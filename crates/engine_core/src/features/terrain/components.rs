@@ -22,17 +22,20 @@ pub struct TerrainSurface {
 /// An object placement layers stand on a terrain: the mesh
 /// it draws and the material it draws with, the coarser meshes it draws at
 /// a distance, finest first (without them, the mesh's automatic levels of
-/// detail), the parts it draws with materials of their own, how far it
-/// sways in the wind:
+/// detail), the parts it draws with materials of their own, its shadow
+/// proxy, how far it sways in the wind:
 /// meters at ten meters up in full wind, its bend growing with the square
 /// of the height, 0 (rigid) to 10, and its objects' collider,
-/// if they collide. Shadow maps cast its coarsest mesh alone.
+/// if they collide.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementAsset {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
     pub lods: Vec<PlacementLod>,
     pub parts: Vec<PlacementPart>,
+    /// A simpler mesh drawn in place of the asset's levels into shadow
+    /// maps, opaque and depth only; none casts the asset's own levels.
+    pub shadow: Option<MeshHandle>,
     pub sway: f32,
     pub collider: Option<PlacedCollider>,
 }
@@ -47,7 +50,8 @@ impl PlacementAsset {
 /// own, such as a tree's masked needle cards over its opaque crown: its
 /// mesh at the asset's mesh and then at each of its coarser meshes, as far
 /// as it reaches; coarser levels draw without it. A part takes the asset's
-/// color, surface factors, sway and impostor, and casts no shadow.
+/// color, surface factors, sway and impostor, and casts no shadow: the
+/// asset's shadow proxy, where it has one, is the whole object's shadow.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementPart {
     pub material: MaterialHandle,

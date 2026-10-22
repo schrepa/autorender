@@ -133,8 +133,7 @@ pub struct SceneTerrainSurface {
 /// draws at a distance, finest first (otherwise the mesh's automatic levels
 /// of detail), up to two parts drawn with materials of their own, and how
 /// far it sways in the wind: meters at
-/// ten meters up in full wind, 0 (rigid, the default) to 10. Shadow maps
-/// cast its coarsest mesh alone.
+/// ten meters up in full wind, 0 (rigid, the default) to 10.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -150,6 +149,11 @@ pub struct SceneTerrainAsset {
     pub lods: Vec<SceneTerrainLod>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<SceneTerrainPart>,
+    /// ID of a simpler mesh of this document its objects draw in place of
+    /// its levels into shadow maps, opaque and depth only; without one they
+    /// cast their own levels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<String>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub sway: f32,
     /// Its objects' collider; without one they never
@@ -244,7 +248,8 @@ pub struct SceneTerrainLod {
 /// own, such as a tree's masked needle cards over its opaque crown: its
 /// meshes by ID, at the asset's mesh and then at each of its coarser
 /// meshes, as far as it reaches; coarser levels draw without it. It takes
-/// the asset's color, sway and impostor, and casts no shadow.
+/// the asset's color, sway and impostor, and casts no shadow: the asset's
+/// `shadow`, where it has one, is the whole object's.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -325,13 +330,14 @@ pub(crate) struct PreparedTerrain {
 }
 
 /// A placement asset's document mesh, material, coarser meshes with their
-/// errors, parts (each one's document material and meshes), sway and
-/// collider.
+/// errors, parts (each one's document material and meshes), shadow proxy's
+/// document mesh, sway and collider.
 pub(crate) type PreparedAsset = (
     usize,
     usize,
     Vec<(usize, f32)>,
     Vec<(usize, Vec<usize>)>,
+    Option<usize>,
     f32,
     Option<PlacedCollider>,
 );
@@ -397,7 +403,7 @@ impl PreparedTerrain {
         terrain.surface.assets = self
             .assets
             .iter()
-            .map(|(mesh, material, lods, parts, sway, collider)| PlacementAsset {
+            .map(|(mesh, material, lods, parts, shadow, sway, collider)| PlacementAsset {
                 mesh: meshes[*mesh],
                 material: materials[*material],
                 lods: lods
@@ -414,6 +420,7 @@ impl PreparedTerrain {
                         meshes: part.iter().map(|&mesh| meshes[mesh]).collect(),
                     })
                     .collect(),
+                shadow: shadow.map(|mesh| meshes[mesh]),
                 sway: *sway,
                 collider: *collider,
             })
@@ -607,6 +614,11 @@ impl SceneTerrain {
                 return Err(invalid(field, rule.into()));
             }
             let parts = prepared_parts(asset, (materials, meshes), (&at, &invalid))?;
+            let shadow = asset
+                .shadow
+                .as_deref()
+                .map(|id| mesh_index(id, format!("{at}.shadow")))
+                .transpose()?;
             if let Err(error) = asset.sway.check("sway", PlacementAsset::SWAY) {
                 return Err(invalid(format!("{at}.sway"), error.rule.into_owned()));
             }
@@ -615,7 +627,7 @@ impl SceneTerrain {
             {
                 return Err(invalid(format!("{at}.collider"), error.rule.into_owned()));
             }
-            assets.push((mesh, material, lods, parts, asset.sway, collider));
+            assets.push((mesh, material, lods, parts, shadow, asset.sway, collider));
         }
         let biomes = Biomes {
             materials: surface
@@ -828,6 +840,7 @@ impl SceneTerrain {
                                     .collect(),
                             })
                             .collect(),
+                        shadow: asset.shadow.and_then(&meshes),
                         sway: asset.sway,
                         collider: asset.collider.map(SceneTerrainCollider::authored),
                     })

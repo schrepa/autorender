@@ -11,11 +11,11 @@
 //! group's list for that view and level, and to its parts' groups', or to
 //! the view's impostor cards; each group and level then draws indirectly,
 //! and each view's cards. Objects draw in the first opaque phase and cast
-//! into every shadow map at their coarsest level, a list of casters per
-//! group and map: the kept ones and the near cascades' caches as seen from
-//! afar, the near cascades drawn every frame with the camera's cards cast
-//! facing the sun, and the moving map without them. They are never
-//! occlusion culled.
+//! into every shadow map, as their group's shadow proxy where it has one,
+//! else at the level the camera draws or a coarser one a map's texel hides:
+//! the kept ones and the near cascades' caches as seen from afar, the near
+//! cascades drawn every frame with the camera's cards cast facing the sun,
+//! and the moving map without them. They are never occlusion culled.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -101,28 +101,27 @@ use crate::gpu_layouts::scatter::DrawArgs;
 
 /// One draw group as the renderer lays it out: each level's index count,
 /// first index and base vertex, and those of the triangles shadow maps
-/// draw of it, the levels the camera draws, the coarser levels' errors,
-/// its impostor's error (mesh units; 0 without one) and record, whether
-/// its objects cast shadows, the groups after it drawing its objects'
-/// parts, and whether it draws a part of a group's before it, whose
-/// objects it draws and which casts for it.
+/// draw of it a level each (its shadow proxy's alone where it has one,
+/// none where its objects cast nothing), the levels the camera draws, the
+/// coarser levels' errors, its impostor's error (mesh units; 0 without one)
+/// and record, the groups after it drawing its objects' parts, and whether
+/// it draws a part of a group's before it, whose objects it draws and
+/// which casts for it.
 pub(crate) struct GroupLayout {
     pub levels: Vec<(u32, u32, i32)>,
     pub casters: Vec<(u32, u32, i32)>,
     pub camera: u32,
     pub errors: [f32; LEVELS as usize - 1],
     pub impostor: (f32, u32),
-    pub casts: bool,
     pub parts: u32,
     pub part: bool,
 }
 
-/// Where a draw group's lists lie in each view's: its camera lists' first
-/// ID and its casters' in a shadow map's, and its objects.
+/// Where a draw group's lists lie in each view's: its first ID, and its
+/// objects.
 #[derive(Clone, Copy, Default)]
 struct GroupLists {
     ids: u32,
-    casters: u32,
     count: u32,
 }
 
@@ -199,14 +198,13 @@ struct CachePlaceholder {
     view: wgpu::TextureView,
 }
 
-/// Where each view's lists lie: each draw group's, the IDs the camera's
-/// lists take and those each shadow map's take, and the view whose lists
-/// hold the camera's fading objects, the one after the last.
+/// Where each view's lists lie, alike in every view: each draw group's,
+/// the IDs a view's lists take, and the view whose lists hold the camera's
+/// fading objects, the one after the last.
 #[derive(Default)]
 struct ListLayout {
     groups: Vec<GroupLists>,
     ids_per_view: u32,
-    casters_per_view: u32,
     fading_view: usize,
 }
 
@@ -368,8 +366,8 @@ impl ScatterPass {
 
     /// Lays out the draw groups `groups` holding `counts` live objects
     /// (a part's group those of the group whose objects it draws): each
-    /// group's lists, the camera's a level each and a shadow map's one of
-    /// casters for groups whose objects cast, and the draws' templates.
+    /// group's lists, a level each in every view, and the draws' templates,
+    /// the camera's and the shadow maps'.
     pub(crate) fn set_groups(
         &mut self,
         device: &wgpu::Device,
@@ -381,7 +379,7 @@ impl ScatterPass {
         self.args.template.clear();
         self.args.casters.clear();
         self.lists.groups.clear();
-        let (mut ids, mut casters) = (0, 0);
+        let mut ids = 0;
         for (group, &count) in groups.iter().zip(counts) {
             data.push(GroupData {
                 ids,
@@ -391,15 +389,10 @@ impl ScatterPass {
                 errors: group.errors,
                 impostor: group.impostor.0,
                 record: group.impostor.1,
-                // Groups casting nothing list no casters.
-                casters: if group.casts { casters } else { DEAD },
+                casters: group.casters.len() as u32,
                 parts: group.parts,
             });
-            self.lists.groups.push(GroupLists {
-                ids,
-                casters,
-                count,
-            });
+            self.lists.groups.push(GroupLists { ids, count });
             for level in 0..LEVELS as usize {
                 for (template, ranges) in [
                     (&mut self.args.template, &group.levels),
@@ -417,9 +410,6 @@ impl ScatterPass {
                 }
             }
             ids += count * LEVELS;
-            if group.casts {
-                casters += count;
-            }
         }
         let bytes: &[u8] = bytemuck::cast_slice(&data);
         if self.groups.grow(device, bytes.len() as u64) {
@@ -430,7 +420,6 @@ impl ScatterPass {
         }
         self.group_count = groups.len() as u32;
         self.lists.ids_per_view = ids;
-        self.lists.casters_per_view = casters;
         // Parts' groups draw objects their own groups count.
         self.resident = counts
             .iter()
@@ -561,13 +550,15 @@ impl ScatterPass {
     /// the regions of the kept map, of a kept level and of the near
     /// cascades' caches redrawn this frame, if any. Levels are picked
     /// within `pixel_error` pixels of a viewport `height` pixels tall (no
-    /// error: finest levels only), and every map casts each object's
-    /// coarsest. With `impostors`, the camera draws impostor cards where
-    /// objects' bounding spheres span fewer pixels of the viewport than it,
-    /// which kept maps and caches cast wherever their texels are no finer
-    /// than an impostor's. The camera's switches fade `fade` of their way
-    /// this frame, or stand still where it is negative. Returns whether any
-    /// object draws.
+    /// error: finest levels only); maps cast each object's shadow proxy
+    /// where its group has one, else the level the camera draws or a
+    /// coarser one where half their texel hides its error, and kept maps
+    /// and caches the coarsest it hides. With `impostors`, the camera draws
+    /// impostor cards where objects' bounding spheres span fewer pixels of
+    /// the viewport than it, which kept maps and caches cast wherever their
+    /// texels are no finer than an impostor's. The camera's switches fade
+    /// `fade` of their way this frame, or stand still where it is negative.
+    /// Returns whether any object draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -647,7 +638,6 @@ impl ScatterPass {
                 self.objects,
             ],
             fade: [fade, FADE_MARGIN, cards, 0.0],
-            lists: [self.lists.casters_per_view, 0, 0, 0],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
         let card_args = &mut self.frame_views.card_args;
@@ -864,16 +854,13 @@ impl ScatterPass {
     }
 
     /// Grows the buffers culling writes to hold `view_count` views' lists
-    /// (the camera's and its fading objects' a level each, each shadow
-    /// map's its casters), cards and card arguments (then the count of
-    /// entries lists left out), and notes whether the lists may reach past
-    /// what their bindings hold, which leaves entries out that culling
-    /// counts and frames read back.
+    /// (the camera's fading objects' after them), cards and card arguments
+    /// (then the count of entries lists left out), and notes whether the
+    /// lists may reach past what their bindings hold, which leaves entries
+    /// out that culling counts and frames read back.
     fn grow_views(&mut self, device: &wgpu::Device, view_count: u32) {
         let lists = u64::from(view_count) + 1;
-        let ids = (2 * u64::from(self.lists.ids_per_view)
-            + u64::from(view_count.saturating_sub(1)) * u64::from(self.lists.casters_per_view))
-            * 4;
+        let ids = u64::from(self.lists.ids_per_view) * lists * 4;
         let draws = u64::from(self.group_count * LEVELS) * lists * size_of::<DrawArgs>() as u64;
         let cards = u64::from(self.objects) * u64::from(view_count) * 8;
         let mut replaced = self
@@ -950,10 +937,11 @@ impl ScatterPass {
 
     /// Group `group`'s list of level `level` in `view` (0 the camera's) and
     /// its draw's arguments: the visible-ID slice to bind and the indirect
-    /// buffer and offset. A shadow map's view lists a group's casters
-    /// alone, at its coarsest level. None where the list starts past what
-    /// the IDs' binding holds, which culling left it out of (a list
-    /// reaching past it draws no instances).
+    /// buffer and offset. A shadow map's view lists a group's objects at
+    /// the levels it casts at, its shadow proxy alone as its first where it
+    /// has one. None where the list starts past what the IDs' binding
+    /// holds, which culling left it out of (a list reaching past it draws
+    /// no instances).
     pub(crate) fn draw_source(
         &self,
         view: usize,
@@ -961,21 +949,11 @@ impl ScatterPass {
         level: usize,
     ) -> Option<(wgpu::BufferSlice<'_>, &wgpu::Buffer, u64)> {
         let lists = self.lists.groups.get(group)?;
-        // The camera's lists first, then each shadow map's casters, then
-        // the camera's fading objects' as the camera's.
-        let (first, within) = if view == 0 {
-            (0, lists.ids + level as u32 * lists.count)
-        } else {
-            let first = u64::from(self.lists.ids_per_view)
-                + (view.min(self.lists.fading_view) as u64 - 1)
-                    * u64::from(self.lists.casters_per_view);
-            if view == self.lists.fading_view {
-                (first, lists.ids + level as u32 * lists.count)
-            } else {
-                (first, lists.casters)
-            }
-        };
-        let start = (first + u64::from(within)) * 4;
+        // Every view's lists lie as the camera's, its fading objects' after
+        // the last view's.
+        let start = (view as u64 * u64::from(self.lists.ids_per_view)
+            + u64::from(lists.ids + level as u32 * lists.count))
+            * 4;
         let draw = (view * self.group_count as usize + group) * LEVELS as usize + level;
         let args: &wgpu::Buffer = &self.draws;
         (start < self.ids.size()).then(|| {

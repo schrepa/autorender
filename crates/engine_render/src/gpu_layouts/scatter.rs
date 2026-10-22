@@ -10,7 +10,6 @@ gpu_structs! {
         pub counts: [u32; 4],
         pub strides: [u32; 4],
         pub fade: [f32; 4],
-        pub lists: [u32; 4],
     }
 
     /// WGSL `View`: a view's frustum planes, the radius objects need in it,
@@ -59,8 +58,9 @@ gpu_structs! {
 
     /// WGSL `Group`: where its lists start, its objects, its levels, those
     /// the camera draws, the coarser ones' errors, its impostor's error
-    /// and record, where its list of casters starts in a shadow map's, and
-    /// the groups after it drawing its objects' parts.
+    /// and record, the levels shadow maps draw its objects at (its shadow
+    /// proxy alone counts one; 0 casting nothing), and the groups after it
+    /// drawing its objects' parts.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct GroupData as ["Group" in SCATTER_CULL_SHADER] {
         pub ids: u32,

@@ -9,12 +9,15 @@
 // sphere smaller than the impostors' size on screen (on frames that draw
 // impostors), it appends its pose and impostor to the camera's cards
 // instead, drawn facing it; the near cascades cast it as a card facing the
-// sun, and the moving map leaves it out. Every shadow map casts the other
-// objects at their coarsest level, the same in each, which every finer
-// level holds within it, its parts casting nothing. The kept maps, redrawn
-// only where objects come and go, hold every object as seen from afar: its
+// sun, and the moving map leaves it out. Shadow maps cast the other
+// objects as their group's shadow proxy where it has one, drawn in place of
+// every level, and otherwise at the level chosen from the camera in every
+// view, so shadows match what is seen, or a coarser one where half a map's
+// texel hides its error; parts cast nothing. The kept maps, redrawn only
+// where objects come and go, hold every object as seen from afar: its
 // impostor, cast as a card facing the sun, wherever their texels are no
-// finer than the impostor's.
+// finer than the impostor's, else its proxy or the coarsest level half
+// their texel hides.
 // The camera switches how it shows an object (a level, its card or
 // nothing, past the density its layer keeps) a margin past each switch's
 // distance, and fades every switch over frames: while one fades, the
@@ -26,9 +29,8 @@ struct Frame {
     eye: vec4<f32>,
     // Objects, draw groups, levels each group lists, and views.
     counts: vec4<u32>,
-    // The IDs the camera's lists take, the draws each view's lists take,
-    // whether the camera's view draws impostors, and the cards each view's
-    // list takes.
+    // The IDs and draws each view's lists take, whether the camera's view
+    // draws impostors, and the cards each view's list takes.
     strides: vec4<u32>,
     // Fades: the share of a switch this frame fades (1
     // switches at once; negative on exact frames, which show objects as
@@ -38,8 +40,6 @@ struct Frame {
     // sphere shows smaller than impostors' size on screen. The camera's
     // fading objects draw from the lists of the view after the last.
     fade: vec4<f32>,
-    // The IDs each shadow map's lists take: one list of casters a group.
-    lists: vec4<u32>,
 }
 
 // A view: its frustum planes (world, inside positive; a shadow map's depth
@@ -83,13 +83,14 @@ const FADED: u32 = 65535u;
 const FADE_SLOT: u32 = 0x00ffffffu;
 const FADE_OUT: u32 = 0x80000000u;
 
-// A draw group: where its objects' lists start, how many objects it has,
-// its levels of detail, how many of them the camera draws (coarser ones
-// serve shadow maps alone), their errors (levels 1 to 4, mesh units), its
-// impostor's error (mesh units; 0 without one) and record, where its list
-// of casters starts in each shadow map's lists (`DEAD` for groups casting
-// nothing), and how many groups after it draw its objects' parts, at as
-// many of its levels as they have.
+// A draw group: where its objects' lists start in each view's, how many
+// objects it has, its levels of detail, how many of them the camera draws
+// (coarser ones serve shadow maps alone), their errors (levels 1 to 4, mesh
+// units), its impostor's error (mesh units; 0 without one) and record, how
+// many levels shadow maps draw its objects at, from the first (one where it
+// casts its shadow proxy, drawn in place of every level; 0 for groups
+// casting nothing), and how many groups after it draw its objects' parts,
+// at as many of its levels as they have.
 struct Group {
     ids: u32,
     count: u32,
@@ -212,54 +213,56 @@ fn shown_at(record: Record, group: Group, thinning: bool, thin: vec4<f32>, rank:
     return level;
 }
 
-// Where view `view`'s lists start in the IDs: the camera's first, then each
-// shadow map's lists of casters, then the camera's fading objects' (the
-// view after the last), laid out as the camera's.
-fn list_start(view: u32) -> u32 {
-    if view == 0u {
-        return 0u;
+// Appends `entry` to the list of level `level` of draw group `drawn`, the
+// `index`th, in view `view`, counting it in the list's draw, where the
+// group lists that level. Every view's lists lie as the camera's, and the
+// camera's fading objects' follow the last view's. A list reaching past
+// what the IDs' binding holds leaves it out, counted.
+fn append(view: u32, index: u32, drawn: Group, level: u32, entry: u32) {
+    if level >= drawn.levels {
+        return;
     }
-    return frame.strides.x + (min(view, frame.counts.w) - 1u) * frame.lists.x;
+    let start = view * frame.strides.x + drawn.ids + level * drawn.count;
+    if start + drawn.count > arrayLength(&ids) {
+        left_out();
+        return;
+    }
+    let draw = view * frame.strides.y + index * frame.counts.z + level;
+    let slot = atomicAdd(&draws[draw].instance_count, 1u);
+    ids[start + slot] = entry;
 }
 
 // Appends `entry` to the list of level `level` of `record`'s draw group
 // `group` in view `view` (the camera's, or its fading objects'), and to
-// those of the groups drawing its parts that reach that level, counting it
-// in each list's draw. A list reaching past what the IDs' binding holds
-// leaves it out, counted.
+// those of the groups drawing its parts that reach that level.
 fn list(view: u32, record: Record, group: Group, level: u32, entry: u32) {
-    for (var part = 0u; part <= group.parts; part++) {
-        let index = record.group + part;
-        var drawn = group;
-        if part != 0u {
-            drawn = groups[index];
-        }
-        if level >= drawn.levels {
-            continue;
-        }
-        let start = list_start(view) + drawn.ids + level * drawn.count;
-        if start + drawn.count > arrayLength(&ids) {
-            left_out();
-            continue;
-        }
-        let draw = view * frame.strides.y + index * frame.counts.z + level;
-        let slot = atomicAdd(&draws[draw].instance_count, 1u);
-        ids[start + slot] = entry;
+    append(view, record.group, group, level, entry);
+    for (var part = 1u; part <= group.parts; part++) {
+        append(view, record.group + part, groups[record.group + part], level, entry);
     }
 }
 
-// Appends object `id` of `record`'s draw group `group` to shadow map
-// view `view`'s casters: its coarsest level, counted in that level's draw.
-// A list reaching past what the IDs' binding holds leaves it out, counted.
-fn list_caster(view: u32, record: Record, group: Group, id: u32) {
-    let start = list_start(view) + group.casters;
-    if start + group.count > arrayLength(&ids) {
-        left_out();
-        return;
+// The level a shadow map casts `record` of draw group `group` at, the
+// camera showing it as `shown`, half the map's texel spanning `half_texel`
+// world units: the level the camera draws (its coarsest where the camera
+// shows a card), or a coarser one only where half the texel hides its
+// error, since a coarser caster stands out of the surface the camera draws
+// in every hollow, by more than lookups allow, and shadows it in blotches.
+// Maps keeping what is drawn into them (`kept`) cast the coarsest level
+// half their texel hides, whatever the camera shows. A group casting its
+// shadow proxy casts it alone.
+fn caster_level(record: Record, group: Group, shown: u32, half_texel: f32,
+        kept: bool) -> u32 {
+    var level = 0u;
+    if !kept {
+        level = min(shown, group.casters - 1u);
     }
-    let draw = view * frame.strides.y + record.group * frame.counts.z + group.levels - 1u;
-    let slot = atomicAdd(&draws[draw].instance_count, 1u);
-    ids[start + slot] = id;
+    for (var l = level + 1u; l < group.casters; l++) {
+        if group.errors[l - 1u] * record.scale <= half_texel {
+            level = l;
+        }
+    }
+    return level;
 }
 
 // Appends object `id`'s card with batch word `word` to view `view`'s cards,
@@ -413,7 +416,7 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         // until they are gone and those fading in from the start, of groups
         // that cast at all.
         let casts = select(shown, previous, shown == SHOWN_NONE && progress < FADED);
-        if casts == SHOWN_NONE || group.casters == DEAD {
+        if casts == SHOWN_NONE || group.casters == 0u {
             continue;
         }
         // Cards near cascades cast too and the moving map
@@ -433,6 +436,7 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
             card(view, id.x, group.record);
             continue;
         }
-        list_caster(view, record, group, id.x);
+        let level = caster_level(record, group, casts, limits.x, kept);
+        append(view, record.group, group, level, id.x);
     }
 }

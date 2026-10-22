@@ -39,7 +39,8 @@ impl RenderSurfaceMaps {
 
 /// A placement asset of a frame: its mesh, its material
 /// and the textures of every material it draws with, its coarser meshes
-/// with their errors, its parts, and its sway.
+/// with their errors, its parts, its shadow proxy
+/// ([`PlacementAsset::shadow`]) and its sway.
 #[derive(Clone, Debug)]
 pub struct RenderPlacementAsset {
     pub mesh: RenderMesh,
@@ -47,6 +48,7 @@ pub struct RenderPlacementAsset {
     pub textures: Vec<RenderTexture>,
     pub lods: Vec<(RenderMesh, f32)>,
     pub parts: Vec<RenderPlacementPart>,
+    pub shadow: Option<RenderMesh>,
     pub sway: f32,
 }
 
@@ -90,6 +92,10 @@ impl RenderPlacementAsset {
                     })
                 })
                 .collect::<Option<Vec<_>>>()?;
+            let shadow = match asset.shadow {
+                Some(handle) => Some(RenderMesh::of(assets, handle)?),
+                None => None,
+            };
             let material = material(asset.material)?;
             let textures = std::iter::once(&material.material)
                 .chain(parts.iter().map(|part| &part.material.material))
@@ -107,6 +113,7 @@ impl RenderPlacementAsset {
                 textures,
                 lods,
                 parts,
+                shadow,
                 sway: asset.sway,
             })
         })();
@@ -114,11 +121,13 @@ impl RenderPlacementAsset {
         found
     }
 
-    /// Every mesh it draws: its own, its coarser ones and its parts'.
+    /// Every mesh it draws: its own, its coarser ones, its parts' and its
+    /// shadow proxy.
     pub fn meshes(&self) -> impl Iterator<Item = &RenderMesh> {
         std::iter::once(&self.mesh)
             .chain(self.lods.iter().map(|(lod, _)| lod))
             .chain(self.parts.iter().flat_map(|part| &part.meshes))
+            .chain(&self.shadow)
     }
 
     /// Every material it draws with: its own, then its parts'.

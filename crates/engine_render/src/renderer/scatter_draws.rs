@@ -63,10 +63,12 @@ impl ScatterDraws {
 
 /// One draw group of placed objects: each level's mesh, its material, its
 /// objects' color and bounding sphere (mesh space, around its parts' meshes
-/// too), the group whose objects it draws (its own, or for a part its
-/// asset's) and which of the asset's parts it draws, its live objects, and
-/// whether it casts shadows and tests its material's texels doing so
-/// (parts cast none).
+/// and its shadow proxy too), the group whose objects it draws (its own, or
+/// for a part its asset's) and which of the asset's parts it draws, its
+/// live objects, whether it casts shadows and tests its material's texels
+/// doing so (parts cast none, and shadow proxies never test), and the mesh
+/// of each level shadow maps draw of it: its shadow proxy alone where it
+/// has one, else its levels'.
 struct ScatterDraw {
     meshes: Vec<MeshHandle>,
     material: MaterialHandle,
@@ -77,11 +79,12 @@ struct ScatterDraw {
     part: Option<usize>,
     count: u32,
     casts: Option<bool>,
+    casters: Vec<MeshHandle>,
 }
 
 /// An asset as its groups were built: its mesh, material and version, its
 /// coarser meshes, which of all its meshes were resident, its sway's bits,
-/// and its parts.
+/// its parts, and its shadow proxy.
 type AssetKey = (
     MeshHandle,
     MaterialHandle,
@@ -90,6 +93,7 @@ type AssetKey = (
     Vec<bool>,
     u32,
     Vec<PartKey>,
+    Option<MeshHandle>,
 );
 
 /// A part as its group was built: its material and version, and its
@@ -467,6 +471,7 @@ impl Renderer {
                                 resident,
                                 asset.sway.to_bits(),
                                 parts,
+                                asset.shadow.as_ref().map(|proxy| proxy.handle),
                             )
                         })
                     })
@@ -477,9 +482,10 @@ impl Renderer {
         (terrains, self.mesh_layout)
     }
 
-    /// Builds one draw group per asset of `terrains` that draws and one per
-    /// part of it whose finest mesh is resident, right after it, and
-    /// empties the pool for them: every tile takes new slots.
+    /// Builds one draw group per asset of `terrains` that draws, casting
+    /// its shadow proxy alone while that is resident, and one per part of
+    /// it whose finest mesh is resident, right after it, and empties the
+    /// pool for them: every tile takes new slots.
     fn build_scatter_groups(&mut self, terrains: &[engine_core::RenderTerrain]) {
         let mut groups = Vec::new();
         let mut layouts = Vec::new();
@@ -504,19 +510,34 @@ impl Renderer {
                     })
                     .collect();
                 let bounds = asset.mesh.mesh.bounds();
-                // Its bounding sphere holds its parts' meshes too.
-                let (low, high) = parts.iter().fold(
-                    (bounds.min(), bounds.max()),
-                    |(low, high), &(part, _, _)| {
-                        let part_bounds = asset.parts[part].meshes[0].mesh.bounds();
-                        (low.min(part_bounds.min()), high.max(part_bounds.max()))
-                    },
-                );
+                // Its shadow proxy, while resident, is the one level its
+                // objects cast at.
+                let proxy = asset
+                    .shadow
+                    .as_ref()
+                    .and_then(|mesh| Some((mesh, self.proxy_caster(mesh)?)));
+                // Its bounding sphere holds its parts' meshes and its shadow
+                // proxy too.
+                let (low, high) = parts
+                    .iter()
+                    .map(|&(part, _, _)| asset.parts[part].meshes[0].mesh.bounds())
+                    .chain(proxy.map(|(mesh, _)| mesh.mesh.bounds()))
+                    .fold((bounds.min(), bounds.max()), |(low, high), held| {
+                        (low.min(held.min()), high.max(held.max()))
+                    });
                 let material = &asset.material.material;
-                // Blending materials cast nothing; masked ones test their
-                // texels.
-                let casts = (!material.is_transparent())
-                    .then(|| matches!(material.alpha_mode(), engine_core::AlphaMode::Mask { .. }));
+                // Blending materials cast nothing and masked ones test their
+                // texels; a shadow proxy casts depth alone in place of the
+                // levels, whatever the material.
+                let (casts, casters, caster_meshes) = match proxy {
+                    Some((mesh, range)) => (Some(false), vec![range], vec![mesh.handle]),
+                    None if material.is_transparent() => (None, Vec::new(), Vec::new()),
+                    None => (
+                        Some(matches!(material.alpha_mode(), engine_core::AlphaMode::Mask { .. })),
+                        casters,
+                        meshes.clone(),
+                    ),
+                };
                 let objects = groups.len() as u32;
                 indices.insert((terrain.id, asset_index), objects);
                 // Swaying objects carry their sway in the flags skinned slots
@@ -538,6 +559,7 @@ impl Renderer {
                     part: None,
                     count: 0,
                     casts,
+                    casters: caster_meshes,
                 });
                 layouts.push(GroupLayout {
                     levels,
@@ -545,7 +567,6 @@ impl Renderer {
                     camera,
                     errors,
                     impostor: (0.0, 0),
-                    casts: casts.is_some(),
                     parts: parts.len() as u32,
                     part: false,
                 });
@@ -553,12 +574,11 @@ impl Renderer {
                 for (part, part_levels, part_meshes) in parts {
                     let rendered = &asset.parts[part];
                     layouts.push(GroupLayout {
-                        casters: part_levels.clone(),
+                        casters: Vec::new(),
                         camera: part_levels.len() as u32,
                         levels: part_levels,
                         errors,
                         impostor: (0.0, groups.len() as u32),
-                        casts: false,
                         parts: 0,
                         part: true,
                     });
@@ -572,6 +592,7 @@ impl Renderer {
                         part: Some(part),
                         count: 0,
                         casts: None,
+                        casters: Vec::new(),
                     });
                     covers.push(cover);
                 }
@@ -675,6 +696,19 @@ impl Renderer {
             meshes.push(rendered.handle);
         }
         Some((ranges, meshes))
+    }
+
+    /// The index count, first index and base vertex of the triangles shadow
+    /// maps draw of shadow proxy `proxy`; `None` while it is not resident or
+    /// is skinned.
+    fn proxy_caster(&self, proxy: &engine_core::RenderMesh) -> Option<(u32, u32, i32)> {
+        let mesh = self.meshes.get(&proxy.handle)?;
+        if mesh.skinned {
+            return None;
+        }
+        let draw = mesh.draw(&self.mesh_arena);
+        let (first, count) = mesh.caster_range(0, (0, draw.index_count));
+        Some((count, draw.first_index + first, draw.base_vertex))
     }
 
     /// The material group and pipeline variant of placed group `draw`,
@@ -787,10 +821,11 @@ impl Renderer {
             .map(|material| material.material)
     }
 
-    /// Draws this frame's placed objects culled for shadow map `map` at
-    /// their coarsest levels with the depth passes' caster pipelines
-    /// `casters`, and their impostor cards with `cards`; the map's view is
-    /// bound. Returns the draws.
+    /// Draws this frame's placed objects culled for shadow map `map` at the
+    /// levels their groups cast at, each group's shadow proxy alone where it
+    /// has one, with the depth passes' caster pipelines `casters`, and their
+    /// impostor cards with `cards`; the map's view is bound. Returns the
+    /// draws.
     pub(super) fn draw_scatter_shadow(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -879,29 +914,32 @@ impl Renderer {
     }
 
     /// Draws group `draw` (the `index`th) from shadow map view `view`'s
-    /// list of its casters, at its coarsest level; returns the draws.
+    /// lists, at each level it casts at with that level's mesh; returns the
+    /// draws.
     fn draw_scatter_casters(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         (index, draw): (usize, &ScatterDraw),
         view: usize,
     ) -> u32 {
-        let Some(level) = draw.meshes.len().checked_sub(1) else {
-            return 0;
-        };
-        let Some(mesh) = self.meshes.get(&draw.meshes[level]) else {
-            return 0;
-        };
-        let Some((ids, args, offset)) = self.features.scatter.get().draw_source(view, index, level)
-        else {
-            return 0;
-        };
-        let source = mesh.draw(&self.mesh_arena);
-        pass.set_vertex_buffer(0, source.vertices.slice(..));
-        pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
-        pass.set_vertex_buffer(1, ids);
-        pass.draw_indexed_indirect(args, offset);
-        1
+        let mut draws = 0;
+        for (level, handle) in draw.casters.iter().enumerate() {
+            let Some(mesh) = self.meshes.get(handle) else {
+                continue;
+            };
+            let Some((ids, args, offset)) =
+                self.features.scatter.get().draw_source(view, index, level)
+            else {
+                continue;
+            };
+            let source = mesh.draw(&self.mesh_arena);
+            pass.set_vertex_buffer(0, source.vertices.slice(..));
+            pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(1, ids);
+            pass.draw_indexed_indirect(args, offset);
+            draws += 1;
+        }
+        draws
     }
 }
 
