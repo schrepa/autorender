@@ -23,7 +23,8 @@ override TERRAIN_HOLES: bool = false;
 @group(1) @binding(23) var<storage, read> terrain_directory: array<u32>;
 // Each tile's control values, in the same layers as its
 // heights: per sample, its two strongest surface materials (bits 0 to 7
-// and 8 to 15), the second's share (16 to 23) and its strongest biome.
+// and 8 to 15), the second's share (16 to 23) and how wet its ground is
+// (24 to 31).
 @group(1) @binding(24) var terrain_control: texture_2d_array<u32>;
 // Gathers a 2x2 block of control values, or of normal maps' texels, at
 // once.
@@ -496,6 +497,77 @@ fn terrain_blend(local: vec2<f32>, normal: vec3<f32>, shading: TerrainShadingLev
     terrain_steep_blend(&blend, normal);
     terrain_border_blend(&blend, local, shading);
     return blend;
+}
+
+// How wet the ground is at terrain-local `local` in `level`'s control
+// values, or the nearest coarser level's where its tile is not resident,
+// from 0, dry, to 1: the four samples' wetness around it (their top bytes),
+// bilinearly, as `terrain_level_blend` blends their materials. A tile
+// fading in, or without its own materials yet, shows the next resident
+// coarser level's under it; ground no level holds is dry.
+fn terrain_level_wetness(local: vec2<f32>, level: u32) -> f32 {
+    let base = terrain.directory.x;
+    let levels = terrain.directory.y;
+    var wet = 0.0;
+    var left = 1.0;
+    for (var index = level; index < levels; index++) {
+        let header = base + index * 4u;
+        let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
+        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
+        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        if layer == 0xffffffffu {
+            continue;
+        }
+        let fade = terrain_layer_fades(layer).y;
+        if fade < 1.0 {
+            let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
+            let corner = min(vec2<u32>(within), vec2<u32>(255u));
+            let f = within - vec2<f32>(corner);
+            let texel = corner + vec2<u32>(1u);
+            // The block's control values gathered as `terrain_level_blend`
+            // gathers them (x: (0, 1), y: (1, 1), z: (1, 0), w: (0, 0)).
+            let controls = textureGather(0, terrain_control, terrain_control_sampler,
+                (vec2<f32>(texel) + vec2<f32>(1.0)) / 259.0, layer);
+            let wets = vec4<f32>(controls >> vec4<u32>(24u)) * (1.0 / 255.0);
+            let low = mix(wets.w, wets.z, f.x);
+            let high = mix(wets.x, wets.y, f.x);
+            wet += mix(low, high, f.y) * (left * (1.0 - fade));
+        }
+        left *= fade;
+        if left <= 0.0 {
+            return wet;
+        }
+    }
+    return wet;
+}
+
+// How wet the ground is at terrain-local `local` at `shading`'s levels,
+// their wetness blended.
+fn terrain_wetness(local: vec2<f32>, shading: TerrainShadingLevel) -> f32 {
+    var wet = terrain_level_wetness(local, shading.level);
+    if shading.blend > 0.0 {
+        wet = mix(wet, terrain_level_wetness(local, shading.level + 1u), shading.blend);
+    }
+    return wet;
+}
+
+// Wet ground (Lagarde 2013, "Water drop 3b: physically based wet
+// surfaces"): ground rougher than `TERRAIN_POROUS` is porous, wholly so
+// `TERRAIN_POROUS_RANGE` rougher still, and water filling its pores darkens
+// it to `TERRAIN_SOAKED` of its albedo.
+const TERRAIN_POROUS: f32 = 0.5;
+const TERRAIN_POROUS_RANGE: f32 = 0.4;
+const TERRAIN_SOAKED: f32 = 0.2;
+
+// Ground of `roughness` as `wet` (0 to 1) wets it: the factor its albedo
+// darkens by, the more the more porous it is, and its roughness, glossed by
+// the water filming it.
+fn terrain_wet_ground(roughness: f32, wet: f32) -> vec2<f32> {
+    let gloss = 1.0 - roughness;
+    let porosity = saturate(((1.0 - gloss) - TERRAIN_POROUS) / TERRAIN_POROUS_RANGE);
+    let factor = mix(1.0, TERRAIN_SOAKED, porosity);
+    return vec2<f32>(mix(1.0, factor, wet), 1.0 - mix(1.0, gloss, mix(1.0, factor, 0.5 * wet)));
 }
 
 // What a terrain fragment's ground shows: its linear albedo, roughness,
@@ -1400,9 +1472,18 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
         let colors = terrain_macro_texel(local, footprint);
         albedo *= macro_tint(colors, ground.vegetated, macro_strength(site.distance));
     }
+    // Wet where the surface's rules wet it, darker and glossier, over the
+    // virtual texture's texels too, which hold it dry.
+    var roughness = ground.roughness;
+    let wet = terrain_wetness(local, seen.shading);
+    if wet > 0.0 {
+        let soaked = terrain_wet_ground(roughness, wet);
+        albedo *= soaked.x;
+        roughness = soaked.y;
+    }
+    roughness = max(roughness, 0.03);
     let sky_map = terrain_sky_map(local);
     let sky = sky_map.r;
-    let roughness = max(ground.roughness, 0.03);
     var point: SurfacePoint;
     point.albedo = albedo;
     point.opacity = 1.0;

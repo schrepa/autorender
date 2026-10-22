@@ -962,7 +962,7 @@ tables! {
     /// A tile's control values from its terrain's surface (
     /// `terrain_control.wgsl`): the height array, the job's uniform, the
     /// surface's data, the control layer it writes and the array of tiles'
-    /// meters to rivers' edges.
+    /// rivers: their samples' meters to rivers' edges and the rivers' beds.
     const TERRAIN_CONTROL: Table = Table {
         label: "engine/terrain-control-layout",
         serves: [TERRAIN_CONTROL_SHADER @ 0],

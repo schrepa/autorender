@@ -4,17 +4,18 @@
 // tile's rows (height, and the slope and curvature of the smooth surface
 // through the heights around it, `terrain_tile.wgsl`'s `tile_shape`;
 // the hydrology bake's flow, wetness and lakes; the meters to the nearest
-// river's edge the tile holds; the nearest road), and the surface's rules
-// run as a program for this interpreter (`engine_terrain::gpu`), in the
-// order the CPU evaluates them. Values match the CPU's but where rounding
-// moves one across a rule's threshold; gameplay reads the CPU's.
+// river's edge and the bed of the river holding it the tile holds; the
+// nearest road), and the surface's rules run as a program for this
+// interpreter (`engine_terrain::gpu`), in the order the CPU evaluates them:
+// the materials and how wet the ground is. Values match the CPU's but where
+// rounding moves one across a rule's threshold; gameplay reads the CPU's.
 
 struct Job {
     // The layer, the tile's first sample (x and z, from the terrain's
     // first, with surroundings' offset), its sample spacing, the
     // hydrology image level its masks read, and 1 where the layer of the
-    // river array holds the tile's meters to rivers' edges (0 where no
-    // river reaches it).
+    // river array holds the tile's meters to rivers' edges and their beds
+    // (0 where no river reaches it).
     layer: u32,
     level: u32,
     first: vec2<i32>,
@@ -35,9 +36,10 @@ const MAX_STACK: u32 = 16u;
 const MAX_MATERIALS: u32 = 64u;
 const RIVER_FAR: f32 = 1.0e9;
 const PATH_FAR: f32 = 1.0e9;
-// A tile's meters to rivers' edges as its steps
-// (`engine_terrain::RIVER_EDGE_STEP`): meters a step, the step at the
-// edge, and the step for no river within reach.
+// A tile's meters to rivers' edges, and heights of their floods above its
+// ground, as its steps (`engine_terrain::RIVER_EDGE_STEP`): meters a step,
+// the step at the edge and the ground, and the step for no river within
+// reach, or no bed.
 const RIVER_EDGE_STEP: f32 = 0.0625;
 const RIVER_EDGE_ZERO: u32 = 32768u;
 const RIVER_EDGE_FAR: u32 = 65535u;
@@ -49,6 +51,11 @@ const H_READS: u32 = 4u;
 const H_HYDROLOGY: u32 = 5u;
 const H_PATHS: u32 = 6u;
 const H_FADE: u32 = 7u;
+const H_WET_BIOMES: u32 = 8u;
+// Words of each biome's entry in the program's table
+// (`engine_terrain::gpu::BIOME_WORDS`): its fitness mask, its layer list
+// and its wetness rule.
+const BIOME_WORDS: u32 = 3u;
 
 // Opcodes (`engine_terrain::gpu::op`).
 const OP_CONSTANT: u32 = 0u;
@@ -67,7 +74,10 @@ const OP_MIN: u32 = 12u;
 const OP_MAX: u32 = 13u;
 const OP_INVERT: u32 = 14u;
 const OP_REMAP: u32 = 15u;
-const OP_END: u32 = 16u;
+const OP_GRAIN: u32 = 16u;
+const OP_POWER: u32 = 17u;
+const OP_FLOOD: u32 = 18u;
+const OP_END: u32 = 19u;
 
 fn real(at: u32) -> f32 {
     return bitcast<f32>(data[at]);
@@ -188,6 +198,9 @@ struct Inputs {
     wetness: f32,
     lake: f32,
     river: f32,
+    grain: f32,
+    power: f32,
+    flood: f32,
     path_distance: f32,
     path_half: f32,
 }
@@ -258,18 +271,29 @@ fn image_table(section: u32, image: u32) -> u32 {
     return table;
 }
 
-// Meters from the nearest river's edge at texel (`column`, `row`) of the
-// tile's layer, as the tile holds them: RIVER_FAR beyond every river's
-// reach.
-fn river_edge(column: u32, row: u32) -> f32 {
+// What the tile holds of the rivers at texel (`column`, `row`) of its
+// layer (`engine_terrain::Tile::river_texels`), as the CPU reads it: meters
+// from the nearest river's edge, RIVER_FAR beyond every river's reach; and
+// of the bed of the river holding it, the median size of its grains
+// (meters) and the stream power at its bankfull flood (watts per square
+// meter), each the high half of its float, 0 outside every river's bed, and
+// meters the ground stands above that flood's level, RIVER_FAR outside
+// every river's bed.
+fn river_sample(column: u32, row: u32) -> vec4<f32> {
+    var sample = vec4<f32>(RIVER_FAR, 0.0, 0.0, RIVER_FAR);
     if job.rivers == 0u {
-        return RIVER_FAR;
+        return sample;
     }
-    let held = textureLoad(rivers, vec2<u32>(column, row), job.layer, 0).r;
-    if held == RIVER_EDGE_FAR {
-        return RIVER_FAR;
+    let held = textureLoad(rivers, vec2<u32>(column, row), job.layer, 0);
+    if held.x != RIVER_EDGE_FAR {
+        sample.x = (f32(held.x) - f32(RIVER_EDGE_ZERO)) * RIVER_EDGE_STEP;
     }
-    return (f32(held) - f32(RIVER_EDGE_ZERO)) * RIVER_EDGE_STEP;
+    sample.y = bitcast<f32>(held.y << 16u);
+    sample.z = bitcast<f32>(held.z << 16u);
+    if held.w != RIVER_EDGE_FAR {
+        sample.w = (f32(RIVER_EDGE_ZERO) - f32(held.w)) * RIVER_EDGE_STEP;
+    }
+    return sample;
 }
 
 // The nearest road as the point sees it (distance from its line and half
@@ -377,6 +401,7 @@ fn sample_inputs(column: u32, row: u32) -> Inputs {
     inputs.curvature = shape.z;
     inputs.spacing = spacing;
     inputs.river = RIVER_FAR;
+    inputs.flood = RIVER_FAR;
     inputs.path_distance = PATH_FAR;
     let point = vec2<f32>(inputs.x, inputs.z);
     let reads = data[H_READS];
@@ -395,7 +420,11 @@ fn sample_inputs(column: u32, row: u32) -> Inputs {
         inputs.flow = flow * show;
         inputs.wetness = wetness * show;
         inputs.lake = lake * show;
-        inputs.river = river_edge(column, row);
+        let river = river_sample(column, row);
+        inputs.river = river.x;
+        inputs.grain = river.y;
+        inputs.power = river.z;
+        inputs.flood = river.w;
     }
     if (reads & 2u) != 0u && show > 0.0 {
         let road = path_at(point);
@@ -416,6 +445,9 @@ fn input_ramp(code: u32, inputs: Inputs, low: f32, high: f32) -> f32 {
         case OP_WETNESS: { return ramp(inputs.wetness, low, high); }
         case OP_LAKE: { return ramp(inputs.lake, low, high); }
         case OP_RIVER: { return ramp(inputs.river, low, high); }
+        case OP_GRAIN: { return ramp(inputs.grain, low, high); }
+        case OP_POWER: { return ramp(inputs.power, low, high); }
+        case OP_FLOOD: { return ramp(inputs.flood, low, high); }
         default: {
             // A road's ramp at four points across the sample's footprint,
             // across the road.
@@ -445,7 +477,8 @@ fn evaluate(start: u32, inputs: Inputs) -> f32 {
                 top += 1u;
                 pc += 2u;
             }
-            case OP_HEIGHT, OP_GRADIENT, OP_CURVATURE, OP_FLOW, OP_WETNESS, OP_LAKE, OP_RIVER, OP_PATH: {
+            case OP_HEIGHT, OP_GRADIENT, OP_CURVATURE, OP_FLOW, OP_WETNESS, OP_LAKE, OP_RIVER, OP_PATH,
+                OP_GRAIN, OP_POWER, OP_FLOOD: {
                 stack[top] = input_ramp(code, inputs, real(pc + 1u), real(pc + 2u));
                 top += 1u;
                 pc += 3u;
@@ -514,31 +547,38 @@ fn tile_control(@builtin(global_invocation_id) id: vec3<u32>) {
     let inputs = sample_inputs(id.x, id.y);
     let program = data[H_PROGRAM];
     let biomes = data[H_BIOMES];
+    let wet_biomes = data[H_WET_BIOMES];
     // Later biomes and layers paint over earlier ones: walk them from the
     // last, each taking what the later ones left, until nothing is left;
-    // materials' weights in the order they first weigh.
+    // materials' weights in the order they first weigh. The ground's
+    // wetness walks the biomes alone, each taking what the later ones left
+    // of it, the steep layer painted over them none.
     var materials: array<u32, MAX_MATERIALS>;
     var weights: array<f32, MAX_MATERIALS>;
     var count = 0u;
     var remaining = 1.0;
-    var biome = 0u;
-    var biome_share = -1.0;
+    var soaking = select(0.0, 1.0, wet_biomes > 0u);
+    var wet = 0.0;
     for (var index = biomes; index > 0u; index--) {
         let current = index - 1u;
-        let fitness = data[program + 2u * current];
+        let at = program + BIOME_WORDS * current;
         var fit = 1.0;
         if current > 0u {
-            fit = clamp_rule(evaluate(fitness, inputs), 0.0, 1.0);
+            fit = clamp_rule(evaluate(data[at], inputs), 0.0, 1.0);
         }
         let share = fit * remaining;
         remaining *= 1.0 - fit;
-        if share > 0.0 {
-            if share > biome_share {
-                biome = current;
-                biome_share = share;
+        if current < wet_biomes {
+            let held = fit * soaking;
+            soaking *= 1.0 - fit;
+            let rule = data[at + 2u];
+            if held > 0.0 && rule != NONE {
+                wet += held * clamp_rule(evaluate(rule, inputs), 0.0, 1.0);
             }
+        }
+        if share > 0.0 {
             var left = share;
-            let list = data[program + 2u * current + 1u];
+            let list = data[at + 1u];
             let layers = data[list];
             for (var layer = layers; layer > 0u; layer--) {
                 let l = layer - 1u;
@@ -570,7 +610,7 @@ fn tile_control(@builtin(global_invocation_id) id: vec3<u32>) {
                 }
             }
         }
-        if remaining <= 0.0 {
+        if remaining <= 0.0 && soaking <= 0.0 {
             break;
         }
     }
@@ -596,7 +636,9 @@ fn tile_control(@builtin(global_invocation_id) id: vec3<u32>) {
         second_weight = 0.0;
     }
     let blend = second_weight / pmax(first_weight + second_weight, 1.0e-12);
+    let soaked = clamp_rule(wet, 0.0, 1.0);
     let packed = (first & 0xffu) | ((second & 0xffu) << 8u)
-        | (min(u32(blend * 255.0 + 0.5), 255u) << 16u) | ((biome & 0xffu) << 24u);
+        | (min(u32(blend * 255.0 + 0.5), 255u) << 16u)
+        | (min(u32(soaked * 255.0 + 0.5), 255u) << 24u);
     textureStore(control, id.xy, vec4<u32>(packed, 0u, 0u, 0u));
 }

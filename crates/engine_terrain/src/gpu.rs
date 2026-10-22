@@ -1,16 +1,17 @@
 //! What a GPU pass reads to give a terrain's tiles their control values:
 //! the surface's rules as one program for an interpreter
 //! shader, and what their masks read of the bakes and roads, flattened into
-//! words; the meters to rivers' edges it reads are each tile's own
-//! ([`Tile::river_edges`]). The pass evaluates what [`BiomeRules::control`]
-//! evaluates at each sample, in the same order, so its control values are
-//! the CPU's but where GPU arithmetic rounds a value across a rule's
-//! threshold. [`sample_control`] gives the CPU's at one sample, for
-//! gameplay.
+//! words; the meters to rivers' edges and the rivers' beds it reads are each
+//! tile's own ([`Tile::river_texels`]). The pass evaluates what
+//! [`BiomeRules::control`] evaluates at each sample, in the same order, so
+//! its control values are the CPU's but where GPU arithmetic rounds a value
+//! across a rule's threshold. [`sample_control`] gives the CPU's at one
+//! sample, for gameplay.
 
-use crate::hydrology::{FLOW_RANGE, Hydrology, LAKE_RANGE, RIVER_FAR, WETNESS_RANGE};
+use crate::hydrology::{FLOW_RANGE, Hydrology, LAKE_RANGE, WETNESS_RANGE};
 use crate::path::PathProfile;
 use crate::surface::{BiomeRules, Control, SampleInputs, SampleShape};
+use crate::tile::RiverInputs;
 use crate::{HydrologySample, Layers, PathSample, TILE_STRIDE, Tile};
 
 /// Opcodes of a surface program's masks, in postfix order: each leaf pushes
@@ -38,16 +39,27 @@ pub mod op {
     pub const INVERT: u32 = 14;
     /// Followed by the ramp's two ends.
     pub const REMAP: u32 = 15;
-    pub const END: u32 = 16;
+    /// Each followed by the ramp's two ends.
+    pub const GRAIN: u32 = 16;
+    pub const POWER: u32 = 17;
+    pub const FLOOD: u32 = 18;
+    pub const END: u32 = 19;
 }
+
+/// Words of each biome's entry in a program's table
+/// ([`header::PROGRAM`]): its fitness mask, its layer list and its wetness
+/// rule.
+pub const BIOME_WORDS: u32 = 3;
 
 /// The words of [`SurfaceData`]'s header: where each section starts
 /// (`u32::MAX` where it has none) and what the program needs.
 pub mod header {
     /// The program: a table of each biome's fitness mask (`u32::MAX` for
-    /// the first, which takes none) and layer list; each list its count,
-    /// then each layer's material, opacity and mask (`u32::MAX` for the
-    /// first); then the masks' code, each ending in [`super::op::END`].
+    /// the first, which takes none), layer list and wetness rule
+    /// (`u32::MAX` for none), [`super::BIOME_WORDS`] words a biome; each
+    /// list its count, then each layer's material, opacity and mask
+    /// (`u32::MAX` for the first); then the masks' code, each ending in
+    /// [`super::op::END`].
     pub const PROGRAM: usize = 0;
     /// The most values the program's stack holds at once.
     pub const STACK: usize = 1;
@@ -69,6 +81,10 @@ pub mod header {
     /// Surroundings' fade: its low and high corners and
     /// blend.
     pub const FADE: usize = 7;
+    /// The biomes whose wetness rules give the ground's wetness: those
+    /// authored, before the steep layer the program paints over them, where
+    /// any has a rule; none where none has.
+    pub const WET_BIOMES: usize = 8;
     pub const LEN: usize = 16;
 }
 
@@ -101,6 +117,7 @@ impl SurfaceData {
         words[header::STACK] = stack;
         words[header::BIOMES] = biomes;
         words[header::MATERIALS] = materials;
+        words[header::WET_BIOMES] = rules.wet_biomes() as u32;
         let reads = rules.reads();
         words[header::READS] = u32::from(reads.water) | (u32::from(reads.path) << 1);
         if let Some(hydrology) = layers.hydrology() {
@@ -158,7 +175,8 @@ fn first_sample(offset: [f32; 2], key: crate::TileKey, spacing: f32) -> [i64; 2]
 /// samples -1 to 257) as generating it over `layers` with `rules` gives it:
 /// what gameplay reads where tiles hold none, the GPU
 /// giving them to rendering. The same inputs and evaluation as a tile's
-/// rows, the meters to rivers' edges the tile's own, so the same bits.
+/// rows, the meters to rivers' edges and the rivers' beds the tile's own,
+/// so the same bits.
 pub fn sample_control(
     tile: &Tile,
     (layers, rules): (&Layers, &BiomeRules),
@@ -177,12 +195,12 @@ pub fn sample_control(
     );
     let x = (first[0] + column as i64 - 1) as f32 * spacing;
     let z = (first[1] + row as i64 - 1) as f32 * spacing;
-    let river = tile.river_edge(column as i32 - 1, row as i32 - 1);
+    let rivers = tile.river_inputs(column as i32 - 1, row as i32 - 1);
     control_with(
         (layers, rules),
         [x, z],
         (at(row, column), shape),
-        (spacing, river),
+        (spacing, rivers),
         &mut Vec::new(),
     )
 }
@@ -190,9 +208,9 @@ pub fn sample_control(
 /// The control value `rules` give ground over `layers` at `(x, z)` in the
 /// layers' frame, whose height there is `height` and whose smooth surface
 /// there, through heights `spacing` meters apart, has `shape`: the inputs a
-/// tile's sample takes, the meters to rivers' edges read from the rivers
-/// there, evaluated as [`sample_control`] evaluates them. `weights` is
-/// scratch space, reused across samples.
+/// tile's sample takes, the meters to rivers' edges and the bed read from
+/// the rivers there, evaluated as [`sample_control`] evaluates them.
+/// `weights` is scratch space, reused across samples.
 pub(crate) fn control_at(
     (layers, rules): (&Layers, &BiomeRules),
     [x, z]: [f32; 2],
@@ -200,26 +218,28 @@ pub(crate) fn control_at(
     spacing: f32,
     weights: &mut Vec<(u8, f32)>,
 ) -> Control {
-    let river = match layers.hydrology() {
-        Some(water) if rules.reads().water => water.rivers.edge(x, z, spacing),
-        _ => RIVER_FAR,
+    let rivers = match layers.hydrology() {
+        Some(water) if rules.reads().water => {
+            RiverInputs::at(&water.rivers, [x, z], (height, spacing))
+        }
+        _ => RiverInputs::FAR,
     };
-    control_with((layers, rules), [x, z], (height, shape), (spacing, river), weights)
+    control_with((layers, rules), [x, z], (height, shape), (spacing, rivers), weights)
 }
 
-/// [`control_at`] at samples `spacing` meters apart, with the meters to the
-/// nearest river's edge there, `river`, already read.
+/// [`control_at`] at samples `spacing` meters apart, with what masks read of
+/// the rivers there, `rivers`, already read.
 fn control_with(
     (layers, rules): (&Layers, &BiomeRules),
     [x, z]: [f32; 2],
     (height, shape): (f32, SampleShape),
-    (spacing, river): (f32, f32),
+    (spacing, rivers): (f32, RiverInputs),
     weights: &mut Vec<(u8, f32)>,
 ) -> Control {
     let reads = rules.reads();
     let shown = layers.shown(x, z);
     let water = match layers.hydrology() {
-        Some(water) if shown > 0.0 && reads.water => water.masks_at(x, z, spacing, river),
+        Some(water) if shown > 0.0 && reads.water => rivers.with_maps(water, [x, z], spacing),
         _ => HydrologySample::default(),
     };
     let inputs = SampleInputs {
@@ -233,7 +253,7 @@ fn control_with(
             flow: water.flow * shown,
             wetness: water.wetness * shown,
             lake: water.lake * shown,
-            river: water.river,
+            ..water
         },
         path: if shown > 0.0 && reads.path {
             layers.path_at(x, z)

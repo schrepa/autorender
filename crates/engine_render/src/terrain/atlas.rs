@@ -1,8 +1,9 @@
 //! The tile atlas: every resident tile's heights, normals (the smooth
-//! surface's gradient at each sample), control values and meters to rivers'
-//! edges in four texture arrays, a layer each; which tile each layer holds,
-//! when it arrived, and the layers free; the GPU's normal maps and control
-//! values of tiles uploaded each frame; and each layer's fades.
+//! surface's gradient at each sample), control values and rivers (meters to
+//! their edges and their beds) in four texture arrays, a layer each; which
+//! tile each layer holds, when it arrived, and the layers free; the GPU's
+//! normal maps and control values of tiles uploaded each frame; and each
+//! layer's fades.
 //!
 //! A sync reads what each terrain's list gained, lost or replaced since the
 //! list it last synced (both in key order), beside the listed tiles still
@@ -22,8 +23,8 @@ use engine_core::collections::HashSet;
 use engine_core::terrain_data::Pyramid;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The arrays: heights, control values, normals and meters to rivers'
-/// edges, a layer per tile.
+/// The arrays: heights, control values, normals and rivers' edges and
+/// beds, a layer per tile.
 struct Arrays {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -232,10 +233,11 @@ impl TileAtlas {
             .map(|arrays| (&arrays.view, &arrays.normals_view, &arrays.control_view))
     }
 
-    /// Bytes of the height, normal, control and river arrays.
+    /// Bytes of the height, normal, control and river arrays: four, four,
+    /// four and eight a texel.
     pub(super) fn capacity_bytes(&self) -> u64 {
         self.arrays.as_ref().map_or(0, |arrays| {
-            u64::from(arrays.layers) * u64::from(LAYER_SIZE * LAYER_SIZE) * 14
+            u64::from(arrays.layers) * u64::from(LAYER_SIZE * LAYER_SIZE) * 20
         })
     }
 
@@ -441,6 +443,7 @@ impl TileAtlas {
                     && held.hole_bits() == tile.hole_bits()
                     && held.control() == tile.control()
                     && held.river_edges() == tile.river_edges()
+                    && held.river_beds() == tile.river_beds()
             });
             if same_ground {
                 self.held.insert(key, Arc::clone(tile));
@@ -508,15 +511,17 @@ impl TileAtlas {
             self.normal_jobs.push((layer, tile.spacing()));
         }
         // Without control values on a terrain whose surface the GPU
-        // reads, the GPU gives them as its heights or meters to
-        // rivers' edges change, from those meters it uploads, its
-        // materials then taking over from the coarser level's.
+        // reads, the GPU gives them as its heights or rivers change,
+        // from the rivers' edges and beds it uploads, its materials
+        // then taking over from the coarser level's.
         let gpu = tile.control().is_none() && surfaces.contains_key(&key.0);
-        let rivers = (before.as_ref()).is_none_or(|held| held.river_edges() != tile.river_edges());
+        let rivers = (before.as_ref()).is_none_or(|held| {
+            held.river_edges() != tile.river_edges() || held.river_beds() != tile.river_beds()
+        });
         if gpu && (heights || rivers) {
-            let edges = tile.river_edges();
-            if let Some(edges) = edges {
-                write_layer(queue, &arrays.rivers, layer, (bytemuck::cast_slice(edges), 2));
+            let texels = tile.river_texels();
+            if let Some(texels) = &texels {
+                write_layer(queue, &arrays.rivers, layer, (bytemuck::cast_slice(&texels[..]), 8));
             }
             let surface = surfaces[&key.0];
             let spacing = tile.spacing();
@@ -527,7 +532,7 @@ impl TileAtlas {
                 first: [first[0] as i32, first[1] as i32],
                 spacing,
                 level: surface.level(spacing),
-                rivers: edges.is_some(),
+                rivers: texels.is_some(),
             });
             self.surfaced.insert(key, self.now);
         }
@@ -1131,8 +1136,8 @@ fn ancestor_control(
 
 /// A tile the GPU gives control values: its layer, its
 /// terrain, its first sample, spacing, the hydrology images' level its
-/// masks read, and whether its layer of the river array holds its meters
-/// to rivers' edges.
+/// masks read, and whether its layer of the river array holds its rivers'
+/// edges and beds.
 struct ControlJob {
     layer: u32,
     terrain: u64,

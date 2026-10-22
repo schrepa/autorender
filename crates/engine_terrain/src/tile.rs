@@ -18,27 +18,33 @@ use crate::{
     TILE_SAMPLES, TILE_STRIDE, TileKey,
 };
 
+mod beds;
+
+pub(crate) use beds::RiverInputs;
+
 /// Cells with a hole bit: those starting at samples 0..=256, so tiles agree
 /// on the cells along their shared edges.
 const HOLE_CELLS: usize = TILE_SAMPLES as usize;
 const HOLE_WORDS: usize = (HOLE_CELLS * HOLE_CELLS).div_ceil(64);
 
-/// A tile holds each sample's meters to the nearest river's edge as steps
-/// of `RIVER_EDGE_STEP` meters counted from `RIVER_EDGE_ZERO`, the edge;
-/// `RIVER_EDGE_FAR` stands for no river within reach. Its surface masks,
-/// placement and the GPU's control values all read these steps.
+/// A tile holds each sample's meters to the nearest river's edge, and the
+/// height of the bankfull flood of the river holding it above its ground,
+/// as steps of `RIVER_EDGE_STEP` meters counted from `RIVER_EDGE_ZERO`, the
+/// edge and the ground; `RIVER_EDGE_FAR` stands for no river within reach,
+/// and for no river's bed. Its surface masks, placement and the GPU's
+/// control values all read these steps.
 pub const RIVER_EDGE_STEP: f32 = 0.0625;
 pub const RIVER_EDGE_ZERO: u16 = 32_768;
 pub const RIVER_EDGE_FAR: u16 = u16::MAX;
 
-/// The step of a tile's river edges ([`RIVER_EDGE_STEP`]) nearest `edge`
-/// meters from the nearest river's edge, within those short of
-/// [`RIVER_EDGE_FAR`]; that one where no river reaches.
-pub(crate) fn river_step(edge: f32) -> u16 {
-    if edge >= RIVER_FAR {
+/// The step of a tile's river values ([`RIVER_EDGE_STEP`]) nearest
+/// `meters`, within those short of [`RIVER_EDGE_FAR`]; that one at
+/// [`RIVER_FAR`] and beyond, where no river reaches.
+pub(crate) fn river_step(meters: f32) -> u16 {
+    if meters >= RIVER_FAR {
         return RIVER_EDGE_FAR;
     }
-    let step = (edge / RIVER_EDGE_STEP).round() + f32::from(RIVER_EDGE_ZERO);
+    let step = (meters / RIVER_EDGE_STEP).round() + f32::from(RIVER_EDGE_ZERO);
     clamp(step, 0.0, f32::from(RIVER_EDGE_FAR - 1)) as u16
 }
 
@@ -56,8 +62,9 @@ pub(crate) fn river_meters(step: u16) -> f32 {
 /// samples -1 to 257 along x and z (its samples and a border of one), row
 /// by row along z, with their bounds, where a stamp cut them holes, and
 /// with a surface each sample's control value; each sample's meters to the
-/// nearest river's edge where rivers reach it; and what culling knows of
-/// each of its patches, made with it.
+/// nearest river's edge where rivers reach it, and the bed of the river
+/// holding it where it lies in one; and what culling knows of each of its
+/// patches, made with it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tile {
     key: TileKey,
@@ -66,6 +73,7 @@ pub struct Tile {
     holes: Option<Box<[u64]>>,
     control: Option<Box<[u32]>>,
     river_edges: Option<Box<[u16]>>,
+    river_beds: Option<Box<[u16]>>,
     placed: Option<Arc<[crate::Placed]>>,
     placing: Option<Placing>,
     // The water standing on it, the world's one water there.
@@ -150,6 +158,7 @@ impl Tile {
             holes,
             control: None,
             river_edges: None,
+            river_beds: None,
             placed: None,
             placing: None,
             water: None,
@@ -272,52 +281,12 @@ impl Tile {
         })
     }
 
-    /// The tile with `edges`: each sample's meters to the nearest river's
-    /// edge in steps ([`river_step`]), the layout of its heights. `None`
-    /// when the size does not match.
-    pub(crate) fn with_river_edges(mut self, edges: Box<[u16]>) -> Option<Self> {
-        let stride = TILE_STRIDE as usize;
-        (edges.len() == stride * stride).then(|| {
-            self.river_edges = Some(edges);
-            self
-        })
-    }
-
     /// Every sample's meters to the nearest river's edge as steps of
     /// [`RIVER_EDGE_STEP`] from [`RIVER_EDGE_ZERO`] ([`RIVER_EDGE_FAR`]
     /// beyond every river's reach), the border included, row by row: the
-    /// layout GPU tiles upload. `None` where no river reaches the tile.
+    /// layout of its heights. `None` where no river reaches the tile.
     pub fn river_edges(&self) -> Option<&[u16]> {
         self.river_edges.as_deref()
-    }
-
-    /// Meters from the nearest river's edge at sample `(x, z)`, -1 to 257
-    /// along each axis: negative in a river's channel, [`RIVER_FAR`] beyond
-    /// every river's reach.
-    pub(crate) fn river_edge(&self, x: i32, z: i32) -> f32 {
-        let stride = TILE_STRIDE as i32;
-        let x = x.clamp(-1, stride - 2);
-        let z = z.clamp(-1, stride - 2);
-        self.river_edges.as_ref().map_or(RIVER_FAR, |edges| {
-            river_meters(edges[((z + 1) * stride + x + 1) as usize])
-        })
-    }
-
-    /// Meters from the nearest river's edge at `local`, meters from the
-    /// tile's first corner, on the triangles [`Self::sample`] reads the
-    /// ground on; [`RIVER_FAR`] where a corner of the triangle holding it
-    /// lies beyond every river's reach, or outside the tile.
-    pub(crate) fn river_edge_at(&self, local: Vec2) -> f32 {
-        let Some((i, j, fu, fv)) = self.cell(local) else {
-            return RIVER_FAR;
-        };
-        let edges = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)]
-            .map(|(x, z)| self.river_edge(x, z));
-        let corners = if fu + fv <= 1.0 { [0, 1, 2] } else { [3, 2, 1] };
-        if corners.iter().any(|&corner| edges[corner] >= RIVER_FAR) {
-            return RIVER_FAR;
-        }
-        on_triangle(edges, fu, fv)
     }
 
     /// The tile with the water its samples' `surface` and packed `info`
@@ -347,6 +316,7 @@ impl Tile {
             holes: self.holes.clone(),
             control: self.control.clone(),
             river_edges: self.river_edges.clone(),
+            river_beds: self.river_beds.clone(),
             placed: self.placed.clone(),
             placing: self.placing,
             water,
@@ -661,6 +631,7 @@ enum Stage {
     Coarse { layer: usize, row: usize },
     Rivers { layer: usize },
     Samples { row: i32 },
+    Beds,
     Holes { row: u32 },
     Biomes { row: usize },
     Done,
@@ -706,10 +677,12 @@ pub struct Generator {
     placed: Vec<crate::Placed>,
     // Each hydrology layer's rivers rasterized over the tile's samples
     // once, by layer, until its water is made; the first baked one's meters
-    // to rivers' edges, which the tile keeps; its stored rows' z; a row's
-    // inputs to the surface's masks.
+    // to rivers' edges and, over the tile's heights, its rivers' beds, which
+    // the tile keeps; its stored rows' z; a row's inputs to the surface's
+    // masks.
     rasters: Vec<Option<RiverRaster>>,
     river_edges: Option<Box<[u16]>>,
+    river_beds: Option<Box<[u16]>>,
     zs: Box<[f32]>,
     inputs: SurfaceInputs,
     places: crate::placement::PlaceScratch,
@@ -802,6 +775,7 @@ impl Generator {
             placed: Vec::new(),
             rasters: Vec::new(),
             river_edges: None,
+            river_beds: None,
             zs: (-1..=TILE_SAMPLES as i64)
                 .map(|i| (first[1] + i) as f32 * spacing)
                 .collect(),
@@ -868,9 +842,9 @@ impl Generator {
             return;
         };
         // Inputs the masks never read are left unread; each sample's meters
-        // to the nearest river's edge are the steps the tile keeps.
+        // to the nearest river's edge and its bed are those the tile keeps.
         let reads = surface.reads();
-        let edges = self.river_edges.as_deref();
+        let rivers = (self.river_edges.as_deref(), self.river_beds.as_deref());
         let control = self
             .control
             .get_or_insert_with(|| vec![0; stride * stride].into_boxed_slice());
@@ -882,8 +856,7 @@ impl Generator {
         let inputs = &mut self.inputs;
         inputs.clear(stride);
         for column in 0..stride {
-            let river =
-                edges.map_or(RIVER_FAR, |edges| river_meters(edges[row * stride + column]));
+            let held = RiverInputs::held(rivers, row * stride + column);
             let (left, right) = (column.saturating_sub(1), (column + 1).min(stride - 1));
             let at = |r: usize, c: usize| heights[r * stride + c];
             let height = at(row, column);
@@ -896,7 +869,7 @@ impl Generator {
             // roads they fade out.
             let shown = self.layers.shown(x, z);
             let water = match self.layers.hydrology() {
-                Some(water) if shown > 0.0 && reads.water => water.masks_at(x, z, spacing, river),
+                Some(water) if shown > 0.0 && reads.water => held.with_maps(water, [x, z], spacing),
                 _ => HydrologySample::default(),
             };
             inputs.height.push(height);
@@ -906,7 +879,7 @@ impl Generator {
                 flow: water.flow * shown,
                 wetness: water.wetness * shown,
                 lake: water.lake * shown,
-                river: water.river,
+                ..water
             });
             inputs.path.push(if shown > 0.0 && reads.path {
                 self.layers.path_at(x, z)
@@ -1007,12 +980,11 @@ impl Generator {
                     *budget = budget.saturating_sub(u64::from(TILE_STRIDE) * layers.max(1));
                     self.stage = if row + 1 < Self::HEIGHT_ROWS.1 {
                         Stage::Samples { row: row + 1 }
-                    } else if self.holes.is_some() {
-                        Stage::Holes { row: 0 }
                     } else {
-                        self.after_holes()
+                        Stage::Beds
                     };
                 }
+                Stage::Beds => self.stage = self.beds(budget),
                 Stage::Holes { row } => {
                     let z = ((self.first[1] + i64::from(row)) as f32 + 0.5) * self.spacing;
                     let bits = self.holes.as_mut().expect("holes stage has bits");
@@ -1049,10 +1021,7 @@ impl Generator {
                         Some(control) => tile.with_control(control)?,
                         None => tile,
                     };
-                    let tile = match self.river_edges.take() {
-                        Some(edges) => tile.with_river_edges(edges)?,
-                        None => tile,
-                    };
+                    let tile = tile.with_rivers(self.river_edges.take(), self.river_beds.take())?;
                     let tile = match water {
                         Some((surface, info)) => tile.with_water(surface.into(), info.into()),
                         None => tile,
@@ -1331,9 +1300,9 @@ impl Layers {
 }
 
 /// A tile's key, spacing, samples, holes, control values, meters to
-/// rivers' edges, placed objects and which of them, and its water's
-/// surfaces and packed info; reading rebuilds its bounds and wet patches
-/// as [`Tile::new`] and `Tile::with_water` do.
+/// rivers' edges and their beds, placed objects and which of them, and its
+/// water's surfaces and packed info; reading rebuilds its bounds and wet
+/// patches as [`Tile::new`] and `Tile::with_water` do.
 /// Tiles travel with their heights and water surfaces at their nearest
 /// steps of the height grid ([`crate::codec::HEIGHT_STEP`]): a tile read
 /// back is the record every host shows.
@@ -1345,15 +1314,17 @@ impl crate::codec::Codec for Tile {
         out.put(&self.holes)
             .put(&self.patch_culling)
             .put(&self.control);
-        match &self.river_edges {
-            Some(edges) => {
-                out.put(&true);
-                crate::codec::put_wide_planes(out, edges, stride);
-            }
-            None => {
-                out.put(&false);
-            }
-        };
+        for planes in [&self.river_edges, &self.river_beds] {
+            match planes {
+                Some(planes) => {
+                    out.put(&true);
+                    crate::codec::put_wide_planes(out, planes, stride);
+                }
+                None => {
+                    out.put(&false);
+                }
+            };
+        }
         out.put(&self.placed).put(&self.placing);
         match &self.water {
             Some(water) => {
@@ -1376,12 +1347,15 @@ impl crate::codec::Codec for Tile {
         let holes = input.get()?;
         let culling: Box<[PatchCulling]> = input.get()?;
         let control: Option<Box<[u32]>> = input.get()?;
-        let edged: bool = input.get()?;
-        let river_edges = if edged {
-            Some(crate::codec::get_wide_planes(input, stride)?)
-        } else {
-            None
-        };
+        // Meters to rivers' edges, then their beds.
+        let mut rivers = [None, None];
+        for planes in &mut rivers {
+            let held: bool = input.get()?;
+            if held {
+                *planes = Some(crate::codec::get_wide_planes(input, stride)?);
+            }
+        }
+        let [river_edges, river_beds] = rivers;
         let placed: Option<Arc<[crate::Placed]>> = input.get()?;
         let placing = input.get()?;
         let watered: bool = input.get()?;
@@ -1393,9 +1367,7 @@ impl crate::codec::Codec for Tile {
         if let Some(control) = control {
             tile = tile.with_control(control).ok_or(invalid)?;
         }
-        if let Some(edges) = river_edges {
-            tile = tile.with_river_edges(edges).ok_or(invalid)?;
-        }
+        tile = tile.with_rivers(river_edges, river_beds).ok_or(invalid)?;
         if watered {
             let surface = crate::codec::get_grid(input, stride)?;
             let info: Box<[u32]> = input.get()?;

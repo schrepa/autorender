@@ -384,6 +384,7 @@ impl TerrainSurface {
                         ),
                     ),
                 ],
+                wetness: None,
             }],
             steep: Some(engine_terrain::SteepLayer {
                 material: "rock".into(),

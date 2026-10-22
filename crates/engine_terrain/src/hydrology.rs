@@ -643,8 +643,12 @@ pub(crate) fn bake(
 /// What a bake found about one place: the base-10 logarithm of its
 /// upstream area (square meters), its wetness index, how deep water would
 /// stand there in a filled pit (meters), and meters from the nearest
-/// river's edge, negative in its water; [`RIVER_FAR`] beyond every river's
-/// reach.
+/// river's edge, negative in its water, [`RIVER_FAR`] beyond every river's
+/// reach; and of the bed of the river holding it, the median size of its
+/// grains (d50, meters) and the river's stream power at its bankfull flood
+/// (watts per square meter of bed), 0 outside every river's bed, and meters
+/// the ground stands above that flood's level, negative below it,
+/// [`RIVER_FAR`] outside every river's bed.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HydrologySample {
@@ -652,6 +656,9 @@ pub struct HydrologySample {
     pub wetness: f32,
     pub lake: f32,
     pub river: f32,
+    pub grain: f32,
+    pub power: f32,
+    pub flood: f32,
 }
 
 /// What [`HydrologySample::river`] reads beyond every river's reach.
@@ -664,6 +671,9 @@ impl Default for HydrologySample {
             wetness: 0.0,
             lake: 0.0,
             river: RIVER_FAR,
+            grain: 0.0,
+            power: 0.0,
+            flood: RIVER_FAR,
         }
     }
 }
@@ -693,6 +703,7 @@ impl Hydrology {
             wetness: decode(self.wetness.sample_smooth(u, v, level), WETNESS_RANGE),
             lake: decode(self.lakes.sample_smooth(u, v, level), LAKE_RANGE),
             river,
+            ..HydrologySample::default()
         }
     }
 

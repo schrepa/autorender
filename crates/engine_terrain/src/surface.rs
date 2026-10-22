@@ -1,14 +1,15 @@
 //! Terrain surfaces: which materials the ground is made of,
-//! where. A surface names its materials and lists biomes; each biome has a
-//! fitness mask saying where it applies and layers of materials, each
-//! painted over the layers before it by its own mask; and one material may
-//! cover its steep ground over every biome. Every tile sample
-//! gets its control value: the two materials weighing most there, their
-//! blend and the biome weighing most, a pure function of the sample's
-//! position, height and the shape of the smooth surface through the samples
-//! around it at its level ([`SampleShape`]), so neighboring tiles agree on
-//! the samples they share. Renderers decide the steep material again at
-//! every point of the ground, from the smooth surface's slope there.
+//! where, and how wet it is. A surface names its materials and lists
+//! biomes; each biome has a fitness mask saying where it applies, layers of
+//! materials, each painted over the layers before it by its own mask, and
+//! may have a wetness rule; and one material may cover its steep ground
+//! over every biome. Every tile sample gets its control value: the two
+//! materials weighing most there, their blend and how wet the ground is, a
+//! pure function of the sample's position, height and the shape of the
+//! smooth surface through the samples around it at its level
+//! ([`SampleShape`]), so neighboring tiles agree on the samples they share.
+//! Renderers decide the steep material again at every point of the ground,
+//! from the smooth surface's slope there.
 
 use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
@@ -29,9 +30,10 @@ const MAX_NOISE_OCTAVES: u32 = 8;
 const MAX_BIOME_LAYERS: usize = 64;
 
 /// A value from 0 to 1 at every sample, from the sample's height, slope,
-/// curvature and position: where a biome applies, or where a material
-/// covers its biome's ground. Ramps run from 0 at their first value to 1 at
-/// their second, smoothly, falling when the first is the larger.
+/// curvature and position: where a biome applies, where a material covers
+/// its biome's ground, or how wet a biome's ground is. Ramps run from 0 at
+/// their first value to 1 at their second, smoothly, falling when the first
+/// is the larger.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -64,6 +66,25 @@ pub enum Mask {
     /// banks. Beyond every river's reach (sixteen meters past its edge),
     /// and without rivers, it reads 1e9.
     River([f32; 2]),
+    /// A ramp over the median size of the grains (the d50) of the bed of
+    /// the river holding the ground, in meters: `[0.002, 0.064]` rises from
+    /// sand through gravel to cobbles. Outside every river's bed (which
+    /// reaches a meter past its banks), and without rivers, it reads 0, as
+    /// fine as any grain: a ramp falling toward fine grains covers that
+    /// ground too unless a `river` or `flood` mask keeps it to the beds.
+    Grain([f32; 2]),
+    /// A ramp over the stream power of the river holding the ground at its
+    /// bankfull flood, in watts per square meter of its bed: `[150, 400]`
+    /// covers the beds of torrents strong enough to roll boulders. Outside
+    /// every river's bed (which reaches a meter past its banks), and without
+    /// rivers, it reads 0.
+    Power([f32; 2]),
+    /// A ramp over meters the ground stands above the bankfull flood level
+    /// of the river holding it, negative below it: `[0.5, 0]` covers the
+    /// ground that river's floods reach, fading out over half a meter above
+    /// them. Outside every river's bed (which reaches a meter past its
+    /// banks), and without rivers, it reads 1e9.
+    Flood([f32; 2]),
     /// A ramp over meters from the nearest road's edge,
     /// negative on roads: `[1, 0]` covers roads with a meter of soft edge.
     /// It averages the ramp across each sample's footprint, so roads
@@ -166,9 +187,10 @@ settings! {
     }
 }
 
-/// A biome: where it applies (`fitness`, everywhere when omitted) and the
-/// layers of its ground. Later biomes paint over earlier ones where they
-/// fit; the first covers wherever none of the others do.
+/// A biome: where it applies (`fitness`, everywhere when omitted), the
+/// layers of its ground and how wet its ground is (`wetness`, dry when
+/// omitted). Later biomes paint over earlier ones where they fit; the first
+/// covers wherever none of the others do.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -177,6 +199,12 @@ pub struct Biome {
     #[serde(default = "Mask::one", skip_serializing_if = "is_one")]
     pub fitness: Mask,
     pub layers: Vec<BiomeLayer>,
+    /// How wet its ground is, from 0, dry, to 1, soaked: darker and glossier
+    /// as water fills its pores and films it, the more so the rougher it
+    /// is. The ground takes the wetness of each biome as far as that biome
+    /// applies; the steep layer painted over them leaves it as they make it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wetness: Option<Mask>,
 }
 
 settings! {
@@ -250,8 +278,8 @@ impl std::fmt::Display for BiomeError {
 impl std::error::Error for BiomeError {}
 
 /// Which of a sample's inputs masks read: its water (flow,
-/// wetness, lakes and rivers) and its roads. Inputs no mask reads are not
-/// sampled, which leaves every mask's value as it was.
+/// wetness, lakes, rivers and their beds) and its roads. Inputs no mask
+/// reads are not sampled, which leaves every mask's value as it was.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Reads {
     pub(crate) water: bool,
@@ -310,6 +338,9 @@ pub(crate) enum Compiled {
     Wetness([f32; 2]),
     Lake([f32; 2]),
     River([f32; 2]),
+    Grain([f32; 2]),
+    Power([f32; 2]),
+    Flood([f32; 2]),
     Path([f32; 2]),
     Noise {
         frequency: f32,
@@ -505,6 +536,24 @@ impl Compiled {
                 }
                 Self::River(*ends)
             }
+            Mask::Grain(ends) => {
+                if !finite(ends) {
+                    return Err(fail("grain sizes must be finite"));
+                }
+                Self::Grain(*ends)
+            }
+            Mask::Power(ends) => {
+                if !finite(ends) {
+                    return Err(fail("stream powers must be finite"));
+                }
+                Self::Power(*ends)
+            }
+            Mask::Flood(ends) => {
+                if !finite(ends) {
+                    return Err(fail("heights above floods must be finite"));
+                }
+                Self::Flood(*ends)
+            }
             Mask::Path(ends) => {
                 if !finite(ends) {
                     return Err(fail("path distances must be finite"));
@@ -552,7 +601,13 @@ impl Compiled {
     /// Which of a sample's inputs the mask reads.
     pub(crate) fn reads(&self) -> Reads {
         match self {
-            Self::Flow(_) | Self::Wetness(_) | Self::Lake(_) | Self::River(_) => Reads {
+            Self::Flow(_)
+            | Self::Wetness(_)
+            | Self::Lake(_)
+            | Self::River(_)
+            | Self::Grain(_)
+            | Self::Power(_)
+            | Self::Flood(_) => Reads {
                 water: true,
                 path: false,
             },
@@ -583,6 +638,9 @@ impl Compiled {
             | Self::Wetness(_)
             | Self::Lake(_)
             | Self::River(_)
+            | Self::Grain(_)
+            | Self::Power(_)
+            | Self::Flood(_)
             | Self::Path(_) => 1,
             Self::Noise { octaves, .. } => 2 * u64::from(*octaves),
             Self::Multiply(masks) | Self::Add(masks) | Self::Min(masks) | Self::Max(masks) => {
@@ -615,6 +673,9 @@ impl Compiled {
             Self::Wetness(ends) => water(out, row.water, *ends, |water| water.wetness),
             Self::Lake(ends) => water(out, row.water, *ends, |water| water.lake),
             Self::River(ends) => water(out, row.water, *ends, |water| water.river),
+            Self::Grain(ends) => water(out, row.water, *ends, |water| water.grain),
+            Self::Power(ends) => water(out, row.water, *ends, |water| water.power),
+            Self::Flood(ends) => water(out, row.water, *ends, |water| water.flood),
             Self::Path(ends) => {
                 for (value, &PathSample { distance, half }) in out.iter_mut().zip(row.path) {
                     *value = [-0.375, -0.125, 0.125, 0.375]
@@ -720,6 +781,9 @@ impl Compiled {
             Self::Wetness(ends) => ramp(out, op::WETNESS, ends),
             Self::Lake(ends) => ramp(out, op::LAKE, ends),
             Self::River(ends) => ramp(out, op::RIVER, ends),
+            Self::Grain(ends) => ramp(out, op::GRAIN, ends),
+            Self::Power(ends) => ramp(out, op::POWER, ends),
+            Self::Flood(ends) => ramp(out, op::FLOOD, ends),
             Self::Path(ends) => ramp(out, op::PATH, ends),
             Self::Noise {
                 frequency,
@@ -756,6 +820,9 @@ impl Compiled {
             Self::Wetness(ends) => ramp(inputs.water.wetness, *ends),
             Self::Lake(ends) => ramp(inputs.water.lake, *ends),
             Self::River(ends) => ramp(inputs.water.river, *ends),
+            Self::Grain(ends) => ramp(inputs.water.grain, *ends),
+            Self::Power(ends) => ramp(inputs.water.power, *ends),
+            Self::Flood(ends) => ramp(inputs.water.flood, *ends),
             Self::Path(ends) => {
                 // The ramp at four points across the sample's footprint,
                 // across the road.
@@ -822,16 +889,19 @@ struct CompiledLayer {
 struct CompiledBiome {
     fitness: Compiled,
     layers: Vec<CompiledLayer>,
+    wetness: Option<Compiled>,
 }
 
 /// A validated surface, ready to evaluate per sample: its biomes, then its
 /// steep layer as one more painted over them, fit as steep as the ground
-/// is, of its one material.
+/// is, of its one material; and the biomes the ground's wetness walks, the
+/// authored ones where any has a wetness rule, none where none has.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BiomeRules {
     authored: Biomes,
     biomes: Vec<CompiledBiome>,
     steep: Option<Steep>,
+    wet_biomes: usize,
     cost: u64,
     reads: Reads,
     placements: Vec<crate::placement::CompiledPlacement>,
@@ -840,24 +910,25 @@ pub struct BiomeRules {
 
 /// A sample's control value: the material weighing most (`a`), the one
 /// weighing second (`b`, `a` again when none), `b`'s share of the two from
-/// 0 to 255, and the biome weighing most (the steep layer counting as one
-/// after the last).
+/// 0 to 255, and how wet the ground is from 0, dry, to 255, soaked: each
+/// biome's wetness rule as far as that biome applies, as if no steep layer
+/// were painted over them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Control {
     pub a: u8,
     pub b: u8,
     pub blend: u8,
-    pub biome: u8,
+    pub wet: u8,
 }
 
 impl Control {
-    /// Packed as `a | b << 8 | blend << 16 | biome << 24`, the layout
+    /// Packed as `a | b << 8 | blend << 16 | wet << 24`, the layout
     /// renderers read.
     pub fn packed(self) -> u32 {
         u32::from(self.a)
             | u32::from(self.b) << 8
             | u32::from(self.blend) << 16
-            | u32::from(self.biome) << 24
+            | u32::from(self.wet) << 24
     }
 
     pub fn unpack(value: u32) -> Self {
@@ -865,7 +936,7 @@ impl Control {
             a: value as u8,
             b: (value >> 8) as u8,
             blend: (value >> 16) as u8,
-            biome: (value >> 24) as u8,
+            wet: (value >> 24) as u8,
         }
     }
 }
@@ -920,8 +991,21 @@ impl Biomes {
                     opacity: layer.opacity,
                 });
             }
-            biomes.push(CompiledBiome { fitness, layers });
+            let wetness = match &biome.wetness {
+                Some(rule) => Some(Compiled::from(rule, &format!("{at}.wetness"), 0)?),
+                None => None,
+            };
+            biomes.push(CompiledBiome {
+                fitness,
+                layers,
+                wetness,
+            });
         }
+        let wet_biomes = if biomes.iter().any(|biome| biome.wetness.is_some()) {
+            biomes.len()
+        } else {
+            0
+        };
         let steep = match &self.steep {
             Some(layer) => {
                 if let Err(invalid) = layer.validate() {
@@ -936,7 +1020,8 @@ impl Biomes {
                     material: material as u8,
                     gradient: layer.slope.map(tangent),
                 };
-                // Painted over every biome, as steep as the ground is.
+                // Painted over every biome, as steep as the ground is,
+                // leaving their wetness as they make it.
                 biomes.push(CompiledBiome {
                     fitness: Compiled::Gradient(steep.gradient),
                     layers: vec![CompiledLayer {
@@ -944,6 +1029,7 @@ impl Biomes {
                         mask: Compiled::Constant(1.0),
                         opacity: 1.0,
                     }],
+                    wetness: None,
                 });
                 Some(steep)
             }
@@ -952,7 +1038,9 @@ impl Biomes {
         let cost = 1 + biomes
             .iter()
             .map(|biome| {
-                biome.fitness.cost() + biome.layers.iter().map(|l| l.mask.cost()).sum::<u64>()
+                biome.fitness.cost()
+                    + biome.layers.iter().map(|l| l.mask.cost()).sum::<u64>()
+                    + biome.wetness.as_ref().map_or(0, Compiled::cost)
             })
             .sum::<u64>();
         let placements = crate::placement::compile(&self.placements, &self.materials, &self.assets)
@@ -960,6 +1048,7 @@ impl Biomes {
         let placed = crate::placement::compile_authored(&self.placed, &self.assets)
             .map_err(|(path, rule)| BiomeError { path, rule })?;
         let reads = biomes.iter().fold(Reads::default(), |reads, biome| {
+            let reads = (biome.wetness.as_ref()).map_or(reads, |rule| reads.and(rule.reads()));
             biome
                 .layers
                 .iter()
@@ -971,6 +1060,7 @@ impl Biomes {
             authored: self.clone(),
             biomes,
             steep,
+            wet_biomes,
             cost,
             reads,
             placements,
@@ -994,6 +1084,12 @@ impl BiomeRules {
     /// Which of a sample's inputs the biomes' masks read.
     pub(crate) fn reads(&self) -> Reads {
         self.reads
+    }
+
+    /// The biomes the ground's wetness walks: the authored ones where any
+    /// has a wetness rule, none where none has.
+    pub(crate) fn wet_biomes(&self) -> usize {
+        self.wet_biomes
     }
 
     /// These rules choosing materials alone, placing no objects: what a
@@ -1068,9 +1164,9 @@ impl BiomeRules {
     /// interpreter's stack holds, its biomes, and the materials its control
     /// values index.
     pub(crate) fn program(&self, words: &mut Vec<u32>) -> (u32, u32, u32) {
-        use crate::gpu::op;
-        let table = words.len();
-        words.extend(std::iter::repeat_n(0, 2 * self.biomes.len()));
+        use crate::gpu::{BIOME_WORDS, op};
+        let (table, entry) = (words.len(), BIOME_WORDS as usize);
+        words.extend(std::iter::repeat_n(0, entry * self.biomes.len()));
         let (mut stack, mut materials) = (1, 0);
         let mut mask = |words: &mut Vec<u32>, compiled: &Compiled| {
             let at = words.len() as u32;
@@ -1079,14 +1175,20 @@ impl BiomeRules {
             at
         };
         for (index, biome) in self.biomes.iter().enumerate() {
-            // The first biome and each biome's first layer take no mask.
-            words[table + 2 * index] = if index == 0 {
+            let at = table + entry * index;
+            // The first biome and each biome's first layer take no mask;
+            // biomes without a wetness rule hold none.
+            words[at] = if index == 0 {
                 u32::MAX
             } else {
                 mask(words, &biome.fitness)
             };
+            words[at + 2] = match &biome.wetness {
+                Some(rule) => mask(words, rule),
+                None => u32::MAX,
+            };
             let list = words.len();
-            words[table + 2 * index + 1] = list as u32;
+            words[at + 1] = list as u32;
             words.push(biome.layers.len() as u32);
             words.extend(std::iter::repeat_n(0, 3 * biome.layers.len()));
             for (layer_index, layer) in biome.layers.iter().enumerate() {
@@ -1110,6 +1212,7 @@ impl BiomeRules {
         self.control_with(
             |biome| self.biomes[biome].fitness.evaluate(inputs),
             |biome, layer| self.biomes[biome].layers[layer].mask.evaluate(inputs),
+            |biome| (self.biomes[biome].wetness.as_ref()).map_or(0.0, |rule| rule.evaluate(inputs)),
             weights,
         )
     }
@@ -1127,8 +1230,9 @@ impl BiomeRules {
         let len = out.len();
         let mut values: Vec<Vec<Vec<f32>>> = Vec::with_capacity(self.biomes.len());
         for (index, biome) in self.biomes.iter().enumerate() {
-            let mut rows = Vec::with_capacity(biome.layers.len() + 1);
-            // The first biome and layers take no mask.
+            let mut rows = Vec::with_capacity(biome.layers.len() + 2);
+            // The first biome and layers take no mask; biomes without a
+            // wetness rule, none after their layers.
             let mut fitness = scratch.take(if index == 0 { 0 } else { len });
             if index > 0 {
                 biome.fitness.evaluate_row(row, &mut fitness, scratch);
@@ -1141,6 +1245,11 @@ impl BiomeRules {
                 }
                 rows.push(mask);
             }
+            let mut wetness = scratch.take(if biome.wetness.is_some() { len } else { 0 });
+            if let Some(rule) = &biome.wetness {
+                rule.evaluate_row(row, &mut wetness, scratch);
+            }
+            rows.push(wetness);
             values.push(rows);
         }
         for (sample, control) in out.iter_mut().enumerate() {
@@ -1148,6 +1257,7 @@ impl BiomeRules {
                 .control_with(
                     |biome| values[biome][0][sample],
                     |biome, layer| values[biome][layer + 1][sample],
+                    |biome| values[biome][self.biomes[biome].layers.len() + 1][sample],
                     weights,
                 )
                 .packed();
@@ -1159,20 +1269,25 @@ impl BiomeRules {
         }
     }
 
-    /// The control value of a sample whose biomes' fitnesses and layers'
-    /// masks (by biome, and by biome and layer) `fitness` and `mask` give,
-    /// asked for only where the walk reaches them.
+    /// The control value of a sample whose biomes' fitnesses, layers' masks
+    /// and wetness rules (by biome, by biome and layer, and by biome)
+    /// `fitness`, `mask` and `wetness` give, asked for only where the walk
+    /// reaches them.
     fn control_with(
         &self,
         fitness: impl Fn(usize) -> f32,
         mask: impl Fn(usize, usize) -> f32,
+        wetness: impl Fn(usize) -> f32,
         weights: &mut Vec<(u8, f32)>,
     ) -> Control {
         weights.clear();
         // Later biomes and layers paint over earlier ones: walk them from the
         // last, each taking what the later ones left, until nothing is left.
+        // The ground's wetness walks the biomes alone, each taking what the
+        // later ones left of it, the steep layer painted over them none.
         let mut remaining = 1.0_f32;
-        let mut biome = (0_usize, -1.0_f32);
+        let mut soaking = if self.wet_biomes > 0 { 1.0_f32 } else { 0.0 };
+        let mut wet = 0.0_f32;
         for (index, compiled) in self.biomes.iter().enumerate().rev() {
             let fit = if index == 0 {
                 1.0
@@ -1181,10 +1296,14 @@ impl BiomeRules {
             };
             let share = fit * remaining;
             remaining *= 1.0 - fit;
-            if share > 0.0 {
-                if share > biome.1 {
-                    biome = (index, share);
+            if index < self.wet_biomes {
+                let held = fit * soaking;
+                soaking *= 1.0 - fit;
+                if held > 0.0 && compiled.wetness.is_some() {
+                    wet += held * clamp(wetness(index), 0.0, 1.0);
                 }
+            }
+            if share > 0.0 {
                 let mut left = share;
                 for (layer_index, layer) in compiled.layers.iter().enumerate().rev() {
                     let cover = if layer_index == 0 {
@@ -1208,7 +1327,7 @@ impl BiomeRules {
                     }
                 }
             }
-            if remaining <= 0.0 {
+            if remaining <= 0.0 && soaking <= 0.0 {
                 break;
             }
         }
@@ -1229,7 +1348,7 @@ impl BiomeRules {
             a: a.0,
             b: b.0,
             blend: (blend * 255.0 + 0.5) as u8,
-            biome: biome.0 as u8,
+            wet: (clamp(wet, 0.0, 1.0) * 255.0 + 0.5) as u8,
         }
     }
 }
@@ -1254,6 +1373,9 @@ tagged!(Mask, "invalid mask" {
     13 => Max(masks),
     14 => Invert(mask),
     15 => Remap(remap),
+    16 => Grain(ends),
+    17 => Power(ends),
+    18 => Flood(ends),
 });
 
 record!(NoiseMask {
@@ -1271,6 +1393,7 @@ record!(Biome {
     id,
     fitness,
     layers,
+    wetness,
 });
 record!(SteepLayer { material, slope });
 record!(Biomes {

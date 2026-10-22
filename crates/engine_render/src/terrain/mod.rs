@@ -97,11 +97,13 @@ pub(crate) const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Fl
 /// sample, the two halves of a float, gathered and blended in shaders.
 const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// Each tile's control values: its samples' two strongest
-/// materials, their blend and biome, read texel by texel.
+/// materials, their blend and how wet their ground is, read texel by texel.
 const CONTROL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
-/// Each tile's meters to rivers' edges, in the steps the tile holds them
-/// as, which the GPU's control values read.
-const RIVER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Uint;
+/// Each tile's rivers as the tile holds them, which the GPU's control
+/// values read: its samples' meters to rivers' edges, then the grain, power
+/// and flood of the bed of the river holding each
+/// (`engine_terrain::Tile::river_texels`).
+const RIVER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
 
 /// Seconds over which a tile that arrived grows out of its parent level,
 /// its patches drawn morphed into the parent's at first, and

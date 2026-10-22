@@ -504,6 +504,8 @@ gpu_mirrors! {
     engine_core::terrain_data::gpu::header::HYDROLOGY => ["H_HYDROLOGY" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::header::PATHS => ["H_PATHS" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::header::FADE => ["H_FADE" in TERRAIN_CONTROL_SHADER];
+    engine_core::terrain_data::gpu::header::WET_BIOMES => ["H_WET_BIOMES" in TERRAIN_CONTROL_SHADER];
+    engine_core::terrain_data::gpu::BIOME_WORDS => ["BIOME_WORDS" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::op::CONSTANT => ["OP_CONSTANT" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::op::HEIGHT => ["OP_HEIGHT" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::op::GRADIENT => ["OP_GRADIENT" in TERRAIN_CONTROL_SHADER];
@@ -520,5 +522,8 @@ gpu_mirrors! {
     engine_core::terrain_data::gpu::op::MAX => ["OP_MAX" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::op::INVERT => ["OP_INVERT" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::op::REMAP => ["OP_REMAP" in TERRAIN_CONTROL_SHADER];
+    engine_core::terrain_data::gpu::op::GRAIN => ["OP_GRAIN" in TERRAIN_CONTROL_SHADER];
+    engine_core::terrain_data::gpu::op::POWER => ["OP_POWER" in TERRAIN_CONTROL_SHADER];
+    engine_core::terrain_data::gpu::op::FLOOD => ["OP_FLOOD" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::op::END => ["OP_END" in TERRAIN_CONTROL_SHADER];
 }
