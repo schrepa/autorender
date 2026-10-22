@@ -11,25 +11,27 @@
 //!
 //! A record's key holds the hash of the renderer's code and of everything
 //! its pages read ([`FarSource`], `terrain/far.rs`). A host holding it hands
-//! it back and its pages upload as they are; one that does not has them
-//! baked in place by the bake near pages take, [`FAR_BAKES`] a frame, read
-//! back once all are and kept: the cook's session makes them so. Pages are
-//! made on the GPU, so the same record made on another differs within its
-//! rounding: records are cooked once, never compared bit for bit across
-//! GPUs, and near and far pages blend over a mip as the ground's own levels
-//! do. A verifying host has those it handed back baked again and kept,
-//! which it compares within the records' parity ([`FAR_PARITY`], `alike`)
-//! as its one verify path compares every record.
+//! it to a worker, which reads it into the texels uploads take (the job
+//! `JobKind::FarTexels`), and its pages upload as they are, [`FAR_UPLOADS`]
+//! a frame; one that does not has them baked in place by the bake near
+//! pages take, [`FAR_BAKES`] a frame, read back once all are and kept: the
+//! cook's session makes them so. Pages are made on the GPU, so the same
+//! record made on another differs within its rounding: records are cooked
+//! once, never compared bit for bit across GPUs, and near and far pages
+//! blend over a mip as the ground's own levels do. A verifying host has
+//! those it handed back baked again and kept, which it compares within the
+//! records' parity ([`FAR_PARITY`], `alike`) as its one verify path
+//! compares every record.
 //!
 //! A record holds its pages' count, each page's mip and page along x and z,
-//! then their texels: each page's three layers (base color, canopy, normal
-//! turn), each layer's channels as planes of [`SLOT_TEXELS`]² bytes,
-//! written as differences from what their neighbours predict
-//! (`codec::put_planes`) for the cook's compression.
+//! and their side, [`SLOT_TEXELS`], then their texels: each page's three
+//! layers (base color, canopy, normal turn), each layer's channels as
+//! planes written as differences from what their neighbours predict, for
+//! the cook's compression (`jobs::far_record`, beside the job reading it).
 
 use super::*;
 use engine_core::RecordKey;
-use engine_core::terrain_data::codec::{self, Reader, Writer};
+use engine_core::terrain_data::jobs;
 
 /// The finest mip far pages begin at: texels of eight meters.
 const FAR_FINEST: usize = 11;
@@ -37,6 +39,8 @@ const FAR_FINEST: usize = 11;
 const FAR_ACROSS: u32 = 8;
 /// Far pages baked in a frame at most, beside near pages.
 const FAR_BAKES: usize = 32;
+/// Far pages uploaded in a frame at most.
+const FAR_UPLOADS: usize = 16;
 /// The parity pages baked again keep with a record handed back: a peak
 /// signal-to-noise ratio of 40 dB over every byte, the mean squared
 /// difference at most 255² over this.
@@ -67,9 +71,10 @@ pub(crate) struct RecordMode {
     pub(crate) loading: bool,
 }
 
-/// Where a terrain's far pages stand: asked for from the host; handed back,
-/// their texels uploading from the page given; missing, baking from the page
-/// given; baked, their slots read back; or resident.
+/// Where a terrain's far pages stand: asked for from the host; handed back
+/// and read on a worker, their texels uploading from the page given;
+/// missing, baking from the page given; baked, their slots read back; or
+/// resident.
 enum State {
     Asking,
     Uploading(Vec<u8>, usize),
@@ -104,16 +109,17 @@ struct Reading {
 }
 
 /// Every textured terrain's far pages, by terrain id; which slots they pin;
-/// the host's records as they stand; the records to fetch and those made,
-/// to keep, until the host takes them, and the answers it gave (`None`
-/// where it holds none); the read-back under way; and the textured
-/// terrains whose sets wait for what they are baked from.
+/// the host's records as they stand; the records to fetch (each read on a
+/// worker) and those made, to keep, until the host takes them, and the
+/// answers it gave (the texels read, `None` where it holds none); the
+/// read-back under way; and the textured terrains whose sets wait for what
+/// they are baked from.
 #[derive(Default)]
 pub(crate) struct FarPages {
     sets: BTreeMap<u64, FarSet>,
     pinned: Vec<bool>,
     mode: RecordMode,
-    fetches: Vec<RecordKey>,
+    reads: Vec<RecordKey>,
     keeps: Vec<(RecordKey, Vec<u8>)>,
     answers: Vec<(RecordKey, Option<Vec<u8>>)>,
     reading: Option<Reading>,
@@ -321,25 +327,11 @@ fn far_key(source: FarSource) -> RecordKey {
 /// A far page record of `pages` whose slots' layers `texels` holds, page by
 /// page, layer by layer, as RGBA8 rows.
 fn encode(pages: &[PageKey], texels: &[u8]) -> Vec<u8> {
-    let mut out = Writer::new();
-    out.put(&(pages.len() as u32));
-    for page in pages {
-        out.put(&page.mip)
-            .put(&(page.page[0] as u16))
-            .put(&(page.page[1] as u16));
-    }
-    // Each layer's channels apart, as planes.
-    let area = (SLOT_TEXELS * SLOT_TEXELS) as usize;
-    let mut planes = vec![0_u8; texels.len()];
-    for (layer, texels) in texels.chunks_exact(LAYER_BYTES).enumerate() {
-        for (at, texel) in texels.chunks_exact(4).enumerate() {
-            for (channel, &value) in texel.iter().enumerate() {
-                planes[(layer * 4 + channel) * area + at] = value;
-            }
-        }
-    }
-    codec::put_planes(&mut out, &planes, SLOT_TEXELS as usize);
-    out.into_bytes()
+    let listed: Vec<(u8, u16, u16)> = pages
+        .iter()
+        .map(|page| (page.mip, page.page[0] as u16, page.page[1] as u16))
+        .collect();
+    jobs::far_record(&listed, SLOT_TEXELS, texels)
 }
 
 /// Whether texels `baked` keep [`FAR_PARITY`] with texels `was`, as many.
@@ -355,18 +347,24 @@ fn within_parity(was: &[u8], baked: &[u8]) -> bool {
 /// Whether far page records `handed` and `made` hold the same pages, their
 /// texels within [`FAR_PARITY`]: a verifying host's comparison of pages
 /// baked again with the record it handed back
-/// (`engine_core::RecordParity::Within`).
+/// (`engine_core::RecordParity::Within`), on its thread as every record's.
 fn alike(handed: &[u8], made: &[u8]) -> bool {
+    let read = |record: &[u8]| {
+        let mut texels = jobs::far_texels(record).ok()?;
+        let held = jobs::far_pages(&mut texels).ok()?;
+        Some((held, texels))
+    };
     match (read(handed), read(made)) {
-        (Ok((pages, was)), Ok((again, baked))) => pages == again && within_parity(&was, &baked),
+        (Some((pages, was)), Some((again, baked))) => pages == again && within_parity(&was, &baked),
         _ => false,
     }
 }
 
-/// The texels of a far page record of `pages`, as [`encode`] took them; why
-/// it holds none where its pages are others.
-fn decode(bytes: &[u8], pages: &[PageKey]) -> Result<Vec<u8>, String> {
-    let (held, texels) = read(bytes)?;
+/// The texels of a far page record of `pages`, as a worker read them into
+/// what uploads take (`bytes`, its job's output: `jobs::far_texels`); why
+/// it holds none where its pages are others, or of another size.
+fn decode(mut bytes: Vec<u8>, pages: &[PageKey]) -> Result<Vec<u8>, String> {
+    let (held, side) = jobs::far_pages(&mut bytes).map_err(|error| error.to_string())?;
     let same = held.len() == pages.len()
         && held.iter().zip(pages).all(|(&(mip, x, z), page)| {
             mip == page.mip && i32::from(x) == page.page[0] && i32::from(z) == page.page[1]
@@ -374,37 +372,10 @@ fn decode(bytes: &[u8], pages: &[PageKey]) -> Result<Vec<u8>, String> {
     if !same {
         return Err("a far page record of other pages".into());
     }
-    Ok(texels)
-}
-
-/// A far page record's pages (each one's mip and page along x and z) and
-/// its texels, as [`encode`] took them.
-fn read(bytes: &[u8]) -> Result<(Vec<(u8, u16, u16)>, Vec<u8>), String> {
-    let invalid = |error: codec::CodecError| error.to_string();
-    let mut input = Reader::new(bytes);
-    let count: u32 = input.get().map_err(invalid)?;
-    let mut pages = Vec::with_capacity((count as usize).min(bytes.len()));
-    for _ in 0..count {
-        let mip: u8 = input.get().map_err(invalid)?;
-        let x: u16 = input.get().map_err(invalid)?;
-        let z: u16 = input.get().map_err(invalid)?;
-        pages.push((mip, x, z));
-    }
-    let planes = codec::get_planes(&mut input, SLOT_TEXELS as usize).map_err(invalid)?;
-    input.finish().map_err(invalid)?;
-    if planes.len() != pages.len() * LAYERS * LAYER_BYTES {
+    if side != SLOT_TEXELS || bytes.len() != pages.len() * LAYERS * LAYER_BYTES {
         return Err("a far page record of another size".into());
     }
-    let area = (SLOT_TEXELS * SLOT_TEXELS) as usize;
-    let mut texels = vec![0_u8; planes.len()];
-    for (layer, texels) in texels.chunks_exact_mut(LAYER_BYTES).enumerate() {
-        for (at, texel) in texels.chunks_exact_mut(4).enumerate() {
-            for (channel, value) in texel.iter_mut().enumerate() {
-                *value = planes[(layer * 4 + channel) * area + at];
-            }
-        }
-    }
-    Ok((pages, texels))
+    Ok(bytes)
 }
 
 impl VirtualTexture {
@@ -413,9 +384,11 @@ impl VirtualTexture {
         self.far.set_mode(mode);
     }
 
-    /// Moves the far pages' records to fetch into `out`.
-    pub(crate) fn take_wants(&mut self, out: &mut Vec<RecordKey>) {
-        out.append(&mut self.far.fetches);
+    /// Moves the far pages' records to fetch into `out`, each with the job
+    /// reading it on a worker into the texels uploads take.
+    pub(crate) fn take_reads(&mut self, out: &mut Vec<(RecordKey, &'static str)>) {
+        let kind = jobs::JobKind::FarTexels.name();
+        out.extend(self.far.reads.drain(..).map(|key| (key, kind)));
     }
 
     /// Whether far pages asked for the record `key`.
@@ -423,8 +396,9 @@ impl VirtualTexture {
         self.far.asks(key)
     }
 
-    /// The host's answer for far pages' record `key`: its bytes, or `None`
-    /// where it holds none, which bakes the pages.
+    /// The host's answer for far pages' record `key`: its texels as a
+    /// worker read them, or `None` where it holds none, which bakes the
+    /// pages.
     pub(crate) fn answer(&mut self, key: RecordKey, bytes: Option<Vec<u8>>) {
         self.far.answers.push((key, bytes));
     }
@@ -455,11 +429,11 @@ impl VirtualTexture {
 
     /// This frame's far pages, after the near pages' asking: sets of
     /// textured `terrains` whose `sources` changed ask for their records
-    /// anew (once textures show their own), the host's answers upload or
-    /// start their bakes, up to [`FAR_BAKES`] pages of sets baking bake
-    /// into slots they pin, and a set baked whole is read back and kept;
-    /// every far page resident has its table entry where its window holds
-    /// it. `maps` holds the sheets they upload into.
+    /// anew (once textures show their own), the host's answers upload, up
+    /// to [`FAR_UPLOADS`] pages, or start their bakes, up to [`FAR_BAKES`]
+    /// pages of sets baking bake into slots they pin, and a set baked whole
+    /// is read back and kept; every far page resident has its table entry
+    /// where its window holds it. `maps` holds the sheets they upload into.
     pub(super) fn far_pages(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -501,7 +475,7 @@ impl VirtualTexture {
                 continue;
             }
             self.unpin_terrain(terrain.id);
-            self.far.fetches.push(key);
+            self.far.reads.push(key);
             self.far.sets.insert(
                 terrain.id,
                 FarSet {
@@ -524,7 +498,7 @@ impl VirtualTexture {
             else {
                 continue;
             };
-            let decoded = answer.and_then(|bytes| decode(&bytes, &set.pages).ok());
+            let decoded = answer.and_then(|bytes| decode(bytes, &set.pages).ok());
             match decoded {
                 Some(texels) => {
                     set.keep = verifying;
@@ -547,13 +521,15 @@ impl VirtualTexture {
             self.far.reading = None;
         }
         let ids: Vec<u64> = self.far.sets.keys().copied().collect();
-        let mut room = FAR_BAKES;
+        let (mut room, mut uploads) = (FAR_BAKES, FAR_UPLOADS);
         for id in ids {
             let Some(mut set) = self.far.sets.remove(&id) else {
                 continue;
             };
             set.state = match std::mem::replace(&mut set.state, State::Here) {
-                State::Uploading(texels, next) => self.upload(queue, maps, &set, (texels, next)),
+                State::Uploading(texels, next) => {
+                    self.upload(queue, maps, &set, (texels, next), &mut uploads)
+                }
                 State::Baking(next) => self.bake_far(device, &set, next, &mut room),
                 State::Reading => self.read_far(&set),
                 state @ (State::Asking | State::Here) => state,
@@ -564,19 +540,25 @@ impl VirtualTexture {
     }
 
     /// Uploads `set`'s pages from `texels` from page `next` on into slots
-    /// they pin in `maps`' sheets: where the sheets run out of slots, the
-    /// rest wait for them to grow. A verifying host's pages bake again.
+    /// they pin in `maps`' sheets, while `uploads` of the frame's far
+    /// uploads last: where the sheets run out of slots, the rest wait for
+    /// them to grow. A verifying host's pages bake again.
     fn upload(
         &mut self,
         queue: &wgpu::Queue,
         maps: &crate::terrain_maps::TerrainMaps,
         set: &FarSet,
         (texels, mut next): (Vec<u8>, usize),
+        uploads: &mut usize,
     ) -> State {
         while let Some(&page) = set.pages.get(next) {
+            if *uploads == 0 {
+                return State::Uploading(texels, next);
+            }
             let Some(slot) = self.pin(page, set.pages.len() - next) else {
                 return State::Uploading(texels, next);
             };
+            *uploads -= 1;
             // A near bake of the slot this frame would draw over it.
             self.bakes.list.retain(|(_, _, record)| record.slot != slot);
             let place = [slot / self.per_sheet, slot % self.per_sheet];

@@ -21,8 +21,10 @@
 //! tiles and make the records that arrive resident within their time and
 //! uploads, larger until the camera's view first loads whole than after.
 //! So are its lighting, bounce transfer and macro colors (the tint and
-//! growth its bakes give its ground), from its finest pinned level once
-//! resident. While a session cooks ([`crate::Cooking`]), every tile a
+//! growth its bakes give its ground), from its finest pinned level as the
+//! records of its tiles hold it, which workers generate; and its tiles'
+//! water as it settled, which workers stand on them from the records of
+//! settled water. While a session cooks ([`crate::Cooking`]), every tile a
 //! camera could want is asked for, for the host's pack.
 //!
 //! Tiles load in the order the view needs them: the pinned
@@ -81,7 +83,7 @@ use dispatch::*;
 pub use extract::*;
 pub use ground_cover::*;
 use identity::Generation;
-use lighting::{Lighting, ground_grid, light, lighting_level, lit, source_tiles};
+use lighting::{Basis, Lighting, ground_tiles, light, lighting_level, lit};
 use macro_colors::{MacroColors, ask_colors, want_colors};
 pub use occupancy::*;
 use plan::*;

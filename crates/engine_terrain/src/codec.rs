@@ -77,6 +77,11 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// The bytes not read yet.
+    pub fn left(&self) -> usize {
+        self.bytes.len()
+    }
+
     fn take<const N: usize>(&mut self) -> Result<[u8; N], CodecError> {
         let (head, rest) = self
             .bytes
@@ -322,6 +327,12 @@ fn predict_byte(at: usize, side: usize, byte: impl Fn(usize) -> u8) -> u8 {
         (false, true) => byte(at - side),
         (false, false) => 0,
     }
+}
+
+/// `value` at its nearest step of the height grid, as [`get_grid`] reads
+/// back what [`put_grid`] wrote of it: NaN stays NaN.
+pub(crate) fn on_grid(value: f32) -> f32 {
+    steps(value).map_or(f32::NAN, |steps| steps as f32 / STEPS_PER_METER)
 }
 
 /// The nearest whole step of the height grid to `value`; none for NaN.

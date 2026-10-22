@@ -1,27 +1,26 @@
 //! Each terrain's bounce transfer ([`engine_terrain::bounce`]): what probes
 //! over its ground see of it, from the heights its lighting reads and its
-//! recipe's surface. Once its lighting is here, those heights and its
-//! recipe's key are one job's input and its output one record, kept by the
-//! input's content hash: the host hands it back from the cook's packs or its
-//! store, or runs the job on a worker and keeps what it makes. Heights that
-//! change (an edit reaching that level) or another recipe make a new input
-//! and a new record; the transfer before stays until it arrives.
+//! recipe's surface. Once its lighting is here, its recipe and the tiles
+//! its lighting reads (each made on the worker as its record holds it) are
+//! one job's input and its output one record, kept by the keys of those
+//! tiles' records and its probe columns: the host hands it back from the
+//! cook's packs or its store, or runs the job on a worker and keeps what it
+//! makes. An edit reaching that level, or another recipe, makes new tile
+//! records and a new record; the transfer before stays until it arrives.
 //! Surroundings, ground seen from afar, take none.
 
 use super::*;
 
 /// A terrain's bounce transfer and its asking for it: the record once made
-/// and the content hash of the input it was made from; the job asking for
-/// it, with its input's hash; the tiles, probe columns and recipe the last
-/// input read; and the frame its job last failed at.
+/// and the key it was made as; the job asking for it, with that key; what
+/// the key was last found from (its recipe, the edits, its level and its
+/// probe columns) and the key then; and the frame its job last failed at.
 #[derive(Default)]
 pub(super) struct Bounce {
     pub(super) made: Option<Arc<TerrainBounce>>,
-    from: Option<u128>,
-    pub(super) job: Option<(JobId, u128)>,
-    tiles: Vec<Arc<Tile>>,
-    probes: u32,
-    recipe: String,
+    from: Option<RecordKey>,
+    pub(super) job: Option<(JobId, RecordKey)>,
+    found: Option<(Basis, BounceJob, RecordKey)>,
     failed: Option<u64>,
 }
 
@@ -75,10 +74,10 @@ pub(super) fn probe_columns(pyramid: &Pyramid, settings: &TerrainSettings) -> u3
 }
 
 /// Takes `state`'s bounce transfer once its job is done, and asks for it
-/// anew, within `slots`, once its lighting is here and the heights it reads,
-/// its probe columns or its recipe differ from those the transfer was made
-/// from (or a while after its job failed); without `settings` asking for it,
-/// or for surroundings, the transfer goes.
+/// anew, within `slots`, once its lighting is here and the records of the
+/// tiles it reads, its probe columns or its recipe differ from those the
+/// transfer was made from (or a while after its job failed); without
+/// `settings` asking for it, or for surroundings, the transfer goes.
 pub(super) fn bounce(
     state: &mut TerrainState,
     settings: &TerrainSettings,
@@ -92,7 +91,7 @@ pub(super) fn bounce(
         state.whole.bounce = Bounce::default();
         return;
     }
-    if let Some((id, hash)) = state.whole.bounce.job
+    if let Some((id, record)) = state.whole.bounce.job
         && let Some(output) = slots.jobs.take(id)
     {
         state.whole.bounce.job = None;
@@ -103,7 +102,7 @@ pub(super) fn bounce(
         ) {
             Ok(made) => {
                 state.whole.bounce.made = Some(Arc::new(made));
-                state.whole.bounce.from = Some(hash);
+                state.whole.bounce.from = Some(record);
                 state.whole.bounce.failed = None;
             }
             Err(error) => {
@@ -129,61 +128,54 @@ pub(super) fn bounce(
         return;
     };
     let level = lighting_level(&state.terrain.pyramid, settings.pinned_levels);
-    let Some(tiles) = source_tiles(state, level) else {
-        return;
-    };
     let probes = probe_columns(&state.terrain.pyramid, settings);
-    let held = &state.whole.bounce;
-    // The same tiles make the same heights: nothing to ask again.
-    let same = tiles.len() == held.tiles.len()
-        && tiles
-            .iter()
-            .zip(&held.tiles)
-            .all(|(tile, held)| Arc::ptr_eq(tile, held));
-    if same && held.probes == probes && held.recipe == recipe {
-        return;
-    }
-    let grid = ground_grid(state, level, &tiles);
-    let job = BounceJob {
-        recipe: recipe.clone(),
-        samples: grid.samples,
-        spacing: grid.spacing,
-        extent: state.terrain.pyramid.extent(),
-        heights: grid.heights,
-        probes,
-    };
-    let input = job.input();
-    let hash = content_hash(&input);
+    let basis = Basis::of(state, &recipe, level, (probes, 0));
+    let found = state
+        .whole
+        .bounce
+        .found
+        .as_ref()
+        .filter(|(held, _, _)| held.same(&basis))
+        .map(|(_, job, record)| (job.clone(), *record));
+    let (job, record) = found.unwrap_or_else(|| {
+        let (tiles, keys) = ground_tiles(state, &recipe, level);
+        let job = BounceJob {
+            recipe,
+            level,
+            tiles,
+            probes,
+        };
+        let mut identity = keys;
+        identity.extend_from_slice(&probes.to_le_bytes());
+        let record = RecordKey::new(
+            &engine_terrain::sources::BOUNCE,
+            BounceJob::KIND.name(),
+            &identity,
+        );
+        state.whole.bounce.found = Some((basis, job.clone(), record));
+        (job, record)
+    });
     let bounce = &mut state.whole.bounce;
-    bounce.tiles = tiles;
-    bounce.probes = probes;
-    bounce.recipe = recipe;
-    if bounce.from == Some(hash) {
+    if bounce.from == Some(record) {
         if let Some((id, _)) = bounce.job.take() {
             slots.jobs.cancel(id);
         }
         return;
     }
-    if bounce.job.is_some_and(|(_, asked)| asked == hash) {
+    if bounce.job.is_some_and(|(_, asked)| asked == record) {
         return;
     }
     // Views wait for it as for the lighting (`waits`).
     let priority = job_priority(VIEW_JOBS, 0);
     if !slots.take(priority) {
         // Asked for again next frame.
-        bounce.tiles.clear();
         return;
     }
     if let Some((id, _)) = bounce.job.take() {
         slots.jobs.cancel(id);
     }
-    let record = RecordKey::new(
-        &engine_terrain::sources::BOUNCE,
-        BounceJob::KIND.name(),
-        &hash.to_le_bytes(),
-    );
     let id = slots
         .jobs
-        .submit_record(BounceJob::KIND.name(), input, priority, record);
-    bounce.job = Some((id, hash));
+        .submit_record(BounceJob::KIND.name(), job.input(), priority, record);
+    bounce.job = Some((id, record));
 }

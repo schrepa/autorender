@@ -10,7 +10,8 @@
 //! resident tile's water is written again the same way where its rivers
 //! run otherwise since, as what stands in them holds them back
 //! ([`Tile::rewatered`]), and as its water settles ([`Tile::steadied`],
-//! [`Tile::flowing`]), its whitewater the foam the settled water carries,
+//! [`Tile::flowing`], a job's record that the tile then holds:
+//! [`Tile::holding`]), its whitewater the foam the settled water carries,
 //! a share of [`crate::shallow_water::FOAM_MOST`]: rivers' own water
 //! carries none. However it was written, every dry sample beside water
 //! holds a surface its water meets the ground by ([`skirt`]), so shores
@@ -123,6 +124,28 @@ impl TileWater {
     pub(crate) fn sample_info(&self, x: i32, z: i32) -> (Vec2, f32, bool, f32) {
         let stride = TILE_STRIDE as i32;
         unpack(self.info[((z + 1) * stride + x + 1) as usize])
+    }
+}
+
+/// A tile's water as its record holds it, apart from its tile: its samples'
+/// surfaces at their nearest steps of the height grid
+/// ([`crate::codec::HEIGHT_STEP`]), their packed info and which patches hold
+/// water, read back as they were written, shores and all.
+impl crate::codec::Codec for TileWater {
+    fn write(&self, out: &mut crate::codec::Writer) {
+        crate::codec::put_grid(out, &self.surface, TILE_STRIDE as usize);
+        out.put(&self.info).put(&self.wet);
+    }
+
+    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
+        let stride = TILE_STRIDE as usize;
+        let surface = crate::codec::get_grid(input, stride)?;
+        let info: Box<[u32]> = input.get()?;
+        let wet: [u64; 4] = input.get()?;
+        if surface.len() != stride * stride || info.len() != stride * stride {
+            return Err(crate::codec::CodecError("invalid tile water"));
+        }
+        Ok(Self { surface, info, wet })
     }
 }
 

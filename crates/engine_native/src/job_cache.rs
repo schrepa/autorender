@@ -4,23 +4,33 @@
 //! index's JSON. Which records the folder keeps and which go beyond its
 //! byte budget is the job worker's index (`engine_worker::JobCache`), the
 //! page's too; keys are the engine's, so what is kept outlives rebuilds
-//! that leave the code making it alone.
+//! that leave the code making it alone. A lookup finds where a record lies
+//! ([`JobStore::sources`]); a worker reads and unpacks it ([`read`]), as
+//! the page's workers do, and the store counts what came back
+//! ([`JobStore::answered`]).
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use engine_worker::{JobCache, PACK_HEADER, PackIndex, pack_directory, unpack};
+use engine_worker::{JobCache, PACK_HEADER, PackEntry, PackIndex, pack_directory, unpack};
 
 const INDEX: &str = "index.json";
 /// The hosts' default budget in bytes.
 pub const DEFAULT_BUDGET: u64 = engine::host::policy::JOB_CACHE_MIB * 1024 * 1024;
 
-/// A pack open for reading.
+/// A pack open for reading: its path and directory.
 struct Pack {
     path: PathBuf,
-    file: File,
     index: PackIndex,
+}
+
+/// Where a record may be read from: a pack's byte range, or the file the
+/// store's folder keeps it in.
+#[derive(Clone, Debug)]
+pub enum Source {
+    Packed { path: PathBuf, entry: PackEntry },
+    Kept { path: PathBuf },
 }
 
 /// The cook's packs, the records kept in a folder, and the folder's index.
@@ -91,39 +101,68 @@ impl JobStore {
         self.packs.iter().map(|pack| pack.index.len()).sum()
     }
 
-    /// The record kept as `key`, if a pack or the folder holds it.
-    pub fn lookup(&mut self, key: &str) -> Option<Vec<u8>> {
-        for pack in &mut self.packs {
-            let Some(entry) = pack.index.find(key) else {
-                continue;
-            };
-            let mut stored = vec![0; entry.stored as usize];
-            let read = pack
-                .file
-                .seek(SeekFrom::Start(entry.offset))
-                .and_then(|_| pack.file.read_exact(&mut stored))
-                .map_err(|error| error.to_string())
-                .and_then(|()| unpack(&entry, &stored));
-            match read {
-                Ok(record) => {
-                    self.pack_hits += 1;
-                    return Some(record);
-                }
-                Err(error) => {
-                    eprintln!("A record of {} does not read: {error}", pack.path.display());
-                }
-            }
+    /// Where the record kept as `key` may be read from, in order: each pack
+    /// holding it, then the folder where the index holds it. None, counted
+    /// a miss, where nothing does.
+    pub fn sources(&mut self, key: &str) -> Vec<Source> {
+        let mut sources: Vec<Source> = self
+            .packs
+            .iter()
+            .filter_map(|pack| {
+                Some(Source::Packed {
+                    path: pack.path.clone(),
+                    entry: pack.index.find(key)?,
+                })
+            })
+            .collect();
+        if self.index.holds(key) {
+            sources.push(Source::Kept {
+                path: self.folder.join(key),
+            });
         }
-        if !self.index.holds(key) {
+        if sources.is_empty() {
             self.index.miss();
-            return None;
         }
-        let bytes = std::fs::read(self.folder.join(key)).ok();
-        let hit = self
-            .index
-            .hit(key, bytes.as_ref().map(|bytes| bytes.len() as u64));
+        sources
+    }
+
+    /// Counts what reading the record kept as `key` from `sources` came to
+    /// (`read`: the place among them of the one that read, and its bytes;
+    /// none where none did): a pack's record is a hit, as is the folder's
+    /// where it holds the bytes the index says, and anything else a miss,
+    /// the folder's file going. The record, where it was a hit.
+    pub fn answered(
+        &mut self,
+        key: &str,
+        sources: &[Source],
+        read: Option<(usize, Vec<u8>)>,
+    ) -> Option<Vec<u8>> {
+        let kept = sources
+            .iter()
+            .any(|source| matches!(source, Source::Kept { .. }));
+        let answer = match read {
+            Some((at, bytes)) => match sources.get(at) {
+                Some(Source::Packed { .. }) => {
+                    self.pack_hits += 1;
+                    Some(bytes)
+                }
+                Some(Source::Kept { .. }) => self
+                    .index
+                    .hit(key, Some(bytes.len() as u64))
+                    .then_some(bytes),
+                None => None,
+            },
+            None if kept => {
+                self.index.hit(key, None);
+                None
+            }
+            None => {
+                self.index.miss();
+                None
+            }
+        };
         self.removals();
-        bytes.filter(|_| hit)
+        answer
     }
 
     /// Keeps `output` as the record `key`, where the index takes it.
@@ -172,6 +211,35 @@ impl JobStore {
     }
 }
 
+/// The record `sources` hold, read from the first of them that reads (a
+/// pack's byte range, unpacked, or the folder's file): the place of the
+/// one that read and the record's bytes, none where none did; a pack's
+/// record that does not read is said so. Workers read what the host looks
+/// up with it, and a host without workers in place.
+pub fn read(sources: &[Source]) -> Option<(usize, Vec<u8>)> {
+    sources.iter().enumerate().find_map(|(at, source)| {
+        let read = match source {
+            Source::Packed { path, entry } => {
+                let read = (|| {
+                    let mut file = File::open(path)?;
+                    let mut stored = vec![0; entry.stored as usize];
+                    file.seek(SeekFrom::Start(entry.offset))?;
+                    file.read_exact(&mut stored)?;
+                    Ok::<_, std::io::Error>(stored)
+                })()
+                .map_err(|error| error.to_string())
+                .and_then(|stored| unpack(entry, &stored));
+                if let Err(error) = &read {
+                    eprintln!("A record of {} does not read: {error}", path.display());
+                }
+                read.ok()
+            }
+            Source::Kept { path } => std::fs::read(path).ok(),
+        };
+        read.map(|bytes| (at, bytes))
+    })
+}
+
 /// Every pack in `folder`, in name order; those that do not read are said
 /// so and left out. None where the folder is missing.
 fn open_packs(folder: &Path) -> Vec<Pack> {
@@ -199,6 +267,8 @@ fn open_packs(folder: &Path) -> Vec<Pack> {
         .collect()
 }
 
+/// The pack at `path`, its directory read: workers open it again for each
+/// record they read, so none holds it open.
 fn open_pack(path: &Path) -> Result<Pack, String> {
     let mut file = File::open(path).map_err(|error| error.to_string())?;
     let mut header = [0; PACK_HEADER];
@@ -212,7 +282,6 @@ fn open_pack(path: &Path) -> Result<Pack, String> {
     let index = PackIndex::open(&header, &directory)?;
     Ok(Pack {
         path: path.to_owned(),
-        file,
         index,
     })
 }

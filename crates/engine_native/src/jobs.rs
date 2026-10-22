@@ -3,11 +3,14 @@
 //! slice at a time (`engine_worker::Worker::slice`). The engine schedules
 //! its jobs (`engine::host::JobScheduler`): the pool carries its orders to
 //! the workers and to the records (the cook's packs, then the store's
-//! folder), and hands back what workers report and the records read; a
-//! pool without workers has the host run its jobs in place. Cooking, it
-//! keeps every record the session read or made for the pack it writes. A
-//! worker's panic ends the program, as every engine panic does
-//! (`engine_panic`'s hook).
+//! folder), and hands back what workers report and the records read. A
+//! record looked up is read and unpacked on the worker the engine waits
+//! least on, as the page's workers unpack theirs, and comes back with the
+//! workers' reports; the game's thread only finds where it lies and counts
+//! it. A pool without workers has the host run its jobs, and read its
+//! records, in place. Cooking, it keeps every record the session read or
+//! made for the pack it writes. A worker's panic ends the program, as every
+//! engine panic does (`engine_panic`'s hook).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,7 +22,7 @@ use engine::{Game, GameHost};
 use engine_worker::Report;
 
 use crate::cook::PackWriter;
-use crate::job_cache::{DEFAULT_BUDGET, JobStore};
+use crate::job_cache::{self, DEFAULT_BUDGET, JobStore, Source};
 
 /// How a native host runs the engine's jobs, as the page's `workers` and
 /// `jobcache` parameters choose, and where its records come from.
@@ -90,7 +93,26 @@ enum Order {
         priority: u32,
     },
     Cancel(u64),
+    /// Read the record `key` lookup `id` asks for from `sources`, in order.
+    Read {
+        id: JobId,
+        key: String,
+        sources: Vec<Source>,
+    },
     Stop,
+}
+
+/// What a worker hands back: a slice's report, or what reading a record
+/// looked up came to on worker `worker` ([`job_cache::read`]).
+enum Reported {
+    Job(Report),
+    Read {
+        worker: u32,
+        id: JobId,
+        key: String,
+        sources: Vec<Source>,
+        read: Option<(usize, Vec<u8>)>,
+    },
 }
 
 struct Slot {
@@ -105,7 +127,7 @@ struct Slot {
 /// pack takes.
 pub struct JobPool {
     slots: Vec<Slot>,
-    reports: Receiver<Report>,
+    reports: Receiver<Reported>,
     store: Option<JobStore>,
     reported: Option<(u64, u64, u64, u64)>,
     cook: Option<PackWriter>,
@@ -129,7 +151,7 @@ impl JobPool {
                         let _ = register.send(engine_profiler::sampler::SampledThread::current(
                             format!("Job worker {index}"),
                         ));
-                        work(&inbox, &report);
+                        work(index as u32, &inbox, &report);
                     })
                     .expect("threads start");
                 Slot {
@@ -170,16 +192,26 @@ impl JobPool {
         host.set_job_cache(cache.is_some(), cache == Some(true));
     }
 
-    /// Hands `host` what workers finished since the last exchange, and
-    /// carries out its orders since.
+    /// Hands `host` what workers finished and the records they read since
+    /// the last exchange, and carries out its orders since.
     pub fn exchange<G: Game>(&mut self, host: &mut GameHost<G>) {
-        while let Ok(report) = self.reports.try_recv() {
-            match report {
-                Report::Done(id, output) => host.complete_job(JobId(id), output),
-                Report::Failed(id, error) => host.fail_job(JobId(id), error),
+        while let Ok(reported) = self.reports.try_recv() {
+            match reported {
+                Reported::Job(Report::Done(id, output)) => host.complete_job(JobId(id), output),
+                Reported::Job(Report::Failed(id, error)) => host.fail_job(JobId(id), error),
+                Reported::Read {
+                    worker,
+                    id,
+                    key,
+                    sources,
+                    read,
+                } => {
+                    host.job_task_done(worker);
+                    self.answer(host, (id, key), &sources, read);
+                }
             }
         }
-        // Reads of records answer at once, and may order more.
+        // Records read in place answer at once, and may order more.
         let mut orders = host.take_jobs();
         while !orders.is_empty() {
             for order in orders {
@@ -219,11 +251,30 @@ impl JobPool {
                 let _ = self.slots[worker as usize].orders.send(Order::Cancel(id.0));
             }
             JobOrder::Lookup { id, key } => {
-                let kept = self.store.as_mut().and_then(|store| store.lookup(&key));
-                if let (Some(cook), Some(record)) = (&mut self.cook, &kept) {
-                    cook.take(&key, record);
+                let sources = self
+                    .store
+                    .as_mut()
+                    .map(|store| store.sources(&key))
+                    .unwrap_or_default();
+                if sources.is_empty() {
+                    host.job_kept(id, key, None);
+                    return;
                 }
-                host.job_kept(id, key, kept);
+                // Its bytes are read and unpacked on a worker, without one
+                // here.
+                match host.job_task() {
+                    Some(worker) => {
+                        let _ = self.slots[worker as usize].orders.send(Order::Read {
+                            id,
+                            key,
+                            sources,
+                        });
+                    }
+                    None => {
+                        let read = job_cache::read(&sources);
+                        self.answer(host, (id, key), &sources, read);
+                    }
+                }
             }
             JobOrder::Keep { key, output } => {
                 if let Some(cook) = &mut self.cook {
@@ -239,6 +290,26 @@ impl JobPool {
                 }
             }
         }
+    }
+
+    /// Hands `host` the record `key` lookup `id` asked for, as reading it
+    /// from `sources` came to (`read`) and the store counted it; the cook's
+    /// pack takes what it held.
+    fn answer<G: Game>(
+        &mut self,
+        host: &mut GameHost<G>,
+        (id, key): (JobId, String),
+        sources: &[Source],
+        read: Option<(usize, Vec<u8>)>,
+    ) {
+        let kept = self
+            .store
+            .as_mut()
+            .and_then(|store| store.answered(&key, sources, read));
+        if let (Some(cook), Some(record)) = (&mut self.cook, &kept) {
+            cook.take(&key, record);
+        }
+        host.job_kept(id, key, kept);
     }
 
     /// The records the packs it reads hold.
@@ -281,9 +352,10 @@ impl Drop for JobPool {
     }
 }
 
-/// A worker's loop: its orders in turn, and between them a slice of its
-/// most urgent job; reports to `report`.
-fn work(inbox: &Receiver<Order>, report: &Sender<Report>) {
+/// Worker `index`'s loop: its orders in turn (records read for lookups at
+/// once), and between them a slice of its most urgent job; reports to
+/// `report`.
+fn work(index: u32, inbox: &Receiver<Order>, report: &Sender<Reported>) {
     let mut worker = engine_worker::Worker::new();
     loop {
         // Orders first: waiting for one while no job is held.
@@ -299,7 +371,7 @@ fn work(inbox: &Receiver<Order>, report: &Sender<Report>) {
         while let Some(order) = next.take() {
             match order {
                 Order::Share(key, bytes) => {
-                    if let Err(error) = worker.share(&key, &bytes) {
+                    if let Err(error) = worker.share(&key, bytes) {
                         eprintln!("A job worker refused share {key}: {error}");
                     }
                 }
@@ -312,12 +384,22 @@ fn work(inbox: &Receiver<Order>, report: &Sender<Report>) {
                     priority,
                 } => worker.hold(id, kind, input, priority),
                 Order::Cancel(id) => worker.cancel(id),
+                Order::Read { id, key, sources } => {
+                    let read = job_cache::read(&sources);
+                    let _ = report.send(Reported::Read {
+                        worker: index,
+                        id,
+                        key,
+                        sources,
+                        read,
+                    });
+                }
                 Order::Stop => return,
             }
             next = inbox.try_recv().ok();
         }
         if let Some(sliced) = worker.slice() {
-            let _ = report.send(sliced);
+            let _ = report.send(Reported::Job(sliced));
         }
     }
 }

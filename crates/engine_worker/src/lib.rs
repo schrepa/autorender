@@ -1,9 +1,11 @@
 //! The engine's job worker: a small Wasm module hosts run in
 //! Web Workers beside the engine, and natively a thread's. It holds what
-//! the engine shares with its workers (terrain stacks and recipes) and runs
-//! the jobs it hands out, each kind once: terrain tiles, tiles' walk graph
-//! portals, bakes, lighting, bounce transfers, macro colors and tiles'
-//! settled water (`engine_terrain::jobs`), the renderer's static tables
+//! the engine shares with its workers (terrain stacks and recipes, and the
+//! records of settled water tiles' water reads) and runs the jobs it hands
+//! out, each kind once: terrain tiles, tiles' walk graph portals, bakes,
+//! lighting, bounce transfers, macro colors, tiles' parts of settling water
+//! and their water as it settled, and terrains' far pages read for
+//! uploading (`engine_terrain::jobs`), the renderer's static tables
 //! (`engine_tables`) and textures cooked for a device family
 //! ([`engine_textures::COOK_JOB`]), with the code hosts without workers run
 //! in place, so outputs are the same bits. Jobs
@@ -18,6 +20,8 @@
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
 )]
+
+use std::sync::Arc;
 
 use engine_tables::TableWorker;
 use engine_terrain::jobs::TerrainWorker;
@@ -105,8 +109,9 @@ impl Worker {
         Self::default()
     }
 
-    /// Holds `bytes` as `key`, replacing what it held.
-    pub fn share(&mut self, key: &str, bytes: &[u8]) -> Result<(), String> {
+    /// Holds `bytes` as `key`, replacing what it held: natively, the same
+    /// bytes every worker holds.
+    pub fn share(&mut self, key: &str, bytes: impl Into<Arc<[u8]>>) -> Result<(), String> {
         self.terrain.share(key, bytes)
     }
 

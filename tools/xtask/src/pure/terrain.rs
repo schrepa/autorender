@@ -133,16 +133,19 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.check(objects > 0, || "no tile holds objects".into());
 
     // The terrain's lighting from its finest pinned level's tiles, as
-    // engines ask for it.
-    let job = lighting_job(&pyramid, &tiles);
+    // engines ask for it: the worker generates them as their records hold
+    // them, which must give the heights of the tiles above.
+    let job = lighting_job(&pyramid);
     let input = job.input();
     let bytes = worker.run(LightingJob::KIND.name(), &input)?;
+    let (samples, spacing, heights) = level_heights(&pyramid, &tiles);
     let ground = Ground {
-        samples: job.samples,
-        spacing: job.spacing,
-        heights: &job.heights,
+        samples,
+        spacing,
+        heights: &heights,
     };
-    let made = lighting::light(&ground, job.extent.to_array(), job.sky, job.horizons);
+    let extent = pyramid.extent().to_array();
+    let made = lighting::light(&ground, extent, job.sky, job.horizons);
     observed.check(codec::encode(&made) == bytes, || {
         "the lighting job differs from the lighting made in place".into()
     });
@@ -169,7 +172,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     records.push((LightingJob::KIND.name(), bytes));
 
     let surface = (baked.as_ref(), rules.as_ref());
-    let transfer = bounce_transfer(&mut worker, &job, surface, observed)?;
+    let transfer = bounce_transfer(&mut worker, (&job, &ground, extent), surface, observed)?;
     records.push((BounceJob::KIND.name(), transfer));
     // Its macro colors from its recipe, read at its finest pinned level as
     // engines ask for them: no record of their own, the records engines
@@ -430,9 +433,28 @@ fn load(root: &Path) -> Result<Terrain, String> {
         .map_err(|error| error.to_string())
 }
 
-/// The lighting job of `pyramid`'s terrain from `tiles`: its finest pinned
-/// level's samples over the whole terrain, as engines gather them.
-fn lighting_job(pyramid: &Pyramid, tiles: &BTreeMap<TileKey, Tile>) -> LightingJob {
+/// The lighting job of `pyramid`'s terrain over the recipe shared as
+/// "recipe", as engines ask for it: its finest pinned level's tiles, each
+/// itself and under no edits.
+fn lighting_job(pyramid: &Pyramid) -> LightingJob {
+    let level = pyramid.levels().saturating_sub(PINNED);
+    LightingJob {
+        recipe: "recipe".into(),
+        level,
+        tiles: pyramid
+            .level_tiles(level)
+            .map(|key| (key, Vec::new()))
+            .collect(),
+        sky: SKY_TEXELS,
+        horizons: HORIZON_TEXELS,
+    }
+}
+
+/// The finest pinned level's samples of `pyramid`'s terrain over the
+/// whole terrain from `tiles`, the tiles' records: its samples along x and
+/// z, their spacing and their heights, row by row, which the lighting job
+/// must read the same.
+fn level_heights(pyramid: &Pyramid, tiles: &BTreeMap<TileKey, Tile>) -> ([u32; 2], f32, Vec<f32>) {
     let level = pyramid.levels().saturating_sub(PINNED);
     let [tiles_x, tiles_z] = pyramid.tiles(level);
     let quads = TILE_QUADS as usize;
@@ -448,48 +470,33 @@ fn lighting_job(pyramid: &Pyramid, tiles: &BTreeMap<TileKey, Tile>) -> LightingJ
             }
         }
     }
-    LightingJob {
-        samples: [columns as u32, rows as u32],
-        spacing: pyramid.spacing(level),
-        extent: pyramid.extent(),
-        heights: heights.into_boxed_slice(),
-        sky: SKY_TEXELS,
-        horizons: HORIZON_TEXELS,
-    }
+    (
+        [columns as u32, rows as u32],
+        pyramid.spacing(level),
+        heights,
+    )
 }
 
 /// The terrain's bounce transfer from the heights its lighting job `job`
-/// reads, its surface chosen by the recipe's rules over its layers
-/// (`baked` and `rules`, the recipe shared as "recipe"), as engines ask for
-/// it: the job's record, which must equal the transfer made in place and the
-/// job run a slice at a time.
+/// reads (`ground`, over `extent`), its surface chosen by the recipe's
+/// rules over its layers (`baked` and `rules`, the recipe shared as
+/// "recipe"), as engines ask for it: the job's record, which must equal the
+/// transfer made in place and the job run a slice at a time.
 fn bounce_transfer(
     worker: &mut Worker,
-    job: &LightingJob,
+    (job, ground, extent): (&LightingJob, &Ground<'_>, [f32; 2]),
     (baked, rules): (&Layers, &BiomeRules),
     observed: &mut Observations,
 ) -> Result<Vec<u8>, String> {
     let transfer = BounceJob {
         recipe: "recipe".into(),
-        samples: job.samples,
-        spacing: job.spacing,
-        extent: job.extent,
-        heights: job.heights.clone(),
+        level: job.level,
+        tiles: job.tiles.clone(),
         probes: BOUNCE_PROBES,
     };
     let input = transfer.input();
     let bytes = worker.run(BounceJob::KIND.name(), &input)?;
-    let ground = Ground {
-        samples: job.samples,
-        spacing: job.spacing,
-        heights: &job.heights,
-    };
-    let made = bounce::bounce(
-        &ground,
-        job.extent.to_array(),
-        (baked, rules),
-        BOUNCE_PROBES,
-    );
+    let made = bounce::bounce(ground, extent, (baked, rules), BOUNCE_PROBES);
     observed.check(codec::encode(&made) == bytes, || {
         "the bounce job differs from the transfer made in place".into()
     });

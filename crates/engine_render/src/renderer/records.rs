@@ -23,14 +23,23 @@ impl Renderer {
     }
 
     /// Records the renderer asks hosts for since the last call: the layers
-    /// of impostors it would otherwise bake, and terrains' far pages. Hosts
-    /// answer each ([`Self::give_record`]).
+    /// of impostors it would otherwise bake. Hosts answer each
+    /// ([`Self::give_record`]).
     pub fn take_record_wants(&mut self) -> Vec<RecordKey> {
         let mut wants = Vec::new();
         self.impostors.atlas.take_wants(&mut wants);
         self.impostors.placed.take_wants(&mut wants);
-        self.terrain.vt.take_wants(&mut wants);
         wants
+    }
+
+    /// Records the renderer asks hosts for since the last call that a
+    /// worker reads into what it uploads, each with the job reading it:
+    /// terrains' far pages. Hosts answer each with that job's output
+    /// ([`Self::give_record`]), the record's bytes never read here.
+    pub fn take_record_reads(&mut self) -> Vec<(RecordKey, &'static str)> {
+        let mut reads = Vec::new();
+        self.terrain.vt.take_reads(&mut reads);
+        reads
     }
 
     /// Hosts' answer for record `record`, which the renderer asked for

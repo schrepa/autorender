@@ -334,6 +334,29 @@ impl Tile {
         self.water.as_ref()
     }
 
+    /// The tile holding `water` in place of its own: water made over its
+    /// samples as its record holds them, as a job of its settled water
+    /// makes it ([`Tile::steadied`], [`Tile::flowing`]). Its ground and
+    /// objects stay as they are.
+    #[must_use]
+    pub fn holding(&self, water: Option<TileWater>) -> Self {
+        Self {
+            key: self.key,
+            spacing: self.spacing,
+            heights: self.heights.clone(),
+            holes: self.holes.clone(),
+            control: self.control.clone(),
+            river_edges: self.river_edges.clone(),
+            placed: self.placed.clone(),
+            placing: self.placing,
+            water,
+            bounds: self.bounds,
+            patch_bounds: self.patch_bounds.clone(),
+            patch_holes: self.patch_holes,
+            patch_culling: self.patch_culling.clone(),
+        }
+    }
+
     pub fn key(&self) -> TileKey {
         self.key
     }

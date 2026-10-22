@@ -164,7 +164,7 @@ impl Terrains {
             for id in retired.jobs {
                 slots.jobs.cancel(id);
             }
-            released.extend(retired.recipes);
+            released.extend(retired.shares);
         }
         self.colors_gone.extend(retired.textures);
         let mut stats = TerrainStats {
@@ -379,13 +379,13 @@ impl Terrains {
             stats.cached_bytes += state.store.cached_bytes();
             stats.prefetching_tiles += state.prefetched.len() as u32;
             stats.loading_tiles += state.dispatched.len() as u32;
-            // Resident tiles take their settled water.
+            // Resident tiles take their settled water, made on workers.
             if let Some(slots) = slots.as_mut() {
                 settled::follow(
                     state,
                     water,
-                    slots,
-                    &mut self.settling,
+                    (slots, &work),
+                    (&mut self.settling, &mut released),
                     (Vec2::new(local_eye.x, local_eye.z), frame),
                 );
             }
@@ -462,8 +462,8 @@ impl Terrains {
             .sum();
         self.upload_left = work.upload.get();
         // Stacks no terrain's recipe shares any longer leave the workers;
-        // keys named by content leave once
-        // no recipe or stack holds them.
+        // keys named by content, or by the records they hold, leave once
+        // no recipe, stack or terrain's settled water holds them.
         if let Some(slots) = slots.as_mut() {
             let entries = &self.entries;
             self.stacks.retain(|(stack, key)| {
@@ -485,6 +485,7 @@ impl Terrains {
                             .recipe
                             .as_ref()
                             .is_some_and(|recipe| recipe.key == key)
+                            || state.settled.holds_share(&key)
                     });
                 if !held {
                     slots.jobs.unshare(key);

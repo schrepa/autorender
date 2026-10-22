@@ -28,20 +28,23 @@
 //! Settled, its water, averaged over its last steps, becomes what each tile
 //! the region keeps keeps of it ([`SettleStart::finish`]), a
 //! [`SteadyWater`], a record hosts keep and the cook ships: level-0 tiles'
-//! water stands, runs and foams as it says ([`Tile::steadied`]), coarser
-//! tiles' runs and foams as its summary does ([`Tile::flowing`]), and the
-//! window simulated around the camera starts from it, takes its water at
-//! its edges and its rivers' water where they bring it.
+//! water stands, runs and foams as theirs and their neighbors' say
+//! ([`Tile::steadied`]), coarser tiles' runs and foams as the summaries
+//! under them do ([`Tile::flowing`]), each tile's water a job's record of
+//! its own, made on a worker from the records it reads ([`Steadying`]);
+//! and the window simulated around the camera starts from it, takes its
+//! water at its edges and its rivers' water where they bring it.
 
 use std::sync::Arc;
 
 use glam::{IVec2, Vec2};
 
+use engine_math::collections::HashMap;
 use engine_math::{max, min};
 
 use crate::codec::{self, Reader, Writer, record};
 use crate::shallow_water::{self, DRY, UNHELD, velocity};
-use crate::tile_water::{WATER_WIDTH_RANGE, pack, unpack};
+use crate::tile_water::{TileWater, WATER_WIDTH_RANGE, pack, unpack};
 use crate::{Generator, Layers, Pyramid, Stamp, TILE_STRIDE, Tile, TileKey};
 
 /// Meters past its tiles a region's square reaches on each side, within
@@ -229,6 +232,36 @@ impl codec::Codec for SteadyWater {
             summary,
             stats,
         })
+    }
+}
+
+/// What a record of settled water holds before its cells: its tile, the
+/// meters across its cells and its summary, which coarser tiles' water runs
+/// and foams by.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SettledHead {
+    pub key: TileKey,
+    pub cell: f32,
+    pub summary: SteadySummary,
+}
+
+impl SteadyWater {
+    /// The head of the record of settled water `bytes`, read without its
+    /// cells (its tile, its cells' size and its summary), and the bytes it
+    /// takes from the record's first: what workers share for coarser tiles'
+    /// water to read.
+    pub fn head(bytes: &[u8]) -> Result<(SettledHead, usize), codec::CodecError> {
+        let mut input = Reader::new(bytes);
+        let key = input.get()?;
+        let cell: f32 = input.get()?;
+        let _: [i64; 2] = input.get()?;
+        let _: [u32; 2] = input.get()?;
+        let _: Vec<SteadySource> = input.get()?;
+        let summary = input.get()?;
+        if !(cell.is_finite() && cell > 0.0) {
+            return Err(codec::CodecError("invalid settled water"));
+        }
+        Ok((SettledHead { key, cell, summary }, bytes.len() - input.left()))
     }
 }
 
@@ -1480,22 +1513,23 @@ fn around(point: Vec2, spacing: f32) -> [(i64, i64, f32); 4] {
 }
 
 impl Tile {
-    /// This level-0 tile of `pyramid`, its water as settled water stands it
-    /// at its samples: from the settled cells `cell` meters across `cells`
-    /// gives (by their place on the terrain's lattice of cells; `None` where
-    /// no record holds them), each sample takes the surface, velocity and
-    /// foam of the cells around it holding water, blended by their
-    /// nearness, held still where most are lakes'; dry where none holds
-    /// any, and as its own water stood where no record holds the cells
-    /// around it. The width its water packs as and whether a fall's sheet
-    /// runs over it stay its own.
+    /// The water settled water stands at this level-0 tile of `pyramid`'s
+    /// samples: from the settled cells `cell` meters across `cells` gives
+    /// (by their place on the terrain's lattice of cells; `None` where no
+    /// record holds them), each sample takes the surface, velocity and foam
+    /// of the cells around it holding water, blended by their nearness,
+    /// held still where most are lakes'; dry where none holds any, and as
+    /// its own water stood where no record holds the cells around it. The
+    /// width its water packs as and whether a fall's sheet runs over it stay
+    /// its own. Surfaces stand at their steps of the height grid, as records
+    /// hold them; `None` where no water stands on it.
     #[must_use]
     pub fn steadied(
         &self,
         pyramid: &Pyramid,
         cell: f32,
         cells: &dyn Fn(i64, i64) -> Option<SteadyCell>,
-    ) -> Self {
+    ) -> Option<TileWater> {
         let stride = TILE_STRIDE as usize;
         let spacing = self.spacing();
         let origin = pyramid.tile_origin(self.key());
@@ -1551,7 +1585,7 @@ impl Tile {
                 } else {
                     SETTLED_HALF_WIDTH
                 };
-                surface[at] = blend.level / blend.weight;
+                surface[at] = codec::on_grid(blend.level / blend.weight);
                 info[at] = pack(
                     blend.flow(),
                     blend.foam / blend.weight / shallow_water::FOAM_MOST,
@@ -1561,28 +1595,29 @@ impl Tile {
                 );
             }
         }
-        self.clone()
-            .with_water(surface.into_boxed_slice(), info.into_boxed_slice())
+        TileWater::new(
+            surface.into_boxed_slice(),
+            info.into_boxed_slice(),
+            self.heights(),
+        )
     }
 
-    /// This tile of `pyramid`, of a coarser level than 0, its water running
-    /// and foaming as settled water's summaries say ([`SteadySummary`]):
-    /// each sample its own water reaches takes the mean velocity and foam of
-    /// the summaries' squares around it, `squares` giving each by its place
-    /// on the terrain's lattice of squares (`None` where no summary holds
-    /// it), blended by their nearness; still and clear where none of them
-    /// holds water, and as its own water ran where no summary holds the
-    /// squares around it. Its water's surface, lakes, width and falls' sheets
-    /// stay its own.
+    /// The water of this tile of `pyramid`, of a coarser level than 0,
+    /// running and foaming as settled water's summaries say
+    /// ([`SteadySummary`]): each sample its own water reaches takes the mean
+    /// velocity and foam of the summaries' squares around it, `squares`
+    /// giving each by its place on the terrain's lattice of squares (`None`
+    /// where no summary holds it), blended by their nearness; still and
+    /// clear where none of them holds water, and as its own water ran where
+    /// no summary holds the squares around it. Its water's surface, lakes,
+    /// width and falls' sheets stay its own; `None` where it holds none.
     #[must_use]
     pub fn flowing(
         &self,
         pyramid: &Pyramid,
         squares: &dyn Fn(i64, i64) -> Option<SteadySquare>,
-    ) -> Self {
-        let Some(own) = self.water() else {
-            return self.clone();
-        };
+    ) -> Option<TileWater> {
+        let own = self.water()?;
         let stride = TILE_STRIDE as usize;
         let spacing = self.spacing();
         let origin = pyramid.tile_origin(self.key());
@@ -1629,7 +1664,85 @@ impl Tile {
                 info[at] = pack(flow, foam / shallow_water::FOAM_MOST, sheeted, lake, width);
             }
         }
-        self.clone().with_water(surface, info)
+        TileWater::new(surface, info, self.heights())
+    }
+}
+
+/// What a tile's water reads of settled water ([`Steadying`]): records of
+/// level-0 tiles whole, or their summaries, by tile.
+pub(crate) enum SettledReads {
+    Records(Vec<(TileKey, SteadyWater)>),
+    Summaries(HashMap<TileKey, SteadySummary>),
+}
+
+/// Making a tile's water as settled water stands it at its samples (the
+/// job [`crate::jobs::SteadiedJob`]): generating its ground, in steps a
+/// job's budget sizes, reading it back as its record holds it, then
+/// standing on it the water its reads give: a level-0 tile's from records
+/// of cells `cell` meters across ([`Tile::steadied`]), a coarser tile's from
+/// summaries ([`Tile::flowing`]).
+pub(crate) struct Steadying {
+    pyramid: Pyramid,
+    cell: f32,
+    generator: Generator,
+    reads: SettledReads,
+}
+
+impl Steadying {
+    /// Tile `key`'s water over `layers` (with their bakes, under the edits
+    /// reaching its ground) and `pyramid`, from `reads` of cells `cell`
+    /// meters across.
+    pub(crate) fn new(
+        layers: Arc<Layers>,
+        pyramid: Pyramid,
+        key: TileKey,
+        (cell, reads): (f32, SettledReads),
+    ) -> Self {
+        Self {
+            pyramid,
+            cell,
+            generator: Generator::new(layers, &pyramid, key),
+            reads,
+        }
+    }
+
+    /// Works for about `budget` units (a sample generated each): once done,
+    /// the tile's water, `None` within where none stands on it; an error
+    /// where its ground does not generate or read back.
+    pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<Option<TileWater>>, String> {
+        let Some(made) = self.generator.advance(budget) else {
+            if self.generator.failed() {
+                return Err("the ground's heights are invalid".into());
+            }
+            return Ok(None);
+        };
+        // The tile as its record holds it: its water stands on those heights.
+        let tile: Tile =
+            codec::decode(&codec::encode(&made)).map_err(|error| error.to_string())?;
+        let pyramid = &self.pyramid;
+        let water = match &self.reads {
+            SettledReads::Records(records) => {
+                let cell = self.cell;
+                tile.steadied(pyramid, cell, &|i, j| {
+                    let middle = Vec2::new((i as f32 + 0.5) * cell, (j as f32 + 0.5) * cell);
+                    let key = pyramid.tile_at(0, middle)?;
+                    let (_, water) = records.iter().find(|(held, _)| *held == key)?;
+                    water.at(i, j)
+                })
+            }
+            SettledReads::Summaries(summaries) => tile.flowing(pyramid, &|i, j| {
+                let side = i64::from(SUMMARY_SIDE);
+                if i < 0 || j < 0 {
+                    return None;
+                }
+                let x = u16::try_from(i / side).ok()?;
+                let z = u16::try_from(j / side).ok()?;
+                summaries
+                    .get(&TileKey::new(0, x, z))?
+                    .square((i % side) as u32, (j % side) as u32)
+            }),
+        };
+        Ok(Some(water))
     }
 }
 

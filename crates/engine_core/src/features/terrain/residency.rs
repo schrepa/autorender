@@ -196,8 +196,8 @@ impl TerrainState {
         }
     }
 
-    /// Its jobs, recipe and macro colors' textures, for the next frame to
-    /// drop once the state is gone.
+    /// Its jobs, shares (its recipe and its settled water's) and macro
+    /// colors' textures, for the next frame to drop once the state is gone.
     pub(super) fn retire(&self, retired: &mut Retired) {
         retired
             .jobs
@@ -218,8 +218,9 @@ impl TerrainState {
             .jobs
             .extend(self.whole.bounce.job.iter().map(|&(id, _)| id));
         retired
-            .recipes
+            .shares
             .extend(self.recipe.as_ref().map(|recipe| recipe.key.clone()));
+        retired.shares.extend(self.settled.shares());
     }
 
     /// The id renderers key its tiles by: its entity's bits, the top bit
@@ -442,7 +443,7 @@ pub struct Terrains {
     /// Whether the camera's view has loaded whole since terrains arrived.
     pub(super) loaded: bool,
     /// Jobs' share: the stacks shared with them and their keys, and the
-    /// jobs and recipes of terrains gone, to drop.
+    /// jobs and shares of terrains gone, to drop.
     pub(super) stacks: Vec<(Arc<Layers>, String)>,
     pub(super) retired: Retired,
     /// Tiles returned from memory since terrains started;
@@ -469,12 +470,12 @@ pub(super) struct Whole {
     pub(super) colors: MacroColors,
 }
 
-/// The workers' jobs and recipes of terrains gone, and their macro colors'
-/// textures.
+/// The workers' jobs and the keys shared with them of terrains gone (their
+/// recipes and their settled water's), and their macro colors' textures.
 #[derive(Default)]
 pub(super) struct Retired {
     pub(super) jobs: Vec<JobId>,
-    pub(super) recipes: Vec<String>,
+    pub(super) shares: Vec<String>,
     pub(super) textures: Vec<engine_assets::TextureHandle>,
 }
 

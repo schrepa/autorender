@@ -16,8 +16,10 @@
 //! output from the records hosts hold where one has it (the cook's packs,
 //! then what the host kept before, in this session or an earlier one), and
 //! the host keeps what a worker makes. Owners name what they share by its
-//! content ([`content_hash`]), so keys reading shares are the same in every
-//! session. A record no job makes is fetched alone ([`Jobs::fetch`]), and
+//! content ([`content_hash`]) or by the keys of the records it holds, so
+//! keys reading shares are the same in every session. A record no job makes
+//! is fetched alone ([`Jobs::fetch`]), or fetched into a job a worker runs
+//! on its bytes, which its owner takes instead ([`Jobs::fetch_into`]); and
 //! an owner that made one itself hands it to the host to keep
 //! ([`Jobs::keep`]).
 
@@ -252,16 +254,21 @@ pub struct Jobs {
     running: HashSet<JobId>,
     cancels: Vec<JobId>,
     done: HashMap<JobId, Result<Vec<u8>, String>>,
+    // Records fetched into jobs: the job each goes on to, with its
+    // priority, once the host hands its bytes back.
+    reading: HashMap<JobId, (&'static str, u32)>,
     // The host's cache counters: hits, misses, bytes and
     // mismatches.
     cache: [u64; 4],
     // Jobs the host's scheduler holds.
     held: u32,
     // What is shared now, in the order shared: the bytes jobs run in place
-    // read.
+    // read; and how many times what is shared changed.
     shared: Vec<(String, Arc<[u8]>)>,
-    // Where jobs run in place, once one does, and the keys it holds.
-    here: Option<(TerrainWorker, Vec<String>)>,
+    sharing: u64,
+    // Where jobs run in place, once one does, the keys it holds and the
+    // change of what is shared it holds them as of.
+    here: Option<(TerrainWorker, Vec<String>, u64)>,
     stats: JobStats,
     // The latest failed job's message.
     last_failure: Option<String>,
@@ -280,9 +287,11 @@ impl Default for Jobs {
             running: HashSet::default(),
             cancels: Vec::new(),
             done: HashMap::default(),
+            reading: HashMap::default(),
             cache: [0; 4],
             held: 0,
             shared: Vec::new(),
+            sharing: 0,
             here: None,
             stats: JobStats::default(),
             last_failure: None,
@@ -389,6 +398,19 @@ impl Jobs {
         id
     }
 
+    /// Fetches the record `record`, which no job makes, at `priority`, and
+    /// hands its bytes to a worker as the input of job `kind`, which reads
+    /// them into what its owner takes: [`Self::take`] that job's output
+    /// once done, or [`MISSING_RECORD`] where no store or pack holds the
+    /// record. The bytes only pass through here, on to the worker.
+    pub fn fetch_into(&mut self, record: RecordKey, kind: &'static str, priority: u32) -> JobId {
+        let id = self.fetch(record, priority);
+        if self.running.contains(&id) {
+            self.reading.insert(id, (kind, priority));
+        }
+        id
+    }
+
     /// Hands hosts `bytes`, the record `record` its owner made itself, to
     /// keep: a later fetch of it, in this session or another, takes them. A
     /// verifying host compares a record it handed back with the bytes its
@@ -412,6 +434,7 @@ impl Jobs {
     /// Drops job `id`: a worker running it stops, and its output, if any,
     /// is thrown away.
     pub fn cancel(&mut self, id: JobId) {
+        self.reading.remove(&id);
         if self.done.remove(&id).is_some() || !self.running.remove(&id) {
             return;
         }
@@ -427,10 +450,11 @@ impl Jobs {
 
     /// Shares `bytes` with every worker as `key`, replacing what it held:
     /// jobs submitted after read them.
-    pub fn share(&mut self, key: String, bytes: Vec<u8>) {
+    pub fn share(&mut self, key: String, bytes: impl Into<Arc<[u8]>>) {
         let bytes: Arc<[u8]> = bytes.into();
         self.shared.retain(|(shared, _)| *shared != key);
         self.shared.push((key.clone(), bytes.clone()));
+        self.sharing += 1;
         self.shares.push(JobShare::Set { key, bytes });
     }
 
@@ -444,6 +468,7 @@ impl Jobs {
         let before = self.shared.len();
         self.shared.retain(|(shared, _)| *shared != key);
         if self.shared.len() < before {
+            self.sharing += 1;
             self.shares.push(JobShare::Remove { key });
         }
     }
@@ -464,21 +489,26 @@ impl Jobs {
                 return output;
             }
         }
-        let shared = &self.shared;
-        let (worker, held) = self
+        let (shared, sharing) = (&self.shared, self.sharing);
+        let (worker, held, synced) = self
             .here
-            .get_or_insert_with(|| (TerrainWorker::new(), Vec::new()));
-        // It holds what is shared now, in the order shared.
-        let current = |key: &String| shared.iter().any(|(shared, _)| shared == key);
-        for key in held.iter().filter(|key| !current(key)) {
-            worker.unshare(key);
-        }
-        held.retain(current);
-        for (key, bytes) in shared {
-            if !held.contains(key) {
-                worker.share(key, bytes)?;
-                held.push(key.clone());
+            .get_or_insert_with(|| (TerrainWorker::new(), Vec::new(), 0));
+        // It holds what is shared now, in the order shared, taken up once
+        // after what is shared changed.
+        if *synced != sharing {
+            let current: HashSet<&str> = shared.iter().map(|(key, _)| key.as_str()).collect();
+            for key in held.iter().filter(|key| !current.contains(key.as_str())) {
+                worker.unshare(key);
             }
+            held.retain(|key| current.contains(key.as_str()));
+            let holding: HashSet<String> = held.iter().cloned().collect();
+            for (key, bytes) in shared {
+                if !holding.contains(key) {
+                    worker.share(key, Arc::clone(bytes))?;
+                    held.push(key.clone());
+                }
+            }
+            *synced = sharing;
         }
         let _profile = engine_profile::span("cpu", "job_in_place");
         worker.run(kind, input)
@@ -514,10 +544,24 @@ impl Jobs {
     }
 
     /// Hosts: job `id`'s output, or why it failed; ignored for jobs
-    /// cancelled since.
+    /// cancelled since. A record fetched into a job ([`Self::fetch_into`])
+    /// goes on to it, as its input, for workers to run next.
     pub fn complete(&mut self, id: JobId, output: Result<Vec<u8>, String>) {
-        if self.running.remove(&id) {
-            self.finish(id, output);
+        if !self.running.contains(&id) {
+            return;
+        }
+        match (self.reading.remove(&id), output) {
+            (Some((kind, priority)), Ok(input)) => self.requests.push(JobRequest {
+                id,
+                kind,
+                input,
+                priority,
+                record: None,
+            }),
+            (_, output) => {
+                self.running.remove(&id);
+                self.finish(id, output);
+            }
         }
     }
 

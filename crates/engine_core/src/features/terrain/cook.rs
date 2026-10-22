@@ -2,7 +2,8 @@
 //! terrain's bakes, then every tile a camera on it could want, as records
 //! asked for coarsest level first and dropped as they arrive, which the
 //! host keeps for its pack, and where water asks for water, every level-0
-//! tile's settled water its bake's water reaches, over the cook's regions
+//! tile's settled water its bake's water reaches, over the cook's regions,
+//! and every tile's water standing as it settled, each a record of its own
 //! ([`super::settled`]). A terrain's surroundings
 //! cook the tiles within reach of the ground they surround, as a view from
 //! it wants them. Every streaming terrain's lighting and macro colors cook
@@ -65,7 +66,8 @@ impl Terrains {
     /// Cooks every generated terrain within `settings`, asking for records
     /// as `jobs` admits them, the settled water too where `water` asks for
     /// water; says in `cooking` how many are left: a bake under way counts
-    /// one, each tile or tile's water not back yet one, each terrain
+    /// one, each tile, tile's settled water or tile's water standing on it
+    /// not back yet one, each terrain
     /// streaming whose lighting is still asked for or not yet made one, each
     /// terrain (not surroundings) whose bounce transfer is one, and each
     /// terrain whose macro colors are not shown yet one (the records count

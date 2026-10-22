@@ -845,6 +845,7 @@ impl AppHost {
             .is_some_and(engine_core::Jobs::verifying);
         self.renderer.set_records(verifying, loading);
         let wants = self.renderer.take_record_wants();
+        let reads = self.renderer.take_record_reads();
         let made = self.renderer.take_made_records();
         let answers = match world.get_resource_mut::<engine_core::Jobs>() {
             Some(mut jobs) => {
@@ -860,6 +861,10 @@ impl AppHost {
                 for record in wants {
                     asked.push((jobs.fetch(record, priority), record));
                 }
+                // Records a worker reads into what the renderer uploads.
+                for (record, kind) in reads {
+                    asked.push((jobs.fetch_into(record, kind, priority), record));
+                }
                 for (record, bytes, parity) in made {
                     jobs.keep_with(record, bytes, parity);
                 }
@@ -868,7 +873,11 @@ impl AppHost {
             }
             // Without jobs no host holds records: what the renderer asks
             // for bakes.
-            None => wants.into_iter().map(|record| (record, None)).collect(),
+            None => wants
+                .into_iter()
+                .chain(reads.into_iter().map(|(record, _)| record))
+                .map(|record| (record, None))
+                .collect(),
         };
         for (record, bytes) in answers {
             self.renderer.give_record(record, bytes);
