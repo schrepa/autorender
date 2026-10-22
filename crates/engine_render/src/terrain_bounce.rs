@@ -35,11 +35,16 @@ use crate::bindings::BOUNCE;
 use crate::buffers::Growable;
 use crate::cached::{Bound, GroupCache};
 use crate::gpu_layouts::bounce::{BounceFrame, BounceTerrain};
-use crate::gpu_layouts::constants::{BOUNCE_GROUP, BOUNCE_LAYERS};
+use crate::gpu_layouts::constants::BOUNCE_GROUP;
 use crate::shaders::entry::terrain_bounce;
 use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
 use crate::terrain_sky::SkyMaps;
+
+/// Layers of the horizon maps each terrain's bounce light takes: per layer
+/// of probes, the light's mean (red, green, blue) and the sky's share
+/// (alpha), then their gradients along x, y and z.
+pub(crate) const BOUNCE_LAYERS: usize = 4 * engine_core::terrain_data::bounce::LAYERS;
 
 /// The ground's light: radiance, filtered and written.
 const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;

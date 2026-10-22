@@ -167,6 +167,7 @@ pub(crate) fn import(
             alpha_mode,
             alpha_cutoff,
             double_sided: material.double_sided().then_some(true),
+            foliage: None,
             transmission,
             ior,
             thickness,

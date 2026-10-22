@@ -39,11 +39,8 @@ export interface FrameStats {
   dropped_instances: number;
   /** Total simulation time discarded by the fixed-step budget in this session. */
   dropped_seconds: number;
-  /**
-   * Pixels of the view the host asked for that the device's largest
-   * texture left out.
-   */
-  dropped_view_pixels: number;
+  /** Dynamic resolution's scale of the size frames draw at. */
+  dynamic_resolution: DynamicResolutionStats;
   /** Milliseconds the frame spent extracting the render snapshot. */
   extraction_ms: number;
   /** Fixed simulation ticks this frame ran. */
@@ -69,8 +66,10 @@ export interface FrameStats {
   level_of_detail: DetailStats;
   /**
    * Whether terrains have yet to load the camera's view whole, or a
-   * static table the scene wants has yet to arrive, read when the stats
-   * are: hosts keep preparing meanwhile.
+   * record game code's content waits for (its generated meshes and
+   * textures), a static table the scene wants or its pipeline list has
+   * yet to arrive, read when the stats are: hosts keep preparing
+   * meanwhile.
    */
   loading: boolean;
   /** Local lights. */
@@ -107,6 +106,17 @@ export interface FrameStats {
    */
   pipelines_created: number;
   /**
+   * Pipelines the scene's pipeline list created up front, while the
+   * session prepared.
+   */
+  pipelines_listed: number;
+  /**
+   * Pipelines the session created that the scene's pipeline list
+   * lacked, once it arrived: 0 while the list holds every pipeline the
+   * session draws with.
+   */
+  pipelines_unlisted: number;
+  /**
    * GPU-culled frames only: how many GPU-presented frames late the counts
    * read back with the visible count (`instances`, `triangles`,
    * `occlusion_culling`, `subpixel_culling` and `level_of_detail`'s
@@ -136,6 +146,8 @@ export interface FrameStats {
   resident_texture_bytes: number;
   /** Number of asset textures retained on the GPU, excluding renderer white. */
   resident_textures: number;
+  /** The display's size and the size the frame drew at. */
+  resolution: ResolutionStats;
   /** Sun shadows. */
   shadows: ShadowStats;
   /** Milliseconds the frame spent in fixed and variable simulation. */
@@ -173,14 +185,6 @@ export interface FrameStats {
    * texture.
    */
   upload_bytes: number;
-  /** The view's height in physical pixels, as the frame drew it. */
-  view_height: number;
-  /**
-   * The view's width in physical pixels, as the frame drew it: the
-   * host's, unless the device's largest texture holds less, which the
-   * view then fits within at its aspect.
-   */
-  view_width: number;
   /** Virtual geometry. */
   virtual_geometry: VirtualGeometryStats;
   /**
@@ -266,7 +270,10 @@ export interface DetailStats {
   dropped_impostors: number;
   /** Instances drawn as impostors, read back like `lod0_instances`. */
   impostor_instances: number | null;
-  /** Impostors baked and resident. */
+  /**
+   * Impostors resident: loaded from their records, or baked where no
+   * pack or store held them.
+   */
   impostors: number;
   /**
    * GPU-culled frames with levels of detail: instances drawn as their
@@ -299,6 +306,22 @@ export interface Drawn {
   dropped: number;
   /** Items breaking their rules, which no frame draws. */
   invalid: number;
+}
+
+/** Dynamic resolution's scale. */
+export interface DynamicResolutionStats {
+  /**
+   * Whether it scaled this frame: a display frame with dynamic resolution
+   * on.
+   */
+  active: boolean;
+  /** The milliseconds of GPU time frames keep within, while active. */
+  budget_ms: number;
+  /**
+   * The scale the frame drew at on each axis, of the size the resolution
+   * policy and the user's scale give: 1 while inactive.
+   */
+  scale: number;
 }
 
 /** Auto exposure's meter. */
@@ -353,7 +376,10 @@ export interface JobStats {
   cancelled: number;
   /** Jobs completed. */
   completed: number;
-  /** Jobs failed. */
+  /**
+   * Jobs failed. A record fetched alone that no pack or store holds
+   * ([`MISSING_RECORD`]) is no failure: its owner makes it.
+   */
   failed: number;
   /**
    * Jobs the host's scheduler holds: on its workers, or looked up in its
@@ -480,10 +506,52 @@ export interface ProbeStats {
   ready: number;
 }
 
+/**
+ * The frame's sizes: the display's, which the surface or canvas and every
+ * screen-sized target take, and the one it drew at from their top-left
+ * corner, which its last pass upscaled to the display.
+ */
+export interface ResolutionStats {
+  /** The display's height in physical pixels. */
+  display_height: number;
+  /**
+   * The display's width in physical pixels: the host's whole view, unless
+   * the device's largest texture holds less, which the display then fits
+   * within at its aspect.
+   */
+  display_width: number;
+  /**
+   * Pixels of the view the host asked for that the device's largest
+   * texture left out of the display.
+   */
+  dropped_pixels: number;
+  /**
+   * Milliseconds the GPU took over the last frame it timed, from two
+   * timestamps around its work, read back a few frames late; `None`
+   * where the device times no work.
+   */
+  gpu_ms: number | null;
+  /** The height the frame drew at in physical pixels. */
+  render_height: number;
+  /**
+   * The width the frame drew at in physical pixels: the resolution
+   * policy's for the view at the user's scale, within the display, times
+   * dynamic resolution's scale; the display's own for debug views and
+   * exact frames.
+   */
+  render_width: number;
+}
+
 /** The sun's shadow maps. */
 export interface ShadowStats {
   /** Whether the sun cast shadows this frame. */
   active: boolean;
+  /**
+   * Tiles of the near cascades' caches of the objects terrains place
+   * this frame redrew: the strips their windows uncovered, where objects
+   * came or went, or all of a cache whose band moved.
+   */
+  cache_tiles: number;
   /**
    * Indexed draws into the shadow maps, beside the camera pass's
    * `draw_calls`.
@@ -543,6 +611,18 @@ export interface SkyStats {
 /** Terrains. */
 export interface TerrainRenderStats {
   /**
+   * Patches within the camera's frustum it skips as every triangle faces
+   * away from the eye: none of them could show.
+   */
+  back_facing_patches: number;
+  /** The probe columns bounce light relit around the camera this frame. */
+  bounce_probes: number;
+  /**
+   * Terrains whose bounce light relit this frame: every frame, however
+   * the sun and sky stand.
+   */
+  bounced: number;
+  /**
    * Surface materials past the palette's capacity, or whose maps the
    * shared arrays cannot hold (block compressed, or sized unlike the first
    * material's), which show a plain color instead.
@@ -566,6 +646,11 @@ export interface TerrainRenderStats {
   fallback_patches: number;
   /** Tiles the GPU gave control values this frame. */
   gpu_controls: number;
+  /**
+   * Patches within the camera's frustum it skips as nearer ground hides
+   * them from the eye: none of them could show.
+   */
+  hidden_patches: number;
   /** Terrains casting long sun shadows through horizon maps. */
   horizons: number;
   /**
@@ -576,6 +661,11 @@ export interface TerrainRenderStats {
   lighting_uploads: number;
   /** Tiles still loading. */
   loading_tiles: number;
+  /**
+   * Terrains whose macro color maps are here: the tint and growth their
+   * bakes give their ground.
+   */
+  macro_maps: number;
   /** Patches the camera drew. */
   patches: number;
   /**
@@ -584,8 +674,9 @@ export interface TerrainRenderStats {
    */
   placed_far_objects: number;
   /**
-   * Placed objects' impostors baked, which the camera draws far away and
-   * shadow maps cast as cards; counted in `level_of_detail.impostors` too.
+   * Placed objects' impostors resident, which the camera draws far away
+   * and shadow maps cast as cards; counted in `level_of_detail.impostors`
+   * too.
    */
   placed_impostors: number;
   /**
@@ -605,6 +696,11 @@ export interface TerrainRenderStats {
   vt_bakes: number;
   /** Virtual texture pages evicted for others this frame. */
   vt_evictions: number;
+  /**
+   * Of the resident pages, far pages: terrains' coarse mips, the same
+   * whatever the eye, cooked once and pinned in their slots.
+   */
+  vt_far_pages: number;
   /**
    * Virtual texture pages asked for but absent, in the last feedback read
    * back.

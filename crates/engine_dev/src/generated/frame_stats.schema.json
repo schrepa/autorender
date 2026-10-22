@@ -155,7 +155,7 @@
           ]
         },
         "impostors": {
-          "description": "Impostors baked and resident.",
+          "description": "Impostors resident: loaded from their records, or baked where no\npack or store held them.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -227,6 +227,31 @@
         "drawn",
         "dropped",
         "invalid"
+      ],
+      "type": "object"
+    },
+    "DynamicResolutionStats": {
+      "description": "Dynamic resolution's scale.",
+      "properties": {
+        "active": {
+          "description": "Whether it scaled this frame: a display frame with dynamic resolution\non.",
+          "type": "boolean"
+        },
+        "budget_ms": {
+          "description": "The milliseconds of GPU time frames keep within, while active.",
+          "format": "float",
+          "type": "number"
+        },
+        "scale": {
+          "description": "The scale the frame drew at on each axis, of the size the resolution\npolicy and the user's scale give: 1 while inactive.",
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "active",
+        "scale",
+        "budget_ms"
       ],
       "type": "object"
     },
@@ -337,7 +362,7 @@
           "type": "integer"
         },
         "failed": {
-          "description": "Jobs failed.",
+          "description": "Jobs failed. A record fetched alone that no pack or store holds\n([`MISSING_RECORD`]) is no failure: its owner makes it.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -644,12 +669,69 @@
       ],
       "type": "object"
     },
+    "ResolutionStats": {
+      "description": "The frame's sizes: the display's, which the surface or canvas and every\nscreen-sized target take, and the one it drew at from their top-left\ncorner, which its last pass upscaled to the display.",
+      "properties": {
+        "display_height": {
+          "description": "The display's height in physical pixels.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "display_width": {
+          "description": "The display's width in physical pixels: the host's whole view, unless\nthe device's largest texture holds less, which the display then fits\nwithin at its aspect.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped_pixels": {
+          "description": "Pixels of the view the host asked for that the device's largest\ntexture left out of the display.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gpu_ms": {
+          "description": "Milliseconds the GPU took over the last frame it timed, from two\ntimestamps around its work, read back a few frames late; `None`\nwhere the device times no work.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "render_height": {
+          "description": "The height the frame drew at in physical pixels.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "render_width": {
+          "description": "The width the frame drew at in physical pixels: the resolution\npolicy's for the view at the user's scale, within the display, times\ndynamic resolution's scale; the display's own for debug views and\nexact frames.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "display_width",
+        "display_height",
+        "render_width",
+        "render_height",
+        "dropped_pixels"
+      ],
+      "type": "object"
+    },
     "ShadowStats": {
       "description": "The sun's shadow maps.",
       "properties": {
         "active": {
           "description": "Whether the sun cast shadows this frame.",
           "type": "boolean"
+        },
+        "cache_tiles": {
+          "description": "Tiles of the near cascades' caches of the objects terrains place\nthis frame redrew: the strips their windows uncovered, where objects\ncame or went, or all of a cache whose band moved.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "draws": {
           "description": "Indexed draws into the shadow maps, beside the camera pass's\n`draw_calls`.",
@@ -730,6 +812,7 @@
         "kept_redraw",
         "level_tiles",
         "levels_pending",
+        "cache_tiles",
         "sky_maps",
         "sky_drawn"
       ],
@@ -758,6 +841,24 @@
     "TerrainRenderStats": {
       "description": "Terrains.",
       "properties": {
+        "back_facing_patches": {
+          "description": "Patches within the camera's frustum it skips as every triangle faces\naway from the eye: none of them could show.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bounce_probes": {
+          "description": "The probe columns bounce light relit around the camera this frame.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bounced": {
+          "description": "Terrains whose bounce light relit this frame: every frame, however\nthe sun and sky stand.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "dropped_materials": {
           "description": "Surface materials past the palette's capacity, or whose maps the\nshared arrays cannot hold (block compressed, or sized unlike the first\nmaterial's), which show a plain color instead.",
           "format": "uint32",
@@ -794,6 +895,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "hidden_patches": {
+          "description": "Patches within the camera's frustum it skips as nearer ground hides\nthem from the eye: none of them could show.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "horizons": {
           "description": "Terrains casting long sun shadows through horizon maps.",
           "format": "uint32",
@@ -812,6 +919,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "macro_maps": {
+          "description": "Terrains whose macro color maps are here: the tint and growth their\nbakes give their ground.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "patches": {
           "description": "Patches the camera drew.",
           "format": "uint32",
@@ -825,7 +938,7 @@
           "type": "integer"
         },
         "placed_impostors": {
-          "description": "Placed objects' impostors baked, which the camera draws far away and\nshadow maps cast as cards; counted in `level_of_detail.impostors` too.",
+          "description": "Placed objects' impostors resident, which the camera draws far away\nand shadow maps cast as cards; counted in `level_of_detail.impostors`\ntoo.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -872,6 +985,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "vt_far_pages": {
+          "description": "Of the resident pages, far pages: terrains' coarse mips, the same\nwhatever the eye, cooked once and pinned in their slots.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "vt_missing": {
           "description": "Virtual texture pages asked for but absent, in the last feedback read\nback.",
           "format": "uint32",
@@ -895,6 +1014,8 @@
         "patches",
         "triangles",
         "shadow_patches",
+        "back_facing_patches",
+        "hidden_patches",
         "tiles",
         "loading_tiles",
         "gpu_controls",
@@ -903,6 +1024,9 @@
         "horizons",
         "sky_maps",
         "lighting_uploads",
+        "bounced",
+        "bounce_probes",
+        "macro_maps",
         "dropped_materials",
         "vt_slots",
         "vt_pages",
@@ -910,6 +1034,7 @@
         "vt_missing",
         "dropped_vt_pages",
         "vt_evictions",
+        "vt_far_pages",
         "placed_objects",
         "placed_far_objects",
         "placed_impostors",
@@ -1098,11 +1223,9 @@
       "format": "double",
       "type": "number"
     },
-    "dropped_view_pixels": {
-      "description": "Pixels of the view the host asked for that the device's largest\ntexture left out.",
-      "format": "uint64",
-      "minimum": 0,
-      "type": "integer"
+    "dynamic_resolution": {
+      "$ref": "#/$defs/DynamicResolutionStats",
+      "description": "Dynamic resolution's scale of the size frames draw at."
     },
     "extraction_ms": {
       "description": "Milliseconds the frame spent extracting the render snapshot.",
@@ -1146,7 +1269,7 @@
       "description": "Levels of detail and impostors."
     },
     "loading": {
-      "description": "Whether terrains have yet to load the camera's view whole, or a\nstatic table the scene wants has yet to arrive, read when the stats\nare: hosts keep preparing meanwhile.",
+      "description": "Whether terrains have yet to load the camera's view whole, or a\nrecord game code's content waits for (its generated meshes and\ntextures), a static table the scene wants or its pipeline list has\nyet to arrive, read when the stats are: hosts keep preparing\nmeanwhile.",
       "type": "boolean"
     },
     "local_lights": {
@@ -1201,6 +1324,18 @@
     },
     "pipelines_created": {
       "description": "Pipelines this frame created: 0 once everything the scene draws is\ncompiled.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "pipelines_listed": {
+      "description": "Pipelines the scene's pipeline list created up front, while the\nsession prepared.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "pipelines_unlisted": {
+      "description": "Pipelines the session created that the scene's pipeline list\nlacked, once it arrived: 0 while the list holds every pipeline the\nsession draws with.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
@@ -1268,6 +1403,10 @@
       "minimum": 0,
       "type": "integer"
     },
+    "resolution": {
+      "$ref": "#/$defs/ResolutionStats",
+      "description": "The display's size and the size the frame drew at."
+    },
     "shadows": {
       "$ref": "#/$defs/ShadowStats",
       "description": "Sun shadows."
@@ -1330,18 +1469,6 @@
       "minimum": 0,
       "type": "integer"
     },
-    "view_height": {
-      "description": "The view's height in physical pixels, as the frame drew it.",
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
-    "view_width": {
-      "description": "The view's width in physical pixels, as the frame drew it: the\nhost's, unless the device's largest texture holds less, which the\nview then fits within at its aspect.",
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
     "virtual_geometry": {
       "$ref": "#/$defs/VirtualGeometryStats",
       "description": "Virtual geometry."
@@ -1377,10 +1504,11 @@
     "fixed_steps",
     "dropped_seconds",
     "pipelines_compiling",
+    "pipelines_listed",
+    "pipelines_unlisted",
     "loading",
-    "view_width",
-    "view_height",
-    "dropped_view_pixels",
+    "resolution",
+    "dynamic_resolution",
     "jobs",
     "navigation",
     "physics",

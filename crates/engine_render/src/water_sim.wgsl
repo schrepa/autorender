@@ -983,9 +983,9 @@ fn sim_above(q: Square, at: u32, water: vec4<f32>) -> vec4<f32> {
 }
 
 // Where a block's cells held water no lake holds at a step's end, as its
-// first entry of `sim_steps` keeps it: SIM_WET where any did, and the side
+// first entry of `sim_steps` keeps it: SIM_WET_CELLS where any did, and the side
 // bits of the sides along which one did.
-const SIM_WET: u32 = 1u;
+const SIM_WET_CELLS: u32 = 1u;
 const SIM_WET_WEST: u32 = 2u;
 const SIM_WET_EAST: u32 = 4u;
 const SIM_WET_SOUTH: u32 = 8u;
@@ -1024,7 +1024,7 @@ fn sim_churned(
             let inside = at % SIM_BLOCK_CELLS;
             let x = inside % WATER_SIM_GROUP;
             let z = inside / WATER_SIM_GROUP;
-            var sides = SIM_WET;
+            var sides = SIM_WET_CELLS;
             sides |= select(0u, SIM_WET_WEST, x == 0u);
             sides |= select(0u, SIM_WET_EAST, x + 1u == WATER_SIM_GROUP);
             sides |= select(0u, SIM_WET_SOUTH, z == 0u);
@@ -1095,7 +1095,7 @@ fn sim_activity(
     let place = vec2<i32>(sim_place(q, block));
     // Water crosses less than a cell a step: it reaches a block from one
     // beside it along the side they share.
-    var wet = (sim_wet_at(q, place) & SIM_WET) != 0u;
+    var wet = (sim_wet_at(q, place) & SIM_WET_CELLS) != 0u;
     wet = wet || (sim_wet_at(q, place - vec2<i32>(1, 0)) & SIM_WET_EAST) != 0u;
     wet = wet || (sim_wet_at(q, place + vec2<i32>(1, 0)) & SIM_WET_WEST) != 0u;
     wet = wet || (sim_wet_at(q, place - vec2<i32>(0, 1)) & SIM_WET_NORTH) != 0u;

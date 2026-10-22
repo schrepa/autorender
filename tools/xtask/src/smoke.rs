@@ -299,11 +299,7 @@ fn sent(folder: &Path) -> Result<Sent, String> {
 /// settings were inspected.
 fn report_sent(root: &Path, passed: &[&str], everything: bool) -> Result<(), String> {
     let development = engine_dev::schemas::generated()?;
-    let offered: Value = serde_json::from_str(&crate::coverage::coverage(
-        root,
-        &development.summary,
-        &development.frame_stats,
-    )?)
+    let offered: Value = serde_json::from_str(&crate::coverage::coverage(root, &development)?)
     .map_err(|error| format!("the coverage file is not JSON: {error}"))?;
     let section_of: BTreeMap<&str, &str> = crate::coverage::environment_sections()
         .iter()

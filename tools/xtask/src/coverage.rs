@@ -26,7 +26,8 @@ pub fn environment_sections() -> &'static [(&'static str, &'static str)] {
 
 /// The coverage file: each section, inspector and op with the smokes whose
 /// code claims it, as JSON.
-pub fn coverage(root: &Path, protocol: &Value, stats: &Value) -> Result<String, String> {
+pub fn coverage(root: &Path, development: &engine_dev::schemas::Generated) -> Result<String, String> {
+    let (protocol, stats) = (&development.summary, &development.frame_stats);
     let sections = environment_sections();
     let smokes: Vec<(String, Claims)> = crate::smoke::scripts(root)?
         .into_iter()
@@ -43,7 +44,9 @@ pub fn coverage(root: &Path, protocol: &Value, stats: &Value) -> Result<String, 
     let reported = |key: &str| stats["properties"].get(key).is_some();
     // The protocol's own description of its types.
     let mut engine = engine::Engine::default();
-    let tools = engine_dev::DevTools::default();
+    // The inspectors as this generation describes them, not as the build
+    // running it last generated them.
+    let tools = engine_dev::DevTools::with_schemas(&development.inspectors);
     let described: Value = serde_json::from_str(&tools.execute(
         &mut engine,
         engine_dev::Context::default(),
@@ -94,11 +97,7 @@ pub fn coverage(root: &Path, protocol: &Value, stats: &Value) -> Result<String, 
 /// protocol op: what the engine offers agents is exercised.
 pub fn check(root: &Path) -> Result<(), String> {
     let development = engine_dev::schemas::generated()?;
-    let coverage: Value = serde_json::from_str(&coverage(
-        root,
-        &development.summary,
-        &development.frame_stats,
-    )?)
+    let coverage: Value = serde_json::from_str(&coverage(root, &development)?)
     .expect("coverage is JSON");
     let mut unchecked = Vec::new();
     for (list, key) in [

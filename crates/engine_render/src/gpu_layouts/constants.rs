@@ -160,10 +160,6 @@ gpu_consts! {
     pub(crate) const HORIZON_RECORDS: usize = 256 => ["HORIZON_RECORDS"];
 
     // crate::terrain_bounce
-    /// Layers of the horizon maps each terrain's bounce light takes: per
-    /// layer of probes, the light's mean (red, green, blue) and the sky's
-    /// share (alpha), then their gradients along x, y and z.
-    pub(crate) const BOUNCE_LAYERS: usize = 4 * engine_core::terrain_data::bounce::LAYERS => ["BOUNCE_LAYERS"];
     /// Columns at a window's edge across which bounce light hands over to
     /// the far field's estimate past it.
     pub(crate) const BOUNCE_FADE: f32 = 8.0 => ["BOUNCE_FADE"];
@@ -307,15 +303,16 @@ gpu_consts! {
 
     // crate::gpu_data::Variant: the bits of a material's variant passes
     // drawn rarely read from its uniform.
-    pub(crate) const VARIANT_MAPS: u16 = 1 => ["VARIANT_MAPS" in SHADER];
-    pub(crate) const VARIANT_NORMAL_MAP: u16 = 2 => ["VARIANT_NORMAL_MAP" in SHADER];
-    pub(crate) const VARIANT_DOUBLE_SIDED: u16 = 8 => ["VARIANT_DOUBLE_SIDED" in SHADER];
-    pub(crate) const VARIANT_METALLIC_ROUGHNESS_MAP: u16 = 128 => ["VARIANT_METALLIC_ROUGHNESS_MAP" in SHADER];
-    pub(crate) const VARIANT_OCCLUSION_MAP: u16 = 256 => ["VARIANT_OCCLUSION_MAP" in SHADER];
-    pub(crate) const VARIANT_EMISSIVE_MAP: u16 = 512 => ["VARIANT_EMISSIVE_MAP" in SHADER];
-    pub(crate) const VARIANT_PACKED_OCCLUSION: u16 = 1024 => ["VARIANT_PACKED_OCCLUSION" in SHADER];
-    pub(crate) const VARIANT_WORLD_MAPPING: u16 = 4096 => ["VARIANT_WORLD_MAPPING" in SHADER];
-    pub(crate) const VARIANT_TOP_LAYER: u16 = 8192 => ["VARIANT_TOP_LAYER" in SHADER];
+    pub(crate) const VARIANT_MAPS: u32 = 1 => ["VARIANT_MAPS" in SHADER];
+    pub(crate) const VARIANT_NORMAL_MAP: u32 = 2 => ["VARIANT_NORMAL_MAP" in SHADER];
+    pub(crate) const VARIANT_DOUBLE_SIDED: u32 = 8 => ["VARIANT_DOUBLE_SIDED" in SHADER];
+    pub(crate) const VARIANT_METALLIC_ROUGHNESS_MAP: u32 = 128 => ["VARIANT_METALLIC_ROUGHNESS_MAP" in SHADER];
+    pub(crate) const VARIANT_OCCLUSION_MAP: u32 = 256 => ["VARIANT_OCCLUSION_MAP" in SHADER];
+    pub(crate) const VARIANT_EMISSIVE_MAP: u32 = 512 => ["VARIANT_EMISSIVE_MAP" in SHADER];
+    pub(crate) const VARIANT_PACKED_OCCLUSION: u32 = 1024 => ["VARIANT_PACKED_OCCLUSION" in SHADER];
+    pub(crate) const VARIANT_WORLD_MAPPING: u32 = 4096 => ["VARIANT_WORLD_MAPPING" in SHADER];
+    pub(crate) const VARIANT_TOP_LAYER: u32 = 8192 => ["VARIANT_TOP_LAYER" in SHADER];
+    pub(crate) const VARIANT_FOLIAGE: u32 = 65536 => ["VARIANT_FOLIAGE" in SHADER];
 
     // crate::probes
     /// Words of an entry of the reflection probes' grid lists.

@@ -310,6 +310,7 @@ pub struct Material {
     emissive_texture: Option<TextureRef>,
     alpha_mode: AlphaMode,
     double_sided: bool,
+    foliage: bool,
     transmission: Transmission,
     world_tiling: Option<f32>,
     top: Option<TopLayer>,
@@ -358,6 +359,7 @@ impl Material {
             emissive_texture: None,
             alpha_mode: AlphaMode::Opaque,
             double_sided: false,
+            foliage: false,
             transmission: Transmission::NONE,
             world_tiling: None,
             top: None,
@@ -596,6 +598,16 @@ impl Material {
         self
     }
 
+    /// This material shaded as foliage (`foliage`): its green read as leaf,
+    /// needle or blade, which the sun lights through, crowns let light
+    /// into and each plant tints, whatever its alpha mode. Masked materials
+    /// shade as foliage either way.
+    #[must_use]
+    pub fn with_foliage(mut self, foliage: bool) -> Self {
+        self.foliage = foliage;
+        self
+    }
+
     pub fn color(&self) -> [f32; 4] {
         self.color
     }
@@ -643,6 +655,11 @@ impl Material {
 
     pub fn is_double_sided(&self) -> bool {
         self.double_sided
+    }
+
+    /// Whether this material shades as foliage ([`Material::with_foliage`]).
+    pub fn is_foliage(&self) -> bool {
+        self.foliage
     }
 
     /// Every texture map, in the order base color, metallic-roughness,
@@ -716,6 +733,7 @@ impl Material {
                 AlphaMode::Blend => 2,
             },
             double_sided: self.double_sided,
+            foliage: self.foliage,
         })
     }
 }
@@ -726,13 +744,15 @@ type BoundMap = (TextureHandle, Sampler, [u32; 5], u32);
 
 /// A material's maps and map parameters ([`Material::binding`]): its
 /// textures with their samplers and transforms, normal scale, occlusion
-/// strength, emissive color, alpha mode, transmission and sides.
+/// strength, emissive color, alpha mode, transmission, sides and whether
+/// it shades as foliage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MaterialBinding {
     maps: [Option<BoundMap>; 5],
     parameters: [u32; 9],
     alpha: u8,
     double_sided: bool,
+    foliage: bool,
 }
 
 fn checked(texture: TextureRef) -> Result<TextureRef, AssetError> {

@@ -544,7 +544,7 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     }
     point.roughness = max(roughness, 0.03);
     point.alpha = point.roughness * point.roughness;
-    if ALPHA_MASK {
+    if ALPHA_MASK || material_flag(VARIANT_FOLIAGE, FOLIAGE) {
         point.leaf = leafiness(point.albedo);
         point.crown = point.leaf;
         point.albedo *= plant_tint(fragment_plant, point.leaf);

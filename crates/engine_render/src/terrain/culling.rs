@@ -23,7 +23,7 @@ use engine_core::glam::Vec3;
 use engine_core::math::{max, min};
 
 /// Azimuth bins around the eye.
-const BINS: usize = 1024;
+const AZIMUTH_BINS: usize = 1024;
 /// Meters a floor is taken lower, and a patch's top higher, than they are:
 /// what rounding and the vertex stage's arithmetic may move them by.
 const MARGIN: f32 = 0.05;
@@ -94,7 +94,7 @@ impl Horizon {
         self.order
             .sort_unstable_by(|&a, &b| reaches[a].0.total_cmp(&reaches[b].0).then(a.cmp(&b)));
         self.bins.clear();
-        self.bins.resize(BINS, f32::NEG_INFINITY);
+        self.bins.resize(AZIMUTH_BINS, f32::NEG_INFINITY);
         self.waiting.clear();
         for &index in &self.order {
             let (near, far) = self.reaches[index];
@@ -110,7 +110,7 @@ impl Horizon {
                 let top = patch.max.y + MARGIN;
                 let rise = if top >= 0.0 { top / near } else { top / far };
                 let (first, last) = span(patch.min, patch.max);
-                hidden[index] = touched(first, last).all(|bin| self.bins[bin % BINS] > rise);
+                hidden[index] = touched(first, last).all(|bin| self.bins[bin % AZIMUTH_BINS] > rise);
             }
             if !patch.holes {
                 for quarter in 0..4 {
@@ -152,7 +152,7 @@ fn block(bins: &mut [f32], patch: &Seen, quarter: usize) {
     };
     let (first, last) = span(low, high);
     for bin in covered(first, last) {
-        let held = &mut bins[bin % BINS];
+        let held = &mut bins[bin % AZIMUTH_BINS];
         *held = max(*held, rise);
     }
 }
@@ -203,12 +203,12 @@ fn turn(x: f32, z: f32) -> f32 {
 
 /// The bins (unwrapped) azimuths from `first` to `last` fall in.
 fn touched(first: f32, last: f32) -> std::ops::RangeInclusive<usize> {
-    let width = BINS as f32 / 4.0;
+    let width = AZIMUTH_BINS as f32 / 4.0;
     (first * width) as usize..=(last * width) as usize
 }
 
 /// The bins (unwrapped) all of whose azimuths lie from `first` to `last`.
 fn covered(first: f32, last: f32) -> Range<usize> {
-    let width = BINS as f32 / 4.0;
+    let width = AZIMUTH_BINS as f32 / 4.0;
     (first * width).ceil() as usize..(last * width).floor() as usize
 }

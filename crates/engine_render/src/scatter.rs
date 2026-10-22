@@ -147,8 +147,6 @@ pub(crate) struct ScatterPass {
     // and whether slots were written since, undoing it.
     snapped: Option<(SnapKey, u64, Vec<TerrainInfo>, Vec3)>,
     slots_written: bool,
-    // Advances when objects' poses or records change.
-    version: u64,
     frame: wgpu::Buffer,
     views: Growable,
     records: Growable,
@@ -278,7 +276,6 @@ impl ScatterPass {
             snapping: false,
             snapped: None,
             slots_written: false,
-            version: 0,
             terrains_generation: 0,
             frame: crate::buffers::uniform(
                 device,
@@ -501,7 +498,6 @@ impl ScatterPass {
             .map(|range| range.start as u32..range.end as u32);
         if let Some(range) = range.filter(|range| !range.is_empty()) {
             self.slots_written = true;
-            self.version += 1;
             let write = |buffer: &wgpu::Buffer, stride: usize, bytes: &[u8]| {
                 queue.write_buffer(buffer, (range.start * stride) as u64, bytes);
             };
@@ -798,7 +794,7 @@ impl ScatterPass {
             });
         if unchanged && !self.slots_written {
             // The eye moving only moves objects up or down as the drawn
-            // ground's levels morph under them: no new version.
+            // ground's levels morph under them.
             match &mut self.snapped {
                 Some((.., seen)) if *seen != eye => *seen = eye,
                 _ => return,
@@ -806,7 +802,6 @@ impl ScatterPass {
         } else {
             self.snapped = Some((key, sources.revision, sources.terrains.to_vec(), eye));
             self.slots_written = false;
-            self.version += 1;
         }
         if self.snap_group.stale(&key) {
             let group = crate::pipelines::group(
@@ -835,12 +830,6 @@ impl ScatterPass {
     /// Slots the culling spans, live or dead.
     pub(crate) fn objects(&self) -> u32 {
         self.objects
-    }
-
-    /// A version advancing whenever objects' poses or records change:
-    /// written, or set on the terrain.
-    pub(crate) fn version(&self) -> u64 {
-        self.version
     }
 
     /// The objects' records and poses, and a generation advancing when the

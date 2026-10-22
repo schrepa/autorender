@@ -115,11 +115,6 @@ export interface StressConfig {
   bodies: number;
   /** Colliders, at most one per renderable. */
   colliders: number;
-  /**
-   * Metro textures as BC7 blocks with their mip chains,
-   * for devices with `texture-compression-bc`; RGBA8 otherwise.
-   */
-  compressed_textures: boolean;
   /** Whether frustum culling runs. */
   culling: boolean;
   /** Whether colliders gather in dense clusters past pair budgets. */
@@ -230,8 +225,7 @@ export const STRESS_CATALOG = {
         "mesh_variety": 32,
         "textured": true,
         "culling": true,
-        "scene": "field",
-        "compressed_textures": false
+        "scene": "field"
       }
     },
     {
@@ -253,8 +247,7 @@ export const STRESS_CATALOG = {
         "mesh_variety": 64,
         "textured": true,
         "culling": true,
-        "scene": "city",
-        "compressed_textures": false
+        "scene": "city"
       }
     },
     {
@@ -276,8 +269,7 @@ export const STRESS_CATALOG = {
         "mesh_variety": 64,
         "textured": true,
         "culling": true,
-        "scene": "metro",
-        "compressed_textures": true
+        "scene": "metro"
       }
     },
     {
@@ -299,8 +291,7 @@ export const STRESS_CATALOG = {
         "mesh_variety": 8,
         "textured": true,
         "culling": true,
-        "scene": "dense",
-        "compressed_textures": false
+        "scene": "dense"
       }
     },
     {
@@ -322,8 +313,7 @@ export const STRESS_CATALOG = {
         "mesh_variety": 32,
         "textured": true,
         "culling": true,
-        "scene": "highlands",
-        "compressed_textures": false
+        "scene": "highlands"
       }
     },
     {
@@ -345,8 +335,7 @@ export const STRESS_CATALOG = {
         "mesh_variety": 8,
         "textured": true,
         "culling": true,
-        "scene": "field",
-        "compressed_textures": false
+        "scene": "field"
       }
     },
     {
@@ -368,8 +357,7 @@ export const STRESS_CATALOG = {
         "mesh_variety": 1,
         "textured": false,
         "culling": true,
-        "scene": "field",
-        "compressed_textures": false
+        "scene": "field"
       }
     },
     {
@@ -391,8 +379,7 @@ export const STRESS_CATALOG = {
         "mesh_variety": 8,
         "textured": false,
         "culling": true,
-        "scene": "field",
-        "compressed_textures": false
+        "scene": "field"
       }
     },
     {
@@ -414,8 +401,7 @@ export const STRESS_CATALOG = {
         "mesh_variety": 8,
         "textured": true,
         "culling": true,
-        "scene": "field",
-        "compressed_textures": false
+        "scene": "field"
       }
     }
   ],

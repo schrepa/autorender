@@ -75,6 +75,11 @@ pub struct SceneMaterial {
     /// Draw back faces too, lit from their own side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub double_sided: Option<bool>,
+    /// Shade as foliage whatever the alpha mode: green reads as leaf,
+    /// needle or blade, which the sun lights through and each plant tints.
+    /// Masked materials shade as foliage either way; default false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foliage: Option<bool>,
     /// The share of light passing through the surface instead of
     /// diffusing off it, in `[0, 1]`, tinted by its color (
     /// glTF `KHR_materials_transmission`). Transmissive materials draw in
@@ -359,6 +364,7 @@ impl SceneMaterial {
             alpha_mode: Some(alpha_mode),
             alpha_cutoff,
             double_sided: Some(material.is_double_sided()),
+            foliage: Some(material.is_foliage()),
             transmission: Some(transmission.factor),
             ior: Some(transmission.ior),
             thickness: Some(transmission.thickness),
@@ -454,6 +460,9 @@ impl SceneMaterial {
         }
         if let Some(double_sided) = self.double_sided {
             material = material.with_double_sided(double_sided);
+        }
+        if let Some(foliage) = self.foliage {
+            material = material.with_foliage(foliage);
         }
         if let Some(tiling) = self.world_tiling {
             material = material

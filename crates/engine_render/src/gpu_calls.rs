@@ -61,8 +61,9 @@ impl Queue {
         self.submission.settle();
     }
 
-    /// Submits work the host asks for between frames, after the work
-    /// handed over.
+    /// Submits work the native host asks for between frames, after the
+    /// work handed over.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn submit(
         &self,
         buffers: impl IntoIterator<Item = wgpu::CommandBuffer>,

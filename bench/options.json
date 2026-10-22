@@ -143,6 +143,16 @@
         "detail"
       ],
       "what": "the debug view frames show in place of the shaded image, over the scene's"
+    },
+    {
+      "default": "host",
+      "name": "dynamic-resolution",
+      "values": [
+        "host",
+        "on",
+        "off"
+      ],
+      "what": "dynamic resolution of display frames, over the host's choice: on for play in a window or a page, off offscreen and in measured runs"
     }
   ]
 }

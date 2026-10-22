@@ -483,6 +483,7 @@
         "gpu-presentation",
         "host-parity",
         "lod",
+        "native",
         "physics",
         "streaming",
         "surfaces",
@@ -1068,6 +1069,26 @@
       "smokes": [
         "native",
         "taa"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Resolution",
+      "section": "resolution",
+      "smokes": [
+        "agent",
+        "debug-view",
+        "native",
+        "terrain-surface",
+        "terrain-water-sky"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "DynamicResolution",
+      "section": "dynamic_resolution",
+      "smokes": [
+        "native"
       ],
       "stats": true
     },

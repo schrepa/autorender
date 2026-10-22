@@ -97,7 +97,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         ("web/src/generated/errors.ts".to_owned(), error_codes()),
         (
             "web/src/generated/coverage.json".to_owned(),
-            crate::coverage::coverage(root, &development.summary, stats)?,
+            crate::coverage::coverage(root, &development)?,
         ),
     ]);
     for client in crate::process::clients()

@@ -251,7 +251,7 @@ fn list(view: u32, record: Record, group: Group, level: u32, entry: u32) {
 // Appends object `id` of `record`'s draw group `group` to shadow map
 // view `view`'s casters: its coarsest level, counted in that level's draw.
 // A list reaching past what the IDs' binding holds leaves it out, counted.
-fn cast(view: u32, record: Record, group: Group, id: u32) {
+fn list_caster(view: u32, record: Record, group: Group, id: u32) {
     let start = list_start(view) + group.casters;
     if start + group.count > arrayLength(&ids) {
         left_out();
@@ -433,6 +433,6 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
             card(view, id.x, group.record);
             continue;
         }
-        cast(view, record, group, id.x);
+        list_caster(view, record, group, id.x);
     }
 }

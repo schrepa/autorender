@@ -21,6 +21,9 @@ pub struct Generated {
     pub summary: Value,
     /// The schema of what a frame observed ([`engine_core::FrameStats`]).
     pub frame_stats: Value,
+    /// The inspectors' schemas, as `inspectors.json` holds them: what
+    /// tooling built from this generation describes inspectors by.
+    pub inspectors: Value,
 }
 
 /// The schema of every development reply ([`crate::Reply`]), which the
@@ -245,6 +248,7 @@ pub const {name}: [&str; {}] = {:?};
         files,
         summary,
         frame_stats: schemas["FrameStats"].clone(),
+        inspectors: schemas,
     })
 }
 
@@ -420,7 +424,7 @@ fn frame_stats(problems: &mut Vec<String>) -> Value {
 /// that an inspector may take: a probe registered under each must be
 /// refused as reserved.
 fn reserved_inspectors(problems: &mut Vec<String>) {
-    let mut tools = crate::DevTools::default();
+    let mut tools = crate::DevTools::bare();
     for name in crate::reserved_names() {
         let probe = crate::InspectorDescriptor::new(name, "a probe", json!({"type": "object"}));
         match tools.register_resource::<engine_core::FixedTime>(probe, |_| Value::Null) {

@@ -1131,6 +1131,12 @@ export interface TerrainStats {
    */
   baking: number;
   /**
+   * Terrains whose bounce transfer is here, and those whose transfer is
+   * asked for: the camera's view waits for it, as for their lighting.
+   */
+  bounced: number;
+  bouncing: number;
+  /**
    * Bridges terrains' roads span, tunnels they bore,
    * and waterfalls their rivers drop over.
    */
@@ -1142,6 +1148,13 @@ export interface TerrainStats {
    * and tiles loading into memory for places games name.
    */
   cached_tiles: number;
+  /**
+   * Terrains whose macro colors are here (the tint and growth their
+   * bakes give their ground), and those asking for them: until they
+   * arrive their ground shows its materials' own colors.
+   */
+  colored: number;
+  coloring: number;
   /** Wanted tiles beyond the tile budget or the device's capacity. */
   dropped_tiles: number;
   fallback_patches: number;
@@ -1180,6 +1193,13 @@ export interface TerrainStats {
    * water was made from other rivers still waiting their turn.
    */
   rewatered_tiles: number;
+  /**
+   * Records of level-0 tiles' settled water arrived, whose summaries
+   * coarser tiles take their flow and foam from (resident level-0 tiles
+   * take their water from those held whole), and those asked for.
+   */
+  settled_records: number;
+  settling_records: number;
   stale_water_tiles: number;
   surroundings_patches: number;
   /** Of the resident tiles and patches, those of terrains' surroundings. */

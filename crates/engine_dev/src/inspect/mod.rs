@@ -191,21 +191,36 @@ pub struct DevTools {
     pub(crate) features: BTreeMap<String, Feature>,
 }
 
+impl DevTools {
+    /// Tools with no inspector registered: what the schema generator checks
+    /// names against before the schemas the built-in inspectors read exist.
+    pub(crate) fn bare() -> Self {
+        Self {
+            inspectors: BTreeMap::new(),
+            builtins: None,
+            features: BTreeMap::new(),
+        }
+    }
+
+    /// Tools with the built-in inspectors described by `schemas`, the
+    /// inspectors' generated schemas: the compiled-in ones for sessions,
+    /// those a generator just made for the tooling it writes from them.
+    pub fn with_schemas(schemas: &Value) -> Self {
+        let mut tools = Self::bare();
+        tools.register_poses(schemas);
+        tools.register_components(schemas);
+        tools.register_environment(schemas);
+        crate::features::register(&mut tools, schemas);
+        tools.builtins = Some(tools.inspectors.len());
+        tools
+    }
+}
+
 impl Default for DevTools {
     fn default() -> Self {
         let schemas: Value = serde_json::from_str(include_str!("../generated/inspectors.json"))
             .expect("generated schemas are valid JSON");
-        let mut tools = Self {
-            inspectors: BTreeMap::new(),
-            builtins: None,
-            features: BTreeMap::new(),
-        };
-        tools.register_poses(&schemas);
-        tools.register_components(&schemas);
-        tools.register_environment(&schemas);
-        crate::features::register(&mut tools, &schemas);
-        tools.builtins = Some(tools.inspectors.len());
-        tools
+        Self::with_schemas(&schemas)
     }
 }
 

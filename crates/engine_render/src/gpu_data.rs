@@ -526,45 +526,48 @@ pub(crate) fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
 /// plain opaque base color textures use [`Variant::BASIC`], the shading of
 /// every material before glTF maps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub(crate) struct Variant(u16);
+pub(crate) struct Variant(u32);
 
 impl Variant {
     pub(crate) const BASIC: Self = Self(0);
-    const MAPS: u16 = constants::VARIANT_MAPS;
-    const NORMAL_MAP: u16 = constants::VARIANT_NORMAL_MAP;
-    const ALPHA_MASK: u16 = 4;
-    const DOUBLE_SIDED: u16 = constants::VARIANT_DOUBLE_SIDED;
+    const MAPS: u32 = constants::VARIANT_MAPS;
+    const NORMAL_MAP: u32 = constants::VARIANT_NORMAL_MAP;
+    const ALPHA_MASK: u32 = 4;
+    const DOUBLE_SIDED: u32 = constants::VARIANT_DOUBLE_SIDED;
     // Meshes with a second vertex stream: extended entry
     // points rather than a constant.
-    const EXTENDED: u16 = 16;
+    const EXTENDED: u32 = 16;
     // Skinned slots' meshes: skinned entry points, which
     // read the second stream and a skin stream.
-    const SKINNED: u16 = 32;
+    const SKINNED: u32 = 32;
     // Transmissive materials: glass shading in the
     // transparent pass.
-    const TRANSMISSION: u16 = 64;
+    const TRANSMISSION: u32 = 64;
     // Maps a material with maps has: the others are not sampled, as the
     // white texel they would read changes nothing. Occlusion packed in the
     // metallic-roughness texture's red (the same texture, sampler, transform
     // and coordinates) is read from its sample.
-    const METALLIC_ROUGHNESS_MAP: u16 = constants::VARIANT_METALLIC_ROUGHNESS_MAP;
-    const OCCLUSION_MAP: u16 = constants::VARIANT_OCCLUSION_MAP;
-    const EMISSIVE_MAP: u16 = constants::VARIANT_EMISSIVE_MAP;
-    const PACKED_OCCLUSION: u16 = constants::VARIANT_PACKED_OCCLUSION;
+    const METALLIC_ROUGHNESS_MAP: u32 = constants::VARIANT_METALLIC_ROUGHNESS_MAP;
+    const OCCLUSION_MAP: u32 = constants::VARIANT_OCCLUSION_MAP;
+    const EMISSIVE_MAP: u32 = constants::VARIANT_EMISSIVE_MAP;
+    const PACKED_OCCLUSION: u32 = constants::VARIANT_PACKED_OCCLUSION;
     // Passes drawn rarely read the map bits from the
     // material uniform: their pipelines key on pipeline state alone.
-    const UBER: u16 = 2048;
+    const UBER: u32 = 2048;
     // Maps laid from the world's axes, and a layer on faces turned up.
-    const WORLD_MAPPING: u16 = constants::VARIANT_WORLD_MAPPING;
-    const TOP_LAYER: u16 = constants::VARIANT_TOP_LAYER;
+    const WORLD_MAPPING: u32 = constants::VARIANT_WORLD_MAPPING;
+    const TOP_LAYER: u32 = constants::VARIANT_TOP_LAYER;
     // Placed objects whose bases blend into the ground: their slot
     // vertex stages pass their slots, whose grounds and poses their
     // fragments read. A draw's, not a material's.
-    const GROUNDING: u16 = 16384;
+    const GROUNDING: u32 = 16384;
     // Placed objects fading between how the camera shows them:
     // their lists' entries carry their fades, which their pixels
     // dither by. A draw's, not a material's.
-    const FADING: u16 = 32768;
+    const FADING: u32 = 32768;
+    // Foliage shading on materials that are not masked, which masked ones
+    // have anyway.
+    const FOLIAGE: u32 = constants::VARIANT_FOLIAGE;
 
     pub(crate) fn of(material: &Material) -> Self {
         let mode = material.alpha_mode();
@@ -613,6 +616,9 @@ impl Variant {
         if material.top_layer().is_some() {
             bits |= Self::TOP_LAYER;
         }
+        if material.is_foliage() {
+            bits |= Self::FOLIAGE;
+        }
         Self(bits)
     }
 
@@ -630,13 +636,13 @@ impl Variant {
 
     /// The bits the material uniform carries (`volume.w`).
     pub(crate) fn bits(self) -> u32 {
-        u32::from(self.0)
+        self.0
     }
 
     /// Override constants: fragment stages read them all, slot vertex
     /// stages GROUNDING and FADE_LIST.
-    pub(crate) fn constants(self) -> [(&'static str, f64); 14] {
-        let set = |bit: u16| if self.0 & bit != 0 { 1.0 } else { 0.0 };
+    pub(crate) fn constants(self) -> [(&'static str, f64); 15] {
+        let set = |bit: u32| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("WORLD_MAPPING", set(Self::WORLD_MAPPING)),
             ("TOP_LAYER", set(Self::TOP_LAYER)),
@@ -652,6 +658,7 @@ impl Variant {
             ("EMISSIVE_MAP", set(Self::EMISSIVE_MAP)),
             ("PACKED_OCCLUSION", set(Self::PACKED_OCCLUSION)),
             ("UBER_MATERIALS", set(Self::UBER)),
+            ("FOLIAGE", set(Self::FOLIAGE)),
         ]
     }
 

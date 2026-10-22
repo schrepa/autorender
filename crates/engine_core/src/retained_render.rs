@@ -53,7 +53,7 @@ static NEXT_STREAM: AtomicU64 = AtomicU64::new(1);
 /// What places a material's objects among draws besides its binding's
 /// contents: its pass, alpha mode, sides and transmission. A replacement
 /// that keeps it keeps its objects' draw keys.
-fn draw_class(material: &Material) -> (bool, u8, bool, bool) {
+fn draw_class(material: &Material) -> (bool, u8, bool, bool, bool) {
     (
         material.is_transparent(),
         match material.alpha_mode() {
@@ -63,6 +63,7 @@ fn draw_class(material: &Material) -> (bool, u8, bool, bool) {
         },
         material.is_double_sided(),
         material.transmission().factor > 0.0,
+        material.is_foliage(),
     )
 }
 

@@ -68,6 +68,12 @@ export interface Runtime {
   set_occlusion_culling(enabled: boolean): void;
   /** Sub-pixel culling of GPU-presented frames, over the world's setting in this and later engines. */
   set_subpixel_culling(enabled: boolean): void;
+  /** The canvas's device pixels per CSS pixel, which the resolution policy sizes ordinary frames by (`engine::host::render_size`): the canvas takes its element's whole size in device pixels, and frames draw within it. */
+  set_pixel_ratio(ratio: number): void;
+  /** The user's resolution `scale` of ordinary frames, over the world's in this and later engines. */
+  set_resolution_scale(scale: number): void;
+  /** Dynamic resolution of ordinary frames, over the world's setting in this and later engines. */
+  set_dynamic_resolution(enabled: boolean): void;
   /** Applies the engine switches the page's URL search part `query` names (`engine::host::SETTINGS`), in this and later engines; a value a switch does not take fails. */
   apply_host_settings(query: string): void;
   /** The last frame's statistics, as the JSON object `FrameStats` types. */
@@ -84,8 +90,8 @@ export interface Runtime {
   subpixel_culling(): boolean;
   /** The spread of measured `values`, as the JSON object `Distribution` types; `null` without values, or with one that is not a finite number of at least 0. */
   distribution(values: Float64Array): Json<Distribution | null>;
-  /** The physical `[width, height]` a view `width` × `height` CSS pixels across draws at, at `pixel_ratio` device pixels per CSS pixel and the user's resolution `scale`, as every host sizes views (`engine::host::view_size`); empty for a view with no area. */
-  view_size(width: number, height: number, pixel_ratio: number, scale: number): Uint32Array;
+  /** Whether ordinary frames scale their size by dynamic resolution. */
+  dynamic_resolution(): boolean;
   /** Runs development request `request` (JSON) on a `width` × `height` canvas; `paused` says whether the page is paused. */
   dev_command?(request: string, width: number, height: number, paused: boolean): Json<Reply>;
   /** Development request `line` (JSON, as an agent sent it) on the page `context` describes (JSON `HostContext`): the engine's reply, or the first effect of the control it names, which the page carries out. */

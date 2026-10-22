@@ -11,7 +11,7 @@ use crate::gpu_layouts::impostors::ImpostorBakeUniform;
 
 /// Bakes rasterize four samples a texel; their resolve averages
 /// fragments with the cleared zeros, premultiplying coverage.
-const SAMPLES: u32 = 4;
+const BAKE_SAMPLES: u32 = 4;
 const BAKE_DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The depth of every frame's nearest surface, which bakes look up to
 /// find the directions a surface sees past its mesh, has this many
@@ -276,7 +276,7 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
         bake_texture(
             device,
             size,
-            SAMPLES,
+            BAKE_SAMPLES,
             format,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
         )
@@ -381,6 +381,6 @@ fn bake_pipeline(
                 targets: &targets,
             }),
         },
-        if shade { 1 } else { SAMPLES },
+        if shade { 1 } else { BAKE_SAMPLES },
     )
 }

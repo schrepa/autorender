@@ -68,11 +68,6 @@
         "minimum": 0,
         "type": "integer"
       },
-      "compressed_textures": {
-        "default": false,
-        "description": "Metro textures as BC7 blocks with their mip chains,\nfor devices with `texture-compression-bc`; RGBA8 otherwise.",
-        "type": "boolean"
-      },
       "culling": {
         "default": true,
         "description": "Whether frustum culling runs.",

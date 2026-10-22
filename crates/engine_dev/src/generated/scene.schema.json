@@ -419,11 +419,19 @@
       "type": "object",
       "properties": {
         "creep": {
-          "description": "Square meters of hillslope creep each round.",
+          "description": "Square meters of hillslope creep each round, at most about a\nquarter of the square of the level's spacing: the most an\nexplicit step keeps stable.",
           "type": "number",
           "format": "float",
           "default": 20.0,
           "maximum": 1000.0,
+          "minimum": 0.0
+        },
+        "debris": {
+          "description": "How much faster water cuts steep ground, as the debris flows of\nsteep headwaters scour it: `1 + debris * slope` times as fast as\nstream power alone, so steep slopes carve gullies rather than\nstand smooth.",
+          "type": "number",
+          "format": "float",
+          "default": 2.0,
+          "maximum": 100.0,
           "minimum": 0.0
         },
         "incision": {
@@ -497,59 +505,21 @@
       "description": "A layer that bakes where water runs over the layers below it and cuts\nchannels into them.",
       "type": "object",
       "properties": {
-        "channel_area": {
-          "description": "Square meters of upstream area where channels begin.",
-          "type": "number",
-          "format": "float",
-          "default": 200000.0,
-          "maximum": 10000000000.0,
-          "minimum": 100.0
-        },
-        "depth": {
-          "description": "Meters deep channels are where they begin; downstream their depth\ngrows with the fourth root of the area they drain, up to `max_depth`.",
+        "discharge": {
+          "description": "Cubic meters a second each square kilometer drained brings the\nchannels full to their banks: every channel carries this times the\narea draining through it, which sets its width, and with its slope\nand the roughness of its bed, its depth.",
           "type": "number",
           "format": "float",
           "default": 1.0,
-          "maximum": 100.0,
-          "minimum": 0.0
-        },
-        "discharge": {
-          "description": "Cubic meters a second each square kilometer drained yields to the\nrivers: with their channels' width and slope and the roughness of\ntheir beds it sets how deep and fast they run. 0, the default,\nyields what runs rivers `fill` of the way up their channels where\ntheir channels' slope is typical.",
-          "type": "number",
-          "format": "float",
           "maximum": 1000.0,
-          "minimum": 0.0
-        },
-        "fill": {
-          "description": "The share of their channels' depth rivers run at where their\nchannels' slope is typical, while `discharge` leaves their yield\nto their channels: fuller where they level out, shallower where\nthey steepen.",
-          "type": "number",
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.05
+          "minimum": 0.001
         },
         "level": {
-          "description": "The pyramid level whose samples the bake reads: finer levels carve\nnarrower channels and take longer.",
+          "description": "The pyramid level whose samples the bake reads: rivers are traced\nalong its grid, and begin where their channels span two of its\nsamples from bank to bank, the narrowest water settling over\nsamples that far apart holds; its maps and lakes lie over the\nlandscape [`MAP_LEVELS`] levels coarser. Finer levels trace narrower\nchannels more closely and take longer.",
           "type": "integer",
           "format": "uint32",
-          "default": 3,
+          "default": 0,
           "maximum": 15,
           "minimum": 0
-        },
-        "max_depth": {
-          "description": "The deepest channels grow, meters.",
-          "type": "number",
-          "format": "float",
-          "default": 6.0,
-          "maximum": 100.0,
-          "minimum": 0.0
-        },
-        "max_width": {
-          "description": "The widest channels grow, meters.",
-          "type": "number",
-          "format": "float",
-          "default": 60.0,
-          "maximum": 1000.0,
-          "minimum": 0.1
         },
         "roughness": {
           "description": "Manning's roughness of riverbeds (seconds over the cube root of a\nmeter): rougher beds hold water deeper and slower.",
@@ -558,19 +528,12 @@
           "maximum": 0.3,
           "minimum": 0.01
         },
-        "stream_area": {
-          "description": "Square meters of upstream area where streams begin: channels\ndraining less than `channel_area` run as streams down to the rivers\nthey join, their width falling with the area they drain below a\nriver's at its head and their depth with its square root, cut a little\ninto the ground. 0, the default, has none, as has `channel_area` or\nmore.",
-          "type": "number",
-          "format": "float",
-          "maximum": 10000000000.0,
-          "minimum": 0.0
-        },
         "width": {
-          "description": "Meters wide channels are where they begin; downstream their width\ngrows with the square root of the area they drain, up to `max_width`.",
+          "description": "Meters wide a channel carrying a cubic meter a second stands at\nits banks: channels widen with the square root of what they carry,\nas channels full to their banks do (about 4.6 meters at 0.63 cubic\nmeters a second, and 21 at 21).",
           "type": "number",
           "format": "float",
-          "default": 6.0,
-          "maximum": 1000.0,
+          "default": 5.0,
+          "maximum": 100.0,
           "minimum": 0.1
         }
       },
@@ -638,7 +601,7 @@
           ]
         },
         {
-          "description": "A ramp over the ground's slope, in degrees from level.",
+          "description": "A ramp over the ground's slope, in degrees from level: the smooth\nsurface's through its samples ([`SampleShape`]).",
           "type": "object",
           "properties": {
             "slope": {
@@ -659,7 +622,7 @@
           ]
         },
         {
-          "description": "A ramp over the ground's curvature: how fast its slope grows per\nmeter, positive in hollows and valleys, negative on ridges.",
+          "description": "A ramp over the ground's curvature: how fast its slope grows per\nmeter, positive in hollows and valleys, negative on ridges (the\nsmooth surface's Laplacian, [`SampleShape`]).",
           "type": "object",
           "properties": {
             "curvature": {
@@ -1310,7 +1273,7 @@
           }
         },
         "bed": {
-          "description": "How far around them they rest on, in meters at scale 1: 0, the\nground at their point; blocks on steep slopes stand in it instead\nof hanging over it.",
+          "description": "How far around them they rest on, in meters at scale 1: 0, the\nground at their point; objects on steep slopes then stand in it\ninstead of hanging over it.",
           "type": "number",
           "format": "float",
           "maximum": 1000.0,
@@ -1320,13 +1283,6 @@
           "description": "Objects per hectare where everything allows, at most one per\nfootprint square.",
           "type": "number",
           "format": "float",
-          "minimum": 0.0
-        },
-        "face": {
-          "description": "How far they turn to face down its slope, their x across it and z\ndown it: 0 any way, 1 straight down it.",
-          "type": "number",
-          "format": "float",
-          "maximum": 1.0,
           "minimum": 0.0
         },
         "far": {
@@ -2424,6 +2380,44 @@
       },
       "additionalProperties": false
     },
+    "SceneDynamicResolution": {
+      "description": "Dynamic resolution settings: whether display frames scale the size\nthey draw at, between the least and the most scale, so their GPU\ntime keeps within a budget. It goes by two timestamps a frame where\nthe device times its work, else by the time between frames; it lowers\nthe scale at once while frames run over the budget and raises it a\nstep at a time while they run under, in steps that keep temporal\nantialiasing's history steady. Off unless a scene names it; hosts\nturn it on for play in a window or a page, and keep it off for\noffscreen captures and measured runs.",
+      "type": "object",
+      "properties": {
+        "budget_ms": {
+          "description": "Milliseconds of GPU time each frame keeps within; omitted, the\ndisplay's refresh interval where the host knows it, else a\nsixtieth of a second.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 1.0
+        },
+        "enabled": {
+          "description": "Whether display frames scale the size they draw at to keep within\nthe budget.",
+          "type": "boolean",
+          "default": true
+        },
+        "max_scale": {
+          "description": "The most scale frames draw at on each axis.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.25
+        },
+        "min_scale": {
+          "description": "The least scale frames draw at on each axis, of the size the\nresolution policy and the user's scale give: at most `max_scale`.",
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.25
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneEmitter": {
       "description": "A particle emitter on this entity.\nOmitted fields take the engine's defaults.",
       "type": "object",
@@ -2701,6 +2695,16 @@
             }
           ]
         },
+        "dynamic_resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDynamicResolution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "foliage": {
           "anyOf": [
             {
@@ -2855,6 +2859,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneRefraction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneResolution"
             },
             {
               "type": "null"
@@ -3114,20 +3128,9 @@
       "additionalProperties": false
     },
     "SceneGrounding": {
-      "description": "The ground staining the base of an object standing on terrain:\nthe linear color its color is multiplied by where it meets the\nground, and how many units of its mesh up the stain fades out, from the\nground's slope under it.",
+      "description": "How the base of an object standing on terrain blends into the ground:\nhow many units of its mesh up from where it enters the ground its\nsurface takes the ground's color, roughness and slope, from the\nground's slope under it.",
       "type": "object",
       "properties": {
-        "color": {
-          "type": "array",
-          "items": {
-            "type": "number",
-            "format": "float",
-            "maximum": 1.0,
-            "minimum": 0.0
-          },
-          "maxItems": 3,
-          "minItems": 3
-        },
         "height": {
           "type": "number",
           "format": "float",
@@ -3137,7 +3140,6 @@
       },
       "additionalProperties": false,
       "required": [
-        "color",
         "height"
       ]
     },
@@ -3323,13 +3325,21 @@
           "maximum": 4.0,
           "minimum": 0.0
         },
+        "impostor_pixels": {
+          "description": "The size below which placed objects draw their impostor cards:\nthe pixels of the viewport height their bounding spheres span.\nLarger shows cards nearer; cards fade in over `fade_seconds`.",
+          "type": "number",
+          "format": "float",
+          "default": 128.0,
+          "maximum": 4096.0,
+          "minimum": 8.0
+        },
         "impostors": {
           "description": "Whether draw groups draw impostors where they fit.",
           "type": "boolean",
           "default": true
         },
         "max_impostors": {
-          "description": "The most impostors kept baked; omitted for no budget.",
+          "description": "The most impostors kept resident; omitted for no budget.",
           "type": [
             "integer",
             "null"
@@ -3576,8 +3586,15 @@
             }
           ]
         },
+        "foliage": {
+          "description": "Shade as foliage whatever the alpha mode: green reads as leaf,\nneedle or blade, which the sun lights through and each plant tints.\nMasked materials shade as foliage either way; default false.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "grounding": {
-          "description": "The ground staining the base of objects terrains place.",
+          "description": "How the base of objects terrains place blends into the ground.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneGrounding"
@@ -4175,7 +4192,7 @@
           "minimum": 64.0
         },
         "resolution": {
-          "description": "The map's texels a side.",
+          "description": "The map's texels a side, rounded up to a multiple of 16: the\ncells its window follows the camera by, sixteen a side, span\nwhole texels.",
           "type": "integer",
           "format": "uint32",
           "default": 1024,
@@ -4581,6 +4598,21 @@
           "default": 1.0,
           "maximum": 4.0,
           "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneResolution": {
+      "description": "The user's resolution scale: display frames draw at this share of\nthe size the resolution policy gives the view on each axis, within\nthe display's own size, and upscale to the display. 1 by default.",
+      "type": "object",
+      "properties": {
+        "scale": {
+          "description": "The share of the resolution policy's size display frames draw at\non each axis: below 1 draws fewer pixels, above 1 more where the\ndisplay holds them.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 2.0,
+          "minimum": 0.25
         }
       },
       "additionalProperties": false
@@ -5278,7 +5310,7 @@
       ]
     },
     "SceneTerrainAsset": {
-      "description": "An object placement layers stand on a terrain: a `mesh`\nand a `material` of this document, by ID, up to four coarser meshes it\ndraws at a distance, finest first (otherwise the mesh's automatic levels\nof detail), and how far it sways in the wind: meters at\nten meters up in full wind, 0 (rigid, the default) to 10.",
+      "description": "An object placement layers stand on a terrain: a `mesh`\nand a `material` of this document, by ID, up to four coarser meshes it\ndraws at a distance, finest first (otherwise the mesh's automatic levels\nof detail), up to two parts drawn with materials of their own, and how\nfar it sways in the wind: meters at\nten meters up in full wind, 0 (rigid, the default) to 10. Shadow maps\ncast its coarsest mesh alone.",
       "type": "object",
       "properties": {
         "collider": {
@@ -5306,6 +5338,12 @@
         },
         "mesh": {
           "type": "string"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SceneTerrainPart"
+          }
         },
         "sway": {
           "type": "number",
@@ -5508,7 +5546,7 @@
           "default": "top"
         },
         "relief": {
-          "description": "Meters its maps' heights span where the ground's relief shows:\n0, flat, to 1; top projections only.",
+          "description": "Meters its maps' heights span where the ground's relief shows:\n0, flat, to 1.",
           "type": "number",
           "format": "float",
           "maximum": 1.0,
@@ -5573,10 +5611,51 @@
       },
       "additionalProperties": false
     },
+    "SceneTerrainPart": {
+      "description": "A part of a placement asset its objects draw with a `material` of its\nown, such as a tree's masked needle cards over its opaque crown: its\nmeshes by ID, at the asset's mesh and then at each of its coarser\nmeshes, as far as it reaches; coarser levels draw without it. It takes\nthe asset's color, sway and impostor, and casts no shadow.",
+      "type": "object",
+      "properties": {
+        "material": {
+          "type": "string"
+        },
+        "meshes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "material",
+        "meshes"
+      ]
+    },
     "SceneTerrainSettings": {
       "description": "Terrain settings.",
       "type": "object",
       "properties": {
+        "bounce": {
+          "description": "Bounce light, with long sun shadows: probes over each terrain\nwhose transfer is cooked from its finest pinned level and its\nsurface's rules, nothing of the sun or sky in it, gather every\nframe the light the ground around sends them as the sun, its\nshadows and the sky light it now, so slopes the sun lights light\nthe valleys beside them through the day. Terrain takes its light\nfrom the ground around it there, and what stands on terrain that\nlight and the share of the sky the ground leaves it. Surroundings\ntake none.",
+          "type": "boolean",
+          "default": true
+        },
+        "bounce_reach": {
+          "description": "Meters around the camera within which probes relight every frame,\nas many columns as the horizon maps' texels at most. Past them lies\nthe far field, where terrain takes an estimate of the light around\nit (as all ground does with bounce light off, and surroundings)\nand what stands on it the open sky.",
+          "type": "number",
+          "format": "float",
+          "default": 2048.0,
+          "maximum": 32768.0,
+          "minimum": 64.0
+        },
+        "bounce_spacing": {
+          "description": "Meters between probe columns at most: a terrain takes the power of\ntwo of them along its longer side within this spacing, at most\n512 (larger terrains spread theirs wider). Each block of two by two\ncolumns holds one probe where the ground around stays open and\nfour where it rises around them, in two layers: about 100 bytes a\nprobe in the record, 7 to 27 MB a terrain of 512 columns.",
+          "type": "number",
+          "format": "float",
+          "default": 16.0,
+          "maximum": 1024.0,
+          "minimum": 1.0
+        },
         "cache_bytes": {
           "description": "Bytes of tiles kept in memory after the view leaves them,\nabout 600 KB each, to return at once when it comes back (and\nthose places games name load into): the least recently used\nbeyond drop, and 0 keeps none.",
           "type": "integer",
@@ -5609,6 +5688,14 @@
           "default": 50.0,
           "maximum": 1000.0,
           "minimum": 0.1
+        },
+        "macro_resolution": {
+          "description": "Texels along the sides of each terrain's macro color map (the tint\nand growth its bakes give its ground over its whole extent),\nrounded up to a multiple of four: a byte each with a third more for\ntheir mips on devices sampling compressed textures, four elsewhere.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2048,
+          "maximum": 4096,
+          "minimum": 64
         },
         "max_tiles": {
           "description": "An optional budget of resident tiles (about 270 KB each, twice that\non the GPU); the least important beyond it drop.",
@@ -5686,7 +5773,7 @@
           "minimum": 0.0
         },
         "sky_resolution": {
-          "description": "Texels along a sky visibility map's sides, 8 bytes each.",
+          "description": "Texels along a sky visibility map's sides, 4 bytes each.",
           "type": "integer",
           "format": "uint32",
           "default": 1024,
@@ -5694,7 +5781,7 @@
           "minimum": 64
         },
         "sky_visibility": {
-          "description": "Ambient light on terrain scaled by how much sky its ground sees,\nand taken from the sky it sees: each terrain's sky visibility map,\ncooked with its lighting from its finest pinned level, where\nvalleys and hollows see less sky and take their own light back\ninstead.",
+          "description": "Ambient light on terrain scaled by how much sky its ground sees,\nand taken from the sky it sees: each terrain's sky visibility map,\ncooked with its lighting from its finest pinned level, where\nvalleys and hollows see less sky and take the light of the ground\naround them instead (bounce light's, or past its reach an\nestimate of their own).",
           "type": "boolean",
           "default": true
         },
@@ -5789,6 +5876,17 @@
           "items": {
             "$ref": "#/$defs/PlacementLayer"
           }
+        },
+        "steep": {
+          "description": "The material covering its steep ground over every biome.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SteepLayer"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
@@ -6305,7 +6403,7 @@
           "minimum": 0.0
         },
         "simulated": {
-          "description": "The meters across the square around the camera over which\nrivers run as the shallow-water equations say, from the water\nthe bake stands there; 0 none, the bake's water standing\neverywhere.",
+          "description": "The meters across the square around the camera over which\nrivers run live as the shallow-water equations say, starting\nfrom their water as it settled there and taking the settled\nwater's past its edges; 0 none, the settled water standing\neverywhere.",
           "type": "number",
           "format": "float",
           "default": 0.0,
@@ -6313,7 +6411,7 @@
           "minimum": 0.0
         },
         "simulation_cell": {
-          "description": "The meters across the simulation's cells.",
+          "description": "The meters across the cells water settles and is simulated in:\nthe cook makes the settled water's records at this size.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -6542,6 +6640,33 @@
           "type": "string",
           "const": "hole"
         }
+      ]
+    },
+    "SteepLayer": {
+      "description": "The material covering a surface's steep ground, painted over every\nbiome and layer: none of it where the ground's slope is the first of\n`slope`'s degrees from level, all of it from the second, smoothly\nbetween, on the smooth surface through the ground's samples\n([`SampleShape`]). Samples hold it as they hold their other materials;\nrenderers decide it again at every point of the ground from the slope\nthere, so its edges follow the ground's form, not its samples.",
+      "type": "object",
+      "properties": {
+        "material": {
+          "description": "The material covering it, an ID of the surface's materials.",
+          "type": "string"
+        },
+        "slope": {
+          "description": "The slopes its share rises between, in degrees from level.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float",
+            "maximum": 90.0,
+            "minimum": 0.0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "material",
+        "slope"
       ]
     },
     "SurfaceProjection": {

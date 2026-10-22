@@ -186,14 +186,16 @@ impl Conifer {
 
     /// The materials conifers draw with over the atlas `atlas`: the trunk's
     /// and crown's, opaque, and the fringe's, masked by the spray's
-    /// coverage; both matte, colored by the atlas and their vertices.
+    /// coverage; both matte foliage, colored by the atlas and their
+    /// vertices.
     pub fn materials(atlas: TextureHandle) -> Result<(Material, Material), AssetError> {
         let crown = Material::new([1.0; 4])?
             .with_surface(Surface {
                 roughness: 0.9,
                 ..Surface::MATTE
             })?
-            .with_base_color_texture(TextureRef::new(atlas))?;
+            .with_base_color_texture(TextureRef::new(atlas))?
+            .with_foliage(true);
         let fringe = crown.with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 })?;
         Ok((crown, fringe))
     }

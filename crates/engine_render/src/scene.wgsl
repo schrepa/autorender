@@ -165,7 +165,7 @@ struct Shadow {
 // lies (meters): layer l holds directions 2l and 2l + 1, their heights in
 // red and green and their distances in blue and alpha. The last layer holds
 // the ground's height above the terrain's lowest (red). With bounce light,
-// the BOUNCE_LAYERS bounce layers of each terrain it relights (by slot:
+// the bounce layers of each terrain it relights (by slot:
 // surroundings hold none) follow every terrain's horizon layers
 // (`bounce_light`).
 @group(0) @binding(14) var terrain_horizons: texture_2d_array<f32>;
@@ -1007,10 +1007,9 @@ fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
     return visible * cloud_passing(world);
 }
 
-// Terrains' bounce light (`terrain_bounce.wgsl`): the horizon maps' layers
-// a terrain's bounce light takes, the columns at its window's edge it hands
-// over across, and its probes' heights above the ground (meters).
-const BOUNCE_LAYERS: u32 = 8u;
+// Terrains' bounce light (`terrain_bounce.wgsl`): the columns at its
+// window's edge it hands over across, and its probes' heights above the
+// ground (meters).
 const BOUNCE_FADE: f32 = 8.0;
 const BOUNCE_LOW: f32 = 1.5;
 const BOUNCE_HIGH: f32 = 24.0;

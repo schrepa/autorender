@@ -23,7 +23,8 @@ use engine_core::terrain_data::lighting::HORIZON_LAYERS;
 use engine_core::{RenderTerrain, RenderTerrains, TerrainLighting, TerrainSettings};
 
 use crate::cached::{Bound, Versioned};
-use crate::gpu_layouts::constants::{BOUNCE_LAYERS, HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
+use crate::gpu_layouts::constants::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
+use crate::terrain_bounce::BOUNCE_LAYERS;
 use crate::terrain_bounce::BounceWindow;
 
 /// A horizon map texel: two directions' crest heights and distances, or the

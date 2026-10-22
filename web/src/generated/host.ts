@@ -93,11 +93,11 @@ export const PACE_INTERVAL_LIMIT_MS = 100.0;
 /** Milliseconds loading between frames leaves before the next is due. */
 export const BETWEEN_MARGIN_MS = 4.0;
 
-/** Logical processors per job worker a host runs by default. */
-export const CORES_PER_DEFAULT_WORKER = 2;
-
-/** The most job workers a host runs by default. */
-export const MAX_DEFAULT_WORKERS = 8;
+/**
+ * Logical processors a host leaves its frames (the engine's thread
+ * and the GPU's driver) when it runs job workers on the rest.
+ */
+export const FRAME_CORES = 2;
 
 /** The most job workers a host runs. */
 export const MAX_WORKERS = 32;
@@ -129,6 +129,41 @@ export const MAX_VIEW_WIDTH = 2560;
 /** The tallest a view draws, in physical pixels. */
 export const MAX_VIEW_HEIGHT = 1440;
 
+/**
+ * The step dynamic resolution's scale moves by: it keeps to its
+ * multiples within the settings' bounds, so temporal antialiasing's
+ * history stays steady.
+ */
+export const DYNAMIC_STEP = 0.03125;
+
+/** Frames taking more than this share of their budget run over it. */
+export const DYNAMIC_OVER = 1.05;
+
+/**
+ * Frames whose GPU work took less than this share of their budget run
+ * under it.
+ */
+export const DYNAMIC_UNDER = 0.85;
+
+/** The share of the budget lowering the scale aims frames at. */
+export const DYNAMIC_AIM = 0.9;
+
+/** Frames in a row over their budget that lower the scale. */
+export const DYNAMIC_LOWER_FRAMES = 3;
+
+/**
+ * Frames in a row whose GPU work ran under their budget that raise the
+ * scale a step.
+ */
+export const DYNAMIC_RAISE_FRAMES = 30;
+
+/**
+ * Frames in a row within their budget that raise the scale a step where
+ * the device times no GPU work: the time between frames cannot tell how
+ * far under it they run.
+ */
+export const DYNAMIC_PROBE_FRAMES = 120;
+
 /** What an animation frame did (Rust's `engine::host::FramePhase`), by name. */
 export const FRAME_PHASES = {"compiling":0,"idle":4,"playing":3,"preparing":1,"started":2};
 
@@ -144,4 +179,4 @@ export const IMAGE_FORMATS = {"jpeg":{"native":"engine","page":"engine","what":"
  * which the engine reads from the page's parameters: each one's values and
  * what it does.
  */
-export const HOST_SETTINGS = {"between":"on (default) or off: terrain loading between frames, in the time they leave free, or within frames alone","debug-view":"off (default), kinds, levels, cards, shadows, casters, overdraw, normals, tiles, materials, sky or detail: the debug view frames show in place of the shaded image, over the scene's","occlusion":"scene (default), on or off: occlusion culling of GPU-presented frames, over the scene's setting","pipeline":"on (default) or off: fixed ticks split across the frames around their due time, on GPU-presented frames","presentation":"gpu (default) or cpu: how ordinary frames are presented: blended, composed and culled on the GPU, or exactly on the CPU","subpixel":"scene (default), on or off: sub-pixel culling of GPU-presented frames, over the scene's setting","taa":"scene (default), on or off: temporal antialiasing of GPU-presented frames, over the scene's setting","terrain-clock":"wall (default) or frames: what terrain times its work by: the host's clock, or frames alone, each a slice of samples_per_frame with none between them"};
+export const HOST_SETTINGS = {"between":"on (default) or off: terrain loading between frames, in the time they leave free, or within frames alone","debug-view":"off (default), kinds, levels, cards, shadows, casters, overdraw, normals, tiles, materials, sky or detail: the debug view frames show in place of the shaded image, over the scene's","dynamic-resolution":"host (default), on or off: dynamic resolution of display frames, over the host's choice: on for play in a window or a page, off offscreen and in measured runs","occlusion":"scene (default), on or off: occlusion culling of GPU-presented frames, over the scene's setting","pipeline":"on (default) or off: fixed ticks split across the frames around their due time, on GPU-presented frames","presentation":"gpu (default) or cpu: how ordinary frames are presented: blended, composed and culled on the GPU, or exactly on the CPU","subpixel":"scene (default), on or off: sub-pixel culling of GPU-presented frames, over the scene's setting","taa":"scene (default), on or off: temporal antialiasing of GPU-presented frames, over the scene's setting","terrain-clock":"wall (default) or frames: what terrain times its work by: the host's clock, or frames alone, each a slice of samples_per_frame with none between them"};

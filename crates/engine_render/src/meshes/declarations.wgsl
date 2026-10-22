@@ -71,6 +71,9 @@ override FADE_LIST: bool = false;
 // bakes, share one pipeline per pipeline state: they read the material's
 // variant bits from its uniform instead of the map constants above.
 override UBER_MATERIALS: bool = false;
+// Foliage shading on a material that is not masked: masked ones shade
+// as foliage anyway.
+override FOLIAGE: bool = false;
 
 // Bits of a material's variant (`gpu_data::Variant`) in the uniform.
 const VARIANT_MAPS: u32 = 1u;
@@ -82,6 +85,7 @@ const VARIANT_EMISSIVE_MAP: u32 = 512u;
 const VARIANT_PACKED_OCCLUSION: u32 = 1024u;
 const VARIANT_WORLD_MAPPING: u32 = 4096u;
 const VARIANT_TOP_LAYER: u32 = 8192u;
+const VARIANT_FOLIAGE: u32 = 65536u;
 
 // Whether the material has feature `bit` of its variant: `specialized` in
 // pipelines specialized for it, the uniform's bit in uber ones.
