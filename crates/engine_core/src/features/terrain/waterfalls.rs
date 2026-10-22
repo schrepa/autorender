@@ -17,10 +17,9 @@ use glam::Vec3;
 use super::Terrains;
 use crate::math::{clamp, max};
 use crate::terrain_data::Fall;
+use crate::terrain_data::hydraulics::GRAVITY;
+use crate::terrain_data::shallow_water::DENSITY;
 use crate::{ParticleBlend, ParticleEmitter, Transform, Water};
-
-/// The gravity spray falls under.
-const GRAVITY: f32 = 9.8;
 
 /// What each terrain's falls spawned.
 #[derive(Resource, Default)]
@@ -34,12 +33,10 @@ struct Spawned {
     entities: Vec<Entity>,
 }
 
-/// Water's density (kilograms a cubic meter): with a fall's discharge,
-/// drop and gravity, the power its jet brings down.
-const WATER_DENSITY: f32 = 1000.0;
 /// Watts of falling water each splashing droplet and each puff of mist a
 /// second stands for, and the fewest and most a fall's splash and mist
-/// emit.
+/// emit: the power its jet brings down is the water's density times
+/// gravity, its discharge and its drop.
 const SPLASH_WATTS: f32 = 2.0e3;
 const SPLASH_RATE: [f32; 2] = [20.0, 600.0];
 const MIST_WATTS: f32 = 1.5e5;
@@ -140,7 +137,7 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
     }
     let puffs = clamp(width / 10.0, 0.6, 2.5);
     for (number, &(landed, drop, landing_speed, open)) in landings.iter().enumerate() {
-        let power = WATER_DENSITY * GRAVITY * fall.discharge * drop;
+        let power = DENSITY * GRAVITY * fall.discharge * drop;
         let lit =
             |[red, green, blue, alpha]: [f32; 4]| [red * open, green * open, blue * open, alpha];
         let key = seed.wrapping_mul(131).wrapping_add(number as u32);

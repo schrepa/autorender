@@ -20,9 +20,10 @@
 // its neighbors' beside them (computing them twice costs less than carrying
 // them through memory), then the share of its outflow each cell can give,
 // and updates every cell; rivers bring their water to their cells after
-// each step. The water carries foam: it churns it up where it runs faster
-// than its waves and where it slams into slower water, the current carries
-// it off, and it fades as its bubbles break.
+// each step. The water carries foam: it churns it up where it loses energy
+// fast enough to break (as it runs, where it plunges and jumps, along its
+// eddy lines and where it piles up), the current carries it off, and it
+// fades as its bubbles break.
 //
 // Every dispatch runs rectangles side by side, the third dimension counting
 // them, each a slot of the buffers with its own cells along x and z, cell
@@ -1272,37 +1273,72 @@ fn sim_dissipation(q: Square, cell: SimCell) -> f32 {
     return SIM_DENSITY * (friction + 0.5 * SIM_GRAVITY * lost / q.dx);
 }
 
-// Foam: the Froude number past which rapids churn it up and how fast (a
-// second, per unit past it); how fast water converging churns it (per
-// unit of convergence, a second); the seconds it takes to fade to 1/e;
-// the most it piles up to; and the meters of water under which a cell
-// holds none.
-const SIM_FOAM_FROUDE: f32 = 2.0;
-const SIM_FOAM_RAPIDS: f32 = 0.3;
-const SIM_FOAM_PILING: f32 = 0.25;
-const SIM_FOAM_LIFE: f32 = 6.0;
+// Foam, the lace white water leaves on the water: churned up where the
+// water loses energy fast enough to break, held by its churning toward the
+// most it holds as it fades. The seconds it takes to fade to 1/e; the most
+// churning holds; the meters of water under which a cell holds none; the
+// least rate (square meters a second cubed) the water loses energy at,
+// gravity times its surface's slope times its speed, for it to churn any;
+// the meters water drops into a cell to plunge, and the Froude number it
+// runs at into water slower than its waves to jump; the vorticity (a
+// second) past which eddy lines churn it, as much again past it holding
+// half the most; the convergence (a second) and the power the water loses
+// (watts a square meter of bed) at which each holds half the most.
+const SIM_FOAM_LIFE: f32 = 20.0;
 const SIM_FOAM_MOST: f32 = 1.5;
 const SIM_FOAM_WET: f32 = 0.005;
+const SIM_FOAM_LOSS: f32 = 0.02;
+const SIM_FOAM_DROP: f32 = 0.05;
+const SIM_FOAM_JUMP: f32 = 1.7;
+const SIM_FOAM_SWIRL: f32 = 1.0;
+const SIM_FOAM_PILING: f32 = 0.5;
+const SIM_FOAM_POWER: f32 = 500.0;
 
-// The first state's cell at `at`: its depth and velocity; or `instead`'s
-// where it is dry.
-fn sim_moving_at(q: Square, at: u32, instead: vec3<f32>) -> vec3<f32> {
+// The first state's cell at `at`: its surface, depth and velocity; or
+// `instead` where it is dry.
+fn sim_moving_at(q: Square, at: u32, instead: vec4<f32>) -> vec4<f32> {
     let cell = sim_cells[sim_cells_base(q) + at];
     let h = cell.x - sim_bed(q, at);
     if h <= SIM_FOAM_WET {
         return instead;
     }
-    return vec3<f32>(h, sim_velocity(h, cell.y), sim_velocity(h, cell.z));
+    return vec4<f32>(cell.x, h, sim_velocity(h, cell.y), sim_velocity(h, cell.z));
 }
 
-// The first state's cell (i, j): its depth and velocity; or `instead`'s
-// where it is dry or the slot holds none there.
-fn sim_moving(q: Square, i: i32, j: i32, instead: vec3<f32>) -> vec3<f32> {
+// The first state's cell (i, j): its surface, depth and velocity; or
+// `instead` where it is dry or the slot holds none there.
+fn sim_moving(q: Square, i: i32, j: i32, instead: vec4<f32>) -> vec4<f32> {
     let at = sim_at(q, i, j);
     if at == SIM_NO_BLOCK {
         return instead;
     }
     return sim_moving_at(q, at, instead);
+}
+
+// The Froude number of water standing as `water` (its surface, depth and
+// velocity): how many times faster than its waves it runs.
+fn sim_foam_froude(water: vec4<f32>) -> f32 {
+    return length(water.zw) / sqrt(SIM_GRAVITY * max(water.y, SIM_FOAM_WET));
+}
+
+// The power (watts a square meter of bed) water standing as `upstream`
+// (its surface, depth and velocity) spends landing in a cell `dx` meters
+// across standing as `here`, `toward` the way from it into the cell: the
+// head it loses times the water it brings, where it plunges, dropping
+// SIM_FOAM_DROP or more into the cell, or jumps, running at SIM_FOAM_JUMP
+// times its waves' speed or faster into water slower than its waves; none
+// elsewhere.
+fn sim_foam_landing(upstream: vec4<f32>, here: vec4<f32>, toward: vec2<f32>, dx: f32) -> f32 {
+    let drop = upstream.x - here.x;
+    let plunges = drop >= SIM_FOAM_DROP;
+    let jumps = sim_foam_froude(upstream) >= SIM_FOAM_JUMP && sim_foam_froude(here) < 1.0;
+    if !plunges && !jumps {
+        return 0.0;
+    }
+    let brought = upstream.y * max(dot(upstream.zw, toward), 0.0);
+    let speeds = dot(upstream.zw, upstream.zw) - dot(here.zw, here.zw);
+    let head = drop + speeds / (2.0 * SIM_GRAVITY);
+    return SIM_DENSITY * SIM_GRAVITY * brought * max(head, 0.0) / dx;
 }
 
 // The first state's foam at cell (i, j): none where the slot holds none
@@ -1350,7 +1386,13 @@ fn sim_foam_at(q: Square, p: vec2<f32>) -> f32 {
 
 // Each cell's foam after a step, into the second state's: what the current
 // carried there (traced back along it), faded, and what the water churned
-// up there.
+// up there. Its churn sums the power its water loses as it runs and that
+// of the water landing in it from its neighbors, each as a share of
+// SIM_FOAM_POWER; the vorticity of its eddy lines past SIM_FOAM_SWIRL, as a
+// share of it; and its convergence, as a share of SIM_FOAM_PILING; none
+// where its water loses energy slower than SIM_FOAM_LOSS. Churning at
+// `churn`, its foam nears churn / (1 + churn) of SIM_FOAM_MOST, 1 + churn
+// times as fast as foam fades, so it never passes the most.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
 fn sim_churn(
     @builtin(workgroup_id) group: vec3<u32>,
@@ -1365,24 +1407,32 @@ fn sim_churn(
     let next = sim_cells_base(q) + sim_held() + cell.at;
     let i = i32(cell.i);
     let j = i32(cell.j);
-    let here = sim_moving_at(q, cell.at, vec3<f32>(0.0));
-    if here.x <= SIM_FOAM_WET {
+    let here = sim_moving_at(q, cell.at, vec4<f32>(0.0));
+    if here.y <= SIM_FOAM_WET {
         sim_cells[next].w = 0.0;
         return;
     }
     let dx = q.dx;
     let dt = sim_seconds_at(q, cell.at);
-    let carried = sim_foam_at(q, vec2<f32>(f32(i), f32(j)) - here.yz * dt / dx);
-    let froude = length(here.yz) / sqrt(SIM_GRAVITY * here.x);
-    let rapids = max(froude - SIM_FOAM_FROUDE, 0.0) * SIM_FOAM_RAPIDS;
-    let east = sim_moving(q, i + 1, j, here).y;
-    let west = sim_moving(q, i - 1, j, here).y;
-    let north = sim_moving(q, i, j + 1, here).z;
-    let south = sim_moving(q, i, j - 1, here).z;
-    let converging = max(-(east - west + north - south) / (2.0 * dx), 0.0);
-    let churned = carried * exp(-dt / SIM_FOAM_LIFE)
-        + dt * (rapids + SIM_FOAM_PILING * converging);
-    sim_cells[next].w = min(churned, SIM_FOAM_MOST);
+    let carried = sim_foam_at(q, vec2<f32>(f32(i), f32(j)) - here.zw * dt / dx);
+    let west = sim_moving(q, i - 1, j, here);
+    let east = sim_moving(q, i + 1, j, here);
+    let south = sim_moving(q, i, j - 1, here);
+    let north = sim_moving(q, i, j + 1, here);
+    let landing = sim_foam_landing(west, here, vec2<f32>(1.0, 0.0), dx)
+        + sim_foam_landing(east, here, vec2<f32>(-1.0, 0.0), dx)
+        + sim_foam_landing(south, here, vec2<f32>(0.0, 1.0), dx)
+        + sim_foam_landing(north, here, vec2<f32>(0.0, -1.0), dx);
+    let slope = length(vec2<f32>(east.x - west.x, north.x - south.x)) / (2.0 * dx);
+    let swirl = abs(east.w - west.w - north.z + south.z) / (2.0 * dx);
+    let converging = max(-(east.z - west.z + north.w - south.w) / (2.0 * dx), 0.0);
+    var churn = (max(sim_dissipation(q, cell.at), 0.0) + landing) / SIM_FOAM_POWER
+        + max(swirl - SIM_FOAM_SWIRL, 0.0) / SIM_FOAM_SWIRL + converging / SIM_FOAM_PILING;
+    if SIM_GRAVITY * slope * length(here.zw) < SIM_FOAM_LOSS {
+        churn = 0.0;
+    }
+    let steady = SIM_FOAM_MOST * churn / (1.0 + churn);
+    sim_cells[next].w = steady + (carried - steady) * exp(-(1.0 + churn) * dt / SIM_FOAM_LIFE);
 }
 
 // Where a block's cells held water no lake holds at a step's end, as its

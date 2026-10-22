@@ -190,6 +190,8 @@ impl Terrains {
                 .iter()
                 .map(|state| state.falls.len() as u32)
                 .sum(),
+            // White water counts its emitters as it spawns them.
+            white_water: self.stats.white_water,
             ..TerrainStats::default()
         };
         let forward = camera.target - camera.eye();
@@ -713,6 +715,7 @@ impl Terrains {
                 .iter()
                 .filter(|state| state.around.is_none())
                 .count() as u32,
+            white_water: self.stats.white_water,
             ..TerrainStats::default()
         };
         self.loaded = true;

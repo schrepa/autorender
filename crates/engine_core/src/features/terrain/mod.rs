@@ -72,6 +72,7 @@ mod water;
 mod water_sim;
 mod water_source;
 mod waterfalls;
+mod white_water;
 mod wind;
 
 use bakes::*;
@@ -166,11 +167,12 @@ impl bevy_app::Plugin for TerrainPlugin {
             )
             .add_systems(
                 crate::WorldSync,
-                // Bridges spawn before waterfalls; water's simulation
-                // windows follow the camera.
+                // Bridges spawn before waterfalls and white water; water's
+                // simulation windows follow the camera.
                 (
                     bridges::sync,
                     waterfalls::sync,
+                    white_water::sync,
                     water_sim::place_water_windows,
                 )
                     .chain()

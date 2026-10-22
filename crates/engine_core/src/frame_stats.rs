@@ -519,6 +519,9 @@ pub struct TerrainRenderStats {
     /// lists hold, once each view and level leaving them out, read back a
     /// few frames late.
     pub dropped_placed_objects: u32,
+    /// Emitters of spray and mist white water spawned at terrains' rapids,
+    /// where their settled water loses energy fastest.
+    pub white_water: u32,
 }
 
 /// Ground cover.

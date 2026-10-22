@@ -60,6 +60,9 @@ pub struct TerrainStats {
     pub bridges: u32,
     pub tunnels: u32,
     pub falls: u32,
+    /// Emitters of spray and mist white water spawned at terrains' rapids,
+    /// where their settled water loses energy fastest.
+    pub white_water: u32,
     /// Of the resident tiles and patches, those of terrains' surroundings.
     pub surroundings_tiles: u32,
     pub surroundings_patches: u32,

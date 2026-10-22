@@ -16,9 +16,9 @@
 //! water that runs into them and giving none. The ground stands at the
 //! cells' corners, with each cell's bed's roughness ([`roughness`]).
 //! Rivers bring their water at the cells their sources name. The water
-//! carries foam, churned up where it runs faster than its waves and where
-//! it slams into slower water, carried off by the current and fading as its
-//! bubbles break.
+//! carries foam, churned up where it loses energy fast enough to break (as
+//! it runs, where it plunges and jumps, along its eddy lines and where it
+//! piles up), carried off by the current and fading as its bubbles break.
 //!
 //! Steps run as the live simulation's do, every cell by the same seconds,
 //! or, settling, each cell by as long as its own and its neighbors'
@@ -79,17 +79,51 @@ pub const BOUNDING_SPEED: f32 = 27.0;
 /// count no wave slower than [`SLOWEST`] meters a second.
 pub const LOCAL_SHARE: f32 = 0.9;
 pub const SLOWEST: f32 = 1.0;
-/// Foam: the Froude number past which rapids churn it up and how fast (a
-/// second, per unit past it); how fast water converging churns it (per
-/// unit of convergence, a second); the seconds it takes to fade to 1/e; the
-/// most it piles up to; and the meters of water under which a cell holds
-/// none.
-pub const FOAM_FROUDE: f32 = 2.0;
-pub const FOAM_RAPIDS: f32 = 0.3;
-pub const FOAM_PILING: f32 = 0.25;
-pub const FOAM_LIFE: f32 = 6.0;
+/// Foam, the lace white water leaves on the water: churned up where the
+/// water loses energy fast enough to break, and fading as its bubbles
+/// break. A cell's churn sums the shares below of what holds half the most
+/// foam: the power its water loses as it runs and that of the water landing
+/// in it, plunging or jumping ([`FOAM_POWER`]); the vorticity of its eddy
+/// lines ([`FOAM_SWIRL`]); and its convergence ([`FOAM_PILING`]); none where
+/// its water loses energy slower than [`FOAM_LOSS`]. Churning at `c`, its
+/// foam nears `c / (1 + c)` of [`FOAM_MOST`], `1 + c` times as fast as foam
+/// fades, so it saturates smoothly.
+///
+/// The seconds foam takes to fade to 1/e: lace left below rapids floats
+/// downstream for tens of seconds, 10 to 60, before its bubbles break.
+pub const FOAM_LIFE: f32 = 20.0;
+/// The most foam churning holds the water toward: white all over, and half
+/// as thick again.
 pub const FOAM_MOST: f32 = 1.5;
+/// Meters of water under which a cell holds no foam: a film thinner than
+/// the few millimeters across foam's bubbles are.
 pub const FOAM_WET: f32 = 0.005;
+/// The least rate water loses energy at for it to churn foam, in watts a
+/// kilogram (square meters a second cubed): gravity times its surface's
+/// slope times its speed, what water running 0.4 meters a second down a
+/// riffle's half percent loses. Pools and gentle runs stay unbroken.
+pub const FOAM_LOSS: f32 = 0.02;
+/// Meters water drops into a cell to plunge: falling that far it lands at
+/// the meter a second (√(2·g·h)) past which plunging water draws air in
+/// (Ervine, McKeogh and Elsawy 1980).
+pub const FOAM_DROP: f32 = 0.05;
+/// The Froude number at which water running into water slower than its
+/// waves jumps, breaking into a roller; slower, its jump stands as undular
+/// waves breaking no surface (Chow 1959).
+pub const FOAM_JUMP: f32 = 1.7;
+/// The vorticity (a second) past which eddy lines churn foam, as much again
+/// past it holding half the most: shear of the meter a second at which
+/// water draws air in, across the meter or so an eddy line beside a rock
+/// spans.
+pub const FOAM_SWIRL: f32 = 1.0;
+/// The convergence (a second) at which water piling up holds half the most
+/// foam: a current of half a meter a second stopping within a meter, as it
+/// piles against a rock.
+pub const FOAM_PILING: f32 = 0.5;
+/// The power water loses (watts a square meter of bed) at which it holds
+/// half the most foam: the power ρ·g·q·S of half a square meter a second
+/// running down a tenth, a cascade's slope.
+pub const FOAM_POWER: f32 = 500.0;
 /// Meters a second the water rivers bring runs along them as it comes.
 pub const SOURCE_SPEED: f32 = 1.5;
 /// Entries of four floats a settling cell's means take, as settling reads
