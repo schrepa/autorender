@@ -223,11 +223,13 @@ impl Renderer {
         let (device, queue) = (&self.device, &self.queue);
         let (post, depth) = (self.features.post.get(), &self.depth.view);
         let lighting = self.camera.lighting_buffer();
+        // The meter reads the pixels the frame drew.
+        let drawn = self.display.region.render.pixels();
         self.features.exposure.prepare(
             (device, needs),
             || ExposurePass::new(device),
             |exposure| {
-                let targets = (post?.scene(), depth);
+                let targets = (post?.scene(), depth, drawn);
                 let frame = exposure.prepare((device, queue), snapshot, targets, lighting);
                 let encoder = inputs.get_or_insert_with(|| {
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -352,6 +354,9 @@ impl Renderer {
             .texture()
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.frame_encoder();
+        // The frame's GPU time, which dynamic resolution keeps within its
+        // budget, from here to its last pass.
+        self.display.time_begin(&mut encoder);
         self.water_settle.encode(&mut encoder);
         let passes = self.prepare_pipelines(kind, &packing.temporal_frame, &features);
         let (virtual_frame, resolving) = self.prepare_virtual_frame(
@@ -456,6 +461,7 @@ impl Renderer {
         self.graph = graph;
         #[cfg(feature = "dev")]
         self.encode_probe(&state, &mut encoder, surface.texture());
+        self.display.time_end(&self.device, &mut encoder);
         self.profiler.end_frame(&mut encoder);
         drop(profile_encoding);
         self.submit_frame(&state, surface, encoder);

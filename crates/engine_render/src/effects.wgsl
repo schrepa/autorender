@@ -2,17 +2,23 @@
 // post.wgsl, the sun shafts of shafts.wgsl and the temporal resolve of
 // temporal.wgsl, which are prepended with this source: the frame's effect
 // settings and how the composite and resolve apply ambient occlusion,
-// reflections, sun shafts and bloom.
+// reflections, sun shafts and bloom. Frames draw their screen-sized targets
+// at their render size, from the top-left corner, and the half-resolution
+// ones at half of it: every read keeps within what the frame drew.
 
 struct Post {
     // Unjittered clip to world space: positions from the depth buffer.
     inverse_view_projection: mat4x4<f32>,
     // Unjittered world to clip space: reflection rays onto the screen.
     view_projection: mat4x4<f32>,
-    // xyz: the eye; w: depth-buffer pixels per world unit at distance 1.
+    // xyz: the eye; w: render pixels per world unit at distance 1.
     eye: vec4<f32>,
-    // Scene target size in pixels, and its inverse.
+    // The render size in pixels, and its inverse: the part of the
+    // screen-sized targets the frame draws.
     size: vec4<f32>,
+    // The screen-sized targets' size in pixels, the display's, and its
+    // inverse.
+    extent: vec4<f32>,
     // Radius in world units, strength, the far radius it grows toward with
     // distance (none above the radius: it stays), and 1 when ambient
     // occlusion runs.
@@ -49,6 +55,20 @@ fn shaft_pixel(texel: vec2<i32>) -> vec2<i32> {
     return texel * 4 + vec2<i32>(1);
 }
 
+// The texels of the half-resolution targets the frame draws: half its
+// render size, a texel at least.
+fn half_size(settings: Post) -> vec2<i32> {
+    return max(vec2<i32>(settings.size.xy) / 2, vec2<i32>(1));
+}
+
+// Texture coordinates in a half-resolution target `allocated` texels large of
+// `uv` across the view (0 to 1), kept half a texel within the texels the
+// frame drew.
+fn half_uv(uv: vec2<f32>, allocated: vec2<u32>, settings: Post) -> vec2<f32> {
+    let drawn = vec2<f32>(half_size(settings));
+    return clamp(uv * drawn, vec2<f32>(0.5), drawn - 0.5) / vec2<f32>(allocated);
+}
+
 // How near a half-resolution texel's surface must lie to a pixel's, as a
 // share of the pixel's inverse distance from the eye, for the pixel to
 // take the texel's effects.
@@ -80,11 +100,11 @@ fn screen_effects(effects: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2
         && settings.sky.w == 0.0 {
         return vec3<f32>(1.0, 0.0, 1.0);
     }
-    let size = textureDimensions(effects);
+    let size = half_size(settings);
     let position = (vec2<f32>(pixel) + 0.5) * vec2<f32>(size) / settings.size.xy - 0.5;
     let first = vec2<i32>(floor(position));
     let f = position - floor(position);
-    let last = vec2<i32>(size) - 1;
+    let last = size - 1;
     let own = inverse_distance_at(depth, pixel, settings);
     let tolerance = max(EFFECTS_PLANE * own, 1.0e-7);
     var near = vec3<f32>(0.0);
@@ -169,11 +189,12 @@ fn effect_shade(ambient: f32, effects: vec3<f32>, settings: Post) -> f32 {
         * contact_factor(ambient, effects.z, settings);
 }
 
-// `color` with the effects that add light laid over it at `uv`: the
-// reflections, the sun shafts' light in `effects`, then bloom.
+// `color` with the effects that add light laid over it at `uv` across the
+// view: the reflections, the sun shafts' light in `effects`, then bloom.
 fn effect_light(color: vec3<f32>, effects: vec3<f32>, reflections: texture_2d<f32>,
         bloom: texture_2d<f32>, linear: sampler, uv: vec2<f32>, settings: Post) -> vec3<f32> {
-    let mirrored = reflected(color, reflections, linear, uv, settings);
+    let mirrored = reflected(color, reflections, linear,
+        half_uv(uv, textureDimensions(reflections), settings), settings);
     let lit = shafted(mirrored, effects.y, settings);
-    return glowing(lit, bloom, linear, uv, settings);
+    return glowing(lit, bloom, linear, half_uv(uv, textureDimensions(bloom), settings), settings);
 }

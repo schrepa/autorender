@@ -11,12 +11,13 @@ struct ResolveOutput {
     @builtin(position) clip_position: vec4<f32>,
 }
 
-// Corner `vertex` of two triangles over tile `instance` of the bin.
+// Corner `vertex` of two triangles over tile `instance` of the bin, among
+// the tiles of the frame's render size, which it draws at.
 @vertex
 fn vs_resolve(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32)
         -> ResolveOutput {
     let tile = resolve_tiles[visibility_draw.tile_base + instance];
-    let size = vec2<f32>(textureDimensions(visibility_ids));
+    let size = camera.region.xy;
     let corner = vec2<f32>(f32((0x32u >> vertex) & 1u), f32((0x2cu >> vertex) & 1u));
     let origin = vec2<f32>(f32(tile % visibility_draw.tiles_across),
         f32(tile / visibility_draw.tiles_across));
@@ -80,7 +81,7 @@ fn resolve_pixel(position: vec4<f32>) -> Resolved {
     let ea = cross(pb, pc);
     let eb = cross(pc, pa);
     let ec = cross(pa, pb);
-    let size = vec2<f32>(textureDimensions(visibility_ids));
+    let size = camera.region.xy;
     let point = vec3<f32>(position.x / size.x * 2.0 - 1.0, 1.0 - position.y / size.y * 2.0, 1.0);
     let weights = barycentric(ea, eb, ec, point);
     // Even pixels' partners follow them, odd ones' precede them.
@@ -146,14 +147,19 @@ fn stepped_normal(resolved: Resolved, texels: MaterialTexels, normal_step: vec3<
 
 // `surface_point` of a resolved pixel: explicit derivatives, and the shading
 // normal's turn toward its quad partners across and down, as forward
-// fragments' derivatives take it.
+// fragments' derivatives take it. Maps sample as finely as the display shows
+// them: their derivatives scaled by the render size's share of it, as the
+// mip bias of forward fragments' samples.
 fn resolved_point(resolved: Resolved) -> SurfacePoint {
     let input = resolved.fragment;
-    let gradients = UvGradients(resolved.uv_dx, resolved.uv_dy, resolved.uv_dx, resolved.uv_dy);
+    let detail = material_detail();
+    let uv_dx = resolved.uv_dx * detail;
+    let uv_dy = resolved.uv_dy * detail;
+    let gradients = UvGradients(uv_dx, uv_dy, uv_dx, uv_dy);
     var texels: MaterialTexels;
     if material_flag(VARIANT_WORLD_MAPPING, WORLD_MAPPING) {
-        texels = world_texels(input.world, stable_normalize(input.normal), resolved.world_dx,
-            resolved.world_dy);
+        texels = world_texels(input.world, stable_normalize(input.normal),
+            resolved.world_dx * detail, resolved.world_dy * detail);
     } else {
         texels = material_texels_grad(input.uv, input.uv1, gradients);
     }

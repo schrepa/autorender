@@ -93,6 +93,8 @@ macro_rules! environment_sections {
             occlusion_culling: OcclusionCulling { opt_in: false, feature: Core },
             subpixel_culling: SubpixelCulling { opt_in: false, feature: Core },
             temporal_antialiasing: TemporalAntialiasing { opt_in: false, feature: Core },
+            resolution: Resolution { opt_in: false, feature: Core },
+            dynamic_resolution: DynamicResolution { opt_in: true, feature: Core },
             debug_view: DebugView { opt_in: true, feature: Core },
         }
     };

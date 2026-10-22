@@ -400,6 +400,10 @@ pub(crate) trait MeshDraws {
 pub(crate) trait AttachmentViews {
     /// The view of attachment `resource` this frame.
     fn view(&self, resource: Resource) -> &wgpu::TextureView;
+
+    /// The texels from its attachments' top-left corner `node` draws: the
+    /// frame's render size, or `None` for the attachments whole.
+    fn region(&self, node: &Node) -> Option<(u32, u32)>;
 }
 
 /// What a feature's encoding reads of the frame, and the one way to begin a
@@ -464,8 +468,9 @@ impl<'f> Encode<'f> {
 
 /// Begins `node`'s render pass, labeled `label`, over its attachments'
 /// `views` with the operations the render graph derived for them, timed by
-/// `timestamp_writes`: how every pass drawing into the graph's attachments
-/// begins, so none writes operations of its own.
+/// `timestamp_writes`, drawing within their region: how every pass drawing
+/// into the graph's attachments begins, so none writes operations or a
+/// region of its own.
 pub(crate) fn render_pass<'e>(
     encoder: &'e mut wgpu::CommandEncoder,
     node: &Node,
@@ -484,7 +489,7 @@ pub(crate) fn render_pass<'e>(
         });
         count += 1;
     }
-    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
         color_attachments: &colors[..count],
         depth_stencil_attachment: node.depth().map(|(resource, ops)| {
@@ -497,7 +502,11 @@ pub(crate) fn render_pass<'e>(
         timestamp_writes,
         occlusion_query_set: None,
         multiview_mask: None,
-    })
+    });
+    if let Some(region) = views.region(node) {
+        crate::targets::draw_within(&mut pass, region);
+    }
+    pass
 }
 
 /// A color attachment's operations as the render graph derived them.

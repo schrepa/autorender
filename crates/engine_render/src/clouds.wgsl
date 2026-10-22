@@ -53,10 +53,12 @@ struct CloudUniform {
 // Clouds in the view: its unjittered inverse
 // view-projection; the marched blocks along x and y, the pixels along a
 // block's side, and whether rays seeing the sky march (1) or leave it to
-// the dome (0).
+// the dome (0); and the pixels the frame draws, its render size, from the
+// depth buffer's top-left corner (xy).
 struct CloudView {
     inverse_view_projection: mat4x4<f32>,
     blocks: vec4<u32>,
+    pixels: vec4<u32>,
 }
 @group(0) @binding(6) var<uniform> cloud_view: CloudView;
 // The view's depth buffer (reversed: 0 at the far plane), and each block's
@@ -421,7 +423,7 @@ fn march_view(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let side = cloud_view.blocks.z;
-    let pixels = textureDimensions(view_depth);
+    let pixels = max(cloud_view.pixels.xy, vec2<u32>(1u));
     let first = id.xy * side;
     var farthest = 1.0;
     for (var y = 0u; y < side; y++) {

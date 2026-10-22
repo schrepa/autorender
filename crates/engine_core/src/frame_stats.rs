@@ -63,15 +63,10 @@ pub struct FrameStats {
     /// yet to arrive, read when the stats are: hosts keep preparing
     /// meanwhile.
     pub loading: bool,
-    /// The view's width in physical pixels, as the frame drew it: the
-    /// host's, unless the device's largest texture holds less, which the
-    /// view then fits within at its aspect.
-    pub view_width: u32,
-    /// The view's height in physical pixels, as the frame drew it.
-    pub view_height: u32,
-    /// Pixels of the view the host asked for that the device's largest
-    /// texture left out.
-    pub dropped_view_pixels: u64,
+    /// The display's size and the size the frame drew at.
+    pub resolution: ResolutionStats,
+    /// Dynamic resolution's scale of the size frames draw at.
+    pub dynamic_resolution: DynamicResolutionStats,
     /// The host's workers and their jobs, read when the stats are.
     pub jobs: crate::JobStats,
     /// Navigation agents at the last fixed tick, read when the stats are.
@@ -246,6 +241,48 @@ impl schemars::JsonSchema for Names {
 pub struct Applied {
     /// Whether this frame applied it.
     pub active: bool,
+}
+
+/// The frame's sizes: the display's, which the surface or canvas and every
+/// screen-sized target take, and the one it drew at from their top-left
+/// corner, which its last pass upscaled to the display.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ResolutionStats {
+    /// The display's width in physical pixels: the host's whole view, unless
+    /// the device's largest texture holds less, which the display then fits
+    /// within at its aspect.
+    pub display_width: u32,
+    /// The display's height in physical pixels.
+    pub display_height: u32,
+    /// The width the frame drew at in physical pixels: the resolution
+    /// policy's for the view at the user's scale, within the display, times
+    /// dynamic resolution's scale; the display's own for debug views and
+    /// exact frames.
+    pub render_width: u32,
+    /// The height the frame drew at in physical pixels.
+    pub render_height: u32,
+    /// Pixels of the view the host asked for that the device's largest
+    /// texture left out of the display.
+    pub dropped_pixels: u64,
+    /// Milliseconds the GPU took over the last frame it timed, from two
+    /// timestamps around its work, read back a few frames late; `None`
+    /// where the device times no work.
+    pub gpu_ms: Option<f32>,
+}
+
+/// Dynamic resolution's scale.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DynamicResolutionStats {
+    /// Whether it scaled this frame: a display frame with dynamic resolution
+    /// on.
+    pub active: bool,
+    /// The scale the frame drew at on each axis, of the size the resolution
+    /// policy and the user's scale give: 1 while inactive.
+    pub scale: f32,
+    /// The milliseconds of GPU time frames keep within, while active.
+    pub budget_ms: f32,
 }
 
 /// What a feature drew, and what a budget or the GPU's bindings left out.

@@ -10,7 +10,9 @@
     "navigation": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
     "world_streaming": "No cell's scene streams world cells; the streaming smoke drives them.",
     "physics": "No cell's scene holds rigid bodies, which move only once a scene authors them; the physics smoke switches the section.",
-    "debug_view": "A development view, not a look: frames showing one draw the debug targets with pipelines no base has; the debug-view smoke switches every view and holds the shaded image after them to the one before."
+    "debug_view": "A development view, not a look: frames showing one draw the debug targets with pipelines no base has; the debug-view smoke switches every view and holds the shaded image after them to the one before.",
+    "resolution": "New with frames drawing at a render size within the display (2026-10-21): bases before it hold no such section, so a cell switching it waits for bases that do. Exact and preview captures draw at the display's whole size whatever it holds; the native smoke scales ordinary frames by it and checks their sizes.",
+    "dynamic_resolution": "Its scale follows the GPU time of the frames before, which differs from run to run, so images under it do not repeat; offscreen hosts, which the cells run on, keep it off, and the native smoke checks that they do."
   },
   "cells": [
     {

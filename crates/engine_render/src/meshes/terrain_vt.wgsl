@@ -310,7 +310,8 @@ fn fs_terrain_vt_bake(input: TerrainVtBakeOutput) -> TerrainVtTargets {
 const VT_FEEDBACK_BLOCK: u32 = 8u;
 @compute @workgroup_size(8, 8)
 fn cs_terrain_vt_feedback(@builtin(global_invocation_id) id: vec3<u32>) {
-    let size = vec2<u32>(textureDimensions(terrain_ids_texture));
+    // The pixels of the frame's render size, which it draws at.
+    let size = vec2<u32>(camera.region.xy);
     let leader = vec2<u32>(terrain.vt.w & 7u, (terrain.vt.w >> 3u) & 7u);
     let pixel = id.xy * VT_FEEDBACK_BLOCK + leader;
     if any(pixel >= size) || terrain.vt.y < 2u {
@@ -347,7 +348,8 @@ fn cs_terrain_vt_feedback(@builtin(global_invocation_id) id: vec3<u32>) {
     if !(abs(normal.y) >= VT_STEEP * length(normal)) {
         return;
     }
-    let along = vec2<f32>(length(steps[0]), length(steps[1]));
+    // Per display pixel, as the resolves' sites measure it (`terrain_seen`).
+    let along = vec2<f32>(length(steps[0]), length(steps[1])) * material_detail();
     let lod = log2(terrain_vt_texel(along) / terrain.vt_scale.x);
     let local = point.xz + camera.position.xz - terrain.origin.xz;
     let mips = terrain.vt.y;

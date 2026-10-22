@@ -63,6 +63,12 @@ impl Renderer {
         if !temporal && let Some(pass) = self.features.temporal.get_mut() {
             pass.reset();
         }
+        // Display frames draw at the render size asked for and upscale through
+        // the screen effects' targets; debug views, exact frames, the pixel
+        // probe's and frames while those effects are disabled draw at the
+        // display's size.
+        self.display
+            .plan_region(display && !debug && !self.features.post.disabled());
         let profile_residency = engine_profile::span("render", "validate_and_retire");
         for source in snapshot.textures.iter().chain(&snapshot.decals.textures) {
             if source.texture.width().max(source.texture.height()) > self.display.max_dimension {
@@ -394,7 +400,7 @@ impl Renderer {
                 &self.device,
                 &self.queue,
                 &frame,
-                self.display.size(),
+                self.display.region,
                 self.instances.generation(),
             )),
             _ => None,
@@ -458,8 +464,7 @@ impl Renderer {
             },
             |frame| frame.camera,
         );
-        camera.options[1] =
-            crate::gpu_data::pixel_angle(snapshot.view_projection, self.display.size().height);
+        camera.set_region(snapshot.view_projection, self.display.region);
         // The wind placed objects sway in, and the time they
         // swayed at last frame for temporal frames' motion.
         let seconds = snapshot.elapsed_seconds;
@@ -684,7 +689,7 @@ impl Renderer {
                 snapshot.presented_seconds,
             ),
             snapshot.view_projection,
-            [self.depth.texture.width(), self.depth.texture.height()],
+            self.display.region,
             (lighting, self.features.sky.get().bindings()),
             &self.depth.view,
         );
@@ -754,15 +759,15 @@ impl Renderer {
         if !occlusion_enabled {
             self.culling.pyramid = None;
         }
+        let region = self.display.region;
         let occlusion = if gpu_mode && occlusion_enabled {
             let device = &self.device;
             let pyramid = self
                 .culling
                 .pyramid
                 .get_or_insert_with(|| DepthPyramid::new(device, Reduction::Farthest));
-            let size = self.display.size();
-            let levels = pyramid.prepare(device, &self.depth.view, size);
-            Some((size.width, size.height, levels))
+            let levels = pyramid.prepare(device, &self.queue, &self.depth.view, region);
+            Some((region.render.width, region.render.height, levels))
         } else {
             None
         };
@@ -822,14 +827,18 @@ impl Renderer {
                     .as_ref()
                     .map_or(snapshot.view_projection, |temporal| temporal.rasterized),
                 eye: snapshot.camera_position,
-                viewport: self.display.size().pixels(),
+                // Culling tests the pixels the frame draws; levels of detail
+                // keep their error in the display's pixels, the render
+                // pixels' share of them, so they hold however the frame
+                // scales.
+                viewport: region.render.pixels(),
                 motion: temporal_frame
                     .as_ref()
                     .is_some_and(|temporal| temporal.motion_valid),
                 occlusion: occlusion.map(|(_, _, levels)| levels),
                 subpixel: snapshot.environment.subpixel_culling.enabled,
                 lod_error: if snapshot.environment.level_of_detail.enabled {
-                    snapshot.environment.level_of_detail.pixel_error
+                    snapshot.environment.level_of_detail.pixel_error * region.share()[1]
                 } else {
                     0.0
                 },
@@ -1115,7 +1124,8 @@ impl Renderer {
         // Local lights: binned on the GPU from this frame's
         // poses, so slot lights follow GPU-presented meshes.
         let needs = snapshot.environment.local_lights.active() && !snapshot.lights.list.is_empty();
-        let (device, queue, size) = (&self.device, &self.queue, self.display.size());
+        // Clusters tile the pixels the frame draws.
+        let (device, queue, size) = (&self.device, &self.queue, self.display.region.render);
         let layouts = (&self.camera.layout, self.materials.layout());
         let temporal_pass = &mut self.features.temporal;
         let instances = &self.instances;
@@ -1153,15 +1163,17 @@ impl Renderer {
         // history averages the occlusion noise), and auto exposure's meter.
         let effects = crate::screen_effects::targets_read(&snapshot.environment);
         // Glass refracts the opaque color of the scene target:
-        // frames drawing it render into the target.
+        // frames drawing it render into the target. Frames drawing smaller
+        // than the display draw into it too, which the composite upscales.
         let refraction = snapshot.environment.refraction.enabled()
             && self.plan.batches.iter().any(|batch| {
                 batch.transparent && self.materials.binding(batch.material).1.transmission()
             });
-        let needs = temporal_frame.is_some() || effects || refraction;
+        let region = self.display.region;
+        let needs = temporal_frame.is_some() || effects || refraction || region.upscales();
         let (device, queue) = (&self.device, &self.queue);
         let (format, camera_layout) = (self.display.format(), &self.camera.layout);
-        let (size, depth) = (self.display.size(), &self.depth.view);
+        let depth = &self.depth.view;
         let post = self.features.post.prepare(
             (device, needs),
             || PostPass::new(device, format, camera_layout),
@@ -1170,7 +1182,7 @@ impl Renderer {
                     device,
                     queue,
                     snapshot,
-                    (size, depth),
+                    (region, depth),
                     temporal_frame.is_some(),
                     self.shadows.sky_bindings(),
                 ))
@@ -1217,7 +1229,7 @@ impl Renderer {
         let meshes = self.plan.batches.iter().any(|batch| batch.transparent);
         let (device, queue) = (&self.device, &self.queue);
         let inputs = (
-            (self.display.size(), &self.depth.view),
+            (self.display.region, &self.depth.view),
             (&self.camera.layout, (self.display.format(), DEPTH_FORMAT)),
         );
         let transparency = self.features.transparency.prepare(|transparency| {

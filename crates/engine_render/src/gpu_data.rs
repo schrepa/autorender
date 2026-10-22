@@ -7,6 +7,7 @@ use engine_core::{
 };
 
 use crate::gpu_layouts::constants;
+use crate::targets::FrameRegion;
 
 pub(crate) use crate::gpu_layouts::constants::COMPOSED_BYTES;
 pub(crate) use crate::gpu_layouts::constants::DRAW_ARGS_BYTES;
@@ -22,7 +23,8 @@ pub(crate) use crate::gpu_layouts::scene::CameraUniform;
 
 impl CameraUniform {
     /// An unjittered camera at `position` without temporal history, at
-    /// presentation time `seconds`.
+    /// presentation time `seconds`; frames give it their region
+    /// ([`Self::set_region`]).
     pub(crate) fn exact(view_projection: Mat4, position: glam::Vec3, seconds: f32) -> Self {
         let columns = view_projection.to_cols_array_2d();
         Self {
@@ -33,12 +35,24 @@ impl CameraUniform {
             jitter: [0.0; 4],
             options: [0.0; 4],
             wind: [0.0, 0.0, 0.0, seconds],
+            region: [0.0; 4],
         }
+    }
+
+    /// The frame's `region` seen through `view_projection`: the angle a
+    /// display pixel spans at the view's center, which shading measures
+    /// pixels' footprints by, the mip bias material textures sample with, so
+    /// frames drawing smaller keep the detail the display shows, and the
+    /// region itself.
+    pub(crate) fn set_region(&mut self, view_projection: Mat4, region: FrameRegion) {
+        self.options[1] = pixel_angle(view_projection, region.display.height);
+        self.options[3] = region.mip_bias();
+        self.region = region.uniform();
     }
 
     /// A reflection probe's cube face `size` texels a side seen from
     /// `position` through `view_projection`, at presentation
-    /// time `seconds`.
+    /// time `seconds`: drawn whole, its textures without a mip bias.
     pub(crate) fn probe(
         view_projection: Mat4,
         position: glam::Vec3,
@@ -47,13 +61,15 @@ impl CameraUniform {
     ) -> Self {
         Self {
             options: [1.0, pixel_angle(view_projection, size), 0.0, 0.0],
+            region: [size as f32, size as f32, 1.0, 1.0],
             ..Self::exact(view_projection, position, seconds)
         }
     }
 
-    /// A temporally antialiased frame of a `width` x `height` viewport:
-    /// `view_projection` jittered by `jitter` (see [`jitter_clip`]), with the
-    /// previous frame's unjittered `previous` for motion vectors.
+    /// A temporally antialiased frame drawing `width` x `height` pixels, its
+    /// render size: `view_projection` jittered by `jitter` (see
+    /// [`jitter_clip`]), with the previous frame's unjittered `previous` for
+    /// motion vectors.
     pub(crate) fn temporal(
         view_projection: Mat4,
         position: glam::Vec3,

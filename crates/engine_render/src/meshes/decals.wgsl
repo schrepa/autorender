@@ -91,9 +91,10 @@ fn vs_decal(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
 }
 
 // The opaque surface's world position at `pixel` of depth `depth`, without
-// the jitter of temporally antialiased frames.
+// the jitter of temporally antialiased frames: a pixel of the frame's render
+// size, which it draws at.
 fn decal_surface(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
-    let size = vec2<f32>(textureDimensions(decal_depth));
+    let size = camera.region.xy;
     let center = vec2<f32>(pixel) + 0.5;
     let ndc = vec2<f32>(center.x / size.x * 2.0 - 1.0, 1.0 - center.y / size.y * 2.0)
         - camera.jitter.xy;
@@ -105,7 +106,7 @@ fn decal_surface(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
 // neighbor whose depth is nearer its own, so edges of other surfaces do not
 // tilt it.
 fn decal_step(pixel: vec2<i32>, depth: f32, world: vec3<f32>, axis: vec2<i32>) -> vec3<f32> {
-    let last = vec2<i32>(textureDimensions(decal_depth)) - 1;
+    let last = vec2<i32>(camera.region.xy) - 1;
     let after = min(pixel + axis, last);
     let before = max(pixel - axis, vec2<i32>(0));
     let after_depth = textureLoad(decal_depth, after, 0);
@@ -147,10 +148,13 @@ fn decal_point(input: DecalOutput) -> SurfacePoint {
     // Surfaces turning away from the box's +y fade out toward a right angle.
     let facing = saturate(dot(normal, input.up) / max(record.params.x, 1.0e-4));
     // The material spans the box's x and z; its map's footprint follows the
-    // surface's steps.
+    // surface's steps, as finely as the display shows them.
     let uv = local.xz + 0.5;
-    let uv_dx = vec2<f32>(dot(input.inverse_0.xyz, world_dx), dot(input.inverse_2.xyz, world_dx));
-    let uv_dy = vec2<f32>(dot(input.inverse_0.xyz, world_dy), dot(input.inverse_2.xyz, world_dy));
+    let detail = material_detail();
+    let uv_dx = vec2<f32>(dot(input.inverse_0.xyz, world_dx), dot(input.inverse_2.xyz, world_dx))
+        * detail;
+    let uv_dy = vec2<f32>(dot(input.inverse_0.xyz, world_dy), dot(input.inverse_2.xyz, world_dy))
+        * detail;
     let transform = mat2x2<f32>(
         vec2<f32>(material_maps.transforms[0].x, material_maps.transforms[1].x),
         vec2<f32>(material_maps.transforms[0].y, material_maps.transforms[1].y));

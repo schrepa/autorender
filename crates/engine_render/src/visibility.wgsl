@@ -3,8 +3,8 @@
 // those. A tile lists a bin once, by its first pixel of that bin.
 
 struct Classify {
-    // The viewport's size in pixels, the tiles across it and each bin's
-    // room for tiles (every tile of the viewport).
+    // The size in pixels the frame draws at, the tiles across it and each
+    // bin's room for tiles (every tile of the display).
     size: vec2<u32>,
     tiles_across: u32,
     capacity: u32,

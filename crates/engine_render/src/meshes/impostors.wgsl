@@ -168,7 +168,8 @@ fn bake_mask(texels: MaterialTexels, color: vec4<f32>) {
 fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool)
         -> BakeTargets {
     let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
-    var texels = material_texels(uv, uv1);
+    // Bakes sample their materials' own mips.
+    var texels = material_texels(uv, uv1, 0.0);
     let local = input.local_v.xyz;
     let local_dx = dpdx(local);
     let local_dy = dpdy(local);
@@ -219,13 +220,13 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
 @fragment
 fn fs_impostor_shade(input: BakeOutput) {
     let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
-    bake_mask(material_texels(uv, uv), vec4<f32>(1.0));
+    bake_mask(material_texels(uv, uv, 0.0), vec4<f32>(1.0));
 }
 
 @fragment
 fn fs_impostor_shade_extended(input: BakeExtendedOutput) {
     let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
-    bake_mask(material_texels(uv, input.uv1), input.color);
+    bake_mask(material_texels(uv, input.uv1, 0.0), input.color);
 }
 
 @fragment
@@ -451,14 +452,15 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     let shown = vec3<u32>(packed & 255u, (packed >> 8u) & 255u, (packed >> 16u) & 255u);
     let frames = impostor_frames(record.flags);
     let masked = (record.flags & IMPOSTOR_MASKED) != 0u;
-    // The level whose texels match the pixels, and half a texel of the
+    // The level whose texels match the pixels the display shows (its
+    // render size's share of them: the mip bias), and half a texel of the
     // coarser level sampled, which keeps each frame's samples in its cell.
     // The atlas is its frames' texels across and has their levels down to
     // two texels a frame (`AtlasShape`), which the record holds.
     let texels = record.flags & (IMPOSTOR_HEMISPHERE - 1u);
     let size = f32(frames * texels);
     let footprint = max(length(dpdx(input.frames_ab.xy)), length(dpdy(input.frames_ab.xy)))
-        * size;
+        * size * material_detail();
     let level = clamp(log2(max(footprint, 1.0e-6)), 0.0,
         f32(countTrailingZeros(texels) - 1u));
     let inset = 0.5 * exp2(ceil(level)) / size;

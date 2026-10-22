@@ -109,13 +109,13 @@ impl ExposurePass {
     }
 
     /// Prepares a frame of `snapshot` metering `scene`, the screen effects'
-    /// scene color, beside the depth buffer `depth`, under the scene's
-    /// `lighting`.
+    /// scene color, beside the depth buffer `depth`, both `drawn` pixels of
+    /// them from their top-left corner, under the scene's `lighting`.
     pub(crate) fn prepare(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
         snapshot: &RenderSnapshot,
-        (scene, depth): (Bound<'_>, &Versioned<wgpu::TextureView>),
+        (scene, depth, drawn): (Bound<'_>, &Versioned<wgpu::TextureView>, (u32, u32)),
         lighting: &wgpu::Buffer,
     ) -> ExposureFrame {
         let settings: &AutoExposure = &snapshot.environment.auto_exposure;
@@ -180,6 +180,7 @@ impl ExposurePass {
                 settings.sky,
             ],
             day: [noon, sky.adaptation * ADAPTATION_POWER, most, 0.0],
+            drawn: [drawn.0 as f32, drawn.1 as f32, 0.0, 0.0],
         };
         if self.written != Some(values) {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&values));

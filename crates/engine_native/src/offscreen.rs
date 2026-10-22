@@ -115,6 +115,9 @@ impl<G: Game> Offscreen<G> {
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
             target, build,
         )))?);
+        // Offscreen frames, captures and measured runs among them, keep their
+        // size: no dynamic resolution, unless the options turn it on.
+        host.set_dynamic_resolution(false);
         jobs.attach(&mut host);
         Ok(Self { host, size, jobs })
     }

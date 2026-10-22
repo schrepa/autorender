@@ -909,11 +909,6 @@ fn window_report(report: &WindowReport) -> serde_json::Value {
     json!({
         "size": [report.size.0, report.size.1],
         "window": [report.window.0, report.window.1],
-        "resolution_policy": if report.capped {
-            "applied"
-        } else {
-            "not applied: this GPU interface's surfaces take the window's size"
-        },
         "frames": report.frames,
         "fps": f64::from(report.frames) * 1000.0 / report.elapsed_ms,
         "frame_ms": report.elapsed_ms / f64::from(report.frames),

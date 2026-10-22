@@ -336,18 +336,18 @@ impl Renderer {
     }
 
     /// The pages the first phase's terrain resolves wanted of the runtime
-    /// virtual texture, read from terrain's visibility target.
+    /// virtual texture, read from the pixels of terrain's visibility target
+    /// the frame drew.
     fn encode_vt_feedback(&mut self, encoder: &mut wgpu::CommandEncoder) {
         let Some(ids) = self.terrain_ids.get() else {
             return;
         };
-        let size = self.depth.texture.size();
         self.terrain.encode_vt_feedback(
             &self.device,
             encoder,
             &self.mesh_shader,
             &self.camera.buffer,
-            (&ids.view, (size.width, size.height)),
+            (&ids.view, self.display.region.render.pixels()),
         );
     }
 
@@ -467,5 +467,15 @@ impl AttachmentViews for FrameViews<'_> {
             (Resource::History, Some(history)) => history,
             _ => self.renderer.attachment_view(resource, self.canvas),
         }
+    }
+
+    /// The canvas and the history are the display's, which passes drawing
+    /// them cover whole; every other screen-sized target is drawn at the
+    /// frame's render size.
+    fn region(&self, node: &Node) -> Option<(u32, u32)> {
+        let whole = node
+            .colors()
+            .any(|(resource, _)| matches!(resource, Resource::Canvas | Resource::History));
+        (!whole).then(|| self.renderer.display.region.render.pixels())
     }
 }

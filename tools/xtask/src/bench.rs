@@ -32,7 +32,7 @@ pub const MEASURED: &[&str] = &[
 ];
 
 /// Frame statistics that are not work: which frame, how late its read-back
-/// counts are, and its timings.
+/// counts are, and its timings (the GPU's among them).
 pub const NOT_WORK: &[&str] = &[
     "frame",
     "tick",
@@ -40,6 +40,7 @@ pub const NOT_WORK: &[&str] = &[
     "simulation_ms",
     "extraction_ms",
     "render_ms",
+    "resolution.gpu_ms",
 ];
 
 /// The options a scene file holds.

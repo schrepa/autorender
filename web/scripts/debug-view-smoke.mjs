@@ -129,7 +129,7 @@ try {
 
   // The pixel probe, from GPU-presented frames: what drew points across the
   // view's middle, among them an object an entity's slot draws.
-  const { view_width: width, view_height: height } = again.rendering;
+  const { display_width: width, display_height: height } = again.rendering.resolution;
   const probes = [];
   for (const fraction of [0.3, 0.4, 0.5, 0.6, 0.7]) {
     const point = { x: Math.floor(width * fraction), y: Math.floor(height * 0.55) };
@@ -188,7 +188,7 @@ try {
     report.terrain_views[view] = pixels.changed;
   }
   // The ground somewhere below the view's middle, where the probe finds it.
-  const { view_width: width, view_height: height } = (await terrain.command("render")).result.rendering;
+  const { display_width: width, display_height: height } = (await terrain.command("render")).result.rendering.resolution;
   let ground;
   for (const [x, y] of [[0.5, 0.75], [0.4, 0.8], [0.6, 0.8], [0.5, 0.9], [0.3, 0.7], [0.7, 0.7]]) {
     const probed = (await terrain.command("probe", { x: Math.floor(width * x), y: Math.floor(height * y) })).result;

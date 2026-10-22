@@ -41,10 +41,12 @@ gpu_structs! {
 
     /// WGSL `CloudView` (`clouds.wgsl`): the view's unjittered
     /// inverse view-projection; its blocks along x and y, pixels along a
-    /// block's side, and whether blocks seeing the sky march.
+    /// block's side, and whether blocks seeing the sky march; and the pixels
+    /// the frame draws of the depth buffer, its render size (zw unused).
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
     pub(crate) struct ViewUniform as ["CloudView"] {
         pub inverse_view_projection: [[f32; 4]; 4],
         pub blocks: [u32; 4],
+        pub pixels: [u32; 4],
     }
 }

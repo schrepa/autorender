@@ -1318,8 +1318,11 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     // which change smoothly across the triangles drawn, so fading detail and
     // mipmaps change with them rather than from one triangle to the next.
     let facing = min(dot(geometric, ray), -0.015625);
-    let smooth_dx = away * (ray_dx - ray * (dot(geometric, ray_dx) / facing));
-    let smooth_dy = away * (ray_dy - ray * (dot(geometric, ray_dy) / facing));
+    // Its materials as finely as the display shows them: per display pixel
+    // (the render size's share of a pixel), as the mip bias samples.
+    let detail = material_detail();
+    let smooth_dx = away * detail * (ray_dx - ray * (dot(geometric, ray_dx) / facing));
+    let smooth_dy = away * detail * (ray_dy - ray * (dot(geometric, ray_dy) / facing));
     let along = vec2<f32>(length(smooth_dx), length(smooth_dy));
     let footprint = max(along.x, along.y);
     var site: TerrainSite;
@@ -1423,8 +1426,11 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     point.view = stable_normalize(-relative);
     point.n_v = max(dot(normal, point.view), 1.0e-4);
     point.world = world;
-    point.world_dx = select(site.world_dx, look.world_dx, look.raw.x);
-    point.world_dy = select(site.world_dy, look.world_dy, look.raw.y);
+    // The point moves per render pixel, as the site's maps do per display
+    // pixel.
+    let detail = material_detail();
+    point.world_dx = select(site.world_dx / detail, look.world_dx, look.raw.x);
+    point.world_dy = select(site.world_dy / detail, look.world_dy, look.raw.y);
     point.shadow_offset = vec3<f32>(0.0);
     point.on_terrain = true;
     return point;
@@ -1469,7 +1475,8 @@ struct TerrainResolved {
 // `dither` picks the runtime virtual texture's mips (`terrain_vt_texels`).
 fn terrain_resolved(position: vec4<f32>, dither: f32) -> TerrainResolved {
     let pixel = vec2<i32>(position.xy);
-    let size = vec2<f32>(textureDimensions(terrain_ids_texture));
+    // A pixel of the frame's render size, which it draws at.
+    let size = camera.region.xy;
     let texel = textureLoad(terrain_ids_texture, pixel, 0);
     let mine = texel.x == terrain.directory.x + 1u;
     if !mine {

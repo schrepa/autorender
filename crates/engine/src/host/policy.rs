@@ -60,6 +60,26 @@ policy! {
     pub const MAX_VIEW_WIDTH: u32 = 2560;
     /// The tallest a view draws, in physical pixels.
     pub const MAX_VIEW_HEIGHT: u32 = 1440;
+    /// The step dynamic resolution's scale moves by: it keeps to its
+    /// multiples within the settings' bounds, so temporal antialiasing's
+    /// history stays steady.
+    pub const DYNAMIC_STEP: f64 = 1.0 / 32.0;
+    /// Frames taking more than this share of their budget run over it.
+    pub const DYNAMIC_OVER: f64 = 1.05;
+    /// Frames whose GPU work took less than this share of their budget run
+    /// under it.
+    pub const DYNAMIC_UNDER: f64 = 0.85;
+    /// The share of the budget lowering the scale aims frames at.
+    pub const DYNAMIC_AIM: f64 = 0.9;
+    /// Frames in a row over their budget that lower the scale.
+    pub const DYNAMIC_LOWER_FRAMES: u32 = 3;
+    /// Frames in a row whose GPU work ran under their budget that raise the
+    /// scale a step.
+    pub const DYNAMIC_RAISE_FRAMES: u32 = 30;
+    /// Frames in a row within their budget that raise the scale a step where
+    /// the device times no GPU work: the time between frames cannot tell how
+    /// far under it they run.
+    pub const DYNAMIC_PROBE_FRAMES: u32 = 120;
 }
 
 /// The job workers a host runs by default on `cores` logical processors:

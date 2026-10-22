@@ -318,10 +318,22 @@ impl Renderer {
         )
     }
 
-    /// Resize in physical pixels, preserving aspect ratio within device limits.
-    /// A zero dimension suspends rendering without configuring an invalid surface.
+    /// Resize in physical pixels, preserving aspect ratio within device limits:
+    /// the display's whole size, which the surface and every screen-sized
+    /// target take. A zero dimension suspends rendering without configuring an
+    /// invalid surface.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.display.resize(width, height);
+    }
+
+    /// The size display frames draw at, in physical pixels, from the top-left
+    /// corner of the display, within it: the frame's last pass upscales to
+    /// the display, and material textures sample as much sharper. Debug
+    /// views and exact frames draw at the display's whole size, as do frames
+    /// while the screen effects, which upscale, are disabled. Changing it
+    /// leaves every target as it is.
+    pub fn set_render_size(&mut self, width: u32, height: u32) {
+        self.display.ask_render_size(width, height);
     }
 
     /// Whether the session cooks: frames then create the pipelines of

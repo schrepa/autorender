@@ -18,6 +18,9 @@ gpu_structs! {
         /// The physically based sky's light at noon (0 without it), the
         /// power of its light's ratio exposure rises by and the most stops.
         pub day: [f32; 4],
+        /// The pixels of the scene the frame drew, from its top-left corner;
+        /// zw unused.
+        pub drawn: [f32; 4],
     }
 
     /// WGSL `ExposureState` (`exposure.wgsl`): the exposure frames show,

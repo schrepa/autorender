@@ -87,6 +87,17 @@ macro_rules! __game_surface {
                 /// Sub-pixel culling of GPU-presented frames, over the world's
                 /// setting in this and later engines.
                 fn set_subpixel_culling(enabled: bool);
+                /// The canvas's device pixels per CSS pixel, which the
+                /// resolution policy sizes ordinary frames by
+                /// (`engine::host::render_size`): the canvas takes its element's
+                /// whole size in device pixels, and frames draw within it.
+                fn set_pixel_ratio(ratio: f64);
+                /// The user's resolution `scale` of ordinary frames, over the
+                /// world's in this and later engines.
+                fn set_resolution_scale(scale: f64);
+                /// Dynamic resolution of ordinary frames, over the world's
+                /// setting in this and later engines.
+                fn set_dynamic_resolution(enabled: bool);
                 /// Applies the engine switches the page's URL search part
                 /// `query` names (`engine::host::SETTINGS`), in this and later
                 /// engines; a value a switch does not take fails.
@@ -109,12 +120,9 @@ macro_rules! __game_surface {
                 /// `Distribution` types; `null` without values, or with one
                 /// that is not a finite number of at least 0.
                 fn distribution(values: Vec<f64>) -> String as Json<Option<Distribution>>;
-                /// The physical `[width, height]` a view `width` × `height`
-                /// CSS pixels across draws at, at `pixel_ratio` device pixels
-                /// per CSS pixel and the user's resolution `scale`, as every
-                /// host sizes views (`engine::host::view_size`); empty for a
-                /// view with no area.
-                fn view_size(width: f64, height: f64, pixel_ratio: f64, scale: f64) -> Vec<u32>;
+                /// Whether ordinary frames scale their size by dynamic
+                /// resolution.
+                fn dynamic_resolution() -> bool;
             }
             dev_mut {
                 /// Runs development request `request` (JSON) on a `width` ×

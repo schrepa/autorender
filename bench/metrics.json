@@ -278,15 +278,37 @@
       "direction": "lower"
     },
     {
-      "name": "dropped_view_pixels",
+      "name": "dynamic_resolution.active",
       "kind": "work",
-      "rule": "not-above",
+      "rule": "equal",
       "statistic": "the last sampled frame's value",
       "runtimes": [
         "native"
       ],
-      "unit": "count",
-      "direction": "lower"
+      "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "dynamic_resolution.budget_ms",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "ms",
+      "direction": null
+    },
+    {
+      "name": "dynamic_resolution.scale",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "share",
+      "direction": null
     },
     {
       "name": "fixed_steps",
@@ -1125,6 +1147,61 @@
       "direction": null
     },
     {
+      "name": "resolution.display_height",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "resolution.display_width",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "resolution.dropped_pixels",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "resolution.render_height",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "resolution.render_width",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "shadows.active",
       "kind": "work",
       "rule": "equal",
@@ -1694,28 +1771,6 @@
         "native"
       ],
       "unit": "bytes",
-      "direction": null
-    },
-    {
-      "name": "view_height",
-      "kind": "work",
-      "rule": "equal",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "view_width",
-      "kind": "work",
-      "rule": "equal",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
       "direction": null
     },
     {

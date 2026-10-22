@@ -11,7 +11,11 @@
 //! resolution and filter the result; bloom filters the glowing light down a
 //! chain of half-resolution levels and back up. Temporally antialiased frames
 //! apply them in their resolve, other frames in a composite
-//! that writes the canvas.
+//! that writes the canvas, upscaling the scene to the display.
+//!
+//! Targets are made at the display's size, or a fraction of it; frames draw
+//! their render size of them from the top-left corner, every pass within
+//! its share, and read within it.
 
 #![expect(
     clippy::expect_used,
@@ -30,7 +34,7 @@ use crate::profiling::{GpuProfiler, Span};
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{Access, BLACK, Clear, FrameShape, Node, Pass, RenderGraph, Resource};
 use crate::screen_effects::{Effects, UniformFrame};
-use crate::targets::{FrameSize, ScreenTarget};
+use crate::targets::{FrameRegion, FrameSize, ScreenTarget, draw_within};
 
 /// Linear color with 8 perceptual bits; alpha holds the ambient share.
 pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -90,8 +94,10 @@ struct Targets {
     reflections: wgpu::TextureView,
     traced: wgpu::TextureView,
     shafts: wgpu::TextureView,
-    // One view per bloom level, and the level count.
+    // One view per bloom level, and the size of the half-resolution chains'
+    // first levels, which each level halves.
     bloom: Vec<wgpu::TextureView>,
+    levels: (u32, u32),
     bloom_first: wgpu::BindGroup,
     // Group `i` reads level `i` (down, writing `i + 1`) or level `i + 1`
     // (up, adding into `i`).
@@ -145,6 +151,9 @@ pub(crate) struct PostPass {
     written: Option<PostUniform>,
     sampler: wgpu::Sampler,
     targets: ScreenTarget<Targets>,
+    // The frame's sizes: the targets', the display's, and the part of them
+    // it draws.
+    region: FrameRegion,
     // Occlusion, filter, reflection and shaft bindings over the depth
     // buffer and targets (and reflections', the pyramid).
     occlusion_group: GroupCache<5>,
@@ -321,6 +330,7 @@ impl PostPass {
             written: None,
             sampler,
             targets: ScreenTarget::default(),
+            region: FrameRegion::default(),
             occlusion_group: GroupCache::default(),
             effects_filter_group: GroupCache::default(),
             reflections_group: GroupCache::default(),
@@ -353,23 +363,25 @@ impl PostPass {
         }) + self.nearest.capacity_bytes()
     }
 
-    /// Sizes the targets to `size` and writes this frame's settings: the
-    /// effects of `snapshot` over the depth buffer `depth`.
-    /// `temporal` frames trace reflections from another pixel of each 2x2
-    /// block than the frame before.
+    /// Sizes the targets to `region`'s display and writes this frame's
+    /// settings: the effects of `snapshot` over the depth buffer `depth`, at
+    /// the region's render size. `temporal` frames trace reflections from
+    /// another pixel of each 2x2 block than the frame before.
     pub(crate) fn begin(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         snapshot: &RenderSnapshot,
-        (size, depth): (FrameSize, &Versioned<wgpu::TextureView>),
+        (region, depth): (FrameRegion, &Versioned<wgpu::TextureView>),
         temporal: bool,
         sky: [(&'static str, Bound<'_>); 3],
     ) -> Effects {
+        let size = region.display;
         if self.targets.resizes(size) {
             let targets = self.create_targets(device, size);
             self.targets.set(size, targets);
         }
+        self.region = region;
         let frame = Effects::of(&snapshot.environment);
         self.bind_occlusion(device, frame, depth, sky);
         let targets = self.targets.get().expect("sized above");
@@ -382,7 +394,7 @@ impl PostPass {
             0
         };
         if frame.reflections {
-            self.nearest.prepare(device, depth, size);
+            self.nearest.prepare(device, queue, depth, region);
         }
         if frame.reflections
             && let Some(nearest) = self.nearest.view()
@@ -423,7 +435,8 @@ impl PostPass {
                 [("post", post()), ("depth_texture", depth.bound())],
             );
         }
-        let (width, height) = (size.width as f32, size.height as f32);
+        let (width, height) = (region.render.width as f32, region.render.height as f32);
+        let (wide, tall) = (size.width as f32, size.height as f32);
         let view_projection = snapshot.view_projection;
         // Row y of a perspective view-projection is the focal scale times a
         // unit axis of the view: its length converts world units at unit
@@ -450,6 +463,7 @@ impl PostPass {
                 .extend(focal * height * 0.5)
                 .to_array(),
             size: [width, height, 1.0 / width, 1.0 / height],
+            extent: [wide, tall, 1.0 / wide, 1.0 / tall],
             occlusion: effects.occlusion,
             bloom: effects.bloom,
             reflections: effects.reflections,
@@ -577,13 +591,21 @@ impl PostPass {
         profiler: &GpuProfiler,
     ) {
         let targets = self.targets.get().expect("sized in begin");
+        // Half the render size of the half-resolution targets, and a quarter
+        // of it, rounded up, of the shafts'.
+        let half = self.region.half();
+        let render = self.region.render;
+        let quarter = (
+            render.width.div_ceil(4).max(1),
+            render.height.div_ceil(4).max(1),
+        );
         if (frame.occlusion || frame.contact || frame.sky)
             && let Some(group) = self.occlusion_group.get()
         {
             let mut pass = fullscreen_pass(
                 encoder,
                 "engine/post-occlusion",
-                &targets.raw_occlusion,
+                (&targets.raw_occlusion, half),
                 wgpu::LoadOp::Load,
                 profiler.span("ambient_occlusion").map(Span::render),
             );
@@ -608,16 +630,17 @@ impl PostPass {
             self.nearest.encode(encoder, profiler.span("reflections"));
             // The scene blurred down its levels for rough reflections, past
             // those the bloom's passes wrote.
-            for (view, group) in targets
+            for (level, (view, group)) in targets
                 .scene_level_views
                 .iter()
                 .zip(&targets.scene_level_groups)
+                .enumerate()
                 .skip(levels_done)
             {
                 let mut pass = fullscreen_pass(
                     encoder,
                     "engine/post-scene-levels",
-                    view,
+                    (view, self.level_region(level as u32, targets.levels)),
                     wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     None,
                 );
@@ -629,7 +652,7 @@ impl PostPass {
                 let mut pass = fullscreen_pass(
                     encoder,
                     "engine/post-reflections",
-                    &targets.traced,
+                    (&targets.traced, half),
                     wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                     None,
                 );
@@ -640,7 +663,7 @@ impl PostPass {
             let mut pass = fullscreen_pass(
                 encoder,
                 "engine/post-reflections-filter",
-                &targets.reflections,
+                (&targets.reflections, half),
                 wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                 profiler
                     .span("reflections")
@@ -656,7 +679,7 @@ impl PostPass {
             let mut pass = fullscreen_pass(
                 encoder,
                 "engine/post-shafts",
-                &targets.shafts,
+                (&targets.shafts, quarter),
                 wgpu::LoadOp::Load,
                 profiler.span("sun_shafts").map(Span::render),
             );
@@ -673,7 +696,7 @@ impl PostPass {
             let mut pass = fullscreen_pass(
                 encoder,
                 "engine/post-effects-filter",
-                &targets.occlusion,
+                (&targets.occlusion, half),
                 wgpu::LoadOp::Load,
                 profiler.span("effects_filter").map(Span::render),
             );
@@ -705,6 +728,7 @@ impl PostPass {
         } else {
             0
         };
+        let drawn = |level: usize| self.level_region(level as u32, targets.levels);
         if shared > 0 {
             for level in 0..shared {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -718,6 +742,7 @@ impl PostPass {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
+                draw_within(&mut pass, drawn(level));
                 if level == 0 {
                     pass.set_pipeline(&self.levels_first);
                     pass.set_bind_group(0, &targets.levels_first, &[]);
@@ -731,7 +756,7 @@ impl PostPass {
             let mut pass = fullscreen_pass(
                 encoder,
                 "engine/post-bloom",
-                &targets.bloom[0],
+                (&targets.bloom[0], drawn(0)),
                 wgpu::LoadOp::Load,
                 timed(true, levels == 1),
             );
@@ -743,7 +768,7 @@ impl PostPass {
             let mut pass = fullscreen_pass(
                 encoder,
                 "engine/post-bloom",
-                &targets.bloom[level],
+                (&targets.bloom[level], drawn(level)),
                 wgpu::LoadOp::Load,
                 None,
             );
@@ -755,7 +780,7 @@ impl PostPass {
             let mut pass = fullscreen_pass(
                 encoder,
                 "engine/post-bloom",
-                &targets.bloom[level],
+                (&targets.bloom[level], drawn(level)),
                 wgpu::LoadOp::Load,
                 timed(false, level == 0),
             );
@@ -766,8 +791,22 @@ impl PostPass {
         shared
     }
 
+    /// The texels the frame draws of level `level` of a half-resolution
+    /// chain whose first level is `first` texels: half the render size,
+    /// halved `level` times, a texel at least, and one more, which shaders
+    /// reading within the share of the level the render size is of the
+    /// display take, however their arithmetic rounds; within the level.
+    fn level_region(&self, level: u32, first: (u32, u32)) -> (u32, u32) {
+        let (wide, tall) = self.region.half();
+        let part = |drawn: u32, whole: u32| {
+            let whole = (whole >> level).max(1);
+            ((drawn >> level).max(1) + 1).min(whole)
+        };
+        (part(wide, first.0), part(tall, first.1))
+    }
+
     /// Draws the composite of a frame without temporal antialiasing into
-    /// `pass`, its node's pass over the canvas.
+    /// `pass`, its node's pass over the canvas, upscaling the scene.
     fn draw_composite(&self, mut pass: wgpu::RenderPass<'_>) {
         let targets = self.targets.get().expect("sized in begin");
         pass.set_pipeline(&self.composite);
@@ -914,6 +953,7 @@ impl PostPass {
             scene,
             glow,
             surface,
+            levels: half,
             scene_levels: scene_levels_view,
             scene_level_views,
             scene_level_groups,
@@ -964,14 +1004,16 @@ pub(crate) fn inverse_or_identity(matrix: Mat4) -> Mat4 {
     }
 }
 
+/// A pass labeled `label` drawing `view`'s first `drawn` texels, from its
+/// top-left corner.
 fn fullscreen_pass<'e>(
     encoder: &'e mut wgpu::CommandEncoder,
     label: &str,
-    view: &wgpu::TextureView,
+    (view, drawn): (&wgpu::TextureView, (u32, u32)),
     load: wgpu::LoadOp<wgpu::Color>,
     timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
 ) -> wgpu::RenderPass<'e> {
-    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view,
@@ -986,7 +1028,9 @@ fn fullscreen_pass<'e>(
         timestamp_writes,
         occlusion_query_set: None,
         multiview_mask: None,
-    })
+    });
+    draw_within(&mut pass, drawn);
+    pass
 }
 
 /// Which screen effects a frame applied.

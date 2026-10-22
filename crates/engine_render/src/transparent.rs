@@ -24,7 +24,7 @@ use crate::render_graph::{
     Access, Clear, FrameShape, Node, Pass, RenderGraph, Resource, TRANSPARENT, WHITE,
 };
 use crate::shaders::entry::transparent;
-use crate::targets::{FrameSize, ScreenTarget};
+use crate::targets::{FrameRegion, FrameSize, ScreenTarget};
 
 /// Weighted premultiplied color and coverage, added.
 pub(crate) const ACCUMULATED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -284,11 +284,11 @@ impl Transparency {
     /// Prepares a frame's transparency: its transparent mesh batches when
     /// `meshes`, and `snapshot`'s particles when they change (`emitters`:
     /// the render stream identity and its emitters revision), soft against
-    /// the depth buffer `depth`; at the frame's `size`, composited into the
-    /// canvas or, with `post`, the effects' targets. `camera` is the main
-    /// passes' first group layout, `formats` the canvas's and the depth
-    /// buffer's. `None` when nothing transparent draws, whose frames release
-    /// the targets.
+    /// the depth buffer `depth`; its targets at `region`'s display size,
+    /// drawn at its render size, composited into the canvas or, with `post`,
+    /// the effects' targets. `camera` is the main passes' first group
+    /// layout, `formats` the canvas's and the depth buffer's. `None` when
+    /// nothing transparent draws, whose frames release the targets.
     #[expect(clippy::too_many_arguments, reason = "the frame's inputs, typed")]
     pub(crate) fn prepare(
         &mut self,
@@ -296,7 +296,7 @@ impl Transparency {
         queue: &wgpu::Queue,
         snapshot: &RenderSnapshot,
         emitters: (u64, u64),
-        (size, depth): (FrameSize, &Versioned<wgpu::TextureView>),
+        (region, depth): (FrameRegion, &Versioned<wgpu::TextureView>),
         (camera, (surface_format, depth_format)): (
             &crate::pipelines::GroupLayout,
             (wgpu::TextureFormat, wgpu::TextureFormat),
@@ -315,7 +315,8 @@ impl Transparency {
                         &accumulation_targets(),
                     )
                 });
-                let prepared = particles.prepare(device, queue, snapshot, emitters, size, depth);
+                let prepared =
+                    particles.prepare(device, queue, snapshot, emitters, region.render, depth);
                 if prepared.is_some() {
                     particles.ensure_additive(device, post);
                 }
@@ -332,7 +333,7 @@ impl Transparency {
         let surfaces = self
             .surfaces
             .get_or_insert_with(|| TransparentPass::new(device, surface_format, depth_format));
-        surfaces.begin(device, size);
+        surfaces.begin(device, region.display);
         let dither = snapshot.environment.dither.enabled;
         surfaces.ensure_composite(device, post, dither);
         Some(TransparencyFrame {

@@ -354,6 +354,33 @@ impl<G: Game> GameHost<G> {
         self.app.set_subpixel_culling(enabled);
     }
 
+    /// The display's physical pixels per logical one (a window's scale
+    /// factor, a page's device pixel ratio), which the resolution policy
+    /// sizes display frames by: 1 until the host says.
+    pub fn set_pixel_ratio(&mut self, ratio: f64) {
+        self.app.set_pixel_ratio(ratio);
+    }
+
+    /// The display's refresh interval in milliseconds, where the host knows
+    /// it: what dynamic resolution keeps frames within unless its settings
+    /// give a budget.
+    pub fn set_refresh_interval(&mut self, milliseconds: Option<f64>) {
+        self.app.set_refresh_interval(milliseconds);
+    }
+
+    /// The user's resolution scale of display frames, over the scene's, in
+    /// this and later engines.
+    pub fn set_resolution_scale(&mut self, scale: f64) {
+        self.app.set_resolution_scale(scale);
+    }
+
+    /// Dynamic resolution of display frames, over the scene's setting, in
+    /// this and later engines: hosts turn it on for play in a window or a
+    /// page.
+    pub fn set_dynamic_resolution(&mut self, enabled: bool) {
+        self.app.set_dynamic_resolution(enabled);
+    }
+
     /// The debug view frames show, in this and later engines.
     pub fn set_debug_view(&mut self, view: engine_core::DebugViewMode) {
         self.app.set_debug_view(view);
@@ -448,6 +475,10 @@ impl<G: Game> GameHost<G> {
 
     pub fn subpixel_culling(&self) -> bool {
         self.app.subpixel_culling()
+    }
+
+    pub fn dynamic_resolution(&self) -> bool {
+        self.app.dynamic_resolution()
     }
 }
 

@@ -1,11 +1,14 @@
-//! Temporal antialiasing of GPU-presented display frames.
+//! Temporal antialiasing of GPU-presented display frames, and their
+//! upscaling to the display.
 //!
-//! Each frame rasterizes with a sub-pixel jitter into the screen effects'
-//! scene and glow targets and a motion target, then one
-//! full-screen pass blends the scene with the reprojected previous output,
-//! applies ambient occlusion and bloom, and writes both the canvas and the
-//! next history. Culling alternates between two pose buffers, so the previous
-//! frame's displayed poses stay readable for motion vectors without copies.
+//! Each frame rasterizes at its render size with a sub-pixel jitter (in
+//! render pixels) into the screen effects' scene and glow targets and a
+//! motion target, then one full-screen pass over the display blends the
+//! scene, upsampled, with the previous output reprojected at the display's
+//! size, applies ambient occlusion and bloom, and writes both the canvas and
+//! the next history. The history keeps however the render size changes.
+//! Culling alternates between two pose buffers, so the previous frame's
+//! displayed poses stay readable for motion vectors without copies.
 
 #![expect(
     clippy::expect_used,
@@ -24,7 +27,7 @@ use crate::post::PostPass;
 use crate::profiling::Span;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{Access, BLACK, Clear, FrameShape, Node, Pass, RenderGraph, Resource};
-use crate::targets::{FrameSize, ScreenTarget};
+use crate::targets::{FrameRegion, FrameSize, ScreenTarget};
 
 pub(crate) const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -52,7 +55,8 @@ impl Drop for Targets {
 /// What the last submitted temporal frame leaves for the next one.
 #[derive(Clone, Copy)]
 struct History {
-    // Its unjittered view-projection, the origin of camera motion.
+    // Its unjittered view-projection, the origin of camera motion, and the
+    // display's size, which the history is.
     view_projection: Mat4,
     size: FrameSize,
     // Retained render identity, structure revision and pose storage
@@ -197,24 +201,27 @@ impl TemporalPass {
     }
 
     /// Target bytes: motion and two history textures of 4 bytes per pixel
-    /// each (the scene target belongs to the screen effects).
+    /// each, at the display's size (the scene target belongs to the screen
+    /// effects).
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
             u64::from(size.width) * u64::from(size.height) * 12
         })
     }
 
-    /// Starts a frame of `size` pixels whose culling writes pose buffer
-    /// `parity` of storage `pose_generation`: sizes the targets, decides
-    /// what history is valid and writes the resolve uniform.
+    /// Starts a frame of `region` whose culling writes pose buffer `parity`
+    /// of storage `pose_generation`: sizes the targets to the display,
+    /// decides what history is valid, jitters by render pixels and writes
+    /// the resolve uniform.
     pub(crate) fn begin(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &RenderFrame<'_>,
-        size: FrameSize,
+        region: FrameRegion,
         pose_generation: u64,
     ) -> TemporalFrame {
+        let (size, render) = (region.display, region.render);
         if self.targets.resizes(size) {
             // Recreated history starts over.
             let targets = self.create_targets(device, size);
@@ -232,7 +239,9 @@ impl TemporalPass {
         let last = self
             .history
             .filter(|last| last.size == size && last.identity == history.identity);
-        let jitter = jitter_clip(jitter_offset(self.frame), size.width, size.height);
+        // Samples move within the pixels the frame draws: render pixels.
+        let offset = jitter_offset(self.frame);
+        let jitter = jitter_clip(offset, render.width, render.height);
         let previous = last.map_or(view_projection, |last| last.view_projection);
         let camera = CameraUniform::temporal(
             view_projection,
@@ -240,7 +249,7 @@ impl TemporalPass {
             frame.snapshot().elapsed_seconds,
             previous,
             jitter,
-            size.pixels(),
+            render.pixels(),
             u64::from(self.frame),
         );
         let environment = &frame.snapshot().environment;
@@ -259,6 +268,12 @@ impl TemporalPass {
                 f32::from(u8::from(settings.nearest_motion)),
                 f32::from(u8::from(settings.rounded_clamp)),
                 settings.particle_response,
+            ],
+            render: [
+                render.width as f32,
+                render.height as f32,
+                offset[0],
+                offset[1],
             ],
         };
         if self
@@ -481,7 +496,7 @@ impl RenderFeature for TemporalPass {
     /// The resolve reads the scene, the motion, the depth buffer and the
     /// history (and the effects that run, and transparency's revealage where
     /// something transparent drew), and writes the canvas and the next
-    /// history.
+    /// history over the display.
     fn declare(frame: &ResolveFrame, shape: &FrameShape, graph: &mut RenderGraph) {
         if shape.targets != crate::render_graph::Targets::Temporal {
             return;

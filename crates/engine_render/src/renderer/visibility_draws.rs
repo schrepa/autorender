@@ -88,12 +88,12 @@ impl Renderer {
                 .map(|bin| first.map_or(0, |first| self.virtual_draws.pass.bin_base(first + bin)))
                 .collect::<Vec<u32>>()
         });
-        let size = self.display.size();
+        let region = self.display.region;
         let visibility = self
             .visibility
             .buffer
             .get_or_insert_with(|| VisibilityBuffer::new(&self.device));
-        if !visibility.prepare(&self.device, &self.queue, size, [&bases[0], &bases[1]]) {
+        if !visibility.prepare(&self.device, &self.queue, region, [&bases[0], &bases[1]]) {
             return false;
         }
         self.visibility.bins.extend(

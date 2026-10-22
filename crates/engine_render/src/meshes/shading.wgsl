@@ -219,8 +219,9 @@ fn mask_coverage(dx: vec2<f32>, dy: vec2<f32>) -> f32 {
 }
 
 // The texels of texture coordinates `uv` and `uv1` with implicit
-// derivatives, so callers sample in uniform control flow.
-fn material_texels(uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
+// derivatives, so callers sample in uniform control flow, their mips biased
+// by `bias` (`material_bias` for frames, 0 for bakes).
+fn material_texels(uv: vec2<f32>, uv1: vec2<f32>, bias: f32) -> MaterialTexels {
     var texels = untextured();
     // RGBA8UnormSrgb sampling decodes source RGB; alpha masks emission and,
     // with maps, is coverage.
@@ -228,34 +229,37 @@ fn material_texels(uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
     if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
         base_uv = map_uv(0u, uv, uv1);
     }
-    texels.base = textureSample(base_color_texture, base_color_sampler, base_uv);
+    texels.base = textureSampleBias(base_color_texture, base_color_sampler, base_uv, bias);
     if ALPHA_MASK {
-        texels.coverage = mask_coverage(dpdx(base_uv), dpdy(base_uv));
+        // The level the bias samples.
+        let detail = exp2(bias);
+        texels.coverage = mask_coverage(dpdx(base_uv) * detail, dpdy(base_uv) * detail);
     }
     if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
         // glTF: green is roughness and blue metalness, red packed occlusion.
         var metallic_roughness = vec4<f32>(1.0);
         if material_flag(VARIANT_METALLIC_ROUGHNESS_MAP, METALLIC_ROUGHNESS_MAP) {
-            metallic_roughness = textureSample(metallic_roughness_texture,
-                metallic_roughness_sampler, map_uv(1u, uv, uv1));
+            metallic_roughness = textureSampleBias(metallic_roughness_texture,
+                metallic_roughness_sampler, map_uv(1u, uv, uv1), bias);
         }
         texels.factors = metallic_roughness.gb;
         texels.height = metallic_roughness.a;
         if material_flag(VARIANT_PACKED_OCCLUSION, PACKED_OCCLUSION) {
             texels.occlusion = metallic_roughness.r;
         } else if material_flag(VARIANT_OCCLUSION_MAP, OCCLUSION_MAP) {
-            texels.occlusion = textureSample(occlusion_texture, occlusion_sampler,
-                map_uv(3u, uv, uv1)).r;
+            texels.occlusion = textureSampleBias(occlusion_texture, occlusion_sampler,
+                map_uv(3u, uv, uv1), bias).r;
         }
         texels.emissive = vec3<f32>(1.0);
         if material_flag(VARIANT_EMISSIVE_MAP, EMISSIVE_MAP) {
-            texels.emissive = textureSample(emissive_texture, emissive_sampler,
-                map_uv(4u, uv, uv1)).rgb;
+            texels.emissive = textureSampleBias(emissive_texture, emissive_sampler,
+                map_uv(4u, uv, uv1), bias).rgb;
         }
     }
     if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
         let normal_uv = map_uv(2u, uv, uv1);
-        texels.normal = textureSample(normal_texture, normal_sampler, normal_uv).xyz * 2.0 - 1.0;
+        texels.normal = textureSampleBias(normal_texture, normal_sampler, normal_uv, bias).xyz
+            * 2.0 - 1.0;
         texels.normal_dx = dpdx(normal_uv);
         texels.normal_dy = dpdy(normal_uv);
     }
@@ -618,11 +622,14 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
         uv: vec2<f32>, uv1: vec2<f32>, packed: u32, front: bool) -> SurfacePoint {
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
+    // Maps sample as finely as the display shows them.
     var texels: MaterialTexels;
     if material_flag(VARIANT_WORLD_MAPPING, WORLD_MAPPING) {
-        texels = world_texels(world, stable_normalize(surface_normal), world_dx, world_dy);
+        let detail = material_detail();
+        texels = world_texels(world, stable_normalize(surface_normal), world_dx * detail,
+            world_dy * detail);
     } else {
-        texels = material_texels(uv, uv1);
+        texels = material_texels(uv, uv1, material_bias());
     }
     var point = textured_point(color, surface_normal, world, world_dx, world_dy, texels, packed,
         front);
@@ -1359,17 +1366,22 @@ fn transparent_targets(shaded: Shaded, point: SurfacePoint, input: Fragment)
     let clip = camera.view_projection * vec4<f32>(exit, 1.0);
     let size = vec2<f32>(textureDimensions(refraction_source));
     // A ray leaving behind the eye shows what is straight behind the pixel.
+    // The opaque color lies over the frame's render size of its target, from
+    // its top-left corner: places in the view scale by its share, kept half
+    // a texel within it.
+    let reach = camera.region.zw - 0.5 / size;
     var uv = input.pixel / size;
     if clip.w > 1.0e-6 {
-        uv = vec2<f32>(clip.x, -clip.y) / clip.w * 0.5 + 0.5;
+        uv = (vec2<f32>(clip.x, -clip.y) / clip.w * 0.5 + 0.5) * camera.region.zw;
     }
+    uv = min(uv, reach);
     var behind = textureSampleLevel(refraction_source, refraction_sampler, uv, 0.0).rgb;
     let radius = point.roughness * lighting.refraction.y / size;
     if radius.x * size.x >= 0.5 {
         var sum = behind;
         for (var tap = 0u; tap < 8u; tap++) {
             sum += textureSampleLevel(refraction_source, refraction_sampler,
-                uv + GLASS_TAPS[tap] * radius, 0.0).rgb;
+                min(uv + GLASS_TAPS[tap] * radius, reach), 0.0).rgb;
         }
         behind = sum / 9.0;
     }

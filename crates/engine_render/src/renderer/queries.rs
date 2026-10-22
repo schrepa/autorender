@@ -30,11 +30,31 @@ impl Renderer {
         }
     }
 
-    /// The size frames draw at, in physical pixels: the size asked for,
-    /// fitted within the device's largest texture; `None` while a view
-    /// without area suspends drawing.
+    /// The display's size, in physical pixels: the size asked for, fitted
+    /// within the device's largest texture; `None` while a view without area
+    /// suspends drawing.
     pub fn view_size(&self) -> Option<(u32, u32)> {
         (!self.display.suspended).then(|| self.display.size().pixels())
+    }
+
+    /// The size the last frame drew at within the display, in physical
+    /// pixels ([`Self::set_render_size`]); `None` while a view without area
+    /// suspends drawing.
+    pub fn render_size(&self) -> Option<(u32, u32)> {
+        (!self.display.suspended).then(|| self.display.region.render.pixels())
+    }
+
+    /// Whether the device times frames' GPU work: two timestamps a frame,
+    /// read back a few frames late ([`Self::take_frame_time`]).
+    pub fn times_frames(&self) -> bool {
+        self.display.times_frames()
+    }
+
+    /// The GPU time in milliseconds of the last frame read back since the
+    /// last call, and the render size it drew at; `None` where the device
+    /// times no work, or nothing arrived since.
+    pub fn take_frame_time(&self) -> Option<(f64, (u32, u32))> {
+        self.display.take_frame_time()
     }
 
     /// Start a bounded GPU capture. Allocate its reusable storage outside frame work.

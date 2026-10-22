@@ -135,6 +135,9 @@ settings! {
     debug_view: engine_core::DebugViewMode = "debug-view",
         "the debug view frames show in place of the shaded image, over the scene's",
         (named engine_core::DebugViewMode) => set_debug_view;
+    dynamic_resolution: bool = "dynamic-resolution",
+        "dynamic resolution of display frames, over the host's choice: on for play in a window or a page, off offscreen and in measured runs",
+        ["host" => None, "on" => Some(true), "off" => Some(false)] => set_dynamic_resolution;
 }
 
 impl HostSettings {

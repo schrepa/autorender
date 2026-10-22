@@ -204,9 +204,9 @@ let between = 0;
 const hud = new FrameHud(canvas);
 // Job workers, for games that hand out jobs.
 let jobs: JobPool | undefined;
+// The canvas's size in device pixels: its element's whole size.
 let pixelWidth = 1;
 let pixelHeight = 1;
-let resolutionScale = 1;
 let inputEnabled = true;
 
 function setStatus(text: string, state: string) {
@@ -233,16 +233,21 @@ function suspendGame() {
   if (!failed) game?.suspend();
 }
 
-/** Sizes the view as the engine's resolution policy does on every host;
- * frames need no size before the game exists, which sizes it at start. */
+/** Sizes the canvas to its element's whole size in device pixels, which
+ * frames draw within at the size the engine's resolution policy gives, as on
+ * every host; frames need no size before the game exists, which sizes it at
+ * start. */
 function resize() {
   if (disposed || failed || !game) return;
   const bounds = canvas.getBoundingClientRect();
-  const [width = 0, height = 0] = game.view_size(bounds.width, bounds.height, window.devicePixelRatio, resolutionScale);
+  const ratio = window.devicePixelRatio || 1;
+  const width = Math.round(bounds.width * ratio);
+  const height = Math.round(bounds.height * ratio);
   const idle = pixelWidth === 0 || pixelHeight === 0;
   if (width !== pixelWidth || height !== pixelHeight) interrupt("resize");
   pixelWidth = width;
   pixelHeight = height;
+  game.set_pixel_ratio(ratio);
   // A view that regains area asks for frames again.
   if (idle && width > 0 && height > 0) resume();
 }
@@ -431,6 +436,9 @@ async function start() {
   // GPU initialization may finish after teardown even when fetch was aborted.
   if (disposed) { created.free(); return; }
   game = created;
+  // Play on the page scales its frames to keep them within their GPU
+  // budget, unless its parameters say otherwise.
+  created.set_dynamic_resolution(true);
   // The engine switches the page's parameters name.
   created.apply_host_settings(location.search);
   created.set_preparation(preparing);
@@ -462,7 +470,7 @@ async function start() {
     },
     setResolutionScale(scale) {
       if (!Number.isFinite(scale) || scale < 0.25 || scale > 2) throw new Error("Resolution scale must be 0.25–2.");
-      resolutionScale = scale; resize();
+      if (!failed) game?.set_resolution_scale(scale);
     },
     setInputEnabled(enabled) {
       inputEnabled = enabled; clearInput();

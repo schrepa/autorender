@@ -41,14 +41,29 @@ try {
   const controls = types.find(type => type.name === "GameControls").controls;
   assert.deepEqual(Object.keys(controls).sort(), ["effects", "look", "view", "workload"]);
   const parameters = types.find(type => type.name === "PageParameters").parameters;
-  for (const name of ["preset", "taa", "occlusion", "subpixel", "presentation", "pipeline", "terrain-clock"]) assert.ok(name in parameters, name);
+  for (const name of ["preset", "taa", "occlusion", "subpixel", "presentation", "pipeline", "terrain-clock", "dynamic-resolution"]) assert.ok(name in parameters, name);
 
   // --taa=on set the world's temporal antialiasing, which ordinary frames
-  // then resolve, at the size asked for.
+  // then resolve, at the size asked for: offscreen frames keep it, without
+  // dynamic resolution.
   assert.equal((await run({ op: "inspect", component: "TemporalAntialiasing" })).value.enabled, true);
   const ordinary = (await run({ op: "frames", count: 4, interval_ms: 1000 / 60 })).rendering;
   assert.equal(ordinary.temporal_antialiasing.active, true, "ordinary frames resolve temporally");
-  assert.deepEqual([ordinary.view_width, ordinary.view_height, ordinary.dropped_view_pixels], [640, 400, 0]);
+  const { resolution } = ordinary;
+  assert.deepEqual(
+    [resolution.display_width, resolution.display_height, resolution.render_width, resolution.render_height, resolution.dropped_pixels],
+    [640, 400, 640, 400, 0],
+  );
+  assert.equal(ordinary.dynamic_resolution.active, false, "offscreen frames keep their size");
+  // The resolution section scales the size ordinary frames draw at, within
+  // the display, whose size the targets keep: the resolve upscales to it.
+  await run({ op: "environment", resolution: { scale: 0.5 } });
+  const scaled = (await run({ op: "frames", count: 4, interval_ms: 1000 / 60 })).rendering.resolution;
+  assert.deepEqual(
+    [scaled.display_width, scaled.display_height, scaled.render_width, scaled.render_height],
+    [640, 400, 320, 200],
+  );
+  await run({ op: "environment", resolution: { scale: 1 } });
 
   // Captures write PNG files of the offscreen frame; the same frame twice
   // compares the same to itself.

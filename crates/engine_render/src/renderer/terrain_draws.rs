@@ -362,14 +362,15 @@ impl Renderer {
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
         // Each within the pixels its patches cover: elsewhere it would only
-        // read the visibility target and discard.
-        let size = self.depth.texture.size();
+        // read the visibility target and discard. Pixels of the frame's
+        // render size, which it draws.
+        let render = self.display.region.render;
         let mut draws = 0;
         for terrain in &self.terrain.patches.frame.terrains {
             if terrain.camera.is_empty() {
                 continue;
             }
-            let Some([x, y, width, height]) = terrain.scissor((size.width, size.height)) else {
+            let Some([x, y, width, height]) = terrain.scissor(render.pixels()) else {
                 continue;
             };
             if !self.terrain.bind(pass, 0, terrain.uniform) {

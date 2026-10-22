@@ -560,20 +560,24 @@ const SKY_SURFACE = vec4<f32>(0.5, 0.5, 1.0, 0.0);
 
 // The view's clouds over the pixel at `position` (framebuffer): the
 // blocks' light and passing share, fading out where they lie beyond what
-// the pixel shows, its block having marched past it.
+// the pixel shows, its block having marched past it. The blocks lie over
+// the depth buffer's pixels from its top-left corner, those over the frame's
+// render size marched.
 fn view_clouds_at(position: vec2<f32>) -> vec4<f32> {
     let pixels = vec2<f32>(textureDimensions(view_cloud_depth));
     let uv = position / pixels;
     // Four filtered taps half a block apart: a tent over the blocks around,
-    // softening their edges and the noise of their rays' offsets.
+    // softening their edges and the noise of their rays' offsets, within
+    // the blocks marched.
     let half_block = 0.5 / vec2<f32>(textureDimensions(view_clouds));
+    let marched = camera.region.zw - half_block;
     let cloud = 0.25 * (
-        textureSampleLevel(view_clouds, view_cloud_sampler, uv - half_block, 0.0)
-        + textureSampleLevel(view_clouds, view_cloud_sampler, uv + half_block, 0.0)
+        textureSampleLevel(view_clouds, view_cloud_sampler, min(uv - half_block, marched), 0.0)
+        + textureSampleLevel(view_clouds, view_cloud_sampler, min(uv + half_block, marched), 0.0)
         + textureSampleLevel(view_clouds, view_cloud_sampler,
-            uv + vec2<f32>(half_block.x, -half_block.y), 0.0)
+            min(uv + vec2<f32>(half_block.x, -half_block.y), marched), 0.0)
         + textureSampleLevel(view_clouds, view_cloud_sampler,
-            uv + vec2<f32>(-half_block.x, half_block.y), 0.0));
+            min(uv + vec2<f32>(-half_block.x, half_block.y), marched), 0.0));
     let depth = textureLoad(view_cloud_depth, vec2<i32>(position), 0);
     if depth <= 0.0 {
         return cloud;
@@ -581,7 +585,10 @@ fn view_clouds_at(position: vec2<f32>) -> vec4<f32> {
     let blocks = vec2<f32>(textureDimensions(view_cloud_front));
     let block = vec2<i32>(min(floor(uv * blocks), blocks - 1.0));
     let front = textureLoad(view_cloud_front, block, 0).r;
-    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    // The pixel's place in the view, which the frame draws at its render
+    // size.
+    let view = position / camera.region.xy;
+    let ndc = vec2<f32>(view.x * 2.0 - 1.0, 1.0 - view.y * 2.0);
     let point = camera.inverse_view_projection * vec4<f32>(ndc, depth, 1.0);
     let distance = length(point.xyz / point.w - camera.position.xyz);
     let shown = saturate((distance - 0.8 * front) / max(0.2 * front, 1.0));

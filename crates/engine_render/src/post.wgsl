@@ -4,8 +4,11 @@
 // shafts (shafts.wgsl) up beside it; screen-space reflections trace
 // reflected rays through it at half resolution; bloom filters the scene's
 // glowing light down a chain of half-resolution levels and back up; the
-// composite applies them to the scene target and writes the canvas.
-// Temporally antialiased frames apply them in their resolve instead.
+// composite applies them to the scene target, upscaled to the display, and
+// writes the canvas. Temporally antialiased frames apply them in their
+// resolve instead. Every pass reads within what the frame drew: its render
+// size of the screen-sized targets, from their top-left corner, and as much
+// of the others.
 
 @group(0) @binding(0) var<uniform> post: Post;
 @group(0) @binding(1) var depth_texture: texture_depth_2d;
@@ -295,7 +298,7 @@ fn inverse_distance(sample: vec4<f32>) -> f32 {
 // the center's extrapolated by the center's slope toward its nearer
 // neighbor on each axis. Each neighbor is read once, the slope's too.
 fn filtered_occlusion(texel: vec2<i32>) -> vec2<f32> {
-    let last = vec2<i32>(textureDimensions(raw_occlusion)) - 1;
+    let last = half_size(post) - 1;
     let center = textureLoad(raw_occlusion, texel, 0);
     if !(center.y > 0.0) {
         return center.xz;
@@ -358,11 +361,12 @@ fn upsampled_shafts(texel: vec2<i32>) -> f32 {
     let far_point = post.inverse_view_projection
         * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
     let reach = min(length(far_point.xyz / far_point.w - post.eye.xyz), post.shafts.z);
-    // Quarter-resolution texels in shaft_pixel's centers.
+    // Quarter-resolution texels in shaft_pixel's centers, a quarter of the
+    // render size of them drawn, rounded up.
     let position = (vec2<f32>(pixel) - 1.0) * 0.25;
     let first = vec2<i32>(floor(position));
     let f = position - floor(position);
-    let shaft_last = vec2<i32>(textureDimensions(shafts)) - 1;
+    let shaft_last = max((vec2<i32>(post.size.xy) + 3) / 4, vec2<i32>(1)) - 1;
     let tolerance = SHAFT_REACH * max(reach, 1.0e-3);
     var sum = 0.0;
     var total = 0.0;
@@ -431,16 +435,39 @@ fn traced_pixel(texel: vec2<i32>) -> vec2<i32> {
 
 // The nearest depth (the largest, reversed) of cell `cell` of mip `mip`:
 // mip 0 is the depth buffer, mip m > 0 the pyramid's level m - 1, whose
-// texels cover 2^m pixels a side (the pyramid repeats the buffer's edge).
-// `pyramid` is the pyramid's first level's size: each level halves it, as
-// mip levels do, so the march asks the texture its size once.
-fn nearest_depth_at(cell: vec2<i32>, mip: i32, pyramid: vec2<u32>) -> f32 {
+// texels cover 2^m pixels a side (the pyramid repeats the drawn pixels'
+// edge), within the cells it reduced: the render size over 2^m, rounded up.
+fn nearest_depth_at(cell: vec2<i32>, mip: i32) -> f32 {
     if mip == 0 {
         let last = vec2<i32>(post.size.xy) - 1;
         return textureLoad(depth_texture, clamp(cell, vec2<i32>(0), last), 0);
     }
-    let last = vec2<i32>(max(pyramid >> vec2<u32>(u32(mip - 1)), vec2<u32>(1u))) - 1;
+    let span = 1 << u32(mip);
+    let last = max((vec2<i32>(post.size.xy) + span - 1) / span, vec2<i32>(1)) - 1;
     return textureLoad(nearest_depth, clamp(cell, vec2<i32>(0), last), mip - 1).r;
+}
+
+// Texture coordinates of the screen-sized targets at `pixel` (render
+// pixels, continuous), kept half a pixel within the pixels the frame drew.
+fn drawn_uv(pixel: vec2<f32>) -> vec2<f32> {
+    return clamp(pixel, vec2<f32>(0.5), post.size.xy - 0.5) * post.extent.zw;
+}
+
+// The texels the frame drew of a target `size` texels large made at a
+// fraction of the display's size (a level of a chain): all of them where it
+// draws the whole display, else as many as the render size's share of the
+// display, rounded down, which its passes draw at least.
+fn drawn_texels(size: vec2<f32>) -> vec2<f32> {
+    let share = max(floor(size * post.size.xy * post.extent.zw), vec2<f32>(1.0));
+    return select(share, size, post.size.xy == post.extent.xy);
+}
+
+// `level`'s color at `at` (its texels, continuous; `size` of them, `drawn`
+// of them drawn), bilinearly, kept half a texel within the drawn ones.
+fn level_tap(level: texture_2d<f32>, at: vec2<f32>, drawn: vec2<f32>, size: vec2<f32>)
+        -> vec3<f32> {
+    return textureSampleLevel(level, linear, clamp(at, vec2<f32>(0.5), drawn - 0.5) / size,
+        0.0).rgb;
 }
 
 // Pixel position (rows downward) and depth of world point `world`, and its
@@ -525,7 +552,6 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let ahead = select(vec2<f32>(0.0), vec2<f32>(1.0), forward);
     let past = select(vec2<f32>(-0.005), vec2<f32>(0.005), forward);
     let top = i32(textureNumLevels(nearest_depth));
-    let pyramid = textureDimensions(nearest_depth);
     // Leave the starting pixel first: a surface does not reflect itself.
     var t = FLOAT_MAX;
     let exits = select(vec2<f32>(FLOAT_MAX),
@@ -541,7 +567,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         }
         let size = exp2(f32(mip));
         let cell = floor(point.xy / size);
-        let surface = nearest_depth_at(vec2<i32>(cell), mip, pyramid);
+        let surface = nearest_depth_at(vec2<i32>(cell), mip);
         let edges = select(vec2<f32>(FLOAT_MAX),
             ((cell + ahead) * size + past - origin.xy) / select(vec2<f32>(1.0), ray.xy, moving),
             moving);
@@ -607,9 +633,10 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let width = 2.0 * travelled * REFLECTION_CONE * roughness * roughness * post.eye.w
         / max(distance(ray_point, post.eye.xyz), 1.0e-4);
     let level = log2(max(width, 1.0));
-    var color = textureSampleLevel(scene, linear, uv, 0.0).rgb;
+    var color = textureSampleLevel(scene, linear, drawn_uv(point.xy), 0.0).rgb;
     if level > 0.0 {
-        let blurred = textureSampleLevel(scene_levels, linear, uv, max(level - 1.0, 0.0)).rgb;
+        let blurred = textureSampleLevel(scene_levels, linear,
+            half_uv(uv, textureDimensions(scene_levels), post), max(level - 1.0, 0.0)).rgb;
         color = mix(color, blurred, saturate(level));
     }
     return vec4<f32>(color, reflectivity * fade);
@@ -623,7 +650,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
 @fragment
 fn fs_reflections_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let texel = vec2<i32>(position.xy);
-    let last = vec2<i32>(textureDimensions(traced)) - 1;
+    let last = half_size(post) - 1;
     let depth = textureLoad(depth_texture, traced_pixel(texel), 0);
     var sum = vec4<f32>(0.0);
     var total = 0.0;
@@ -662,8 +689,7 @@ fn glow_light(uv: vec2<f32>) -> vec3<f32> {
 // 1 / (1 + luminance) so single bright pixels cannot flicker as fireflies.
 @fragment
 fn fs_bloom_first(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let texel = post.size.zw;
-    let uv = position.xy * 2.0 * texel;
+    let center = position.xy * 2.0;
     var sum = vec3<f32>(0.0);
     var weights = 0.0;
     for (var i = 0u; i < 5u; i++) {
@@ -671,7 +697,7 @@ fn fs_bloom_first(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         if i > 0u {
             offset = vec2<f32>(f32(i & 1u) * 2.0 - 1.0, f32((i >> 1u) & 1u) * 2.0 - 1.0);
         }
-        let light = glow_light(uv + offset * texel);
+        let light = glow_light(drawn_uv(center + offset));
         let weight = select(1.0, 4.0, i == 0u) / (1.0 + luminance(light));
         sum += light * weight;
         weights += weight;
@@ -680,15 +706,17 @@ fn fs_bloom_first(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
 }
 
 // Half the resolution of `level` at `position`: its 2x2 block weighted four
-// times against the four diagonal neighbors (a dual filter).
+// times against the four diagonal neighbors (a dual filter), within the
+// texels the frame drew of it.
 fn halved(level: texture_2d<f32>, position: vec2<f32>) -> vec4<f32> {
-    let texel = 1.0 / vec2<f32>(textureDimensions(level));
-    let uv = position * 2.0 * texel;
-    let sum = textureSampleLevel(level, linear, uv, 0.0).rgb * 4.0
-        + textureSampleLevel(level, linear, uv - texel, 0.0).rgb
-        + textureSampleLevel(level, linear, uv + texel, 0.0).rgb
-        + textureSampleLevel(level, linear, uv + vec2<f32>(texel.x, -texel.y), 0.0).rgb
-        + textureSampleLevel(level, linear, uv + vec2<f32>(-texel.x, texel.y), 0.0).rgb;
+    let size = vec2<f32>(textureDimensions(level));
+    let drawn = drawn_texels(size);
+    let at = position * 2.0;
+    let sum = level_tap(level, at, drawn, size) * 4.0
+        + level_tap(level, at - 1.0, drawn, size)
+        + level_tap(level, at + 1.0, drawn, size)
+        + level_tap(level, at + vec2<f32>(1.0, -1.0), drawn, size)
+        + level_tap(level, at + vec2<f32>(-1.0, 1.0), drawn, size);
     return vec4<f32>(sum * 0.125, 1.0);
 }
 
@@ -708,8 +736,7 @@ struct Levels {
 // fs_bloom_down's of its color and fs_bloom_first's of its glowing light.
 @fragment
 fn fs_levels_first(@builtin(position) position: vec4<f32>) -> Levels {
-    let texel = post.size.zw;
-    let uv = position.xy * 2.0 * texel;
+    let center = position.xy * 2.0;
     var colors: array<vec3<f32>, 5>;
     var sum = vec3<f32>(0.0);
     var weights = 0.0;
@@ -718,7 +745,7 @@ fn fs_levels_first(@builtin(position) position: vec4<f32>) -> Levels {
         if i > 0u {
             offset = vec2<f32>(f32(i & 1u) * 2.0 - 1.0, f32((i >> 1u) & 1u) * 2.0 - 1.0);
         }
-        let at = uv + offset * texel;
+        let at = drawn_uv(center + offset);
         let color = textureSampleLevel(scene, linear, at, 0.0).rgb;
         let decoded = min(textureSampleLevel(glow, linear, at, 0.0).r, 0.98);
         let light = color * (decoded / (1.0 - decoded));
@@ -745,28 +772,73 @@ fn fs_levels_down(@builtin(position) position: vec4<f32>) -> Levels {
 }
 
 // Twice the resolution of `source`, added to the level below: a tent of
-// eight taps (the dual filter's upsampling).
+// eight taps (the dual filter's upsampling), within the texels the frame
+// drew of it.
 @fragment
 fn fs_bloom_up(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let texel = 1.0 / vec2<f32>(textureDimensions(source));
-    let uv = position.xy * 0.5 * texel;
-    let sum = (textureSampleLevel(source, linear, uv + vec2<f32>(-2.0, 0.0) * texel, 0.0).rgb
-        + textureSampleLevel(source, linear, uv + vec2<f32>(2.0, 0.0) * texel, 0.0).rgb
-        + textureSampleLevel(source, linear, uv + vec2<f32>(0.0, -2.0) * texel, 0.0).rgb
-        + textureSampleLevel(source, linear, uv + vec2<f32>(0.0, 2.0) * texel, 0.0).rgb)
-        + (textureSampleLevel(source, linear, uv - texel, 0.0).rgb
-        + textureSampleLevel(source, linear, uv + texel, 0.0).rgb
-        + textureSampleLevel(source, linear, uv + vec2<f32>(texel.x, -texel.y), 0.0).rgb
-        + textureSampleLevel(source, linear, uv + vec2<f32>(-texel.x, texel.y), 0.0).rgb) * 2.0;
+    let size = vec2<f32>(textureDimensions(source));
+    let drawn = drawn_texels(size);
+    let at = position.xy * 0.5;
+    let sum = (level_tap(source, at + vec2<f32>(-2.0, 0.0), drawn, size)
+        + level_tap(source, at + vec2<f32>(2.0, 0.0), drawn, size)
+        + level_tap(source, at + vec2<f32>(0.0, -2.0), drawn, size)
+        + level_tap(source, at + vec2<f32>(0.0, 2.0), drawn, size))
+        + (level_tap(source, at - 1.0, drawn, size)
+        + level_tap(source, at + 1.0, drawn, size)
+        + level_tap(source, at + vec2<f32>(1.0, -1.0), drawn, size)
+        + level_tap(source, at + vec2<f32>(-1.0, 1.0), drawn, size)) * 2.0;
     return vec4<f32>(sum / 12.0, 1.0);
 }
 
-// Frames without temporal antialiasing: the scene with its effects.
+// The scene at `pixel` (render pixels, continuous) as the canvas shows it
+// upscaled: Catmull-Rom over the 4x4 pixels around it, its middle pairs on
+// each axis merged into one bilinear fetch and its corners dropped (as the
+// temporal resolve reads its history), within the pixels the frame drew.
+fn upscaled_scene(pixel: vec2<f32>) -> vec4<f32> {
+    let center = floor(pixel - 0.5) + 0.5;
+    let f = pixel - center;
+    let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    let w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    let w3 = f * f * (-0.5 + 0.5 * f);
+    let w12 = w1 + w2;
+    let middle = center + w2 / w12;
+    let before = center - 1.0;
+    let after = center + 2.0;
+    let weights = vec4<f32>(w12.x * w0.y, w0.x * w12.y, w3.x * w12.y, w12.x * w3.y);
+    let middle_weight = w12.x * w12.y;
+    let sum = middle_weight + weights.x + weights.y + weights.z + weights.w;
+    let color = scene_tap(middle) * middle_weight
+        + scene_tap(vec2<f32>(middle.x, before.y)) * weights.x
+        + scene_tap(vec2<f32>(before.x, middle.y)) * weights.y
+        + scene_tap(vec2<f32>(after.x, middle.y)) * weights.z
+        + scene_tap(vec2<f32>(middle.x, after.y)) * weights.w;
+    // Catmull-Rom's negative lobes overshoot at edges.
+    return clamp(color / sum, vec4<f32>(0.0), vec4<f32>(1.0));
+}
+
+// The scene at `pixel` (render pixels, continuous), bilinearly, within the
+// pixels the frame drew.
+fn scene_tap(pixel: vec2<f32>) -> vec4<f32> {
+    return textureSampleLevel(scene, linear, drawn_uv(pixel), 0.0);
+}
+
+// Frames without temporal antialiasing: the scene upscaled to the canvas,
+// with its effects.
 @fragment
 fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let texel = textureLoad(scene, vec2<i32>(position.xy), 0);
-    let uv = position.xy * post.size.zw;
-    let effects = screen_effects(occlusion, depth_texture, vec2<i32>(position.xy), post);
+    // This canvas pixel's center in the view, and in the pixels the frame
+    // drew: their own where it drew the whole display, whose color it reads
+    // as it is.
+    let uv = position.xy * post.extent.zw;
+    let whole = all(post.size.xy == post.extent.xy);
+    let rendered = select(uv * post.size.xy, position.xy, whole);
+    let pixel = min(vec2<i32>(rendered), vec2<i32>(post.size.xy) - 1);
+    var texel = textureLoad(scene, pixel, 0);
+    if !whole {
+        texel = upscaled_scene(rendered);
+    }
+    let effects = screen_effects(occlusion, depth_texture, pixel, post);
     let shaded = texel.rgb * effect_shade(texel.a, effects, post);
     let color = effect_light(shaded, effects, reflections, bloom, linear, uv, post);
     // The UNORM canvas stores encoded color, dithered when 8-bit writes are.

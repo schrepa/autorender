@@ -54,14 +54,12 @@ pub struct WindowReport {
     /// The last frame's statistics, as JSON.
     pub stats: String,
     pub adapter: engine::AdapterInfo,
-    /// The size frames drew at, in physical pixels.
+    /// The size the last frame drew at, in physical pixels: the resolution
+    /// policy's for the window ([`engine::host::render_size`]), within it,
+    /// which the frame upscaled to the window.
     pub size: (u32, u32),
-    /// The window's size, in physical pixels.
+    /// The window's size, in physical pixels: its surface's.
     pub window: (u32, u32),
-    /// Whether frames drew at the size the resolution policy gives the
-    /// window ([`engine::host::view_size`]), which D3D12 and Metal stretch
-    /// over it; Vulkan's surfaces take the window's own size.
-    pub capped: bool,
 }
 
 impl Window {
@@ -115,11 +113,9 @@ struct Running<G: Game> {
     window: Arc<winit::window::Window>,
     // Tens of kilobytes: boxed, as moves would copy it through the stack.
     host: Box<GameHost<G>>,
-    // The window's, in physical pixels.
+    // The window's, in physical pixels: the surface's, which frames draw
+    // within at the size the engine's resolution policy gives.
     size: (u32, u32),
-    // Whether frames draw at the resolution policy's size: D3D12 and Metal
-    // stretch a smaller surface over the window, Vulkan's takes its size.
-    capped: bool,
     title: Title,
     jobs: JobPool,
     // When play started, and each measured frame's start and CPU time.
@@ -157,21 +153,19 @@ impl<'a, G: Game> App<'a, G> {
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
             target, build,
         )))?);
+        host.set_pixel_ratio(window.scale_factor());
+        host.set_refresh_interval(refresh_interval(&window));
+        // Play in a window scales its frames to keep them within their GPU
+        // budget, the display's refresh interval; measured windows keep their
+        // size. The options may say otherwise.
+        host.set_dynamic_resolution(self.options.measure.is_none());
         self.options.settings.apply(&mut host);
-        let backend = host.adapter().backend.clone();
-        let capped = ["Dx12", "Metal"].contains(&backend.as_str());
-        if !capped {
-            eprintln!(
-                "The resolution policy is not applied on {backend}: its surfaces take the window's size."
-            );
-        }
         let mut jobs = self.options.jobs.pool(false);
         jobs.attach(&mut host);
         Ok(Running {
             window,
             host,
             size,
-            capped,
             title: Title::new(&self.options.title),
             jobs,
             playing: None,
@@ -206,11 +200,18 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 // A view that regains area asks for frames again.
-                let idle = running.drawn().0 == 0 || running.drawn().1 == 0;
+                let idle = running.size.0 == 0 || running.size.1 == 0;
                 running.size = (size.width, size.height);
                 if idle {
                     running.window.request_redraw();
                 }
+            }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                // A window moved to another display.
+                running.host.set_pixel_ratio(scale_factor);
+                running
+                    .host
+                    .set_refresh_interval(refresh_interval(&running.window));
             }
             WindowEvent::Focused(false) => {
                 self.input.clear();
@@ -258,28 +259,10 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
 }
 
 impl<G: Game> Running<G> {
-    /// The size frames draw at, in physical pixels: the resolution
-    /// policy's for the window's size and scale factor where the surface
-    /// stretches over the window, else the window's.
-    fn drawn(&self) -> (u32, u32) {
-        let (width, height) = self.size;
-        if !self.capped {
-            return self.size;
-        }
-        let scale = self.window.scale_factor();
-        engine::host::view_size(
-            f64::from(width) / scale,
-            f64::from(height) / scale,
-            scale,
-            1.0,
-        )
-        .unwrap_or((0, 0))
-    }
-
     /// The window's animation frame: what it did.
     fn redraw(&mut self) -> engine::Result<FramePhase> {
         let timestamp = engine::host::now_ms();
-        let (width, height) = self.drawn();
+        let (width, height) = self.size;
         let phase = self.host.animation_frame(timestamp, width, height)?;
         self.exchange_jobs();
         if phase == FramePhase::Playing {
@@ -314,17 +297,24 @@ impl<G: Game> Running<G> {
         if self.measured.len() < measure.frames as usize {
             return None;
         }
+        let resolution = stats.resolution;
         Some(WindowReport {
             frames: measure.frames,
             elapsed_ms: self.measured[0].0.elapsed().as_secs_f64() * 1000.0,
             cpu_ms: self.measured.iter().map(|&(_, cpu)| cpu).collect(),
             stats: self.host.stats(),
             adapter: self.host.adapter().clone(),
-            size: self.drawn(),
+            size: (resolution.render_width, resolution.render_height),
             window: self.size,
-            capped: self.capped,
         })
     }
+}
+
+/// The refresh interval of the display `window` shows on, in milliseconds,
+/// where the windowing library knows it.
+fn refresh_interval(window: &winit::window::Window) -> Option<f64> {
+    let millihertz = window.current_monitor()?.refresh_rate_millihertz()?;
+    (millihertz > 0).then(|| 1_000_000.0 / f64::from(millihertz))
 }
 
 /// The window's title with its recent frame rate and CPU time per frame.

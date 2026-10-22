@@ -27,8 +27,9 @@ impl Renderer {
     ///
     /// Returns an actionable error when no compatible WebGPU adapter exists,
     /// device creation fails, or pipeline validation fails. Ordinary builds require
-    /// no optional GPU features. Profiling builds request timestamps when supported;
-    /// there is deliberately no WebGL fallback in this milestone.
+    /// no optional GPU features; they request timestamps when supported, to time
+    /// frames, and profiling builds timestamps inside passes and pipeline
+    /// statistics too. There is deliberately no WebGL fallback in this milestone.
     pub async fn new(target: RenderTarget) -> Result<Self, RenderError> {
         Self::start(target).await?.finish().await
     }
@@ -91,11 +92,13 @@ impl Renderer {
         // Indirect draws name their visible-ID regions as first instances
         // where the adapter allows it, so passes bind each ID buffer once.
         // Bloom keeps its levels in 32 bits where the device
-        // renders them.
+        // renders them. Frames time their GPU work where the device has
+        // timestamps: dynamic resolution keeps it within its budget.
         let features = compression
             | (adapter.features()
                 & (wgpu::Features::INDIRECT_FIRST_INSTANCE
-                    | wgpu::Features::RG11B10UFLOAT_RENDERABLE));
+                    | wgpu::Features::RG11B10UFLOAT_RENDERABLE
+                    | wgpu::Features::TIMESTAMP_QUERY));
         #[cfg(not(feature = "profiling"))]
         let required_features = features;
         #[cfg(feature = "profiling")]

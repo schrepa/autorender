@@ -131,6 +131,15 @@ pub(crate) struct AppHost {
     record_fetches: Vec<(JobId, RecordKey)>,
     // The scene's pipeline list: asked for, created up front or kept.
     pipeline_list: crate::host::PipelineList,
+    // The display's physical pixels per logical one, which the resolution
+    // policy reads, and its refresh interval in milliseconds where the host
+    // knows it, which dynamic resolution's budget defaults to.
+    pixel_ratio: f64,
+    refresh_ms: Option<f64>,
+    // Dynamic resolution's scale, and the GPU time of the last frame the
+    // device timed.
+    dynamic: crate::host::DynamicScale,
+    gpu_ms: Option<f32>,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
 }
@@ -141,6 +150,8 @@ struct Overrides {
     occlusion_culling: Option<bool>,
     subpixel_culling: Option<bool>,
     debug_view: Option<engine_core::DebugViewMode>,
+    resolution_scale: Option<f32>,
+    dynamic_resolution: Option<bool>,
 }
 
 /// What a submitted frame shows. Only development controls submit exact
@@ -155,8 +166,11 @@ struct Overrides {
 )]
 enum FrameKind {
     /// An ordinary frame at fraction `alpha` of the fixed tick: GPU-presented
-    /// unless the game opted out, and blended by temporal antialiasing.
-    Display { alpha: f32 },
+    /// unless the game opted out, blended by temporal antialiasing and drawn
+    /// at the size the resolution policy and dynamic resolution give;
+    /// `interval` milliseconds after the frame before, `None` after a
+    /// suspension.
+    Display { alpha: f32, interval: Option<f64> },
     /// The exact current state: steps, renders and captures.
     Exact,
     /// Fraction `alpha` of the latest completed tick, presented on the GPU
@@ -200,6 +214,10 @@ impl AppHost {
             overrides: Overrides::default(),
             record_fetches: Vec::new(),
             pipeline_list: crate::host::PipelineList::default(),
+            pixel_ratio: 1.0,
+            refresh_ms: None,
+            dynamic: crate::host::DynamicScale::default(),
+            gpu_ms: None,
             #[cfg(feature = "profiling")]
             profile_frame: 0,
         }
@@ -271,6 +289,8 @@ impl AppHost {
             occlusion_culling,
             subpixel_culling,
             debug_view,
+            resolution_scale,
+            dynamic_resolution,
         } = self.overrides;
         let world = self.engine.app.world_mut();
         if let Some(enabled) = temporal_antialiasing {
@@ -296,6 +316,20 @@ impl AppHost {
                 .copied()
                 .unwrap_or_default();
             world.insert_resource(engine_core::DebugView { view, ..settings });
+        }
+        if let Some(scale) = resolution_scale {
+            world.insert_resource(engine_core::Resolution { scale });
+        }
+        if let Some(enabled) = dynamic_resolution {
+            // The world's other dynamic resolution settings stay.
+            let settings = world
+                .get_resource::<engine_core::DynamicResolution>()
+                .copied()
+                .unwrap_or_default();
+            world.insert_resource(engine_core::DynamicResolution {
+                enabled,
+                ..settings
+            });
         }
     }
 
@@ -398,6 +432,167 @@ impl AppHost {
             .world()
             .get_resource::<engine_core::SubpixelCulling>()
             .is_some_and(|settings| settings.enabled)
+    }
+
+    /// The display's physical pixels per logical one (a window's scale
+    /// factor, a page's device pixel ratio), which the resolution policy
+    /// sizes display frames by: 1 until the host says.
+    pub fn set_pixel_ratio(&mut self, ratio: f64) {
+        self.pixel_ratio = if ratio.is_finite() && ratio > 0.0 {
+            ratio
+        } else {
+            1.0
+        };
+    }
+
+    /// The display's refresh interval in milliseconds, where the host knows
+    /// it: what dynamic resolution keeps frames within unless its settings
+    /// give a budget.
+    pub fn set_refresh_interval(&mut self, milliseconds: Option<f64>) {
+        self.refresh_ms = milliseconds.filter(|ms| ms.is_finite() && *ms > 0.0);
+    }
+
+    /// The user's resolution scale of display frames, in this and later
+    /// engines: sets the world's [`engine_core::Resolution`] settings (a
+    /// scene environment's `resolution` section), which the next frame
+    /// follows.
+    pub fn set_resolution_scale(&mut self, scale: f64) {
+        self.overrides.resolution_scale = Some(scale as f32);
+        self.apply_overrides();
+    }
+
+    /// Dynamic resolution of display frames, in this and later engines: sets
+    /// the world's [`engine_core::DynamicResolution`] settings' `enabled` (a
+    /// scene environment's `dynamic_resolution` section), its other settings
+    /// staying. Hosts turn it on for play in a window or a page.
+    pub fn set_dynamic_resolution(&mut self, enabled: bool) {
+        self.overrides.dynamic_resolution = Some(enabled);
+        self.apply_overrides();
+    }
+
+    pub fn dynamic_resolution(&self) -> bool {
+        self.engine
+            .app
+            .world()
+            .get_resource::<engine_core::DynamicResolution>()
+            .is_some_and(|settings| settings.enabled)
+    }
+
+    /// The world's resolution settings and its dynamic resolution's,
+    /// sanitized; a world without them draws at the policy's size alone.
+    fn resolution_settings(&self) -> (engine_core::Resolution, engine_core::DynamicResolution) {
+        let world = self.engine.app.world();
+        (
+            world
+                .get_resource::<engine_core::Resolution>()
+                .copied()
+                .unwrap_or_else(engine_core::Resolution::off)
+                .sanitized(),
+            world
+                .get_resource::<engine_core::DynamicResolution>()
+                .copied()
+                .unwrap_or_else(engine_core::DynamicResolution::off)
+                .sanitized(),
+        )
+    }
+
+    /// The milliseconds of GPU time frames keep within under dynamic
+    /// resolution's `settings`: their budget, else the display's refresh
+    /// interval where the host knows it, else a sixtieth of a second.
+    fn resolution_budget(&self, settings: &engine_core::DynamicResolution) -> f64 {
+        settings.budget_ms.map_or_else(
+            || self.refresh_ms.unwrap_or(crate::host::policy::FRAME_INTERVAL_MS),
+            f64::from,
+        )
+    }
+
+    /// Sizes a frame of `kind` on a `width` × `height` display: display
+    /// frames draw at the resolution policy's size for the view at the
+    /// user's scale, times dynamic resolution's scale as the last timed
+    /// frame moved it; other frames at the display's whole size. Returns
+    /// what dynamic resolution did.
+    fn size_frame(
+        &mut self,
+        kind: FrameKind,
+        (width, height): (u32, u32),
+    ) -> engine_core::DynamicResolutionStats {
+        let timing = self.renderer.take_frame_time();
+        if let Some((ms, _)) = timing {
+            self.gpu_ms = Some(ms as f32);
+        }
+        let (resolution, dynamic) = self.resolution_settings();
+        let FrameKind::Display { interval, .. } = kind else {
+            self.renderer.set_render_size(width, height);
+            return engine_core::DynamicResolutionStats {
+                active: false,
+                scale: 1.0,
+                budget_ms: 0.0,
+            };
+        };
+        self.adapt_resolution(&dynamic, timing, interval);
+        let scale = self.dynamic.scale(&dynamic);
+        let (render_width, render_height) = crate::host::render_size(
+            (width, height),
+            self.pixel_ratio,
+            f64::from(resolution.scale),
+            scale,
+        )
+        .unwrap_or((width, height));
+        self.renderer.set_render_size(render_width, render_height);
+        engine_core::DynamicResolutionStats {
+            active: dynamic.enabled,
+            scale: scale as f32,
+            budget_ms: if dynamic.enabled {
+                self.resolution_budget(&dynamic) as f32
+            } else {
+                0.0
+            },
+        }
+    }
+
+    /// The display's size and the size the last frame drew at, for a view
+    /// the host asked `width` × `height` pixels of.
+    fn resolution_stats(&self, (width, height): (u32, u32)) -> engine_core::ResolutionStats {
+        let (display_width, display_height) = self.renderer.view_size().unwrap_or((0, 0));
+        let (render_width, render_height) = self.renderer.render_size().unwrap_or((0, 0));
+        engine_core::ResolutionStats {
+            display_width,
+            display_height,
+            render_width,
+            render_height,
+            dropped_pixels: (u64::from(width) * u64::from(height))
+                .saturating_sub(u64::from(display_width) * u64::from(display_height)),
+            gpu_ms: self.gpu_ms,
+        }
+    }
+
+    /// Moves dynamic resolution's scale under `settings` before a display
+    /// frame: by `timing`, the GPU time of the last frame the device timed
+    /// and the size it drew at, where that is the size frames draw at now;
+    /// where the device times no work, by `interval`, the milliseconds since
+    /// the frame before.
+    fn adapt_resolution(
+        &mut self,
+        settings: &engine_core::DynamicResolution,
+        timing: Option<(f64, (u32, u32))>,
+        interval: Option<f64>,
+    ) {
+        if !settings.enabled {
+            self.dynamic.reset();
+            return;
+        }
+        let budget = self.resolution_budget(settings);
+        if self.renderer.times_frames() {
+            if let Some((ms, size)) = timing
+                && Some(size) == self.renderer.render_size()
+            {
+                self.dynamic.frame(settings, ms, budget, true);
+            }
+        } else if let Some(interval) = interval
+            .filter(|&ms| ms > 0.0 && ms < crate::host::policy::PACE_INTERVAL_LIMIT_MS)
+        {
+            self.dynamic.frame(settings, interval, budget, false);
+        }
     }
 
     /// Streams terrains for a frame's work time on a `width` × `height`
@@ -578,9 +773,10 @@ impl AppHost {
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
         let _profile = engine_profile::span("cpu", "host.frame");
-        let delta = self
+        let interval = self
             .last_timestamp_ms
-            .map_or(0.0, |last| (timestamp_ms - last).max(0.0) * 0.001);
+            .map(|last| (timestamp_ms - last).max(0.0));
+        let delta = interval.map_or(0.0, |interval| interval * 0.001);
         self.last_timestamp_ms = Some(timestamp_ms);
         self.set_input(input);
         let start = now_ms();
@@ -593,6 +789,7 @@ impl AppHost {
             report,
             FrameKind::Display {
                 alpha: report.interpolation,
+                interval,
             },
         )?;
         // After submission, so the GPU draws this frame while the next tick's
@@ -722,6 +919,7 @@ impl AppHost {
                     height: height.max(1),
                 });
         }
+        let dynamic_resolution = self.size_frame(kind, (width, height));
         let (frame_number, tick) = {
             let world = self.engine.app.world();
             (
@@ -753,10 +951,10 @@ impl AppHost {
             self.engine.reveal_ticks_ahead();
         }
         let frame = match kind {
-            FrameKind::Display { alpha } | FrameKind::Preview { alpha, .. } if gpu => {
+            FrameKind::Display { alpha, .. } | FrameKind::Preview { alpha, .. } if gpu => {
                 self.engine.extract_gpu_frame(aspect, alpha)
             }
-            FrameKind::Display { alpha } | FrameKind::Preview { alpha, .. } => self
+            FrameKind::Display { alpha, .. } | FrameKind::Preview { alpha, .. } => self
                 .engine
                 .extract_frame(aspect, PresentationMode::Interpolated { alpha }),
             FrameKind::Exact => self.engine.extract_frame(aspect, PresentationMode::Current),
@@ -790,7 +988,6 @@ impl AppHost {
                 snapshot.dropped_instances.min(u32::MAX as usize) as u32,
             )
         };
-        let (view_width, view_height) = self.renderer.view_size().unwrap_or((0, 0));
         self.stats = FrameStats {
             frame: frame_number,
             tick,
@@ -810,10 +1007,8 @@ impl AppHost {
             pipelines_listed: 0,
             pipelines_unlisted: 0,
             loading: false,
-            view_width,
-            view_height,
-            dropped_view_pixels: (u64::from(width) * u64::from(height))
-                .saturating_sub(u64::from(view_width) * u64::from(view_height)),
+            resolution: self.resolution_stats((width, height)),
+            dynamic_resolution,
             jobs: engine_core::JobStats::default(),
             navigation: engine_core::NavStats::default(),
             physics: engine_core::PhysicsStats::default(),
@@ -978,9 +1173,11 @@ impl AppHost {
         serde_json::to_string(&self.stats()).expect("frame stats serialize")
     }
 
-    /// Drop suspension time and held input before the next frame.
+    /// Drop suspension time and held input before the next frame; dynamic
+    /// resolution starts over at its most scale.
     pub fn suspend(&mut self) {
         self.last_timestamp_ms = None;
+        self.dynamic.reset();
         self.engine.reset_clock();
         *self.engine.app.world_mut().resource_mut::<InputState>() = InputState::default();
     }

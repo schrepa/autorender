@@ -30,7 +30,7 @@ gpu_structs! {
     /// projection.
     /// Temporally antialiased frames jitter it by `jitter.xy` clip
     /// units per w, and their motion vectors use the previous frame's unjittered
-    /// `previous_view_projection` and `jitter.zw`, two over the viewport size in
+    /// `previous_view_projection` and `jitter.zw`, two over the render size in
     /// pixels. Other frames repeat the view-projection and keep the jitter zero.
     /// The unjittered `inverse_view_projection` turns pixels into sky rays and
     /// `position` (xyz) is the eye, for view-dependent lighting;
@@ -38,8 +38,10 @@ gpu_structs! {
     /// `options.x` is 1 while a reflection probe captures a cube face:
     /// its surfaces read shadows from the far maps alone, which
     /// hold every caster whatever the main camera sees; `options.y` is the angle
-    /// a pixel spans at the view's center ([`pixel_angle`](crate::gpu_data::pixel_angle));
-    /// `options.z` turns fades' dither each temporally antialiased frame.
+    /// a display pixel spans at the view's center ([`pixel_angle`](crate::gpu_data::pixel_angle));
+    /// `options.z` turns fades' dither each temporally antialiased frame;
+    /// `options.w` is the mip bias material textures sample with
+    /// ([`FrameRegion::mip_bias`](crate::targets::FrameRegion::mip_bias)).
     #[derive(Clone, Copy, Pod, Zeroable)]
     pub(crate) struct CameraUniform as ["Camera"] {
         pub view_projection: [[f32; 4]; 4],
@@ -51,6 +53,11 @@ gpu_structs! {
         /// The wind's velocity (x and z), gust strength and the previous
         /// frame's presentation time.
         pub wind: [f32; 4],
+        /// The frame's region: its render size in pixels, which it draws at
+        /// from the top-left corner of its screen-sized targets, and that
+        /// size's share of the display on each axis
+        /// ([`FrameRegion::uniform`](crate::targets::FrameRegion::uniform)).
+        pub region: [f32; 4],
     }
 
     /// The scene's atmosphere and grade, as `scene.wgsl` reads them.
@@ -307,7 +314,7 @@ gpu_structs! {
         pub sky_depths: [f32; 4],
     }
 
-    /// WGSL `Post` uniform of `effects.wgsl`: 256
+    /// WGSL `Post` uniform of `effects.wgsl`: 272
     /// bytes.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct PostUniform as ["Post"] {
@@ -315,10 +322,14 @@ gpu_structs! {
         pub inverse_view_projection: [[f32; 4]; 4],
         /// Unjittered world to clip space, for reflection rays.
         pub view_projection: [[f32; 4]; 4],
-        /// The eye; w: depth-buffer pixels per world unit at distance 1.
+        /// The eye; w: render pixels per world unit at distance 1.
         pub eye: [f32; 4],
-        /// Scene target size in pixels, and its inverse.
+        /// The render size in pixels, and its inverse: the part of the
+        /// screen-sized targets the frame draws, from their top-left corner.
         pub size: [f32; 4],
+        /// The screen-sized targets' size in pixels, the display's, and its
+        /// inverse.
+        pub extent: [f32; 4],
         /// Radius, strength, the far radius it grows toward with distance
         /// (none above the radius: it stays) and 1 when ambient occlusion
         /// runs.
@@ -362,15 +373,21 @@ gpu_structs! {
     /// Temporal antialiasing's resolve, as `temporal.wgsl` reads it.
     #[derive(Clone, Copy, Pod, Zeroable)]
     pub(crate) struct ResolveUniform as ["Resolve"] {
-        /// Size of one target pixel in texture coordinates.
+        /// Size of one display pixel in texture coordinates: the canvas's and
+        /// the history's.
         pub texel: [f32; 2],
         /// Weight of this frame's color against the reprojected history.
         pub current_weight: f32,
         /// Zero when the history must not be read (reset).
         pub history_valid: u32,
-        /// x: this frame's turn of the dither (the camera's `options.z`); yzw
-        /// unused.
+        /// This frame's turn of the dither (the camera's `options.z`); 1
+        /// following the nearest surface's motion; 1 with the rounded clamp;
+        /// particles' least weight of this frame's color.
         pub options: [f32; 4],
+        /// The render size this frame drew its targets at, in pixels, and
+        /// how far its samples moved off their pixels' centers, in render
+        /// pixels.
+        pub render: [f32; 4],
     }
 
     /// A GPU-presented frame, as `presentation.wgsl` reads it.

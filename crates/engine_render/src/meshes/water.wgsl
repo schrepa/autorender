@@ -96,9 +96,10 @@ const WATER_FOAM_STREAKED: f32 = 0.6;
 @group(2) @binding(23) var water_scene: texture_2d<f32>;
 
 // The opaque surface behind the water at `pixel` (its center), less the
-// eye, without the jitter of temporally antialiased frames.
+// eye, without the jitter of temporally antialiased frames: a pixel of the
+// frame's render size, which it draws at.
 fn water_ground(pixel: vec2<f32>) -> vec3<f32> {
-    let size = vec2<f32>(textureDimensions(water_depth));
+    let size = camera.region.xy;
     let depth = textureLoad(water_depth, vec2<i32>(pixel), 0);
     let ndc = vec2<f32>(pixel.x / size.x * 2.0 - 1.0, 1.0 - pixel.y / size.y * 2.0)
         - camera.jitter.xy;
@@ -518,13 +519,16 @@ fn water_tile(tile: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec3<f3
 // the pixel (z).
 fn water_waves_at(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, tiles: vec3<f32>) -> vec3<f32> {
     var waves = vec3<f32>(0.0);
+    // As finely as the display shows them: the mip bias.
+    let detail = material_detail();
     for (var tile = 0u; tile < WATER_WAVE_TILES; tile++) {
         let share = tiles[tile];
         if share <= 0.0 {
             continue;
         }
         let repeats = water.waves[tile];
-        let read = water_tile(tile, p * repeats, dx * repeats, dy * repeats);
+        let read = water_tile(tile, p * repeats, dx * (repeats * detail),
+            dy * (repeats * detail));
         waves += vec3<f32>(read.xy * share, read.z * share * share);
     }
     return waves;
@@ -622,7 +626,9 @@ struct WaterBehind {
 
 fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: vec2<f32>,
         ground: vec3<f32>) -> WaterBehind {
-    let size = vec2<f32>(textureDimensions(water_depth));
+    // Places in the view among the pixels of the frame's render size, which
+    // the copies hold from their top-left corner.
+    let size = camera.region.xy;
     var behind: WaterBehind;
     behind.ground = ground;
     var at = pixel;
@@ -644,7 +650,8 @@ fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: 
             }
         }
     }
-    behind.color = textureSampleLevel(water_scene, refraction_sampler, at / size, 0.0).rgb;
+    behind.color = textureSampleLevel(water_scene, refraction_sampler,
+        min(at, size - 0.5) / vec2<f32>(textureDimensions(water_depth)), 0.0).rgb;
     return behind;
 }
 

@@ -2,18 +2,22 @@
 // shaders: the first bind group's camera, atmosphere and sun
 // shadows, and the lighting functions every path shades with.
 
-// Uniform: three column-major mat4 and four vec4, 16-byte alignment,
-// exactly 256 bytes. `view_projection` is the rasterized projection; temporally
+// Uniform: three column-major mat4 and five vec4, 16-byte alignment,
+// exactly 272 bytes. `view_projection` is the rasterized projection; temporally
 // antialiased frames jitter it by `jitter.xy` clip units per w.
 // Their motion uses the previous frame's unjittered `previous_view_projection`
-// and `jitter.zw`, two over the viewport size in pixels. The unjittered
+// and `jitter.zw`, two over the render size in pixels. The unjittered
 // inverse turns pixels into sky rays; `position.xyz` is the eye and
 // `position.w` presentation time in seconds. `options.x` is 1
 // while a reflection probe captures a cube face; `options.y`
-// is the angle a pixel spans at the view's center (radians), which
-// `pixel_footprint` measures pixels by. `wind` is
+// is the angle a display pixel spans at the view's center (radians), which
+// `pixel_footprint` measures pixels by; `options.w` the mip bias material
+// textures sample with (`material_bias`). `wind` is
 // the wind's velocity (x and z), gust strength and the previous frame's
-// presentation time, which temporal frames' motion sways by.
+// presentation time, which temporal frames' motion sways by. `region` is
+// the frame's render size in pixels, which it draws at from the top-left
+// corner of its screen-sized targets (the viewport), and that size's share
+// of the display on each axis.
 struct Camera {
     view_projection: mat4x4<f32>,
     previous_view_projection: mat4x4<f32>,
@@ -22,6 +26,7 @@ struct Camera {
     jitter: vec4<f32>,
     options: vec4<f32>,
     wind: vec4<f32>,
+    region: vec4<f32>,
 }
 // The scene's atmosphere in linear color; scalars ride in w.
 struct Lighting {
@@ -291,6 +296,21 @@ fn pixel_footprint(world: vec3<f32>, normal: vec3<f32>) -> f32 {
     let depth = max(dot(vec3<f32>(view[0].w, view[1].w, view[2].w), relative), 1.0e-6);
     let facing = max(abs(dot(normal, relative)) / distance, 0.0625);
     return depth * camera.options.y * sqrt(depth / (distance * facing));
+}
+
+// The mip bias material textures sample with (`camera.options.w`): log2 of
+// the render size's share of the display, 0 drawing the whole display and
+// negative below it, so frames drawing smaller, which upscale, keep their
+// textures as sharp as the display shows them.
+fn material_bias() -> f32 {
+    return camera.options.w;
+}
+
+// The render size's share of the display (`camera.region.z`): how much
+// smaller than the screen derivatives they pick mips by shaders choosing
+// their own scale them, as `material_bias` samples.
+fn material_detail() -> f32 {
+    return camera.region.z;
 }
 
 fn stable_normalize(value: vec3<f32>) -> vec3<f32> {

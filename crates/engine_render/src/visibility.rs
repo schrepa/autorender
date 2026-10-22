@@ -17,7 +17,7 @@ use crate::gpu_data::VISIBILITY_SHADER;
 use crate::gpu_layouts::constants::RESOLVE_ARGS_GROUP;
 use crate::gpu_layouts::constants::VISIBILITY_TILE as TILE;
 use crate::shaders::entry::visibility;
-use crate::targets::{FrameSize, ScreenTarget};
+use crate::targets::{FrameRegion, FrameSize, ScreenTarget};
 
 /// Each pixel's visible entry plus one (0: none) and its triangle | bin << 7.
 pub(crate) const ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
@@ -26,24 +26,26 @@ pub(crate) const ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
 pub(crate) const DRAW_STRIDE: u64 = 256;
 
 /// The ID target, the tile lists and each draw's uniform, sized to the
-/// viewport and the frame's bins.
+/// display and the frame's bins; frames classify the tiles of the pixels
+/// they draw.
 pub(crate) struct VisibilityBuffer {
     layout: crate::pipelines::GroupLayout,
     classify: wgpu::ComputePipeline,
     args: wgpu::ComputePipeline,
-    // The ID target, at the frame's size.
+    // The ID target, at the display's size.
     ids: ScreenTarget<wgpu::TextureView>,
-    // Tiles across and down the viewport.
+    // Tiles across and down the pixels the frame draws.
     tiles: (u32, u32),
     // The classification's uniform, each bin's tile count, the tile lists
-    // (each bin's from `bin * capacity`), each bin's resolve arguments, and
-    // the draws' uniforms (phase one's bins, then phase two's).
+    // (each bin's from `bin * capacity`, room for each tile of the
+    // display), each bin's resolve arguments, and the draws' uniforms (phase
+    // one's bins, then phase two's).
     params: wgpu::Buffer,
     counts: Versioned<wgpu::Buffer>,
     lists: Versioned<wgpu::Buffer>,
     draw_args: Versioned<wgpu::Buffer>,
     draws: Versioned<wgpu::Buffer>,
-    // The bins and tile grid the buffers hold.
+    // The bins and the display's tile grid the buffers hold.
     held: (usize, (u32, u32)),
     group: GroupCache<5>,
 }
@@ -97,22 +99,29 @@ impl VisibilityBuffer {
         }
     }
 
-    /// Readies the target and buffers for a viewport of `size` and the bins
-    /// whose first selected cluster in each phase `visible_bases` holds
-    /// (phase one's, then phase two's), and writes the draws' uniforms.
-    /// False when the tile lists would exceed the device's storage binding
-    /// size: the frame draws its bins forward instead.
+    /// Readies the target and buffers for `region`, its display's size, and
+    /// the bins whose first selected cluster in each phase `visible_bases`
+    /// holds (phase one's, then phase two's), and writes the draws' uniforms
+    /// for the tiles of its render size. False when the tile lists would
+    /// exceed the device's storage binding size: the frame draws its bins
+    /// forward instead.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        size: FrameSize,
+        region: FrameRegion,
         visible_bases: [&[u32]; 2],
     ) -> bool {
-        let (width, height) = (size.width.max(1), size.height.max(1));
+        let target = FrameSize {
+            width: region.display.width.max(1),
+            height: region.display.height.max(1),
+        };
+        let (width, height) = (region.render.width.max(1), region.render.height.max(1));
         let bins = visible_bases[0].len();
         self.tiles = (width.div_ceil(TILE), height.div_ceil(TILE));
-        let capacity = u64::from(self.tiles.0) * u64::from(self.tiles.1);
+        // Lists hold every tile of the display, whatever size frames draw at.
+        let room = (target.width.div_ceil(TILE), target.height.div_ceil(TILE));
+        let capacity = u64::from(room.0) * u64::from(room.1);
         let limits = device.limits();
         let binding = limits
             .max_storage_buffer_binding_size
@@ -120,12 +129,11 @@ impl VisibilityBuffer {
         if bins as u64 * capacity * 4 > binding {
             return false;
         }
-        let target = FrameSize { width, height };
         if self.ids.resizes(target) {
-            let view = ids_target(device, (width, height)).create_view(&Default::default());
+            let view = ids_target(device, target.pixels()).create_view(&Default::default());
             self.ids.set(target, view);
         }
-        if bins > self.held.0 || self.tiles != self.held.1 {
+        if bins > self.held.0 || room != self.held.1 {
             let none = wgpu::BufferUsages::empty();
             self.counts.replace(storage(
                 device,
@@ -150,7 +158,7 @@ impl VisibilityBuffer {
                 "engine/visibility-draws",
                 2 * bins.max(1) as u64 * DRAW_STRIDE,
             ));
-            self.held = (bins, self.tiles);
+            self.held = (bins, room);
         }
         let ids = self.ids.get().expect("sized above");
         self.group.bind(

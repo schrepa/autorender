@@ -22,6 +22,8 @@ struct ExposureUniform {
     // of its light's ratio to it that exposure rises by, and the most stops
     // it rises by (fewer at night).
     day: vec4<f32>,
+    // The pixels of the scene the frame drew, from its top-left corner.
+    drawn: vec4<f32>,
 }
 
 // The exposure the frame shows, which the lighting copies; its stops from
@@ -85,7 +87,7 @@ fn meter_exposure(
         atomicStore(&counted[index], 0u);
     }
     workgroupBarrier();
-    let size = textureDimensions(scene_color);
+    let size = max(vec2<u32>(settings.drawn.xy), vec2<u32>(1u));
     let place = (vec2<f32>(id.xy) + 0.5) / f32(EXPOSURE_GRID);
     let pixel = min(vec2<u32>(place * vec2<f32>(size)), size - 1u);
     // Black reads as half the 8-bit target's first step: what lies below it

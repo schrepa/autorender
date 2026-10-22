@@ -227,13 +227,11 @@ impl Renderer {
             self.virtual_draws.phase_two = Some(bins);
             bins += self.virtual_draws.bins.len();
         }
+        // Clusters' tests measure the pixels the frame draws.
+        let render = self.display.region.render;
         let tests = CameraTests {
             view_projection: rasterized,
-            viewport: (
-                self.display.size().width,
-                self.display.size().height,
-                pyramid_levels.unwrap_or(0),
-            ),
+            viewport: (render.width, render.height, pyramid_levels.unwrap_or(0)),
             previous,
             phase_two: self.virtual_draws.phase_two.map(|bin| bin as u32),
             subpixel: gpu_mode && self.gpu_presentation.culls_subpixel(),

@@ -199,11 +199,13 @@ const FALL_RING: f32 = 0.04;
 // changing by `dx` and `dy` a pixel), `flown` seconds on its way, its
 // pattern `shift` meters along: how dense its strands, their fibers and its
 // churning clumps stand there (about a half, x), its clumps alone (y), and
-// its foam's bubbles' walls (z).
+// its foam's bubbles' walls (z). Its map samples as finely as the display
+// shows it: the mip bias.
 fn fall_pattern(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flown: f32, shift: vec2<f32>)
         -> vec3<f32> {
+    let detail = material_detail();
     let map = textureSampleGrad(water_fall_map, water_wave_sampler, (p + shift) / FALL_MAP,
-        dx / FALL_MAP, dy / FALL_MAP);
+        dx * detail / FALL_MAP, dy * detail / FALL_MAP);
     let clumps = water_gradient_noise3(vec3<f32>(p / FALL_CLUMPS + shift * 0.6,
         flown * FALL_CHURN));
     let dense = FALL_STRANDS * map.r + FALL_FIBERS * map.g

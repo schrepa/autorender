@@ -385,12 +385,6 @@ impl<G: Game> PageHost<G> {
         Ok(())
     }
 
-    /// [`crate::host::view_size`] as `[width, height]`; empty for no area.
-    pub fn view_size(&self, width: f64, height: f64, pixel_ratio: f64, scale: f64) -> Vec<u32> {
-        crate::host::view_size(width, height, pixel_ratio, scale)
-            .map_or_else(Vec::new, |(width, height)| vec![width, height])
-    }
-
     /// [`crate::host::Distribution::of`] `values`, as JSON (`null` for none).
     pub fn distribution(&self, values: Vec<f64>) -> String {
         serde_json::to_string(&crate::host::Distribution::of(&values))

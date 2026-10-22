@@ -754,9 +754,10 @@ impl CloudPass {
 
     /// Plans this frame's clouds in the view of `settings`
     /// from an eye at `eye` at simulation time `seconds`, through
-    /// `view_projection` (unjittered) onto a canvas of `canvas` pixels in
-    /// `lighting`'s sun and sky; call after [`Self::prepare`]. Nothing
-    /// marches without clouds or with the view's march off.
+    /// `view_projection` (unjittered) onto the frame's `region` in
+    /// `lighting`'s sun and sky: blocks made for its display, marched over
+    /// its render size; call after [`Self::prepare`]. Nothing marches
+    /// without clouds or with the view's march off.
     #[expect(clippy::too_many_arguments, reason = "the view's inputs, typed")]
     pub(crate) fn prepare_view(
         &mut self,
@@ -764,14 +765,15 @@ impl CloudPass {
         queue: &wgpu::Queue,
         (settings, eye, seconds): (&Clouds, glam::Vec3, f64),
         view_projection: glam::Mat4,
-        canvas: [u32; 2],
+        region: crate::targets::FrameRegion,
         (lighting, air): (&LightingUniform, crate::sky::AirBindings<'_>),
         depth: &Versioned<wgpu::TextureView>,
     ) {
         let settings = settings.sanitized();
         self.view_job = None;
         self.view_blocks = 0;
-        let marches = self.active && settings.in_view && !canvas.contains(&0);
+        let (display, render) = (region.display, region.render);
+        let marches = self.active && settings.in_view && display.width > 0 && display.height > 0;
         let view_sky = marches && eye.y > settings.base;
         if view_sky != self.view_sky {
             self.view_sky = view_sky;
@@ -781,16 +783,19 @@ impl CloudPass {
             return;
         }
         let side = settings.view_block;
-        let blocks = [canvas[0].div_ceil(side), canvas[1].div_ceil(side)];
+        // Blocks over the display's pixels, those over the frame's render
+        // size marched.
+        let room = [display.width.div_ceil(side), display.height.div_ceil(side)];
+        let blocks = [render.width.div_ceil(side), render.height.div_ceil(side)];
         if self
             .view_targets
             .as_ref()
-            .is_none_or(|targets| targets.size != blocks)
+            .is_none_or(|targets| targets.size != room)
         {
             self.view_targets = Some(Versioned::new(ViewTargets {
-                clouds: view_texture(device, blocks, wgpu::TextureFormat::Rgba16Float),
-                front: view_texture(device, blocks, wgpu::TextureFormat::R32Float),
-                size: blocks,
+                clouds: view_texture(device, room, wgpu::TextureFormat::Rgba16Float),
+                front: view_texture(device, room, wgpu::TextureFormat::R32Float),
+                size: room,
             }));
         }
         let mut uniform = march_uniform(&settings, (eye, seconds), lighting);
@@ -799,6 +804,7 @@ impl CloudPass {
         let view = ViewUniform {
             inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
             blocks: [blocks[0], blocks[1], side, u32::from(view_sky)],
+            pixels: [render.width, render.height, 0, 0],
         };
         queue.write_buffer(&self.view_uniform, 0, bytemuck::bytes_of(&view));
         // No vertices until the march meets a cloud; one instance.

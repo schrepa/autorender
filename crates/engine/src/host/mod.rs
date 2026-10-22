@@ -30,7 +30,8 @@ pub use input::{FrameInput, InputGatherer, KEYS};
 pub use jobs::JobOrder;
 pub(crate) use jobs::{Finished, JobScheduler};
 pub(crate) use pipeline_list::PipelineList;
-pub use resolution::view_size;
+pub(crate) use resolution::DynamicScale;
+pub use resolution::{render_size, view_size};
 pub use scene_load::{
     FileRead, IMAGE_FORMATS, Image, ImageDecoder, ImageFormat, ImageRead, LoadingHost, SceneLoad,
     decode_image, image_format,
