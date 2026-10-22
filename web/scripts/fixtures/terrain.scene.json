@@ -865,8 +865,7 @@
           },
           {
             "hydrology": {
-              "level": 1,
-              "channel_area": 20000
+              "level": 1
             }
           },
           {

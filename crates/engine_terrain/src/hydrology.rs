@@ -43,11 +43,13 @@ settings! {
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct HydrologyLayer {
-        /// The pyramid level whose samples the bake reads: finer levels trace
+        /// The pyramid level whose samples the bake reads: rivers are traced
+        /// along its grid, and begin where their channels span two of its
+        /// samples from bank to bank, the narrowest water settling over
+        /// samples that far apart holds; its maps and lakes lie over the
+        /// landscape [`MAP_LEVELS`] levels coarser. Finer levels trace narrower
         /// channels more closely and take longer.
-        pub level: u32 = 3 => range(0, MAX_LEVEL),
-        /// Square meters of upstream area where channels begin.
-        pub channel_area: f32 = 200_000.0 => range(100.0, 1.0e10),
+        pub level: u32 = 0 => range(0, MAX_LEVEL),
         /// Cubic meters a second each square kilometer drained brings the
         /// channels full to their banks: every channel carries this times the
         /// area draining through it, which sets its width, and with its slope
@@ -532,92 +534,113 @@ fn spread(heights: &[f32], drained: &Drainage, width: usize, spacing: f32) -> (V
     (area, steepest)
 }
 
-/// Bakes `layer` over the grid of `heights`, `width` samples wide (row by
-/// row along z, at least two each way), whose samples lie `spacing` meters
-/// apart; with its rivers' lines, whose channels and water the finest
-/// ground sets once read (`crate::hydraulics::river`), and no rivers yet.
+/// Levels coarser than a hydrology bake's own its maps and lakes are made
+/// at: they lie smooth over the landscape, eight times as many meters a
+/// sample as the grid rivers are traced along.
+pub const MAP_LEVELS: u32 = 3;
+
+/// Bakes `layer` over two grids of the ground (each its heights, samples
+/// a row, row by row along z, at least two each way, and meters between
+/// them): its own level's, along which water runs and rivers are traced,
+/// and the landscape's, over which its maps and lakes lie. Its rivers'
+/// lines come back for their channels and water to be set
+/// (`crate::hydraulics::river`); it holds no rivers yet.
 pub(crate) fn bake(
-    heights: &[f32],
-    width: usize,
-    spacing: f32,
+    (heights, width, spacing): (&[f32], usize, f32),
+    (landscape, across, apart): (&[f32], usize, f32),
     layer: &HydrologyLayer,
 ) -> (Hydrology, Vec<RiverLine>) {
-    let count = heights.len();
-    let height = count / width;
-    let routed = drainage(heights, width, spacing);
-    let lake = lakes(heights, &routed.filled, width);
-    // The maps read water spread over every lower neighbor; rivers run
-    // where single courses gather it.
-    let (spread_area, steepest) = spread(heights, &routed, width, spacing);
-    let Drainage {
-        filled,
-        order,
-        receivers,
-        area,
-        ..
-    } = routed;
-    // Channels run where enough area drains; water crossing a filled pit
-    // runs as a lake, not a channel.
-    let channel_samples = area
-        .iter()
-        .zip(&lake)
-        .filter(|&(&drained, &lake)| drained >= layer.channel_area && !lake)
-        .count();
+    let count = landscape.len();
+    let rows = count / across;
+    let routed = drainage(landscape, across, apart);
+    let lake = lakes(landscape, &routed.filled, across);
+    // The maps read water spread over every lower neighbor.
+    let (spread_area, steepest) = spread(landscape, &routed, across, apart);
+    let filled = routed.filled;
     let found = Found {
         filled: &filled,
         lakes: &lake,
     };
-    // The grid keeps lakes alone, rivers standing on lines of their own whose
-    // flow places their falls.
-    let water = Arc::new(water(heights, &found, width, spacing));
-    let mut rank = vec![0_u32; count];
-    for (position, &sample) in order.iter().enumerate() {
-        rank[sample as usize] = position as u32;
-    }
-    let lines = trace(
-        &Channels {
-            area: &area,
-            receivers: &receivers,
-            lakes: &lake,
-            rank: &rank,
-        },
-        (width, spacing),
-        layer.channel_area,
-    );
+    let water = Arc::new(water(landscape, &found, across, apart));
     let mut lake_samples = 0;
-    let mut max_area = 0.0_f32;
     let mut flow = Vec::with_capacity(count);
     let mut wetness = Vec::with_capacity(count);
     let mut lakes = Vec::with_capacity(count);
     for sample in 0..count {
-        max_area = max(max_area, area[sample]);
         let standing = if lake[sample] {
             lake_samples += 1;
-            filled[sample] - heights[sample]
+            filled[sample] - landscape[sample]
         } else {
             0.0
         };
         // libm's logarithms, as browsers compute them: the platform's
         // differ.
         flow.push(encode(libm::log10f(spread_area[sample]), FLOW_RANGE));
-        let catchment = spread_area[sample] / spacing;
+        let catchment = spread_area[sample] / apart;
         let index = libm::logf(catchment / max(steepest[sample], 1.0e-3));
         wetness.push(encode(index, WETNESS_RANGE));
         lakes.push(encode(standing, LAKE_RANGE));
     }
     let image = |samples: Vec<u16>| {
-        HeightImage::new(width as u32, height as u32, samples)
+        HeightImage::new(across as u32, rows as u32, samples)
             .expect("grids hold two samples each way")
     };
+    // Rivers run where single courses gather water over the ground they
+    // are cut into, its own grid: a sample lies in a lake where a lake's
+    // level stands above its ground.
+    let Drainage {
+        order,
+        receivers,
+        area,
+        ..
+    } = drainage(heights, width, spacing);
+    let in_lake: Vec<bool> = (0..heights.len())
+        .map(|sample| {
+            let (x, z) = (
+                (sample % width) as f32 * spacing,
+                (sample / width) as f32 * spacing,
+            );
+            water
+                .lake_reach(x, z)
+                .is_some_and(|level| heights[sample] < level)
+        })
+        .collect();
+    let mut rank = vec![0_u32; heights.len()];
+    for (position, &sample) in order.iter().enumerate() {
+        rank[sample as usize] = position as u32;
+    }
+    drop(order);
+    // Channels begin where they span two of the grid's samples from bank
+    // to bank: the narrowest the water settling over it holds.
+    let runoff = layer.discharge * 1.0e-6;
+    let narrowest = 2.0 * spacing / layer.width;
+    let channel_area = narrowest * narrowest / runoff;
+    let channel_samples = area
+        .iter()
+        .zip(&in_lake)
+        .filter(|&(&drained, &lake)| drained >= channel_area && !lake)
+        .count();
+    let max_area = area.iter().fold(0.0_f32, |most, &drained| max(most, drained));
+    let lines = trace(
+        &Channels {
+            area: &area,
+            receivers: &receivers,
+            lakes: &in_lake,
+            rank: &rank,
+        },
+        (width, spacing),
+        channel_area,
+        |drained| layer.width * (drained * runoff).sqrt(),
+    );
     let hydrology = Hydrology {
-        spacing,
+        spacing: apart,
         flow: image(flow),
         wetness: image(wetness),
         lakes: image(lakes),
         water,
         rivers: Arc::new(Rivers::default()),
         stats: HydrologyStats {
-            samples: count,
+            samples: heights.len(),
             channel_samples,
             lake_samples,
             max_area,
@@ -937,7 +960,6 @@ pub(crate) fn image_level(image_spacing: f32, levels: usize, spacing: f32) -> us
 
 crate::codec::record!(HydrologyLayer {
     level,
-    channel_area,
     discharge,
     width,
     roughness,

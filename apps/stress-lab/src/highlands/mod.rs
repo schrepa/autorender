@@ -417,16 +417,15 @@ pub(crate) fn populate(
             op: StampOp::Flatten(60.0),
         }),
         plateau_stamp,
-        // Streams and rivers carved where water gathers off the mountains,
-        // baked over the eight-meter tiles erosion shaped. Channels begin
-        // where two and a half hectares drain, a meter or so wide, and each
-        // runs as wide and deep as it must to carry what it drains: an
-        // alpine 3.2 cubic meters a second a square kilometer when full,
-        // which makes the largest river some forty-five meters across.
+        // Streams and rivers traced where water gathers off the mountains
+        // over the meter tiles it runs on, the water's own cells. Channels
+        // begin where they span two meters, and each runs as wide and deep
+        // as its floods must to carry what it drains: an alpine 3.2 cubic
+        // meters a second a square kilometer, which makes the largest river
+        // some forty-five meters across.
         Layer::Hydrology(HydrologyStage {
             layer: HydrologyLayer {
-                level: 3,
-                channel_area: 25_000.0,
+                level: 0,
                 discharge: 3.2,
                 ..HydrologyLayer::default()
             },
@@ -1747,12 +1746,12 @@ fn rules() -> Biomes {
                 ),
             ],
         }],
-        // Rock over everything on slopes from 28 degrees, all of it from 35,
-        // where no soil holds: the ground's own form decides where, at every
+        // Rock over everything steeper than soil rests at, 35 degrees, all
+        // of it from 40: the ground's own form decides where, at every
         // point of it.
         steep: Some(engine::terrain::data::SteepLayer {
             material: "rock".into(),
-            slope: [28.0, 35.0],
+            slope: [35.0, 40.0],
         }),
     }
 }

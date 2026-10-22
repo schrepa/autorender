@@ -11,8 +11,11 @@
 //! the layers below is a signed 16-bit image with coarser levels, read
 //! through its uniform cubic B-spline and added at every terrain level, so
 //! the finer layers' detail rides the eroded shape without the bake's grid
-//! printed into it. Only exact arithmetic, square roots and integer hashes
-//! enter it: every target bakes the same bits.
+//! printed into it. Where it laid sediment down, the sediment fills the
+//! hollows of that finer detail as deep as it lies, as sediment buries the
+//! relief it settles on: valley floors lie smooth instead of holding the
+//! finer detail's pits. Only exact arithmetic, square roots and integer
+//! hashes enter it: every target bakes the same bits.
 
 use crate::MAX_LEVEL;
 use engine_math::{max, min};
@@ -59,13 +62,16 @@ pub struct ErosionStats {
 }
 
 /// What erosion changed: meters it added (negative where it wore ground
-/// away), over `range`, at samples `spacing` meters apart from the
+/// away), over `range`, and the ground it started from (terrain-local
+/// meters), over `ground_range`, at samples `spacing` meters apart from the
 /// terrain's first corner.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Erosion {
     pub spacing: f32,
     pub change: HeightImage,
     pub range: [f32; 2],
+    pub ground: HeightImage,
+    pub ground_range: [f32; 2],
     pub stats: ErosionStats,
 }
 
@@ -83,13 +89,59 @@ impl Erosion {
         xs: impl IntoIterator<Item = f32>,
         z: f32,
         spacing: f32,
+        each: impl FnMut(usize, f32),
+    ) {
+        Self::read_row(&self.change, self.range, (self.spacing, spacing), xs, z, each);
+    }
+
+    /// The meters erosion adds at terrain-local `(x, z)` for each of `xs`
+    /// in turn, where the layers below it stand at `heights` (one each), as
+    /// terrain samples `spacing` meters apart see it, handed to `each` with
+    /// its index: the change ([`Self::change_row`]), and where erosion laid
+    /// sediment down, the hollows the finer detail cut below the ground it
+    /// started from filled as deep as the sediment lies.
+    pub(crate) fn wear_row(
+        &self,
+        xs: &[f32],
+        z: f32,
+        spacing: f32,
+        heights: &[f32],
         mut each: impl FnMut(usize, f32),
     ) {
-        let level = image_level(self.spacing, self.change.levels(), spacing);
-        let scale = 1.0 / self.spacing;
-        let [low, high] = self.range;
+        let count = heights.len().min(xs.len());
+        let mut started = vec![0.0_f32; count];
+        Self::read_row(
+            &self.ground,
+            self.ground_range,
+            (self.spacing, spacing),
+            xs[..count].iter().copied(),
+            z,
+            |index, ground| started[index] = ground,
+        );
+        self.change_row(xs[..count].iter().copied(), z, spacing, |index, change| {
+            let filled = min(max(change, 0.0), max(started[index] - heights[index], 0.0));
+            each(index, change + filled);
+        });
+    }
+
+    /// `image`'s samples over `range`, its samples `own` meters apart, as
+    /// terrain samples `spacing` meters apart see them at terrain-local
+    /// `(x, z)` for each of `xs`, through its uniform cubic B-spline, which
+    /// never passes its samples, so it digs no pits beside the valleys'
+    /// sharp cuts and leaves no creases along the image's rows and columns.
+    #[inline]
+    fn read_row(
+        image: &HeightImage,
+        [low, high]: [f32; 2],
+        (own, spacing): (f32, f32),
+        xs: impl IntoIterator<Item = f32>,
+        z: f32,
+        mut each: impl FnMut(usize, f32),
+    ) {
+        let level = image_level(own, image.levels(), spacing);
+        let scale = 1.0 / own;
         let us = xs.into_iter().map(|x| x * scale);
-        self.change.sample_smooth_row(us, z * scale, level, |index, sample| {
+        image.sample_smooth_row(us, z * scale, level, |index, sample| {
             each(index, low + (high - low) * sample * (1.0 / 65_535.0));
         });
     }
@@ -173,6 +225,26 @@ pub(crate) fn erode_round(
     std::mem::swap(heights, ground);
 }
 
+/// `values` (`width` a row) as a 16-bit image over their own range, and
+/// that range: a millimeter at least, which keeps the encoding finite.
+fn encoded(values: &[f32], width: usize) -> (HeightImage, [f32; 2]) {
+    let mut range = [f32::INFINITY, f32::NEG_INFINITY];
+    for &value in values {
+        range = [min(range[0], value), max(range[1], value)];
+    }
+    let span = max(range[1] - range[0], 1.0e-3);
+    let samples = values
+        .iter()
+        .map(|&value| {
+            let unit = (value - range[0]) / span;
+            (max(min(unit, 1.0), 0.0) * 65_535.0 + 0.5) as u16
+        })
+        .collect();
+    let image = HeightImage::new(width as u32, (values.len() / width) as u32, samples)
+        .expect("grids hold two samples each way");
+    (image, [range[0], range[0] + span])
+}
+
 /// What erosion changed from `original` to `eroded` (`width` samples
 /// wide, `spacing` meters apart) over `rounds` rounds.
 pub(crate) fn finish(
@@ -182,32 +254,24 @@ pub(crate) fn finish(
     spacing: f32,
     rounds: u32,
 ) -> Erosion {
-    let mut range = [0.0_f32, 0.0_f32];
-    for (before, after) in original.iter().zip(eroded) {
-        let change = after - before;
-        range = [min(range[0], change), max(range[1], change)];
-    }
-    // A span of at least a millimeter keeps the encoding finite.
-    let span = max(range[1] - range[0], 1.0e-3);
-    let samples = original
+    let changes: Vec<f32> = original
         .iter()
         .zip(eroded)
-        .map(|(before, after)| {
-            let unit = ((after - before) - range[0]) / span;
-            (max(min(unit, 1.0), 0.0) * 65_535.0 + 0.5) as u16
-        })
+        .map(|(before, after)| after - before)
         .collect();
-    let height = original.len() / width;
+    let (change, range) = encoded(&changes, width);
+    let (ground, ground_range) = encoded(original, width);
     Erosion {
         spacing,
-        change: HeightImage::new(width as u32, height as u32, samples)
-            .expect("grids hold two samples each way"),
-        range: [range[0], range[0] + span],
+        change,
+        range,
+        ground,
+        ground_range,
         stats: ErosionStats {
             samples: original.len(),
             rounds,
-            deepest: -range[0],
-            highest: range[1],
+            deepest: -min(range[0], 0.0),
+            highest: max(range[1], 0.0),
         },
     }
 }
@@ -229,5 +293,7 @@ crate::codec::record!(Erosion {
     spacing,
     change,
     range,
+    ground,
+    ground_range,
     stats,
 });

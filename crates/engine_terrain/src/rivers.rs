@@ -897,12 +897,16 @@ pub(crate) struct Channels<'a> {
 /// channel (samples draining `channel_area` or more outside lakes) from its
 /// head or a confluence down to the next confluence, a lake or the edge,
 /// upstream rivers first, as a smooth line ([`smooth_line`]) with the area
-/// draining through it. Where it ends in a lake or a confluence, whose
-/// sample other water reaches too, its last point carries its own water.
+/// draining through it, as smooth as its channel is wide: its course's
+/// samples shape it no closer together than the meters `widths` gives the
+/// channel draining the area there. Where it ends in a lake or a
+/// confluence, whose sample other water reaches too, its last point
+/// carries its own water.
 pub(crate) fn trace(
     channels: &Channels<'_>,
     (width, spacing): (usize, f32),
     channel_area: f32,
+    widths: impl Fn(f32) -> f32,
 ) -> Vec<RiverLine> {
     let Channels {
         area,
@@ -954,12 +958,22 @@ pub(crate) fn trace(
         if course.len() < 2 {
             continue;
         }
-        let points: Vec<Vec2> = course.iter().map(|&sample| place(sample)).collect();
-        let mut drained: Vec<f32> = course.iter().map(|&sample| area[sample]).collect();
-        if joins {
-            let last = drained.len() - 1;
-            drained[last] = drained[last - 1];
+        let last = course.len() - 1;
+        // Where it joins other water, its last sample carries its own.
+        let drains = |index: usize| {
+            let at = if joins && index == last { index - 1 } else { index };
+            area[course[at]]
+        };
+        let mut shaping = vec![0];
+        for index in 1..last {
+            let from = place(course[shaping[shaping.len() - 1]]);
+            if from.distance(place(course[index])) >= widths(drains(index)) {
+                shaping.push(index);
+            }
         }
+        shaping.push(last);
+        let points: Vec<Vec2> = shaping.iter().map(|&index| place(course[index])).collect();
+        let drained: Vec<f32> = shaping.iter().map(|&index| drains(index)).collect();
         let mut line = smooth_line(&points, &drained);
         line.head = inflows[start] == 0;
         lines.push(line);

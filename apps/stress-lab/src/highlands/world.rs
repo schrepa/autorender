@@ -66,11 +66,12 @@ impl StressWorld for HighlandsWorld {
         });
         // The eye adapts: the cave brightens by day, the night keeps dark.
         world.insert_resource(AutoExposure::default());
-        // Rivers settle and run in 2-meter cells: the cook settles every
-        // watered tile at that size, and the window simulated around the
-        // camera steps it.
+        // Rivers settle and run in meter cells, the ground's own samples,
+        // which its rivers are traced along: the cook settles every watered
+        // tile at that size, and the window simulated around the camera
+        // steps it.
         world.insert_resource(Water {
-            simulation_cell: 2.0,
+            simulation_cell: 1.0,
             ..Water::default()
         });
     }

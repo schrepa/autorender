@@ -1471,9 +1471,9 @@ impl Layers {
                 let Some(baked) = &stage.baked else {
                     return;
                 };
-                let points = xs.iter().copied().take(row.len());
-                baked.change_row(points, z, spacing, |index, change| {
-                    row[index] += change * self.shown(xs[index], z);
+                let below = row.to_vec();
+                baked.wear_row(xs, z, spacing, &below, |index, worn| {
+                    row[index] += worn * self.shown(xs[index], z);
                 });
             }
             Layer::Hydrology(stage) => {
