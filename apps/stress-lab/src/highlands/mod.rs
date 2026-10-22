@@ -1751,26 +1751,27 @@ fn coarser_than(grain: f32) -> Mask {
     Mask::Grain([grain * (1.0 - GRAIN_BLEND), grain * (1.0 + GRAIN_BLEND)])
 }
 
-/// How wet the ground stands, 0 to 1: soaked up to the flood line of the
-/// stream holding it and a little above, ragged, and higher up the banks
-/// of streams spending more power ([`SPRAY_POWER`]), whose spray wets them.
+/// How wet the ground stands, 0 to 1: soaked to the channel's edge and
+/// drying over two and a half meters of bank, finely ragged, and wet
+/// further up the banks of streams spending more power ([`SPRAY_POWER`]),
+/// whose spray wets them.
 fn wetness() -> Mask {
     Mask::Max(vec![
         remap(
             Mask::Add(vec![
-                Mask::Flood([0.3, 0.0]),
-                scaled(noise(4.0, 71, 2), 0.5),
-                Mask::Constant(-0.25),
+                Mask::River([2.5, 0.0]),
+                scaled(noise(1.5, 71, 2), 0.25),
+                Mask::Constant(-0.12),
             ]),
-            0.3,
-            0.7,
+            0.2,
+            0.8,
         ),
         remap(
             Mask::Add(vec![
                 Mask::Power(SPRAY_POWER),
-                Mask::Flood([1.0, 0.0]),
-                scaled(noise(6.0, 72, 2), 0.4),
-                Mask::Constant(-0.2),
+                Mask::River([5.0, 0.0]),
+                scaled(noise(2.0, 72, 2), 0.25),
+                Mask::Constant(-0.12),
             ]),
             1.1,
             1.4,

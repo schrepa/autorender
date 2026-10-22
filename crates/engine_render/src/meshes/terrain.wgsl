@@ -499,12 +499,19 @@ fn terrain_blend(local: vec2<f32>, normal: vec3<f32>, shading: TerrainShadingLev
     return blend;
 }
 
+// The meters apart a level's samples stand at most for its wetness to show
+// whole: wet banks a few meters wide drawn between samples further apart
+// alias into scallops, so coarser levels' fade out as their samples
+// spread.
+const TERRAIN_WET_SPACING: f32 = 2.0;
+
 // How wet the ground is at terrain-local `local` in `level`'s control
 // values, or the nearest coarser level's where its tile is not resident,
 // from 0, dry, to 1: the four samples' wetness around it (their top bytes),
-// bilinearly, as `terrain_level_blend` blends their materials. A tile
-// fading in, or without its own materials yet, shows the next resident
-// coarser level's under it; ground no level holds is dry.
+// bilinearly, as `terrain_level_blend` blends their materials, fading out
+// on levels whose samples stand further apart than TERRAIN_WET_SPACING. A
+// tile fading in, or without its own materials yet, shows the next
+// resident coarser level's under it; ground no level holds is dry.
 fn terrain_level_wetness(local: vec2<f32>, level: u32) -> f32 {
     let base = terrain.directory.x;
     let levels = terrain.directory.y;
@@ -532,7 +539,9 @@ fn terrain_level_wetness(local: vec2<f32>, level: u32) -> f32 {
             let wets = vec4<f32>(controls >> vec4<u32>(24u)) * (1.0 / 255.0);
             let low = mix(wets.w, wets.z, f.x);
             let high = mix(wets.x, wets.y, f.x);
-            wet += mix(low, high, f.y) * (left * (1.0 - fade));
+            let spacing = terrain.anchor.w * f32(1u << index);
+            wet += mix(low, high, f.y) * (left * (1.0 - fade))
+                * saturate(TERRAIN_WET_SPACING / spacing);
         }
         left *= fade;
         if left <= 0.0 {

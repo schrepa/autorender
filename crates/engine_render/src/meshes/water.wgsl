@@ -177,6 +177,12 @@ const WATER_SHORE: f32 = 0.1;
 // changes across a pixel: running water, however thin, is water.
 const WATER_EDGE_PIXELS: f32 = 1.5;
 const WATER_EDGE: f32 = 0.05;
+// The meters a second over which thin water comes to show whole however
+// thin, from the first to the second: calm shallows (a river's water
+// spread over its banks, a pool's edge) fade in over WATER_SHORE of depth
+// as still water's edges do, while water racing thinner than that (a
+// torrent's sheet over its bed) is all there.
+const WATER_RACING: vec2<f32> = vec2<f32>(0.8, 1.6);
 // Meters a second squared of gravity (`engine_terrain::hydraulics::GRAVITY`),
 // and the meters of depth Froude numbers read thinner water as.
 const WATER_GRAVITY: f32 = 9.81;
@@ -1585,10 +1591,13 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     let bed = min(depth, standing);
     let gathered = water_caustics(input.relative, normal, bed);
     // The water ends at its waterline, where its depth or its height over
-    // what stands in it comes to nothing: however thin, running water is
-    // all there.
+    // what stands in it comes to nothing; thin water shows by how fast it
+    // runs: calm shallows fade in over WATER_SHORE of depth, while racing
+    // water, however thin, is all there.
+    let racing = smoothstep(WATER_RACING.x, WATER_RACING.y, speed);
+    let shallows = mix(smoothstep(0.0, WATER_SHORE, min(depth, standing)), 1.0, racing);
     let fade = min(water_edge(depth, fwidth(depth)), water_edge(standing, standing_change))
-        * (1.0 - falling);
+        * shallows * (1.0 - falling);
     // Light comes back through the water along the view to what it shows,
     // as far as the depth lets it run, after reaching it down from the
     // surface, taken by the water and its silt.
