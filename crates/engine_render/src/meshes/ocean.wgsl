@@ -259,6 +259,8 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     surface.scatter = water.color.rgb;
     surface.transmit = transmit;
     surface.glow = glow;
+    // The sea's crests glow by `glow` instead.
+    surface.crest = 0.0;
     let lit = water_light(surface);
     // Of what the surface lets through, foam covers what lies below; the
     // sea thins out to nothing where it meets the shore and around what

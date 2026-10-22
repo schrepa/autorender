@@ -373,6 +373,7 @@ impl WaterPass {
                 [0.0; 4]
             };
             let [red, green, blue] = settings.color;
+            let sediment = settings.sediment_color;
             let uniform = WaterUniform {
                 color: [red, green, blue, settings.clarity],
                 ripples: ripples(settings, wind),
@@ -382,6 +383,7 @@ impl WaterPass {
                 ocean: sea,
                 sim: simulated.map_or([0.0; 4], |(square, _)| square),
                 sim_datum: simulated.map_or([0.0; 4], |(_, datum)| datum),
+                sediment: [sediment[0], sediment[1], sediment[2], settings.sediment],
                 ..WaterUniform::zeroed()
             };
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
@@ -620,6 +622,8 @@ impl WaterPass {
             ocean_reach,
             sim: [0.0; 4],
             sim_datum: [0.0; 4],
+            // The sea carries no sediment.
+            sediment: [0.0; 4],
         };
         queue.write_buffer(&draw.uniform, 0, bytemuck::bytes_of(&uniform));
         !draw.runs.is_empty()
