@@ -2,9 +2,11 @@
 //! which the renderer runs rivers by the shallow-water equations (its
 //! `water_sim`), placed where [`Water::simulated`] asks for one, in cells
 //! [`Water::live_cell`] across: its ground and the roughness of its rivers'
-//! beds, the water to start from, where its rivers bring theirs, and the
-//! water standing just past its edges. All of it but the ground and the
-//! beds comes from the terrain's settled water ([`super::settled`]), whose
+//! beds, the water to start from, where its rivers bring theirs, the water
+//! standing just past its edges, and what the beds hold under its water
+//! (their reach and nearest obstacle), which it draws with as the settled
+//! water does. All of it but the ground and the beds' roughness comes from
+//! the terrain's settled water ([`super::settled`]), whose
 //! cells may be coarser or finer than the window's: a window's cell stands
 //! on the planes of the surfaces of the settled cells around it, blended by
 //! their nearness, and runs at their velocity, its depth its own over its
@@ -67,7 +69,11 @@ const NOISE_REACH: f32 = 1.732_050_8;
 /// cells' ground, row by row: the D84 of the river bed under it in meters,
 /// negated where steps or boulders are carved into the bed (whose friction
 /// then counts its grains alone), and 5 centimeters outside rivers'
-/// channels; and where its rivers bring water.
+/// channels; what the bed holds under each cell's middle, row by row, as the
+/// settled water's sample nearest it holds it: its reach's code and its
+/// nearest obstacle, offset from the cell's middle
+/// ([`crate::terrain_data::Tile::bed_words`]); and where its rivers bring
+/// water.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterWindow {
     pub origin: [f32; 2],
@@ -77,6 +83,7 @@ pub struct WaterWindow {
     pub corners: Arc<[f32]>,
     water: Arc<[WaterCell]>,
     pub roughness: Arc<[f32]>,
+    pub bed_words: Arc<[[u32; 2]]>,
     pub sources: Arc<[WaterSourceCell]>,
 }
 
@@ -239,9 +246,9 @@ impl WaterWindow {
     }
 
     /// The square of its middle `cells` cells along each side (all of it,
-    /// where it has no more): its ground, water, roughness and sources
-    /// there, the cells just past that square's edges standing as it holds
-    /// them, on its datum.
+    /// where it has no more): its ground, water, roughness, beds' words and
+    /// sources there, the cells just past that square's edges standing as it
+    /// holds them, on its datum.
     pub fn within(&self, cells: u32) -> Self {
         let n = self.cells as usize;
         let m = cells.min(self.cells) as usize;
@@ -269,6 +276,7 @@ impl WaterWindow {
             corners: cut(m + 1, n + 1).map(|at| self.corners[at]).collect(),
             water: cut(m + 2, n + 2).map(|at| self.water[at]).collect(),
             roughness: cut(m, n).map(|at| self.roughness[at]).collect(),
+            bed_words: cut(m, n).map(|at| self.bed_words[at]).collect(),
             sources,
         }
     }
@@ -495,18 +503,24 @@ fn gather(
         }
     }
     // The roughness of its cells' ground, from the beds of the finest tiles
-    // under their middles.
-    let bed = |point: Vec2| {
+    // under their middles, and what those beds hold under the tiles'
+    // settled water there.
+    let tile = |point: Vec2| {
         let key = pyramid.tile_at(0, point)?;
-        state.store.get(&key)?.bed(point - pyramid.tile_origin(key))
+        Some((state.store.get(&key)?, point - pyramid.tile_origin(key)))
     };
     let mut roughness = Vec::with_capacity(n * n);
+    let mut bed_words = Vec::with_capacity(n * n);
     for j in 0..n {
         for i in 0..n {
-            roughness.push(match (previous, carried(i, j, n)) {
-                (Some(previous), Some(at)) => previous.roughness[at],
-                _ => rough(bed(middle(i + 1, j + 1))),
-            });
+            let (cell_roughness, cell_words) = match (previous, carried(i, j, n)) {
+                (Some(previous), Some(at)) => (previous.roughness[at], previous.bed_words[at]),
+                _ => tile(middle(i + 1, j + 1)).map_or((rough(None), [0; 2]), |(tile, local)| {
+                    (rough(tile.bed(local)), tile.bed_words(local))
+                }),
+            };
+            roughness.push(cell_roughness);
+            bed_words.push(cell_words);
         }
     }
     WaterWindow {
@@ -517,6 +531,7 @@ fn gather(
         corners,
         water: water.into(),
         roughness: roughness.into(),
+        bed_words: bed_words.into(),
         sources: sources(state, first, (cells, cell)).into(),
     }
 }

@@ -55,7 +55,7 @@ pub const TURBULENT_SWIRL: f32 = 4.0;
 /// Watts a square meter of bed the water loses at which it breaks white all
 /// over: about the power a step-pool stream spends on its bed (ρ·g·q·S,
 /// half a square meter a second down a slope of 0.06).
-const WHITE_POWER: f32 = 300.0;
+pub const WHITE_POWER: f32 = 300.0;
 /// The share of the time the water leaves the bed (its lip) at which a cell
 /// counts wholly as a lip water plunges from: most of the time.
 const LIP_HIGH: f32 = 0.5;
@@ -205,6 +205,20 @@ impl TileWater {
     pub(crate) fn sample_state(&self, x: i32, z: i32) -> WaterState {
         let stride = TILE_STRIDE as i32;
         unpack_state(self.info[((z + 1) * stride + x + 1) as usize][1])
+    }
+
+    /// What the bed holds under a point `offset` meters from sample `(x,
+    /// z)`, -1 to 257 along each axis, as that sample's words hold it: its
+    /// reach's code ([`reach_code`]), and its nearest obstacle packed as
+    /// [`pack_obstacle`] packs it, offset from the point instead of the
+    /// sample.
+    pub(crate) fn bed_words(&self, x: i32, z: i32, offset: Vec2) -> [u32; 2] {
+        let stride = TILE_STRIDE as i32;
+        let [_, state, obstacle] = self.info[((z + 1) * stride + x + 1) as usize];
+        let step = |shift: u32| f32::from((obstacle >> shift) as u8 as i8) * WATER_OBSTACLE_STEP;
+        let radius = f32::from((obstacle >> 16) as u8) * WATER_RADIUS_STEP;
+        let toward = Vec2::new(step(0), step(8)) - offset;
+        [state >> 24, pack_obstacle(toward, radius, jump_of(obstacle))]
     }
 }
 

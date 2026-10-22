@@ -569,6 +569,20 @@ impl Tile {
             },
         })
     }
+
+    /// What the bed holds under the water at `local`, meters from the
+    /// tile's first corner, as the water's sample nearest it holds it: its
+    /// reach's code and its nearest obstacle, offset from `local`
+    /// ([`TileWater::bed_words`]); none outside the tile or where it holds
+    /// no water.
+    pub fn bed_words(&self, local: Vec2) -> [u32; 2] {
+        let (Some(water), Some((i, j, fu, fv))) = (self.water.as_ref(), self.cell(local)) else {
+            return [0; 2];
+        };
+        let (x, z) = (i + i32::from(fu >= 0.5), j + i32::from(fv >= 0.5));
+        let sample = Vec2::new(x as f32, z as f32) * self.spacing;
+        water.bed_words(x, z, local - sample)
+    }
 }
 
 /// The value at `(fu, fv)` in a cell whose corners, from its first, hold

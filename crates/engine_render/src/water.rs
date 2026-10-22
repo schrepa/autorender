@@ -485,9 +485,13 @@ impl WaterPass {
         (waves, map): (&WaterWaves, &FallMap),
     ) -> wgpu::BindGroup {
         let (moments, sampler) = waves.sampled();
-        let (sim_cells, sim_ground) = self.sim.drawn().0.map_or(
-            (&self.placeholders.sim, &self.placeholders.sim),
-            |drawn| (drawn.cells, drawn.ground),
+        let (sim_cells, sim_ground, sim_beds) = self.sim.drawn().0.map_or(
+            (
+                &self.placeholders.sim,
+                &self.placeholders.sim,
+                &self.placeholders.sim,
+            ),
+            |drawn| (drawn.cells, drawn.ground, drawn.beds),
         );
         crate::pipelines::group(
             device,
@@ -509,6 +513,7 @@ impl WaterPass {
                 ("water_fall_map", crate::pipelines::view(map.view())),
                 crate::buffers::entry("water_sim_cells", sim_cells),
                 crate::buffers::entry("water_sim_ground", sim_ground),
+                crate::buffers::entry("water_sim_beds", sim_beds),
             ],
         )
     }
@@ -1083,6 +1088,7 @@ fn ocean_draw(
             ("water_fall_map", crate::pipelines::view(map.view())),
             crate::buffers::entry("water_sim_cells", &placeholders.sim),
             crate::buffers::entry("water_sim_ground", &placeholders.sim),
+            crate::buffers::entry("water_sim_beds", &placeholders.sim),
         ],
     );
     OceanDraw {

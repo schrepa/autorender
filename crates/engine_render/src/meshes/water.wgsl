@@ -91,9 +91,13 @@ struct WaterUniform {
 // meters a second) and the foam it carries, a block's row by row; and each
 // block's ground, SIM_BLOCK_GROUND entries of it: at its cells' corners (a
 // row of its cells and one more at a time), then the levels lakes hold its
-// cells at and its cells' beds' roughness.
+// cells at and its cells' beds' roughness; and what the bed holds under
+// each cell, in the cells' order, as the settled water's sample nearest it
+// holds it (`engine_terrain`'s `Tile::bed_words`): its reach's code and its
+// nearest obstacle, offset from the cell's middle, as tiles' words pack them.
 @group(1) @binding(56) var<storage, read> water_sim_cells: array<vec4<f32>>;
 @group(1) @binding(57) var<storage, read> water_sim_ground: array<f32>;
+@group(1) @binding(58) var<storage, read> water_sim_beds: array<vec2<u32>>;
 const SIM_WATER_BLOCK: u32 = 8u;
 const SIM_BLOCK_GROUND: u32 = 209u;
 // The most foam water carries, as its flow churns it up
@@ -415,14 +419,21 @@ fn water_output(input: WaterPatchInput) -> WaterOutput {
     // stands: morphing slides it off its sample toward its even neighbor.
     let state = unpack4x8unorm(words.y);
     output.state = vec4<f32>(state.xy, state.z * WATER_SHEAR_RANGE, 0.0);
-    let radius = f32(extractBits(words.z, 16u, 8u)) * WATER_RADIUS_STEP;
-    let toward = vec2<f32>(f32(extractBits(bitcast<i32>(words.z), 0u, 8u)),
-        f32(extractBits(bitcast<i32>(words.z), 8u, 8u))) * WATER_OBSTACLE_STEP
-        + vec2<f32>(ground.odd) * (ground.morph * spacing);
-    output.obstacle = vec4<f32>(select(vec2<f32>(0.0), toward, radius > 0.0), radius,
-        f32(words.z >> 24u) / 255.0);
+    output.obstacle = water_obstacle(words.z, vec2<f32>(ground.odd) * (ground.morph * spacing));
     output.reach = words.y >> 24u;
     return output;
+}
+
+// The nearest obstacle a word packs (`engine_terrain`'s `pack_obstacle`):
+// the offset to its middle along x and z from where the vertex stands, its
+// sample's offset plus `slide`, none without one; its radius (0 for none);
+// and how strongly a drop or a jump lies just upstream.
+fn water_obstacle(word: u32, slide: vec2<f32>) -> vec4<f32> {
+    let radius = f32(extractBits(word, 16u, 8u)) * WATER_RADIUS_STEP;
+    let toward = vec2<f32>(f32(extractBits(bitcast<i32>(word), 0u, 8u)),
+        f32(extractBits(bitcast<i32>(word), 8u, 8u))) * WATER_OBSTACLE_STEP + slide;
+    return vec4<f32>(select(vec2<f32>(0.0), toward, radius > 0.0), radius,
+        f32(word >> 24u) / 255.0);
 }
 
 @vertex
@@ -1757,11 +1768,11 @@ fn fs_water_temporal(input: WaterTemporalOutput) -> TemporalTargets {
 
 // Simulated water (`water_sim.rs`): a vertex at each cell's middle, its
 // water's surface, depth and flow, the slopes of its surface and depth
-// read across its neighbors, the foam the water carries, and how turbulent
-// it runs and its shear, read from the velocities around it, as tiles'
-// water holds them; shaded as tiles' water is. Its heights stand over the
-// live window's datum (`water.sim_datum.x` meters), which drawing adds
-// back.
+// read across its neighbors, the foam the water carries, how turbulent it
+// runs, where white water is born in it and its shear, read from the water
+// around it, and its bed's reach and nearest obstacle, as tiles' water
+// holds them; shaded as tiles' water is. Its heights stand over the live
+// window's datum (`water.sim_datum.x` meters), which drawing adds back.
 //
 // Meters of water under which a cell is dry; the half width its shores'
 // foam reads it as (a river's); and the depth over which its velocity is
@@ -1774,6 +1785,11 @@ const SIM_THIN_WATER: f32 = 0.05;
 // turbulent (`engine_terrain::TURBULENT_SPEED`, `TURBULENT_SWIRL`).
 const WATER_TURBULENT_SPEED: f32 = 0.5;
 const WATER_TURBULENT_SWIRL: f32 = 4.0;
+// Kilograms a cubic meter of water, and the watts a square meter of bed the
+// water loses at which it breaks white all over
+// (`engine_terrain::shallow_water::DENSITY`, `WHITE_POWER`).
+const WATER_DENSITY: f32 = 1000.0;
+const WATER_WHITE_POWER: f32 = 300.0;
 // How upright (the up part of its triangles' normal) the simulated water's
 // surface stands where it gives way, from the first to the second: down a
 // cliff, between cells far apart in height, the falls' sheets show it; and
@@ -1922,7 +1938,11 @@ fn sim_water_output(index: u32) -> WaterOutput {
     // turbulence reads its water's swings (`engine_terrain`'s
     // `turbulence`): how far its velocity strays from the mean of its
     // neighbors holding water, against its speed, and how fast the water
-    // turns there; and its shear. It has no white water, obstacle or reach.
+    // turns there; where white water is born in it, where it loses its
+    // energy as the cook finds its settled water does (`engine_terrain`'s
+    // `breaking`), the power it spends running down its surface, ρ·g·|q|
+    // times the surface's slope, as a share of WATER_WHITE_POWER; and its
+    // shear. Its reach and nearest obstacle are its bed's.
     let to_east = sim_water_moving(i + 1, j);
     let to_west = sim_water_moving(i - 1, j);
     let to_north = sim_water_moving(i, j + 1);
@@ -1936,10 +1956,13 @@ fn sim_water_output(index: u32) -> WaterOutput {
     let turbulence = saturate(strays / max(length(velocity), WATER_TURBULENT_SPEED)
         + swirl / WATER_TURBULENT_SWIRL);
     let shear = sqrt(dot(along_x, along_x) + dot(along_z, along_z));
+    let spent = WATER_DENSITY * WATER_GRAVITY * length(flow) * length(output.slope);
+    let born = saturate(spent / WATER_WHITE_POWER);
     let wet = depth > SIM_WET;
-    output.state = vec4<f32>(select(0.0, turbulence, wet), 0.0, select(0.0, shear, wet), 0.0);
-    output.obstacle = vec4<f32>(0.0);
-    output.reach = 0u;
+    output.state = vec4<f32>(select(vec3<f32>(0.0), vec3<f32>(turbulence, born, shear), wet), 0.0);
+    let bed = water_sim_beds[sim_water_at(i, j)];
+    output.obstacle = water_obstacle(bed.y, vec2<f32>(0.0));
+    output.reach = bed.x;
     return output;
 }
 

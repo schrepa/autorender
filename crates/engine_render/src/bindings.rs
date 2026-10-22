@@ -1043,9 +1043,10 @@ tables! {
     /// array and the views' and terrains' uniforms at dynamic offsets, as
     /// terrain's patches draw on them; tiles' water blocks, their surfaces
     /// and words (packed flow, whitewater and kind, state and nearest
-    /// obstacle); water's uniform; and the
+    /// obstacle); water's uniform; the
     /// waves' moments with their levels (`water_waves.rs`) and the sampler
-    /// repeating them. The sea's group has placeholders for what only
+    /// repeating them; and the simulated water's cells, ground and what the
+    /// beds hold under them. The sea's group has placeholders for what only
     /// tiles' water reads.
     const WATER: Table = Table {
         label: "engine/water-layout",
@@ -1067,6 +1068,7 @@ tables! {
             texture(55, "water_fall_map", Float, D2, F),
             read(56, "water_sim_cells", VF),
             read(57, "water_sim_ground", VF),
+            read(58, "water_sim_beds", V),
         ],
     };
 

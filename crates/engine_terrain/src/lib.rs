@@ -95,7 +95,7 @@ pub use surface::{
 pub use tile::{Generator, RIVER_EDGE_FAR, RIVER_EDGE_STEP, RIVER_EDGE_ZERO, Tile, TileSample};
 pub use tile_water::{
     TURBULENT_SPEED, TURBULENT_SWIRL, TileWater, WATER_FLOW_RANGE, WATER_OBSTACLE_STEP,
-    WATER_RADIUS_STEP, WATER_SHEAR_RANGE, WATER_WIDTH_RANGE, WaterPoint, WaterState,
+    WATER_RADIUS_STEP, WATER_SHEAR_RANGE, WATER_WIDTH_RANGE, WHITE_POWER, WaterPoint, WaterState,
     pack as pack_water, unpack as unpack_water,
 };
 

@@ -43,8 +43,9 @@ pub(crate) struct WaterSim {
 /// A window as terrains placed it and the square of it that runs (all of
 /// it, where the device's bindings hold its buffers), the square's blocks
 /// (every one of them, in order), its buffers (one slot with its ring), the
-/// count of cells rivers bring water to, and the triangles water draws its
-/// cells' middles with.
+/// count of cells rivers bring water to, the triangles water draws its
+/// cells' middles with, and what the beds hold under its cells, in the
+/// blocks' order, which water draws them with.
 struct SimWindow {
     source: Arc<WaterWindow>,
     fitted: Arc<WaterWindow>,
@@ -52,6 +53,7 @@ struct SimWindow {
     buffers: SlotBuffers,
     sourced: u32,
     indices: wgpu::Buffer,
+    beds: wgpu::Buffer,
 }
 
 impl WaterSim {
@@ -193,6 +195,14 @@ impl WaterSim {
         if !triangles.is_empty() {
             queue.write_buffer(&indices, 0, bytemuck::cast_slice(&triangles));
         }
+        let words = bed_words(window, &stored);
+        let beds = crate::buffers::storage(
+            device,
+            "engine/water-sim-beds",
+            (words.len() * 8) as u64,
+            wgpu::BufferUsages::empty(),
+        );
+        queue.write_buffer(&beds, 0, bytemuck::cast_slice(&words));
         SimWindow {
             source: source.clone(),
             fitted,
@@ -200,6 +210,7 @@ impl WaterSim {
             buffers,
             sourced,
             indices,
+            beds,
         }
     }
 
@@ -227,6 +238,11 @@ impl WaterSim {
             &buffers.ground,
             0,
             bytemuck::cast_slice(&ground(&fitted, &current.stored)),
+        );
+        queue.write_buffer(
+            &current.beds,
+            0,
+            bytemuck::cast_slice(&bed_words(&fitted, &current.stored)),
         );
         queue.write_buffer(
             &buffers.cells,
@@ -278,13 +294,15 @@ impl WaterSim {
     }
 
     /// What water draws the simulated water from: the square of the window
-    /// that runs, its cells, its ground and the triangles drawing them; and
-    /// a count advancing whenever they change.
+    /// that runs, its cells, its ground, what the beds hold under them and
+    /// the triangles drawing them; and a count advancing whenever they
+    /// change.
     pub(crate) fn drawn(&self) -> (Option<SimDrawn<'_>>, u64) {
         let drawn = self.window.as_ref().map(|window| SimDrawn {
             window: window.fitted.as_ref(),
             cells: &window.buffers.cells,
             ground: &window.buffers.ground,
+            beds: &window.beds,
             indices: &window.indices,
         });
         (drawn, self.generation)
@@ -292,9 +310,9 @@ impl WaterSim {
 
     /// Bytes of the window's buffers.
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.window
-            .as_ref()
-            .map_or(0, |window| window.buffers.bytes() + window.indices.size())
+        self.window.as_ref().map_or(0, |window| {
+            window.buffers.bytes() + window.indices.size() + window.beds.size()
+        })
     }
 }
 
@@ -398,6 +416,14 @@ fn ground(window: &WaterWindow, stored: &StoredBlocks) -> Vec<f32> {
     )
 }
 
+/// What the beds hold under `window`'s cells as `stored`, its blocks, holds
+/// them ([`WaterWindow::bed_words`]): each one's reach's code and nearest
+/// obstacle.
+fn bed_words(window: &WaterWindow, stored: &StoredBlocks) -> Vec<[u32; 2]> {
+    let n = window.cells;
+    stored.gather(|i, j| window.bed_words[(j * n + i) as usize])
+}
+
 /// `window`'s ring as the shader reads it: each cell past its edges'
 /// surface, flow along x and z and the level a lake holds it at
 /// (`UNHELD` where none does), then its foam and the flow it brings into
@@ -425,5 +451,6 @@ pub(crate) struct SimDrawn<'a> {
     pub(crate) window: &'a WaterWindow,
     pub(crate) cells: &'a wgpu::Buffer,
     pub(crate) ground: &'a wgpu::Buffer,
+    pub(crate) beds: &'a wgpu::Buffer,
     pub(crate) indices: &'a wgpu::Buffer,
 }
