@@ -76,6 +76,9 @@ const SIM_THETA: f32 = 1.3;
 const SIM_THIN: f32 = 0.01;
 const SIM_DRY: f32 = 1.0e-4;
 const SIM_FASTEST: f32 = 20.0;
+// The share of the time a cell must be wet for its settled water to stand
+// in it (`engine_terrain::shallow_water::WET_MOST`).
+const SIM_WET_MOST: f32 = 0.5;
 // The bed's friction: Ferguson's law's a1 and a2, the least and the most
 // the water's depth over its bed's D84 counts as, and what Manning's n of a
 // bed's grains alone divides its D84 to the power 1/6 by.
@@ -188,11 +191,12 @@ struct SimSlots {
 // SIM_CELL_SUMS entries a cell (`SimSums`, each step weighted by its
 // seconds; then the seconds it ran at the fastest water runs, and the
 // seconds themselves); then their means at that look, SIM_CELL_MEANS
-// entries a cell: its surface, flow along x and z and foam; the energy it
-// loses (watts a square meter), the variance of its depth, the mean square
-// of its vorticity and the variance of its velocity; and the shares of the
-// time it was wet, its water left its bed and it ran at the fastest water
-// runs, then nothing. Then each of its pool's blocks' sums at a look,
+// entries a cell, each over the seconds it was wet: its surface, flow along
+// x and z and foam; the energy it loses (watts a square meter), the
+// variance of its depth, the mean square of its vorticity and the variance
+// of its velocity; and the share of the time it was wet, the share of the
+// time wet its water left its bed and the share of the time it ran at the
+// fastest water runs, then nothing. Then each of its pool's blocks' sums at a look,
 // SIM_BLOCK_LOOKS entries each: the water its cells flowing held, their
 // speeds, those cells and its cells stepping; the energy those lose, their
 // heave, their swirl and those that ran at the fastest water runs; and the
@@ -1491,11 +1495,12 @@ fn sim_churned(
     }
 }
 
-// What a cell's water adds to its sums for each of its seconds: its depth,
-// flow along x and z and foam; the energy it loses (watts a square meter),
-// its depth squared, its vorticity squared and its speed squared; and its
-// velocity along x and z, whether it is wet and whether its water leaves
-// its bed.
+// What a cell's water adds to its sums for each of its seconds: while it
+// is wet, its depth, flow along x and z and foam; the energy it loses
+// (watts a square meter), its depth squared, its vorticity squared and its
+// speed squared; and its velocity along x and z; whether it is wet; and
+// whether its water leaves its bed. Dry, it adds none of its water, so its
+// means are those of the time it was wet.
 struct SimSums {
     water: vec4<f32>,
     motion: vec4<f32>,
@@ -1513,12 +1518,13 @@ fn sim_add(q: Square, at: u32, seconds: f32, sums: SimSums) {
 }
 
 // What the cell at `at` adds to its sums standing still, its water
-// standing as `water`: its depth, flow and foam, its depth squared and
-// whether it is wet; nothing moving.
+// standing as `water`: wet, its depth, flow and foam, its depth squared and
+// that it is wet; nothing moving.
 fn sim_still(q: Square, at: u32, water: vec4<f32>) -> SimSums {
     let h = max(water.x - sim_bed(q, at), 0.0);
-    return SimSums(vec4<f32>(h, water.yzw), vec4<f32>(0.0, h * h, 0.0, 0.0),
-        vec4<f32>(0.0, 0.0, select(0.0, 1.0, h > SIM_DRY), 0.0));
+    let wet = select(0.0, 1.0, h > SIM_DRY);
+    return SimSums(wet * vec4<f32>(h, water.yzw), vec4<f32>(0.0, wet * h * h, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, wet, 0.0));
 }
 
 // The seconds each step a block stands still counts for in its cells'
@@ -1597,9 +1603,12 @@ fn sim_tally(
     let wet = h > SIM_DRY;
     let swirl = select(0.0, ((east.y - west.y) - (north.x - south.x)) / (2.0 * q.dx), wet);
     let leaves = wet && SIM_GRAVITY + sim_bend(q, cell, velocity) <= 0.0;
-    let sums = SimSums(vec4<f32>(h, water.yzw),
-        vec4<f32>(sim_dissipation(q, cell), h * h, swirl * swirl, dot(velocity, velocity)),
-        vec4<f32>(velocity, select(0.0, 1.0, wet), select(0.0, 1.0, leaves)));
+    let moving = vec4<f32>(sim_dissipation(q, cell), h * h, swirl * swirl,
+        dot(velocity, velocity));
+    let sums = SimSums(select(vec4<f32>(0.0), vec4<f32>(h, water.yzw), wet),
+        select(vec4<f32>(0.0), moving, wet),
+        vec4<f32>(select(vec2<f32>(0.0), velocity, wet), select(0.0, 1.0, wet),
+            select(0.0, 1.0, leaves)));
     sim_add(q, at, sim_seconds_at(q, at), sums);
 }
 
@@ -1705,13 +1714,15 @@ fn sim_at_edge(q: Square, i: i32, j: i32) -> bool {
 }
 
 // A look at a summing rectangle, a workgroup for each block of its pool:
-// each cell's means over the seconds since the look before (its sums, with
-// its water over the steps its block stood still since it last did,
-// standing as it stood), the variances of its depth and its velocity about
-// their means (the means of their squares less their means' squares, the
-// sums kept above the ground so they keep their precision), replace the
-// means kept then, and its sums start anew; each block sums, over its
-// cells flowing, the water their means hold (cubic meters a meter of cell,
+// each cell's means over the seconds it was wet since the look before (its
+// sums, with its water over the steps its block stood still since it last
+// did, standing as it stood), the variances of its depth and its velocity
+// about their means (the means of their squares less their means' squares,
+// the sums kept above the ground so they keep their precision), and the
+// shares of the time it was wet and ran at the fastest water runs, replace
+// the means kept then, and its sums start anew; each block sums, over its
+// cells flowing (wet SIM_WET_MOST of the time or more), the water their
+// means hold (cubic meters a meter of cell,
 // above their ground), their speeds, the energy they lose, their heave
 // (their depth's root mean square about its mean) and their swirl (their
 // vorticity's root mean square), and counts them, those that ran at the
@@ -1753,20 +1764,22 @@ fn sim_look(
             stepping = state.x;
         }
         let seconds = max(spent.y, 1.0e-30);
-        let mean = water / seconds;
-        let moving = motion / seconds;
-        let portions = shares / seconds;
+        let wet = max(shares.z, 1.0e-30);
+        let mean = water / wet;
+        let moving = motion / wet;
+        let portions = shares / wet;
         let heave = max(moving.y - mean.x * mean.x, 0.0);
         let rush = max(moving.w - dot(portions.xy, portions.xy), 0.0);
         let means = sim_means_at(q, at);
         sim_averages[means] = vec4<f32>(sim_bed(q, at) + mean.x, mean.yzw);
         sim_averages[means + 1u] = vec4<f32>(moving.x, heave, moving.z, rush);
-        sim_averages[means + 2u] = vec4<f32>(portions.zw, spent.x / seconds, 0.0);
+        sim_averages[means + 2u] = vec4<f32>(shares.z / seconds, portions.w, spent.x / seconds,
+            0.0);
         for (var k = 0u; k < SIM_CELL_SUMS; k++) {
             sim_averages[sums + k] = vec4<f32>(0.0);
         }
         let h = mean.x;
-        if !sim_held_at(q, at) && h > SIM_DRY {
+        if !sim_held_at(q, at) && h > SIM_DRY && shares.z >= SIM_WET_MOST * seconds {
             let velocity = vec2<f32>(sim_velocity(h, mean.y), sim_velocity(h, mean.z));
             water_sum = vec4<f32>(h, length(velocity), 1.0, stepping);
             motion_sum = vec4<f32>(moving.x, sqrt(heave), sqrt(moving.z),

@@ -26,8 +26,9 @@
 //! state gets there in far fewer steps, and the state it settles to is the
 //! same, as each cell's water stops changing when what flows in and out of
 //! it balances, whatever its steps. Settling sums each cell's water over
-//! its steps, each weighted by its seconds, for the means and spreads its
-//! record keeps ([`CELL_MEANS`]).
+//! the steps it is wet, each weighted by its seconds, for the means and
+//! spreads its record keeps ([`CELL_MEANS`]), and the cells wet most of the
+//! time hold its settled water ([`WET_MOST`]).
 
 use crate::Bed;
 use crate::hydraulics::GRAVITY;
@@ -38,6 +39,11 @@ pub const THETA: f32 = 1.3;
 pub const THIN: f32 = 0.01;
 /// Meters of water under which a cell is dry.
 pub const DRY: f32 = 1.0e-4;
+/// The share of the time a cell must be wet for its settled water to stand
+/// in it: settled water stands where water stands most of the time, at the
+/// median of its waterline, as deep as it stands there while wet, so edges
+/// water wets now and then, sloshing or spilling over, stand dry.
+pub const WET_MOST: f32 = 0.5;
 /// Meters a second the fastest water runs: a safety net the cook counts
 /// the cells of where water reaches it.
 pub const FASTEST: f32 = 20.0;
@@ -128,11 +134,12 @@ pub const FOAM_POWER: f32 = 500.0;
 /// Meters a second the water rivers bring runs along them as it comes.
 pub const SOURCE_SPEED: f32 = 1.5;
 /// Entries of four floats a settling cell's means take, as settling reads
-/// them back at its region's last look ([`crate::SettleStart::finish`]):
-/// its surface, flow along x and z and foam; the energy it loses (watts a
-/// square meter), the variance of its depth, the mean square of its
-/// vorticity and the variance of its velocity; and the shares of the time
-/// it was wet, its water left its bed and it ran at the fastest water runs
+/// them back at its region's last look ([`crate::SettleStart::finish`]),
+/// each over the time it was wet: its surface, flow along x and z and foam;
+/// the energy it loses (watts a square meter), the variance of its depth,
+/// the mean square of its vorticity and the variance of its velocity; and
+/// the share of the time it was wet, the share of the time wet its water
+/// left its bed, and the share of the time it ran at the fastest water runs
 /// ([`FASTEST`]), then nothing.
 pub const CELL_MEANS: usize = 3;
 

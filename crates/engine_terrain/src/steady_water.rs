@@ -46,7 +46,7 @@ use engine_math::{max, min};
 
 use crate::codec::{self, Reader, Writer, record};
 use crate::hydraulics::GRAVITY;
-use crate::shallow_water::{self, CELL_MEANS, DRY, UNHELD, resistance, velocity};
+use crate::shallow_water::{self, CELL_MEANS, DRY, UNHELD, WET_MOST, resistance, velocity};
 use crate::tile_water::{
     TileWater, WATER_WIDTH_RANGE, WaterState, breaking, lipped, pack, pack_obstacle, pack_state,
     plunges, shears, turbulence, unpack,
@@ -182,13 +182,14 @@ pub enum SteadyCell {
         foam: f32,
     },
     /// Its water stands at `surface`, runs at `velocity` and carries
-    /// `foam`, as its means over its region's last steps; it loses `energy`
-    /// watts a square meter of bed (to its bed's friction and across its
-    /// faces); about their means, its surface heaves by `heave` meters and
-    /// its velocity varies by `rush` meters a second, and its vorticity's
-    /// root mean square is `swirl` a second; and over those steps it was wet
-    /// `wet` of the time and its water left its bed (curving away under it
-    /// faster than gravity holds it down) `lip` of it.
+    /// `foam`, as its means over the time it was wet in its region's last
+    /// steps, which was `wet` of them, [`shallow_water::WET_MOST`] or more;
+    /// over that time, it loses `energy` watts a square meter of bed (to its
+    /// bed's friction and across its faces); about their means, its surface
+    /// heaves by `heave` meters and its velocity varies by `rush` meters a
+    /// second, and its vorticity's root mean square is `swirl` a second; and
+    /// its water left its bed (curving away under it faster than gravity
+    /// holds it down) `lip` of it.
     Flowing {
         surface: f32,
         velocity: [f32; 2],
@@ -1430,8 +1431,10 @@ impl SettleStart {
                         foam[out] = cell_foam;
                         continue;
                     }
+                    // Its water stands where it stands most of the time,
+                    // as it stands while wet.
                     let depth = level - self.bed(at);
-                    if depth <= DRY {
+                    if depth <= DRY || shares[0] < WET_MOST {
                         continue;
                     }
                     let moving = [velocity(depth, along_x), velocity(depth, along_z)];

@@ -484,6 +484,7 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::CELL_MEANS => ["SIM_CELL_MEANS" in WATER_SIM_SHADER];
     engine_core::terrain_data::NO_BLOCK => ["SIM_NO_BLOCK" in WATER_SIM_SHADER];
     engine_core::terrain_data::BLOCK_GROUND => ["SIM_BLOCK_GROUND" in WATER_SIM_SHADER, "SIM_BLOCK_GROUND" in SHADER];
+    engine_core::terrain_data::shallow_water::WET_MOST => ["SIM_WET_MOST" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_LIFE => ["SIM_FOAM_LIFE" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_MOST => ["SIM_FOAM_MOST" in WATER_SIM_SHADER, "WATER_FOAM_MOST"];
     engine_core::terrain_data::shallow_water::FOAM_WET => ["SIM_FOAM_WET" in WATER_SIM_SHADER];
