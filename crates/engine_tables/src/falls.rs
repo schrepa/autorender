@@ -39,7 +39,7 @@ const BUBBLE_ALONG: usize = BUBBLE_CELLS / STRETCH as usize;
 const BUBBLE_WALL: f32 = 0.2;
 /// How far the strands and fibers spread about their middle (their
 /// standard deviation).
-const SPREAD: f32 = 0.17;
+pub const SPREAD: f32 = 0.17;
 /// The patterns' seeds: the strands' octaves, the fibers' noise, their
 /// meander and the bubbles'.
 const SEEDS: [u32; 5] = [
