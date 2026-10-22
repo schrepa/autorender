@@ -31,6 +31,18 @@ use serde::Serialize;
 use crate::hydraulics::{GRAVITY, along_line};
 use crate::rivers::RIVER_STEP;
 
+/// The bankfull flood (cubic meters a second) at which channels begin:
+/// what a 0.05 square kilometer hollow brings in flood at about 3 cubic
+/// meters a second each square kilometer, where Montgomery and
+/// Foufoula-Georgiou (1993) find channels beginning on hillsides of about
+/// 11 degrees (drained area times the slope's tangent squared near 2000
+/// square meters).
+pub(crate) const HEAD_FLOOD: f32 = 0.16;
+/// The fewest of the grid's samples a channel spans from bank to bank:
+/// narrower channels are cut that wide, as deep as they carry their flood,
+/// so the water settling over the grid stays in them.
+pub(crate) const NARROWEST: f32 = 2.0;
+
 /// The slopes (meters a meter) at which a reach's bed changes form
 /// (Montgomery and Buffington 1997): gentler than the first, pools and
 /// riffles; to the second, a plane bed; to the third, steps and pools; to
@@ -243,12 +255,6 @@ impl Shares {
 /// ([`WIDTH_LAW`]).
 pub(crate) fn bankfull_width(flood: f32) -> f32 {
     WIDTH_LAW[0] * libm::powf(flood, WIDTH_LAW[1])
-}
-
-/// The discharge (cubic meters a second) a channel `width` meters across
-/// carries full to its banks: [`bankfull_width`] solved for it.
-pub(crate) fn bankfull_flood(width: f32) -> f32 {
-    libm::powf(width / WIDTH_LAW[0], 1.0 / WIDTH_LAW[1])
 }
 
 /// The width and the depth at its middle (meters) of a channel carrying

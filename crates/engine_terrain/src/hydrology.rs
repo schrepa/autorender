@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use glam::Vec2;
 
-use crate::bed::{bankfull_flood, bankfull_width};
+use crate::bed::bankfull_width;
 use crate::layers::HeightImage;
 use crate::noise::hash;
 use crate::rivers::{Channels, RiverLine, Rivers, trace};
@@ -600,10 +600,10 @@ pub(crate) fn bake(
         rank[sample as usize] = position as u32;
     }
     drop(order);
-    // Channels begin where they span two of the grid's samples from bank
-    // to bank: the narrowest the water settling over it holds.
+    // Channels begin where their flood reaches the head's
+    // ([`crate::bed::HEAD_FLOOD`]).
     let runoff = layer.discharge * 1.0e-6;
-    let channel_area = bankfull_flood(2.0 * spacing) / runoff;
+    let channel_area = crate::bed::HEAD_FLOOD / runoff;
     let channel_samples = area
         .iter()
         .zip(&in_lake)

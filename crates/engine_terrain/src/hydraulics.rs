@@ -211,12 +211,14 @@ fn beside(points: &[Vec2], widths: &[f32], ground: &dyn Fn(Vec2) -> f32) -> Vec<
 /// the first. Its reach's slope, read along the profile of the ground
 /// beneath it over as many widths as channels carrying its floods stand
 /// wide, sets its reach's form, and with its floods, the channel carrying
-/// them full to its banks; its banks then stand along the profile of that
+/// them full to its banks, at least [`bed::NARROWEST`] of the grid's
+/// samples wide; its banks then stand along the profile of that
 /// ground, held [`HELD_DEPTH`] of the channel's depth below the lower ground
 /// either side of it ([`beside`]), so its flood stays in it.
-fn channel(course: &Course<'_>, runoff: f32, along: &[f32]) -> Bankfull {
+fn channel(course: &Course<'_>, flow: &Flow, along: &[f32]) -> Bankfull {
     let line = course.line;
-    let floods: Vec<f32> = line.area.iter().map(|&area| area * runoff).collect();
+    let floods: Vec<f32> = line.area.iter().map(|&area| area * flow.runoff).collect();
+    let narrowest = bed::NARROWEST * flow.finest;
     let ground: Vec<f32> = line
         .points
         .iter()
@@ -224,14 +226,17 @@ fn channel(course: &Course<'_>, runoff: f32, along: &[f32]) -> Bankfull {
         .collect();
     let spans: Vec<f32> = floods
         .iter()
-        .map(|&flood| bed::bankfull_width(flood))
+        .map(|&flood| max(bed::bankfull_width(flood), narrowest))
         .collect();
     let slopes = slopes(&profile(&ground, along, course.start), along, &spans);
     let shares: Vec<Shares> = slopes.iter().map(|&slope| Shares::of(slope)).collect();
     let (widths, depths): (Vec<f32>, Vec<f32>) = floods
         .iter()
         .zip(&shares)
-        .map(|(&flood, shares)| bed::bankfull(flood, shares))
+        .map(|(&flood, shares)| {
+            let (width, depth) = bed::bankfull(flood, shares);
+            (max(width, narrowest), depth)
+        })
         .unzip();
     let sides = beside(&line.points, &widths, course.ground);
     let held: Vec<f32> = (0..ground.len())
@@ -581,7 +586,7 @@ pub(crate) fn river(course: &Course<'_>, flow: &Flow) -> (River, Vec<Fall>) {
     let line = course.line;
     let count = line.points.len();
     let along = distances(&line.points);
-    let bankfull = channel(course, flow.runoff, &along);
+    let bankfull = channel(course, flow, &along);
     let Bankfull {
         floods,
         slopes,
