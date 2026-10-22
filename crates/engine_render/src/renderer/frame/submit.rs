@@ -29,19 +29,20 @@ pub(super) fn batch(pass: Pass) -> u8 {
     }
 }
 
-/// Writes `end`'s end and `begin`'s begin, those there are, from one empty
-/// compute pass, into `encoder`: between consecutive work profiling
-/// captures time.
+/// Writes `end`'s end, then `begin`'s begin, those there are, into
+/// `encoder`: between consecutive work profiling captures time. Each mark
+/// takes an empty pass of its own, as a pass writing two queries resets the
+/// queries between them, which other spans may have written.
 pub(super) fn mark_between(
     encoder: &mut wgpu::CommandEncoder,
     end: Option<Span<'_>>,
     begin: Option<Span<'_>>,
 ) {
-    match (end, begin) {
-        (Some(end), Some(begin)) => end.mark_until(begin, encoder),
-        (Some(end), None) => end.mark(encoder, true),
-        (None, Some(begin)) => begin.mark(encoder, false),
-        (None, None) => {}
+    if let Some(end) = end {
+        end.mark(encoder, true);
+    }
+    if let Some(begin) = begin {
+        begin.mark(encoder, false);
     }
 }
 
