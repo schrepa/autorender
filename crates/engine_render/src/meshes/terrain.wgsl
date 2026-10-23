@@ -1253,7 +1253,12 @@ fn terrain_ground(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainGro
 }
 
 fn terrain_shares(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainShares {
-    let blend = terrain_blend(site.world.xz - terrain.origin.xz, site.geometric, shading);
+    return terrain_blend_shares(
+        terrain_blend(site.world.xz - terrain.origin.xz, site.geometric, shading), site);
+}
+
+// The shares of `blend`'s materials the ground at `site` shows them in.
+fn terrain_blend_shares(blend: TerrainBlend, site: TerrainSite) -> TerrainShares {
     let first = terrain_slot(blend.ids.x, blend.weights.x, site);
     let second = terrain_slot(blend.ids.y, blend.weights.y, site);
     let third = terrain_slot(blend.ids.z, blend.weights.z, site);
@@ -1421,10 +1426,15 @@ fn terrain_track_slope_share(track: vec2<f32>, deform: f32) -> f32 {
 
 // Where a fragment's view ray meets the ground: `world` sunk to where it
 // shades, and `deform` the meters its materials let tracks sink it at
-// most where the deformation map holds tracks nearby (otherwise 0).
+// most where the deformation map holds tracks nearby (otherwise 0); and
+// the materials it looked up there (`blended` where it did), which the
+// ground shades with, the relief's shift being far smaller than their
+// samples' spacing.
 struct TerrainRelief {
     world: vec3<f32>,
     deform: f32,
+    blend: TerrainBlend,
+    blended: bool,
 }
 
 // How far below the ground's top the relief layers `a` and `b` and the
@@ -1439,10 +1449,10 @@ fn terrain_sink(a: TerrainReliefLayer, b: TerrainReliefLayer, point: vec3<f32>, 
 }
 
 // The pixels on screen the relief's deepest point moves where the relief
-// shows whole, and where it has flattened away: a shift under half a
-// pixel cannot be seen.
+// shows whole, and where it has flattened away: as other detail, it hands
+// over once it moves the ground less than a pixel.
 const TERRAIN_RELIEF_WHOLE: f32 = 2.0;
-const TERRAIN_RELIEF_GONE: f32 = 0.5;
+const TERRAIN_RELIEF_GONE: f32 = 1.0;
 
 // How far across a ray along `way` (toward the ground) travels per meter
 // of depth into ground of normal `normal`, at most three meters, rays
@@ -1479,13 +1489,15 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
     let pixels = terrain_relief_across(site.world - camera.detail.xyz, site.geometric)
         / detail_footprint_long(site.world, site.geometric);
     let tracked = terrain_deform_reach(site.world.xz);
-    // Without tracks, ground whose deepest relief could not move half a
-    // pixel looks up no materials.
+    // Without tracks, ground whose deepest relief could not move a pixel
+    // looks up no materials.
     let shows = grazing > 0.0 && terrain.relief.x * pixels > TERRAIN_RELIEF_GONE;
     if !shows && tracked < 5.0e-4 {
         return relief;
     }
     let blend = terrain_blend(site.world.xz - terrain.origin.xz, site.geometric, shading);
+    relief.blend = blend;
+    relief.blended = true;
     let weights = blend.weights;
     if tracked >= 5.0e-4 {
         var deform = 0.0;
@@ -1609,12 +1621,13 @@ fn terrain_forward_look(relative: vec3<f32>) -> TerrainLook {
 
 // Where the view ray of a fragment `relative` to the eye, seen as `look`
 // says, meets the ground: its site, sunk where the ground's relief and
-// tracks show, the shading levels its pixel's footprint gives and the
-// meters tracks may sink it (`TerrainRelief`).
+// tracks show, the shading levels its pixel's footprint gives, the
+// meters tracks may sink it and the materials its relief looked up
+// (`TerrainRelief`).
 struct TerrainSeen {
     site: TerrainSite,
     shading: TerrainShadingLevel,
-    deform: f32,
+    relief: TerrainRelief,
 }
 
 fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
@@ -1651,7 +1664,7 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     // Sunk where the ground's relief and tracks show.
     let relief = terrain_parallax(site, shading);
     site.world = relief.world;
-    return TerrainSeen(site, shading, relief.deform);
+    return TerrainSeen(site, shading, relief);
 }
 
 // `terrain_point` before its highlights widen with its normal's turn.
@@ -1678,7 +1691,12 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     }
     var ground = page;
     if shown < 1.0 {
-        ground = terrain_ground(site, seen.shading);
+        // With the materials the relief looked up, where it did.
+        if seen.relief.blended {
+            ground = terrain_shared_ground(terrain_blend_shares(seen.relief.blend, site), site);
+        } else {
+            ground = terrain_ground(site, seen.shading);
+        }
         ground.albedo *= terrain_tint(world, ground, site.footprint,
             detail_footprint(world, geometric));
         if shown > 0.0 {
@@ -1688,19 +1706,19 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     var albedo = ground.albedo;
     var normal = ground.normal;
     var occlusion = ground.occlusion;
-    if seen.deform > 0.0 {
+    if seen.relief.deform > 0.0 {
         // Tracks tilt the ground along their walls and rims,
         // and darken it where they press it down.
         let track = terrain_deform_track(site.world.xz);
         let slope = terrain_deform_slope(site.world.xz)
-            * terrain_track_slope_share(track, seen.deform);
+            * terrain_track_slope_share(track, seen.relief.deform);
         // Walls steeper than the map's texels resolve (narrower tracks than
         // a few texels) tilt as steeply as about fifty degrees, not flat on
         // their sides.
         let steep = length(slope);
         let tilt = slope * min(1.0, 1.2 / max(steep, 1.0e-6));
         normal = stable_normalize(normal - vec3<f32>(tilt.x, 0.0, tilt.y));
-        let pressed = saturate(-terrain_track_height(track, seen.deform) / 0.06);
+        let pressed = saturate(-terrain_track_height(track, seen.relief.deform) / 0.06);
         albedo *= 1.0 - 0.15 * pressed;
         occlusion *= 1.0 - 0.25 * pressed;
     }

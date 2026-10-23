@@ -117,8 +117,10 @@ fn terrain_vt_sample(slot: i32, texel: vec2<f32>) -> array<vec4<f32>, 3> {
 // The texture's ground at `site` where its pages hold it, from the two mips
 // whose texels bracket the pixel's, each its share of the ground by how far
 // the pixel's lies toward it, as far as its page has faded in since it
-// arrived, and the share of the pixel's ground they show together, the
-// ground computed there showing the rest. `dither`, a threshold in [0, 1)
+// arrived: the finer page fades in over the coarser one, which pages bake
+// first, as textures sharpen when their finer mips arrive; and the share of
+// the pixel's ground they show together, the ground computed there showing
+// the rest, where the coarser page is still fading in itself. `dither`, a threshold in [0, 1)
 // that temporally antialiased frames vary by pixel and frame, shows one of
 // the three whole, the coarser page below its share, the finer next and
 // the computed ground past both, so the resolve blends them; frames without
@@ -152,7 +154,8 @@ fn terrain_vt_texels(site: TerrainSite, dither: f32) -> TerrainVtTexels {
         return texels;
     }
     let fine_share = (1.0 - blend) * fine_page.shown;
-    let coarse_share = blend * coarse_page.shown;
+    // What the finer page does not show yet, the coarser one shows for it.
+    let coarse_share = (1.0 - fine_share) * coarse_page.shown;
     if dither >= 0.0 {
         if dither < coarse_share {
             texels.layers = terrain_vt_sample(coarse_page.slot, texel * 0.5);
