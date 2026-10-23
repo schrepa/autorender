@@ -1,10 +1,12 @@
 //! Cooking terrains, while a session cooks ([`Cooking`]): each generated
 //! terrain's bakes, then every tile a camera on it could want, as records
 //! asked for coarsest level first and dropped as they arrive, which the
-//! host keeps for its pack, and where water asks for water, every level-0
-//! tile's settled water its bake's water reaches, over the cook's regions,
-//! and every tile's water standing as it settled, each a record of its own
-//! ([`super::settled`]). A terrain's surroundings
+//! host keeps for its pack; every tile of level 1 and coarser's shading,
+//! level 0's averaged, level 1 first and each coarser level once the level
+//! finer under it is in ([`super::shading`]); and where water asks for
+//! water, every level-0 tile's settled water its bake's water reaches, over
+//! the cook's regions, and every tile's water standing as it settled, each
+//! a record of its own ([`super::settled`]). A terrain's surroundings
 //! cook the tiles within reach of the ground they surround, as a view from
 //! it wants them. Every streaming terrain's lighting and macro colors cook
 //! as streaming asks for them, the colors in every family of compressed
@@ -66,8 +68,8 @@ impl Terrains {
     /// Cooks every generated terrain within `settings`, asking for records
     /// as `jobs` admits them, the settled water too where `water` asks for
     /// water; says in `cooking` how many are left: a bake under way counts
-    /// one, each tile, tile's settled water or tile's water standing on it
-    /// not back yet one, each terrain
+    /// one, each tile, tile's shading, tile's settled water or tile's water
+    /// standing on it not back yet one, each terrain
     /// streaming whose lighting is still asked for or not yet made one, each
     /// terrain (not surroundings) whose bounce transfer is one, and each
     /// terrain whose macro colors are not shown yet one (the records count
@@ -135,6 +137,13 @@ impl Terrains {
             }
             left += cook.left();
             state.cook = Some(cook);
+            // Shading: every coarser tile's, level 1 first, each coarser
+            // one once the level finer under it is in; surroundings shade
+            // with their own samples.
+            if state.around.is_none() {
+                state.shading.cooking = true;
+                left += state.shading.left();
+            }
             // Settled water: every watered tile's, over the cook's regions,
             // each settling once its tiles were fetched, while tiles cook.
             let watering = water.is_some_and(|water| water.enabled) && state.around.is_none();

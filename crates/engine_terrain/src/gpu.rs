@@ -1,12 +1,14 @@
-//! What a GPU pass reads to give a terrain's tiles their control values:
-//! the surface's rules as one program for an interpreter
-//! shader, and what their masks read of the bakes and roads, flattened into
-//! words; the meters to rivers' edges and the rivers' beds it reads are each
-//! tile's own ([`Tile::river_texels`]). The pass evaluates what
-//! [`BiomeRules::control`] evaluates at each sample, in the same order, so
-//! its control values are the CPU's but where GPU arithmetic rounds a value
-//! across a rule's threshold. [`sample_control`] gives the CPU's at one
-//! sample, for gameplay.
+//! What a GPU pass reads to give the tiles shading with their own samples
+//! their control values (level-0 tiles, and every tile of surroundings; a
+//! terrain's coarser tiles take theirs from their shading, level 0's
+//! averaged, [`crate::TileShading`]): the surface's rules as one program for
+//! an interpreter shader, and what their masks read of the bakes and roads,
+//! flattened into words; the meters to rivers' edges and the rivers' beds it
+//! reads are each tile's own ([`Tile::river_texels`]). The pass evaluates
+//! what [`BiomeRules::control`] evaluates at each sample, in the same order,
+//! so its control values are the CPU's but where GPU arithmetic rounds a
+//! value across a rule's threshold. [`sample_control`] gives the CPU's at
+//! one sample, for gameplay.
 
 use crate::hydrology::{FLOW_RANGE, Hydrology, LAKE_RANGE, WETNESS_RANGE};
 use crate::path::PathProfile;

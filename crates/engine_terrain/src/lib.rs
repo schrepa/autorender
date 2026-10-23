@@ -1,6 +1,7 @@
 //! Heightfield terrain data: tile pyramids, the layer stack
 //! that generates heights, tiles with their samples, height queries, the
-//! patches a view draws and the jobs that make tiles and bakes.
+//! patches a view draws, the shading coarser tiles take from level 0 and
+//! the jobs that make tiles and bakes.
 //!
 //! A terrain is a square grid of level-0 tiles, each [`TILE_QUADS`] quads of
 //! its sample spacing across; every coarser level halves the tiles along
@@ -12,7 +13,9 @@
 //! Heights come from a [`Layers`] stack (procedural noise with erosion,
 //! imported heightmaps and stamps, later layers winning) evaluated tile by
 //! tile. Each tile is a pure function of its key, so tiles stream in any
-//! order and neighbors agree on shared samples.
+//! order and neighbors agree on shared samples. A terrain's tiles of level 1
+//! and coarser shade with level 0's materials and normals averaged
+//! ([`TileShading`]), records of their own made from the level finer.
 //!
 //! Cells split into two triangles along the diagonal from their (x, z+1)
 //! corner to their (x+1, z) corner, as `parry3d` heightfields split them;
@@ -46,6 +49,7 @@ mod placement;
 mod pyramid;
 mod rivers;
 mod select;
+mod shading;
 pub mod shallow_water;
 mod sights;
 mod steady_water;
@@ -82,6 +86,7 @@ pub use rivers::{RIVER_STEP, Rivers};
 pub use select::{
     LodRanges, Patch, Selection, WantedTile, WantedView, select_patches, wanted_tiles,
 };
+pub use shading::TileShading;
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverSight};
 pub use steady_water::{
     BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, MARGIN, NO_BLOCK, REGION_CELLS, SUMMARY_SIDE,

@@ -32,6 +32,12 @@ pub struct TerrainStats {
     /// take their water from those held whole), and those asked for.
     pub settled_records: u32,
     pub settling_records: u32,
+    /// Resident tiles of level 1 and coarser shading with their shading
+    /// (level 0's materials and normals averaged), and the records of such
+    /// shading asked for: until a tile's arrives it shows the next coarser
+    /// level's.
+    pub shaded_tiles: u32,
+    pub shading_records: u32,
     /// Wanted tiles beyond the tile budget or the device's capacity.
     pub dropped_tiles: u32,
     /// Patches the camera draws, and of those how many stand in for finer

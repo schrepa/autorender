@@ -22,10 +22,14 @@
 //! uploads, larger until the camera's view first loads whole than after.
 //! So are its lighting, bounce transfer and macro colors (the tint and
 //! growth its bakes give its ground), from its finest pinned level as the
-//! records of its tiles hold it, which workers generate; and its tiles'
-//! water as it settled, which workers stand on them from the records of
-//! settled water. While a session cooks ([`crate::Cooking`]), every tile a
-//! camera could want is asked for, for the host's pack.
+//! records of its tiles hold it, which workers generate; its tiles' water
+//! as it settled, which workers stand on them from the records of settled
+//! water; and the shading its tiles of level 1 and coarser take from level
+//! 0, averaged ([`engine_terrain::TileShading`]), which workers make from
+//! the level-0 tiles or the level finer's records and which attaches to
+//! each resident tile as it arrives. While a session cooks
+//! ([`crate::Cooking`]), every tile a camera could want is asked for, for
+//! the host's pack.
 //!
 //! Tiles load in the order the view needs them: the pinned
 //! levels; the tiles the view draws and shows, with those under focus
@@ -63,6 +67,7 @@ mod residency;
 mod rewater;
 mod settings;
 mod settled;
+mod shading;
 mod stats;
 mod store;
 mod streaming;
@@ -92,6 +97,7 @@ pub use queries::*;
 pub use residency::*;
 pub use settings::*;
 use settled::{SettleQueue, Settled};
+use shading::Shadings;
 pub use stats::*;
 use store::*;
 pub(crate) use streaming::*;

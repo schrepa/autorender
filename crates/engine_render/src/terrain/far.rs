@@ -2,9 +2,10 @@
 //! (`terrain_vt.rs`): each terrain's finest pinned level, once every tile of
 //! it stands resident as it is and the terrain's macro colors are here, and
 //! the hash of everything their texels read there: the terrain's place and
-//! pyramid, that level's tiles (their heights, and their control values or
-//! the surface the GPU gives them from), its surface materials' palette
-//! entries and its macro colors' identity. Far pages read no material map:
+//! pyramid, that level's tiles (their heights, and their shading, their
+//! control values or the surface the GPU gives them from), its surface
+//! materials' palette entries and its macro colors' identity. Far pages
+//! read no material map:
 //! at their texels, eight meters and more, the maps of any material
 //! repeating within 64 meters show only their means, which the palette
 //! holds, so pages cooked on one family of compressed formats serve every
@@ -22,8 +23,9 @@ use super::*;
 use crate::terrain_vt::FarSource;
 use engine_core::terrain_data::Pyramid;
 
-/// A tile's hashes as far pages read it: its heights', and its control
-/// values' where it holds them.
+/// A tile's hashes as far pages read it: its heights', and its shading's
+/// (its control values and normal maps) or its own control values' where it
+/// holds them.
 type TileHashes = (u128, Option<u128>);
 
 /// What a terrain's far pages read, as last seen: the level and the
@@ -109,10 +111,16 @@ impl FarTerrain {
                 Some(made) => made,
                 None => {
                     let tile = atlas.held.get(&(terrain.id, key))?;
+                    let shading = tile.shading().map(|shading| {
+                        let words = [shading.control(), shading.gradients()].concat();
+                        engine_core::content_hash(bytemuck::cast_slice(&words))
+                    });
                     let made = (
                         engine_core::content_hash(bytemuck::cast_slice(tile.heights())),
-                        tile.control().map(|control| {
-                            engine_core::content_hash(bytemuck::cast_slice(control))
+                        shading.or_else(|| {
+                            (tile.control()).map(|control| {
+                                engine_core::content_hash(bytemuck::cast_slice(control))
+                            })
                         }),
                     );
                     *hashes = Some(made);

@@ -126,11 +126,13 @@ settings! {
         /// that frame, about 540 KB a tile: tiles beyond wait for the next,
         /// though each frame's first arrives whatever its size.
         pub upload_bytes: u32 = 8 << 20 => at_least(1),
-        /// Tiles' surface materials from the GPU: tiles generate
-        /// without control values, which a compute pass gives each as it
-        /// uploads, the rules' own but where GPU rounding crosses a threshold;
-        /// gameplay reads the rules at the points it asks. Off, the CPU gives
-        /// them.
+        /// Level-0 tiles' and surroundings' tiles' surface materials from
+        /// the GPU: those tiles generate without control values, which a
+        /// compute pass gives each as it uploads, the rules' own but where GPU
+        /// rounding crosses a threshold; gameplay reads the rules at the
+        /// points it asks. Off, the CPU gives them. Either way a terrain's
+        /// coarser tiles take theirs from their shading, level 0's averaged,
+        /// made in the cook.
         pub gpu_materials: bool = true => any,
         /// The runtime virtual texture: the ground's materials
         /// baked into pages the views ask for, which pixels read in place of
