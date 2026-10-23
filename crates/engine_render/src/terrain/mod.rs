@@ -1,7 +1,7 @@
 //! Terrain: every resident tile's heights in one texture
 //! array, the camera's patches as instances of one shared grid with skirts,
 //! and their pipelines in the opaque passes, the shadow maps drawn every
-//! frame and reflection probe faces.
+//! frame, the kept shadow levels and reflection probe faces.
 //!
 //! Tiles upload as frames list them and release when they leave the list;
 //! the array grows by doubling up to the device's layers, beyond which
@@ -9,10 +9,14 @@
 //! camera's patches by their bounds: the camera's frustum, each shadow
 //! map's sides; the camera also skips those whose every triangle faces away
 //! from it and those nearer ground hides (`culling`), from what each tile
-//! was made with. Every view draws the same vertices, at the positions the
-//! camera sees, so terrain shadows itself without acne. Where terrains cast
-//! long shadows through their horizon maps, only the near
-//! cascades draw terrain, near their receivers.
+//! was made with. Every view drawn each frame draws the same vertices, at
+//! the positions the camera sees, so terrain shadows itself without acne.
+//! Where terrains cast long shadows through their horizon maps, the near
+//! cascades draw terrain near their receivers; kept shadow levels, which
+//! must not depend on where the eye stood, hold the ground as far as they
+//! reach at a level of detail of their own, unmorphed, over the region a
+//! level redraws (`patches`), and redraw over ground that arrives, leaves
+//! or changes; the horizon maps shadow the rest.
 //!
 //! Each tile's normal map, the gradient of the smooth surface through its
 //! heights at each sample, lies in a parallel array: computed once on
@@ -191,7 +195,8 @@ pub(crate) struct CoverSources<'a> {
 }
 
 /// One terrain's draws this frame: its uniform slot, the camera's patches,
-/// every patch (for probe faces) and each shadow map's. The camera's and
+/// every patch (for probe faces) and each shadow map's, the kept shadow
+/// level redrawn this frame's ground among them. The camera's and
 /// every patch's ranges end with the patches with holes, which draw with
 /// their own pipelines: as many as `*_holes`. And the rectangle of the
 /// screen the camera's patches cover, in normalized device coordinates
@@ -262,6 +267,9 @@ pub(crate) struct TerrainViews<'a> {
     pub detail_eye: Vec3,
     /// Shadow maps drawn every frame and their world-to-clip matrices.
     pub maps: &'a [(usize, Mat4)],
+    /// This frame's redraw of a kept shadow level, which the ground casts
+    /// into at a level of detail the level's texels choose.
+    pub kept: Option<crate::shadows::KeptRefresh>,
     /// Whether reflection probes capture faces this frame, which draw every
     /// patch.
     pub probes: bool,
@@ -382,8 +390,10 @@ impl TerrainPass {
     }
 
     /// Uploads tiles the frame's terrains list and the GPU lacks, releases
-    /// those they no longer list, and lays out this frame's patches for the
-    /// camera, reflection probe faces and the shadow maps of `views`.
+    /// those they no longer list, noting the ground that arrived, left or
+    /// changed ([`Self::ground_changes`]), and lays out this frame's patches
+    /// for the camera, reflection probe faces, the shadow maps of `views`
+    /// and the kept shadow level it redraws.
     /// `max_layers` is the device's texture array layers; `mips` renders
     /// surface materials' mip levels. Returns whether any terrain draws.
     pub(crate) fn prepare(
@@ -402,6 +412,7 @@ impl TerrainPass {
         }
         let (held, changes) = (&self.atlas.held, &self.atlas.held_changes[..]);
         self.water.sync(device, queue, held, changes, max_layers);
+        self.patches.follow_ground(terrains, &self.atlas);
         self.atlas.fade(views.fades, self.tables.fade_words);
         let fades = (&self.atlas.fades[..], self.atlas.fades_dirty.clone());
         self.tables.write_fades(queue, fades);
@@ -663,5 +674,11 @@ impl TerrainPass {
     /// Whether any patch drawn this frame has holes.
     pub(crate) fn has_holes(&self) -> bool {
         self.patches.has_holes()
+    }
+
+    /// The ground that arrived, left or changed this frame, over which the
+    /// kept shadow levels holding it redraw.
+    pub(crate) fn ground_changes(&self) -> &[patches::GroundChange] {
+        self.patches.ground_changes()
     }
 }

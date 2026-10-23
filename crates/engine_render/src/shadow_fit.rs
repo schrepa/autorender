@@ -1,7 +1,8 @@
 //! Placement of the sun's shadow maps, independent of GPU
 //! objects: the light-space basis, the regions each map covers and their
 //! orthographic projections, what the kept far map and the kept levels
-//! hold, and the near cascades' caches of what terrains place.
+//! hold (terrain's ground among it, at a level of detail of each level's
+//! own), and the near cascades' caches of what terrains place.
 
 #![expect(
     clippy::expect_used,
@@ -9,13 +10,19 @@
 )]
 
 use engine_core::{
+    RenderTerrains,
     glam::{Mat4, Vec3, Vec4},
     math,
+    terrain_data::{MORPH_START, Pyramid},
 };
 
 use crate::gpu_data::{FAR_DEPTH, MAX_CASCADES, MAX_LEVELS, NEAR_DEPTH, frustum_uniform};
 pub(crate) use crate::gpu_layouts::constants::SHADOW_TILE_WORDS as TILE_WORDS;
 pub(crate) use crate::gpu_layouts::constants::SHADOW_TILES as TILES;
+
+/// The sine of the lowest sun the kept levels' depths and ground follow,
+/// about six degrees up: lower ones would make both reach without end.
+const LOW_SUN: f32 = 0.1;
 
 /// World to light space: x and y across the sun's view, z away from the sun.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -45,6 +52,12 @@ impl LightBasis {
             self.rows[1].dot(point),
             self.rows[2].dot(point),
         )
+    }
+
+    /// The sine of the sun's elevation, at least [`LOW_SUN`]: a lower sun
+    /// counts as standing that high.
+    pub(crate) fn sine(&self) -> f32 {
+        math::max(-self.rows[2].y, LOW_SUN)
     }
 
     /// Light-space bounds of the box `min`..`max`.
@@ -488,10 +501,10 @@ impl TileRegion {
 }
 
 /// A kept level: [`TILES`] by [`TILES`] tiles `tile` wide
-/// following the camera in light space. Its map holds the absolute tile
+/// following the detail eye in light space. Its map holds the absolute tile
 /// `(a, b)`, whose light-space corner is `(a, b) * tile`, at slot
 /// `(a mod TILES, b mod TILES)`: the window moves a tile at a time and only
-/// the tiles it uncovers redraw. Its depths span a band around the camera,
+/// the tiles it uncovers redraw. Its depths span a band around the eye,
 /// which follows it (redrawing the level) once it leaves the band's middle:
 /// receivers deeper or shallower read coarser maps.
 #[derive(Debug)]
@@ -502,6 +515,8 @@ struct KeptLevel {
     // Light-space depth of the band's middle, and half its depth.
     depth: f32,
     half_depth: f32,
+    // How far the ground it holds casts away from the sun.
+    push: f32,
     // Slots whose texels do not hold their tiles' casters, which lookups
     // skip, and slots to redraw.
     invalid: DirtyTiles,
@@ -531,6 +546,15 @@ pub(crate) struct KeptLevels {
 /// Tiles across a level, as a signed count.
 const SIDE: i32 = TILES as i32;
 
+/// Tiles a kept level's window's middle lies off the eye at most along an
+/// axis: the window follows once the eye's tile lies more than one off the
+/// tile it is centered for, and the eye stands anywhere in its tile.
+const WINDOW_LAG: f32 = 2.0;
+
+/// Texels of a kept level a sample of the ground it holds spans at least:
+/// finer samples draw detail its texels cannot hold.
+const GROUND_TEXELS: f32 = 2.0;
+
 impl KeptLevel {
     /// A level with its window's first corner at `origin` and its band
     /// around `depth`, holding nothing yet.
@@ -540,6 +564,7 @@ impl KeptLevel {
             origin,
             depth,
             half_depth,
+            push: 0.0,
             invalid: DirtyTiles::ALL,
             dirty: DirtyTiles::ALL,
         }
@@ -550,8 +575,9 @@ impl KeptLevel {
         self.tile * TILES as f32
     }
 
-    /// Moves the window's first corner to `target` once the camera is more
-    /// than a tile from the middle, invalidating the slots it uncovers.
+    /// Moves the window's first corner to `target`, where the eye's tile
+    /// centers it, once that lies more than a tile off the corner along an
+    /// axis, invalidating the slots it uncovers.
     fn scroll(&mut self, target: [i32; 2]) {
         let shift = [target[0] - self.origin[0], target[1] - self.origin[1]];
         if shift.iter().all(|step| step.abs() <= 1) {
@@ -630,8 +656,8 @@ fn dirty_window(
 
 impl KeptLevels {
     /// Places `levels` levels, the finest `extent` wide, in light `basis`
-    /// around the camera at `eye`: each window follows it, uncovering
-    /// slots, and each band moves (invalidating its level) once the camera
+    /// around the detail eye at `eye`: each window follows it, uncovering
+    /// slots, and each band moves (invalidating its level) once the eye
     /// leaves the band's middle. A new basis or other settings start every
     /// level over.
     pub(crate) fn place(&mut self, basis: LightBasis, eye: Vec3, levels: u32, extent: f32) {
@@ -643,12 +669,12 @@ impl KeptLevels {
         }
         let light = basis.apply(eye);
         // Receivers within a window lie across its width, and those it
-        // shadows within half its width above or below the camera; the band
+        // shadows within half its width above or below the eye; the band
         // reaches them along the sun, deeper the lower it stands, and half a
-        // width more each way, which the camera crosses before the band
+        // width more each way, which the eye crosses before the band
         // follows it. Others read coarser maps.
         let rise = basis.rows[1].y.abs();
-        let sine = math::max(-basis.rows[2].y, 0.1);
+        let sine = basis.sine();
         for index in 0..levels as usize {
             let width = extent * 4.0_f32.powi(index as i32);
             let tile = width / TILES as f32;
@@ -699,6 +725,43 @@ impl KeptLevels {
         let (low, high) = basis.bounds(min, max);
         for level in &mut self.levels {
             level.dirty_rect(low, high);
+        }
+    }
+
+    /// Marks dirty level `index`'s tiles under the world box `min`..`max`.
+    pub(crate) fn dirty_level_box(&mut self, index: usize, min: Vec3, max: Vec3) {
+        let (Some(basis), Some(level)) = (self.basis, self.levels.get_mut(index)) else {
+            return;
+        };
+        let (low, high) = basis.bounds(min, max);
+        level.dirty_rect(low, high);
+    }
+
+    /// Meters around the detail eye within which level `index` holds every
+    /// point wherever its window stands: half its width less the tiles its
+    /// middle may lie off the eye ([`WINDOW_LAG`]). Lookups hand over to
+    /// the next level across the outer part of it, not at the window's
+    /// edge, which moves a tile at a time.
+    pub(crate) fn reach(&self, index: usize) -> f32 {
+        self.levels.get(index).map_or(0.0, |level| {
+            (TILES as f32 * 0.5 - WINDOW_LAG) * level.tile
+        })
+    }
+
+    /// How far the ground level `index` holds casts away from the sun.
+    pub(crate) fn held_push(&self, index: usize) -> f32 {
+        self.levels.get(index).map_or(0.0, |level| level.push)
+    }
+
+    /// Moves the ground level `index` holds `push` away from the sun: a
+    /// level holding it moved otherwise redraws every tile, a region at a
+    /// time, its lookups reading what it holds meanwhile.
+    pub(crate) fn push_ground(&mut self, index: usize, push: f32) {
+        if let Some(level) = self.levels.get_mut(index)
+            && level.push != push
+        {
+            level.push = push;
+            level.dirty = DirtyTiles::ALL;
         }
     }
 
@@ -756,14 +819,15 @@ impl KeptLevels {
 
     /// Light space to level `index`'s lookups: one over its width (x and
     /// y in level widths), and its band's nearest depth and one over its
-    /// depth (z in [0, 1] over the band).
+    /// depth (z in [0, 1] over the band); then its reach around the detail
+    /// eye ([`Self::reach`]).
     pub(crate) fn scales(&self, index: usize) -> [f32; 4] {
         self.levels.get(index).map_or([0.0; 4], |level| {
             [
                 1.0 / level.width(),
                 level.depth - level.half_depth,
                 0.5 / level.half_depth,
-                0.0,
+                self.reach(index),
             ]
         })
     }
@@ -838,6 +902,68 @@ impl KeptLevels {
             },
         )
     }
+}
+
+/// The level of `pyramid` a terrain's ground casts into a kept level of
+/// texels `texel` wide at, whatever the eye: the finest whose samples span
+/// at least [`GROUND_TEXELS`] of them, else the coarsest.
+pub(crate) fn ground_level(pyramid: &Pyramid, texel: f32) -> u32 {
+    let coarsest = pyramid.levels().saturating_sub(1);
+    (0..coarsest)
+        .find(|&level| pyramid.spacing(level) >= GROUND_TEXELS * texel)
+        .unwrap_or(coarsest)
+}
+
+/// The most a terrain's ground drawn at `level` may stand above the ground
+/// receivers draw within `reach` meters of the eye. Its levels draw up to
+/// `ranges` meters away (finest first), each but the coarsest morphing into
+/// the next past [`MORPH_START`] of its range, and each lies at most
+/// `errors` meters off the next coarser (zero until measured): receivers
+/// draw at any level from the finest to the coarsest drawn within the
+/// reach, or the one it morphs into there, and lie at most the errors of
+/// the levels between off `level`'s ground.
+pub(crate) fn ground_error(level: u32, reach: f32, (ranges, errors): (&[f32], &[f32])) -> f32 {
+    let last = ranges.len().saturating_sub(1);
+    let drawn = ranges
+        .iter()
+        .position(|&range| range >= reach)
+        .unwrap_or(last);
+    let morphs = drawn < last
+        && ranges
+            .get(drawn)
+            .is_some_and(|&range| range * MORPH_START < reach);
+    let coarsest = drawn + usize::from(morphs);
+    let between = |levels: std::ops::Range<usize>| -> f32 {
+        levels
+            .map(|at| errors.get(at).copied().unwrap_or(0.0))
+            .sum()
+    };
+    let level = level as usize;
+    math::max(between(0..level), between(level..coarsest))
+}
+
+/// How far `terrains`' ground casts into a kept level away from the sun of
+/// `basis`, the level's texels `texel` wide and its receivers within
+/// `reach` meters of the detail eye: as far along the sun as lowers flat
+/// ground by the most receivers' ground may lie below the ground the level
+/// holds ([`ground_error`]), the most over every terrain drawing, rounded
+/// up to a whole texel. No receiver then falls behind the ground cached for
+/// it, and the ground never shadows itself.
+pub(crate) fn ground_push(
+    terrains: &RenderTerrains,
+    basis: &LightBasis,
+    (texel, reach): (f32, f32),
+) -> f32 {
+    let below = terrains
+        .terrains
+        .iter()
+        .filter(|terrain| !terrain.patches.is_empty())
+        .map(|terrain| {
+            let level = ground_level(&terrain.pyramid, texel);
+            ground_error(level, reach, (&terrain.ranges[..], &terrain.errors[..]))
+        })
+        .fold(0.0, math::max);
+    (below / basis.sine() / texel).ceil() * texel
 }
 
 /// A near cascade's width against its reach: every receiver within its

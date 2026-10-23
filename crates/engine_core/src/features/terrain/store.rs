@@ -128,7 +128,8 @@ impl TileStore {
         self.revision
     }
 
-    /// Each level's largest measured morph error.
+    /// Each level's largest measured morph error, which frames hand
+    /// renderers ([`RenderTerrain::errors`]).
     pub(super) fn errors(&self) -> &[f32] {
         &self.errors
     }

@@ -136,7 +136,9 @@ struct Shadow {
     light: array<vec4<f32>, 3>,
     // Each kept level's light space: one over its width (x and y in level
     // widths, whose fractions place a point in its map, which wraps), and
-    // its depth band's nearest depth and one over its depth (z in [0, 1]).
+    // its depth band's nearest depth and one over its depth (z in [0, 1]);
+    // then the meters around the detail eye within which it holds every
+    // point wherever its window stands (w).
     level_scales: array<vec4<f32>, 3>,
     // Each level's window: its first corner in level widths (x and y), the
     // normal offset of its lookups (z, world units) and its steepest
@@ -801,9 +803,10 @@ fn crown_spread(cascade: u32, point: MapPoint, size: f32, visible: f32) -> f32 {
     return lit;
 }
 
-// Kept levels hand over to the next coarser map across this
-// share of their width inside their windows' edges.
-const LEVEL_HANDOVER: f32 = 0.08;
+// Kept levels hand over to the next coarser map across this outer share of
+// their reach around the detail eye, as the ground's levels of data hand
+// over across the second half of theirs.
+const LEVEL_BAND: f32 = 0.5;
 // The last near cascade hands over to the far maps across this share of its
 // reach.
 const CASCADE_HANDOVER: f32 = 0.3;
@@ -828,10 +831,12 @@ fn level_depths(level: u32, point: MapPoint, size: f32) -> vec4<f32> {
 // Visibility of still casters' sun at the surface point `world` in the kept
 // levels, each looked up its offset along `normal`: from the
 // finest level whose window and band hold it on a tile holding its casters,
-// handing over to the next across the window's edge and as its texels
-// shrink below a pixel's footprint. x: the visibility found,
-// weighted; y: the weight left to coarser maps (1 where no level holds the
-// point).
+// handing over to the next across the outer part of its reach around the
+// detail eye, which its window holds wherever it stands, and as its texels
+// shrink below a pixel's footprint seen from there; so where sharper
+// texels give way moves with the eye and never jumps with the window. x:
+// the visibility found, weighted; y: the weight left to coarser maps (1
+// where no level holds the point).
 fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         dy: vec3<f32>) -> vec2<f32> {
     let count = u32(shadow.level_state.x);
@@ -851,16 +856,19 @@ fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
     // to the next map as its texels shrink from 0.7 to 0.35 of the
     // footprint, as textures blend mipmaps. Windows' offsets are half their
     // texels.
-    let footprint = max(pixel_footprint(world, normal), 1.0e-6);
+    let footprint = max(detail_footprint(world, normal), 1.0e-6);
+    let distance = detail_distance(world);
     var visible = 0.0;
     var left = 1.0;
     for (var level = 0u; level < count; level++) {
         let window = shadow.level_windows[level];
+        let scales = shadow.level_scales[level];
         let fine = saturate((2.0 * window.z / footprint - 0.35) / 0.35);
-        if fine <= 0.0 {
+        let near = saturate((scales.w - distance) / (LEVEL_BAND * scales.w));
+        let weight = min(fine, near);
+        if weight <= 0.0 {
             continue;
         }
-        let scales = shadow.level_scales[level];
         let at = light + light_normal * window.z;
         let position = vec3<f32>(at.xy * scales.x, (at.z - scales.y) * scales.z);
         let local = position.xy - window.xy;
@@ -886,8 +894,6 @@ fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
             vec4<f32>(light_dy * level_scale, 0.0), vec2<f32>(1.0, -1.0) * size, window.w);
         point.soft = crown_softness(scales.z);
         let here = plane_visibility(level_depths(level, point, size), point);
-        let edge = min(min(local.x, local.y), min(1.0 - local.x, 1.0 - local.y));
-        let weight = (1.0 - saturate(1.0 - edge / LEVEL_HANDOVER)) * fine;
         visible += left * weight * here;
         left *= 1.0 - weight;
         if left <= 0.0 {
@@ -899,8 +905,9 @@ fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
 
 // Visibility of the surface at `world` beyond the near cascades: of the
 // moving map's casters and of still ones, which the kept levels
-// hold where they reach and the kept far map elsewhere. Far maps are
-// looked up their offset along `normal` and see nothing outside them.
+// hold where they reach (terrain's ground among them) and the kept far map
+// elsewhere. Far maps are looked up their offset along `normal` and see
+// nothing outside them.
 fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         dy: vec3<f32>) -> f32 {
     let size = shadow.sizes.y;
@@ -1202,7 +1209,9 @@ fn handover_threshold(world: vec3<f32>) -> f32 {
 // the first stretch of the view, each three times sharper than the next,
 // and hand over to the next one across the last tenth of
 // their reach, the last one to the far maps across `CASCADE_HANDOVER` of
-// its reach; the far maps, the kept one for still casters
+// its reach, by the camera's distance, as they fit its view; the far maps,
+// the kept one and the kept levels for still casters (the levels holding
+// terrain's ground too, which the handover so keeps shadowed)
 // and the one redrawn every frame, cover the rest and fade out at the
 // shadow distance. Lookups compare four texels with the surface's plane.
 // Across a band, dissolving lookups read one map, blending ones both.

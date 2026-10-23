@@ -88,17 +88,18 @@ fn debug_shadowed(source: u32, visible: f32) -> u32 {
 }
 
 // The finest kept level `level_visibility` reads at `world`: the first
-// whose window and depth band hold the point, while its texels are not too
-// small for a pixel's footprint there.
+// whose reach around the detail eye, window and depth band hold the point,
+// while its texels are not too small for a pixel's footprint there.
 fn debug_kept_level(world: vec3<f32>, normal: vec3<f32>) -> u32 {
     let axes = mat3x3<f32>(shadow.light[0].xyz, shadow.light[1].xyz, shadow.light[2].xyz);
     let light = world * axes;
     let light_normal = normal * axes;
-    let footprint = max(pixel_footprint(world, normal), 1.0e-6);
+    let footprint = max(detail_footprint(world, normal), 1.0e-6);
+    let distance = detail_distance(world);
     let margin = 2.0 / shadow.level_state.y;
     for (var level = 0u; level < u32(shadow.level_state.x); level++) {
         let window = shadow.level_windows[level];
-        if 2.0 * window.z / footprint <= 0.35 {
+        if 2.0 * window.z / footprint <= 0.35 || distance >= shadow.level_scales[level].w {
             continue;
         }
         let scales = shadow.level_scales[level];

@@ -6,11 +6,21 @@
 //! share is looked up once for each run of them, the vectors laying them
 //! out are kept from frame to frame, and the records and uniforms are
 //! written where they differ from the last frame's.
+//!
+//! A kept shadow level redrawing a region takes the ground there at a level
+//! of detail its texels choose, not the camera's selection: each patch of
+//! that level whose tile is resident, else of the finest coarser level
+//! whose tile is, unmorphed (`kept_patches`), after every other list so
+//! that none of theirs moves. Where a tile's ground arrives, leaves or
+//! changes, the box it stood and stands in goes to the kept levels, which
+//! redraw over it (`follow_ground`).
 
 use super::atlas::TileAtlas;
 use super::culling::{self, Seen};
 use super::tables::TerrainTables;
 use super::*;
+use engine_core::glam::Vec2;
+use engine_core::terrain_data::{NO_MORPH, PATCH_QUADS, PATCHES_PER_TILE, Pyramid};
 
 /// How the camera's culling leaves a patch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,9 +70,26 @@ pub(crate) struct PatchDraws {
     // follow the rest.
     laid: Vec<Laid>,
     holed: Vec<Laid>,
+    // The patches a kept level's ground has yet to look at, each held tile
+    // and the box its ground stands in as last followed, and the ground
+    // that arrived, left or changed this frame.
+    kept_stack: Vec<(u32, u32, u32)>,
+    kept_ground: HashMap<(u64, TileKey), (Arc<engine_core::Tile>, GroundChange)>,
+    ground_changes: Vec<GroundChange>,
     /// The eye this frame's terrain positions are relative to.
     eye: Vec3,
     pub(crate) frame: TerrainFrame,
+}
+
+/// Ground that arrived, left or changed: the world box a tile's ground
+/// stood or stands in, skirts included, and its terrain's pyramid and the
+/// tile's level, which say the kept shadow levels that may draw it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct GroundChange {
+    pub(crate) min: Vec3,
+    pub(crate) max: Vec3,
+    pub(crate) pyramid: Pyramid,
+    pub(crate) level: u32,
 }
 
 /// What laying out the frame's patches reads besides the terrains: the
@@ -107,6 +134,9 @@ impl PatchDraws {
             horizon: culling::Horizon::default(),
             laid: Vec::new(),
             holed: Vec::new(),
+            kept_stack: Vec::new(),
+            kept_ground: HashMap::default(),
+            ground_changes: Vec::new(),
             eye: Vec3::ZERO,
             frame: TerrainFrame::default(),
         }
@@ -140,8 +170,9 @@ impl PatchDraws {
     }
 
     /// Lays out this frame's patches of `terrains` for the camera,
-    /// reflection probe faces and the shadow maps of `views`, and every
-    /// terrain's uniform, a slot each, which [`Self::write`] writes.
+    /// reflection probe faces, the shadow maps of `views` and the kept
+    /// level it redraws, and every terrain's uniform, a slot each, which
+    /// [`Self::write`] writes.
     pub(super) fn lay_out(
         &mut self,
         device: &wgpu::Device,
@@ -219,9 +250,10 @@ impl PatchDraws {
             }
             let all_range = all_start..self.records.len() as u32;
             let all_holes = if views.probes { all_holes } else { 0 };
-            let mut maps = Vec::with_capacity(views.maps.len());
+            let mut maps = Vec::with_capacity(views.maps.len() + 1);
             // Terrains casting long shadows draw into the near cascades
-            // only, within the reach their horizon maps leave them.
+            // within the reach their horizon maps leave them, and not the
+            // moving map: the kept levels hold their ground beyond.
             let reach = parts.horizons.cascade_reach(terrain.id);
             for &(map, clip) in views.maps {
                 if reach.is_some() && map == crate::shadows::MOVING_MAP {
@@ -248,6 +280,9 @@ impl PatchDraws {
                 maps,
                 screen,
             });
+        }
+        if let Some(kept) = views.kept {
+            self.lay_out_kept(terrains, (kept, eye), parts);
         }
         self.frame.triangles = self.frame.patches * PATCH_TRIANGLES;
         let record_bytes = (self.records.len() * size_of::<PatchRecord>()) as u64;
@@ -303,6 +338,81 @@ impl PatchDraws {
                 self.frame.hidden += 1;
             }
         }
+    }
+
+    /// Lays out the ground of each of `terrains` drawing this frame that
+    /// the kept shadow level redrawn this frame takes within `kept`'s
+    /// region, after every other list: at the level of detail its texels
+    /// choose, whatever the eye, counted from the anchors of the eye at
+    /// `eye`, as `parts` hold it.
+    fn lay_out_kept(
+        &mut self,
+        terrains: &RenderTerrains,
+        (kept, eye): (crate::shadows::KeptRefresh, DVec3),
+        parts: &Layout<'_>,
+    ) {
+        let planes = kept.planes.map(Vec4::from_array);
+        for (index, terrain) in terrains.terrains.iter().enumerate() {
+            if terrain.patches.is_empty() {
+                continue;
+            }
+            let level = crate::shadow_fit::ground_level(&terrain.pyramid, kept.texel);
+            let first = self.records.len() as u32;
+            kept_patches(
+                (&mut self.records, &mut self.kept_stack),
+                terrain,
+                (&planes[..], level),
+                Anchors::of(terrain, eye),
+                parts,
+            );
+            let range = first..self.records.len() as u32;
+            self.frame.shadow_patches += range.len() as u32;
+            if let Some(frame) = self.frame.terrains.get_mut(index) {
+                frame.maps.push((crate::shadows::KEPT_LEVELS, range));
+            }
+        }
+    }
+
+    /// Follows the tiles `atlas` holds of `terrains` where this frame's sync
+    /// changed them: the box each one's ground stood and stands in where it
+    /// arrived, left or changed, over which the kept shadow levels holding
+    /// it redraw. A tile replaced over the same ground (its water made
+    /// again) changes none.
+    pub(super) fn follow_ground(&mut self, terrains: &RenderTerrains, atlas: &TileAtlas) {
+        self.ground_changes.clear();
+        for &slot in &atlas.held_changes {
+            let before = self.kept_ground.remove(&slot);
+            let now = atlas.held.get(&slot).and_then(|tile| {
+                let terrain = terrains.terrains.iter().find(|terrain| terrain.id == slot.0)?;
+                Some((Arc::clone(tile), ground_box(terrain, slot.1, tile.bounds())))
+            });
+            let change = match (&before, &now) {
+                (Some((was, stood)), Some((is, stands)))
+                    if was.heights() == is.heights()
+                        && stood.min == stands.min
+                        && stood.max == stands.max =>
+                {
+                    None
+                }
+                (Some((_, stood)), Some((_, stands))) => Some(GroundChange {
+                    min: stood.min.min(stands.min),
+                    max: stood.max.max(stands.max),
+                    ..*stands
+                }),
+                (Some((_, stood)), None) => Some(*stood),
+                (None, Some((_, stands))) => Some(*stands),
+                (None, None) => None,
+            };
+            self.ground_changes.extend(change);
+            if let Some(now) = now {
+                self.kept_ground.insert(slot, now);
+            }
+        }
+    }
+
+    /// The ground that arrived, left or changed this frame.
+    pub(super) fn ground_changes(&self) -> &[GroundChange] {
+        &self.ground_changes
     }
 
     /// Writes the records laid out where they differ from the last frame's,
@@ -453,33 +563,168 @@ impl TileRecord {
     /// The instance record of `patch`, one of the tile's, counting its
     /// samples from `anchors`.
     pub(super) fn record(&self, patch: &engine_core::Patch, anchors: Anchors) -> PatchRecord {
+        self.record_at((patch.x, patch.z), (patch.morph, self.fade), patch.holes, anchors)
+    }
+
+    /// The instance record of the tile's patch `(x, z)` as the kept shadow
+    /// levels draw it, with its holes where `holes`, counting its samples
+    /// from `anchors`: unmorphed and grown out of its parent, whatever the
+    /// eye.
+    pub(super) fn kept_record(&self, at: (u8, u8), holes: bool, anchors: Anchors) -> PatchRecord {
+        self.record_at(at, (NO_MORPH, 0.0), holes, anchors)
+    }
+
+    /// The instance record of the tile's patch `(x, z)`, morphing into its
+    /// parent over the distances `morph` and still `fade` of the way into
+    /// it, with its holes where `holes`, counting its samples from
+    /// `anchors`.
+    fn record_at(
+        &self,
+        (x, z): (u8, u8),
+        (morph, fade): ([f32; 2], f32),
+        holes: bool,
+        anchors: Anchors,
+    ) -> PatchRecord {
         let key = self.key;
         let anchor = anchors.at(u32::from(key.level));
         let first = [
-            i64::from(key.x) * 256 + i64::from(patch.x) * 16 - anchor[0],
-            i64::from(key.z) * 256 + i64::from(patch.z) * 16 - anchor[1],
+            i64::from(key.x) * 256 + i64::from(x) * 16 - anchor[0],
+            i64::from(key.z) * 256 + i64::from(z) * 16 - anchor[1],
         ];
         let (parent_layer, parent_texel) = match self.parent {
             Some(parent_layer) => {
-                let x = u32::from(key.x % 2) * 128 + u32::from(patch.x) * 8;
-                let z = u32::from(key.z % 2) * 128 + u32::from(patch.z) * 8;
-                (parent_layer, x | (z << 16))
+                let column = u32::from(key.x % 2) * 128 + u32::from(x) * 8;
+                let row = u32::from(key.z % 2) * 128 + u32::from(z) * 8;
+                (parent_layer, column | (row << 16))
             }
             None => (self.layer, 0),
         };
-        let texel = (u32::from(patch.x) * 16) | ((u32::from(patch.z) * 16) << 16);
+        let texel = (u32::from(x) * 16) | ((u32::from(z) * 16) << 16);
         PatchRecord {
             first: [first[0] as i32, first[1] as i32],
             shape: [
                 self.spacing,
-                patch.morph[0],
-                patch.morph[1],
-                4.0 * self.spacing,
+                morph[0],
+                morph[1],
+                SKIRT_SPACINGS * self.spacing,
             ],
             atlas: [self.layer, parent_layer, texel, parent_texel],
-            holes: if patch.holes { self.holes } else { NO_HOLES },
-            fade: self.fade,
+            holes: if holes { self.holes } else { NO_HOLES },
+            fade,
         }
+    }
+}
+
+/// Sample spacings a patch's skirt hangs below its edges.
+const SKIRT_SPACINGS: f32 = 4.0;
+
+/// Appends to `records` the records of `terrain`'s ground within the world
+/// `planes` of a kept shadow level's redraw: its patches at pyramid level
+/// `level` where their tiles are resident, else those of the finest
+/// coarser level whose are, unmorphed and grown in, so what the level keeps
+/// follows the tiles alone, never the eye. Records count their samples from
+/// `anchors` and take what `parts` hold; patches within the terrain's
+/// cutout never draw, as the camera's do not. A patch's descendants stand
+/// within its box widened by the errors measured between their levels and
+/// a sample of its own; `stack` holds the patches yet to look at.
+fn kept_patches(
+    (records, stack): (&mut Vec<PatchRecord>, &mut Vec<(u32, u32, u32)>),
+    terrain: &RenderTerrain,
+    (planes, level): (&[Vec4], u32),
+    anchors: Anchors,
+    parts: &Layout<'_>,
+) {
+    let pyramid = &terrain.pyramid;
+    let top = pyramid.levels() - 1;
+    let finest = level.min(top);
+    let extent = pyramid.extent();
+    let side = PATCHES_PER_TILE;
+    let [tiles_x, tiles_z] = pyramid.tiles(top);
+    stack.clear();
+    stack.extend(
+        (0..tiles_z * side).flat_map(|z| (0..tiles_x * side).map(move |x| (top, x, z))),
+    );
+    // How far the ground of a level's descendants down to the finest may
+    // stray from its own heights.
+    let stray = |from: u32| {
+        let measured: f32 = (finest..from)
+            .map(|at| terrain.errors.get(at as usize).copied().unwrap_or(0.0))
+            .sum();
+        measured + pyramid.spacing(from)
+    };
+    let held = |key: TileKey| parts.atlas.held.get(&(terrain.id, key));
+    let mut shared: Option<(TileKey, Option<TileRecord>)> = None;
+    while let Some((at, x, z)) = stack.pop() {
+        let spacing = pyramid.spacing(at);
+        let size = PATCH_QUADS as f32 * spacing;
+        let corner = Vec2::new(x as f32, z as f32) * size;
+        if corner.x >= extent.x || corner.y >= extent.y || cut_out(terrain.cutout, corner, size) {
+            continue;
+        }
+        let key = TileKey::new(at as u8, (x / side) as u16, (z / side) as u16);
+        let Some(tile) = held(key) else {
+            continue;
+        };
+        let (column, row) = (x % side, z % side);
+        let [low, high] = tile.patch_bounds(column, row);
+        // As drawn, skirts hanging below the box.
+        let min = terrain.origin + Vec3::new(corner.x, low - SKIRT_SPACINGS * spacing, corner.y);
+        let max = terrain.origin + Vec3::new(corner.x + size, high, corner.y + size);
+        if at > finest {
+            let child = TileKey::new(at as u8 - 1, (2 * x / side) as u16, (2 * z / side) as u16);
+            if held(child).is_some() {
+                let widened = Vec3::Y * stray(at);
+                if visible(planes, min - widened, max + widened) {
+                    for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        stack.push((at - 1, 2 * x + dx, 2 * z + dz));
+                    }
+                }
+                continue;
+            }
+        }
+        if !visible(planes, min, max) {
+            continue;
+        }
+        let record = match shared {
+            Some((cached, record)) if cached == key => record,
+            _ => {
+                let record = TileRecord::of(parts, terrain, key, false);
+                shared = Some((key, record));
+                record
+            }
+        };
+        if let Some(record) = record {
+            let holes = tile.patch_has_holes(column, row);
+            records.push(record.kept_record((column as u8, row as u8), holes, anchors));
+        }
+    }
+}
+
+/// Whether the square of side `size` from terrain-local `corner` lies
+/// within `cutout`, the ground a terrain's surroundings leave to the
+/// terrain they surround.
+fn cut_out(cutout: Option<(Vec2, Vec2)>, corner: Vec2, size: f32) -> bool {
+    cutout.is_some_and(|(first, last)| {
+        corner.x >= first.x
+            && corner.y >= first.y
+            && corner.x + size <= last.x
+            && corner.y + size <= last.y
+    })
+}
+
+/// The box `terrain`'s tile `key` stands in with heights from `low` to
+/// `high`, world, its patches' skirts hanging below.
+fn ground_box(terrain: &RenderTerrain, key: TileKey, [low, high]: [f32; 2]) -> GroundChange {
+    let pyramid = terrain.pyramid;
+    let level = u32::from(key.level);
+    let corner = pyramid.tile_origin(key);
+    let size = pyramid.tile_size(level);
+    let skirt = SKIRT_SPACINGS * pyramid.spacing(level);
+    GroundChange {
+        min: terrain.origin + Vec3::new(corner.x, low - skirt, corner.y),
+        max: terrain.origin + Vec3::new(corner.x + size, high, corner.y + size),
+        pyramid,
+        level,
     }
 }
 

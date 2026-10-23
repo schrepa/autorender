@@ -62,6 +62,7 @@ impl Renderer {
                 eye: snapshot.camera_position,
                 detail_eye: snapshot.detail_eye,
                 maps,
+                kept: self.shadows.level_refresh(),
                 probes,
                 settings: snapshot.environment.terrain.sanitized(),
                 shadows: snapshot.environment.shadows.enabled,
@@ -71,6 +72,12 @@ impl Renderer {
             },
             (self.display.max_layers, self.materials.mips()),
         );
+        // The kept shadow levels redraw over ground that arrived, left or
+        // changed.
+        for change in self.terrain.ground_changes() {
+            self.shadows
+                .dirty_ground((change.min, change.max), (&change.pyramid, change.level));
+        }
         // What terrains draw with is created before they first draw,
         // so the GPU compiles it while they bake and load.
         self.warm_terrain(snapshot, opaque_kind, probes);
