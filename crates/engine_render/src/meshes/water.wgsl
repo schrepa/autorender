@@ -1894,14 +1894,22 @@ const WATER_NOISE_SPREAD: vec2<f32> = vec2<f32>(0.15, 0.12);
 // a normal spread passes, to WATER_FOAM_DENSEST, which 85% of one passes:
 // low amounts leave scattered flecks and clusters, the most dense foam
 // with dark water in its gaps, never one sheet. Its edge spans
-// WATER_FOAM_EDGE spreads, and WATER_FOAM_SOFT more as a pixel comes to
-// span its bubbles; amounts below WATER_FOAM_LEAST, which would cover about
-// a thousandth of the water, draw none.
+// WATER_FOAM_EDGE spreads where a pixel resolves the grain; amounts below
+// WATER_FOAM_LEAST, which would cover about a thousandth of the water, draw
+// none.
 const WATER_FOAM_NONE: f32 = 3.5;
 const WATER_FOAM_DENSEST: f32 = -1.04;
 const WATER_FOAM_EDGE: f32 = 0.3;
-const WATER_FOAM_SOFT: f32 = 2.5;
 const WATER_FOAM_LEAST: f32 = 0.1;
+
+// The share of a noise's variance a pixel spanning `footprint` meters
+// resolves, its features `size` meters across: about 1 / (1 + (footprint /
+// size)^2), the rest averaging out within the pixel as filtering averages
+// it.
+fn water_resolved_share(footprint: f32, size: f32) -> f32 {
+    let ratio = footprint / size;
+    return 1.0 / (1.0 + ratio * ratio);
+}
 // The spreads past its threshold over which foam heaps from a single layer
 // of bubbles, of which WATER_FOAM_THINNEST hides what lies under it, to a
 // heap that hides all; how high carried foam heaps beside white water, its
@@ -2015,6 +2023,12 @@ fn water_foam(p: vec2<f32>, white: f32, carried: f32, flow: vec2<f32>, shear: f3
     let mean = textureSampleLevel(water_fall_map, water_wave_sampler, vec2<f32>(0.5),
         f32(levels - 1u));
     let bands = water_bands(shear, WATER_FOAM_CYCLES);
+    // The share of each part's variance the pixel resolves: the map's grain
+    // (x, its mipmaps averaging the rest), white water's clumps (y) and the
+    // carried foam's patches (z).
+    let kept = vec3<f32>(water_resolved_share(footprint, WATER_FOAM_BUBBLE),
+        water_resolved_share(footprint, WATER_FOAM_CLUMPS),
+        water_resolved_share(footprint, WATER_FOAM_PATCHES));
     var wet = 0.0;
     var dry = 0.0;
     var weights = 0.0;
@@ -2035,14 +2049,17 @@ fn water_foam(p: vec2<f32>, white: f32, carried: f32, flow: vec2<f32>, shear: f3
             let grain = water_foam_grain(at, heading, dx, dy, mean, salt);
             let faded = weight * exp(-WATER_STRAIN_FADE * abs(phase.seconds) * shear);
             if white > WATER_FOAM_LEAST {
+                // Filtered as the pixel spans its clumps, as the map's
+                // grain is by its mipmaps.
                 let clumps = (water_gradient_noise3(vec3<f32>(at / WATER_FOAM_CLUMPS,
-                    time * WATER_FOAM_CHURN)) - 0.5) / WATER_NOISE_SPREAD.y;
+                    time * WATER_FOAM_CHURN)) - 0.5) / WATER_NOISE_SPREAD.y
+                    * sqrt(kept.y);
                 wet += (dot(grain.xyw, WATER_FOAM_WHITE.xyz) + WATER_FOAM_WHITE.w * clumps)
                     * faded;
             }
             if carried > WATER_FOAM_LEAST {
                 let patches = (water_gradient_noise(at / WATER_FOAM_PATCHES) - 0.5)
-                    / WATER_NOISE_SPREAD.x;
+                    / WATER_NOISE_SPREAD.x * sqrt(kept.z);
                 dry += (dot(grain.xzw, WATER_FOAM_DRIFT.xyz) + WATER_FOAM_DRIFT.w * patches)
                     * faded;
             }
@@ -2055,7 +2072,16 @@ fn water_foam(p: vec2<f32>, white: f32, carried: f32, flow: vec2<f32>, shear: f3
         * inverseSqrt(max(weights, 1.0e-6));
     let above = grains - mix(vec2<f32>(WATER_FOAM_NONE), vec2<f32>(WATER_FOAM_DENSEST),
         vec2<f32>(white, carried));
-    let edge = WATER_FOAM_EDGE + WATER_FOAM_SOFT * saturate(footprint / WATER_FOAM_BUBBLE);
+    // What the pixel averages of each grain, in its spreads squared: the
+    // threshold's edge widens by it, as a ramp of the same variance (twelve
+    // times a uniform spread's), so the foam a pixel shows is the share of
+    // its bubbles passing the threshold within it, however far it is, and
+    // never thins out as it recedes.
+    let unresolved = vec2<f32>(
+        dot(WATER_FOAM_WHITE * WATER_FOAM_WHITE, vec4<f32>(vec3<f32>(1.0 - kept.x), 1.0 - kept.y)),
+        dot(WATER_FOAM_DRIFT * WATER_FOAM_DRIFT, vec4<f32>(vec3<f32>(1.0 - kept.x), 1.0 - kept.z)))
+        / vec2<f32>(dot(WATER_FOAM_WHITE, WATER_FOAM_WHITE), dot(WATER_FOAM_DRIFT, WATER_FOAM_DRIFT));
+    let edge = sqrt(WATER_FOAM_EDGE * WATER_FOAM_EDGE + 12.0 * unresolved);
     let covers = saturate(above / edge + 0.5);
     let heaped = saturate(above / WATER_FOAM_THICK);
     let thick = heaped * vec2<f32>(1.0, WATER_FOAM_AGED);

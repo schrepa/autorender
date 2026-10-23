@@ -1448,6 +1448,19 @@ fn terrain_sink(a: TerrainReliefLayer, b: TerrainReliefLayer, point: vec3<f32>, 
     return sink;
 }
 
+// The share of its maps' repeat a relief ray crosses at most between two
+// steps: a sixty-fourth, about the heights' own features.
+const TERRAIN_RELIEF_STRIDE: f32 = 1.0 / 64.0;
+
+// The meters a relief layer's maps repeat over; no limit for a layer
+// that sinks nothing.
+fn terrain_relief_repeat(layer: TerrainReliefLayer) -> f32 {
+    if layer.depth <= 0.0 {
+        return 1.0e6;
+    }
+    return 1.0 / layer.mapping.scale;
+}
+
 // The pixels on screen the relief's deepest point moves where the relief
 // shows whole, and where it has flattened away: as other detail, it hands
 // over once it moves the ground less than a pixel.
@@ -1473,7 +1486,8 @@ fn terrain_relief_across(way: vec3<f32>, normal: vec3<f32>) -> f32 {
 // deepest point moves TERRAIN_RELIEF_WHOLE pixels or more, flattening to
 // none by TERRAIN_RELIEF_GONE, with about a step per pixel it moves, so far
 // relief costs little and no ring follows the eye.
-fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainRelief {
+fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32)
+        -> TerrainRelief {
     var relief: TerrainRelief;
     relief.world = site.world;
     relief.deform = 0.0;
@@ -1551,10 +1565,19 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
     let along = travel.xz * min(1.0, 3.0 / max(across, 1.0e-6));
     // The point's move per meter of depth.
     let march = vec3<f32>(along.x, travel.y, along.y);
-    // About a step per pixel the relief moves, from two up to the most
-    // steps; a step every two centimeters of tracks, up to twice that.
-    let base = clamp((depth - top) * pixels, 2.0, terrain.relief.y);
-    let steps = max(u32(round(clamp((sunk + raised) / 0.02, base, 2.0 * terrain.relief.y))), 2u);
+    // Enough steps that each moves the point at most a pixel on screen and
+    // across at most TERRAIN_RELIEF_STRIDE of its maps' repeat, so the ray
+    // never steps over what it should meet, from two up to the most steps;
+    // a step every two centimeters of tracks, up to twice that. A count
+    // between two whole ones takes either by `dither`, which temporally
+    // antialiased frames vary by pixel and frame, so no seam shows where
+    // the count changes.
+    let crossed = (depth - top) * length(along);
+    let stride = TERRAIN_RELIEF_STRIDE * min(terrain_relief_repeat(a), terrain_relief_repeat(b));
+    let wanted = max((depth - top) * pixels, crossed / max(stride, 1.0e-4));
+    let count = max(clamp(wanted, 2.0, terrain.relief.y),
+        min((sunk + raised) / 0.02, 2.0 * terrain.relief.y));
+    let steps = max(u32(floor(count + dither)), 2u);
     var previous = top;
     var gap = top - terrain_sink(a, b, site.world + march * top, deform, fade);
     var hit = top;
@@ -1662,7 +1685,7 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     site.thinned = terrain_thinned(world);
     site.across = terrain_across(world);
     // Sunk where the ground's relief and tracks show.
-    let relief = terrain_parallax(site, shading);
+    let relief = terrain_parallax(site, shading, look.dither);
     site.world = relief.world;
     return TerrainSeen(site, shading, relief);
 }
