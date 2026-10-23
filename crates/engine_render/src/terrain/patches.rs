@@ -683,6 +683,8 @@ fn terrain_uniform(
         vt,
         vt_scale,
         vt_layout,
+        // The ground's shading levels hand over as its geometry's do.
+        pixel_error: [views.settings.pixel_error, 0.0, 0.0, 0.0],
         macro_map: [parts.macro_maps.layer(index), 0, 0, 0],
         steep: terrain.steep.map_or([0.0; 4], |steep| {
             [

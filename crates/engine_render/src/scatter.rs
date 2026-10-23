@@ -78,7 +78,8 @@ pub(crate) use crate::gpu_layouts::scatter::TerrainInfo;
 /// heights and control values, its directory, the terrains' palette and
 /// macro colors, the generations of the tiles' arrays, the directory and
 /// the macro colors, a revision advancing whenever resident tiles change,
-/// and each terrain's place.
+/// each terrain's place, and the meters a pixel spans a meter from the
+/// eye, which the ground's tint under objects follows.
 pub(crate) struct SnapSources<'a> {
     pub heights: &'a wgpu::TextureView,
     pub control: &'a wgpu::TextureView,
@@ -88,6 +89,7 @@ pub(crate) struct SnapSources<'a> {
     pub generation: (u64, u64, u64),
     pub revision: u64,
     pub terrains: &'a [TerrainInfo],
+    pub pixel: f32,
 }
 
 use crate::gpu_layouts::scatter::GroupData;
@@ -142,9 +144,10 @@ pub(crate) struct ScatterPass {
     snap_group: Cached<SnapKey, wgpu::BindGroup>,
     snapping: bool,
     // What objects were last set on: the group's key, the resident tiles'
-    // revision, the terrains' places and the eye the ground was seen from,
-    // and whether slots were written since, undoing it.
-    snapped: Option<(SnapKey, u64, Vec<TerrainInfo>, Vec3)>,
+    // revision, the terrains' places and the eye the ground was seen from
+    // with the meters a pixel spans a meter from it, and whether slots were
+    // written since, undoing it.
+    snapped: Option<(SnapKey, u64, Vec<TerrainInfo>, [f32; 4])>,
     slots_written: bool,
     frame: wgpu::Buffer,
     views: Growable,
@@ -743,8 +746,9 @@ impl ScatterPass {
 
     /// Plans setting objects on the terrain this frame from `sources`, on
     /// the ground as drawn seen from `eye`: when slots were written, the
-    /// resident heights or terrains changed or the eye moved since they
-    /// last were; never while the terrain pass holds no heights.
+    /// resident heights or terrains changed or the eye moved or its pixels
+    /// changed size since they last were; never while the terrain pass
+    /// holds no heights.
     pub(crate) fn prepare_snap(
         &mut self,
         device: &wgpu::Device,
@@ -764,9 +768,10 @@ impl ScatterPass {
             self.terrains_generation += 1;
         }
         queue.write_buffer(&self.terrains, 0, bytes);
+        let view = eye.extend(sources.pixel).to_array();
         let uniform = crate::gpu_layouts::scatter::SnapUniform {
             counts: [self.objects, sources.terrains.len() as u32, 0, 0],
-            eye: eye.extend(0.0).to_array(),
+            eye: view,
         };
         queue.write_buffer(&self.snap, 0, bytemuck::bytes_of(&uniform));
         self.snap_pipeline
@@ -786,11 +791,11 @@ impl ScatterPass {
             // The eye moving only moves objects up or down as the drawn
             // ground's levels morph under them.
             match &mut self.snapped {
-                Some((.., seen)) if *seen != eye => *seen = eye,
+                Some((.., seen)) if *seen != view => *seen = view,
                 _ => return,
             }
         } else {
-            self.snapped = Some((key, sources.revision, sources.terrains.to_vec(), eye));
+            self.snapped = Some((key, sources.revision, sources.terrains.to_vec(), view));
             self.slots_written = false;
         }
         if self.snap_group.stale(&key) {

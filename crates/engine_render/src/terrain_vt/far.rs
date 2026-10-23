@@ -1,7 +1,10 @@
 //! Far pages: each textured terrain's pages at its coarse mips, the same
-//! whatever the eye (their bake reads the terrain's finest pinned level
-//! alone, every material at its maps' means), as one record per terrain
-//! that the host keeps and the cook's pack ships. Pages of every mip from
+//! whatever the eye, as one record per terrain that the host keeps and the
+//! cook's pack ships. They shade as any page of their texel size does, at
+//! the levels and macro tint that size gives, but never finer than the
+//! terrain's finest pinned level, the finest resident everywhere, whose
+//! heights they read: at texels of eight meters and more, every material
+//! repeating within 64 meters shows its maps' means. Pages of every mip from
 //! the finest whose texels span eight meters or more and whose pages along
 //! the terrain's longer side number [`FAR_ACROSS`] at most pin their slots
 //! (where they take at most half the slots the sheets may hold): they stay
@@ -9,19 +12,20 @@
 //! other pages, so far ground shows textured from its first frames and only
 //! near pages, which follow the eye, bake as the view moves.
 //!
-//! A record's key holds the hash of the renderer's code and of everything
-//! its pages read ([`FarSource`], `terrain/far.rs`). A host holding it hands
-//! it to a worker, which reads it into the texels uploads take (the job
-//! `JobKind::FarTexels`), and its pages upload as they are, [`FAR_UPLOADS`]
-//! a frame; one that does not has them baked in place by the bake near
-//! pages take, [`FAR_BAKES`] a frame, read back once all are and kept: the
-//! cook's session makes them so. Pages are made on the GPU, so the same
-//! record made on another differs within its rounding: records are cooked
-//! once, never compared bit for bit across GPUs, and near and far pages
-//! blend over a mip as the ground's own levels do. A verifying host has
-//! those it handed back baked again and kept, which it compares within the
-//! records' parity ([`FAR_PARITY`], `alike`) as its one verify path
-//! compares every record.
+//! A record's key holds the hash of the renderer's code, of everything its
+//! pages read ([`FarSource`], `terrain/far.rs`) and of the pixel error
+//! their levels hand over by (`TerrainSettings::pixel_error`). A host
+//! holding it hands it to a worker, which reads it into the texels uploads
+//! take (the job `JobKind::FarTexels`), and its pages upload as they are,
+//! [`FAR_UPLOADS`] a frame; one that does not has them baked in place by
+//! the bake near pages take, [`FAR_BAKES`] a frame, read back once all are
+//! and kept: the cook's session makes them so. Pages are made on the GPU,
+//! so the same record made on another differs within its rounding: records
+//! are cooked once, never compared bit for bit across GPUs, and near and
+//! far pages blend over a mip as the ground's own levels do. A verifying
+//! host has those it handed back baked again and kept, which it compares
+//! within the records' parity ([`FAR_PARITY`], `alike`) as its one verify
+//! path compares every record.
 //!
 //! A record holds its pages' count, each page's mip and page along x and z,
 //! and their side, [`SLOT_TEXELS`], then their texels: each page's three
@@ -317,10 +321,12 @@ fn far_pages(id: u64, extent: engine_core::glam::Vec2, first: usize) -> Vec<Page
     pages
 }
 
-/// The key of the record of far pages baked from `source`.
-fn far_key(source: FarSource) -> RecordKey {
+/// The key of the record of far pages baked from `source`, their levels
+/// handing over by `pixel_error`.
+fn far_key(source: FarSource, pixel_error: f32) -> RecordKey {
     let mut identity = source.identity.to_le_bytes().to_vec();
     identity.extend_from_slice(&source.level.to_le_bytes());
+    identity.extend_from_slice(&pixel_error.to_bits().to_le_bytes());
     RecordKey::new(&crate::SOURCE, KIND, &identity)
 }
 
@@ -428,17 +434,18 @@ impl VirtualTexture {
     }
 
     /// This frame's far pages, after the near pages' asking: sets of
-    /// textured `terrains` whose `sources` changed ask for their records
-    /// anew (once textures show their own), the host's answers upload, up
-    /// to [`FAR_UPLOADS`] pages, or start their bakes, up to [`FAR_BAKES`]
-    /// pages of sets baking bake into slots they pin, and a set baked whole
-    /// is read back and kept; every far page resident has its table entry
-    /// where its window holds it. `maps` holds the sheets they upload into.
+    /// textured `terrains` whose `sources` or `pixel_error` changed ask for
+    /// their records anew (once textures show their own), the host's
+    /// answers upload, up to [`FAR_UPLOADS`] pages, or start their bakes, up
+    /// to [`FAR_BAKES`] pages of sets baking bake into slots they pin, and a
+    /// set baked whole is read back and kept; every far page resident has
+    /// its table entry where its window holds it. `maps` holds the sheets
+    /// they upload into.
     pub(super) fn far_pages(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
         terrains: &RenderTerrains,
-        sources: &[Option<FarSource>],
+        (sources, pixel_error): (&[Option<FarSource>], f32),
         maps: &crate::terrain_maps::TerrainMaps,
     ) {
         // Sets of terrains textured no longer went with their slots.
@@ -465,7 +472,7 @@ impl VirtualTexture {
                 }
                 continue;
             };
-            let key = far_key(source);
+            let key = far_key(source, pixel_error);
             if self
                 .far
                 .sets
@@ -701,7 +708,7 @@ impl VirtualTexture {
     }
 
     /// Sets the table entry of each of `set`'s pages resident where its
-    /// window holds it.
+    /// window holds it, those entering their tables arriving this frame.
     fn entries_far(&mut self, set: &FarSet) {
         let terrain = set.pages.first().map_or(0, |page| page.terrain);
         let Some(textured) = self.terrains.get_mut(&terrain) else {
@@ -718,6 +725,7 @@ impl VirtualTexture {
             let at = entry(mip, page.page);
             if textured.entries[at] != slot + 1 {
                 textured.entries[at] = slot + 1;
+                textured.arrivals[at] = self.arrival;
                 textured.dirty[mip] = true;
             }
         }
@@ -746,8 +754,7 @@ impl VirtualTexture {
         }
         self.far.pinned[index] = true;
         self.asked[index] = self.frame;
-        self.baked_from[index] = None;
-        self.changed[index] = 0;
+        self.changed[index] = None;
         Some(slot)
     }
 

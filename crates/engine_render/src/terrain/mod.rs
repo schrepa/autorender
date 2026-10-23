@@ -17,9 +17,9 @@
 //! Each tile's normal map, the gradient of the smooth surface through its
 //! heights at each sample, is computed once on upload into a parallel
 //! array; fragments blend it through a directory of every level's resident
-//! tiles, from the finest level loaded at their distance whatever level the
-//! geometry draws at, so light and materials hold still as levels of
-//! detail hand over.
+//! tiles, at the levels a pixel's footprint asks for
+//! (`terrain_shading_level`) whatever level the geometry draws at, so light
+//! and materials hold still as levels of detail hand over.
 //!
 //! The pass is its parts: the tile atlas (`atlas`), the tables shaders
 //! look up (`tables`), the frame's patches (`patches`, `culling`) and the
@@ -436,7 +436,8 @@ impl TerrainPass {
             device,
             queue,
             terrains,
-            (views.eye, &views.settings),
+            (views.detail_eye, &views.settings),
+            (views.now, views.fades),
             (&self.maps, &self.macro_maps),
             (&self.atlas.changed, &sources),
             (
