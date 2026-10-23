@@ -6,9 +6,12 @@
 //! blocks upload as it arrives and free as it leaves or changes, following
 //! the tiles the atlas held anew; the camera's patches holding water lay
 //! out each frame as instances water's pass draws on terrain's grid, with
-//! its morph and projection, so water meets the ground it covers on the
-//! same triangles (`crate::water`), written where they differ from the
-//! last frame's.
+//! its morph and projection, written where they differ from the last
+//! frame's. Each names its own block and its parent tile's over it, toward
+//! whose samples its vertices morph as the ground's do, surfaces and words
+//! alike, so water meets the ground it covers on the same triangles and
+//! nothing it does switches where a patch meets one of the next level
+//! (`crate::water`).
 
 #![expect(
     clippy::expect_used,
@@ -435,8 +438,8 @@ impl WaterBlocks {
                 let Some(record) = shared.map(|shared| shared.record(patch, anchors)) else {
                     continue;
                 };
-                // The parent tile's block over it, and where in that
-                // block it starts.
+                // The parent tile's block over it, whose samples its
+                // vertices morph toward, and where in that block it starts.
                 let (x, z) = (u32::from(patch.x), u32::from(patch.z));
                 let over = parent.map_or(NO_WATER_BLOCK, |parent| {
                     let px = u32::from(patch.tile.x % 2) * 8 + x / 2;

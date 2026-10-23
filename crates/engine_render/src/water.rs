@@ -4,7 +4,10 @@
 //! blocks hold (`crate::terrain::TerrainPass::water_draws`): the depth each
 //! pixel shades by is the tiles' water less their ground on the triangles
 //! the ground is drawn on, and the shore falls where the ground rises
-//! through the water. Water draws after the opaque scene and its decals and
+//! through the water. Their vertices morph toward the parent tile's samples
+//! as the ground's do, the water's flow, foam, state and what stands in it
+//! with its surface, so none of it switches where patches of two levels
+//! meet. Water draws after the opaque scene and its decals and
 //! blends over the ground by how little light comes back through it,
 //! writing the depth and surface targets, so later passes and screen-space
 //! reflections see its surface. Before it draws, the opaque depth copies

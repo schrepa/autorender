@@ -31,11 +31,12 @@
 //! ([`SettleStart::finish`]), a [`SteadyWater`], a record hosts keep and
 //! the cook ships: level-0 tiles' water stands, runs and foams as theirs
 //! and their neighbors' say ([`Tile::steadied`]), coarser tiles' runs and
-//! foams as the summaries under them do ([`Tile::flowing`]), each tile's
-//! water a job's record of its own, made on a worker from the records it
-//! reads ([`Steadying`]); and the window simulated around the camera starts
-//! from it, takes its water at its edges and its rivers' water where they
-//! bring it.
+//! foams as the summaries under them do, each sample averaging their
+//! squares over its own spacing ([`Tile::flowing`]), so every level holds
+//! the finer water's average; each tile's water is a job's record of its
+//! own, made on a worker from the records it reads ([`Steadying`]); and the
+//! window simulated around the camera starts from it, takes its water at
+//! its edges and its rivers' water where they bring it.
 
 use std::sync::Arc;
 
@@ -1578,22 +1579,26 @@ fn holding(
     holding
 }
 
-/// Squares along each side of a tile its settled water's summary holds:
-/// what coarser levels' water runs and foams by.
-pub const SUMMARY_SIDE: u32 = 32;
+/// Squares along each side of a level-0 tile its settled water's summary
+/// holds, each four of the tile's quads across, as far apart as level 2's
+/// samples: what coarser levels' water runs and foams by, each sample
+/// averaging those under its footprint ([`Tile::flowing`]).
+pub const SUMMARY_SIDE: u32 = 64;
 
 /// A level-0 tile's settled water seen from afar ([`SteadyWater::summary`]):
 /// over [`SUMMARY_SIDE`] squares along each side of the tile, row by row,
-/// each square's flowing cells' mean velocity along x and z (meters a
-/// second), the mean of how strongly they break white (0 to 1, each as its
-/// water does at its own depth) and mean swirl (a second), NaN where none
-/// flows; and its wet cells' mean foam (NaN where none is wet).
+/// of the cells over each square, its flowing cells' mean velocity along x
+/// and z (meters a second), the mean of how strongly they break white (0 to
+/// 1, each as its water does at its own depth) and mean swirl (a second),
+/// NaN where none flows; and its wet cells' mean foam (NaN where none is
+/// wet). Each is held, in memory as in its record, as the bits of the half
+/// float nearest it, which keep NaN.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SteadySummary {
-    velocity: [Box<[f32]>; 2],
-    foam: Box<[f32]>,
-    white: Box<[f32]>,
-    swirl: Box<[f32]>,
+    velocity: [Box<[u16]>; 2],
+    foam: Box<[u16]>,
+    white: Box<[u16]>,
+    swirl: Box<[u16]>,
 }
 
 /// A square of a [`SteadySummary`]: where water flows in it, its mean
@@ -1610,7 +1615,9 @@ pub struct SteadySquare {
 impl SteadySummary {
     /// The summary of a tile's `cells` (along x and z) holding `velocity`,
     /// `foam` and `swirl` ([`SteadyWater`]'s, row by row) and `white`, how
-    /// strongly each of its flowing cells breaks white.
+    /// strongly each of its flowing cells breaks white: each cell counts in
+    /// every square it overlaps, so a square finer than the cells takes the
+    /// cells over it.
     fn of(
         cells: [u32; 2],
         (velocity, foam): (&[Vec<f32>; 2], &[f32]),
@@ -1619,26 +1626,31 @@ impl SteadySummary {
         let side = SUMMARY_SIDE as usize;
         let mut sums = vec![[0.0_f32; 7]; side * side];
         let (columns, rows) = (cells[0] as usize, cells[1] as usize);
+        // The squares along an axis that cell `at` of `count` overlaps.
+        let over = |at: usize, count: usize| at * side / count..((at + 1) * side).div_ceil(count);
         for row in 0..rows {
             for column in 0..columns {
                 let at = row * columns + column;
-                let square = (row * side / rows) * side + column * side / columns;
-                let sum = &mut sums[square];
-                if !foam[at].is_nan() {
-                    sum[3] += foam[at];
-                    sum[4] += 1.0;
-                }
-                if !velocity[0][at].is_nan() {
-                    sum[0] += velocity[0][at];
-                    sum[1] += velocity[1][at];
-                    sum[2] += 1.0;
-                    sum[5] += white[at];
-                    sum[6] += swirl[at];
+                for z in over(row, rows) {
+                    for x in over(column, columns) {
+                        let sum = &mut sums[z * side + x];
+                        if !foam[at].is_nan() {
+                            sum[3] += foam[at];
+                            sum[4] += 1.0;
+                        }
+                        if !velocity[0][at].is_nan() {
+                            sum[0] += velocity[0][at];
+                            sum[1] += velocity[1][at];
+                            sum[2] += 1.0;
+                            sum[5] += white[at];
+                            sum[6] += swirl[at];
+                        }
+                    }
                 }
             }
         }
         let mean = |total: f32, count: f32| {
-            if count > 0.0 { total / count } else { f32::NAN }
+            f16_bits(if count > 0.0 { total / count } else { f32::NAN })
         };
         Self {
             velocity: [
@@ -1657,13 +1669,14 @@ impl SteadySummary {
             return None;
         }
         let at = (z * SUMMARY_SIDE + x) as usize;
-        let velocity = [self.velocity[0][at], self.velocity[1][at]];
+        let velocity = [f16_value(self.velocity[0][at]), f16_value(self.velocity[1][at])];
+        let foam = f16_value(self.foam[at]);
         let flowing = !velocity[0].is_nan();
         Some(SteadySquare {
             velocity: flowing.then_some(velocity),
-            foam: (!self.foam[at].is_nan()).then_some(self.foam[at]),
-            white: flowing.then_some(self.white[at]),
-            swirl: flowing.then_some(self.swirl[at]),
+            foam: (!foam.is_nan()).then_some(foam),
+            white: flowing.then(|| f16_value(self.white[at])),
+            swirl: flowing.then(|| f16_value(self.swirl[at])),
         })
     }
 }
@@ -1678,17 +1691,17 @@ impl codec::Codec for SteadySummary {
             &self.white,
             &self.swirl,
         ] {
-            codec::put_grid(out, values, stride);
+            codec::put_wide_planes(out, values, stride);
         }
     }
 
     fn read(input: &mut Reader<'_>) -> Result<Self, codec::CodecError> {
         let stride = SUMMARY_SIDE as usize;
-        let x = codec::get_grid(input, stride)?;
-        let z = codec::get_grid(input, stride)?;
-        let foam = codec::get_grid(input, stride)?;
-        let white = codec::get_grid(input, stride)?;
-        let swirl = codec::get_grid(input, stride)?;
+        let x = codec::get_wide_planes(input, stride)?;
+        let z = codec::get_wide_planes(input, stride)?;
+        let foam = codec::get_wide_planes(input, stride)?;
+        let white = codec::get_wide_planes(input, stride)?;
+        let swirl = codec::get_wide_planes(input, stride)?;
         if [x.len(), z.len(), foam.len(), white.len(), swirl.len()] != [stride * stride; 5] {
             return Err(codec::CodecError("invalid settled water summary"));
         }
@@ -1699,6 +1712,54 @@ impl codec::Codec for SteadySummary {
             swirl,
         })
     }
+}
+
+/// The bits of the half float nearest `value` (ties to even), as a
+/// summary holds its values: NaN stays NaN, and finite values beyond the
+/// largest half float hold to it.
+fn f16_bits(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let biased = (bits >> 23) & 0xff;
+    let mantissa = bits & 0x7f_ffff;
+    if biased == 0xff {
+        // Infinite, or a quiet NaN.
+        return sign | 0x7c00 | if mantissa == 0 { 0 } else { 0x200 };
+    }
+    let exponent = biased as i32 - 127 + 15;
+    // The half's bits before rounding, the mantissa they come from and the
+    // bits of it rounding takes away: normal halves keep its top ten bits
+    // under their exponent; subnormal ones shift it, its implicit bit with
+    // it, into units of 2^-24.
+    let (kept, whole, shift) = if exponent > 0 {
+        (((exponent as u32) << 10) | (mantissa >> 13), mantissa, 13)
+    } else if exponent >= -10 {
+        let whole = mantissa | 0x80_0000;
+        let shift = (14 - exponent) as u32;
+        (whole >> shift, whole, shift)
+    } else {
+        return sign;
+    };
+    let rest = whole & ((1 << shift) - 1);
+    let halfway = 1 << (shift - 1);
+    // A carry out of the mantissa raises the exponent, as it should.
+    let rounded = kept + u32::from(rest > halfway || (rest == halfway && (kept & 1) == 1));
+    sign | rounded.min(0x7bff) as u16
+}
+
+/// The value of the half float whose bits are `bits` ([`f16_bits`]'s),
+/// exactly: NaN for NaN.
+fn f16_value(bits: u16) -> f32 {
+    let sign = u32::from(bits & 0x8000) << 16;
+    let exponent = u32::from((bits >> 10) & 0x1f);
+    let mantissa = u32::from(bits & 0x3ff);
+    let magnitude = match exponent {
+        // Subnormal: its mantissa counts 2^-24s.
+        0 => (f32::from(bits & 0x3ff) / 16_777_216.0).to_bits(),
+        0x1f => 0x7f80_0000 | (mantissa << 13),
+        _ => ((exponent + 112) << 23) | (mantissa << 13),
+    };
+    f32::from_bits(sign | magnitude)
 }
 
 /// Meters of half width the water of a sample its own water left dry packs
@@ -1758,6 +1819,31 @@ fn around(point: Vec2, spacing: f32) -> [(i64, i64, f32); 4] {
         (i0, j0 + 1, (1.0 - fu) * fv),
         (i0 + 1, j0 + 1, fu * fv),
     ]
+}
+
+/// The squares of a lattice `square` meters apart whose first lies half a
+/// step past the terrain's first corner that a sample at terrain-local
+/// `point`, `spacing` meters from its neighbors, averages over: those its
+/// tent covers, nearer it than its spacing along x and along z (than a
+/// square, where its spacing is finer), each one's indices and the share it
+/// blends in by, how near it lies along x times along z, rows first. A tent
+/// reaching a square either way covers the four squares around the point,
+/// blending them as [`around`] does.
+fn tent(point: Vec2, spacing: f32, square: f32) -> impl Iterator<Item = (i64, i64, f32)> {
+    // Squares the tent reaches either way.
+    let reach = max(spacing, square) / square;
+    let covered = move |at: f32| {
+        let first = (at - reach).floor() as i64 + 1;
+        let last = (at + reach).ceil() as i64 - 1;
+        (first..=last).filter_map(move |index| {
+            let near = 1.0 - (index as f32 - at).abs() / reach;
+            (near > 0.0).then_some((index, near))
+        })
+    };
+    let (u, v) = (point.x / square - 0.5, point.y / square - 0.5);
+    covered(v).flat_map(move |(j, along_z)| {
+        covered(u).map(move |(i, along_x)| (i, j, along_x * along_z))
+    })
 }
 
 /// The generalized minmod of `a`, `b` and `c`, as the shallow-water scheme
@@ -2051,13 +2137,16 @@ impl Tile {
     /// running, foaming, churning and breaking as settled water's summaries
     /// say ([`SteadySummary`]): each sample its own water reaches takes the
     /// mean velocity, foam, swirl and white water of the summaries' squares
-    /// around it, `squares` giving each by its place on the terrain's
-    /// lattice of squares (`None` where no summary holds it), blended by
-    /// their nearness, and its shear, where it plunges and the reach of its
-    /// bed ([`Tile::bed`]); still and clear where none of them holds water,
-    /// and as its own water ran where no summary holds the squares around
-    /// it. Its water's surface, lakes, width and falls' sheets stay its own;
-    /// `None` where it holds none.
+    /// under its footprint, `squares` giving each by its place on the
+    /// terrain's lattice of squares (`None` where no summary holds it),
+    /// weighted by a tent reaching its spacing either way (a square, the
+    /// four squares around it blended bilinearly, where its spacing is
+    /// finer), so each level holds the finer water averaged over its own
+    /// spacing; and its shear, where it plunges and the reach of its bed
+    /// ([`Tile::bed`]); still and clear where none of them holds water, and
+    /// as its own water ran where no summary holds any square under it. Its
+    /// water's surface, lakes, width and falls' sheets stay its own; `None`
+    /// where it holds none.
     #[must_use]
     pub fn flowing(
         &self,
@@ -2081,7 +2170,7 @@ impl Tile {
                 }
                 let point = origin + Vec2::new(x as f32 - 1.0, z as f32 - 1.0) * spacing;
                 let mut blend = Blend::NONE;
-                for (i, j, share) in around(point, square) {
+                for (i, j, share) in tent(point, spacing, square) {
                     let Some(found) = squares(i, j) else {
                         continue;
                     };
@@ -2195,7 +2284,8 @@ pub(crate) enum SettledReads {
 /// job's budget sizes, reading it back as its record holds it, then
 /// standing on it the water its reads give: a level-0 tile's from records
 /// of cells `cell` meters across ([`Tile::steadied`]), a coarser tile's from
-/// summaries ([`Tile::flowing`]).
+/// summaries, their squares on the terrain's lattice of them, each level-0
+/// tile holding [`SUMMARY_SIDE`] along each side ([`Tile::flowing`]).
 pub(crate) struct Steadying {
     pyramid: Pyramid,
     cell: f32,

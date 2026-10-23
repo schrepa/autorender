@@ -3,8 +3,14 @@
 // patch draws and morphs toward the parent level's as the ground does, so
 // the depth each pixel shades by is the tiles' own, their surface less
 // their ground on the triangles the ground is drawn on, and the shore falls
-// where the ground rises through the water. The waves' tiles
-// (`water_waves.wgsl`) tilt it where it stands still and their finest run
+// where the ground rises through the water. What its samples' words say of
+// the water (its flow, foam, white water and what stands in it) morphs with
+// it, so none of it changes where a patch meets one of the next level. Its
+// foam's lace and relief and the waves standing about what stands in it
+// hand over to their means as a pixel seen from the detail eye
+// (`detail_footprint`) comes to span their detail, while the pixel's own
+// derivatives filter them. The waves' tiles (`water_waves.wgsl`) tilt it
+// where it stands still and their finest run
 // with its flow where it moves, carried along in sets that start over
 // before its shear stretches them; running water's chop comes from its
 // current, the eddies it carries and short waves standing on its bed where
@@ -372,6 +378,41 @@ fn water_slope(block: u32, sample: vec2<u32>, center: f32, spacing: f32) -> vec2
             sample.y == last, center, spacing));
 }
 
+// What a sample's words say of its water: its flow along x and z (meters a
+// second), the foam it carries (0 none, WATER_FOAM_MOST the most), the half
+// width of its water (meters; lakes WATER_WIDTH_RANGE) and whether a fall's
+// sheet runs over it; how turbulent it runs, how strongly it breaks white
+// and its shear (a second); its reach's code (0 for none, else 1 plus
+// `engine_terrain::Reach`); and its nearest obstacle's word
+// (`water_obstacle`).
+struct WaterWords {
+    flow: vec2<f32>,
+    foam: f32,
+    width: f32,
+    sheet: bool,
+    state: vec3<f32>,
+    reach: u32,
+    obstacle: u32,
+}
+
+// The words of block `block`'s sample `sample`.
+fn water_words(block: u32, sample: vec2<u32>) -> WaterWords {
+    let texel = water_texel(block, sample);
+    let words = textureLoad(water_info, texel.xy, texel.z, 0);
+    let info = unpack4x8snorm(words.x);
+    let state = unpack4x8unorm(words.y);
+    var read: WaterWords;
+    read.flow = info.xy * WATER_FLOW_RANGE;
+    read.foam = abs(info.z) * WATER_FOAM_MOST;
+    read.width = select(saturate(info.w * 127.0 / 126.0) * WATER_WIDTH_RANGE, WATER_WIDTH_RANGE,
+        info.w > 0.996);
+    read.sheet = info.z < 0.0;
+    read.state = vec3<f32>(state.xy, state.z * WATER_SHEAR_RANGE);
+    read.reach = words.y >> 24u;
+    read.obstacle = words.z;
+    return read;
+}
+
 fn water_output(input: WaterPatchInput) -> WaterOutput {
     var record: PatchInput;
     record.vertex = input.vertex;
@@ -382,54 +423,68 @@ fn water_output(input: WaterPatchInput) -> WaterOutput {
     record.fade = input.fade;
     let ground = terrain_grid_vertex(record);
     // Its water at its sample and, morphing as the ground does, at its even
-    // neighbor's in the parent's block, or its own block without one.
-    // How fast its depth falls, from its samples' either side, morphing
-    // alike: smooth across the triangles, where the depth's own change
-    // between pixels is not.
+    // neighbor's in the parent's block, or its own block without one: its
+    // surface and depth, and what its words say. How fast its depth falls,
+    // from its samples' either side, morphing alike: smooth across the
+    // triangles, where the depth's own change between pixels is not.
     let spacing = input.shape.x;
+    let morph = ground.morph;
     let height_texel = vec2<u32>(input.atlas.z & 0xffffu, input.atlas.z >> 16u) + ground.grid + 1u;
     let fine = water_block_sample(input.water.x, ground.grid, ground.fine);
+    let fine_words = water_words(input.water.x, ground.grid);
     let fine_shoaling = water_shoaling(input.water.x, ground.grid, fine.y, input.atlas.x,
         height_texel, spacing);
     let even = ground.grid - ground.odd;
     var coarse = water_block_sample(input.water.x, even, ground.coarse);
+    var coarse_words = water_words(input.water.x, even);
     var coarse_shoaling = fine_shoaling;
     let fine_slope = water_slope(input.water.x, ground.grid, fine.x, spacing);
     var coarse_slope = fine_slope;
     if input.water.y != NO_WATER_BLOCK {
         let offset = vec2<u32>(input.water.z & 0xffffu, input.water.z >> 16u);
         coarse = water_block_sample(input.water.y, offset + even / 2u, ground.coarse);
+        coarse_words = water_words(input.water.y, offset + even / 2u);
         let parent_texel = vec2<u32>(input.atlas.w & 0xffffu, input.atlas.w >> 16u)
             + even / 2u + 1u;
         coarse_shoaling = water_shoaling(input.water.y, offset + even / 2u, coarse.y,
             input.atlas.y, parent_texel, 2.0 * spacing);
         coarse_slope = water_slope(input.water.y, offset + even / 2u, coarse.x, 2.0 * spacing);
     }
-    let water = fine * (1.0 - ground.morph) + coarse * ground.morph;
+    // Weights summing exactly, as the ground's: a fully morphed vertex holds
+    // its coarse sample's water to the bit, so a patch fully morphed at its
+    // range's end matches its coarser neighbor.
+    let kept = 1.0 - morph;
+    let water = fine * kept + coarse * morph;
     let surface = water.x;
-    let texel = water_texel(input.water.x, ground.grid);
-    let words = textureLoad(water_info, texel.xy, texel.z, 0);
-    let info = unpack4x8snorm(words.x);
     let relative = vec3<f32>(ground.vertex.relative.x, surface + terrain.anchor.y,
         ground.vertex.relative.z) + terrain_view.eye_offset.xyz;
     var output: WaterOutput;
     output.clip_position = terrain_view.relative_view_projection * vec4<f32>(relative, 1.0);
     output.relative = relative;
-    output.water = vec3<f32>(water.y, info.xy * WATER_FLOW_RANGE);
-    let width = select(saturate(info.w * 127.0 / 126.0) * WATER_WIDTH_RANGE, WATER_WIDTH_RANGE,
-        info.w > 0.996);
-    let foam = abs(info.z) * WATER_FOAM_MOST;
-    output.foam = vec3<f32>(min(foam, 1.0) * WATER_FOAM_STREAKED, width,
-        select(0.0, 1.0, info.z < 0.0));
-    output.shore = fine_shoaling * (1.0 - ground.morph) + coarse_shoaling * ground.morph;
-    output.slope = fine_slope * (1.0 - ground.morph) + coarse_slope * ground.morph;
+    // What changes by degrees blends with the morph; what names a kind (a
+    // fall's sheet over it, its reach, its nearest obstacle) is its coarse
+    // sample's once the morph passes a half.
+    let coarser = morph > 0.5;
+    output.water = vec3<f32>(water.y, fine_words.flow * kept + coarse_words.flow * morph);
+    let foam = fine_words.foam * kept + coarse_words.foam * morph;
+    output.foam = vec3<f32>(min(foam, 1.0) * WATER_FOAM_STREAKED,
+        fine_words.width * kept + coarse_words.width * morph,
+        select(0.0, 1.0, select(fine_words.sheet, coarse_words.sheet, coarser)));
+    output.shore = fine_shoaling * kept + coarse_shoaling * morph;
+    output.slope = fine_slope * kept + coarse_slope * morph;
     output.churned = foam;
-    // Its state, and its nearest obstacle, offset from where the vertex
-    // stands: morphing slides it off its sample toward its even neighbor.
-    let state = unpack4x8unorm(words.y);
-    output.state = vec4<f32>(state.xy, state.z * WATER_SHEAR_RANGE, 0.0);
-    output.obstacle = water_obstacle(words.z, vec2<f32>(ground.odd) * (ground.morph * spacing));
-    output.reach = words.y >> 24u;
+    output.state = vec4<f32>(fine_words.state * kept + coarse_words.state * morph, 0.0);
+    // Its nearest obstacle, offset from where the vertex stands: morphing
+    // slides the vertex off its sample toward its even neighbor, where the
+    // coarse sample stands; how strongly a drop or a jump lies just upstream
+    // blends.
+    let fine_obstacle = water_obstacle(fine_words.obstacle,
+        vec2<f32>(ground.odd) * (morph * spacing));
+    let coarse_obstacle = water_obstacle(coarse_words.obstacle,
+        vec2<f32>(ground.odd) * ((morph - 1.0) * spacing));
+    output.obstacle = vec4<f32>(select(fine_obstacle.xyz, coarse_obstacle.xyz, coarser),
+        fine_obstacle.w * kept + coarse_obstacle.w * morph);
+    output.reach = select(fine_words.reach, coarse_words.reach, coarser);
     return output;
 }
 
@@ -1150,8 +1205,9 @@ fn water_lace_beads(edge: WaterCellEdge, width: f32, blur: f32) -> f32 {
 // noise at two scales so they wander and curl, their bubbles larger over
 // clumps a few cells across, where they gather, and smaller between, the
 // chains parting here and there, the more the older it is, and finer
-// cells' smaller bubbles within them up close.
-fn water_lace_set(p: vec2<f32>, width: f32, blur: f32, worn: f32) -> f32 {
+// cells' smaller bubbles within them, as much as `finer` shows them (0 to
+// 1: up close).
+fn water_lace_set(p: vec2<f32>, width: f32, blur: f32, finer: f32, worn: f32) -> f32 {
     let curl = vec2<f32>(water_noise(p * 0.9).x, water_noise(p * 0.9 + vec2<f32>(5.3, 1.7)).x)
         - 0.5;
     let sway = vec2<f32>(water_noise(p * 0.3 + vec2<f32>(8.1, 2.2)).x,
@@ -1162,10 +1218,10 @@ fn water_lace_set(p: vec2<f32>, width: f32, blur: f32, worn: f32) -> f32 {
         water_noise(bent * 1.4 + vec2<f32>(4.4, 0.7)).x);
     let gathered = min(width * (0.2 + 1.6 * clumps * clumps) * (0.3 + 0.7 * parted), 0.4);
     var lace = water_lace_beads(water_cell_edge(bent), gathered, blur);
-    if blur < 0.25 {
+    if finer > 0.0 {
         let fine = water_lace_beads(water_cell_edge(bent * 3.0 + 7.1), gathered * 0.55,
             blur * 3.0);
-        lace = max(lace, fine * 0.7 * (1.0 - smoothstep(0.12, 0.25, blur)));
+        lace = max(lace, fine * 0.7 * finer);
     }
     return lace;
 }
@@ -1199,9 +1255,10 @@ fn water_foam_set(clock: f32, which: u32) -> WaterFoamSet {
 // back out as it dissolves; its bubbles up to `lining` cells across along
 // the waterline and, where the water carries foam, `plunge` of
 // WATER_PLUNGE_LACE: how wide (cells) it strings its bubbles, and its lace
-// for a pixel spanning `blur` cells where `drawn`.
+// for a pixel spanning `blur` cells, `finer` of its finer cells shown
+// (`water_lace_set`), where `drawn`.
 fn water_lapped_lace(which: u32, p: vec2<f32>, clock: f32, lining: f32, plunge: f32,
-        offshore: vec2<f32>, lapping: f32, blur: f32, drawn: bool) -> vec2<f32> {
+        offshore: vec2<f32>, lapping: f32, blur: f32, finer: f32, drawn: bool) -> vec2<f32> {
     let lived = water_foam_set(clock, which);
     let age = lived.age;
     let swept = 1.0 - abs(2.0 * age - 1.0);
@@ -1212,7 +1269,7 @@ fn water_lapped_lace(which: u32, p: vec2<f32>, clock: f32, lining: f32, plunge: 
         * (1.0 - smoothstep(0.18, 1.0, age)));
     var lace = 0.0;
     if drawn && width > 1.0e-3 {
-        lace = water_lace_set(at / WATER_LACE_CELL + lived.offset, width, blur, age);
+        lace = water_lace_set(at / WATER_LACE_CELL + lived.offset, width, blur, finer, age);
     }
     return vec2<f32>(width, lace);
 }
@@ -1225,9 +1282,10 @@ fn water_lapped_lace(which: u32, p: vec2<f32>, clock: f32, lining: f32, plunge: 
 // as it shows, so the sets' bubbles together are as large as the lace's
 // and stay sharp; and the smaller the more the flow has strained them. How
 // wide (cells) its bubbles string altogether, and its lace for a pixel
-// spanning `blur` cells where `drawn`.
+// spanning `blur` cells, `finer` of its finer cells shown
+// (`water_lace_set`), where `drawn`.
 fn water_carried_lace(p: vec2<f32>, current: vec2<f32>, shear: f32, time: f32, stagger: f32,
-        width: f32, blur: f32, drawn: bool) -> vec2<f32> {
+        width: f32, blur: f32, finer: f32, drawn: bool) -> vec2<f32> {
     let bands = water_bands(shear, WATER_FOAM_CYCLES);
     var covered = 0.0;
     var lace = 0.0;
@@ -1246,7 +1304,7 @@ fn water_carried_lace(p: vec2<f32>, current: vec2<f32>, shear: f32, time: f32, s
             if drawn && strung > 1.0e-3 {
                 let at = p - current * carried.seconds;
                 lace = max(lace, water_lace_set(at / WATER_LACE_CELL + carried.offset, strung,
-                    blur, carried.age));
+                    blur, finer, carried.age));
             }
         }
     }
@@ -1346,10 +1404,10 @@ fn water_breathing(p: vec2<f32>, flow: vec2<f32>, time: f32, stagger: f32) -> f3
 }
 
 // A standing wave's slopes `gradient` (meters a meter), its features
-// `width` meters across, as a pixel spanning `footprint` meters sees them:
-// whole where they span WATER_STANDING_PIXELS pixels, fading into the
-// roughness of what the pixel hides as they narrow below that (xy: the
-// slopes kept, z: the variance hidden).
+// `width` meters across, as a pixel spanning `footprint` meters seen from
+// the detail eye shows them: whole where they span WATER_STANDING_PIXELS
+// pixels, handing over to the roughness of what the pixel hides as they
+// narrow below that (xy: the slopes kept, z: the variance hidden).
 fn water_resolved(gradient: vec2<f32>, width: f32, footprint: f32) -> vec3<f32> {
     let kept = saturate(width / (WATER_STANDING_PIXELS * max(footprint, 1.0e-6)));
     return vec3<f32>(gradient * kept, dot(gradient, gradient) * (1.0 - kept * kept));
@@ -1359,12 +1417,13 @@ fn water_resolved(gradient: vec2<f32>, width: f32, footprint: f32) -> vec3<f32> 
 // (meters a second) at Froude number `froude`, about the obstacle nearest
 // it, `obstacle` (its offset from the point along x and z and its radius,
 // meters, and how strongly a drop or jump lies just upstream), rising
-// `breathing` of their height, for a pixel spanning `footprint` meters:
-// slopes of the surface fixed where the bed is, which the flow never
-// smears (xy, meters a meter), and the variance of those finer than the
-// pixel (z). A pillow heaps up just upstream of the obstacle, as wide as it
-// and as high as the water's velocity head U²/2g, or WATER_PILLOW.z of its
-// radius; in supercritical water, a front trails each side at the half
+// `breathing` of their height, for a pixel spanning `footprint` meters seen
+// from the detail eye (`water_resolved`): slopes of the surface fixed where
+// the bed is, which the flow never smears (xy, meters a meter), and the
+// variance of those finer than the pixel (z). A pillow heaps up just
+// upstream of the obstacle, as wide as it and as high as the water's
+// velocity head U²/2g, or WATER_PILLOW.z of its radius; in supercritical
+// water, a front trails each side at the half
 // angle asin(1/Fr) (30° at Froude 2), a narrow crest falling off
 // downstream; in slower water, waves stand in its wake 2πU²/g apart, the
 // length of the waves its current holds still; and below a drop or jump,
@@ -1934,19 +1993,21 @@ struct WaterFoam {
 // waves lies) of white water as strong as `white` and of foam the water
 // carries as strong as `carried` (0 to 1 each), where water flows along
 // `flow` (meters a second) shearing `shear` a second, changing by `dx` and
-// `dy` a pixel spanning `footprint` meters, at `time`, the place's clock
-// running `stagger` cycles ahead: a smooth amount thresholding a fine grain
-// (Uncharted 3's foam). The grain (`water_foam_grain`), with white water's
-// clumps churning in it and the patches carried foam drifts in, is carried
-// along with the flow in sets as ripples are, cycling within
-// WATER_FOAM_CYCLES, blended keeping its spread and faded as the flow
-// strains it, so streaks thin out rather than smear. Each kind covers the
-// water where its grain passes the threshold its amount sets, across an
-// edge that widens only as far as the pixel spans its bubbles, so its
-// edges follow the grain, never the triangles its amounts come from; past
-// it, foam heaps, white water thick and bright, carried foam thinner.
+// `dy` a pixel spanning `footprint` meters, `seen` meters seen from the
+// detail eye, at `time`, the place's clock running `stagger` cycles ahead:
+// a smooth amount thresholding a fine grain (Uncharted 3's foam). The grain
+// (`water_foam_grain`), with white water's clumps churning in it and the
+// patches carried foam drifts in, is carried along with the flow in sets
+// as ripples are, cycling within WATER_FOAM_CYCLES, blended keeping its
+// spread and faded as the flow strains it, so streaks thin out rather than
+// smear. Each kind covers the water where its grain passes the threshold
+// its amount sets, across an edge that widens only as far as the pixel
+// spans its bubbles, so its edges follow the grain, never the triangles its
+// amounts come from; past it, foam heaps, white water thick and bright,
+// carried foam thinner, its relief handing over to none as the pixel seen
+// from the detail eye comes to span its bubbles.
 fn water_foam(p: vec2<f32>, white: f32, carried: f32, flow: vec2<f32>, shear: f32, time: f32,
-        stagger: f32, dx: vec2<f32>, dy: vec2<f32>, footprint: f32) -> WaterFoam {
+        stagger: f32, dx: vec2<f32>, dy: vec2<f32>, footprint: f32, seen: f32) -> WaterFoam {
     let speed = length(flow);
     let heading = select(vec2<f32>(1.0, 0.0), flow / max(speed, 1.0e-6), speed > 1.0e-4);
     // The map's channels' means, as its last level holds them.
@@ -2004,9 +2065,10 @@ fn water_foam(p: vec2<f32>, white: f32, carried: f32, flow: vec2<f32>, shear: f3
     foam.cover = 1.0 - (1.0 - hiding.x) * (1.0 - hiding.y);
     foam.thin = 1.0 - dot(hiding, thick) / both;
     foam.hollow = 1.0 - dot(hiding, heaped) / both;
-    // Its relief, which fades as a pixel comes to span its bubbles.
+    // Its relief, which hands over to none as a pixel seen from the detail
+    // eye comes to span its bubbles.
     foam.height = WATER_FOAM_RELIEF * max(max(above.x, above.y * WATER_FOAM_AGED), 0.0)
-        * (1.0 - saturate(footprint / WATER_FOAM_BUBBLE));
+        * (1.0 - saturate(seen / WATER_FOAM_BUBBLE));
     return foam;
 }
 
@@ -2093,8 +2155,12 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     // How fast it runs, still to 2 m/s: running water raises no swell, and
     // its current's chop takes over from the wind's ripples.
     let running = saturate(speed * 0.5);
-    // How far the pixel spans on the water.
+    // How far the pixel spans on the water, which filters the patterns it
+    // shows of it; and how far it spans seen from the detail eye, facing as
+    // the water's surface falls, which those patterns hand over to their
+    // means by.
     let footprint = max(length(world_dx.xz), length(world_dy.xz));
+    let seen = detail_footprint(world, normalize(vec3<f32>(input.slope.x, 1.0, input.slope.y)));
     // Each place's patterns start over at their own times, so the flow
     // never pulses all at once (Vlachos's phase noise): the cycles its
     // clock runs ahead by.
@@ -2128,7 +2194,7 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     }
     var stationary = vec3<f32>(0.0);
     if anchored > 0.0 {
-        stationary = water_standing(input.obstacle, flow, depth, froude, breathing, footprint)
+        stationary = water_standing(input.obstacle, flow, depth, froude, breathing, seen)
             * anchored;
     }
     // Running water's current chops it: the eddies it carries, and short
@@ -2240,14 +2306,18 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     // current carries them along as it carries ripples, slower at the bank,
     // drawing them out along it; on still water each is a wave lapping the
     // shore, washing its lace in, as big as the gusts raise the waves there,
-    // and drawing it back out as it dissolves. Where the pixel spans most of
-    // its cells, its share of the surface instead. Lace is a single layer of
-    // bubbles: WATER_LACE_OPACITY of it hides the water.
+    // and drawing it back out as it dissolves. Its bubbles' edges soften by
+    // the cells the pixel spans; seen from the detail eye, its finer cells'
+    // smaller bubbles show up close only, and where the pixel spans most of
+    // its cells, its share of the surface shows instead. Lace is a single
+    // layer of bubbles: WATER_LACE_OPACITY of it hides the water.
     let flat = 1.0 - smoothstep(0.5, 1.0, steep);
     var lace = 0.0;
     if max(lining, plunge) * flat > 1.0e-3 {
         let blur = footprint / WATER_LACE_CELL;
-        let far = smoothstep(0.35, 0.9, blur);
+        let seen_cells = seen / WATER_LACE_CELL;
+        let far = smoothstep(0.35, 0.9, seen_cells);
+        let finer = 1.0 - smoothstep(0.12, 0.25, seen_cells);
         let lives = water_noise(world.xz / WATER_FOAM_STAGGER).x * WATER_FOAM_STAGGERED;
         let current = flow * mix(0.75, 1.0, smoothstep(0.0, 3.0 * shore_reach, from_shore));
         let lapping = clamp(gusts, 0.3, 1.3);
@@ -2255,14 +2325,14 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
         if flowing < 1.0 {
             for (var which = 0u; which < 2u; which++) {
                 let one = water_lapped_lace(which, ridden, time / WATER_FOAM_LAPPED + lives,
-                    lining, plunge, offshore, lapping, blur, far < 1.0);
+                    lining, plunge, offshore, lapping, blur, finer, far < 1.0);
                 lapped = vec2<f32>(lapped.x + one.x, max(lapped.y, one.y));
             }
         }
         var drifted = vec2<f32>(0.0);
         if flowing > 0.0 {
             drifted = water_carried_lace(ridden, current, shear, time, lives,
-                max(lining, WATER_PLUNGE_LACE * plunge), blur, far < 1.0);
+                max(lining, WATER_PLUNGE_LACE * plunge), blur, finer, far < 1.0);
         }
         let laced = mix(lapped, drifted, flowing);
         lace = mix(laced.y, min(laced.x * 2.2, 0.8) * WATER_LACE_FILL, far) * flat
@@ -2283,7 +2353,7 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     var drawn: WaterFoam;
     if max(white_amount, carried_amount) > WATER_FOAM_LEAST {
         drawn = water_foam(ridden, white_amount, carried_amount, flow, shear, time, stagger,
-            world_dx.xz, world_dy.xz, footprint);
+            world_dx.xz, world_dy.xz, footprint, seen);
     }
     // The share of the surface foam covers, lace and surface foam over each
     // other.
