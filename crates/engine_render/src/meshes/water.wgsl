@@ -776,11 +776,12 @@ fn water_body(aerated: f32) -> vec3<f32> {
 // The normal that mirrors the eye's view along `view` no lower than
 // WATER_HORIZON: `normal`, or, for slopes turned from the eye, the normal
 // mirroring the view just over the horizon instead. Seen from under the
-// water, `normal`.
-fn water_facing(normal: vec3<f32>, view: vec3<f32>) -> vec3<f32> {
+// water, below the plane its surface lies in (`plane`, its normal),
+// `normal`.
+fn water_facing(normal: vec3<f32>, view: vec3<f32>, plane: vec3<f32>) -> vec3<f32> {
     let mirrored = reflect(-view, normal);
     let across = length(mirrored.xz);
-    if view.y <= 0.0 || mirrored.y >= WATER_HORIZON || across < 1.0e-6 {
+    if dot(view, plane) <= 0.0 || mirrored.y >= WATER_HORIZON || across < 1.0e-6 {
         return normal;
     }
     let level = mirrored.xz / across * sqrt(1.0 - WATER_HORIZON * WATER_HORIZON);
@@ -798,36 +799,39 @@ fn water_phase(cosine: f32) -> f32 {
 
 // Light water's body scatters toward the eye along `view` per unit of its
 // color, before the surface lets it out: the sky's light into its level
-// surface, and the sun's `sunlight` refracted in and turned toward the eye,
-// the more the nearer the eye looks toward the sun. Seen from under the
-// water, the sky's alone.
-fn water_scattered(view: vec3<f32>, sunlight: vec3<f32>) -> vec3<f32> {
+// surface, and the sun's `sunlight` refracted in through the plane its
+// surface lies in (`plane`, its normal) and turned toward the eye, the more
+// the nearer the eye looks toward the sun. Seen from under the water, the
+// sky's alone.
+fn water_scattered(view: vec3<f32>, sunlight: vec3<f32>, plane: vec3<f32>) -> vec3<f32> {
     let up = vec3<f32>(0.0, 1.0, 0.0);
     let sky = sky_average(up) * lighting.zenith.w;
     let sun = lighting.sun.xyz;
-    if sun.y <= 0.0 || view.y <= 0.0 {
+    let sun_in = dot(sun, plane);
+    if sun_in <= 0.0 || dot(view, plane) <= 0.0 {
         return sky;
     }
-    let entering = refract(-sun, up, 1.0 / WATER_IOR);
-    let leaving = -refract(-view, up, 1.0 / WATER_IOR);
-    let into = 1.0 - fresnel(vec3<f32>(0.02), sun.y).r;
-    return sky + sunlight * (sun.y * into * water_phase(dot(entering, leaving)));
+    let entering = refract(-sun, plane, 1.0 / WATER_IOR);
+    let leaving = -refract(-view, plane, 1.0 / WATER_IOR);
+    let into = 1.0 - fresnel(vec3<f32>(0.02), sun_in).r;
+    return sky + sunlight * (sun_in * into * water_phase(dot(entering, leaving)));
 }
 
 // What the eye sees through water at its point `relative` (less the eye)
 // of normal `normal` along `view`, where the opaque surface behind its
-// pixel `pixel` stands at `ground` (less the eye): the opaque scene's color
-// where the view, bent into the water, meets it (graded, as the scene holds
-// it), and that surface less the eye. The bent view runs on to the depth of
-// the surface behind the pixel; what stands nearer than the water, or out
-// of it, shows unbent, as does everything seen from under the water.
+// pixel `pixel` stands at `ground` (less the eye), its surface lying in the
+// plane of normal `plane`: the opaque scene's color where the view, bent
+// into the water, meets it (graded, as the scene holds it), and that
+// surface less the eye. The bent view runs on as deep under that plane as
+// the surface behind the pixel lies; what stands nearer than the water, or
+// out of it, shows unbent, as does everything seen from under the water.
 struct WaterBehind {
     color: vec3<f32>,
     ground: vec3<f32>,
 }
 
 fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: vec2<f32>,
-        ground: vec3<f32>) -> WaterBehind {
+        ground: vec3<f32>, plane: vec3<f32>) -> WaterBehind {
     // Places in the view among the pixels of the frame's render size, which
     // the copies hold from their top-left corner.
     let size = camera.region.xy;
@@ -835,9 +839,10 @@ fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: 
     behind.ground = ground;
     var at = pixel;
     let bent = refract(-view, normal, 1.0 / WATER_IOR);
-    if view.y > 0.0 && bent.y < 0.0 {
-        let below = max(relative.y - ground.y, 0.0);
-        let reach = min(below / max(-bent.y, 0.1), WATER_REACH);
+    let sinking = -dot(bent, plane);
+    if dot(view, plane) > 0.0 && sinking > 0.0 {
+        let below = max(dot(relative - ground, plane), 0.0);
+        let reach = min(below / max(sinking, 0.1), WATER_REACH);
         let clip = camera.view_projection
             * vec4<f32>(relative + bent * reach + camera.position.xyz, 1.0);
         if clip.w > 1.0e-6 {
@@ -845,7 +850,8 @@ fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: 
             if all(moved >= vec2<f32>(0.0)) && all(moved < size)
                 && textureLoad(water_depth, vec2<i32>(moved), 0) > 0.0 {
                 let there = water_ground(moved);
-                if dot(there, there) > dot(relative, relative) && there.y < relative.y {
+                if dot(there, there) > dot(relative, relative)
+                    && dot(relative - there, plane) > 0.0 {
                     behind.ground = there;
                     at = moved;
                 }
@@ -859,17 +865,20 @@ fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: 
 
 // A water surface to light: its point less the eye and how it changes per
 // pixel; its waves' normal and the roughness of what a pixel spans of them;
-// the share of it foam covers; the color its body scatters back, and what
-// it keeps of each channel of the light on its way to what lies below and
-// back; light it adds of its own (the sea's crests lit through); and how
-// near the top of a crest of its chop it stands (0 to 1), where the light
-// its body scatters crosses less water on its way out.
+// the normal of the plane it lies in without them (up for the sea, tilted
+// as terrains' water falls), which the eye looks down onto and light
+// enters through; the share of it foam covers; the color its body scatters
+// back, and what it keeps of each channel of the light on its way to what
+// lies below and back; light it adds of its own (the sea's crests lit
+// through); and how near the top of a crest of its chop it stands (0 to
+// 1), where the light its body scatters crosses less water on its way out.
 struct WaterSurface {
     relative: vec3<f32>,
     world_dx: vec3<f32>,
     world_dy: vec3<f32>,
     normal: vec3<f32>,
     roughness: f32,
+    plane: vec3<f32>,
     // How the relief of the foam on it tilts the normal the foam is lit by
     // off the waves' (a surface gradient, meters a meter), how much its
     // hollows shade it, and how thin it lies, from heaped (0) to a single
@@ -905,7 +914,7 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     let distance = length(surface.relative);
     let view = stable_normalize(-surface.relative);
     let up = vec3<f32>(0.0, 1.0, 0.0);
-    let normal = water_facing(surface.normal, view);
+    let normal = water_facing(surface.normal, view, surface.plane);
     // Foam is rough where it heaps, and smoother where it lies thin and wet.
     let foam_roughness = mix(WATER_FOAM_ROUGH.y, WATER_FOAM_ROUGH.x, surface.foam_thin);
     let roughness = mix(surface.roughness, foam_roughness, surface.foam);
@@ -932,7 +941,7 @@ fn water_light(surface: WaterSurface) -> WaterLit {
                 * visibility(n_v, n_l, widened) * n_l * lighting.sun_color.w);
     }
     let body = surface.scatter * (vec3<f32>(1.0) - surface.transmit)
-        * water_scattered(view, sunlight) * (1.0 - reflectance)
+        * water_scattered(view, sunlight, surface.plane) * (1.0 - reflectance)
         * (1.0 + WATER_CREST_BODY * surface.crest);
     // Foam scatters the sun's light, as the waves it rides face it, and the
     // light around it: the sky's, of which water in its channel sees
@@ -2243,6 +2252,11 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     let roughness = water_roughness(waves.z * strength * strength + chop.waves.z
         + stationary.z);
     let view = stable_normalize(-input.relative);
+    // The plane its surface lies in without its waves, tilted as it falls:
+    // the eye looks down onto it, light enters through it and what lies
+    // behind the pixel stands under it, so water running down toward the eye
+    // from above its height shows as water below it does.
+    let plane = normalize(vec3<f32>(input.slope.x, 1.0, input.slope.y));
     // Under the sea, the sea's water stands instead.
     if water.ocean.y > 0.5 && input.relative.y < water.ocean.x {
         discard;
@@ -2255,12 +2269,13 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     behind.ground = own;
     behind.color = vec3<f32>(0.0);
     if refracts {
-        behind = water_behind(input.relative, normal, view, pixel, own);
+        behind = water_behind(input.relative, normal, view, pixel, own, plane);
     }
     // How far the water's surface stands over what stands in it behind the
-    // pixel, and how fast that changes across it; and the bed under the
-    // pixel, where the waves gather the sun's light.
-    let standing = max(input.relative.y - own.y, 0.0);
+    // pixel, the meters it lies under the surface's plane, and how fast that
+    // changes across it; and the bed under the pixel, where the waves gather
+    // the sun's light.
+    let standing = max(dot(input.relative - own, plane) / plane.y, 0.0);
     let standing_change = abs(dpdx(standing)) + abs(dpdy(standing));
     let bed = min(depth, standing);
     let gathered = water_caustics(input.relative, normal, bed);
@@ -2280,8 +2295,8 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     let steep = length(input.slope);
     let film = smoothstep(WATER_FILM.x, WATER_FILM.y, steep) * input.foam.z;
     let through = min(max(length(behind.ground - input.relative), 0.0),
-        depth / max(view.y, 0.1));
-    let down = clamp(input.relative.y - behind.ground.y, 0.0, through);
+        depth * plane.y / max(dot(view, plane), 0.1));
+    let down = clamp(dot(input.relative - behind.ground, plane) / plane.y, 0.0, through);
     // The water holds bubbles where white water is born in it and where it
     // carries the foam its flow churned up.
     let aerated = max(input.state.y, saturate(input.churned / WATER_FOAM_MOST));
@@ -2401,6 +2416,7 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     surface.world_dy = world_dy;
     surface.normal = normal;
     surface.roughness = roughness;
+    surface.plane = plane;
     surface.foam_tilt = foam_tilt;
     surface.foam_shade = WATER_FOAM_HOLLOW * drawn.hollow * drawn.cover / layers;
     surface.foam_thin = (drawn.thin * drawn.cover + lace) / layers;

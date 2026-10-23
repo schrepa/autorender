@@ -221,7 +221,8 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
         below = max(input.relative.y - own.y, 0.0);
         behind.ground = own;
         if refracts {
-            behind = water_behind(input.relative, normal, view, pixel, own);
+            behind = water_behind(input.relative, normal, view, pixel, own,
+                vec3<f32>(0.0, 1.0, 0.0));
         }
         through = max(length(behind.ground - input.relative), 0.0);
     }
@@ -255,6 +256,7 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     surface.world_dy = world_dy;
     surface.normal = normal;
     surface.roughness = roughness;
+    surface.plane = vec3<f32>(0.0, 1.0, 0.0);
     surface.foam = foam;
     surface.scatter = water.color.rgb;
     surface.transmit = transmit;
