@@ -3,6 +3,7 @@
 
 use engine::ErrorCode;
 use engine::collections::HashMap;
+use engine::host::TerrainDebug;
 
 use engine::prelude::*;
 use engine::scene::{SceneError, SceneFiles};
@@ -17,6 +18,13 @@ use crate::{
 /// the meters across the window it simulates (`Water::simulated`).
 const SIMULATE_WATER: ActionId = ActionId::new(1).expect("an action's index");
 const SIMULATED_WATER: f32 = 256.0;
+
+/// The action pinning every distance switch where the eye stands, or
+/// letting them follow it again (KeyL): each press freezes the detail eye
+/// at the camera's eye ([`TerrainDebug::freeze`]) or thaws it, so a ring
+/// where detail hands over can be walked away from and seen standing
+/// still.
+const FREEZE_DETAIL: ActionId = ActionId::new(2).expect("an action's index");
 
 /// The Stress Lab beside its engine.
 pub struct StressLab {
@@ -37,6 +45,8 @@ pub struct StressLab {
     authored: Option<AuthoredScene>,
     // Whether the key simulating water was held last frame.
     simulate_held: bool,
+    // Whether the key freezing the detail eye was held last frame.
+    freeze_held: bool,
 }
 
 impl StressLab {
@@ -70,6 +80,7 @@ impl StressLab {
             visibility_buffer: false,
             authored,
             simulate_held: false,
+            freeze_held: false,
         }
     }
 
@@ -245,7 +256,7 @@ impl StressLab {
 }
 
 impl Game for StressLab {
-    const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0), ("KeyJ", 1)];
+    const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0), ("KeyJ", 1), ("KeyL", 2)];
 
     fn before_frame(&mut self, engine: &mut Engine) {
         let world = engine.app.world_mut();
@@ -263,6 +274,22 @@ impl Game for StressLab {
             };
         }
         self.simulate_held = held;
+        // The detail eye frozen where the camera's eye stands, or following
+        // it again, each press.
+        let held = world.resource::<ActionInput>().pressed(FREEZE_DETAIL);
+        if held && !self.freeze_held {
+            let eye = world.resource::<Camera>().eye();
+            let mut debug = world
+                .get_resource::<TerrainDebug>()
+                .copied()
+                .unwrap_or_default();
+            debug.freeze = match debug.freeze {
+                Some(_) => None,
+                None => Some(eye),
+            };
+            world.insert_resource(debug);
+        }
+        self.freeze_held = held;
     }
 
     /// The workload's overview, or the authored scene's player back where

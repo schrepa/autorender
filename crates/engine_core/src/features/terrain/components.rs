@@ -479,14 +479,30 @@ impl Terrain {
     }
 }
 
-/// Temporary terrain state for development: an eye that
-/// streaming and level of detail follow instead of the camera's, so agents
-/// can look at the patches it selects from elsewhere. Absent, terrain
-/// follows the camera. What terrain is made of shows in the debug views
-/// (`crate::DebugView`).
+/// Temporary state for development: an eye that every distance switch
+/// follows instead of the camera's, the detail eye
+/// ([`crate::RenderSnapshot::detail_eye`]). Terrain streaming, its patches
+/// and shading levels, the ground's relief, ground cover and its canopy,
+/// placed objects' thinning, kept shadow windows, river water and virtual
+/// texture pages all stay where it stands, so agents can look at what it
+/// selects from elsewhere, and a ring where detail hands over can be walked
+/// away from and seen standing still. Absent, they follow the camera. What
+/// terrain is made of shows in the debug views (`crate::DebugView`).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct TerrainDebug {
+    /// The frozen eye (world space); `None` follows the camera.
     pub freeze: Option<Vec3>,
+}
+
+impl TerrainDebug {
+    /// `world`'s detail eye and whether it is frozen: the eye a
+    /// `TerrainDebug` holds, else the camera's.
+    pub(crate) fn detail_eye(world: &World) -> (Vec3, bool) {
+        match world.get_resource::<Self>().and_then(|debug| debug.freeze) {
+            Some(eye) => (eye, true),
+            None => (world.resource::<Camera>().eye(), false),
+        }
+    }
 }
 
 settings! {

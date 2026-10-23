@@ -1,11 +1,12 @@
 // Terrain, the vertex stage every terrain pass shares: patches of one shared
 // grid of 17 x 17 vertices and a skirt, displaced by the heights of their
 // tile's layer of the height atlas. Each vertex morphs toward the next coarser
-// level's vertex over the last quarter of its level's range (continuous
+// level's vertex over the last quarter of its level's range from the detail
+// eye, which streaming selected the patches around (continuous
 // distance-dependent level of detail): odd grid vertices slide onto their even
 // neighbors and heights blend into the coarser tile's, so a patch fully morphed
 // at its range's end matches its coarser neighbors exactly. Positions are
-// relative to the eye the terrain streamed for (camera-relative rendering):
+// relative to the terrain's eye, the camera's (camera-relative rendering):
 // integer sample counts from an anchor on every level's grid, times the
 // spacing, plus the anchor's offset from the eye. Skirts hang below patch edges
 // and fill gaps where a finer tile is not resident yet.
@@ -33,10 +34,13 @@ struct TerrainView {
 struct TerrainUniform {
     anchor: vec4<f32>,
     eye: vec4<f32>,
+    // The detail eye less its eye (xyz), which vertices morph by their
+    // distance from.
+    detail: vec4<f32>,
     origin: vec4<f32>,
     directory: vec4<u32>,
-    // The ground's relief: meters from the camera it shows
-    // within and the most steps its rays take.
+    // The ground's relief: the deepest any of its materials with maps
+    // sinks it (meters) and the most steps its rays take.
     relief: vec4<f32>,
     // Runtime deformation's map: its first texel (world
     // texel indices along x and z), and its texels and blocks along a side
@@ -140,8 +144,11 @@ fn terrain_grid_vertex(input: PatchInput) -> TerrainGridVertex {
     let base = vec2<f32>(input.first + vec2<i32>(grid));
     let unmorphed = vec3<f32>(base.x * spacing + terrain.anchor.x, fine + terrain.anchor.y,
         base.y * spacing + terrain.anchor.z);
-    let morph = max(clamp((length(unmorphed) - input.shape.y) / (input.shape.z - input.shape.y),
-        0.0, 1.0), input.fade);
+    // By its distance from the detail eye, which the patch was selected
+    // around.
+    let away = length(unmorphed - terrain.detail.xyz);
+    let morph = max(clamp((away - input.shape.y) / (input.shape.z - input.shape.y), 0.0, 1.0),
+        input.fade);
     let odd = grid & vec2<u32>(1u);
     let parent_texel = vec2<u32>(input.atlas.w & 0xffffu, input.atlas.w >> 16u)
         + (grid - odd) / 2u + 1u;

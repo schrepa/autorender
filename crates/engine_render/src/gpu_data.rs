@@ -23,8 +23,9 @@ pub(crate) use crate::gpu_layouts::scene::CameraUniform;
 
 impl CameraUniform {
     /// An unjittered camera at `position` without temporal history, at
-    /// presentation time `seconds`; frames give it their region
-    /// ([`Self::set_region`]).
+    /// presentation time `seconds`, whose distance switches measure from its
+    /// own eye; frames give it their region ([`Self::set_region`]) and their
+    /// detail eye ([`Self::set_detail`]).
     pub(crate) fn exact(view_projection: Mat4, position: glam::Vec3, seconds: f32) -> Self {
         let columns = view_projection.to_cols_array_2d();
         Self {
@@ -36,6 +37,7 @@ impl CameraUniform {
             options: [0.0; 4],
             wind: [0.0, 0.0, 0.0, seconds],
             region: [0.0; 4],
+            detail: position.extend(0.0).to_array(),
         }
     }
 
@@ -48,6 +50,15 @@ impl CameraUniform {
         self.options[1] = pixel_angle(view_projection, region.display.height);
         self.options[3] = region.mip_bias();
         self.region = region.uniform();
+    }
+
+    /// The frame's detail eye `eye`
+    /// ([`RenderSnapshot::detail_eye`](engine_core::RenderSnapshot::detail_eye)),
+    /// which every distance switch measures from, and whether it is
+    /// `frozen`: shaders then measure what a pixel spans from it as well
+    /// (`detail_footprint`).
+    pub(crate) fn set_detail(&mut self, eye: glam::Vec3, frozen: bool) {
+        self.detail = eye.extend(f32::from(u8::from(frozen))).to_array();
     }
 
     /// A reflection probe's cube face `size` texels a side seen from

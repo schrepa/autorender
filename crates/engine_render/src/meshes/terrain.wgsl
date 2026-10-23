@@ -1075,7 +1075,7 @@ fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGro
 }
 
 // One material's part in the ground's relief: the meters it
-// sinks the ground at most, already weighted and faded, and where its
+// sinks the ground at most, already weighted, and where its
 // maps' heights lie: as its maps lie there (from above, or across their
 // planes on steep ground), read with the point's change per pixel.
 struct TerrainReliefLayer {
@@ -1085,8 +1085,7 @@ struct TerrainReliefLayer {
     dy: vec3<f32>,
 }
 
-fn terrain_relief_layer(material: u32, weight: f32, fade: f32, site: TerrainSite)
-        -> TerrainReliefLayer {
+fn terrain_relief_layer(material: u32, weight: f32, site: TerrainSite) -> TerrainReliefLayer {
     var layer: TerrainReliefLayer;
     layer.depth = 0.0;
     if weight <= 0.0 || material == 0xffffffffu {
@@ -1100,8 +1099,7 @@ fn terrain_relief_layer(material: u32, weight: f32, fade: f32, site: TerrainSite
     layer.mapping = terrain_mapping(entry, site.geometric);
     layer.dx = site.world_dx;
     layer.dy = site.world_dy;
-    layer.depth = entry.relief.x * weight * fade
-        * terrain_map_detail(site.footprint, entry.params.x);
+    layer.depth = entry.relief.x * weight * terrain_map_detail(site.footprint, entry.params.x);
     return layer;
 }
 
@@ -1233,24 +1231,50 @@ fn terrain_sink(a: TerrainReliefLayer, b: TerrainReliefLayer, point: vec3<f32>, 
     return sink;
 }
 
-// Where a fragment's view ray meets the ground's relief:
-// within the relief distance, the ray marches down through the heights of
-// its two heaviest materials, from above or across their planes on steep
-// ground as their maps lie, each as deep as its relief
-// reaches and flattening toward the distance's end, and through the
-// tracks deformers pressed, from the top of their rims to
-// the bottom of the deepest; the ground shades from where the ray meets
-// them, sunk that deep.
+// The pixels on screen the relief's deepest point moves where the relief
+// shows whole, and where it has flattened away: a shift under half a
+// pixel cannot be seen.
+const TERRAIN_RELIEF_WHOLE: f32 = 2.0;
+const TERRAIN_RELIEF_GONE: f32 = 0.5;
+
+// How far across a ray along `way` (toward the ground) travels per meter
+// of depth into ground of normal `normal`, at most three meters, rays
+// meeting it at a cosine under 0.08 counting as at 0.08.
+fn terrain_relief_across(way: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let ray = way / max(length(way), 1.0e-6);
+    let travel = ray / max(-dot(ray, normal), 0.08);
+    return min(length(travel.xz), 3.0);
+}
+
+// Where a fragment's view ray meets the ground's relief: the ray marches
+// down through the heights of its two heaviest materials, from above or
+// across their planes on steep ground as their maps lie, each as deep as
+// its relief reaches, and through the tracks deformers pressed, from the
+// top of their rims to the bottom of the deepest; the ground shades from
+// where the ray meets them, sunk that deep. The relief shows by its size on
+// screen, seen from the detail eye, not by its distance: whole while its
+// deepest point moves TERRAIN_RELIEF_WHOLE pixels or more, flattening to
+// none by TERRAIN_RELIEF_GONE, with about a step per pixel it moves, so far
+// relief costs little and no ring follows the eye.
 fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainRelief {
     var relief: TerrainRelief;
     relief.world = site.world;
     relief.deform = 0.0;
-    let reach = terrain.relief.x;
     let to_point = site.world - camera.position.xyz;
-    let distance = length(to_point);
+    let ray = to_point / max(length(to_point), 1.0e-6);
+    // Depth runs into the ground along its normal; grazing rays, which
+    // would stretch the relief across the ground, see it flatten.
+    let into = -dot(ray, site.geometric);
+    let grazing = smoothstep(0.08, 0.35, into);
+    // The pixels a meter of depth moves the point on screen at most, seen
+    // from the detail eye.
+    let pixels = terrain_relief_across(site.world - camera.detail.xyz, site.geometric)
+        / detail_footprint(site.world, site.geometric);
     let tracked = terrain_deform_reach(site.world.xz);
-    let marching = reach > 0.0 && distance < reach;
-    if !marching && tracked < 5.0e-4 {
+    // Without tracks, ground whose deepest relief could not move half a
+    // pixel looks up no materials.
+    let shows = grazing > 0.0 && terrain.relief.x * pixels > TERRAIN_RELIEF_GONE;
+    if !shows && tracked < 5.0e-4 {
         return relief;
     }
     let blend = terrain_blend(site.world.xz - terrain.origin.xz, site.geometric, shading);
@@ -1264,7 +1288,7 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
         }
         relief.deform = deform;
     }
-    if !marching {
+    if grazing <= 0.0 {
         return relief;
     }
     // The two heaviest materials.
@@ -1280,23 +1304,25 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
             next = index;
         }
     }
-    // Depth runs into the ground along its normal; grazing rays, which
-    // would stretch the relief across the ground, see it flatten.
-    let ray = to_point / distance;
-    let into = -dot(ray, site.geometric);
-    let fade = (1.0 - smoothstep(0.6 * reach, reach, distance)) * smoothstep(0.08, 0.35, into);
-    let a = terrain_relief_layer(blend.ids[heaviest], weights[heaviest], fade, site);
-    let b = terrain_relief_layer(blend.ids[next], weights[next], fade, site);
+    var a = terrain_relief_layer(blend.ids[heaviest], weights[heaviest], site);
+    var b = terrain_relief_layer(blend.ids[next], weights[next], site);
     // Tracks as deep and rims as high as the map's nearby tracks reach and
     // the ground's materials let them.
-    let deform = select(0.0, relief.deform, fade > 0.0);
-    let sunk = min(tracked, deform) * fade;
-    let raised = min(tracked, 0.5 * deform) * fade;
-    let top = -raised;
-    let depth = a.depth + b.depth + sunk;
-    if depth - top < 0.002 {
+    let deform = relief.deform;
+    let sunk_whole = min(tracked, deform);
+    let raised_whole = min(tracked, 0.5 * deform);
+    // Its depth shows by how far its deepest point would move on screen.
+    let moved = (a.depth + b.depth + sunk_whole + raised_whole) * pixels;
+    let fade = smoothstep(TERRAIN_RELIEF_GONE, TERRAIN_RELIEF_WHOLE, moved) * grazing;
+    if fade <= 0.0 {
         return relief;
     }
+    a.depth *= fade;
+    b.depth *= fade;
+    let sunk = sunk_whole * fade;
+    let raised = raised_whole * fade;
+    let top = -raised;
+    let depth = a.depth + b.depth + sunk;
     // Down the ray a step of the relief's depth at a time, the ray's
     // travel across per meter of depth bounded; from above the rims, the
     // ray starting before the ground it meets.
@@ -1305,13 +1331,10 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
     let along = travel.xz * min(1.0, 3.0 / max(across, 1.0e-6));
     // The point's move per meter of depth.
     let march = vec3<f32>(along.x, travel.y, along.y);
-    // Relief whose deepest point would move under a pixel takes no march.
-    if (depth - top) * min(across, 3.0) < 0.75 * site.footprint {
-        return relief;
-    }
-    let base = mix(3.0, terrain.relief.y, fade);
-    // A step every two centimeters of tracks, up to twice the relief's.
-    let steps = max(u32(round(clamp((depth - top) / 0.02, base, 2.0 * terrain.relief.y))), 2u);
+    // About a step per pixel the relief moves, from two up to the most
+    // steps; a step every two centimeters of tracks, up to twice that.
+    let base = clamp((depth - top) * pixels, 2.0, terrain.relief.y);
+    let steps = max(u32(round(clamp((sunk + raised) / 0.02, base, 2.0 * terrain.relief.y))), 2u);
     var previous = top;
     var gap = top - terrain_sink(a, b, site.world + march * top, deform, fade);
     var hit = top;
