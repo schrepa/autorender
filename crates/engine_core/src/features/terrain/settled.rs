@@ -1362,8 +1362,9 @@ fn watering(state: &TerrainState, (watered, near): (&[TileKey], &[TileKey])) -> 
 /// What tile `key`'s water reads of `settled` (its tile's record being
 /// `tile`), over `pyramid`: a level-0 tile's, the records of itself and the
 /// tiles of `watered` around it, shared whole, its own here; a coarser
-/// tile's, the summaries of those under it and around it. Where one is
-/// still to come it waits; where none is here it reads nothing. Those of
+/// tile's, the summaries of those under it and around it as far as its
+/// samples' footprints reach ([`engine_terrain::Tile::flowing`]). Where one
+/// is still to come it waits; where none is here it reads nothing. Those of
 /// `near` (every one while its session cooks) are made where no host holds
 /// them, where a renderer `settles` water.
 fn wants(
@@ -1400,11 +1401,15 @@ fn wants(
             }
         }
     } else {
-        // The level-0 tiles under it and a tile around them.
+        // The level-0 tiles under it and as many around them as its samples'
+        // footprints reach: its border's samples average squares up to two
+        // of its spacings (`2 << up` level-0 quads) past its edges, a tile
+        // at least.
         let up = u32::from(key.level);
+        let around = (2_u32 << up).div_ceil(TILE_QUADS).max(1);
         let span = |at: u16, count: u32| {
-            let first = (u32::from(at) << up).saturating_sub(1);
-            let last = ((u32::from(at) + 1) << up).min(count - 1);
+            let first = (u32::from(at) << up).saturating_sub(around);
+            let last = (((u32::from(at) + 1) << up) + around - 1).min(count - 1);
             (first, last)
         };
         let (x0, x1) = span(key.x, columns);
