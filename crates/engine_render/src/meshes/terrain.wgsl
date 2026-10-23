@@ -335,6 +335,79 @@ fn terrain_pixel_shading(world: vec3<f32>) -> TerrainShadingLevel {
     return terrain_shading_level(detail_distance(world) * camera.options.y);
 }
 
+// Texels of a kept shadow level a sample of the ground it holds spans at
+// least (`gpu_layouts::constants::GROUND_TEXELS`).
+const KEPT_GROUND_TEXELS: f32 = 2.0;
+
+// The height above the terrain's origin of its ground at terrain-local
+// `local` on the triangles of `level`'s tiles, unmorphed, or of the nearest
+// coarser level's where its tile is not resident, as that level's patches
+// draw it whole; `found` false where no level holds it.
+struct TerrainLevelHeight {
+    height: f32,
+    found: bool,
+}
+
+fn terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight {
+    let base = terrain.directory.x;
+    let levels = terrain.directory.y;
+    var held: TerrainLevelHeight;
+    for (var index = level; index < levels; index++) {
+        let header = base + index * 4u;
+        let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
+        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
+        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        if layer == 0xffffffffu {
+            continue;
+        }
+        // Samples 0 to 256 within the tile, a texel past its border; the
+        // cell's triangles split from its (x, z+1) corner to its (x+1, z)
+        // one, as every consumer splits them.
+        let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
+        let corner = min(vec2<u32>(within), vec2<u32>(255u));
+        let f = within - vec2<f32>(corner);
+        let texel = corner + vec2<u32>(1u);
+        let h00 = terrain_load(layer, texel);
+        let h10 = terrain_load(layer, texel + vec2<u32>(1u, 0u));
+        let h01 = terrain_load(layer, texel + vec2<u32>(0u, 1u));
+        let h11 = terrain_load(layer, texel + vec2<u32>(1u, 1u));
+        held.found = true;
+        if f.x + f.y <= 1.0 {
+            held.height = h00 + f.x * (h10 - h00) + f.y * (h01 - h00);
+        } else {
+            held.height = h11 + (1.0 - f.x) * (h01 - h11) + (1.0 - f.y) * (h10 - h11);
+        }
+        return held;
+    }
+    return held;
+}
+
+// The meters each kept shadow level's ground stands above the ground's
+// point `world`, terrain-local `local` (`scene.wgsl`'s `kept_lift`): each
+// level holds the ground of the finest level whose samples span at least
+// KEPT_GROUND_TEXELS of its texels (`shadow_fit::ground_level`), drawn
+// whole, so the point looks the level up from its height on that ground,
+// where the level's ground meets itself whatever level draws it here.
+fn terrain_kept_lift(world: vec3<f32>, local: vec2<f32>) -> vec4<f32> {
+    var lift = vec4<f32>(0.0);
+    let count = min(u32(shadow.level_state.x), 4u);
+    let levels = terrain.directory.y;
+    for (var kept = 0u; kept < count; kept++) {
+        let texel = 2.0 * shadow.level_windows[kept].z;
+        var level = 0u;
+        while level + 1u < levels
+            && terrain.anchor.w * f32(1u << level) < KEPT_GROUND_TEXELS * texel {
+            level++;
+        }
+        let held = terrain_level_height(local, level);
+        if held.found {
+            lift[kept] = held.height + terrain.origin.y - world.y;
+        }
+    }
+    return lift;
+}
+
 // The normal of the terrain's smooth surface at terrain-local `local` at
 // `shading`'s levels, their gradients blended.
 fn terrain_surface_normal(local: vec2<f32>, shading: TerrainShadingLevel) -> vec3<f32> {
@@ -1588,6 +1661,9 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     let world = relative + camera.position.xyz;
     let local = world.xz - terrain.origin.xz;
     let geometric = site.geometric;
+    // The kept shadow levels' ground over this point, which it looks them
+    // up from.
+    kept_lift = terrain_kept_lift(world, local);
     // The runtime virtual texture's ground where its pages show, their
     // detail and macro colors baked in; computed here elsewhere and under
     // pages still fading in, its detail and macro colors applied.

@@ -602,8 +602,7 @@ impl TerrainPass {
         if !self.vt.baking() {
             return;
         }
-        let (Some(group), Some(heights)) = (self.pipelines.bake_group(), self.atlas.heights())
-        else {
+        let Some(group) = self.pipelines.bake_group() else {
             return;
         };
         let tables = &self.tables;
@@ -613,7 +612,6 @@ impl TerrainPass {
             shader,
             camera,
             (&self.pipelines.layout, group),
-            heights,
             &self.maps,
             |id| tables.uniform_of(id),
         );

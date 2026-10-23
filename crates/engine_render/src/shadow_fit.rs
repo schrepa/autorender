@@ -10,13 +10,13 @@
 )]
 
 use engine_core::{
-    RenderTerrains,
     glam::{Mat4, Vec3, Vec4},
     math,
-    terrain_data::{MORPH_START, Pyramid},
+    terrain_data::Pyramid,
 };
 
 use crate::gpu_data::{FAR_DEPTH, MAX_CASCADES, MAX_LEVELS, NEAR_DEPTH, frustum_uniform};
+use crate::gpu_layouts::constants::GROUND_TEXELS;
 pub(crate) use crate::gpu_layouts::constants::SHADOW_TILE_WORDS as TILE_WORDS;
 pub(crate) use crate::gpu_layouts::constants::SHADOW_TILES as TILES;
 
@@ -515,8 +515,6 @@ struct KeptLevel {
     // Light-space depth of the band's middle, and half its depth.
     depth: f32,
     half_depth: f32,
-    // How far the ground it holds casts away from the sun.
-    push: f32,
     // Slots whose texels do not hold their tiles' casters, which lookups
     // skip, and slots to redraw.
     invalid: DirtyTiles,
@@ -551,10 +549,6 @@ const SIDE: i32 = TILES as i32;
 /// tile it is centered for, and the eye stands anywhere in its tile.
 const WINDOW_LAG: f32 = 2.0;
 
-/// Texels of a kept level a sample of the ground it holds spans at least:
-/// finer samples draw detail its texels cannot hold.
-const GROUND_TEXELS: f32 = 2.0;
-
 impl KeptLevel {
     /// A level with its window's first corner at `origin` and its band
     /// around `depth`, holding nothing yet.
@@ -564,7 +558,6 @@ impl KeptLevel {
             origin,
             depth,
             half_depth,
-            push: 0.0,
             invalid: DirtyTiles::ALL,
             dirty: DirtyTiles::ALL,
         }
@@ -748,23 +741,6 @@ impl KeptLevels {
         })
     }
 
-    /// How far the ground level `index` holds casts away from the sun.
-    pub(crate) fn held_push(&self, index: usize) -> f32 {
-        self.levels.get(index).map_or(0.0, |level| level.push)
-    }
-
-    /// Moves the ground level `index` holds `push` away from the sun: a
-    /// level holding it moved otherwise redraws every tile, a region at a
-    /// time, its lookups reading what it holds meanwhile.
-    pub(crate) fn push_ground(&mut self, index: usize, push: f32) {
-        if let Some(level) = self.levels.get_mut(index)
-            && level.push != push
-        {
-            level.push = push;
-            level.dirty = DirtyTiles::ALL;
-        }
-    }
-
     /// Adds each level's slots the selection pass marked dirty.
     pub(crate) fn merge(&mut self, words: [[u32; TILE_WORDS]; MAX_LEVELS]) {
         for (level, words) in self.levels.iter_mut().zip(words) {
@@ -912,58 +888,6 @@ pub(crate) fn ground_level(pyramid: &Pyramid, texel: f32) -> u32 {
     (0..coarsest)
         .find(|&level| pyramid.spacing(level) >= GROUND_TEXELS * texel)
         .unwrap_or(coarsest)
-}
-
-/// The most a terrain's ground drawn at `level` may stand above the ground
-/// receivers draw within `reach` meters of the eye. Its levels draw up to
-/// `ranges` meters away (finest first), each but the coarsest morphing into
-/// the next past [`MORPH_START`] of its range, and each lies at most
-/// `errors` meters off the next coarser (zero until measured): receivers
-/// draw at any level from the finest to the coarsest drawn within the
-/// reach, or the one it morphs into there, and lie at most the errors of
-/// the levels between off `level`'s ground.
-pub(crate) fn ground_error(level: u32, reach: f32, (ranges, errors): (&[f32], &[f32])) -> f32 {
-    let last = ranges.len().saturating_sub(1);
-    let drawn = ranges
-        .iter()
-        .position(|&range| range >= reach)
-        .unwrap_or(last);
-    let morphs = drawn < last
-        && ranges
-            .get(drawn)
-            .is_some_and(|&range| range * MORPH_START < reach);
-    let coarsest = drawn + usize::from(morphs);
-    let between = |levels: std::ops::Range<usize>| -> f32 {
-        levels
-            .map(|at| errors.get(at).copied().unwrap_or(0.0))
-            .sum()
-    };
-    let level = level as usize;
-    math::max(between(0..level), between(level..coarsest))
-}
-
-/// How far `terrains`' ground casts into a kept level away from the sun of
-/// `basis`, the level's texels `texel` wide and its receivers within
-/// `reach` meters of the detail eye: as far along the sun as lowers flat
-/// ground by the most receivers' ground may lie below the ground the level
-/// holds ([`ground_error`]), the most over every terrain drawing, rounded
-/// up to a whole texel. No receiver then falls behind the ground cached for
-/// it, and the ground never shadows itself.
-pub(crate) fn ground_push(
-    terrains: &RenderTerrains,
-    basis: &LightBasis,
-    (texel, reach): (f32, f32),
-) -> f32 {
-    let below = terrains
-        .terrains
-        .iter()
-        .filter(|terrain| !terrain.patches.is_empty())
-        .map(|terrain| {
-            let level = ground_level(&terrain.pyramid, texel);
-            ground_error(level, reach, (&terrain.ranges[..], &terrain.errors[..]))
-        })
-        .fold(0.0, math::max);
-    (below / basis.sine() / texel).ceil() * texel
 }
 
 /// A near cascade's width against its reach: every receiver within its

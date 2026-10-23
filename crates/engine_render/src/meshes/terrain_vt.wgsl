@@ -243,8 +243,6 @@ struct TerrainVtBake {
     page: vec2<i32>,
 }
 @group(2) @binding(20) var<storage, read> terrain_vt_bakes: array<TerrainVtBake>;
-// Every resident tile's heights, which bakes read in their fragments.
-@group(2) @binding(21) var terrain_vt_heights: texture_2d_array<f32>;
 // Each textured terrain's pages its pixels want this frame, a bit each by
 // mip and table entry, read back for the pages to bake.
 @group(2) @binding(19) var<storage, read_write> terrain_vt_wanted: array<atomic<u32>>;
@@ -269,10 +267,10 @@ fn terrain_vt_height(local: vec2<f32>, finest: u32) -> f32 {
         let first = vec2<i32>(floor(at));
         let f = at - floor(at);
         let next = min(first + vec2<i32>(1), vec2<i32>(258));
-        let low = mix(textureLoad(terrain_vt_heights, first, layer, 0).x,
-            textureLoad(terrain_vt_heights, vec2<i32>(next.x, first.y), layer, 0).x, f.x);
-        let high = mix(textureLoad(terrain_vt_heights, vec2<i32>(first.x, next.y), layer, 0).x,
-            textureLoad(terrain_vt_heights, next, layer, 0).x, f.x);
+        let low = mix(textureLoad(terrain_heights, first, layer, 0).x,
+            textureLoad(terrain_heights, vec2<i32>(next.x, first.y), layer, 0).x, f.x);
+        let high = mix(textureLoad(terrain_heights, vec2<i32>(first.x, next.y), layer, 0).x,
+            textureLoad(terrain_heights, next, layer, 0).x, f.x);
         return mix(low, high, f.y);
     }
     return 0.0;

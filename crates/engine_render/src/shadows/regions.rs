@@ -45,14 +45,12 @@ pub(super) struct SelectionCounts<'a> {
 
 /// This frame's redraw of a kept level: which, its
 /// light-space rectangle and the region of its page, which its view maps
-/// onto the level's whole map, and how far the ground it holds casts away
-/// from the sun.
+/// onto the level's whole map.
 #[derive(Clone, Copy)]
 pub(super) struct LevelDraw {
     pub(super) refresh: LevelRefresh,
     pub(super) rect: [f32; 4],
     pub(super) page: MapRegion,
-    pub(super) push: f32,
 }
 
 pub(super) struct Regions {
@@ -117,7 +115,6 @@ impl Regions {
                 refresh,
                 rect,
                 page,
-                push: levels.held_push(refresh.level),
             }
         });
         self
@@ -131,16 +128,6 @@ impl Regions {
     /// World to clip space of this frame's kept-level redraw: its page's.
     pub(super) fn level_clip(&self) -> Option<engine_core::glam::Mat4> {
         self.level_draw.map(|draw| draw.page.clip(&self.basis))
-    }
-
-    /// World to clip space of the ground in this frame's kept-level redraw:
-    /// its page's, of points moved away from the sun as far as the level
-    /// pushes its ground.
-    pub(super) fn ground_clip(&self) -> Option<engine_core::glam::Mat4> {
-        self.level_draw.map(|draw| {
-            let away = self.basis.rows[2] * draw.push;
-            draw.page.clip(&self.basis) * engine_core::glam::Mat4::from_translation(away)
-        })
     }
 
     /// The near cascades in use, with the view depth each reaches.
@@ -189,15 +176,13 @@ impl Regions {
     }
 
     /// The maps' view matrices at their view offsets: each near cascade's,
-    /// then the far maps' at [`FAR_VIEW`], the redrawn kept level's page
-    /// at [`LEVEL_VIEW`] and its ground's after it (the far maps' without
-    /// one).
-    pub(super) fn view_matrices(&self) -> [f32; (MAX_CASCADES + 3) * VIEW_STRIDE as usize / 4] {
+    /// then the far maps' at [`FAR_VIEW`] and the redrawn kept level's page
+    /// at [`LEVEL_VIEW`] (the far maps' without one).
+    pub(super) fn view_matrices(&self) -> [f32; (MAX_CASCADES + 2) * VIEW_STRIDE as usize / 4] {
         let (near, far) = self.clips();
         let level = self.level_clip().unwrap_or(far);
-        let ground = self.ground_clip().unwrap_or(far);
-        let mut views = [0.0_f32; (MAX_CASCADES + 3) * VIEW_STRIDE as usize / 4];
-        for (index, clip) in near.iter().chain([&far, &level, &ground]).enumerate() {
+        let mut views = [0.0_f32; (MAX_CASCADES + 2) * VIEW_STRIDE as usize / 4];
+        for (index, clip) in near.iter().chain([&far, &level]).enumerate() {
             let start = index * VIEW_STRIDE as usize / 4;
             views[start..start + 16].copy_from_slice(&clip.to_cols_array());
         }

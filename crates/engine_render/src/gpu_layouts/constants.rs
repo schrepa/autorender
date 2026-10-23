@@ -105,6 +105,14 @@ gpu_consts! {
     /// Words of the dirty-tile mask, each holding two rows of tiles, as the
     /// selection pass marks them.
     pub(crate) const SHADOW_TILE_WORDS: usize = (SHADOW_TILES * SHADOW_TILES / 32) as usize => ["TILE_WORDS" in SHADOW_SHADER];
+    /// Texels of a kept level a sample of the ground it holds spans at
+    /// least: finer samples draw detail its texels cannot hold. The ground's
+    /// own fragments look each level up from that level's ground.
+    pub(crate) const GROUND_TEXELS: f32 = 2.0 => ["KEPT_GROUND_TEXELS" in SHADER];
+    /// Layers of the far maps' texture: the kept map's, then the moving
+    /// map's.
+    pub(crate) const FAR_KEPT: u32 = 0 => ["FAR_KEPT"];
+    pub(crate) const FAR_MOVING: u32 = 1 => ["FAR_MOVING"];
 
     // crate::shadows::selection
     // Dirty tiles of the kept map, then of each kept level, then

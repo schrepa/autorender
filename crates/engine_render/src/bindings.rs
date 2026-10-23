@@ -306,8 +306,9 @@ tables! {
             uniform_of(1, "lighting", size_of::<LightingUniform>(), VF),
             uniform_of(2, "shadow", size_of::<ShadowUniform>(), VF),
             texture(3, "near_shadows", Depth, D2Array, VF),
-            texture(4, "kept_shadows", Depth, D2, VF),
-            texture(5, "moving_shadows", Depth, D2, VF),
+            // The far maps, the kept one and the moving one, two layers of
+            // one texture.
+            texture(4, "far_shadows", Depth, D2Array, VF),
             sampler(6, "shadow_sampler", Comparison, F),
             // Receiver-plane lookups read four texels.
             sampler(7, "shadow_texels", NonFiltering, VF),
@@ -347,8 +348,7 @@ tables! {
             uniform_of(1, "lighting", size_of::<LightingUniform>(), F),
             uniform_of(2, "shadow", size_of::<ShadowUniform>(), F),
             texture(3, "near_shadows", Depth, D2Array, F),
-            texture(4, "kept_shadows", Depth, D2, F),
-            texture(5, "moving_shadows", Depth, D2, F),
+            texture(4, "far_shadows", Depth, D2Array, F),
             sampler(6, "shadow_sampler", Comparison, F),
             sampler(7, "shadow_texels", NonFiltering, F),
             texture(8, "kept_levels", Depth, D2Array, F),
@@ -743,11 +743,13 @@ tables! {
     /// Group 1 of terrain pipelines (`meshes/terrain_vertex.wgsl`):
     /// the height array, each view's eye-relative projection and each
     /// terrain's anchor and material, the uniforms at dynamic offsets.
+    /// Fragments read the heights too, where kept shadow levels hold the
+    /// ground at a level of their own.
     const TERRAIN: Table = Table {
         label: "engine/terrain-layout",
         serves: [SHADER @ 1, TERRAIN_SHADOW_SHADER @ 1],
         bindings: &[
-            texture(17, "terrain_heights", Unfilterable, D2Array, V),
+            texture(17, "terrain_heights", Unfilterable, D2Array, VF),
             dynamic_uniform(18, "terrain_view", size_of::<terrain::ViewUniform>(), VF),
             dynamic_uniform(
                 19,
@@ -792,15 +794,11 @@ tables! {
     };
 
     /// Group 2 of the runtime virtual texture's bakes: the
-    /// pages to bake, and every resident tile's heights, which the terrain
-    /// group gives vertex stages alone.
+    /// pages to bake; they read tiles' heights through the terrain group.
     const TERRAIN_VT_BAKE: Table = Table {
         label: "engine/terrain-vt-bake-layout",
         serves: [SHADER @ 2],
-        bindings: &[
-            read(20, "terrain_vt_bakes", VF),
-            texture(21, "terrain_vt_heights", Unfilterable, D2Array, F),
-        ],
+        bindings: &[read(20, "terrain_vt_bakes", VF)],
     };
 
     /// The runtime virtual texture's feedback, a compute pass

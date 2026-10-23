@@ -18,7 +18,7 @@ pub struct LodRanges {
 }
 
 /// Where morphing starts, as a share of a level's range.
-pub const MORPH_START: f32 = 0.75;
+const MORPH_START: f32 = 0.75;
 /// A morph range no vertex reaches: the coarsest level never morphs.
 pub const NO_MORPH: [f32; 2] = [1.0e30, 2.0e30];
 

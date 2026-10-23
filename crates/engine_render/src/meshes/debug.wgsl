@@ -149,8 +149,10 @@ fn debug_sun(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
     var moving = 1.0;
     var kept = 1.0;
     if inside {
-        moving = plane_visibility(textureGather(moving_shadows, shadow_texels, corner), point);
-        kept = plane_visibility(textureGather(kept_shadows, shadow_texels, corner), point);
+        moving = plane_visibility(textureGather(far_shadows, shadow_texels, corner, FAR_MOVING),
+            point);
+        kept = plane_visibility(textureGather(far_shadows, shadow_texels, corner, FAR_KEPT),
+            point);
     }
     if shadow.state.y == 0.0 {
         return debug_shadowed(DEBUG_SUN_MOVING, moving);

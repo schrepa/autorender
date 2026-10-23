@@ -1,12 +1,14 @@
 //! The shadow maps and what the main passes
 //! bind to look them up: the near cascades as layers of one texture, the
-//! moving and kept far maps, the kept levels as layers of another, the
+//! kept and moving far maps as layers of another, the kept levels as layers
+//! of a third, the
 //! lookup uniform and the samplers, with placeholders while shadows (or
 //! levels) are off; and the near cascades' caches, layers of a third,
 //! which their cascades are composed from.
 
 use crate::cached::{Bound, Versioned};
 use crate::gpu_data::ShadowUniform;
+use crate::gpu_layouts::constants::{FAR_KEPT, FAR_MOVING};
 
 use crate::pipelines::{sampler, view};
 
@@ -17,13 +19,16 @@ pub(super) struct MapTextures {
     pub(super) resolution: u32,
     cascades: u32,
     levels: u32,
-    // The near cascades as layers of one texture, the moving and kept far
-    // maps, and the kept levels as layers of another.
-    textures: [wgpu::Texture; 3],
+    // The near cascades as layers of one texture, the kept and moving far
+    // maps as the two layers of another, and the kept levels as layers of a
+    // third.
+    textures: [wgpu::Texture; 2],
     level_texture: Option<wgpu::Texture>,
     // The near cascades as one array (lookups) and each layer (drawing).
     near_array: wgpu::TextureView,
     pub(super) near_layers: Vec<wgpu::TextureView>,
+    // The far maps as one array (lookups) and each (drawing).
+    far_array: wgpu::TextureView,
     pub(super) moving: wgpu::TextureView,
     pub(super) kept: wgpu::TextureView,
     // The kept levels as one array (lookups) and each layer (drawing).
@@ -108,23 +113,22 @@ impl MapTextures {
         };
         let textures = [
             texture("engine/shadow-near", resolution / 2, cascades),
-            texture("engine/shadow-moving", resolution, 1),
-            texture("engine/shadow-kept", resolution, 1),
+            texture("engine/shadow-far", resolution, 2),
         ];
         let level_texture =
             (levels > 0).then(|| texture("engine/shadow-levels", resolution / 2, levels));
         let cache_texture =
             cached.then(|| texture("engine/shadow-near-caches", resolution / 2, cascades));
-        let moving = textures[1].create_view(&Default::default());
-        let kept = textures[2].create_view(&Default::default());
+        let far_layers = layer_views(&textures[1], 2);
         Self {
             resolution,
             cascades,
             levels,
             near_array: array_view(&textures[0]),
             near_layers: layer_views(&textures[0], cascades),
-            moving,
-            kept,
+            far_array: array_view(&textures[1]),
+            moving: far_layers[FAR_MOVING as usize].clone(),
+            kept: far_layers[FAR_KEPT as usize].clone(),
             level_array: level_texture.as_ref().map(array_view),
             level_layers: level_texture
                 .as_ref()
@@ -160,7 +164,6 @@ pub(super) struct ShadowMaps {
     // Reads the four texels around a receiver-plane lookup.
     texel_sampler: wgpu::Sampler,
     _placeholder: wgpu::Texture,
-    placeholder_view: wgpu::TextureView,
     placeholder_array: wgpu::TextureView,
 }
 
@@ -187,16 +190,16 @@ impl ShadowMaps {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
+        // Two layers, as the far maps' texture holds.
         let placeholder = crate::targets::texture_2d(
             device,
             "engine/shadow-placeholder",
             (1, 1),
-            1,
+            2,
             1,
             SHADOW_FORMAT,
             wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        let placeholder_view = placeholder.create_view(&Default::default());
         let placeholder_array = placeholder.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
@@ -208,7 +211,6 @@ impl ShadowMaps {
             sampler,
             texel_sampler,
             _placeholder: placeholder,
-            placeholder_view,
             placeholder_array,
         }
     }
@@ -219,21 +221,18 @@ impl ShadowMaps {
     }
 
     /// Bindings of the main passes' first group (`bindings::CAMERA`): the
-    /// lookup uniform, the near cascades, the kept and moving maps, the
-    /// comparison sampler, the texel sampler of receiver planes and the
-    /// kept levels.
-    pub(super) fn entries(&self) -> [(&'static str, Bound<'_>); 7] {
-        let (near, kept, moving, levels) = match &*self.textures {
+    /// lookup uniform, the near cascades, the far maps, the comparison
+    /// sampler, the texel sampler of receiver planes and the kept levels.
+    pub(super) fn entries(&self) -> [(&'static str, Bound<'_>); 6] {
+        let (near, far, levels) = match &*self.textures {
             Some(maps) => (
                 &maps.near_array,
-                &maps.kept,
-                &maps.moving,
+                &maps.far_array,
                 maps.level_array.as_ref().unwrap_or(&self.placeholder_array),
             ),
             None => (
                 &self.placeholder_array,
-                &self.placeholder_view,
-                &self.placeholder_view,
+                &self.placeholder_array,
                 &self.placeholder_array,
             ),
         };
@@ -241,8 +240,7 @@ impl ShadowMaps {
         [
             ("shadow", Bound::fixed(self.uniform.as_entire_binding())),
             ("near_shadows", map(near)),
-            ("kept_shadows", map(kept)),
-            ("moving_shadows", map(moving)),
+            ("far_shadows", map(far)),
             ("shadow_sampler", Bound::fixed(sampler(&self.sampler))),
             ("shadow_texels", Bound::fixed(sampler(&self.texel_sampler))),
             ("kept_levels", map(levels)),

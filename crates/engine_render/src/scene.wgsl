@@ -157,9 +157,11 @@ struct Shadow {
 @group(0) @binding(2) var<uniform> shadow: Shadow;
 // The near cascades, one layer each.
 @group(0) @binding(3) var near_shadows: texture_depth_2d_array;
-// The far map of still casters, and the one redrawn every frame.
-@group(0) @binding(4) var kept_shadows: texture_depth_2d;
-@group(0) @binding(5) var moving_shadows: texture_depth_2d;
+// The far maps, layers of one texture: the one of still casters
+// (FAR_KEPT) and the one redrawn every frame (FAR_MOVING).
+@group(0) @binding(4) var far_shadows: texture_depth_2d_array;
+const FAR_KEPT: u32 = 0u;
+const FAR_MOVING: u32 = 1u;
 @group(0) @binding(6) var shadow_sampler: sampler_comparison;
 // Unfiltered reads of four shadow texels, for receiver planes.
 @group(0) @binding(7) var shadow_texels: sampler;
@@ -659,12 +661,13 @@ fn far_visibility(world: vec3<f32>) -> f32 {
     // Where the kept map shadows, the moving one leaves the minimum at 0.
     var kept = 1.0;
     if shadow.state.y != 0.0 {
-        kept = textureSampleCompareLevel(kept_shadows, shadow_sampler, uv, clip.z);
+        kept = textureSampleCompareLevel(far_shadows, shadow_sampler, uv, FAR_KEPT, clip.z);
         if kept == 0.0 {
             return 0.0;
         }
     }
-    return min(textureSampleCompareLevel(moving_shadows, shadow_sampler, uv, clip.z), kept);
+    return min(textureSampleCompareLevel(far_shadows, shadow_sampler, uv, FAR_MOVING, clip.z),
+        kept);
 }
 
 // Receiver planes: a surface's lookup compares each of the
@@ -822,6 +825,14 @@ const LEVEL_BAND: f32 = 0.5;
 // reach.
 const CASCADE_HANDOVER: f32 = 0.3;
 
+// The meters each kept level's ground stands above the point a ground
+// fragment shades (`meshes/terrain.wgsl`'s `terrain_kept_lift`), which it
+// looks that level up from: a level holds the ground at a level of detail
+// its texels choose, whatever level the fragment's ground draws at, and the
+// ground's own fragments meet it on that ground, so it never shadows
+// itself. Zero for every other surface.
+var<private> kept_lift: vec4<f32>;
+
 // The four depths around `point` in kept level `level`, `size` texels a
 // side, in gather order. The map wraps: texels past one edge are those at
 // the other.
@@ -860,6 +871,8 @@ fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
     let light_normal = normal * axes;
     let light_dx = dx * axes;
     let light_dy = dy * axes;
+    // A meter up, in light space.
+    let up = vec3<f32>(axes[0].y, axes[1].y, axes[2].y);
     let size = shadow.level_state.y;
     let pending = u32(shadow.level_state.z);
     // A level whose texels are under half a pixel's footprint shows no more
@@ -880,7 +893,7 @@ fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         if weight <= 0.0 {
             continue;
         }
-        let at = light + light_normal * window.z;
+        let at = light + light_normal * window.z + up * kept_lift[level];
         let position = vec3<f32>(at.xy * scales.x, (at.z - scales.y) * scales.z);
         let local = position.xy - window.xy;
         let margin = 2.0 / size;
@@ -936,7 +949,8 @@ fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         if levels.y > 0.0 {
             var kept = 1.0;
             if inside {
-                kept = plane_visibility(textureGather(kept_shadows, shadow_texels, corner), point);
+                kept = plane_visibility(
+                    textureGather(far_shadows, shadow_texels, corner, FAR_KEPT), point);
             }
             still += levels.y * kept;
         }
@@ -946,7 +960,8 @@ fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
     }
     var moving = 1.0;
     if inside {
-        moving = plane_visibility(textureGather(moving_shadows, shadow_texels, corner), point);
+        moving = plane_visibility(textureGather(far_shadows, shadow_texels, corner, FAR_MOVING),
+            point);
     }
     if shadow.state.y == 0.0 {
         return moving;

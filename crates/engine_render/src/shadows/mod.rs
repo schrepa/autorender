@@ -24,11 +24,12 @@
 //! follows it a tile at a time, and a frame redraws the tiles one level
 //! uncovered, or a region of its dirty tiles. Terrain's ground casts there
 //! too, at a level of detail the level's texels choose rather than the
-//! camera's (`terrain::patches`), moved away from the sun as far as the
-//! ground receivers draw within the level's reach may lie below it, so a
-//! cached level never depends on where the eye stood when it was drawn;
-//! tiles of ground arriving, leaving or changing mark the tiles over them
-//! dirty. Lookups read the finest level holding a receiver within its
+//! camera's (`terrain::patches`), so a cached level never depends on where
+//! the eye stood when it was drawn; the ground's own pixels look the level
+//! up from their height on that level's ground (`meshes/terrain.wgsl`'s
+//! `terrain_kept_lift`), so the ground the level holds never shadows itself
+//! whatever level the ground draws at; tiles of ground arriving, leaving or
+//! changing mark the tiles over them dirty. Lookups read the finest level holding a receiver within its
 //! reach around the detail eye, handing over to the next across the reach's
 //! outer half and as its texels shrink under a pixel, then the kept map.
 //! Casters with virtual geometry are selected like the others; virtual
@@ -75,7 +76,7 @@ use crate::profiling::GpuProfiler;
 use crate::renderer::FramePoses;
 use crate::shadow_fit::{
     KeptLevels, KeptMap, LevelRefresh, LightBasis, NearCaches, REFRESH_TILES, Refresh, TileSpan,
-    ground_level, ground_push,
+    ground_level,
 };
 
 pub(crate) use crate::gpu_layouts::constants::KEPT_LEVELS;
@@ -100,14 +101,12 @@ use selection::Selection;
 use sky::{SkyDraw, SkyMaps};
 
 // Uniform offset alignment between view matrices: each near cascade's, the
-// far maps', the redrawn kept level's and its ground's, the redrawn sky
-// map's, then each near cache's pages', four each, and each cascade's
-// compose view.
+// far maps', the redrawn kept level's, the redrawn sky map's, then each
+// near cache's pages', four each, and each cascade's compose view.
 const VIEW_STRIDE: u64 = 256;
 const FAR_VIEW: u64 = MAX_CASCADES as u64 * VIEW_STRIDE;
 const LEVEL_VIEW: u64 = FAR_VIEW + VIEW_STRIDE;
-const GROUND_VIEW: u64 = LEVEL_VIEW + VIEW_STRIDE;
-const SKY_VIEW: u64 = GROUND_VIEW + VIEW_STRIDE;
+const SKY_VIEW: u64 = LEVEL_VIEW + VIEW_STRIDE;
 const PAGE_VIEW: u64 = SKY_VIEW + VIEW_STRIDE;
 const COMPOSE_VIEW: u64 = PAGE_VIEW + 4 * MAX_CASCADES as u64 * VIEW_STRIDE;
 const VIEWS_BYTES: u64 = COMPOSE_VIEW + MAX_CASCADES as u64 * VIEW_STRIDE;
@@ -448,9 +447,9 @@ impl ShadowPass {
     }
 
     /// Bindings of the main passes' first group (`bindings::CAMERA`): the
-    /// lookup uniform, the near cascades, the kept and moving maps, the
-    /// comparison sampler and the texel sampler of receiver planes.
-    pub(crate) fn entries(&self) -> [(&'static str, crate::cached::Bound<'_>); 7] {
+    /// lookup uniform, the near cascades, the far maps, the comparison
+    /// sampler, the texel sampler of receiver planes and the kept levels.
+    pub(crate) fn entries(&self) -> [(&'static str, crate::cached::Bound<'_>); 6] {
         self.maps.entries()
     }
 
@@ -697,16 +696,6 @@ impl ShadowPass {
             settings.level_extent,
         );
         self.place_near(basis, eye, &settings, snapshot.environment.wind.velocity);
-        // The ground casts into each kept level moved away from the sun as
-        // far as receivers within its reach may lie below it.
-        for index in 0..self.levels.len() {
-            let level = (
-                self.levels.texel(index, settings.resolution / 2),
-                self.levels.reach(index),
-            );
-            let push = ground_push(&snapshot.terrain, &basis, level);
-            self.levels.push_ground(index, push);
-        }
         let classify = source == Source::Presented;
         if classify
             && self
@@ -1263,22 +1252,10 @@ impl ShadowPass {
                 draws.set(draws.get() + 1);
             }
         };
-        // A map's casters through its view, which the pass binds, and the
-        // ground's through its own where the map holds the ground moved away
-        // from the sun: `views`, their offsets.
-        let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize, views: (u64, u64)| {
-            let (view, ground) = views;
+        let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
             for casters in CASTERS {
                 match casters {
-                    Casters::Terrain => {
-                        if ground != view {
-                            pass.set_bind_group(0, &pipelines.view_group, &[ground as u32]);
-                        }
-                        draws.set(draws.get() + terrain_draw(pass, map));
-                        if ground != view {
-                            pass.set_bind_group(0, &pipelines.view_group, &[view as u32]);
-                        }
-                    }
+                    Casters::Terrain => draws.set(draws.get() + terrain_draw(pass, map)),
                     Casters::Scatter => draws.set(
                         draws.get()
                             + scatter_draw(
@@ -1346,7 +1323,7 @@ impl ShadowPass {
                 pass.draw(0..3, map as u32..map as u32 + 1);
             }
             pass.set_bind_group(0, &pipelines.view_group, &[offset as u32]);
-            draw_selected(&mut pass, map, (offset, offset));
+            draw_selected(&mut pass, map);
         }
         if let Some(refresh) = frame.refresh {
             let whole = refresh == Refresh::Whole;
@@ -1372,12 +1349,11 @@ impl ShadowPass {
                 pass.draw(0..3, 0..1);
             }
             pass.set_bind_group(0, &pipelines.view_group, &[FAR_VIEW as u32]);
-            draw_selected(&mut pass, KEPT_MAP, (FAR_VIEW, FAR_VIEW));
+            draw_selected(&mut pass, KEPT_MAP);
         }
         // A region of a kept level: cleared, then its still
-        // casters drawn through its page's view, the ground through its own
-        // moving it away from the sun; GPU-presented frames alone redraw
-        // levels, and bind poses.
+        // casters and the ground drawn through its page's view; GPU-presented
+        // frames alone redraw levels, and bind poses.
         if let (Some(refresh), Some(pose_group)) = (frame.level_refresh, pose_group) {
             let mut pass = map_pass(
                 encoder,
@@ -1391,7 +1367,7 @@ impl ShadowPass {
             pass.set_bind_group(1, pose_group, &[]);
             pass.set_pipeline(&pipelines.clear);
             pass.draw(0..3, 0..1);
-            draw_selected(&mut pass, KEPT_LEVELS, (LEVEL_VIEW, GROUND_VIEW));
+            draw_selected(&mut pass, KEPT_LEVELS);
         }
         // Sky occlusion's map redrawn this frame: its still mesh casters
         // alone, neither terrain, placed objects nor virtual geometry.

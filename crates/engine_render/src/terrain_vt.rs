@@ -837,7 +837,6 @@ impl VirtualTexture {
         shader: &wgpu::ShaderModule,
         (camera_layout, camera_group): (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
         (terrain_layout, terrain_group): (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
-        heights: &wgpu::TextureView,
         maps: &crate::terrain_maps::TerrainMaps,
         uniform_of: impl Fn(u64) -> Option<u32>,
     ) {
@@ -875,10 +874,7 @@ impl VirtualTexture {
             "engine/terrain-vt-bake",
             &TERRAIN_VT_BAKE,
             &self.bake_layout,
-            &[
-                crate::buffers::entry("terrain_vt_bakes", &self.bakes.buffer),
-                ("terrain_vt_heights", crate::pipelines::view(heights)),
-            ],
+            &[crate::buffers::entry("terrain_vt_bakes", &self.bakes.buffer)],
         );
         let mut start = 0;
         while start < self.bakes.list.len() {

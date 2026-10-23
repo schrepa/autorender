@@ -84,8 +84,7 @@ pub use placement::{
 pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use rivers::{RIVER_STEP, Rivers};
 pub use select::{
-    LodRanges, MORPH_START, NO_MORPH, Patch, Selection, WantedTile, WantedView, select_patches,
-    wanted_tiles,
+    LodRanges, NO_MORPH, Patch, Selection, WantedTile, WantedView, select_patches, wanted_tiles,
 };
 pub use shading::TileShading;
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverSight};

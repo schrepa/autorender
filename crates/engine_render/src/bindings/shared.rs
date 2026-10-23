@@ -46,8 +46,7 @@ shared_groups! {
     SHADER @ 0 {
         frame: 0..2 [camera, lighting],
         shadows: 2..9 [
-            shadow, near_shadows, kept_shadows, moving_shadows, shadow_sampler, shadow_texels,
-            kept_levels
+            shadow, near_shadows, far_shadows, shadow_sampler, shadow_texels, kept_levels
         ],
         refraction: 9..11 [refraction_source, refraction_sampler],
         environment: 11..13 [environment_maps, environment_sampler],
@@ -91,7 +90,7 @@ shared_groups! {
         decals: 13..15 [decal_records, decal_depth],
         impostor_bakes: 15..17 [impostor_bake, impostor_shade],
         terrain: 18..19 [terrain_ids_texture],
-        virtual_texture: 19..22 [terrain_vt_wanted, terrain_vt_bakes, terrain_vt_heights],
+        virtual_texture: 19..21 [terrain_vt_wanted, terrain_vt_bakes],
         water: 22..24 [water_depth, water_scene],
     }
     SHADER @ 3 {
