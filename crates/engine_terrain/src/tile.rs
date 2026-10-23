@@ -15,7 +15,7 @@ use crate::surface::{BiomeRules, Control, RowInputs, RowScratch, SampleShape, sm
 use crate::tile_water::{TileWater, WaterPoint, WaterState};
 use crate::{
     HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placing, Pyramid, TILE_QUADS,
-    TILE_SAMPLES, TILE_STRIDE, TileKey,
+    TILE_SAMPLES, TILE_STRIDE, TileKey, TileShading,
 };
 
 mod beds;
@@ -63,8 +63,10 @@ pub(crate) fn river_meters(step: u16) -> f32 {
 /// by row along z, with their bounds, where a stamp cut them holes, and
 /// with a surface each sample's control value; each sample's meters to the
 /// nearest river's edge where rivers reach it, and the bed of the river
-/// holding it where it lies in one; and what culling knows of each of its
-/// patches, made with it.
+/// holding it where it lies in one; what culling knows of each of its
+/// patches, made with it; and for a terrain's tiles of level 1 and coarser,
+/// once it arrived, the shading they take from a record of their own, level
+/// 0's averaged.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tile {
     key: TileKey,
@@ -78,6 +80,7 @@ pub struct Tile {
     placing: Option<Placing>,
     // The water standing on it, the world's one water there.
     water: Option<TileWater>,
+    shading: Option<Arc<TileShading>>,
     bounds: [f32; 2],
     patch_bounds: Box<[[f32; 2]]>,
     patch_holes: [u64; 4],
@@ -162,6 +165,7 @@ impl Tile {
             placed: None,
             placing: None,
             water: None,
+            shading: None,
             bounds: [0.0; 2],
             patch_bounds: vec![[0.0; 2]; (PATCHES_PER_TILE * PATCHES_PER_TILE) as usize]
                 .into_boxed_slice(),
@@ -305,8 +309,8 @@ impl Tile {
 
     /// The tile holding `water` in place of its own: water made over its
     /// samples as its record holds them, as a job of its settled water
-    /// makes it ([`Tile::steadied`], [`Tile::flowing`]). Its ground and
-    /// objects stay as they are.
+    /// makes it ([`Tile::steadied`], [`Tile::flowing`]). Its ground,
+    /// objects and shading stay as they are.
     #[must_use]
     pub fn holding(&self, water: Option<TileWater>) -> Self {
         Self {
@@ -320,10 +324,28 @@ impl Tile {
             placed: self.placed.clone(),
             placing: self.placing,
             water,
+            shading: self.shading.clone(),
             bounds: self.bounds,
             patch_bounds: self.patch_bounds.clone(),
             patch_holes: self.patch_holes,
             patch_culling: self.patch_culling.clone(),
+        }
+    }
+
+    /// The shading the tile shades with, once its record arrived: level 0's
+    /// averaged, which a terrain's tiles of level 1 and coarser take from
+    /// it ([`TileShading::shades`]); `None` before, and for other tiles.
+    pub fn shading(&self) -> Option<&Arc<TileShading>> {
+        self.shading.as_ref()
+    }
+
+    /// The tile shading with `shading` in place of what it held, as its
+    /// record arrives. Its ground, water and objects stay as they are.
+    #[must_use]
+    pub fn shaded(&self, shading: Option<Arc<TileShading>>) -> Self {
+        Self {
+            shading,
+            ..self.clone()
         }
     }
 
@@ -337,7 +359,8 @@ impl Tile {
     }
 
     /// Every sample's packed control value, the border included, row by
-    /// row: the layout GPU tiles upload. `None` without a surface.
+    /// row: the layout GPU tiles upload. `None` without a surface, and for
+    /// tiles the GPU or their shading gives theirs.
     pub fn control(&self) -> Option<&[u32]> {
         self.control.as_deref()
     }
@@ -687,11 +710,9 @@ pub struct Generator {
     lanes: Box<[Vec4]>,
     min: Vec2,
     max: Vec2,
-    // The surface whose control values the tile gets, their samples, and
-    // scratch space for one sample's material weights.
+    // The surface whose control values the tile gets, and their samples.
     surface: Option<Arc<BiomeRules>>,
     control: Option<Box<[u32]>>,
-    weights: Vec<(u8, f32)>,
     // The finished tile while its objects are placed, a row
     // of candidate squares at a time, and the objects placed so far.
     tile: Option<Tile>,
@@ -707,14 +728,15 @@ pub struct Generator {
     zs: Box<[f32]>,
     inputs: SurfaceInputs,
     places: crate::placement::PlaceScratch,
-    // Whether it gives its tile control values; the GPU gives them where
-    // not.
+    // Whether it gives its tile control values; the GPU, or its shading,
+    // gives them where not.
     materials: bool,
 }
 
-/// A row's inputs to a surface's masks, reused row after row.
+/// A row's inputs to a surface's masks, and scratch space for evaluating
+/// them and for one sample's material weights, reused row after row.
 #[derive(Default)]
-struct SurfaceInputs {
+pub(crate) struct SurfaceInputs {
     zs: Vec<f32>,
     height: Vec<f32>,
     gradient: Vec<f32>,
@@ -722,6 +744,7 @@ struct SurfaceInputs {
     water: Vec<HydrologySample>,
     path: Vec<PathSample>,
     scratch: RowScratch,
+    weights: Vec<(u8, f32)>,
 }
 
 impl SurfaceInputs {
@@ -733,6 +756,76 @@ impl SurfaceInputs {
         self.water.clear();
         self.path.clear();
     }
+}
+
+/// The control values `rules` over `layers` give a tile's stored row `row`
+/// (0 to 258, samples -1 to 257) at its stored `columns`, into `out`, one a
+/// column: from the smooth surface through the tile's stored `heights`
+/// around each sample ([`SampleShape`]), border samples reading their
+/// nearest neighbors inside, and from each sample's meters to the nearest
+/// river's edge and its bed the tile holds (`rivers`, its edges' steps and
+/// its beds' planes); `xs` holds each stored column's x and `z` is the
+/// row's, in the layers' frame, its samples `spacing` meters apart. What the
+/// rules give a tile's samples on the CPU, for generators to give their
+/// tiles and for tiles' shading to average.
+pub(crate) fn control_row(
+    (rules, layers): (&BiomeRules, &Layers),
+    (heights, rivers): (&[f32], (Option<&[u16]>, Option<&[u16]>)),
+    (xs, z, spacing): (&[f32], f32, f32),
+    (row, columns): (usize, Range<usize>),
+    (out, inputs): (&mut [u32], &mut SurfaceInputs),
+) {
+    let stride = TILE_STRIDE as usize;
+    // Inputs the masks never read are left unread.
+    let reads = rules.reads();
+    let (up, down) = (row.saturating_sub(1), (row + 1).min(stride - 1));
+    // The row's inputs, then its control values all at once.
+    inputs.clear(columns.len());
+    for column in columns.clone() {
+        let held = RiverInputs::held(rivers, row * stride + column);
+        let (left, right) = (column.saturating_sub(1), (column + 1).min(stride - 1));
+        let at = |r: usize, c: usize| heights[r * stride + c];
+        let height = at(row, column);
+        let shape = SampleShape::of(
+            [up, row, down].map(|r| [left, column, right].map(|c| at(r, c))),
+            spacing,
+        );
+        let x = xs[column];
+        // Surroundings lose the masks of the bakes and
+        // roads they fade out.
+        let shown = layers.shown(x, z);
+        let water = match layers.hydrology() {
+            Some(water) if shown > 0.0 && reads.water => held.with_maps(water, [x, z], spacing),
+            _ => HydrologySample::default(),
+        };
+        inputs.height.push(height);
+        inputs.gradient.push(shape.slope());
+        inputs.curvature.push(shape.curvature);
+        inputs.water.push(HydrologySample {
+            flow: water.flow * shown,
+            wetness: water.wetness * shown,
+            lake: water.lake * shown,
+            ..water
+        });
+        inputs.path.push(if shown > 0.0 && reads.path {
+            layers.path_at(x, z)
+        } else {
+            PathSample::FAR
+        });
+    }
+    inputs.zs.clear();
+    inputs.zs.resize(columns.len(), z);
+    let row_inputs = RowInputs {
+        xs: &xs[columns],
+        zs: &inputs.zs,
+        spacing,
+        height: &inputs.height,
+        gradient: &inputs.gradient,
+        curvature: &inputs.curvature,
+        water: &inputs.water,
+        path: &inputs.path,
+    };
+    rules.control_row(&row_inputs, out, (&mut inputs.scratch, &mut inputs.weights));
 }
 
 impl Generator {
@@ -791,7 +884,6 @@ impl Generator {
             max,
             surface: None,
             control: None,
-            weights: Vec::new(),
             tile: None,
             placed: Vec::new(),
             rasters: Vec::new(),
@@ -806,9 +898,10 @@ impl Generator {
         }
     }
 
-    /// The generator leaving its tile without control values,
-    /// which the GPU gives to rendering and the rules to gameplay at
-    /// the samples it asks for; it still places objects.
+    /// The generator leaving its tile without control values (where
+    /// `materials` is false), which the GPU, or the tile's shading, gives to
+    /// rendering and the rules to gameplay at the samples it asks for; it
+    /// still places objects.
     #[must_use]
     pub fn with_materials(mut self, materials: bool) -> Self {
         self.materials = materials;
@@ -853,77 +946,30 @@ impl Generator {
         }
     }
 
-    /// Control values of stored row `row` (0 to 258, samples -1 to 257),
-    /// from the smooth surface through the heights around each sample
-    /// ([`SampleShape`]); border samples read their nearest neighbors
-    /// inside.
+    /// Control values of stored row `row` (0 to 258, samples -1 to 257), as
+    /// the rules give a tile's samples ([`control_row`]), each sample's
+    /// meters to the nearest river's edge and its bed those the tile keeps.
     fn surface_row(&mut self, row: usize) {
         let stride = TILE_STRIDE as usize;
         let Some(surface) = self.surface.clone() else {
             return;
         };
-        // Inputs the masks never read are left unread; each sample's meters
-        // to the nearest river's edge and its bed are those the tile keeps.
-        let reads = surface.reads();
-        let rivers = (self.river_edges.as_deref(), self.river_beds.as_deref());
         let control = self
             .control
             .get_or_insert_with(|| vec![0; stride * stride].into_boxed_slice());
-        let spacing = self.spacing;
-        let heights = &self.heights;
-        let (up, down) = (row.saturating_sub(1), (row + 1).min(stride - 1));
-        let z = (self.first[1] + row as i64 - 1) as f32 * spacing;
-        // The row's inputs, then its control values all at once.
-        let inputs = &mut self.inputs;
-        inputs.clear(stride);
-        for column in 0..stride {
-            let held = RiverInputs::held(rivers, row * stride + column);
-            let (left, right) = (column.saturating_sub(1), (column + 1).min(stride - 1));
-            let at = |r: usize, c: usize| heights[r * stride + c];
-            let height = at(row, column);
-            let shape = SampleShape::of(
-                [up, row, down].map(|r| [left, column, right].map(|c| at(r, c))),
-                spacing,
-            );
-            let x = self.xs[column];
-            // Surroundings lose the masks of the bakes and
-            // roads they fade out.
-            let shown = self.layers.shown(x, z);
-            let water = match self.layers.hydrology() {
-                Some(water) if shown > 0.0 && reads.water => held.with_maps(water, [x, z], spacing),
-                _ => HydrologySample::default(),
-            };
-            inputs.height.push(height);
-            inputs.gradient.push(shape.slope());
-            inputs.curvature.push(shape.curvature);
-            inputs.water.push(HydrologySample {
-                flow: water.flow * shown,
-                wetness: water.wetness * shown,
-                lake: water.lake * shown,
-                ..water
-            });
-            inputs.path.push(if shown > 0.0 && reads.path {
-                self.layers.path_at(x, z)
-            } else {
-                PathSample::FAR
-            });
-        }
-        inputs.zs.clear();
-        inputs.zs.resize(stride, z);
-        let row_inputs = RowInputs {
-            xs: &self.xs,
-            zs: &inputs.zs,
-            spacing,
-            height: &inputs.height,
-            gradient: &inputs.gradient,
-            curvature: &inputs.curvature,
-            water: &inputs.water,
-            path: &inputs.path,
-        };
-        surface.control_row(
-            &row_inputs,
-            &mut control[row * stride..(row + 1) * stride],
-            (&mut inputs.scratch, &mut self.weights),
+        let z = (self.first[1] + row as i64 - 1) as f32 * self.spacing;
+        control_row(
+            (&surface, &self.layers),
+            (
+                &self.heights,
+                (self.river_edges.as_deref(), self.river_beds.as_deref()),
+            ),
+            (&self.xs, z, self.spacing),
+            (row, 0..stride),
+            (
+                &mut control[row * stride..(row + 1) * stride],
+                &mut self.inputs,
+            ),
         );
     }
 
@@ -1323,7 +1369,8 @@ impl Layers {
 /// A tile's key, spacing, samples, holes, control values, meters to
 /// rivers' edges and their beds, placed objects and which of them, and its
 /// water as its own record holds it ([`TileWater`]'s); reading rebuilds its
-/// bounds as [`Tile::new`] does.
+/// bounds as [`Tile::new`] does. Its shading is a record of its own
+/// ([`TileShading`]), which a tile read back holds none of.
 /// Tiles travel with their heights and water surfaces at their nearest
 /// steps of the height grid ([`crate::codec::HEIGHT_STEP`]): a tile read
 /// back is the record every host shows.

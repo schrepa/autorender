@@ -6,7 +6,7 @@
 use engine_sources::Set;
 
 /// Each kind of terrain record and the modules making it.
-const SETS: [(&str, &[&str]); 7] = [
+const SETS: [(&str, &[&str]); 8] = [
     ("TILES", &["tile"]),
     ("BAKES", &["bake"]),
     ("PORTALS", &["nav"]),
@@ -14,6 +14,7 @@ const SETS: [(&str, &[&str]); 7] = [
     ("BOUNCE", &["bounce"]),
     ("MACRO", &["macro_colors"]),
     ("WATER", &["steady_water", "shallow_water"]),
+    ("SHADING", &["shading"]),
 ];
 
 fn main() {

@@ -2,7 +2,8 @@
 //! builds with debug assertions:
 //!
 //! - T1 slots: every resident tile's slot holds that tile, and only
-//!   resident tiles have arrival or surface times;
+//!   resident tiles have arrival or surface times or shade with their
+//!   shading;
 //! - T2 layers: each layer holds at most one tile, every layer handed out
 //!   is resident or free, never both, and none lies past the arrays;
 //! - T3 holes: each tile with hole bits has its own run of them past the
@@ -47,10 +48,11 @@ impl TerrainPass {
             atlas.held.len(),
             atlas.slots.len()
         );
-        for key in atlas.arrivals.keys().chain(atlas.surfaced.keys()) {
+        let timed = atlas.arrivals.keys().chain(atlas.surfaced.keys());
+        for key in timed.chain(atlas.shaded.iter()) {
             debug_assert!(
                 atlas.slots.contains_key(key),
-                "T1: {key:?} has a time but no slot"
+                "T1: {key:?} has a time or its shading but no slot"
             );
         }
         // T2 layers.

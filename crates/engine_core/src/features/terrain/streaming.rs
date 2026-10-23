@@ -381,19 +381,25 @@ impl Terrains {
             stats.cached_bytes += state.store.cached_bytes();
             stats.prefetching_tiles += state.prefetched.len() as u32;
             stats.loading_tiles += state.dispatched.len() as u32;
-            // Resident tiles take their settled water, made on workers.
+            // Resident tiles take their shading (of level 1 and coarser,
+            // level 0's averaged) and their settled water, made on workers.
+            let seen = (Vec2::new(local_eye.x, local_eye.z), frame);
             if let Some(slots) = slots.as_mut() {
+                shading::follow(state, settings, (&mut *slots, &work), &mut released, seen);
                 settled::follow(
                     state,
                     water,
                     (slots, &work),
                     (&mut self.settling, &mut released),
-                    (Vec2::new(local_eye.x, local_eye.z), frame),
+                    seen,
                 );
             }
             let (settled_records, settling_records) = state.settled.counts();
             stats.settled_records += settled_records;
             stats.settling_records += settling_records;
+            let (shaded_tiles, shading_records) = state.shading.counts();
+            stats.shaded_tiles += shaded_tiles;
+            stats.shading_records += shading_records;
             // Tiles' water follows the rivers as they run now.
             let [rewatered, stale] = rewater::rewater(state, &work, &mut budget);
             stats.rewatered_tiles += rewatered;
@@ -465,7 +471,7 @@ impl Terrains {
         self.upload_left = work.upload.get();
         // Stacks no terrain's recipe shares any longer leave the workers;
         // keys named by content, or by the records they hold, leave once
-        // no recipe, stack or terrain's settled water holds them.
+        // no recipe, stack or terrain's settled water or shading holds them.
         if let Some(slots) = slots.as_mut() {
             let entries = &self.entries;
             self.stacks.retain(|(stack, key)| {
@@ -488,6 +494,7 @@ impl Terrains {
                             .as_ref()
                             .is_some_and(|recipe| recipe.key == key)
                             || state.settled.holds_share(&key)
+                            || state.shading.holds_share(&key)
                     });
                 if !held {
                     slots.jobs.unshare(key);

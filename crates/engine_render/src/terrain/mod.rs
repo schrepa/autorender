@@ -15,11 +15,14 @@
 //! cascades draw terrain, near their receivers.
 //!
 //! Each tile's normal map, the gradient of the smooth surface through its
-//! heights at each sample, is computed once on upload into a parallel
-//! array; fragments blend it through a directory of every level's resident
+//! heights at each sample, lies in a parallel array: computed once on
+//! upload for level-0 tiles and surroundings' tiles, and uploaded with its
+//! control values from its shading for a terrain's coarser tiles, level 0's
+//! averaged, so a coarser level looks like the finer one seen from afar.
+//! Fragments blend them through a directory of every level's resident
 //! tiles, from the finest level loaded at their distance whatever level the
-//! geometry draws at, so light and materials hold still as levels of
-//! detail hand over.
+//! geometry draws at, so light and materials hold still as levels of detail
+//! hand over.
 //!
 //! The pass is its parts: the tile atlas (`atlas`), the tables shaders
 //! look up (`tables`), the frame's patches (`patches`, `culling`) and the
@@ -94,7 +97,8 @@ const SLOT: u64 = 256;
 const VIEWS: u64 = 7;
 pub(crate) const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 /// Each tile's normals: the smooth surface's rise along x and z at each
-/// sample, the two halves of a float, gathered and blended in shaders.
+/// sample, the two halves of a float, gathered and blended in shaders (a
+/// terrain's coarser tiles' from their shading, in the same words).
 const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// Each tile's control values: its samples' two strongest
 /// materials, their blend and how wet their ground is, read texel by texel.

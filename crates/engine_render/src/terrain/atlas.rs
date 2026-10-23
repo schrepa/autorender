@@ -2,8 +2,10 @@
 //! surface's gradient at each sample), control values and rivers (meters to
 //! their edges and their beds) in four texture arrays, a layer each; which
 //! tile each layer holds, when it arrived, and the layers free; the GPU's
-//! normal maps and control values of tiles uploaded each frame; and each
-//! layer's fades.
+//! normal maps and control values of the tiles shading with their own
+//! samples uploaded each frame (level-0 tiles, and surroundings' tiles); a
+//! terrain's coarser tiles' control values and normal maps uploaded from
+//! their shading, level 0's averaged, as it arrives; and each layer's fades.
 //!
 //! A sync reads what each terrain's list gained, lost or replaced since the
 //! list it last synced (both in key order), beside the listed tiles still
@@ -20,7 +22,7 @@
 use super::*;
 use crate::shaders::entry::{terrain_control, terrain_normals};
 use engine_core::collections::HashSet;
-use engine_core::terrain_data::Pyramid;
+use engine_core::terrain_data::{Pyramid, TileShading};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The arrays: heights, control values, normals and rivers' edges and
@@ -117,6 +119,9 @@ pub(crate) struct TileAtlas {
     pub(super) arrivals: HashMap<(u64, TileKey), f32>,
     pub(super) surfaced: HashMap<(u64, TileKey), f32>,
     pub(super) now: f32,
+    /// The resident tiles shading with their shading, whose normal maps
+    /// arrive with their surface materials.
+    pub(super) shaded: HashSet<(u64, TileKey)>,
     // The tile each slot holds: edits replace tiles under the
     // same key, which upload again into their layers.
     pub(super) held: HashMap<(u64, TileKey), Arc<engine_core::Tile>>,
@@ -180,6 +185,7 @@ impl TileAtlas {
             arrivals: HashMap::default(),
             surfaced: HashMap::default(),
             now: 0.0,
+            shaded: HashSet::default(),
             held: HashMap::default(),
             free: Vec::new(),
             next_layer: 0,
@@ -308,9 +314,8 @@ impl TileAtlas {
             let Some(tile) = listed_tile(&terrain.tiles, key.1) else {
                 continue;
             };
-            let listing = (&terrain.tiles[..], terrain.pyramid);
             let room = (&surfaces, capacity);
-            edited |= self.upload(queue, (key, tile), listing, &mut replaced, room);
+            edited |= self.upload(queue, (key, tile), terrain, &mut replaced, room);
         }
         self.compute_controls(device, queue);
         // Layers of replaced tiles that found no upload are free again.
@@ -375,6 +380,7 @@ impl TileAtlas {
             self.held.remove(&key);
             self.arrivals.remove(&key);
             self.surfaced.remove(&key);
+            self.shaded.remove(&key);
             self.holed.remove(&key);
         }
     }
@@ -383,7 +389,8 @@ impl TileAtlas {
     /// resident tile replaced without control values by one with them
     /// takes them over from now, and a tile without them on a terrain whose
     /// surface the GPU does not read has none, every such tile of a terrain
-    /// whose surface the GPU stopped reading included.
+    /// whose surface the GPU stopped reading included. Tiles shading with
+    /// their shading take its time as it uploads ([`Self::shade`]).
     fn surface_times(
         &mut self,
         terrains: &RenderTerrains,
@@ -396,14 +403,25 @@ impl TileAtlas {
             if !stopped {
                 continue;
             }
-            for tile in terrain.tiles.iter().filter(|tile| tile.control().is_none()) {
+            let unsurfaced = |tile: &&Arc<engine_core::Tile>| {
+                tile.control().is_none()
+                    && !TileShading::shades(tile.key().level, terrain.surroundings)
+            };
+            for tile in terrain.tiles.iter().filter(unsurfaced) {
                 self.unsurface((terrain.id, tile.key()));
             }
         }
         for &key in changes.arrived.iter().chain(&changes.swapped) {
-            let Some(tile) = listed_in(terrains, key) else {
+            let terrain = terrains.terrains.iter().find(|terrain| terrain.id == key.0);
+            let Some(terrain) = terrain else {
                 continue;
             };
+            let Some(tile) = listed_tile(&terrain.tiles, key.1) else {
+                continue;
+            };
+            if TileShading::shades(key.1.level, terrain.surroundings) {
+                continue;
+            }
             let had = self.held.get(&key).map(|held| held.control().is_some());
             match (had, tile.control().is_some()) {
                 (_, false) if !surfaces.contains_key(&key.0) => self.unsurface(key),
@@ -425,12 +443,12 @@ impl TileAtlas {
     }
 
     /// Of the resident tiles `swapped` replaced under their keys, keeps
-    /// those over the same ground and materials in their layers as they
-    /// are (their water made again as their rivers run now, which the
+    /// those over the same ground, materials and shading in their layers as
+    /// they are (their water made again as their rivers run now, which the
     /// water's blocks follow), and takes the rest out of their layers to
     /// upload again, keeping what they replace: a tile arriving whole after
     /// its shape, or with its objects standing far away, has the same
-    /// heights.
+    /// heights, and one taking its shading the same ground.
     fn replace(&mut self, terrains: &RenderTerrains, swapped: &[(u64, TileKey)]) -> Replaced {
         let mut replaced = Replaced::default();
         for &key in swapped {
@@ -444,6 +462,7 @@ impl TileAtlas {
                     && held.control() == tile.control()
                     && held.river_edges() == tile.river_edges()
                     && held.river_beds() == tile.river_beds()
+                    && same_shading(held.shading(), tile.shading())
             });
             if same_ground {
                 self.held.insert(key, Arc::clone(tile));
@@ -459,18 +478,20 @@ impl TileAtlas {
         replaced
     }
 
-    /// Uploads listed tile `key`, `tile` (of a terrain listing `tiles` over
-    /// `pyramid`), into a layer: the one it left as it was replaced
-    /// (`replaced`), else a free one or a new one within `capacity`; a tile
-    /// finding none leaves its parent standing in and waits for the next
-    /// sync, dropped. The GPU gives tiles without control values on
-    /// terrains it reads the surface of (`surfaces`) theirs. Returns
-    /// whether it changed the hole bits of the tile it replaced.
+    /// Uploads listed tile `key`, `tile` (of `terrain`), into a layer: the
+    /// one it left as it was replaced (`replaced`), else a free one or a new
+    /// one within `capacity`; a tile finding none leaves its parent standing
+    /// in and waits for the next sync, dropped. The GPU gives the tiles
+    /// shading with their own samples their normal maps, and those without
+    /// control values on terrains it reads the surface of (`surfaces`)
+    /// theirs ([`Self::give_control`]); a terrain's coarser tiles take both
+    /// from their shading ([`Self::shade`]). Returns whether it changed the
+    /// hole bits of the tile it replaced.
     fn upload(
         &mut self,
         queue: &Queue,
         (key, tile): ((u64, TileKey), &Arc<engine_core::Tile>),
-        (tiles, pyramid): (&[Arc<engine_core::Tile>], Pyramid),
+        terrain: &RenderTerrain,
         replaced: &mut Replaced,
         (surfaces, capacity): (&BTreeMap<u64, &Arc<SurfaceData>>, u32),
     ) -> bool {
@@ -488,11 +509,12 @@ impl TileAtlas {
             }
         };
         self.unplaced.remove(&key);
+        let shades = TileShading::shades(key.1.level, terrain.surroundings);
         // Tiles arriving grow out of their parents; edited ones
         // change in place.
         if arriving {
             self.arrivals.insert(key, self.now);
-            if tile.control().is_some() {
+            if tile.control().is_some() && !shades {
                 self.surfaced.insert(key, self.now);
             }
         }
@@ -508,14 +530,48 @@ impl TileAtlas {
         if heights {
             let texels = bytemuck::cast_slice(tile.heights());
             write_layer(queue, &arrays.texture, layer, (texels, 4));
-            self.normal_jobs.push((layer, tile.spacing()));
+            // Tiles shading with their shading take its normal maps.
+            if !shades {
+                self.normal_jobs.push((layer, tile.spacing()));
+            }
         }
-        // Without control values on a terrain whose surface the GPU
-        // reads, the GPU gives them as its heights or rivers change,
-        // from the rivers' edges and beds it uploads, its materials
-        // then taking over from the coarser level's.
+        let placed = ((key, layer), &**tile, before.as_ref());
+        let control = if shades {
+            self.shaded.insert(key);
+            self.shade(queue, placed, terrain)
+        } else {
+            self.give_control(queue, placed, (terrain, surfaces), heights)
+        };
+        self.slots.insert(key, layer);
+        self.held.insert(key, Arc::clone(tile));
+        if tile.hole_bits().is_some() {
+            self.holed.insert(key);
+        } else {
+            self.holed.remove(&key);
+        }
+        self.uploads += u32::from(heights || control);
+        edited
+    }
+
+    /// Gives tile `key`, in `layer`, of `terrain`, which shades with its
+    /// own samples, its control values as they change from those of
+    /// `before`, the tile it replaces. Without its own on a terrain whose
+    /// surface the GPU reads (`surfaces`), the GPU gives them as its heights
+    /// (`heights`, whether they changed) or rivers change, from the rivers'
+    /// edges and beds it uploads, its materials then taking over from the
+    /// coarser level's; else its own upload, and a tile without its own yet
+    /// takes its nearest ancestor's for ground cover, and without a surface,
+    /// the first material everywhere. Whether it wrote them from here.
+    fn give_control(
+        &mut self,
+        queue: &Queue,
+        ((key, layer), tile, before): Uploading<'_>,
+        (terrain, surfaces): (&RenderTerrain, &BTreeMap<u64, &Arc<SurfaceData>>),
+        heights: bool,
+    ) -> bool {
+        let arrays = self.arrays.as_ref().expect("allocated above");
         let gpu = tile.control().is_none() && surfaces.contains_key(&key.0);
-        let rivers = (before.as_ref()).is_none_or(|held| {
+        let rivers = before.is_none_or(|held| {
             held.river_edges() != tile.river_edges() || held.river_beds() != tile.river_beds()
         });
         if gpu && (heights || rivers) {
@@ -536,32 +592,58 @@ impl TileAtlas {
             });
             self.surfaced.insert(key, self.now);
         }
-        // Its control values; a tile without its own yet
-        // takes its nearest ancestor's for ground cover, and without a
-        // surface, the first material everywhere.
         let control = !gpu
             && (tile.control().is_none()
-                || (before.as_ref()).is_none_or(|held| held.control() != tile.control()));
+                || before.is_none_or(|held| held.control() != tile.control()));
         if control {
             let borrowed;
             let values = match tile.control() {
                 Some(values) => values,
                 None => {
-                    borrowed = ancestor_control(tiles, key.1, pyramid);
+                    let listing = (&terrain.tiles[..], terrain.pyramid);
+                    borrowed = ancestor_texels(listing, key.1, held_control);
                     &borrowed
                 }
             };
             write_layer(queue, &arrays.control, layer, (bytemuck::cast_slice(values), 4));
         }
-        self.slots.insert(key, layer);
-        self.held.insert(key, Arc::clone(tile));
-        if tile.hole_bits().is_some() {
-            self.holed.insert(key);
-        } else {
-            self.holed.remove(&key);
+        control
+    }
+
+    /// Writes tile `key`'s control values and normal maps into `layer` from
+    /// its shading as it arrives or changes from that of `before`, the tile
+    /// it replaces, its materials and normals then fading in from the
+    /// coarser level's; until its shading arrives, its nearest listed
+    /// ancestor's for ground cover (of `terrain`), the coarser level's
+    /// materials and normals showing over it. Whether it wrote them.
+    fn shade(
+        &mut self,
+        queue: &Queue,
+        ((key, layer), tile, before): Uploading<'_>,
+        terrain: &RenderTerrain,
+    ) -> bool {
+        let shading = tile.shading();
+        if before.is_some_and(|held| same_shading(held.shading(), shading)) {
+            return false;
         }
-        self.uploads += u32::from(heights || control);
-        edited
+        let (control, gradients) = match shading {
+            Some(shading) => {
+                self.surfaced.insert(key, self.now);
+                (shading.control_texels(), shading.gradient_texels())
+            }
+            None => {
+                self.surfaced.remove(&key);
+                let listing = (&terrain.tiles[..], terrain.pyramid);
+                (
+                    ancestor_texels(listing, key.1, held_control),
+                    ancestor_texels(listing, key.1, held_gradients),
+                )
+            }
+        };
+        let arrays = self.arrays.as_ref().expect("allocated above");
+        write_layer(queue, &arrays.control, layer, (bytemuck::cast_slice(&control[..]), 4));
+        write_layer(queue, &arrays.normals, layer, (bytemuck::cast_slice(&gradients[..]), 4));
+        true
     }
 
     /// How much of a coarser level still shows of what arrived at `at`:
@@ -574,16 +656,21 @@ impl TileAtlas {
     /// How much of the next coarser level's normals and surface materials
     /// shows over resident tile `key` now: as it grows out of its parent on
     /// ordinary frames (with `fades`) and none on exact ones, but the whole
-    /// of the coarser level's materials over a tile without its own yet.
+    /// of the coarser level's materials over a tile without its own yet. A
+    /// tile shading with its shading takes its normals with its materials,
+    /// the coarser level's showing whole until they arrive.
     pub(super) fn fades_of(&self, key: &(u64, TileKey), fades: bool) -> (f32, f32) {
-        let normals = match self.arrivals.get(key) {
-            Some(&at) if fades => self.fade_since(at),
-            _ => 0.0,
-        };
         let materials = match self.surfaced.get(key) {
             None => 1.0,
             Some(&at) if fades => self.fade_since(at),
             Some(_) => 0.0,
+        };
+        if self.shaded.contains(key) {
+            return (materials, materials);
+        }
+        let normals = match self.arrivals.get(key) {
+            Some(&at) if fades => self.fade_since(at),
+            _ => 0.0,
         };
         (normals, materials)
     }
@@ -659,8 +746,11 @@ impl TileAtlas {
             self.fading.remove(&key);
         }
         // Materials fading in from their own time move; a tile without its
-        // own shows the coarser level's whole until they arrive.
-        if normals > 0.0 || (materials > 0.0 && self.surfaced.contains_key(&key)) {
+        // own shows the coarser level's whole until they arrive, its normals
+        // too where they come with them.
+        let timed = self.surfaced.contains_key(&key);
+        let normals_move = normals > 0.0 && (timed || !self.shaded.contains(&key));
+        if normals_move || (materials > 0.0 && timed) {
             self.moving.insert(key);
         } else {
             self.moving.remove(&key);
@@ -1094,25 +1184,55 @@ fn listed_in(
     listed_tile(&terrain.tiles, key)
 }
 
-/// Control values for tile `key` without its own yet, of a terrain over
-/// `pyramid` listing `tiles`, for ground cover to grow from: its nearest
-/// listed ancestor's holding some, each sample its nearest sample's there;
-/// the first material everywhere without one.
-fn ancestor_control(
-    tiles: &[Arc<engine_core::Tile>],
+/// A tile uploading: its key and layer, the tile, and the tile it
+/// replaces in that layer.
+type Uploading<'a> = (
+    ((u64, TileKey), u32),
+    &'a engine_core::Tile,
+    Option<&'a Arc<engine_core::Tile>>,
+);
+
+/// Whether `a` and `b` are the same shading, or both none.
+fn same_shading(a: Option<&Arc<TileShading>>, b: Option<&Arc<TileShading>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (None, None) => true,
+        (Some(_), None) | (None, Some(_)) => false,
+    }
+}
+
+/// The control values `tile` uploads from the CPU, in its layer's layout:
+/// its own, or its shading's.
+fn held_control(tile: &engine_core::Tile) -> Option<Box<[u32]>> {
+    (tile.control().map(Box::from)).or_else(|| tile.shading().map(|held| held.control_texels()))
+}
+
+/// The normal maps `tile` uploads from the CPU, in its layer's layout: its
+/// shading's.
+fn held_gradients(tile: &engine_core::Tile) -> Option<Box<[u32]>> {
+    tile.shading().map(|held| held.gradient_texels())
+}
+
+/// What tile `key` without its own control values or normal maps yet, of a
+/// terrain over `pyramid` listing `tiles`, uploads for ground cover to grow
+/// from: what `held` gives of its nearest listed ancestor giving any, each
+/// texel its nearest sample's there; zeros without one (the first material,
+/// and level ground).
+fn ancestor_texels(
+    (tiles, pyramid): (&[Arc<engine_core::Tile>], Pyramid),
     key: TileKey,
-    pyramid: Pyramid,
-) -> Vec<u32> {
+    held: fn(&engine_core::Tile) -> Option<Box<[u32]>>,
+) -> Box<[u32]> {
     let size = LAYER_SIZE as usize;
-    let mut out = vec![0_u32; size * size];
+    let mut out = vec![0_u32; size * size].into_boxed_slice();
     let (mut at, mut shift) = (key, 0_u32);
-    let control = loop {
+    let values = loop {
         let Some(parent) = pyramid.parent(at) else {
             return out;
         };
         (at, shift) = (parent, shift + 1);
-        if let Some(control) = listed_tile(tiles, at).and_then(|tile| tile.control()) {
-            break control;
+        if let Some(values) = listed_tile(tiles, at).and_then(|tile| held(tile.as_ref())) {
+            break values;
         }
     };
     // Layers keep a border sample before the tile's first: texel `i` holds
@@ -1128,7 +1248,7 @@ fn ancestor_control(
     for (z, row) in out.chunks_exact_mut(size).enumerate() {
         let from = nearest(z, key.z, at.z) * size;
         for (value, &x) in row.iter_mut().zip(&columns) {
-            *value = control[from + x];
+            *value = values[from + x];
         }
     }
     out

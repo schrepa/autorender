@@ -231,8 +231,9 @@ fn terrain_layer_fades(layer: u32) -> vec2<f32> {
 // terrain-local `local` in `level`'s normal maps, or in the nearest coarser
 // level's where its tile is not resident: the gradients at the four samples
 // around it blended bilinearly, as `engine_terrain::Tile::sample` blends
-// them. A tile fading in shows the next resident coarser level's under it;
-// ground no level holds is level.
+// them; a terrain's coarser levels' are level 0's averaged. A tile fading
+// in, or shading with its shading before that arrived, shows the next
+// resident coarser level's under it; ground no level holds is level.
 fn terrain_level_gradient(local: vec2<f32>, level: u32) -> vec2<f32> {
     let base = terrain.directory.x;
     let levels = terrain.directory.y;
@@ -354,56 +355,71 @@ fn terrain_control_blend(blend: ptr<function, TerrainBlend>, control: u32, weigh
     }
 }
 
+// Whether this terrain's coarser levels shade with level 0's shading
+// averaged (`terrain.steep.w`): every terrain's but surroundings'.
+fn terrain_averaged() -> bool {
+    return terrain.steep.w > 0.5;
+}
+
+// Adds `weight` of the materials at terrain-local `local` in `level`'s own
+// control values, the four samples around it, bilinearly: as much as its
+// tile shows of its own, a tile fading in, or without its own materials yet,
+// showing the next coarser level's. Returns the weight it leaves to the
+// coarser levels: all of it where `level`'s tile is not resident.
+fn terrain_level_own(blend: ptr<function, TerrainBlend>, local: vec2<f32>, level: u32,
+        weight: f32) -> f32 {
+    let header = terrain.directory.x + level * 4u;
+    let samples = max(local / (terrain.anchor.w * f32(1u << level)), vec2<f32>(0.0));
+    let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+    let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
+    let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+    if layer == 0xffffffffu {
+        return weight;
+    }
+    let fade = terrain_layer_fades(layer).y;
+    if fade < 1.0 {
+        // Samples 0 to 256 within the tile; layers keep a border texel
+        // before the first.
+        let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
+        let corner = min(vec2<u32>(within), vec2<u32>(255u));
+        let f = within - vec2<f32>(corner);
+        let texel = corner + vec2<u32>(1u);
+        let own = weight * (1.0 - fade);
+        // The 2x2 block's four control values in one gather at its
+        // shared corner (x: (0, 1), y: (1, 1), z: (1, 0), w: (0, 0)),
+        // which no subtexel rounding moves off the block; layers are 259
+        // samples a side.
+        let controls = textureGather(0, terrain_control, terrain_control_sampler,
+            (vec2<f32>(texel) + vec2<f32>(1.0)) / 259.0, layer);
+        let weights = vec4<f32>(own * (1.0 - f.x) * (1.0 - f.y), own * f.x * (1.0 - f.y),
+            own * (1.0 - f.x) * f.y, own * f.x * f.y);
+        if weights.x != 0.0 {
+            terrain_control_blend(blend, controls.w, weights.x);
+        }
+        if weights.y != 0.0 {
+            terrain_control_blend(blend, controls.z, weights.y);
+        }
+        if weights.z != 0.0 {
+            terrain_control_blend(blend, controls.x, weights.z);
+        }
+        if weights.w != 0.0 {
+            terrain_control_blend(blend, controls.y, weights.w);
+        }
+    }
+    return weight * fade;
+}
+
 // Adds `weight` of the materials at terrain-local `local` in `level`'s
 // control values, or the nearest coarser level's where its tile is not
 // resident: the four samples around it, bilinearly. A tile fading in, or
 // without its own materials yet, shows the next resident coarser level's
-// under it.
+// under it; ground no level holds is the first material.
 fn terrain_level_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>, level: u32,
         weight: f32) {
-    let base = terrain.directory.x;
     let levels = terrain.directory.y;
     var left = weight;
     for (var index = level; index < levels; index++) {
-        let header = base + index * 4u;
-        let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
-        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
-        let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
-        if layer == 0xffffffffu {
-            continue;
-        }
-        let fade = terrain_layer_fades(layer).y;
-        if fade < 1.0 {
-            // Samples 0 to 256 within the tile; layers keep a border texel
-            // before the first.
-            let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
-            let corner = min(vec2<u32>(within), vec2<u32>(255u));
-            let f = within - vec2<f32>(corner);
-            let texel = corner + vec2<u32>(1u);
-            let own = left * (1.0 - fade);
-            // The 2x2 block's four control values in one gather at its
-            // shared corner (x: (0, 1), y: (1, 1), z: (1, 0), w: (0, 0)),
-            // which no subtexel rounding moves off the block; layers are 259
-            // samples a side.
-            let controls = textureGather(0, terrain_control, terrain_control_sampler,
-                (vec2<f32>(texel) + vec2<f32>(1.0)) / 259.0, layer);
-            let weights = vec4<f32>(own * (1.0 - f.x) * (1.0 - f.y), own * f.x * (1.0 - f.y),
-                own * (1.0 - f.x) * f.y, own * f.x * f.y);
-            if weights.x != 0.0 {
-                terrain_control_blend(blend, controls.w, weights.x);
-            }
-            if weights.y != 0.0 {
-                terrain_control_blend(blend, controls.z, weights.y);
-            }
-            if weights.z != 0.0 {
-                terrain_control_blend(blend, controls.x, weights.z);
-            }
-            if weights.w != 0.0 {
-                terrain_control_blend(blend, controls.y, weights.w);
-            }
-        }
-        left *= fade;
+        left = terrain_level_own(blend, local, index, left);
         if left <= 0.0 {
             return;
         }
@@ -416,7 +432,9 @@ fn terrain_level_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>, lev
 // the samples decide it at theirs: none up to the first tangent of its
 // slopes, all of it from the second, smoothly between, the other materials
 // sharing what it leaves as they share the rest. Ground whose samples hold
-// the steep material alone keeps it.
+// the steep material alone keeps it. Where coarser levels hold level 0's
+// shading averaged, it paints level 0's part of the blend alone
+// (`terrain_blend`): their averages hold it as level 0's samples did.
 fn terrain_steep_blend(blend: ptr<function, TerrainBlend>, normal: vec3<f32>) {
     let steep = terrain.steep;
     if steep.x <= 0.0 {
@@ -484,37 +502,57 @@ fn terrain_border_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>,
 // The materials of the ground at terrain-local `local`, of smooth normal
 // `normal`, at `shading`'s levels: each level's control values at the four
 // samples around it, bilinearly; the steep material decided again at this
-// point; and the borders between them moved by noise.
+// point, over the whole blend on surroundings and, where coarser levels
+// hold level 0's averaged, over level 0's own part before the coarser
+// levels' are added, theirs holding it as averaged; and the borders
+// between them moved by noise.
 fn terrain_blend(local: vec2<f32>, normal: vec3<f32>, shading: TerrainShadingLevel)
         -> TerrainBlend {
     var blend: TerrainBlend;
     blend.ids = vec4<u32>(0xffffffffu);
     blend.weights = vec4<f32>(0.0);
-    terrain_level_blend(&blend, local, shading.level, 1.0 - shading.blend);
+    let averaged = terrain_averaged();
+    var near = 1.0 - shading.blend;
+    var level = shading.level;
+    if averaged && level == 0u {
+        // Level 0's samples decided the steep material by the same rule.
+        near = terrain_level_own(&blend, local, 0u, near);
+        terrain_steep_blend(&blend, normal);
+        level = 1u;
+    }
+    if near > 0.0 {
+        terrain_level_blend(&blend, local, level, near);
+    }
     if shading.blend > 0.0 {
         terrain_level_blend(&blend, local, shading.level + 1u, shading.blend);
     }
-    terrain_steep_blend(&blend, normal);
+    if !averaged {
+        terrain_steep_blend(&blend, normal);
+    }
     terrain_border_blend(&blend, local, shading);
     return blend;
 }
 
-// The meters apart a level's samples stand at most for its wetness to show
-// whole: wet banks a few meters wide drawn between samples further apart
-// alias into scallops, so coarser levels' fade out as their samples
-// spread.
+// The meters apart a level's own samples stand at most for its wetness to
+// show whole: wet banks a few meters wide drawn between samples further
+// apart alias into scallops, so surroundings' coarser levels, which give
+// their samples their own wetness, fade theirs out as their samples
+// spread. A terrain's coarser levels hold level 0's wetness averaged,
+// which never scallops, and show it whole.
 const TERRAIN_WET_SPACING: f32 = 2.0;
 
 // How wet the ground is at terrain-local `local` in `level`'s control
 // values, or the nearest coarser level's where its tile is not resident,
 // from 0, dry, to 1: the four samples' wetness around it (their top bytes),
-// bilinearly, as `terrain_level_blend` blends their materials, fading out
-// on levels whose samples stand further apart than TERRAIN_WET_SPACING. A
-// tile fading in, or without its own materials yet, shows the next
-// resident coarser level's under it; ground no level holds is dry.
+// bilinearly, as `terrain_level_blend` blends their materials; on
+// surroundings fading out on levels whose samples stand further apart than
+// TERRAIN_WET_SPACING. A tile fading in, or without its own materials yet,
+// shows the next resident coarser level's under it; ground no level holds
+// is dry.
 fn terrain_level_wetness(local: vec2<f32>, level: u32) -> f32 {
     let base = terrain.directory.x;
     let levels = terrain.directory.y;
+    let averaged = terrain_averaged();
     var wet = 0.0;
     var left = 1.0;
     for (var index = level; index < levels; index++) {
@@ -532,7 +570,7 @@ fn terrain_level_wetness(local: vec2<f32>, level: u32) -> f32 {
             let corner = min(vec2<u32>(within), vec2<u32>(255u));
             let f = within - vec2<f32>(corner);
             let texel = corner + vec2<u32>(1u);
-            // The block's control values gathered as `terrain_level_blend`
+            // The block's control values gathered as `terrain_level_own`
             // gathers them (x: (0, 1), y: (1, 1), z: (1, 0), w: (0, 0)).
             let controls = textureGather(0, terrain_control, terrain_control_sampler,
                 (vec2<f32>(texel) + vec2<f32>(1.0)) / 259.0, layer);
@@ -540,8 +578,8 @@ fn terrain_level_wetness(local: vec2<f32>, level: u32) -> f32 {
             let low = mix(wets.w, wets.z, f.x);
             let high = mix(wets.x, wets.y, f.x);
             let spacing = terrain.anchor.w * f32(1u << index);
-            wet += mix(low, high, f.y) * (left * (1.0 - fade))
-                * saturate(TERRAIN_WET_SPACING / spacing);
+            let kept = select(saturate(TERRAIN_WET_SPACING / spacing), 1.0, averaged);
+            wet += mix(low, high, f.y) * (left * (1.0 - fade)) * kept;
         }
         left *= fade;
         if left <= 0.0 {

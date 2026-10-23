@@ -146,8 +146,10 @@ pub struct RenderTerrain {
     /// How each of its surface's materials looks, by the index tiles'
     /// control values hold.
     pub surface: Vec<SurfaceMaterial>,
-    /// Its surface's steep layer, which renderers decide at every point of
-    /// the ground; `None` without one.
+    /// Its surface's steep layer, which renderers decide again at every
+    /// point of the ground its level-0 samples shade (every level's, on
+    /// surroundings), coarser levels holding it as their shading averaged
+    /// it; `None` without one.
     pub steep: Option<engine_terrain::Steep>,
     /// Each surface material's engine material, where it names one that
     /// exists.
@@ -162,7 +164,8 @@ pub struct RenderTerrain {
     /// the share standing there (their own level and 0 without).
     pub thinning: Vec<(u8, u8, f32)>,
     /// Its resident tiles, in key order: renderers upload those they lack
-    /// and release the rest. The list changes only when `tiles_revision`
+    /// and release the rest, and upload a tile again as its shading arrives
+    /// ([`Tile::shaded`]). The list changes only when `tiles_revision`
     /// advances.
     pub tiles: Arc<[Arc<Tile>]>,
     pub tiles_revision: u64,
@@ -183,8 +186,11 @@ pub struct RenderTerrain {
     /// while it loads.
     pub may_hole: bool,
     pub hydrology: bool,
-    /// Its surface for the GPU to give its tiles control values,
-    /// which they then hold none of; `None` where they hold them.
+    /// Its surface for the GPU to give its tiles shading with their own
+    /// samples (level-0 tiles, and every tile of surroundings) control
+    /// values, which they then hold none of; `None` where they hold them.
+    /// Its coarser tiles take theirs, and their normal maps, from their
+    /// shading ([`Tile::shading`]).
     pub gpu_surface: Option<Arc<engine_terrain::gpu::SurfaceData>>,
     /// Where its rivers leave their beds (terrain-local): renderers draw
     /// their jets where water draws.

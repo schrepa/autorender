@@ -93,11 +93,12 @@ pub(super) struct TerrainState {
     /// Records of tiles places games name, loading into memory: each one's
     /// job and the generation it was asked for under.
     pub(super) prefetched: TileMap<(JobId, Generation)>,
-    /// Its tiles cooking, while a session cooks, and its settled water:
-    /// what its resident tiles take, and while a session cooks every
-    /// watered tile's.
+    /// Its tiles cooking, while a session cooks, its settled water and its
+    /// tiles' shading: what its resident tiles take, and while a session
+    /// cooks every watered tile's water and every coarser tile's shading.
     pub(super) cook: Option<CookTiles>,
     pub(super) settled: Settled,
+    pub(super) shading: Shadings,
     /// What it makes over its whole extent, and its asking for it.
     pub(super) whole: Whole,
     /// The layers its tiles generate from and its surface's data for the
@@ -158,6 +159,7 @@ impl TerrainState {
             prefetched: TileMap::default(),
             cook: None,
             settled: Settled::default(),
+            shading: Shadings::default(),
             whole: Whole::default(),
             surface: None,
             materials: true,
@@ -196,8 +198,9 @@ impl TerrainState {
         }
     }
 
-    /// Its jobs, shares (its recipe and its settled water's) and macro
-    /// colors' textures, for the next frame to drop once the state is gone.
+    /// Its jobs, shares (its recipe's, its settled water's and its
+    /// shading's) and macro colors' textures, for the next frame to drop
+    /// once the state is gone.
     pub(super) fn retire(&self, retired: &mut Retired) {
         retired
             .jobs
@@ -210,6 +213,7 @@ impl TerrainState {
             .jobs
             .extend(self.cook.iter().flat_map(CookTiles::asked));
         retired.jobs.extend(self.settled.asked());
+        retired.jobs.extend(self.shading.asked());
         retired
             .jobs
             .extend(self.whole.lighting.job.iter().map(|&(id, _)| id));
@@ -221,6 +225,7 @@ impl TerrainState {
             .shares
             .extend(self.recipe.as_ref().map(|recipe| recipe.key.clone()));
         retired.shares.extend(self.settled.shares());
+        retired.shares.extend(self.shading.shares());
     }
 
     /// The id renderers key its tiles by: its entity's bits, the top bit
@@ -383,7 +388,7 @@ impl TerrainState {
 
     /// The meters tracks sink the ground at terrain-local `local` at most:
     /// its nearest sample's materials' blend, from the
-    /// finest resident tile.
+    /// finest resident tile (its shading's, for a tile shading with one).
     pub(super) fn deform(&self, local: Vec2) -> Option<f32> {
         if self.cut_out(local) {
             return None;
@@ -394,11 +399,13 @@ impl TerrainState {
             let tile = self.store.get(&key)?;
             let at = (local - pyramid.tile_origin(key)) / tile.spacing();
             let (x, z) = (at.x.round() as i32, at.y.round() as i32);
-            // Tiles whose materials the GPU gives: the rules'
-            // at the sample.
-            let control = match (tile.control_at(x, z), &self.surface) {
-                (Some(control), _) => control,
-                (None, Some((layers, _))) => {
+            // Tiles shading with their shading: level 0's averaged there;
+            // those whose materials the GPU gives: the rules' at the
+            // sample.
+            let control = match (tile.control_at(x, z), tile.shading(), &self.surface) {
+                (Some(control), _, _) => control,
+                (None, Some(shading), _) => shading.control_at(x, z),
+                (None, None, Some((layers, _))) => {
                     let stored =
                         |sample: i32| (sample.clamp(-1, TILE_STRIDE as i32 - 2) + 1) as usize;
                     engine_terrain::gpu::sample_control(
@@ -407,7 +414,7 @@ impl TerrainState {
                         (stored(x), stored(z)),
                     )
                 }
-                (None, None) => return None,
+                (None, None, None) => return None,
             };
             let materials = &self.terrain.surface.materials;
             let deform = |index: u8| {

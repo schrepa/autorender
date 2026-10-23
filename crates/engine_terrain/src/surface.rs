@@ -8,8 +8,10 @@
 //! pure function of the sample's position, height and the shape of the
 //! smooth surface through the samples around it at its level
 //! ([`SampleShape`]), so neighboring tiles agree on the samples they share.
-//! Renderers decide the steep material again at every point of the ground,
-//! from the smooth surface's slope there.
+//! A terrain's coarser tiles shade with level 0's control values averaged
+//! ([`crate::TileShading`]). Renderers decide the steep material again at
+//! every point of the ground level-0 samples shade, from the smooth
+//! surface's slope there.
 
 use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
@@ -214,8 +216,10 @@ settings! {
     /// `slope`'s degrees from level, all of it from the second, smoothly
     /// between, on the smooth surface through the ground's samples
     /// ([`SampleShape`]). Samples hold it as they hold their other materials;
-    /// renderers decide it again at every point of the ground from the slope
-    /// there, so its edges follow the ground's form, not its samples.
+    /// renderers decide it again at every point of the ground level-0 samples
+    /// shade from the slope there, so its edges follow the ground's form, not
+    /// its samples, and farther away show it as level 0's samples hold it,
+    /// averaged.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]

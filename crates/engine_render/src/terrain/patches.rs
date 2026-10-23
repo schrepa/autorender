@@ -676,14 +676,19 @@ fn terrain_uniform(
         vt_scale,
         vt_layout,
         macro_map: [parts.macro_maps.layer(index), 0, 0, 0],
-        steep: terrain.steep.map_or([0.0; 4], |steep| {
-            [
-                f32::from(steep.material) + 1.0,
-                steep.gradient[0],
-                steep.gradient[1],
-                0.0,
-            ]
-        }),
+        steep: {
+            let [material, low, high] = terrain.steep.map_or([0.0; 3], |steep| {
+                [
+                    f32::from(steep.material) + 1.0,
+                    steep.gradient[0],
+                    steep.gradient[1],
+                ]
+            });
+            // 1 where its coarser levels shade with level 0's averaged.
+            let averaged =
+                engine_core::terrain_data::TileShading::shades(1, terrain.surroundings);
+            [material, low, high, if averaged { 1.0 } else { 0.0 }]
+        },
     };
     (uniform, anchors)
 }

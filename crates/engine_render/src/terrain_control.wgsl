@@ -1,6 +1,8 @@
 // Terrain surface materials on the GPU: a tile's control
 // values from its heights, once when it uploads, into the same layer of the
-// control array. Each sample's inputs are read as the CPU reads them for a
+// control array, for level-0 tiles and surroundings' tiles (a terrain's
+// coarser tiles upload theirs from their shading, level 0's averaged).
+// Each sample's inputs are read as the CPU reads them for a
 // tile's rows (height, and the slope and curvature of the smooth surface
 // through the heights around it, `terrain_tile.wgsl`'s `tile_shape`;
 // the hydrology bake's flow, wetness and lakes; the meters to the nearest

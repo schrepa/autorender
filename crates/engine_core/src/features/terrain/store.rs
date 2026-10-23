@@ -7,7 +7,8 @@
 //! regenerates, drawn until then. The
 //! store measures the levels' morph errors as tiles arrive and advances its
 //! revision with every change, which renderers and collision follow. Tiles
-//! become resident through [`TileStore::arrive`] alone.
+//! become resident through [`TileStore::arrive`] alone; their water and
+//! their shading change in place.
 
 use super::*;
 
@@ -42,11 +43,12 @@ pub(super) struct Left {
     pub(super) current: bool,
 }
 
-/// Bytes `tile` holds in memory.
+/// Bytes `tile` holds in memory, its shading's included.
 fn memory_bytes(tile: &Tile) -> u64 {
     let arrays = tile.heights().len() + tile.control().map_or(0, <[u32]>::len);
     let holes = tile.hole_bits().map_or(0, <[u64]>::len) * 8;
-    (arrays * 4 + holes + std::mem::size_of_val(tile.placed())) as u64
+    let shading = tile.shading().map_or(0, |shading| shading.bytes());
+    (arrays * 4 + holes + std::mem::size_of_val(tile.placed())) as u64 + shading
 }
 
 pub(super) struct TileStore {
@@ -153,6 +155,18 @@ impl TileStore {
             resident.tile = tile;
             self.revision += 1;
         }
+    }
+
+    /// Gives resident tile `key` `tile`, itself with its shading as its
+    /// record arrived ([`Tile::shaded`]). It keeps its generation and the
+    /// rivers its water was made from: its ground, water and objects are the
+    /// same.
+    pub(super) fn reshade(&mut self, key: &TileKey, tile: Arc<Tile>) {
+        let Some(resident) = self.tiles.get_mut(key) else {
+            return;
+        };
+        resident.tile = tile;
+        self.revision += 1;
     }
 
     fn put(&mut self, tile: Arc<Tile>, made: Generation, watered: Watered) {

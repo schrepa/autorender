@@ -62,7 +62,10 @@ struct TerrainUniform {
     macro_map: vec4<u32>,
     // Its surface's steep layer, which fragments decide at every point of
     // the ground (`engine_terrain::Steep`): its material plus one (0
-    // without one) and the tangents of the slopes its share rises between.
+    // without one) and the tangents of the slopes its share rises between;
+    // and w 1 where its coarser levels shade with level 0's shading
+    // averaged (`engine_terrain::TileShading`), whose steep material is
+    // decided at level 0's samples alone, 0 for surroundings.
     steep: vec4<f32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;
