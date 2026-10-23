@@ -8,7 +8,7 @@
 // it, so none of it changes where a patch meets one of the next level. Its
 // foam's lace and relief and the waves standing about what stands in it
 // hand over to their means as a pixel seen from the detail eye
-// (`detail_footprint`) comes to span their detail, while the pixel's own
+// (`detail_footprint_long`) comes to span their detail, while the pixel's own
 // derivatives filter them. The waves' tiles (`water_waves.wgsl`) tilt it
 // where it stands still and their finest run
 // with its flow where it moves, carried along in sets that start over
@@ -2156,11 +2156,12 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     // its current's chop takes over from the wind's ripples.
     let running = saturate(speed * 0.5);
     // How far the pixel spans on the water, which filters the patterns it
-    // shows of it; and how far it spans seen from the detail eye, facing as
-    // the water's surface falls, which those patterns hand over to their
-    // means by.
+    // shows of it; and how far it spans along its longer side seen from the
+    // detail eye, facing as the water's surface falls, which those patterns
+    // hand over to their means by before they shimmer.
     let footprint = max(length(world_dx.xz), length(world_dy.xz));
-    let seen = detail_footprint(world, normalize(vec3<f32>(input.slope.x, 1.0, input.slope.y)));
+    let seen = detail_footprint_long(world,
+        normalize(vec3<f32>(input.slope.x, 1.0, input.slope.y)));
     // Each place's patterns start over at their own times, so the flow
     // never pulses all at once (Vlachos's phase noise): the cycles its
     // clock runs ahead by.

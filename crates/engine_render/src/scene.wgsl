@@ -327,6 +327,17 @@ fn detail_footprint(world: vec3<f32>, normal: vec3<f32>) -> f32 {
     return distance * camera.options.y / sqrt(facing);
 }
 
+// The meters a pixel spans along its longer side on a surface at `world`
+// facing `normal`, seen from the detail eye: `detail_footprint` drawn out
+// as far again as the view meets the surface obliquely. Patterns hand over
+// to their means by it where they would shimmer along an oblique view
+// before they blur across it.
+fn detail_footprint_long(world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let relative = world - camera.detail.xyz;
+    let facing = max(abs(dot(normal, relative)) / max(length(relative), 1.0e-6), 0.0625);
+    return detail_footprint(world, normal) / sqrt(facing);
+}
+
 // The mip bias material textures sample with (`camera.options.w`): log2 of
 // the render size's share of the display, 0 drawing the whole display and
 // negative below it, so frames drawing smaller, which upscale, keep their

@@ -324,18 +324,15 @@ fn terrain_shading_level(footprint: f32) -> TerrainShadingLevel {
     return shading;
 }
 
-// The levels shading ground at `world`, terrain-local `local`, as a pixel
-// seen from the detail eye shows it: by the meters it spans there
-// (`detail_footprint`) on the smooth surface's normal at the finest level
-// its distance loads, and never finer than that level, which a pixel facing
-// the ground at the view's center takes. Pixels off the center span less
-// than there, while the geometry's ranges, within twice which tiles load,
-// count pixels by distance alone.
-fn terrain_pixel_shading(world: vec3<f32>, local: vec2<f32>) -> TerrainShadingLevel {
-    let facing = detail_distance(world) * camera.options.y;
-    let gradient = terrain_level_gradient(local, terrain_shading_level(facing).level);
-    let normal = normalize(vec3<f32>(-gradient.x, 1.0, -gradient.y));
-    return terrain_shading_level(max(detail_footprint(world, normal), facing));
+// The levels shading ground at `world` as a pixel seen from the detail eye
+// shows it: by the meters it spans across the view there, the detail eye's
+// distance times a pixel's angle. Seen obliquely, a level's samples crowd
+// along the view but still span as many pixels across it, where they show,
+// so no view of the ground hands them over sooner; and the levels' tiles
+// load by the same distance, so it never asks for a finer level than is
+// loaded.
+fn terrain_pixel_shading(world: vec3<f32>) -> TerrainShadingLevel {
+    return terrain_shading_level(detail_distance(world) * camera.options.y);
 }
 
 // The normal of the terrain's smooth surface at terrain-local `local` at
@@ -1404,9 +1401,10 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
     let into = -dot(ray, site.geometric);
     let grazing = smoothstep(0.08, 0.35, into);
     // The pixels a meter of depth moves the point on screen at most, seen
-    // from the detail eye.
+    // from the detail eye: it moves along the view, where a pixel spans its
+    // longer side.
     let pixels = terrain_relief_across(site.world - camera.detail.xyz, site.geometric)
-        / detail_footprint(site.world, site.geometric);
+        / detail_footprint_long(site.world, site.geometric);
     let tracked = terrain_deform_reach(site.world.xz);
     // Without tracks, ground whose deepest relief could not move half a
     // pixel looks up no materials.
@@ -1553,7 +1551,7 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     let ray_dx = look.ray_dx;
     let ray_dy = look.ray_dy;
     let local = world.xz - terrain.origin.xz;
-    let shading = terrain_pixel_shading(world, local);
+    let shading = terrain_pixel_shading(world);
     let geometric = terrain_surface_normal(local, shading);
     // How the point moves per pixel on the plane of the terrain's smooth
     // normal: where the rays one pixel over meet that plane,
