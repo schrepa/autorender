@@ -1591,7 +1591,16 @@ fn rules() -> Biomes {
                 sink: 0.08,
                 bed: 0.0,
                 level: 0,
-                far: None,
+                // Stones retire as they shrink under a pixel or so on
+                // screen, the largest only some one and a half kilometers
+                // away at 1080p: where the finest tiles end (346 meters
+                // there), about three in four of them, over their sizes,
+                // still span enough to show, and those stand on the
+                // kilometer tiles too.
+                far: Some(FarPlacement {
+                    level: 2,
+                    share: 0.75,
+                }),
             },
             PlacementLayer {
                 id: "outcrops".into(),
@@ -1802,7 +1811,13 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             sink: 0.3,
             bed: 0.3,
             level: 0,
-            far: None,
+            // Every one still spans pixels enough to show where the finest
+            // tiles end, so all stand on the kilometer tiles too and retire
+            // by their size beyond.
+            far: Some(FarPlacement {
+                level: 2,
+                share: 1.0,
+            }),
         },
         PlacementLayer {
             id: "channel_stones".into(),
@@ -1820,7 +1835,12 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             sink: 0.1,
             bed: 0.3,
             level: 0,
-            far: None,
+            // As the channel's boulders, nearly every one still shows where
+            // the finest tiles end.
+            far: Some(FarPlacement {
+                level: 2,
+                share: 1.0,
+            }),
         },
     ]
 }

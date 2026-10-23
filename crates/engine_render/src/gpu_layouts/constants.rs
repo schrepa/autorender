@@ -168,9 +168,6 @@ gpu_consts! {
     pub(crate) const BOUNCE_FADE: f32 = 8.0 => ["BOUNCE_FADE"];
     /// Words of a probe in the probes' buffer.
     pub(crate) const BOUNCE_RECORD_WORDS: usize = engine_core::terrain_data::bounce::PROBE_BYTES / 4 => ["BOUNCE_RECORD_WORDS" in BOUNCE_SHADER];
-    /// The share of their color blades' canopy shows the light it takes on
-    /// average, as terrain shades it (`meshes/terrain.wgsl`).
-    pub(crate) const BOUNCE_CANOPY: f32 = 0.6 => ["BOUNCE_CANOPY" in BOUNCE_SHADER, "TERRAIN_CANOPY_OCCLUSION" in SHADER];
 
     // crate::terrain_vt
     /// Texels along a page's side, the border around it, and a slot's side.
@@ -278,6 +275,11 @@ gpu_consts! {
     // crate::ground_cover
     /// Bytes of a blade (`CoverBlade`).
     pub(crate) const BLADE_BYTES: u64 = 32 => ["size_of CoverBlade"];
+    /// The share of ground cover's radius within which it grows densest:
+    /// past it blades thin as this share of the radius over the distance,
+    /// widening as much to cover as much ground, up to its inverse at the
+    /// radius (`terrain_variety.wgsl`'s `cover_share`).
+    pub(crate) const COVER_CORE: f32 = 0.2 => ["COVER_CORE"];
     /// Joints along a blade too short on screen to show its curve, which
     /// the blades' second indirect draw draws straight.
     pub(crate) const STRAIGHT_JOINTS: u32 = 3 => ["STRAIGHT_JOINTS"];

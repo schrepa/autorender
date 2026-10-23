@@ -6,7 +6,7 @@
 // pages of VT_PAGE² texels, VT_BORDER more around them so filtering never
 // reaches a neighbor. Pages lie in sheets, the layers of `terrain_vt_sheets`,
 // three a sheet: albedo (its detail and macro colors applied) and roughness,
-// then the cover's canopy color and the ground's vegetated share, then the
+// then the cover's tip color and the ground's vegetated share, then the
 // normal maps' turn of the terrain's normal (in `terrain_vt_frame`), occlusion
 // and the cover's leaves, linear data the sRGB layer decodes before it
 // filters. Mip m's texels span `terrain.vt_scale.x` · 2^m meters. Each terrain
@@ -155,11 +155,12 @@ fn terrain_vt_ground(texels: TerrainVtTexels, site: TerrainSite) -> TerrainGroun
     ground.colored = 1.0;
     ground.vegetated = canopy_texel.a;
     if ground.vegetated > 0.0 {
-        let canopy = ground.vegetated * terrain_canopy(turn_texel.w * VT_LEAVES, site);
-        let shown = terrain_canopy_shown(abs(dot(site.toward, site.geometric)));
-        ground.albedo = mix(ground.albedo, canopy_texel.rgb * shown, canopy);
-        ground.roughness = mix(ground.roughness, 0.7, canopy);
-        ground.occlusion = mix(ground.occlusion, TERRAIN_CANOPY_OCCLUSION * shown, canopy);
+        let leaves = turn_texel.w * VT_LEAVES;
+        let canopy = ground.vegetated * terrain_canopy(leaves, site);
+        let look = terrain_canopy_look(ground.albedo, canopy_texel.rgb, leaves, site);
+        ground.albedo = mix(ground.albedo, look.color, canopy);
+        ground.roughness = mix(ground.roughness, COVER_ROUGHNESS, canopy);
+        ground.occlusion = mix(ground.occlusion, look.occlusion, canopy);
         ground.normal = stable_normalize(mix(ground.normal, terrain_blade_normal(site.geometric),
             canopy));
         ground.canopy = canopy;

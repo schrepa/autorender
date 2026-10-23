@@ -7,7 +7,8 @@
 //! those blending into the ground the ground's color under them
 //! (`scatter_snap.wgsl`), then culls it against each view (the camera,
 //! then the shadow maps drawn this frame) and picks its level of detail
-//! from the camera (`scatter_cull.wgsl`), appending it to its draw
+//! from the detail eye, retiring objects of thinning layers too small on
+//! screen for their ranks (`scatter_cull.wgsl`), appending it to its draw
 //! group's list for that view and level, and to its parts' groups', or to
 //! the view's impostor cards; each group and level then draws indirectly,
 //! and each view's cards. Objects draw in the first opaque phase and cast
@@ -544,12 +545,15 @@ impl ScatterPass {
     }
 
     /// Plans this frame's culling: the camera's view, from its
-    /// `view_projection` (world) and eye, those of the shadow `maps`
+    /// `view_projection` (world) and the detail eye, which every switch
+    /// measures from, those of the shadow `maps`
     /// drawn every frame (their world-to-clip matrices, each its own texels
     /// square), where objects smaller than half a texel cast nothing, and
     /// the regions of the kept map, of a kept level and of the near
-    /// cascades' caches redrawn this frame, if any. Levels are picked
-    /// within `pixel_error` pixels of a viewport `height` pixels tall (no
+    /// cascades' caches redrawn this frame, if any. Objects of thinning
+    /// layers retire where their bounding spheres span too few pixels of a
+    /// viewport `height` pixels tall for their ranks. Levels are picked
+    /// within `pixel_error` pixels of the viewport (no
     /// error: finest levels only); maps cast each object's shadow proxy
     /// where its group has one, else the level the camera draws or a
     /// coarser one where half their texel hides its error, and kept maps
@@ -572,7 +576,9 @@ impl ScatterPass {
             return false;
         }
         let y_row = view_projection.row(1).truncate().length();
-        let pixels = pixel_error.map_or(0.0, |error| y_row * height * 0.5 / error);
+        // Pixels a world unit spans at unit distance.
+        let spanned = y_row * height * 0.5;
+        let pixels = pixel_error.map_or(0.0, |error| spanned / error);
         // How many times its radius away an object's bounding sphere spans
         // the impostors' pixels.
         let cards = impostors.map_or(0.0, |size| y_row * height / size);
@@ -637,7 +643,7 @@ impl ScatterPass {
                 u32::from(impostors.is_some()),
                 self.objects,
             ],
-            fade: [fade, FADE_MARGIN, cards, 0.0],
+            fade: [fade, FADE_MARGIN, cards, spanned],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
         let card_args = &mut self.frame_views.card_args;

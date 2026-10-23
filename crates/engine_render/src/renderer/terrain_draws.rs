@@ -77,7 +77,8 @@ impl Renderer {
             return false;
         }
         // Ground cover on the terrain, seen through the
-        // camera's unjittered view.
+        // camera's unjittered view, growing and retiring by its distance
+        // from the detail eye.
         let covered = self.features.ground_cover.get_mut().prepare(
             &self.device,
             &self.queue,
@@ -87,7 +88,7 @@ impl Renderer {
                 &snapshot.environment.ground_cover,
                 snapshot.environment.wind.velocity,
                 snapshot.view_projection,
-                snapshot.camera_position,
+                snapshot.detail_eye,
                 snapshot.elapsed_seconds,
             ),
             (

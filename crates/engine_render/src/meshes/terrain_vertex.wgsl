@@ -44,9 +44,11 @@ struct TerrainUniform {
     // map's reference time, and the rim's height for a track's depth.
     deform_grid: vec4<i32>,
     deform: vec4<f32>,
-    // Ground cover's radius and the reach of its tiers on this terrain, whose
-    // law the canopy follows as blades thin (a radius of 0 shows it from the
-    // eye on), and its density scale; all 0 without cover.
+    // Ground cover's radius and the meters from the eye at which its blades
+    // past the radius span the settings' pixels on this terrain
+    // (`ground_cover::cover_span`), whose law the canopy follows as blades
+    // retire (a radius of 0 shows it from the eye on), and its density
+    // scale; all 0 without cover.
     cover: vec4<f32>,
     // Its runtime virtual texture (`terrain.wgsl`): its index
     // among the textured terrains, its mips (0 without one), slots along a

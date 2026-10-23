@@ -136,6 +136,32 @@ impl RenderPlacementAsset {
     }
 }
 
+/// A placement layer of a frame: how its objects thin with distance, the
+/// level of the tiles holding them, and the level they also stand far
+/// away at with the share standing there (their own level and 0 without);
+/// and what the ground under them takes on where they retire: its objects
+/// per square meter where everything allows, their scale range, the
+/// surface materials it stands on (a bit per material; `None`: any) and
+/// the assets it chooses from, by index, each with its share of them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RenderPlacementLayer {
+    pub level: u8,
+    pub far: (u8, f32),
+    pub density: f32,
+    pub scale: [f32; 2],
+    pub materials: Option<[u64; 4]>,
+    pub assets: Vec<(u16, f32)>,
+}
+
+impl RenderPlacementLayer {
+    /// Whether its objects stand on surface material `material`.
+    pub fn stands_on(&self, material: usize) -> bool {
+        self.materials.is_none_or(|set| {
+            material < 256 && set[material / 64] & (1 << (material % 64)) != 0
+        })
+    }
+}
+
 /// One terrain of a frame.
 #[derive(Clone, Debug)]
 pub struct RenderTerrain {
@@ -156,11 +182,10 @@ pub struct RenderTerrain {
     /// indices its tiles' placed objects hold; `None` where the mesh or
     /// material is missing.
     pub assets: Vec<Option<RenderPlacementAsset>>,
-    /// How each placement layer's objects thin with distance,
-    /// by the layer indices its tiles' placed objects hold: the level
-    /// of the tiles holding them, the level they also stand far away at and
-    /// the share standing there (their own level and 0 without).
-    pub thinning: Vec<(u8, u8, f32)>,
+    /// Its placement layers, by the layer indices its tiles' placed objects
+    /// hold: how their objects thin with distance, and what the ground
+    /// takes on where they retire.
+    pub layers: Vec<RenderPlacementLayer>,
     /// Its resident tiles, in key order: renderers upload those they lack
     /// and release the rest. The list changes only when `tiles_revision`
     /// advances.
@@ -251,7 +276,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 steep: None,
                 maps: Vec::new(),
                 assets: Vec::new(),
-                thinning: Vec::new(),
+                layers: Vec::new(),
                 tiles: Arc::from(Vec::new()),
                 tiles_revision: 0,
                 patches: Vec::new(),
@@ -283,20 +308,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 .assets
                 .push(assets.and_then(|assets| RenderPlacementAsset::of(asset, assets, missing)));
         }
-        render.thinning.clear();
-        render.thinning.extend(
-            state
-                .terrain
-                .surface
-                .rules
-                .authored()
-                .placements
-                .iter()
-                .map(|layer| match layer.far {
-                    Some(far) => (layer.level, far.level, far.share),
-                    None => (layer.level, layer.level, 0.0),
-                }),
-        );
+        extract_layers(state.terrain.surface.rules.authored(), &mut render.layers);
         render.maps.clear();
         for look in &state.terrain.surface.materials {
             let material = look.material.and_then(|handle| {
@@ -332,5 +344,39 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         render.lighting.clone_from(&state.whole.lighting.made);
         render.bounce.clone_from(&state.whole.bounce.made);
         render.macro_map = state.whole.colors.map(assets);
+    }
+}
+
+/// `rules`' placement layers as frames hand them to renderers, into
+/// `layers`, whose vectors it keeps from frame to frame.
+fn extract_layers(rules: &Biomes, layers: &mut Vec<RenderPlacementLayer>) {
+    layers.truncate(rules.placements.len());
+    for (index, layer) in rules.placements.iter().enumerate() {
+        if index == layers.len() {
+            layers.push(RenderPlacementLayer::default());
+        }
+        let held = &mut layers[index];
+        held.level = layer.level;
+        held.far = layer.far.map_or((layer.level, 0.0), |far| (far.level, far.share));
+        // Layers count their objects per hectare.
+        held.density = layer.density / 10_000.0;
+        held.scale = layer.scale;
+        held.materials = (!layer.materials.is_empty()).then(|| {
+            let mut set = [0_u64; 4];
+            for id in &layer.materials {
+                if let Some(material) = rules.materials.iter().position(|known| known == id)
+                    && material < 256
+                {
+                    set[material / 64] |= 1 << (material % 64);
+                }
+            }
+            set
+        });
+        let total: f32 = layer.assets.iter().map(|choice| choice.weight).sum();
+        held.assets.clear();
+        held.assets.extend(layer.assets.iter().filter_map(|choice| {
+            let asset = rules.assets.iter().position(|known| *known == choice.asset)?;
+            Some((asset as u16, choice.weight / total.max(f32::MIN_POSITIVE)))
+        }));
     }
 }
