@@ -652,9 +652,22 @@ fn terrain_uniform(
         .get(index)
         .copied()
         .unwrap_or(([0; 4], [0.0; 4], [0; 4]));
+    // The deepest any of its materials with maps sinks the ground, as the
+    // palette holds them.
+    let deepest = tables
+        .palette_of(index, terrain.surface.len())
+        .iter()
+        .filter(|entry| entry.params[3] > 0.0)
+        .map(|entry| entry.relief[0])
+        .fold(0.0, engine_core::math::max);
     let uniform = TerrainUniform {
         anchor: [relative.x, relative.y, relative.z, pyramid.spacing(0)],
         eye: eye.as_vec3().extend(0.0).to_array(),
+        // Vertices morph by their distance from the detail eye.
+        detail: (views.detail_eye.as_dvec3() - eye)
+            .as_vec3()
+            .extend(0.0)
+            .to_array(),
         origin: terrain.origin.extend(0.0).to_array(),
         directory: [
             tables.directory_bases.get(index).copied().unwrap_or(0),
@@ -663,12 +676,7 @@ fn terrain_uniform(
             parts.sky.layer(index),
         ],
         // The ground's relief.
-        relief: [
-            views.settings.relief_distance,
-            views.settings.relief_steps as f32,
-            0.0,
-            0.0,
-        ],
+        relief: [deepest, views.settings.relief_steps as f32, 0.0, 0.0],
         deform_grid: parts.shading.grid,
         deform: parts.shading.scale,
         cover,

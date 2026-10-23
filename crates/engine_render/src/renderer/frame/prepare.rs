@@ -462,6 +462,8 @@ impl Renderer {
             |frame| frame.camera,
         );
         camera.set_region(snapshot.view_projection, self.display.region);
+        // The point every distance switch measures from.
+        camera.set_detail(snapshot.detail_eye, snapshot.detail_frozen);
         // The wind placed objects sway in, and the time they
         // swayed at last frame for temporal frames' motion.
         let seconds = snapshot.elapsed_seconds;

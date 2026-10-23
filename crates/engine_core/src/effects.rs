@@ -44,12 +44,13 @@ use crate::environment::InvalidSetting;
 use crate::{Camera, Environment, FrameTime, RenderSnapshot};
 use engine_settings::{ExtraRules, settings};
 
-/// Copies the camera eye, presentation time and environment of `world`
-/// into `snapshot`, sanitized ([`Environment::current`]): a missing
-/// atmosphere reads as the default one, a missing effect resource turns that
-/// effect off.
+/// Copies the camera eye, the detail eye, presentation time and environment
+/// of `world` into `snapshot`, sanitized ([`Environment::current`]): a
+/// missing atmosphere reads as the default one, a missing effect resource
+/// turns that effect off.
 pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
     snapshot.camera_position = world.resource::<Camera>().eye();
+    (snapshot.detail_eye, snapshot.detail_frozen) = crate::TerrainDebug::detail_eye(world);
     snapshot.elapsed_seconds = world
         .get_resource::<FrameTime>()
         .map_or(0.0, |time| time.elapsed_seconds as f32);

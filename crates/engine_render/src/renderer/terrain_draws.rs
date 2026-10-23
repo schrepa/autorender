@@ -60,6 +60,7 @@ impl Renderer {
                 camera: crate::gpu_data::jittered(culling, jitter),
                 culling,
                 eye: snapshot.camera_position,
+                detail_eye: snapshot.detail_eye,
                 maps,
                 probes,
                 settings: snapshot.environment.terrain.sanitized(),

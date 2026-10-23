@@ -2,8 +2,8 @@
 // shaders: the first bind group's camera, atmosphere and sun
 // shadows, and the lighting functions every path shades with.
 
-// Uniform: three column-major mat4 and five vec4, 16-byte alignment,
-// exactly 272 bytes. `view_projection` is the rasterized projection; temporally
+// Uniform: three column-major mat4 and six vec4, 16-byte alignment,
+// exactly 288 bytes. `view_projection` is the rasterized projection; temporally
 // antialiased frames jitter it by `jitter.xy` clip units per w.
 // Their motion uses the previous frame's unjittered `previous_view_projection`
 // and `jitter.zw`, two over the render size in pixels. The unjittered
@@ -17,7 +17,10 @@
 // presentation time, which temporal frames' motion sways by. `region` is
 // the frame's render size in pixels, which it draws at from the top-left
 // corner of its screen-sized targets (the viewport), and that size's share
-// of the display on each axis.
+// of the display on each axis. `detail.xyz` is the detail eye every
+// distance switch measures from (`detail_distance`, `detail_footprint`):
+// the eye, or the point `TerrainDebug::freeze` holds; `detail.w` is 1 while
+// it is frozen, else 0.
 struct Camera {
     view_projection: mat4x4<f32>,
     previous_view_projection: mat4x4<f32>,
@@ -27,6 +30,7 @@ struct Camera {
     options: vec4<f32>,
     wind: vec4<f32>,
     region: vec4<f32>,
+    detail: vec4<f32>,
 }
 // The scene's atmosphere in linear color; scalars ride in w.
 struct Lighting {
@@ -296,6 +300,29 @@ fn pixel_footprint(world: vec3<f32>, normal: vec3<f32>) -> f32 {
     let depth = max(dot(vec3<f32>(view[0].w, view[1].w, view[2].w), relative), 1.0e-6);
     let facing = max(abs(dot(normal, relative)) / distance, 0.0625);
     return depth * camera.options.y * sqrt(depth / (distance * facing));
+}
+
+// The meters from the detail eye (`camera.detail`) to `world`, which every
+// handover by distance measures.
+fn detail_distance(world: vec3<f32>) -> f32 {
+    return length(world - camera.detail.xyz);
+}
+
+// The meters a pixel spans on a surface at `world` facing `normal`, as
+// `pixel_footprint` measures it but seen from the detail eye, which every
+// handover by size on screen measures; texture filtering keeps the view's
+// own derivatives. While the eye is frozen, its distance and the way from
+// it to the point stand in for the view's depth and direction, as if it
+// looked straight at the point, so handovers stay where it stands however
+// the view turns or moves; otherwise this is the view's own footprint.
+fn detail_footprint(world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if camera.detail.w == 0.0 {
+        return pixel_footprint(world, normal);
+    }
+    let relative = world - camera.detail.xyz;
+    let distance = max(length(relative), 1.0e-6);
+    let facing = max(abs(dot(normal, relative)) / distance, 0.0625);
+    return distance * camera.options.y / sqrt(facing);
 }
 
 // The mip bias material textures sample with (`camera.options.w`): log2 of

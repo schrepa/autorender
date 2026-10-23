@@ -242,11 +242,13 @@ impl Renderer {
             revision: sources.revision,
             terrains: &infos,
         });
+        // On the ground as drawn, which morphs by the distance from the
+        // detail eye.
         self.features.scatter.get_mut().prepare_snap(
             &self.device,
             &self.queue,
             sources,
-            snapshot.camera_position,
+            snapshot.detail_eye,
         );
         // Each group's pipelines, and those its fading objects draw with:
         // masked groups' depth pre-pass too.

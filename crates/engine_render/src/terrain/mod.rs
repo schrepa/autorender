@@ -251,6 +251,11 @@ pub(crate) struct TerrainViews<'a> {
     /// culling.
     pub culling: Mat4,
     pub eye: Vec3,
+    /// The detail eye
+    /// ([`RenderSnapshot::detail_eye`](engine_core::RenderSnapshot::detail_eye)),
+    /// which streaming selected the patches around and their vertices morph
+    /// by: the camera's eye unless frozen.
+    pub detail_eye: Vec3,
     /// Shadow maps drawn every frame and their world-to-clip matrices.
     pub maps: &'a [(usize, Mat4)],
     /// Whether reflection probes capture faces this frame, which draw every

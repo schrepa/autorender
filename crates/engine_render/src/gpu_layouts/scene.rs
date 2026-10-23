@@ -58,6 +58,10 @@ gpu_structs! {
         /// size's share of the display on each axis
         /// ([`FrameRegion::uniform`](crate::targets::FrameRegion::uniform)).
         pub region: [f32; 4],
+        /// The detail eye every distance switch measures from (xyz, world
+        /// space as `position`), and 1 while it is frozen, else 0
+        /// ([`set_detail`](crate::gpu_data::CameraUniform::set_detail)).
+        pub detail: [f32; 4],
     }
 
     /// The scene's atmosphere and grade, as `scene.wgsl` reads them.

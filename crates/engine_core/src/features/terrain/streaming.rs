@@ -581,10 +581,7 @@ impl TerrainStreaming {
             .get_resource::<Viewport>()
             .copied()
             .unwrap_or_default();
-        let eye = world
-            .get_resource::<TerrainDebug>()
-            .and_then(|debug| debug.freeze)
-            .unwrap_or_else(|| camera.eye());
+        let (eye, _) = TerrainDebug::detail_eye(world);
         let seconds = world
             .get_resource::<crate::FrameTime>()
             .map_or(0.0, |time| time.delta_seconds);

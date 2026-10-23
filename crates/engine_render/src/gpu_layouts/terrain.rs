@@ -57,8 +57,15 @@ gpu_structs! {
     pub(crate) struct TerrainUniform as ["TerrainUniform"] {
         pub anchor: [f32; 4],
         pub eye: [f32; 4],
+        /// The detail eye less `eye` (xyz), which patches morph by their
+        /// distance from, as streaming selected them around it; w unused.
+        pub detail: [f32; 4],
         pub origin: [f32; 4],
         pub directory: [u32; 4],
+        /// The ground's relief: the meters the deepest of the terrain's
+        /// materials with maps sinks it, so pixels where no relief could
+        /// move half a pixel look up no materials for it, and the most steps
+        /// its rays take; zw unused.
         pub relief: [f32; 4],
         pub deform_grid: [i32; 4],
         pub deform: [f32; 4],

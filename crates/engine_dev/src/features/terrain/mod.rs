@@ -373,9 +373,12 @@ fn river_flow(found: &engine_core::terrain_data::Hydrology) -> crate::views::Riv
 }
 
 /// Temporarily set terrain's level of detail and render while paused:
-/// `pixel_error` replaces the settings', and `freeze` keeps streaming and
-/// patches following the camera's current position while the camera moves
-/// on. Omitted fields stay as they are. Terrain's levels, normals, tiles
+/// `pixel_error` replaces the settings', and `freeze` holds the detail eye
+/// at the camera's current position while the camera moves on, so every
+/// distance switch stays where it stood: terrain streaming, its patches and
+/// shading levels, the ground's relief, ground cover and its canopy, placed
+/// objects' thinning, kept shadow windows, river water and virtual texture
+/// pages. Omitted fields stay as they are. Terrain's levels, normals, tiles
 /// and patches, materials, sky visibility and detail show in the debug
 /// views (the environment's `debug_view` section).
 #[derive(Debug, Deserialize, Serialize)]
@@ -443,7 +446,7 @@ pub struct TerrainControlResult {
     pub temporary: bool,
     /// Always true: terrain draws as asked.
     pub terrain_changed: bool,
-    /// Where streaming stays frozen, where it does (world space).
+    /// Where the detail eye stays frozen, where it does (world space).
     pub frozen_at: Option<[f32; 3]>,
     /// The settings' pixel error, where terrain settings exist.
     pub pixel_error: Option<f32>,
