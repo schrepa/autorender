@@ -1062,7 +1062,7 @@ export interface SweepRays {
 
 /** What `terrain` answers: terrain's level of detail after. */
 export interface TerrainControlResult {
-  /** Where streaming stays frozen, where it does (world space). */
+  /** Where the detail eye stays frozen, where it does (world space). */
   frozen_at?: number[] | null;
   /** The settings' pixel error, where terrain settings exist. */
   pixel_error?: number | null;
@@ -1213,6 +1213,14 @@ export interface TerrainStats {
    */
   settled_records: number;
   settling_records: number;
+  /**
+   * Resident tiles of level 1 and coarser shading with their shading
+   * (level 0's materials and normals averaged), and the records of such
+   * shading asked for: until a tile's arrives it shows the next coarser
+   * level's.
+   */
+  shaded_tiles: number;
+  shading_records: number;
   stale_water_tiles: number;
   surroundings_patches: number;
   /** Of the resident tiles and patches, those of terrains' surroundings. */
