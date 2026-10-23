@@ -244,7 +244,9 @@ gpu_structs! {
         pub light: [[f32; 4]; 3],
         /// Each kept level's light space: one over its width (x and y in level
         /// widths, whose fractions place a point in its toroidal map), and its
-        /// band's nearest depth and one over its depth (z in [0, 1]); w unused.
+        /// band's nearest depth and one over its depth (z in [0, 1]); then the
+        /// meters around the detail eye within which it holds every point,
+        /// across whose outer part lookups hand over to the next level.
         pub level_scales: [[f32; 4]; MAX_LEVELS],
         /// Each level's window: its first corner in level widths, the normal
         /// offset (world units) of its lookups and its steepest receiver plane.

@@ -18,9 +18,9 @@ pub struct LodRanges {
 }
 
 /// Where morphing starts, as a share of a level's range.
-const MORPH_START: f32 = 0.75;
+pub const MORPH_START: f32 = 0.75;
 /// A morph range no vertex reaches: the coarsest level never morphs.
-const NEVER: [f32; 2] = [1.0e30, 2.0e30];
+pub const NO_MORPH: [f32; 2] = [1.0e30, 2.0e30];
 
 impl LodRanges {
     /// The shortest range of a level in its sample spacings. Patches of a
@@ -71,7 +71,7 @@ impl LodRanges {
     /// coarser level's; never for the coarsest.
     pub fn morph(&self, level: u32) -> [f32; 2] {
         if level + 1 >= self.levels() {
-            return NEVER;
+            return NO_MORPH;
         }
         let range = self.range(level);
         [range * MORPH_START, range]

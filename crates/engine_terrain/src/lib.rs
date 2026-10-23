@@ -80,7 +80,8 @@ pub use placement::{
 pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use rivers::{RIVER_STEP, Rivers};
 pub use select::{
-    LodRanges, Patch, Selection, WantedTile, WantedView, select_patches, wanted_tiles,
+    LodRanges, MORPH_START, NO_MORPH, Patch, Selection, WantedTile, WantedView, select_patches,
+    wanted_tiles,
 };
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverSight};
 pub use steady_water::{

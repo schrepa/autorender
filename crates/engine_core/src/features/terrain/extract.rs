@@ -175,9 +175,18 @@ pub struct RenderTerrain {
     /// but the coarsest morphs into the next over its last quarter
     /// ([`LodRanges`]): where renderers find the ground as drawn.
     pub ranges: Vec<f32>,
+    /// The largest height difference measured between each level's tiles
+    /// and the next coarser level's, finest first, as tiles arrive (zero
+    /// until measured): how far the ground one level draws may stand off
+    /// another's.
+    pub errors: Vec<f32>,
     /// Whether it is a terrain's surroundings, which grow
     /// no blades: their grassy ground shows as canopy at every distance.
     pub surroundings: bool,
+    /// For a terrain's surroundings, the ground the terrain they surround
+    /// covers (terrain-local, least corner then greatest): their patches
+    /// never draw there.
+    pub cutout: Option<(Vec2, Vec2)>,
     /// Whether its tiles may hold holes and whether a hydrology bake will
     /// give it water: renderers create what draws them before it shows,
     /// while it loads.
@@ -257,7 +266,9 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 patches: Vec::new(),
                 reach: Vec::new(),
                 ranges: Vec::new(),
+                errors: Vec::new(),
                 surroundings: false,
+                cutout: None,
                 may_hole: false,
                 hydrology: false,
                 gpu_surface: None,
@@ -271,6 +282,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         let render = &mut listing.terrains[index];
         render.id = state.render_id();
         render.surroundings = state.around.is_some();
+        render.cutout = state.around.as_ref().map(|around| around.cutout);
         let layers = &state.terrain.layers;
         (render.may_hole, render.hydrology) = (layers.may_hole(), layers.has_hydrology());
         render.origin = state.terrain.origin;
@@ -327,6 +339,8 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
             .reach
             .extend(state.ranges.iter().map(|range| range * LOAD_REACH));
         render.ranges.clone_from(&state.ranges);
+        render.errors.clear();
+        render.errors.extend_from_slice(state.store.errors());
         render.falls = state.falls.clone();
         render.water_window = state.hydrology.window.clone();
         render.lighting.clone_from(&state.whole.lighting.made);

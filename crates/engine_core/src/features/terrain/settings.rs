@@ -57,8 +57,10 @@ settings! {
         /// tiles load for collision.
         pub collision_radius: f32 = 192.0 => range(0.0, 4096.0),
         /// Long sun shadows through each terrain's horizon map,
-        /// with shadows on; shadow maps then draw terrain near the camera only.
-        /// Off, terrain casts into the shadow maps alone. The map holds the
+        /// with shadows on: the near shadow maps then draw terrain near their
+        /// receivers, the kept shadow levels hold its ground as far as they
+        /// reach, and the horizon map shadows the rest. Off, terrain casts
+        /// into the shadow maps alone. The map holds the
         /// horizons in sixteen directions, cooked with the terrain's lighting
         /// from its finest pinned level, so the sun moves freely.
         pub sun_shadows: bool = true => any,
