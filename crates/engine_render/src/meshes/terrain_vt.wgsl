@@ -25,9 +25,10 @@ const VT_WINDOW: u32 = 64u;
 const VT_MIPS: u32 = 18u;
 // Leaves per square meter of ground the leaves texel's 1 stands for.
 const VT_LEAVES: f32 = 16.0;
-// Ground steeper than this (its normal's y below) stays exact: its texels
-// would stretch down cliffs.
-const VT_STEEP: f32 = 0.7;
+// Ground steeper than the first (its normal's y below) stays exact, its
+// texels stretching down slopes; from the first to the second the pages
+// take over from the ground computed there (`terrain_vt_texels`).
+const VT_STEEP: vec2<f32> = vec2<f32>(0.65, 0.75);
 // Seconds a page that arrived takes to fade in from the ground computed
 // under it to its own: long enough that no arrival pops, as switches do
 // over about half a second.
@@ -120,14 +121,14 @@ fn terrain_vt_sample(slot: i32, texel: vec2<f32>) -> array<vec4<f32>, 3> {
 // arrived: the finer page fades in over the coarser one, which pages bake
 // first, as textures sharpen when their finer mips arrive; and the share of
 // the pixel's ground they show together, the ground computed there showing
-// the rest, where the coarser page is still fading in itself. `dither`, a threshold in [0, 1)
-// that temporally antialiased frames vary by pixel and frame, shows one of
-// the three whole, the coarser page below its share, the finer next and
-// the computed ground past both, so the resolve blends them; frames without
-// temporal antialiasing pass it negative and blend the pages by their
-// shares. `shown` is 0 where the ground stays exact: no texture, steep
-// ground, texels coarser than the pixel at the finest mip, or a page not
-// baked yet.
+// the rest, where the coarser page is still fading in itself or the pages
+// are taking over from it. `dither`, a threshold in [0, 1) that temporally
+// antialiased frames vary by pixel and frame, shows one of the three
+// whole, the coarser page below its share, the finer next and the computed
+// ground past both, so the resolve blends them; frames without temporal
+// antialiasing pass it negative and blend the pages by their shares.
+// `shown` is 0 where the ground stays exact: no texture, steep ground, a
+// pixel spanning half the finest texel or less, or a page not baked yet.
 struct TerrainVtTexels {
     layers: array<vec4<f32>, 3>,
     shown: f32,
@@ -136,16 +137,21 @@ struct TerrainVtTexels {
 fn terrain_vt_texels(site: TerrainSite, dither: f32) -> TerrainVtTexels {
     var texels: TerrainVtTexels;
     let mips = terrain.vt.y;
-    if mips < 2u || site.geometric.y < VT_STEEP {
+    if mips < 2u {
         return texels;
     }
     let along = vec2<f32>(length(site.world_dx), length(site.world_dy));
     let lod = log2(terrain_vt_texel(along) / terrain.vt_scale.x);
-    if !(lod >= 0.0 && lod < f32(mips - 1u)) {
+    // The share of the ground the pages take over: none where a pixel spans
+    // half the finest texel or less, or on steep ground; all of it where it
+    // spans a whole one on gentler ground; smoothly between, so no edge
+    // shows where the computed ground and the pages meet.
+    let taking = saturate(lod + 1.0) * smoothstep(VT_STEEP.x, VT_STEEP.y, site.geometric.y);
+    if !(taking > 0.0 && lod < f32(mips - 1u)) {
         return texels;
     }
-    let fine = u32(lod);
-    let blend = lod - f32(fine);
+    let fine = u32(max(lod, 0.0));
+    let blend = max(lod, 0.0) - f32(fine);
     let size = terrain.vt_scale.x * f32(1u << fine);
     let texel = (site.world.xz - terrain.origin.xz) / size;
     let fine_page = terrain_vt_page(fine, texel);
@@ -153,9 +159,9 @@ fn terrain_vt_texels(site: TerrainSite, dither: f32) -> TerrainVtTexels {
     if fine_page.slot < 0 || coarse_page.slot < 0 {
         return texels;
     }
-    let fine_share = (1.0 - blend) * fine_page.shown;
+    let fine_share = (1.0 - blend) * fine_page.shown * taking;
     // What the finer page does not show yet, the coarser one shows for it.
-    let coarse_share = (1.0 - fine_share) * coarse_page.shown;
+    let coarse_share = (taking - fine_share) * coarse_page.shown;
     if dither >= 0.0 {
         if dither < coarse_share {
             texels.layers = terrain_vt_sample(coarse_page.slot, texel * 0.5);
@@ -250,35 +256,6 @@ struct TerrainVtBake {
 // mip and table entry, read back for the pages to bake.
 @group(2) @binding(19) var<storage, read_write> terrain_vt_wanted: array<atomic<u32>>;
 
-// The terrain's height at terrain-local `local` in its finest resident
-// level from `finest` on, bilinear between its samples (heights from the
-// terrain's origin).
-fn terrain_vt_height(local: vec2<f32>, finest: u32) -> f32 {
-    let base = terrain.directory.x;
-    let levels = terrain.directory.y;
-    for (var index = finest; index < levels; index++) {
-        let header = base + index * 4u;
-        let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
-        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
-        let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
-        if layer == 0xffffffffu {
-            continue;
-        }
-        // Layers keep a border sample before the tile's first.
-        let at = min(samples - vec2<f32>(tile * 256u), vec2<f32>(256.0)) + 1.0;
-        let first = vec2<i32>(floor(at));
-        let f = at - floor(at);
-        let next = min(first + vec2<i32>(1), vec2<i32>(258));
-        let low = mix(textureLoad(terrain_heights, first, layer, 0).x,
-            textureLoad(terrain_heights, vec2<i32>(next.x, first.y), layer, 0).x, f.x);
-        let high = mix(textureLoad(terrain_heights, vec2<i32>(first.x, next.y), layer, 0).x,
-            textureLoad(terrain_heights, next, layer, 0).x, f.x);
-        return mix(low, high, f.y);
-    }
-    return 0.0;
-}
-
 struct TerrainVtBakeOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) @interpolate(flat) bake: u32,
@@ -357,8 +334,10 @@ fn fs_terrain_vt_bake(input: TerrainVtBakeOutput) -> TerrainVtTargets {
     let texel = vec2<f32>(bake.page) * VT_PAGE + (input.clip_position.xy - corner) - VT_BORDER;
     let local = texel * size;
     let first = select(0u, far - 1u, far > 0u);
+    // On the ground's surface, where its materials lie (`terrain_level_height`).
+    let held = terrain_level_height(local, first);
     let world = vec3<f32>(local.x + terrain.origin.x,
-        terrain.origin.y + terrain_vt_height(local, first), local.y + terrain.origin.z);
+        terrain.origin.y + select(0.0, held.height, held.found), local.y + terrain.origin.z);
     // Its levels by its footprint on the ground's slope, the slope read at
     // the levels its size gives level ground.
     let normal = terrain_surface_normal(local, terrain_vt_shading(size, first));
@@ -420,7 +399,7 @@ fn cs_terrain_vt_feedback(@builtin(global_invocation_id) id: vec3<u32>) {
             - point) * sign;
     }
     let normal = cross(steps[1], steps[0]);
-    if !(abs(normal.y) >= VT_STEEP * length(normal)) {
+    if !(abs(normal.y) >= VT_STEEP.x * length(normal)) {
         return;
     }
     // Per display pixel, as the resolves' sites measure it (`terrain_seen`).
@@ -428,10 +407,11 @@ fn cs_terrain_vt_feedback(@builtin(global_invocation_id) id: vec3<u32>) {
     let lod = log2(terrain_vt_texel(along) / terrain.vt_scale.x);
     let local = point.xz + camera.position.xz - terrain.origin.xz;
     let mips = terrain.vt.y;
-    // The resolve's two mips, and one either side for its smoother measure.
+    // The resolve's two mips, and one either side for its smoother measure,
+    // from where the pages begin to take over (`terrain_vt_texels`).
     let low = u32(max(floor(lod - 0.25), 0.0));
-    let high = min(u32(max(floor(lod + 0.25) + 1.0, 0.0)), mips - 1u);
-    if !(lod + 0.25 >= 0.0) {
+    let high = min(u32(max(floor(lod + 0.25) + 1.0, 1.0)), mips - 1u);
+    if !(lod + 1.25 >= 0.0) {
         return;
     }
     for (var mip = low; mip <= high; mip++) {

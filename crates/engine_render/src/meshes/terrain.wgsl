@@ -342,7 +342,10 @@ const KEPT_GROUND_TEXELS: f32 = 2.0;
 // The height above the terrain's origin of its ground at terrain-local
 // `local` on the triangles of `level`'s tiles, unmorphed, or of the nearest
 // coarser level's where its tile is not resident, as that level's patches
-// draw it whole; `found` false where no level holds it.
+// draw it whole; `found` false where no level holds it. Level 0's is the
+// surface the ground's materials lie on, wherever the geometry drawn
+// stands: the virtual texture's pages bake them there, and pixels
+// computing their ground read them there too.
 struct TerrainLevelHeight {
     height: f32,
     found: bool,
@@ -1253,12 +1256,7 @@ fn terrain_ground(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainGro
 }
 
 fn terrain_shares(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainShares {
-    return terrain_blend_shares(
-        terrain_blend(site.world.xz - terrain.origin.xz, site.geometric, shading), site);
-}
-
-// The shares of `blend`'s materials the ground at `site` shows them in.
-fn terrain_blend_shares(blend: TerrainBlend, site: TerrainSite) -> TerrainShares {
+    let blend = terrain_blend(site.world.xz - terrain.origin.xz, site.geometric, shading);
     let first = terrain_slot(blend.ids.x, blend.weights.x, site);
     let second = terrain_slot(blend.ids.y, blend.weights.y, site);
     let third = terrain_slot(blend.ids.z, blend.weights.z, site);
@@ -1424,17 +1422,13 @@ fn terrain_track_slope_share(track: vec2<f32>, deform: f32) -> f32 {
     return saturate(deform / 0.02) * (1.0 - smoothstep(0.85 * deform, deform, track.x));
 }
 
-// Where a fragment's view ray meets the ground: `world` sunk to where it
-// shades, and `deform` the meters its materials let tracks sink it at
-// most where the deformation map holds tracks nearby (otherwise 0); and
-// the materials it looked up there (`blended` where it did), which the
-// ground shades with, the relief's shift being far smaller than their
-// samples' spacing.
+// Where a fragment's view ray meets the ground: `world` moved across the
+// ground to where it shades, and `deform` the meters its materials let
+// tracks sink it at most where the deformation map holds tracks nearby
+// (otherwise 0).
 struct TerrainRelief {
     world: vec3<f32>,
     deform: f32,
-    blend: TerrainBlend,
-    blended: bool,
 }
 
 // How far below the ground's top the relief layers `a` and `b` and the
@@ -1477,15 +1471,17 @@ fn terrain_relief_across(way: vec3<f32>, normal: vec3<f32>) -> f32 {
 }
 
 // Where a fragment's view ray meets the ground's relief: the ray marches
-// down through the heights of its two heaviest materials, from above or
-// across their planes on steep ground as their maps lie, each as deep as
+// down through the heights of its two heaviest materials, each as deep as
 // its relief reaches, and through the tracks deformers pressed, from the
-// top of their rims to the bottom of the deepest; the ground shades from
-// where the ray meets them, sunk that deep. The relief shows by its size on
-// screen, seen from the detail eye, not by its distance: whole while its
-// deepest point moves TERRAIN_RELIEF_WHOLE pixels or more, flattening to
-// none by TERRAIN_RELIEF_GONE, with about a step per pixel it moves, so far
-// relief costs little and no ring follows the eye.
+// top of their rims to the bottom of the deepest; the heights lie on the
+// ground's surface, from above or across their planes on steep ground as
+// their maps lie (`terrain_level_height`), so the ray only moves where on
+// that surface the ground shades from, as the virtual texture's pages hold
+// it. The relief shows by its size on screen, seen from the detail eye,
+// not by its distance: whole while its deepest point moves
+// TERRAIN_RELIEF_WHOLE pixels or more, flattening to none by
+// TERRAIN_RELIEF_GONE, with about a step per pixel it moves, so far relief
+// costs little and no ring follows the eye.
 fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32)
         -> TerrainRelief {
     var relief: TerrainRelief;
@@ -1510,8 +1506,6 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
         return relief;
     }
     let blend = terrain_blend(site.world.xz - terrain.origin.xz, site.geometric, shading);
-    relief.blend = blend;
-    relief.blended = true;
     let weights = blend.weights;
     if tracked >= 5.0e-4 {
         var deform = 0.0;
@@ -1563,8 +1557,18 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     let travel = ray / max(into, 0.08);
     let across = length(travel.xz);
     let along = travel.xz * min(1.0, 3.0 / max(across, 1.0e-6));
-    // The point's move per meter of depth.
-    let march = vec3<f32>(along.x, travel.y, along.y);
+    // The surface point the ray stands over, and its move per meter of
+    // depth: along the surface's tangent from the point under the fragment,
+    // whose height maps lying across planes read.
+    let rise = -site.geometric.xz / max(site.geometric.y, 0.05);
+    let march = vec3<f32>(along.x, dot(rise, along), along.y);
+    var start = site.world;
+    if (a.depth > 0.0 && a.mapping.planes.y < 1.0) || (b.depth > 0.0 && b.mapping.planes.y < 1.0) {
+        let held = terrain_level_height(site.world.xz - terrain.origin.xz, 0u);
+        if held.found {
+            start.y = held.height + terrain.origin.y;
+        }
+    }
     // Enough steps that each moves the point at most a pixel on screen and
     // across at most TERRAIN_RELIEF_STRIDE of its maps' repeat, so the ray
     // never steps over what it should meet, from two up to the most steps;
@@ -1579,13 +1583,13 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
         min((sunk + raised) / 0.02, 2.0 * terrain.relief.y));
     let steps = max(u32(floor(count + dither)), 2u);
     var previous = top;
-    var gap = top - terrain_sink(a, b, site.world + march * top, deform, fade);
+    var gap = top - terrain_sink(a, b, start + march * top, deform, fade);
     var hit = top;
     if gap < 0.0 {
         hit = depth;
         for (var step = 1u; step <= steps; step++) {
             let at = top + (depth - top) * f32(step) / f32(steps);
-            let point = site.world + march * at;
+            let point = start + march * at;
             let next_gap = at - terrain_sink(a, b, point, deform, fade);
             if next_gap >= 0.0 {
                 // Between the last step and this one, where the ray reaches
@@ -1643,14 +1647,13 @@ fn terrain_forward_look(relative: vec3<f32>) -> TerrainLook {
 }
 
 // Where the view ray of a fragment `relative` to the eye, seen as `look`
-// says, meets the ground: its site, sunk where the ground's relief and
-// tracks show, the shading levels its pixel's footprint gives, the
-// meters tracks may sink it and the materials its relief looked up
-// (`TerrainRelief`).
+// says, meets the ground: its site, moved across the ground where its
+// relief and tracks show, the shading levels its pixel's footprint gives
+// and the meters tracks may sink it (`TerrainRelief`).
 struct TerrainSeen {
     site: TerrainSite,
     shading: TerrainShadingLevel,
-    relief: TerrainRelief,
+    deform: f32,
 }
 
 fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
@@ -1684,10 +1687,10 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     site.toward = -ray;
     site.thinned = terrain_thinned(world);
     site.across = terrain_across(world);
-    // Sunk where the ground's relief and tracks show.
+    // Moved where the ground's relief and tracks show.
     let relief = terrain_parallax(site, shading, look.dither);
     site.world = relief.world;
-    return TerrainSeen(site, shading, relief);
+    return TerrainSeen(site, shading, relief.deform);
 }
 
 // `terrain_point` before its highlights widen with its normal's turn.
@@ -1714,13 +1717,15 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     }
     var ground = page;
     if shown < 1.0 {
-        // With the materials the relief looked up, where it did.
-        if seen.relief.blended {
-            ground = terrain_shared_ground(terrain_blend_shares(seen.relief.blend, site), site);
-        } else {
-            ground = terrain_ground(site, seen.shading);
+        // As the pages bake it: the materials, their blend and the tint on
+        // the ground's surface where the view meets its relief.
+        var surface = site;
+        let held = terrain_level_height(site.world.xz - terrain.origin.xz, 0u);
+        if held.found {
+            surface.world.y = held.height + terrain.origin.y;
         }
-        ground.albedo *= terrain_tint(world, ground, site.footprint,
+        ground = terrain_ground(surface, seen.shading);
+        ground.albedo *= terrain_tint(surface.world, ground, site.footprint,
             detail_footprint(world, geometric));
         if shown > 0.0 {
             ground = terrain_vt_shown(ground, page, shown);
@@ -1729,19 +1734,19 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     var albedo = ground.albedo;
     var normal = ground.normal;
     var occlusion = ground.occlusion;
-    if seen.relief.deform > 0.0 {
+    if seen.deform > 0.0 {
         // Tracks tilt the ground along their walls and rims,
         // and darken it where they press it down.
         let track = terrain_deform_track(site.world.xz);
         let slope = terrain_deform_slope(site.world.xz)
-            * terrain_track_slope_share(track, seen.relief.deform);
+            * terrain_track_slope_share(track, seen.deform);
         // Walls steeper than the map's texels resolve (narrower tracks than
         // a few texels) tilt as steeply as about fifty degrees, not flat on
         // their sides.
         let steep = length(slope);
         let tilt = slope * min(1.0, 1.2 / max(steep, 1.0e-6));
         normal = stable_normalize(normal - vec3<f32>(tilt.x, 0.0, tilt.y));
-        let pressed = saturate(-terrain_track_height(track, seen.relief.deform) / 0.06);
+        let pressed = saturate(-terrain_track_height(track, seen.deform) / 0.06);
         albedo *= 1.0 - 0.15 * pressed;
         occlusion *= 1.0 - 0.25 * pressed;
     }
