@@ -6,7 +6,10 @@
 //! and variety. All of it holds still while the light and the view move,
 //! so pages of it, baked once by the exact path's own code (the ground as
 //! seen where a pixel's footprint spans a texel), stand in for it at the
-//! pixels that ask: a page-table read and three bilinear texel fetches.
+//! pixels that ask: a page-table read and three bilinear texel fetches. A
+//! page's texels shade at the levels and macro tint their own size gives
+//! (`terrain_shading_level`, `macro_strength`), as pixels of that footprint
+//! do, wherever the eye stands.
 //!
 //! Mip m's texels span [`TEXEL`] · 2^m meters, its pages [`PAGE_TEXELS`] of
 //! them, kept with a border of
@@ -20,10 +23,11 @@
 //! page's normal turns, occlusion and leaves are linear data, stored in the
 //! sheets' sRGB layers as they are: sampling decodes them before it
 //! filters. Each textured terrain keeps, per mip, a window of
-//! [`WINDOW`]² pages around the eye, its table entries in the directory
-//! buffer after the directory's words (the resolve's fragments are at their
-//! device's limits of textures and storage buffers, so the texture adds no
-//! binding to them).
+//! [`WINDOW`]² pages around the detail eye (`RenderSnapshot::detail_eye`),
+//! its table entries and the time each entry's page arrived in the
+//! directory buffer after the directory's words (the resolve's fragments
+//! are at their device's limits of textures and storage buffers, so the
+//! texture adds no binding to them).
 //!
 //! Pixels ask for pages through a compute pass after the resolves, which
 //! marks the pages of the mips around each 8x8 block's footprint (a
@@ -31,17 +35,15 @@
 //! frames late. Pages asked for and absent bake, up to
 //! `virtual_texture_bakes` a frame, coarsest first, into free slots or the
 //! least recently asked for. Until a pixel's two pages are baked it
-//! computes its ground as before, so pages arriving never change what
-//! shows, only what it costs. A terrain's macro colors replaced drop its
-//! pages.
+//! computes its ground as before, and a page that arrives in a window fades
+//! in from that ground to its own over half a second, so arrivals never
+//! pop. A terrain's macro colors replaced drop its pages.
 //!
 //! Pages go stale and bake again with the budget absent pages leave, those
-//! still asked for only: pages over tiles that arrived, left or were edited
-//! first, once the tiles have held still [`SETTLE_FRAMES`] (they show their
-//! old ground until then, rather than none), then
-//! pages whose shading levels (`terrain_shading_level`, which the exact
-//! path takes from each point's distance to the eye they bake from) the
-//! eye has turned by more than [`STALE_SHADING`] of a level.
+//! still asked for only: pages over tiles that arrived, left or were
+//! edited, once the tiles have held still [`SETTLE_FRAMES`] (they show
+//! their old ground until then, rather than none), those whose tiles
+//! changed longest ago first.
 //!
 //! A terrain's coarse mips are far pages instead (`far`): the same whatever
 //! the eye, a record the host keeps and the cook ships, pinned in their
@@ -60,7 +62,6 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use engine_core::glam::Vec3;
-use engine_core::math::{max, min};
 use engine_core::{RenderTerrains, TerrainSettings, TileKey};
 
 use crate::bindings::{
@@ -78,10 +79,13 @@ mod far;
 pub(crate) use far::{FarSource, RecordMode};
 
 const TEXEL: f32 = 1.0 / 256.0;
-/// Words a textured terrain's windows and tables take in the directory
-/// buffer, and its bits of pages wanted.
-pub(crate) const TERRAIN_WORDS: usize = 2 * MIPS + MIPS * (WINDOW * WINDOW) as usize;
+/// Words a textured terrain's windows, tables and their entries' arrivals
+/// take in the directory buffer, and its bits of pages wanted.
+pub(crate) const TERRAIN_WORDS: usize = 2 * MIPS + 2 * MIPS * (WINDOW * WINDOW) as usize;
 const WANTED_WORDS: usize = MIPS * (WINDOW * WINDOW) as usize / 32;
+/// The arrival of pages placed on frames that do not fade, as exact frames'
+/// tiles do not: long before any frame's time, so they show at once.
+const LONG_AGO: f32 = -1.0e30;
 /// Frames a page goes unasked for before another may take its slot: a
 /// round of the feedback's pixels, so every pixel still showing it has
 /// asked.
@@ -92,9 +96,6 @@ const FIRST_PAGES: u32 = 64;
 /// Samples around a changed tile whose pages it drops: its border, and the
 /// neighbors its normals and bilinear heights read.
 const TILE_MARGIN: f32 = 2.0;
-/// The share of a level the exact path's shading levels may turn from a
-/// page's before it bakes again.
-const STALE_SHADING: f32 = 0.1;
 /// Frames the tiles under a page hold still before it bakes again: tiles
 /// coming and going frame by frame cost no bakes.
 const SETTLE_FRAMES: u64 = 4;
@@ -111,12 +112,14 @@ use crate::gpu_layouts::terrain_vt::BakeRecord;
 
 /// A textured terrain: its index this frame (its windows' and tables'
 /// place, and its feedback bits'), its windows' first pages, its table
-/// entries (slot plus one, 0 while absent) and which mips' tables changed
-/// since written, and the macro colors' upload its pages follow.
+/// entries (slot plus one, 0 while absent) and the time each entry's page
+/// arrived (seconds), which mips' tables changed since written, and the
+/// macro colors' upload its pages follow.
 struct Textured {
     index: u32,
     firsts: [[i32; 2]; MIPS],
     entries: Vec<u32>,
+    arrivals: Vec<f32>,
     dirty: [bool; MIPS],
     colors: u64,
 }
@@ -127,6 +130,7 @@ impl Textured {
             index: 0,
             firsts: [[i32::MIN / 2; 2]; MIPS],
             entries: vec![0; MIPS * (WINDOW * WINDOW) as usize],
+            arrivals: vec![LONG_AGO; MIPS * (WINDOW * WINDOW) as usize],
             dirty: [true; MIPS],
             colors: u64::MAX,
         }
@@ -157,59 +161,6 @@ fn page_of(first: [i32; 2], index: usize) -> [i32; 2] {
 /// Meters a texel of mip `mip` spans.
 fn texel_size(mip: usize) -> f32 {
     TEXEL * (1_u32 << mip) as f32
-}
-
-/// What a terrain's shading levels turn with: its origin, its levels'
-/// reaches (`RenderTerrain::reach`) and the heights its drawn patches span
-/// from its origin.
-struct Levels<'a> {
-    origin: Vec3,
-    reach: &'a [f32],
-    heights: [f32; 2],
-}
-
-impl Levels<'_> {
-    /// The nearest and farthest a point of `page` can lie from `eye`.
-    fn distances(&self, page: &PageKey, eye: Vec3) -> (f32, f32) {
-        let span = texel_size(usize::from(page.mip)) * PAGE_TEXELS as f32;
-        let local = eye - self.origin;
-        let mut near = 0.0;
-        let mut far = 0.0;
-        for (axis, at) in [local.x, local.z].into_iter().enumerate() {
-            let low = page.page[axis] as f32 * span;
-            let out = max(max(low - at, at - low - span), 0.0);
-            let across = max((at - low).abs(), (low + span - at).abs());
-            near += out * out;
-            far += across * across;
-        }
-        let [bottom, top] = self.heights;
-        let out = max(max(bottom - local.y, local.y - top), 0.0);
-        let across = max((local.y - bottom).abs(), (top - local.y).abs());
-        ((near + out * out).sqrt(), (far + across * across).sqrt())
-    }
-
-    /// The most the exact path's shading levels anywhere on `page` turn, as
-    /// a share of a level, between eyes `from` and `to`: none while all of
-    /// it lies within the first half of the finest level's reach, which no
-    /// blend reaches, and otherwise at most the distance moved over half the
-    /// reach of the level shading its nearest point, where levels blend
-    /// fastest.
-    fn turn(&self, page: &PageKey, from: Vec3, to: Vec3) -> f32 {
-        let (near_from, far_from) = self.distances(page, from);
-        let (near_to, far_to) = self.distances(page, to);
-        let first = self.reach.first().copied().unwrap_or(f32::MAX);
-        if max(far_from, far_to) < 0.5 * first {
-            return 0.0;
-        }
-        let nearest = min(near_from, near_to);
-        let reach = self
-            .reach
-            .iter()
-            .copied()
-            .find(|&reach| nearest < reach)
-            .unwrap_or(f32::MAX);
-        from.distance(to) * 2.0 / reach
-    }
 }
 
 /// What the texture did this frame.
@@ -264,12 +215,16 @@ pub(crate) struct VirtualTexture {
     resident: HashMap<PageKey, u32>,
     owners: Vec<Option<PageKey>>,
     asked: Vec<u64>,
-    // The eye each slot's page baked from, none once tiles under it change,
-    // and the frame they last did.
-    baked_from: Vec<Option<Vec3>>,
-    changed: Vec<u64>,
+    // The frame the tiles under each slot's page last changed since it
+    // baked, none while it shows them (far pages always: they follow what
+    // they are baked from).
+    changed: Vec<Option<u64>>,
     free: Vec<u32>,
     frame: u64,
+    // The time pages entering their tables this frame arrive at, which they
+    // fade in from, and the pixel error the pages resident shade by.
+    arrival: f32,
+    pixel_error: Option<f32>,
     // The directory buffer's words where the windows and tables start, and
     // the buffer's generation, which a new buffer writes whole.
     base: u32,
@@ -309,10 +264,11 @@ impl VirtualTexture {
             resident: HashMap::default(),
             owners: Vec::new(),
             asked: Vec::new(),
-            baked_from: Vec::new(),
             changed: Vec::new(),
             free: Vec::new(),
             frame: 0,
+            arrival: LONG_AGO,
+            pixel_error: None,
             base: 0,
             directory_generation: u64::MAX,
             wanted: crate::buffers::storage(
@@ -360,7 +316,7 @@ impl VirtualTexture {
         }
     }
 
-    /// Words the windows and tables of `terrains` take after the
+    /// Words the windows, tables and arrivals of `terrains` take after the
     /// directory's, at the directory buffer's word `base`.
     pub(crate) fn words(terrains: usize) -> usize {
         terrains * TERRAIN_WORDS
@@ -372,13 +328,26 @@ impl VirtualTexture {
         self.resident.clear();
         self.owners = vec![None; self.capacity as usize];
         self.asked = vec![0; self.capacity as usize];
-        self.baked_from = vec![None; self.capacity as usize];
-        self.changed = vec![0; self.capacity as usize];
+        self.changed = vec![None; self.capacity as usize];
         self.free = (0..self.capacity).rev().collect();
         self.readbacks.clear();
         self.snapshots.clear();
         self.arrived.borrow_mut().clear();
         self.far.reset();
+    }
+
+    /// Frees the slots of terrain `id`'s near pages, or every terrain's.
+    fn release_near(&mut self, id: Option<u64>) {
+        let far = &self.far;
+        let drop: Vec<u32> = self
+            .resident
+            .iter()
+            .filter(|(key, slot)| id.is_none_or(|id| key.terrain == id) && !far.pinned(**slot))
+            .map(|(_, &slot)| slot)
+            .collect();
+        for slot in drop {
+            self.release(slot);
+        }
     }
 
     /// Frees `slot`, clearing its page's entry where its terrain keeps it.
@@ -399,11 +368,13 @@ impl VirtualTexture {
 
     /// Lays out this frame's texture: the slots the material maps' sheets
     /// hold (new ones free; new materials empty them), each terrain's
-    /// windows around `eye`, the pages tiles that changed (`changed`) or
-    /// replaced macro colors (`colors`) drop, the pages pixels asked for, the
-    /// far pages of what each terrain's `sources` give, and the bakes this
-    /// frame draws; writes the windows and tables into the directory buffer
-    /// at word `base` and the bakes into their buffer. Returns each
+    /// windows around the detail eye `eye`, the pages tiles that changed
+    /// (`changed`) or replaced macro colors (`colors`) drop, the pages pixels
+    /// asked for, the far pages of what each terrain's `sources` give, and
+    /// the bakes this frame draws; pages entering their tables arrive at
+    /// `now` (seconds), or show at once on frames whose tiles do not fade
+    /// (`fades` false). Writes the windows and tables into the directory
+    /// buffer at word `base` and the bakes into their buffer. Returns each
     /// terrain's uniform words, by its index in `terrains`.
     #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     pub(crate) fn prepare(
@@ -412,6 +383,7 @@ impl VirtualTexture {
         queue: &wgpu::Queue,
         terrains: &RenderTerrains,
         (eye, settings): (Vec3, &TerrainSettings),
+        (now, fades): (f32, bool),
         (maps, colors): (
             &crate::terrain_maps::TerrainMaps,
             &crate::terrain_macro::MacroMaps,
@@ -422,6 +394,7 @@ impl VirtualTexture {
         self.stats = VtStats::default();
         self.bakes.list.clear();
         self.frame += 1;
+        self.arrival = if fades { now } else { LONG_AGO };
         self.bakes_per_frame = settings.virtual_texture_bakes;
         let per_row = crate::terrain_maps::SHEET_TEXELS / SLOT_TEXELS;
         let budget = settings.virtual_texture_pages.unwrap_or(u32::MAX);
@@ -438,8 +411,7 @@ impl VirtualTexture {
             // Sheets grown, their pages copied: the new slots free.
             self.owners.resize(capacity as usize, None);
             self.asked.resize(capacity as usize, 0);
-            self.baked_from.resize(capacity as usize, None);
-            self.changed.resize(capacity as usize, 0);
+            self.changed.resize(capacity as usize, None);
             self.free.splice(0..0, (self.capacity..capacity).rev());
             self.capacity = capacity;
         }
@@ -448,6 +420,12 @@ impl VirtualTexture {
                 self.reset();
             }
             return vec![([0; 4], [0.0; 4], [0; 4]); terrains.terrains.len()];
+        }
+        // Pages shade at the levels the pixel error hands over by: another
+        // drops the near ones, as far pages' records follow it.
+        if self.pixel_error != Some(settings.pixel_error) {
+            self.pixel_error = Some(settings.pixel_error);
+            self.release_near(None);
         }
         // Textured terrains: those drawing. Their near pages follow their
         // macro colors' uploads; far pages, their sources.
@@ -468,16 +446,7 @@ impl VirtualTexture {
             let upload = colors.uploads(index);
             if textured.colors != upload {
                 textured.colors = upload;
-                let far = &self.far;
-                let drop: Vec<u32> = self
-                    .resident
-                    .iter()
-                    .filter(|(key, slot)| key.terrain == terrain.id && !far.pinned(**slot))
-                    .map(|(_, &slot)| slot)
-                    .collect();
-                for slot in drop {
-                    self.release(slot);
-                }
+                self.release_near(Some(terrain.id));
             }
             uniforms.push((
                 [
@@ -489,7 +458,7 @@ impl VirtualTexture {
                 [
                     TEXEL,
                     1.0 / crate::terrain_maps::SHEET_TEXELS as f32,
-                    0.0,
+                    now,
                     0.0,
                 ],
                 [base + vt_index * TERRAIN_WORDS as u32, 0, 0, 0],
@@ -517,7 +486,7 @@ impl VirtualTexture {
         self.stale_changed(terrains, changed);
         self.move_windows(terrains, eye);
         self.ask(terrains, eye);
-        self.far_pages((device, queue), terrains, sources, maps);
+        self.far_pages((device, queue), terrains, (sources, settings.pixel_error), maps);
         self.stats.bakes = self.bakes.list.len() as u32;
         self.write(device, queue, (directory, base, generation), kept.len());
         self.stats.slots = self.capacity;
@@ -555,8 +524,7 @@ impl VirtualTexture {
                     start < high[axis] && start + span > low[axis]
                 });
                 if page.terrain == id && over && !self.far.pinned(slot) {
-                    self.baked_from[slot as usize] = None;
-                    self.changed[slot as usize] = self.frame;
+                    self.changed[slot as usize] = Some(self.frame);
                 }
             }
         }
@@ -621,12 +589,9 @@ impl VirtualTexture {
     }
 
     /// Takes the pages pixels asked for, keeping those resident and baking
-    /// up to the frame's budget of the absent, coarsest and nearest first,
-    /// then of the stale, stalest first.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
+    /// up to the frame's budget of the absent, coarsest and nearest `eye`
+    /// first, then of the stale, those whose tiles changed longest ago
+    /// first.
     fn ask(&mut self, terrains: &RenderTerrains, eye: Vec3) {
         let arrived = std::mem::take(&mut *self.arrived.borrow_mut());
         let mut wanted: Vec<PageKey> = Vec::new();
@@ -722,60 +687,38 @@ impl VirtualTexture {
             self.resident.insert(key, slot);
             let textured = self.terrains.get_mut(&key.terrain).expect("asked above");
             let mip = usize::from(key.mip);
-            textured.entries[entry(mip, key.page)] = slot + 1;
+            let at = entry(mip, key.page);
+            textured.entries[at] = slot + 1;
+            textured.arrivals[at] = self.arrival;
             textured.dirty[mip] = true;
-            self.bake(slot, key, eye);
+            self.bake(slot, key);
         }
         let room = (self.bakes_per_frame as usize).saturating_sub(self.bakes.list.len());
         if room > 0 {
-            let levels: HashMap<u64, Levels> = terrains
-                .terrains
-                .iter()
-                .map(|terrain| {
-                    let heights = terrain
-                        .patches
-                        .iter()
-                        .fold([f32::MAX, f32::MIN], |[bottom, top], patch| {
-                            [min(bottom, patch.min.y), max(top, patch.max.y)]
-                        });
-                    let levels = Levels {
-                        origin: terrain.origin,
-                        reach: &terrain.reach,
-                        heights,
-                    };
-                    (terrain.id, levels)
-                })
-                .collect();
             let frame = self.frame;
-            let mut stale: Vec<(u32, PageKey, f32)> = self
+            let mut stale: Vec<(u64, u32, PageKey)> = self
                 .owners
                 .iter()
                 .enumerate()
                 .filter_map(|(slot, key)| {
                     let key = (*key)?;
-                    // Far pages never go stale.
-                    if self.asked[slot] + KEEP_FRAMES <= frame || self.far.pinned(slot as u32) {
-                        return None;
-                    }
-                    let levels = levels.get(&key.terrain)?;
-                    let turn = match self.baked_from[slot] {
-                        Some(from) => levels.turn(&key, from, eye),
-                        None if self.changed[slot] + SETTLE_FRAMES <= frame => f32::INFINITY,
-                        None => return None,
-                    };
-                    (turn > STALE_SHADING).then_some((slot as u32, key, turn))
+                    let changed = self.changed[slot]?;
+                    let asked = self.asked[slot] + KEEP_FRAMES > frame;
+                    (asked && changed + SETTLE_FRAMES <= frame)
+                        .then_some((changed, slot as u32, key))
                 })
                 .collect();
-            stale.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-            for (slot, key, _) in stale.into_iter().take(room) {
-                self.bake(slot, key, eye);
+            stale.sort_unstable_by_key(|&(changed, slot, _)| (changed, slot));
+            for (_, slot, key) in stale.into_iter().take(room) {
+                self.bake(slot, key);
             }
         }
     }
 
-    /// Bakes `key`'s page into `slot` from `eye` this frame.
-    fn bake(&mut self, slot: u32, key: PageKey, eye: Vec3) {
-        self.baked_from[slot as usize] = Some(eye);
+    /// Bakes `key`'s page into `slot` this frame, which shows the tiles
+    /// under it as they stand.
+    fn bake(&mut self, slot: u32, key: PageKey) {
+        self.changed[slot as usize] = None;
         self.bakes.list.push((
             slot / self.per_sheet,
             key.terrain,
@@ -808,9 +751,10 @@ impl VirtualTexture {
         self.free.pop()
     }
 
-    /// Writes the windows and changed tables into the directory buffer at
-    /// word `base` (all of them into a new buffer or at a new place), and
-    /// this frame's bakes, sorted by sheet and terrain, into their buffer.
+    /// Writes the windows and changed tables, each with its entries'
+    /// arrivals after every table, into the directory buffer at word `base`
+    /// (all of them into a new buffer or at a new place), and this frame's
+    /// bakes, sorted by sheet and terrain, into their buffer.
     fn write(
         &mut self,
         device: &wgpu::Device,
@@ -838,13 +782,18 @@ impl VirtualTexture {
                     continue;
                 }
                 let table = mip * (WINDOW * WINDOW) as usize;
+                let cells = table..table + (WINDOW * WINDOW) as usize;
                 let offset = (start + (2 * MIPS + table) as u64) * 4;
                 queue.write_buffer(
                     directory,
                     offset,
-                    bytemuck::cast_slice(
-                        &terrain.entries[table..table + (WINDOW * WINDOW) as usize],
-                    ),
+                    bytemuck::cast_slice(&terrain.entries[cells.clone()]),
+                );
+                let arrivals = offset + (MIPS * (WINDOW * WINDOW) as usize * 4) as u64;
+                queue.write_buffer(
+                    directory,
+                    arrivals,
+                    bytemuck::cast_slice(&terrain.arrivals[cells]),
                 );
                 terrain.dirty[mip] = false;
             }

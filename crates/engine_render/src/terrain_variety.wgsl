@@ -22,10 +22,20 @@ fn variety_noise(p: vec2<f32>) -> f32 {
     return mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
 }
 
+// The meters a pixel spans of level ground `relative` to the eye, a pixel
+// spanning `pixel` meters a meter away: as `pixel_footprint` measures it,
+// the view's depth taken as the distance, for passes binding no view
+// (blades and placed objects take their ground's tint by it). Views more
+// grazing than a sixteenth count as that, as there.
+fn ground_footprint(relative: vec3<f32>, pixel: f32) -> f32 {
+    let distance = max(length(relative), 1.0e-6);
+    return distance * pixel * inverseSqrt(max(abs(relative.y) / distance, 0.0625));
+}
+
 // The tint of ground whose macro colors' texel holds `colors` (the tint, 128
 // of 255 leaving it as it is, and how lush plants grow there:
 // `engine_terrain::macro_colors`), `vegetated` the share of it growing
-// plants, `strength` of it shown (1 in the distance): every ground takes the
+// plants, `strength` of it shown (`macro_strength`): every ground takes the
 // tint, and plants grow lusher and darker where it holds them lush, drier
 // and paler where dry.
 fn macro_tint(colors: vec4<f32>, vegetated: f32, strength: f32) -> vec3<f32> {
@@ -34,11 +44,14 @@ fn macro_tint(colors: vec4<f32>, vegetated: f32, strength: f32) -> vec3<f32> {
     return mix(vec3<f32>(1.0), tint, strength);
 }
 
-// How much of their tint macro colors give ground `distance` meters from the
-// eye: a little near, where its materials' own detail shows, all of it from
-// a few hundred meters, where those repeat too small to vary it.
-fn macro_strength(distance: f32) -> f32 {
-    return 0.35 + 0.65 * smoothstep(40.0, 400.0, distance);
+// How much of their tint macro colors give ground where a pixel spans
+// `footprint` meters of it (a page's texel its own size): a little where
+// its materials' own detail shows, all of it once a pixel spans a third of
+// a meter, where those repeat too small to vary it, rising between 4 and 35
+// centimeters (40 and 400 meters away at a view facing the ground at
+// 1080p).
+fn macro_strength(footprint: f32) -> f32 {
+    return 0.35 + 0.65 * smoothstep(0.04, 0.35, footprint);
 }
 
 // Ground cover's density as a share of its densest, `away`

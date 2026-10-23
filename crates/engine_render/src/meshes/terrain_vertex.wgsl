@@ -51,8 +51,9 @@ struct TerrainUniform {
     // Its runtime virtual texture (`terrain.wgsl`): its index
     // among the textured terrains, its mips (0 without one), slots along a
     // sheet's side, and this frame's feedback pixel (0 to 63) of each 8x8
-    // block; the meters a texel of mip 0 spans and the inverse of a sheet's
-    // texels along a side; and where its windows and tables start in
+    // block; the meters a texel of mip 0 spans, the inverse of a sheet's
+    // texels along a side and the frame's time in seconds, which pages fade
+    // in by from their arrivals; and where its windows and tables start in
     // `terrain_directory`.
     vt: vec4<u32>,
     vt_scale: vec4<f32>,
@@ -64,6 +65,11 @@ struct TerrainUniform {
     // the ground (`engine_terrain::Steep`): its material plus one (0
     // without one) and the tangents of the slopes its share rises between.
     steep: vec4<f32>,
+    // The pixels a level's samples span at least where it shades the ground
+    // whole, as its geometry draws them (`TerrainSettings::pixel_error`):
+    // `terrain_shading_level` hands each level over as they shrink to half
+    // that (x).
+    pixel_error: vec4<f32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;
 

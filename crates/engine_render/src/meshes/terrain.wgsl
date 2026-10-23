@@ -95,6 +95,25 @@ fn terrain_macro_texel(local: vec2<f32>, footprint: f32) -> vec4<f32> {
     return textureSampleLevel(terrain_macro, terrain_material_sampler, uv, layer - 1u, lod);
 }
 
+// The tint the terrain's detail and macro colors give `ground` at `world`,
+// filtered over `footprint` meters (a pixel's, or a page's texel's), where a
+// pixel seen from the detail eye spans `seen` meters (a texel its own size),
+// which sets how much of the macro colors shows (`macro_strength`): plain
+// colors vary at every scale, maps carry their own detail and vary
+// broadly, and the macro colors tint it as they do the blades growing on
+// it. Pages bake it in; pixels computing their ground apply it.
+fn terrain_tint(world: vec3<f32>, ground: TerrainGround, footprint: f32, seen: f32)
+        -> vec3<f32> {
+    let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
+    let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
+    let fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, footprint);
+    let plain = (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
+    let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
+    let colors = terrain_macro_texel(world.xz - terrain.origin.xz, footprint);
+    return mix(plain, mapped, ground.mapped)
+        * macro_tint(colors, ground.vegetated, macro_strength(seen));
+}
+
 struct TerrainOutput {
     @builtin(position) clip_position: vec4<f32>,
     // Relative to the view's eye; w: the patch's sample spacing.
@@ -269,34 +288,47 @@ fn terrain_level_gradient(local: vec2<f32>, level: u32) -> vec2<f32> {
     return gradient;
 }
 
-// Which level shades a point `distance` from the eye its tiles load
-// around: the finest whose tiles load that far, turning into the next
-// coarser over the second half of its reach. Reaches double level by
-// level, so detail fades continuously with distance, as trilinear
-// filtering turns between mipmaps, and the ground's light and materials
-// hold still as levels of detail hand over, whatever level the geometry
-// draws at.
+// Which level shades ground where a pixel spans `footprint` meters of it:
+// the finest whose samples span at least half `terrain.pixel_error.x`
+// pixels there, whole while they span that many and turning into the next
+// coarser as they shrink to half as many. At a view facing the ground that
+// is the second half of each level's load reach, where its geometry's
+// samples stand from the pixel error to half of it apart and its tiles
+// still load; seen obliquely, where its samples crowd on screen. Spacings
+// double level by level, so detail fades continuously with what a pixel
+// spans, as trilinear filtering turns between mipmaps, and the ground's
+// light and materials hold still as levels of detail hand over, whatever
+// level the geometry draws at. Lookups fall back to coarser levels where a
+// level's tiles are not resident.
 struct TerrainShadingLevel {
     level: u32,
     blend: f32,
 }
 
-fn terrain_shading_level(distance: f32) -> TerrainShadingLevel {
-    let base = terrain.directory.x;
+fn terrain_shading_level(footprint: f32) -> TerrainShadingLevel {
     let levels = terrain.directory.y;
+    // The pixel error over the pixels level 0's samples span there: level
+    // L's is this over 2^L.
+    let over = terrain.pixel_error.x * footprint / terrain.anchor.w;
     var shading: TerrainShadingLevel;
-    shading.level = 0u;
-    var reach = 0.0;
-    loop {
-        reach = bitcast<f32>(terrain_directory[base + shading.level * 4u + 3u]);
-        if distance < reach || shading.level + 1u >= levels {
-            break;
-        }
-        shading.level++;
-    }
-    shading.blend = select(0.0, saturate((distance - 0.5 * reach) / (0.5 * reach)),
+    shading.level = u32(clamp(ceil(log2(max(over, 1.0e-6))) - 1.0, 0.0, f32(levels - 1u)));
+    shading.blend = select(0.0, saturate(over / f32(1u << shading.level) - 1.0),
         shading.level + 1u < levels);
     return shading;
+}
+
+// The levels shading ground at `world`, terrain-local `local`, as a pixel
+// seen from the detail eye shows it: by the meters it spans there
+// (`detail_footprint`) on the smooth surface's normal at the finest level
+// its distance loads, and never finer than that level, which a pixel facing
+// the ground at the view's center takes. Pixels off the center span less
+// than there, while the geometry's ranges, within twice which tiles load,
+// count pixels by distance alone.
+fn terrain_pixel_shading(world: vec3<f32>, local: vec2<f32>) -> TerrainShadingLevel {
+    let facing = detail_distance(world) * camera.options.y;
+    let gradient = terrain_level_gradient(local, terrain_shading_level(facing).level);
+    let normal = normalize(vec3<f32>(-gradient.x, 1.0, -gradient.y));
+    return terrain_shading_level(max(detail_footprint(world, normal), facing));
 }
 
 // The normal of the terrain's smooth surface at terrain-local `local` at
@@ -775,7 +807,7 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 // surface, a pixel's footprint there (meters, its long
 // side), the footprint the maps' anisotropic filtering resolves (its short
 // side, or a sixteenth of its long side where filtering runs out), the
-// terrain's normal, the way toward the eye and the meters to it, and the
+// terrain's normal, the way toward the eye, and the
 // share of its cover's leaves blades no longer show there.
 struct TerrainSite {
     world: vec3<f32>,
@@ -785,7 +817,6 @@ struct TerrainSite {
     texel: f32,
     geometric: vec3<f32>,
     toward: vec3<f32>,
-    distance: f32,
     thinned: f32,
 }
 
@@ -1354,7 +1385,8 @@ struct TerrainLook {
     ray_dy: vec3<f32>,
     raw: vec2<bool>,
     // Whether the runtime virtual texture may stand in for
-    // the ground, and how it picks between two mips (`terrain_vt_texels`).
+    // the ground, and the threshold it picks between its two mips and the
+    // computed ground by, negative to blend them (`terrain_vt_texels`).
     textured: bool,
     dither: f32,
 }
@@ -1377,8 +1409,8 @@ fn terrain_forward_look(relative: vec3<f32>) -> TerrainLook {
 
 // Where the view ray of a fragment `relative` to the eye, seen as `look`
 // says, meets the ground: its site, sunk where the ground's relief and
-// tracks show, the shading levels of its distance and the meters tracks
-// may sink it (`TerrainRelief`).
+// tracks show, the shading levels its pixel's footprint gives and the
+// meters tracks may sink it (`TerrainRelief`).
 struct TerrainSeen {
     site: TerrainSite,
     shading: TerrainShadingLevel,
@@ -1392,7 +1424,7 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     let ray_dx = look.ray_dx;
     let ray_dy = look.ray_dy;
     let local = world.xz - terrain.origin.xz;
-    let shading = terrain_shading_level(length(world - terrain.eye.xyz));
+    let shading = terrain_pixel_shading(world, local);
     let geometric = terrain_surface_normal(local, shading);
     // How the point moves per pixel on the plane of the terrain's smooth
     // normal: where the rays one pixel over meet that plane,
@@ -1413,7 +1445,6 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     site.footprint = footprint;
     site.texel = max(min(along.x, along.y), footprint / 16.0);
     site.geometric = geometric;
-    site.distance = away;
     site.toward = -ray;
     site.thinned = terrain_thinned(world, away);
     // Sunk where the ground's relief and tracks show.
@@ -1429,26 +1460,26 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     let world = relative + camera.position.xyz;
     let local = world.xz - terrain.origin.xz;
     let geometric = site.geometric;
-    let footprint = site.footprint;
-    // The runtime virtual texture's ground where its pages hold it, its
-    // detail and macro colors baked in; computed here otherwise.
-    var ground: TerrainGround;
-    var baked = false;
+    // The runtime virtual texture's ground where its pages show, their
+    // detail and macro colors baked in; computed here elsewhere and under
+    // pages still fading in, its detail and macro colors applied.
+    var page: TerrainGround;
+    var shown = 0.0;
     if look.textured {
         let texels = terrain_vt_texels(site, look.dither);
-        if texels.found {
-            ground = terrain_vt_ground(texels, site);
-            baked = true;
+        shown = texels.shown;
+        if shown > 0.0 {
+            page = terrain_vt_ground(texels, site);
         }
     }
-    var broad = 0.5;
-    var patchy = 0.5;
-    var fine = 0.5;
-    if !baked {
+    var ground = page;
+    if shown < 1.0 {
         ground = terrain_ground(site, seen.shading);
-        broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
-        patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
-        fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, footprint);
+        ground.albedo *= terrain_tint(world, ground, site.footprint,
+            detail_footprint(world, geometric));
+        if shown > 0.0 {
+            ground = terrain_vt_shown(ground, page, shown);
+        }
     }
     var albedo = ground.albedo;
     var normal = ground.normal;
@@ -1468,18 +1499,6 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
         let pressed = saturate(-terrain_track_height(track, seen.deform) / 0.06);
         albedo *= 1.0 - 0.15 * pressed;
         occlusion *= 1.0 - 0.25 * pressed;
-    }
-    if !baked {
-        // Plain colors vary at every scale; maps carry their own detail
-        // and vary broadly.
-        let plain = (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
-        let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
-        albedo *= mix(plain, mapped, ground.mapped);
-    }
-    if !baked {
-        // Its macro colors, as on the blades growing on it.
-        let colors = terrain_macro_texel(local, footprint);
-        albedo *= macro_tint(colors, ground.vegetated, macro_strength(site.distance));
     }
     // Wet where the surface's rules wet it, darker and glossier, over the
     // virtual texture's texels too, which hold it dry.
@@ -1562,7 +1581,9 @@ struct TerrainResolved {
 // The terrain point a resolve pass shades at `position`: discarded where
 // another surface or terrain shows. Its point and normal move per pixel as
 // its neighbors on the same surface show; the view ray as the quad's.
-// `dither` picks the runtime virtual texture's mips (`terrain_vt_texels`).
+// `dither` picks between the runtime virtual texture's mips and the
+// computed ground, or blends them where negative, as frames without
+// temporal antialiasing do (`terrain_vt_texels`).
 fn terrain_resolved(position: vec4<f32>, dither: f32) -> TerrainResolved {
     let pixel = vec2<i32>(position.xy);
     // A pixel of the frame's render size, which it draws at.
@@ -1604,12 +1625,13 @@ fn terrain_resolved(position: vec4<f32>, dither: f32) -> TerrainResolved {
 
 @fragment
 fn fs_terrain_resolve_post(@builtin(position) position: vec4<f32>) -> SceneTargets {
-    return scene_targets(finish(terrain_resolved(position, 0.5).point, vec3<f32>(0.0)), position.xy);
+    return scene_targets(finish(terrain_resolved(position, -1.0).point, vec3<f32>(0.0)),
+        position.xy);
 }
 
 @fragment
 fn fs_terrain_resolve_post_lit(@builtin(position) position: vec4<f32>) -> SceneTargets {
-    let point = terrain_resolved(position, 0.5).point;
+    let point = terrain_resolved(position, -1.0).point;
     return scene_targets(finish(point, local_light(point, position.xy)), position.xy);
 }
 

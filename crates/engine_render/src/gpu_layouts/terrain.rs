@@ -68,5 +68,9 @@ gpu_structs! {
         pub vt_layout: [u32; 4],
         pub macro_map: [u32; 4],
         pub steep: [f32; 4],
+        /// The pixels a level's samples span at least where it shades the
+        /// ground whole (`TerrainSettings::pixel_error`), as its geometry's
+        /// ranges count them; yzw unused.
+        pub pixel_error: [f32; 4],
     }
 }

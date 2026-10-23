@@ -228,6 +228,11 @@ impl Renderer {
         // resident.
         self.shadows
             .cache_placed(self.features.scatter.get().resident != 0);
+        // The ground's tint under objects follows the pixels it spans.
+        let pixel = crate::gpu_data::pixel_angle(
+            snapshot.view_projection,
+            self.display.region.display.height,
+        );
         let sources = self.terrain.cover_sources().map(|sources| SnapSources {
             heights: sources.heights,
             control: sources.control,
@@ -241,6 +246,7 @@ impl Renderer {
             ),
             revision: sources.revision,
             terrains: &infos,
+            pixel,
         });
         self.features.scatter.get_mut().prepare_snap(
             &self.device,

@@ -9,12 +9,15 @@
 // then the cover's canopy color and the ground's vegetated share, then the
 // normal maps' turn of the terrain's normal (in `terrain_vt_frame`), occlusion
 // and the cover's leaves, linear data the sRGB layer decodes before it
-// filters. Mip m's texels span `terrain.vt_scale.x` · 2^m meters. Each terrain
-// keeps, per mip, a window of VT_WINDOW² pages around the eye in
-// `terrain_directory` from `terrain.vt_layout.x`: its first page, then a table
-// of each page's slot plus one (0 while absent), addressed by page modulo
-// VT_WINDOW. Its coarse mips' pages are far pages (`terrain_vt.rs`), the same
-// whatever the eye, cooked once and resident from its first frames.
+// filters. Mip m's texels span `terrain.vt_scale.x` · 2^m meters, and shade
+// at the levels and macro tint their own size gives, wherever the eye
+// stands. Each terrain keeps, per mip, a window of VT_WINDOW² pages around the
+// detail eye in `terrain_directory` from `terrain.vt_layout.x`: its first
+// page, then a table of each page's slot plus one (0 while absent), addressed
+// by page modulo VT_WINDOW, and after every table each entry's arrival, the
+// time its page entered it (seconds, the bits of a float). Its coarse mips'
+// pages are far pages (`terrain_vt.rs`), the same whatever the eye, cooked
+// once and resident from its first frames.
 const VT_PAGE: f32 = 128.0;
 const VT_BORDER: f32 = 8.0;
 const VT_SLOT: f32 = 144.0;
@@ -22,12 +25,13 @@ const VT_WINDOW: u32 = 64u;
 const VT_MIPS: u32 = 18u;
 // Leaves per square meter of ground the leaves texel's 1 stands for.
 const VT_LEAVES: f32 = 16.0;
-// The footprint far pages see every material from: wider than any repeat,
-// so each shows its maps' means.
-const VT_FAR_FOOTPRINT: f32 = 1.0e6;
 // Ground steeper than this (its normal's y below) stays exact: its texels
 // would stretch down cliffs.
 const VT_STEEP: f32 = 0.7;
+// Seconds a page that arrived takes to fade in from the ground computed
+// under it to its own: long enough that no arrival pops, as switches do
+// over about half a second.
+const VT_FADE_SECONDS: f32 = 0.5;
 // The texels a pixel whose footprint spans `along` (its two axes) reads:
 // its long side's, so a page texel covers the whole pixel and one bilinear
 // read filters it (the exact path's maps filter anisotropically up to 16 to
@@ -63,15 +67,29 @@ fn terrain_vt_entry(mip: u32, texel: vec2<f32>) -> i32 {
     return i32(cell.y * VT_WINDOW + cell.x);
 }
 
-// The slot holding mip `mip`'s page at texel `texel` of the mip; -1 where
-// it is absent or outside its window.
-fn terrain_vt_slot(mip: u32, texel: vec2<f32>) -> i32 {
+// Mip `mip`'s page at texel `texel` of the mip: the slot holding it, -1
+// where it is absent or outside its window, and the share of the ground it
+// shows, rising from 0 to 1 over VT_FADE_SECONDS since it entered its table
+// (whole where the frame's time stands before that).
+struct TerrainVtPage {
+    slot: i32,
+    shown: f32,
+}
+
+fn terrain_vt_page(mip: u32, texel: vec2<f32>) -> TerrainVtPage {
+    var page = TerrainVtPage(-1, 0.0);
     let entry = terrain_vt_entry(mip, texel);
     if entry < 0 {
-        return -1;
+        return page;
     }
-    return i32(terrain_directory[terrain.vt_layout.x + 2u * VT_MIPS
-        + mip * VT_WINDOW * VT_WINDOW + u32(entry)]) - 1;
+    let at = terrain.vt_layout.x + 2u * VT_MIPS + mip * VT_WINDOW * VT_WINDOW + u32(entry);
+    page.slot = i32(terrain_directory[at]) - 1;
+    if page.slot >= 0 {
+        let age = terrain.vt_scale.z
+            - bitcast<f32>(terrain_directory[at + VT_MIPS * VT_WINDOW * VT_WINDOW]);
+        page.shown = select(saturate(age / VT_FADE_SECONDS), 1.0, age < 0.0);
+    }
+    return page;
 }
 
 // Slot `slot`'s sheet and its corner in it, in texels.
@@ -96,16 +114,21 @@ fn terrain_vt_sample(slot: i32, texel: vec2<f32>) -> array<vec4<f32>, 3> {
         textureSampleLevel(terrain_vt_sheets, terrain_material_sampler, uv, sheet + 1u, 0.0));
 }
 
-// The texture's ground at `site` where its pages hold it, from one of the
-// two mips whose texels bracket the pixel's: the coarser where the pixel's
-// lies farther toward it than `dither`, a threshold in [0, 1) (0.5 picks
-// the nearer; temporally antialiased frames vary it by pixel and frame, so
-// the resolve blends the two); `found` false where the ground stays exact:
-// no texture, steep ground, texels coarser than the pixel at the finest
-// mip, or a page not baked yet.
+// The texture's ground at `site` where its pages hold it, from the two mips
+// whose texels bracket the pixel's, each its share of the ground by how far
+// the pixel's lies toward it, as far as its page has faded in since it
+// arrived, and the share of the pixel's ground they show together, the
+// ground computed there showing the rest. `dither`, a threshold in [0, 1)
+// that temporally antialiased frames vary by pixel and frame, shows one of
+// the three whole, the coarser page below its share, the finer next and
+// the computed ground past both, so the resolve blends them; frames without
+// temporal antialiasing pass it negative and blend the pages by their
+// shares. `shown` is 0 where the ground stays exact: no texture, steep
+// ground, texels coarser than the pixel at the finest mip, or a page not
+// baked yet.
 struct TerrainVtTexels {
     layers: array<vec4<f32>, 3>,
-    found: bool,
+    shown: f32,
 }
 
 fn terrain_vt_texels(site: TerrainSite, dither: f32) -> TerrainVtTexels {
@@ -123,15 +146,39 @@ fn terrain_vt_texels(site: TerrainSite, dither: f32) -> TerrainVtTexels {
     let blend = lod - f32(fine);
     let size = terrain.vt_scale.x * f32(1u << fine);
     let texel = (site.world.xz - terrain.origin.xz) / size;
-    let fine_slot = terrain_vt_slot(fine, texel);
-    let coarse_slot = terrain_vt_slot(fine + 1u, texel * 0.5);
-    if fine_slot < 0 || coarse_slot < 0 {
+    let fine_page = terrain_vt_page(fine, texel);
+    let coarse_page = terrain_vt_page(fine + 1u, texel * 0.5);
+    if fine_page.slot < 0 || coarse_page.slot < 0 {
         return texels;
     }
-    let coarse = blend > dither;
-    texels.layers = terrain_vt_sample(select(fine_slot, coarse_slot, coarse),
-        select(texel, texel * 0.5, coarse));
-    texels.found = true;
+    let fine_share = (1.0 - blend) * fine_page.shown;
+    let coarse_share = blend * coarse_page.shown;
+    if dither >= 0.0 {
+        if dither < coarse_share {
+            texels.layers = terrain_vt_sample(coarse_page.slot, texel * 0.5);
+            texels.shown = 1.0;
+        } else if dither < coarse_share + fine_share {
+            texels.layers = terrain_vt_sample(fine_page.slot, texel);
+            texels.shown = 1.0;
+        }
+        return texels;
+    }
+    // Two reads where both pages show.
+    texels.shown = fine_share + coarse_share;
+    if texels.shown <= 0.0 {
+        return texels;
+    }
+    if coarse_share <= 0.0 {
+        texels.layers = terrain_vt_sample(fine_page.slot, texel);
+    } else if fine_share <= 0.0 {
+        texels.layers = terrain_vt_sample(coarse_page.slot, texel * 0.5);
+    } else {
+        let coarser = coarse_share / texels.shown;
+        let a = terrain_vt_sample(fine_page.slot, texel);
+        let b = terrain_vt_sample(coarse_page.slot, texel * 0.5);
+        texels.layers = array<vec4<f32>, 3>(mix(a[0], b[0], coarser), mix(a[1], b[1], coarser),
+            mix(a[2], b[2], coarser));
+    }
     return texels;
 }
 
@@ -164,6 +211,25 @@ fn terrain_vt_ground(texels: TerrainVtTexels, site: TerrainSite) -> TerrainGroun
             canopy));
         ground.canopy = canopy;
     }
+    return ground;
+}
+
+// The ground where the texture's pages show `shown` of it (`terrain_vt_texels`):
+// `exact`, the ground computed there, mixed with `page`, theirs.
+fn terrain_vt_shown(exact: TerrainGround, page: TerrainGround, shown: f32) -> TerrainGround {
+    var ground = exact;
+    ground.albedo = mix(exact.albedo, page.albedo, shown);
+    ground.roughness = mix(exact.roughness, page.roughness, shown);
+    ground.normal = stable_normalize(mix(exact.normal, page.normal, shown));
+    ground.occlusion = mix(exact.occlusion, page.occlusion, shown);
+    ground.metalness = mix(exact.metalness, page.metalness, shown);
+    ground.mapped = mix(exact.mapped, page.mapped, shown);
+    ground.vegetated = mix(exact.vegetated, page.vegetated, shown);
+    ground.canopy = mix(exact.canopy, page.canopy, shown);
+    ground.full = mix(exact.full, page.full, shown);
+    ground.colored = mix(exact.colored, page.colored, shown);
+    ground.canopy_color = mix(exact.canopy_color, page.canopy_color, shown);
+    ground.leaves = mix(exact.leaves, page.leaves, shown);
     return ground;
 }
 
@@ -237,14 +303,47 @@ struct TerrainVtTargets {
     @location(2) turn: vec4<f32>,
 }
 
+// The levels shading a texel whose footprint spans `footprint` meters
+// (`terrain_shading_level`), no finer than level `first`: far pages read the
+// terrain's finest pinned level and coarser ones alone, the levels resident
+// everywhere, where finer ones' lookups would fall back to them.
+fn terrain_vt_shading(footprint: f32, first: u32) -> TerrainShadingLevel {
+    var shading = terrain_shading_level(footprint);
+    if shading.level < first {
+        shading.level = first;
+        shading.blend = 0.0;
+    }
+    return shading;
+}
+
+// Where a texel `size` meters across lies at `world` on ground of smooth
+// normal `geometric`, seen from straight above: its sides on the ground's
+// slope, its footprint the longer and the footprint its filtering resolves
+// the shorter, or a sixteenth of the longer where filtering runs out, as
+// for a pixel spanning it.
+fn terrain_vt_site(world: vec3<f32>, size: f32, geometric: vec3<f32>) -> TerrainSite {
+    let slope = -geometric.xz / max(geometric.y, 0.05);
+    var site: TerrainSite;
+    site.world = world;
+    site.world_dx = vec3<f32>(size, slope.x * size, 0.0);
+    site.world_dy = vec3<f32>(0.0, slope.y * size, size);
+    let along = vec2<f32>(length(site.world_dx), length(site.world_dy));
+    site.footprint = max(along.x, along.y);
+    site.texel = max(min(along.x, along.y), site.footprint / 16.0);
+    site.geometric = geometric;
+    site.toward = vec3<f32>(0.0, 1.0, 0.0);
+    site.thinned = 0.0;
+    return site;
+}
+
 // One texel of a page: the exact path's ground at its center, as seen
-// where a pixel's footprint spans the texel, at the shading levels its
-// distance from the eye gives (`terrain_shading_level`, as the exact path),
-// without the cover's canopy, which pixels lay over it as seen from them.
-// A far page's texel is the ground seen from afar whatever the eye: its
-// level alone shades it (the terrain's finest pinned), every material shows
-// its maps' means and its macro colors their whole tint. A bake draws one
-// sheet's pages.
+// where a pixel's footprint spans the texel, at the shading levels and
+// macro tint that footprint gives (`terrain_shading_level`,
+// `macro_strength`), measured on the ground's slope at the levels the
+// texel's size gives on level ground; no eye enters it. Without the
+// cover's canopy, which pixels lay over it as seen from them. A far page's
+// texel shades no finer than the level it reads (`terrain_vt_shading`). A
+// bake draws one sheet's pages.
 @fragment
 fn fs_terrain_vt_bake(input: TerrainVtBakeOutput) -> TerrainVtTargets {
     let bake = terrain_vt_bakes[input.bake];
@@ -258,41 +357,15 @@ fn fs_terrain_vt_bake(input: TerrainVtBakeOutput) -> TerrainVtTargets {
     let first = select(0u, far - 1u, far > 0u);
     let world = vec3<f32>(local.x + terrain.origin.x,
         terrain.origin.y + terrain_vt_height(local, first), local.y + terrain.origin.z);
-    let distance = length(world - terrain.eye.xyz);
-    var shading = terrain_shading_level(distance);
-    if far > 0u {
-        shading.level = first;
-        shading.blend = 0.0;
-    }
-    let geometric = terrain_surface_normal(local, shading);
-    let slope = -geometric.xz / max(geometric.y, 0.05);
-    var site: TerrainSite;
-    site.world = world;
-    site.world_dx = vec3<f32>(size, slope.x * size, 0.0);
-    site.world_dy = vec3<f32>(0.0, slope.y * size, size);
-    let along = vec2<f32>(length(site.world_dx), length(site.world_dy));
-    let footprint = max(along.x, along.y);
-    site.footprint = footprint;
-    site.texel = max(min(along.x, along.y), footprint / 16.0);
-    if far > 0u {
-        site.footprint = VT_FAR_FOOTPRINT;
-        site.texel = VT_FAR_FOOTPRINT;
-    }
-    site.geometric = geometric;
-    site.distance = distance;
-    site.toward = vec3<f32>(0.0, 1.0, 0.0);
-    site.thinned = 0.0;
+    // Its levels by its footprint on the ground's slope, the slope read at
+    // the levels its size gives level ground.
+    let normal = terrain_surface_normal(local, terrain_vt_shading(size, first));
+    let shading = terrain_vt_shading(terrain_vt_site(world, size, normal).footprint, first);
+    let site = terrain_vt_site(world, size, terrain_surface_normal(local, shading));
     let ground = terrain_ground(site, shading);
     // The detail and macro colors pixels apply (`terrain_point_seen`).
-    let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
-    let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
-    let fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, footprint);
-    let plain = (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
-    let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
-    let colors = terrain_macro_texel(local, footprint);
-    let strength = select(macro_strength(distance), 1.0, far > 0u);
-    let tint = mix(plain, mapped, ground.mapped) * macro_tint(colors, ground.vegetated, strength);
-    let frame = terrain_vt_frame(geometric);
+    let tint = terrain_tint(world, ground, site.footprint, site.footprint);
+    let frame = terrain_vt_frame(site.geometric);
     let vegetated = max(ground.vegetated, 1.0e-6);
     var targets: TerrainVtTargets;
     targets.albedo = vec4<f32>(ground.albedo * tint, ground.roughness);

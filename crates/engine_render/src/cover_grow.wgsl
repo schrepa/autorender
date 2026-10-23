@@ -559,7 +559,8 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             continue;
         }
         let variation = (0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u)))
-            * macro_tint(colors_at(local), 1.0, macro_strength(away));
+            * macro_tint(colors_at(local), 1.0, macro_strength(ground_footprint(
+                root - grow.eye.xyz, 1.0 / max(grow.view.x, 1.0e-6))));
         var blade: CoverBlade;
         blade.root = root;
         blade.height = height;

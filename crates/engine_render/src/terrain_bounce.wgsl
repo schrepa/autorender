@@ -114,10 +114,11 @@ fn bounce_vegetated(first: u32, material: u32) -> f32 {
 }
 
 // Each texel of each relighting terrain's ground: its materials' color,
-// tinted by its macro colors as terrain's own ground from afar, times the
-// sun's light on it, wrapped about the terminator as terrain's own
-// (`finish`), through its horizons and the clouds' shadows, and the sky's
-// around its normal turned toward the sky it sees, by the share it sees.
+// tinted by its macro colors as terrain's own ground where a pixel spans
+// the texel (`macro_strength`), times the sun's light on it, wrapped about
+// the terminator as terrain's own (`finish`), through its horizons and the
+// clouds' shadows, and the sky's around its normal turned toward the sky it
+// sees, by the share it sees.
 @compute @workgroup_size(8, 8, 1)
 fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
     let terrain = bounce_terrains[id.z];
@@ -145,7 +146,8 @@ fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
         let lod = max(log2(f32(textureDimensions(bounce_macro).x) / f32(side)), 0.0);
         let colors = textureSampleLevel(bounce_macro, bounce_sampler, uv,
             terrain.materials.y - 1u, lod);
-        albedo *= macro_tint(colors, vegetated, 1.0);
+        let texel = max(terrain.place.z, terrain.place.w) / f32(side);
+        albedo *= macro_tint(colors, vegetated, macro_strength(texel));
     }
     var seen = 1.0;
     var turn = vec3<f32>(0.0);
