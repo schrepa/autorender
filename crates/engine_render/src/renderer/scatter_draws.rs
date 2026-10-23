@@ -294,12 +294,14 @@ impl Renderer {
             .collect();
         let impostors = impostors.then_some(level_of_detail.impostor_pixels);
         let (device, queue, shadows) = (&self.device, &self.queue, &self.shadows);
+        // Objects switch how they show, and retire, by their distance from
+        // the detail eye; the views cull by their own planes.
         self.features.scatter.prepare(|scatter| {
             scatter
                 .prepare(
                     device,
                     queue,
-                    (snapshot.view_projection, snapshot.camera_position),
+                    (snapshot.view_projection, snapshot.detail_eye),
                     (pixel_error, height, impostors, fade),
                     (
                         &maps,
@@ -964,14 +966,15 @@ fn scatter_thinning(snapshot: &RenderSnapshot) -> Vec<[f32; 4]> {
                     .unwrap_or(0.0)
             }
         };
-        for (layer, &(near, far, share)) in terrain
-            .thinning
+        for (layer, placement) in terrain
+            .layers
             .iter()
             .enumerate()
             .take(crate::scatter::THIN_LAYERS)
         {
+            let (far, share) = placement.far;
             thins[index * crate::scatter::THIN_LAYERS + layer] =
-                [share, reach(near), reach(far), 1.0];
+                [share, reach(placement.level), reach(far), 1.0];
         }
     }
     thins

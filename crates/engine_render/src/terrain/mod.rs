@@ -557,7 +557,7 @@ impl TerrainPass {
     }
 
     /// Terrain `index`'s place in the directory and palette, its densest
-    /// cover (blades per square meter) and that cover's mean blade height
+    /// cover (blades per square meter) and that cover's blades' root width
     /// (meters), as the last preparation wrote them, and its macro colors'
     /// layer plus one (0 until they arrive).
     pub(crate) fn cover_terrain(&self, index: usize) -> (u32, u32, [f32; 2], u32) {

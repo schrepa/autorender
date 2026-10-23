@@ -33,7 +33,7 @@ struct BounceTerrain {
 }
 
 // A surface material as the terrain palette holds it (`meshes/terrain.wgsl`):
-// its maps' mean color, factors applied, in `far`, and its cover's canopy
+// its maps' mean color, factors applied, in `far`, and its cover's tip
 // color and leaves per square meter in `canopy`.
 struct PaletteEntry {
     color: vec4<f32>,
@@ -42,6 +42,8 @@ struct PaletteEntry {
     far: vec4<f32>,
     relief: vec4<f32>,
     canopy: vec4<f32>,
+    placed: vec4<f32>,
+    placed_size: vec4<f32>,
 }
 
 // A probe's light: the light reaching it alike from every way (red, green
@@ -62,11 +64,8 @@ const BOUNCE_RECORD_WORDS: u32 = 26u;
 // over BOUNCE_STEPS meters.
 const BOUNCE_NEAREST: f32 = 0.5;
 const BOUNCE_STEPS: f32 = 16.0;
-// The share of their color blades' canopy shows of the light it takes, as
-// terrain shades it.
-const BOUNCE_CANOPY: f32 = 0.6;
 // As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
-const PALETTE_ENTRIES: u32 = 170u;
+const PALETTE_ENTRIES: u32 = 128u;
 
 @group(0) @binding(60) var<uniform> bounce_frame: BounceFrame;
 @group(0) @binding(61) var<storage, read> bounce_terrains: array<BounceTerrain>;
@@ -96,12 +95,17 @@ const PALETTE_ENTRIES: u32 = 170u;
 @group(0) @binding(71) var bounce_macro: texture_2d_array<f32>;
 
 // Surface material `material` of the palette from `first`: its maps' mean
-// color, and ground under cover its canopy, as it shows from afar.
+// color, and ground under cover its canopy, as it shows from afar: its
+// blades' colors seen from above (`cover_seen`), half of them from their
+// far sides, in the light their occlusion leaves.
 fn bounce_albedo(first: u32, material: u32) -> vec3<f32> {
     let entry = bounce_palette[min(first + material, PALETTE_ENTRIES - 1u)];
     var color = entry.far.rgb;
     if entry.canopy.w > 0.0 {
-        color = mix(color, entry.canopy.rgb * BOUNCE_CANOPY, 1.0 - exp(-entry.canopy.w));
+        let seen = cover_seen(0.5 * entry.canopy.w);
+        let canopy = mix(color, entry.canopy.rgb, seen.tip) * mix(1.0, COVER_FAR_SIDE, 0.5)
+            * seen.occlusion;
+        color = mix(color, canopy, 1.0 - exp(-entry.canopy.w));
     }
     return color;
 }

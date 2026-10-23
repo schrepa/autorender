@@ -1,8 +1,9 @@
 //! The terrain tables shaders look up: each layer's fades and the hole bits
 //! of tiles with holes; the directory of every terrain's levels and
 //! resident tiles' layers, with the runtime virtual texture's windows and
-//! tables after it; every terrain's surface materials and their covers;
-//! and each terrain's uniform. Each is written where it changed: the
+//! tables after it; every terrain's surface materials, their covers and
+//! what their placement layers' objects leave the ground where they
+//! retire; and each terrain's uniform. Each is written where it changed: the
 //! directory is laid out again only as the terrains or their pyramids
 //! change, and otherwise rewrites the entries of the tiles that took or
 //! left layers.
@@ -47,6 +48,9 @@ pub(crate) struct TerrainTables {
     pub(super) palette_bases: Vec<u32>,
     palette_written: Vec<PaletteEntry>,
     palette_spare: Vec<PaletteEntry>,
+    // The terrain being written's placement layers as the ground takes
+    // their objects on, kept from terrain to terrain.
+    placed_layers: Vec<PlacedSums>,
     /// Surface materials past the palette's capacity, which show the
     /// palette's first instead.
     pub(crate) dropped_materials: u32,
@@ -55,7 +59,7 @@ pub(crate) struct TerrainTables {
     pub(super) covers: wgpu::Buffer,
     covers_written: Vec<CoverEntry>,
     covers_spare: Vec<CoverEntry>,
-    // Each terrain's densest cover and its mean blade height.
+    // Each terrain's densest cover and its blades' root width.
     pub(super) cover_densities: Vec<[f32; 2]>,
     // The tallest blade any material's cover grows.
     pub(super) cover_tallest: f32,
@@ -98,6 +102,7 @@ impl TerrainTables {
             palette_bases: Vec::new(),
             palette_written: Vec::new(),
             palette_spare: Vec::new(),
+            placed_layers: Vec::new(),
             dropped_materials: 0,
             covers: crate::buffers::storage(
                 device,
@@ -185,8 +190,9 @@ impl TerrainTables {
 
     /// Writes every terrain's surface materials into the palette when they
     /// change, each terrain's after the one before, with the layers their
-    /// `maps` lie in; materials past its capacity, and those whose maps the
-    /// arrays cannot hold, are dropped and counted.
+    /// `maps` lie in and what its placement layers' objects leave the ground
+    /// where they retire; materials past its capacity, and those whose maps
+    /// the arrays cannot hold, are dropped and counted.
     pub(super) fn write_palette(
         &mut self,
         queue: &wgpu::Queue,
@@ -208,12 +214,24 @@ impl TerrainTables {
             } else {
                 0
             });
+            self.placed_layers.clear();
+            self.placed_layers.extend(
+                terrain
+                    .layers
+                    .iter()
+                    .map(|layer| placed_sums(terrain, layer)),
+            );
+            let layers = &self.placed_layers;
             let terrain_maps = terrain.maps.iter().chain(std::iter::repeat(&None));
             entries.extend(
                 terrain.surface[..kept]
                     .iter()
                     .zip(terrain_maps)
-                    .map(|(look, terrain_maps)| palette_entry(look, terrain_maps, maps)),
+                    .enumerate()
+                    .map(|(material, (look, terrain_maps))| {
+                        let placed = placed_terms(terrain, layers, material);
+                        palette_entry(look, terrain_maps, maps, placed)
+                    }),
             );
         }
         if entries.is_empty() || entries == self.palette_written {
@@ -237,7 +255,7 @@ impl TerrainTables {
                 .push(if kept.len() == terrain.surface.len() {
                     kept.iter()
                         .filter_map(|look| look.cover)
-                        .map(|cover| [cover.density, 0.5 * (cover.height[0] + cover.height[1])])
+                        .map(|cover| [cover.density, cover.width])
                         .fold([0.0; 2], |densest, cover| {
                             if cover[0] > densest[0] {
                                 cover
@@ -461,11 +479,13 @@ fn set_word(words: &mut [u32], at: usize, value: u32, dirty: &mut Range<usize>) 
 }
 
 /// The palette entry of surface material `look` with `terrain_maps`, its
-/// maps in `maps`' arrays.
+/// maps in `maps`' arrays, and its placement layers' objects' terms
+/// `placed` ([`placed_terms`]).
 fn palette_entry(
     look: &engine_core::SurfaceMaterial,
     terrain_maps: &Option<engine_core::RenderSurfaceMaps>,
     maps: &TerrainMaps,
+    (placed, placed_size): ([f32; 4], [f32; 4]),
 ) -> PaletteEntry {
     let projection = match look.projection {
         engine_core::SurfaceProjection::Top => 0.0,
@@ -509,19 +529,17 @@ fn palette_entry(
     // The slopes its normal maps lose to distance roughen
     // it.
     let slopes = means.map_or(0.0, |means| means.slopes * scale * scale);
-    // Its cover's canopy: the blades' color
-    // from root (the ground's mean) most of the way to tip,
-    // as their upper parts show from afar, and their
-    // leaves' area: blades a square meter, each about as
-    // wide as its root and tapering up its mean height.
+    // Its cover's canopy: the blades' tip color, which shaders mix with the
+    // ground's at their roots as a view meets them (`terrain_variety.wgsl`'s
+    // `cover_seen`), and their leaves' area: blades a square meter, each as
+    // wide as its root and tapering up the height they stand on average.
     let canopy = look.cover.map_or([0.0; 4], |cover| {
-        let tip = 0.75;
-        let height = 0.5 * (cover.height[0] + cover.height[1]);
+        let height = COVER_RISEN * 0.5 * (cover.height[0] + cover.height[1]);
         [
-            far[0] + (cover.color[0] - far[0]) * tip,
-            far[1] + (cover.color[1] - far[1]) * tip,
-            far[2] + (cover.color[2] - far[2]) * tip,
-            cover.density * height * cover.width * 0.6,
+            cover.color[0],
+            cover.color[1],
+            cover.color[2],
+            cover.density * height * cover.width * COVER_FILLED,
         ]
     });
     PaletteEntry {
@@ -536,5 +554,153 @@ fn palette_entry(
         far,
         relief: [look.relief, look.deform, slopes, 0.0],
         canopy,
+        placed,
+        placed_size,
     }
+}
+
+/// The share of their full height ground cover's blades stand on average:
+/// candidates ranked within the last quarter under their threshold grow
+/// short, rising with it (`cover_grow.wgsl`), seven eighths.
+const COVER_RISEN: f32 = 0.875;
+
+/// The share of the rectangle a blade's root width and height span that it
+/// fills, tapering as 1 - along^1.5 (`meshes/cover.wgsl`): the taper's
+/// integral.
+const COVER_FILLED: f32 = 0.6;
+
+/// Scales across a placement layer's range at which the palette sums its
+/// objects: layers scale their objects evenly across it.
+const SCALE_STEPS: u32 = 8;
+
+/// One placement layer's objects as the ground takes them on where they
+/// retire, summed over the assets it chooses and its scales: the share of
+/// ground they cover where everything allows them, and over it the sums of
+/// their linear colors and of the base-2 logarithm of their bounding
+/// spheres' diameters and its square.
+#[derive(Clone, Copy, Default)]
+struct PlacedSums {
+    covered: f32,
+    color: [f32; 3],
+    octaves: f32,
+    squares: f32,
+}
+
+impl PlacedSums {
+    fn add(&mut self, other: &Self) {
+        self.covered += other.covered;
+        for (sum, part) in self.color.iter_mut().zip(other.color) {
+            *sum += part;
+        }
+        self.octaves += other.octaves;
+        self.squares += other.squares;
+    }
+}
+
+/// `layer`'s objects on `terrain` as the ground takes them on where they
+/// retire ([`PlacedSums`]): each asset it chooses, by its share, at each of
+/// [`SCALE_STEPS`] scales across its range, at the layer's density, its mask
+/// whole. Assets not here yet bring none.
+fn placed_sums(terrain: &RenderTerrain, layer: &engine_core::RenderPlacementLayer) -> PlacedSums {
+    let mut sums = PlacedSums::default();
+    let steps = SCALE_STEPS as f32;
+    for &(asset, share) in &layer.assets {
+        let Some(Some(asset)) = terrain.assets.get(usize::from(asset)) else {
+            continue;
+        };
+        let (area, diameter, color) = placed_asset(asset);
+        for step in 0..SCALE_STEPS {
+            let along = (step as f32 + 0.5) / steps;
+            let scale = layer.scale[0] + (layer.scale[1] - layer.scale[0]) * along;
+            let covered = layer.density * share * area * scale * scale / steps;
+            if covered <= 0.0 {
+                continue;
+            }
+            let octaves = engine_core::math::max(diameter * scale, 1.0e-6).log2();
+            sums.covered += covered;
+            for (sum, channel) in sums.color.iter_mut().zip(color) {
+                *sum += covered * channel;
+            }
+            sums.octaves += covered * octaves;
+            sums.squares += covered * octaves * octaves;
+        }
+    }
+    sums
+}
+
+/// What a placed asset brings the ground at scale 1: the square meters an
+/// object covers, the ellipse within its mesh's bounds across the ground;
+/// its bounding sphere's diameter, around its mesh, its parts' finest and
+/// its shadow proxy as culling bounds it (`renderer::scatter_draws`); and
+/// its material's linear color, its base color texture's mean applied
+/// where that is summarized.
+fn placed_asset(asset: &engine_core::RenderPlacementAsset) -> (f32, f32, [f32; 3]) {
+    let bounds = asset.mesh.mesh.bounds();
+    let extent = bounds.max() - bounds.min();
+    let area = std::f32::consts::FRAC_PI_4 * extent.x * extent.z;
+    let (low, high) = asset
+        .parts
+        .iter()
+        .filter_map(|part| part.meshes.first())
+        .chain(&asset.shadow)
+        .map(|mesh| mesh.mesh.bounds())
+        .fold((bounds.min(), bounds.max()), |(low, high), held| {
+            (low.min(held.min()), high.max(held.max()))
+        });
+    let material = &asset.material.material;
+    let factor = material.color();
+    let mean = material
+        .base_color_texture()
+        .and_then(|map| {
+            asset
+                .textures
+                .iter()
+                .find(|texture| texture.handle == map.texture)
+        })
+        .and_then(|texture| texture.texture.summary())
+        .map_or([1.0; 3], |summary| summary.color);
+    (
+        area,
+        (high - low).length(),
+        [
+            factor[0] * mean[0],
+            factor[1] * mean[1],
+            factor[2] * mean[2],
+        ],
+    )
+}
+
+/// What surface material `material` of `terrain` shows where its placement
+/// layers' objects retire (`meshes/terrain.wgsl`'s `terrain_placed_share`),
+/// from the layers' sums `layers`: the objects' mean linear color and the
+/// share of the ground they cover where the material lies alone, at most
+/// all of it; and the base-2 logarithm of their bounding spheres'
+/// diameters, its mean and deviation over that ground. Zeroes where none
+/// stands on it.
+fn placed_terms(
+    terrain: &RenderTerrain,
+    layers: &[PlacedSums],
+    material: usize,
+) -> ([f32; 4], [f32; 4]) {
+    let mut sums = PlacedSums::default();
+    for (layer, held) in terrain.layers.iter().zip(layers) {
+        if layer.stands_on(material) {
+            sums.add(held);
+        }
+    }
+    if sums.covered <= 0.0 {
+        return ([0.0; 4], [0.0; 4]);
+    }
+    let covered = sums.covered;
+    let octaves = sums.octaves / covered;
+    let deviation = engine_core::math::max(sums.squares / covered - octaves * octaves, 0.0).sqrt();
+    (
+        [
+            sums.color[0] / covered,
+            sums.color[1] / covered,
+            sums.color[2] / covered,
+            engine_core::math::min(covered, 1.0),
+        ],
+        [octaves, deviation, 0.0, 0.0],
+    )
 }

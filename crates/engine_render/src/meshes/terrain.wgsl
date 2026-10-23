@@ -46,13 +46,19 @@ struct TerrainPaletteEntry {
     // variance of its normal maps' slopes at their scale, which its
     // roughness takes over where they fade.
     relief: vec4<f32>,
-    // Its cover's canopy: the linear color its blades show
-    // seen from afar, and their leaves' area per square meter of ground (0
-    // without cover).
+    // Its cover's canopy: its blades' tip color (linear), and their
+    // leaves' area per square meter of ground (0 without cover).
     canopy: vec4<f32>,
+    // Its placement layers' objects, which the ground takes on where they
+    // retire: their mean linear color and the share of the ground they
+    // cover where it lies alone (w, 0 without any); and the base-2 logarithm
+    // of their bounding spheres' diameters (meters), its mean (x) and
+    // deviation (y) over the ground they cover.
+    placed: vec4<f32>,
+    placed_size: vec4<f32>,
 }
 // As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
-const TERRAIN_PALETTE_ENTRIES: u32 = 170u;
+const TERRAIN_PALETTE_ENTRIES: u32 = 128u;
 // Every terrain's surface materials, each terrain's from
 // `terrain.directory.z`.
 @group(1) @binding(25) var<uniform> terrain_palette: array<TerrainPaletteEntry, TERRAIN_PALETTE_ENTRIES>;
@@ -664,7 +670,7 @@ struct TerrainGround {
     canopy: f32,
     full: f32,
     colored: f32,
-    // The cover's canopy colors and leaves, each weighted by its material's
+    // The cover's tip colors and leaves, each weighted by its material's
     // share, which the runtime virtual texture keeps.
     canopy_color: vec3<f32>,
     leaves: f32,
@@ -845,8 +851,12 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 // surface, a pixel's footprint there (meters, its long
 // side), the footprint the maps' anisotropic filtering resolves (its short
 // side, or a sixteenth of its long side where filtering runs out), the
-// terrain's normal, the way toward the eye, and the
-// share of its cover's leaves blades no longer show there.
+// terrain's normal and the way toward the eye; the share of its cover's
+// leaves blades no longer show there, and the meters a pixel spans across
+// the view there as level of detail measures objects (`terrain_across`),
+// by which placed objects retire. The virtual texture's bakes, whose pages
+// pixels of any size across the view read, hold neither: no canopy and no
+// retired objects.
 struct TerrainSite {
     world: vec3<f32>,
     world_dx: vec3<f32>,
@@ -856,13 +866,14 @@ struct TerrainSite {
     geometric: vec3<f32>,
     toward: vec3<f32>,
     thinned: f32,
+    across: f32,
 }
 
-// The share of the cover's leaves blades no longer show `distance` meters
-// from the eye at `world` by their law (`terrain.cover`): all
-// of them where a terrain's surroundings show its cover as canopy from the
-// eye on; none without cover.
-fn terrain_thinned(world: vec3<f32>, distance: f32) -> f32 {
+// The share of the cover's leaves blades no longer show at `world` by their
+// law (`terrain.cover`, `terrain_variety.wgsl`'s `cover_share`), from the
+// detail eye as the blades are: all of them where a terrain's surroundings
+// show its cover as canopy from the eye on; none without cover.
+fn terrain_thinned(world: vec3<f32>) -> f32 {
     let cover = terrain.cover;
     if cover.z <= 0.0 {
         return 0.0;
@@ -870,30 +881,17 @@ fn terrain_thinned(world: vec3<f32>, distance: f32) -> f32 {
     if cover.x <= 0.0 {
         return 1.0;
     }
-    var end = cover.y;
-    // Within 0.55 of the reach the fade has not begun and past it has
-    // ended, wherever the noise draws the end in (0.8 to 1 of the reach).
-    if cover.y <= cover.x || (distance > 0.55 * cover.y && distance < cover.y) {
-        end = cover_end(world.xz, cover.y);
-    }
-    let share = cover_share(distance, cover.x, cover.y, end);
-    return 1.0 - cover_shown(distance, share, cover.x);
+    let away = detail_distance(world);
+    return 1.0 - cover_shown(away, cover_share(away, cover.x, cover.y), cover.x);
 }
 
-// How much light reaches blades on average, which their canopy takes:
-// their occlusion rises from 0.35 at the root to 1 at the
-// tip (`meshes/cover.wgsl`), 0.675 over their height, and the half of them
-// seen through from the side away from the sun shows 0.8 of its color.
-const TERRAIN_CANOPY_OCCLUSION: f32 = 0.6;
-
-// How bright blades seen at `sine` (the sine of the view's angle over the
-// ground) show their color on average, which their canopy shows too:
-// seen along the ground their lit tops give way to their
-// sides and the shade among them. Measured against blades under the low
-// and the high sun alike: about 0.6 along the ground, 0.7 from 25 degrees
-// up and 0.75 from 45.
-fn terrain_canopy_shown(sine: f32) -> f32 {
-    return 0.6 + 0.22 * saturate(sine);
+// The meters a pixel spans across the view at `world` as level of detail
+// measures objects standing there, which placed objects retire by
+// (`terrain_variety.wgsl`'s `seen_share`, as `scatter_cull.wgsl` culls
+// them): their distance from the detail eye times the angle a pixel spans
+// at the view's center, the same whichever way the view turns.
+fn terrain_across(world: vec3<f32>) -> f32 {
+    return detail_distance(world) * camera.options.y;
 }
 
 // The normal blades standing on ground of normal `ground` light with, on
@@ -906,16 +904,75 @@ fn terrain_blade_normal(ground: vec3<f32>) -> vec3<f32> {
     return stable_normalize(mix(side, ground, 0.6));
 }
 
+// How many times its leaves' area a view at `site` crosses through a
+// cover whose leaves' area is `leaves` per square meter of ground, the
+// density's setting applied: G = 0.5 of it across its way, as leaves facing
+// every way show, over the sine of its angle to the ground.
+fn terrain_canopy_depth(leaves: f32, site: TerrainSite) -> f32 {
+    let sine = max(abs(dot(site.toward, site.geometric)), 0.03);
+    return 0.5 * leaves * terrain.cover.z / sine;
+}
+
 // How much of the ground at `site` a cover whose leaves' area is `leaves` per
 // square meter shows as its canopy: as much of the leaves as its blades no
 // longer show by their law (`terrain.cover`) hides of the ground along the
-// view, 1 - exp(-G leaves / sin), all of it at grazing views.
+// view, 1 - exp(-depth), all of it at grazing views.
 fn terrain_canopy(leaves: f32, site: TerrainSite) -> f32 {
     if site.thinned <= 0.0 || leaves <= 0.0 {
         return 0.0;
     }
-    let sine = max(abs(dot(site.toward, site.geometric)), 0.03);
-    return site.thinned * (1.0 - exp(-0.5 * leaves * terrain.cover.z / sine));
+    return site.thinned * (1.0 - exp(-terrain_canopy_depth(leaves, site)));
+}
+
+// The share of their color blades show seen from `site` on average: those
+// seen from their side away from the sun show COVER_FAR_SIDE of it, and of
+// blades facing every way, as many are as the angle between the view's way
+// and the sun's across the ground is of a half turn: none with the sun
+// behind the eye, all looking toward it, half seen from straight above.
+fn terrain_canopy_through(site: TerrainSite) -> f32 {
+    let lengths = length(site.toward.xz) * length(lighting.sun.xz);
+    var through = 0.5;
+    if lengths > 1.0e-4 {
+        through = acos(clamp(dot(site.toward.xz, lighting.sun.xz) / lengths, -1.0, 1.0)) / PI;
+    }
+    return mix(1.0, COVER_FAR_SIDE, through);
+}
+
+// What the canopy of a cover's blades shows at `site`, their tips' color
+// `tip` and their leaves' area `leaves` per square meter, standing on
+// ground of color `root`, which their roots take: the colors and the light
+// of the blades a view meets there on average (`terrain_variety.wgsl`'s
+// `cover_seen`), their far sides dimmer (`terrain_canopy_through`).
+struct TerrainCanopyLook {
+    color: vec3<f32>,
+    occlusion: f32,
+}
+
+fn terrain_canopy_look(root: vec3<f32>, tip: vec3<f32>, leaves: f32, site: TerrainSite)
+        -> TerrainCanopyLook {
+    let seen = cover_seen(terrain_canopy_depth(leaves, site));
+    var look: TerrainCanopyLook;
+    look.color = mix(root, tip, seen.tip) * terrain_canopy_through(site);
+    look.occlusion = seen.occlusion;
+    return look;
+}
+
+// The share of the ground of material `entry` at `site` that shows its
+// placement layers' objects' mean color: of the ground they cover, the
+// share their objects narrower on screen than about a pixel by their ranks
+// leave as they retire (`terrain_variety.wgsl`'s `seen_share`, as
+// `scatter_cull.wgsl` culls them, across `site.across`), over their sizes
+// as two diameters a deviation either side of their mean, in octaves; none
+// where the site measures nothing.
+fn terrain_placed_share(entry: TerrainPaletteEntry, site: TerrainSite) -> f32 {
+    let covered = entry.placed.w;
+    if covered <= 0.0 || site.across <= 0.0 {
+        return 0.0;
+    }
+    let size = entry.placed_size;
+    let shown = 0.5 * (seen_share(exp2(size.x + size.y) / site.across)
+        + seen_share(exp2(size.x - size.y) / site.across));
+    return covered * (1.0 - shown);
 }
 
 // One material of a fragment's blend after its first pass: its occlusion,
@@ -1072,21 +1129,32 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     (*ground).full += weight * slot.detail;
     (*ground).colored += weight * slot.colored;
     if entry.canopy.w > 0.0 {
-        // Ground under cover shows as its canopy where blades thin out:
-        // their color, rougher and shaded among the
-        // blades, and lit as blades are, their sides toward the sun.
+        // Ground under cover shows as its canopy where blades retire: the
+        // colors a view meets among them on average, rough and shaded
+        // among them as they are, and lit as blades are, their sides
+        // toward the sun and the sun passing through them (their leaf
+        // share, `terrain_point_seen`).
         let canopy = terrain_canopy(entry.canopy.w, site);
-        let shown = terrain_canopy_shown(abs(dot(site.toward, site.geometric)));
-        color = mix(color, entry.canopy.rgb * shown, canopy);
-        roughness = mix(roughness, 0.7, canopy);
-        // The sky they reflect too: a flat ground seen along it would
-        // mirror much more of it than blades facing the eye do.
-        occlusion = mix(occlusion, TERRAIN_CANOPY_OCCLUSION * shown, canopy);
-        turned = mix(turned, terrain_blade_normal(site.geometric), canopy);
+        if canopy > 0.0 {
+            let look = terrain_canopy_look(color, entry.canopy.rgb, entry.canopy.w, site);
+            color = mix(color, look.color, canopy);
+            roughness = mix(roughness, COVER_ROUGHNESS, canopy);
+            // The sky they reflect too: a flat ground seen along it would
+            // mirror much more of it than blades facing the eye do.
+            occlusion = mix(occlusion, look.occlusion, canopy);
+            turned = mix(turned, terrain_blade_normal(site.geometric), canopy);
+        }
         (*ground).vegetated += weight;
         (*ground).canopy += weight * canopy;
         (*ground).canopy_color += weight * entry.canopy.rgb;
         (*ground).leaves += weight * entry.canopy.w;
+    }
+    // Where its placement layers' objects retire, the ground takes on their
+    // mean color over what they covered, standing over its canopy as they
+    // stand over the blades.
+    let placed = terrain_placed_share(entry, site);
+    if placed > 0.0 {
+        color = mix(color, entry.placed.rgb, placed);
     }
     (*ground).albedo += weight * color;
     (*ground).roughness += weight * roughness;
@@ -1507,7 +1575,8 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     site.texel = max(min(along.x, along.y), footprint / 16.0);
     site.geometric = geometric;
     site.toward = -ray;
-    site.thinned = terrain_thinned(world, away);
+    site.thinned = terrain_thinned(world);
+    site.across = terrain_across(world);
     // Sunk where the ground's relief and tracks show.
     let relief = terrain_parallax(site, shading);
     site.world = relief.world;
@@ -1603,6 +1672,8 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     point.world_dy = select(site.world_dy / detail, look.world_dy, look.raw.y);
     point.shadow_offset = vec3<f32>(0.0);
     point.on_terrain = true;
+    // Its cover's canopy is leaf, as the blades it stands for are.
+    point.leaf = ground.canopy;
     return point;
 }
 

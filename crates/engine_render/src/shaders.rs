@@ -97,8 +97,10 @@ shaders! {
         "sky_common.wgsl",
         "sky.wgsl",
     ];
-    /// Placed objects' culling.
+    /// Placed objects' culling, after ground variety's rule for things
+    /// retiring by their size on screen.
     SCATTER_CULL_SHADER = [
+        "terrain_variety.wgsl",
         "scatter_cull.wgsl",
     ];
     /// Placed objects set on the ground as drawn, taking its colors.

@@ -19,13 +19,15 @@
 // finer than the impostor's, else its proxy or the coarsest level half
 // their texel hides.
 // The camera switches how it shows an object (a level, its card or
-// nothing, past the density its layer keeps) a margin past each switch's
-// distance, and fades every switch over frames: while one fades, the
+// nothing, past the density its layer keeps or once it spans too few
+// pixels for its rank) a margin past each switch's distance from the
+// detail eye, and fades every switch over frames: while one fades, the
 // object shows both ways, each on its share of the pixels.
 
 struct Frame {
-    // The camera's eye (world) and pixels per world unit at unit distance
-    // over the pixel error; 0 keeps every object at its finest level.
+    // The detail eye (world), which every switch measures from, and pixels
+    // per world unit at unit distance over the pixel error; 0 keeps every
+    // object at its finest level.
     eye: vec4<f32>,
     // Objects, draw groups, levels each group lists, and views.
     counts: vec4<u32>,
@@ -35,10 +37,12 @@ struct Frame {
     // Fades: the share of a switch this frame fades (1
     // switches at once; negative on exact frames, which show objects as
     // they stand and advance nothing), the share of its distance past a
-    // switch the eye goes before the camera switches back, and (z) the
+    // switch the eye goes before the camera switches back, (z) the
     // distance per world unit of radius past which an object's bounding
-    // sphere shows smaller than impostors' size on screen. The camera's
-    // fading objects draw from the lists of the view after the last.
+    // sphere shows smaller than impostors' size on screen, and (w) the
+    // pixels a world unit spans at unit distance, by which objects of
+    // thinning layers retire. The camera's fading objects draw from the
+    // lists of the view after the last.
     fade: vec4<f32>,
 }
 
@@ -144,6 +148,16 @@ fn thinned(thin: vec4<f32>, away: f32) -> f32 {
     return keep;
 }
 
+// Whether an object of a thinning layer whose bounding sphere's radius is
+// `radius`, ranked `rank` under its layer's density, is big enough on
+// screen to show `away` meters from the eye: while its sphere spans more
+// than about a pixel times its own factor (`terrain_variety.wgsl`'s
+// `seen_share`), each at its own size, the ground taking on its look where
+// it retires (`meshes/terrain.wgsl`'s `terrain_placed_share`).
+fn placed_seen(radius: f32, rank: f32, away: f32) -> bool {
+    return rank < seen_share(2.0 * radius * frame.fade.w / max(away, 1.0e-3));
+}
+
 // A non-indexed indirect draw, counting its instances.
 struct CardArgs {
     vertex_count: u32,
@@ -188,14 +202,14 @@ fn inside(view: u32, center: vec3<f32>, radius: f32) -> bool {
 }
 
 // How the camera shows `record` (of draw group `group`) from `away` meters:
-// nothing past the density its layer keeps there (`thin` and `rank`, where
-// `thinning`), its card where its bounding sphere shows smaller than
-// impostors' size on screen on frames drawing impostors, else the coarsest
-// level it draws whose error shows within the pixel error; exact frames
-// show the finest level.
+// nothing past the density its layer keeps there or once too small on
+// screen for its rank (`thin` and `rank`, where `thinning`), its card where
+// its bounding sphere shows smaller than impostors' size on screen on
+// frames drawing impostors, else the coarsest level it draws whose error
+// shows within the pixel error; exact frames show the finest level.
 fn shown_at(record: Record, group: Group, thinning: bool, thin: vec4<f32>, rank: f32,
         away: f32) -> u32 {
-    if thinning && rank >= thinned(thin, away) {
+    if thinning && (rank >= thinned(thin, away) || !placed_seen(record.radius, rank, away)) {
         return SHOWN_NONE;
     }
     if frame.eye.w <= 0.0 {

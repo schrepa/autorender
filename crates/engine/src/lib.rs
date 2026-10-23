@@ -127,11 +127,11 @@ pub mod render {
         PAGE_WORDS, PoseRows, PresentationMode, RIM_REACH, RIM_START, RenderDecal, RenderDecals,
         RenderDeformation, RenderEmitter, RenderFrame, RenderInstance, RenderJoint, RenderLight,
         RenderLights, RenderMaterial, RenderMesh, RenderParticles, RenderPlacementAsset,
-        RenderPlacementPart, RenderReflectionProbe, RenderReflectionProbes, RenderSnapshot,
-        RenderSurfaceMaps, RenderTerrain, RenderTerrains, RenderTexture, STREAMING_GRIDS,
-        StreamingGrid, TerrainBounce, TerrainLighting, TransformIndex, TransformPropagation,
-        VIRTUAL_MESH_MAGIC, carve_profile, presentation_bounds, propagate_transforms, rim_profile,
-        valid_global_matrix,
+        RenderPlacementLayer, RenderPlacementPart, RenderReflectionProbe, RenderReflectionProbes,
+        RenderSnapshot, RenderSurfaceMaps, RenderTerrain, RenderTerrains, RenderTexture,
+        STREAMING_GRIDS, StreamingGrid, TerrainBounce, TerrainLighting, TransformIndex,
+        TransformPropagation, VIRTUAL_MESH_MAGIC, carve_profile, presentation_bounds,
+        propagate_transforms, rim_profile, valid_global_matrix,
     };
 }
 

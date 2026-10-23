@@ -198,7 +198,9 @@ fn vs_cover_temporal(@builtin(instance_index) instance: u32,
 // shade each other. Blades are thin and pass light through: either side
 // lights as the side facing the sun does, the far side seen
 // through the blade a little dimmer, and their normal leans most of the way
-// up, so they light much as the ground they stand on.
+// up, so they light much as the ground they stand on. The ground's canopy
+// shows their average where they retire (`terrain_variety.wgsl`'s
+// `cover_seen`).
 fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     var face = normalize(input.normal);
     if !front {
@@ -217,15 +219,15 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
         normal = normalize(mix(normal, ground, 1.0 - smoothstep(0.0, lighting.foliage.w, above)));
     }
     let relative = input.world - camera.position.xyz;
-    let albedo = input.color * select(1.0, 0.8, through);
+    let albedo = input.color * select(1.0, COVER_FAR_SIDE, through);
     var point: SurfacePoint;
     point.albedo = albedo;
     // Blades are leaf throughout.
     point.leaf = 1.0;
     point.opacity = 1.0;
-    point.occlusion = mix(0.35, 1.0, input.along);
-    point.roughness = 0.7;
-    point.alpha = 0.49;
+    point.occlusion = mix(COVER_ROOT_OCCLUSION, 1.0, input.along);
+    point.roughness = COVER_ROUGHNESS;
+    point.alpha = COVER_ROUGHNESS * COVER_ROUGHNESS;
     point.f0 = vec3<f32>(0.04);
     point.diffuse_color = albedo;
     point.geometric = normal;

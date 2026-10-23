@@ -3,7 +3,8 @@
 //! the camera and never store. A surface material names the cover growing
 //! where it lies ([`Cover`]); the [`GroundCover`] settings place, budget and
 //! sway it. Past its radius cover grows on in tiers as long as blades stay
-//! big enough on screen, and the ground beyond shows as its canopy.
+//! wide enough on screen, retiring in a fixed order as they narrow, and the
+//! ground shows the leaves they leave as its canopy, their average.
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
@@ -65,15 +66,16 @@ settings! {
     pub struct GroundCover {
         /// Whether terrains grow their cover.
         pub enabled: bool = true => any,
-        /// Meters from the camera within which cover grows densest. Past it the
-        /// ground shows as its cover's canopy, and sparser tiers of wider blades
-        /// reach on.
+        /// Meters from the camera within which cover grows densest, its blades
+        /// widening as they thin. Past it the ground shows as its cover's
+        /// canopy, and sparser tiers of blades as wide as there reach on.
         pub radius: f32 = 40.0 => range(2.0, 200.0),
-        /// How tall on screen (pixels) the average blade stands where tiers
-        /// end: each tier reaches twice as far as the last, with blades sparser
-        /// and wider, until its blades would stand shorter than this. 0 grows
-        /// cover within the radius alone.
-        pub pixels: f32 = 2.0 => range(0.0, 16.0),
+        /// How wide on screen (pixels) blades stand as they retire: each
+        /// retires, in a fixed order, once it spans fewer than this times a
+        /// factor of its own from a half to two, and tiers, each reaching
+        /// twice as far as the last, end where the last has. 0 grows cover
+        /// within the radius alone.
+        pub pixels: f32 = 1.0 => range(0.0, 16.0),
         /// Scales every cover's density. Blades sway in the world's `Wind`.
         pub density: f32 = 1.0 => range(0.0, 4.0),
         /// An optional budget of blades a frame; beyond it the farthest drop.
