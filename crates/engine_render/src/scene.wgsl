@@ -64,15 +64,15 @@ struct Lighting {
     // haze (w).
     aerial: vec4<f32>,
     aerial_color: vec4<f32>,
-    // Occupancy: the map's center (x and z), the inverse of
-    // its side and the strength covers darken by (0 without a map); then
-    // the reference height its heights are above, its texels a side, the
-    // meters from the eye it fades out by and the far map's
-    // reference height; the far map's center, the inverse of its side and
-    // its reach (0 without one).
+    // Occupancy: one over the finest map's side (meters), its
+    // texels a side, the meters around the detail eye within which it holds
+    // every point (each coarser map twice as far) and the strength covers
+    // darken by (0 without maps); the maps' count and the reference height
+    // their heights are above; each map's window's center (x and z), two
+    // maps a vector.
     occupancy: vec4<f32>,
-    occupancy_heights: vec4<f32>,
-    occupancy_far: vec4<f32>,
+    occupancy_maps: vec4<f32>,
+    occupancy_centers: array<vec4<f32>, 4>,
     // Under the sea: the light its water scatters toward the
     // eye (rgb) and the meters through which half the light passes (w);
     // zero above it.
@@ -174,22 +174,26 @@ const FAR_MOVING: u32 = 1u;
 // red and green and their distances in blue and alpha. The last layer holds
 // the ground's height above the terrain's lowest (red). With bounce light,
 // the bounce layers of each terrain it relights (by slot:
-// surroundings hold none) follow every terrain's horizon layers
-// (`bounce_light`).
+// surroundings hold none) follow every terrain's horizon layers, each of
+// its levels' windows in a region of them (`bounce_light`).
 @group(0) @binding(14) var terrain_horizons: texture_2d_array<f32>;
 // HORIZON_RECORD_VECTORS vectors per terrain: its map's first corner (world
 // x and z) and one over its extent (x and z, 0 without a map); its first
 // layer, how fast its shadows soften per meter to their crests, the meters
 // receivers rise before comparing and the lowest ground's world height; its
-// bounce layers' first (-1 without bounce light), its probe columns along a
-// side and the first column (x and z) of the window of them relighting; the
-// window's columns along a side and one over the maps' side.
-const HORIZON_RECORDS: u32 = 256u;
+// bounce layers' first (-1 without bounce light), its finest level's probe
+// columns along a side, its levels and its windows' columns along a side;
+// one over the maps' side, the meters around the detail eye within which
+// its finest level's window holds every point, the levels' regions a row
+// of the bounce layers holds and its finest level relit; and each level's
+// window's first column, x plus BOUNCE_WINDOW_ROW times z, four levels a
+// vector.
+const HORIZON_RECORDS: u32 = 384u;
 @group(0) @binding(15) var<uniform> terrain_horizon_records: array<vec4<f32>, HORIZON_RECORDS>;
 @group(0) @binding(16) var terrain_horizon_sampler: sampler;
-// What placed objects cover around the camera: the densest
-// cover over each texel, and the covers' highest top and lowest bottom
-// (negated), above the map's reference height.
+// What placed objects cover around the detail eye, a layer per map, the
+// finest first: how much covers hide over each texel, and their highest
+// top and lowest bottom (negated), above the maps' reference height.
 @group(0) @binding(17) var occupancy_coverage: texture_2d_array<f32>;
 @group(0) @binding(18) var occupancy_heights: texture_2d_array<f32>;
 // The kept shadow levels, one layer each.
@@ -214,35 +218,36 @@ override PROBES: bool = true;
 override WINDOWS: bool = true;
 override BOUNCE: bool = true;
 
-// How much the covers in occupancy layer `layer` (its window centered at
-// `center`, `inverse` over its side, heights above `reference`) hide the
-// sky from `world`: their cover there, the more the deeper below their
-// top; none above them or outside the window. The map wraps: a point's
-// texels are where it falls in its map-wide page, those past one edge of
-// the map at the other.
-fn occupancy_cover(world: vec3<f32>, layer: u32, center: vec2<f32>, inverse: f32,
-        reference: f32) -> f32 {
+// How much the covers in occupancy map `map` hide the sky from `world`:
+// their cover there, the more the deeper below their top; none above them;
+// -1 outside the map's window. Each map is twice as wide as the one inside
+// it, and wraps: a point's texels are where it falls in its map-wide page,
+// those past one edge of the map at the other.
+fn occupancy_cover(world: vec3<f32>, map: u32) -> f32 {
+    let inverse = lighting.occupancy.x / f32(1u << map);
+    let centers = lighting.occupancy_centers[map / 2u];
+    let center = select(centers.xy, centers.zw, (map & 1u) == 1u);
     let local = (world.xz - center) * inverse + 0.5;
     if any(local <= vec2<f32>(0.0)) || any(local >= vec2<f32>(1.0)) {
-        return 0.0;
+        return -1.0;
     }
-    let size = lighting.occupancy_heights.y;
+    let size = lighting.occupancy.y;
     let uv = fract(world.xz * inverse);
     let at = uv * size - vec2<f32>(0.5);
     let corner = floor(at);
     var coverage: f32;
     if all(corner >= vec2<f32>(0.0)) && all(corner < vec2<f32>(size - 1.0)) {
-        coverage = textureSampleLevel(occupancy_coverage, terrain_horizon_sampler, uv, layer,
+        coverage = textureSampleLevel(occupancy_coverage, terrain_horizon_sampler, uv, map,
             0.0).r;
     } else {
         let texels = vec2<i32>(i32(size));
         let low = (vec2<i32>(corner) + texels) % texels;
         let high = (vec2<i32>(corner) + vec2<i32>(1) + texels) % texels;
         let share = at - corner;
-        let below = mix(textureLoad(occupancy_coverage, low, layer, 0).r,
-            textureLoad(occupancy_coverage, vec2<i32>(high.x, low.y), layer, 0).r, share.x);
-        let above = mix(textureLoad(occupancy_coverage, vec2<i32>(low.x, high.y), layer, 0).r,
-            textureLoad(occupancy_coverage, high, layer, 0).r, share.x);
+        let below = mix(textureLoad(occupancy_coverage, low, map, 0).r,
+            textureLoad(occupancy_coverage, vec2<i32>(high.x, low.y), map, 0).r, share.x);
+        let above = mix(textureLoad(occupancy_coverage, vec2<i32>(low.x, high.y), map, 0).r,
+            textureLoad(occupancy_coverage, high, map, 0).r, share.x);
         coverage = mix(below, above, share.y);
     }
     coverage = min(coverage, 1.0);
@@ -250,8 +255,8 @@ fn occupancy_cover(world: vec3<f32>, layer: u32, center: vec2<f32>, inverse: f32
         return 0.0;
     }
     let texel = min(vec2<u32>(uv * size), vec2<u32>(u32(size) - 1u));
-    let heights = textureLoad(occupancy_heights, texel, layer, 0).rg;
-    let height = world.y - reference;
+    let heights = textureLoad(occupancy_heights, texel, map, 0).rg;
+    let height = world.y - lighting.occupancy_maps.y;
     let top = heights.x;
     let bottom = -heights.y;
     if height >= top {
@@ -261,30 +266,43 @@ fn occupancy_cover(world: vec3<f32>, layer: u32, center: vec2<f32>, inverse: f32
 }
 
 // The share of the sky light placed objects' covers leave at `world`:
-// under a cover, its density's worth less; within it, less
-// the deeper below its top; above it or outside the maps, all of it. Covers
-// darken less over the outer two fifths of the map's reach around the eye,
-// so their edge is never seen, where the far map's take
-// over, fading out over the outer two fifths of theirs.
+// under a cover, its density's worth less; within it, less the deeper
+// below its top; above it or outside the maps, all of it. The map a
+// pixel's size there picks gives it (`detail_level`, its reach seen from
+// the detail eye), or the finest from there whose window holds the point,
+// blended with the next coarser one as the levels hand over; past the
+// coarsest a level holding no cover, so covers fade out over the outer half
+// of its reach. A map's texels are the mean of the finer one's where they
+// overlap, so a handover changes how sharp covers show, not how much.
 fn occupancy_visibility(world: vec3<f32>) -> f32 {
     let strength = lighting.occupancy.w;
     if !OCCUPANCY || strength <= 0.0 {
         return 1.0;
     }
-    let reach = lighting.occupancy_heights.z;
-    let away = length(world.xz - camera.position.xz);
-    let near = 1.0 - smoothstep(0.6 * reach, reach, away);
-    let far_reach = lighting.occupancy_far.w;
-    let far = (1.0 - near) * select(0.0, 1.0 - smoothstep(0.6 * far_reach, far_reach, away),
-        far_reach > 0.0);
-    var hidden = 0.0;
-    if near > 0.0 {
-        hidden += near * occupancy_cover(world, 0u, lighting.occupancy.xy, lighting.occupancy.z,
-            lighting.occupancy_heights.x);
+    let maps = u32(lighting.occupancy_maps.x);
+    let picked = detail_level(detail_across(world), 0.5 * lighting.occupancy.z * camera.options.y,
+        maps + 1u);
+    var map = picked.level;
+    var blend = picked.blend;
+    var hidden = -1.0;
+    for (; map < maps; map++) {
+        hidden = occupancy_cover(world, map);
+        if hidden >= 0.0 {
+            break;
+        }
+        blend = 0.0;
     }
-    if far > 0.0 {
-        hidden += far * occupancy_cover(world, 1u, lighting.occupancy_far.xy,
-            lighting.occupancy_far.z, lighting.occupancy_heights.w);
+    if hidden < 0.0 {
+        return 1.0;
+    }
+    if blend > 0.0 {
+        var next = 0.0;
+        if map + 1u < maps {
+            next = occupancy_cover(world, map + 1u);
+        }
+        if next >= 0.0 {
+            hidden = mix(hidden, next, blend);
+        }
     }
     return 1.0 - strength * hidden;
 }
@@ -982,7 +1000,7 @@ fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
 
 const HORIZON_DIRECTIONS: u32 = 16u;
 const HORIZON_LAYERS: u32 = 9u;
-const HORIZON_RECORD_VECTORS: u32 = 4u;
+const HORIZON_RECORD_VECTORS: u32 = 6u;
 
 // The share of the sun terrains leave unblocked at `world`: where the sun's
 // ray toward it passes under a terrain's crest there, none; over it, all;
@@ -1078,18 +1096,18 @@ fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
     return visible * cloud_passing(world);
 }
 
-// Terrains' bounce light (`terrain_bounce.wgsl`): the columns at its
-// window's edge it hands over across, and its probes' heights above the
-// ground (meters).
-const BOUNCE_FADE: f32 = 8.0;
+// Terrains' bounce light (`terrain_bounce.wgsl`): its probes' heights above
+// the ground (meters), and the columns a packed window's first row counts
+// in.
 const BOUNCE_LOW: f32 = 1.5;
 const BOUNCE_HIGH: f32 = 24.0;
+const BOUNCE_WINDOW_ROW: u32 = 4096u;
 
 // Bounce light at a point: the light the ground around sends it, per unit
-// of its diffuse color; the share of the sky the ground leaves it; and how
-// much of both the probes there give: 0 in the far field, past their reach
-// (and everywhere with bounce light off), where terrain takes its estimate
-// (`terrain_bounce`) and what stands on it the open sky.
+// of its diffuse color; the share of the sky the ground leaves it; and 1
+// where a terrain's probes hold the point, 0 elsewhere (and everywhere with
+// bounce light off), where terrain takes none and what stands on it the
+// open sky.
 struct BounceLight {
     light: vec3<f32>,
     sky: f32,
@@ -1110,11 +1128,47 @@ fn bounce_layer(texel: vec2<f32>, first: u32, normal: vec3<f32>) -> vec4<f32> {
     return mean + x * normal.x + y * normal.y + z * normal.z;
 }
 
+// Where level `level` of the probes of the terrain whose horizon record
+// starts at `at` holds terrain-local `uv`, between its window's columns,
+// each at its middle, the terrain's edges within its outer ones: a point of
+// the bounce layers (their coordinates), in the level's region of them; x
+// below 0 where the window does not hold the point.
+fn bounce_texel(at: u32, level: u32, uv: vec2<f32>) -> vec2<f32> {
+    let header = terrain_horizon_records[at + 2u];
+    let arranged = terrain_horizon_records[at + 3u];
+    let columns = f32(u32(header.y) >> level);
+    let window = min(header.w, columns);
+    let packed = u32(terrain_horizon_records[at + 4u + level / 4u][level % 4u]);
+    let first = vec2<f32>(f32(packed % BOUNCE_WINDOW_ROW), f32(packed / BOUNCE_WINDOW_ROW));
+    let column = clamp(uv * columns - 0.5, vec2<f32>(0.0), vec2<f32>(columns - 1.0)) - first;
+    if any(column < vec2<f32>(0.0)) || any(column > vec2<f32>(window - 1.0)) {
+        return vec2<f32>(-1.0);
+    }
+    let row = u32(arranged.z);
+    let region = vec2<f32>(f32(level % row), f32(level / row)) * header.w;
+    return (region + column + 0.5) * arranged.x;
+}
+
+// A level's probes' light at `texel` of the bounce layers from `first`,
+// around `normal`: the lower layer's, the upper's mixed in by `above`.
+fn bounce_held(texel: vec2<f32>, first: u32, normal: vec3<f32>, above: f32) -> vec4<f32> {
+    let held = bounce_layer(texel, first, normal);
+    if above <= 0.0 {
+        return held;
+    }
+    return mix(held, bounce_layer(texel, first + 4u, normal), above);
+}
+
 // Bounce light at `world` on a surface of `normal`, from the first terrain
-// whose probes relight around it: between its probe columns and, for a
-// surface above its ground (not `on_terrain`, whose surfaces lie on it),
-// between its probes' two layers by its height above the ground; handing
-// over across the window's last columns.
+// whose probes relight it: from the level of them a pixel's size there
+// picks (`detail_level`, the finest level's reach seen from the detail
+// eye), or the finest from there whose window holds the point, the coarsest
+// holding the whole terrain; between that level's probe columns, blended
+// with the next coarser level's as the levels hand over, each coarser
+// probe the mean of the finer ones under it, so a handover changes how
+// sharp the light is, never how much; and, for a surface above the ground
+// (not `on_terrain`, whose surfaces lie on it), between the probes' two
+// layers by its height above the ground.
 fn bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> BounceLight {
     var found: BounceLight;
     found.sky = 1.0;
@@ -1124,36 +1178,48 @@ fn bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> Bounce
     let count = min(u32(shadow.level_state.w), HORIZON_RECORDS / HORIZON_RECORD_VECTORS);
     for (var index = 0u; index < count; index++) {
         let at = HORIZON_RECORD_VECTORS * index;
-        let columns = terrain_horizon_records[at + 2u];
-        if columns.x < 0.0 {
+        let header = terrain_horizon_records[at + 2u];
+        if header.x < 0.0 {
             continue;
         }
         let place = terrain_horizon_records[at];
-        let window = terrain_horizon_records[at + 3u];
         let uv = (world.xz - place.xy) * place.zw;
-        // Where the point lies among the window's columns, each at its
-        // middle.
-        let column = uv * columns.y - 0.5 - columns.zw;
-        let edge = min(min(column.x, column.y), window.x - 1.0 - max(column.x, column.y));
-        if edge <= -0.5 {
+        if any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
             continue;
         }
-        let texel = (clamp(column, vec2<f32>(0.0), vec2<f32>(window.x - 1.0)) + 0.5) * window.y;
-        let first = u32(columns.x);
-        var held = bounce_layer(texel, first, normal);
+        let arranged = terrain_horizon_records[at + 3u];
+        let levels = u32(header.z);
+        let picked = detail_level(detail_across(world), 0.5 * arranged.y * camera.options.y,
+            levels);
+        var level = max(picked.level, u32(arranged.w));
+        var blend = select(0.0, picked.blend, level == picked.level);
+        var texel = bounce_texel(at, level, uv);
+        for (; texel.x < 0.0 && level + 1u < levels; level++) {
+            texel = bounce_texel(at, level + 1u, uv);
+            blend = 0.0;
+        }
+        if texel.x < 0.0 {
+            continue;
+        }
+        var above = 0.0;
         if !on_terrain {
             let shape = terrain_horizon_records[at + 1u];
             let ground = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
                 u32(shape.x) + HORIZON_LAYERS - 1u, 0.0).r;
-            let above = saturate((world.y - shape.w - ground - BOUNCE_LOW)
+            above = saturate((world.y - shape.w - ground - BOUNCE_LOW)
                 / (BOUNCE_HIGH - BOUNCE_LOW));
-            if above > 0.0 {
-                held = mix(held, bounce_layer(texel, first + 4u, normal), above);
+        }
+        let first = u32(header.x);
+        var held = bounce_held(texel, first, normal, above);
+        if blend > 0.0 && level + 1u < levels {
+            let next = bounce_texel(at, level + 1u, uv);
+            if next.x >= 0.0 {
+                held = mix(held, bounce_held(next, first, normal, above), blend);
             }
         }
         found.light = max(held.rgb, vec3<f32>(0.0));
         found.sky = saturate(held.a);
-        found.weight = saturate((edge + 0.5) / BOUNCE_FADE);
+        found.weight = 1.0;
         return found;
     }
     return found;

@@ -8,6 +8,9 @@ use super::constants::SKY_LAYERS;
 pub(crate) const MAX_CASCADES: usize = engine_core::MAX_SHADOW_CASCADES as usize;
 /// Most kept shadow levels.
 pub(crate) const MAX_LEVELS: usize = engine_core::MAX_KEPT_LEVELS as usize;
+/// Most occupancy maps, whose centers the lighting uniform holds two a
+/// vector.
+pub(crate) const MAX_OCCUPANCY_LEVELS: usize = engine_core::MAX_OCCUPANCY_LEVELS as usize;
 /// Planes of a map's caster volume ([`ShadowCullUniform::planes`]): the
 /// view frustum's sides, near and far planes, and the receivers' first and
 /// last view depths, those facing the sun.
@@ -101,13 +104,15 @@ gpu_structs! {
         /// haze, when fog and the air take the sky's light (w).
         pub aerial: [f32; 4],
         pub aerial_color: [f32; 4],
-        /// Occupancy: the map's center (x and z), the inverse of
-        /// its side in meters and the strength covers darken by (0 without a
-        /// map); then the reference height its heights are above and its texels
-        /// a side.
+        /// Occupancy: one over the finest map's side in meters, its
+        /// texels a side, the meters around the detail eye within which it
+        /// holds every point (each coarser map twice as far) and the strength
+        /// covers darken by (0 without maps); the maps' count and the
+        /// reference height their heights are above (zw unused); then each
+        /// map's window's center (x and z), two maps a vector.
         pub occupancy: [f32; 4],
-        pub occupancy_heights: [f32; 4],
-        pub occupancy_far: [f32; 4],
+        pub occupancy_maps: [f32; 4],
+        pub occupancy_centers: [[f32; 4]; MAX_OCCUPANCY_LEVELS / 2],
         /// Under the sea: the light its water scatters toward
         /// the eye (rgb) and the meters through which half the light passes
         /// (w); zero above it.
@@ -320,7 +325,7 @@ gpu_structs! {
         pub sky_depths: [f32; 4],
     }
 
-    /// WGSL `Post` uniform of `effects.wgsl`: 272
+    /// WGSL `Post` uniform of `effects.wgsl`: 320
     /// bytes.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct PostUniform as ["Post"] {
@@ -336,9 +341,11 @@ gpu_structs! {
         /// The screen-sized targets' size in pixels, the display's, and its
         /// inverse.
         pub extent: [f32; 4],
-        /// Radius, strength, the far radius it grows toward with distance
-        /// (none above the radius: it stays) and 1 when ambient occlusion
-        /// runs.
+        /// Ambient occlusion: its radius in world units, its strength, the
+        /// finest occupancy map's texel over the meters around the detail
+        /// eye it holds (its share of the render pixels a meter spans a meter
+        /// away is where the occlusion fades out, over the octave above) and
+        /// 1 when it runs.
         pub occlusion: [f32; 4],
         /// Strength and 1 when bloom runs; half-resolution texel size.
         pub bloom: [f32; 4],
@@ -359,6 +366,9 @@ gpu_structs! {
         /// Sky occlusion: the share of hidden sky's light taken away, the
         /// least share any point keeps, and (w) 1 when it runs.
         pub sky: [f32; 4],
+        /// The detail eye ambient occlusion hands over by its distance from
+        /// (xyz, world space as `eye`); w unused.
+        pub detail: [f32; 4],
     }
 
     /// Sky occlusion's maps as the screen effects' occlusion pass reads them

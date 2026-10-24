@@ -163,17 +163,15 @@ gpu_consts! {
 
     // crate::terrain_horizons
     /// Vectors of the record each terrain's horizon map takes (where it lies
-    /// and how its shadows soften, then where its bounce light lies), and
-    /// those the records' uniform holds: as many as fit 4 KiB, 64 terrains,
+    /// and how its shadows soften, then where its bounce light lies: its
+    /// levels' layout, and each level's window, four levels a vector), and
+    /// those the records' uniform holds: as many as fit 6 KiB, 64 terrains,
     /// more than the maps' array layers hold at the limits every device
     /// grants.
-    pub(crate) const HORIZON_RECORD_VECTORS: u32 = 4 => ["HORIZON_RECORD_VECTORS"];
-    pub(crate) const HORIZON_RECORDS: usize = 256 => ["HORIZON_RECORDS"];
+    pub(crate) const HORIZON_RECORD_VECTORS: u32 = 4 + engine_core::MAX_BOUNCE_LEVELS / 4 => ["HORIZON_RECORD_VECTORS"];
+    pub(crate) const HORIZON_RECORDS: usize = 64 * HORIZON_RECORD_VECTORS as usize => ["HORIZON_RECORDS"];
 
     // crate::terrain_bounce
-    /// Columns at a window's edge across which bounce light hands over to
-    /// the far field's estimate past it.
-    pub(crate) const BOUNCE_FADE: f32 = 8.0 => ["BOUNCE_FADE"];
     /// Words of a probe in the probes' buffer.
     pub(crate) const BOUNCE_RECORD_WORDS: usize = engine_core::terrain_data::bounce::PROBE_BYTES / 4 => ["BOUNCE_RECORD_WORDS" in BOUNCE_SHADER];
 
@@ -561,6 +559,7 @@ gpu_mirrors! {
     engine_core::terrain_data::bounce::LAYERS => ["BOUNCE_PROBE_LAYERS" in BOUNCE_SHADER];
     engine_core::terrain_data::bounce::LOW_PROBE => ["BOUNCE_LOW"];
     engine_core::terrain_data::bounce::HIGH_PROBE => ["BOUNCE_HIGH"];
+    engine_core::terrain_data::bounce::MAX_PROBES => ["BOUNCE_WINDOW_ROW"];
     engine_core::terrain_data::bounce::NEAREST => ["BOUNCE_NEAREST" in BOUNCE_SHADER];
     engine_core::terrain_data::bounce::DISTANCE_STEPS => ["BOUNCE_STEPS" in BOUNCE_SHADER];
     engine_core::terrain_data::TILE_STRIDE => ["TILE_STRIDE" in TERRAIN_CONTROL_SHADER, "TILE_STRIDE" in TERRAIN_NORMALS_SHADER];

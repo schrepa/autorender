@@ -240,15 +240,11 @@ settings! {
         /// How much creases and corners darken the ambient light; 0 turns it
         /// off.
         pub intensity: f32 = 0.8 => range(0.0, 1.0),
-        /// World distance within which geometry occludes.
+        /// World distance within which geometry occludes, the same at every
+        /// distance: where it shrinks on screen to what the finest occupancy
+        /// map's texels span where that map hands over, the occlusion fades
+        /// out, as the maps and terrains' probes hold coarser shade.
         pub radius: f32 = 2.5 => above(0.0),
-        /// The radius distant surfaces occlude within at most: beyond where
-        /// `radius` spans a fiftieth of the view's height on screen, the
-        /// radius grows with distance to keep that span, up to this one, so
-        /// distant creases, streets and valleys keep their occlusion. 0, or
-        /// any radius up to `radius`, keeps the radius the same at every
-        /// distance.
-        pub far_radius: f32 = 0.0 => at_least(0.0),
     }
 }
 

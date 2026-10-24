@@ -113,12 +113,15 @@ macro_rules! screen_effects {
 }
 
 screen_effects! {
-    /// Ambient occlusion: the depth buffer sampled at half resolution.
+    /// Ambient occlusion: the depth buffer sampled at half resolution,
+    /// handing over by its radius's span on screen as the occupancy maps'
+    /// texels do.
     occlusion {
         gate: |environment, _| environment.ambient_occlusion.sanitized().enabled(),
         uniform: |settings, on, _| {
             let occlusion = settings.ambient_occlusion.sanitized();
-            [occlusion.radius, occlusion.intensity, occlusion.far_radius, on]
+            let share = crate::occupancy::texel_share(&settings.occupancy.sanitized());
+            [occlusion.radius, occlusion.intensity, share, on]
         },
         reads: [Depth],
     },

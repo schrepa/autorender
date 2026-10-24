@@ -283,9 +283,9 @@ try {
   checks.push({ check: "horizon shadows", horizons: moved.terrain.horizons, pixels: lengthened.changed });
 
   // Bounce light: the terrain's probes, their transfer cooked after its
-  // lighting, relight around the camera every frame as the sun lights the
-  // ground; off, nothing relights and the ground takes an estimate of the
-  // light around it.
+  // lighting, relight in levels around the detail eye every frame as the
+  // sun lights the ground; off, nothing relights and the ground takes no
+  // light from the ground around it.
   let bounced = (await command("environment", { terrain: fast })).result.rendering;
   for (let frame = 0; frame < 400 && bounced.terrain.bounced === 0; frame++) {
     await new Promise(resolve => setTimeout(resolve, 25));

@@ -7,14 +7,15 @@
 //! and compares its own height above the ground with it, softening with the
 //! crest's distance (`scene.wgsl`): the sun moves and nothing builds. A
 //! terrain's layers upload as its lighting arrives and again when it
-//! changes; a record of four vectors per terrain, in a uniform the lookups
-//! loop over, places its map. Terrains past what the device's array layers
-//! or the records hold cast no long shadows (`room`).
+//! changes; a record of `HORIZON_RECORD_VECTORS` vectors per terrain, in a
+//! uniform the lookups loop over, places its map. Terrains past what the
+//! device's array layers or the records hold cast no long shadows (`room`).
 //!
 //! With bounce light on, the maps hold after every terrain's horizon layers
 //! the bounce layers of each terrain it relights, by slot
-//! (`crate::terrain_bounce`: surroundings hold none), which its probes
-//! around the camera write every frame; the records place them too.
+//! (`crate::terrain_bounce`: surroundings hold none), which its levels of
+//! probes around the detail eye write every frame, each level's window in a
+//! region of them; the records place them too.
 
 use std::sync::Arc;
 
@@ -24,8 +25,7 @@ use engine_core::{RenderTerrain, RenderTerrains, TerrainLighting, TerrainSetting
 
 use crate::cached::{Bound, Versioned};
 use crate::gpu_layouts::constants::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
-use crate::terrain_bounce::BOUNCE_LAYERS;
-use crate::terrain_bounce::BounceWindow;
+use crate::terrain_bounce::{BOUNCE_LAYERS, BounceLevels, MOST_LEVELS};
 
 /// A horizon map texel: two directions' crest heights and distances, or the
 /// ground's height, filtered; or bounce light's coefficients.
@@ -33,11 +33,23 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Texels of the horizon map within which terrain still draws into the
 /// near cascades, which shadow fine detail its texels miss.
 const CASCADE_TEXELS: f32 = 4.0;
+/// The columns a packed window's first row counts in (`scene.wgsl`'s
+/// `BOUNCE_WINDOW_ROW`): as many as any level has at most, which keeps the
+/// packed value within the integers a float holds exactly.
+const WINDOW_ROW: u32 = engine_core::terrain_data::bounce::MAX_PROBES;
+
+const _: () = assert!(
+    MOST_LEVELS <= 4 * (HORIZON_RECORD_VECTORS as usize - 4),
+    "a record holds every level's window, four a vector"
+);
 
 /// A terrain's record without a map: its place covers no ground and it
 /// holds no bounce light.
-const NO_RECORD: [[f32; 4]; HORIZON_RECORD_VECTORS as usize] =
-    [[0.0; 4], [0.0; 4], [-1.0, 0.0, 0.0, 0.0], [0.0; 4]];
+const NO_RECORD: [[f32; 4]; HORIZON_RECORD_VECTORS as usize] = {
+    let mut record = [[0.0; 4]; HORIZON_RECORD_VECTORS as usize];
+    record[2][0] = -1.0;
+    record
+};
 
 struct Maps {
     texture: wgpu::Texture,
@@ -189,7 +201,7 @@ impl Horizons {
 
     /// Uploads the maps of every terrain whose lighting arrived or changed
     /// since and writes their records, with shadows on and terrain
-    /// `settings` casting at their resolution, each placing the window of
+    /// `settings` casting at their resolution, each placing the levels of
     /// `windows` (by terrain index) its bounce light relights there, the
     /// maps holding the bounce layers of `slots` terrains. Without casters
     /// the maps are released.
@@ -199,7 +211,7 @@ impl Horizons {
         queue: &wgpu::Queue,
         terrains: &RenderTerrains,
         (settings, shadows): (&TerrainSettings, bool),
-        (windows, slots): (&[Option<BounceWindow>], u32),
+        (windows, slots): (&[Option<BounceLevels>], u32),
     ) {
         self.uploaded = 0;
         self.reaches.clear();
@@ -301,13 +313,13 @@ fn max_extent(terrain: &RenderTerrain) -> f32 {
 }
 
 /// Where a terrain's record places its layers: its index among `count`
-/// terrains whose maps are `size` texels a side, and the window its bounce
+/// terrains whose maps are `size` texels a side, and the levels its bounce
 /// light relights in its slot's layers, if it does.
 struct Place {
     index: usize,
     count: usize,
     size: u32,
-    window: Option<BounceWindow>,
+    window: Option<BounceLevels>,
 }
 
 /// A terrain's record (`scene.wgsl`): its map's first corner (world x and
@@ -315,9 +327,13 @@ struct Place {
 /// per meter to their crests, the meters receivers rise before they compare
 /// (a tenth of a texel, within which slopes the sun grazes stay lit) and
 /// the world height its ground's heights count from; its bounce layers'
-/// first (-1 without bounce light), its probe columns along a side and the
-/// first column (x and z) of its window; and the window's columns along a
-/// side and one over the maps' side.
+/// first (-1 without bounce light), its finest level's probe columns along
+/// a side, its levels and its windows' columns along a side; one over the
+/// maps' side, the meters around the detail eye within which its finest
+/// level's window holds every point, the levels' regions a row of the
+/// bounce layers holds and its finest level relit; and each level's
+/// window's first column, x plus z times `WINDOW_ROW`, four levels a
+/// vector.
 fn record(
     terrain: &RenderTerrain,
     lighting: &TerrainLighting,
@@ -326,34 +342,37 @@ fn record(
 ) -> [[f32; 4]; HORIZON_RECORD_VECTORS as usize] {
     let extent = terrain.pyramid.extent();
     let texel = max_extent(terrain) / lighting.horizon_size as f32;
-    let (bounce, window) = match place.window {
-        Some(window) => (
-            [
-                (HORIZON_LAYERS * place.count + BOUNCE_LAYERS * window.slot as usize) as f32,
-                window.probes as f32,
-                window.first[0] as f32,
-                window.first[1] as f32,
-            ],
-            [window.columns as f32, 1.0 / place.size as f32, 0.0, 0.0],
-        ),
-        None => (NO_RECORD[2], NO_RECORD[3]),
-    };
-    [
-        [
-            terrain.origin.x,
-            terrain.origin.z,
-            1.0 / extent.x,
-            1.0 / extent.y,
-        ],
-        [
-            (HORIZON_LAYERS * place.index) as f32,
-            settings.shadow_softness,
-            0.1 * texel,
-            terrain.origin.y + lighting.lowest,
-        ],
-        bounce,
-        window,
-    ]
+    let mut record = NO_RECORD;
+    record[0] = [
+        terrain.origin.x,
+        terrain.origin.z,
+        1.0 / extent.x,
+        1.0 / extent.y,
+    ];
+    record[1] = [
+        (HORIZON_LAYERS * place.index) as f32,
+        settings.shadow_softness,
+        0.1 * texel,
+        terrain.origin.y + lighting.lowest,
+    ];
+    if let Some(window) = place.window {
+        record[2] = [
+            (HORIZON_LAYERS * place.count + BOUNCE_LAYERS * window.slot as usize) as f32,
+            window.probes as f32,
+            window.levels as f32,
+            window.columns as f32,
+        ];
+        record[3] = [
+            1.0 / place.size as f32,
+            window.reach,
+            window.row as f32,
+            window.finest as f32,
+        ];
+        for (level, &[x, z]) in window.first.iter().enumerate().take(MOST_LEVELS) {
+            record[4 + level / 4][level % 4] = (x + z * WINDOW_ROW) as f32;
+        }
+    }
+    record
 }
 
 /// Writes terrain `index`'s layers of `texture`, `size` texels a side, from

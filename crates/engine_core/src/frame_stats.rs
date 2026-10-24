@@ -176,7 +176,7 @@ pub struct RenderStats {
     pub terrain: TerrainRenderStats,
     /// Ground cover.
     pub ground_cover: GroundCoverStats,
-    /// The occupancy map.
+    /// The occupancy maps.
     pub occupancy: OccupancyStats,
     /// Lakes and rivers.
     pub water: WaterStats,
@@ -478,8 +478,15 @@ pub struct TerrainRenderStats {
     /// Terrains whose bounce light relit this frame: every frame, however
     /// the sun and sky stand.
     pub bounced: u32,
-    /// The probe columns bounce light relit around the camera this frame.
+    /// The probes bounce light relit this frame, over every level around
+    /// the detail eye.
     pub bounce_probes: u32,
+    /// The most levels of probes a terrain's bounce light relit this frame:
+    /// those whose reach meets the terrain, the coarsest always.
+    pub bounce_levels: u32,
+    /// Terrains whose bounce light the horizon maps' layers or the probes'
+    /// buffers could not hold this frame, which take none.
+    pub dropped_bounce: u32,
     /// Terrains whose macro color maps are here: the tint and growth their
     /// bakes give their ground.
     pub macro_maps: u32,
@@ -538,13 +545,16 @@ pub struct GroundCoverStats {
     pub tiers: u32,
 }
 
-/// The occupancy map around the camera.
+/// The occupancy maps around the detail eye.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct OccupancyStats {
-    /// Times the map was drawn: it follows the camera in steps and redraws
-    /// when objects change.
+    /// Times a map redrew cells: each follows the detail eye in steps and
+    /// redraws where objects change.
     pub redraws: u32,
+    /// Times a map took the mean of the finer one inside it where that one
+    /// changed.
+    pub averages: u32,
 }
 
 /// Terrains' water, as their tiles hold it.

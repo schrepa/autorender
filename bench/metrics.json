@@ -828,6 +828,17 @@
       "direction": null
     },
     {
+      "name": "occupancy.averages",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "occupancy.redraws",
       "kind": "work",
       "rule": "shown",
@@ -1444,6 +1455,17 @@
       "direction": null
     },
     {
+      "name": "terrain.bounce_levels",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "terrain.bounce_probes",
       "kind": "work",
       "rule": "shown",
@@ -1464,6 +1486,17 @@
       ],
       "unit": "count",
       "direction": null
+    },
+    {
+      "name": "terrain.dropped_bounce",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
     },
     {
       "name": "terrain.dropped_materials",

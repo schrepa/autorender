@@ -98,8 +98,8 @@ resources! {
     Tracks: Kept,
     /// The runtime virtual texture's baked pages.
     Pages: Kept,
-    /// Terrains' bounce light around the camera, relit every frame, and
-    /// their ground's light it gathers.
+    /// Terrains' bounce light in levels around the detail eye, relit every
+    /// frame, and their ground's light it gathers.
     Bounce: Kept,
     /// Ground cover's blades and their counts, read back later.
     Cover: Kept,

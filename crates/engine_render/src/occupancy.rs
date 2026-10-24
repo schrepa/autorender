@@ -1,19 +1,24 @@
-//! Occupancy: a top-down map around the camera of what
-//! placed objects cover, drawn from the scatter pass's slots
-//! (`occupancy.wgsl`) and read by the shared shading (`scene.wgsl`'s
-//! `occupancy_visibility`), which darkens the sky light of what lies under
-//! or within a cover, less toward the end of its reach around the eye;
-//! and a coarser far map in the targets' second layer,
-//! reaching on to the settings' far radius, whose texels
-//! keep how much of their ground covers hide.
+//! Occupancy: top-down maps around the detail eye of what placed objects
+//! cover, drawn from the scatter pass's slots (`occupancy.wgsl`) and read
+//! by the shared shading (`scene.wgsl`'s `occupancy_visibility`), which
+//! darkens the sky light of what lies under or within a cover. The maps
+//! nest, a layer of the targets each, the finest first: each reaches twice
+//! as far as the one inside it with texels twice as wide, and where it lies
+//! over the finer one its texels are the finer one's means, so it shows what
+//! the finer one does there; shading reads the map a pixel's size picks and
+//! blends it with the next. Every map's texels keep how much of their
+//! ground covers hide, each footprint at least most of a texel wide
+//! carrying its share of it.
 //!
 //! Each map wraps, as the kept shadow levels do: a world point falls on
 //! the texel its place in its map-wide page gives, and a window of `CELLS`
-//! by `CELLS` cells follows the camera over the map in whole cells. A frame
-//! redraws only cells: those the window uncovers, and those under objects
-//! that came or went. Its selection lists the objects whose footprints
-//! reach them, the cells are cleared, and the listed footprints are drawn
-//! into them alone.
+//! by `CELLS` cells follows the detail eye over the map in whole cells. A
+//! frame redraws only cells: those a window uncovers, those under objects
+//! that came or went, and a coarser map's cells under those its finer
+//! window left. Its selection lists the objects whose footprints reach
+//! them, the cells are cleared, and the listed footprints are drawn into
+//! them alone; then a coarser map takes the finer one's means over the
+//! finer cells that changed and those under its own cells redrawn.
 
 use crate::shaders::entry::occupancy;
 use engine_core::Occupancy;
@@ -24,6 +29,7 @@ use crate::buffers::Growable;
 use crate::cached::{Bound, GroupCache, Versioned};
 use crate::gpu_layouts::constants::{OCCUPANCY_CELLS as CELLS, OCCUPANCY_GROUP, OCCUPANCY_QUAD};
 use crate::gpu_layouts::occupancy::{ListedDraw, SplatUniform};
+use crate::gpu_layouts::scene::MAX_OCCUPANCY_LEVELS;
 use crate::pipelines::{Fillers, GroupLayout};
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
@@ -33,11 +39,6 @@ use crate::shaders::Entry;
 const COVERAGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 const HEIGHTS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
-/// The maps: the near one, and the far one, each a layer of
-/// the targets.
-const NEAR: usize = 0;
-const FAR: usize = 1;
-
 /// Cells across a window, as a signed count.
 const SIDE: i32 = CELLS as i32;
 
@@ -45,6 +46,11 @@ const SIDE: i32 = CELLS as i32;
 const CELL_WORDS: usize = (CELLS * CELLS / 32) as usize;
 
 const _: () = assert!(CELLS == 16, "a word holds two rows of cells");
+
+/// The share of a map's side its window holds every point within either
+/// way of the eye: six of its sixteen cells, as the window follows the eye
+/// once it strays more than a cell from its middle cells.
+const REACH_SHARE: f32 = 3.0 / 8.0;
 
 pub(crate) use crate::gpu_layouts::occupancy::Cover;
 
@@ -71,20 +77,42 @@ impl Cover {
     }
 }
 
-/// Where a map lies: its window's center (x and z), meters a side,
-/// reference height and texels a side, and the meters around the eye
-/// covers darken within.
+/// What shading reads of the maps (`scene.wgsl`'s `Lighting`): one over the
+/// finest map's side, its texels a side, the meters around the detail eye
+/// within which it holds every point and the strength covers darken by;
+/// the maps' count and the reference height their heights are above; and
+/// each map's window's center (x and z), two maps a vector.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Area {
-    pub center: [f32; 2],
-    pub size: f32,
-    pub reference: f32,
-    pub resolution: u32,
-    pub reach: f32,
+pub(crate) struct Lit {
+    pub(crate) occupancy: [f32; 4],
+    pub(crate) maps: [f32; 4],
+    pub(crate) centers: [[f32; 4]; MAX_OCCUPANCY_LEVELS / 2],
 }
 
-/// A map's cells to redraw: bit `16 y + x` for the cell at column `x` and
-/// row `y` of its texels.
+/// The finest map's texel over the meters around the detail eye within
+/// which it holds every point, as `settings` size it, which ambient
+/// occlusion hands over by (`post.wgsl`'s `occlusion_share`).
+pub(crate) fn texel_share(settings: &Occupancy) -> f32 {
+    let (texel, reach) = finest(settings);
+    texel / reach
+}
+
+/// The finest map's texel as `settings` size it, and the meters around
+/// the eye within which it holds every point: its window's six cells either
+/// way, less the half texel a lookup reads past the point.
+fn finest(settings: &Occupancy) -> (f32, f32) {
+    let texel = settings.radius / (REACH_SHARE * side_texels(settings) as f32);
+    (texel, settings.radius - 0.5 * texel)
+}
+
+/// Each map's texels a side under `settings`: cells of whole texels, and
+/// each finer cell whole texels of the next map.
+fn side_texels(settings: &Occupancy) -> u32 {
+    settings.resolution.next_multiple_of(2 * CELLS)
+}
+
+/// A map's cells: bit `16 y + x` for the cell at column `x` and row `y`,
+/// of its texels or of its window.
 #[derive(Clone, Copy, Debug, Default)]
 struct Cells([u32; CELL_WORDS]);
 
@@ -95,6 +123,12 @@ impl Cells {
     fn set(&mut self, column: u32, row: u32) {
         let bit = row * CELLS + column;
         self.0[(bit / 32) as usize] |= 1 << (bit % 32);
+    }
+
+    /// Whether the cell at column `column` and row `row` is marked.
+    fn get(&self, column: u32, row: u32) -> bool {
+        let bit = row * CELLS + column;
+        self.0[(bit / 32) as usize] & (1 << (bit % 32)) != 0
     }
 
     /// Marks every cell of column `column`.
@@ -117,16 +151,14 @@ impl Cells {
 }
 
 /// A map's window: `CELLS` by `CELLS` cells `cell` meters wide following
-/// the camera, the absolute cell of its first corner (x and z), and the
-/// height its heights are above. The map holds the absolute cell `(a, b)`,
-/// whose first corner is `(a, b) * cell`, in its cell `(a mod CELLS, b mod
-/// CELLS)`: the window moves in whole cells, and only the cells it uncovers
-/// redraw.
+/// the detail eye, and the absolute cell of its first corner (x and z). The
+/// map holds the absolute cell `(a, b)`, whose first corner is
+/// `(a, b) * cell`, in its cell `(a mod CELLS, b mod CELLS)`: the window
+/// moves in whole cells, and only the cells it uncovers redraw.
 #[derive(Clone, Copy, Debug)]
 struct Window {
     cell: f32,
     origin: [i32; 2],
-    reference: f32,
 }
 
 impl Window {
@@ -154,18 +186,39 @@ impl Window {
         self.origin = target;
     }
 
+    /// Whether the window holds the absolute cell `cell`.
+    fn holds(&self, cell: [i32; 2]) -> bool {
+        (0..2).all(|axis| (self.origin[axis]..self.origin[axis] + SIDE).contains(&cell[axis]))
+    }
+
+    /// Whether the window holds the world box `min` to `max` (x and z).
+    fn holds_box(&self, min: Vec3, max: Vec3) -> bool {
+        let corner = self.corner();
+        let side = self.cell * CELLS as f32;
+        min.x >= corner[0]
+            && min.z >= corner[1]
+            && max.x < corner[0] + side
+            && max.z < corner[1] + side
+    }
+
     /// The window's first corner (x and z, world).
     fn corner(&self) -> [f32; 2] {
         self.origin.map(|cell| cell as f32 * self.cell)
     }
 }
 
-/// The maps' pipelines: each map's (the near one keeps each target's
-/// maximum, the far one adds covers up and keeps the heights' maximum),
-/// the one clearing the cells redrawn, and the selection's.
+/// Where absolute cell `cell` falls among a map's cells.
+fn wrapped(cell: [i32; 2]) -> [u32; 2] {
+    cell.map(|axis| axis.rem_euclid(SIDE) as u32)
+}
+
+/// The maps' pipelines: the footprints' (covers composed as what each lets
+/// through, heights keeping their extremes), the one clearing the cells
+/// redrawn, the one taking a finer map's means, and the selection's.
 struct Pipelines {
-    splats: [wgpu::RenderPipeline; 2],
+    splat: wgpu::RenderPipeline,
     clear: wgpu::RenderPipeline,
+    means: wgpu::RenderPipeline,
     select: wgpu::ComputePipeline,
 }
 
@@ -180,18 +233,15 @@ impl Pipelines {
             &crate::pipeline_layouts::OCCUPANCY_PIPELINES,
             &[layout],
         );
-        let blend = |operation| {
+        let blend = |dst_factor, operation| {
+            let component = wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor,
+                operation,
+            };
             Some(wgpu::BlendState {
-                color: wgpu::BlendComponent {
-                    src_factor: wgpu::BlendFactor::One,
-                    dst_factor: wgpu::BlendFactor::One,
-                    operation,
-                },
-                alpha: wgpu::BlendComponent {
-                    src_factor: wgpu::BlendFactor::One,
-                    dst_factor: wgpu::BlendFactor::One,
-                    operation,
-                },
+                color: component,
+                alpha: component,
             })
         };
         // Into both targets, the coverage blended by `coverage` and the
@@ -229,19 +279,24 @@ impl Pipelines {
                 },
             )
         };
-        let splat = (occupancy::vs_splat, occupancy::fs_splat);
-        let (max, add) = (
-            blend(wgpu::BlendOperation::Max),
-            blend(wgpu::BlendOperation::Add),
-        );
+        // A footprint lets through what it does not cover of what the
+        // others let through.
+        let over = blend(wgpu::BlendFactor::OneMinusSrc, wgpu::BlendOperation::Add);
+        let max = blend(wgpu::BlendFactor::One, wgpu::BlendOperation::Max);
         Self {
-            splats: [
-                draw("engine/occupancy", splat, (max, max)),
-                draw("engine/occupancy-far", splat, (add, max)),
-            ],
+            splat: draw(
+                "engine/occupancy",
+                (occupancy::vs_splat, occupancy::fs_splat),
+                (over, max),
+            ),
             clear: draw(
                 "engine/occupancy-clear",
                 (occupancy::vs_clear, occupancy::fs_clear),
+                (None, None),
+            ),
+            means: draw(
+                "engine/occupancy-means",
+                (occupancy::vs_means, occupancy::fs_means),
                 (None, None),
             ),
             select: crate::pipelines::compute_entry(
@@ -262,58 +317,60 @@ pub(crate) struct OccupancyPass {
     pipelines: Option<Pipelines>,
     // Each map's uniform, and the arguments of the draw of its listed
     // footprints.
-    uniforms: [wgpu::Buffer; 2],
-    draws: [wgpu::Buffer; 2],
+    uniforms: Vec<wgpu::Buffer>,
+    draws: Vec<wgpu::Buffer>,
     covers: Growable,
     covers_written: Vec<Cover>,
     // The footprints a map's selection lists, which its draw reads.
     listed: Growable,
     // The coverage and heights targets, the views shading reads (made anew
-    // with the targets) and each map's layer of them.
+    // with the targets), each map's layer of them, and what the finest map
+    // reads in place of a finer one.
     targets: [wgpu::Texture; 2],
     views: [Versioned<wgpu::TextureView>; 2],
-    layers: [[wgpu::TextureView; 2]; 2],
+    layers: [Vec<wgpu::TextureView>; 2],
+    unfiner: [wgpu::TextureView; 2],
     // Each map's groups of its draws and of its selection.
-    groups: [GroupCache<6>; 2],
-    select_groups: [GroupCache<6>; 2],
+    groups: Vec<GroupCache<8>>,
+    select_groups: Vec<GroupCache<6>>,
     // Each map's window, none before its first draw or once its texels no
-    // longer hold it; the cells to redraw with its next uniform; and
-    // whether this frame redraws cells of it.
-    windows: [Option<Window>; 2],
-    dirty: [Cells; 2],
-    pending: [bool; 2],
+    // longer hold it; the height every map's heights are above; the cells
+    // to redraw with each map's next uniform; and whether this frame
+    // redraws cells of each, and takes the finer one's means into each.
+    windows: Vec<Option<Window>>,
+    reference: f32,
+    dirty: Vec<Cells>,
+    pending: Vec<bool>,
+    averaging: Vec<bool>,
     // The selection's workgroups this frame, over every slot.
     workgroups: u32,
-    /// Times a map redrew cells.
+    /// Times a map redrew cells, and took the finer one's means.
     pub(crate) redraws: u32,
+    pub(crate) averages: u32,
 }
 
 impl OccupancyPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         // Zeroed targets cover nothing until the first draw.
-        let (targets, views, layers) = targets(device, 1);
-        let uniform =
-            |label| crate::buffers::uniform(device, label, size_of::<SplatUniform>() as u64);
-        let draw = |label| {
-            crate::buffers::storage(
+        let (targets, views, layers) = targets(device, 1, 1);
+        let unfiner = |label, format| {
+            crate::targets::texture_2d(
                 device,
                 label,
-                size_of::<ListedDraw>() as u64,
-                wgpu::BufferUsages::INDIRECT,
+                (1, 1),
+                1,
+                1,
+                format,
+                wgpu::TextureUsages::TEXTURE_BINDING,
             )
+            .create_view(&wgpu::TextureViewDescriptor::default())
         };
         Self {
             layout: crate::pipelines::layout(device, &OCCUPANCY),
             fillers: Fillers::new(device),
             pipelines: None,
-            uniforms: [
-                uniform("engine/occupancy-splat"),
-                uniform("engine/occupancy-far-splat"),
-            ],
-            draws: [
-                draw("engine/occupancy-draw"),
-                draw("engine/occupancy-far-draw"),
-            ],
+            uniforms: Vec::new(),
+            draws: Vec::new(),
             covers: Growable::new(
                 device,
                 "engine/occupancy-covers",
@@ -330,13 +387,20 @@ impl OccupancyPass {
             targets,
             views,
             layers,
-            groups: Default::default(),
-            select_groups: Default::default(),
-            windows: [None, None],
-            dirty: [Cells::default(); 2],
-            pending: [false; 2],
+            unfiner: [
+                unfiner("engine/occupancy-unfiner-coverage", COVERAGE_FORMAT),
+                unfiner("engine/occupancy-unfiner-heights", HEIGHTS_FORMAT),
+            ],
+            groups: Vec::new(),
+            select_groups: Vec::new(),
+            windows: Vec::new(),
+            reference: 0.0,
+            dirty: Vec::new(),
+            pending: Vec::new(),
+            averaging: Vec::new(),
             workgroups: 0,
             redraws: 0,
+            averages: 0,
         }
     }
 
@@ -363,11 +427,14 @@ impl OccupancyPass {
 
     /// Plans this frame: with `settings` on and placed objects
     /// (`covers` per draw group, `slots` in all), each map's window around
-    /// `eye`, and the cells it redraws: those its window uncovered and
-    /// those under objects that came or went since the last frame's. Every
-    /// cell redraws once the targets, the covers or the settings changed.
-    /// Returns the near map's area and the far map's, if any, with the
-    /// strength covers darken by; `None` without maps.
+    /// the detail eye `eye`, the cells it redraws (those its window
+    /// uncovered, those under objects that came or went since the last
+    /// frame's, and those under the cells its finer window left) and the
+    /// finer map's cells whose means it takes (those that changed, and
+    /// those under its own cells redrawn). Every cell redraws once the
+    /// targets, the covers or the settings changed, or the eye left the
+    /// maps' reference height by more than the finest map's reach. Returns
+    /// what shading reads of the maps; `None` without them.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -375,122 +442,189 @@ impl OccupancyPass {
         settings: &Occupancy,
         eye: Vec3,
         (covers, slots): (&[Cover], u32),
-    ) -> Option<(Area, Option<Area>, f32)> {
-        self.pending = [false; 2];
+    ) -> Option<Lit> {
+        self.pending.fill(false);
+        self.averaging.fill(false);
         if !settings.enabled || settings.strength <= 0.0 || slots == 0 || covers.is_empty() {
-            self.windows = [None, None];
+            self.windows.clear();
             return None;
         }
-        // Cells of whole texels.
-        let resolution = settings.resolution.next_multiple_of(CELLS);
-        if self.targets[0].width() != resolution {
-            (self.targets, self.views, self.layers) = targets(device, resolution);
-            self.windows = [None, None];
+        let maps = settings.levels.clamp(1, MAX_OCCUPANCY_LEVELS as u32) as usize;
+        let resolution = side_texels(settings);
+        if self.targets[0].width() != resolution || self.layers[0].len() != maps {
+            (self.targets, self.views, self.layers) = targets(device, resolution, maps);
+            self.windows.clear();
         }
+        self.size(device, maps);
         if covers != self.covers_written.as_slice() {
             let bytes: &[u8] = bytemuck::cast_slice(covers);
             self.covers.grow(device, bytes.len() as u64);
             queue.write_buffer(&self.covers, 0, bytes);
             self.covers_written = covers.to_vec();
-            self.windows = [None, None];
+            self.windows.clear();
         }
         // Room for every object's footprint and as many again listed past
         // the map's edges.
         self.listed
             .grow(device, 2 * u64::from(slots) * size_of::<u32>() as u64);
         self.workgroups = slots.div_ceil(OCCUPANCY_GROUP);
-        let counts = (covers.len() as u32, slots);
-        let near = self.plan(queue, NEAR, settings.radius, eye, counts);
-        let far = (settings.far_radius > settings.radius)
-            .then(|| self.plan(queue, FAR, settings.far_radius, eye, counts));
-        if far.is_none() {
-            self.windows[FAR] = None;
+        if self.windows.first().copied().flatten().is_none()
+            || (eye.y - self.reference).abs() > settings.radius
+        {
+            self.windows.clear();
+            self.reference = eye.y;
         }
-        Some((near, far, settings.strength))
-    }
-
-    /// Plans map `map` reaching `reach` meters around `eye`: covers darken
-    /// within it, and its window, a third wider each way, follows the eye
-    /// once it strays more than a cell from the window's middle cells,
-    /// redrawing the cells it uncovers. A window first placed, of another
-    /// size or whose reference height the eye left by more than the reach
-    /// starts over at the eye, every cell redrawn. The cells to redraw go to
-    /// the GPU with the map's uniform, which `counts` (draw groups and
-    /// slots) complete.
-    fn plan(
-        &mut self,
-        queue: &wgpu::Queue,
-        map: usize,
-        reach: f32,
-        eye: Vec3,
-        (groups, slots): (u32, u32),
-    ) -> Area {
-        let size = 8.0 / 3.0 * reach;
-        let cell = size / CELLS as f32;
-        let resolution = self.targets[0].width();
-        let target = [
-            (eye.x / cell).floor() as i32 - SIDE / 2,
-            (eye.z / cell).floor() as i32 - SIDE / 2,
-        ];
-        let dirty = &mut self.dirty[map];
-        let window = match &mut self.windows[map] {
-            Some(window) if window.cell == cell && (eye.y - window.reference).abs() <= reach => {
-                window.scroll(target, dirty);
-                *window
+        self.windows.resize(maps, None);
+        // Each map's window around the eye, its cells uncovered redrawing.
+        let before = self.windows.clone();
+        for (map, (window, dirty)) in self.windows.iter_mut().zip(&mut self.dirty).enumerate() {
+            let cell = settings.radius * (1_u32 << map) as f32 / REACH_SHARE / CELLS as f32;
+            let target = [
+                (eye.x / cell).floor() as i32 - SIDE / 2,
+                (eye.z / cell).floor() as i32 - SIDE / 2,
+            ];
+            match window {
+                Some(window) if window.cell == cell => window.scroll(target, dirty),
+                window => {
+                    *dirty = Cells::ALL;
+                    *window = Some(Window {
+                        cell,
+                        origin: target,
+                    });
+                }
             }
-            window => {
-                *dirty = Cells::ALL;
-                *window.insert(Window {
-                    cell,
-                    origin: target,
-                    reference: eye.y,
-                })
+        }
+        // A coarser map redraws the cells under those its finer window
+        // left, which it held the finer one's means over.
+        for map in 1..maps {
+            let (Some(left), Some(finer), Some(window)) =
+                (before[map - 1], self.windows[map - 1], self.windows[map])
+            else {
+                continue;
+            };
+            for cell in cells(left).filter(|&cell| !finer.holds(cell)) {
+                let under = cell.map(|axis| axis.div_euclid(2));
+                if window.holds(under) {
+                    let [column, row] = wrapped(under);
+                    self.dirty[map].set(column, row);
+                }
             }
+        }
+        let texels = resolution / CELLS;
+        let mut lit = Lit {
+            occupancy: [0.0; 4],
+            maps: [maps as f32, self.reference, 0.0, 0.0],
+            centers: [[0.0; 4]; MAX_OCCUPANCY_LEVELS / 2],
         };
-        let corner = window.corner();
-        let cells = std::mem::take(dirty);
-        if cells.any() {
-            let texels = resolution / CELLS;
+        // The finer map's cells that changed this frame, which the next
+        // coarser one takes the means of.
+        let mut changed = Cells::default();
+        for map in 0..maps {
+            let Some(window) = self.windows[map] else {
+                continue;
+            };
+            let dirty = std::mem::take(&mut self.dirty[map]);
+            let finer = map.checked_sub(1).and_then(|finer| self.windows[finer]);
+            let mut means = Cells::default();
+            let mut now = dirty;
+            if let Some(finer) = finer {
+                for (index, cell) in cells(finer).enumerate() {
+                    let [x, y] = wrapped(cell);
+                    let [under_x, under_y] = wrapped(cell.map(|axis| axis.div_euclid(2)));
+                    if changed.get(x, y) || dirty.get(under_x, under_y) {
+                        means.set(index as u32 % CELLS, index as u32 / CELLS);
+                        now.set(under_x, under_y);
+                    }
+                }
+            }
+            changed = now;
+            let size = window.cell * CELLS as f32;
+            let corner = window.corner();
+            let center = [corner[0] + size * 0.5, corner[1] + size * 0.5];
+            lit.centers[map / 2][2 * (map % 2)] = center[0];
+            lit.centers[map / 2][2 * (map % 2) + 1] = center[1];
+            let (redraw, average) = (dirty.any(), means.any());
+            if !redraw && !average {
+                continue;
+            }
             let uniform = SplatUniform {
-                area: [corner[0], corner[1], size, window.reference],
-                counts: [slots, groups, u32::from(map == FAR), resolution],
+                area: [corner[0], corner[1], size, self.reference],
+                counts: [slots, covers.len() as u32, 0, resolution],
                 place: [
                     window.origin[0].rem_euclid(SIDE) as u32 * texels,
                     window.origin[1].rem_euclid(SIDE) as u32 * texels,
                     texels,
                     0,
                 ],
-                dirty: bytemuck::cast(cells.0),
+                dirty: bytemuck::cast(dirty.0),
+                finer: finer.map_or([0; 4], |finer| [finer.origin[0], finer.origin[1], 1, 0]),
+                means: bytemuck::cast(means.0),
             };
             queue.write_buffer(&self.uniforms[map], 0, bytemuck::bytes_of(&uniform));
-            let draw = ListedDraw {
-                vertices: OCCUPANCY_QUAD,
-                instances: 0,
-                first_vertex: 0,
-                first_instance: 0,
-            };
-            queue.write_buffer(&self.draws[map], 0, bytemuck::bytes_of(&draw));
-            self.pending[map] = true;
+            if redraw {
+                let draw = ListedDraw {
+                    vertices: OCCUPANCY_QUAD,
+                    instances: 0,
+                    first_vertex: 0,
+                    first_instance: 0,
+                };
+                queue.write_buffer(&self.draws[map], 0, bytemuck::bytes_of(&draw));
+            }
+            self.pending[map] = redraw;
+            self.averaging[map] = average;
         }
-        Area {
-            center: [corner[0] + size * 0.5, corner[1] + size * 0.5],
-            size,
-            reference: window.reference,
-            resolution,
+        let (_, reach) = finest(settings);
+        let finest_side = self.windows[0].map_or(1.0, |window| window.cell * CELLS as f32);
+        lit.occupancy = [
+            1.0 / finest_side,
+            resolution as f32,
             reach,
+            settings.strength,
+        ];
+        Some(lit)
+    }
+
+    /// Sizes each map's uniform, draw, groups and plan to `maps` maps.
+    fn size(&mut self, device: &wgpu::Device, maps: usize) {
+        while self.uniforms.len() < maps {
+            self.uniforms.push(crate::buffers::uniform(
+                device,
+                "engine/occupancy-splat",
+                size_of::<SplatUniform>() as u64,
+            ));
+            self.draws.push(crate::buffers::storage(
+                device,
+                "engine/occupancy-draw",
+                size_of::<ListedDraw>() as u64,
+                wgpu::BufferUsages::INDIRECT,
+            ));
         }
+        self.groups.resize_with(maps, GroupCache::default);
+        self.select_groups.resize_with(maps, GroupCache::default);
+        self.dirty.resize(maps, Cells::default());
+        self.pending.resize(maps, false);
+        self.averaging.resize(maps, false);
     }
 
     /// Marks the cells of each map's window under the world box `min` to
-    /// `max`, where objects came or went, a texel wider each way as far
+    /// `max`, where objects came or went, a texel wider each way as
     /// footprints widen to most of one: the next frame's maps redraw them.
+    /// A coarser map whose finer window holds the box takes the finer one's
+    /// means over it instead.
     pub(crate) fn dirty_box(&mut self, min: Vec3, max: Vec3) {
         let resolution = self.targets[0].width() as f32;
-        for (window, dirty) in self.windows.iter().zip(&mut self.dirty) {
-            let Some(window) = window else {
+        for map in 0..self.windows.len() {
+            let Some(window) = self.windows[map] else {
                 continue;
             };
             let margin = window.cell * CELLS as f32 / resolution;
+            let finer = map.checked_sub(1).and_then(|finer| self.windows[finer]);
+            if finer.is_some_and(|finer| {
+                let margin = Vec3::splat(finer.cell * CELLS as f32 / resolution);
+                finer.holds_box(min - margin, max + margin)
+            }) {
+                continue;
+            }
             let span = |low: f32, high: f32, origin: i32| {
                 let cell = |value: f32| (value / window.cell).floor() as i32;
                 cell(low - margin).max(origin)..=cell(high + margin).min(origin + SIDE - 1)
@@ -498,7 +632,8 @@ impl OccupancyPass {
             let rows = span(min.z, max.z, window.origin[1]);
             for column in span(min.x, max.x, window.origin[0]) {
                 for row in rows.clone() {
-                    dirty.set(column.rem_euclid(SIDE) as u32, row.rem_euclid(SIDE) as u32);
+                    let [column, row] = wrapped([column, row]);
+                    self.dirty[map].set(column, row);
                 }
             }
         }
@@ -511,15 +646,16 @@ impl OccupancyPass {
         }
     }
 
-    /// Readies the maps this frame redraws cells of, from the placed
-    /// objects' `records` and `poses`, and how their layers thin (`thins`),
-    /// whose buffers `generation` counts; `None` when none redraws.
+    /// Readies the maps this frame redraws cells of or takes means into,
+    /// from the placed objects' `records` and `poses`, and how their layers
+    /// thin (`thins`), whose buffers `generation` counts; `None` when none
+    /// changes.
     pub(crate) fn prepare_draws(
         &mut self,
         device: &wgpu::Device,
         (records, poses, thins, generation): (&wgpu::Buffer, &wgpu::Buffer, &wgpu::Buffer, u64),
     ) -> Option<OccupancyFrame> {
-        if !self.pending.contains(&true) {
+        if !self.pending.contains(&true) && !self.averaging.contains(&true) {
             return None;
         }
         self.warm(device);
@@ -528,11 +664,20 @@ impl OccupancyPass {
         let records = Bound::counted(generation, records.as_entire_binding());
         let poses = Bound::counted(generation, poses.as_entire_binding());
         let thins = Bound::counted(generation, thins.as_entire_binding());
-        for map in [NEAR, FAR] {
-            if !self.pending[map] {
+        for map in 0..self.pending.len() {
+            let (redraw, average) = (self.pending[map], self.averaging[map]);
+            if !redraw && !average {
                 continue;
             }
             let splat = Bound::fixed(self.uniforms[map].as_entire_binding());
+            // The finer map's layers, made anew with the targets.
+            let finer = |target: usize| match map.checked_sub(1) {
+                Some(finer) => Bound::of(
+                    &self.views[target],
+                    crate::pipelines::view(&self.layers[target][finer]),
+                ),
+                None => Bound::fixed(crate::pipelines::view(&self.unfiner[target])),
+            };
             self.groups[map].bind_filled(
                 device,
                 "engine/occupancy",
@@ -544,38 +689,45 @@ impl OccupancyPass {
                     ("covers", self.covers.bound()),
                     ("thins", thins.clone()),
                     ("listed", self.listed.bound()),
+                    ("finer_coverage", finer(0)),
+                    ("finer_heights", finer(1)),
                 ],
                 &self.fillers,
             );
-            self.select_groups[map].bind_filled(
-                device,
-                "engine/occupancy-select",
-                (&OCCUPANCY, &self.layout),
-                [
-                    ("splat", splat),
-                    ("records", records.clone()),
-                    ("poses", poses.clone()),
-                    ("covers", self.covers.bound()),
-                    ("listing", self.listed.bound()),
-                    (
-                        "listed_draw",
-                        Bound::fixed(self.draws[map].as_entire_binding()),
-                    ),
-                ],
-                &self.fillers,
-            );
-            self.redraws += 1;
+            if redraw {
+                self.select_groups[map].bind_filled(
+                    device,
+                    "engine/occupancy-select",
+                    (&OCCUPANCY, &self.layout),
+                    [
+                        ("splat", splat),
+                        ("records", records.clone()),
+                        ("poses", poses.clone()),
+                        ("covers", self.covers.bound()),
+                        ("listing", self.listed.bound()),
+                        (
+                            "listed_draw",
+                            Bound::fixed(self.draws[map].as_entire_binding()),
+                        ),
+                    ],
+                    &self.fillers,
+                );
+                self.redraws += 1;
+            }
+            self.averages += u32::from(average);
         }
         Some(OccupancyFrame {
-            draws: self.pending,
+            draws: self.pending.clone(),
+            means: self.averaging.clone(),
             workgroups: self.workgroups,
         })
     }
 
     /// Redraws the cells of the maps `frame` redraws into `encoder`, one
-    /// map after the other: its selection lists the footprints reaching
-    /// them, then its cells clear and the listed footprints draw. Timed by
-    /// `profiler` (`occupancy`).
+    /// map after the other, the finest first: its selection lists the
+    /// footprints reaching them, then its cells clear and the listed
+    /// footprints draw; then it takes the finer map's means where `frame`
+    /// asks. Timed by `profiler` (`occupancy`).
     fn encode_maps(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -589,15 +741,13 @@ impl OccupancyPass {
         if let Some(span) = span {
             span.mark(encoder, false);
         }
-        for map in [NEAR, FAR] {
-            let (true, Some(select), Some(group)) = (
-                frame.draws[map],
-                self.select_groups[map].get(),
-                self.groups[map].get(),
-            ) else {
+        let changes = frame.draws.iter().zip(&frame.means).enumerate();
+        for (map, (&redraw, &average)) in changes {
+            let Some(group) = self.groups[map].get().filter(|_| redraw || average) else {
                 continue;
             };
-            {
+            let select = self.select_groups[map].get().filter(|_| redraw);
+            if let Some(select) = select {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("engine/occupancy-select"),
                     timestamp_writes: None,
@@ -630,10 +780,16 @@ impl OccupancyPass {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, group, &[]);
-            pass.set_pipeline(&pipelines.clear);
-            pass.draw(0..OCCUPANCY_QUAD, 0..CELLS * CELLS);
-            pass.set_pipeline(&pipelines.splats[map]);
-            pass.draw_indirect(&self.draws[map], 0);
+            if select.is_some() {
+                pass.set_pipeline(&pipelines.clear);
+                pass.draw(0..OCCUPANCY_QUAD, 0..CELLS * CELLS);
+                pass.set_pipeline(&pipelines.splat);
+                pass.draw_indirect(&self.draws[map], 0);
+            }
+            if average {
+                pass.set_pipeline(&pipelines.means);
+                pass.draw(0..OCCUPANCY_QUAD, 0..CELLS * CELLS);
+            }
         }
         if let Some(span) = span {
             span.mark(encoder, true);
@@ -641,9 +797,18 @@ impl OccupancyPass {
     }
 }
 
-/// The maps a frame redraws cells of, and its selection's workgroups.
+/// The absolute cells of `window`, rows along z.
+fn cells(window: Window) -> impl Iterator<Item = [i32; 2]> {
+    (0..SIDE).flat_map(move |row| {
+        (0..SIDE).map(move |column| [window.origin[0] + column, window.origin[1] + row])
+    })
+}
+
+/// The maps a frame redraws cells of and takes the finer one's means into,
+/// and its selection's workgroups.
 pub(crate) struct OccupancyFrame {
-    draws: [bool; 2],
+    draws: Vec<bool>,
+    means: Vec<bool>,
     workgroups: u32,
 }
 
@@ -674,7 +839,7 @@ impl RenderFeature for OccupancyPass {
         OccupancyPass::capacity_bytes(self)
     }
 
-    /// Times a map redrew cells.
+    /// Times a map redrew cells, and took the finer one's means.
     fn stats(
         this: Option<&Self>,
         _frame: Option<&OccupancyFrame>,
@@ -682,20 +847,22 @@ impl RenderFeature for OccupancyPass {
     ) -> engine_core::OccupancyStats {
         engine_core::OccupancyStats {
             redraws: this.map_or(0, |occupancy| occupancy.redraws),
+            averages: this.map_or(0, |occupancy| occupancy.averages),
         }
     }
 }
 
 /// The coverage and heights targets, `resolution` texels a side with a
-/// layer for each map, the views shading reads and each map's layer of
-/// each target.
+/// layer for each of `maps` maps, the views shading reads and each map's
+/// layer of each target.
 fn targets(
     device: &wgpu::Device,
     resolution: u32,
+    maps: usize,
 ) -> (
     [wgpu::Texture; 2],
     [Versioned<wgpu::TextureView>; 2],
-    [[wgpu::TextureView; 2]; 2],
+    [Vec<wgpu::TextureView>; 2],
 ) {
     let target = |label, format| {
         device.create_texture(&wgpu::TextureDescriptor {
@@ -703,7 +870,7 @@ fn targets(
             size: wgpu::Extent3d {
                 width: resolution,
                 height: resolution,
-                depth_or_array_layers: 2,
+                depth_or_array_layers: maps as u32,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -725,21 +892,22 @@ fn targets(
             ..Default::default()
         })
     };
-    let layer = |target: &wgpu::Texture, map: u32| {
-        target.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            base_array_layer: map,
-            array_layer_count: Some(1),
-            ..Default::default()
-        })
+    let layers = |target: &wgpu::Texture| {
+        (0..maps as u32)
+            .map(|map| {
+                target.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: map,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                })
+            })
+            .collect()
     };
     let views = [
         Versioned::new(whole(&targets[0])),
         Versioned::new(whole(&targets[1])),
     ];
-    let layers = [
-        [layer(&targets[0], 0), layer(&targets[0], 1)],
-        [layer(&targets[1], 0), layer(&targets[1], 1)],
-    ];
+    let layers = [layers(&targets[0]), layers(&targets[1])];
     (targets, views, layers)
 }

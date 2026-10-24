@@ -325,9 +325,9 @@ tables! {
             texture(14, "terrain_horizons", Float, D2Array, F),
             uniform_of(15, "terrain_horizon_records", HORIZON_RECORDS_BYTES, F),
             sampler(16, "terrain_horizon_sampler", Filtering, F),
-            // What placed objects cover around the camera: its
-            // density, filtered, and the covers' tops and bottoms; the near map
-            // in the first layer, the far one in the second.
+            // What placed objects cover around the detail eye: how much
+            // they hide, filtered, and the covers' tops and bottoms; a layer
+            // per map, the finest first.
             texture(17, "occupancy_coverage", Float, D2Array, F),
             texture(18, "occupancy_heights", Unfilterable, D2Array, F),
             // Clouds' shadows: the eighth storage buffer the
@@ -992,11 +992,12 @@ tables! {
     /// lighting, the shadow lookups' uniform (the horizon records' count),
     /// the horizon maps' own layers with their records and sampler and the
     /// clouds' shadows, as the sun's lookups read them; the bins' moments
-    /// and each terrain's bounce this frame, the terrains' sky maps, their
-    /// cooked ground and probes, the ground's light read (a level, or all
-    /// of them) and written (a level), the bounce layers of the horizon maps
-    /// written, the light's sampler, the terrain palette and the terrains'
-    /// macro colors.
+    /// and each terrain's bounce at a level of its probes this frame, the
+    /// terrains' sky maps, their cooked ground and probes, the ground's
+    /// light read (a level, or all of them) and written (a level), the
+    /// bounce layers of the horizon maps written, the light's sampler, the
+    /// terrain palette, the terrains' macro colors, and the probes each
+    /// level relights, which the next coarser one averages.
     const BOUNCE: Table = Table {
         label: "engine/terrain-bounce-layout",
         serves: [BOUNCE_SHADER @ 0],
@@ -1019,6 +1020,7 @@ tables! {
             sampler(69, "bounce_sampler", Filtering, C),
             uniform_of(70, "bounce_palette", terrain::PALETTE_BYTES, C),
             texture(71, "bounce_macro", Float, D2Array, C),
+            write(72, "bounce_scratch", C),
         ],
     };
 
@@ -1190,9 +1192,10 @@ tables! {
     /// Occupancy (`occupancy.wgsl`), one table for its selection and its
     /// draws, whose groups fill what each leaves alone: the map's window,
     /// cells redrawn and counts, the placed objects' records, poses and
-    /// draw groups' covers, and how their layers thin, which the far map
-    /// weighs far objects by; and the footprints listed, which the
-    /// selection writes with their draw's arguments and the draws read.
+    /// draw groups' covers, and how their layers thin, which the maps weigh
+    /// far objects by; the footprints listed, which the selection writes
+    /// with their draw's arguments and the draws read; and the finer map's
+    /// coverage and heights, whose means the map takes where they overlap.
     const OCCUPANCY: Table = Table {
         label: "engine/occupancy-layout",
         serves: [OCCUPANCY_SHADER @ 0],
@@ -1205,6 +1208,8 @@ tables! {
             read(5, "listed", V),
             write(6, "listing", C),
             write(7, "listed_draw", C),
+            texture(8, "finer_coverage", Unfilterable, D2, F),
+            texture(9, "finer_heights", Unfilterable, D2, F),
         ],
     };
 

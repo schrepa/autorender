@@ -35,8 +35,7 @@ impl Bounce {
 /// its lighting: `settings` ask for bounce light, it is no surroundings,
 /// and its transfer is asked for, or not yet here without its job, or its
 /// lighting's, having failed. Preparation ends only once none waits, so
-/// views start on the transfer, never on the far field's estimate standing
-/// in for it.
+/// views start on the transfer, never on ground taking no bounce light.
 pub(super) fn waits(state: &TerrainState, settings: &TerrainSettings) -> bool {
     let held = &state.whole.bounce;
     bounces(settings)

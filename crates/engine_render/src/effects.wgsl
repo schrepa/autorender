@@ -19,9 +19,9 @@ struct Post {
     // The screen-sized targets' size in pixels, the display's, and its
     // inverse.
     extent: vec4<f32>,
-    // Radius in world units, strength, the far radius it grows toward with
-    // distance (none above the radius: it stays), and 1 when ambient
-    // occlusion runs.
+    // Ambient occlusion: its radius in world units, its strength, the
+    // finest occupancy map's texel over the meters around the detail eye it
+    // holds, which it hands over by (`occlusion_share`), and 1 when it runs.
     occlusion: vec4<f32>,
     // Strength and 1 when bloom runs; zw: size of a half-resolution texel in
     // texture coordinates.
@@ -46,6 +46,9 @@ struct Post {
     // share any point keeps, and (w) 1 when it runs: the occlusion pass
     // then folds it into the occlusion's visibility.
     sky: vec4<f32>,
+    // The detail eye ambient occlusion hands over by its distance from
+    // (xyz); w unused.
+    detail: vec4<f32>,
 }
 
 // The full-resolution pixel quarter-resolution sun shaft texel `texel`

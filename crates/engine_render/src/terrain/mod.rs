@@ -305,7 +305,7 @@ pub(crate) struct TerrainPass {
     pub(crate) maps: TerrainMaps,
     /// Sky visibility.
     pub(crate) sky: SkyMaps,
-    /// Bounce light, relit every frame around the camera.
+    /// Bounce light, relit every frame in levels around the detail eye.
     pub(crate) bounce: Bounce,
     /// Whether the session cooks, which makes bounce light's pipelines up
     /// front for the scene's pipeline list.
@@ -421,11 +421,11 @@ impl TerrainPass {
         let vt_pages = self.vt.wanted(&views.settings);
         self.maps.prepare(device, queue, mips, terrains, vt_pages);
         self.tables.write_palette(queue, terrains, (&self.maps, views.settings.pinned_levels));
-        // Bounce light's windows, which the horizon records place, in the
-        // slots the horizon maps' layers hold.
+        // Bounce light's levels around the detail eye, which the horizon
+        // records place, in the slots the horizon maps' layers hold.
         let room = crate::terrain_horizons::room(device, terrains.terrains.len());
         self.bounce
-            .place(terrains, (views.eye, &views.settings), room);
+            .place(terrains, (views.detail_eye, &views.settings), room);
         let horizon_settings = (&views.settings, views.shadows);
         let windows = self.bounce.windows();
         (self.horizons).prepare(device, queue, terrains, horizon_settings, windows);

@@ -1,6 +1,6 @@
 // Terrain's sky map in the mesh passes, after `terrain.wgsl`: where its
-// ground sees the sky, and in the far field past bounce light's reach the
-// light the ground around gives back where it does not.
+// ground sees the sky; the light the ground around gives back where it does
+// not is bounce light's (`bounce_light`).
 
 // Each terrain's sky map, cooked with its lighting: over the
 // whole terrain, a layer from `terrain.directory.w` less one: the share of
@@ -27,13 +27,4 @@ fn terrain_sky_map(local: vec2<f32>) -> vec4<f32> {
     }
     return textureSampleLevel(terrain_sky, terrain_sky_sampler, terrain_sky_uv(local),
         terrain.directory.w - 1u, 0.0);
-}
-
-// The far field's estimate of the light the terrain around a hollow gives
-// back per unit albedo for the sky it hides: past bounce light's reach
-// (`bounce_light`), on surroundings and, with bounce light off, all ground.
-// Sunlit and skylit ground, as level ground would be.
-fn terrain_bounce() -> vec3<f32> {
-    return lighting.sun_color.rgb * (0.35 * saturate(lighting.sun.y))
-        + sky_average(vec3<f32>(0.0, 1.0, 0.0)) * (0.5 * lighting.zenith.w);
 }

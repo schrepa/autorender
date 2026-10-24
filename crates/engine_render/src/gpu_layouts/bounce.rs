@@ -15,22 +15,30 @@ gpu_structs! {
     }
 
     /// WGSL `BounceTerrain` (`terrain_bounce.wgsl`): one terrain's bounce
-    /// light this frame. Its first corner (world x and z) and its extent
-    /// (meters along x and z); its probe columns along a side, its ground's
-    /// texels along a side and the first column (x and z) of the window
-    /// relighting; the window's columns along a side (0: it relights none),
-    /// where its blocks' words and its probes start among every terrain's,
-    /// and its place among the horizon records; its ground's first layer,
-    /// its light's layer, its probes' first layer among the bounce layers
-    /// and its sky map's layer plus one (0 without one); and where its
-    /// materials start in the palette and its macro colors' layer plus one
-    /// (0 without them).
+    /// light at one level of its probes this frame. Its first corner (world
+    /// x and z) and its extent (meters along x and z); its finest level's
+    /// probe columns along a side, its ground's texels along a side (0: it
+    /// relights none), where its materials start in the palette and its
+    /// macro colors' layer plus one (0 without them); its ground's first
+    /// layer, its light's layer, its probes' first layer among the bounce
+    /// layers and its sky map's layer plus one (0 without one); where its
+    /// blocks' words, its probes and this level's mean probes (from the
+    /// third level on) start among every terrain's, and its place among the
+    /// horizon records; the level, its window's columns along a side (0: it
+    /// relights none at this level) and the window's first column (x and
+    /// z); the window's first texel (x and y) in the bounce layers and where
+    /// its probes start in the scratch; and the finer level's window, whose
+    /// probes this one averages where it holds all four under one: its first
+    /// column (x and z), its columns along a side (0: none relit) and where
+    /// its probes start in the scratch.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct BounceTerrain as ["BounceTerrain"] {
         pub place: [f32; 4],
         pub grid: [u32; 4],
-        pub window: [u32; 4],
         pub layers: [u32; 4],
-        pub materials: [u32; 4],
+        pub sources: [u32; 4],
+        pub level: [u32; 4],
+        pub kept: [u32; 4],
+        pub finer: [u32; 4],
     }
 }
