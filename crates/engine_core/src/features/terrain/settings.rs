@@ -1,4 +1,4 @@
-//! Terrain settings: level of detail, streaming, motion and the viewport
+//! Terrain settings: its subdivision, streaming, motion and the viewport
 //! level of detail measures.
 
 use super::*;
@@ -37,8 +37,25 @@ settings! {
     pub struct TerrainSettings {
         /// Whether terrains draw.
         pub enabled: bool = true => any,
-        /// Pixels a level's samples span before the next coarser level takes
-        /// over; smaller draws more triangles.
+        /// Pixels the ground's drawn triangles may stray from its true
+        /// surface, seen from the detail eye: each terrain's subdivision
+        /// splits its leaves straying more and merges those whose halves
+        /// would not, refining a level every other frame. Smaller draws more
+        /// triangles.
+        pub subdivision_error: f32 = 1.0 => range(0.25, 64.0),
+        /// The deepest level of each terrain's subdivision: two levels halve
+        /// its leaves' sides, and each takes twice the memory, a bit for every
+        /// leaf it could hold and a quarter more for their counts. 27 holds
+        /// leaves a meter across on an 8-kilometer terrain in 20 MB; devices
+        /// whose storage bindings hold less keep it shallower, counted.
+        pub subdivision_depth: u32 = 27 => range(10, 29),
+        /// The most leaves each terrain's subdivision draws, 28 bytes each on
+        /// the GPU: past them leaves split no more, counted, and the ground
+        /// there stays coarser.
+        pub subdivision_leaves: u32 = 131_072 => range(1024, 4_000_000),
+        /// Pixels a level's samples span where its tiles load and shade the
+        /// ground, before the next coarser level's take over; smaller loads
+        /// finer tiles farther out.
         pub pixel_error: f32 = 6.0 => range(1.0, 64.0),
         /// The coarsest levels kept resident over the whole terrain, so it
         /// always draws whole.

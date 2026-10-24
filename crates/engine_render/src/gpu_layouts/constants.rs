@@ -161,6 +161,21 @@ gpu_consts! {
     pub(crate) const TERRAIN_GRID: u32 = engine_core::terrain_data::PATCH_QUADS + 1 => ["TERRAIN_GRID"];
     pub(crate) const TERRAIN_GRID_VERTICES: u32 = TERRAIN_GRID * TERRAIN_GRID => ["TERRAIN_GRID_VERTICES"];
 
+    // crate::terrain::surface
+    /// The halvings of a subdivision leaf's sides its meshlet cuts it by,
+    /// each two bisections, so every side holds as many parts whatever its
+    /// neighbor; and the vertices it draws, three for each of its pieces,
+    /// four to that power, a non-indexed list.
+    pub(crate) const SURFACE_MESHLET_LEVEL: u32 = 2 => ["SURFACE_MESHLET_LEVEL"];
+    pub(crate) const SURFACE_MESHLET_VERTICES: u32 = 3 << (2 * SURFACE_MESHLET_LEVEL) => ["SURFACE_MESHLET_VERTICES"];
+    /// Lanes of the subdivision's passes over leaves.
+    pub(crate) const SUBDIVISION_GROUP: u32 = 64 => ["SUBDIVISION_GROUP", "@subdivide_decide", "@subdivide_apply"];
+    /// Words each terrain takes of the subdivision's indirect arguments.
+    pub(crate) const SUBDIVISION_ARGS: u32 = 16 => ["SUBDIVISION_ARGS"];
+    /// The deepest levels of a subdivision's tree it keeps no counts of,
+    /// which the bitfield's words count.
+    pub(crate) const SUBDIVISION_COUNTED: u32 = 8 => ["SUBDIVISION_COUNTED"];
+
     // crate::terrain_horizons
     /// Vectors of the record each terrain's horizon map takes (where it lies
     /// and how its shadows soften, then where its bounce light lies: its

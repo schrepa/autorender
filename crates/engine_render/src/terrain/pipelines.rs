@@ -1,7 +1,9 @@
-//! Terrain's pipelines and the terrain group: patches in the opaque passes
-//! (forward, or deferred as visibility and resolves), reflection probe
-//! faces and shadow maps, and the group binding the arrays, tables, views,
-//! material, sky and macro color maps and deformation's map they read.
+//! Terrain's pipelines and the terrain group: its subdivisions' leaves in
+//! the opaque passes (forward, or deferred as visibility and resolves),
+//! reflection probe faces and the shadow maps drawn every frame, the kept
+//! levels' patches, and the group binding the arrays, tables, views,
+//! leaves, material, sky and macro color maps and deformation's map they
+//! read.
 
 use super::atlas::TileAtlas;
 use super::patches::{PatchDraws, patch_layout};
@@ -11,17 +13,18 @@ use crate::scene_shading::SceneShading;
 use crate::shaders::entry::meshes;
 
 /// The generations of what the terrain group binds: the atlas, uniforms,
-/// hole bits, directory, material maps, sky maps, macro color maps and
-/// deformation map.
-type GroupKey = (u64, u64, u64, u64, u64, u64, u64, u64);
+/// hole bits, directory, material maps, sky maps, macro color maps,
+/// deformation map and the subdivisions' leaves.
+type GroupKey = (u64, u64, u64, u64, u64, u64, u64, u64, u64);
 
 /// What the terrain group binds besides the pipelines' own: the arrays,
-/// tables, views, material, sky and macro color maps and deformation's
-/// map.
+/// tables, views, the subdivisions' leaves, material, sky and macro color
+/// maps and deformation's map.
 pub(super) struct GroupSources<'a> {
     pub(super) atlas: &'a TileAtlas,
     pub(super) tables: &'a TerrainTables,
     pub(super) patches: &'a PatchDraws,
+    pub(super) surface: &'a SurfaceTrees,
     pub(super) maps: &'a TerrainMaps,
     pub(super) sky: &'a SkyMaps,
     pub(super) macro_maps: &'a MacroMaps,
@@ -32,8 +35,11 @@ pub(crate) struct TerrainPipelines {
     pub(super) layout: crate::pipelines::GroupLayout,
     group: Cached<GroupKey, wgpu::BindGroup>,
     // The group the runtime virtual texture's bakes bind,
-    // its material maps' views leaving out the sheets they draw into.
+    // its material maps' views leaving out the sheets they draw into; and
+    // the group the subdivisions' passes bind, leaving out the leaves they
+    // write.
     bake_group: Cached<GroupKey, wgpu::BindGroup>,
+    surface_group: Cached<GroupKey, wgpu::BindGroup>,
     pipelines: HashMap<(Targets, bool, bool), wgpu::RenderPipeline>,
     // Deferred shading: the visibility pipelines (by
     // holes), the resolves (by targets and lighting) and the layout of the
@@ -42,7 +48,10 @@ pub(crate) struct TerrainPipelines {
     pub(crate) resolves: HashMap<(Targets, bool), wgpu::RenderPipeline>,
     pub(crate) resolve_layout: crate::pipelines::GroupLayout,
     probe_pipelines: HashMap<(bool, bool), wgpu::RenderPipeline>,
+    // The shadow maps' depth pipelines: the kept levels' patches, and the
+    // leaves the maps drawn every frame draw.
     shadow: Option<wgpu::RenderPipeline>,
+    surface_shadow: Option<wgpu::RenderPipeline>,
     // The scene features the shading pipelines are specialized for.
     shading: SceneShading,
 }
@@ -53,12 +62,14 @@ impl TerrainPipelines {
             layout: crate::pipelines::layout(device, &TERRAIN),
             group: Cached::default(),
             bake_group: Cached::default(),
+            surface_group: Cached::default(),
             pipelines: HashMap::default(),
             deferred_ids: HashMap::default(),
             resolves: HashMap::default(),
             resolve_layout: crate::pipelines::layout(device, &crate::bindings::TERRAIN_RESOLVE),
             probe_pipelines: HashMap::default(),
             shadow: None,
+            surface_shadow: None,
             shading: SceneShading::ALL,
         }
     }
@@ -84,8 +95,13 @@ impl TerrainPipelines {
         self.bake_group.get()
     }
 
-    /// Rebuilds the terrain group, and the bakes', when what `sources`
-    /// binds was replaced.
+    /// The group the subdivisions' passes bind, once tiles arrived.
+    pub(super) fn surface_group(&self) -> Option<&wgpu::BindGroup> {
+        self.surface_group.get()
+    }
+
+    /// Rebuilds the terrain group, the bakes' and the subdivisions', when
+    /// what `sources` binds was replaced.
     pub(super) fn ensure_group(&mut self, device: &wgpu::Device, sources: &GroupSources<'_>) {
         let Some((heights, normals, control)) = sources.atlas.views() else {
             return;
@@ -96,6 +112,7 @@ impl TerrainPipelines {
             sources.sky,
             sources.deformation,
         );
+        let leaves = sources.surface.leaves();
         let key = (
             sources.atlas.generation,
             tables.uniform_generation,
@@ -105,8 +122,11 @@ impl TerrainPipelines {
             sky.generation(),
             sources.macro_maps.generation(),
             deformation.map().1,
+            leaves.generation(),
         );
-        let build = |label: &str, material_maps: &[wgpu::TextureView; 3]| {
+        let build = |label: &str,
+                     material_maps: &[wgpu::TextureView; 3],
+                     surface_leaves: &wgpu::Buffer| {
             crate::pipelines::group(
                 device,
                 label,
@@ -169,16 +189,24 @@ impl TerrainPipelines {
                         "terrain_control_sampler",
                         crate::pipelines::sampler(&sources.atlas.control_sampler),
                     ),
+                    crate::buffers::entry("terrain_surface_leaves", surface_leaves),
                 ],
             )
         };
         if self.group.stale(&key) {
-            let group = build("engine/terrain-group", &maps.views);
+            let group = build("engine/terrain-group", &maps.views, leaves);
             // The runtime virtual texture's bakes bind a stand-in for the
-            // sheets they draw into.
-            let bake = build("engine/terrain-bake-group", &maps.bake_views);
+            // sheets they draw into, and the subdivisions' passes one for
+            // the leaves they write.
+            let bake = build("engine/terrain-bake-group", &maps.bake_views, leaves);
+            let surface = build(
+                "engine/terrain-surface-group",
+                &maps.views,
+                &sources.surface.stand_in,
+            );
             self.group.set(key, group);
             self.bake_group.set(key, bake);
+            self.surface_group.set(key, surface);
         }
     }
 
@@ -197,8 +225,15 @@ impl TerrainPipelines {
         self.probe_pipelines.get(&(lit, holes))
     }
 
+    /// The kept shadow levels' depth pipeline, of their patches.
     pub(crate) fn shadow_pipeline(&self) -> Option<&wgpu::RenderPipeline> {
         self.shadow.as_ref()
+    }
+
+    /// The depth pipeline of the leaves the shadow maps drawn every frame
+    /// draw.
+    pub(crate) fn surface_shadow_pipeline(&self) -> Option<&wgpu::RenderPipeline> {
+        self.surface_shadow.as_ref()
     }
 
     /// Creates the opaque pipeline into `targets` (`lit` or not) unless it
@@ -360,9 +395,10 @@ impl TerrainPipelines {
         self.probe_pipelines.insert((lit, holes), pipeline);
     }
 
-    /// Creates the shadow maps' depth pipeline unless it exists.
+    /// Creates the shadow maps' depth pipelines unless they exist: the kept
+    /// levels' patches, and the leaves.
     pub(crate) fn ensure_shadow_pipeline(&mut self, device: &wgpu::Device) {
-        if self.shadow.is_some() {
+        if self.shadow.is_some() && self.surface_shadow.is_some() {
             return;
         }
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -375,35 +411,46 @@ impl TerrainPipelines {
             &crate::pipeline_layouts::TERRAIN_CASTER_PIPELINES,
             &[&view_layout, &self.layout],
         );
-        let pipeline = crate::pipelines::geometry(
-            device,
-            &crate::pipelines::Geometry {
-                label: "engine/terrain-shadow",
-                layout: &layout,
-                module: &module,
-                vertex_constants: &[],
-                vertex: crate::entries::TERRAIN_SHADOW_VERTEX,
-                buffers: &[Some(patch_layout())],
-                // Both faces cast, as meshes' casters do.
-                primitive: wgpu::PrimitiveState::default(),
-                depth: Some(wgpu::DepthStencilState {
-                    format: crate::shadows::SHADOW_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
-                    stencil: Default::default(),
-                    // Terrain is seen at grazing angles over texels meters
-                    // wide: its depth also slides back by its slope, so the
-                    // facets of a texel never shadow the surface they make.
-                    bias: wgpu::DepthBiasState {
-                        constant: 2,
-                        slope_scale: 2.5,
-                        clamp: 0.0,
-                    },
-                }),
-                fragment: None,
-            },
-        );
-        self.shadow = Some(pipeline);
+        let caster = |vertex: crate::shaders::Entry,
+                      buffers: &[Option<wgpu::VertexBufferLayout<'static>>]| {
+            crate::pipelines::geometry(
+                device,
+                &crate::pipelines::Geometry {
+                    label: "engine/terrain-shadow",
+                    layout: &layout,
+                    module: &module,
+                    vertex_constants: &[],
+                    vertex,
+                    buffers,
+                    // Both faces cast, as meshes' casters do.
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth: Some(wgpu::DepthStencilState {
+                        format: crate::shadows::SHADOW_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::Less),
+                        stencil: Default::default(),
+                        // Terrain is seen at grazing angles over texels
+                        // meters wide: its depth also slides back by its
+                        // slope, so the facets of a texel never shadow the
+                        // surface they make.
+                        bias: wgpu::DepthBiasState {
+                            constant: 2,
+                            slope_scale: 2.5,
+                            clamp: 0.0,
+                        },
+                    }),
+                    fragment: None,
+                },
+            )
+        };
+        self.shadow = Some(caster(
+            crate::entries::TERRAIN_SHADOW_VERTEX,
+            &[Some(patch_layout())],
+        ));
+        self.surface_shadow = Some(caster(
+            crate::shaders::entry::terrain_shadow::vs_terrain_surface_shadow,
+            &[],
+        ));
     }
 }
 
@@ -432,9 +479,10 @@ fn pipeline_layout(
     })
 }
 
-/// A pipeline drawing patches, with holes or without, through `vertex` and
-/// `fragment`, which shades a scene of the features given (pipelines
-/// shading nothing take none).
+/// A pipeline drawing a subdivision's leaves, cutting holes or not,
+/// through `vertex` and `fragment`, which shades a scene of the features
+/// given (pipelines shading nothing take none); leaves read no vertex
+/// buffers, only their instance and vertex indices.
 fn geometry(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
@@ -464,7 +512,7 @@ fn geometry(
             module: shader,
             vertex_constants: &[],
             vertex,
-            buffers: &[Some(patch_layout())],
+            buffers: &[],
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face,

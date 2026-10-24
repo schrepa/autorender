@@ -1,12 +1,15 @@
-// Terrain in the mesh passes, after `terrain_vertex.wgsl`:
-// vertex stages into the frame's targets, the ground's surface
-// and the forward fragment stages.
+// Terrain in the mesh passes, after `terrain_vertex.wgsl` and
+// `terrain_surface.wgsl`: vertex stages drawing its subdivision's leaves
+// into the frame's targets, deep materials displacing them, the ground's
+// surface and the forward fragment stages.
 
-// Hole bits of the tiles with holes, each tile's cells
+// Each layer's fades (`terrain_layer_fades`); from `terrain.surface.y`, each
+// layer's word naming where its tile's hole bits start (all ones without
+// holes); and the hole bits of the tiles with holes, each tile's cells
 // starting at samples 0 to 256 row by row, 32 to a word.
 @group(1) @binding(20) var<storage, read> terrain_holes: array<u32>;
 
-// Pipelines of patches with holes discard their hole cells; the others
+// Pipelines of terrains with holes discard their hole cells; the others
 // never test.
 override TERRAIN_HOLES: bool = false;
 
@@ -16,11 +19,6 @@ override TERRAIN_HOLES: bool = false;
 @group(1) @binding(21) var terrain_normals: texture_2d_array<u32>;
 // The sky maps' sampler (`meshes/terrain_sky.wgsl`).
 @group(1) @binding(22) var terrain_sky_sampler: sampler;
-// Each terrain's levels, finest first, from `terrain.directory.x`: four
-// words each (where its tiles' entries start, its tiles along x and z, and
-// the meters from the eye its tiles load within, as bits); then the entries,
-// row by row, each the layer of a resident tile or all ones.
-@group(1) @binding(23) var<storage, read> terrain_directory: array<u32>;
 // Each tile's control values, in the same layers as its
 // heights: per sample, its two strongest surface materials (bits 0 to 7
 // and 8 to 15), the second's share (16 to 23) and how wet its ground is
@@ -41,10 +39,11 @@ struct TerrainPaletteEntry {
     params: vec4<f32>,
     maps: vec4<f32>,
     far: vec4<f32>,
-    // The meters its heights span where the ground's relief shows,
-    // the meters tracks sink it at most, and the
+    // The meters its heights span where the ground's relief shows (none
+    // where it displaces the ground), the meters tracks sink it at most, the
     // variance of its normal maps' slopes at their scale, which its
-    // roughness takes over where they fade.
+    // roughness takes over where they fade, and the meters its heights
+    // displace the ground (`terrain_displacement`).
     relief: vec4<f32>,
     // Its cover's canopy: its blades' tip color (linear), and their
     // leaves' area per square meter of ground (0 without cover).
@@ -127,58 +126,103 @@ fn terrain_tint(world: vec3<f32>, ground: TerrainGround, footprint: f32) -> vec3
 
 struct TerrainOutput {
     @builtin(position) clip_position: vec4<f32>,
-    // Relative to the view's eye; w: the patch's sample spacing.
+    // Relative to the view's eye; w: the meters between its leaf's meshlet
+    // vertices.
     @location(1) relative: vec4<f32>,
-    // Where the point lies in its tile's cells, and where the tile's hole
-    // bits start.
+    // Where the point lies on its true surface, in level-0 samples from the
+    // terrain's origin, which hole cells are looked up by.
     @location(2) cell: vec2<f32>,
-    @location(3) @interpolate(flat) holes: u32,
 }
 
 struct TerrainTemporalOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(1) relative: vec4<f32>,
     @location(2) cell: vec2<f32>,
-    @location(3) @interpolate(flat) holes: u32,
     @location(4) previous: vec3<f32>,
 }
 
-fn terrain_output(input: PatchInput) -> TerrainOutput {
-    let vertex = terrain_vertex(input);
-    let relative = vertex.relative + terrain_view.eye_offset.xyz;
+// A vertex of the terrain's subdivision as every pass drawing the camera's
+// ground places it: relative to the terrain's eye, terrain-local where it
+// stands on the true surface, and the meters between its leaf's meshlet
+// vertices.
+struct TerrainSurfaceVertex {
+    relative: vec3<f32>,
+    local: vec2<f32>,
+    spacing: f32,
+}
+
+// Vertex `vertex` of leaf `leaf` of this frame's subdivision: on the
+// ground's true surface, moved along its smooth normal where deep materials
+// displace it (`terrain_displacement`). Every quantity it reads is a
+// function of where it stands, so leaves sharing a side meet without cracks.
+fn terrain_surface_vertex(leaf: u32, vertex: u32) -> TerrainSurfaceVertex {
+    let triangle = surface_leaf(leaf);
+    var point: TerrainSurfaceVertex;
+    point.local = surface_vertex(triangle, vertex);
+    point.relative = surface_relative(point.local, terrain_true_height(point.local));
+    point.relative += terrain_displacement(point.relative + terrain.eye.xyz, point.local);
+    point.spacing = length(triangle.c - triangle.a) / f32(1u << SURFACE_MESHLET_LEVEL);
+    return point;
+}
+
+fn terrain_output(leaf: u32, vertex: u32) -> TerrainOutput {
+    let point = terrain_surface_vertex(leaf, vertex);
+    let relative = point.relative + terrain_view.eye_offset.xyz;
     var output: TerrainOutput;
     output.clip_position = terrain_view.relative_view_projection * vec4<f32>(relative, 1.0);
-    output.relative = vec4<f32>(relative, input.shape.x);
-    output.cell = vertex.cell;
-    output.holes = input.holes;
+    output.relative = vec4<f32>(relative, point.spacing);
+    output.cell = point.local / terrain.anchor.w;
     return output;
 }
 
-// Leaves no fragment in hole cells.
-fn terrain_holes_test(cell: vec2<f32>, holes: u32) {
-    if TERRAIN_HOLES && holes != 0xffffffffu {
-        let at = vec2<u32>(clamp(floor(cell), vec2<f32>(0.0), vec2<f32>(256.0)));
+// Leaves no fragment in hole cells: at `cell` (level-0 samples from the
+// terrain's origin), the cell of the finest resident level's tile there,
+// whose triangles the true surface lies on, where that tile's hole bits
+// mark it.
+fn terrain_holes_test(cell: vec2<f32>) {
+    if !TERRAIN_HOLES {
+        return;
+    }
+    let base = terrain.directory.x;
+    let levels = terrain.directory.y;
+    for (var index = 0u; index < levels; index++) {
+        let header = base + index * 4u;
+        let samples = max(cell / f32(1u << index), vec2<f32>(0.0));
+        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
+        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        if layer == 0xffffffffu {
+            continue;
+        }
+        let holes = terrain_holes[terrain.surface.y + layer];
+        if holes == 0xffffffffu {
+            return;
+        }
+        let at = vec2<u32>(clamp(floor(samples - vec2<f32>(tile * 256u)), vec2<f32>(0.0),
+            vec2<f32>(256.0)));
         let bit = at.y * 257u + at.x;
         if (terrain_holes[holes + bit / 32u] & (1u << (bit % 32u))) != 0u {
             discard;
         }
+        return;
     }
 }
 
 @vertex
-fn vs_terrain(input: PatchInput) -> TerrainOutput {
-    return terrain_output(input);
+fn vs_terrain(@builtin(instance_index) leaf: u32, @builtin(vertex_index) vertex: u32)
+        -> TerrainOutput {
+    return terrain_output(leaf, vertex);
 }
 
 // Terrain stands still: its motion is the camera's.
 @vertex
-fn vs_terrain_temporal(input: PatchInput) -> TerrainTemporalOutput {
-    let output = terrain_output(input);
+fn vs_terrain_temporal(@builtin(instance_index) leaf: u32,
+        @builtin(vertex_index) vertex: u32) -> TerrainTemporalOutput {
+    let output = terrain_output(leaf, vertex);
     var temporal: TerrainTemporalOutput;
     temporal.clip_position = output.clip_position;
     temporal.relative = output.relative;
     temporal.cell = output.cell;
-    temporal.holes = output.holes;
     temporal.previous = (camera.previous_view_projection
         * vec4<f32>(output.relative.xyz + camera.position.xyz, 1.0)).xyw;
     return temporal;
@@ -342,53 +386,6 @@ fn terrain_pixel_shading(world: vec3<f32>) -> TerrainShadingLevel {
 // Texels of a kept shadow level a sample of the ground it holds spans at
 // least (`gpu_layouts::constants::GROUND_TEXELS`).
 const KEPT_GROUND_TEXELS: f32 = 2.0;
-
-// The height above the terrain's origin of its ground at terrain-local
-// `local` on the triangles of `level`'s tiles, unmorphed, or of the nearest
-// coarser level's where its tile is not resident, as that level's patches
-// draw it whole; `found` false where no level holds it. Level 0's is the
-// surface the ground's materials lie on, wherever the geometry drawn
-// stands: the virtual texture's pages bake them there, and pixels
-// computing their ground read them there too.
-struct TerrainLevelHeight {
-    height: f32,
-    found: bool,
-}
-
-fn terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight {
-    let base = terrain.directory.x;
-    let levels = terrain.directory.y;
-    var held: TerrainLevelHeight;
-    for (var index = level; index < levels; index++) {
-        let header = base + index * 4u;
-        let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
-        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
-        let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
-        if layer == 0xffffffffu {
-            continue;
-        }
-        // Samples 0 to 256 within the tile, a texel past its border; the
-        // cell's triangles split from its (x, z+1) corner to its (x+1, z)
-        // one, as every consumer splits them.
-        let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
-        let corner = min(vec2<u32>(within), vec2<u32>(255u));
-        let f = within - vec2<f32>(corner);
-        let texel = corner + vec2<u32>(1u);
-        let h00 = terrain_load(layer, texel);
-        let h10 = terrain_load(layer, texel + vec2<u32>(1u, 0u));
-        let h01 = terrain_load(layer, texel + vec2<u32>(0u, 1u));
-        let h11 = terrain_load(layer, texel + vec2<u32>(1u, 1u));
-        held.found = true;
-        if f.x + f.y <= 1.0 {
-            held.height = h00 + f.x * (h10 - h00) + f.y * (h01 - h00);
-        } else {
-            held.height = h11 + (1.0 - f.x) * (h01 - h11) + (1.0 - f.y) * (h10 - h11);
-        }
-        return held;
-    }
-    return held;
-}
 
 // The meters each kept shadow level's ground stands above the ground's
 // point `world`, terrain-local `local` (`scene.wgsl`'s `kept_lift`): each
@@ -1402,7 +1399,8 @@ fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGro
 }
 
 // One material's part in the ground's relief: the meters it
-// sinks the ground at most, already weighted, and where its
+// sinks the ground at most, already weighted (none for materials
+// displacing it, whose palette entries hold no relief), and where its
 // maps' heights lie: as its maps lie there (from above, or across their
 // planes on steep ground), read with the point's change per pixel.
 struct TerrainReliefLayer {
@@ -1447,6 +1445,68 @@ fn terrain_relief_sink(layer: TerrainReliefLayer, point: vec3<f32>) -> f32 {
         }
     }
     return layer.depth * (1.0 - height);
+}
+
+// The meters a material displacing the ground `depth` deep moves it along
+// its smooth normal at `world`, where a pixel seen from the detail eye spans
+// `across` meters, its maps lying as `mapping` lays them: its heights less
+// their mean (their coarsest mip), so the plain surface far ground draws is
+// the displaced one's average. Its heights are read no finer than a pixel,
+// nor than the subdivision's finest meshlets can carry
+// (`terrain.relief.w`); it shows whole while its depth spans
+// TERRAIN_RELIEF_WHOLE pixels or more and none by TERRAIN_RELIEF_GONE, as
+// relief does, so far ground is the plain surface its normal maps shade.
+fn terrain_material_displacement(depth: f32, mapping: TerrainMapping, world: vec3<f32>,
+        across: f32) -> f32 {
+    let shown = smoothstep(TERRAIN_RELIEF_GONE, TERRAIN_RELIEF_WHOLE, depth / across);
+    if shown <= 0.0 {
+        return 0.0;
+    }
+    let layer = 2u * mapping.layer + 1u;
+    let texels = f32(textureDimensions(terrain_material_data).x) * mapping.scale;
+    let lod = max(log2(max(across, terrain.relief.w) * texels), 0.0);
+    var height = 0.0;
+    for (var axis = 0u; axis < 3u; axis++) {
+        let share = mapping.planes[axis];
+        if share > 0.0 {
+            height += share * textureSampleLevel(terrain_material_data, terrain_material_sampler,
+                world_plane(world, axis) * mapping.scale, layer, lod).a;
+        }
+    }
+    let mean = textureSampleLevel(terrain_material_data, terrain_material_sampler,
+        vec2<f32>(0.5), layer, f32(textureNumLevels(terrain_material_data) - 1u)).a;
+    return depth * (height - mean) * shown;
+}
+
+// How far deep materials displace the ground's true surface at `world`,
+// terrain-local `local`: along its smooth normal at the levels a pixel seen
+// from the detail eye shades it at, each material of its blend by its share
+// (`terrain_material_displacement`). None where the deepest of the
+// terrain's materials could not move it a pixel (`terrain.relief.z`), which
+// then reads no materials. A function of where the point stands alone, so
+// every pass drawing the ground, and the subdivision measuring it, moves it
+// alike.
+fn terrain_displacement(world: vec3<f32>, local: vec2<f32>) -> vec3<f32> {
+    let across = max(detail_across(world), 1.0e-6);
+    if terrain.relief.z < TERRAIN_RELIEF_GONE * across {
+        return vec3<f32>(0.0);
+    }
+    let shading = terrain_pixel_shading(world);
+    let normal = terrain_surface_normal(local, shading);
+    let blend = terrain_blend(local, normal, shading);
+    var moved = 0.0;
+    for (var slot = 0u; slot < 4u; slot++) {
+        let weight = blend.weights[slot];
+        if weight <= 0.0 {
+            continue;
+        }
+        let entry = terrain_material(blend.ids[slot]);
+        if entry.relief.w > 0.0 && entry.params.w > 0.0 {
+            moved += weight * terrain_material_displacement(entry.relief.w,
+                terrain_mapping(entry, normal), world, across);
+        }
+    }
+    return normal * moved;
 }
 
 // World texel `texel`'s slot in the deformation map, whose texels wrap.
@@ -1574,28 +1634,27 @@ fn terrain_relief_repeat(layer: TerrainReliefLayer) -> f32 {
 
 // The pixels on screen the relief's deepest point moves where the relief
 // shows whole, and where it has flattened away: as other detail, it hands
-// over once it moves the ground less than a pixel.
+// over once it moves the ground less than a pixel. Displacement hands over
+// by its depth on screen alike.
 const TERRAIN_RELIEF_WHOLE: f32 = 2.0;
 const TERRAIN_RELIEF_GONE: f32 = 1.0;
-// The cosine under which rays meeting the ground edge on see its relief
-// flatten, where the drawn surface's own silhouette cuts through it; and
-// the secant steps that narrow where the ray meets the relief between its
+// The secant steps that narrow where the ray meets the relief between its
 // last two steps, so no step's layer shows where the ray skims it.
-const TERRAIN_RELIEF_EDGE: f32 = 0.08;
 const TERRAIN_RELIEF_REFINE: u32 = 2u;
 
 // How far across a ray along `way` (toward the ground) travels per meter
 // of depth into ground of normal `normal`, at most three meters, rays
-// meeting it at a cosine under TERRAIN_RELIEF_EDGE counting as at it.
+// meeting it at a cosine under DETAIL_EDGE_ON counting as edge on.
 fn terrain_relief_across(way: vec3<f32>, normal: vec3<f32>) -> f32 {
     let ray = way / max(length(way), 1.0e-6);
-    let travel = ray / max(-dot(ray, normal), TERRAIN_RELIEF_EDGE);
+    let travel = ray / max(-dot(ray, normal), DETAIL_EDGE_ON);
     return min(length(travel.xz), 3.0);
 }
 
 // Where a fragment's view ray meets the ground's relief: the ray marches
 // down through the heights of its two heaviest materials, each as deep as
-// its relief reaches, and through the tracks deformers pressed, from the
+// its relief reaches (a few centimeters at most: deeper materials displace
+// the ground instead), and through the tracks deformers pressed, from the
 // top of their rims to the bottom of the deepest; the heights lie on the
 // ground's surface, from above or across their planes on steep ground as
 // their maps lie (`terrain_level_height`), so the ray only moves where on
@@ -1614,14 +1673,15 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     let to_point = site.world - camera.position.xyz;
     let ray = to_point / max(length(to_point), 1.0e-6);
     // Depth runs into the ground along its normal; rays meeting it edge on
-    // see it flatten (TERRAIN_RELIEF_EDGE).
+    // (DETAIL_EDGE_ON) see it flatten, where the drawn surface's own
+    // silhouette cuts through it.
     let into = -dot(ray, site.geometric);
-    let grazing = smoothstep(0.0, TERRAIN_RELIEF_EDGE, into);
+    let grazing = smoothstep(0.0, DETAIL_EDGE_ON, into);
     // The pixels a meter of depth moves the point on screen at most, seen
     // from the detail eye: it moves along the view, where a pixel spans its
     // longer side.
     let pixels = terrain_relief_across(site.world - camera.detail.xyz, site.geometric)
-        / detail_footprint_long(site.world, site.geometric);
+        / detail_span(site.world, site.geometric).y;
     let tracked = terrain_deform_reach(site.world.xz);
     // Without tracks, ground whose deepest relief could not move a pixel
     // looks up no materials.
@@ -1678,7 +1738,7 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     // Down the ray a step of the relief's depth at a time, the ray's
     // travel across per meter of depth bounded; from above the rims, the
     // ray starting before the ground it meets.
-    let travel = ray / max(into, TERRAIN_RELIEF_EDGE);
+    let travel = ray / max(into, DETAIL_EDGE_ON);
     let across = length(travel.xz);
     let along = travel.xz * min(1.0, 3.0 / max(across, 1.0e-6));
     // The surface point the ray stands over, and its move per meter of
@@ -1783,9 +1843,10 @@ fn terrain_forward_look(relative: vec3<f32>) -> TerrainLook {
 }
 
 // Where the view ray of a fragment `relative` to the eye, seen as `look`
-// says, meets the ground: its site, moved across the ground where its
-// relief and tracks show, the shading levels its pixel's footprint gives
-// and the meters tracks may sink it (`TerrainRelief`).
+// says, meets the ground: its site, on the true surface where deep
+// materials displaced the ground drawn there and moved across the ground
+// where its relief and tracks show, the shading levels its pixel's
+// footprint gives and the meters tracks may sink it (`TerrainRelief`).
 struct TerrainSeen {
     site: TerrainSite,
     shading: TerrainShadingLevel,
@@ -1793,7 +1854,11 @@ struct TerrainSeen {
 }
 
 fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
-    let world = relative + camera.position.xyz;
+    // The true surface's point the drawn one stands for: a step back along
+    // the displacement there, so materials lie where their heights moved the
+    // ground.
+    let drawn = relative + camera.position.xyz;
+    let world = drawn - terrain_displacement(drawn, drawn.xz - terrain.origin.xz);
     let away = length(relative);
     let ray = relative / max(away, 1.0e-6);
     let ray_dx = look.ray_dx;
@@ -1939,7 +2004,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
 // The id of this fragment's terrain in the visibility pass.
 @fragment
 fn fs_terrain_ids(input: TerrainOutput) -> @location(0) vec2<u32> {
-    terrain_holes_test(input.cell, input.holes);
+    terrain_holes_test(input.cell);
     return vec2<u32>(terrain.directory.x + 1u, bitcast<u32>(input.clip_position.z));
 }
 
@@ -2035,13 +2100,13 @@ fn fs_terrain_resolve_temporal_lit(@builtin(position) position: vec4<f32>) -> Te
 
 fn shade_terrain(input: TerrainOutput) -> Shaded {
     let point = terrain_point(input.relative.xyz);
-    terrain_holes_test(input.cell, input.holes);
+    terrain_holes_test(input.cell);
     return finish(point, vec3<f32>(0.0));
 }
 
 fn shade_terrain_lit(input: TerrainOutput) -> Shaded {
     let point = terrain_point(input.relative.xyz);
-    terrain_holes_test(input.cell, input.holes);
+    terrain_holes_test(input.cell);
     return finish(point, local_light(point, input.clip_position.xy));
 }
 
@@ -2050,7 +2115,6 @@ fn terrain_temporal_output(input: TerrainTemporalOutput) -> TerrainOutput {
     output.clip_position = input.clip_position;
     output.relative = input.relative;
     output.cell = input.cell;
-    output.holes = input.holes;
     return output;
 }
 

@@ -4,8 +4,8 @@
 //! slice of samples a frame, while the camera
 //! flies a fixed path over it: it looks the terrain over, flies across it,
 //! jumps to a far corner and returns. Each frame's line holds the
-//! streaming counters and hashes of each terrain's resident tiles and the
-//! patches it draws; equal traces between two builds mean equal streaming.
+//! streaming counters, a hash of each terrain's resident tiles and whether
+//! it draws; equal traces between two builds mean equal streaming.
 
 use std::path::Path;
 
@@ -37,14 +37,14 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
             let mut keys: Vec<_> = terrain.tiles.iter().map(|tile| tile.key()).collect();
             keys.sort_unstable();
             line.push_str(&format!(
-                " | {} tiles {} patches {}",
+                " | {} tiles {} drawn {}",
                 if terrain.surroundings {
                     "surroundings"
                 } else {
                     "terrain"
                 },
                 hash(format!("{keys:?}").as_bytes()),
-                hash(format!("{:?}", terrain.patches).as_bytes()),
+                terrain.drawn,
             ));
         }
         lines.push(line);

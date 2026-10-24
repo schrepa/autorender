@@ -34,7 +34,7 @@ try {
   for (let frame = 0; frame < 300; frame++) {
     const rendering = (await command("render")).result.rendering;
     controls += rendering.terrain.gpu_controls;
-    if (controls > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_patches === 0) break;
+    if (controls > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_tiles === 0) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   assert.ok(controls > 0, "the GPU gives new tiles their control values");

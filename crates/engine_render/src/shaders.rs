@@ -37,8 +37,10 @@ shaders! {
         "impostor_frames.wgsl",
         "meshes/impostors.wgsl",
         "meshes/terrain_vertex.wgsl",
+        "meshes/terrain_surface.wgsl",
         "terrain_variety.wgsl",
         "meshes/terrain.wgsl",
+        "meshes/terrain_subdivision.wgsl",
         "meshes/terrain_vt.wgsl",
         "meshes/terrain_sky.wgsl",
         "fullscreen.wgsl",
@@ -118,9 +120,11 @@ shaders! {
     OCCUPANCY_SHADER = [
         "occupancy.wgsl",
     ];
-    /// Terrain's depth drawing into shadow maps.
+    /// Terrain's depth drawing into shadow maps: its subdivision's leaves
+    /// and the kept levels' patches.
     TERRAIN_SHADOW_SHADER = [
         "meshes/terrain_vertex.wgsl",
+        "meshes/terrain_surface.wgsl",
         "terrain_shadow.wgsl",
     ];
     /// Compute passes of GPU presentation.
@@ -313,7 +317,7 @@ entry_points! {
             fs_debug_impostor, fs_debug_terrain, fs_debug_cover, fs_debug_water,
             fs_debug_sim_water, fs_debug_ocean, fs_debug_fall, fs_debug_sky
         ],
-        compute: [cs_terrain_vt_feedback],
+        compute: [cs_terrain_vt_feedback, subdivide_begin, subdivide_decide, subdivide_apply],
     }
     terrain_normals = TERRAIN_NORMALS_SHADER {
         compute: [tile_normals],
@@ -360,7 +364,7 @@ entry_points! {
         compute: [select_covers],
     }
     terrain_shadow = TERRAIN_SHADOW_SHADER {
-        vertex: [vs_terrain_shadow],
+        vertex: [vs_terrain_shadow, vs_terrain_surface_shadow],
     }
     presentation = PRESENTATION_SHADER {
         compute: [

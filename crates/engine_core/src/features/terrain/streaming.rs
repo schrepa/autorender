@@ -39,9 +39,9 @@ impl Terrains {
     /// Loads, for `milliseconds`, the tiles the last frame found missing,
     /// most important first, between frames: frames leave
     /// time free while the GPU draws them, which terrain otherwise only
-    /// takes a few milliseconds of. Patches are selected anew with the next
-    /// frame. Returns whether tiles are still to load; nothing without a
-    /// clock (`set_clock`).
+    /// takes a few milliseconds of. What loads draws from the next frame on.
+    /// Returns whether tiles are still to load; nothing without a clock
+    /// (`set_clock`).
     pub fn work_between_frames(
         &mut self,
         settings: &TerrainSettings,
@@ -138,7 +138,7 @@ impl Terrains {
 
     /// Streams every terrain toward `eye` (the camera's, unless frozen)
     /// and focus points, within the settings' work and tile budgets, and
-    /// selects the patches seen from `eye`.
+    /// notes which terrains draw.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -258,8 +258,7 @@ impl Terrains {
             // their terrain, and stream while settings show them.
             let cutout = state.around.as_ref().map(|around| around.cutout);
             if cutout.is_some() && !settings.surroundings {
-                state.selection.patches.clear();
-                state.selection.fallbacks = 0;
+                state.drawn = false;
                 continue;
             }
             let pyramid = state.terrain.pyramid;
@@ -278,6 +277,7 @@ impl Terrains {
                 keep,
                 mut missing,
                 waiting: waiting_tiles,
+                fallback,
                 named,
             } = plan(PlanInput {
                 settings,
@@ -404,25 +404,12 @@ impl Terrains {
             let [rewatered, stale] = rewater::rewater(state, &work, &mut budget);
             stats.rewatered_tiles += rewatered;
             stats.stale_water_tiles += stale;
-            if settings.enabled {
-                let store = &state.store;
-                engine_terrain::select_patches(
-                    &pyramid,
-                    &ranges,
-                    local_eye,
-                    |key| store.get(&key).map(Arc::as_ref),
-                    cutout,
-                    &mut state.selection,
-                );
-            } else {
-                state.selection.patches.clear();
-                state.selection.fallbacks = 0;
-            }
-            stats.patches += state.selection.patches.len() as u32;
-            stats.fallback_patches += state.selection.fallbacks;
+            // The ground draws from whatever is resident, coarser tiles
+            // standing in for those still loading.
+            state.drawn = settings.enabled && state.store.len() > 0;
+            stats.fallback_tiles += fallback;
             if cutout.is_some() {
                 stats.surroundings_tiles += state.store.len() as u32;
-                stats.surroundings_patches += state.selection.patches.len() as u32;
             }
         }
         // What the GPU settled that no terrain took is wanted no more.
@@ -509,7 +496,7 @@ impl Terrains {
             && stats.terrains > 0
             && stats.baking == 0
             && stats.loading_tiles == 0
-            && stats.fallback_patches == 0
+            && stats.fallback_tiles == 0
             && stats.lighting == 0
             && unbounced == 0
         {
@@ -711,7 +698,7 @@ impl Terrains {
     /// to load.
     fn stand_still(&mut self) {
         for state in &mut self.entries {
-            state.selection.patches.clear();
+            state.drawn = false;
         }
         self.stats = TerrainStats {
             terrains: self

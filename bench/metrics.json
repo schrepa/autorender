@@ -1444,17 +1444,6 @@
       "direction": null
     },
     {
-      "name": "terrain.back_facing_patches",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "terrain.bounce_levels",
       "kind": "work",
       "rule": "shown",
@@ -1543,7 +1532,7 @@
       "direction": "lower"
     },
     {
-      "name": "terrain.fallback_patches",
+      "name": "terrain.fallback_tiles",
       "kind": "work",
       "rule": "not-above",
       "statistic": "the last sampled frame's value",
@@ -1565,7 +1554,7 @@
       "direction": null
     },
     {
-      "name": "terrain.hidden_patches",
+      "name": "terrain.horizons",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",
@@ -1576,7 +1565,7 @@
       "direction": null
     },
     {
-      "name": "terrain.horizons",
+      "name": "terrain.leaves",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",
@@ -1620,17 +1609,6 @@
       "direction": null
     },
     {
-      "name": "terrain.patches",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "terrain.placed_far_objects",
       "kind": "work",
       "rule": "shown",
@@ -1664,6 +1642,17 @@
       "direction": null
     },
     {
+      "name": "terrain.refused_splits",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "terrain.shadow_patches",
       "kind": "work",
       "rule": "shown",
@@ -1673,6 +1662,17 @@
       ],
       "unit": "count",
       "direction": null
+    },
+    {
+      "name": "terrain.shallow_subdivisions",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
     },
     {
       "name": "terrain.sky_maps",

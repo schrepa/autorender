@@ -751,7 +751,7 @@ fn stopped(reply: &Value) -> Stopped {
     (code, message)
 }
 
-/// Every number in `value` by its path, such as `terrain.patches`.
+/// Every number in `value` by its path, such as `terrain.leaves`.
 fn numbers(value: &Value, prefix: &str, out: &mut Vec<(String, f64)>) {
     if let Value::Object(fields) = value {
         for (key, value) in fields {

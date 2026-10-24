@@ -53,6 +53,10 @@ pub(super) struct Plan {
     /// and how many tiles wait for the eye to slow down.
     pub(super) missing: Vec<(TileKey, u32)>,
     pub(super) waiting: u32,
+    /// Tiles the view draws (within their level's range, or pinned) that it
+    /// loads and the store does not hold resident yet: coarser tiles' ground
+    /// stands in for theirs.
+    pub(super) fallback: u32,
     /// The tiles places games name want.
     pub(super) named: Vec<WantedTile>,
 }
@@ -178,6 +182,9 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
             (key, job_priority(class, index as u32))
         })
         .collect();
+    let fallback = tier(|tile| tile.score < 0.0 || tile.drawn)
+        .filter(|key| target.contains(key) && store.get(key).is_none())
+        .count() as u32;
     Plan {
         collision,
         ordered: order.len(),
@@ -185,6 +192,7 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
         keep,
         missing,
         waiting: waiting_tiles,
+        fallback,
         named: wanted.named,
     }
 }
@@ -263,8 +271,8 @@ fn wanted(input: &PlanInput<'_>) -> Wanted {
 
 /// The lowest and highest ground tile `key` can hold,
 /// terrain-local, as distances to it take them: a resident tile's own,
-/// widened by how far its level measured from the next coarser (its
-/// patches morph toward that); else its nearest resident ancestor's over
+/// widened by how far its level measured from the next coarser, which
+/// stands in for it where it leaves; else its nearest resident ancestor's over
 /// its ground, widened by how far the levels between measured apart and by
 /// four of the ancestor's spacings, as finer levels add detail. `None`
 /// without either.

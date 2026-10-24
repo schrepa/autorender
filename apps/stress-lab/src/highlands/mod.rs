@@ -730,6 +730,7 @@ fn surface(
                     projection: look.projection,
                     cover: look.cover,
                     relief: look.relief,
+                    displacement: look.displacement,
                     deform: look.deform,
                 })
             })

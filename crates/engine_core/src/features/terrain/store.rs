@@ -58,8 +58,8 @@ pub(super) struct TileStore {
     generation: Generation,
     revision: u64,
     /// The largest height difference measured between each level and the
-    /// next coarser one ([`Tile::morph_error`]), what its patches morph by;
-    /// zero until measured.
+    /// next coarser one ([`Tile::morph_error`]), how far a level's ground
+    /// may stand off the one standing in for it; zero until measured.
     errors: Vec<f32>,
     /// Tiles that left whole, kept in memory to return at once while the
     /// layers they generated from stay, and their bytes.

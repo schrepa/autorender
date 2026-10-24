@@ -23,7 +23,7 @@ const output = await artifacts("jobs-smoke");
 const { browser, page, errors } = await launch({ width: 960, height: 540, timeout: 600_000 });
 // What an exact frame draws of the terrain, which time leaves alone.
 const drawn = ({ terrain, water }) => ({
-  tiles: terrain.tiles, patches: terrain.patches, triangles: terrain.triangles, shadow_patches: terrain.shadow_patches,
+  tiles: terrain.tiles, leaves: terrain.leaves, triangles: terrain.triangles, shadow_patches: terrain.shadow_patches,
   placed_objects: terrain.placed_objects, placed_far_objects: terrain.placed_far_objects, water_patches: water.patches,
 });
 const command = commander(page, { deadline: 600_000 });
@@ -50,7 +50,7 @@ async function settle(label) {
     const frame = JSON.stringify(drawn((await command("render")).result.rendering));
     terrains = await inspect("Terrains");
     const { running } = await inspect("Jobs");
-    const settled = terrains.resident_tiles > 0 && terrains.baking === 0 && terrains.loading_tiles === 0 && terrains.fallback_patches === 0
+    const settled = terrains.resident_tiles > 0 && terrains.baking === 0 && terrains.loading_tiles === 0 && terrains.fallback_tiles === 0
       && running === 0 && frame === previous;
     previous = frame;
     quiet = settled ? quiet + 1 : 0;

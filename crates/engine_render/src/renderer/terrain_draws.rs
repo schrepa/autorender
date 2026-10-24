@@ -1,9 +1,9 @@
 //! Terrain's draws: its preparation each frame, and its
-//! patches in the opaque pass, shadow maps and reflection probe faces.
+//! subdivisions' leaves in the opaque pass and reflection probe faces.
 
 use super::frame::FrameState;
 use super::*;
-use crate::terrain::{FrameTerrain, TerrainViews};
+use crate::terrain::TerrainViews;
 use crate::water::WaterFrame;
 
 /// Terrain's visibility target: each pixel's terrain (its
@@ -15,10 +15,10 @@ pub(super) struct TerrainIds {
 }
 
 impl Renderer {
-    /// Prepares this frame's terrain: tile uploads, each view's patches and
-    /// the pipelines drawing them into `opaque_kind`'s targets, the shadow
-    /// maps and, when `probes` capture, reflection probe faces. Returns
-    /// whether terrain draws.
+    /// Prepares this frame's terrain: tile uploads, its subdivisions and the
+    /// pipelines drawing their leaves into `opaque_kind`'s targets, the
+    /// shadow maps and, when `probes` capture, reflection probe faces.
+    /// Returns whether terrain draws.
     pub(super) fn prepare_terrain(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -28,7 +28,7 @@ impl Renderer {
     ) -> bool {
         let terrains = &snapshot.terrain;
         if terrains.terrains.is_empty() && self.terrain.resident() == 0 {
-            self.terrain.bounce.rest();
+            self.terrain.rest();
             return false;
         }
         let jitter = temporal_frame.as_ref().map_or([0.0; 2], |frame| {
@@ -111,7 +111,7 @@ impl Renderer {
             &self.mesh_pipelines.empty_layout,
             lights,
         );
-        // Patches with holes draw with their own pipelines, created with the
+        // Terrains with holes draw with their own pipelines, created with the
         // first frame that has them.
         let variants: &[bool] = if self.terrain.has_holes() {
             &[false, true]
@@ -187,7 +187,7 @@ impl Renderer {
     }
 
     /// Creates the pipelines `snapshot`'s terrains draw with unless they
-    /// exist, before any draws: their patches into
+    /// exist, before any draws: their leaves into
     /// `opaque_kind`'s targets, with holes where tiles may hold any, into
     /// reflection probe faces when `probes` capture and into shadow maps;
     /// their tiles' normal and sky maps; their cover's growth and blades;
@@ -326,8 +326,8 @@ impl Renderer {
             && !self.terrain.patches.frame.terrains.is_empty()
     }
 
-    /// The camera's terrain patches into terrain's visibility target;
-    /// returns the draws.
+    /// The leaves of the terrains' subdivisions into terrain's visibility
+    /// target; returns the draws.
     pub(super) fn draw_terrain_ids(&self, pass: &mut wgpu::RenderPass<'_>) -> u32 {
         pass.set_bind_group(0, self.camera.group(), &[]);
         let mut draws = 0;
@@ -337,9 +337,9 @@ impl Renderer {
             };
             pass.set_pipeline(pipeline);
             for terrain in &self.terrain.patches.frame.terrains {
-                let range =
-                    &FrameTerrain::split(&terrain.camera, terrain.camera_holes)[usize::from(holes)];
-                draws += self.terrain.draw(pass, range, 0, terrain.uniform);
+                if terrain.holes == holes {
+                    draws += self.terrain.draw_surface(pass, terrain, 0);
+                }
             }
         }
         draws
@@ -370,15 +370,12 @@ impl Renderer {
             };
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
-        // Each within the pixels its patches cover: elsewhere it would only
+        // Each within the pixels its ground covers: elsewhere it would only
         // read the visibility target and discard. Pixels of the frame's
         // render size, which it draws.
         let render = self.display.region.render;
         let mut draws = 0;
         for terrain in &self.terrain.patches.frame.terrains {
-            if terrain.camera.is_empty() {
-                continue;
-            }
             let Some([x, y, width, height]) = terrain.scissor(render.pixels()) else {
                 continue;
             };
@@ -417,8 +414,8 @@ impl Renderer {
             .draw(pass, targets, kind.lit)
     }
 
-    /// Draws the camera's terrain patches into the opaque pass; returns the
-    /// draws.
+    /// Draws the leaves of the terrains' subdivisions into the opaque pass;
+    /// returns the draws.
     pub(super) fn draw_terrain_patches(
         &self,
         state: &FrameState<'_>,
@@ -445,15 +442,15 @@ impl Renderer {
         }) {
             pass.set_pipeline(pipeline);
             for terrain in &self.terrain.patches.frame.terrains {
-                let range =
-                    &FrameTerrain::split(&terrain.camera, terrain.camera_holes)[usize::from(holes)];
-                draws += self.terrain.draw(pass, range, 0, terrain.uniform);
+                if terrain.holes == holes {
+                    draws += self.terrain.draw_surface(pass, terrain, 0);
+                }
             }
         }
         draws
     }
 
-    /// Draws every terrain patch into reflection probe face `face` of the
+    /// Draws every terrain's leaves into reflection probe face `face` of the
     /// probe at `center`, after its meshes (`lit` when lights shade it).
     pub(super) fn draw_terrain_face(
         &self,
@@ -481,9 +478,9 @@ impl Renderer {
             };
             pass.set_pipeline(pipeline);
             for terrain in &self.terrain.patches.frame.terrains {
-                let range =
-                    &FrameTerrain::split(&terrain.all, terrain.all_holes)[usize::from(holes)];
-                self.terrain.draw(pass, range, view, terrain.uniform);
+                if terrain.holes == holes {
+                    self.terrain.draw_surface(pass, terrain, view);
+                }
             }
         }
     }

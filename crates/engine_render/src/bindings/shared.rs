@@ -73,6 +73,7 @@ shared_groups! {
         ],
         cover: 33..35 [cover_blades, cover_frame],
         macro_colors: 35..36 [terrain_macro],
+        surface: 36..37 [terrain_surface_leaves],
         sky: 38..46 [
             sky_clouds, sky_cloud_sampler, sky_air, sky_view_table, sky_transmittance_table,
             sky_table_sampler, sky_clouds_old, sky_domes
@@ -92,6 +93,9 @@ shared_groups! {
         terrain: 18..19 [terrain_ids_texture],
         virtual_texture: 19..21 [terrain_vt_wanted, terrain_vt_bakes],
         water: 22..24 [water_depth, water_scene],
+        subdivision: 24..29 [
+            subdivision, subdivision_tree, subdivision_nodes, subdivision_leaves, subdivision_args
+        ],
     }
     SHADER @ 3 {
         lights: 0..4 [clusters, lights, cluster_ranges, cluster_lights],

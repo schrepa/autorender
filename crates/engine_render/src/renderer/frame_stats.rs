@@ -118,6 +118,8 @@ impl Renderer {
             None
         };
         let shadow_casters = shadow_frame.as_ref().and(self.shadows.caster_counts());
+        // Read back a few frames late.
+        let surface = self.terrain.surface.stats();
         let residency = self.residency();
         let stats = RenderStats {
             draw_calls: report.draws,
@@ -262,16 +264,16 @@ impl Renderer {
                     .count() as u32,
             },
             terrain: TerrainRenderStats {
-                patches: self.terrain.patches.frame.patches,
-                triangles: self.terrain.patches.frame.triangles,
+                leaves: surface.leaves,
+                triangles: surface.triangles,
+                refused_splits: surface.refused,
+                shallow_subdivisions: surface.shallow,
                 shadow_patches: self.terrain.patches.frame.shadow_patches,
-                back_facing_patches: self.terrain.patches.frame.back_facing,
-                hidden_patches: self.terrain.patches.frame.hidden,
                 tiles: self.terrain.resident(),
                 loading_tiles: snapshot.terrain.stats.loading_tiles,
                 gpu_controls: self.terrain.atlas.controls,
                 dropped_tiles: snapshot.terrain.stats.dropped_tiles + self.terrain.atlas.dropped,
-                fallback_patches: snapshot.terrain.stats.fallback_patches,
+                fallback_tiles: snapshot.terrain.stats.fallback_tiles,
                 horizons: self.terrain.horizons.count(),
                 sky_maps: self.terrain.sky.count(),
                 lighting_uploads: self.terrain.horizons.uploaded + self.terrain.sky.uploaded,

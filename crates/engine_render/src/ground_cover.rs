@@ -215,7 +215,7 @@ impl GroundCoverPass {
             let (directory, palette, [densest, width], colors) = terrain.cover_terrain(index);
             let density = densest * settings.density;
             // Surroundings grow no blades.
-            if density <= 0.0 || render.patches.is_empty() || render.surroundings {
+            if density <= 0.0 || !render.drawn || render.surroundings {
                 continue;
             }
             let spacing = render.pyramid.spacing(0);
@@ -223,8 +223,6 @@ impl GroundCoverPass {
             let local = eye - render.origin;
             let span = cover_span(&settings, width, pixels_per_meter);
             let reach = tier_reach(radius, span);
-            // Blades stand on the ground as each level draws it.
-            let ranges = morph_ranges(render);
             let mut tiers = [(0.0, radius, 1.0); MAX_TIERS];
             let mut count = 1;
             while reach > 0.0 && count < MAX_TIERS {
@@ -274,7 +272,6 @@ impl GroundCoverPass {
                     planes,
                     deform_grid: shading.grid,
                     deform: shading.scale,
-                    ranges,
                     foliage: [f32::from(u8::from(grounded)), 0.0, 0.0, 0.0],
                     view: [pixels_per_meter, 0.0, 0.0, 0.0],
                 };
@@ -522,20 +519,6 @@ impl GroundCoverPass {
         pass.draw_indirect(&self.args, DRAW_ARGS);
         2
     }
-}
-
-/// The meters from the eye up to which each of `terrain`'s first eight
-/// levels draws, finest first, as what stands on its ground reads them
-/// (`terrain_ground.wgsl`): the coarsest never morphs, so it and levels
-/// past the eighth read 0.
-pub(crate) fn morph_ranges(terrain: &engine_core::RenderTerrain) -> [[f32; 4]; 2] {
-    let mut ranges = [[0.0_f32; 4]; 2];
-    for (level, range) in terrain.ranges.iter().enumerate().take(8) {
-        if level + 1 < terrain.ranges.len() {
-            ranges[level / 4][level % 4] = *range;
-        }
-    }
-    ranges
 }
 
 /// Pixels a meter spans a meter from the eye along a view `height` pixels
