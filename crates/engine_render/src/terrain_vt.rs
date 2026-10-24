@@ -432,7 +432,7 @@ impl VirtualTexture {
         let mut uniforms = Vec::with_capacity(terrains.terrains.len());
         let mut kept = Vec::new();
         for (index, terrain) in terrains.terrains.iter().enumerate() {
-            if terrain.patches.is_empty() {
+            if !terrain.drawn {
                 uniforms.push(([0; 4], [0.0; 4], [0; 4]));
                 continue;
             }

@@ -18,11 +18,13 @@ pub(crate) struct TerrainTables {
     pub(super) uniforms: wgpu::Buffer,
     pub(super) uniform_generation: u64,
     pub(super) uniform_ids: Vec<u64>,
-    // Each layer's fades, then the hole bits of the tiles
+    // Each layer's fades, then each layer's word naming where its tile's
+    // hole bits start (all ones without), then the hole bits of the tiles
     // with holes, and where each tile's start; whether the buffer holds
     // no fades yet, and the words they take.
     pub(super) holes: crate::buffers::Growable,
     pub(super) hole_offsets: HashMap<(u64, TileKey), u32>,
+    hole_layers: HashMap<(u64, TileKey), u32>,
     pub(super) holes_generation: u64,
     fades_stale: bool,
     pub(super) fade_words: u32,
@@ -78,6 +80,7 @@ impl TerrainTables {
                 wgpu::BufferUsages::empty(),
             ),
             hole_offsets: HashMap::default(),
+            hole_layers: HashMap::default(),
             holes_generation: 0,
             fades_stale: true,
             fade_words: 0,
@@ -119,7 +122,9 @@ impl TerrainTables {
 
     /// Rewrites the hole bits whole when `atlas`' resident tiles with holes
     /// changed, or a tile replaced under its key changed its bits
-    /// (`edited`), after each layer's fades for `max_layers` layers.
+    /// (`edited`), after each layer's fades for `max_layers` layers and each
+    /// layer's word naming where its tile's bits start, which fragments look
+    /// the bits up by wherever they stand (`terrain_holes_test`).
     pub(super) fn write_holes(
         &mut self,
         device: &wgpu::Device,
@@ -132,22 +137,29 @@ impl TerrainTables {
         let unchanged = !edited
             && fade_words == self.fade_words
             && atlas.holed.len() == self.hole_offsets.len()
-            && atlas
-                .holed
-                .iter()
-                .all(|key| self.hole_offsets.contains_key(key));
+            && atlas.holed.iter().all(|key| {
+                self.hole_offsets.contains_key(key)
+                    && atlas.slots.get(key) == self.hole_layers.get(key)
+            });
         if unchanged {
             return;
         }
         self.fade_words = fade_words;
         self.hole_offsets.clear();
-        let mut words: Vec<u32> = Vec::with_capacity(atlas.holed.len() * HOLE_WORDS);
+        self.hole_layers.clear();
+        let mut words: Vec<u32> = vec![NO_HOLES; max_layers as usize];
         for &key in &atlas.holed {
             let Some(bits) = atlas.held.get(&key).and_then(|tile| tile.hole_bits()) else {
                 continue;
             };
-            self.hole_offsets
-                .insert(key, fade_words + words.len() as u32);
+            let offset = fade_words + words.len() as u32;
+            self.hole_offsets.insert(key, offset);
+            if let Some(&layer) = atlas.slots.get(&key) {
+                self.hole_layers.insert(key, layer);
+                if let Some(word) = words.get_mut(layer as usize) {
+                    *word = offset;
+                }
+            }
             words.extend(
                 bits.iter()
                     .flat_map(|word| [*word as u32, (word >> 32) as u32])
@@ -542,6 +554,13 @@ fn palette_entry(
             cover.density * height * cover.width * COVER_FILLED,
         ]
     });
+    // Materials displacing the ground show no relief, which parallax
+    // fakes; the rest's as deep as parallax holds.
+    let relief = if look.displacement > 0.0 {
+        0.0
+    } else {
+        engine_core::math::min(look.relief, RELIEF_MOST)
+    };
     PaletteEntry {
         color: [color[0], color[1], color[2], roughness],
         params: [
@@ -552,12 +571,17 @@ fn palette_entry(
         ],
         maps: [scale, occlusion, metalness, far_occlusion],
         far,
-        relief: [look.relief, look.deform, slopes, 0.0],
+        relief: [relief, look.deform, slopes, look.displacement],
         canopy,
         placed,
         placed_size,
     }
 }
+
+/// The most meters a material's relief sinks the ground, a few
+/// centimeters: deeper heights break parallax at grazing views and on
+/// silhouettes, where materials displace the ground instead.
+const RELIEF_MOST: f32 = 0.06;
 
 /// The share of their full height ground cover's blades stand on average:
 /// candidates ranked within the last quarter under their threshold grow

@@ -445,18 +445,19 @@ pub struct DetailStats {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TerrainRenderStats {
-    /// Patches the camera drew.
-    pub patches: u32,
-    /// Triangles the camera drew.
+    /// Leaves of the terrains' subdivisions the camera drew and their
+    /// meshlets' triangles, as read back a few frames later.
+    pub leaves: u32,
     pub triangles: u32,
-    /// Patches drawn into shadow maps.
+    /// Splits the subdivisions refused for want of room for their leaves
+    /// (`TerrainSettings::subdivision_leaves`), as read back: the ground
+    /// there stays coarser.
+    pub refused_splits: u32,
+    /// Terrains whose subdivision the device's storage bindings keep
+    /// shallower than `TerrainSettings::subdivision_depth` asks.
+    pub shallow_subdivisions: u32,
+    /// Patches the kept shadow levels drew of the ground.
     pub shadow_patches: u32,
-    /// Patches within the camera's frustum it skips as every triangle faces
-    /// away from the eye: none of them could show.
-    pub back_facing_patches: u32,
-    /// Patches within the camera's frustum it skips as nearer ground hides
-    /// them from the eye: none of them could show.
-    pub hidden_patches: u32,
     /// Tiles resident on the GPU.
     pub tiles: u32,
     /// Tiles still loading.
@@ -465,8 +466,9 @@ pub struct TerrainRenderStats {
     pub gpu_controls: u32,
     /// Tiles the tile budget or the device's texture array layers dropped.
     pub dropped_tiles: u32,
-    /// Patches standing in for finer levels not resident yet.
-    pub fallback_patches: u32,
+    /// Tiles the camera's view draws and shows that are not resident yet,
+    /// whose ground coarser tiles stand in for.
+    pub fallback_tiles: u32,
     /// Terrains casting long sun shadows through horizon maps.
     pub horizons: u32,
     /// Terrains whose sky visibility maps are here.

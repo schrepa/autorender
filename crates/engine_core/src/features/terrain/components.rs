@@ -210,8 +210,16 @@ settings! {
         pub cover: Option<crate::Cover> = None => any,
         /// The meters its maps' heights span where relief sinks the ground
         /// between its stones, tufts and ledges: 0 flat. Biplanar ones sink
-        /// it across their planes, as on rock faces.
+        /// it across their planes, as on rock faces. Relief is parallax, which
+        /// holds for a few centimeters and shows no deeper: deeper materials
+        /// displace the ground instead.
         pub relief: f32 = 0.0 => range(0.0, 1.0),
+        /// The meters its maps' heights move the ground itself, its vertices
+        /// raised and sunk about their mean along the ground's smooth normal
+        /// while that depth spans a few pixels, none from a pixel down, so far
+        /// ground is its plain surface: 0 none. A material displacing the
+        /// ground shows no relief.
+        pub displacement: f32 = 0.0 => range(0.0, 2.0),
         /// The meters tracks sink it at most: 0 rigid.
         pub deform: f32 = 0.0 => range(0.0, 2.0),
     }
@@ -481,7 +489,7 @@ impl Terrain {
 
 /// Temporary state for development: an eye that every distance switch
 /// follows instead of the camera's, the detail eye
-/// ([`crate::RenderSnapshot::detail_eye`]). Terrain streaming, its patches
+/// ([`crate::RenderSnapshot::detail_eye`]). Terrain streaming, its subdivision
 /// and shading levels, the ground's relief, ground cover and its canopy,
 /// placed objects' thinning, kept shadow windows, river water and virtual
 /// texture pages all stay where it stands, so agents can look at what it

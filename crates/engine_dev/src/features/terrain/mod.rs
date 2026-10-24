@@ -77,14 +77,12 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
                     restored_tiles: stats.restored_tiles,
                     prefetching_tiles: stats.prefetching_tiles,
                     dropped_tiles: stats.dropped_tiles,
-                    patches: stats.patches,
-                    fallback_patches: stats.fallback_patches,
+                    fallback_tiles: stats.fallback_tiles,
                     baking: stats.baking,
                     bridges: stats.bridges,
                     tunnels: stats.tunnels,
                     falls: stats.falls,
                     surroundings_tiles: stats.surroundings_tiles,
-                    surroundings_patches: stats.surroundings_patches,
                     water: terrains
                         .waters()
                         .next()
@@ -246,7 +244,7 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
                 tiles: status.tiles,
                 spacing: status.spacing,
                 resident_tiles: status.resident_tiles,
-                patches: status.patches,
+                drawn: status.drawn,
             }),
     }))
 }
@@ -373,23 +371,43 @@ fn river_flow(found: &engine_core::terrain_data::Hydrology) -> crate::views::Riv
 }
 
 /// Temporarily set terrain's level of detail and render while paused:
-/// `pixel_error` replaces the settings', and `freeze` holds the detail eye
-/// at the camera's current position while the camera moves on, so every
-/// distance switch stays where it stood: terrain streaming, its patches and
-/// shading levels, the ground's relief, ground cover and its canopy, placed
-/// objects' thinning, kept shadow windows, river water and virtual texture
-/// pages. Omitted fields stay as they are. Terrain's levels, normals, tiles
-/// and patches, materials, sky visibility and detail show in the debug
-/// views (the environment's `debug_view` section).
+/// `subdivision_error` replaces the settings' pixels the drawn ground may
+/// stray from its true surface, `pixel_error` the settings' pixels a level's
+/// samples span where its tiles stream and shade, and `freeze` holds the
+/// detail eye at the camera's current position while the camera moves on,
+/// so every distance switch stays where it stood: terrain streaming, its
+/// subdivision and shading levels, the ground's relief and displacement,
+/// ground cover and its canopy, placed objects' thinning, kept shadow
+/// windows, river water and virtual texture pages. Omitted fields stay as
+/// they are. Terrain's leaves, normals, tiles and patches, materials, sky
+/// visibility and detail show in the debug views (the environment's
+/// `debug_view` section).
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TerrainControl {
     #[serde(default)]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::TerrainSettings::rule_of("subdivision_error")))))]
+    pub subdivision_error: Option<f32>,
+    #[serde(default)]
     #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::TerrainSettings::rule_of("pixel_error")))))]
     pub pixel_error: Option<f32>,
     #[serde(default)]
     pub freeze: Option<bool>,
+}
+
+/// `value` for terrain setting `name`, held to the settings' own rule.
+fn terrain_setting(value: f32, name: &'static str) -> Result<f32, DevError> {
+    let rule = engine_core::TerrainSettings::rule_of(name).expect("terrain settings declare it");
+    engine_settings::Setting::check(&value, name, rule)
+        .map(|()| value)
+        .map_err(|invalid| {
+            DevError::new(
+                ErrorCode::OutOfRange,
+                format!("$.{name}"),
+                invalid.to_string(),
+            )
+        })
 }
 
 impl EngineControl for TerrainControl {
@@ -399,23 +417,25 @@ impl EngineControl for TerrainControl {
 
     fn apply(&self, engine: &mut Engine, _: Option<&SceneInstance>) -> Result<Value, DevError> {
         let world = engine.app.world_mut();
-        if let Some(pixel_error) = self.pixel_error {
-            // The settings' own rule.
-            let rule = engine_core::TerrainSettings::rule_of("pixel_error")
-                .expect("terrain settings declare pixel_error");
-            if let Err(invalid) = engine_settings::Setting::check(&pixel_error, "pixel_error", rule)
-            {
-                return Err(DevError::new(
-                    ErrorCode::OutOfRange,
-                    "$.pixel_error",
-                    invalid.to_string(),
-                ));
-            }
+        let subdivision_error = self
+            .subdivision_error
+            .map(|value| terrain_setting(value, "subdivision_error"))
+            .transpose()?;
+        let pixel_error = self
+            .pixel_error
+            .map(|value| terrain_setting(value, "pixel_error"))
+            .transpose()?;
+        if subdivision_error.is_some() || pixel_error.is_some() {
             let mut settings = world
                 .get_resource::<engine_core::TerrainSettings>()
                 .copied()
                 .unwrap_or_default();
-            settings.pixel_error = pixel_error;
+            if let Some(subdivision_error) = subdivision_error {
+                settings.subdivision_error = subdivision_error;
+            }
+            if let Some(pixel_error) = pixel_error {
+                settings.pixel_error = pixel_error;
+            }
             world.insert_resource(settings);
         }
         let eye = world.resource::<engine_core::Camera>().eye();
@@ -427,13 +447,13 @@ impl EngineControl for TerrainControl {
             debug.freeze = freeze.then_some(debug.freeze.unwrap_or(eye));
         }
         world.insert_resource(debug);
+        let settings = world.get_resource::<engine_core::TerrainSettings>();
         Ok(result::terrain(TerrainControlResult {
             temporary: true,
             terrain_changed: true,
             frozen_at: debug.freeze.map(|eye| eye.to_array()),
-            pixel_error: world
-                .get_resource::<engine_core::TerrainSettings>()
-                .map(|settings| settings.pixel_error),
+            subdivision_error: settings.map(|settings| settings.subdivision_error),
+            pixel_error: settings.map(|settings| settings.pixel_error),
         }))
     }
 }
@@ -448,7 +468,9 @@ pub struct TerrainControlResult {
     pub terrain_changed: bool,
     /// Where the detail eye stays frozen, where it does (world space).
     pub frozen_at: Option<[f32; 3]>,
-    /// The settings' pixel error, where terrain settings exist.
+    /// The settings' subdivision error and pixel error, where terrain
+    /// settings exist.
+    pub subdivision_error: Option<f32>,
     pub pixel_error: Option<f32>,
 }
 

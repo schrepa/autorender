@@ -16,8 +16,8 @@ pub struct TerrainView {
     pub extent: [f32; 2],
     pub resident_tiles_by_level: Vec<u32>,
     /// Per level, finest first: the most meters its height differs from
-    /// the next coarser level's, which its patches morph by (0 until
-    /// measured), and meters from the eye it draws to.
+    /// the next coarser level's (0 until measured), and meters from the eye
+    /// its tiles stream within.
     pub level_errors: Vec<f32>,
     pub level_ranges: Vec<f32>,
     /// Its hydrology bake, when its layers hold one.
@@ -32,8 +32,8 @@ pub struct TerrainView {
     pub edits: Vec<TerrainEditView>,
     /// Its surroundings once they stream, after its bakes:
     /// how far they reach past its edges along x and z, their level-0 tiles
-    /// along a side and sample spacing, and their resident tiles and the
-    /// patches drawn.
+    /// along a side and sample spacing, their resident tiles and whether
+    /// they draw.
     pub surroundings: Option<SurroundingsView>,
 }
 
@@ -45,7 +45,7 @@ pub struct SurroundingsView {
     pub tiles: u32,
     pub spacing: f32,
     pub resident_tiles: u32,
-    pub patches: u32,
+    pub drawn: bool,
 }
 
 /// One terrain edit: its id and its stamp (terrain-local).
@@ -426,8 +426,9 @@ pub struct TerrainsView {
     pub restored_tiles: u64,
     pub prefetching_tiles: u32,
     pub dropped_tiles: u32,
-    pub patches: u32,
-    pub fallback_patches: u32,
+    /// Tiles the view draws that are not resident yet: coarser tiles'
+    /// ground stands in for theirs.
+    pub fallback_tiles: u32,
     /// Terrains whose bakes are in progress.
     pub baking: u32,
     /// Bridges terrains' roads span, tunnels they bore,
@@ -435,9 +436,8 @@ pub struct TerrainsView {
     pub bridges: u32,
     pub tunnels: u32,
     pub falls: u32,
-    /// Of the resident tiles and patches, those of terrains' surroundings.
+    /// Of the resident tiles, those of terrains' surroundings.
     pub surroundings_tiles: u32,
-    pub surroundings_patches: u32,
     /// The first terrain whose hydrology bake is done: how its rivers flow
     /// and its first falls (world space).
     pub water: Option<TerrainWaterView>,

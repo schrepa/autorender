@@ -12,8 +12,9 @@ gpu_structs! {
     /// contrast, projection and maps' layer plus one (0 without maps); its
     /// normal scale, occlusion strength, metalness and mean occlusion; its
     /// maps' mean color and roughness, its factors applied; the meters its
-    /// relief spans, tracks sink it at most and its normal maps' slope
-    /// variance; its cover's canopy: its blades' linear tip color and their
+    /// relief spans (none where it displaces the ground), tracks sink it at
+    /// most, its normal maps' slope variance and the meters it displaces the
+    /// ground; its cover's canopy: its blades' linear tip color and their
     /// leaves' area per square meter of ground; and its placement layers'
     /// objects, which the ground takes on where they retire: their mean
     /// linear color and the share of the ground they cover where it lies
@@ -40,14 +41,15 @@ gpu_structs! {
         pub color: [f32; 4],
     }
 
-    /// A patch as `PatchInput` reads it.
+    /// A patch of the kept shadow levels as `PatchInput` reads it: its first
+    /// sample, its spacing and skirt's depth, its tile's layer and first
+    /// texel, and its hole run.
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
     pub(crate) struct PatchRecord {
         pub first: [i32; 2],
-        pub shape: [f32; 4],
-        pub atlas: [u32; 4],
+        pub shape: [f32; 2],
+        pub atlas: [u32; 2],
         pub holes: u32,
-        pub fade: f32,
     }
 
     /// WGSL `TerrainView`.
@@ -63,15 +65,19 @@ gpu_structs! {
     pub(crate) struct TerrainUniform as ["TerrainUniform"] {
         pub anchor: [f32; 4],
         pub eye: [f32; 4],
-        /// The detail eye less `eye` (xyz), which patches morph by their
-        /// distance from, as streaming selected them around it; w unused.
-        pub detail: [f32; 4],
+        /// Its subdivision's leaves: where they start in the frame's leaves,
+        /// where each layer's word naming its tile's hole run starts in the
+        /// hole buffer, and its anchor's cell on the coarsest level's grid
+        /// (x and z, signed).
+        pub surface: [u32; 4],
         pub origin: [f32; 4],
         pub directory: [u32; 4],
         /// The ground's relief: the meters the deepest of the terrain's
         /// materials with maps sinks it, so pixels where no relief could
         /// move half a pixel look up no materials for it, and the most steps
-        /// its rays take; zw unused.
+        /// its rays take; the meters the deepest of them displaces it, so
+        /// vertices where none could move a pixel read none, and the meters
+        /// between its subdivision's finest leaves' meshlet vertices.
         pub relief: [f32; 4],
         pub deform_grid: [i32; 4],
         pub deform: [f32; 4],
@@ -82,8 +88,24 @@ gpu_structs! {
         pub macro_map: [u32; 4],
         pub steep: [f32; 4],
         /// The pixels a level's samples span at least where it shades the
-        /// ground whole (`TerrainSettings::pixel_error`), as its geometry's
+        /// ground whole (`TerrainSettings::pixel_error`), as its tiles'
         /// ranges count them; yzw unused.
         pub pixel_error: [f32; 4],
+    }
+
+    /// WGSL `TerrainSubdivision` (`meshes/terrain_subdivision.wgsl`): a
+    /// terrain's square and error target; its tree's deepest level, where
+    /// its bitfield starts, where its leaves start and how many it holds;
+    /// whether the frame merges and its place among the arguments; the
+    /// ground it draws and its cutout; and the camera's frustum, in the
+    /// world.
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct SubdivisionUniform as ["TerrainSubdivision"] {
+        pub square: [f32; 4],
+        pub tree: [u32; 4],
+        pub frame: [u32; 4],
+        pub extent: [f32; 4],
+        pub cutout: [f32; 4],
+        pub planes: [[f32; 4]; 6],
     }
 }

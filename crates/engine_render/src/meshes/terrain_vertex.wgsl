@@ -1,15 +1,14 @@
-// Terrain, the vertex stage every terrain pass shares: patches of one shared
-// grid of 17 x 17 vertices and a skirt, displaced by the heights of their
-// tile's layer of the height atlas. Each vertex morphs toward the next coarser
-// level's vertex over the last quarter of its level's range from the detail
-// eye, which streaming selected the patches around (continuous
-// distance-dependent level of detail): odd grid vertices slide onto their even
-// neighbors and heights blend into the coarser tile's, so a patch fully morphed
-// at its range's end matches its coarser neighbors exactly. Positions are
-// relative to the terrain's eye, the camera's (camera-relative rendering):
-// integer sample counts from an anchor on every level's grid, times the
-// spacing, plus the anchor's offset from the eye. Skirts hang below patch edges
-// and fill gaps where a finer tile is not resident yet.
+// Terrain, the declarations every terrain pass shares: the height atlas, the
+// views and each terrain's uniform; and the vertex stage of the patches the
+// kept shadow levels draw the ground with, at a level of detail of their
+// own: one shared grid of 17 x 17 vertices and a skirt, displaced by the
+// heights of their tile's layer of the height atlas, unmorphed. Positions
+// are relative to the terrain's eye, the camera's (camera-relative
+// rendering): integer sample counts from an anchor on every level's grid,
+// times the spacing, plus the anchor's offset from the eye. Skirts hang
+// below patch edges and fill gaps where neighbors of other levels meet. The
+// camera's ground draws its subdivision's leaves instead
+// (`meshes/terrain_surface.wgsl`).
 
 // Every tile's heights with a border of one sample, one layer each; only
 // loaded.
@@ -34,13 +33,18 @@ struct TerrainView {
 struct TerrainUniform {
     anchor: vec4<f32>,
     eye: vec4<f32>,
-    // The detail eye less its eye (xyz), which vertices morph by their
-    // distance from.
-    detail: vec4<f32>,
+    // Its subdivision's leaves: where they start in `terrain_surface_leaves`
+    // (x), where each layer's word of `terrain_holes` naming its tile's hole
+    // bits starts (y), and its anchor on the coarsest level's grid, in that
+    // level's samples from its origin (z and w, signed).
+    surface: vec4<u32>,
     origin: vec4<f32>,
     directory: vec4<u32>,
     // The ground's relief: the deepest any of its materials with maps
-    // sinks it (meters) and the most steps its rays take.
+    // sinks it (meters) and the most steps its rays take; the deepest any of
+    // them displaces it (meters), and the meters apart the vertices of its
+    // subdivision's finest leaves stand, which displacement reads its height
+    // maps no finer than.
     relief: vec4<f32>,
     // Runtime deformation's map: its first texel (world
     // texel indices along x and z), and its texels and blocks along a side
@@ -75,7 +79,7 @@ struct TerrainUniform {
     // decided at level 0's samples alone, 0 for surroundings.
     steep: vec4<f32>,
     // The pixels a level's samples span at least where it shades the ground
-    // whole, as its geometry draws them (`TerrainSettings::pixel_error`):
+    // whole, as its tiles stream (`TerrainSettings::pixel_error`):
     // `terrain_shading_level` hands each level over as they shrink to half
     // that (x).
     pixel_error: vec4<f32>,
@@ -83,18 +87,15 @@ struct TerrainUniform {
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;
 
 // A patch: its first sample counted from the anchor at its level; its
-// spacing, the distances its vertices morph over and its skirt's depth; its
-// tile's layer, its parent tile's layer, and its first texel in each (x |
-// z << 16), borders aside; where its tile's hole bits start in
-// `terrain_holes` (0xffffffff without holes); and how far it still stands
-// morphed into its parent since its tile arrived.
+// spacing and its skirt's depth; its tile's layer and its first texel there
+// (x | z << 16), borders aside; and where its tile's hole bits start in
+// `terrain_holes` (0xffffffff without holes).
 struct PatchInput {
     @builtin(vertex_index) vertex: u32,
     @location(0) first: vec2<i32>,
-    @location(1) shape: vec4<f32>,
-    @location(2) atlas: vec4<u32>,
+    @location(1) shape: vec2<f32>,
+    @location(2) atlas: vec2<u32>,
     @location(3) holes: u32,
-    @location(4) fade: f32,
 }
 
 // Vertices along a patch side, and the grid's vertices before the skirts'.
@@ -105,34 +106,10 @@ fn terrain_load(layer: u32, texel: vec2<u32>) -> f32 {
     return textureLoad(terrain_heights, vec2<i32>(texel), i32(layer), 0).x;
 }
 
-// A vertex relative to the terrain's eye, and where it lies in its tile's
-// cells. Fragments take their normals from the smooth surface of the
-// terrain's normal maps, not from the level drawn.
-struct TerrainVertex {
-    relative: vec3<f32>,
-    cell: vec2<f32>,
-}
-
-// A patch's vertex as its patch draws it: its place on the grid, which of
-// its coordinates are odd and how far it morphs into its parent, its
-// tile's height there, its parent's at its even neighbor and the height it
-// stands at between them, and the vertex. What stands on the ground, as
-// water does, morphs alike.
-struct TerrainGridVertex {
-    grid: vec2<u32>,
-    odd: vec2<u32>,
-    morph: f32,
-    fine: f32,
-    coarse: f32,
-    height: f32,
-    vertex: TerrainVertex,
-}
-
-fn terrain_vertex(input: PatchInput) -> TerrainVertex {
-    return terrain_grid_vertex(input).vertex;
-}
-
-fn terrain_grid_vertex(input: PatchInput) -> TerrainGridVertex {
+// A patch's vertex relative to the terrain's eye: its place on the grid at
+// its tile's height there, skirts hanging their depth below the grid's
+// edges.
+fn terrain_vertex(input: PatchInput) -> vec3<f32> {
     var grid: vec2<u32>;
     var skirt = false;
     if input.vertex < TERRAIN_GRID_VERTICES {
@@ -149,36 +126,10 @@ fn terrain_grid_vertex(input: PatchInput) -> TerrainGridVertex {
         skirt = true;
     }
     let spacing = input.shape.x;
-    let layer = input.atlas.x;
-    let texel = vec2<u32>(input.atlas.z & 0xffffu, input.atlas.z >> 16u) + grid + 1u;
-    let fine = terrain_load(layer, texel);
+    let texel = vec2<u32>(input.atlas.y & 0xffffu, input.atlas.y >> 16u) + grid + 1u;
+    let height = terrain_load(input.atlas.x, texel);
     let base = vec2<f32>(input.first + vec2<i32>(grid));
-    let unmorphed = vec3<f32>(base.x * spacing + terrain.anchor.x, fine + terrain.anchor.y,
+    return vec3<f32>(base.x * spacing + terrain.anchor.x,
+        height + terrain.anchor.y - select(0.0, input.shape.y, skirt),
         base.y * spacing + terrain.anchor.z);
-    // By its distance from the detail eye, which the patch was selected
-    // around.
-    let away = length(unmorphed - terrain.detail.xyz);
-    let morph = max(clamp((away - input.shape.y) / (input.shape.z - input.shape.y), 0.0, 1.0),
-        input.fade);
-    let odd = grid & vec2<u32>(1u);
-    let parent_texel = vec2<u32>(input.atlas.w & 0xffffu, input.atlas.w >> 16u)
-        + (grid - odd) / 2u + 1u;
-    let coarse = terrain_load(input.atlas.y, parent_texel);
-    // Weights summing exactly: fully morphed vertices take the coarser
-    // tile's heights to the bit.
-    let height = fine * (1.0 - morph) + coarse * morph;
-    let morphed = base - vec2<f32>(odd) * morph;
-    var vertex: TerrainGridVertex;
-    vertex.grid = grid;
-    vertex.odd = odd;
-    vertex.morph = morph;
-    vertex.fine = fine;
-    vertex.coarse = coarse;
-    vertex.height = height;
-    vertex.vertex.relative = vec3<f32>(morphed.x * spacing + terrain.anchor.x,
-        height + terrain.anchor.y - select(0.0, input.shape.w, skirt),
-        morphed.y * spacing + terrain.anchor.z);
-    vertex.vertex.cell = vec2<f32>(texel - 1u) + morphed - base;
-    return vertex;
 }
-

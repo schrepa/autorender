@@ -37,15 +37,13 @@ gpu_structs! {
     }
 
     /// WGSL `TerrainInfo` of `scatter_snap.wgsl`: a terrain's origin and
-    /// level-0 spacing; where its levels start in the directory, how many
-    /// there are, where its materials start in the palette and its macro
-    /// colors' layer plus one (0 until they arrive); and the meters from
-    /// the eye up to which each of its first eight levels draws.
+    /// level-0 spacing; and where its levels start in the directory, how
+    /// many there are, where its materials start in the palette and its
+    /// macro colors' layer plus one (0 until they arrive).
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct TerrainInfo as ["TerrainInfo"] {
         pub origin: [f32; 4],
         pub levels: [u32; 4],
-        pub ranges: [[f32; 4]; 2],
     }
 
     /// WGSL `Snap` of `scatter_snap.wgsl`: the slots and terrains, and the

@@ -17,7 +17,8 @@ use crate::bindings::{
     PRESENTATION_SKIN_BOUNDS, PRESENTATION_TESTS, PYRAMID_DOWN, PYRAMID_FIRST, RETAINED_POSES,
     SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW, SHAFTS,
     SKY_TABLES, TAA_RESOLVE, TEMPORAL_POSES, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS,
-    TERRAIN_RESOLVE, TERRAIN_VT_BAKE, TERRAIN_VT_CAMERA, TERRAIN_VT_FEEDBACK, TERRAIN_VT_TERRAIN,
+    TERRAIN_RESOLVE, TERRAIN_SUBDIVISION, TERRAIN_VT_BAKE, TERRAIN_VT_CAMERA, TERRAIN_VT_FEEDBACK,
+    TERRAIN_VT_TERRAIN,
     TRANSPARENT_COMPOSITE, Table, VIRTUAL_BIN, VIRTUAL_POSES, VIRTUAL_SEED, VIRTUAL_SELECT,
     VIRTUAL_SHADOW, VIRTUAL_TRAVERSE, VISIBILITY_CLASSIFY, VISIBILITY_PASS, VISIBILITY_RESOLVE,
     WATER, WATER_BEHIND, WATER_SIM, WATER_WAVES,
@@ -125,6 +126,9 @@ pipeline_layouts! {
     LIT_TERRAIN_RESOLVE_PIPELINES = [CAMERA_TERRAIN, TERRAIN, TERRAIN_RESOLVE, LIGHT_SHADING];
     TERRAIN_VT_BAKE_PIPELINES = [CAMERA_TERRAIN, TERRAIN, TERRAIN_VT_BAKE];
     TERRAIN_VT_FEEDBACK_PIPELINES = [TERRAIN_VT_CAMERA, TERRAIN_VT_TERRAIN, TERRAIN_VT_FEEDBACK];
+    /// Terrain's subdivision: the camera, the terrain group and each
+    /// terrain's tree, leaves and arguments.
+    TERRAIN_SUBDIVISION_PIPELINES = [TERRAIN_VT_CAMERA, TERRAIN, TERRAIN_SUBDIVISION];
     /// Ground cover's blades.
     COVER_PIPELINES = [CAMERA, COVER_DRAW];
     LIT_COVER_PIPELINES = [CAMERA, COVER_DRAW, EMPTY, LIGHT_SHADING];
@@ -196,5 +200,6 @@ pipeline_layouts! {
 /// effect. Water's simulation builds its layout only once water is
 /// simulated, and terrain bounce light its own once a terrain's transfer
 /// arrives; the debug views' and auto exposure's layouts count though no
-/// start builds them unless they are on.
-pub const LAYOUT_BUDGET: usize = 72;
+/// start builds them unless they are on. Terrain's subdivision, which
+/// replaced the camera's patches selected on the CPU, takes one.
+pub const LAYOUT_BUDGET: usize = 73;

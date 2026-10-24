@@ -15,7 +15,6 @@ gpu_structs! {
         pub planes: [[f32; 4]; 6],
         pub deform_grid: [i32; 4],
         pub deform: [f32; 4],
-        pub ranges: [[f32; 4]; 2],
         pub foliage: [f32; 4],
         pub view: [f32; 4],
     }

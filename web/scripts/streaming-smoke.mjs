@@ -81,7 +81,7 @@ try {
   let rendering = await look(0, 0);
   // Job workers generate tiles beside the page, their
   // outputs arriving between commands.
-  for (let frame = 0; frame < 400 && (rendering.terrain.loading_tiles > 0 || rendering.terrain.fallback_patches > 0); frame++) {
+  for (let frame = 0; frame < 400 && (rendering.terrain.loading_tiles > 0 || rendering.terrain.fallback_tiles > 0); frame++) {
     await new Promise(resolve => setTimeout(resolve, 25));
     rendering = await rendered();
   }

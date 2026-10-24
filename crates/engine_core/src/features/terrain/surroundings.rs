@@ -74,14 +74,14 @@ impl Surroundings {
 
 /// A terrain's surroundings as they stream: how far they
 /// reach past its edges along x and z, their level-0 tiles along a side and
-/// sample spacing, and their resident tiles and the patches drawn.
+/// sample spacing, their resident tiles and whether they draw.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct SurroundingsStatus {
     pub reach: [f32; 2],
     pub tiles: u32,
     pub spacing: f32,
     pub resident_tiles: u32,
-    pub patches: u32,
+    pub drawn: bool,
 }
 
 impl Terrains {
@@ -98,7 +98,7 @@ impl Terrains {
             tiles: state.terrain.pyramid.base_tiles()[0],
             spacing: state.terrain.pyramid.spacing(0),
             resident_tiles: state.store.len() as u32,
-            patches: state.selection.patches.len() as u32,
+            drawn: state.drawn,
         })
     }
 

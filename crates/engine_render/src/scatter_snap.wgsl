@@ -1,31 +1,28 @@
-// Placed objects on the terrain as drawn: each frame the eye moved or
-// objects or the resident heights changed, before culling, every live
-// object's base moves onto its terrain's ground as the terrain draws it at
-// the object's distance (`terrain_ground.wgsl`), as ground cover's roots
-// do (`cover_grow.wgsl`), so objects stand on the ground drawn under them
-// as its levels morph and settle as finer tiles arrive. Its pose's height
-// and its bounding sphere follow its base, and an object blending into the
-// ground takes the ground's color under it, as ground cover's roots do.
-// Objects standing far away hide where tiles of the level holding them
-// instead are resident.
+// Placed objects on the terrain: each frame the eye moved or objects or the
+// resident heights changed, before culling, every live object's base moves
+// onto its terrain's true surface (`terrain_ground.wgsl`), which the
+// terrain draws within about a pixel, as ground cover's roots do
+// (`cover_grow.wgsl`), so objects stand on the ground drawn under them and
+// settle as finer tiles arrive. Its pose's height and its bounding sphere
+// follow its base, and an object blending into the ground takes the
+// ground's color under it, as ground cover's roots do. Objects standing far
+// away hide where tiles of the level holding them instead are resident.
 
 struct Snap {
     // Slots and terrains.
     counts: vec4<u32>,
-    // The eye (world), whose distance the ground's levels morph by, and the
-    // meters a pixel spans a meter from it (w).
+    // The eye (world), and the meters a pixel spans a meter from it (w),
+    // which the ground's tint under objects follows.
     eye: vec4<f32>,
 }
 
-// A terrain: its origin (world) and level-0 sample spacing; where its
+// A terrain: its origin (world) and level-0 sample spacing; and where its
 // levels start in the directory, how many there are, where its materials
 // start in the palette and its macro colors' layer plus one (0 until they
-// arrive); and the meters from the eye up to which each of its first eight
-// levels draws (`terrain_ground.wgsl`'s `GroundTerrain`).
+// arrive).
 struct TerrainInfo {
     origin: vec4<f32>,
     levels: vec4<u32>,
-    ranges: array<vec4<f32>, 2>,
 }
 
 // A surface material as the terrain palette holds it (`terrain.wgsl`):
@@ -184,8 +181,7 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let info = terrains[terrain];
-    let ground_terrain = GroundTerrain(info.levels.x, info.levels.y, info.origin.w,
-        info.ranges);
+    let ground_terrain = GroundTerrain(info.levels.x, info.levels.y, info.origin.w);
     let pose = poses[id.x];
     let local = vec2<f32>(pose.r0.w, pose.r2.w) - info.origin.xz;
     let ground = finest_ground(info, ground_terrain, local);
@@ -197,12 +193,9 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     if !ground.found {
         return;
     }
-    // The ground drawn under it morphs by its distance from the eye, as
-    // ground cover's does by its cell's.
     let relative = vec3<f32>(pose.r0.w, info.origin.y + ground.height, pose.r2.w) - snap.eye.xyz;
-    let away = length(relative);
     let base = info.origin.y
-        + drawn_height(ground_terrain, local, away, ground.level, ground.tile) - record.sink;
+        + true_height(ground_terrain, local, ground.level, ground.tile) - record.sink;
     poses[id.x].r1.w = base;
     records[id.x].center.y = record.center.y + (base - pose.r1.w);
     if grounds[id.x].z != 0u {

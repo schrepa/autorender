@@ -264,9 +264,9 @@ impl Terrains {
     }
 
     /// Each level's largest measured height difference from the next
-    /// coarser one (meters; zero until measured) and the range it drew to
-    /// at the last selection (meters from the eye), finest first, of
-    /// `entity`'s terrain.
+    /// coarser one (meters; zero until measured) and the range its tiles
+    /// streamed by at the last update (meters from the eye), finest first,
+    /// of `entity`'s terrain.
     pub fn level_detail(&self, entity: Entity) -> Option<(&[f32], &[f32])> {
         self.entries
             .iter()

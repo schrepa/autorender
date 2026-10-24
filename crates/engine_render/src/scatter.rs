@@ -794,8 +794,7 @@ impl ScatterPass {
                 *snapped == key && *revision == sources.revision && terrains == sources.terrains
             });
         if unchanged && !self.slots_written {
-            // The eye moving only moves objects up or down as the drawn
-            // ground's levels morph under them.
+            // The eye moving only changes the ground's tint under objects.
             match &mut self.snapped {
                 Some((.., seen)) if *seen != view => *seen = view,
                 _ => return,

@@ -106,7 +106,7 @@ pub mod terrain {
         Blend, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion, ErosionLayer, ErosionStage,
         FarPlacement, HeightImage, HeightmapLayer, Hydrology, HydrologyLayer, HydrologySample,
         HydrologyStage, Layer, LayerError, Layers, MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS,
-        MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, Mask, MotionDetail, NoiseLayer, NoiseMask, Patch,
+        MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, Mask, MotionDetail, NoiseLayer, NoiseMask,
         PathLayer, PathProfile, PathStage, Placed, PlacedCollider, PlacedShape, PlacementAsset,
         PlacementChoice, PlacementLayer, PlacementLod, PlacementPart, Pyramid, PyramidError, Remap,
         Route, RouteOptions, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Surroundings,

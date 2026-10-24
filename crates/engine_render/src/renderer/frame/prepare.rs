@@ -938,11 +938,7 @@ impl Renderer {
                 slot_capacity: self.instances.capacity,
                 mesh_layout: self.mesh_layout,
                 placement: &placement,
-                terrain: snapshot
-                    .terrain
-                    .terrains
-                    .iter()
-                    .any(|terrain| !terrain.patches.is_empty()),
+                terrain: snapshot.terrain.terrains.iter().any(|terrain| terrain.drawn),
             },
         )
     }
@@ -1428,6 +1424,7 @@ impl Renderer {
             deformation: self.terrain.deformation.pending(),
             vt_bakes: self.terrain.vt.baking(),
             bounce: self.terrain.bounce.relights(),
+            subdivision: terrain && self.terrain.subdivides(),
             deferred: self.terrain_deferred(terrain, passes.opaque_kind),
             scatter,
             clusters: virtual_frame,

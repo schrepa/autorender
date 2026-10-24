@@ -68,7 +68,7 @@ export async function openTerrain(name) {
     let resident = 0;
     for (let frame = 0; frame < 600; frame++) {
       rendering = (await command("render")).result.rendering ?? (await command("status")).result.rendering;
-      const ready = rendering.terrain.tiles > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_patches === 0;
+      const ready = rendering.terrain.tiles > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_tiles === 0;
       resident = ready ? resident + 1 : 0;
       if (resident > 1) {
         return rendering;

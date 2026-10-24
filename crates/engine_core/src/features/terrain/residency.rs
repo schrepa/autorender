@@ -7,8 +7,9 @@ use super::*;
 pub(super) const RETRY_AFTER: u64 = 120;
 
 /// Ranges, as multiples of each level's, within which tiles load and stay:
-/// beyond its range a level's tiles still shade the coarser level's
-/// patches (their normals), so they load further than they draw.
+/// beyond its range a level's tiles still shade the ground (their normals)
+/// and hold its true surface, so they load further than their samples span
+/// the pixel error.
 pub(super) const LOAD_REACH: f32 = 2.0;
 
 pub(super) const KEEP_REACH: f32 = 2.5;
@@ -52,14 +53,16 @@ pub(super) struct TerrainState {
     /// Its resident tiles, and those kept in memory.
     pub(super) store: TileStore,
     pub(super) failed: TileMap<u64>,
-    pub(super) selection: Selection,
+    /// Whether the camera draws it: terrain drawing is on, its tiles are
+    /// resident and, for surroundings, the settings show them.
+    pub(super) drawn: bool,
     /// Level-0 tiles collision wants.
     pub(super) collision: Vec<TileKey>,
     /// Advances whenever what stands on its tiles changes: the placement
     /// assets, the bridge material, and the bridges and falls its bakes
     /// found ([`Self::revision`] adds the tiles' own).
     pub(super) standing: u64,
-    /// The ranges the last selection used.
+    /// The ranges its levels' tiles streamed by at the last update.
     pub(super) ranges: Vec<f32>,
     /// The layers tiles generate from once its bakes are done, and what
     /// the last hydrology and erosion bakes found.
@@ -138,7 +141,7 @@ impl TerrainState {
             store: TileStore::new(terrain.pyramid, Generation::of(&terrain.edits, true)),
             terrain,
             failed: TileMap::default(),
-            selection: Selection::default(),
+            drawn: false,
             collision: Vec::new(),
             standing: 0,
             ranges: Vec::new(),

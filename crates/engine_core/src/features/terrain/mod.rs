@@ -1,5 +1,6 @@
-//! Terrain: heightfields whose tiles stream around the camera,
-//! drawn in continuous level of detail and sampled by queries and collision.
+//! Terrain: heightfields whose tiles stream around the camera, drawn by
+//! renderers' subdivisions of their true surface and sampled by queries
+//! and collision.
 //!
 //! An entity's [`Terrain`] describes one: where it lies, its tile pyramid,
 //! the layer stack its tiles generate from (they load as records, the
@@ -11,7 +12,7 @@
 //! first, and level-0 tiles load around the camera and [`StreamingFocus`](crate::StreamingFocus)
 //! entities for collision. Past a tile budget or the device's capacity the
 //! least important tiles drop and count as dropped. Frames list each
-//! terrain's resident tiles and the patches the camera draws in
+//! terrain's resident tiles and whether the camera draws it in
 //! [`RenderSnapshot::terrain`].
 //!
 //! Its bakes and tiles are records ([`crate::Jobs`]): the host hands each
@@ -128,9 +129,8 @@ pub use engine_terrain::lighting::TerrainLighting;
 use engine_terrain::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats, Fall,
     Gait, HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask, NoiseMask, Obstacle,
-    PATCH_QUADS, PATCHES_PER_TILE, Patch, PathStage, Pyramid, Remap, Route, RouteOptions,
-    Selection, Stamp, TILE_QUADS, TILE_STRIDE, Tile, TileKey, TileSample, WantedTile, WantedView,
-    WaterPoint,
+    PATCH_QUADS, PATCHES_PER_TILE, PathStage, Pyramid, Remap, Route, RouteOptions, Stamp,
+    TILE_QUADS, TILE_STRIDE, Tile, TileKey, TileSample, WantedTile, WantedView, WaterPoint,
 };
 
 use crate::{

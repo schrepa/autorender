@@ -20,6 +20,13 @@ impl Renderer {
     ) {
         match node.pass() {
             Pass::Presentation => self.encode_presentation(encoder),
+            Pass::Subdivision => self.terrain.encode_subdivision(
+                &self.device,
+                encoder,
+                &self.mesh_shader,
+                &self.camera.buffer,
+                &self.profiler,
+            ),
             Pass::ShadowSelect => self.encode_shadow_selection(state, encoder),
             Pass::VirtualSelect => self.encode_cluster_selection(encoder),
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
@@ -154,6 +161,7 @@ impl Renderer {
             | Resource::Tracks
             | Resource::Pages
             | Resource::Bounce
+            | Resource::Leaves
             | Resource::Cover
             | Resource::Feedback => {
                 unreachable!("{resource:?} is no attachment of the renderer's passes")
@@ -299,28 +307,14 @@ impl Renderer {
                             )
                         })
                 },
-                // Terrain: the camera's patches in this map.
+                // Terrain: its subdivision's leaves, or a kept level's
+                // ground, in this map.
                 terrain_draw: &|pass, map| {
-                    let Some(pipeline) = terrain
-                        .pipelines
-                        .shadow_pipeline()
-                        .filter(|_| terrain_frame)
-                    else {
-                        return 0;
-                    };
-                    let mut draws = 0;
-                    for frame_terrain in &terrain.patches.frame.terrains {
-                        let Some((_, range)) = frame_terrain
-                            .maps
-                            .iter()
-                            .find(|(drawn, range)| *drawn == map && !range.is_empty())
-                        else {
-                            continue;
-                        };
-                        pass.set_pipeline(pipeline);
-                        draws += terrain.draw(pass, range, 0, frame_terrain.uniform);
+                    if terrain_frame {
+                        terrain.draw_shadow(pass, map)
+                    } else {
+                        0
                     }
-                    draws
                 },
                 // Placed objects culled for this map.
                 scatter_draw: &|pass, map, casters, cards| {

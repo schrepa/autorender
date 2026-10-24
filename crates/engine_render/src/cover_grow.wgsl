@@ -20,8 +20,9 @@
 // as wide as the last, trying only the first indices of the finest cells
 // within them that its density can reach, so wherever a blade grows it is
 // the same blade. Candidates near their threshold grow short, so blades
-// rise as the eye nears instead of popping in. Blades stand on the ground
-// as the terrain draws it, morphing between its levels.
+// rise as the eye nears instead of popping in. Blades stand on the ground's
+// true surface, which the terrain draws within about a pixel
+// (`terrain_ground.wgsl`).
 // Survivors in the view append to the frame's blades; past capacity they
 // are only counted. Blades take the tint of the ground's macro colors, as
 // the ground does (`terrain_variety.wgsl`).
@@ -53,11 +54,6 @@ struct Grow {
     // `deform_grid` and `deform`).
     deform_grid: vec4<i32>,
     deform: vec4<f32>,
-    // Meters from the eye up to which each of the terrain's first eight
-    // levels draws, finest first: each morphs into the next coarser level
-    // over the last quarter of its range; 0 for levels that
-    // never morph.
-    ranges: array<vec4<f32>, 2>,
     // Foliage: 1 while blades keep their ground's normal (its bases blend
     // into the ground).
     foliage: vec4<f32>,
@@ -131,7 +127,7 @@ fn hash(value: u32) -> u32 {
 
 // The terrain cover grows on, as its ground reads.
 fn grown() -> GroundTerrain {
-    return GroundTerrain(grow.counts.x, grow.counts.y, grow.origin.w, grow.ranges);
+    return GroundTerrain(grow.counts.x, grow.counts.y, grow.origin.w);
 }
 
 // What the terrain holds at terrain-local `local`: its height, and the
@@ -144,11 +140,11 @@ struct Ground {
     level: u32,
 }
 
-// The ground at terrain-local `local` as the terrain draws it `away` meters
-// from the eye (`terrain_ground.wgsl`'s `drawn_height`). Control values
-// come from the nearest sample of the finest resident level. Nothing grows
-// beyond the terrain's far edges.
-fn drawn_ground(local: vec2<f32>, away: f32) -> Ground {
+// The ground at terrain-local `local` on its true surface
+// (`terrain_ground.wgsl`'s `true_height`). Control values come from the
+// nearest sample of the finest resident level. Nothing grows beyond the
+// terrain's far edges.
+fn true_ground(local: vec2<f32>) -> Ground {
     var ground: Ground;
     let base = grow.counts.x;
     let levels = grow.counts.y;
@@ -173,7 +169,7 @@ fn drawn_ground(local: vec2<f32>, away: f32) -> Ground {
         min(vec2<u32>(round(finest)) - tile.first, vec2<u32>(256u)) + vec2<u32>(1u),
         tile.layer, 0).x;
     ground.found = true;
-    ground.height = drawn_height(grown(), local, away, level, tile);
+    ground.height = true_height(grown(), local, level, tile);
     return ground;
 }
 
@@ -205,26 +201,6 @@ fn ground_at(local: vec2<f32>) -> Ground {
         return ground;
     }
     return ground;
-}
-
-// The level `drawn_ground` stands on `away` meters from the eye at
-// terrain-local `local`, whose finest resident level is `finest`: the
-// first it has not fully morphed out of, or whose coarser level is not
-// resident.
-fn drawn_level(local: vec2<f32>, finest: u32, away: f32) -> u32 {
-    var level = finest;
-    loop {
-        if level + 1u >= grow.counts.y || level_morph(grown(), level, away) < 1.0 {
-            break;
-        }
-        let coarse = level_tile(grown(), level + 1u,
-            local / (grow.origin.w * f32(2u << level)));
-        if coarse.layer == NOT_RESIDENT {
-            break;
-        }
-        level += 1u;
-    }
-    return level;
 }
 
 // Heights as unsigned integers in the same order, for atomic extremes.
@@ -287,9 +263,8 @@ const CELL_MARGIN: f32 = 0.05;
 
 // The samples of `level` (counted from the terrain's origin at that
 // level) the ground of a cell from terrain-local `corner`, `spacing` wide,
-// can stand on as `drawn_ground` reads it, on that level or morphing into
-// it from the finer one: the first, none before `first`, and how many
-// along each side.
+// can stand on as `true_ground` reads it on that level: the first, none
+// before `first`, and how many along each side.
 struct CellSamples {
     first: vec2<u32>,
     count: vec2<u32>,
@@ -297,11 +272,10 @@ struct CellSamples {
 
 fn cell_samples(corner: vec2<f32>, spacing: f32, level: u32, first: vec2<u32>) -> CellSamples {
     let per = grow.origin.w * f32(1u << level);
-    // Corners of the pairs of cells from even samples that hold its
-    // points, a thousandth of a sample wider for rounding.
-    let low = max(vec2<u32>(max(floor((corner / per - 0.001) * 0.5), vec2<f32>(0.0))) * 2u,
-        first);
-    let high = vec2<u32>(floor(((corner + vec2<f32>(spacing)) / per + 0.001) * 0.5)) * 2u + 2u;
+    // Corners of the cells that hold its points, a thousandth of a sample
+    // wider for rounding.
+    let low = max(vec2<u32>(max(floor(corner / per - 0.001), vec2<f32>(0.0))), first);
+    let high = vec2<u32>(floor((corner + vec2<f32>(spacing)) / per + 0.001)) + 1u;
     var rect: CellSamples;
     rect.first = low;
     rect.count = high + 1u - min(low, high + 1u);
@@ -439,18 +413,16 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         u32(ceil(held * cover_share(nearest, radius_densest, span))));
     let finest = side * side;
     // Whether any candidate's blade can show, before any reads its ground:
-    // the samples of every level its ground stands on across the cell
-    // (`drawn_ground`'s, from those drawn nearest to the coarser one the
-    // farthest morph into) bound its root, and the tallest blade its
-    // sphere. Cells whose bound would read more samples than four for
-    // each candidate (each reads four heights or more), or for each lane,
-    // go unbounded. One lane plans it and all read the samples.
+    // the samples its ground stands on across the cell (`true_ground`'s, of
+    // the finest level resident at its middle and the next coarser, where
+    // the cell reaches past that level's tile) bound its root, and the
+    // tallest blade its sphere. Cells whose bound would read more samples
+    // than four for each candidate (each reads four heights or more), or for
+    // each lane, go unbounded. One lane plans it and all read the samples.
     let middle = corner + vec2<f32>(0.5 * spacing);
     if lane == 0u {
-        let slack = 0.01 + 1.0e-5 * center_away;
-        let first = drawn_level(middle, cell_level, max(center_away - half_diagonal - slack, 0.0));
-        let last = min(drawn_level(middle, cell_level, center_away + half_diagonal + slack) + 1u,
-            grow.counts.y - 1u);
+        let first = cell_level;
+        let last = min(cell_level + 1u, grow.counts.y - 1u);
         var samples = 0u;
         for (var level = first; level <= last; level++) {
             let rect = cell_samples(corner, spacing, level, vec2<u32>(0u));
@@ -521,9 +493,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         if rank >= held * cover_share(distance(world_xz, grow.eye.xz), radius_densest, span) {
             continue;
         }
-        // The ground morphs by the distance to the cell's ground there.
-        let level_away = distance(vec3<f32>(world_xz.x, cell_center.y, world_xz.y), grow.eye.xyz);
-        let ground = drawn_ground(local, level_away);
+        let ground = true_ground(local);
         if !ground.found {
             continue;
         }

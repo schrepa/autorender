@@ -744,44 +744,49 @@ tables! {
     /// the height array, each view's eye-relative projection and each
     /// terrain's anchor and material, the uniforms at dynamic offsets.
     /// Fragments read the heights too, where kept shadow levels hold the
-    /// ground at a level of their own.
+    /// ground at a level of their own. Vertices read the frame's leaves of
+    /// the terrains' subdivisions and the true surface under them, and
+    /// where deep materials displace it their blend, normals and heights,
+    /// which the subdivision's compute passes measure leaves by alike.
     const TERRAIN: Table = Table {
         label: "engine/terrain-layout",
         serves: [SHADER @ 1, TERRAIN_SHADOW_SHADER @ 1],
         bindings: &[
-            texture(17, "terrain_heights", Unfilterable, D2Array, VF),
+            texture(17, "terrain_heights", Unfilterable, D2Array, VFC),
             dynamic_uniform(18, "terrain_view", size_of::<terrain::ViewUniform>(), VF),
             dynamic_uniform(
                 19,
                 "terrain",
                 size_of::<terrain::TerrainUniform>(),
-                VF,
+                VFC,
             ),
-            read(20, "terrain_holes", F),
+            read(20, "terrain_holes", VFC),
             // Each tile's normal maps, gathered through the control
             // values' sampler; and the sky maps' sampler.
-            texture(21, "terrain_normals", Uint, D2Array, F),
+            texture(21, "terrain_normals", Uint, D2Array, VFC),
             sampler(22, "terrain_sky_sampler", Filtering, F),
-            read(23, "terrain_directory", F),
-            texture(24, "terrain_control", Uint, D2Array, F),
-            uniform_of(25, "terrain_palette", terrain::PALETTE_BYTES, F),
+            read(23, "terrain_directory", VFC),
+            texture(24, "terrain_control", Uint, D2Array, VFC),
+            uniform_of(25, "terrain_palette", terrain::PALETTE_BYTES, VFC),
             // Surface materials' maps, base color and data (each
             // material's normal and packed maps), the runtime virtual
             // texture's sheets, and their sampler.
             texture(26, "terrain_albedo", Float, D2Array, F),
-            texture(27, "terrain_material_data", Float, D2Array, F),
+            texture(27, "terrain_material_data", Float, D2Array, VFC),
             texture(28, "terrain_vt_sheets", Float, D2Array, F),
-            sampler(29, "terrain_material_sampler", Filtering, F),
+            sampler(29, "terrain_material_sampler", Filtering, VFC),
             // Each terrain's sky visibility map.
             texture(30, "terrain_sky", Float, D2Array, F),
             // Runtime deformation's map.
             read(31, "terrain_deformation", F),
             // Gathers of the control values (nearest).
-            sampler(32, "terrain_control_sampler", NonFiltering, F),
+            sampler(32, "terrain_control_sampler", NonFiltering, VFC),
             // Each terrain's macro colors with their mips, read through
             // the materials' sampler: the slot the horizon records' uniform
             // left of the 16 sampled textures a fragment stage binds.
             texture(35, "terrain_macro", Float, D2Array, F),
+            // The frame's leaves of every terrain's subdivision.
+            read(36, "terrain_surface_leaves", V),
         ],
     };
 
@@ -833,6 +838,29 @@ tables! {
         bindings: &[
             texture(18, "terrain_ids_texture", Uint, D2, C),
             write(19, "terrain_vt_wanted", C),
+        ],
+    };
+
+    /// Group 2 of terrain's subdivision, compute passes after the camera
+    /// (group 0, as the virtual texture's feedback binds it) and the terrain
+    /// group (`meshes/terrain_subdivision.wgsl`): each terrain's subdivision
+    /// at a dynamic offset, its tree, the frame's leaves' nodes and the
+    /// leaves the frame draws, and every terrain's counters, which its
+    /// indirect arguments are copied from.
+    const TERRAIN_SUBDIVISION: Table = Table {
+        label: "engine/terrain-subdivision-layout",
+        serves: [SHADER @ 2],
+        bindings: &[
+            dynamic_uniform(
+                24,
+                "subdivision",
+                size_of::<terrain::SubdivisionUniform>(),
+                C,
+            ),
+            write(25, "subdivision_tree", C),
+            write(26, "subdivision_nodes", C),
+            write(27, "subdivision_leaves", C),
+            write(28, "subdivision_args", C),
         ],
     };
 
@@ -1067,6 +1095,10 @@ tables! {
             read(56, "water_sim_cells", VF),
             read(57, "water_sim_ground", VF),
             read(58, "water_sim_beds", V),
+            // The terrain's directory and its subdivision's leaves, which
+            // tiles' water draws on (`meshes/terrain_surface.wgsl`).
+            read(23, "terrain_directory", V),
+            read(36, "terrain_surface_leaves", V),
         ],
     };
 

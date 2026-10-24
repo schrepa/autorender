@@ -84,8 +84,9 @@ modes! {
     /// (pointing back) to 1 (along the axis); terrain's its smooth
     /// surface's.
     Normals = "normals",
-    /// Terrain's tiles and patches: tile edges red, patch edges dark, the
-    /// ground between gray; everything else as in `cards`.
+    /// Terrain's level-0 tiles and patches (sixteen samples a side): tile
+    /// edges red, patch edges dark, the ground between gray; everything else
+    /// as in `cards`.
     Tiles = "tiles",
     /// Terrain's surface materials, each in its own color, blended in the
     /// shares the ground shows them in.
@@ -241,8 +242,8 @@ pub struct DetailShares {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TerrainProbe {
-    /// The tile it lies in at its patch's level ([`PixelProbe::level`]),
-    /// 256 cells a side, counted along x and z from the terrain's origin.
+    /// The level-0 tile it lies in, 256 cells a side, counted along x and z
+    /// from the terrain's origin.
     pub tile: [i32; 2],
     /// The patch it lies in within the tile, 16 cells a side, from the
     /// tile's corner.
@@ -318,7 +319,8 @@ pub struct PixelProbe {
     pub kind: Option<DrawnKind>,
     /// Its level of detail: meshes' and placed objects' 0 for their own
     /// mesh and 1 up for their simplifications, impostor cards' the level
-    /// past the simplifications, terrain's patch level.
+    /// past the simplifications, terrain's leaf level (the pyramid level
+    /// whose spacing its subdivision leaf's meshlet vertices stand apart).
     pub level: u32,
     /// Whether it is an impostor card fading in or out over its mesh.
     pub fading: bool,

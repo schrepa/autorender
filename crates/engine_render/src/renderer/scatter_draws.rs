@@ -166,8 +166,8 @@ impl Renderer {
                     .insert((terrain.id, tile.key()), Arc::clone(tile), objects);
             }
         }
-        // Objects stand on the ground as each level draws it, of the
-        // heights resident this frame, and take its colors there.
+        // Objects stand on the ground's true surface, of the heights
+        // resident this frame, and take its colors there.
         let infos: Vec<TerrainInfo> = terrains
             .iter()
             .enumerate()
@@ -176,7 +176,6 @@ impl Renderer {
                 TerrainInfo {
                     origin: terrain.origin.extend(terrain.pyramid.spacing(0)).to_array(),
                     levels: [directory, terrain.pyramid.levels(), palette, colors],
-                    ranges: crate::ground_cover::morph_ranges(terrain),
                 }
             })
             .collect();

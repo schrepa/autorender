@@ -40,10 +40,10 @@ pub struct TerrainStats {
     pub shading_records: u32,
     /// Wanted tiles beyond the tile budget or the device's capacity.
     pub dropped_tiles: u32,
-    /// Patches the camera draws, and of those how many stand in for finer
-    /// levels not resident yet.
-    pub patches: u32,
-    pub fallback_patches: u32,
+    /// Tiles the camera's view draws (within their level's range of the
+    /// eye, or pinned) that are to load and not resident yet: coarser tiles'
+    /// ground stands in for theirs.
+    pub fallback_tiles: u32,
     /// Terrains whose bakes are in progress: they
     /// load no tiles until done.
     pub baking: u32,
@@ -69,9 +69,8 @@ pub struct TerrainStats {
     /// Emitters of spray and mist white water spawned at terrains' rapids,
     /// where their settled water loses energy fastest.
     pub white_water: u32,
-    /// Of the resident tiles and patches, those of terrains' surroundings.
+    /// Of the resident tiles, those of terrains' surroundings.
     pub surroundings_tiles: u32,
-    pub surroundings_patches: u32,
     /// Whether the camera's view has yet to load whole since terrains
     /// arrived or [`Terrains::begin_loading`]: frames work
     /// on terrain for the settings' `loading_work_ms`, then `work_ms`.

@@ -1,18 +1,19 @@
 //! Terrain: every resident tile's heights in one texture
-//! array, the camera's patches as instances of one shared grid with skirts,
-//! and their pipelines in the opaque passes, the shadow maps drawn every
-//! frame, the kept shadow levels and reflection probe faces.
+//! array, each terrain's ground drawn by the leaves of its subdivision on
+//! the GPU (`surface`), and their pipelines in the opaque passes, the shadow
+//! maps drawn every frame, the kept shadow levels and reflection probe
+//! faces.
 //!
 //! Tiles upload as frames list them and release when they leave the list;
 //! the array grows by doubling up to the device's layers, beyond which
-//! tiles drop (counted) and their patches do not draw. Each view culls the
-//! camera's patches by their bounds: the camera's frustum, each shadow
-//! map's sides; the camera also skips those whose every triangle faces away
-//! from it and those nearer ground hides (`culling`), from what each tile
-//! was made with. Every view drawn each frame draws the same vertices, at
-//! the positions the camera sees, so terrain shadows itself without acne.
-//! Where terrains cast long shadows through their horizon maps, the near
-//! cascades draw terrain near their receivers; kept shadow levels, which
+//! tiles drop (counted) and the ground draws the coarser levels resident
+//! there. A terrain's subdivision splits its square by longest edge
+//! bisection wherever a leaf's flat triangle strays more than the settings'
+//! pixels from the ground's true surface, seen from the detail eye, and its
+//! leaves draw that surface, deep materials displacing it, with one indirect
+//! draw per terrain and view. The shadow maps drawn every frame draw the
+//! same leaves on the true surface, undisplaced, so terrain its materials do
+//! not displace shadows itself without acne. Kept shadow levels, which
 //! must not depend on where the eye stood, hold the ground as far as they
 //! reach at a level of detail of their own, unmorphed, over the region a
 //! level redraws (`patches`), and redraw over ground that arrives, leaves
@@ -25,12 +26,13 @@
 //! averaged, so a coarser level looks like the finer one seen from afar.
 //! Fragments blend them through a directory of every level's resident
 //! tiles, at the levels a pixel's footprint asks for
-//! (`terrain_shading_level`) whatever level the geometry draws at, so light
-//! and materials hold still as levels of detail hand over.
+//! (`terrain_shading_level`) whatever leaves the geometry draws, so light
+//! and materials hold still as the subdivision changes.
 //!
 //! The pass is its parts: the tile atlas (`atlas`), the tables shaders
-//! look up (`tables`), the frame's patches (`patches`, `culling`) and the
-//! pipelines and terrain group (`pipelines`), beside tiles' water
+//! look up (`tables`), the subdivisions (`surface`), the frame's uniforms
+//! and kept patches (`patches`) and the pipelines and terrain group
+//! (`pipelines`), beside tiles' water
 //! (`water_blocks`), the material maps, the sky and horizon maps its
 //! lighting uploads, its bounce light, its macro colors, the runtime
 //! virtual texture with its far pages (what they are baked from: `far`)
@@ -74,25 +76,24 @@ use crate::terrain_maps::TerrainMaps;
 use crate::terrain_sky::SkyMaps;
 
 mod atlas;
-mod culling;
 mod far;
 #[cfg(debug_assertions)]
 mod invariants;
 mod patches;
 mod pipelines;
+mod surface;
 mod tables;
 mod water_blocks;
 
 use atlas::TileAtlas;
 pub(crate) use patches::{PatchDraws, planes, visible};
 use pipelines::{GroupSources, TerrainPipelines};
+pub(crate) use surface::SurfaceTrees;
 use tables::TerrainTables;
 pub(crate) use water_blocks::{GRID_INDICES as WATER_GRID_INDICES, water_patch_layout};
 
 pub(crate) use crate::gpu_layouts::terrain::PatchRecord;
 
-/// Triangles a patch draws: its grid's and its skirts'.
-pub(crate) const PATCH_TRIANGLES: u32 = 2 * (GRID - 1) * (GRID - 1) + 8 * (GRID - 1);
 /// Texels along each side of a layer: a tile's samples with their border.
 const LAYER_SIZE: u32 = engine_core::terrain_data::TILE_STRIDE;
 /// Uniform offsets of the views and terrains, at the WebGPU alignment.
@@ -114,8 +115,7 @@ const CONTROL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 const RIVER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
 
 /// Seconds over which a tile that arrived grows out of its parent level,
-/// its patches drawn morphed into the parent's at first, and
-/// its normals and surface materials take over from the coarser level's:
+/// its normals and surface materials taking over from the coarser level's:
 /// the same time however fast frames come.
 const ARRIVAL_SECONDS: f32 = 0.4;
 
@@ -161,7 +161,10 @@ fn changed_run<T: bytemuck::Pod>(was: &[T], now: &[T]) -> Range<usize> {
 /// when any of them is another texture or buffer, this frame's patches
 /// holding water and each terrain's uniform offset and range of them, the
 /// grid's indices, and the blocks resident and dropped this frame for want
-/// of layers.
+/// of layers. And the terrains' directory and the frame's leaves of their
+/// subdivisions (`meshes/terrain_surface.wgsl`), with a generation advancing
+/// when either is another buffer, whose indirect draws are
+/// [`TerrainPass::surface_draw`]'s.
 pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) heights: &'a wgpu::TextureView,
     pub(crate) views: &'a wgpu::Buffer,
@@ -173,6 +176,9 @@ pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) indices: &'a wgpu::Buffer,
     pub(crate) terrains: &'a [(u32, Range<u32>)],
     pub(crate) blocks: [u32; 2],
+    pub(crate) directory: &'a wgpu::Buffer,
+    pub(crate) leaves: &'a wgpu::Buffer,
+    pub(crate) surface_generation: (u64, u64),
 }
 
 /// What ground cover's growth reads of the terrain pass.
@@ -194,31 +200,25 @@ pub(crate) struct CoverSources<'a> {
     pub revision: u64,
 }
 
-/// One terrain's draws this frame: its uniform slot, the camera's patches,
-/// every patch (for probe faces) and each shadow map's, the kept shadow
-/// level redrawn this frame's ground among them. The camera's and
-/// every patch's ranges end with the patches with holes, which draw with
-/// their own pipelines: as many as `*_holes`. And the rectangle of the
-/// screen the camera's patches cover, in normalized device coordinates
-/// (least x and y, then greatest; `None` where it is unbounded), which its
-/// resolve shades within.
+/// One terrain drawing this frame: its index among the frame's terrains,
+/// its uniform slot, whether any of its resident tiles has holes (its
+/// leaves then draw with the pipelines cutting them), whether it casts long
+/// shadows through its horizon map (its kept levels then hold its ground
+/// past the near cascades, and the moving map draws none of it), the
+/// patches the kept shadow level redrawn this frame takes of its ground,
+/// and the rectangle of the screen its ground covers, in normalized device
+/// coordinates (least x and y, then greatest; `None` where it is
+/// unbounded), which its resolve shades within.
 pub(crate) struct FrameTerrain {
+    pub terrain: usize,
     pub uniform: u32,
-    pub camera: Range<u32>,
-    pub camera_holes: u32,
-    pub all: Range<u32>,
-    pub all_holes: u32,
-    pub maps: Vec<(usize, Range<u32>)>,
+    pub holes: bool,
+    pub long_shadows: bool,
+    pub kept: Range<u32>,
     pub screen: Option<[f32; 4]>,
 }
 
 impl FrameTerrain {
-    /// `range` without and with holes.
-    pub(crate) fn split(range: &Range<u32>, holes: u32) -> [Range<u32>; 2] {
-        let middle = range.end - holes;
-        [range.start..middle, middle..range.end]
-    }
-
     /// The pixels of a `size` target its resolve shades: its screen
     /// rectangle, widened a pixel for rasterization's rounding (x, y, width
     /// and height); `None` where it covers none.
@@ -236,19 +236,12 @@ impl FrameTerrain {
     }
 }
 
-/// What a frame draws of every terrain.
+/// What a frame draws of every terrain drawing, and the patches the kept
+/// shadow level redrawn draws.
 #[derive(Default)]
 pub(crate) struct TerrainFrame {
     pub terrains: Vec<FrameTerrain>,
-    /// Patches the camera draws and their triangles, and patches drawn into
-    /// shadow maps.
-    pub patches: u32,
-    pub triangles: u32,
     pub shadow_patches: u32,
-    /// Patches within the camera's frustum it skips: those whose every
-    /// triangle faces away, and those nearer ground hides.
-    pub back_facing: u32,
-    pub hidden: u32,
 }
 
 /// What `TerrainPass::prepare` needs of the frame's views.
@@ -262,8 +255,8 @@ pub(crate) struct TerrainViews<'a> {
     pub eye: Vec3,
     /// The detail eye
     /// ([`RenderSnapshot::detail_eye`](engine_core::RenderSnapshot::detail_eye)),
-    /// which streaming selected the patches around and their vertices morph
-    /// by: the camera's eye unless frozen.
+    /// which the virtual texture's pages lie around: the camera's eye unless
+    /// frozen.
     pub detail_eye: Vec3,
     /// Shadow maps drawn every frame and their world-to-clip matrices.
     pub maps: &'a [(usize, Mat4)],
@@ -271,7 +264,7 @@ pub(crate) struct TerrainViews<'a> {
     /// into at a level of detail the level's texels choose.
     pub kept: Option<crate::shadows::KeptRefresh>,
     /// Whether reflection probes capture faces this frame, which draw every
-    /// patch.
+    /// leaf.
     pub probes: bool,
     /// Terrain settings, and whether shadows run, which horizon maps
     /// serve.
@@ -295,7 +288,9 @@ pub(crate) struct TerrainPass {
     /// What shaders look up: fades and holes, the directory, palette and
     /// covers, and each terrain's uniform.
     pub(crate) tables: TerrainTables,
-    /// This frame's patches and views.
+    /// Each terrain's subdivision, whose leaves the camera's ground draws.
+    pub(crate) surface: SurfaceTrees,
+    /// This frame's uniforms, views and the kept level's patches.
     pub(crate) patches: PatchDraws,
     /// Pipelines and the terrain group.
     pub(crate) pipelines: TerrainPipelines,
@@ -326,6 +321,7 @@ impl TerrainPass {
         Self {
             atlas: TileAtlas::new(device),
             tables: TerrainTables::new(device),
+            surface: SurfaceTrees::new(device),
             patches: PatchDraws::new(device),
             pipelines: TerrainPipelines::new(device),
             horizons: Horizons::new(device),
@@ -351,11 +347,12 @@ impl TerrainPass {
         self.atlas.slots.len() as u32
     }
 
-    /// Bytes of the height, normal, control and river arrays, the horizon,
-    /// sky and macro color maps, bounce light's and the surface materials'
-    /// maps.
+    /// Bytes of the height, normal, control and river arrays, the
+    /// subdivisions, the horizon, sky and macro color maps, bounce light's
+    /// and the surface materials' maps.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.atlas.capacity_bytes()
+            + self.surface.capacity_bytes()
             + self.horizons.capacity_bytes()
             + self.sky.capacity_bytes()
             + self.bounce.capacity_bytes()
@@ -386,14 +383,20 @@ impl TerrainPass {
             indices: self.patches.indices(),
             terrains: &self.water.terrains,
             blocks: [self.water.resident(), self.water.dropped],
+            directory: &self.tables.directory,
+            leaves: self.surface.leaves(),
+            surface_generation: (
+                self.tables.directory_generation,
+                self.surface.leaves().generation(),
+            ),
         })
     }
 
     /// Uploads tiles the frame's terrains list and the GPU lacks, releases
     /// those they no longer list, noting the ground that arrived, left or
-    /// changed ([`Self::ground_changes`]), and lays out this frame's patches
-    /// for the camera, reflection probe faces, the shadow maps of `views`
-    /// and the kept shadow level it redraws.
+    /// changed ([`Self::ground_changes`]), and lays out this frame's
+    /// subdivisions, uniforms and the patches of the kept shadow level it
+    /// redraws.
     /// `max_layers` is the device's texture array layers; `mips` renders
     /// surface materials' mip levels. Returns whether any terrain draws.
     pub(crate) fn prepare(
@@ -461,18 +464,17 @@ impl TerrainPass {
                 tables.directory_generation,
             ),
         );
-        if terrains
-            .terrains
-            .iter()
-            .all(|terrain| terrain.patches.is_empty())
-        {
+        if !terrains.terrains.iter().any(|terrain| terrain.drawn) {
             self.water.terrains.clear();
+            self.surface.rest();
             return false;
         }
         self.tables.size_uniforms(device, terrains);
+        self.surface.prepare(device, queue, terrains, views);
         let parts = patches::Layout {
             atlas: &self.atlas,
             tables: &self.tables,
+            surface: &self.surface,
             sky: &self.sky,
             macro_maps: &self.macro_maps,
             horizons: &self.horizons,
@@ -491,6 +493,7 @@ impl TerrainPass {
                 atlas: &self.atlas,
                 tables: &self.tables,
                 patches: &self.patches,
+                surface: &self.surface,
                 maps: &self.maps,
                 sky: &self.sky,
                 macro_maps: &self.macro_maps,
@@ -574,20 +577,98 @@ impl TerrainPass {
         )
     }
 
-    /// Draws `range` of this frame's patches of the terrain whose uniform
-    /// sits at `uniform`, seen by the view at `view`, with the pipeline the
-    /// caller set; returns the draws.
-    pub(crate) fn draw(
+    /// Draws the leaves of this frame's subdivision of `terrain`, seen by the
+    /// view at `view`, with the pipeline the caller set; returns the draws.
+    pub(crate) fn draw_surface(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
-        range: &Range<u32>,
+        terrain: &FrameTerrain,
         view: u32,
-        uniform: u32,
     ) -> u32 {
-        let Some(group) = self.pipelines.group() else {
+        let (Some(group), Some((args, offset))) =
+            (self.pipelines.group(), self.surface_draw(terrain.terrain))
+        else {
             return 0;
         };
-        self.patches.draw(pass, group, range, (view, uniform))
+        pass.set_bind_group(1, group, &[view, terrain.uniform]);
+        pass.draw_indirect(args, offset);
+        1
+    }
+
+    /// The indirect draw arguments of the leaves of this frame's subdivision
+    /// of the frame's terrain `terrain` (`wgpu::util::DrawIndirectArgs`: a
+    /// meshlet's `SURFACE_MESHLET_VERTICES` vertices, an instance a leaf) and
+    /// their byte offset, valid once the frame's subdivision pass has listed
+    /// them; `None` where the terrain does not draw.
+    pub(crate) fn surface_draw(&self, terrain: usize) -> Option<(&wgpu::Buffer, u64)> {
+        self.surface.draw(terrain)
+    }
+
+    /// Draws nothing this frame, as no terrain is: bounce light rests and the
+    /// subdivisions' stats read none drawn.
+    pub(crate) fn rest(&mut self) {
+        self.bounce.rest();
+        self.surface.rest();
+    }
+
+    /// Whether any terrain subdivides this frame, which its pass then
+    /// records.
+    pub(crate) fn subdivides(&self) -> bool {
+        self.surface.any()
+    }
+
+    /// Draws terrain into shadow map `map`: the leaves of every terrain's
+    /// subdivision into the maps drawn every frame, the near cascades and,
+    /// but for terrains casting long shadows, whose kept levels hold their
+    /// ground beyond the near cascades, the moving map; the kept level's
+    /// patches into the kept levels; and none into the kept map. Returns the
+    /// draws.
+    pub(crate) fn draw_shadow(&self, pass: &mut wgpu::RenderPass<'_>, map: usize) -> u32 {
+        let pipelines = &self.pipelines;
+        let mut draws = 0;
+        if map == crate::shadows::KEPT_LEVELS {
+            let (Some(pipeline), Some(group)) = (pipelines.shadow_pipeline(), pipelines.group())
+            else {
+                return 0;
+            };
+            pass.set_pipeline(pipeline);
+            for terrain in &self.patches.frame.terrains {
+                draws += self.patches.draw(pass, group, &terrain.kept, (0, terrain.uniform));
+            }
+            return draws;
+        }
+        let Some(pipeline) = pipelines
+            .surface_shadow_pipeline()
+            .filter(|_| map <= crate::shadows::MOVING_MAP)
+        else {
+            return 0;
+        };
+        pass.set_pipeline(pipeline);
+        for terrain in &self.patches.frame.terrains {
+            if terrain.long_shadows && map == crate::shadows::MOVING_MAP {
+                continue;
+            }
+            draws += self.draw_surface(pass, terrain, 0);
+        }
+        draws
+    }
+
+    /// Records this frame's subdivisions through the camera's uniform
+    /// `camera` (`shader` the mesh module), timed by `profiler`.
+    pub(crate) fn encode_subdivision(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        shader: &wgpu::ShaderModule,
+        camera: &wgpu::Buffer,
+        profiler: &crate::profiling::GpuProfiler,
+    ) {
+        let Some(group) = self.pipelines.surface_group() else {
+            return;
+        };
+        let terrain = (&self.pipelines.layout, group);
+        self.surface
+            .encode(device, encoder, shader, camera, terrain, profiler);
     }
 
     /// Records the runtime virtual texture's bakes through
@@ -669,9 +750,9 @@ impl TerrainPass {
         true
     }
 
-    /// Whether any patch drawn this frame has holes.
+    /// Whether any terrain drawing this frame has holes.
     pub(crate) fn has_holes(&self) -> bool {
-        self.patches.has_holes()
+        self.patches.frame.terrains.iter().any(|terrain| terrain.holes)
     }
 
     /// The ground that arrived, left or changed this frame, over which the

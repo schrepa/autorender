@@ -101,6 +101,9 @@ resources! {
     /// Terrains' bounce light around the camera, relit every frame, and
     /// their ground's light it gathers.
     Bounce: Kept,
+    /// Terrains' subdivisions: each one's tree, which the next frame starts
+    /// from, and the leaves the frame draws.
+    Leaves: Kept,
     /// Ground cover's blades and their counts, read back later.
     Cover: Kept,
     /// Terrain's visibility target: each pixel's terrain and depth.
@@ -228,6 +231,9 @@ impl Phase {
 pub(crate) enum Pass {
     /// GPU presentation's blending, composition, culling and compaction.
     Presentation,
+    /// Terrains' subdivisions: each one's leaves listed for the frame, then
+    /// split or merged by the error they draw with.
+    Subdivision,
     /// Shadow caster selection.
     ShadowSelect,
     /// Virtual geometry's cluster selection.
@@ -311,6 +317,7 @@ macro_rules! passes {
 
 passes! {
     presentation: Presentation,
+    subdivision: Subdivision,
     scatter: Feature(FeaturePass::Scatter),
     occupancy: Feature(FeaturePass::Occupancy),
     shadow_select: ShadowSelect,
@@ -700,6 +707,8 @@ pub(crate) struct FrameShape {
     pub(crate) deformation: bool,
     pub(crate) vt_bakes: bool,
     pub(crate) bounce: bool,
+    /// Terrain draws: its subdivisions list their leaves first.
+    pub(crate) subdivision: bool,
     /// Terrain draws deferred in the first opaque phase: its visibility
     /// target holds the pages the virtual texture's feedback looks up.
     pub(crate) deferred: bool,
@@ -759,13 +768,17 @@ pub(crate) const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 const FAR: f32 = 0.0;
 
 /// Declares the work a frame of `shape` does before its opaque passes into
-/// `graph`: GPU presentation, shadow casters and maps, cluster selection,
-/// tracks, the virtual texture's bakes and terrains' bounce light.
+/// `graph`: GPU presentation, terrains' subdivisions, shadow casters and
+/// maps, cluster selection, tracks, the virtual texture's bakes and
+/// terrains' bounce light.
 fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
     use Resource::*;
     let gpu = shape.gpu;
     if gpu {
         graph.add(Pass::Presentation).write(Poses).write(Visible);
+    }
+    if shape.subdivision {
+        graph.add(Pass::Subdivision).write(Leaves);
     }
     // Shadow casters first: virtual geometry selects the clusters of the
     // virtual ones with the camera's, then the maps draw.
@@ -792,6 +805,7 @@ fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(Casters)
             .read_if(shape.scatter, Placed)
             .read_if(shape.shadow_clusters, Clusters)
+            .read_if(shape.subdivision, Leaves)
             .write(ShadowMaps);
     }
     // What the first opaque phase draws and shades with: the clouds' dome
@@ -866,7 +880,8 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(CloudDome)
             .read_if(forward, Tracks)
             .read_if(forward, Pages)
-            .read_if(forward, Cover);
+            .read_if(forward, Cover)
+            .read_if(forward && shape.subdivision, Leaves);
         for &(target, clear) in targets {
             opaque = opaque.color(target, Access::Draw(clear));
         }
@@ -903,6 +918,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .add(Pass::ProbeCaptures)
             .read(Poses)
             .read(Visible)
+            .read_if(shape.subdivision, Leaves)
             .write(Probes);
     }
 }
@@ -917,6 +933,7 @@ fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Res
     graph
         .add(Pass::TerrainIds)
         .read(Tracks)
+        .read(Leaves)
         .color(TerrainIds, Access::Clear(Clear::Color(TRANSPARENT)))
         .depth(Depth, Access::Load);
     let mut resolve = graph

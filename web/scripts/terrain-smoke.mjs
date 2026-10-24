@@ -16,11 +16,24 @@ import assert from "node:assert/strict";
 import { differentPixels } from "./harness.mjs";
 import { fast, fixture, openTerrain, overview, terrain } from "./terrain-fixture.mjs";
 
-const { page, errors, command, scene, settled, close, settle, capture, heights, inspectTerrains } = await openTerrain("terrain");
+const { page, errors, command, scene, settled, close, settle, capture, rendersUntil, heights, inspectTerrains } = await openTerrain("terrain");
 const checks = [];
 
+/** Renders until the subdivision's leaves, read back a few frames late,
+ * have held for sixteen frames (it splits or merges a level every other
+ * frame); returns that frame's stats. */
+async function subdivided() {
+  let last = -1;
+  let held = 0;
+  return rendersUntil(rendering => {
+    held = rendering.terrain.leaves === last ? held + 1 : 0;
+    last = rendering.terrain.leaves;
+    return held >= 16;
+  }, "the subdivision settles");
+}
+
 try {
-  assert.ok(settled.terrain.patches > 0 && settled.terrain.triangles > 0, "terrain draws");
+  assert.ok(settled.terrain.leaves > 0 && settled.terrain.triangles > 0, "terrain draws");
   assert.ok(settled.terrain.shadow_patches > 0, "terrain casts shadows");
   assert.equal(settled.terrain.dropped_tiles, 0);
   assert.equal(settled.terrain.dropped_materials, 0);
@@ -37,7 +50,7 @@ try {
   }
   assert.equal(presented.terrain.placed_impostors, 1, `the balls' impostor comes: ${JSON.stringify(presented)}`);
   assert.equal(presented.level_of_detail.dropped_impostors, 0);
-  checks.push({ check: "streams and draws", tiles: settled.terrain.tiles, patches: settled.terrain.patches, triangles: settled.terrain.triangles, placed_impostors: presented.terrain.placed_impostors, placed_far: settled.terrain.placed_far_objects });
+  checks.push({ check: "streams and draws", tiles: settled.terrain.tiles, leaves: settled.terrain.leaves, triangles: settled.terrain.triangles, placed_impostors: presented.terrain.placed_impostors, placed_far: settled.terrain.placed_far_objects });
 
   // Discovery and inspection.
   const listing = await command("describe");
@@ -57,7 +70,7 @@ try {
   assert.deepEqual(view.extent, [1024, 1024]);
   assert.ok(view.resident_tiles_by_level.reduce((a, b) => a + b, 0) > 0);
   // Each level's largest measured difference from the next coarser one,
-  // which its patches morph by, and ranges growing level by level.
+  // and ranges growing level by level.
   assert.ok(view.level_errors.slice(0, -1).every(error => error > 0), `measured ${view.level_errors}`);
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
   assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow", "gravel"]);
@@ -81,7 +94,7 @@ try {
     assert.ok(around && around.reach.every(reach => reach >= 3000) && around.spacing === 4 && around.resident_tiles > 0,
       `the surroundings stream: ${JSON.stringify(around)}`);
     const status = (await command("inspect", { component: "Terrains" })).result.value;
-    assert.ok(status.terrains === 1 && status.surroundings_tiles > 0 && status.surroundings_patches > 0,
+    assert.ok(status.terrains === 1 && status.surroundings_tiles > 0,
       `the surroundings draw: ${JSON.stringify(status)}`);
     const pairs = [];
     for (const along of [-300, 0, 300]) {
@@ -102,7 +115,7 @@ try {
     const edged = await command("environment", { terrain: { ...fast, surroundings: false } });
     assert.deepEqual(edged.result.environment_changed, ["terrain"]);
     const alone = await settle();
-    assert.equal((await command("inspect", { component: "Terrains" })).result.value.surroundings_patches, 0, "settings turn the surroundings off");
+    assert.equal((await command("inspect", { component: "Terrains" })).result.value.surroundings_tiles, 0, "settings turn the surroundings off");
     assert.equal(alone.terrain.placed_objects, surroundedFrame.terrain.placed_objects, "the surroundings place nothing");
     const bare = await capture("no-surroundings");
     const filled = await differentPixels(page, [surrounded, bare]);
@@ -110,7 +123,7 @@ try {
     await command("environment", { terrain: fast });
     await command("camera", overview);
     await settle();
-    checks.push({ check: "surroundings", reach: around.reach, tiles: status.surroundings_tiles, patches: status.surroundings_patches, pixels: filled.changed });
+    checks.push({ check: "surroundings", reach: around.reach, tiles: status.surroundings_tiles, pixels: filled.changed });
   }
   // The erosion bake ran its rounds over the same samples
   // first, wearing ground away.
@@ -236,27 +249,29 @@ try {
   assert.ok(sweep.layers.worst.max_difference < 5e-3, `layers differ by ${sweep.layers.worst.max_difference}`);
   checks.push({ check: "render versus collision", compared: sweep.collision.compared, worst: sweep.collision.worst.max_difference, layers: sweep.layers.worst.max_difference, placed_colliders: ray.result.snapshot.placed_colliders, placed_first: sweep.collision.placed_first });
 
-  // The settings section: finer level of detail reaches further and draws
-  // more triangles; invalid values are refused; disabled terrain draws
-  // nothing.
-  const fine = await command("environment", { terrain: { ...fast, pixel_error: 2 } });
-  const finer = (await settle());
+  // The settings section: finer level of detail reaches further, and a
+  // smaller subdivision error draws more triangles once the subdivision
+  // settles; invalid values are refused; disabled terrain draws nothing.
+  const coarse = await subdivided();
+  const fine = await command("environment", { terrain: { ...fast, pixel_error: 2, subdivision_error: 0.5 } });
+  await settle();
+  const finer = await subdivided();
   const detailed = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
   assert.ok(detailed.level_ranges[0] > view.level_ranges[0], `level 0 reaches ${detailed.level_ranges[0]} m`);
-  assert.ok(finer.terrain.triangles > settled.terrain.triangles, "a smaller pixel error draws more triangles");
+  assert.ok(finer.terrain.triangles > coarse.terrain.triangles, `a smaller subdivision error draws more triangles: ${coarse.terrain.triangles} to ${finer.terrain.triangles}`);
   assert.deepEqual(fine.result.environment_changed, ["terrain"]);
   const invalid = await command("environment", { terrain: { pixel_error: 0.5 } }, false);
   assert.equal(invalid.error.code, "invalid_environment");
   assert.equal(invalid.error.path, "$.terrain.pixel_error");
   const shaded = await capture("shaded");
   const off = await command("environment", { terrain: { enabled: false } });
-  assert.equal(off.result.rendering.terrain.patches, 0);
+  assert.equal(off.result.rendering.terrain.leaves, 0);
   const empty = await capture("disabled");
   const shown = await differentPixels(page, [shaded, empty]);
   assert.ok(shown.changed > 10_000, `terrain covers ${shown.changed} pixels`);
   await command("environment", { terrain: fast });
   await settle();
-  checks.push({ check: "settings section", more: finer.terrain.triangles, terrainPixels: shown.changed });
+  checks.push({ check: "settings section", fewer: coarse.terrain.triangles, more: finer.terrain.triangles, terrainPixels: shown.changed });
 
   // Speed-aware detail: while the camera moves fast the
   // finest levels' tiles in view wait, and those out of view until it
@@ -311,8 +326,8 @@ try {
   checks.push({ check: "memory", restored: back.restored_tiles });
 
   // Terrain's development views are debug views and change pixels; the
-  // terrain control's freezing keeps the patches while the camera moves
-  // away.
+  // terrain control's freezing keeps the subdivision cut for the frozen eye
+  // while the camera moves away.
   const baseline = await capture("view-shaded");
   const levels = await command("environment", { debug_view: { view: "levels" } });
   assert.deepEqual(levels.result.environment_changed, ["debug_view"]);
@@ -343,20 +358,15 @@ try {
   assert.ok(Array.isArray(frozen.result.frozen_at));
   // The control's state inspects.
   assert.deepEqual((await command("inspect", { component: "TerrainDebug" })).result.value, { freeze: frozen.result.frozen_at });
-  await command("render");
-  const selected = async () => (await command("inspect", { component: "Terrains" })).result.value.patches;
-  const before = await selected();
   await command("camera", { ...overview, position: [0, 900, 1400] });
-  const afar = (await command("render")).result.rendering;
-  assert.equal(await selected(), before, "a frozen eye keeps its patches");
+  const afar = await subdivided();
   await capture("frozen-from-afar");
   await command("terrain", { freeze: false });
-  await command("render");
-  const moved = await selected();
-  assert.notEqual(moved, before, "unfrozen, patches follow the camera");
+  const moved = await subdivided();
+  assert.ok(moved.terrain.leaves < afar.terrain.leaves, `unfrozen, the subdivision coarsens as the eye leaves: ${afar.terrain.leaves} leaves frozen, ${moved.terrain.leaves} unfrozen`);
   await command("camera", overview);
   await settle();
-  checks.push({ check: "terrain control", frozenPatches: before, visibleFromAfar: afar.terrain.patches, unfrozenPatches: moved });
+  checks.push({ check: "terrain control", frozenLeaves: afar.terrain.leaves, unfrozenLeaves: moved.terrain.leaves });
 
   // Edits stand over a terrain's layers and bakes: the
   // ground moves where one reaches once its tiles regenerate, its id

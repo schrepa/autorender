@@ -194,15 +194,13 @@ pub struct RenderTerrain {
     /// advances.
     pub tiles: Arc<[Arc<Tile>]>,
     pub tiles_revision: u64,
-    /// The patches the camera draws.
-    pub patches: Vec<Patch>,
+    /// Whether the camera draws it this frame: terrain drawing is on, tiles
+    /// of it are resident and, for surroundings, the settings show them.
+    /// Renderers subdivide its ground over whatever tiles are resident.
+    pub drawn: bool,
     /// Meters from the eye within which each level's tiles load, finest
     /// first: where renderers can shade with them.
     pub reach: Vec<f32>,
-    /// Meters from the eye up to which each level draws, finest first; each
-    /// but the coarsest morphs into the next over its last quarter
-    /// ([`LodRanges`]): where renderers find the ground as drawn.
-    pub ranges: Vec<f32>,
     /// The largest height difference measured between each level's tiles
     /// and the next coarser level's, finest first, as tiles arrive (zero
     /// until measured): how far the ground one level draws may stand off
@@ -212,8 +210,8 @@ pub struct RenderTerrain {
     /// no blades: their grassy ground shows as canopy at every distance.
     pub surroundings: bool,
     /// For a terrain's surroundings, the ground the terrain they surround
-    /// covers (terrain-local, least corner then greatest): their patches
-    /// never draw there.
+    /// covers (terrain-local, least corner then greatest): their ground
+    /// never draws there.
     pub cutout: Option<(Vec2, Vec2)>,
     /// Whether its tiles may hold holes and whether a hydrology bake will
     /// give it water: renderers create what draws them before it shows,
@@ -264,7 +262,7 @@ pub struct RenderTerrains {
     pub stats: TerrainStats,
 }
 
-/// Lists every terrain's resident tiles and the camera's patches.
+/// Lists every terrain's resident tiles and whether the camera draws it.
 pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut RenderSnapshot) {
     let listing = &mut snapshot.terrain;
     let missing = &mut snapshot.missing_assets;
@@ -294,9 +292,8 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 layers: Vec::new(),
                 tiles: Arc::from(Vec::new()),
                 tiles_revision: 0,
-                patches: Vec::new(),
+                drawn: false,
                 reach: Vec::new(),
-                ranges: Vec::new(),
                 errors: Vec::new(),
                 surroundings: false,
                 cutout: None,
@@ -343,10 +340,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
             render.tiles = Arc::from(tiles);
             render.tiles_revision = state.revision();
         }
-        render.patches.clear();
-        if enabled {
-            render.patches.extend_from_slice(&state.selection.patches);
-        }
+        render.drawn = enabled && state.drawn;
         render.gpu_surface = if state.materials {
             None
         } else {
@@ -356,7 +350,6 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         render
             .reach
             .extend(state.ranges.iter().map(|range| range * LOAD_REACH));
-        render.ranges.clone_from(&state.ranges);
         render.errors.clear();
         render.errors.extend_from_slice(state.store.errors());
         render.falls = state.falls.clone();

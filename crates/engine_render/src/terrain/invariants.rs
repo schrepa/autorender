@@ -8,10 +8,9 @@
 //!   is resident or free, never both, and none lies past the arrays;
 //! - T3 holes: each tile with hole bits has its own run of them past the
 //!   layers' fades and within the buffer, and only such tiles do;
-//! - T4 ranges: each frame terrain's ranges lie within the records laid
-//!   out, without overlapping, with no more patches with holes than
-//!   patches, and every record names resident layers and a hole run or
-//!   none;
+//! - T4 ranges: each frame terrain's kept patches lie within the records
+//!   laid out, without overlapping, its uniform within the buffer, and
+//!   every record names a resident layer and a hole run or none;
 //! - T5 directory: every terrain's directory names the layers its
 //!   resident tiles hold and nothing else;
 //! - T6 listing: every resident tile is the one its terrain lists, every
@@ -125,14 +124,7 @@ impl TerrainPass {
         let records = self.patches.records();
         let mut ranges: Vec<Range<u32>> = Vec::new();
         for terrain in &self.patches.frame.terrains {
-            debug_assert!(
-                terrain.camera_holes as usize <= terrain.camera.len()
-                    && terrain.all_holes as usize <= terrain.all.len(),
-                "T4: more patches with holes than patches"
-            );
-            ranges.push(terrain.camera.clone());
-            ranges.push(terrain.all.clone());
-            ranges.extend(terrain.maps.iter().map(|(_, range)| range.clone()));
+            ranges.push(terrain.kept.clone());
             debug_assert!(
                 u64::from(terrain.uniform) + SLOT <= tables.uniforms.size(),
                 "T4: a uniform at {} past the buffer",
@@ -160,9 +152,9 @@ impl TerrainPass {
             atlas.slots.values().copied().collect();
         for record in records {
             debug_assert!(
-                resident.contains(&record.atlas[0]) && resident.contains(&record.atlas[1]),
-                "T4: a record names layers {:?} no tile holds",
-                &record.atlas[..2]
+                resident.contains(&record.atlas[0]),
+                "T4: a record names layer {} no tile holds",
+                record.atlas[0]
             );
             debug_assert!(
                 record.holes == NO_HOLES || runs.binary_search(&record.holes).is_ok(),

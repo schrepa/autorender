@@ -290,6 +290,10 @@ pub struct SceneTerrainMaterial {
     /// 0, flat, to 1.
     #[serde(default, skip_serializing_if = "is_flat")]
     pub relief: f32,
+    /// Meters its maps' heights move the ground itself where that depth
+    /// spans a few pixels: 0, none, to 2.
+    #[serde(default, skip_serializing_if = "is_flat")]
+    pub displacement: f32,
     /// Meters tracks sink it at most: 0, rigid, to 2.
     #[serde(default, skip_serializing_if = "is_flat")]
     pub deform: f32,
@@ -551,6 +555,7 @@ impl SceneTerrain {
                 projection: material.projection,
                 cover: material.cover,
                 relief: material.relief,
+                displacement: material.displacement,
                 deform: material.deform,
             };
             if let Err(error) = look.validate() {
@@ -806,6 +811,7 @@ impl SceneTerrain {
                         projection: look.projection,
                         cover: look.cover,
                         relief: look.relief,
+                        displacement: look.displacement,
                         deform: look.deform,
                     })
                     .collect(),
