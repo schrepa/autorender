@@ -291,7 +291,7 @@ gpu_structs! {
     /// texels (first x and y, then past the last); and two over the atlas's
     /// width and height (zw unused).
     #[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
-    pub(crate) struct RouteUniform as ["Routes" in SHADOW_SHADER] {
+    pub(crate) struct RouteData as ["Routes" in SHADOW_SHADER] {
         pub clips: [[[f32; 4]; 4]; MAX_MOVING_TILES],
         pub slots: [[f32; 4]; MAX_MOVING_TILES],
         pub atlas: [f32; 4],

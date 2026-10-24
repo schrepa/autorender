@@ -12,6 +12,7 @@ use engine_render::bindings::{
 use engine_render::gpu_layouts::{Layout, constants, layouts};
 use engine_render::pipeline_layouts::{
     LAYOUT_BUDGET, PIPELINE_LAYOUTS, PipelineLayout, REQUIRED_LIMITS, StageLimits,
+    UNIFORM_BINDING_BYTES,
 };
 use engine_render::shaders::{ENTRIES, Stage};
 use naga::valid::{Capabilities, ValidationFlags, Validator};
@@ -224,6 +225,13 @@ fn mismatch(
     };
     let expected = match (global.space, inner) {
         (naga::AddressSpace::Uniform, _) => match binding.kind {
+            Kind::Uniform { .. } if inner.size(module.to_ctx()) as u64 > UNIFORM_BINDING_BYTES => {
+                return Err(format!(
+                    "{} bytes, more than the {UNIFORM_BINDING_BYTES} a uniform binding holds on \
+                     every device: bind it as read-only storage",
+                    inner.size(module.to_ctx())
+                ));
+            }
             Kind::Uniform { min_size, .. } => return sized(min_size),
             _ => "a uniform buffer",
         },

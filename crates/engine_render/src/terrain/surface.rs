@@ -136,11 +136,12 @@ impl SurfaceTrees {
                 ARGS_BYTES,
                 wgpu::BufferUsages::COPY_SRC,
             ),
+            // Water copies its leaves' count from the draws' arguments.
             args: Growable::new(
                 device,
                 "engine/terrain-surface-args",
                 ARGS_BYTES,
-                wgpu::BufferUsages::INDIRECT,
+                wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
             ),
             uniforms: Versioned::new(crate::buffers::uniform(
                 device,

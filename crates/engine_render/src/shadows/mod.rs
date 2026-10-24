@@ -71,7 +71,7 @@ use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, glam:
 use crate::batches::BatchPlan;
 use crate::bindings::SHADOW_POSES;
 use crate::cached::{Bound, GroupCache};
-use crate::gpu_data::{ComposeData, DRAW_ARGS_BYTES, RouteUniform, ShadowCullUniform};
+use crate::gpu_data::{ComposeData, DRAW_ARGS_BYTES, RouteData, ShadowCullUniform};
 use crate::mesh_arena::{Bindings, Ids, MeshDraw};
 use crate::profiling::GpuProfiler;
 use crate::renderer::FramePoses;
@@ -328,7 +328,7 @@ pub(crate) struct ShadowPass {
     // The views, cull uniform and routes last written.
     written_views: Option<Vec<f32>>,
     written_cull: Option<ShadowCullUniform>,
-    written_routes: Option<Box<RouteUniform>>,
+    written_routes: Option<Box<RouteData>>,
     // The tiles composed this frame, an instance each, and their buffer.
     composes: Vec<ComposeData>,
     compose_buffer: crate::buffers::Growable,

@@ -775,7 +775,7 @@ pub(crate) use crate::gpu_layouts::scene::ShadowUniform;
 
 pub(crate) use crate::gpu_layouts::scene::ShadowCullUniform;
 
-pub(crate) use crate::gpu_layouts::scene::{ComposeData, RouteUniform};
+pub(crate) use crate::gpu_layouts::scene::{ComposeData, RouteData};
 
 pub(crate) use crate::gpu_layouts::scene::PostUniform;
 

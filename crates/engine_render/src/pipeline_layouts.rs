@@ -24,6 +24,12 @@ use crate::bindings::{
     WATER_WAVES,
 };
 
+/// The bytes one uniform buffer binding holds on every device (wgpu's
+/// downlevel defaults), which the renderer requests: blocks larger than
+/// this bind as read-only storage (`cargo xtask gpu` checks every shader's
+/// uniforms).
+pub const UNIFORM_BINDING_BYTES: u64 = 16_384;
+
 /// What a pipeline layout keeps within, for each stage (and, for dynamic
 /// buffers, over the whole layout).
 #[derive(Clone, Copy, Debug)]

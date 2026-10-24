@@ -11,7 +11,7 @@ use super::{
     COMPOSE_VIEW, KeptRefresh, MAPS, MOVING_MAP, MOVING_VIEW, SKY_MAP, SKY_VIEW, VIEW_STRIDE,
     VIRTUAL_SHADOW_PLANES, VirtualShadowView,
 };
-use crate::gpu_data::{ComposeData, MAX_LEVELS, RouteUniform, ShadowCullUniform, ShadowUniform};
+use crate::gpu_data::{ComposeData, MAX_LEVELS, RouteData, ShadowCullUniform, ShadowUniform};
 use crate::gpu_layouts::constants::{SHADOW_REGIONS, STILLNESS};
 use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, Region, region_tiles};
 
@@ -169,8 +169,8 @@ impl FrameRegions<'_> {
     /// The moving tiles' routes: each tile's world to the atlas's clip
     /// space, its rectangle (with its apron) mapped onto its slot, and the
     /// slot's texels.
-    pub(super) fn routes(&self) -> RouteUniform {
-        let mut routes: RouteUniform = bytemuck::Zeroable::zeroed();
+    pub(super) fn routes(&self) -> RouteData {
+        let mut routes: RouteData = bytemuck::Zeroable::zeroed();
         let (width, height) = self.layout.size();
         let (width, height) = (width as f32, height as f32);
         let side = self.layout.slot as f32;

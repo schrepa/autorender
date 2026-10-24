@@ -78,6 +78,7 @@ impl Renderer {
             max_storage_textures_per_shader_stage: required.storage_textures,
             max_dynamic_uniform_buffers_per_pipeline_layout: required.dynamic_uniform_buffers,
             max_dynamic_storage_buffers_per_pipeline_layout: required.dynamic_storage_buffers,
+            max_uniform_buffer_binding_size: crate::pipeline_layouts::UNIFORM_BINDING_BYTES,
             // Terrain tiles, impostors and reflection probes
             // take a layer each.
             max_texture_array_layers: adapter_limits.max_texture_array_layers,

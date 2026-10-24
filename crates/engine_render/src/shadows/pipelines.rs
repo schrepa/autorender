@@ -9,7 +9,7 @@ use super::{SHADOW_FORMAT, VIEWS_BYTES};
 use crate::bindings::{SHADOW_MARKS, SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW};
 use crate::gpu_data::Vertex;
 use crate::gpu_data::{
-    ComposeData, RouteUniform, SHADOW_MARKS_SHADER, SHADOW_SHADER, ShadowCullUniform,
+    ComposeData, RouteData, SHADOW_MARKS_SHADER, SHADOW_SHADER, ShadowCullUniform,
 };
 use crate::pipeline_layouts::{
     CASTER_PIPELINES, IMPOSTOR_CASTER_PIPELINES, MASKED_CASTER_PIPELINES, PipelineLayout,
@@ -292,10 +292,12 @@ impl ShadowPipelines {
             Some(shadow::fs_compose),
         );
         let view_buffer = crate::buffers::uniform(device, "engine/shadow-views", VIEWS_BYTES);
-        let routes = crate::buffers::uniform(
+        // Too large for a uniform binding: storage.
+        let routes = crate::buffers::storage(
             device,
             "engine/shadow-routes",
-            size_of::<RouteUniform>() as u64,
+            size_of::<RouteData>() as u64,
+            wgpu::BufferUsages::empty(),
         );
         let view_group = group(
             device,

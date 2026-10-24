@@ -11,7 +11,7 @@ pub(crate) use crate::gpu_layouts::constants::PYRAMID_EXTENT_BYTES;
 use crate::gpu_layouts::impostors::{ImpostorBakeUniform, ImpostorRecord};
 use crate::gpu_layouts::scene::{
     CameraUniform, ColorData, GroundData, LightingUniform, MaterialUniform, PoseData, PostUniform,
-    ResolveUniform, RouteUniform, ShadowCullUniform, ShadowUniform, SkyUniform,
+    ResolveUniform, RouteData, ShadowCullUniform, ShadowUniform, SkyUniform,
 };
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::gpu_layouts::{
@@ -1076,7 +1076,7 @@ tables! {
         serves: [SHADOW_SHADER @ 0, TERRAIN_SHADOW_SHADER @ 0],
         bindings: &[
             dynamic_uniform(9, "view", 96, V),
-            uniform_of(13, "routes", size_of::<RouteUniform>(), VF),
+            read_of(13, "routes", size_of::<RouteData>(), VF),
         ],
     };
 

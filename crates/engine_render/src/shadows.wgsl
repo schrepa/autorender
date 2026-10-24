@@ -473,13 +473,13 @@ struct View {
 // The routes of this frame's moving tiles: each tile's world to the atlas's
 // clip space, mapping the tile onto its slot, and its slot's texels (first
 // x and y, then past the last); and two over the atlas's width and height
-// (x and y).
+// (x and y). More than a uniform binding holds on every device.
 struct Routes {
     clips: array<mat4x4<f32>, MOVING_TILES>,
     slots: array<vec4<f32>, MOVING_TILES>,
     atlas: vec4<f32>,
 }
-@group(0) @binding(13) var<uniform> routes: Routes;
+@group(0) @binding(13) var<storage, read> routes: Routes;
 @group(1) @binding(0) var<storage, read> slot_poses: array<Rows>;
 // Joint palettes of skinned slots, as meshes.wgsl reads them.
 @group(1) @binding(2) var<storage, read> slot_palette: array<Rows>;
