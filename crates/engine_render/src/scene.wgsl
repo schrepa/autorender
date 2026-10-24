@@ -337,7 +337,8 @@ fn detail_span(world: vec3<f32>, normal: vec3<f32>) -> vec2<f32> {
 }
 
 // The level of a pyramid a pixel reads, and the share of the next coarser
-// level blended in, as trilinear filtering blends mipmaps.
+// level blended in, as brilinear filtering blends mipmaps: over the upper
+// half of each level's octave alone, so the lower half reads one level.
 struct DetailLevel {
     level: u32,
     blend: f32,
@@ -345,14 +346,15 @@ struct DetailLevel {
 
 // The level of a pyramid of `levels` levels whose level 0 spaces its
 // texels `base` meters apart that a pixel spanning `span` meters reads:
-// log2 of `span` over `base`, within the pyramid, its fraction the next
-// level's share; none past the coarsest.
+// log2 of `span` over `base`, within the pyramid; the next level's share
+// rising from none halfway through its octave to all of it at its end;
+// none past the coarsest.
 fn detail_level(span: f32, base: f32, levels: u32) -> DetailLevel {
     let coarsest = f32(max(levels, 1u) - 1u);
     let at = clamp(log2(max(span / max(base, 1.0e-30), 1.0e-30)), 0.0, coarsest);
     var chosen: DetailLevel;
     chosen.level = u32(floor(at));
-    chosen.blend = at - floor(at);
+    chosen.blend = saturate(2.0 * (at - floor(at)) - 1.0);
     return chosen;
 }
 
@@ -823,36 +825,46 @@ fn level_lift(level: u32) -> f32 {
 
 // Taps around a receiver inside a crown: as many, on a spiral out to
 // CROWN_REACH crown depths, each a golden angle round from the last.
-const CROWN_TAPS: u32 = 8u;
+const CROWN_TAPS: u32 = 4u;
 const CROWN_REACH: f32 = 2.0;
 const CROWN_SPIRAL_TURN: f32 = 2.39996323;
 
 // The sun a receiver inside a crown takes in level `level`, at light-space
-// `light` as `point` there, of which `visible` reaches it along the sun:
+// `light` as `point` there (in the tile `center` holds, its still casters
+// in `slot`, one more than the slot), of which `visible` reaches it along
+// the sun:
 // also what comes from the crown's sun-facing silhouette across the level,
 // halving every crown depth of the way across to a tap and down past the
 // caster there, the most any tap finds; so leaves under a crown's outer
 // tiers on its sun-facing side light as its top does, and its far side and
 // middle stay dim.
-fn crown_spread(level: u32, light: vec3<f32>, point: MapPoint, visible: f32) -> f32 {
+fn crown_spread(level: u32, light: vec3<f32>, point: MapPoint, center: LevelPoint, slot: u32,
+        visible: f32) -> f32 {
     let depth_per_meter = max(shadow.bands[level].y, 1.0e-12);
     let crown = point.soft / depth_per_meter;
     // The spiral turns with the receiver's texel, and across temporally
-    // antialiased frames.
+    // antialiased frames; each tap a golden angle round from the last.
     let turn = fade_noise(floor(point.texel) + vec2<f32>(0.5)) * 2.0 * PI;
+    var way = vec2<f32>(cos(turn), sin(turn));
+    let step = vec2<f32>(cos(CROWN_SPIRAL_TURN), sin(CROWN_SPIRAL_TURN));
     var lit = visible;
     for (var tap = 0u; tap < CROWN_TAPS; tap++) {
         let across = CROWN_REACH * crown * sqrt((f32(tap) + 0.5) / f32(CROWN_TAPS));
-        let angle = turn + f32(tap) * CROWN_SPIRAL_TURN;
-        let at = level_point(level, light + vec3<f32>(cos(angle), sin(angle), 0.0) * across);
+        let at = level_point(level, light + vec3<f32>(way, 0.0) * across);
+        way = vec2<f32>(way.x * step.x - way.y * step.y, way.x * step.y + way.y * step.x);
         if !at.inside {
             continue;
         }
-        let slot = level_slots(level, at).x;
-        if slot == 0u {
-            continue;
+        // Taps within the receiver's tile read its slot; those crossing
+        // into another look that one's up.
+        var held = slot;
+        if any(at.cell != center.cell) {
+            held = level_slots(level, at).x;
+            if held == 0u {
+                continue;
+            }
         }
-        let caster = textureLoad(shadow_atlas, vec2<i32>(slot_texel(slot - 1u, at.across)), 0);
+        let caster = textureLoad(shadow_atlas, vec2<i32>(slot_texel(held - 1u, at.across)), 0);
         let down = max(point.depth - caster, 0.0) / depth_per_meter;
         lit = max(lit, exp2(-(across + down) / crown));
     }
@@ -862,11 +874,12 @@ fn crown_spread(level: u32, light: vec3<f32>, point: MapPoint, visible: f32) -> 
 // Visibility of the sun at the surface point `world` in level `level`,
 // looked up its normal offset along `normal` and from the level's ground's
 // height over the point (`kept_lift`), the receiver's plane from how the
-// point moves per pixel (`dx` and `dy`): what still casters leave of it and
-// what the moving casters drawn over the tile this frame leave, the less;
-// -1 where the level holds no drawn tile there.
+// point moves per pixel (`dx` and `dy`): what still casters leave of it,
+// spread into crowns where `spread`, and what the moving casters drawn
+// over the tile this frame leave, the less; -1 where the level holds no
+// drawn tile there.
 fn level_visibility(level: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
-        dy: vec3<f32>) -> f32 {
+        dy: vec3<f32>, spread: bool) -> f32 {
     let window = shadow.windows[level];
     let band = shadow.bands[level];
     // A meter up, in light space.
@@ -890,8 +903,8 @@ fn level_visibility(level: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f3
         vec4<f32>(light_space(dy) * per_world, 0.0), vec2<f32>(1.0, -1.0) / window.w, band.w);
     point.soft = crown_softness(band.y);
     var visible = plane_visibility(atlas_depths(point), point);
-    if point.soft > 0.0 && visible < 1.0 {
-        visible = crown_spread(level, light, point, visible);
+    if spread && point.soft > 0.0 && visible < 1.0 {
+        visible = crown_spread(level, light, point, at, slots.x, visible);
     }
     if slots.y != 0u {
         var moving = point;
@@ -1191,7 +1204,7 @@ fn map_lookup(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>)
     let pick = shadow_level(world);
     let count = u32(shadow.level_state.x);
     for (var level = pick.level; level < count; level++) {
-        let visible = level_visibility(level, world, normal, dx, dy);
+        let visible = level_visibility(level, world, normal, dx, dy, true);
         if visible < 0.0 {
             continue;
         }
@@ -1199,7 +1212,7 @@ fn map_lookup(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>)
             return vec2<f32>(visible, f32(level));
         }
         for (var next = level + 1u; next < count; next++) {
-            let coarser = level_visibility(next, world, normal, dx, dy);
+            let coarser = level_visibility(next, world, normal, dx, dy, false);
             if coarser >= 0.0 {
                 return vec2<f32>(mix(visible, coarser, pick.blend), f32(level));
             }
