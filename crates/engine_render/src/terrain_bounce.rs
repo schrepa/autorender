@@ -97,7 +97,7 @@ pub(crate) struct BounceLevels {
 impl BounceLevels {
     /// Level `level`'s window's columns along a side: all of the level's
     /// where they are fewer than the windows'.
-    pub(crate) fn window(&self, level: u32) -> u32 {
+    fn window(&self, level: u32) -> u32 {
         self.columns.min(self.probes >> level)
     }
 
