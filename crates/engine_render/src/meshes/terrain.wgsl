@@ -1460,13 +1460,19 @@ fn terrain_relief_repeat(layer: TerrainReliefLayer) -> f32 {
 // over once it moves the ground less than a pixel.
 const TERRAIN_RELIEF_WHOLE: f32 = 2.0;
 const TERRAIN_RELIEF_GONE: f32 = 1.0;
+// The cosine under which rays meeting the ground edge on see its relief
+// flatten, where the drawn surface's own silhouette cuts through it; and
+// the secant steps that narrow where the ray meets the relief between its
+// last two steps, so no step's layer shows where the ray skims it.
+const TERRAIN_RELIEF_EDGE: f32 = 0.08;
+const TERRAIN_RELIEF_REFINE: u32 = 2u;
 
 // How far across a ray along `way` (toward the ground) travels per meter
 // of depth into ground of normal `normal`, at most three meters, rays
-// meeting it at a cosine under 0.08 counting as at 0.08.
+// meeting it at a cosine under TERRAIN_RELIEF_EDGE counting as at it.
 fn terrain_relief_across(way: vec3<f32>, normal: vec3<f32>) -> f32 {
     let ray = way / max(length(way), 1.0e-6);
-    let travel = ray / max(-dot(ray, normal), 0.08);
+    let travel = ray / max(-dot(ray, normal), TERRAIN_RELIEF_EDGE);
     return min(length(travel.xz), 3.0);
 }
 
@@ -1478,10 +1484,11 @@ fn terrain_relief_across(way: vec3<f32>, normal: vec3<f32>) -> f32 {
 // their maps lie (`terrain_level_height`), so the ray only moves where on
 // that surface the ground shades from, as the virtual texture's pages hold
 // it. The relief shows by its size on screen, seen from the detail eye,
-// not by its distance: whole while its deepest point moves
-// TERRAIN_RELIEF_WHOLE pixels or more, flattening to none by
+// not by its distance or the angle it is seen at: whole while its deepest
+// point moves TERRAIN_RELIEF_WHOLE pixels or more, flattening to none by
 // TERRAIN_RELIEF_GONE, with about a step per pixel it moves, so far relief
-// costs little and no ring follows the eye.
+// costs little and no ring or band follows the eye; seen at a slant, it
+// stands as deep as head on, as real ground's bumps do.
 fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32)
         -> TerrainRelief {
     var relief: TerrainRelief;
@@ -1489,10 +1496,10 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     relief.deform = 0.0;
     let to_point = site.world - camera.position.xyz;
     let ray = to_point / max(length(to_point), 1.0e-6);
-    // Depth runs into the ground along its normal; grazing rays, which
-    // would stretch the relief across the ground, see it flatten.
+    // Depth runs into the ground along its normal; rays meeting it edge on
+    // see it flatten (TERRAIN_RELIEF_EDGE).
     let into = -dot(ray, site.geometric);
-    let grazing = smoothstep(0.08, 0.35, into);
+    let grazing = smoothstep(0.0, TERRAIN_RELIEF_EDGE, into);
     // The pixels a meter of depth moves the point on screen at most, seen
     // from the detail eye: it moves along the view, where a pixel spans its
     // longer side.
@@ -1554,7 +1561,7 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     // Down the ray a step of the relief's depth at a time, the ray's
     // travel across per meter of depth bounded; from above the rims, the
     // ray starting before the ground it meets.
-    let travel = ray / max(into, 0.08);
+    let travel = ray / max(into, TERRAIN_RELIEF_EDGE);
     let across = length(travel.xz);
     let along = travel.xz * min(1.0, 3.0 / max(across, 1.0e-6));
     // The surface point the ray stands over, and its move per meter of
@@ -1593,8 +1600,20 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
             let next_gap = at - terrain_sink(a, b, point, deform, fade);
             if next_gap >= 0.0 {
                 // Between the last step and this one, where the ray reaches
-                // the ground.
-                hit = mix(previous, at, gap / min(gap - next_gap, -1.0e-6));
+                // the ground, narrowed by secant steps (TERRAIN_RELIEF_REFINE).
+                var low = vec2<f32>(previous, gap);
+                var high = vec2<f32>(at, next_gap);
+                for (var refine = 0u; refine < TERRAIN_RELIEF_REFINE; refine++) {
+                    let middle = mix(low.x, high.x, low.y / min(low.y - high.y, -1.0e-6));
+                    let middle_gap = middle
+                        - terrain_sink(a, b, start + march * middle, deform, fade);
+                    if middle_gap >= 0.0 {
+                        high = vec2<f32>(middle, middle_gap);
+                    } else {
+                        low = vec2<f32>(middle, middle_gap);
+                    }
+                }
+                hit = mix(low.x, high.x, low.y / min(low.y - high.y, -1.0e-6));
                 break;
             }
             previous = at;
