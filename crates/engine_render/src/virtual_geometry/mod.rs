@@ -73,8 +73,8 @@ pub(crate) struct VirtualBatch {
 /// How a view tests clusters' normal cones.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Cone {
-    /// From the eye (perspective views).
-    Eye,
+    /// From the camera's eye at a point (perspective views).
+    From(Vec3),
     /// Along a direction the view looks (orthographic views).
     Along(Vec3),
 }
@@ -84,7 +84,9 @@ pub(crate) enum Cone {
 pub(crate) struct VirtualView {
     /// Inward planes, normalized; unused ones hold everything.
     pub planes: [[f32; 4]; PLANES],
-    /// The camera's eye, which errors project from.
+    /// The detail eye
+    /// ([`RenderSnapshot::detail_eye`](engine_core::RenderSnapshot::detail_eye)),
+    /// which errors project from.
     pub eye: Vec3,
     /// The smallest distance errors project from.
     pub min_distance: f32,

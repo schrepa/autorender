@@ -11,16 +11,16 @@
 // `position.w` presentation time in seconds. `options.x` is 1
 // while a reflection probe captures a cube face; `options.y`
 // is the angle a display pixel spans at the view's center (radians), which
-// `pixel_footprint` measures pixels by; `options.w` the mip bias material
+// `detail_across` measures pixels by; `options.w` the mip bias material
 // textures sample with (`material_bias`). `wind` is
 // the wind's velocity (x and z), gust strength and the previous frame's
 // presentation time, which temporal frames' motion sways by. `region` is
 // the frame's render size in pixels, which it draws at from the top-left
 // corner of its screen-sized targets (the viewport), and that size's share
 // of the display on each axis. `detail.xyz` is the detail eye every
-// distance switch measures from (`detail_distance`, `detail_footprint`):
-// the eye, or the point `TerrainDebug::freeze` holds; `detail.w` is 1 while
-// it is frozen, else 0.
+// handover measures from (`detail_distance`, `detail_across`,
+// `detail_span`): the eye, or the point `TerrainDebug::freeze` holds;
+// `detail.w` is unused.
 struct Camera {
     view_projection: mat4x4<f32>,
     previous_view_projection: mat4x4<f32>,
@@ -291,20 +291,18 @@ fn occupancy_visibility(world: vec3<f32>) -> f32 {
 
 const PI: f32 = 3.14159265;
 
-// The meters a pixel spans on a surface at `world` facing `normal`, the
-// mean of its two sides: from the angle a pixel spans
-// (`camera.options.y`), the point's depth along the view and how obliquely
-// the view meets the surface, so it changes smoothly over curved surfaces
-// where screen derivatives step from one triangle to the next. Views more
-// grazing than a sixteenth count as that.
-fn pixel_footprint(world: vec3<f32>, normal: vec3<f32>) -> f32 {
-    let relative = world - camera.position.xyz;
-    let distance = max(length(relative), 1.0e-6);
-    let view = camera.view_projection;
-    let depth = max(dot(vec3<f32>(view[0].w, view[1].w, view[2].w), relative), 1.0e-6);
-    let facing = max(abs(dot(normal, relative)) / distance, 0.0625);
-    return depth * camera.options.y * sqrt(depth / (distance * facing));
+// The world position of the point `relative` to the eye. Shaders turn the
+// eye-relative positions their stages pass back into world positions by it
+// alone, which `cargo xtask gpu`'s handover check knows to depend on where
+// the camera stands no more.
+fn eye_world(relative: vec3<f32>) -> vec3<f32> {
+    return relative + camera.position.xyz;
 }
+
+// The facing cosine under which every measure of how a view meets a surface
+// counts it as seen edge on: a pixel spans at most sixteen times as far
+// along the view as across it.
+const DETAIL_EDGE_ON: f32 = 0.0625;
 
 // The meters from the detail eye (`camera.detail`) to `world`, which every
 // handover by distance measures.
@@ -312,32 +310,45 @@ fn detail_distance(world: vec3<f32>) -> f32 {
     return length(world - camera.detail.xyz);
 }
 
-// The meters a pixel spans on a surface at `world` facing `normal`, as
-// `pixel_footprint` measures it but seen from the detail eye, which every
-// handover by size on screen measures; texture filtering keeps the view's
-// own derivatives. While the eye is frozen, its distance and the way from
-// it to the point stand in for the view's depth and direction, as if it
-// looked straight at the point, so handovers stay where it stands however
-// the view turns or moves; otherwise this is the view's own footprint.
-fn detail_footprint(world: vec3<f32>, normal: vec3<f32>) -> f32 {
-    if camera.detail.w == 0.0 {
-        return pixel_footprint(world, normal);
-    }
-    let relative = world - camera.detail.xyz;
-    let distance = max(length(relative), 1.0e-6);
-    let facing = max(abs(dot(normal, relative)) / distance, 0.0625);
-    return distance * camera.options.y / sqrt(facing);
+// The meters a pixel spans across the view at `world`, seen from the detail
+// eye: its distance times the angle a pixel spans (`camera.options.y`),
+// never the view's depth, so it stays where it stands however the view
+// turns or moves, frozen or not. Every handover by size on screen measures
+// it; texture filtering keeps the view's own derivatives.
+fn detail_across(world: vec3<f32>) -> f32 {
+    return detail_distance(world) * camera.options.y;
 }
 
-// The meters a pixel spans along its longer side on a surface at `world`
-// facing `normal`, seen from the detail eye: `detail_footprint` drawn out
-// as far again as the view meets the surface obliquely. Patterns hand over
-// to their means by it where they would shimmer along an oblique view
-// before they blur across it.
-fn detail_footprint_long(world: vec3<f32>, normal: vec3<f32>) -> f32 {
-    let relative = world - camera.detail.xyz;
-    let facing = max(abs(dot(normal, relative)) / max(length(relative), 1.0e-6), 0.0625);
-    return detail_footprint(world, normal) / sqrt(facing);
+// The meters a pixel spans on a surface at `world` facing `normal`, seen
+// from the detail eye: across the view (x, `detail_across`), and along it
+// (y), as far again as the eye meets the surface obliquely, views more
+// grazing than DETAIL_EDGE_ON counting as that. A feature wanting one size
+// takes the mean of the two sides, `sqrt(x * y)`.
+fn detail_span(world: vec3<f32>, normal: vec3<f32>) -> vec2<f32> {
+    let across = detail_across(world);
+    let toward = world - camera.detail.xyz;
+    let facing = max(abs(dot(normal, toward)) / max(length(toward), 1.0e-6), DETAIL_EDGE_ON);
+    return vec2<f32>(across, across / facing);
+}
+
+// The level of a pyramid a pixel reads, and the share of the next coarser
+// level blended in, as trilinear filtering blends mipmaps.
+struct DetailLevel {
+    level: u32,
+    blend: f32,
+}
+
+// The level of a pyramid of `levels` levels whose level 0 spaces its
+// texels `base` meters apart that a pixel spanning `span` meters reads:
+// log2 of `span` over `base`, within the pyramid, its fraction the next
+// level's share; none past the coarsest.
+fn detail_level(span: f32, base: f32, levels: u32) -> DetailLevel {
+    let coarsest = f32(max(levels, 1u) - 1u);
+    let at = clamp(log2(max(span / max(base, 1.0e-30), 1.0e-30)), 0.0, coarsest);
+    var chosen: DetailLevel;
+    chosen.level = u32(floor(at));
+    chosen.blend = at - floor(at);
+    return chosen;
 }
 
 // The mip bias material textures sample with (`camera.options.w`): log2 of

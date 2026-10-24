@@ -463,7 +463,7 @@ impl Renderer {
         );
         camera.set_region(snapshot.view_projection, self.display.region);
         // The point every distance switch measures from.
-        camera.set_detail(snapshot.detail_eye, snapshot.detail_frozen);
+        camera.set_detail(snapshot.detail_eye);
         // The wind placed objects sway in, and the time they
         // swayed at last frame for temporal frames' motion.
         let seconds = snapshot.elapsed_seconds;
@@ -825,7 +825,9 @@ impl Renderer {
                 view_projection: temporal_frame
                     .as_ref()
                     .map_or(snapshot.view_projection, |temporal| temporal.rasterized),
-                eye: snapshot.camera_position,
+                // Levels of detail and their cards' fades measure from the
+                // detail eye; culling keeps the projection's planes.
+                eye: snapshot.detail_eye,
                 // Culling tests the pixels the frame draws; levels of detail
                 // keep their error in the display's pixels, the render
                 // pixels' share of them, so they hold however the frame
@@ -943,6 +945,10 @@ impl Renderer {
                     .terrains
                     .iter()
                     .any(|terrain| !terrain.patches.is_empty()),
+                pixel_angle: crate::gpu_data::pixel_angle(
+                    snapshot.view_projection,
+                    self.display.region.display.height,
+                ),
             },
         )
     }

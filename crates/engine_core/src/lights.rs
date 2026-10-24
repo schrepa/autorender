@@ -432,8 +432,9 @@ impl LightExtraction {
             .map_or(usize::MAX, |budget| budget as usize);
         snapshot.lights.list.clear();
         if self.lights.len() > budget {
-            // Nearest to the camera first, by authoritative position.
-            let eye = snapshot.camera_position;
+            // Nearest to the detail eye first, by authoritative position: the
+            // budget's cut follows it, as every handover does.
+            let eye = snapshot.detail_eye;
             self.ranked.clear();
             for (index, (entity, light, _)) in self.lights.iter().enumerate() {
                 let Some(model) = globals.get(*entity).and_then(|pose| pose.matrix()) else {

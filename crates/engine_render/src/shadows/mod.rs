@@ -207,6 +207,10 @@ pub(crate) struct ShadowInputs<'a> {
     /// Whether terrain casts this frame: shadows then run
     /// without mesh casters too.
     pub terrain: bool,
+    /// The angle a display pixel spans at the view's center
+    /// ([`pixel_angle`](crate::gpu_data::pixel_angle)), which sizes the
+    /// wind's shaking on screen as meshes see it.
+    pub pixel_angle: f32,
 }
 
 /// What depth passes draw: each mesh's uploaded draw (and whether it is
@@ -800,7 +804,8 @@ impl ShadowPass {
         let pipelines = self.pipelines.as_ref().expect("created above");
         let mut views = regions.view_matrices();
         // After each map's matrix, the wind placed objects sway in
-        // at this frame's time, then the eye whose distance fades its layers.
+        // at this frame's time, then the detail eye whose distance sizes its
+        // shaking on screen, with the pixels a radian spans there.
         let wind = snapshot.environment.wind;
         let wind = [
             wind.velocity[0],
@@ -808,7 +813,10 @@ impl ShadowPass {
             wind.gusts,
             snapshot.elapsed_seconds,
         ];
-        let viewer = eye.extend(1.0).to_array();
+        let viewer = snapshot
+            .detail_eye
+            .extend(1.0 / inputs.pixel_angle)
+            .to_array();
         for slot in views.as_chunks_mut::<{ VIEW_STRIDE as usize / 4 }>().0 {
             slot[16..20].copy_from_slice(&wind);
             slot[20..24].copy_from_slice(&viewer);

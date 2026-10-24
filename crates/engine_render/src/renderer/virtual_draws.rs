@@ -144,16 +144,18 @@ impl Renderer {
         let view_projection = snapshot.view_projection;
         let mut camera_planes = [[0.0, 0.0, 0.0, 1.0]; crate::shadows::VIRTUAL_SHADOW_PLANES];
         camera_planes[..6].copy_from_slice(&crate::virtual_geometry::planes(view_projection));
+        // Levels measure from the detail eye, which shadow views inherit;
+        // normal cones are tested from the camera's eye.
         let camera = VirtualView {
             planes: camera_planes,
-            eye: snapshot.camera_position,
+            eye: snapshot.detail_eye,
             min_distance: VIRTUAL_NEAREST,
             // The projection's y scale: its second row's length.
             projection: view_projection.row(1).truncate().length() * 0.5,
             threshold: snapshot.environment.virtual_geometry.pixel_error
                 / self.display.size().height.max(1) as f32,
             unseen_error: 0.0,
-            cone: Cone::Eye,
+            cone: Cone::From(snapshot.camera_position),
         };
         // Shadow maps drawn every frame select their virtual casters'
         // clusters as the camera sees them, from where their

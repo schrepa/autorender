@@ -48,14 +48,16 @@ struct View {
     // map's casters can darken what the camera sees; unused ones hold
     // everything.
     planes: array<vec4<f32>, VIEW_PLANES>,
-    // The camera's eye, and the smallest distance errors project from.
+    // The detail eye, and the smallest distance errors project from: every
+    // view's levels follow it, so they hold still while it does.
     eye: vec4<f32>,
     // cot(fovy / 2) / 2, the largest projected error drawn (a fraction of
     // the viewport height), the normal cone test (CONE_*) and, for shadow
     // views, the error accepted outside the camera's frustum (0: none).
     lod: vec4<f32>,
-    // Direction the view looks along, for orthographic cone tests.
-    direction: vec4<f32>,
+    // What normal cones are tested from: the camera's eye, or the
+    // direction an orthographic view looks along.
+    cone: vec4<f32>,
 }
 
 struct Frame {
@@ -348,8 +350,9 @@ fn work_args() {
 
 // Whether the normal cone `cone` (8-bit snorm axis and cutoff) of a cluster
 // posed by `pose` faces away from view `view` everywhere in its sphere
-// (meshoptimizer's tests: from the eye, or along an orthographic view's
-// direction). Mirroring poses flip it; poses scaling unevenly skip it.
+// (meshoptimizer's tests: from the camera's eye, or along an orthographic
+// view's direction). Mirroring poses flip it; poses scaling unevenly skip
+// it.
 fn backfacing(view: u32, pose: Rows, cone: u32, center: vec3<f32>, radius: f32) -> bool {
     let mode = frame.views[view].lod.z;
     let bytes = vec4<i32>(bitcast<i32>(cone << 24u), bitcast<i32>(cone << 16u),
@@ -368,9 +371,9 @@ fn backfacing(view: u32, pose: Rows, cone: u32, center: vec3<f32>, radius: f32) 
     let local = vec3<f32>(bytes.xyz) / 127.0;
     let axis = normalize(x * local.x + y * local.y + z * local.z) * sign(dot(x, cross(y, z)));
     if mode == CONE_ORTHOGRAPHIC {
-        return dot(frame.views[view].direction.xyz, axis) >= cutoff;
+        return dot(frame.views[view].cone.xyz, axis) >= cutoff;
     }
-    let to_center = center - frame.views[view].eye.xyz;
+    let to_center = center - frame.views[view].cone.xyz;
     return dot(to_center, axis) >= cutoff * length(to_center) + radius;
 }
 

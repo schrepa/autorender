@@ -495,13 +495,13 @@ pub struct TerrainDebug {
 }
 
 impl TerrainDebug {
-    /// `world`'s detail eye and whether it is frozen: the eye a
-    /// `TerrainDebug` holds, else the camera's.
-    pub(crate) fn detail_eye(world: &World) -> (Vec3, bool) {
-        match world.get_resource::<Self>().and_then(|debug| debug.freeze) {
-            Some(eye) => (eye, true),
-            None => (world.resource::<Camera>().eye(), false),
-        }
+    /// `world`'s detail eye: the eye a `TerrainDebug` holds, else the
+    /// camera's.
+    pub(crate) fn detail_eye(world: &World) -> Vec3 {
+        world
+            .get_resource::<Self>()
+            .and_then(|debug| debug.freeze)
+            .unwrap_or_else(|| world.resource::<Camera>().eye())
     }
 }
 

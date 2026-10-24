@@ -54,11 +54,10 @@ impl CameraUniform {
 
     /// The frame's detail eye `eye`
     /// ([`RenderSnapshot::detail_eye`](engine_core::RenderSnapshot::detail_eye)),
-    /// which every distance switch measures from, and whether it is
-    /// `frozen`: shaders then measure what a pixel spans from it as well
-    /// (`detail_footprint`).
-    pub(crate) fn set_detail(&mut self, eye: glam::Vec3, frozen: bool) {
-        self.detail = eye.extend(f32::from(u8::from(frozen))).to_array();
+    /// which every handover measures from, by distance and by what a pixel
+    /// spans alike (`detail_distance`, `detail_across`, `detail_span`).
+    pub(crate) fn set_detail(&mut self, eye: glam::Vec3) {
+        self.detail = eye.extend(0.0).to_array();
     }
 
     /// A reflection probe's cube face `size` texels a side seen from

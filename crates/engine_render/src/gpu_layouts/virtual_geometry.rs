@@ -20,16 +20,18 @@ gpu_structs! {
 
     /// A view selection culls for: its inward planes (the camera's frustum,
     /// or where a shadow map's casters can darken what the camera sees;
-    /// unused ones hold everything); the eye and the smallest distance
-    /// errors project from; cot(fovy / 2) / 2, the largest projected error
-    /// drawn, the normal cone test and, for shadow views, the error accepted
-    /// outside the camera's frustum; and the direction it looks along.
+    /// unused ones hold everything); the detail eye and the smallest
+    /// distance errors project from; cot(fovy / 2) / 2, the largest
+    /// projected error drawn, the normal cone test and, for shadow views,
+    /// the error accepted outside the camera's frustum; and what normal
+    /// cones are tested from: the camera's eye, or the direction an
+    /// orthographic view looks along.
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
     pub(crate) struct ViewRecord as ["View" in VIRTUAL_SHADER] {
         pub planes: [[f32; 4]; VIRTUAL_SHADOW_PLANES],
         pub eye: [f32; 4],
         pub lod: [f32; 4],
-        pub direction: [f32; 4],
+        pub cone: [f32; 4],
     }
 
     /// Selection's uniform: the node queue and group list capacities, bins

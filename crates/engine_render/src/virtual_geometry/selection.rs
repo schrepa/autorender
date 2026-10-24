@@ -5,7 +5,6 @@
 //! views and the camera's tests.
 
 use bytemuck::Zeroable;
-use engine_core::glam::Vec3;
 
 use crate::buffers::storage;
 use crate::gpu_layouts::virtual_geometry::{FrameUniform, ViewRecord};
@@ -357,15 +356,15 @@ impl SelectionStorage {
             views: Zeroable::zeroed(),
         };
         for (record, view) in uniform.views.iter_mut().zip(views) {
-            let (mode, direction) = match view.cone {
-                Cone::Eye => (0.0, Vec3::ZERO),
+            let (mode, cone) = match view.cone {
+                Cone::From(eye) => (0.0, eye),
                 Cone::Along(direction) => (1.0, direction),
             };
             *record = ViewRecord {
                 planes: view.planes,
                 eye: [view.eye.x, view.eye.y, view.eye.z, view.min_distance],
                 lod: [view.projection, view.threshold, mode, view.unseen_error],
-                direction: [direction.x, direction.y, direction.z, 0.0],
+                cone: [cone.x, cone.y, cone.z, 0.0],
             };
         }
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));

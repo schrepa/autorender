@@ -325,14 +325,13 @@ fn terrain_shading_level(footprint: f32) -> TerrainShadingLevel {
 }
 
 // The levels shading ground at `world` as a pixel seen from the detail eye
-// shows it: by the meters it spans across the view there, the detail eye's
-// distance times a pixel's angle. Seen obliquely, a level's samples crowd
-// along the view but still span as many pixels across it, where they show,
-// so no view of the ground hands them over sooner; and the levels' tiles
-// load by the same distance, so it never asks for a finer level than is
-// loaded.
+// shows it: by the meters it spans across the view there
+// (`detail_across`). Seen obliquely, a level's samples crowd along the view
+// but still span as many pixels across it, where they show, so no view of
+// the ground hands them over sooner; and the levels' tiles load by the same
+// distance, so it never asks for a finer level than is loaded.
 fn terrain_pixel_shading(world: vec3<f32>) -> TerrainShadingLevel {
-    return terrain_shading_level(detail_distance(world) * camera.options.y);
+    return terrain_shading_level(detail_across(world));
 }
 
 // Texels of a kept shadow level a sample of the ground it holds spans at
@@ -961,10 +960,9 @@ fn terrain_thinned(world: vec3<f32>) -> f32 {
 // The meters a pixel spans across the view at `world` as level of detail
 // measures objects standing there, which placed objects retire by
 // (`terrain_variety.wgsl`'s `seen_share`, as `scatter_cull.wgsl` culls
-// them): their distance from the detail eye times the angle a pixel spans
-// at the view's center, the same whichever way the view turns.
+// them): `detail_across`, the same whichever way the view turns.
 fn terrain_across(world: vec3<f32>) -> f32 {
-    return detail_distance(world) * camera.options.y;
+    return detail_across(world);
 }
 
 // The normal blades standing on ground of normal `ground` light with, on

@@ -137,11 +137,15 @@ pub(crate) struct PresentationInputs<'a> {
     pub poses: FramePoses<'a>,
 }
 
-/// How a frame culls: the projection it rasterizes, the eye and the
-/// viewport's width and height, and what culling does where culling runs
-/// without an instance budget.
+/// How a frame culls: the projection it rasterizes, the eye its levels of
+/// detail measure from and the viewport's width and height, and what
+/// culling does where culling runs without an instance budget.
 pub(crate) struct CullingView {
     pub view_projection: glam::Mat4,
+    /// The detail eye
+    /// ([`RenderSnapshot::detail_eye`](engine_core::RenderSnapshot::detail_eye)),
+    /// which levels of detail and the fades of their cards follow the
+    /// distance to; culling tests the projection's planes.
     pub eye: glam::Vec3,
     pub viewport: (u32, u32),
     /// Visible IDs of moving slots carry `MOVED_SLOT`.
