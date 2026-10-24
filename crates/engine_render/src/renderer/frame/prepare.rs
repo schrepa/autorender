@@ -521,30 +521,22 @@ impl Renderer {
         // Clouds' shadows on everything the sun lights.
         (lighting.cloud_shadow, lighting.cloud_layer) =
             crate::clouds::shadow_lighting(&snapshot.environment.clouds, snapshot.camera_position);
-        // What placed objects cover around the camera: the
-        // maps shading reads, whose windows follow the camera and redraw
+        // What placed objects cover around the detail eye: the
+        // maps shading reads, whose windows follow the detail eye and redraw
         // the cells they uncover and those whose objects changed.
-        if let Some((area, far, strength)) = self.features.occupancy.get_mut().prepare(
+        if let Some(maps) = self.features.occupancy.get_mut().prepare(
             &self.device,
             &self.queue,
             &snapshot.environment.occupancy,
-            snapshot.camera_position,
+            snapshot.detail_eye,
             (
                 self.scatter_draws.covers(),
                 self.features.scatter.get().objects(),
             ),
         ) {
-            lighting.occupancy = [area.center[0], area.center[1], 1.0 / area.size, strength];
-            lighting.occupancy_heights = [
-                area.reference,
-                area.resolution as f32,
-                area.reach,
-                far.map_or(0.0, |far| far.reference),
-            ];
-            // The far map.
-            if let Some(far) = far {
-                lighting.occupancy_far = [far.center[0], far.center[1], 1.0 / far.size, far.reach];
-            }
+            lighting.occupancy = maps.occupancy;
+            lighting.occupancy_maps = maps.maps;
+            lighting.occupancy_centers = maps.centers;
         }
         camera_upload_bytes += self.camera.write_lighting(&self.queue, lighting);
         let mut color_upload_bytes = 0_u64;

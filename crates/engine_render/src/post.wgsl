@@ -78,20 +78,24 @@ const SPIRAL: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
 // The largest sampling radius, in full-resolution pixels: close surfaces
 // keep their samples in cache.
 const MAX_PIXELS: f32 = 96.0;
-// The share of the view's height the occlusion radius spans on screen at
-// least, where it grows with distance toward the far radius.
-const GROWN_SHARE: f32 = 0.02;
 
-// The world radius surfaces `distance` from the eye occlude within: the
-// radius, or with a larger far radius (`post.occlusion.z`) one growing with
-// distance to span `GROWN_SHARE` of the view's height, up to the far radius.
-fn occlusion_radius(distance: f32) -> f32 {
-    let near = post.occlusion.x;
-    let far = post.occlusion.z;
-    if far <= near {
-        return near;
-    }
-    return clamp(GROWN_SHARE * post.size.y * distance / post.eye.w, near, far);
+// The world radius surfaces occlude within: the same at every distance, so
+// a place darkens alike wherever the eye stands.
+fn occlusion_radius() -> f32 {
+    return post.occlusion.x;
+}
+
+// How much of its occlusion a surface takes whose occlusion radius spans
+// `pixels` pixels: only what the terrains' probes and the occupancy maps
+// are too coarse to hold. The radius hands over as a level finer than the
+// finest occupancy map would: all of it while it spans twice the pixels
+// that map's texel spans at the edge of its reach (`post.occlusion.z`
+// times the pixels a meter spans a meter away), none once it spans no
+// more, over the octave between, as the maps' levels hand over
+// (`scene.wgsl`'s `detail_level`).
+fn occlusion_share(pixels: f32) -> f32 {
+    let handover = post.occlusion.z * post.eye.w;
+    return saturate(log2(max(pixels, 1.0e-6) / max(handover, 1.0e-6)));
 }
 
 // World position of a depth-buffer pixel; w is 0 where only sky is (the
@@ -151,16 +155,20 @@ fn contact_visibility(p: vec3<f32>, normal: vec3<f32>, away: f32, noise: f32) ->
 
 // Scalable ambient obscurance (McGuire et al.) over eight samples: each
 // sample closer to the surface's tangent plane than the radius occludes by
-// how far above that plane, and how close, it is; 1 without occlusion.
+// how far above that plane, and how close, it is, at the share of its
+// strength the radius's span on screen leaves (`occlusion_share`), seen from
+// the detail eye; 1 without occlusion.
 fn ambient_visibility(pixel: vec2<i32>, p: vec3<f32>, normal: vec3<f32>, distance: f32,
         noise: f32) -> f32 {
     if post.occlusion.w == 0.0 {
         return 1.0;
     }
     let last = vec2<i32>(post.size.xy) - 1;
-    let radius = occlusion_radius(distance);
+    let radius = occlusion_radius();
+    let seen = radius * post.eye.w / max(length(p - post.detail.xyz), 1.0e-4);
+    let strength = post.occlusion.y * occlusion_share(seen);
     let pixels = min(radius * post.eye.w / distance, MAX_PIXELS);
-    if pixels < 1.0 {
+    if strength <= 0.0 || pixels < 1.0 {
         return 1.0;
     }
     let turn = vec2<f32>(cos(noise * TAU), sin(noise * TAU));
@@ -182,7 +190,7 @@ fn ambient_visibility(pixel: vec2<i32>, p: vec3<f32>, normal: vec3<f32>, distanc
     }
     let radius6 = radius2 * radius2 * radius2;
     let obscurance = clamp(sum * (5.0 / f32(SAMPLES)) / radius6, 0.0, 1.0);
-    return 1.0 - post.occlusion.y * obscurance;
+    return 1.0 - strength * obscurance;
 }
 
 // How much of map `layer` sees the sky along its direction from `p`, a

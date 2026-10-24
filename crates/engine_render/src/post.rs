@@ -476,6 +476,7 @@ impl PostPass {
                 .extend(f32::from(u8::from(snapshot.environment.dither.enabled)))
                 .to_array(),
             sky: effects.sky,
+            detail: snapshot.detail_eye.extend(0.0).to_array(),
         };
         if self.written != Some(uniform) {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
