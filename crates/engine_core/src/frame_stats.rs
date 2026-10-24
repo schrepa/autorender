@@ -563,8 +563,14 @@ pub struct OccupancyStats {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WaterStats {
-    /// Terrain patches holding water drawn.
-    pub patches: u32,
+    /// Leaves of terrains' subdivisions water may stand over that the last
+    /// read-back frame drew, a few frames late.
+    pub leaves: u32,
+    /// Leaves of terrains' subdivisions past the room the listing of
+    /// water's leaves held the last read-back frame, which went untested,
+    /// so water over them did not draw: the room grows to hold them a few
+    /// frames later.
+    pub dropped_leaves: u32,
     /// Blocks of tiles' water resident on the GPU, a patch's each.
     pub blocks: u32,
     /// Blocks this frame dropped for want of the device's texture array

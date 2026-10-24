@@ -47,17 +47,17 @@ struct TerrainSubdivision {
     cutout: vec4<f32>,
     planes: array<vec4<f32>, 6>,
 }
-@group(2) @binding(24) var<uniform> subdivision: TerrainSubdivision;
+@group(2) @binding(27) var<uniform> subdivision: TerrainSubdivision;
 // The terrain's tree: its counts by node (words 1 on), then its bitfield.
-@group(2) @binding(25) var<storage, read_write> subdivision_tree: array<atomic<u32>>;
+@group(2) @binding(28) var<storage, read_write> subdivision_tree: array<atomic<u32>>;
 // Each leaf's node this frame and what it decided (the top two bits).
-@group(2) @binding(26) var<storage, read_write> subdivision_nodes: array<u32>;
+@group(2) @binding(29) var<storage, read_write> subdivision_nodes: array<u32>;
 // The leaves the frame draws (`terrain_surface_leaves`).
-@group(2) @binding(27) var<storage, read_write> subdivision_leaves: array<SurfaceTriangle>;
+@group(2) @binding(30) var<storage, read_write> subdivision_leaves: array<SurfaceTriangle>;
 // Every terrain's SUBDIVISION_ARGS words: its dispatches' arguments, its
 // leaves as the frame found them and its draw's arguments, as begin writes
 // them, then the leaves its splits reserved and the splits its room refused.
-@group(2) @binding(28) var<storage, read_write> subdivision_args: array<atomic<u32>>;
+@group(2) @binding(31) var<storage, read_write> subdivision_args: array<atomic<u32>>;
 
 // Lanes of the passes over leaves, and the words each terrain takes of
 // `subdivision_args`.

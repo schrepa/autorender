@@ -90,7 +90,7 @@ pub(crate) use patches::{PatchDraws, planes, visible};
 use pipelines::{GroupSources, TerrainPipelines};
 pub(crate) use surface::SurfaceTrees;
 use tables::TerrainTables;
-pub(crate) use water_blocks::{GRID_INDICES as WATER_GRID_INDICES, water_patch_layout};
+pub(crate) use water_blocks::TerrainWaterDraws;
 
 pub(crate) use crate::gpu_layouts::terrain::PatchRecord;
 
@@ -154,31 +154,6 @@ fn changed_run<T: bytemuck::Pod>(was: &[T], now: &[T]) -> Range<usize> {
             .map_or(first + 1, |at| at + 1)
     };
     first..end
-}
-
-/// What water's pass draws tiles' water with: the height array, the views'
-/// and terrains' uniforms, the water blocks' arrays, generations advancing
-/// when any of them is another texture or buffer, this frame's patches
-/// holding water and each terrain's uniform offset and range of them, the
-/// grid's indices, and the blocks resident and dropped this frame for want
-/// of layers. And the terrains' directory and the frame's leaves of their
-/// subdivisions (`meshes/terrain_surface.wgsl`), with a generation advancing
-/// when either is another buffer, whose indirect draws are
-/// [`TerrainPass::surface_draw`]'s.
-pub(crate) struct TerrainWaterDraws<'a> {
-    pub(crate) heights: &'a wgpu::TextureView,
-    pub(crate) views: &'a wgpu::Buffer,
-    pub(crate) uniforms: &'a wgpu::Buffer,
-    pub(crate) surfaces: &'a wgpu::TextureView,
-    pub(crate) info: &'a wgpu::TextureView,
-    pub(crate) generation: (u64, u64, u64),
-    pub(crate) instances: &'a wgpu::Buffer,
-    pub(crate) indices: &'a wgpu::Buffer,
-    pub(crate) terrains: &'a [(u32, Range<u32>)],
-    pub(crate) blocks: [u32; 2],
-    pub(crate) directory: &'a wgpu::Buffer,
-    pub(crate) leaves: &'a wgpu::Buffer,
-    pub(crate) surface_generation: (u64, u64),
 }
 
 /// What ground cover's growth reads of the terrain pass.
@@ -363,33 +338,10 @@ impl TerrainPass {
             + self.water.capacity_bytes()
     }
 
-    /// What water's pass draws tiles' water with; `None` before tiles and
-    /// their water arrive.
-    pub(crate) fn water_draws(&self) -> Option<TerrainWaterDraws<'_>> {
-        let heights = self.atlas.heights()?;
-        let (surfaces, info) = self.water.views()?;
-        Some(TerrainWaterDraws {
-            heights,
-            views: &self.patches.views,
-            uniforms: &self.tables.uniforms,
-            surfaces,
-            info,
-            generation: (
-                self.atlas.generation,
-                self.tables.uniform_generation,
-                self.water.generation,
-            ),
-            instances: &self.water.instances,
-            indices: self.patches.indices(),
-            terrains: &self.water.terrains,
-            blocks: [self.water.resident(), self.water.dropped],
-            directory: &self.tables.directory,
-            leaves: self.surface.leaves(),
-            surface_generation: (
-                self.tables.directory_generation,
-                self.surface.leaves().generation(),
-            ),
-        })
+    /// What water's pass draws tiles' water with this frame's `terrains`;
+    /// `None` before tiles and their water arrive.
+    pub(crate) fn water_draws(&self, terrains: &RenderTerrains) -> Option<TerrainWaterDraws<'_>> {
+        self.water.draws(self, terrains)
     }
 
     /// Uploads tiles the frame's terrains list and the GPU lacks, releases
@@ -413,8 +365,8 @@ impl TerrainPass {
             self.tables
                 .write_holes(device, queue, (&self.atlas, edited), max_layers);
         }
-        let (held, changes) = (&self.atlas.held, &self.atlas.held_changes[..]);
-        self.water.sync(device, queue, held, changes, max_layers);
+        self.water
+            .sync(device, queue, (&self.atlas, terrains), max_layers);
         self.patches.follow_ground(terrains, &self.atlas);
         self.atlas.fade(views.fades, self.tables.fade_words);
         let fades = (&self.atlas.fades[..], self.atlas.fades_dirty.clone());
@@ -465,7 +417,6 @@ impl TerrainPass {
             ),
         );
         if !terrains.terrains.iter().any(|terrain| terrain.drawn) {
-            self.water.terrains.clear();
             self.surface.rest();
             return false;
         }
@@ -482,9 +433,6 @@ impl TerrainPass {
             textures: &textures,
         };
         self.patches.lay_out(device, terrains, views, &parts);
-        let eye = views.eye.as_dvec3();
-        let seen = (views.culling, eye, views.fades);
-        self.water.lay_out(device, queue, terrains, seen, &parts);
         let uniforms = (&self.tables.uniforms, self.tables.uniform_generation);
         self.patches.write(queue, views, uniforms);
         self.pipelines.ensure_group(
@@ -602,6 +550,14 @@ impl TerrainPass {
     /// them; `None` where the terrain does not draw.
     pub(crate) fn surface_draw(&self, terrain: usize) -> Option<(&wgpu::Buffer, u64)> {
         self.surface.draw(terrain)
+    }
+
+    /// The leaves of this frame's subdivisions, which tiles' water draws on
+    /// (`meshes/terrain_surface.wgsl`), and a generation advancing when they
+    /// are another buffer.
+    pub(crate) fn surface_leaves(&self) -> Option<(&wgpu::Buffer, u64)> {
+        let leaves = self.surface.leaves();
+        Some((leaves, leaves.generation()))
     }
 
     /// Draws nothing this frame, as no terrain is: bounce light rests and the

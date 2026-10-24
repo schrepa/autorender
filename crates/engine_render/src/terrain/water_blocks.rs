@@ -4,25 +4,26 @@
 //! packed flow, whitewater and kind, their state and their nearest obstacle
 //! (`engine_core::terrain_data::TileWater::info`), and a fourth, 0. A tile's
 //! blocks upload as it arrives and free as it leaves or changes, following
-//! the tiles the atlas held anew; the camera's patches holding water lay
-//! out each frame as instances water's pass draws on terrain's grid, with
-//! its morph and projection, written where they differ from the last
-//! frame's. Each names its own block and its parent tile's over it, toward
-//! whose samples its vertices morph as the ground's do, surfaces and words
-//! alike, so water meets the ground it covers on the same triangles and
-//! nothing it does switches where a patch meets one of the next level
-//! (`crate::water`).
+//! the tiles the atlas held anew. Water's directory lists, for each layer of
+//! the height array, the blocks of its tile's patches and a bit for each
+//! patch over which water stands there or in a finer resident tile within
+//! it, laid out again as tiles or their water change: shaders read a tile's
+//! water at any point through it, and tell the leaves of the terrain's
+//! subdivision water may stand over from those it cannot (`crate::water`).
 
 #![expect(
     clippy::expect_used,
     reason = "the arrays are allocated before blocks upload"
 )]
 
+use std::collections::BTreeSet;
+
+use super::atlas::TileAtlas;
 use super::*;
 use crate::gpu_layouts::constants::{
     NO_WATER_BLOCK, NO_WATER_SURFACE, WATER_BLOCK as BLOCK, WATER_BLOCKS_SIDE as SIDE,
+    WATER_TILE_PATCHES as TILE_PATCHES, WATER_TILE_WORDS as TILE_WORDS,
 };
-use crate::gpu_layouts::water::WaterPatchRecord;
 use engine_core::terrain_data::{PATCHES_PER_TILE, Tile};
 
 /// Blocks a layer holds, and its texels along a side.
@@ -34,8 +35,15 @@ const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const INFO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
 const SURFACE_BYTES: u32 = 4;
 const INFO_BYTES: u32 = 16;
-/// Indices of the grid's triangles before its skirts': water hangs none.
-pub(crate) const GRID_INDICES: u32 = (GRID - 1) * (GRID - 1) * 6;
+/// A tile's entry in water's directory: the blocks of its patches, then the
+/// words of their bits.
+const TILE_BLOCKS: usize = (TILE_PATCHES * TILE_PATCHES) as usize;
+const BIT_WORDS: usize = TILE_WORDS as usize - TILE_BLOCKS;
+
+/// A tile's bits: one for each of its patches, patch (x, z)'s at bit
+/// z * `TILE_PATCHES` + x, set where water stands over it there or in a
+/// finer resident tile within it.
+type PatchBits = [u32; BIT_WORDS];
 
 /// The arrays and their layers.
 struct Arrays {
@@ -46,13 +54,33 @@ struct Arrays {
     layers: u32,
 }
 
-/// A tile's blocks: the tile whose water they hold, each patch's block
-/// (`NO_WATER_BLOCK` where its water stands nowhere over its ground) and
-/// its water's highest surface.
+/// A tile's blocks: the tile whose water they hold, and each patch's block
+/// (`NO_WATER_BLOCK` where its water stands nowhere over its ground).
 struct TileBlocks {
     tile: Arc<Tile>,
     blocks: Box<[u32]>,
-    tops: Box<[f32]>,
+}
+
+/// What water's pass draws tiles' water with: the height array, the views'
+/// and terrains' uniforms, the terrain's directory and this frame's leaves
+/// of its subdivision, the water blocks' arrays and water's directory, with
+/// generations advancing when any of them is another texture or buffer;
+/// each frame terrain holding water whose subdivision draws, its uniform's
+/// offset and its subdivision's draw (its arguments' buffer and byte
+/// offset); and the blocks resident and dropped this frame for want of
+/// layers.
+pub(crate) struct TerrainWaterDraws<'a> {
+    pub(crate) heights: &'a wgpu::TextureView,
+    pub(crate) views: &'a wgpu::Buffer,
+    pub(crate) uniforms: &'a wgpu::Buffer,
+    pub(crate) directory: &'a wgpu::Buffer,
+    pub(crate) leaves: &'a wgpu::Buffer,
+    pub(crate) surfaces: &'a wgpu::TextureView,
+    pub(crate) info: &'a wgpu::TextureView,
+    pub(crate) water_directory: &'a wgpu::Buffer,
+    pub(crate) generation: [u64; 6],
+    pub(crate) terrains: Vec<(u32, &'a wgpu::Buffer, u64)>,
+    pub(crate) blocks: [u32; 2],
 }
 
 pub(crate) struct WaterBlocks {
@@ -65,14 +93,16 @@ pub(crate) struct WaterBlocks {
     /// Blocks uploaded this frame, and dropped for want of layers.
     pub(crate) uploads: u32,
     pub(crate) dropped: u32,
-    // This frame's patches holding water and the last frame's, which the
-    // instances hold unless they were made since (`fresh`); their
-    // instances, and each terrain's uniform offset and range of them.
-    records: Vec<WaterPatchRecord>,
-    written: Vec<WaterPatchRecord>,
-    fresh: bool,
-    pub(crate) instances: wgpu::Buffer,
-    pub(crate) terrains: Vec<(u32, Range<u32>)>,
+    // Water's directory, the words it holds and those they replaced, kept
+    // for the next layout, and the height array's layers it was laid out
+    // for; the bits of every tile water stands over, coarser tiles' holding
+    // their finer ones', as last worked out; and the terrains holding water.
+    directory: crate::buffers::Growable,
+    directory_written: Vec<u32>,
+    directory_spare: Vec<u32>,
+    directory_layers: Option<u32>,
+    bits: HashMap<(u64, TileKey), PatchBits>,
+    holding: BTreeSet<u64>,
 }
 
 impl WaterBlocks {
@@ -85,11 +115,17 @@ impl WaterBlocks {
             next: 0,
             uploads: 0,
             dropped: 0,
-            records: Vec::new(),
-            written: Vec::new(),
-            fresh: true,
-            instances: instance_buffer(device, 64),
-            terrains: Vec::new(),
+            directory: crate::buffers::Growable::new(
+                device,
+                "engine/water-directory",
+                16,
+                wgpu::BufferUsages::empty(),
+            ),
+            directory_written: Vec::new(),
+            directory_spare: Vec::new(),
+            directory_layers: None,
+            bits: HashMap::default(),
+            holding: BTreeSet::new(),
         }
     }
 
@@ -105,29 +141,73 @@ impl WaterBlocks {
         self.next - self.free.len() as u32
     }
 
-    /// Bytes of the arrays.
+    /// Bytes of the arrays and the directory.
     pub(super) fn capacity_bytes(&self) -> u64 {
-        self.arrays.as_ref().map_or(0, |arrays| {
+        let arrays = self.arrays.as_ref().map_or(0, |arrays| {
             u64::from(arrays.layers)
                 * u64::from(LAYER_TEXELS * LAYER_TEXELS)
                 * u64::from(SURFACE_BYTES + INFO_BYTES)
+        });
+        arrays + self.directory.size()
+    }
+
+    /// What water's pass draws tiles' water with this frame, of `pass`'s
+    /// parts and `terrains`; `None` before tiles and their water arrive, or
+    /// the leaves of the terrain's subdivision.
+    pub(super) fn draws<'a>(
+        &'a self,
+        pass: &'a TerrainPass,
+        terrains: &RenderTerrains,
+    ) -> Option<TerrainWaterDraws<'a>> {
+        let heights = pass.atlas.heights()?;
+        let (surfaces, info) = self.views()?;
+        let (leaves, leaves_generation) = pass.surface_leaves()?;
+        let terrains = (terrains.terrains.iter().enumerate())
+            .filter(|(_, terrain)| self.holding.contains(&terrain.id))
+            .filter_map(|(index, terrain)| {
+                let uniform = pass.tables.uniform_of(terrain.id)?;
+                let (draw, offset) = pass.surface_draw(index)?;
+                Some((uniform, draw, offset))
+            })
+            .collect();
+        Some(TerrainWaterDraws {
+            heights,
+            views: &pass.patches.views,
+            uniforms: &pass.tables.uniforms,
+            directory: &pass.tables.directory,
+            leaves,
+            surfaces,
+            info,
+            water_directory: &self.directory,
+            generation: [
+                pass.atlas.generation,
+                pass.tables.uniform_generation,
+                self.generation,
+                pass.tables.directory_generation,
+                self.directory.generation(),
+                leaves_generation,
+            ],
+            terrains,
+            blocks: [self.resident(), self.dropped],
         })
     }
 
-    /// Uploads the blocks of tiles `held` (by terrain and key) that arrived
-    /// or changed, and frees those of tiles gone, looking only at
-    /// `changes`, the keys whose held tile changed since the last sync; a
-    /// tile replaced under its key keeps the blocks of patches whose water
+    /// Uploads the blocks of the tiles `atlas` holds (by terrain and key)
+    /// that arrived or changed, and frees those of tiles gone, looking only
+    /// at the keys whose held tile changed since the last sync; a tile
+    /// replaced under its key keeps the blocks of patches whose water
     /// stayed the same (its water made again where its rivers run
-    /// otherwise). Layers grow up to `max_layers`.
+    /// otherwise). Layers grow up to `max_layers`. Where any tile changed,
+    /// or the height array's layers did, water's directory is laid out
+    /// again over `terrains`' pyramids.
     pub(super) fn sync(
         &mut self,
         device: &wgpu::Device,
         queue: &Queue,
-        held: &HashMap<(u64, TileKey), Arc<Tile>>,
-        changes: &[(u64, TileKey)],
+        (atlas, terrains): (&TileAtlas, &RenderTerrains),
         max_layers: u32,
     ) {
+        let (held, changes) = (&atlas.held, &atlas.held_changes[..]);
         self.uploads = 0;
         self.dropped = 0;
         let mut replaced = Vec::new();
@@ -162,6 +242,9 @@ impl WaterBlocks {
             let blocks = self.upload(device, queue, tile, None, max_layers);
             self.tiles.insert(slot, blocks);
         }
+        if !changes.is_empty() || self.directory_layers != Some(atlas.layers()) {
+            self.write_directory(device, queue, (atlas, terrains));
+        }
     }
 
     /// Whether it holds blocks for exactly the tiles `held` holds, each of
@@ -188,11 +271,10 @@ impl WaterBlocks {
         max_layers: u32,
     ) -> TileBlocks {
         let patches = PATCHES_PER_TILE as usize;
-        let (mut blocks, mut tops, held) = match before {
-            Some(before) => (before.blocks, before.tops, Some(before.tile)),
+        let (mut blocks, held) = match before {
+            Some(before) => (before.blocks, Some(before.tile)),
             None => (
                 vec![NO_WATER_BLOCK; patches * patches].into_boxed_slice(),
-                vec![f32::NEG_INFINITY; patches * patches].into_boxed_slice(),
                 None,
             ),
         };
@@ -216,7 +298,6 @@ impl WaterBlocks {
                     if blocks[index] != NO_WATER_BLOCK {
                         self.free.push(blocks[index]);
                         blocks[index] = NO_WATER_BLOCK;
-                        tops[index] = f32::NEG_INFINITY;
                     }
                     continue;
                 };
@@ -243,11 +324,9 @@ impl WaterBlocks {
                     },
                     block => block,
                 };
-                let mut top = f32::NEG_INFINITY;
                 for (texel, at) in samples(px, pz).enumerate() {
                     let surface = water.surfaces()[at];
                     surface_texels[texel] = if surface.is_finite() {
-                        top = engine_core::math::max(top, surface);
                         surface
                     } else {
                         NO_WATER_SURFACE
@@ -257,11 +336,10 @@ impl WaterBlocks {
                 }
                 self.write(queue, block, &surface_texels, &info_texels);
                 blocks[index] = block;
-                tops[index] = top;
                 self.uploads += 1;
             }
         }
-        TileBlocks { tile, blocks, tops }
+        TileBlocks { tile, blocks }
     }
 
     /// A free block, the arrays grown to hold it; `None` beyond
@@ -383,127 +461,104 @@ impl WaterBlocks {
         }
     }
 
-    /// Lays out this frame's patches of `terrains` holding water that the
-    /// camera sees through `culling` (eye-relative) from `eye`, as terrain
-    /// lays its own out in `parts`, and writes their instances where they
-    /// differ from the last frame's. A tile's blocks, its parent's and what
-    /// its patches' records share are looked up once for each run of them.
-    pub(super) fn lay_out(
+    /// Lays water's directory out for the layers `atlas` holds and writes
+    /// the words that changed: each resident tile's patches' blocks and
+    /// their bits, which say where water stands over each patch, there or
+    /// in a finer resident tile within it, worked out level by level up
+    /// each of `terrains`' pyramids, through tiles not resident too.
+    fn write_directory(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        terrains: &RenderTerrains,
-        (culling, eye, fades): (Mat4, DVec3, bool),
-        parts: &patches::Layout<'_>,
+        queue: &Queue,
+        (atlas, terrains): (&TileAtlas, &RenderTerrains),
     ) {
-        std::mem::swap(&mut self.records, &mut self.written);
-        self.records.clear();
-        self.terrains.clear();
-        let planes = planes(culling, false);
-        let patches = PATCHES_PER_TILE as usize;
-        for (index, terrain) in terrains.terrains.iter().enumerate() {
-            let anchors = patches::Anchors::of(terrain, eye);
-            let relative_origin = (terrain.origin.as_dvec3() - eye).as_vec3();
-            let start = self.records.len() as u32;
-            // The tile of the patch before: its blocks, its parent's and
-            // what its records share.
-            let mut last: Option<TileKey> = None;
-            let (mut blocks, mut parent, mut shared) = (None, None, None);
-            for patch in &terrain.patches {
-                if last != Some(patch.tile) {
-                    last = Some(patch.tile);
-                    blocks = self.tiles.get(&(terrain.id, patch.tile));
-                    parent = (terrain.pyramid.parent(patch.tile))
-                        .and_then(|parent| self.tiles.get(&(terrain.id, parent)));
-                    shared = blocks
-                        .and_then(|_| patches::TileRecord::of(parts, terrain, patch.tile, fades));
+        self.bits.clear();
+        self.holding.clear();
+        for (&(id, key), tile) in &self.tiles {
+            let mut bits = [0_u32; BIT_WORDS];
+            for (patch, &block) in tile.blocks.iter().enumerate() {
+                if block != NO_WATER_BLOCK {
+                    bits[patch / 32] |= 1 << (patch % 32);
                 }
-                let Some(tile) = blocks else {
-                    continue;
-                };
-                let at = usize::from(patch.z) * patches + usize::from(patch.x);
-                let block = tile.blocks[at];
-                if block == NO_WATER_BLOCK {
-                    continue;
-                }
-                // Its box up to its water's highest surface.
-                let top = Vec3::new(
-                    patch.max.x,
-                    engine_core::math::max(patch.max.y, tile.tops[at]),
-                    patch.max.z,
-                );
-                if !visible(&planes, relative_origin + patch.min, relative_origin + top) {
-                    continue;
-                }
-                let Some(record) = shared.map(|shared| shared.record(patch, anchors)) else {
-                    continue;
-                };
-                // The parent tile's block over it, whose samples its
-                // vertices morph toward, and where in that block it starts.
-                let (x, z) = (u32::from(patch.x), u32::from(patch.z));
-                let over = parent.map_or(NO_WATER_BLOCK, |parent| {
-                    let px = u32::from(patch.tile.x % 2) * 8 + x / 2;
-                    let pz = u32::from(patch.tile.z % 2) * 8 + z / 2;
-                    parent.blocks[(pz * PATCHES_PER_TILE + px) as usize]
-                });
-                let offset = ((x % 2) * 8) | (((z % 2) * 8) << 16);
-                self.records.push(WaterPatchRecord {
-                    first: record.first,
-                    shape: record.shape,
-                    atlas: record.atlas,
-                    water: [block, over, offset, 0],
-                    fade: record.fade,
-                });
             }
-            let range = start..self.records.len() as u32;
-            if !range.is_empty() {
-                self.terrains.push(((index as u64 * SLOT) as u32, range));
+            if bits != [0; BIT_WORDS] {
+                self.holding.insert(id);
+                self.bits.insert((id, key), bits);
             }
         }
-        if self.records.is_empty() {
-            return;
+        // Each level's bits into its parents', finest first.
+        let levels = (terrains.terrains.iter())
+            .map(|terrain| terrain.pyramid.levels())
+            .max()
+            .unwrap_or(0);
+        let mut below = Vec::new();
+        for level in 0..levels {
+            below.clear();
+            below.extend(
+                (self.bits.iter())
+                    .filter(|((_, key), _)| u32::from(key.level) == level)
+                    .map(|(&slot, &bits)| (slot, bits)),
+            );
+            for &((id, key), bits) in &below {
+                let parent = (terrains.terrains.iter())
+                    .find(|terrain| terrain.id == id)
+                    .and_then(|terrain| terrain.pyramid.parent(key));
+                let Some(parent) = parent else {
+                    continue;
+                };
+                let held = self.bits.entry((id, parent)).or_insert([0; BIT_WORDS]);
+                for (word, set) in held.iter_mut().zip(covered(&bits, key)) {
+                    *word |= set;
+                }
+            }
         }
-        let bytes = std::mem::size_of_val(self.records.as_slice()) as u64;
-        if bytes > self.instances.size() {
-            self.instances =
-                instance_buffer(device, (self.records.len() as u64).next_power_of_two());
-            self.fresh = true;
+        let layers = atlas.layers();
+        let mut words = std::mem::take(&mut self.directory_spare);
+        words.clear();
+        for _ in 0..layers {
+            words.resize(words.len() + TILE_BLOCKS, NO_WATER_BLOCK);
+            words.resize(words.len() + BIT_WORDS, 0);
         }
-        let run = if self.fresh {
-            0..self.records.len()
+        for (slot, &layer) in &atlas.slots {
+            let at = layer as usize * TILE_WORDS as usize;
+            let Some(entry) = words.get_mut(at..at + TILE_WORDS as usize) else {
+                continue;
+            };
+            if let Some(tile) = self.tiles.get(slot) {
+                entry[..TILE_BLOCKS].copy_from_slice(&tile.blocks);
+            }
+            if let Some(bits) = self.bits.get(slot) {
+                entry[TILE_BLOCKS..].copy_from_slice(bits);
+            }
+        }
+        self.directory_layers = Some(layers);
+        let grown = self.directory.grow(device, (words.len() * 4) as u64);
+        let run = if grown {
+            0..words.len()
         } else {
-            changed_run(&self.written, &self.records)
+            changed_run(&self.directory_written, &words)
         };
-        self.fresh = false;
         if !run.is_empty() {
-            let offset = (run.start * size_of::<WaterPatchRecord>()) as u64;
-            let records = bytemuck::cast_slice(&self.records[run]);
-            queue.write_buffer(&self.instances, offset, records);
+            let offset = (run.start * 4) as u64;
+            queue.write_buffer(&self.directory, offset, bytemuck::cast_slice(&words[run]));
+        }
+        self.directory_spare = std::mem::replace(&mut self.directory_written, words);
+    }
+}
+
+/// The bits tile `key`'s `bits` set in its parent tile's: those of the
+/// quarter of the parent's patches it lies under, each over two of its
+/// patches along each side.
+fn covered(bits: &PatchBits, key: TileKey) -> PatchBits {
+    let side = TILE_PATCHES as usize;
+    let half = side / 2;
+    let (first_x, first_z) = (usize::from(key.x % 2) * half, usize::from(key.z % 2) * half);
+    let mut parent = [0; BIT_WORDS];
+    for patch in 0..side * side {
+        if bits[patch / 32] & (1 << (patch % 32)) != 0 {
+            let at = (first_z + patch / side / 2) * side + first_x + patch % side / 2;
+            parent[at / 32] |= 1 << (at % 32);
         }
     }
-}
-
-/// `WaterPatchInput`'s instance locations.
-pub(crate) fn water_patch_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 5] = crate::pipelines::vertex_attributes!(WaterPatchRecord {
-        0 => first as Sint32x2,
-        1 => shape as Float32x4,
-        2 => atlas as Uint32x4,
-        3 => water as Uint32x4,
-        4 => fade as Float32,
-    });
-    wgpu::VertexBufferLayout {
-        array_stride: size_of::<WaterPatchRecord>() as u64,
-        step_mode: wgpu::VertexStepMode::Instance,
-        attributes: &ATTRIBUTES,
-    }
-}
-
-fn instance_buffer(device: &wgpu::Device, records: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("engine/water-patches"),
-        size: records * size_of::<WaterPatchRecord>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
+    parent
 }

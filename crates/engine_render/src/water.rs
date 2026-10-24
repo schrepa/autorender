@@ -1,13 +1,13 @@
 //! Water: terrains' water as their tiles hold it, and the sea. Each frame
-//! the camera's terrain patches holding water draw on terrain's own grid,
-//! with its morph and projection, standing at the surfaces the tiles' water
-//! blocks hold (`crate::terrain::TerrainPass::water_draws`): the depth each
-//! pixel shades by is the tiles' water less their ground on the triangles
-//! the ground is drawn on, and the shore falls where the ground rises
-//! through the water. Their vertices morph toward the parent tile's samples
-//! as the ground's do, the water's flow, foam, state and what stands in it
-//! with its surface, so none of it switches where patches of two levels
-//! meet. Water draws after the opaque scene and its decals and
+//! the leaves of each terrain's subdivision over which its tiles' water may
+//! stand are listed on the GPU, in their order (`meshes/water.wgsl`'s
+//! `cs_water_leaves` and `cs_water_list`), and water draws on them: its
+//! vertices stand where the ground's do, at the surfaces the tiles' water
+//! blocks hold there, read by position through water's directory
+//! (`crate::terrain::TerrainPass::water_draws`), so the depth each pixel
+//! shades by is the tiles' water over the true ground, the shore falls where
+//! the ground rises through the water, and none of it moves as the eye
+//! does. Water draws after the opaque scene and its decals and
 //! blends over the ground by how little light comes back through it,
 //! writing the depth and surface targets, so later passes and screen-space
 //! reflections see its surface. Before it draws, the opaque depth copies
@@ -16,6 +16,12 @@
 //! the opaque color copies too, and water covers it whole with what shows
 //! through it, bent by its waves and dimmed channel by channel over the
 //! light's path; other frames blend water over the ground.
+//!
+//! The leaves' listing has room for as many leaves of each terrain's
+//! subdivision as the most any held when their counts last read back, a
+//! few frames late, within what one storage binding holds: past it, leaves
+//! go untested and their water does not draw, counted, until the room
+//! grows to hold them.
 //!
 //! Water's waves (`crate::water_waves`) evolve before it draws, the same
 //! tiles of them for terrains' water and the sea.
@@ -35,7 +41,9 @@
 //! terrain's projection, jittered alike, so its shores meet the ground.
 
 use engine_core::collections::HashMap;
+use std::cell::Cell;
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use bytemuck::Zeroable;
@@ -48,13 +56,15 @@ use engine_core::{
 };
 
 use crate::bindings::{WATER, WATER_BEHIND};
+use crate::buffers::{Growable, ReadbackRing};
 use crate::gpu_layouts::terrain::{TerrainUniform, ViewUniform};
-use crate::profiling::Span;
+use crate::profiling::{GpuProfiler, Span};
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource, Targets};
 use crate::scene_shading::SceneShading;
+use crate::shaders::entry::meshes;
 use crate::targets::{FrameSize, ScreenTarget};
-use crate::terrain::{TerrainWaterDraws, WATER_GRID_INDICES, water_patch_layout};
+use crate::terrain::TerrainWaterDraws;
 use crate::water_fall_map::FallMap;
 use crate::water_falls::{fall_layout, sheets};
 use crate::water_sim::WaterSim;
@@ -71,15 +81,28 @@ const OCEAN_FIRST_RINGS: u32 = 31;
 const OCEAN_CELL: f32 = 0.3;
 const OCEAN_CELL_PER_HEIGHT: f32 = 0.004;
 
-use crate::gpu_layouts::water::{FallVertex, WaterUniform};
+/// Leaves of each terrain's subdivision the listing has room for until
+/// their counts first read back.
+const FIRST_LEAVES: u32 = 4096;
+/// Workgroups the test of a terrain's leaves dispatches, each invocation
+/// testing the leaves as many apart as they run.
+const LEAF_WORKGROUPS: u32 = 256;
+/// Bytes from one terrain's leaf record to the next: the dynamic offsets'
+/// alignment every device allows (WebGPU's
+/// `minUniformBufferOffsetAlignment`).
+const RECORD_SLOT: u64 = 256;
+
+use crate::gpu_layouts::water::{FallVertex, WaterDraw, WaterLeafRecord, WaterUniform};
 
 /// Bytes of the water group's uniform.
 pub(crate) const WATER_UNIFORM_BYTES: usize = size_of::<WaterUniform>();
 
 /// One-texel stand-ins for what the water group binds that the sea reads
-/// none of: the terrain's height array and uniforms and tiles' water
-/// blocks; and for the scene's color, which frames blending water read
-/// none of.
+/// none of: the terrain's height array, uniforms and directory, its
+/// subdivision's leaves, tiles' water blocks, water's directory, its
+/// leaves listed and a terrain's record of them; and for the scene's color,
+/// which frames blending water read none of. The leaves' listing binds the
+/// storage stand-in for the leaves listed, which it writes.
 struct Placeholders {
     surfaces: wgpu::Texture,
     info: wgpu::Texture,
@@ -87,6 +110,8 @@ struct Placeholders {
     terrains: wgpu::Buffer,
     scene: wgpu::TextureView,
     sim: wgpu::Buffer,
+    storage: wgpu::Buffer,
+    record: wgpu::Buffer,
 }
 
 /// The sea on the GPU: its uniform and group, and this frame's rings and
@@ -98,12 +123,128 @@ struct OceanDraw {
     runs: Vec<Range<u32>>,
 }
 
-/// Tiles' water this frame: its instances, the grid's indices and each
-/// terrain's uniform offset and range of instances.
+/// Tiles' water this frame: each terrain drawing it, its uniform's offset
+/// and its subdivision's draw (the arguments' buffer and byte offset), in
+/// the order of its records, bits, leaves listed and draws.
 struct TileDraws {
-    instances: wgpu::Buffer,
-    indices: wgpu::Buffer,
-    terrains: Vec<(u32, Range<u32>)>,
+    terrains: Vec<(u32, wgpu::Buffer, u64)>,
+}
+
+/// Tiles' water's groups of the water layout: the one its draws bind, and
+/// the one the listing of its leaves binds, a stand-in for the leaves
+/// listed, which it writes through its own group.
+struct TileGroups {
+    draws: wgpu::BindGroup,
+    listing: wgpu::BindGroup,
+}
+
+/// What lists the leaves of terrains' subdivisions over which water may
+/// stand: its pipelines, the test's and the listing's; each terrain's
+/// record of where its leaves lie, the bits of its leaves holding water,
+/// the leaves listed and its draw; the leaves each terrain has room for and
+/// the terrains there is room for, `generation` advancing as any buffer is
+/// another; the group binding what the listing writes; and its draws'
+/// counts read back a few frames late (`counts`: the most leaves a
+/// terrain's subdivision held, the leaves drawn, and the leaves past the
+/// room, left untested).
+struct Leaves {
+    pipelines: Option<[wgpu::ComputePipeline; 2]>,
+    records: wgpu::Buffer,
+    bits: Growable,
+    list: Growable,
+    draws: wgpu::Buffer,
+    room: u32,
+    terrains: u32,
+    generation: u64,
+    lists: Option<wgpu::BindGroup>,
+    readbacks: ReadbackRing<(u32, u32)>,
+    counts: Rc<Cell<[u32; 3]>>,
+}
+
+impl Leaves {
+    fn new(device: &wgpu::Device) -> Self {
+        Self {
+            pipelines: None,
+            records: crate::buffers::uniform(device, "engine/water-leaf-records", RECORD_SLOT),
+            bits: Growable::new(
+                device,
+                "engine/water-leaf-bits",
+                16,
+                wgpu::BufferUsages::empty(),
+            ),
+            list: Growable::new(
+                device,
+                "engine/water-leaf-list",
+                16,
+                wgpu::BufferUsages::empty(),
+            ),
+            draws: draws_buffer(device, 1),
+            room: 0,
+            terrains: 0,
+            generation: 0,
+            lists: None,
+            readbacks: ReadbackRing::new("engine/water-leaf-readback"),
+            counts: Rc::new(Cell::new([0; 3])),
+        }
+    }
+
+    /// Room for `terrains` terrains' leaves, as many each as the most a
+    /// terrain's subdivision held when their counts last read back, and at
+    /// least [`FIRST_LEAVES`], within what one storage binding holds;
+    /// their records written as the room changes. Returns whether any
+    /// buffer is another.
+    fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, terrains: u32) -> bool {
+        let terrains = terrains.max(1);
+        let wanted = (self.counts.get()[0].max(FIRST_LEAVES))
+            .checked_next_power_of_two()
+            .unwrap_or(u32::MAX);
+        // Whole words of bits within what the list's binding holds.
+        let fits = self.list.room() / 4 / u64::from(terrains);
+        let within = fits.min(u64::from(u32::MAX)) as u32 / 32 * 32;
+        let room = wanted.max(self.room).min(within);
+        let mut replaced = self.list.grow(device, u64::from(terrains) * u64::from(room) * 4);
+        replaced |= self.bits.grow(device, u64::from(terrains) * u64::from(room / 8));
+        if u64::from(terrains) * size_of::<WaterDraw>() as u64 > self.draws.size() {
+            self.draws = draws_buffer(device, terrains.next_power_of_two());
+            replaced = true;
+        }
+        let record_bytes = u64::from(terrains) * RECORD_SLOT;
+        if record_bytes > self.records.size() {
+            self.records = crate::buffers::uniform(
+                device,
+                "engine/water-leaf-records",
+                u64::from(terrains.next_power_of_two()) * RECORD_SLOT,
+            );
+            replaced = true;
+            self.terrains = 0;
+        }
+        if replaced {
+            self.generation += 1;
+        }
+        if (room, terrains) != (self.room, self.terrains) {
+            let mut bytes = vec![0_u8; record_bytes as usize];
+            for index in 0..terrains {
+                let record = WaterLeafRecord {
+                    places: [index * room, index * room / 32, room, index],
+                };
+                let at = (u64::from(index) * RECORD_SLOT) as usize;
+                bytes[at..at + size_of::<WaterLeafRecord>()]
+                    .copy_from_slice(bytemuck::bytes_of(&record));
+            }
+            queue.write_buffer(&self.records, 0, &bytes);
+            if terrains != self.terrains {
+                // The draws read back are as many as the terrains.
+                self.readbacks.clear();
+            }
+            (self.room, self.terrains) = (room, terrains);
+        }
+        replaced
+    }
+
+    /// Bytes of its buffers.
+    fn capacity_bytes(&self) -> u64 {
+        self.records.size() + self.bits.size() + self.list.size() + self.draws.size()
+    }
 }
 
 /// Terrains' falls' sheets: their vertices and triangles' indices, and the
@@ -123,10 +264,9 @@ struct BehindCopies {
     group: wgpu::BindGroup,
 }
 
-/// What water draws this frame: tiles' patches holding water and their
-/// blocks resident and dropped, and the sea's sectors and their triangles.
+/// What water draws this frame: tiles' water blocks resident and dropped,
+/// and the sea's sectors and their triangles.
 pub(crate) struct WaterFrame {
-    patches: u32,
     blocks: [u32; 2],
     sectors: u32,
     triangles: u32,
@@ -137,18 +277,23 @@ pub(crate) struct WaterPass {
     behind_layout: crate::pipelines::GroupLayout,
     behind: ScreenTarget<BehindCopies>,
     placeholders: Placeholders,
+    // What groups of the water layout fill where a pass leaves bindings
+    // out: the listing's outputs in draws' groups, what lies behind the
+    // water in the listing's.
+    fillers: crate::pipelines::Fillers,
     // Created with the first frame drawing water, the fall map once the
     // scene's tables hold it.
     waves: Option<WaterWaves>,
     fall_map: Option<FallMap>,
     // Water simulated around the camera, where water asks for it.
     sim: WaterSim,
-    // Tiles' water's uniform, and the group binding it with the terrain
-    // pass's arrays and uniforms and the simulation's water, as of their
-    // generations.
+    // Tiles' water's uniform, and the groups binding it with the terrain
+    // pass's arrays, uniforms, directory and leaves, the simulation's water
+    // and the leaves' listing's, as of their generations.
     uniform: wgpu::Buffer,
-    group: Option<(GroupGenerations, wgpu::BindGroup)>,
+    group: Option<(GroupGenerations, TileGroups)>,
     tiles: Option<TileDraws>,
+    leaves: Leaves,
     pipeline_layout: Option<wgpu::PipelineLayout>,
     pipelines: HashMap<Targets, wgpu::RenderPipeline>,
     ocean_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
@@ -173,12 +318,14 @@ impl WaterPass {
             behind_layout: crate::pipelines::layout(device, &WATER_BEHIND),
             behind: ScreenTarget::default(),
             placeholders: placeholders(device),
+            fillers: crate::pipelines::Fillers::new(device),
             waves: None,
             fall_map: None,
             sim: WaterSim::new(device),
             uniform: crate::buffers::uniform(device, "engine/water", WATER_UNIFORM_BYTES as u64),
             group: None,
             tiles: None,
+            leaves: Leaves::new(device),
             pipeline_layout: None,
             pipelines: HashMap::default(),
             ocean_pipelines: HashMap::default(),
@@ -300,10 +447,10 @@ impl WaterPass {
         }
     }
 
-    /// Prepares this frame's water: tiles' patches holding water as the
-    /// terrain pass lays them out (`tiles`) and the falls of `terrains`,
-    /// shaded as `settings` say with the waves' spectra and the fall map
-    /// the scene's `tables` hold, and
+    /// Prepares this frame's water: tiles' water over the leaves of the
+    /// terrains' subdivisions as the terrain pass holds them (`tiles`) and
+    /// the falls of `terrains`, shaded as `settings` say with the waves'
+    /// spectra and the fall map the scene's `tables` hold, and
     /// the sea `ocean`, culled through `cull` and drawn through `view`
     /// (both eye-relative) over the opaque `depth` and, when `refracts`,
     /// the color it copies; seen from `eye` in the wind `wind`, its waves
@@ -355,20 +502,7 @@ impl WaterPass {
             (square, [window.datum, 0.0, 0.0, 0.0])
         });
         if let Some(tiles) = tiles {
-            if let (Some(waves), Some(map)) = (&self.waves, &self.fall_map)
-                && self
-                    .group
-                    .as_ref()
-                    .is_none_or(|(bound, _)| *bound != (tiles.generation, sim_generation))
-            {
-                let group = self.tile_group(device, &tiles, (waves, map));
-                self.group = Some(((tiles.generation, sim_generation), group));
-            }
-            self.tiles = Some(TileDraws {
-                instances: tiles.instances.clone(),
-                indices: tiles.indices.clone(),
-                terrains: tiles.terrains.to_vec(),
-            });
+            self.prepare_tiles(device, queue, &tiles, sim_generation);
             // Terrains' water gives way to the sea where it lies under it.
             let sea = if ocean.enabled {
                 [ocean.level - eye.y, 1.0, 0.0, 0.0]
@@ -399,14 +533,7 @@ impl WaterPass {
             (eye, wind, seconds),
             repeats,
         );
-        let patches = self.tiles.as_ref().map_or(0, |tiles| {
-            tiles
-                .terrains
-                .iter()
-                .map(|(_, range)| range.len() as u32)
-                .sum()
-        });
-        if patches == 0 && !sea && !falling {
+        if self.tiles.is_none() && !sea && !falling {
             return None;
         }
         // The copies, at the depth buffer's size: the frame's.
@@ -427,15 +554,74 @@ impl WaterPass {
         }
         let (sectors, triangles) = self.ocean_drawn();
         Some(WaterFrame {
-            patches,
             blocks,
             sectors,
             triangles,
         })
     }
 
+    /// Prepares tiles' water over `tiles`: room for each terrain's leaves
+    /// and the group their listing writes them through, and the groups of
+    /// the water layout tiles' water and its listing bind, made again as
+    /// what they bind changes (the simulation's water as of
+    /// `sim_generation` among it).
+    fn prepare_tiles(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        tiles: &TerrainWaterDraws<'_>,
+        sim_generation: u64,
+    ) {
+        let replaced = self
+            .leaves
+            .prepare(device, queue, tiles.terrains.len() as u32);
+        if replaced || self.leaves.lists.is_none() {
+            self.leaves.lists = Some(crate::pipelines::filled_group(
+                device,
+                "engine/water-leaf-lists",
+                &WATER_BEHIND,
+                &self.behind_layout,
+                &[
+                    crate::buffers::entry("water_leaf_bits", &self.leaves.bits),
+                    crate::buffers::entry("water_leaf_list", &self.leaves.list),
+                    crate::buffers::entry("water_leaf_draws", &self.leaves.draws),
+                ],
+                &self.fillers,
+            ));
+        }
+        let generations = (tiles.generation, sim_generation, self.leaves.generation);
+        if let (Some(waves), Some(map)) = (&self.waves, &self.fall_map)
+            && self
+                .group
+                .as_ref()
+                .is_none_or(|(bound, _)| *bound != generations)
+        {
+            let groups = TileGroups {
+                draws: self.tile_group(
+                    device,
+                    ("engine/water-group", tiles),
+                    (waves, map),
+                    &self.leaves.list,
+                ),
+                listing: self.tile_group(
+                    device,
+                    ("engine/water-listing-group", tiles),
+                    (waves, map),
+                    &self.placeholders.storage,
+                ),
+            };
+            self.group = Some((generations, groups));
+        }
+        self.tiles = Some(TileDraws {
+            terrains: (tiles.terrains.iter())
+                .map(|&(uniform, draw, offset)| (uniform, draw.clone(), offset))
+                .collect(),
+        });
+    }
+
     /// The copies of the opaque scene at `size`, the depth's of `format`
-    /// and, when water `refracts`, the color's; and their group.
+    /// and, when water `refracts`, the color's; and their group, which
+    /// fills what the leaves' listing writes.
     fn behind_copies(
         &self,
         device: &wgpu::Device,
@@ -460,7 +646,7 @@ impl WaterPass {
         let scene_view = scene
             .as_ref()
             .map(|scene| scene.create_view(&wgpu::TextureViewDescriptor::default()));
-        let group = crate::pipelines::group(
+        let group = crate::pipelines::filled_group(
             device,
             "engine/water-behind",
             &WATER_BEHIND,
@@ -472,6 +658,7 @@ impl WaterPass {
                     crate::pipelines::view(scene_view.as_ref().unwrap_or(&self.placeholders.scene)),
                 ),
             ],
+            &self.fillers,
         );
         BehindCopies {
             depth,
@@ -480,14 +667,18 @@ impl WaterPass {
         }
     }
 
-    /// The group tiles' water draws with: the terrain pass's height array,
-    /// views' and terrains' uniforms and water blocks, water's uniform,
-    /// `waves` and falling water's `map`.
+    /// The group `label` of the water layout tiles' water binds: the
+    /// terrain pass's height array, views' and terrains' uniforms,
+    /// directory and leaves of its subdivision, and the water blocks and
+    /// water's directory (`tiles`); water's uniform, `waves` and falling
+    /// water's `map`; the simulated water; and `listed` as the leaves
+    /// listed, with the terrains' records of them.
     fn tile_group(
         &self,
         device: &wgpu::Device,
-        tiles: &TerrainWaterDraws<'_>,
+        (label, tiles): (&str, &TerrainWaterDraws<'_>),
         (waves, map): (&WaterWaves, &FallMap),
+        listed: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         let (moments, sampler) = waves.sampled();
         let (sim_cells, sim_ground, sim_beds) = self.sim.drawn().0.map_or(
@@ -500,7 +691,7 @@ impl WaterPass {
         );
         crate::pipelines::group(
             device,
-            "engine/water-group",
+            label,
             &WATER,
             &self.layout,
             &[
@@ -510,6 +701,8 @@ impl WaterPass {
                     "terrain",
                     sized(tiles.uniforms, size_of::<TerrainUniform>()),
                 ),
+                crate::buffers::entry("terrain_directory", tiles.directory),
+                crate::buffers::entry("terrain_surface_leaves", tiles.leaves),
                 ("water_surface", crate::pipelines::view(tiles.surfaces)),
                 ("water_info", crate::pipelines::view(tiles.info)),
                 ("water", self.uniform.as_entire_binding()),
@@ -519,6 +712,12 @@ impl WaterPass {
                 crate::buffers::entry("water_sim_cells", sim_cells),
                 crate::buffers::entry("water_sim_ground", sim_ground),
                 crate::buffers::entry("water_sim_beds", sim_beds),
+                crate::buffers::entry("water_directory", tiles.water_directory),
+                crate::buffers::entry("water_leaves", listed),
+                (
+                    "water_leaf_record",
+                    sized(&self.leaves.records, size_of::<WaterLeafRecord>()),
+                ),
             ],
         )
     }
@@ -633,9 +832,9 @@ impl WaterPass {
     }
 
     /// Creates the pipelines into `targets` this frame's water and sea
-    /// draw with unless they exist, and tiles' water's when `coming`,
-    /// before a bake gives any; `camera` is the main passes'
-    /// first group.
+    /// draw with unless they exist, and tiles' water's and its leaves'
+    /// listing's when `coming`, before a bake gives any; `camera` is the
+    /// main passes' first group.
     pub(crate) fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -647,6 +846,13 @@ impl WaterPass {
         if (coming || self.tiles.is_some()) && !self.pipelines.contains_key(&targets) {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Tiles);
             self.pipelines.insert(targets, pipeline);
+        }
+        if (coming || self.tiles.is_some()) && self.leaves.pipelines.is_none() {
+            let layout = self.pipeline_layout(device, camera);
+            self.leaves.pipelines = Some([
+                crate::pipelines::compute_entry(device, &layout, shader, meshes::cs_water_leaves),
+                crate::pipelines::compute_entry(device, &layout, shader, meshes::cs_water_list),
+            ]);
         }
         if self.ocean.is_some() && !self.ocean_pipelines.contains_key(&targets) {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Sea);
@@ -662,6 +868,24 @@ impl WaterPass {
         }
     }
 
+    /// The layout water's pipelines and its leaves' listing share, its
+    /// first group `camera`'s, made once.
+    fn pipeline_layout(
+        &mut self,
+        device: &wgpu::Device,
+        camera: &crate::pipelines::GroupLayout,
+    ) -> wgpu::PipelineLayout {
+        self.pipeline_layout
+            .get_or_insert_with(|| {
+                crate::pipelines::pipeline_layout(
+                    device,
+                    &crate::pipeline_layouts::WATER_PIPELINES,
+                    &[camera, &self.layout, &self.behind_layout],
+                )
+            })
+            .clone()
+    }
+
     /// The pipeline of `surface` into `targets`.
     fn pipeline(
         &mut self,
@@ -673,13 +897,7 @@ impl WaterPass {
         surface: Surface,
     ) -> wgpu::RenderPipeline {
         // Water and the sea share one layout.
-        let layout = self.pipeline_layout.get_or_insert_with(|| {
-            crate::pipelines::pipeline_layout(
-                device,
-                &crate::pipeline_layouts::WATER_PIPELINES,
-                &[camera, &self.layout, &self.behind_layout],
-            )
-        });
+        let layout = self.pipeline_layout(device, camera);
         let (vertex, fragment) = match surface {
             Surface::Tiles => crate::entries::water(targets),
             Surface::Sea => crate::entries::ocean(targets),
@@ -709,7 +927,6 @@ impl WaterPass {
         {
             scene.blend = Some(blended);
         }
-        let patches = [Some(water_patch_layout())];
         let sheets = [Some(fall_layout())];
         // Tiles' and simulated water draw into the debug targets as the
         // view shown asks.
@@ -728,14 +945,14 @@ impl WaterPass {
                     Surface::Falls => "engine/water-falls",
                     Surface::Sim => "engine/water-sim-draw",
                 },
-                layout,
+                layout: &layout,
                 module: shader,
                 vertex_constants: &[],
                 vertex,
-                // The sea's vertices come from their indices alone.
+                // Tiles' water's vertices come from the leaves listed, the
+                // sea's from their indices alone.
                 buffers: match surface {
-                    Surface::Tiles => &patches,
-                    Surface::Sea | Surface::Sim => &[],
+                    Surface::Tiles | Surface::Sea | Surface::Sim => &[],
                     Surface::Falls => &sheets,
                 },
                 primitive: wgpu::PrimitiveState {
@@ -761,6 +978,65 @@ impl WaterPass {
         )
     }
 
+    /// Records the listing of this frame's terrains' water's leaves, seen
+    /// from the main passes' first group `camera` and timed by `profiler`:
+    /// each terrain's leaves as its subdivision's draw counts them, copied
+    /// into its own draw; their bits cleared and set where water may stand
+    /// over a leaf, and those leaves listed in their order; and a copy of
+    /// the draws to read back.
+    fn list_leaves(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        (camera, profiler): (&wgpu::BindGroup, &GpuProfiler),
+    ) {
+        let leaves = &self.leaves;
+        let (Some(tiles), Some((_, groups)), Some([test, list]), Some(lists)) = (
+            &self.tiles,
+            &self.group,
+            &leaves.pipelines,
+            &leaves.lists,
+        ) else {
+            return;
+        };
+        let stride = size_of::<WaterDraw>() as u64;
+        let counts = std::mem::offset_of!(WaterDraw, counts) as u64;
+        // Its subdivision's draw's instances, a leaf each.
+        let instances = std::mem::offset_of!(wgpu::util::DrawIndirectArgs, instance_count) as u64;
+        let word = size_of::<u32>() as u64;
+        for (index, (_, draw, offset)) in tiles.terrains.iter().enumerate() {
+            let at = index as u64 * stride + counts;
+            encoder.copy_buffer_to_buffer(draw, offset + instances, &leaves.draws, at, word);
+        }
+        encoder.clear_buffer(&leaves.bits, 0, None);
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/water-leaves"),
+                timestamp_writes: profiler.span("water_leaves").map(|span| span.compute()),
+            });
+            pass.set_bind_group(0, camera, &[]);
+            pass.set_bind_group(2, lists, &[]);
+            // Every terrain's leaves tested, then each terrain's listed.
+            for (pipeline, workgroups) in [(test, LEAF_WORKGROUPS), (list, 1)] {
+                pass.set_pipeline(pipeline);
+                for (index, (uniform, _, _)) in tiles.terrains.iter().enumerate() {
+                    pass.set_bind_group(1, &groups.listing, &[0, *uniform, record_offset(index)]);
+                    pass.dispatch_workgroups(workgroups, 1, 1);
+                }
+            }
+        }
+        let bytes = tiles.terrains.len() as u64 * stride;
+        let tag = (leaves.room, tiles.terrains.len() as u32);
+        leaves
+            .readbacks
+            .record(device, encoder, &leaves.draws, bytes, tag);
+    }
+
+    /// Whether tiles' water draws this frame: its leaves' listing ready.
+    fn lists(&self) -> bool {
+        self.tiles.is_some() && self.leaves.pipelines.is_some() && self.leaves.lists.is_some()
+    }
+
     /// Records this frame's water into `pass` with the main passes' first
     /// group `camera`; returns its draws.
     fn draw(
@@ -777,7 +1053,7 @@ impl WaterPass {
         if let (Some(ocean), Some(pipeline)) = (&self.ocean, self.ocean_pipelines.get(&targets)) {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, &ocean.group, &[0, 0]);
+            pass.set_bind_group(1, &ocean.group, &[0, 0, 0]);
             pass.set_bind_group(2, &behind.group, &[]);
             let vertices = ocean.rings * (OCEAN_SEGMENTS / OCEAN_SECTORS) * 6;
             for run in &ocean.runs {
@@ -785,20 +1061,21 @@ impl WaterPass {
                 draws += 1;
             }
         }
-        let Some((_, group)) = &self.group else {
+        let Some((_, groups)) = &self.group else {
             return draws;
         };
-        if let (Some(tiles), Some(pipeline)) = (&self.tiles, self.pipelines.get(&targets)) {
+        if let (Some(tiles), Some(pipeline), true) =
+            (&self.tiles, self.pipelines.get(&targets), self.lists())
+        {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, camera, &[]);
             pass.set_bind_group(2, &behind.group, &[]);
-            pass.set_vertex_buffer(0, tiles.instances.slice(..));
-            pass.set_index_buffer(tiles.indices.slice(..), wgpu::IndexFormat::Uint16);
-            // Each terrain's patches through its uniform, seen by the
-            // camera's view, the first.
-            for (uniform, range) in &tiles.terrains {
-                pass.set_bind_group(1, group, &[0, *uniform]);
-                pass.draw_indexed(0..WATER_GRID_INDICES, 0, range.clone());
+            // Each terrain's leaves listed, through its uniform and record,
+            // seen by the camera's view, the first.
+            for (index, (uniform, _, _)) in tiles.terrains.iter().enumerate() {
+                pass.set_bind_group(1, &groups.draws, &[0, *uniform, record_offset(index)]);
+                let offset = index as u64 * size_of::<WaterDraw>() as u64;
+                pass.draw_indirect(&self.leaves.draws, offset);
                 draws += 1;
             }
         }
@@ -810,7 +1087,7 @@ impl WaterPass {
             let quads = drawn.window.cells.saturating_sub(1);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, group, &[0, 0]);
+            pass.set_bind_group(1, &groups.draws, &[0, 0, 0]);
             pass.set_bind_group(2, &behind.group, &[]);
             pass.set_index_buffer(drawn.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..quads * quads * 6, 0, 0..1);
@@ -821,7 +1098,7 @@ impl WaterPass {
         if let (Some(falls), Some(pipeline)) = (&self.falls, self.fall_pipelines.get(&targets)) {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, group, &[0, 0]);
+            pass.set_bind_group(1, &groups.draws, &[0, 0, 0]);
             pass.set_bind_group(2, &behind.group, &[]);
             pass.set_vertex_buffer(0, falls.vertices.slice(..));
             pass.set_index_buffer(falls.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -857,12 +1134,15 @@ impl RenderFeature for WaterPass {
         encode: &Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        // The waves, the simulated water's steps and what lies behind the
-        // water, before it draws.
+        // The waves, the simulated water's steps, the leaves tiles' water
+        // draws on and what lies behind the water, before it draws.
         if let Some(waves) = &self.waves {
             waves.encode(encoder, encode.profiler);
         }
         self.sim.encode(encoder, encode.profiler);
+        if self.lists() {
+            self.list_leaves(encode.device, encoder, (encode.camera, encode.profiler));
+        }
         self.copy_behind(encoder, encode.depth, encode.scene);
         let mut pass = encode.render_pass(
             encoder,
@@ -873,8 +1153,28 @@ impl RenderFeature for WaterPass {
         self.draw(&mut pass, encode.camera, encode.targets)
     }
 
-    /// Bytes of the copies and the waves: tiles' water blocks count with
-    /// the terrain's arrays.
+    /// Requests the map of this frame's leaves' draws once it is submitted.
+    fn after_submit(&mut self, _frame: Option<&WaterFrame>) {
+        let counts = Rc::clone(&self.leaves.counts);
+        self.leaves
+            .readbacks
+            .after_submit(move |words, (room, terrains)| {
+                let stride = size_of::<WaterDraw>() / 4;
+                let instances = std::mem::offset_of!(WaterDraw, args) / 4 + 1;
+                let leaves = std::mem::offset_of!(WaterDraw, counts) / 4;
+                let mut read = [0_u32; 3];
+                for index in 0..terrains as usize {
+                    let held = words.get(index * stride + leaves);
+                    read[0] = read[0].max(held);
+                    read[1] = read[1].saturating_add(words.get(index * stride + instances));
+                    read[2] = read[2].saturating_add(held.saturating_sub(room));
+                }
+                counts.set(read);
+            });
+    }
+
+    /// Bytes of the copies, the waves and the leaves' listing: tiles'
+    /// water blocks count with the terrain's arrays.
     fn capacity_bytes(&self) -> u64 {
         let copies = self.behind.size().map_or(0, |size| {
             let texels = u64::from(size.width) * u64::from(size.height);
@@ -890,6 +1190,7 @@ impl RenderFeature for WaterPass {
             .map_or(0, |falls| falls.vertices.size() + falls.indices.size());
         copies
             + falls
+            + self.leaves.capacity_bytes()
             + self.sim.capacity_bytes()
             + self.waves.as_ref().map_or(0, WaterWaves::capacity_bytes)
             + self
@@ -898,8 +1199,10 @@ impl RenderFeature for WaterPass {
                 .map_or(0, |_| FallMap::capacity_bytes())
     }
 
-    /// Tiles' patches holding water drawn, the cells along a side of the
-    /// simulated square, and the sea's sectors drawn and their triangles.
+    /// The leaves tiles' water drew and those its listing left untested, as
+    /// the last of their counts read back; tiles' water blocks resident and
+    /// dropped; the cells along a side of the simulated square; and the
+    /// sea's sectors drawn and their triangles.
     fn stats(
         this: Option<&Self>,
         frame: Option<&WaterFrame>,
@@ -909,9 +1212,13 @@ impl RenderFeature for WaterPass {
             .and(this)
             .and_then(|this| this.sim.drawn().0)
             .map_or(0, |drawn| drawn.window.cells);
+        let [_, leaves, dropped_leaves] = frame
+            .and(this)
+            .map_or([0; 3], |this| this.leaves.counts.get());
         (
             WaterStats {
-                patches: frame.map_or(0, |frame| frame.patches),
+                leaves,
+                dropped_leaves,
                 blocks: frame.map_or(0, |frame| frame.blocks[0]),
                 dropped_blocks: frame.map_or(0, |frame| frame.blocks[1]),
                 simulated_cells: simulated,
@@ -924,9 +1231,10 @@ impl RenderFeature for WaterPass {
     }
 }
 
-/// The generations of what water's group binds: the terrain pass's arrays
-/// and uniforms, and the simulation's water.
-type GroupGenerations = ((u64, u64, u64), u64);
+/// The generations of what water's groups bind: the terrain pass's arrays,
+/// uniforms, directory and leaves, the water blocks and water's directory;
+/// the simulation's water; and the leaves' listing's buffers.
+type GroupGenerations = ([u64; 6], u64, u64);
 
 /// What a water pipeline draws: tiles' water, the sea, falls' sheets or
 /// simulated water.
@@ -945,6 +1253,33 @@ fn sized(buffer: &wgpu::Buffer, bytes: usize) -> wgpu::BindingResource<'_> {
         offset: 0,
         size: wgpu::BufferSize::new(bytes as u64),
     })
+}
+
+/// The dynamic offset of the leaf record of the `index`th terrain drawing
+/// tiles' water.
+fn record_offset(index: usize) -> u32 {
+    (index as u64 * RECORD_SLOT) as u32
+}
+
+/// The draws of `terrains` terrains' water, which the listing of their
+/// leaves writes, the pass draws from and the read-backs copy: each draws
+/// nothing until its terrain's leaves are listed.
+fn draws_buffer(device: &wgpu::Device, terrains: u32) -> wgpu::Buffer {
+    let none = WaterDraw {
+        args: [0; 4],
+        counts: [0; 4],
+    };
+    wgpu::util::DeviceExt::create_buffer_init(
+        device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("engine/water-leaf-draws"),
+            contents: bytemuck::cast_slice(&vec![none; terrains as usize]),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        },
+    )
 }
 
 /// The light of the sea around an eye at `eye` under its surface,
@@ -1051,6 +1386,17 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
             16,
             wgpu::BufferUsages::empty(),
         ),
+        storage: crate::buffers::storage(
+            device,
+            "engine/water-placeholder-storage",
+            256,
+            wgpu::BufferUsages::empty(),
+        ),
+        record: crate::buffers::uniform(
+            device,
+            "engine/water-placeholder-record",
+            size_of::<WaterLeafRecord>() as u64,
+        ),
     }
 }
 
@@ -1087,6 +1433,8 @@ fn ocean_draw(
                 "terrain",
                 sized(&placeholders.terrains, size_of::<TerrainUniform>()),
             ),
+            crate::buffers::entry("terrain_directory", &placeholders.storage),
+            crate::buffers::entry("terrain_surface_leaves", &placeholders.storage),
             ("water_surface", crate::pipelines::view(&surfaces)),
             ("water_info", crate::pipelines::view(&info)),
             ("water", uniform.as_entire_binding()),
@@ -1096,6 +1444,12 @@ fn ocean_draw(
             crate::buffers::entry("water_sim_cells", &placeholders.sim),
             crate::buffers::entry("water_sim_ground", &placeholders.sim),
             crate::buffers::entry("water_sim_beds", &placeholders.sim),
+            crate::buffers::entry("water_directory", &placeholders.storage),
+            crate::buffers::entry("water_leaves", &placeholders.storage),
+            (
+                "water_leaf_record",
+                sized(&placeholders.record, size_of::<WaterLeafRecord>()),
+            ),
         ],
     );
     OceanDraw {

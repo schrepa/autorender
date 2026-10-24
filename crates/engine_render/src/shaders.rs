@@ -317,7 +317,14 @@ entry_points! {
             fs_debug_impostor, fs_debug_terrain, fs_debug_cover, fs_debug_water,
             fs_debug_sim_water, fs_debug_ocean, fs_debug_fall, fs_debug_sky
         ],
-        compute: [cs_terrain_vt_feedback, subdivide_begin, subdivide_decide, subdivide_apply],
+        compute: [
+            cs_terrain_vt_feedback,
+            subdivide_begin,
+            subdivide_decide,
+            subdivide_apply,
+            cs_water_leaves,
+            cs_water_list,
+        ],
     }
     terrain_normals = TERRAIN_NORMALS_SHADER {
         compute: [tile_normals],

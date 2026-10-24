@@ -63,18 +63,24 @@ gpu_structs! {
         pub clock: [f32; 4],
     }
 
-    /// WGSL `WaterPatchInput`'s instance part: a patch holding water as
-    /// terrain's `PatchRecord` draws it (its first sample, shape, atlas
-    /// layers and texels, fade), and its water's blocks: its own, its
-    /// parent tile's over it (`NO_WATER_BLOCK` without) and where it starts
-    /// in that block (x | z << 16).
+    /// WGSL `WaterLeafRecord` of `meshes/water.wgsl`: where a terrain's
+    /// water lists the leaves of its subdivision over which water stands:
+    /// its first listed leaf, its first word of their bits, the most leaves
+    /// it tests and lists, and its draw (`WaterDraw`).
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct WaterPatchRecord {
-        pub first: [i32; 2],
-        pub shape: [f32; 4],
-        pub atlas: [u32; 4],
-        pub water: [u32; 4],
-        pub fade: f32,
+    pub(crate) struct WaterLeafRecord as ["WaterLeafRecord"] {
+        pub places: [u32; 4],
+    }
+
+    /// WGSL `WaterDraw` of `meshes/water.wgsl`, which the listing of a
+    /// terrain's water's leaves writes: its indirect draw (a leaf's
+    /// vertices, the leaves listed, and zeros) and its counts (its
+    /// subdivision's leaves, as their own draw counts them, those holding
+    /// water, and zeros).
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct WaterDraw as ["WaterDraw"] {
+        pub args: [u32; 4],
+        pub counts: [u32; 4],
     }
 
     /// WGSL `FallInput` of `meshes/water_falls.wgsl`: a vertex of a waterfall's

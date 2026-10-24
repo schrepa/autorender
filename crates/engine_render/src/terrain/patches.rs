@@ -119,11 +119,6 @@ impl PatchDraws {
         self.eye
     }
 
-    /// The grid's indices: its triangles, then its skirts'.
-    pub(super) fn indices(&self) -> &wgpu::Buffer {
-        &self.indices
-    }
-
     /// The records this frame draws, which debug builds check.
     #[cfg(debug_assertions)]
     pub(super) fn records(&self) -> &[PatchRecord] {

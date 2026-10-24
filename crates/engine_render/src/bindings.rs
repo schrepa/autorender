@@ -866,15 +866,15 @@ tables! {
         serves: [SHADER @ 2],
         bindings: &[
             dynamic_uniform(
-                24,
+                27,
                 "subdivision",
                 size_of::<terrain::SubdivisionUniform>(),
                 C,
             ),
-            write(25, "subdivision_tree", C),
-            write(26, "subdivision_nodes", C),
-            write(27, "subdivision_leaves", C),
-            write(28, "subdivision_args", C),
+            write(28, "subdivision_tree", C),
+            write(29, "subdivision_nodes", C),
+            write(30, "subdivision_leaves", C),
+            write(31, "subdivision_args", C),
         ],
     };
 
@@ -1082,14 +1082,18 @@ tables! {
     };
 
     /// Group 1 of water's pipelines (`meshes/water.wgsl`): terrain's height
-    /// array and the views' and terrains' uniforms at dynamic offsets, as
-    /// terrain's patches draw on them; tiles' water blocks, their surfaces
+    /// array and the views' and terrains' uniforms at dynamic offsets, its
+    /// directory and this frame's leaves of its subdivision, as the terrain
+    /// group binds them; tiles' water blocks, their surfaces
     /// and words (packed flow, whitewater and kind, state and nearest
     /// obstacle); water's uniform; the
     /// waves' moments with their levels (`water_waves.rs`) and the sampler
-    /// repeating them; and the simulated water's cells, ground and what the
-    /// beds hold under them. The sea's group has placeholders for what only
-    /// tiles' water reads.
+    /// repeating them; the simulated water's cells, ground and what the
+    /// beds hold under them; and water's directory, the leaves its listing
+    /// lists and, at a dynamic offset, each terrain's record of where its
+    /// own lie. The listing reads the terrain's uniform and directory, its
+    /// leaves, water's directory and the terrain's record. The sea's group
+    /// has placeholders for what only tiles' water reads.
     const WATER: Table = Table {
         label: "engine/water-layout",
         serves: [SHADER @ 1],
@@ -1100,8 +1104,10 @@ tables! {
                 19,
                 "terrain",
                 size_of::<terrain::TerrainUniform>(),
-                VF,
+                VFC,
             ),
+            read(23, "terrain_directory", VC),
+            read(36, "terrain_surface_leaves", VC),
             texture(50, "water_surface", Unfilterable, D2Array, V),
             texture(51, "water_info", Uint, D2Array, V),
             uniform_of(52, "water", size_of::<water::WaterUniform>(), VF),
@@ -1111,22 +1117,26 @@ tables! {
             read(56, "water_sim_cells", VF),
             read(57, "water_sim_ground", VF),
             read(58, "water_sim_beds", V),
-            // The terrain's directory and its subdivision's leaves, which
-            // tiles' water draws on (`meshes/terrain_surface.wgsl`).
-            read(23, "terrain_directory", V),
-            read(36, "terrain_surface_leaves", V),
+            read(59, "water_directory", VC),
+            read(60, "water_leaves", V),
+            dynamic_uniform(61, "water_leaf_record", size_of::<water::WaterLeafRecord>(), VC),
         ],
     };
 
     /// Group 2 of water's pipelines: what lies behind the water, copied
     /// from the opaque scene before it draws: the depth, and the color in
-    /// frames drawing the effects' targets (a placeholder in others).
+    /// frames drawing the effects' targets (a placeholder in others); and
+    /// what the listing of its leaves writes, which draws fill: each leaf's
+    /// bit, the leaves listed and each terrain's draw.
     const WATER_BEHIND: Table = Table {
         label: "engine/water-behind-layout",
         serves: [SHADER @ 2],
         bindings: &[
             texture(22, "water_depth", Depth, D2, F),
             texture(23, "water_scene", Float, D2, F),
+            write(24, "water_leaf_bits", C),
+            write(25, "water_leaf_list", C),
+            write(26, "water_leaf_draws", C),
         ],
     };
 
