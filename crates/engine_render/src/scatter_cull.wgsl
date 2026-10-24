@@ -119,7 +119,9 @@ struct DrawArgs {
 // How each terrain's placement layers thin with distance,
 // `THIN_LAYERS` entries a terrain: the share standing far away, the meters
 // the layer's own tiles and its far tiles reach (0 where they stay resident
-// everywhere), and 1 where the layer thins at all.
+// everywhere), and 1 where the layer thins at all (`terrain_variety.wgsl`'s
+// `placed_thinned`). Layers rank their objects by size, the largest first,
+// so those standing far away are the largest.
 const THIN_LAYERS: u32 = 64u;
 // Where an object's layer and its rank under the density lie in its
 // terrain word (`scatter.rs`).
@@ -127,26 +129,6 @@ const TERRAIN_INDEX: u32 = 0x1ffu;
 const LAYER_SHIFT: u32 = 9u;
 const NO_LAYER: u32 = 0x7fu;
 const RANK_SHIFT: u32 = 21u;
-
-// The share of a layer's density `away` meters from the eye:
-// all of it within seven tenths of its tiles' reach, falling to its
-// far share across most of the rest, then to none across the same part of
-// its far tiles' reach unless those stay resident everywhere: objects
-// ranked past it hide before their tiles leave, so density never steps
-// where tiles end.
-fn thinned(thin: vec4<f32>, away: f32) -> f32 {
-    if thin.w == 0.0 {
-        return 1.0;
-    }
-    var keep = 1.0;
-    if thin.y > 0.0 {
-        keep = mix(1.0, thin.x, smoothstep(0.7 * thin.y, 0.95 * thin.y, away));
-    }
-    if thin.z > 0.0 {
-        keep *= 1.0 - smoothstep(0.7 * thin.z, 0.95 * thin.z, away);
-    }
-    return keep;
-}
 
 // Whether an object of a thinning layer whose bounding sphere's radius is
 // `radius`, ranked `rank` under its layer's density, is big enough on
@@ -209,7 +191,7 @@ fn inside(view: u32, center: vec3<f32>, radius: f32) -> bool {
 // shows within the pixel error; exact frames show the finest level.
 fn shown_at(record: Record, group: Group, thinning: bool, thin: vec4<f32>, rank: f32,
         away: f32) -> u32 {
-    if thinning && (rank >= thinned(thin, away) || !placed_seen(record.radius, rank, away)) {
+    if thinning && (rank >= placed_thinned(thin, away) || !placed_seen(record.radius, rank, away)) {
         return SHOWN_NONE;
     }
     if frame.eye.w <= 0.0 {

@@ -10,14 +10,15 @@
 // normal maps' turn of the terrain's normal (in `terrain_vt_frame`), occlusion
 // and the cover's leaves, linear data the sRGB layer decodes before it
 // filters. Mip m's texels span `terrain.vt_scale.x` · 2^m meters, and shade
-// at the levels and macro tint their own size gives, wherever the eye
-// stands. Each terrain keeps, per mip, a window of VT_WINDOW² pages around the
-// detail eye in `terrain_directory` from `terrain.vt_layout.x`: its first
-// page, then a table of each page's slot plus one (0 while absent), addressed
+// at the levels their own size gives, wherever the eye stands. Each terrain
+// keeps, per mip, a window of VT_WINDOW² pages around the detail eye in
+// `terrain_directory` from `terrain.vt_layout.x`: its first page, then a
+// table of each page's slot plus one (0 while absent), addressed
 // by page modulo VT_WINDOW, and after every table each entry's arrival, the
 // time its page entered it (seconds, the bits of a float). Its coarse mips'
 // pages are far pages (`terrain_vt.rs`), the same whatever the eye, cooked
-// once and resident from its first frames.
+// once and resident from its first frames: the finest of them baked here,
+// each coarser one the mean of the one below (`terrain_vt_far.wgsl`).
 const VT_PAGE: f32 = 128.0;
 const VT_BORDER: f32 = 8.0;
 const VT_SLOT: f32 = 144.0;
@@ -298,8 +299,8 @@ fn terrain_vt_shading(footprint: f32, first: u32) -> TerrainShadingLevel {
 // Where a texel `size` meters across lies at `world` on ground of smooth
 // normal `geometric`, seen from straight above: its sides on the ground's
 // slope, its footprint the longer and the footprint its filtering resolves
-// the shorter, or a sixteenth of the longer where filtering runs out, as
-// for a pixel spanning it.
+// the shorter, or the longer over TERRAIN_ANISOTROPY where filtering runs
+// out, as for a pixel spanning it.
 fn terrain_vt_site(world: vec3<f32>, size: f32, geometric: vec3<f32>) -> TerrainSite {
     let slope = -geometric.xz / max(geometric.y, 0.05);
     var site: TerrainSite;
@@ -308,7 +309,7 @@ fn terrain_vt_site(world: vec3<f32>, size: f32, geometric: vec3<f32>) -> Terrain
     site.world_dy = vec3<f32>(0.0, slope.y * size, size);
     let along = vec2<f32>(length(site.world_dx), length(site.world_dy));
     site.footprint = max(along.x, along.y);
-    site.texel = max(min(along.x, along.y), site.footprint / 16.0);
+    site.texel = max(min(along.x, along.y), site.footprint / TERRAIN_ANISOTROPY);
     site.geometric = geometric;
     site.toward = vec3<f32>(0.0, 1.0, 0.0);
     site.thinned = 0.0;
@@ -316,13 +317,13 @@ fn terrain_vt_site(world: vec3<f32>, size: f32, geometric: vec3<f32>) -> Terrain
 }
 
 // One texel of a page: the exact path's ground at its center, as seen
-// where a pixel's footprint spans the texel, at the shading levels and
-// macro tint that footprint gives (`terrain_shading_level`,
-// `macro_strength`), measured on the ground's slope at the levels the
-// texel's size gives on level ground; no eye enters it. Without the
-// cover's canopy, which pixels lay over it as seen from them. A far page's
-// texel shades no finer than the level it reads (`terrain_vt_shading`). A
-// bake draws one sheet's pages.
+// where a pixel's footprint spans the texel, at the shading levels that
+// footprint gives (`terrain_shading_level`), measured on the ground's slope
+// at the levels the texel's size gives on level ground, its materials
+// sharing it as their maps' detail there shows them; no eye enters it.
+// Without the cover's canopy, which pixels lay over it as seen from them. A
+// far page's texel shades no finer than the level it reads
+// (`terrain_vt_shading`). A bake draws one sheet's pages.
 @fragment
 fn fs_terrain_vt_bake(input: TerrainVtBakeOutput) -> TerrainVtTargets {
     let bake = terrain_vt_bakes[input.bake];
@@ -345,7 +346,7 @@ fn fs_terrain_vt_bake(input: TerrainVtBakeOutput) -> TerrainVtTargets {
     let site = terrain_vt_site(world, size, terrain_surface_normal(local, shading));
     let ground = terrain_ground(site, shading);
     // The detail and macro colors pixels apply (`terrain_point_seen`).
-    let tint = terrain_tint(world, ground, site.footprint, site.footprint);
+    let tint = terrain_tint(world, ground, site.footprint);
     let frame = terrain_vt_frame(site.geometric);
     let vegetated = max(ground.vegetated, 1.0e-6);
     var targets: TerrainVtTargets;

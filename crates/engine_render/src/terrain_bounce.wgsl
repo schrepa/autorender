@@ -44,6 +44,8 @@ struct PaletteEntry {
     canopy: vec4<f32>,
     placed: vec4<f32>,
     placed_size: vec4<f32>,
+    placed_thinning: vec4<f32>,
+    heights: vec4<f32>,
 }
 
 // A probe's light: the light reaching it alike from every way (red, green
@@ -65,7 +67,7 @@ const BOUNCE_RECORD_WORDS: u32 = 26u;
 const BOUNCE_NEAREST: f32 = 0.5;
 const BOUNCE_STEPS: f32 = 16.0;
 // As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
-const PALETTE_ENTRIES: u32 = 128u;
+const PALETTE_ENTRIES: u32 = 102u;
 
 @group(0) @binding(60) var<uniform> bounce_frame: BounceFrame;
 @group(0) @binding(61) var<storage, read> bounce_terrains: array<BounceTerrain>;
@@ -118,11 +120,10 @@ fn bounce_vegetated(first: u32, material: u32) -> f32 {
 }
 
 // Each texel of each relighting terrain's ground: its materials' color,
-// tinted by its macro colors as terrain's own ground where a pixel spans
-// the texel (`macro_strength`), times the sun's light on it, wrapped about
-// the terminator as terrain's own (`finish`), through its horizons and the
-// clouds' shadows, and the sky's around its normal turned toward the sky it
-// sees, by the share it sees.
+// tinted by its macro colors as terrain's own ground is, times the sun's
+// light on it, wrapped about the terminator as terrain's own (`finish`),
+// through its horizons and the clouds' shadows, and the sky's around its
+// normal turned toward the sky it sees, by the share it sees.
 @compute @workgroup_size(8, 8, 1)
 fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
     let terrain = bounce_terrains[id.z];
@@ -150,8 +151,7 @@ fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
         let lod = max(log2(f32(textureDimensions(bounce_macro).x) / f32(side)), 0.0);
         let colors = textureSampleLevel(bounce_macro, bounce_sampler, uv,
             terrain.materials.y - 1u, lod);
-        let texel = max(terrain.place.z, terrain.place.w) / f32(side);
-        albedo *= macro_tint(colors, vegetated, macro_strength(texel));
+        albedo *= macro_tint(colors, vegetated);
     }
     var seen = 1.0;
     var turn = vec3<f32>(0.0);

@@ -10,8 +10,9 @@
 //! whose maps differ in size, levels or format, or carry no summary, show
 //! their colors instead and count as dropped. Each layer's summaries
 //! ([`engine_core::Texture::summary`]) stand in for its maps where they
-//! repeat too small on screen to show, and the variance of its normal
-//! map's slopes roughens it there. The runtime virtual texture
+//! repeat too small on screen to show: the variance of its normal map's
+//! slopes roughens it there, and its height map's mean and deviation share
+//! the ground as height blending does on average. The runtime virtual texture
 //! (`terrain_vt.rs`) keeps its sheets in a renderable array of their own,
 //! three layers a sheet, as many as it asks for (up to the device's
 //! layers), which grows by copying itself; it has sheets only while the
@@ -30,9 +31,7 @@ type LayerKey = [Option<TextureHandle>; 3];
 
 /// Texels along a side of the virtual texture's sheets.
 pub(crate) const SHEET_TEXELS: u32 = 1024;
-/// Layers of the sheets' array a sheet takes: its base color, its cover's
-/// canopy and its normals' turn (sRGB, linear data stored as is).
-pub(crate) const SHEET_LAYERS: u32 = 3;
+pub(crate) use crate::gpu_layouts::constants::VT_SHEET_LAYERS as SHEET_LAYERS;
 
 /// What a layer holds where its material lacks a map: white, a flat
 /// normal, and full occlusion, roughness and metalness factors at middle
@@ -75,14 +74,17 @@ pub(crate) struct TerrainMaps {
     means: Vec<Means>,
 }
 
-/// A layer's mean linear base color, roughness and occlusion texels, and
-/// the mean square of its normal map's slopes at scale 1.
+/// A layer's mean linear base color, roughness and occlusion texels, the
+/// mean square of its normal map's slopes at scale 1, and its height map's
+/// mean and deviation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Means {
     pub color: [f32; 3],
     pub roughness: f32,
     pub occlusion: f32,
     pub slopes: f32,
+    pub height: f32,
+    pub height_deviation: f32,
 }
 
 /// What every layer of the arrays shares: the size, levels and format of
@@ -124,7 +126,7 @@ impl TerrainMaps {
                 mipmap_filter: wgpu::MipmapFilterMode::Linear,
                 // Ground seen at grazing angles stays sharp along its
                 // steep axis.
-                anisotropy_clamp: 16,
+                anisotropy_clamp: crate::gpu_layouts::constants::MATERIAL_ANISOTROPY,
                 ..Default::default()
             }),
             generation: 0,
@@ -427,17 +429,21 @@ fn sheet_bytes() -> u64 {
 }
 
 /// The means of `maps`' base color, decoded from sRGB, and of its
-/// metallic-roughness map's roughness and occlusion, 1 without them; and
-/// of the squares of its normal map's slopes, 0 without one: each map's
-/// summary.
+/// metallic-roughness map's roughness and occlusion, 1 without them; of
+/// the squares of its normal map's slopes, 0 without one; and the mean and
+/// deviation of the height its metallic-roughness map's alpha holds, the
+/// default layer's middle height without one: each map's summary.
 fn means(maps: &RenderSurfaceMaps) -> Means {
     let [base_color, normal, metallic_roughness] =
         textures(maps).map(|texture| texture.and_then(Texture::summary));
+    let middle = f32::from(DEFAULTS[2][3]) / 255.0;
     Means {
         color: base_color.map_or([1.0; 3], |summary| summary.color),
         roughness: metallic_roughness.map_or(1.0, |summary| summary.mean[1]),
         occlusion: metallic_roughness.map_or(1.0, |summary| summary.mean[0]),
         slopes: normal.map_or(0.0, |summary| summary.slopes),
+        height: metallic_roughness.map_or(middle, |summary| summary.mean[3]),
+        height_deviation: metallic_roughness.map_or(0.0, |summary| summary.deviation[3]),
     }
 }
 

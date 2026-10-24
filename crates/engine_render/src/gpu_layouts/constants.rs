@@ -188,6 +188,19 @@ gpu_consts! {
     /// Mips, and the meters mip 0's texels span: about the material maps'
     /// own texels where they repeat every few meters.
     pub(crate) const VT_MIPS: usize = 18 => ["VT_MIPS"];
+    /// Layers of the sheets' array a sheet takes: its base color, its
+    /// cover's canopy and its normals' turn (sRGB, linear data stored as is).
+    pub(crate) const VT_SHEET_LAYERS: u32 = 3 => ["VT_SHEET_LAYERS" in TERRAIN_VT_FAR_SHADER];
+    /// Bytes of a row of a slot's layer as copies between the sheets and
+    /// buffers take it: whole multiples of what copies align rows to.
+    pub(crate) const VT_ROW_BYTES: u32 = (VT_SLOT_TEXELS * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) => ["VT_ROW_BYTES" in TERRAIN_VT_FAR_SHADER];
+
+    // crate::terrain_maps
+    /// The most anisotropy surface materials' maps filter to, their
+    /// sampler's clamp: past it their filtering under-samples a pixel's
+    /// footprint along its long side, so shaders sampling them widen their
+    /// derivatives' short side to at least the long side over it.
+    pub(crate) const MATERIAL_ANISOTROPY: u16 = 16 => ["TERRAIN_ANISOTROPY" in SHADER];
 
     // crate::deformation
     /// Texels along a side of a block of the map's mask.
@@ -430,6 +443,7 @@ gpu_consts! {
     pub(crate) const NORMALS_GROUP: u32 = 16 => ["@tile_normals" in TERRAIN_NORMALS_SHADER];
     pub(crate) const RESOLVE_ARGS_GROUP: u32 = 64 => ["@resolve_args" in VISIBILITY_SHADER];
     pub(crate) const VT_FEEDBACK_GROUP: u32 = 8 => ["@cs_terrain_vt_feedback" in SHADER];
+    pub(crate) const VT_FAR_GROUP: u32 = 8 => ["@far_mean" in TERRAIN_VT_FAR_SHADER];
     /// Pixels a side of the blocks the virtual texture's feedback tests one
     /// pixel of, a different one each frame.
     pub(crate) const VT_FEEDBACK_BLOCK: u32 = 8 => ["VT_FEEDBACK_BLOCK" in SHADER];

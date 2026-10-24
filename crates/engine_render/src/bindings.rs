@@ -836,6 +836,20 @@ tables! {
         ],
     };
 
+    /// The runtime virtual texture's coarser far pages made as the means of
+    /// the finer ones (`terrain_vt_far.wgsl`): the sheets holding the finer
+    /// pages, the pages to make, and the texels they write, which copies
+    /// take into the sheets.
+    const TERRAIN_VT_FAR: Table = Table {
+        label: "engine/terrain-vt-far-layout",
+        serves: [TERRAIN_VT_FAR_SHADER @ 0],
+        bindings: &[
+            texture(0, "far_sheets", Float, D2Array, C),
+            read(1, "far_means", C),
+            write(2, "far_texels", C),
+        ],
+    };
+
     /// The clouds' march into their dome (`clouds.wgsl`): the
     /// layer, sun and sky, the noise's volumes and their sampler, the dome,
     /// the physically based sky's uniform, transmittance table and sampler,

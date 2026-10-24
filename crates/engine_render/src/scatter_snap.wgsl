@@ -12,8 +12,8 @@
 struct Snap {
     // Slots and terrains.
     counts: vec4<u32>,
-    // The eye (world), whose distance the ground's levels morph by, and the
-    // meters a pixel spans a meter from it (w).
+    // The eye (world), whose distance the ground's levels morph by; w
+    // unused.
     eye: vec4<f32>,
 }
 
@@ -40,6 +40,8 @@ struct PaletteEntry {
     canopy: vec4<f32>,
     placed: vec4<f32>,
     placed_size: vec4<f32>,
+    placed_thinning: vec4<f32>,
+    heights: vec4<f32>,
 }
 
 // `scatter_cull.wgsl`'s record: the bounding sphere, draw group and scale,
@@ -82,7 +84,7 @@ const HIDDEN: u32 = 0x80000000u;
 // entries as fit 16 KiB (`terrain::PALETTE_ENTRIES`), and their macro
 // colors.
 @group(0) @binding(7) var control: texture_2d_array<u32>;
-const PALETTE_ENTRIES: u32 = 128u;
+const PALETTE_ENTRIES: u32 = 102u;
 @group(0) @binding(8) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
 @group(0) @binding(9) var macro_maps: texture_2d_array<f32>;
 
@@ -151,14 +153,12 @@ fn macro_colors(info: TerrainInfo, local: vec2<f32>) -> vec4<f32> {
 }
 
 // The ground's color under an object at terrain-local `local` of terrain
-// `info`, where a pixel spans `footprint` meters of it and `ground` is its
-// finest resident level: the nearest sample's control value's two
-// materials' mean colors and roughness blended by their shares, tinted by
-// the macro colors as the ground and ground cover's roots are
-// (`terrain_variety.wgsl`); as `grounds` hold it, the colors' square roots
-// and the roughness (never 0) in bytes.
-fn ground_color(info: TerrainInfo, local: vec2<f32>, ground: FinestGround, footprint: f32)
-        -> u32 {
+// `info`, where `ground` is its finest resident level: the nearest sample's
+// control value's two materials' mean colors and roughness blended by their
+// shares, tinted by the macro colors as the ground and ground cover's roots
+// are (`terrain_variety.wgsl`); as `grounds` hold it, the colors' square
+// roots and the roughness (never 0) in bytes.
+fn ground_color(info: TerrainInfo, local: vec2<f32>, ground: FinestGround) -> u32 {
     let samples = local / (info.origin.w * f32(1u << ground.level));
     let texel = min(vec2<u32>(round(samples)) - ground.tile.first, vec2<u32>(256u))
         + vec2<u32>(1u);
@@ -168,7 +168,7 @@ fn ground_color(info: TerrainInfo, local: vec2<f32>, ground: FinestGround, footp
     let second = palette[min(info.levels.z + ((value >> 8u) & 0xffu), PALETTE_ENTRIES - 1u)];
     let far = mix(first.far, second.far, share);
     let vegetated = mix(step(1.0e-6, first.canopy.w), step(1.0e-6, second.canopy.w), share);
-    let tint = macro_tint(macro_colors(info, local), vegetated, macro_strength(footprint));
+    let tint = macro_tint(macro_colors(info, local), vegetated);
     return pack4x8unorm(vec4<f32>(sqrt(saturate(far.rgb * tint)),
         max(saturate(far.w), 1.0 / 255.0)));
 }
@@ -206,6 +206,6 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     poses[id.x].r1.w = base;
     records[id.x].center.y = record.center.y + (base - pose.r1.w);
     if grounds[id.x].z != 0u {
-        grounds[id.x].w = ground_color(info, local, ground, ground_footprint(relative, snap.eye.w));
+        grounds[id.x].w = ground_color(info, local, ground);
     }
 }

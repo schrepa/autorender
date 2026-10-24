@@ -2,8 +2,8 @@
 //! ground and how lush its plants grow there
 //! ([`engine_core::RenderTerrain::macro_map`]), cooked with its mips in the
 //! family of formats the device samples, a layer each of one array the
-//! terrain group binds. Ground whose pixels span a third of a meter or more
-//! takes the tint over its materials' own colors, ground seen finer subtly
+//! terrain group binds. Ground takes the tint over its materials' own
+//! colors as the map holds it, the same however near or far it is seen
 //! (`terrain_variety.wgsl`), the runtime virtual texture's pages carry it,
 //! and ground cover's blades take it as their ground does. A terrain's
 //! layer uploads as its map arrives and again when it changes; until then

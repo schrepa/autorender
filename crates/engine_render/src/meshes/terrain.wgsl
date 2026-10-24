@@ -51,14 +51,22 @@ struct TerrainPaletteEntry {
     canopy: vec4<f32>,
     // Its placement layers' objects, which the ground takes on where they
     // retire: their mean linear color and the share of the ground they
-    // cover where it lies alone (w, 0 without any); and the base-2 logarithm
-    // of their bounding spheres' diameters (meters), its mean (x) and
-    // deviation (y) over the ground they cover.
+    // cover where it lies alone (w, 0 without any); the base-2 logarithm
+    // of the bounding spheres' diameters (meters) of those ranked first
+    // (`placed_size.x`) and last (y), the largest and smallest, as layers
+    // rank them by size; and how they thin with distance: the share
+    // standing far away (`placed_thinning.x`), and the levels whose tiles
+    // hold them near and far (y and z), each plus one, 0 where those stay
+    // resident everywhere.
     placed: vec4<f32>,
     placed_size: vec4<f32>,
+    placed_thinning: vec4<f32>,
+    // Its height map's mean and deviation (x, y), which height blending
+    // shows on average where its maps fade.
+    heights: vec4<f32>,
 }
 // As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
-const TERRAIN_PALETTE_ENTRIES: u32 = 128u;
+const TERRAIN_PALETTE_ENTRIES: u32 = 102u;
 // Every terrain's surface materials, each terrain's from
 // `terrain.directory.z`.
 @group(1) @binding(25) var<uniform> terrain_palette: array<TerrainPaletteEntry, TERRAIN_PALETTE_ENTRIES>;
@@ -102,22 +110,19 @@ fn terrain_macro_texel(local: vec2<f32>, footprint: f32) -> vec4<f32> {
 }
 
 // The tint the terrain's detail and macro colors give `ground` at `world`,
-// filtered over `footprint` meters (a pixel's, or a page's texel's), where a
-// pixel seen from the detail eye spans `seen` meters (a texel its own size),
-// which sets how much of the macro colors shows (`macro_strength`): plain
+// filtered over `footprint` meters (a pixel's, or a page's texel's): plain
 // colors vary at every scale, maps carry their own detail and vary
 // broadly, and the macro colors tint it as they do the blades growing on
-// it. Pages bake it in; pixels computing their ground apply it.
-fn terrain_tint(world: vec3<f32>, ground: TerrainGround, footprint: f32, seen: f32)
-        -> vec3<f32> {
+// it, the same wherever the eye stands. Pages bake it in; pixels computing
+// their ground apply it.
+fn terrain_tint(world: vec3<f32>, ground: TerrainGround, footprint: f32) -> vec3<f32> {
     let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
     let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
     let fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, footprint);
     let plain = (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
     let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
     let colors = terrain_macro_texel(world.xz - terrain.origin.xz, footprint);
-    return mix(plain, mapped, ground.mapped)
-        * macro_tint(colors, ground.vegetated, macro_strength(seen));
+    return mix(plain, mapped, ground.mapped) * macro_tint(colors, ground.vegetated);
 }
 
 struct TerrainOutput {
@@ -792,17 +797,46 @@ fn terrain_lattice(uv: vec2<f32>, axis: u32, lattice: u32) -> vec2<f32> {
     return vec2<f32>(uv.x * TERRAIN_STRETCH, uv.y);
 }
 
+// The most anisotropy surface materials' maps filter to
+// (`gpu_layouts::constants::MATERIAL_ANISOTROPY`, their sampler's clamp):
+// past it the filtering under-samples a footprint's long side, and crests
+// seen almost edge on ripple.
+const TERRAIN_ANISOTROPY: f32 = 16.0;
+
+// Derivative `short` of a map's coordinates widened, beside `long`, to at
+// least `least`: along its own way, or across `long` where it has none.
+fn terrain_widened(short: vec2<f32>, long: vec2<f32>, least: f32) -> vec2<f32> {
+    let span = length(short);
+    if span >= least {
+        return short;
+    }
+    if span > 0.0 {
+        return short * (least / span);
+    }
+    return vec2<f32>(-long.y, long.x) * (least / max(length(long), 1.0e-20));
+}
+
+// A map's coordinates' derivatives `dx` and `dy` (columns), the shorter
+// widened to at least a TERRAIN_ANISOTROPY-th of the longer, so its
+// filtering resolves the footprint whole, as a site's `texel` measures it.
+fn terrain_filtered(dx: vec2<f32>, dy: vec2<f32>) -> mat2x2<f32> {
+    let least = max(length(dx), length(dy)) / TERRAIN_ANISOTROPY;
+    return mat2x2<f32>(terrain_widened(dx, dy, least), terrain_widened(dy, dx, least));
+}
+
 // Layer `layer` of `map` at `world` (with its screen derivatives) on axis
-// `axis`'s plane in lattice `lattice`, as `mapping` lays it.
+// `axis`'s plane in lattice `lattice`, as `mapping` lays it, filtered over
+// no more anisotropy than the maps' filtering takes (`terrain_filtered`).
 fn terrain_plane_texel(map: texture_2d_array<f32>, layer: u32, mapping: TerrainMapping,
         world: vec3<f32>, world_dx: vec3<f32>, world_dy: vec3<f32>, axis: u32, lattice: u32)
         -> vec4<f32> {
     let shift = vec2<f32>(0.37, 0.71) * f32(lattice);
-    return textureSampleGrad(map, terrain_material_sampler,
-        terrain_lattice(world_plane(world, axis) * mapping.scale, axis, lattice) + shift,
-        layer,
+    let gradients = terrain_filtered(
         terrain_lattice(world_plane(world_dx, axis) * mapping.scale, axis, lattice),
         terrain_lattice(world_plane(world_dy, axis) * mapping.scale, axis, lattice));
+    return textureSampleGrad(map, terrain_material_sampler,
+        terrain_lattice(world_plane(world, axis) * mapping.scale, axis, lattice) + shift,
+        layer, gradients[0], gradients[1]);
 }
 
 // Layer `layer` of `map` at `world` (with its screen derivatives) as
@@ -908,12 +942,20 @@ fn terrain_relief(footprint: f32, tiling: f32) -> f32 {
     return 1.0 - smoothstep(0.015625, 0.03125, footprint / tiling);
 }
 
+// How far under the highest raised weight materials still show where their
+// heights blend them, sharing the ground by how far they reach into the
+// band; and the deviation of that band's ramp between two materials,
+// sqrt(2 (3 - 4 ln 2)) of its width, which blurs which of them leads as a
+// spread of their heights does.
+const TERRAIN_HEIGHT_BAND: f32 = 0.08;
+const TERRAIN_BAND_SPREAD: f32 = 0.6744 * TERRAIN_HEIGHT_BAND;
+
 // The share of `second` (0 to 1) after the two lattices' heights `first`
 // and `raised` meet as materials do, as sharply as `contrast` asks.
 fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) -> f32 {
     let a = 1.0 - second + contrast * first;
     let b = second + contrast * raised;
-    let top = max(a, b) - 0.08;
+    let top = max(a, b) - TERRAIN_HEIGHT_BAND;
     let lifted = max(vec2<f32>(a, b) - top, vec2<f32>(0.0));
     return mix(second, lifted.y / max(lifted.x + lifted.y, 1.0e-6), saturate(contrast));
 }
@@ -1028,29 +1070,56 @@ fn terrain_canopy_look(root: vec3<f32>, tip: vec3<f32>, leaves: f32, site: Terra
     return look;
 }
 
+// The meters from the detail eye placed objects on the tiles of the level
+// coded `code` (`placed_thinning`: the level plus one, 0 where its tiles
+// stay resident everywhere) stand within, as culling thins them: the
+// level's reach in the directory, or 0.
+fn terrain_placed_reach(code: f32) -> f32 {
+    if code < 0.5 {
+        return 0.0;
+    }
+    let header = terrain.directory.x + (u32(code + 0.5) - 1u) * 4u;
+    return bitcast<f32>(terrain_directory[header + 3u]);
+}
+
 // The share of the ground of material `entry` at `site` that shows its
 // placement layers' objects' mean color: of the ground they cover, the
-// share their objects narrower on screen than about a pixel by their ranks
-// leave as they retire (`terrain_variety.wgsl`'s `seen_share`, as
-// `scatter_cull.wgsl` culls them, across `site.across`), over their sizes
-// as two diameters a deviation either side of their mean, in octaves; none
-// where the site measures nothing.
+// share their objects leave as `scatter_cull.wgsl` culls them, seen from the
+// detail eye, whether thinning hides them with distance
+// (`terrain_variety.wgsl`'s `placed_thinned`) or they span too few pixels
+// across `site.across` for their ranks (`seen_share`). Both keep the objects
+// ranked first, the largest, whose diameters' logarithms fall evenly from
+// the first's to the last's, each covering the ground as its diameter's
+// square; none where the site measures nothing.
 fn terrain_placed_share(entry: TerrainPaletteEntry, site: TerrainSite) -> f32 {
     let covered = entry.placed.w;
     if covered <= 0.0 || site.across <= 0.0 {
         return 0.0;
     }
-    let size = entry.placed_size;
-    let shown = 0.5 * (seen_share(exp2(size.x + size.y) / site.across)
-        + seen_share(exp2(size.x - size.y) / site.across));
+    let first = entry.placed_size.x;
+    let octaves = max(first - entry.placed_size.y, 0.0);
+    // Objects ranked under this still span enough pixels to show: where a
+    // rank meets the share its diameter's pixels keep.
+    let seen = saturate((1.0 + first - log2(site.across)) / (2.0 + octaves));
+    let thinning = entry.placed_thinning;
+    let thin = vec4<f32>(thinning.x, terrain_placed_reach(thinning.y),
+        terrain_placed_reach(thinning.z), 1.0);
+    let kept = min(placed_thinned(thin, detail_distance(site.world)), seen);
+    // The share of their ground the objects ranked under `kept` cover.
+    var shown = kept;
+    if octaves > 1.0e-3 {
+        shown = (1.0 - exp2(-2.0 * octaves * kept)) / (1.0 - exp2(-2.0 * octaves));
+    }
     return covered * (1.0 - shown);
 }
 
 // One material of a fragment's blend after its first pass: its occlusion,
 // roughness, metalness and height texel, the share of its second lattice,
 // how much of all its maps shows and how much of its color map, the second
-// lattice's share by its pattern alone, its weight raised by its height,
-// and its share of the height contrast its maps show.
+// lattice's share by its pattern alone; its weight raised by its height
+// (its texel's where its maps show, its heights' mean where they fade) and
+// by its heights' mean, and how widely its heights spread that, each as
+// sharply as its height contrast asks; and its weight times that contrast.
 struct TerrainSlot {
     texel: vec4<f32>,
     second: f32,
@@ -1058,13 +1127,15 @@ struct TerrainSlot {
     colored: f32,
     pattern: f32,
     raised: f32,
+    lead: f32,
+    spread: f32,
     contrast: f32,
 }
 
 // The first pass of material `material` at weight `weight`: its heights
-// where its maps show, and its height contrast as far as they show, so
-// materials without maps, or too far to show them, blend by their weights
-// alone. All its maps show while a repeat spans enough pixels along the
+// where its maps show, its heights' mean and spread where they fade, and its
+// height contrast, so materials without maps blend by their weights alone.
+// All its maps show while a repeat spans enough pixels along the
 // footprint's long side; its color map alone farther out, as long as its
 // filtering keeps it.
 fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
@@ -1075,9 +1146,11 @@ fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
         return slot;
     }
     let entry = terrain_material(material);
+    var sharpness = 0.0;
     if entry.params.w > 0.0 {
         slot.detail = terrain_map_detail(site.footprint, entry.params.x);
         slot.colored = terrain_map_detail(site.texel, entry.params.x);
+        sharpness = entry.params.y;
     }
     if slot.colored > 0.0 {
         slot.pattern = terrain_second_lattice(site.world, entry.params.x, site.texel);
@@ -1103,8 +1176,11 @@ fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
         }
         slot.texel = mix(first, other, slot.second);
     }
-    slot.raised = weight + contrast * slot.texel.a;
-    slot.contrast = weight * contrast;
+    let heights = entry.heights;
+    slot.raised = weight + sharpness * mix(heights.x, slot.texel.a, slot.detail);
+    slot.lead = weight + sharpness * heights.x;
+    slot.spread = sharpness * heights.y;
+    slot.contrast = weight * sharpness;
     return slot;
 }
 
@@ -1246,11 +1322,41 @@ struct TerrainShares {
 }
 
 // The ground at `site` at `shading`'s levels: up to four materials, each
-// where its maps show raised by its height map as sharply as its height
-// contrast asks, so stones and tufts stand through what they meet before
-// it covers them.
+// raised by its height map as sharply as its height contrast asks, so
+// stones and tufts stand through what they meet before it covers them,
+// and where its maps fade by the share that shows on average.
 fn terrain_ground(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainGround {
     return terrain_shared_ground(terrain_shares(site, shading), site);
+}
+
+// The standard normal distribution's share under `x`, as Page's (1977)
+// fit gives it, within 0.0002.
+fn terrain_normal_share(x: f32) -> f32 {
+    let t = clamp(x, -6.0, 6.0);
+    return 0.5 + 0.5 * tanh(0.7978846 * (t + 0.044715 * t * t * t));
+}
+
+// The shares height blending shows on average among materials of weights
+// `weights` whose heights raise them to `lead` on average, spread as widely
+// as `spread` (their height contrast times their heights' deviation): about
+// the chance each one's raised weight is the highest, its lead over each
+// other's blurred by both spreads and the band's, those chances' product,
+// normalized.
+fn terrain_mean_shares(weights: vec4<f32>, lead: vec4<f32>, spread: vec4<f32>) -> vec4<f32> {
+    let present = weights > vec4<f32>(0.0);
+    var chances = select(vec4<f32>(0.0), vec4<f32>(1.0), present);
+    for (var a = 0u; a < 4u; a++) {
+        for (var b = a + 1u; b < 4u; b++) {
+            if present[a] && present[b] {
+                let deviation = sqrt(spread[a] * spread[a] + spread[b] * spread[b]
+                    + TERRAIN_BAND_SPREAD * TERRAIN_BAND_SPREAD);
+                let ahead = terrain_normal_share((lead[a] - lead[b]) / deviation);
+                chances[a] *= ahead;
+                chances[b] *= 1.0 - ahead;
+            }
+        }
+    }
+    return chances / max(dot(chances, vec4<f32>(1.0)), 1.0e-6);
 }
 
 fn terrain_shares(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainShares {
@@ -1259,14 +1365,27 @@ fn terrain_shares(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainSha
     let second = terrain_slot(blend.ids.y, blend.weights.y, site);
     let third = terrain_slot(blend.ids.z, blend.weights.z, site);
     let fourth = terrain_slot(blend.ids.w, blend.weights.w, site);
-    // Height blending: materials within a narrow band of the highest show,
-    // turned toward the plain shares as contrast falls to 0.
+    // Height blending: materials within TERRAIN_HEIGHT_BAND of the highest
+    // show, turned toward the plain shares as contrast falls to 0.
     let raised = vec4<f32>(first.raised, second.raised, third.raised, fourth.raised);
-    let contrast = first.contrast + second.contrast + third.contrast + fourth.contrast;
+    let contrast = vec4<f32>(first.contrast, second.contrast, third.contrast, fourth.contrast);
     let highest = max(max(raised.x, raised.y), max(raised.z, raised.w));
-    let lifted = max(raised - vec4<f32>(highest - 0.08), vec4<f32>(0.0));
-    let weights = mix(blend.weights, lifted / max(dot(lifted, vec4<f32>(1.0)), 1.0e-6),
-        saturate(contrast));
+    let lifted = max(raised - vec4<f32>(highest - TERRAIN_HEIGHT_BAND), vec4<f32>(0.0));
+    var shares = lifted / max(dot(lifted, vec4<f32>(1.0)), 1.0e-6);
+    // Where maps fade, the shares height blending shows on average, so the
+    // mix holds still as detail hands over: all of them where no material
+    // shows its heights, none where all do; materials whose heights raise
+    // nothing count as shown.
+    let detail = vec4<f32>(first.detail, second.detail, third.detail, fourth.detail);
+    let known = select(vec4<f32>(1.0), detail, contrast > vec4<f32>(0.0));
+    let shown = dot(blend.weights, known) / max(dot(blend.weights, vec4<f32>(1.0)), 1.0e-6);
+    if shown < 1.0 && any(contrast > vec4<f32>(0.0)) {
+        let lead = vec4<f32>(first.lead, second.lead, third.lead, fourth.lead);
+        let spread = vec4<f32>(first.spread, second.spread, third.spread, fourth.spread);
+        shares = mix(terrain_mean_shares(blend.weights, lead, spread), shares, shown);
+    }
+    let weights = mix(blend.weights, shares,
+        saturate(contrast.x + contrast.y + contrast.z + contrast.w));
     return TerrainShares(blend.ids, weights, first, second, third, fourth);
 }
 
@@ -1742,8 +1861,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
             surface.world.y = held.height + terrain.origin.y;
         }
         ground = terrain_ground(surface, seen.shading);
-        ground.albedo *= terrain_tint(surface.world, ground, site.footprint,
-            detail_footprint(world, geometric));
+        ground.albedo *= terrain_tint(surface.world, ground, site.footprint);
         if shown > 0.0 {
             ground = terrain_vt_shown(ground, page, shown);
         }

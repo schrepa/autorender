@@ -1,10 +1,13 @@
 //! Far pages: each textured terrain's pages at its coarse mips, the same
 //! whatever the eye, as one record per terrain that the host keeps and the
-//! cook's pack ships. They shade as any page of their texel size does, at
-//! the levels and macro tint that size gives, but never finer than the
-//! terrain's finest pinned level, the finest resident everywhere, whose
-//! heights they read: at texels of eight meters and more, every material
-//! repeating within 64 meters shows its maps' means. Pages of every mip from
+//! cook's pack ships. Those of its finest far mip shade as any page of
+//! their texel size does, at the levels that size gives, but never finer
+//! than the terrain's finest pinned level, the finest resident everywhere,
+//! whose heights they read: at texels of eight meters and more, every
+//! material repeating within 64 meters shows its maps' means. Each coarser
+//! far mip's pages are the 2x2 means of the one below
+//! (`terrain_vt_far.wgsl`), so a coarser page is the average of the finer
+//! one by construction. Pages of every mip from
 //! the finest whose texels span eight meters or more and whose pages along
 //! the terrain's longer side number [`FAR_ACROSS`] at most pin their slots
 //! (where they take at most half the slots the sheets may hold): they stay
@@ -17,13 +20,15 @@
 //! their levels hand over by (`TerrainSettings::pixel_error`). A host
 //! holding it hands it to a worker, which reads it into the texels uploads
 //! take (the job `JobKind::FarTexels`), and its pages upload as they are,
-//! [`FAR_UPLOADS`] a frame; one that does not has them baked in place by
-//! the bake near pages take, [`FAR_BAKES`] a frame, read back once all are
-//! and kept: the cook's session makes them so. Pages are made on the GPU,
+//! [`FAR_UPLOADS`] a frame; one that does not has them made in place,
+//! [`FAR_BAKES`] a frame: the finest mip's by the bake near pages take,
+//! then each coarser mip's means, a mip a frame once the one below is
+//! whole, all read back once made and kept: the cook's session makes them
+//! so. Pages are made on the GPU,
 //! so the same record made on another differs within its rounding: records
 //! are cooked once, never compared bit for bit across GPUs, and near and
 //! far pages blend over a mip as the ground's own levels do. A verifying
-//! host has those it handed back baked again and kept, which it compares
+//! host has those it handed back made again and kept, which it compares
 //! within the records' parity ([`FAR_PARITY`], `alike`) as its one verify
 //! path compares every record.
 //!
@@ -34,6 +39,11 @@
 //! the cook's compression (`jobs::far_record`, beside the job reading it).
 
 use super::*;
+use crate::bindings::TERRAIN_VT_FAR;
+use crate::gpu_layouts::constants::VT_FAR_GROUP;
+use crate::gpu_layouts::constants::VT_ROW_BYTES as READ_ROW;
+use crate::gpu_layouts::terrain_vt::FarMeanRecord;
+use crate::shaders::entry::terrain_vt_far;
 use engine_core::RecordKey;
 use engine_core::terrain_data::jobs;
 
@@ -41,7 +51,7 @@ use engine_core::terrain_data::jobs;
 const FAR_FINEST: usize = 11;
 /// Pages along a terrain's longer side its finest far mip holds at most.
 const FAR_ACROSS: u32 = 8;
-/// Far pages baked in a frame at most, beside near pages.
+/// Far pages made in a frame at most, baked or as means, beside near pages.
 const FAR_BAKES: usize = 32;
 /// Far pages uploaded in a frame at most.
 const FAR_UPLOADS: usize = 16;
@@ -53,10 +63,9 @@ const FAR_PARITY: u64 = 10_000;
 const KIND: &str = "terrain_far_pages";
 /// Layers a page takes: its sheet's base color, canopy and normal turn.
 const LAYERS: usize = crate::terrain_maps::SHEET_LAYERS as usize;
-/// Bytes of a layer of a slot, and of its rows as read back (whole multiples
-/// of what copies to buffers align rows to).
+/// Bytes of a layer of a slot, its rows as uploads take them (rows as read
+/// back, or as means are written, take `READ_ROW`).
 const LAYER_BYTES: usize = (SLOT_TEXELS * SLOT_TEXELS * 4) as usize;
-const READ_ROW: u32 = (SLOT_TEXELS * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
 
 /// What a terrain's far pages are baked from: the level they read, its
 /// finest pinned, and the hash of everything their texels read.
@@ -77,7 +86,7 @@ pub(crate) struct RecordMode {
 
 /// Where a terrain's far pages stand: asked for from the host; handed back
 /// and read on a worker, their texels uploading from the page given;
-/// missing, baking from the page given; baked, their slots read back; or
+/// missing, being made from the page given; made, their slots read back; or
 /// resident.
 enum State {
     Asking,
@@ -88,15 +97,29 @@ enum State {
 }
 
 /// A terrain's far pages: their record's key, the level their bakes read,
-/// the pages in the record's order, where they stand, and whether their
-/// bakes are kept once read back (a missing record's, and those a verifying
-/// host handed back).
+/// the terrain's extent, the pages in the record's order (finest mip
+/// first), where they stand, and whether what is made of them is kept once
+/// read back (a missing record's, and those a verifying host handed back).
 struct FarSet {
     key: RecordKey,
     level: u32,
+    extent: engine_core::glam::Vec2,
     pages: Vec<PageKey>,
     state: State,
     keep: bool,
+}
+
+/// This frame's coarser far pages, each made as the mean of the next finer
+/// far mip's (`terrain_vt_far.wgsl`): their records, the buffer holding
+/// them and the one their texels are written into and copied into the
+/// sheets from, and the pass's layout and its pipeline, made when means are
+/// first made.
+struct Means {
+    records: Vec<FarMeanRecord>,
+    buffer: crate::buffers::Growable,
+    texels: crate::buffers::Growable,
+    layout: crate::pipelines::GroupLayout,
+    pipeline: Option<wgpu::ComputePipeline>,
 }
 
 /// A set's slots read back: the record's key and pages, the slots in their
@@ -116,9 +139,8 @@ struct Reading {
 /// the host's records as they stand; the records to fetch (each read on a
 /// worker) and those made, to keep, until the host takes them, and the
 /// answers it gave (the texels read, `None` where it holds none); the
-/// read-back under way; and the textured terrains whose sets wait for what
-/// they are baked from.
-#[derive(Default)]
+/// read-back under way; the textured terrains whose sets wait for what
+/// they are baked from; and this frame's means.
 pub(crate) struct FarPages {
     sets: BTreeMap<u64, FarSet>,
     pinned: Vec<bool>,
@@ -128,9 +150,33 @@ pub(crate) struct FarPages {
     answers: Vec<(RecordKey, Option<Vec<u8>>)>,
     reading: Option<Reading>,
     waiting: u64,
+    means: Means,
 }
 
 impl FarPages {
+    /// No far pages yet, with the layout of the pass making means on
+    /// `device`.
+    pub(super) fn new(device: &wgpu::Device) -> Self {
+        let growable = |label, usage| crate::buffers::Growable::new(device, label, 16, usage);
+        Self {
+            sets: BTreeMap::new(),
+            pinned: Vec::new(),
+            mode: RecordMode::default(),
+            reads: Vec::new(),
+            keeps: Vec::new(),
+            answers: Vec::new(),
+            reading: None,
+            waiting: 0,
+            means: Means {
+                records: Vec::new(),
+                buffer: growable("engine/terrain-vt-far-means", wgpu::BufferUsages::empty()),
+                texels: growable("engine/terrain-vt-far-texels", wgpu::BufferUsages::COPY_SRC),
+                layout: crate::pipelines::layout(device, &TERRAIN_VT_FAR),
+                pipeline: None,
+            },
+        }
+    }
+
     /// Whether `slot` holds a far page.
     pub(super) fn pinned(&self, slot: u32) -> bool {
         self.pinned.get(slot as usize).copied().unwrap_or(false)
@@ -154,6 +200,122 @@ impl FarPages {
         self.pinned.clear();
         self.reading = None;
         self.waiting = 0;
+        self.means.records.clear();
+    }
+
+    /// A new frame, which has made no means yet.
+    pub(super) fn clear_means(&mut self) {
+        self.means.records.clear();
+    }
+
+    /// Far pages this frame makes as means of finer ones.
+    pub(super) fn means(&self) -> usize {
+        self.means.records.len()
+    }
+
+    /// Writes this frame's means' records into their buffer.
+    fn write_means(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let means = &mut self.means;
+        if means.records.is_empty() {
+            return;
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(&means.records);
+        means.buffer.grow(device, bytes.len() as u64);
+        queue.write_buffer(&means.buffer, 0, bytes);
+    }
+
+    /// Records this frame's means, after the bakes drawing the finer pages
+    /// they read: each texel of each page the mean of the finer mip's four
+    /// under it, written into texels then copied into the page's slot in
+    /// `maps`' sheets, `per_row` slots along a sheet's side and `per_sheet`
+    /// a sheet.
+    pub(super) fn encode_means(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        maps: &crate::terrain_maps::TerrainMaps,
+        (per_row, per_sheet): (u32, u32),
+    ) {
+        let means = &mut self.means;
+        if means.records.is_empty() {
+            return;
+        }
+        let count = means.records.len() as u32;
+        let layer_bytes = u64::from(READ_ROW * SLOT_TEXELS);
+        means.texels.grow(device, layer_bytes * (LAYERS as u64) * u64::from(count));
+        let layout = &means.layout;
+        let pipeline = means.pipeline.get_or_insert_with(|| {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("engine/terrain-vt-far.wgsl"),
+                source: wgpu::ShaderSource::Wgsl(crate::shaders::TERRAIN_VT_FAR_SHADER.into()),
+            });
+            let pipeline_layout = crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::TERRAIN_VT_FAR_PIPELINES,
+                &[layout],
+            );
+            crate::pipelines::compute_entry(
+                device,
+                &pipeline_layout,
+                &module,
+                terrain_vt_far::far_mean,
+            )
+        });
+        let group = crate::pipelines::group(
+            device,
+            "engine/terrain-vt-far",
+            &TERRAIN_VT_FAR,
+            &means.layout,
+            &[
+                ("far_sheets", crate::pipelines::view(&maps.views[2])),
+                crate::buffers::entry("far_means", &means.buffer),
+                crate::buffers::entry("far_texels", &means.texels),
+            ],
+        );
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/terrain-vt-far"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            let groups = SLOT_TEXELS.div_ceil(VT_FAR_GROUP);
+            pass.dispatch_workgroups(groups, groups, count);
+        }
+        for (index, record) in means.records.iter().enumerate() {
+            let within = record.slot % per_sheet;
+            let corner = [
+                within % per_row * SLOT_TEXELS,
+                within / per_row * SLOT_TEXELS,
+            ];
+            for layer in 0..LAYERS {
+                encoder.copy_buffer_to_texture(
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &means.texels,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: (index * LAYERS + layer) as u64 * layer_bytes,
+                            bytes_per_row: Some(READ_ROW),
+                            rows_per_image: Some(SLOT_TEXELS),
+                        },
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: maps.sheet_texture(),
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: corner[0],
+                            y: corner[1],
+                            z: record.slot / per_sheet * LAYERS as u32 + layer as u32,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: SLOT_TEXELS,
+                        height: SLOT_TEXELS,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+        }
     }
 
     /// Takes the host's records as they stand.
@@ -302,11 +464,12 @@ fn far_count(extent: engine_core::glam::Vec2, first: usize) -> usize {
         .sum()
 }
 
-/// Terrain `id`'s far pages over `extent` from mip `first`, coarsest mip
-/// first, rows along z.
+/// Terrain `id`'s far pages over `extent` from mip `first`, finest mip
+/// first, as they are made (each coarser mip from the one before), rows
+/// along z.
 fn far_pages(id: u64, extent: engine_core::glam::Vec2, first: usize) -> Vec<PageKey> {
     let mut pages = Vec::with_capacity(far_count(extent, first));
-    for mip in (first..MIPS).rev() {
+    for mip in first..MIPS {
         let across = far_across(extent, mip);
         for z in 0..across[1] {
             for x in 0..across[0] {
@@ -437,10 +600,10 @@ impl VirtualTexture {
     /// textured `terrains` whose `sources` or `pixel_error` changed ask for
     /// their records anew (once textures show their own), the host's
     /// answers upload, up to [`FAR_UPLOADS`] pages, or start their bakes, up
-    /// to [`FAR_BAKES`] pages of sets baking bake into slots they pin, and a
-    /// set baked whole is read back and kept; every far page resident has
-    /// its table entry where its window holds it. `maps` holds the sheets
-    /// they upload into.
+    /// to [`FAR_BAKES`] pages of sets being made are baked, or made as
+    /// means, into slots they pin, and a set made whole is read back and
+    /// kept; every far page resident has its table entry where its window
+    /// holds it. `maps` holds the sheets they upload into.
     pub(super) fn far_pages(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -488,6 +651,7 @@ impl VirtualTexture {
                 FarSet {
                     key,
                     level: source.level,
+                    extent,
                     pages: far_pages(terrain.id, extent, first),
                     state: State::Asking,
                     keep: false,
@@ -544,6 +708,7 @@ impl VirtualTexture {
             self.entries_far(&set);
             self.far.sets.insert(id, set);
         }
+        self.far.write_means(device, queue);
     }
 
     /// Uploads `set`'s pages from `texels` from page `next` on into slots
@@ -608,9 +773,12 @@ impl VirtualTexture {
         }
     }
 
-    /// Bakes `set`'s pages from page `next` on into slots they pin, while
-    /// `room` of the frame's far bakes lasts; once all are baked, a set
-    /// whose bakes are kept is read back (once no other is).
+    /// Makes `set`'s pages from page `next` on in slots they pin, while
+    /// `room` of the frame's far pages lasts: its finest mip's baked, each
+    /// coarser mip's as the means of the one below, a mip a frame, as the
+    /// mip below is whole (its pages baked before, or this frame, whose
+    /// bakes draw before the means read them); once all are made, a set
+    /// whose pages are kept is read back (once no other is).
     fn bake_far(
         &mut self,
         device: &wgpu::Device,
@@ -618,8 +786,15 @@ impl VirtualTexture {
         mut next: usize,
         room: &mut usize,
     ) -> State {
+        let finest = set.pages.first().map(|page| page.mip);
+        // The mip whose means this frame makes, of this set.
+        let mut averaged = None;
         while let Some(&page) = set.pages.get(next) {
             if *room == 0 {
+                return State::Baking(next);
+            }
+            let mean = Some(page.mip) != finest;
+            if mean && averaged.is_some_and(|mip| mip != page.mip) {
                 return State::Baking(next);
             }
             let Some(slot) = self.pin(page, set.pages.len() - next) else {
@@ -627,15 +802,25 @@ impl VirtualTexture {
             };
             // A near bake of the slot this frame gives way.
             self.bakes.list.retain(|(_, _, record)| record.slot != slot);
-            self.bakes.list.push((
-                slot / self.per_sheet,
-                page.terrain,
-                BakeRecord {
-                    slot,
-                    mip: u32::from(page.mip) | ((set.level + 1) << 8),
-                    page: page.page,
-                },
-            ));
+            if mean {
+                let Some(record) = self.far_mean(set, page, slot) else {
+                    // A finer page lost its slot meanwhile: they are made
+                    // again.
+                    return State::Baking(0);
+                };
+                self.far.means.records.push(record);
+                averaged = Some(page.mip);
+            } else {
+                self.bakes.list.push((
+                    slot / self.per_sheet,
+                    page.terrain,
+                    BakeRecord {
+                        slot,
+                        mip: u32::from(page.mip) | ((set.level + 1) << 8),
+                        page: page.page,
+                    },
+                ));
+            }
             *room -= 1;
             next += 1;
         }
@@ -651,7 +836,7 @@ impl VirtualTexture {
             .filter_map(|page| self.resident.get(page).copied())
             .collect();
         if slots.len() != set.pages.len() {
-            // A page lost its slot meanwhile: they bake again.
+            // A page lost its slot meanwhile: they are made again.
             return State::Baking(0);
         }
         let bytes = u64::from(READ_ROW * SLOT_TEXELS) * (LAYERS * slots.len()) as u64;
@@ -670,6 +855,38 @@ impl VirtualTexture {
             mapped: Rc::new(RefCell::new(None)),
         });
         State::Reading
+    }
+
+    /// The record making `set`'s far page `page`, in `slot`, the mean of the
+    /// next finer far mip's pages under it: those from one before twice its
+    /// page on, held within that mip's pages; `None` where one of them holds
+    /// no slot.
+    fn far_mean(&self, set: &FarSet, page: PageKey, slot: u32) -> Option<FarMeanRecord> {
+        let finer = page.mip - 1;
+        let [across_x, across_z] = far_across(set.extent, usize::from(finer));
+        let last = [across_x - 1, across_z - 1];
+        let mut fine = [[0_u32; 4]; 4];
+        for (row, slots) in fine.iter_mut().enumerate() {
+            for (column, held) in slots.iter_mut().enumerate() {
+                let at = [
+                    (2 * page.page[0] - 1 + column as i32).clamp(0, last[0]),
+                    (2 * page.page[1] - 1 + row as i32).clamp(0, last[1]),
+                ];
+                let key = PageKey {
+                    terrain: page.terrain,
+                    mip: finer,
+                    page: at,
+                };
+                *held = *self.resident.get(&key)?;
+            }
+        }
+        Some(FarMeanRecord {
+            page: page.page,
+            last,
+            fine,
+            slot,
+            pad: [0; 3],
+        })
     }
 
     /// `set`'s read-back once mapped: its pages' texels, unpadded, kept as

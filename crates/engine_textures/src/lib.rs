@@ -357,8 +357,8 @@ pub fn decompress(texture: &Texture) -> Result<Texture, AssetError> {
 /// A record's first bytes.
 const MAGIC: &[u8; 4] = b"ETEX";
 /// Bytes of a record's header: magic, format, emission mask, levels, a
-/// spare zero, width, height and the summary's eight values.
-const HEADER: usize = 4 + 4 + 8 + 32;
+/// spare zero, width, height and the summary's twelve values.
+const HEADER: usize = 4 + 4 + 8 + 48;
 
 /// `texture` as a record's bytes: its header, then its levels from the
 /// base down. Textures without a summary write their base level's.
@@ -367,6 +367,7 @@ pub fn record(texture: &Texture) -> Vec<u8> {
         color: [1.0; 3],
         mean: [1.0; 4],
         slopes: 0.0,
+        deviation: [0.0; 4],
     });
     let mut out = Vec::with_capacity(HEADER + texture.byte_len());
     out.extend_from_slice(MAGIC);
@@ -386,6 +387,7 @@ pub fn record(texture: &Texture) -> Vec<u8> {
         .iter()
         .chain(&summary.mean)
         .chain([&summary.slopes])
+        .chain(&summary.deviation)
     {
         out.extend_from_slice(&value.to_le_bytes());
     }
@@ -421,6 +423,7 @@ pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
         color: [value(0), value(1), value(2)],
         mean: [value(3), value(4), value(5), value(6)],
         slopes: value(7),
+        deviation: [value(8), value(9), value(10), value(11)],
     };
     let mut levels = Vec::with_capacity(count);
     let mut at = HEADER;
