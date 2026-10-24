@@ -58,8 +58,8 @@ gpu_structs! {
         /// size's share of the display on each axis
         /// ([`FrameRegion::uniform`](crate::targets::FrameRegion::uniform)).
         pub region: [f32; 4],
-        /// The detail eye every distance switch measures from (xyz, world
-        /// space as `position`), and 1 while it is frozen, else 0
+        /// The detail eye every handover measures from (xyz, world space as
+        /// `position`; w unused)
         /// ([`set_detail`](crate::gpu_data::CameraUniform::set_detail)).
         pub detail: [f32; 4],
     }
@@ -438,13 +438,13 @@ gpu_structs! {
         /// The screen error in pixels levels of detail keep within; 0 draws
         /// every instance at full detail.
         pub lod_error: f32,
-        /// The eye the frame rasterizes from, which levels of detail follow
-        /// the distance to; w is 1 where impostor cards may stand in.
+        /// The detail eye, which levels of detail follow the distance to;
+        /// w is 1 where impostor cards may stand in.
         pub eye: [f32; 4],
         /// Fades: the share of a switch between a mesh and its
         /// card this frame fades (1 for previews, which keep no level) and the
-        /// share of its distance past a switch the eye goes before a candidate
-        /// switches back.
+        /// share of its distance past a switch the detail eye goes before a
+        /// candidate switches back.
         pub fade: [f32; 4],
     }
 

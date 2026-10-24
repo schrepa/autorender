@@ -236,7 +236,8 @@ impl ParticleExtraction {
             return;
         }
         let poses = Poses::of(world, gpu);
-        let eye = snapshot.camera_position;
+        // The budget's cut follows the detail eye, as every handover does.
+        let eye = snapshot.detail_eye;
         self.candidates.clear();
         let mut wanted = 0_u64;
         for (position, (entity, emitter)) in self.query.iter(world).enumerate() {

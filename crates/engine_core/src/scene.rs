@@ -431,15 +431,14 @@ pub struct RenderSnapshot {
     /// The detail eye: the point every distance switch measures from,
     /// wherever detail hands over to a cheaper form (terrain streaming, its
     /// patches and shading levels, the ground's relief, ground cover and its
-    /// canopy, placed objects' thinning, kept shadow windows, river water
-    /// and virtual texture pages). The camera's eye, or the point
+    /// canopy, placed objects' thinning, meshes' levels of detail and
+    /// virtual geometry's, the wind's shaking, kept shadow windows, river
+    /// water and virtual texture pages). The camera's eye, or the point
     /// [`crate::TerrainDebug::freeze`] holds while frozen; transforms,
-    /// culling and lighting keep [`Self::camera_position`].
+    /// culling and lighting keep [`Self::camera_position`]. Handovers by
+    /// what a pixel spans measure that from it too, so they stay where it
+    /// stands however the view turns or moves.
     pub detail_eye: Vec3,
-    /// Whether [`Self::detail_eye`] is frozen: shaders then measure what a
-    /// pixel spans from it too, as if it looked straight at each point, so
-    /// handovers by size on screen stay where it stands.
-    pub detail_frozen: bool,
     /// Presentation time ([`crate::FrameTime::elapsed_seconds`]) for animated
     /// surfaces such as ripples.
     pub elapsed_seconds: f32,

@@ -89,12 +89,14 @@ fn debug_shadowed(source: u32, visible: f32) -> u32 {
 
 // The finest kept level `level_visibility` reads at `world`: the first
 // whose reach around the detail eye, window and depth band hold the point,
-// while its texels are not too small for a pixel's footprint there.
+// while its texels are not too small for a pixel's footprint there, the
+// mean of the sides it spans seen from the detail eye.
 fn debug_kept_level(world: vec3<f32>, normal: vec3<f32>) -> u32 {
     let axes = mat3x3<f32>(shadow.light[0].xyz, shadow.light[1].xyz, shadow.light[2].xyz);
     let light = world * axes;
     let light_normal = normal * axes;
-    let footprint = max(detail_footprint(world, normal), 1.0e-6);
+    let span = detail_span(world, normal);
+    let footprint = max(sqrt(span.x * span.y), 1.0e-6);
     let distance = detail_distance(world);
     let margin = 2.0 / shadow.level_state.y;
     for (var level = 0u; level < u32(shadow.level_state.x); level++) {
@@ -328,10 +330,10 @@ fn fs_debug_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> Deb
 // in the top byte (0 for none, else one more than `engine_terrain::Reach`).
 fn debug_water(input: WaterOutput, simulated: bool) -> DebugTargets {
     let shade = shade_water(input, false, simulated);
-    if shade.coverage < 0.5 && !DEBUG_WATER_VIEWS {
+    if shade.coverage < 0.5 && !DEBUG_WATER_VIEWS { // optics: water covers as its shading sees it
         discard;
     }
-    let point = debug_point(input.relative + camera.position.xyz, shade.shaded.normal);
+    let point = debug_point(eye_world(input.relative), shade.shaded.normal);
     let depth = input.water.x;
     let speed = length(input.water.yz);
     let froude = speed / sqrt(DEBUG_GRAVITY * max(depth, DEBUG_DRY));
@@ -355,20 +357,20 @@ fn fs_debug_sim_water(input: WaterOutput) -> DebugTargets {
 @fragment
 fn fs_debug_ocean(input: OceanOutput) -> DebugTargets {
     let shade = shade_ocean(input, false);
-    if shade.coverage < 0.5 {
+    if shade.coverage < 0.5 { // optics: the sea covers as its shading sees it
         discard;
     }
-    let point = debug_point(input.relative + camera.position.xyz, shade.shaded.normal);
+    let point = debug_point(eye_world(input.relative), shade.shaded.normal);
     return debug_targets(DEBUG_KIND_SEA, 0u, 0u, point);
 }
 
 @fragment
 fn fs_debug_fall(input: FallOutput) -> DebugTargets {
     let shade = shade_fall(input);
-    if shade.coverage < 0.5 {
+    if shade.coverage < 0.5 { // optics: falls cover as their shading sees them
         discard;
     }
-    let point = debug_point(input.relative + camera.position.xyz, shade.shaded.normal);
+    let point = debug_point(eye_world(input.relative), shade.shaded.normal);
     return debug_targets(DEBUG_KIND_FALLS, 0u, 0u, point);
 }
 

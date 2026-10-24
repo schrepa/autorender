@@ -44,13 +44,13 @@ struct Frame {
     // The screen error in pixels levels of detail keep within; 0 draws every
     // candidate at full detail.
     lod_error: f32,
-    // The eye the frame rasterizes from; w: 1 when draw groups' impostors
-    // may draw.
+    // The detail eye, which levels of detail follow the distance to; w: 1
+    // when draw groups' impostors may draw.
     eye: vec4<f32>,
     // Fades: the share of a switch between a mesh and its
     // card this frame fades (1 or more switches at once, keeping no level
     // past its distance), and the share of its distance past a switch the
-    // eye goes before a candidate switches back.
+    // detail eye goes before a candidate switches back.
     fade: vec4<f32>,
 }
 
@@ -515,16 +515,16 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
 
 // The coarsest level of detail of `batch` whose geometric
 // error, scaled by `model`'s largest axis, projects within the frame's pixel
-// error at the posed bounding sphere's nearest distance from the eye (not its
-// depth, so turning the camera never changes a level): an empty level, which
-// draws nothing, wherever that fits; otherwise its impostor
-// wherever that fits; 0 for groups without levels, frames without them and
-// spheres around the eye.
+// error at the posed bounding sphere's nearest distance from the detail eye
+// (not its depth, so turning or moving the view never changes a level while
+// the detail eye holds): an empty level, which draws nothing, wherever that
+// fits; otherwise its impostor wherever that fits; 0 for groups without
+// levels, frames without them and spheres around the detail eye.
 fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
     return lod_level_at(batch, model, 1.0);
 }
 
-// `lod_level` with the distance to the eye scaled by `scale`.
+// `lod_level` with the distance to the detail eye scaled by `scale`.
 fn lod_level_at(batch: Batch, model: mat4x4<f32>, scale_distance: f32) -> u32 {
     let levels = u32(batch.lod_errors.z);
     let impostor = frame.eye.w != 0.0 && batch.lod_errors.w > 0.0;
@@ -576,9 +576,9 @@ fn level_indices(batch: Batch, level: u32) -> u32 {
 }
 
 // Levels of detail kept and faded, after culling: a
-// candidate drawn this frame keeps its slot's level until the eye goes a
-// margin past the level's distance (so candidates near a switch do not
-// flicker between two levels as the eye wavers), and switching between a
+// candidate drawn this frame keeps its slot's level until the detail eye
+// goes a margin past the level's distance (so candidates near a switch do
+// not flicker between two levels as the eye wavers), and switching between a
 // mesh and its card, the card fades in or out over its steady mesh over
 // frames, drawn over it at its card's depth. Switches between meshes,
 // whose errors stay within the pixel error, happen at once. Candidates

@@ -197,7 +197,8 @@ impl ProbeExtraction {
             return;
         }
         let globals = world.resource::<GlobalTransforms>();
-        let eye = snapshot.camera_position;
+        // The budget's cut follows the detail eye, as every handover does.
+        let eye = snapshot.detail_eye;
         self.candidates.clear();
         for (position, (entity, probe)) in self.query.iter(world).enumerate() {
             if probe.validate().is_err() {

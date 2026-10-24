@@ -231,7 +231,8 @@ impl DecalExtraction {
         }
         let poses = Poses::of(world, gpu);
         let assets = world.resource::<AssetLibrary>();
-        let eye = snapshot.camera_position;
+        // The budget's cut follows the detail eye, as every handover does.
+        let eye = snapshot.detail_eye;
         self.candidates.clear();
         for (position, (entity, decal)) in self.query.iter(world).enumerate() {
             if decal.validate().is_err() {

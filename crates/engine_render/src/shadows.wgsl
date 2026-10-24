@@ -498,10 +498,10 @@ struct View {
     // presentation time, which placed objects sway in as `wind.wgsl`'s
     // `wind_sway` has them.
     wind: vec4<f32>,
-    // The camera's eye (w 1), whose distance fades the wind's layers as the
-    // camera sees them. Views without one (w 0), the near caches', cast
-    // placed objects by their trunks' bend alone: the mean bend, in their
-    // wind without gusts at time zero.
+    // The detail eye, whose distance sizes the wind's shaking on screen as
+    // meshes see it, and (w) the pixels a radian spans at the view's center,
+    // one over a pixel's angle. Views without one (w 0), the near caches',
+    // cast placed objects by their trunks' mean bend alone.
     eye: vec4<f32>,
 }
 
@@ -531,7 +531,10 @@ fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
         return world;
     }
     let root = vec3<f32>(pose.r0.w, pose.r1.w, pose.r2.w);
-    return world + wind_sway(view.wind, view.eye, root, world.y - root.y, position, sway);
+    // The pixels a meter at the root spans on screen seen from the detail
+    // eye, as `detail_across` measures it for meshes; none without an eye.
+    let pixels = view.eye.w / max(length(root - view.eye.xyz), 1.0e-6);
+    return world + wind_sway(view.wind, pixels, root, world.y - root.y, position, sway);
 }
 
 @vertex

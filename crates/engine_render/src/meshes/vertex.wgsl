@@ -65,13 +65,15 @@ fn placed_material(material: vec4<u32>, slot: u32) -> vec4<u32> {
 }
 
 // The offset the wind gives the vertex at mesh point `position`, placed at
-// `world`, of a slot posed by `model` that sways `sway`, at time `time`, as
-// the camera sees it: every layer of `wind_sway`, which shadow casters and
+// `world`, of a slot posed by `model` that sways `sway`, at time `time`:
+// every layer of `wind_sway`, its shaking sized on screen at the slot's
+// root seen from the detail eye (`detail_across`), which shadow casters and
 // depth passes displace their vertices by alike.
 fn vertex_wind(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, sway: f32,
         time: f32) -> vec3<f32> {
-    return wind_sway(vec4<f32>(camera.wind.xyz, time), vec4<f32>(camera.position.xyz, 1.0),
-        model[3].xyz, world.y - model[3].y, position, sway);
+    let root = model[3].xyz;
+    return wind_sway(vec4<f32>(camera.wind.xyz, time), 1.0 / max(detail_across(root), 1.0e-6),
+        root, world.y - root.y, position, sway);
 }
 
 // The offset the wind gives the point at `world` of a slot posed by

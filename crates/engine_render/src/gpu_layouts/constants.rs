@@ -442,6 +442,10 @@ gpu_consts! {
     /// their sway.
     pub(crate) const WIND_FULL_SPEED: f32 = 12.0 => ["WIND_FULL_SPEED"];
     pub(crate) const WIND_SPAN: f32 = 10.0 => ["WIND_SPAN"];
+    /// The trunk's own flutter about its gusts: its share of the push and
+    /// its rate (radians a second).
+    pub(crate) const WIND_TRUNK_FLUTTER: f32 = 0.12 => ["WIND_TRUNK_FLUTTER"];
+    pub(crate) const WIND_TRUNK_RATE: f32 = 4.7 => ["WIND_TRUNK_RATE"];
     /// Branches' bob, as far up as along the wind: its share of the sway,
     /// growing with the square of a vertex's reach from the object's
     /// vertical axis; its wave's rate (radians a second), and how far the
@@ -455,12 +459,14 @@ gpu_consts! {
     /// second).
     pub(crate) const WIND_FLUTTER: f32 = 0.2 => ["WIND_FLUTTER"];
     pub(crate) const WIND_FLUTTER_RATE: f32 = 13.0 => ["WIND_FLUTTER_RATE"];
-    /// The eye's distances, in meters, over which branches and needles fade
-    /// out, then the trunk: objects farther away stand still.
-    pub(crate) const WIND_DETAIL_NEAR: f32 = 30.0 => ["WIND_DETAIL_NEAR"];
-    pub(crate) const WIND_DETAIL_FAR: f32 = 70.0 => ["WIND_DETAIL_FAR"];
-    pub(crate) const WIND_TRUNK_NEAR: f32 = 250.0 => ["WIND_TRUNK_NEAR"];
-    pub(crate) const WIND_TRUNK_FAR: f32 = 500.0 => ["WIND_TRUNK_FAR"];
+    /// The pixels on screen, seen from the detail eye, a shaking layer's
+    /// widest swing spans where it shows whole and where it has stilled
+    /// (the gusts' swing about the trunk's mean bend, branches' bob and
+    /// needles' flutter): as other detail, it hands over once it moves the
+    /// object less than a pixel, while the mean bend holds at every
+    /// distance.
+    pub(crate) const WIND_SHAKE_WHOLE: f32 = 1.0 => ["WIND_SHAKE_WHOLE"];
+    pub(crate) const WIND_SHAKE_STILL: f32 = 0.5 => ["WIND_SHAKE_STILL"];
 
     // Values only shaders hold, in several modules under several names.
     /// A card word's flag of fading, and of fading out.
