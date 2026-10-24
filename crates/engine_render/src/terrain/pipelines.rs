@@ -48,10 +48,8 @@ pub(crate) struct TerrainPipelines {
     pub(crate) resolves: HashMap<(Targets, bool), wgpu::RenderPipeline>,
     pub(crate) resolve_layout: crate::pipelines::GroupLayout,
     probe_pipelines: HashMap<(bool, bool), wgpu::RenderPipeline>,
-    // The shadow maps' depth pipelines: the kept levels' patches, and the
-    // leaves the maps drawn every frame draw.
+    // The shadow clipmap's depth pipeline, of the patches its regions take.
     shadow: Option<wgpu::RenderPipeline>,
-    surface_shadow: Option<wgpu::RenderPipeline>,
     // The scene features the shading pipelines are specialized for.
     shading: SceneShading,
 }
@@ -69,7 +67,6 @@ impl TerrainPipelines {
             resolve_layout: crate::pipelines::layout(device, &crate::bindings::TERRAIN_RESOLVE),
             probe_pipelines: HashMap::default(),
             shadow: None,
-            surface_shadow: None,
             shading: SceneShading::ALL,
         }
     }
@@ -225,15 +222,10 @@ impl TerrainPipelines {
         self.probe_pipelines.get(&(lit, holes))
     }
 
-    /// The kept shadow levels' depth pipeline, of their patches.
+    /// The shadow clipmap's depth pipeline, of the patches its regions
+    /// take.
     pub(crate) fn shadow_pipeline(&self) -> Option<&wgpu::RenderPipeline> {
         self.shadow.as_ref()
-    }
-
-    /// The depth pipeline of the leaves the shadow maps drawn every frame
-    /// draw.
-    pub(crate) fn surface_shadow_pipeline(&self) -> Option<&wgpu::RenderPipeline> {
-        self.surface_shadow.as_ref()
     }
 
     /// Creates the opaque pipeline into `targets` (`lit` or not) unless it
@@ -395,10 +387,9 @@ impl TerrainPipelines {
         self.probe_pipelines.insert((lit, holes), pipeline);
     }
 
-    /// Creates the shadow maps' depth pipelines unless they exist: the kept
-    /// levels' patches, and the leaves.
+    /// Creates the shadow clipmap's depth pipeline unless it exists.
     pub(crate) fn ensure_shadow_pipeline(&mut self, device: &wgpu::Device) {
-        if self.shadow.is_some() && self.surface_shadow.is_some() {
+        if self.shadow.is_some() {
             return;
         }
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -411,45 +402,34 @@ impl TerrainPipelines {
             &crate::pipeline_layouts::TERRAIN_CASTER_PIPELINES,
             &[&view_layout, &self.layout],
         );
-        let caster = |vertex: crate::shaders::Entry,
-                      buffers: &[Option<wgpu::VertexBufferLayout<'static>>]| {
-            crate::pipelines::geometry(
-                device,
-                &crate::pipelines::Geometry {
-                    label: "engine/terrain-shadow",
-                    layout: &layout,
-                    module: &module,
-                    vertex_constants: &[],
-                    vertex,
-                    buffers,
-                    // Both faces cast, as meshes' casters do.
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth: Some(wgpu::DepthStencilState {
-                        format: crate::shadows::SHADOW_FORMAT,
-                        depth_write_enabled: Some(true),
-                        depth_compare: Some(wgpu::CompareFunction::Less),
-                        stencil: Default::default(),
-                        // Terrain is seen at grazing angles over texels
-                        // meters wide: its depth also slides back by its
-                        // slope, so the facets of a texel never shadow the
-                        // surface they make.
-                        bias: wgpu::DepthBiasState {
-                            constant: 2,
-                            slope_scale: 2.5,
-                            clamp: 0.0,
-                        },
-                    }),
-                    fragment: None,
-                },
-            )
-        };
-        self.shadow = Some(caster(
-            crate::entries::TERRAIN_SHADOW_VERTEX,
-            &[Some(patch_layout())],
-        ));
-        self.surface_shadow = Some(caster(
-            crate::shaders::entry::terrain_shadow::vs_terrain_surface_shadow,
-            &[],
+        self.shadow = Some(crate::pipelines::geometry(
+            device,
+            &crate::pipelines::Geometry {
+                label: "engine/terrain-shadow",
+                layout: &layout,
+                module: &module,
+                vertex_constants: &[],
+                vertex: crate::entries::TERRAIN_SHADOW_VERTEX,
+                buffers: &[Some(patch_layout())],
+                // Both faces cast, as meshes' casters do.
+                primitive: wgpu::PrimitiveState::default(),
+                depth: Some(wgpu::DepthStencilState {
+                    format: crate::shadows::SHADOW_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: Default::default(),
+                    // Terrain is seen at grazing angles over texels
+                    // meters wide: its depth also slides back by its
+                    // slope, so the facets of a texel never shadow the
+                    // surface they make.
+                    bias: wgpu::DepthBiasState {
+                        constant: 2,
+                        slope_scale: 2.5,
+                        clamp: 0.0,
+                    },
+                }),
+                fragment: None,
+            },
         ));
     }
 }

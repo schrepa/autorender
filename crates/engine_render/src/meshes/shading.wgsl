@@ -960,11 +960,9 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     var visible = 1.0;
     if any(sunlit != vec3<f32>(0.0)) && point.sun_shade != 1.0 && interior.y != 0.0 {
         crown_light = point.crown;
-        handover_dissolves = true;
         visible = sun_visibility(point.world + point.shadow_offset, point.geometric,
             point.world_dx, point.world_dy, point.distance, point.on_terrain);
         crown_light = 0.0;
-        handover_dissolves = false;
     }
     let sun_light = sunlit * visible * (1.0 - point.sun_shade) * interior.y;
     let emitted = (point.albedo * point.emission + point.emissive) * lighting.effects.x;

@@ -30,7 +30,7 @@ impl StressWorld for MetroWorld {
         world: &mut World,
         config: &StressConfig,
         _files: &HashMap<String, StressFile>,
-    ) -> engine::Result<(u32, (Vec3, Vec3))> {
+    ) -> engine::Result<u32> {
         let city = populate(world, config)?;
         world.insert_resource(Workload {
             transform_nodes: city.transform_nodes,
@@ -41,7 +41,7 @@ impl StressWorld for MetroWorld {
         });
         // Glass refracts what is behind it.
         world.insert_resource(Refraction::default());
-        Ok((city.moving_nodes, city.bounds))
+        Ok(city.moving_nodes)
     }
 
     fn refracts(&self) -> bool {

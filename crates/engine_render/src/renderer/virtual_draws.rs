@@ -157,12 +157,10 @@ impl Renderer {
             unseen_error: 0.0,
             cone: Cone::From(snapshot.camera_position),
         };
-        // Shadow maps drawn every frame select their virtual casters'
-        // clusters as the camera sees them, from where their
-        // receivers start, and where the camera sees nothing within as many
-        // of the map's texels as pixels, into a bin each. Closed meshes cast
-        // the clusters facing the sun, which hide the rest; others cast both
-        // faces.
+        // Each region of shadow tiles redrawn selects its virtual casters'
+        // clusters within its world error whatever the camera sees, into a
+        // bin each. Closed meshes cast the clusters facing the sun, which
+        // hide the rest; others cast both faces.
         let mut views = vec![camera];
         let mut shadow_batches = Vec::new();
         let mut shadow_instances = 0;
@@ -201,25 +199,15 @@ impl Renderer {
                     bin,
                     shadow_view.view_offset,
                 ));
-                views.push(match shadow_view.error {
-                    // Errors project from beyond any distance: within
-                    // `error` everywhere, whatever the camera sees.
-                    Some(error) => VirtualView {
-                        planes: shadow_view.planes,
-                        min_distance: KEPT_DISTANCE,
-                        threshold: error * camera.projection / KEPT_DISTANCE,
-                        unseen_error: 0.0,
-                        cone: Cone::Along(shadow_view.direction),
-                        ..camera
-                    },
-                    None => VirtualView {
-                        planes: shadow_view.planes,
-                        min_distance: shadow_view.min_distance.unwrap_or(VIRTUAL_NEAREST),
-                        unseen_error: snapshot.environment.virtual_geometry.pixel_error
-                            * shadow_view.texel,
-                        cone: Cone::Along(shadow_view.direction),
-                        ..camera
-                    },
+                // Errors project from beyond any distance: within the
+                // region's error everywhere, whatever the camera sees.
+                views.push(VirtualView {
+                    planes: shadow_view.planes,
+                    min_distance: REGION_DISTANCE,
+                    threshold: shadow_view.error * camera.projection / REGION_DISTANCE,
+                    unseen_error: 0.0,
+                    cone: Cone::Along(shadow_view.direction),
+                    ..camera
                 });
             }
         }
@@ -448,9 +436,9 @@ pub(super) struct VirtualStages {
 /// The smallest distance virtual geometry's errors project from:
 /// a guard for the eye's own position.
 pub(super) const VIRTUAL_NEAREST: f32 = 0.05;
-/// The distance a kept map's view projects every error
-/// from, beyond any scene's: errors then compare in world units.
-const KEPT_DISTANCE: f32 = 1.0e7;
+/// The distance a shadow region's view projects every error from, beyond
+/// any scene's: errors then compare in world units.
+const REGION_DISTANCE: f32 = 1.0e7;
 
 /// Selected clusters of virtual geometry: visible ID and
 /// cluster, one entry per instance.

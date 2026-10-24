@@ -110,58 +110,48 @@ struct Lighting {
     windows: vec4<f32>,
     night_shape: vec4<f32>,
 }
-// Sun shadows: world to each near cascade and to both
-// far maps (x and y in [-1, 1] across a map, z in [0, 1]).
+// Sun shadows: a clipmap of levels around the detail eye, all in light
+// space (`shadows/mod.rs`), the finest level's texels `level_state.y` wide
+// and each next level's twice as wide; each level a window of tiles
+// `level_state.z` texels a side, each tile drawn in a slot of one atlas.
 struct Shadow {
-    near: array<mat4x4<f32>, 4>,
-    far: mat4x4<f32>,
-    // x: shadows on; y: the kept far map holds casters; z: near cascades in
-    // use; w: distance where shadows begin to fade.
-    state: vec4<f32>,
-    // View distance each near cascade reaches; unreachable beyond those in
-    // use.
-    reach: vec4<f32>,
-    // Normal offsets (world units) of lookups in each near cascade.
-    near_offsets: vec4<f32>,
-    // Steepest receiver plane (depth per texel) of each near cascade.
-    near_limits: vec4<f32>,
-    // x: distance where shadows are gone; y: normal offset of far lookups;
-    // z: steepest receiver plane of the far maps; w: meters into crowns the
-    // sun reaches (`crown_softness`).
-    offsets: vec4<f32>,
-    // Texels a side of the near cascades (x) and the far maps (y).
-    sizes: vec4<f32>,
-    // World to light space: the sun's right, up and
-    // away-from-sun axes, which every kept level scales.
+    // World to light space: the sun's right, up and away-from-sun axes.
     light: array<vec4<f32>, 3>,
-    // Each kept level's light space: one over its width (x and y in level
-    // widths, whose fractions place a point in its map, which wraps), and
-    // its depth band's nearest depth and one over its depth (z in [0, 1]);
-    // then the meters around the detail eye within which it holds every
-    // point wherever its window stands (w).
-    level_scales: array<vec4<f32>, 3>,
-    // Each level's window: its first corner in level widths (x and y), the
-    // normal offset of its lookups (z, world units) and its steepest
-    // receiver plane (w).
-    level_windows: array<vec4<f32>, 3>,
-    // The tiles of each level holding their casters: a bit per slot, two
-    // vectors a level.
-    level_valid: array<vec4<u32>, 6>,
-    // x: levels in use; y: their texels a side; z: a bit for each level
-    // with tiles not yet drawn; w: the terrains whose horizon records
+    // x: shadows on; y: meters into crowns the sun reaches
+    // (`crown_softness`).
+    state: vec4<f32>,
+    // x: levels in use; y: the finest level's texel (world units); z:
+    // texels along a tile's side; w: the terrains whose horizon records
     // lookups loop over.
     level_state: vec4<f32>,
+    // x: tiles along a side of each level's window; y: slots along a row
+    // of the atlas; zw: one over the atlas's width and height in texels.
+    atlas: vec4<f32>,
+    // Each level's window: light-space x and y of its first tile's corner,
+    // its tiles' width and its texels' (world units).
+    windows: array<vec4<f32>, SHADOW_LEVELS>,
+    // Each level's depth band: its nearest depth from the sun and one over
+    // its depth (z in [0, 1] over it), the normal offset of its lookups
+    // (world units) and its steepest receiver plane (depth per texel).
+    bands: array<vec4<f32>, SHADOW_LEVELS>,
 }
+// Levels of the clipmap the uniform holds, and the texels a tile's slot
+// holds past its tile on each side, drawn with it.
+const SHADOW_LEVELS: u32 = 20u;
+const SHADOW_APRON: u32 = 1u;
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<uniform> lighting: Lighting;
 @group(0) @binding(2) var<uniform> shadow: Shadow;
-// The near cascades, one layer each.
-@group(0) @binding(3) var near_shadows: texture_depth_2d_array;
-// The far maps, layers of one texture: the one of still casters
-// (FAR_KEPT) and the one redrawn every frame (FAR_MOVING).
-@group(0) @binding(4) var far_shadows: texture_depth_2d_array;
-const FAR_KEPT: u32 = 0u;
-const FAR_MOVING: u32 = 1u;
+// The atlas of the clipmap's drawn tiles, each in a slot of its texels with
+// SHADOW_APRON more on each side; slots run along rows of `shadow.atlas.y`,
+// the rows downward, and texel rows run downward in each slot.
+@group(0) @binding(3) var shadow_atlas: texture_depth_2d;
+// The slots each level's tiles lie in: the tile of level `l` whose absolute
+// tile is `(a, b)`, cell `(a, b)` modulo the window's side, at texel
+// `(a mod side, l * side + b mod side)`. One more than its slot in the low
+// half (0 where it is not drawn), and than the slot moving casters drew
+// over it this frame in the high half (0 where they drew none).
+@group(0) @binding(4) var shadow_tiles: texture_2d<u32>;
 @group(0) @binding(6) var shadow_sampler: sampler_comparison;
 // Unfiltered reads of four shadow texels, for receiver planes.
 @group(0) @binding(7) var shadow_texels: sampler;
@@ -196,21 +186,18 @@ const HORIZON_RECORDS: u32 = 384u;
 // top and lowest bottom (negated), above the maps' reference height.
 @group(0) @binding(17) var occupancy_coverage: texture_2d_array<f32>;
 @group(0) @binding(18) var occupancy_heights: texture_2d_array<f32>;
-// The kept shadow levels, one layer each.
-@group(0) @binding(8) var kept_levels: texture_depth_2d_array;
 // Environment maps: cubes of the light around, blurred down
 // their levels by roughness; the first holds the sky.
 @group(0) @binding(11) var environment_maps: texture_cube_array<f32>;
 @group(0) @binding(12) var environment_sampler: sampler;
 
 // The features of the scene shading looks up (`scene_shading::SceneShading`):
-// sun shadow maps and their kept levels, terrains' horizons, clouds'
-// shadows, placed objects' covers, reflection probes, windows lighting room
-// by room, and terrains' bounce light. One switched off compiles its lookups
-// out of the pipelines given it, which then leave what its absent uniforms
-// and bindings would; pipelines not given these keep every lookup.
+// sun shadows' clipmap, terrains' horizons, clouds' shadows, placed objects'
+// covers, reflection probes, windows lighting room by room, and terrains'
+// bounce light. One switched off compiles its lookups out of the pipelines
+// given it, which then leave what its absent uniforms and bindings would;
+// pipelines not given these keep every lookup.
 override SHADOW_MAPS: bool = true;
-override KEPT_LEVELS: bool = true;
 override TERRAIN_HORIZONS: bool = true;
 override CLOUD_SHADOWS: bool = true;
 override OCCUPANCY: bool = true;
@@ -679,26 +666,6 @@ fn glow_weight(color: vec3<f32>) -> f32 {
     return bright / (1.0 + bright);
 }
 
-// Visibility of the sun at `world` in the far maps: the kept one of still
-// casters and the one redrawn every frame; 1 outside them.
-fn far_visibility(world: vec3<f32>) -> f32 {
-    let clip = shadow.far * vec4<f32>(world, 1.0);
-    if any(abs(clip.xy) >= vec2<f32>(1.0)) || clip.z >= 1.0 {
-        return 1.0;
-    }
-    let uv = vec2<f32>(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
-    // Where the kept map shadows, the moving one leaves the minimum at 0.
-    var kept = 1.0;
-    if shadow.state.y != 0.0 {
-        kept = textureSampleCompareLevel(far_shadows, shadow_sampler, uv, FAR_KEPT, clip.z);
-        if kept == 0.0 {
-            return 0.0;
-        }
-    }
-    return min(textureSampleCompareLevel(far_shadows, shadow_sampler, uv, FAR_MOVING, clip.z),
-        kept);
-}
-
 // Receiver planes: a surface's lookup compares each of the
 // four texels around it with the surface's own plane at that texel's center.
 // A tilted surface then matches its own depths, so lookups need no margin
@@ -726,7 +693,7 @@ var<private> crown_light: f32;
 // changes by `per_meter` per meter along the sun: the crown depth's worth,
 // as light reaches past a crown's first leaves.
 fn crown_softness(per_meter: f32) -> f32 {
-    return crown_light * shadow.offsets.w * abs(per_meter);
+    return crown_light * shadow.state.y * abs(per_meter);
 }
 
 // How depth changes per texel along a map's axes where the surface moves
@@ -745,31 +712,16 @@ fn texel_slope(map_dx: vec4<f32>, map_dy: vec4<f32>, scale: vec2<f32>, limit: f3
     return clamp(slope, vec2<f32>(-limit), vec2<f32>(limit));
 }
 
-// `world` in the map `clip_from_world`, `size` texels a side. The plane
-// comes from how the surface moves per pixel (`dx` and `dy`); its slope stays
-// within `limit` depth per texel where the surface turns edge-on to the sun.
-fn map_point(clip_from_world: mat4x4<f32>, world: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
-        size: f32, limit: f32) -> MapPoint {
-    let clip = clip_from_world * vec4<f32>(world, 1.0);
-    // Texel rows run downward.
-    var point: MapPoint;
-    point.texel = (clip.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5)) * size;
-    point.depth = clip.z;
-    point.slope = texel_slope(clip_from_world * vec4<f32>(dx, 0.0),
-        clip_from_world * vec4<f32>(dy, 0.0), vec2<f32>(0.5, -0.5) * size, limit);
-    point.soft = crown_softness((clip_from_world * vec4<f32>(shadow.light[2].xyz, 0.0)).z);
-    return point;
-}
-
-// Where to gather the four texels around `point` in a map `size` texels a
-// side: their shared corner, so the hardware's limited subtexel precision
+// The four depths of the atlas around `point`, in gather order, gathered
+// at their shared corner, so the hardware's limited subtexel precision
 // cannot pick a neighboring block near texel edges.
-fn gather_uv(point: MapPoint, size: f32) -> vec2<f32> {
-    return (floor(point.texel - vec2<f32>(0.5)) + vec2<f32>(1.0)) / size;
+fn atlas_depths(point: MapPoint) -> vec4<f32> {
+    let corner = floor(point.texel - vec2<f32>(0.5)) + vec2<f32>(1.0);
+    return textureGather(shadow_atlas, shadow_texels, corner * shadow.atlas.zw);
 }
 
-// Visibility of `point` from the four texel depths around it, gathered at
-// `gather_uv`, in gather order (least u and greatest v, both greatest,
+// Visibility of `point` from the four texel depths around it, gathered by
+// `atlas_depths`, in gather order (least u and greatest v, both greatest,
 // greatest u and least v, both least), each compared with the receiver's
 // plane at the texel's center and weighted bilinearly. A soft point's
 // light halves every softness behind a texel's caster.
@@ -786,47 +738,105 @@ fn plane_visibility(depths: vec4<f32>, point: MapPoint) -> f32 {
     return mix(mix(lit.w, lit.z, f.x), mix(lit.x, lit.y, f.x), f.y);
 }
 
-// Visibility of the surface at `world` in near cascade `cascade`,
-// looked up `normal` times its offset away; -1 where the cascade does
-// not cover the lookup.
-fn cascade_visibility(cascade: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
-        dy: vec3<f32>) -> f32 {
-    let size = shadow.sizes.x;
-    let point = map_point(shadow.near[cascade], world + normal * shadow.near_offsets[cascade],
-        dx, dy, size, shadow.near_limits[cascade]);
-    let uv = point.texel / size;
-    if any(abs(uv * 2.0 - vec2<f32>(1.0)) >= vec2<f32>(0.98)) || point.depth >= 1.0 {
-        return -1.0;
-    }
-    let corner = gather_uv(point, size);
-    let visible = plane_visibility(textureGather(near_shadows, shadow_texels, corner, cascade),
-        point);
-    if point.soft > 0.0 && visible < 1.0 {
-        return crown_spread(cascade, point, size, visible);
-    }
-    return visible;
+// `world` in light space: across the sun's view (x and y) and away from
+// the sun (z).
+fn light_space(world: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(dot(shadow.light[0].xyz, world), dot(shadow.light[1].xyz, world),
+        dot(shadow.light[2].xyz, world));
 }
 
-// Taps across a near cascade around a receiver inside a crown: as many, on a
-// spiral out to CROWN_REACH crown depths, each a golden angle round from
-// the last.
+// The level of the clipmap a pixel's size picks at `world`, seen from the
+// detail eye, and the share of the next coarser level blended in: the one
+// whose texels match what the pixel spans across the view.
+fn shadow_level(world: vec3<f32>) -> DetailLevel {
+    return detail_level(detail_across(world), shadow.level_state.y, u32(shadow.level_state.x));
+}
+
+// Where a light-space point lies in one level of the clipmap: its tile's
+// cell (its absolute tile modulo the window's side, as `shadow_tiles`
+// holds it), the share across that tile from its first corner and its
+// depth over the level's band; `inside` while the window and the band hold
+// it.
+struct LevelPoint {
+    cell: vec2<u32>,
+    across: vec2<f32>,
+    depth: f32,
+    inside: bool,
+}
+
+// Where light-space `light` lies in level `level`.
+fn level_point(level: u32, light: vec3<f32>) -> LevelPoint {
+    let window = shadow.windows[level];
+    let band = shadow.bands[level];
+    let side = shadow.atlas.x;
+    let tiles = (light.xy - window.xy) / window.z;
+    let tile = floor(tiles);
+    var point: LevelPoint;
+    point.depth = (light.z - band.x) * band.y;
+    point.inside = all(tile >= vec2<f32>(0.0)) && all(tile < vec2<f32>(side))
+        && point.depth > 0.0 && point.depth < 1.0;
+    let first = vec2<i32>(round(window.xy / window.z));
+    point.cell = vec2<u32>((first + vec2<i32>(tile)) & vec2<i32>(i32(side) - 1));
+    point.across = tiles - tile;
+    return point;
+}
+
+// The slots of `point`'s tile in level `level`, each one more than the
+// slot: the tile's own (x) and what moving casters drew over it this frame
+// (y); 0 for none.
+fn level_slots(level: u32, point: LevelPoint) -> vec2<u32> {
+    let side = u32(shadow.atlas.x);
+    let entry = textureLoad(shadow_tiles, vec2<u32>(point.cell.x, level * side + point.cell.y),
+        0).r;
+    return vec2<u32>(entry & 0xffffu, entry >> 16u);
+}
+
+// The atlas texel at share `across` of the tile in slot `slot`, past its
+// apron; texel rows run downward.
+fn slot_texel(slot: u32, across: vec2<f32>) -> vec2<f32> {
+    let texels = shadow.level_state.z;
+    let side = texels + 2.0 * f32(SHADOW_APRON);
+    let per_row = u32(shadow.atlas.y);
+    let corner = vec2<f32>(vec2<u32>(slot % per_row, slot / per_row)) * side;
+    return corner + vec2<f32>(f32(SHADOW_APRON)) + vec2<f32>(across.x, 1.0 - across.y) * texels;
+}
+
+// The meters the ground of four levels of the clipmap, from `first`,
+// stands above the point a ground fragment shades (`meshes/terrain.wgsl`'s
+// `terrain_kept_lift`), which it looks those levels up from: a level holds
+// the ground at a level of detail its texels choose, whatever level the
+// fragment's ground draws at, and the ground's own fragments meet it on
+// that ground, so it never shadows itself. Zero for every other surface.
+struct KeptLift {
+    first: u32,
+    lifts: vec4<f32>,
+}
+var<private> kept_lift: KeptLift;
+
+// The meters level `level`'s ground stands above the point shaded.
+fn level_lift(level: u32) -> f32 {
+    if level < kept_lift.first || level - kept_lift.first >= 4u {
+        return 0.0;
+    }
+    return kept_lift.lifts[level - kept_lift.first];
+}
+
+// Taps around a receiver inside a crown: as many, on a spiral out to
+// CROWN_REACH crown depths, each a golden angle round from the last.
 const CROWN_TAPS: u32 = 8u;
 const CROWN_REACH: f32 = 2.0;
 const CROWN_SPIRAL_TURN: f32 = 2.39996323;
 
-// The sun a receiver inside a crown takes in near cascade `cascade`, of
-// which `visible` reaches it along the sun: also what comes from the
-// crown's sun-facing silhouette across the map, halving every crown depth
-// of the way across to a tap and down past the caster there, the most any
-// tap finds; so leaves under a crown's outer tiers on its sun-facing side
-// light as its top does, and its far side and middle stay dim.
-fn crown_spread(cascade: u32, point: MapPoint, size: f32, visible: f32) -> f32 {
-    let clip_from_world = shadow.near[cascade];
-    let depth_per_meter = max(abs((clip_from_world * vec4<f32>(shadow.light[2].xyz, 0.0)).z),
-        1.0e-12);
+// The sun a receiver inside a crown takes in level `level`, at light-space
+// `light` as `point` there, of which `visible` reaches it along the sun:
+// also what comes from the crown's sun-facing silhouette across the level,
+// halving every crown depth of the way across to a tap and down past the
+// caster there, the most any tap finds; so leaves under a crown's outer
+// tiers on its sun-facing side light as its top does, and its far side and
+// middle stay dim.
+fn crown_spread(level: u32, light: vec3<f32>, point: MapPoint, visible: f32) -> f32 {
+    let depth_per_meter = max(shadow.bands[level].y, 1.0e-12);
     let crown = point.soft / depth_per_meter;
-    let texels = length(vec3<f32>(clip_from_world[0].x, clip_from_world[1].x,
-        clip_from_world[2].x)) * 0.5 * size;
     // The spiral turns with the receiver's texel, and across temporally
     // antialiased frames.
     let turn = fade_noise(floor(point.texel) + vec2<f32>(0.5)) * 2.0 * PI;
@@ -834,168 +844,61 @@ fn crown_spread(cascade: u32, point: MapPoint, size: f32, visible: f32) -> f32 {
     for (var tap = 0u; tap < CROWN_TAPS; tap++) {
         let across = CROWN_REACH * crown * sqrt((f32(tap) + 0.5) / f32(CROWN_TAPS));
         let angle = turn + f32(tap) * CROWN_SPIRAL_TURN;
-        let texel = vec2<i32>(floor(point.texel
-            + vec2<f32>(cos(angle), sin(angle)) * across * texels));
-        if any(texel < vec2<i32>(0)) || any(texel >= vec2<i32>(i32(size))) {
+        let at = level_point(level, light + vec3<f32>(cos(angle), sin(angle), 0.0) * across);
+        if !at.inside {
             continue;
         }
-        let caster = textureLoad(near_shadows, texel, cascade, 0);
+        let slot = level_slots(level, at).x;
+        if slot == 0u {
+            continue;
+        }
+        let caster = textureLoad(shadow_atlas, vec2<i32>(slot_texel(slot - 1u, at.across)), 0);
         let down = max(point.depth - caster, 0.0) / depth_per_meter;
         lit = max(lit, exp2(-(across + down) / crown));
     }
     return lit;
 }
 
-// Kept levels hand over to the next coarser map across this outer share of
-// their reach around the detail eye, as the ground's levels of data hand
-// over across the second half of theirs.
-const LEVEL_BAND: f32 = 0.5;
-// The last near cascade hands over to the far maps across this share of its
-// reach.
-const CASCADE_HANDOVER: f32 = 0.3;
-
-// The meters each kept level's ground stands above the point a ground
-// fragment shades (`meshes/terrain.wgsl`'s `terrain_kept_lift`), which it
-// looks that level up from: a level holds the ground at a level of detail
-// its texels choose, whatever level the fragment's ground draws at, and the
-// ground's own fragments meet it on that ground, so it never shadows
-// itself. Zero for every other surface.
-var<private> kept_lift: vec4<f32>;
-
-// The four depths around `point` in kept level `level`, `size` texels a
-// side, in gather order. The map wraps: texels past one edge are those at
-// the other.
-fn level_depths(level: u32, point: MapPoint, size: f32) -> vec4<f32> {
-    let corner = floor(point.texel - vec2<f32>(0.5));
-    if all(corner >= vec2<f32>(0.0)) && all(corner < vec2<f32>(size - 1.0)) {
-        return textureGather(kept_levels, shadow_texels, (corner + vec2<f32>(1.0)) / size, level);
-    }
-    let last = vec2<i32>(i32(size) - 1);
-    let low = vec2<i32>(corner) & last;
-    let high = (vec2<i32>(corner) + vec2<i32>(1)) & last;
-    return vec4<f32>(textureLoad(kept_levels, vec2<i32>(low.x, high.y), level, 0),
-        textureLoad(kept_levels, high, level, 0),
-        textureLoad(kept_levels, vec2<i32>(high.x, low.y), level, 0),
-        textureLoad(kept_levels, low, level, 0));
-}
-
-// Visibility of still casters' sun at the surface point `world` in the kept
-// levels, each looked up its offset along `normal`: from the
-// finest level whose window and band hold it on a tile holding its casters,
-// handing over to the next across the outer part of its reach around the
-// detail eye, which its window holds wherever it stands, and as its texels
-// shrink below a pixel's footprint seen from there; so where sharper
-// texels give way moves with the eye and never jumps with the window. x:
-// the visibility found, weighted; y: the weight left to coarser maps (1
-// where no level holds the point).
-fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
-        dy: vec3<f32>) -> vec2<f32> {
-    let count = u32(shadow.level_state.x);
-    if !KEPT_LEVELS || count == 0u {
-        return vec2<f32>(0.0, 1.0);
-    }
-    // Light space once; each level scales it.
-    let axes = mat3x3<f32>(shadow.light[0].xyz, shadow.light[1].xyz, shadow.light[2].xyz);
-    let light = world * axes;
-    let light_normal = normal * axes;
-    let light_dx = dx * axes;
-    let light_dy = dy * axes;
-    // A meter up, in light space.
-    let up = vec3<f32>(axes[0].y, axes[1].y, axes[2].y);
-    let size = shadow.level_state.y;
-    let pending = u32(shadow.level_state.z);
-    // A level whose texels are under half a pixel's footprint shows no more
-    // than the coarser maps after it, which read cheaper: lookups hand over
-    // to the next map as its texels shrink from 0.7 to 0.35 of the
-    // footprint, as textures blend mipmaps. Windows' offsets are half their
-    // texels.
-    let footprint = max(detail_footprint(world, normal), 1.0e-6);
-    let distance = detail_distance(world);
-    var visible = 0.0;
-    var left = 1.0;
-    for (var level = 0u; level < count; level++) {
-        let window = shadow.level_windows[level];
-        let scales = shadow.level_scales[level];
-        let fine = saturate((2.0 * window.z / footprint - 0.35) / 0.35);
-        let near = saturate((scales.w - distance) / (LEVEL_BAND * scales.w));
-        let weight = min(fine, near);
-        if weight <= 0.0 {
-            continue;
-        }
-        let at = light + light_normal * window.z + up * kept_lift[level];
-        let position = vec3<f32>(at.xy * scales.x, (at.z - scales.y) * scales.z);
-        let local = position.xy - window.xy;
-        let margin = 2.0 / size;
-        if any(local < vec2<f32>(margin)) || any(local > vec2<f32>(1.0 - margin))
-            || position.z <= 0.0 || position.z >= 1.0 {
-            continue;
-        }
-        if (pending & (1u << level)) != 0u {
-            let slot = vec2<u32>(vec2<i32>(floor(position.xy * 16.0)) & vec2<i32>(15));
-            let bit = slot.y * 16u + slot.x;
-            let words = shadow.level_valid[level * 2u + bit / 128u];
-            if (words[(bit / 32u) % 4u] & (1u << (bit % 32u))) == 0u {
-                continue;
-            }
-        }
-        // Texel rows run downward, and the map wraps.
-        var point: MapPoint;
-        point.texel = vec2<f32>(fract(position.x), 1.0 - fract(position.y)) * size;
-        point.depth = position.z;
-        let level_scale = vec3<f32>(scales.x, scales.x, scales.z);
-        point.slope = texel_slope(vec4<f32>(light_dx * level_scale, 0.0),
-            vec4<f32>(light_dy * level_scale, 0.0), vec2<f32>(1.0, -1.0) * size, window.w);
-        point.soft = crown_softness(scales.z);
-        let here = plane_visibility(level_depths(level, point, size), point);
-        visible += left * weight * here;
-        left *= 1.0 - weight;
-        if left <= 0.0 {
-            break;
-        }
-    }
-    return vec2<f32>(visible, left);
-}
-
-// Visibility of the surface at `world` beyond the near cascades: of the
-// moving map's casters and of still ones, which the kept levels
-// hold where they reach (terrain's ground among them) and the kept far map
-// elsewhere. Far maps are looked up their offset along `normal` and see
-// nothing outside them.
-fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
+// Visibility of the sun at the surface point `world` in level `level`,
+// looked up its normal offset along `normal` and from the level's ground's
+// height over the point (`kept_lift`), the receiver's plane from how the
+// point moves per pixel (`dx` and `dy`): what still casters leave of it and
+// what the moving casters drawn over the tile this frame leave, the less;
+// -1 where the level holds no drawn tile there.
+fn level_visibility(level: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         dy: vec3<f32>) -> f32 {
-    let size = shadow.sizes.y;
-    let point = map_point(shadow.far, world + normal * shadow.offsets.y, dx, dy, size,
-        shadow.offsets.z);
-    let uv = point.texel / size;
-    let inside = all(abs(uv * 2.0 - vec2<f32>(1.0)) < vec2<f32>(1.0)) && point.depth < 1.0;
-    let corner = gather_uv(point, size);
-    var still = 1.0;
-    if shadow.state.y != 0.0 {
-        // Still casters first: where they leave nothing, the moving ones
-        // cannot leave less.
-        let levels = level_visibility(world, normal, dx, dy);
-        still = levels.x;
-        if levels.y > 0.0 {
-            var kept = 1.0;
-            if inside {
-                kept = plane_visibility(
-                    textureGather(far_shadows, shadow_texels, corner, FAR_KEPT), point);
-            }
-            still += levels.y * kept;
-        }
-        if still == 0.0 {
-            return 0.0;
-        }
+    let window = shadow.windows[level];
+    let band = shadow.bands[level];
+    // A meter up, in light space.
+    let up = vec3<f32>(shadow.light[0].y, shadow.light[1].y, shadow.light[2].y);
+    let light = light_space(world + normal * band.z) + up * level_lift(level);
+    let at = level_point(level, light);
+    if !at.inside {
+        return -1.0;
     }
-    var moving = 1.0;
-    if inside {
-        moving = plane_visibility(textureGather(far_shadows, shadow_texels, corner, FAR_MOVING),
-            point);
+    let slots = level_slots(level, at);
+    if slots.x == 0u {
+        return -1.0;
     }
-    if shadow.state.y == 0.0 {
-        return moving;
+    var point: MapPoint;
+    point.texel = slot_texel(slots.x - 1u, at.across);
+    point.depth = at.depth;
+    // Light-space units across the view, and depth, per pixel; texels a
+    // world unit, rows running downward.
+    let per_world = vec3<f32>(1.0, 1.0, band.y);
+    point.slope = texel_slope(vec4<f32>(light_space(dx) * per_world, 0.0),
+        vec4<f32>(light_space(dy) * per_world, 0.0), vec2<f32>(1.0, -1.0) / window.w, band.w);
+    point.soft = crown_softness(band.y);
+    var visible = plane_visibility(atlas_depths(point), point);
+    if point.soft > 0.0 && visible < 1.0 {
+        visible = crown_spread(level, light, point, visible);
     }
-    return min(moving, still);
+    if slots.y != 0u {
+        var moving = point;
+        moving.texel = slot_texel(slots.y - 1u, at.across);
+        visible = min(visible, plane_visibility(atlas_depths(moving), moving));
+    }
+    return visible;
 }
 
 const HORIZON_DIRECTIONS: u32 = 16u;
@@ -1077,7 +980,8 @@ fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
 // Visibility of the sun at the surface point `world`, whose
 // position changes by `dx` and `dy` per pixel, looked up a little along the
 // surface normal: what terrains' horizons leave of it, and of
-// that what the shadow maps leave. `on_terrain`: the point is terrain's.
+// that what the shadow clipmap leaves. `on_terrain`: the point is
+// terrain's.
 fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
         distance: f32, on_terrain: bool) -> f32 {
     if !SHADOW_MAPS || shadow.state.x == 0.0 {
@@ -1088,8 +992,8 @@ fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
         return 0.0;
     }
     // Clouds shade whatever else does: only what the terrain
-    // and the maps leave.
-    let visible = min(terrain, map_visibility(world, normal, dx, dy, distance));
+    // and the clipmap leave.
+    let visible = min(terrain, map_visibility(world, normal, dx, dy));
     if visible == 0.0 {
         return 0.0;
     }
@@ -1268,19 +1172,6 @@ fn cloud_passing(world: vec3<f32>) -> f32 {
     return mix(1.0, passing, strength * fade);
 }
 
-// Visibility of the sun at `world` in the far maps, fading out at the
-// shadow distance.
-fn far_maps_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
-        distance: f32) -> f32 {
-    let fade = saturate((distance - shadow.state.w) / (shadow.offsets.x - shadow.state.w));
-    // Faded out entirely, every visibility mixes to all of it.
-    if fade >= 1.0 {
-        return 1.0;
-    }
-    let visible = far_surface_visibility(world, normal, dx, dy);
-    return mix(visible, 1.0, fade);
-}
-
 // A threshold in [0, 1) at pixel `position` that fades compare their
 // progress with: interleaved gradient noise, turned a different way each
 // temporally antialiased frame (`camera.options.z`) so the resolve blends
@@ -1290,77 +1181,68 @@ fn fade_noise(position: vec2<f32>) -> f32 {
         + camera.options.z);
 }
 
-// Whether the fragment being shaded dissolves between maps across handover
-// bands: mesh surfaces, set around their sun lookup; others blend the two.
-var<private> handover_dissolves: bool;
-
-// The threshold past which a lookup at `world` in a handover band takes
-// the next map alone, where the fragment dissolves on a temporally
-// antialiased frame, whose camera holds two over the view's pixels in
-// `jitter.zw`: `fade_noise` at its pixel, turning across pixels and frames
-// so the resolve averages the two maps; -1 elsewhere, where both blend.
-fn handover_threshold(world: vec3<f32>) -> f32 {
-    if !handover_dissolves || camera.jitter.z == 0.0 {
-        return -1.0;
+// The sun at the surface point `world` in the shadow clipmap (x) and the
+// level that decided it (y; -1 where none holds a drawn tile there, which
+// leaves all of it): from the level a pixel's size picks there, blended
+// with the next coarser as `shadow_level` blends them, each looked up a
+// little along `normal` with the receiver's plane from how the point moves
+// per pixel (`dx` and `dy`). A level holding no drawn tile there gives way
+// to the first coarser one that does, which then stands in for both.
+fn map_lookup(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> vec2<f32> {
+    let pick = shadow_level(world);
+    let count = u32(shadow.level_state.x);
+    for (var level = pick.level; level < count; level++) {
+        let visible = level_visibility(level, world, normal, dx, dy);
+        if visible < 0.0 {
+            continue;
+        }
+        if level > pick.level || pick.blend <= 0.0 {
+            return vec2<f32>(visible, f32(level));
+        }
+        for (var next = level + 1u; next < count; next++) {
+            let coarser = level_visibility(next, world, normal, dx, dy);
+            if coarser >= 0.0 {
+                return vec2<f32>(mix(visible, coarser, pick.blend), f32(level));
+            }
+        }
+        return vec2<f32>(visible, f32(level));
     }
-    let clip = camera.view_projection * vec4<f32>(world, 1.0);
-    let uv = clip.xy / clip.w * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
-    return fade_noise(floor(uv * 2.0 / camera.jitter.zw) + vec2<f32>(0.5));
+    return vec2<f32>(1.0, -1.0);
 }
 
-// Visibility of the sun at `world` in the shadow maps. Near cascades cover
-// the first stretch of the view, each three times sharper than the next,
-// and hand over to the next one across the last tenth of
-// their reach, the last one to the far maps across `CASCADE_HANDOVER` of
-// its reach, by the camera's distance, as they fit its view; the far maps,
-// the kept one and the kept levels for still casters (the levels holding
-// terrain's ground too, which the handover so keeps shadowed)
-// and the one redrawn every frame, cover the rest and fade out at the
-// shadow distance. Lookups compare four texels with the surface's plane.
-// Across a band, dissolving lookups read one map, blending ones both.
-fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
-        distance: f32) -> f32 {
-    // The first cascade reaching the fragment. Reflection probe captures
-    // look from elsewhere than the cascades cover and select
-    // for: they read the far maps alone.
-    let beyond = select(vec4<f32>(0.0), vec4<f32>(1.0), vec4<f32>(distance) >= shadow.reach);
-    let cascade = u32(dot(beyond, vec4<f32>(1.0)));
-    let cascades = select(u32(shadow.state.z), 0u, camera.options.x != 0.0);
-    if cascade < cascades {
-        let reach = shadow.reach[cascade];
-        let last = cascade + 1u == cascades;
-        let band = select(0.1, CASCADE_HANDOVER, last);
-        let handover = saturate((distance - reach * (1.0 - band)) / (reach * band));
-        var threshold = -1.0;
-        if handover > 0.0 {
-            threshold = handover_threshold(world);
+// Visibility of the sun at the surface point `world` in the shadow
+// clipmap (`map_lookup`): lookups compare four texels with the surface's
+// plane, past the last level none shadows.
+fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> f32 {
+    return map_lookup(world, normal, dx, dy).x;
+}
+
+// Visibility of the sun at `world`, a point of the air rather than a
+// surface: a plain comparison in the first level holding a drawn tile
+// there from the one a pixel's size picks there, of still casters and of
+// those moving over the tile; 1 where none holds one.
+fn air_visibility(world: vec3<f32>) -> f32 {
+    let pick = shadow_level(world);
+    let light = light_space(world);
+    for (var level = pick.level; level < u32(shadow.level_state.x); level++) {
+        let at = level_point(level, light);
+        if !at.inside {
+            continue;
         }
-        if threshold >= 0.0 && handover > threshold {
-            if last {
-                return far_maps_visibility(world, normal, dx, dy, distance);
-            }
-            let next = cascade_visibility(cascade + 1u, world, normal, dx, dy);
-            if next >= 0.0 {
-                return next;
-            }
+        let slots = level_slots(level, at);
+        if slots.x == 0u {
+            continue;
         }
-        let visible = cascade_visibility(cascade, world, normal, dx, dy);
-        if visible >= 0.0 {
-            if handover <= 0.0 || threshold >= 0.0 {
-                return visible;
-            }
-            if last {
-                return mix(visible, far_maps_visibility(world, normal, dx, dy, distance),
-                    handover);
-            }
-            let next = cascade_visibility(cascade + 1u, world, normal, dx, dy);
-            if next >= 0.0 {
-                return mix(visible, next, handover);
-            }
-            return visible;
+        let still = slot_texel(slots.x - 1u, at.across) * shadow.atlas.zw;
+        var visible = textureSampleCompareLevel(shadow_atlas, shadow_sampler, still, at.depth);
+        if slots.y != 0u {
+            let moving = slot_texel(slots.y - 1u, at.across) * shadow.atlas.zw;
+            visible = min(visible,
+                textureSampleCompareLevel(shadow_atlas, shadow_sampler, moving, at.depth));
         }
+        return visible;
     }
-    return far_maps_visibility(world, normal, dx, dy, distance);
+    return 1.0;
 }
 
 // Trowbridge-Reitz (GGX) distribution of microfacet normals.

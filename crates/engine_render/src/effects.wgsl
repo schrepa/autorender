@@ -35,10 +35,6 @@ struct Post {
     shafts: vec4<f32>,
     // The sun's exposed color: light the shafts scatter.
     sun: vec4<f32>,
-    // Contact shadows: each ray's reach in meters, the share
-    // of sunlight a hit takes away, the distance within which surfaces
-    // trace, and 1 when they run.
-    contact: vec4<f32>,
     // The unit direction toward the sun; w: 1 when 8-bit color writes
     // dither.
     sun_direction: vec4<f32>,
@@ -90,18 +86,17 @@ fn inverse_distance_at(depth: texture_depth_2d, pixel: vec2<i32>, settings: Post
     return 1.0 / max(length(point.xyz / point.w - settings.eye.xyz), 1.0e-4);
 }
 
-// The ambient occlusion's visibility (x), the sun shafts' light (y) and the
-// contact shadows' visibility (z) at full-resolution `pixel`, which the
-// half-resolution filter of post.wgsl writes together with the inverse
-// distance of each texel's surface (w): the four texels around the pixel,
-// weighted bilinearly and by how near their surface lies to the pixel's
-// own (from `depth`), so no effect darkens or lights across a silhouette;
-// where none lies near, the bilinear weights alone.
+// The ambient occlusion's visibility (x) and the sun shafts' light (y) at
+// full-resolution `pixel`, which the half-resolution filter of post.wgsl
+// writes together with the inverse distance of each texel's surface (w):
+// the four texels around the pixel, weighted bilinearly and by how near
+// their surface lies to the pixel's own (from `depth`), so no effect
+// darkens or lights across a silhouette; where none lies near, the
+// bilinear weights alone.
 fn screen_effects(effects: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2<i32>,
-        settings: Post) -> vec3<f32> {
-    if settings.occlusion.w == 0.0 && settings.shafts.w == 0.0 && settings.contact.w == 0.0
-        && settings.sky.w == 0.0 {
-        return vec3<f32>(1.0, 0.0, 1.0);
+        settings: Post) -> vec2<f32> {
+    if settings.occlusion.w == 0.0 && settings.shafts.w == 0.0 && settings.sky.w == 0.0 {
+        return vec2<f32>(1.0, 0.0);
     }
     let size = half_size(settings);
     let position = (vec2<f32>(pixel) + 0.5) * vec2<f32>(size) / settings.size.xy - 0.5;
@@ -110,42 +105,23 @@ fn screen_effects(effects: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2
     let last = size - 1;
     let own = inverse_distance_at(depth, pixel, settings);
     let tolerance = max(EFFECTS_PLANE * own, 1.0e-7);
-    var near = vec3<f32>(0.0);
+    var near = vec2<f32>(0.0);
     var near_total = 0.0;
-    var plain = vec3<f32>(0.0);
+    var plain = vec2<f32>(0.0);
     for (var y = 0; y < 2; y++) {
         for (var x = 0; x < 2; x++) {
             let texel = textureLoad(effects, clamp(first + vec2<i32>(x, y), vec2<i32>(0), last), 0);
             let bilinear = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
             let weight = bilinear * saturate(1.25 - abs(texel.w - own) / tolerance);
-            near += texel.rgb * weight;
+            near += texel.xy * weight;
             near_total += weight;
-            plain += texel.rgb * bilinear;
+            plain += texel.xy * bilinear;
         }
     }
     if near_total < 1.0e-3 {
         return plain;
     }
     return near / near_total;
-}
-
-// The factor darkening a pixel whose light has an ambient share of
-// `ambient` (the scene target's alpha) by the occlusion's `visible` share,
-// which holds what sky occlusion leaves of the sky's light too.
-fn occlusion_factor(ambient: f32, visible: f32, settings: Post) -> f32 {
-    if settings.occlusion.w == 0.0 && settings.sky.w == 0.0 {
-        return 1.0;
-    }
-    return 1.0 - ambient * (1.0 - visible);
-}
-
-// The factor darkening the rest of that light, the sun's, by the contact
-// shadows' `visible` share.
-fn contact_factor(ambient: f32, visible: f32, settings: Post) -> f32 {
-    if settings.contact.w == 0.0 {
-        return 1.0;
-    }
-    return 1.0 - (1.0 - ambient) * (1.0 - visible);
 }
 
 // The scene reflected at `uv` replacing the share of `color`
@@ -183,18 +159,20 @@ fn glowing(color: vec3<f32>, bloom: texture_2d<f32>, linear: sampler, uv: vec2<f
     return vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - light);
 }
 
-// The share of a pixel's light the ambient occlusion and the contact
-// shadows leave: its ambient share `ambient` (the scene target's alpha)
-// darkened by the occlusion, the rest by the contact shadows, as
-// `screen_effects` gives them in `effects`.
-fn effect_shade(ambient: f32, effects: vec3<f32>, settings: Post) -> f32 {
-    return occlusion_factor(ambient, effects.x, settings)
-        * contact_factor(ambient, effects.z, settings);
+// The share of a pixel's light the ambient occlusion leaves: its ambient
+// share `ambient` (the scene target's alpha) darkened by the occlusion's
+// visible share in `effects` (`screen_effects`), which holds what sky
+// occlusion leaves of the sky's light too.
+fn effect_shade(ambient: f32, effects: vec2<f32>, settings: Post) -> f32 {
+    if settings.occlusion.w == 0.0 && settings.sky.w == 0.0 {
+        return 1.0;
+    }
+    return 1.0 - ambient * (1.0 - effects.x);
 }
 
 // `color` with the effects that add light laid over it at `uv` across the
 // view: the reflections, the sun shafts' light in `effects`, then bloom.
-fn effect_light(color: vec3<f32>, effects: vec3<f32>, reflections: texture_2d<f32>,
+fn effect_light(color: vec3<f32>, effects: vec2<f32>, reflections: texture_2d<f32>,
         bloom: texture_2d<f32>, linear: sampler, uv: vec2<f32>, settings: Post) -> vec3<f32> {
     let mirrored = reflected(color, reflections, linear,
         half_uv(uv, textureDimensions(reflections), settings), settings);

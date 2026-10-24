@@ -34,7 +34,7 @@ const TILE: f32 = 64.0;
 /// Ground each object stands on, on average.
 const AREA_PER_OBJECT: f32 = 36.0;
 
-/// Builds the scene from `files`, returning its moving nodes and bounds.
+/// Builds the scene from `files`, returning its moving nodes.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -43,7 +43,7 @@ pub(crate) fn populate(
     world: &mut World,
     config: &StressConfig,
     files: &HashMap<String, StressFile>,
-) -> engine::Result<(u32, (Vec3, Vec3))> {
+) -> engine::Result<u32> {
     let mut assets = world.resource_mut::<AssetLibrary>();
     let mut mesh = |name: &str| -> engine::Result<MeshHandle> {
         let file = files.get(name).ok_or_else(|| {
@@ -174,8 +174,7 @@ pub(crate) fn populate(
         probes: Vec::new(),
         overlap_hits: Vec::new(),
     });
-    let bounds = (Vec3::new(-half, -2.0, -half), Vec3::new(half, 12.0, half));
-    Ok((moving_nodes, bounds))
+    Ok(moving_nodes)
 }
 
 pub(crate) struct DenseWorld;
@@ -198,7 +197,7 @@ impl StressWorld for DenseWorld {
         world: &mut World,
         config: &StressConfig,
         files: &HashMap<String, StressFile>,
-    ) -> engine::Result<(u32, (Vec3, Vec3))> {
+    ) -> engine::Result<u32> {
         populate(world, config, files)
     }
 

@@ -1,6 +1,6 @@
 //! Debug views: frames that show, instead of the shaded image, what drew
 //! each pixel and how: its kind of geometry, its level of detail, whether it
-//! is an impostor card, which sun shadow map decided its shadow, how it
+//! is an impostor card, which level of sun shadows decided its shadow, how it
 //! casts sun shadows, how many fragments covered it, its normal, what
 //! terrain's ground is made of: its tiles and patches, surface materials,
 //! the sky it sees and how much detail it shows; or what terrains' water is
@@ -66,16 +66,14 @@ modes! {
     /// Impostor cards magenta (cards fading over their meshes pink) over
     /// everything else gray: where cards stand in for meshes.
     Cards = "cards",
-    /// Which sun shadow lookup decided it: the near cascades green, from
-    /// bright (the first) to dark, the kept levels cyan to blue, the kept far
-    /// map indigo, the moving map orange, a terrain's horizon purple, past
-    /// the shadow distance gray; darker where it lies in shadow, black
-    /// without sun shadows.
+    /// Which sun shadow lookup decided it: the clipmap's levels green to
+    /// blue, from the finest, a terrain's horizon purple, where no level is
+    /// drawn gray; darker where it lies in shadow, black without sun
+    /// shadows.
     Shadows = "shadows",
-    /// How it casts sun shadows: meshes red, placed objects orange (yellow
-    /// where the kept map holds them), virtual geometry violet, impostor
-    /// cards casting cards of their own magenta, terrain brown, what casts
-    /// none gray.
+    /// How it casts sun shadows: meshes red, placed objects orange,
+    /// virtual geometry violet, impostor cards casting cards of their own
+    /// magenta, terrain brown, what casts none gray.
     Casters = "casters",
     /// How many fragments passed the depth test there as the frame drew,
     /// from dark blue (one) through green and yellow to white (ten or more).
@@ -200,17 +198,11 @@ pub enum DrawnKind {
 pub enum SunLookup {
     /// No sun shadows: shadows are off, or the pixel is the sky.
     None,
-    /// The near cascade the probe's `sun_index` names, from the first.
-    Cascade,
-    /// The kept level `sun_index` names, from the finest.
+    /// The clipmap's level the probe's `sun_index` names, from the finest.
     Level,
-    /// The kept far map, of still casters.
-    Kept,
-    /// The far map redrawn every frame, of moving casters.
-    Moving,
     /// A terrain's horizon, below which the sun is gone.
     Horizon,
-    /// Past the shadow distance: lit.
+    /// No level drawn where it lies: lit.
     Beyond,
 }
 
@@ -324,10 +316,8 @@ pub struct PixelProbe {
     pub level: u32,
     /// Whether it is an impostor card fading in or out over its mesh.
     pub fading: bool,
-    /// Whether what drew it casts sun shadows, and for placed objects
-    /// whether the kept map holds them.
+    /// Whether what drew it casts sun shadows.
     pub casts_shadows: bool,
-    pub kept_shadows: bool,
     /// The object it drew: an entity's renderer slot (meshes, cards and
     /// virtual geometry) or the placed object's index.
     pub object: Option<u32>,
@@ -336,8 +326,8 @@ pub struct PixelProbe {
     pub detail: Option<u32>,
     /// Its shading normal, unit length; `None` for the sky.
     pub normal: Option<[f32; 3]>,
-    /// Which lookup decided its sun shadow, which cascade or level among
-    /// several, and whether it leaves the pixel in shadow.
+    /// Which lookup decided its sun shadow, which level of the clipmap, and
+    /// whether it leaves the pixel in shadow.
     pub sun: SunLookup,
     pub sun_index: u32,
     pub shadowed: bool,

@@ -1,13 +1,12 @@
 //! The screen effects, one entry each: whether a frame runs it (its gate,
-//! from the frame's environment and the direction toward the sun), its
-//! fields of the effects' uniform, and what the effects pass reads for it.
+//! from the frame's environment), its field of the effects' uniform, and
+//! what the effects pass reads for it.
 //! The frame's targets, the effects pass, its stats and the uniform's
 //! "runs" flags all follow the same gates; the post composite and the
 //! temporal resolve apply the effects alike (`effect_shade` and
 //! `effect_light` in effects.wgsl).
 
 use engine_core::Environment;
-use engine_core::glam::Vec3;
 
 use crate::render_graph::{NodeBuilder, Resource};
 
@@ -20,9 +19,8 @@ pub(crate) struct UniformFrame {
 }
 
 /// Whether sun shafts run under `environment`: light gathered through the
-/// shadow maps, which they need, from the fog they march, which must
+/// shadow clipmap, which they need, from the fog they march, which must
 /// scatter: the physical sky's air has none (its lighting zeroes the fog).
-/// The far shadow maps reach as far as running shafts gather.
 pub(crate) fn shafts_run(environment: &Environment) -> bool {
     environment.sun_shafts.sanitized().enabled()
         && environment.shadows.enabled
@@ -44,7 +42,7 @@ macro_rules! screen_effects {
     ($(
         $(#[$doc:meta])*
         $effect:ident {
-            gate: |$environment:ident, $sun:pat_param| $gate:expr,
+            gate: |$environment:ident| $gate:expr,
             uniform: |$settings:ident, $on:ident, $frame:pat_param| $uniform:expr,
             reads: [$($read:ident),*],
         },
@@ -63,14 +61,9 @@ macro_rules! screen_effects {
         impl Effects {
             /// The effects `environment` runs.
             pub(crate) fn of(environment: &Environment) -> Self {
-                let toward_sun: Vec3 = environment
-                    .atmosphere
-                    .sanitized()
-                    .sun_direction
-                    .normalize_or_zero();
                 Self {
                     $($effect: {
-                        let ($environment, $sun) = (environment, toward_sun);
+                        let $environment = environment;
                         $gate
                     },)*
                 }
@@ -117,7 +110,7 @@ screen_effects! {
     /// handing over by its radius's span on screen as the occupancy maps'
     /// texels do.
     occlusion {
-        gate: |environment, _| environment.ambient_occlusion.sanitized().enabled(),
+        gate: |environment| environment.ambient_occlusion.sanitized().enabled(),
         uniform: |settings, on, _| {
             let occlusion = settings.ambient_occlusion.sanitized();
             let share = crate::occupancy::texel_share(&settings.occupancy.sanitized());
@@ -128,7 +121,7 @@ screen_effects! {
     /// Bloom: the glowing light filtered down a chain of half-resolution
     /// levels and back up.
     bloom {
-        gate: |environment, _| environment.bloom.sanitized().enabled(),
+        gate: |environment| environment.bloom.sanitized().enabled(),
         uniform: |settings, on, frame| {
             let [x, y] = frame.half_texel;
             [settings.bloom.sanitized().intensity, on, x, y]
@@ -138,7 +131,7 @@ screen_effects! {
     /// Screen-space reflections: the surface target's rays walked over a
     /// pyramid of the depth buffer's nearest depths.
     reflections {
-        gate: |environment, _| environment.reflections.sanitized().enabled(),
+        gate: |environment| environment.reflections.sanitized().enabled(),
         uniform: |settings, on, frame| {
             let reflections = settings.reflections.sanitized();
             [reflections.distance, reflections.intensity, on, frame.trace_index as f32]
@@ -147,7 +140,7 @@ screen_effects! {
     },
     /// Sun shafts ([`shafts_run`]).
     shafts {
-        gate: |environment, _| shafts_run(environment),
+        gate: |environment| shafts_run(environment),
         uniform: |settings, on, _| {
             let shafts = settings.sun_shafts.sanitized();
             [shafts.intensity, shafts.anisotropy, shafts.distance, on]
@@ -157,7 +150,7 @@ screen_effects! {
     /// Sky occlusion: sky light fading where still meshes hide the sky, from
     /// the shadow pass's sky maps (`shadows::sky`), which need shadows.
     sky {
-        gate: |environment, _| {
+        gate: |environment| {
             environment.sky_occlusion.sanitized().darkens() && environment.shadows.enabled
         },
         uniform: |settings, on, _| {
@@ -165,17 +158,5 @@ screen_effects! {
             [sky.strength, sky.floor, 0.0, on]
         },
         reads: [Depth, ShadowMaps],
-    },
-    /// Contact shadows, traced with the occlusion toward a sun above the
-    /// horizon.
-    contact {
-        gate: |environment, toward_sun| {
-            environment.contact_shadows.sanitized().traces() && toward_sun.y > 0.0
-        },
-        uniform: |settings, on, _| {
-            let contact = settings.contact_shadows.sanitized();
-            [contact.length, contact.strength, contact.distance, on]
-        },
-        reads: [Depth],
     },
 }

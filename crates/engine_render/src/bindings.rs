@@ -11,7 +11,7 @@ pub(crate) use crate::gpu_layouts::constants::PYRAMID_EXTENT_BYTES;
 use crate::gpu_layouts::impostors::{ImpostorBakeUniform, ImpostorRecord};
 use crate::gpu_layouts::scene::{
     CameraUniform, ColorData, GroundData, LightingUniform, MaterialUniform, PoseData, PostUniform,
-    ResolveUniform, ShadowCullUniform, ShadowUniform, SkyUniform,
+    ResolveUniform, RouteUniform, ShadowCullUniform, ShadowUniform, SkyUniform,
 };
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::gpu_layouts::{
@@ -305,15 +305,13 @@ tables! {
             // middles.
             uniform_of(1, "lighting", size_of::<LightingUniform>(), VF),
             uniform_of(2, "shadow", size_of::<ShadowUniform>(), VF),
-            texture(3, "near_shadows", Depth, D2Array, VF),
-            // The far maps, the kept one and the moving one, two layers of
-            // one texture.
-            texture(4, "far_shadows", Depth, D2Array, VF),
+            // The shadow clipmap's tiles, each in a slot of one atlas, and
+            // the slot each level's tiles lie in.
+            texture(3, "shadow_atlas", Depth, D2, VF),
+            texture(4, "shadow_tiles", Uint, D2, VF),
             sampler(6, "shadow_sampler", Comparison, F),
             // Receiver-plane lookups read four texels.
             sampler(7, "shadow_texels", NonFiltering, VF),
-            // The kept shadow levels, one layer each.
-            texture(8, "kept_levels", Depth, D2Array, VF),
             texture(9, "refraction_source", Float, D2, F),
             sampler(10, "refraction_sampler", Filtering, F),
             texture(11, "environment_maps", Float, CubeArray, F),
@@ -347,11 +345,10 @@ tables! {
             uniform_of(0, "camera", size_of::<CameraUniform>(), VF),
             uniform_of(1, "lighting", size_of::<LightingUniform>(), F),
             uniform_of(2, "shadow", size_of::<ShadowUniform>(), F),
-            texture(3, "near_shadows", Depth, D2Array, F),
-            texture(4, "far_shadows", Depth, D2Array, F),
+            texture(3, "shadow_atlas", Depth, D2, F),
+            texture(4, "shadow_tiles", Uint, D2, F),
             sampler(6, "shadow_sampler", Comparison, F),
             sampler(7, "shadow_texels", NonFiltering, F),
-            texture(8, "kept_levels", Depth, D2Array, F),
             texture(11, "environment_maps", Float, CubeArray, F),
             sampler(12, "environment_sampler", Filtering, F),
             read(13, "probe_words", F),
@@ -706,7 +703,8 @@ tables! {
 
     // Shadows (`shadows.wgsl`).
 
-    /// Caster selection and counting.
+    /// Caster selection and counting, with the slot each level's tiles lie
+    /// in, which moving casters draw over.
     const SHADOW_SELECT: Table = Table {
         label: "engine/shadow-select-layout",
         serves: [SHADOW_SHADER @ 0],
@@ -720,6 +718,7 @@ tables! {
             write(6, "ids", C),
             write(7, "args", C),
             write(8, "counters", C),
+            texture(12, "tile_slots", Uint, D2, C),
         ],
     };
 
@@ -737,16 +736,31 @@ tables! {
             write(8, "counters", C),
             read(10, "skinned", C),
             read(11, "skin_bounds", C),
+            texture(12, "tile_slots", Uint, D2, C),
+        ],
+    };
+
+    /// The shadow clipmap's marks (`shadow_marks.wgsl`): the camera, the
+    /// shadow lookups' uniform, the depth buffer and the marks of the tiles
+    /// its pixels read.
+    const SHADOW_MARKS: Table = Table {
+        label: "engine/shadow-marks-layout",
+        serves: [SHADOW_MARKS_SHADER @ 0],
+        bindings: &[
+            uniform_of(0, "camera", size_of::<CameraUniform>(), C),
+            uniform_of(2, "shadow", size_of::<ShadowUniform>(), C),
+            texture(24, "shadow_depth", Depth, D2, C),
+            write(25, "shadow_marks", C),
         ],
     };
 
     /// Group 1 of terrain pipelines (`meshes/terrain_vertex.wgsl`):
     /// the height array, each view's eye-relative projection and each
     /// terrain's anchor and material, the uniforms at dynamic offsets.
-    /// Fragments read the heights too, where kept shadow levels hold the
-    /// ground at a level of their own. Vertices read the frame's leaves of
-    /// the terrains' subdivisions and the true surface under them, and
-    /// where deep materials displace it their blend, normals and heights,
+    /// Fragments read the heights too, where the shadow clipmap's levels
+    /// hold the ground at a level of their own. Vertices read the frame's
+    /// leaves of the terrains' subdivisions and the true surface under them,
+    /// and where deep materials displace it their blend, normals and heights,
     /// which the subdivision's compute passes measure leaves by alike.
     const TERRAIN: Table = Table {
         label: "engine/terrain-layout",
@@ -1255,18 +1269,22 @@ tables! {
         ],
     };
 
-    /// Group 0 of depth passes: each map's view matrix at a dynamic offset,
-    /// with the wind and the eye placed objects sway by.
+    /// Group 0 of depth passes: each view's matrix at a dynamic offset, with
+    /// the wind and the eye placed objects sway by; and the routes moving
+    /// casters draw through into this frame's moving tiles.
     const SHADOW_VIEW: Table = Table {
         label: "engine/shadow-view-layout",
         serves: [SHADOW_SHADER @ 0, TERRAIN_SHADOW_SHADER @ 0],
-        bindings: &[dynamic_uniform(9, "view", 96, V)],
+        bindings: &[
+            dynamic_uniform(9, "view", 96, V),
+            uniform_of(13, "routes", size_of::<RouteUniform>(), VF),
+        ],
     };
 
     /// Group 1 of retained depth passes: slot poses, and slot colors and joint
-    /// palettes for masked and skinned casters; and the near cascades'
-    /// caches, which their composing reads (a placeholder in passes drawing
-    /// into them).
+    /// palettes for masked and skinned casters; and the regions of tiles
+    /// this frame redrew, which composing reads into the atlas (a
+    /// placeholder in passes drawing into them).
     const SHADOW_POSES: Table = Table {
         label: "engine/shadow-pose-layout",
         serves: [SHADOW_SHADER @ 1],
@@ -1274,7 +1292,7 @@ tables! {
             read_of(0, "slot_poses", POSE, V),
             read_of(1, "slot_colors", COLOR, V),
             read_of(2, "slot_palette", POSE, V),
-            texture(3, "near_cache", Depth, D2Array, F),
+            texture(3, "shadow_regions", Depth, D2Array, F),
         ],
     };
 

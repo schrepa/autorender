@@ -1074,7 +1074,6 @@ fn scene(
     }
     let mut environment = json!({
         "atmosphere": {"preset": "golden_hour"},
-        "shadows": {"bounds": {"min": [-half, low - 50.0, -half], "max": [half, high + 50.0, half]}, "distance": 9000.0, "near_distance": 160.0, "resolution": 4096, "levels": 2, "level_extent": 512.0},
     });
     if let Some(level) = options.sea {
         environment["ocean"] = json!({"enabled": true, "level": level});

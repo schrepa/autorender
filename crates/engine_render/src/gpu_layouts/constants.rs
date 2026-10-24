@@ -2,7 +2,7 @@
 //! mirroring them; constants of other crates shaders mirror are registered
 //! by path. Rust code reads them from here.
 
-use super::scene::{MAX_CASCADES, MAX_LEVELS};
+use super::scene::{MAX_LEVELS, MAX_MOVING_TILES};
 use super::terrain::PaletteEntry;
 
 gpu_consts! {
@@ -77,21 +77,34 @@ gpu_consts! {
     pub(crate) const THIN_LAYERS: usize = 64 => ["THIN_LAYERS"];
 
     // crate::shadows
-    // Near cascades are maps 0 to MAX_CASCADES - 1; the far maps follow, then
-    // the kept levels, one map of selected casters for the one
-    // redrawn, then the sky map redrawn this frame (`shadows::sky`).
-    pub(crate) const MOVING_MAP: usize = MAX_CASCADES => ["MOVING_MAP" in SHADOW_SHADER];
-    pub(crate) const KEPT_MAP: usize = MAX_CASCADES + 1 => ["KEPT_MAP" in SHADOW_SHADER];
-    pub(crate) const KEPT_LEVELS: usize = MAX_CASCADES + 2 => ["KEPT_LEVELS" in SHADOW_SHADER];
-    pub(crate) const SKY_MAP: usize = MAX_CASCADES + 3 => ["SKY_MAP" in SHADOW_SHADER];
-    pub(crate) const SHADOW_MAPS: usize = MAX_CASCADES + 4 => ["MAPS" in SHADOW_SHADER];
+    /// Regions of tiles a frame redraws at most, each a map of the casters
+    /// over it: as many as virtual geometry selects views for besides the
+    /// camera's. The map of moving casters over the moving tiles follows
+    /// them, then the sky map redrawn this frame (`shadows::sky`).
+    pub(crate) const SHADOW_REGIONS: usize = MAX_VIEWS - 1 => ["REGIONS" in SHADOW_SHADER];
+    pub(crate) const MOVING_MAP: usize = SHADOW_REGIONS => ["MOVING_MAP" in SHADOW_SHADER];
+    pub(crate) const SKY_MAP: usize = SHADOW_REGIONS + 1 => ["SKY_MAP" in SHADOW_SHADER];
+    pub(crate) const SHADOW_MAPS: usize = SHADOW_REGIONS + 2 => ["MAPS" in SHADOW_SHADER];
+    /// Instance IDs the moving map holds for each of a draw group's casters:
+    /// its draws into that many tiles, past which its draws are counted and
+    /// left out.
+    pub(crate) const MOVING_PAIRS: u32 = 8 => ["MOVING_PAIRS" in SHADOW_SHADER];
+    /// Moving tiles a frame draws over at most, which a moving caster's
+    /// instance ID names in its top eight bits beside its slot.
+    pub(crate) const MOVING_TILES: usize = MAX_MOVING_TILES => ["MOVING_TILES" in SHADOW_SHADER];
+    /// Levels of the shadow clipmap the uniforms hold.
+    pub(crate) const SHADOW_LEVELS: usize = MAX_LEVELS => ["SHADOW_LEVELS"];
+    /// Totals the selection reads back before the masks of tiles: the
+    /// casters the regions drew, the moving casters' draws into moving
+    /// tiles, and those the moving map left out.
+    pub(crate) const SHADOW_TOTALS: usize = 4 => ["TOTALS" in SHADOW_SHADER];
     pub(crate) const SHADOW_GROUP: u32 = 256 => ["@select_casters" in SHADOW_SHADER];
     pub(crate) const SHADOW_SKINNED_GROUP: u32 = 64 => ["@select_skinned" in SHADOW_SHADER];
+    /// Pixels a side of the workgroups marking the tiles pixels read.
+    pub(crate) const SHADOW_MARKS_GROUP: u32 = 8 => ["@mark_shadow_tiles" in SHADOW_MARKS_SHADER];
     // Mode bits of the selection pass.
     pub(crate) const STILLNESS: u32 = 1 => ["STILLNESS" in SHADOW_SHADER];
-    pub(crate) const REFRESH: u32 = 2 => ["REFRESH" in SHADOW_SHADER];
-    pub(crate) const LEVEL_REFRESH: u32 = 4 => ["LEVEL_REFRESH" in SHADOW_SHADER];
-    pub(crate) const SKY_REFRESH: u32 = 8 => ["SKY_REFRESH" in SHADOW_SHADER];
+    pub(crate) const SKY_REFRESH: u32 = 2 => ["SKY_REFRESH" in SHADOW_SHADER];
     /// Directions of the sky that sky occlusion tests at most, and its
     /// maps: one per direction near the camera, then one per direction
     /// reaching farther.
@@ -99,25 +112,13 @@ gpu_consts! {
     pub(crate) const SKY_LAYERS: usize = 2 * SKY_DIRECTIONS => ["SKY_LAYERS" in POST_SHADER];
 
     // crate::shadow_fit
-    /// Tiles across each side of the kept far map: kept casters
-    /// that move mark the tiles under them dirty, and frames redraw them.
-    pub(crate) const SHADOW_TILES: u32 = 16 => ["TILES" in SHADOW_SHADER];
-    /// Words of the dirty-tile mask, each holding two rows of tiles, as the
-    /// selection pass marks them.
-    pub(crate) const SHADOW_TILE_WORDS: usize = (SHADOW_TILES * SHADOW_TILES / 32) as usize => ["TILE_WORDS" in SHADOW_SHADER];
-    /// Texels of a kept level a sample of the ground it holds spans at
-    /// least: finer samples draw detail its texels cannot hold. The ground's
-    /// own fragments look each level up from that level's ground.
+    /// Texels of a level a sample of the ground it holds spans at least:
+    /// finer samples draw detail its texels cannot hold. The ground's own
+    /// fragments look each level up from that level's ground.
     pub(crate) const GROUND_TEXELS: f32 = 2.0 => ["KEPT_GROUND_TEXELS" in SHADER];
-    /// Layers of the far maps' texture: the kept map's, then the moving
-    /// map's.
-    pub(crate) const FAR_KEPT: u32 = 0 => ["FAR_KEPT"];
-    pub(crate) const FAR_MOVING: u32 = 1 => ["FAR_MOVING"];
-
-    // crate::shadows::selection
-    // Dirty tiles of the kept map, then of each kept level, then
-    // the four caster totals, read back together.
-    pub(crate) const DIRTY_WORDS: usize = SHADOW_TILE_WORDS * (1 + MAX_LEVELS) => ["DIRTY_WORDS" in SHADOW_SHADER];
+    /// Texels a tile's slot holds past its tile on each side, drawn with
+    /// it: the four texels a lookup compares always lie in one slot.
+    pub(crate) const SHADOW_APRON: u32 = 1 => ["SHADOW_APRON"];
 
     // crate::lights
     pub(crate) const NO_SLOT: u32 = u32::MAX => ["NO_SLOT" in LIGHT_SHADER];
@@ -222,8 +223,8 @@ gpu_consts! {
     // crate::virtual_geometry
     pub(crate) const NONE: u32 = u32::MAX => ["NONE" in VIRTUAL_SHADER];
     pub(crate) const VIRTUAL_GROUP: u32 = 64 => ["GROUP" in VIRTUAL_SHADER, "@seed" in VIRTUAL_SHADER, "@traverse_even" in VIRTUAL_SHADER, "@traverse_odd" in VIRTUAL_SHADER, "@select_clusters" in VIRTUAL_SHADER, "@retest_clusters" in VIRTUAL_SHADER, "@bin_args" in VIRTUAL_SHADER];
-    /// Views one frame selects for: the camera's and those of the shadow maps
-    /// drawn every frame (up to four cascades and the moving map).
+    /// Views one frame selects for: the camera's and those of the regions
+    /// of shadow tiles it redraws.
     pub(crate) const MAX_VIEWS: usize = 8 => ["MAX_VIEWS" in VIRTUAL_SHADER];
     /// Planes of a virtual shadow view: its selection region's five, and the
     /// view frustum slice's that the sun's sweep never crosses.
@@ -423,24 +424,19 @@ gpu_consts! {
     pub(crate) const DEBUG_KIND_FALLS: u32 = 10 => ["DEBUG_KIND_FALLS"];
     pub(crate) const DEBUG_KIND_SKY: u32 = 11 => ["DEBUG_KIND_SKY"];
     pub(crate) const DEBUG_LEVEL_SHIFT: u32 = 4 => ["DEBUG_LEVEL_SHIFT"];
-    /// A card fading in or out; a draw casting sun shadows; placed objects'
-    /// casters the kept map holds.
+    /// A card fading in or out; a draw casting sun shadows.
     pub(crate) const DEBUG_FADING: u32 = 0x100 => ["DEBUG_FADING"];
     pub(crate) const DEBUG_CASTS: u32 = 0x200 => ["DEBUG_CASTS"];
-    pub(crate) const DEBUG_KEPT: u32 = 0x400 => ["DEBUG_KEPT"];
-    /// The sun's lookup at a pixel: none, the near cascades from the first,
-    /// the kept levels from the finest, the kept far map, the moving map, a
-    /// terrain's horizon, past the shadow distance; and the flag of a point
-    /// it leaves in shadow.
+    /// The sun's lookup at a pixel, in the eight bits above
+    /// `DEBUG_SOURCE_SHIFT`: none, the clipmap's levels from the finest, a
+    /// terrain's horizon, no level drawn there; and the flag of a point it
+    /// leaves in shadow.
     pub(crate) const DEBUG_SOURCE_SHIFT: u32 = 16 => ["DEBUG_SOURCE_SHIFT"];
     pub(crate) const DEBUG_SUN_NONE: u32 = 0 => ["DEBUG_SUN_NONE"];
-    pub(crate) const DEBUG_SUN_CASCADE: u32 = 1 => ["DEBUG_SUN_CASCADE"];
-    pub(crate) const DEBUG_SUN_LEVEL: u32 = DEBUG_SUN_CASCADE + MAX_CASCADES as u32 => ["DEBUG_SUN_LEVEL"];
-    pub(crate) const DEBUG_SUN_KEPT: u32 = DEBUG_SUN_LEVEL + MAX_LEVELS as u32 => ["DEBUG_SUN_KEPT"];
-    pub(crate) const DEBUG_SUN_MOVING: u32 = DEBUG_SUN_KEPT + 1 => ["DEBUG_SUN_MOVING"];
-    pub(crate) const DEBUG_SUN_HORIZON: u32 = DEBUG_SUN_MOVING + 1 => ["DEBUG_SUN_HORIZON"];
+    pub(crate) const DEBUG_SUN_LEVEL: u32 = 1 => ["DEBUG_SUN_LEVEL"];
+    pub(crate) const DEBUG_SUN_HORIZON: u32 = DEBUG_SUN_LEVEL + MAX_LEVELS as u32 => ["DEBUG_SUN_HORIZON"];
     pub(crate) const DEBUG_SUN_BEYOND: u32 = DEBUG_SUN_HORIZON + 1 => ["DEBUG_SUN_BEYOND"];
-    pub(crate) const DEBUG_SHADOWED: u32 = 0x10 => ["DEBUG_SHADOWED"];
+    pub(crate) const DEBUG_SHADOWED: u32 = 0x80 => ["DEBUG_SHADOWED"];
     /// Terrain pixels (`meshes/terrain_debug.wgsl`): on a tile's edge, on a
     /// patch's, in their record, with the patch within its tile above
     /// `DEBUG_PATCH_SHIFT`; a material slot holding none.

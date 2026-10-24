@@ -12,8 +12,8 @@ gpu_structs! {
         pub fade: [f32; 4],
     }
 
-    /// WGSL `View`: a view's frustum planes, the radius objects need in it,
-    /// the error its texels hide and whether it is the kept shadow map's.
+    /// WGSL `View`: a view's frustum planes, the radius objects need in it
+    /// and the error its texels hide.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct ViewData as ["View" in SCATTER_CULL_SHADER] {
         pub planes: [[f32; 4]; 6],

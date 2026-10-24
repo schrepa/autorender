@@ -12,17 +12,20 @@
 //! the same JSON shape and checks itself with `validate`;
 //! their docs are the sections' schema descriptions, written for authors.
 //!
-//! Shadows: every rendered instance casts and receives them. One map covers
-//! `bounds`, or without bounds a sphere of `distance` around the camera that
-//! moves when the camera travels a quarter of it. Instances that stay still
-//! are drawn into that map once and kept; moving ones are drawn every frame.
-//! Sharper maps follow the first `near_distance` of the view, split into
-//! `cascades`: each has three times the texel density of the
-//! next and is a depth pass per frame over the casters it covers, and each
-//! has half the far maps' `resolution` per side. Kept `levels`
-//! hold still casters sharper than that map near the camera: squares
-//! `level_extent` wide and four times wider each, following the camera a
-//! tile at a time and redrawing only the tiles it uncovers.
+//! Shadows: every rendered instance casts and receives them. They lie in a
+//! clipmap of `levels` around the camera, the finest of `finest_texel`
+//! texels and each next one twice as coarse and twice as wide, each a
+//! window of square tiles of `tile_texels` texels that follows the camera a
+//! tile at a time. A tile has memory, one of the `atlas_slots` of one
+//! atlas, only while pixels read it: each frame the depth buffer marks the
+//! tiles its pixels read, at the level whose texels match the pixel's size,
+//! and `redraw_budget` of them redraw a frame, coarse levels first, those
+//! never drawn before those whose still casters changed. On GPU-presented
+//! frames instances that stay still are kept in the tiles they were drawn
+//! into; moving ones, and on other frames every instance but virtual
+//! geometry, are drawn every frame over the tiles they cross,
+//! `moving_tiles` at most. Where a level is not drawn yet, a coarser one
+//! shows.
 //!
 //! Ambient occlusion darkens the sky's ambient light in creases, corners and
 //! under objects. Bloom makes light glow beyond bright pixels such as
@@ -37,12 +40,10 @@
 //! glass never pay for it.
 
 use bevy_ecs::prelude::{Resource, World};
-use glam::Vec3;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
-use crate::environment::InvalidSetting;
 use crate::{Camera, Environment, FrameTime, RenderSnapshot};
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 /// Copies the camera eye, the detail eye, presentation time and environment
 /// of `world` into `snapshot`, sanitized ([`Environment::current`]): a
@@ -60,13 +61,14 @@ pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
     snapshot.environment = Environment::current(world).sanitized();
 }
 
-/// Most near shadow cascades ([`Shadows::cascades`]).
-pub const MAX_SHADOW_CASCADES: u32 = 4;
-/// Most kept shadow levels ([`Shadows::levels`]).
-pub const MAX_KEPT_LEVELS: u32 = 3;
+/// Most levels of the sun's shadow clipmap ([`Shadows::levels`]).
+pub const MAX_SHADOW_LEVELS: u32 = 20;
+/// Most tiles moving casters draw over in a frame
+/// ([`Shadows::moving_tiles`]): a caster's draw into one names it in eight
+/// bits.
+pub const MAX_MOVING_TILES: u32 = 256;
 
 settings! {
-    extra_rules;
     /// Sun shadows; omitted fields take the engine defaults.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
@@ -78,133 +80,26 @@ settings! {
     pub struct Shadows {
         /// Whether the sun casts shadows.
         pub enabled: bool = true => any,
-        /// Region to keep shadows for: the whole scene gives the sharpest,
-        /// stable shadows. Without it the maps follow the camera. Corners
-        /// finite, `min` at most `max` on every axis.
-        #[serde(with = "bounds", skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(feature = "schema", schemars(with = "Option<bounds::Bounds>"))]
-        pub bounds: Option<(Vec3, Vec3)> = None => any,
-        /// Shadows fade out this far from the camera (world units).
-        pub distance: f32 = 500.0 => above(0.0),
-        /// View distance of the sharper maps that follow the camera, less
-        /// than `distance`.
-        pub near_distance: f32 = 100.0 => above(0.0),
-        /// Sharper maps (cascades) splitting `near_distance`, each reaching a
-        /// third as far as the next; 3 when omitted.
-        #[serde(
-            deserialize_with = "cascades_or_default",
-            skip_serializing_if = "is_default_cascades"
-        )]
-        #[cfg_attr(feature = "schema", schemars(with = "Option<u32>"))]
-        pub cascades: u32 = 3 => range(1, MAX_SHADOW_CASCADES),
-        /// Texels per side of the far maps.
-        pub resolution: u32 = 2048 => power_of_two(1024, 4096),
-        /// Kept levels: maps of still casters following the camera, sharper
-        /// than the far maps where they reach, each with half the far maps'
-        /// `resolution` per side; none when omitted. Worlds larger than their
-        /// shadows' sharpness give them two or three.
-        #[serde(skip_serializing_if = "is_zero")]
-        pub levels: u32 = 0 => range(0, MAX_KEPT_LEVELS),
-        /// Side of the finest kept level (world units), which each next level
-        /// is four times; 256 when omitted.
-        #[serde(skip_serializing_if = "is_default_level_extent")]
-        pub level_extent: f32 = 256.0 => above(0.0),
+        /// Levels of the clipmap around the camera, each with texels twice
+        /// the size of the one inside it: sixteen reach from the finest
+        /// texel to about a kilometer a texel.
+        pub levels: u32 = 16 => range(1, MAX_SHADOW_LEVELS),
+        /// World size of the finest level's texels: shadows are this sharp
+        /// at most, where pixels are smaller.
+        pub finest_texel: f32 = 0.04 => range(0.005, 1.0),
+        /// Texels along a side of a tile, the square that takes memory and
+        /// redraws.
+        pub tile_texels: u32 = 128 => power_of_two(64, 512),
+        /// Tiles the atlas holds; tiles pixels read beyond these show a
+        /// coarser level.
+        pub atlas_slots: u32 = 1024 => range(64, 4096),
+        /// Tiles a frame redraws at most, coarse levels first; the rest
+        /// redraw over the next frames, a coarser level showing meanwhile.
+        pub redraw_budget: u32 = 32 => range(1, 4096),
+        /// Tiles moving casters draw over each frame at most, coarse levels
+        /// first; they cast nothing on the tiles past these.
+        pub moving_tiles: u32 = MAX_MOVING_TILES => range(0, MAX_MOVING_TILES),
     }
-}
-
-impl ExtraRules for Shadows {
-    /// The near maps reach less far than the shadows, and bounds are a box.
-    fn check_extra(&self) -> Result<(), InvalidSetting> {
-        if self.near_distance >= self.distance {
-            return Err(InvalidSetting::new(
-                "near_distance",
-                "must be less than distance",
-            ));
-        }
-        if let Some((min, max)) = self.bounds
-            && (!min.is_finite() || !max.is_finite() || !min.cmple(max).all())
-        {
-            return Err(InvalidSetting::new(
-                "bounds",
-                "corners must be finite with min at most max on every axis",
-            ));
-        }
-        Ok(())
-    }
-
-    /// Unusable bounds are dropped; a near distance beyond the shadows'
-    /// reaches half of it at most.
-    fn sanitize_extra(self) -> Self {
-        let bounds = self
-            .bounds
-            .filter(|(min, max)| min.is_finite() && max.is_finite() && min.cmple(*max).all());
-        let near_distance = if self.near_distance < self.distance {
-            self.near_distance
-        } else {
-            crate::math::min(Self::default().near_distance, self.distance * 0.5)
-        };
-        Self {
-            bounds,
-            near_distance,
-            ..self
-        }
-    }
-}
-
-fn is_zero(value: &u32) -> bool {
-    *value == 0
-}
-
-fn is_default_level_extent(extent: &f32) -> bool {
-    *extent == Shadows::default().level_extent
-}
-
-/// Shadow bounds as a scene writes them: `{"min": [x, y, z], "max": [x, y, z]}`.
-mod bounds {
-    use glam::Vec3;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    /// A world box (minimum and maximum corners).
-    #[derive(Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneBounds")
-    )]
-    #[serde(deny_unknown_fields)]
-    pub(super) struct Bounds {
-        min: [f32; 3],
-        max: [f32; 3],
-    }
-
-    pub(super) fn serialize<S: Serializer>(
-        bounds: &Option<(Vec3, Vec3)>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        bounds
-            .map(|(min, max)| Bounds {
-                min: min.to_array(),
-                max: max.to_array(),
-            })
-            .serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<(Vec3, Vec3)>, D::Error> {
-        Ok(Option::<Bounds>::deserialize(deserializer)?
-            .map(|bounds| (Vec3::from_array(bounds.min), Vec3::from_array(bounds.max))))
-    }
-}
-
-/// Reads a null cascade count as the default, as an omitted one.
-fn cascades_or_default<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
-    Ok(Option::<u32>::deserialize(deserializer)?.unwrap_or(Shadows::default().cascades))
-}
-
-/// Scenes omit the default cascade count.
-fn is_default_cascades(cascades: &u32) -> bool {
-    *cascades == Shadows::default().cascades
 }
 
 impl Shadows {
@@ -214,16 +109,6 @@ impl Shadows {
             enabled: false,
             ..Self::default()
         }
-    }
-
-    /// View distance each near cascade reaches, nearest first: the last
-    /// reaches `near_distance`, and each one before it a third as far.
-    pub fn cascade_reaches(&self) -> impl Iterator<Item = f32> {
-        let settings = self.sanitized();
-        (0..settings.cascades).map(move |cascade| {
-            let steps = (settings.cascades - 1 - cascade) as i32;
-            settings.near_distance / 3.0_f32.powi(steps)
-        })
     }
 }
 

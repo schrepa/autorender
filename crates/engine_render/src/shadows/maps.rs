@@ -1,161 +1,167 @@
-//! The shadow maps and what the main passes
-//! bind to look them up: the near cascades as layers of one texture, the
-//! kept and moving far maps as layers of another, the kept levels as layers
-//! of a third, the
-//! lookup uniform and the samplers, with placeholders while shadows (or
-//! levels) are off; and the near cascades' caches, layers of a third,
-//! which their cascades are composed from.
+//! The shadow clipmap's textures and what the main passes bind to look it
+//! up: the atlas of drawn tiles, one slot a tile with an apron around it;
+//! the layers of the regions of tiles a frame redraws, which tiles are
+//! composed from; the table of each level's slots; the lookup uniform and
+//! the samplers, with placeholders while shadows are off.
 
 use crate::cached::{Bound, Versioned};
 use crate::gpu_data::ShadowUniform;
-use crate::gpu_layouts::constants::{FAR_KEPT, FAR_MOVING};
-
+use crate::gpu_layouts::constants::{SHADOW_APRON, SHADOW_REGIONS};
 use crate::pipelines::{sampler, view};
+use crate::shadow_fit::{LEVEL_TEXELS, region_tiles};
 
 pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
+/// The table's texels: each cell's slots, one more than each, in two
+/// halves.
+const TABLE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
-/// One resolution's maps.
-pub(super) struct MapTextures {
-    pub(super) resolution: u32,
-    cascades: u32,
+/// How the atlas lays out its slots: their texels a side (a tile's and its
+/// apron), slots along a row and rows, the slots holding still casters'
+/// tiles and those past them holding this frame's moving tiles, and its
+/// width and height in texels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AtlasLayout {
+    pub(crate) slot: u32,
+    pub(crate) per_row: u32,
+    pub(crate) rows: u32,
+    pub(crate) still: u32,
+    pub(crate) moving: u32,
+}
+
+impl AtlasLayout {
+    /// The layout holding `still` slots of still casters' tiles and
+    /// `moving` of moving tiles, of tiles `tile_texels` a side, within
+    /// textures `limit` texels a side: still slots first, then moving ones,
+    /// as many as fit.
+    fn new(tile_texels: u32, (still, moving): (u32, u32), limit: u32) -> Self {
+        let slot = tile_texels + 2 * SHADOW_APRON;
+        let most = (limit / slot).max(1);
+        let wanted = (still + moving).max(1);
+        let per_row = (f64::from(wanted).sqrt().ceil() as u32).clamp(1, most);
+        let rows = wanted.div_ceil(per_row).min(most);
+        let held = per_row * rows;
+        let still = still.min(held);
+        Self {
+            slot,
+            per_row,
+            rows,
+            still,
+            moving: moving.min(held - still),
+        }
+    }
+
+    /// Width and height in texels.
+    pub(crate) fn size(&self) -> (u32, u32) {
+        (self.per_row * self.slot, self.rows * self.slot)
+    }
+
+    /// The texels of slot `slot`: its first x and y, then past its last.
+    pub(crate) fn texels(&self, slot: u32) -> [f32; 4] {
+        let x = (slot % self.per_row * self.slot) as f32;
+        let y = (slot / self.per_row * self.slot) as f32;
+        [x, y, x + self.slot as f32, y + self.slot as f32]
+    }
+}
+
+/// What the textures are made for: the atlas's layout, tiles' texels a
+/// side, the clipmap's levels and its windows' tiles a side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TexturesKey {
+    atlas: AtlasLayout,
+    tile_texels: u32,
     levels: u32,
-    // The near cascades as layers of one texture, the kept and moving far
-    // maps as the two layers of another, and the kept levels as layers of a
-    // third.
-    textures: [wgpu::Texture; 2],
-    level_texture: Option<wgpu::Texture>,
-    // The near cascades as one array (lookups) and each layer (drawing).
-    near_array: wgpu::TextureView,
-    pub(super) near_layers: Vec<wgpu::TextureView>,
-    // The far maps as one array (lookups) and each (drawing).
-    far_array: wgpu::TextureView,
-    pub(super) moving: wgpu::TextureView,
-    pub(super) kept: wgpu::TextureView,
-    // The kept levels as one array (lookups) and each layer (drawing).
-    level_array: Option<wgpu::TextureView>,
-    pub(super) level_layers: Vec<wgpu::TextureView>,
-    // The near cascades' caches, while objects terrains place are
-    // resident: one array (composing) and each layer (drawing).
-    cache_texture: Option<wgpu::Texture>,
-    cache_array: Option<wgpu::TextureView>,
-    pub(super) cache_layers: Vec<wgpu::TextureView>,
+    side: u32,
+}
+
+/// The textures of one key.
+pub(super) struct MapTextures {
+    key: TexturesKey,
+    atlas: wgpu::Texture,
+    pub(super) atlas_view: wgpu::TextureView,
+    regions: wgpu::Texture,
+    // The regions' layers as one array (composing) and each (drawing).
+    regions_array: wgpu::TextureView,
+    pub(super) region_layers: Vec<wgpu::TextureView>,
+    table: wgpu::Texture,
+    table_view: wgpu::TextureView,
 }
 
 impl Drop for MapTextures {
     fn drop(&mut self) {
         // Browsers otherwise keep the memory until garbage collection;
         // submitted work that still reads them completes first.
-        for texture in self
-            .textures
-            .iter()
-            .chain(&self.level_texture)
-            .chain(&self.cache_texture)
-        {
+        for texture in [&self.atlas, &self.regions, &self.table] {
             texture.destroy();
         }
     }
 }
 
-/// Views of each layer of `texture`'s `layers`, for drawing.
-fn layer_views(texture: &wgpu::Texture, layers: u32) -> Vec<wgpu::TextureView> {
-    (0..layers)
-        .map(|layer| {
-            texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("engine/shadow-layer"),
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                base_array_layer: layer,
-                array_layer_count: Some(1),
-                ..Default::default()
-            })
-        })
-        .collect()
-}
-
-/// A view of every layer of `texture`, for lookups.
-fn array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
-    texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some("engine/shadow-layers"),
-        dimension: Some(wgpu::TextureViewDimension::D2Array),
-        ..Default::default()
-    })
-}
-
 impl MapTextures {
-    /// Texels along a side of map `map` drawn every frame: a near
-    /// cascade's layer, or the moving map.
-    pub(super) fn drawn_texels(&self, map: usize) -> u32 {
-        let texture = if map < super::MOVING_MAP {
-            &self.textures[0]
-        } else {
-            &self.textures[1]
-        };
-        texture.width()
-    }
-
-    /// Maps of `resolution` texels (the near cascades, their caches and
-    /// kept levels half as many) with `cascades` near layers, `levels` kept
-    /// levels and, where `cached`, the near cascades' caches.
-    fn new(
-        device: &wgpu::Device,
-        resolution: u32,
-        (cascades, levels, cached): (u32, u32, bool),
-    ) -> Self {
-        let texture = |label, size, layers| {
-            crate::targets::texture_2d(
-                device,
-                label,
-                (size, size),
-                layers,
-                1,
-                SHADOW_FORMAT,
-                crate::targets::RENDER_TARGET,
-            )
-        };
-        let textures = [
-            texture("engine/shadow-near", resolution / 2, cascades),
-            texture("engine/shadow-far", resolution, 2),
-        ];
-        let level_texture =
-            (levels > 0).then(|| texture("engine/shadow-levels", resolution / 2, levels));
-        let cache_texture =
-            cached.then(|| texture("engine/shadow-near-caches", resolution / 2, cascades));
-        let far_layers = layer_views(&textures[1], 2);
+    fn new(device: &wgpu::Device, key: TexturesKey) -> Self {
+        let (width, height) = key.atlas.size();
+        let atlas = crate::targets::texture_2d(
+            device,
+            "engine/shadow-atlas",
+            (width, height),
+            1,
+            1,
+            SHADOW_FORMAT,
+            crate::targets::RENDER_TARGET,
+        );
+        let side = region_tiles(key.tile_texels) * key.tile_texels + 2 * SHADOW_APRON;
+        let regions = crate::targets::texture_2d(
+            device,
+            "engine/shadow-regions",
+            (side, side),
+            SHADOW_REGIONS as u32,
+            1,
+            SHADOW_FORMAT,
+            crate::targets::RENDER_TARGET,
+        );
+        let table = crate::targets::texture_2d(
+            device,
+            "engine/shadow-tiles",
+            (key.side, key.side * key.levels),
+            1,
+            1,
+            TABLE_FORMAT,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let region_layers = (0..SHADOW_REGIONS as u32)
+            .map(|layer| {
+                regions.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("engine/shadow-region"),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: layer,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                })
+            })
+            .collect();
         Self {
-            resolution,
-            cascades,
-            levels,
-            near_array: array_view(&textures[0]),
-            near_layers: layer_views(&textures[0], cascades),
-            far_array: array_view(&textures[1]),
-            moving: far_layers[FAR_MOVING as usize].clone(),
-            kept: far_layers[FAR_KEPT as usize].clone(),
-            level_array: level_texture.as_ref().map(array_view),
-            level_layers: level_texture
-                .as_ref()
-                .map_or_else(Vec::new, |texture| layer_views(texture, levels)),
-            cache_array: cache_texture.as_ref().map(array_view),
-            cache_layers: cache_texture
-                .as_ref()
-                .map_or_else(Vec::new, |texture| layer_views(texture, cascades)),
-            textures,
-            level_texture,
-            cache_texture,
+            key,
+            atlas_view: atlas.create_view(&wgpu::TextureViewDescriptor::default()),
+            regions_array: regions.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("engine/shadow-regions"),
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            }),
+            region_layers,
+            table_view: table.create_view(&wgpu::TextureViewDescriptor::default()),
+            atlas,
+            regions,
+            table,
         }
     }
 
-    /// Whether it holds the near cascades' caches.
-    pub(super) fn caches(&self) -> bool {
-        self.cache_array.is_some()
-    }
-
-    /// Texels along a side of the near cascades and their caches.
-    pub(super) fn near_texels(&self) -> u32 {
-        self.textures[0].width()
+    /// The atlas's layout.
+    pub(super) fn layout(&self) -> AtlasLayout {
+        self.key.atlas
     }
 }
 
 pub(super) struct ShadowMaps {
-    // The maps, replaced (or released) as a whole: bindings of the main
+    // The textures, replaced (or released) as a whole: bindings of the main
     // passes follow.
     textures: Versioned<Option<MapTextures>>,
     uniform: wgpu::Buffer,
@@ -163,8 +169,12 @@ pub(super) struct ShadowMaps {
     sampler: wgpu::Sampler,
     // Reads the four texels around a receiver-plane lookup.
     texel_sampler: wgpu::Sampler,
-    _placeholder: wgpu::Texture,
-    placeholder_array: wgpu::TextureView,
+    // Stand in for the atlas, the regions' layers and the table while
+    // there are none.
+    _placeholders: [wgpu::Texture; 3],
+    placeholder_atlas: wgpu::TextureView,
+    placeholder_regions: wgpu::TextureView,
+    placeholder_table: wgpu::TextureView,
 }
 
 impl ShadowMaps {
@@ -174,7 +184,7 @@ impl ShadowMaps {
             "engine/shadow-uniform",
             size_of::<ShadowUniform>() as u64,
         );
-        // Comparisons filter four texels.
+        // Comparisons filter four texels, which a slot's apron holds.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/shadow-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -190,111 +200,127 @@ impl ShadowMaps {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        // Two layers, as the far maps' texture holds.
-        let placeholder = crate::targets::texture_2d(
-            device,
-            "engine/shadow-placeholder",
-            (1, 1),
-            2,
-            1,
-            SHADOW_FORMAT,
-            wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        let placeholder_array = placeholder.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
+        let placeholder = |label, format, layers| {
+            crate::targets::texture_2d(
+                device,
+                label,
+                (1, 1),
+                layers,
+                1,
+                format,
+                wgpu::TextureUsages::TEXTURE_BINDING,
+            )
+        };
+        let atlas = placeholder("engine/shadow-atlas-placeholder", SHADOW_FORMAT, 1);
+        let regions = placeholder("engine/shadow-regions-placeholder", SHADOW_FORMAT, 1);
+        let table = placeholder("engine/shadow-tiles-placeholder", TABLE_FORMAT, 1);
+        let view = |texture: &wgpu::Texture, dimension| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(dimension),
+                ..Default::default()
+            })
+        };
         Self {
             textures: Versioned::new(None),
             uniform,
             written: None,
             sampler,
             texel_sampler,
-            _placeholder: placeholder,
-            placeholder_array,
+            placeholder_atlas: view(&atlas, wgpu::TextureViewDimension::D2),
+            placeholder_regions: view(&regions, wgpu::TextureViewDimension::D2Array),
+            placeholder_table: view(&table, wgpu::TextureViewDimension::D2),
+            _placeholders: [atlas, regions, table],
         }
     }
 
-    /// The maps, once shadows ran.
+    /// The textures, once shadows ran.
     pub(super) fn textures(&self) -> Option<&MapTextures> {
         Option::as_ref(&self.textures)
     }
 
     /// Bindings of the main passes' first group (`bindings::CAMERA`): the
-    /// lookup uniform, the near cascades, the far maps, the comparison
-    /// sampler, the texel sampler of receiver planes and the kept levels.
-    pub(super) fn entries(&self) -> [(&'static str, Bound<'_>); 6] {
-        let (near, far, levels) = match &*self.textures {
-            Some(maps) => (
-                &maps.near_array,
-                &maps.far_array,
-                maps.level_array.as_ref().unwrap_or(&self.placeholder_array),
-            ),
-            None => (
-                &self.placeholder_array,
-                &self.placeholder_array,
-                &self.placeholder_array,
-            ),
+    /// lookup uniform, the atlas, the table of slots, the comparison
+    /// sampler and the texel sampler of receiver planes.
+    pub(super) fn entries(&self) -> [(&'static str, Bound<'_>); 5] {
+        let (atlas, table) = match &*self.textures {
+            Some(maps) => (&maps.atlas_view, &maps.table_view),
+            None => (&self.placeholder_atlas, &self.placeholder_table),
         };
         let map = |texture| Bound::of(&self.textures, view(texture));
         [
             ("shadow", Bound::fixed(self.uniform.as_entire_binding())),
-            ("near_shadows", map(near)),
-            ("far_shadows", map(far)),
+            ("shadow_atlas", map(atlas)),
+            ("shadow_tiles", map(table)),
             ("shadow_sampler", Bound::fixed(sampler(&self.sampler))),
             ("shadow_texels", Bound::fixed(sampler(&self.texel_sampler))),
-            ("kept_levels", map(levels)),
         ]
     }
 
-    /// Bytes of the maps.
+    /// The lookup uniform, which the clipmap's marks read too.
+    pub(super) fn uniform(&self) -> &wgpu::Buffer {
+        &self.uniform
+    }
+
+    /// The table of slots as the caster selection binds it, and a key
+    /// changing whenever it is another texture.
+    pub(super) fn table(&self) -> (&wgpu::TextureView, u64) {
+        let table = self
+            .textures()
+            .map_or(&self.placeholder_table, |maps| &maps.table_view);
+        (table, self.textures.generation())
+    }
+
+    /// Bytes of the textures.
     pub(super) fn capacity_bytes(&self) -> u64 {
         self.textures().map_or(0, |maps| {
-            let far = u64::from(maps.resolution) * u64::from(maps.resolution) * 2;
-            let caches = if maps.caches() { maps.cascades } else { 0 };
-            2 * far + u64::from(maps.cascades + maps.levels + caches) * far / 4
+            let (width, height) = maps.key.atlas.size();
+            let side = u64::from(maps.regions.width());
+            u64::from(width) * u64::from(height) * 2
+                + side * side * 2 * SHADOW_REGIONS as u64
+                + u64::from(maps.table.width()) * u64::from(maps.table.height()) * 4
         })
     }
 
-    /// Creates maps of `resolution` texels with `cascades` near layers,
-    /// `levels` kept levels and, where `cached`, the near cascades' caches,
-    /// unless they exist; returns whether it did (new maps hold nothing).
+    /// Makes the textures for `settings`' clipmap of `levels` levels unless
+    /// they exist, within textures `limit` texels a side; returns the
+    /// atlas's layout and whether they were made (new ones hold nothing).
     pub(super) fn ensure(
         &mut self,
         device: &wgpu::Device,
-        resolution: u32,
-        (cascades, levels, cached): (u32, u32, bool),
-    ) -> bool {
-        if self.textures().is_some_and(|maps| {
-            maps.resolution == resolution
-                && maps.cascades == cascades
-                && maps.levels == levels
-                && maps.caches() == cached
-        }) {
-            return false;
+        settings: &engine_core::Shadows,
+        limit: u32,
+    ) -> (AtlasLayout, bool) {
+        let key = TexturesKey {
+            atlas: AtlasLayout::new(
+                settings.tile_texels,
+                (settings.atlas_slots, settings.moving_tiles),
+                limit,
+            ),
+            tile_texels: settings.tile_texels,
+            levels: settings.levels,
+            side: (LEVEL_TEXELS / settings.tile_texels).max(1),
+        };
+        if self.textures().is_some_and(|maps| maps.key == key) {
+            return (key.atlas, false);
         }
-        self.textures.replace(Some(MapTextures::new(
-            device,
-            resolution,
-            (cascades, levels, cached),
-        )));
-        true
+        self.textures.replace(Some(MapTextures::new(device, key)));
+        (key.atlas, true)
     }
 
-    /// The near cascades' caches as composing binds them, while the maps
-    /// hold them.
-    pub(super) fn caches_bound(&self) -> Option<Bound<'_>> {
-        let caches = self.textures()?.cache_array.as_ref()?;
-        Some(Bound::of(&self.textures, view(caches)))
+    /// The regions' layers as composing binds them, while the textures
+    /// exist.
+    pub(super) fn regions_bound(&self) -> Option<Bound<'_>> {
+        let maps = self.textures()?;
+        Some(Bound::of(&self.textures, view(&maps.regions_array)))
     }
 
-    /// What depth passes bind in place of the caches: they may draw into
-    /// them.
-    pub(super) fn caches_placeholder(&self) -> Bound<'_> {
-        Bound::fixed(view(&self.placeholder_array))
+    /// What depth passes bind in place of the regions' layers: they may
+    /// draw into them.
+    pub(super) fn regions_placeholder(&self) -> Bound<'_> {
+        Bound::fixed(view(&self.placeholder_regions))
     }
 
-    /// Releases the maps while shadows are off.
+    /// Releases the textures while shadows are off.
     pub(super) fn release(&mut self) {
         if self.textures.is_some() {
             self.textures.replace(None);
@@ -318,6 +344,44 @@ impl ShadowMaps {
             written.level_state[3] = count;
             let offset = std::mem::offset_of!(ShadowUniform, level_state) + 12;
             queue.write_buffer(&self.uniform, offset as u64, bytemuck::bytes_of(&count));
+        }
+    }
+
+    /// Writes the blocks of levels `changed` of the table `table`, which
+    /// holds `side` rows of `side` cells a level.
+    pub(super) fn write_table(&self, queue: &wgpu::Queue, table: &[u32], changed: &[usize]) {
+        let Some(maps) = self.textures() else {
+            return;
+        };
+        let side = maps.key.side;
+        let cells = (side * side) as usize;
+        for &level in changed {
+            let Some(block) = table.get(level * cells..(level + 1) * cells) else {
+                continue;
+            };
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &maps.table,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: level as u32 * side,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(block),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(side * 4),
+                    rows_per_image: Some(side),
+                },
+                wgpu::Extent3d {
+                    width: side,
+                    height: side,
+                    depth_or_array_layers: 1,
+                },
+            );
         }
     }
 }

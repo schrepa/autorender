@@ -102,11 +102,11 @@ async function verify(workload) {
   const url = devUrl("stress.html", { config: workload.config });
   await openPaused(page, url);
   if (workload.settle) {
-    // Ordinary frames until the kept shadow map stopped redrawing and its
-    // levels hold every tile.
+    // Ordinary frames until the shadow clipmap holds every tile the pixels
+    // read and stopped redrawing.
     await command("resume");
     await waitFrames(command, 2, {
-      done: ({ result }) => result.rendering.shadows.kept_redraw === 0 && result.rendering.shadows.levels_pending === 0,
+      done: ({ result }) => result.rendering.shadows.tiles_missing === 0 && result.rendering.shadows.tiles_drawn === 0,
     });
     await command("pause");
   }

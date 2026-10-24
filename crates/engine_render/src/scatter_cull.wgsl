@@ -1,23 +1,19 @@
 // Placed objects: each frame, every object's bounding sphere
-// against each view's frustum (the camera's, then those of the shadow maps
-// drawn this frame), and the level of detail the camera draws it at, by
-// the same rule as GPU presentation's (`presentation.wgsl`): the coarsest
-// level whose geometric error, projected at the object's distance, stays
-// within the pixel error. Visible objects append their pose index to their
-// draw group's list for that view and level, and to its parts' lists, and
-// count in its indirect draw. Where the camera sees an object's bounding
-// sphere smaller than the impostors' size on screen (on frames that draw
-// impostors), it appends its pose and impostor to the camera's cards
-// instead, drawn facing it; the near cascades cast it as a card facing the
-// sun, and the moving map leaves it out. Shadow maps cast the other
-// objects as their group's shadow proxy where it has one, drawn in place of
-// every level, and otherwise at the level chosen from the camera in every
-// view, so shadows match what is seen, or a coarser one where half a map's
-// texel hides its error; parts cast nothing. The kept maps, redrawn only
-// where objects come and go, hold every object as seen from afar: its
-// impostor, cast as a card facing the sun, wherever their texels are no
-// finer than the impostor's, else its proxy or the coarsest level half
-// their texel hides.
+// against each view's frustum (the camera's, then those of the regions of
+// shadow tiles redrawn this frame), and the level of detail the camera
+// draws it at, by the same rule as GPU presentation's
+// (`presentation.wgsl`): the coarsest level whose geometric error,
+// projected at the object's distance, stays within the pixel error.
+// Visible objects append their pose index to their draw group's list for
+// that view and level, and to its parts' lists, and count in its indirect
+// draw. Where the camera sees an object's bounding sphere smaller than the
+// impostors' size on screen (on frames that draw impostors), it appends
+// its pose and impostor to the camera's cards instead, drawn facing it.
+// The regions, which tiles keep, hold every object the camera shows as
+// seen from afar: its impostor, cast as a card facing the sun, wherever
+// their texels are no finer than the impostor's, else its group's shadow
+// proxy where it has one, drawn in place of every level, else the
+// coarsest level half their texel hides; parts cast nothing.
 // The camera switches how it shows an object (a level, its card or
 // nothing, past the density its layer keeps or once it spans too few
 // pixels for its rank) a margin past each switch's distance from the
@@ -46,12 +42,10 @@ struct Frame {
     fade: vec4<f32>,
 }
 
-// A view: its frustum planes (world, inside positive; a shadow map's depth
-// planes pass everything, but a kept level's far one), the radius objects
-// need to draw in it (x, half its texel), the geometric error its texels
-// hide (y, world units; 0 for the camera), whether it is a kept map's,
-// kept level's or near cache's (z, 1) and whether it is a near cascade's
-// (w, 1).
+// A view: its frustum planes (world, inside positive; a region's depth
+// planes pass everything but its far one), the radius objects need to draw
+// in it (x, half its texel) and the geometric error its texels hide (y,
+// world units; 0 for the camera); z and w are unused.
 struct View {
     planes: array<vec4<f32>, 6>,
     limits: vec4<f32>,
@@ -238,22 +232,13 @@ fn list(view: u32, record: Record, group: Group, level: u32, entry: u32) {
     }
 }
 
-// The level a shadow map casts `record` of draw group `group` at, the
-// camera showing it as `shown`, half the map's texel spanning `half_texel`
-// world units: the level the camera draws (its coarsest where the camera
-// shows a card), or a coarser one only where half the texel hides its
-// error, since a coarser caster stands out of the surface the camera draws
-// in every hollow, by more than lookups allow, and shadows it in blotches.
-// Maps keeping what is drawn into them (`kept`) cast the coarsest level
-// half their texel hides, whatever the camera shows. A group casting its
-// shadow proxy casts it alone.
-fn caster_level(record: Record, group: Group, shown: u32, half_texel: f32,
-        kept: bool) -> u32 {
+// The level a region of shadow tiles casts `record` of draw group `group`
+// at, half the region's texel spanning `half_texel` world units: the
+// coarsest level half the texel hides, whatever the camera shows. A group
+// casting its shadow proxy casts it alone.
+fn caster_level(record: Record, group: Group, half_texel: f32) -> u32 {
     var level = 0u;
-    if !kept {
-        level = min(shown, group.casters - 1u);
-    }
-    for (var l = level + 1u; l < group.casters; l++) {
+    for (var l = 1u; l < group.casters; l++) {
         if group.errors[l - 1u] * record.scale <= half_texel {
             level = l;
         }
@@ -408,31 +393,24 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             continue;
         }
-        // Shadow maps cast what the camera shows, objects fading out of it
+        // Regions cast what the camera shows, objects fading out of it
         // until they are gone and those fading in from the start, of groups
         // that cast at all.
         let casts = select(shown, previous, shown == SHOWN_NONE && progress < FADED);
         if casts == SHOWN_NONE || group.casters == 0u {
             continue;
         }
-        // Cards near cascades cast too and the moving map
-        // leaves out; kept maps cast one wherever their texels are no finer
-        // than the impostor's.
         let limits = views[view].limits;
-        let kept = limits.z > 0.0;
-        let impostor = group.impostor * record.scale;
-        let card_shown = frame.strides.z != 0u && impostor > 0.0
-            && select(casts == SHOWN_CARD, impostor <= limits.y, kept);
-        let leaves_cards = !kept && limits.w == 0.0;
-        if record.radius < limits.x || (card_shown && leaves_cards)
-            || !inside(view, record.center, record.radius) {
+        if record.radius < limits.x || !inside(view, record.center, record.radius) {
             continue;
         }
-        if card_shown {
+        // A card wherever the region's texels are no finer than the
+        // impostor's.
+        let impostor = group.impostor * record.scale;
+        if frame.strides.z != 0u && impostor > 0.0 && impostor <= limits.y {
             card(view, id.x, group.record);
             continue;
         }
-        let level = caster_level(record, group, casts, limits.x, kept);
-        append(view, record.group, group, level, id.x);
+        append(view, record.group, group, caster_level(record, group, limits.x), id.x);
     }
 }

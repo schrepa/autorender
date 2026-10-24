@@ -10,11 +10,10 @@
 use super::frame::FrameState;
 use super::*;
 use crate::gpu_layouts::constants::{
-    DEBUG_CASTS, DEBUG_FADING, DEBUG_KEPT, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
-    DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SEA, DEBUG_KIND_SKY,
-    DEBUG_KIND_TERRAIN, DEBUG_KIND_VIRTUAL, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL,
-    DEBUG_PATCH_SHIFT, DEBUG_SHADOWED, DEBUG_SOURCE_SHIFT, DEBUG_SUN_BEYOND, DEBUG_SUN_CASCADE,
-    DEBUG_SUN_HORIZON, DEBUG_SUN_KEPT, DEBUG_SUN_LEVEL, DEBUG_SUN_MOVING,
+    DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS, DEBUG_KIND_MESH,
+    DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SEA, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN,
+    DEBUG_KIND_VIRTUAL, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL, DEBUG_PATCH_SHIFT,
+    DEBUG_SHADOWED, DEBUG_SOURCE_SHIFT, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL,
 };
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::max;
@@ -364,19 +363,13 @@ fn drawn_kind(kind: u32) -> Option<DrawnKind> {
     })
 }
 
-/// The sun's lookup a debug target's record names, with its cascade or
-/// level.
+/// The sun's lookup a debug target's record names, with its level.
 fn sun_lookup(source: u32) -> (SunLookup, u32) {
     match source {
-        DEBUG_SUN_KEPT => (SunLookup::Kept, 0),
-        DEBUG_SUN_MOVING => (SunLookup::Moving, 0),
         DEBUG_SUN_HORIZON => (SunLookup::Horizon, 0),
         DEBUG_SUN_BEYOND => (SunLookup::Beyond, 0),
-        level if (DEBUG_SUN_LEVEL..DEBUG_SUN_KEPT).contains(&level) => {
+        level if (DEBUG_SUN_LEVEL..DEBUG_SUN_HORIZON).contains(&level) => {
             (SunLookup::Level, level - DEBUG_SUN_LEVEL)
-        }
-        cascade if (DEBUG_SUN_CASCADE..DEBUG_SUN_LEVEL).contains(&cascade) => {
-            (SunLookup::Cascade, cascade - DEBUG_SUN_CASCADE)
         }
         _ => (SunLookup::None, 0),
     }
@@ -448,8 +441,8 @@ impl Armed {
     fn result(&self, bytes: &[u8]) -> PixelProbe {
         let record = word(bytes, IDS);
         let kind = drawn_kind(record & 0xf);
-        let sun = (record >> DEBUG_SOURCE_SHIFT) & 0x1f;
-        let (lookup, sun_index) = sun_lookup(sun & 0xf);
+        let sun = (record >> DEBUG_SOURCE_SHIFT) & 0xff;
+        let (lookup, sun_index) = sun_lookup(sun & (DEBUG_SHADOWED - 1));
         let object = word(bytes, IDS + 4);
         let detail = word(bytes, IDS + 8);
         // The texel the debug frame's copies read: the pixel, in the view.
@@ -496,7 +489,6 @@ impl Armed {
             level: (record >> DEBUG_LEVEL_SHIFT) & 0xf,
             fading: record & DEBUG_FADING != 0,
             casts_shadows: record & DEBUG_CASTS != 0,
-            kept_shadows: record & DEBUG_KEPT != 0,
             object: with_object.then_some(object),
             detail: with_detail.then_some(detail),
             normal: (kind.is_some() && kind != Some(DrawnKind::Sky))

@@ -17,13 +17,12 @@ use wgpu::util::DeviceExt;
 
 use crate::bindings::DEBUG_VIEW;
 use crate::gpu_layouts::constants::{
-    DEBUG_CASTS, DEBUG_KEPT, DEBUG_KIND_CARD, DEBUG_KIND_MESH, DEBUG_KIND_PLACED,
-    DEBUG_KIND_PLACED_CARD, DEBUG_KIND_VIRTUAL, DEBUG_LEVEL_SHIFT, DEBUG_VIEW_CARDS,
-    DEBUG_VIEW_CASTERS, DEBUG_VIEW_DETAIL, DEBUG_VIEW_KINDS, DEBUG_VIEW_LEVELS,
-    DEBUG_VIEW_MATERIALS, DEBUG_VIEW_NORMALS, DEBUG_VIEW_OVERDRAW, DEBUG_VIEW_SHADOWS,
-    DEBUG_VIEW_SKY, DEBUG_VIEW_TILES, DEBUG_VIEW_WATER_DEPTH, DEBUG_VIEW_WATER_FROUDE,
-    DEBUG_VIEW_WATER_REACH, DEBUG_VIEW_WATER_SPEED, DEBUG_VIEW_WATER_TURBULENCE,
-    DEBUG_VIEW_WATER_WHITE,
+    DEBUG_CASTS, DEBUG_KIND_CARD, DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD,
+    DEBUG_KIND_VIRTUAL, DEBUG_LEVEL_SHIFT, DEBUG_VIEW_CARDS, DEBUG_VIEW_CASTERS, DEBUG_VIEW_DETAIL,
+    DEBUG_VIEW_KINDS, DEBUG_VIEW_LEVELS, DEBUG_VIEW_MATERIALS, DEBUG_VIEW_NORMALS,
+    DEBUG_VIEW_OVERDRAW, DEBUG_VIEW_SHADOWS, DEBUG_VIEW_SKY, DEBUG_VIEW_TILES,
+    DEBUG_VIEW_WATER_DEPTH, DEBUG_VIEW_WATER_FROUDE, DEBUG_VIEW_WATER_REACH, DEBUG_VIEW_WATER_SPEED,
+    DEBUG_VIEW_WATER_TURBULENCE, DEBUG_VIEW_WATER_WHITE,
 };
 use crate::gpu_layouts::debug_view::DebugViewUniform;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -138,15 +137,13 @@ impl DrawKind {
 /// Levels of detail a record names: four bits.
 const LEVELS: u32 = 16;
 
-/// A draw's record: what it draws, at which level of detail, whether it
-/// casts sun shadows and, for placed objects, whether the kept map holds
-/// them.
+/// A draw's record: what it draws, at which level of detail and whether it
+/// casts sun shadows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DrawRecord {
     pub kind: DrawKind,
     pub level: u32,
     pub casts: bool,
-    pub kept: bool,
 }
 
 impl DrawRecord {
@@ -157,20 +154,17 @@ impl DrawRecord {
             kind,
             level: level.min(LEVELS as usize - 1) as u32,
             casts,
-            kept: false,
         }
     }
 
-    /// Its place among the records: by kind, level, casting and keeping.
+    /// Its place among the records: by kind, level and casting.
     fn index(self) -> u64 {
         let kind = DrawKind::ALL
             .iter()
             .position(|kind| *kind == self.kind)
             .unwrap_or_default() as u64;
-        ((kind * u64::from(LEVELS) + u64::from(self.level.min(LEVELS - 1))) * 2
-            + u64::from(self.casts))
-            * 2
-            + u64::from(self.kept)
+        (kind * u64::from(LEVELS) + u64::from(self.level.min(LEVELS - 1))) * 2
+            + u64::from(self.casts)
     }
 
     /// The record's first word in the debug targets.
@@ -178,9 +172,6 @@ impl DrawRecord {
         let mut word = self.kind.kind() | (self.level.min(LEVELS - 1) << DEBUG_LEVEL_SHIFT);
         if self.casts {
             word |= DEBUG_CASTS;
-        }
-        if self.kept {
-            word |= DEBUG_KEPT;
         }
         word
     }
@@ -295,15 +286,8 @@ impl DebugViewPass {
         for kind in DrawKind::ALL {
             for level in 0..LEVELS {
                 for casts in [false, true] {
-                    for kept in [false, true] {
-                        let record = DrawRecord {
-                            kind,
-                            level,
-                            casts,
-                            kept,
-                        };
-                        words.extend([record.word(), 0, 0, 0]);
-                    }
+                    let record = DrawRecord { kind, level, casts };
+                    words.extend([record.word(), 0, 0, 0]);
                 }
             }
         }

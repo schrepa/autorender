@@ -147,7 +147,7 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
     output.sunlit = 1.0;
     if SHADOW_MAPS && shadow.state.x != 0.0 {
         output.sunlit = map_visibility(position, lighting.sun.xyz, vec3<f32>(0.0),
-            vec3<f32>(0.0), length(position - camera.position.xyz));
+            vec3<f32>(0.0));
     }
     return output;
 }

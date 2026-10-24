@@ -150,8 +150,6 @@ pub struct RenderStats {
     pub shadows: ShadowStats,
     /// Ambient occlusion.
     pub ambient_occlusion: Applied,
-    /// Contact shadows.
-    pub contact_shadows: Applied,
     /// Bloom.
     pub bloom: Applied,
     /// Local lights.
@@ -309,37 +307,39 @@ pub struct CullingStats {
     pub instances: Option<u32>,
 }
 
-/// The sun's shadow maps.
+/// The sun's shadow clipmap.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ShadowStats {
     /// Whether the sun cast shadows this frame.
     pub active: bool,
-    /// Indexed draws into the shadow maps, beside the camera pass's
+    /// Indexed draws into the clipmap's tiles, beside the camera pass's
     /// `draw_calls`.
     pub draws: u32,
-    /// The kept map's redraw: 0 none, 1 a rectangle of dirty tiles, 2 the
-    /// whole map (every still caster).
-    pub kept_redraw: u32,
-    /// Casters the near map drew, read back a few frames late; `None` before
-    /// the first read-back.
-    pub near_casters: Option<u32>,
-    /// Casters the moving map drew, read back like the near map's: in a
-    /// settled scene, the moving renderables.
+    /// Tiles the pixels read back latest read, at the levels their size on
+    /// screen picks: those the clipmap draws.
+    pub tiles_marked: u32,
+    /// Tiles holding a slot of the atlas: those pixels read and those kept
+    /// from before while slots last.
+    pub tiles_resident: u32,
+    /// Tiles this frame redrew.
+    pub tiles_drawn: u32,
+    /// Kept tiles whose slots this frame gave to tiles pixels read.
+    pub tiles_reclaimed: u32,
+    /// Tiles pixels read that hold no drawn slot yet, for want of slots or
+    /// of the redraw budget: lookups read a coarser level there.
+    pub tiles_missing: u32,
+    /// Tiles moving casters drew over this frame.
+    pub moving_tiles: u32,
+    /// Casters the redrawn tiles drew, read back a few frames late; `None`
+    /// before the first read-back.
+    pub casters: Option<u32>,
+    /// Moving casters' draws into the tiles they cross, read back like
+    /// `casters`.
     pub moving_casters: Option<u32>,
-    /// Casters the kept map drew, read back like the near map's: redraws
-    /// only.
-    pub kept_casters: Option<u32>,
-    /// Kept-level tiles this frame redrew.
-    pub level_tiles: u32,
-    /// Kept-level tiles no level holds yet: lookups read coarser maps there.
-    pub levels_pending: u32,
-    /// Tiles of the near cascades' caches of the objects terrains place
-    /// this frame redrew: the strips their windows uncovered, where objects
-    /// came or went, or all of a cache whose band moved.
-    pub cache_tiles: u32,
-    /// Casters the kept levels drew, read back like the near map's.
-    pub level_casters: Option<u32>,
+    /// Moving casters' draws into tiles they cross that their draw groups'
+    /// room left out, read back like `casters`.
+    pub moving_left_out: Option<u32>,
     /// Sky occlusion's maps of still meshes seen from the sky
     /// (`sky_occlusion`), drawn around the camera: two per direction in use
     /// at most, and until a direction's are drawn it counts as open sky.

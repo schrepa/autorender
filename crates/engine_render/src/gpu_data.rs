@@ -1,6 +1,6 @@
 //! Explicit schemas for the adjacent shader, separate from gameplay components.
 
-pub(crate) use crate::gpu_layouts::scene::{CASTER_PLANES, MAX_CASCADES, MAX_LEVELS};
+pub(crate) use crate::gpu_layouts::scene::MAX_LEVELS;
 use engine_core::{
     AlphaMode, Atmosphere, Bloom, Material, MeshVertex, Reflections, RenderInstance, Surface,
     UvTransform, glam::Mat4,
@@ -445,9 +445,9 @@ pub(crate) use crate::shaders::{
     BOUNCE_SHADER, CLOUDS_SHADER, COVER_GROW_SHADER, DEBUG_VIEW_SHADER, DEFORMATION_SHADER,
     DEPTH_PYRAMID_SHADER, ENVIRONMENT_SHADER, EXPOSURE_SHADER, LIGHT_SHADER, MIPMAP_SHADER,
     OCCUPANCY_SHADER, PARTICLE_SHADER, POST_SHADER, PRESENTATION_SHADER, SCATTER_CULL_SHADER,
-    SCATTER_SNAP_SHADER, SHADER, SHADOW_SHADER, SHAFTS_SHADER, SKY_SHADER, TEMPORAL_SHADER,
-    TERRAIN_CONTROL_SHADER, TERRAIN_NORMALS_SHADER, TERRAIN_SHADOW_SHADER, TRANSPARENT_SHADER,
-    VIRTUAL_SHADER, VISIBILITY_SHADER, WATER_SIM_SHADER, WATER_WAVES_SHADER,
+    SCATTER_SNAP_SHADER, SHADER, SHADOW_MARKS_SHADER, SHADOW_SHADER, SHAFTS_SHADER, SKY_SHADER,
+    TEMPORAL_SHADER, TERRAIN_CONTROL_SHADER, TERRAIN_NORMALS_SHADER, TERRAIN_SHADOW_SHADER,
+    TRANSPARENT_SHADER, VIRTUAL_SHADER, VISIBILITY_SHADER, WATER_SIM_SHADER, WATER_WAVES_SHADER,
 };
 
 pub(crate) use crate::gpu_layouts::scene::MaterialUniform;
@@ -774,6 +774,8 @@ impl Variant {
 pub(crate) use crate::gpu_layouts::scene::ShadowUniform;
 
 pub(crate) use crate::gpu_layouts::scene::ShadowCullUniform;
+
+pub(crate) use crate::gpu_layouts::scene::{ComposeData, RouteUniform};
 
 pub(crate) use crate::gpu_layouts::scene::PostUniform;
 

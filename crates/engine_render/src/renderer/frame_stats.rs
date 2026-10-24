@@ -118,6 +118,10 @@ impl Renderer {
             None
         };
         let shadow_casters = shadow_frame.as_ref().and(self.shadows.caster_counts());
+        let tiles = shadow_frame
+            .as_ref()
+            .map(crate::shadows::ShadowFrame::tiles)
+            .unwrap_or_default();
         // Read back a few frames late.
         let surface = self.terrain.surface.stats();
         let residency = self.residency();
@@ -193,27 +197,19 @@ impl Renderer {
                 } else {
                     0
                 },
-                kept_redraw: shadow_frame
-                    .as_ref()
-                    .map_or(0, |frame| u32::from(frame.refresh_kind())),
-                near_casters: shadow_casters.map(|casters| casters[0]),
+                tiles_marked: tiles.marked,
+                tiles_resident: tiles.resident,
+                tiles_drawn: tiles.drawn,
+                tiles_reclaimed: tiles.reclaimed,
+                tiles_missing: tiles.missing,
+                moving_tiles: tiles.moving,
+                casters: shadow_casters.map(|casters| casters[0]),
                 moving_casters: shadow_casters.map(|casters| casters[1]),
-                kept_casters: shadow_casters.map(|casters| casters[2]),
-                level_tiles: shadow_frame
-                    .as_ref()
-                    .map_or(0, crate::shadows::ShadowFrame::level_tiles),
-                levels_pending: shadow_frame
-                    .as_ref()
-                    .map_or(0, crate::shadows::ShadowFrame::level_pending),
-                cache_tiles: shadow_frame
-                    .as_ref()
-                    .map_or(0, crate::shadows::ShadowFrame::cache_tiles),
-                level_casters: shadow_casters.map(|casters| casters[3]),
+                moving_left_out: shadow_casters.map(|casters| casters[2]),
                 sky_maps: self.shadows.sky_counts().0,
                 sky_drawn: self.shadows.sky_counts().1,
             },
             ambient_occlusion: effects.ambient_occlusion,
-            contact_shadows: effects.contact_shadows,
             bloom: effects.bloom,
             local_lights: LightPass::stats(
                 self.features.lights.get(),

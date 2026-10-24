@@ -50,18 +50,14 @@ const DEBUG_KIND_FALLS: u32 = 10u;
 const DEBUG_KIND_SKY: u32 = 11u;
 const DEBUG_LEVEL_SHIFT: u32 = 4u;
 const DEBUG_FADING: u32 = 0x100u;
-// The draw casts sun shadows; placed objects' casters the kept map holds.
+// The draw casts sun shadows.
 const DEBUG_CASTS: u32 = 0x200u;
-const DEBUG_KEPT: u32 = 0x400u;
 const DEBUG_SOURCE_SHIFT: u32 = 16u;
 const DEBUG_SUN_NONE: u32 = 0u;
-const DEBUG_SUN_CASCADE: u32 = 1u;
-const DEBUG_SUN_LEVEL: u32 = 5u;
-const DEBUG_SUN_KEPT: u32 = 8u;
-const DEBUG_SUN_MOVING: u32 = 9u;
-const DEBUG_SUN_HORIZON: u32 = 10u;
-const DEBUG_SUN_BEYOND: u32 = 11u;
-const DEBUG_SHADOWED: u32 = 0x10u;
+const DEBUG_SUN_LEVEL: u32 = 1u;
+const DEBUG_SUN_HORIZON: u32 = 21u;
+const DEBUG_SUN_BEYOND: u32 = 22u;
+const DEBUG_SHADOWED: u32 = 0x80u;
 // Terrain pixels: on a tile's edge, on a patch's, in their record, with the
 // patch within its tile above DEBUG_PATCH_SHIFT; a material slot holding
 // none.
@@ -223,20 +219,16 @@ fn debug_card_color(record: u32) -> vec3<f32> {
 // The sun's lookup (`meshes/debug.wgsl`'s `debug_sun`), darker where it
 // leaves the point in shadow.
 fn debug_sun_color(sun: u32) -> vec3<f32> {
-    let source = sun & 0xfu;
+    let source = sun & (DEBUG_SHADOWED - 1u);
     var color = vec3<f32>(0.0);
-    if source >= DEBUG_SUN_CASCADE && source < DEBUG_SUN_LEVEL {
-        // Greens, darker from the first cascade.
-        let cascade = f32(source - DEBUG_SUN_CASCADE);
-        color = vec3<f32>(0.3, 1.0, 0.3) * (1.0 - 0.2 * cascade);
-    } else if source >= DEBUG_SUN_LEVEL && source < DEBUG_SUN_KEPT {
-        // Cyan to blue from the finest kept level.
-        let level = f32(source - DEBUG_SUN_LEVEL);
-        color = mix(vec3<f32>(0.2, 0.9, 0.95), vec3<f32>(0.25, 0.35, 0.95), level * 0.5);
-    } else if source == DEBUG_SUN_KEPT {
-        color = vec3<f32>(0.4, 0.25, 0.8);
-    } else if source == DEBUG_SUN_MOVING {
-        color = vec3<f32>(1.0, 0.55, 0.1);
+    if source >= DEBUG_SUN_LEVEL && source < DEBUG_SUN_HORIZON {
+        // Green through cyan to blue from the finest level, a step every
+        // level.
+        let level = f32(source - DEBUG_SUN_LEVEL)
+            / f32(DEBUG_SUN_HORIZON - DEBUG_SUN_LEVEL - 1u);
+        let green_to_cyan = mix(vec3<f32>(0.3, 1.0, 0.3), vec3<f32>(0.2, 0.9, 0.95),
+            saturate(2.0 * level));
+        color = mix(green_to_cyan, vec3<f32>(0.25, 0.35, 0.95), saturate(2.0 * level - 1.0));
     } else if source == DEBUG_SUN_HORIZON {
         color = vec3<f32>(0.7, 0.25, 0.7);
     } else if source == DEBUG_SUN_BEYOND {
@@ -306,8 +298,7 @@ fn debug_caster_color(record: u32) -> vec3<f32> {
             return vec3<f32>(0.9, 0.25, 0.2);
         }
         case DEBUG_KIND_PLACED: {
-            return select(vec3<f32>(0.95, 0.55, 0.15), vec3<f32>(0.95, 0.85, 0.2),
-                (record & DEBUG_KEPT) != 0u);
+            return vec3<f32>(0.95, 0.55, 0.15);
         }
         case DEBUG_KIND_PLACED_CARD: {
             return DEBUG_CARDS;

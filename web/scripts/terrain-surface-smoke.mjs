@@ -3,10 +3,11 @@
  *
  * The GPU's surface materials match the CPU's; the runtime virtual texture
  * bakes the pages the view asks for, within its budget; ground cover grows
- * near the eye; the wind, occupancy and contact shadow sections read back,
- * refuse values out of range and change what draws; tracks press into the
- * ground as deep as its materials let them and refill; kept shadow levels
- * sharpen still casters. The fixture: terrain-fixture.mjs.
+ * near the eye; the wind and occupancy sections read back, refuse values
+ * out of range and change what draws; tracks press into the ground as deep
+ * as its materials let them and refill; the shadow clipmap draws every tile
+ * the pixels read, sharper with finer texels. The fixture:
+ * terrain-fixture.mjs.
  */
 // @ts-check
 import assert from "node:assert/strict";
@@ -104,21 +105,6 @@ try {
   assert.equal(coarse.error.path, "$.occupancy.resolution");
   await command("environment", { occupancy });
   checks.push({ check: "occupancy", redraws: settled.occupancy.redraws });
-  // Contact shadows trace with the frame's effects: the
-  // blades and crates darken the sun's light where they reach; the section
-  // reads back as set and refuses rays out of range.
-  const contact = (await command("inspect", { component: "ContactShadows" })).result.value;
-  const traced = (await command("environment", { contact_shadows: contact })).result.rendering;
-  assert.equal(traced.contact_shadows.active, true, "contact shadows trace");
-  const withContact = await capture("contact-shadows");
-  await command("environment", { contact_shadows: { ...contact, enabled: false } });
-  const withoutContact = await capture("no-contact-shadows");
-  const contactPixels = await differentPixels(page, [withContact, withoutContact]);
-  assert.ok(contactPixels.changed > 100, `contact shadows shade ${contactPixels.changed} pixels`);
-  const reaching = await command("environment", { contact_shadows: { ...contact, length: 10 } }, false);
-  assert.equal(reaching.error.path, "$.contact_shadows.length");
-  await command("environment", { contact_shadows: contact });
-  checks.push({ check: "contact shadows", pixels: contactPixels.changed });
   // Tracks press into the ground as deep as its materials
   // let them, from the deform control and from deformers each tick: the
   // log answers queries and presses them again where the map returns, they
@@ -181,38 +167,37 @@ try {
     await command("camera", overview);
     checks.push({ check: "deformation", track: inside.track, depth: inside.depth, pixels: trackPixels.changed, replayed: replay.changed, dimple: dimple.track, refilled: later.track });
   }
-  // Kept levels hold still casters sharper than the kept
-  // map around the camera on GPU-presented frames, every tile once built;
-  // with cascades out of reach, their shadows differ from the kept map's
-  // alone. The section refuses more levels than the engine keeps.
-  const kept = (await command("inspect", { component: "Shadows" })).result.value;
-  const reachless = { ...kept, near_distance: 1, distance: 400 };
+  // The shadow clipmap draws every tile the pixels read on GPU-presented
+  // frames once they settle; coarser finest texels blur what its finest
+  // levels held. The section refuses more levels than the engine holds.
+  const clipmap = (await command("inspect", { component: "Shadows" })).result.value;
   const gpuCapture = async (name, shadows) => {
     await command("environment", { shadows });
     let rendering;
     // GPU-presented frames need pipelines of their own, which compile for
     // seconds on some GPUs while the browser presents nothing: the capture
-    // waits for them as for the levels.
+    // waits for them as for the tiles.
     const until = Date.now() + COMPILE_MS;
     for (let frame = 0; ; frame++) {
       rendering = (await command("present", { alpha: 1, gpu: true })).result.rendering;
-      if (frame > 8 && rendering.shadows.levels_pending === 0 && !rendering.pipelines_compiling) break;
-      if (Date.now() > until) assert.fail(`kept levels or pipelines still pending after ${COMPILE_MS / 1000} s: ${JSON.stringify(rendering.shadows)}`);
+      const drawn = rendering.shadows.tiles_marked > 0 && rendering.shadows.tiles_missing === 0;
+      if (frame > 8 && drawn && !rendering.pipelines_compiling) break;
+      if (Date.now() > until) assert.fail(`shadow tiles or pipelines still pending after ${COMPILE_MS / 1000} s: ${JSON.stringify(rendering.shadows)}`);
       if (rendering.pipelines_compiling) await new Promise(resolve => setTimeout(resolve, 50));
     }
     await command("capture", { alpha: 1, gpu: true });
     const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
     return { rendering, image: bytes.toString("base64") };
   };
-  const leveled = await gpuCapture("kept-levels", { ...reachless, levels: 2, level_extent: 64 });
-  assert.equal(leveled.rendering.shadows.levels_pending, 0, `kept levels build: ${JSON.stringify(leveled.rendering)}`);
-  const unleveled = await gpuCapture("kept-map-only", { ...reachless, levels: 0 });
-  const levelPixels = await differentPixels(page, [leveled.image, unleveled.image]);
-  assert.ok(levelPixels.changed > 100, `kept levels change ${levelPixels.changed} pixels`);
-  const deep = await command("environment", { shadows: { ...kept, levels: 4 } }, false);
+  const sharp = await gpuCapture("shadow-tiles", clipmap);
+  assert.equal(sharp.rendering.shadows.tiles_missing, 0, `shadow tiles draw: ${JSON.stringify(sharp.rendering.shadows)}`);
+  const blurred = await gpuCapture("coarse-shadow-tiles", { ...clipmap, finest_texel: 0.5 });
+  const texelPixels = await differentPixels(page, [sharp.image, blurred.image]);
+  assert.ok(texelPixels.changed > 100, `finer texels change ${texelPixels.changed} pixels`);
+  const deep = await command("environment", { shadows: { ...clipmap, levels: 64 } }, false);
   assert.equal(deep.error.path, "$.shadows.levels");
-  await command("environment", { shadows: kept });
-  checks.push({ check: "kept levels", pixels: levelPixels.changed });
+  await command("environment", { shadows: clipmap });
+  checks.push({ check: "shadow clipmap", tiles: sharp.rendering.shadows.tiles_resident, pixels: texelPixels.changed });
   await command("camera", overview);
 
   assert.deepEqual(errors, []);

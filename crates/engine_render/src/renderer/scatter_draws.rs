@@ -186,8 +186,8 @@ impl Renderer {
             .set_thinning(&self.device, &self.queue, &thins);
         let draws = &mut self.scatter_draws;
         let (dirty, counts_changed) = draws.pool.take_changes();
-        // The kept shadow map, its levels, the near cascades' caches and the
-        // occupancy maps redraw where objects came or went.
+        // The shadow clipmap's tiles and the occupancy maps redraw where
+        // objects came or went.
         for (min, max) in draws.pool.take_moved() {
             self.shadows.dirty_kept(min, max);
             self.features.occupancy.get_mut().dirty_box(min, max);
@@ -223,10 +223,6 @@ impl Renderer {
                 &counts,
             );
         }
-        // Shadows cache the objects placed near the camera while any are
-        // resident.
-        self.shadows
-            .cache_placed(self.features.scatter.get().resident != 0);
         let sources = self.terrain.cover_sources().map(|sources| SnapSources {
             heights: sources.heights,
             control: sources.control,
@@ -241,8 +237,7 @@ impl Renderer {
             revision: sources.revision,
             terrains: &infos,
         });
-        // On the ground as drawn, which morphs by the distance from the
-        // detail eye.
+        // On the ground's true surface.
         self.features.scatter.get_mut().prepare_snap(
             &self.device,
             &self.queue,
@@ -270,25 +265,11 @@ impl Renderer {
         // How much of their way the camera's switches fade this frame.
         let fade = self.switch_fades.share;
         let height = self.display.size().height as f32;
-        // Frames keeping still casters cast placed objects into the kept
-        // map, not the moving one, and into the near cascades' caches,
-        // which the cascades are composed from, not into the cascades.
-        let keeps_still = self.shadows.keeps_still();
-        let caches = self.shadows.caches_near();
-        let maps: Vec<(usize, engine_core::glam::Mat4, u32)> = self
-            .shadows
-            .drawn_maps()
-            .iter()
-            .filter(|&&(map, _)| {
-                let moving = map == crate::shadows::MOVING_MAP;
-                !(keeps_still && moving) && !(caches && map < crate::shadows::MOVING_MAP)
-            })
-            .map(|&(map, clip)| (map, clip, self.shadows.drawn_map_texels(map)))
-            .collect();
         let impostors = impostors.then_some(level_of_detail.impostor_pixels);
         let (device, queue, shadows) = (&self.device, &self.queue, &self.shadows);
         // Objects switch how they show, and retire, by their distance from
-        // the detail eye; the views cull by their own planes.
+        // the detail eye; the views cull by their own planes, and placed
+        // objects cast into the regions of shadow tiles redrawn this frame.
         self.features.scatter.prepare(|scatter| {
             scatter
                 .prepare(
@@ -296,12 +277,7 @@ impl Renderer {
                     queue,
                     (snapshot.view_projection, snapshot.detail_eye),
                     (pixel_error, height, impostors, fade),
-                    (
-                        &maps,
-                        shadows.kept_refresh(),
-                        shadows.level_refresh(),
-                        shadows.near_refreshes(),
-                    ),
+                    shadows.region_views(),
                 )
                 .then_some(ScatterFrame)
         })
@@ -417,8 +393,8 @@ impl Renderer {
             records.push(record);
         }
         self.impostors.placed.release_targets();
-        // The kept shadow maps and caches cast impostors as cards: they
-        // redraw whole when those change.
+        // The shadow clipmap's tiles cast impostors as cards: they redraw
+        // whole when those change.
         if records != self.scatter_draws.impostors {
             self.shadows.dirty_kept_all();
         }
@@ -750,11 +726,10 @@ impl Renderer {
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
         pass.set_bind_group(2, &groups[usize::from(temporal)], &[]);
-        // Debug views' draws read their records: placed objects cast into
-        // the kept map in frames keeping still casters.
+        // Debug views' draws read their records.
         let debug = self
             .debug_records(state)
-            .map(|records| (records, state.shape.shadows, self.shadows.keeps_still()));
+            .map(|records| (records, state.shape.shadows));
         let mut draws = 0;
         // The camera's lists, then those of objects fading between how the
         // camera shows them, at the levels the camera draws.
@@ -790,7 +765,7 @@ impl Renderer {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
             pass.set_vertex_buffer(0, cards);
-            if let Some((records, casts, _)) = debug {
+            if let Some((records, casts)) = debug {
                 let record = DrawRecord::of(DrawKind::PlacedCard, 0, casts);
                 bind_record(pass, Some(records), record);
             }
@@ -816,11 +791,11 @@ impl Renderer {
             .map(|material| material.material)
     }
 
-    /// Draws this frame's placed objects culled for shadow map `map` at the
-    /// levels their groups cast at, each group's shadow proxy alone where it
-    /// has one, with the depth passes' caster pipelines `casters`, and their
-    /// impostor cards with `cards`; the map's view is bound. Returns the
-    /// draws.
+    /// Draws this frame's placed objects culled for the shadow region of
+    /// map `map` at the levels their groups cast at, each group's shadow
+    /// proxy alone where it has one, with the depth passes' caster
+    /// pipelines `casters`, and their impostor cards with `cards`; the
+    /// region's view is bound. Returns the draws.
     pub(super) fn draw_scatter_shadow(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -869,13 +844,13 @@ impl Renderer {
     /// `view`'s lists (the camera's, or its fading objects'), binding each
     /// level's mesh with its extra stream and, in debug views, each level's
     /// record of `debug`'s records, the group casting sun shadows where they
-    /// say and its casters kept; returns the draws.
+    /// say; returns the draws.
     fn draw_scatter_levels(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         (index, draw): (usize, &ScatterDraw),
         view: usize,
-        debug: Option<(&DebugViewPass, bool, bool)>,
+        debug: Option<(&DebugViewPass, bool)>,
     ) -> u32 {
         let mut draws = 0;
         for (level, handle) in draw.meshes.iter().enumerate() {
@@ -894,12 +869,9 @@ impl Renderer {
             }
             pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.set_vertex_buffer(1, ids);
-            if let Some((records, casts, kept)) = debug {
+            if let Some((records, casts)) = debug {
                 let casts = casts && draw.casts.is_some();
-                let record = DrawRecord {
-                    kept: casts && kept,
-                    ..DrawRecord::of(DrawKind::Placed, level, casts)
-                };
+                let record = DrawRecord::of(DrawKind::Placed, level, casts);
                 bind_record(pass, Some(records), record);
             }
             pass.draw_indexed_indirect(args, offset);
@@ -908,7 +880,7 @@ impl Renderer {
         draws
     }
 
-    /// Draws group `draw` (the `index`th) from shadow map view `view`'s
+    /// Draws group `draw` (the `index`th) from shadow region view `view`'s
     /// lists, at each level it casts at with that level's mesh; returns the
     /// draws.
     fn draw_scatter_casters(

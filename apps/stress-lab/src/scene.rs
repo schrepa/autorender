@@ -64,9 +64,8 @@ pub fn create_workload_with(
     engine.app.init_resource::<FrameMetrics>();
     let content = config.scene.world();
     let world = engine.app.world_mut();
-    let (moving_nodes, bounds) = content.populate(world, &config, files)?;
+    let moving_nodes = content.populate(world, &config, files)?;
     content.environment(world);
-    world.insert_resource(content.shadows(bounds));
     // Sun shafts and screen-space reflections
     // are opt-in engine effects; street lamps near the camera light the
     // city, brighter as the look darkens.

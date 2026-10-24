@@ -184,7 +184,6 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_core/src/**/occupancy*",
             "crates/engine_core/src/**/deformation*",
             "crates/engine_core/src/**/deformation/**",
-            "crates/engine_core/src/**/contact_shadows*",
             "crates/engine_render/src/**/ground_cover*",
             "crates/engine_render/src/**/cover_grow*",
             "crates/engine_render/src/**/occupancy*",
@@ -194,11 +193,7 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[
             Smoke("terrain-surface"),
-            Cells(&[
-                "highlands",
-                "metro-shadows-off",
-                "metro-contact-shadows-off",
-            ]),
+            Cells(&["highlands", "metro-shadows-off"]),
         ],
     },
     Rule {

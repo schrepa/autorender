@@ -39,9 +39,9 @@ impl StressWorld for HighlandsWorld {
         world: &mut World,
         config: &StressConfig,
         files: &HashMap<String, StressFile>,
-    ) -> engine::Result<(u32, (Vec3, Vec3))> {
-        let (bounds, plateau) = populate(world, config, hamlet_radius(config), files)?;
-        Ok((field(world, config, plateau)?, bounds))
+    ) -> engine::Result<u32> {
+        let plateau = populate(world, config, hamlet_radius(config), files)?;
+        field(world, config, plateau)
     }
 
     fn environment(&self, world: &mut World) {
@@ -87,21 +87,6 @@ impl StressWorld for HighlandsWorld {
             simulation_cell: 1.0,
             ..Water::default()
         });
-    }
-
-    fn shadows(&self, bounds: (Vec3, Vec3)) -> Shadows {
-        // Shadows reach across the valleys, and two kept levels keep still
-        // casters sharper within a kilometer of the camera: a quarter meter
-        // a texel within 256 meters, one beyond.
-        Shadows {
-            bounds: Some(bounds),
-            distance: 6000.0,
-            near_distance: 160.0,
-            resolution: 4096,
-            levels: 2,
-            level_extent: 512.0,
-            ..Shadows::default()
-        }
     }
 
     fn reflections(&self) -> Reflections {

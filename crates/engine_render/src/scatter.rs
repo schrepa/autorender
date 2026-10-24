@@ -6,17 +6,16 @@
 //! sets every object on its terrain's finest resident heights, giving
 //! those blending into the ground the ground's color under them
 //! (`scatter_snap.wgsl`), then culls it against each view (the camera,
-//! then the shadow maps drawn this frame) and picks its level of detail
-//! from the detail eye, retiring objects of thinning layers too small on
-//! screen for their ranks (`scatter_cull.wgsl`), appending it to its draw
-//! group's list for that view and level, and to its parts' groups', or to
-//! the view's impostor cards; each group and level then draws indirectly,
-//! and each view's cards. Objects draw in the first opaque phase and cast
-//! into every shadow map, as their group's shadow proxy where it has one,
-//! else at the level the camera draws or a coarser one a map's texel hides:
-//! the kept ones and the near cascades' caches as seen from afar, the near
-//! cascades drawn every frame with the camera's cards cast facing the sun,
-//! and the moving map without them. They are never occlusion culled.
+//! then the regions of shadow tiles redrawn this frame) and picks its level
+//! of detail from the detail eye, retiring objects of thinning layers too
+//! small on screen for their ranks (`scatter_cull.wgsl`), appending it to
+//! its draw group's list for that view and level, and to its parts'
+//! groups', or to the view's impostor cards; each group and level then
+//! draws indirectly, and each view's cards. Objects draw in the first
+//! opaque phase and cast into every region as seen from afar: their
+//! impostor cards facing the sun where its texels are no finer than an
+//! impostor's, else their group's shadow proxy where it has one, else the
+//! coarsest level its texel hides. They are never occlusion culled.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -55,18 +54,6 @@ pub(crate) const STATE_FRESH: u32 = SHOWN_NONE | SHOWN_NONE << 3 | FADED << 6;
 const FADE_MARGIN: f32 = 0.1;
 
 use crate::gpu_layouts::scatter::ViewData;
-
-/// The shadow maps placed objects cast into: those drawn every frame
-/// (their world-to-clip matrices and texels a side), this frame's redraws
-/// of the kept map and of a kept level, and the regions of the near
-/// cascades' caches redrawn this frame, each with the map it reads its
-/// lists as.
-pub(crate) type ShadowViews<'a> = (
-    &'a [(usize, Mat4, u32)],
-    Option<KeptRefresh>,
-    Option<KeptRefresh>,
-    &'a [(usize, KeptRefresh)],
-);
 
 pub(crate) const NEAR_LEVEL_MASK: u32 = 0x1f;
 pub(crate) const RANK_MAX: f32 = 1023.0;
@@ -179,11 +166,11 @@ pub(crate) struct ScatterPass {
     thins_written: Vec<[f32; 4]>,
     cull_group: Cached<u64, wgpu::BindGroup>,
     // The pose groups of plain and temporal mesh pipelines, and of depth
-    // passes, whose near-cache binding takes a placeholder: the depth
-    // passes drawing into a cache must not bind it.
+    // passes, whose binding of the shadow regions' layers takes a
+    // placeholder: the depth passes drawing into a layer must not bind it.
     pose_groups: Cached<u64, [wgpu::BindGroup; 2]>,
     shadow_group: Cached<u64, wgpu::BindGroup>,
-    cache_placeholder: CachePlaceholder,
+    regions_placeholder: RegionsPlaceholder,
     // Each draw's arguments with no instances, and every view's, rewritten
     // every frame.
     args: DrawArgsLists,
@@ -201,9 +188,9 @@ pub(crate) struct ScatterPass {
     pub(crate) resident: u32,
 }
 
-/// What depth passes bind in place of the near cascades' caches, which
+/// What depth passes bind in place of the shadow regions' layers, which
 /// they may draw into: a texel of depth, and its view as an array.
-struct CachePlaceholder {
+struct RegionsPlaceholder {
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
 }
@@ -218,9 +205,9 @@ struct ListLayout {
     fading_view: usize,
 }
 
-/// A frame's views: the shadow map each one after the camera's draws into,
-/// what culling reads of each, and their card arguments, then the count of
-/// entries lists left out; kept from frame to frame.
+/// A frame's views: the shadow region each one after the camera's draws
+/// into, what culling reads of each, and their card arguments, then the
+/// count of entries lists left out; kept from frame to frame.
 #[derive(Default)]
 struct FrameViews {
     maps: Vec<usize>,
@@ -255,9 +242,9 @@ impl ScatterPass {
         };
         let growable =
             |label, bytes| Growable::new(device, label, bytes, wgpu::BufferUsages::empty());
-        let cache_placeholder = crate::targets::texture_2d(
+        let regions_placeholder = crate::targets::texture_2d(
             device,
-            "engine/scatter-cache-placeholder",
+            "engine/scatter-regions-placeholder",
             (1, 1),
             1,
             1,
@@ -322,13 +309,13 @@ impl ScatterPass {
             cull_group: Cached::default(),
             pose_groups: Cached::default(),
             shadow_group: Cached::default(),
-            cache_placeholder: CachePlaceholder {
-                view: cache_placeholder.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("engine/scatter-cache-placeholder"),
+            regions_placeholder: RegionsPlaceholder {
+                view: regions_placeholder.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("engine/scatter-regions-placeholder"),
                     dimension: Some(wgpu::TextureViewDimension::D2Array),
                     ..Default::default()
                 }),
-                _texture: cache_placeholder,
+                _texture: regions_placeholder,
             },
             args: DrawArgsLists::default(),
             objects: 0,
@@ -555,30 +542,26 @@ impl ScatterPass {
 
     /// Plans this frame's culling: the camera's view, from its
     /// `view_projection` (world) and the detail eye, which every switch
-    /// measures from, those of the shadow `maps`
-    /// drawn every frame (their world-to-clip matrices, each its own texels
-    /// square), where objects smaller than half a texel cast nothing, and
-    /// the regions of the kept map, of a kept level and of the near
-    /// cascades' caches redrawn this frame, if any. Objects of thinning
-    /// layers retire where their bounding spheres span too few pixels of a
-    /// viewport `height` pixels tall for their ranks. Levels are picked
-    /// within `pixel_error` pixels of the viewport (no
-    /// error: finest levels only); maps cast each object's shadow proxy
-    /// where its group has one, else the level the camera draws or a
-    /// coarser one where half their texel hides its error, and kept maps
-    /// and caches the coarsest it hides. With `impostors`, the camera draws
-    /// impostor cards where objects' bounding spheres span fewer pixels of
-    /// the viewport than it, which kept maps and caches cast wherever their
-    /// texels are no finer than an impostor's. The camera's switches fade
-    /// `fade` of their way this frame, or stand still where it is negative.
-    /// Returns whether any object draws.
+    /// measures from, and those of the regions of shadow tiles redrawn
+    /// this frame (`regions`, each with the map it reads its lists as),
+    /// where objects smaller than half a texel cast nothing. Objects of
+    /// thinning layers retire where their bounding spheres span too few
+    /// pixels of a viewport `height` pixels tall for their ranks. Levels
+    /// are picked within `pixel_error` pixels of the viewport (no error:
+    /// finest levels only); regions cast each object's shadow proxy where
+    /// its group has one, else the coarsest level half their texel hides.
+    /// With `impostors`, the camera draws impostor cards where objects'
+    /// bounding spheres span fewer pixels of the viewport than it, which
+    /// regions cast wherever their texels are no finer than an impostor's.
+    /// The camera's switches fade `fade` of their way this frame, or stand
+    /// still where it is negative. Returns whether any object draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (view_projection, eye): (Mat4, Vec3),
         (pixel_error, height, impostors, fade): (Option<f32>, f32, Option<f32>, f32),
-        (maps, kept, level, near): ShadowViews<'_>,
+        regions: &[(usize, KeptRefresh)],
     ) -> bool {
         self.frame_views.maps.clear();
         if self.resident == 0 {
@@ -597,43 +580,12 @@ impl ScatterPass {
             planes: crate::ground_cover::planes(view_projection),
             limits: [0.0; 4],
         });
-        // Half a texel of a map `resolution` texels square seen through
-        // `clip`, in world units.
-        let half_texel = |clip: Mat4, resolution: u32| {
-            let texels = clip.row(0).truncate().length() * resolution as f32;
-            1.0 / engine_core::math::max(texels, 1.0e-12)
-        };
-        for &(map, clip, resolution) in maps {
-            // An orthographic map: its sides alone bound what casts into it.
-            let mut planes = crate::ground_cover::planes(clip);
-            planes[4] = [0.0, 0.0, 0.0, 1.0];
-            planes[5] = [0.0, 0.0, 0.0, 1.0];
-            let half_texel = half_texel(clip, resolution);
-            // Near cascades cast the camera's cards.
-            let cascade = if map < crate::shadows::MOVING_MAP {
-                1.0
-            } else {
-                0.0
-            };
-            views.push(ViewData {
-                planes,
-                limits: [half_texel, 2.0 * half_texel, 0.0, cascade],
-            });
-            self.frame_views.maps.push(map);
-        }
-        // Maps keeping what is drawn into them: their texels' world size
+        // Regions keep what is drawn into them: their texels' world size
         // bounds what casts and where cards do.
-        let kept_views = [
-            (crate::shadows::KEPT_MAP, kept),
-            (crate::shadows::KEPT_LEVELS, level),
-        ]
-        .into_iter()
-        .filter_map(|(map, refresh)| Some((map, refresh?)))
-        .chain(near.iter().copied());
-        for (map, refresh) in kept_views {
+        for &(map, region) in regions {
             views.push(ViewData {
-                planes: refresh.planes,
-                limits: [0.5 * refresh.texel, refresh.texel, 1.0, 0.0],
+                planes: region.planes,
+                limits: [0.5 * region.texel, region.texel, 0.0, 0.0],
             });
             self.frame_views.maps.push(map);
         }
@@ -668,8 +620,8 @@ impl ScatterPass {
         self.frame_views.data = views;
         self.args.lists.clear();
         for list in 0..lists {
-            // The shadow maps' views, after the camera's and before its
-            // fading objects', draw their caster triangles.
+            // The regions' views, after the camera's and before its fading
+            // objects', draw their caster triangles.
             let shadow = list > 0 && list < view_count;
             self.args.lists.extend_from_slice(if shadow {
                 &self.args.casters
@@ -707,7 +659,7 @@ impl ScatterPass {
     /// Builds the pose groups of plain and temporal mesh pipelines and of
     /// depth passes over the objects' poses (their previous poses being the
     /// same: objects stand still) when buffers changed; depth passes bind a
-    /// placeholder for the near cascades' caches, which they draw into.
+    /// placeholder for the shadow regions' layers, which they draw into.
     fn build_pose_groups(&mut self, device: &wgpu::Device) {
         let [retained, temporal] = &self.pose_layouts;
         self.pose_groups.get_or_insert_with(self.generation, || {
@@ -750,7 +702,7 @@ impl ScatterPass {
                     crate::buffers::entry("slot_poses", &self.poses),
                     crate::buffers::entry("slot_colors", &self.colors),
                     crate::buffers::entry("slot_palette", &self.palette),
-                    ("near_cache", crate::pipelines::view(&self.cache_placeholder.view)),
+                    ("shadow_regions", crate::pipelines::view(&self.regions_placeholder.view)),
                 ],
             )
         });
@@ -858,8 +810,8 @@ impl ScatterPass {
         self.lists.fading_view
     }
 
-    /// The view shadow map `map` reads its lists from this frame, if it
-    /// draws objects.
+    /// The view the shadow region of map `map` reads its lists from this
+    /// frame, if it draws objects.
     pub(crate) fn map_view(&self, map: usize) -> Option<usize> {
         self.frame_views
             .maps

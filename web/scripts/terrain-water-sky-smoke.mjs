@@ -259,12 +259,13 @@ try {
 
   await settle();
 
-  // Long shadows: a low sun behind the dome, with shadow maps
-  // reaching 60 m, shadows the plateau through the horizon map alone. The
-  // map holds every direction's horizons: a new sun uploads nothing.
+  // Long shadows: a low sun behind the dome, with the shadow clipmap's one
+  // level reaching 20 m around the eye, shadows the plateau through the
+  // horizon map alone. The map holds every direction's horizons: a new sun
+  // uploads nothing.
   const current = (await command("inspect", { component: "Environment" })).result.value;
   const atmosphere = { ...current.atmosphere, sun_direction: [1, 0.22, 1] };
-  const shadows = { ...current.shadows, distance: 60, near_distance: 20 };
+  const shadows = { ...current.shadows, levels: 1, finest_texel: 0.005 };
   // The control renders a frame with the new sun.
   const moved = (await command("environment", { atmosphere, shadows })).result.rendering;
   // The terrain's and its surroundings'.

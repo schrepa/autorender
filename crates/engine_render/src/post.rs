@@ -5,7 +5,7 @@
 //! ambient share of each pixel's light, and a glow target of each pixel's
 //! exposed brightness above the bloom threshold and its reflectivity. Ambient
 //! occlusion samples the depth buffer at half resolution; sun shafts march
-//! the far shadow maps at quarter resolution; one half-resolution filter then
+//! the shadow clipmap at quarter resolution; one half-resolution filter then
 //! smooths the occlusion on each surface and brings the shafts up beside it.
 //! Reflections walk a pyramid of the depth buffer's nearest depths at half
 //! resolution and filter the result; bloom filters the glowing light down a
@@ -471,7 +471,6 @@ impl PostPass {
             sun: (atmosphere.sun_color * atmosphere.exposure)
                 .extend(0.0)
                 .to_array(),
-            contact: effects.contact,
             sun_direction: toward_sun
                 .extend(f32::from(u8::from(snapshot.environment.dither.enabled)))
                 .to_array(),
@@ -498,7 +497,7 @@ impl PostPass {
         let post = || Bound::fixed(self.uniform.as_entire_binding());
         let target = |view| Bound::of(targets, pipelines::view(view));
         let shared = (&POST, &self.layout);
-        if frame.occlusion || frame.contact || frame.sky {
+        if frame.occlusion || frame.sky {
             let [sky_maps, sky_sampler, sky] = sky;
             self.occlusion_group.bind_filled(
                 device,
@@ -514,7 +513,7 @@ impl PostPass {
                 &self.fillers,
             );
         }
-        if frame.occlusion || frame.shafts || frame.contact || frame.sky {
+        if frame.occlusion || frame.shafts || frame.sky {
             self.effects_filter_group.bind_filled(
                 device,
                 "engine/post-effects-filter-group",
@@ -600,7 +599,7 @@ impl PostPass {
             render.width.div_ceil(4).max(1),
             render.height.div_ceil(4).max(1),
         );
-        if (frame.occlusion || frame.contact || frame.sky)
+        if (frame.occlusion || frame.sky)
             && let Some(group) = self.occlusion_group.get()
         {
             let mut pass = fullscreen_pass(
@@ -689,9 +688,9 @@ impl PostPass {
             pass.set_bind_group(1, group, &[]);
             pass.draw(0..3, 0..1);
         }
-        // The occlusion and contact shadows filtered and the shafts at half
-        // resolution, together (1, 0 and 1 where off).
-        if (frame.occlusion || frame.shafts || frame.contact || frame.sky)
+        // The occlusion filtered and the shafts at half resolution, together
+        // (1 and 0 where off).
+        if (frame.occlusion || frame.shafts || frame.sky)
             && let Some(group) = self.effects_filter_group.get()
         {
             let mut pass = fullscreen_pass(
@@ -1037,7 +1036,6 @@ fn fullscreen_pass<'e>(
 /// Which screen effects a frame applied.
 pub(crate) struct EffectStats {
     pub(crate) ambient_occlusion: Applied,
-    pub(crate) contact_shadows: Applied,
     pub(crate) bloom: Applied,
     pub(crate) sun_shafts: Applied,
     pub(crate) reflections: Applied,
@@ -1105,7 +1103,6 @@ impl RenderFeature for PostPass {
         };
         EffectStats {
             ambient_occlusion: applied(|effects| effects.occlusion),
-            contact_shadows: applied(|effects| effects.contact),
             bloom: applied(|effects| effects.bloom),
             sun_shafts: applied(|effects| effects.shafts),
             reflections: applied(|effects| effects.reflections),

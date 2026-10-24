@@ -52,7 +52,7 @@ mod games {
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, AnimatedProperty,
         AnimationChannel, AnimationClip, AnimationPlayer, AnimationPlugin, AnimationSystems, App,
         AssetBudget, AssetError, AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, ClipHandle,
-        Clouds, ContactShadows, Cover, Cube, DebugView, DebugViewMode, Decal, DecalBlend,
+        Clouds, Cover, Cube, DebugView, DebugViewMode, Decal, DecalBlend,
         DecalSettings, Deformation, DeformationPlugin, Deformer, Dither, Engine, EngineConfig,
         EngineEntityCommands, Environment, Feature, Filter, FixedPostSimulation,
         FixedPreSimulation, FixedSimulation, FixedSimulationSystems, FixedTickEnd,
@@ -86,7 +86,7 @@ pub use games::*;
 pub use engine_core::{
     AnimationSample, DEFAULT_FALLBACK_TRIANGLES, DetailShares, DrawnKind, EnvironmentSection,
     ErrorCode, Features, HierarchyReport, InvalidSetting, LodLevel, MAX_EMITTER_PARTICLES,
-    MAX_HIERARCHY_DEPTH, MAX_KEPT_LEVELS, MAX_LIGHT_RANGE, MAX_OCEAN_WAVES, MAX_SHADOW_CASCADES,
+    MAX_HIERARCHY_DEPTH, MAX_LIGHT_RANGE, MAX_MOVING_TILES, MAX_OCEAN_WAVES, MAX_SHADOW_LEVELS,
     MAX_SPLINE_POINTS, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION,
     MAX_TRACK_DEPTH, MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MaterialShare, MeshLods, OceanPoint,
     OceanSurface, OceanWave, OceanWaves, PixelProbe, PluginGroupBuilder, SplineChunks, SunLookup,

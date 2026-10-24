@@ -28,27 +28,16 @@ pub(crate) trait StressWorld: Sync {
     fn look(&self) -> &'static str;
 
     /// Builds its content into `world` from `config` and the files it reads:
-    /// how many nodes move, and the bounds its shadows keep in one map.
+    /// how many nodes move.
     fn populate(
         &self,
         world: &mut World,
         config: &StressConfig,
         files: &HashMap<String, StressFile>,
-    ) -> engine::Result<(u32, (Vec3, Vec3))>;
+    ) -> engine::Result<u32>;
 
     /// Changes what every world's environment holds, once populated.
     fn environment(&self, _world: &mut World) {}
-
-    /// Its shadows: the whole of `bounds` in one map, seen from every view.
-    fn shadows(&self, bounds: (Vec3, Vec3)) -> Shadows {
-        Shadows {
-            bounds: Some(bounds),
-            distance: 1600.0,
-            near_distance: 90.0,
-            resolution: 4096,
-            ..Shadows::default()
-        }
-    }
 
     /// Its screen-space reflections.
     fn reflections(&self) -> Reflections {

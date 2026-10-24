@@ -1,8 +1,8 @@
 //! Terrain: every resident tile's heights in one texture
 //! array, each terrain's ground drawn by the leaves of its subdivision on
-//! the GPU (`surface`), and their pipelines in the opaque passes, the shadow
-//! maps drawn every frame, the kept shadow levels and reflection probe
-//! faces.
+//! the GPU (`surface`), and their pipelines in the opaque passes, the
+//! regions of the shadow clipmap's tiles a frame redraws and reflection
+//! probe faces.
 //!
 //! Tiles upload as frames list them and release when they leave the list;
 //! the array grows by doubling up to the device's layers, beyond which
@@ -11,13 +11,11 @@
 //! bisection wherever a leaf's flat triangle strays more than the settings'
 //! pixels from the ground's true surface, seen from the detail eye, and its
 //! leaves draw that surface, deep materials displacing it, with one indirect
-//! draw per terrain and view. The shadow maps drawn every frame draw the
-//! same leaves on the true surface, undisplaced, so terrain its materials do
-//! not displace shadows itself without acne. Kept shadow levels, which
-//! must not depend on where the eye stood, hold the ground as far as they
-//! reach at a level of detail of their own, unmorphed, over the region a
-//! level redraws (`patches`), and redraw over ground that arrives, leaves
-//! or changes; the horizon maps shadow the rest.
+//! draw per terrain and view. The shadow clipmap's tiles, which must not
+//! depend on where the eye stood, hold the ground at a level of detail each
+//! level's texels choose, unmorphed, over the regions a frame redraws
+//! (`patches`), and redraw over ground that arrives, leaves or changes;
+//! past the last level the horizon maps shadow alone.
 //!
 //! Each tile's normal map, the gradient of the smooth surface through its
 //! heights at each sample, lies in a parallel array: computed once on
@@ -177,19 +175,16 @@ pub(crate) struct CoverSources<'a> {
 
 /// One terrain drawing this frame: its index among the frame's terrains,
 /// its uniform slot, whether any of its resident tiles has holes (its
-/// leaves then draw with the pipelines cutting them), whether it casts long
-/// shadows through its horizon map (its kept levels then hold its ground
-/// past the near cascades, and the moving map draws none of it), the
-/// patches the kept shadow level redrawn this frame takes of its ground,
-/// and the rectangle of the screen its ground covers, in normalized device
-/// coordinates (least x and y, then greatest; `None` where it is
-/// unbounded), which its resolve shades within.
+/// leaves then draw with the pipelines cutting them), the patches each
+/// region of shadow tiles redrawn this frame takes of its ground, by the
+/// map its casters list as, and the rectangle of the screen its ground
+/// covers, in normalized device coordinates (least x and y, then greatest;
+/// `None` where it is unbounded), which its resolve shades within.
 pub(crate) struct FrameTerrain {
     pub terrain: usize,
     pub uniform: u32,
     pub holes: bool,
-    pub long_shadows: bool,
-    pub kept: Range<u32>,
+    pub maps: Vec<(usize, Range<u32>)>,
     pub screen: Option<[f32; 4]>,
 }
 
@@ -211,8 +206,8 @@ impl FrameTerrain {
     }
 }
 
-/// What a frame draws of every terrain drawing, and the patches the kept
-/// shadow level redrawn draws.
+/// What a frame draws of every terrain drawing, and the patches the
+/// regions of shadow tiles redrawn draw.
 #[derive(Default)]
 pub(crate) struct TerrainFrame {
     pub terrains: Vec<FrameTerrain>,
@@ -233,11 +228,10 @@ pub(crate) struct TerrainViews<'a> {
     /// which the virtual texture's pages lie around: the camera's eye unless
     /// frozen.
     pub detail_eye: Vec3,
-    /// Shadow maps drawn every frame and their world-to-clip matrices.
-    pub maps: &'a [(usize, Mat4)],
-    /// This frame's redraw of a kept shadow level, which the ground casts
-    /// into at a level of detail the level's texels choose.
-    pub kept: Option<crate::shadows::KeptRefresh>,
+    /// The regions of shadow tiles this frame redraws, which the ground
+    /// casts into at a level of detail each one's texels choose: the map
+    /// whose lists each reads, and its planes and texels.
+    pub regions: &'a [(usize, crate::shadows::KeptRefresh)],
     /// Whether reflection probes capture faces this frame, which draw every
     /// leaf.
     pub probes: bool,
@@ -347,8 +341,8 @@ impl TerrainPass {
     /// Uploads tiles the frame's terrains list and the GPU lacks, releases
     /// those they no longer list, noting the ground that arrived, left or
     /// changed ([`Self::ground_changes`]), and lays out this frame's
-    /// subdivisions, uniforms and the patches of the kept shadow level it
-    /// redraws.
+    /// subdivisions, uniforms and the patches of the regions of shadow
+    /// tiles `views` redraws.
     /// `max_layers` is the device's texture array layers; `mips` renders
     /// surface materials' mip levels. Returns whether any terrain draws.
     pub(crate) fn prepare(
@@ -428,7 +422,6 @@ impl TerrainPass {
             surface: &self.surface,
             sky: &self.sky,
             macro_maps: &self.macro_maps,
-            horizons: &self.horizons,
             shading: self.deformation.shading(),
             textures: &textures,
         };
@@ -573,38 +566,20 @@ impl TerrainPass {
         self.surface.any()
     }
 
-    /// Draws terrain into shadow map `map`: the leaves of every terrain's
-    /// subdivision into the maps drawn every frame, the near cascades and,
-    /// but for terrains casting long shadows, whose kept levels hold their
-    /// ground beyond the near cascades, the moving map; the kept level's
-    /// patches into the kept levels; and none into the kept map. Returns the
-    /// draws.
+    /// Draws into the region of shadow tiles whose casters list as `map`
+    /// the ground each terrain holds there. Returns the draws.
     pub(crate) fn draw_shadow(&self, pass: &mut wgpu::RenderPass<'_>, map: usize) -> u32 {
-        let pipelines = &self.pipelines;
-        let mut draws = 0;
-        if map == crate::shadows::KEPT_LEVELS {
-            let (Some(pipeline), Some(group)) = (pipelines.shadow_pipeline(), pipelines.group())
-            else {
-                return 0;
-            };
-            pass.set_pipeline(pipeline);
-            for terrain in &self.patches.frame.terrains {
-                draws += self.patches.draw(pass, group, &terrain.kept, (0, terrain.uniform));
-            }
-            return draws;
-        }
-        let Some(pipeline) = pipelines
-            .surface_shadow_pipeline()
-            .filter(|_| map <= crate::shadows::MOVING_MAP)
+        let (Some(pipeline), Some(group)) =
+            (self.pipelines.shadow_pipeline(), self.pipelines.group())
         else {
             return 0;
         };
         pass.set_pipeline(pipeline);
+        let mut draws = 0;
         for terrain in &self.patches.frame.terrains {
-            if terrain.long_shadows && map == crate::shadows::MOVING_MAP {
-                continue;
+            if let Some((_, range)) = terrain.maps.iter().find(|(drawn, _)| *drawn == map) {
+                draws += self.patches.draw(pass, group, range, (0, terrain.uniform));
             }
-            draws += self.draw_surface(pass, terrain, 0);
         }
         draws
     }
@@ -712,7 +687,7 @@ impl TerrainPass {
     }
 
     /// The ground that arrived, left or changed this frame, over which the
-    /// kept shadow levels holding it redraw.
+    /// shadow clipmap's tiles holding it redraw.
     pub(crate) fn ground_changes(&self) -> &[patches::GroundChange] {
         self.patches.ground_changes()
     }

@@ -45,9 +45,7 @@ macro_rules! shared_groups {
 shared_groups! {
     SHADER @ 0 {
         frame: 0..2 [camera, lighting],
-        shadows: 2..9 [
-            shadow, near_shadows, far_shadows, shadow_sampler, shadow_texels, kept_levels
-        ],
+        shadows: 2..9 [shadow, shadow_atlas, shadow_tiles, shadow_sampler, shadow_texels],
         refraction: 9..11 [refraction_source, refraction_sampler],
         environment: 11..13 [environment_maps, environment_sampler],
         probes: 13..14 [probe_words],
