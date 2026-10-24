@@ -260,9 +260,10 @@ impl Renderer {
         }
     }
 
-    /// Prepares this frame's water and its pipeline into
+    /// Prepares this frame's water and its pipelines into
     /// `opaque_kind`'s targets, created while terrains with hydrology stream
-    /// in; the sea draws through the terrain's projection, jittered as
+    /// in, tiles' water on the leaves of the terrains' subdivisions; the sea
+    /// draws through the terrain's projection, jittered as
     /// `temporal_frame` jitters it; `None` when none of it draws.
     pub(super) fn prepare_water(
         &mut self,
@@ -283,7 +284,7 @@ impl Renderer {
         let view = crate::gpu_data::jittered(cull, jitter);
         let (device, shader, camera) = (&self.device, &self.mesh_shader, &self.camera.layout);
         let formats = (self.display.format(), DEPTH_FORMAT);
-        let tiles = self.terrain.water_draws();
+        let tiles = self.terrain.water_draws(&snapshot.terrain);
         self.features.water.prepare(|water| {
             if coming {
                 water.ensure_pipeline(device, shader, camera, (targets, true), formats);

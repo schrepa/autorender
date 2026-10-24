@@ -1950,7 +1950,18 @@
       "direction": "lower"
     },
     {
-      "name": "water.patches",
+      "name": "water.dropped_leaves",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "water.leaves",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",
