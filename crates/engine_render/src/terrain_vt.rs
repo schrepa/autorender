@@ -7,9 +7,9 @@
 //! so pages of it, baked once by the exact path's own code (the ground as
 //! seen where a pixel's footprint spans a texel), stand in for it at the
 //! pixels that ask: a page-table read and three bilinear texel fetches. A
-//! page's texels shade at the levels and macro tint their own size gives
-//! (`terrain_shading_level`, `macro_strength`), as pixels of that footprint
-//! do, wherever the eye stands.
+//! page's texels shade at the levels their own size gives
+//! (`terrain_shading_level`), as pixels of that footprint do, wherever the
+//! eye stands.
 //!
 //! Mip m's texels span [`TEXEL`] · 2^m meters, its pages [`PAGE_TEXELS`] of
 //! them, kept with a border of
@@ -46,9 +46,10 @@
 //! changed longest ago first.
 //!
 //! A terrain's coarse mips are far pages instead (`far`): the same whatever
-//! the eye, a record the host keeps and the cook ships, pinned in their
-//! slots from the terrain's first frames; only the near pages bake as the
-//! view moves.
+//! the eye, the finest baked as any page and each coarser one the mean of
+//! the one below, a record the host keeps and the cook ships, pinned in
+//! their slots from the terrain's first frames; only the near pages bake as
+//! the view moves.
 
 #![expect(
     clippy::expect_used,
@@ -299,7 +300,7 @@ impl VirtualTexture {
                 crate::pipelines::layout(device, &TERRAIN_VT_FEEDBACK),
             ],
             feedback_pipeline: None,
-            far: far::FarPages::default(),
+            far: far::FarPages::new(device),
             stats: VtStats::default(),
         }
     }
@@ -393,6 +394,7 @@ impl VirtualTexture {
     ) -> Vec<VtUniform> {
         self.stats = VtStats::default();
         self.bakes.list.clear();
+        self.far.clear_means();
         self.frame += 1;
         self.arrival = if fades { now } else { LONG_AGO };
         self.bakes_per_frame = settings.virtual_texture_bakes;
@@ -487,7 +489,7 @@ impl VirtualTexture {
         self.move_windows(terrains, eye);
         self.ask(terrains, eye);
         self.far_pages((device, queue), terrains, (sources, settings.pixel_error), maps);
-        self.stats.bakes = self.bakes.list.len() as u32;
+        self.stats.bakes = (self.bakes.list.len() + self.far.means()) as u32;
         self.write(device, queue, (directory, base, generation), kept.len());
         self.stats.slots = self.capacity;
         self.stats.pages = self.resident.len() as u32;
@@ -814,9 +816,10 @@ impl VirtualTexture {
         queue.write_buffer(&bakes.buffer, 0, bytemuck::cast_slice(&bakes.records));
     }
 
-    /// Whether this frame bakes pages, or reads far pages back.
+    /// Whether this frame bakes pages, makes far pages as means of finer
+    /// ones, or reads far pages back.
     pub(crate) fn baking(&self) -> bool {
-        !self.bakes.list.is_empty() || self.far.copying()
+        !self.bakes.list.is_empty() || self.far.means() > 0 || self.far.copying()
     }
 
     /// Whether any terrain is textured this frame, which asks for pages.
@@ -828,23 +831,41 @@ impl VirtualTexture {
     /// terrain's with its uniform (`uniform_of` gives a terrain's offset by
     /// its id), through the camera's terrain group, the terrain group whose
     /// material maps leave the sheets out, and the bakes' own group; then
-    /// the copies of the far pages read back this frame.
+    /// the far pages made as means of the finer ones the sheets now hold,
+    /// and the copies of the far pages read back this frame.
     #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     pub(crate) fn encode_bakes(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         shader: &wgpu::ShaderModule,
-        (camera_layout, camera_group): (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
-        (terrain_layout, terrain_group): (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
+        camera: (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
+        terrain: (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
         maps: &crate::terrain_maps::TerrainMaps,
         uniform_of: impl Fn(u64) -> Option<u32>,
     ) {
         let slots = (self.per_row, self.per_sheet);
-        if self.bakes.list.is_empty() {
-            self.far.copy_slots(encoder, maps.sheet_texture(), slots);
-            return;
+        if !self.bakes.list.is_empty() {
+            self.encode_page_bakes(device, encoder, shader, (camera, terrain), maps, uniform_of);
         }
+        self.far.encode_means(device, encoder, maps, slots);
+        self.far.copy_slots(encoder, maps.sheet_texture(), slots);
+    }
+
+    /// Records the passes drawing this frame's bakes, a pass per sheet
+    /// (`encode_bakes`).
+    fn encode_page_bakes(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        shader: &wgpu::ShaderModule,
+        ((camera_layout, camera_group), (terrain_layout, terrain_group)): (
+            (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
+            (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
+        ),
+        maps: &crate::terrain_maps::TerrainMaps,
+        uniform_of: impl Fn(u64) -> Option<u32>,
+    ) {
         let pipeline = self.bake_pipeline.get_or_insert_with(|| {
             let layout = crate::pipelines::pipeline_layout(
                 device,
@@ -924,7 +945,6 @@ impl VirtualTexture {
             drop(pass);
             start = end;
         }
-        self.far.copy_slots(encoder, maps.sheet_texture(), slots);
     }
 
     /// Records the feedback pass over terrain's visibility target `ids`

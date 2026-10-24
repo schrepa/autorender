@@ -71,6 +71,15 @@ pub(crate) type ShadowViews<'a> = (
 pub(crate) const NEAR_LEVEL_MASK: u32 = 0x1f;
 pub(crate) const RANK_MAX: f32 = 1023.0;
 
+/// Whether the objects placement layers stand on level `level`'s tiles of a
+/// terrain of `levels` levels thin out with distance: all but those on its
+/// `pinned` coarsest levels, whose tiles stay resident everywhere. Culling
+/// thins them by it, and the ground takes on those it thins alike
+/// (`terrain::tables`).
+pub(crate) fn thins_on(level: u8, levels: u32, pinned: u32) -> bool {
+    u32::from(level) + pinned < levels
+}
+
 pub(crate) use crate::gpu_layouts::scatter::Record;
 
 pub(crate) use crate::gpu_layouts::scatter::TerrainInfo;
@@ -79,8 +88,7 @@ pub(crate) use crate::gpu_layouts::scatter::TerrainInfo;
 /// heights and control values, its directory, the terrains' palette and
 /// macro colors, the generations of the tiles' arrays, the directory and
 /// the macro colors, a revision advancing whenever resident tiles change,
-/// each terrain's place, and the meters a pixel spans a meter from the
-/// eye, which the ground's tint under objects follows.
+/// and each terrain's place.
 pub(crate) struct SnapSources<'a> {
     pub heights: &'a wgpu::TextureView,
     pub control: &'a wgpu::TextureView,
@@ -90,7 +98,6 @@ pub(crate) struct SnapSources<'a> {
     pub generation: (u64, u64, u64),
     pub revision: u64,
     pub terrains: &'a [TerrainInfo],
-    pub pixel: f32,
 }
 
 use crate::gpu_layouts::scatter::GroupData;
@@ -145,9 +152,8 @@ pub(crate) struct ScatterPass {
     snap_group: Cached<SnapKey, wgpu::BindGroup>,
     snapping: bool,
     // What objects were last set on: the group's key, the resident tiles'
-    // revision, the terrains' places and the eye the ground was seen from
-    // with the meters a pixel spans a meter from it, and whether slots were
-    // written since, undoing it.
+    // revision, the terrains' places and the eye the ground was seen from,
+    // and whether slots were written since, undoing it.
     snapped: Option<(SnapKey, u64, Vec<TerrainInfo>, [f32; 4])>,
     slots_written: bool,
     frame: wgpu::Buffer,
@@ -752,9 +758,8 @@ impl ScatterPass {
 
     /// Plans setting objects on the terrain this frame from `sources`, on
     /// the ground as drawn seen from `eye`: when slots were written, the
-    /// resident heights or terrains changed or the eye moved or its pixels
-    /// changed size since they last were; never while the terrain pass
-    /// holds no heights.
+    /// resident heights or terrains changed or the eye moved since they
+    /// last were; never while the terrain pass holds no heights.
     pub(crate) fn prepare_snap(
         &mut self,
         device: &wgpu::Device,
@@ -774,7 +779,7 @@ impl ScatterPass {
             self.terrains_generation += 1;
         }
         queue.write_buffer(&self.terrains, 0, bytes);
-        let view = eye.extend(sources.pixel).to_array();
+        let view = eye.extend(0.0).to_array();
         let uniform = crate::gpu_layouts::scatter::SnapUniform {
             counts: [self.objects, sources.terrains.len() as u32, 0, 0],
             eye: view,

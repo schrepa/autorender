@@ -228,11 +228,6 @@ impl Renderer {
         // resident.
         self.shadows
             .cache_placed(self.features.scatter.get().resident != 0);
-        // The ground's tint under objects follows the pixels it spans.
-        let pixel = crate::gpu_data::pixel_angle(
-            snapshot.view_projection,
-            self.display.region.display.height,
-        );
         let sources = self.terrain.cover_sources().map(|sources| SnapSources {
             heights: sources.heights,
             control: sources.control,
@@ -246,7 +241,6 @@ impl Renderer {
             ),
             revision: sources.revision,
             terrains: &infos,
-            pixel,
         });
         // On the ground as drawn, which morphs by the distance from the
         // detail eye.
@@ -948,7 +942,8 @@ impl Renderer {
 /// How each of `snapshot`'s terrains' placement layers thin with distance
 /// this frame, `THIN_LAYERS` entries a terrain: their tiles' reaches follow
 /// the view's levels of detail, and pinned levels stay resident
-/// everywhere.
+/// everywhere (`scatter::thins_on`), as the ground taking on what they thin
+/// reads them (`terrain::tables`).
 fn scatter_thinning(snapshot: &RenderSnapshot) -> Vec<[f32; 4]> {
     let terrains = &snapshot.terrain.terrains;
     let pinned = snapshot.environment.terrain.sanitized().pinned_levels;
@@ -956,14 +951,14 @@ fn scatter_thinning(snapshot: &RenderSnapshot) -> Vec<[f32; 4]> {
     for (index, terrain) in terrains.iter().enumerate() {
         let levels = terrain.pyramid.levels();
         let reach = |level: u8| {
-            if u32::from(level) + pinned >= levels {
-                0.0
-            } else {
+            if crate::scatter::thins_on(level, levels, pinned) {
                 terrain
                     .reach
                     .get(usize::from(level))
                     .copied()
                     .unwrap_or(0.0)
+            } else {
+                0.0
             }
         };
         for (layer, placement) in terrain

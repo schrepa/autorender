@@ -1,9 +1,10 @@
 // Ground variety: the tint a terrain's macro colors give its
-// ground and the blades growing on it, the same in both
-// (`meshes/terrain.wgsl`, `cover_grow.wgsl`). Ground cover's density, which
-// both read too, follows, with how things retire by their size on screen
-// (ground cover's blades and placed objects alike) and what a view sees of
-// blades, which their canopy shows where they retire.
+// ground and the blades growing on it, the same in both and at every
+// distance (`meshes/terrain.wgsl`, `cover_grow.wgsl`). Ground cover's
+// density, which both read too, follows, with how things retire by their
+// size on screen (ground cover's blades and placed objects alike), how
+// placement layers thin with distance, and what a view sees of blades,
+// which their canopy shows where they retire.
 
 fn variety_hash(cell: vec2<i32>) -> f32 {
     var h = (u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u);
@@ -24,36 +25,15 @@ fn variety_noise(p: vec2<f32>) -> f32 {
     return mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
 }
 
-// The meters a pixel spans of level ground `relative` to the eye, a pixel
-// spanning `pixel` meters a meter away: as `pixel_footprint` measures it,
-// the view's depth taken as the distance, for passes binding no view
-// (blades and placed objects take their ground's tint by it). Views more
-// grazing than a sixteenth count as that, as there.
-fn ground_footprint(relative: vec3<f32>, pixel: f32) -> f32 {
-    let distance = max(length(relative), 1.0e-6);
-    return distance * pixel * inverseSqrt(max(abs(relative.y) / distance, 0.0625));
-}
-
 // The tint of ground whose macro colors' texel holds `colors` (the tint, 128
 // of 255 leaving it as it is, and how lush plants grow there:
 // `engine_terrain::macro_colors`), `vegetated` the share of it growing
-// plants, `strength` of it shown (`macro_strength`): every ground takes the
-// tint, and plants grow lusher and darker where it holds them lush, drier
-// and paler where dry.
-fn macro_tint(colors: vec4<f32>, vegetated: f32, strength: f32) -> vec3<f32> {
+// plants: every ground takes the tint as the macro colors hold it, near and
+// far alike, and plants grow lusher and darker where it holds them lush,
+// drier and paler where dry.
+fn macro_tint(colors: vec4<f32>, vegetated: f32) -> vec3<f32> {
     let growth = mix(vec3<f32>(1.05, 1.02, 0.88), vec3<f32>(0.85, 0.97, 0.82), colors.a);
-    let tint = colors.rgb * (255.0 / 128.0) * mix(vec3<f32>(1.0), growth, vegetated);
-    return mix(vec3<f32>(1.0), tint, strength);
-}
-
-// How much of their tint macro colors give ground where a pixel spans
-// `footprint` meters of it (a page's texel its own size): a little where
-// its materials' own detail shows, all of it once a pixel spans a third of
-// a meter, where those repeat too small to vary it, rising between 4 and 35
-// centimeters (40 and 400 meters away at a view facing the ground at
-// 1080p).
-fn macro_strength(footprint: f32) -> f32 {
-    return 0.35 + 0.65 * smoothstep(0.04, 0.35, footprint);
+    return colors.rgb * (255.0 / 128.0) * mix(vec3<f32>(1.0), growth, vegetated);
 }
 
 // The share of the radius within which ground cover grows densest
@@ -77,6 +57,30 @@ const COVER_ROUGHNESS: f32 = 0.7;
 // ground takes on what they leave.
 fn seen_share(pixels: f32) -> f32 {
     return saturate(0.5 + 0.5 * log2(max(pixels, 1.0e-6)));
+}
+
+// The share of a placement layer's objects still standing `away` meters from
+// the detail eye as the layer thins with distance, `thin` holding the share
+// standing far away, the meters its own tiles and its far tiles reach (0
+// where they stay resident everywhere) and 1 where it thins at all: all of
+// them within seven tenths of its tiles' reach, falling to its far share
+// across most of the rest, then to none across the same part of its far
+// tiles' reach. Objects ranked past it hide before their tiles leave, so
+// density never steps where tiles end (`scatter_cull.wgsl`), and the ground
+// takes on those it hides as it does those retiring by their size
+// (`meshes/terrain.wgsl`'s `terrain_placed_share`).
+fn placed_thinned(thin: vec4<f32>, away: f32) -> f32 {
+    if thin.w == 0.0 {
+        return 1.0;
+    }
+    var keep = 1.0;
+    if thin.y > 0.0 {
+        keep = mix(1.0, thin.x, smoothstep(0.7 * thin.y, 0.95 * thin.y, away));
+    }
+    if thin.z > 0.0 {
+        keep *= 1.0 - smoothstep(0.7 * thin.z, 0.95 * thin.z, away);
+    }
+    return keep;
 }
 
 // How many times wider than their roots ground cover's blades grow `away`

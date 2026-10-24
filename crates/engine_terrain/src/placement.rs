@@ -5,7 +5,9 @@
 //! candidates stay where they are however tiles stream and whoever asks.
 //! A candidate stands where its rank falls under the layer's density at its
 //! point: the share of a square the density fills, times the layer's mask
-//! and the share of the surface materials it stands on there. Placement
+//! and the share of the surface materials it stands on there; its scale
+//! falls across the layer's range as its rank under that density rises, so
+//! the objects ranked first are the largest. Placement
 //! is a pure function of a tile's heights and control values; each
 //! candidate belongs to the tile of the layer's level holding its point.
 //! Coarser levels stay resident farther from the camera, so their layers'
@@ -14,7 +16,8 @@
 //! level's tiles, which stay resident farther still (pinned levels
 //! everywhere), place the share of its candidates whose rank falls under
 //! that share of its density, a subset of its own objects in the same
-//! places, which renderers hide where its own level's tiles are resident.
+//! places, its largest, which renderers hide where its own level's tiles
+//! are resident.
 //!
 //! Authors stand objects on a surface too: each at its own
 //! point, on the tiles of its level (the finest for small things, coarser
@@ -314,7 +317,7 @@ pub(crate) fn place_authored(
 /// whose resident tiles hold it instead, and its rank under the density at
 /// its point (0 to 1; 0 for authored objects): the share of the density
 /// past which it stands, which renderers thin layers by with distance.
-/// Far away, a layer stands the objects ranked first.
+/// Far away, a layer stands the objects ranked first, its largest.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub position: [f32; 3],
@@ -775,8 +778,12 @@ pub(crate) fn place_row(
             .map_or(layer.choices[layer.choices.len() - 1].0, |(asset, _)| {
                 *asset
             });
-        let scale =
-            layer.scale[0] + (layer.scale[1] - layer.scale[0]) * unit(hash(square ^ 0xc2b2_ae35));
+        // Its rank under the density here, which its size follows: from the
+        // largest of the layer's scales, ranked first, down to the smallest,
+        // evenly as ranks spread, so those standing far away and those
+        // thinning keeps are the largest.
+        let ranked = rank / full;
+        let scale = layer.scale[1] - (layer.scale[1] - layer.scale[0]) * ranked;
         // Turned at random.
         let yaw = unit(hash(square ^ 0x85eb_ca6b)) * std::f32::consts::TAU;
         // Its up leans toward the ground's normal as far as the
@@ -805,7 +812,7 @@ pub(crate) fn place_row(
             asset,
             layer: layer_index as u16,
             near_level,
-            rank: rank / full,
+            rank: ranked,
         });
     }
     let squares = (last[0] - first[0] + 1) as u64;

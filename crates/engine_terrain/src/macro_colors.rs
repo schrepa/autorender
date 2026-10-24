@@ -3,11 +3,12 @@
 //! where water gathers and runs (the hydrology bake's wetness and flow),
 //! the shores of its lakes, where erosion wore ground away and where it
 //! laid it down, and the dust beside its roads; with its ridges and
-//! hollows from its shape and broad patches of noise. Distant ground takes
-//! them over its materials' own colors, so it neither repeats their maps
-//! evenly nor lies the same color across a valley, and near ground takes
-//! them subtly. Nothing in them depends on the light, only on the ground:
-//! the sun and the sky light what they tint at any time of day.
+//! hollows from its shape and broad patches of noise. Ground takes them in
+//! full over its materials' own colors wherever it is seen from, so it
+//! neither repeats their maps evenly nor lies the same color across a
+//! valley, and keeps its color as the eye nears. Nothing in them depends on
+//! the light, only on the ground: the sun and the sky light what they tint
+//! at any time of day.
 //!
 //! A map is RGBA8 texels over the terrain's extent, rows along z, texel
 //! `(x, z)` centered at `((x + 0.5, z + 0.5) * extent / size)`: red, green

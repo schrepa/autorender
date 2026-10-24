@@ -83,6 +83,8 @@ struct PaletteEntry {
     canopy: vec4<f32>,
     placed: vec4<f32>,
     placed_size: vec4<f32>,
+    placed_thinning: vec4<f32>,
+    heights: vec4<f32>,
 }
 
 // A blade, as `meshes/cover.wgsl` reads it.
@@ -108,7 +110,7 @@ struct Counts {
 @group(0) @binding(1) var control: texture_2d_array<u32>;
 @group(0) @binding(2) var<storage, read> directory: array<u32>;
 // As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
-const PALETTE_ENTRIES: u32 = 128u;
+const PALETTE_ENTRIES: u32 = 102u;
 @group(0) @binding(3) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
 @group(0) @binding(4) var<storage, read> covers: array<CoverSpec>;
 @group(0) @binding(5) var<uniform> grow: Grow;
@@ -564,8 +566,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             continue;
         }
         let variation = (0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u)))
-            * macro_tint(colors_at(local), 1.0, macro_strength(ground_footprint(
-                root - grow.eye.xyz, 1.0 / max(grow.view.x, 1.0e-6))));
+            * macro_tint(colors_at(local), 1.0);
         var blade: CoverBlade;
         blade.root = root;
         blade.height = height;

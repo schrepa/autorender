@@ -420,7 +420,7 @@ impl TerrainPass {
             .write_directory(device, queue, terrains, &self.atlas);
         let vt_pages = self.vt.wanted(&views.settings);
         self.maps.prepare(device, queue, mips, terrains, vt_pages);
-        self.tables.write_palette(queue, terrains, &self.maps);
+        self.tables.write_palette(queue, terrains, (&self.maps, views.settings.pinned_levels));
         // Bounce light's windows, which the horizon records place, in the
         // slots the horizon maps' layers hold.
         let room = crate::terrain_horizons::room(device, terrains.terrains.len());

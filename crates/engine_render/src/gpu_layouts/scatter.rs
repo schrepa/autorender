@@ -49,7 +49,7 @@ gpu_structs! {
     }
 
     /// WGSL `Snap` of `scatter_snap.wgsl`: the slots and terrains, and the
-    /// eye with the meters a pixel spans a meter from it.
+    /// eye (w unused).
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SnapUniform as ["Snap"] {
         pub counts: [u32; 4],

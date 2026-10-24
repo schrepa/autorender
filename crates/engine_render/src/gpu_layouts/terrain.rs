@@ -14,11 +14,14 @@ gpu_structs! {
     /// maps' mean color and roughness, its factors applied; the meters its
     /// relief spans, tracks sink it at most and its normal maps' slope
     /// variance; its cover's canopy: its blades' linear tip color and their
-    /// leaves' area per square meter of ground; and its placement layers'
+    /// leaves' area per square meter of ground; its placement layers'
     /// objects, which the ground takes on where they retire: their mean
     /// linear color and the share of the ground they cover where it lies
-    /// alone, and the base-2 logarithm of their bounding spheres' diameters,
-    /// its mean and deviation over the ground they cover.
+    /// alone, the base-2 logarithms of the bounding spheres' diameters of
+    /// those ranked first and last, the largest and smallest, and how they
+    /// thin with distance: the share standing far away and the levels whose
+    /// tiles hold them near and far, each plus one, 0 where those stay
+    /// resident everywhere; and its height map's mean and deviation.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct PaletteEntry as ["TerrainPaletteEntry", "PaletteEntry" in COVER_GROW_SHADER, "PaletteEntry" in BOUNCE_SHADER, "PaletteEntry" in SCATTER_SNAP_SHADER] {
         pub color: [f32; 4],
@@ -29,6 +32,8 @@ gpu_structs! {
         pub canopy: [f32; 4],
         pub placed: [f32; 4],
         pub placed_size: [f32; 4],
+        pub placed_thinning: [f32; 4],
+        pub heights: [f32; 4],
     }
 
     /// A surface material's cover, at its palette entry's index: blades

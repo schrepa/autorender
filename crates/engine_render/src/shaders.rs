@@ -59,6 +59,12 @@ shaders! {
         "terrain_tile.wgsl",
         "terrain_control.wgsl",
     ];
+    /// The runtime virtual texture's coarser far pages, each the mean of the
+    /// finer far mip's.
+    TERRAIN_VT_FAR_SHADER = [
+        "color.wgsl",
+        "terrain_vt_far.wgsl",
+    ];
     /// Terrain bounce light after the shared scene declarations: the
     /// ground lit, its levels and the probes' gathers.
     BOUNCE_SHADER = [
@@ -314,6 +320,9 @@ entry_points! {
     }
     terrain_control = TERRAIN_CONTROL_SHADER {
         compute: [tile_control],
+    }
+    terrain_vt_far = TERRAIN_VT_FAR_SHADER {
+        compute: [far_mean],
     }
     terrain_bounce = BOUNCE_SHADER {
         compute: [bounce_ground, bounce_down, bounce_gather],
