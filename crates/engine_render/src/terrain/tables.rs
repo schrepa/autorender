@@ -311,12 +311,11 @@ impl TerrainTables {
         terrains: &RenderTerrains,
         atlas: &TileAtlas,
     ) {
-        let same = self.directory_layout.len() == terrains.terrains.len()
-            && self
-                .directory_layout
-                .iter()
-                .zip(&terrains.terrains)
-                .all(|(&(id, pyramid), terrain)| id == terrain.id && pyramid == terrain.pyramid);
+        let same =
+            self.directory_layout.len() == terrains.terrains.len()
+                && self.directory_layout.iter().zip(&terrains.terrains).all(
+                    |(&(id, pyramid), terrain)| id == terrain.id && pyramid == terrain.pyramid,
+                );
         if !same {
             self.lay_out_directory(device, queue, terrains, atlas);
             return;
@@ -330,7 +329,11 @@ impl TerrainTables {
             }
         }
         for &(id, key) in &atlas.changed {
-            let Some(index) = terrains.terrains.iter().position(|terrain| terrain.id == id) else {
+            let Some(index) = terrains
+                .terrains
+                .iter()
+                .position(|terrain| terrain.id == id)
+            else {
                 continue;
             };
             let (pyramid, level) = (&terrains.terrains[index].pyramid, u32::from(key.level));
@@ -342,8 +345,8 @@ impl TerrainTables {
                 continue;
             }
             // The level's header holds where its entries start.
-            let header = (self.directory_bases.get(index))
-                .map(|&base| base as usize + 4 * level as usize);
+            let header =
+                (self.directory_bases.get(index)).map(|&base| base as usize + 4 * level as usize);
             let Some(&first) = header.and_then(|header| self.directory_written.get(header)) else {
                 continue;
             };
@@ -544,7 +547,9 @@ fn palette_entry(
     let slopes = means.map_or(0.0, |means| means.slopes * scale * scale);
     // Where its maps fade, its heights' mean and spread share the ground
     // as height blending does on average.
-    let heights = means.map_or([0.0; 4], |means| [means.height, means.height_deviation, 0.0, 0.0]);
+    let heights = means.map_or([0.0; 4], |means| {
+        [means.height, means.height_deviation, 0.0, 0.0]
+    });
     // Its cover's canopy: the blades' tip color, which shaders mix with the
     // ground's at their roots as a view meets them (`terrain_variety.wgsl`'s
     // `cover_seen`), and their leaves' area: blades a square meter, each as
@@ -757,6 +762,11 @@ fn placed_terms(
             engine_core::math::min(covered, 1.0),
         ],
         [sums.first / covered, sums.last / covered, 0.0, 0.0],
-        [sums.far / covered, code(widest.level), code(widest.far.0), 0.0],
+        [
+            sums.far / covered,
+            code(widest.level),
+            code(widest.far.0),
+            0.0,
+        ],
     )
 }

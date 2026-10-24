@@ -289,7 +289,11 @@ impl Sums {
             if part == 0 {
                 continue;
             }
-            match self.materials.iter_mut().find(|(held, _)| *held == material) {
+            match self
+                .materials
+                .iter_mut()
+                .find(|(held, _)| *held == material)
+            {
                 Some((_, sum)) => *sum += part,
                 None => self.materials.push((material, part)),
             }
@@ -309,7 +313,8 @@ impl Sums {
     /// 255th; and the mean gradient as a normal map's texel.
     fn mean(&self) -> (u32, u32) {
         let heavier = |a: (u8, u32), b: (u8, u32)| a.1 > b.1 || (a.1 == b.1 && a.0 < b.0);
-        let (mut first, mut second): (Option<(u8, u32)>, Option<(u8, u32)>) = (None, None);
+        let mut first: Option<(u8, u32)> = None;
+        let mut second: Option<(u8, u32)> = None;
         for &material in &self.materials {
             if first.is_none_or(|held| heavier(material, held)) {
                 second = first;
@@ -321,11 +326,7 @@ impl Sums {
         let (a, heaviest) = first.unwrap_or((0, 0));
         let (b, next) = second.unwrap_or((a, 0));
         let pair = heaviest + next;
-        let blend = if pair > 0 {
-            (255 * next + pair / 2) / pair
-        } else {
-            0
-        };
+        let blend = (255 * next + pair / 2).checked_div(pair).unwrap_or(0);
         let total = self.total.max(1);
         let control = Control {
             a,

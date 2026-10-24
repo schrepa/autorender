@@ -328,24 +328,19 @@ pub(crate) struct Forms {
 /// from the first, takes in the channel `bankfull` sizes, where the
 /// terrain's finest samples lie `finest` meters apart: pools and riffles on
 /// gentle reaches, POOLS_APART widths apart, deepest and shallowest by
-/// POOL_DEPTH of the channel's depth on a flat and by none from FORMS[0] on;
+/// POOL_DEPTH of the channel's depth on a flat and by none from `FORMS[0]` on;
 /// steps on steps' and cascades' reaches ([`steps`]); and knobs where
 /// boulders stand ([`knobs`]). Forms stand by distance along the river from
 /// phases its first point's place gives, so the same river forms alike in
 /// every bake.
-pub(crate) fn forms(
-    (points, along): (&[Vec2], &[f32]),
-    bankfull: &Bankfull,
-    finest: f32,
-) -> Forms {
+pub(crate) fn forms((points, along): (&[Vec2], &[f32]), bankfull: &Bankfull, finest: f32) -> Forms {
     let key = place_key(points[0]);
     let count = points.len();
     let mut turn = unit_of(key);
     let mut pools = Vec::with_capacity(count);
     for index in 0..count {
         if index > 0 {
-            turn += (along[index] - along[index - 1])
-                / (POOLS_APART * bankfull.widths[index - 1]);
+            turn += (along[index] - along[index - 1]) / (POOLS_APART * bankfull.widths[index - 1]);
         }
         let strength = POOL_DEPTH * max(1.0 - bankfull.slopes[index] / FORMS[0], 0.0);
         pools.push(bankfull.depths[index] * strength * cos(TAU * (turn - turn.floor())));
@@ -394,7 +389,7 @@ struct Row {
 /// step takes at that steepness, H / (c S) for steps STEP_HEIGHT as high as
 /// the clasts they form from, within STEPS_APART widths; each step spans
 /// STEP_LEAST of that and an exponential draw of the rest, and at least
-/// STEPS_APART[0] widths. Steps whose mean spacing spans STEP_SAMPLES of the
+/// `STEPS_APART[0]` widths. Steps whose mean spacing spans STEP_SAMPLES of the
 /// finest samples or more are carved, closer ones left to friction; where
 /// the reach only partly forms steps, they drop as much less.
 fn steps(along: &[f32], bankfull: &Bankfull, (key, finest): (u32, f32)) -> Steps {

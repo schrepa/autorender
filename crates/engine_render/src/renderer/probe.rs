@@ -10,10 +10,11 @@
 use super::frame::FrameState;
 use super::*;
 use crate::gpu_layouts::constants::{
-    DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS, DEBUG_KIND_MESH,
-    DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SEA, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN,
-    DEBUG_KIND_VIRTUAL, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL, DEBUG_PATCH_SHIFT,
-    DEBUG_SHADOWED, DEBUG_SOURCE_SHIFT, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL,
+    DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
+    DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SEA, DEBUG_KIND_SKY,
+    DEBUG_KIND_TERRAIN, DEBUG_KIND_VIRTUAL, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL,
+    DEBUG_PATCH_SHIFT, DEBUG_SHADOWED, DEBUG_SOURCE_SHIFT, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON,
+    DEBUG_SUN_LEVEL,
 };
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::max;
@@ -503,8 +504,7 @@ impl Armed {
             displayed: self.canvas.map(|blue_first| color(CANVAS, blue_first)),
             terrain: (kind == Some(DrawnKind::Ground))
                 .then(|| terrain_probe((record, object, detail), bytes)),
-            water: (kind == Some(DrawnKind::Lakes))
-                .then(|| water_probe((object, detail), bytes)),
+            water: (kind == Some(DrawnKind::Lakes)).then(|| water_probe((object, detail), bytes)),
         }
     }
 }

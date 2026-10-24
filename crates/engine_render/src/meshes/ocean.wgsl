@@ -115,7 +115,7 @@ fn vs_ocean_temporal(@builtin(vertex_index) vertex: u32,
     temporal.relative = output.relative;
     temporal.still = output.still;
     temporal.previous = (camera.previous_view_projection
-        * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw;
+        * vec4<f32>(eye_world(output.relative), 1.0)).xyw;
     return temporal;
 }
 
@@ -123,7 +123,7 @@ fn vs_ocean_temporal(@builtin(vertex_index) vertex: u32,
 // window the sky shows through it, bent; beyond, the surface mirrors the
 // water below. The water between veils it like everything else.
 fn shade_ocean_below(input: OceanOutput) -> WaterShade {
-    let world = input.relative + camera.position.xyz;
+    let world = eye_world(input.relative);
     let footprint = max(max(length(dpdx(input.still.xy)), length(dpdy(input.still.xy))),
         1.0e-4);
     let up = ocean_normal(input.still.xy, footprint).xyz;
@@ -182,7 +182,7 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     if lighting.underwater.w > 0.0 {
         return shade_ocean_below(input);
     }
-    let world = input.relative + camera.position.xyz;
+    let world = eye_world(input.relative);
     let still = input.still.xy;
     let time = camera.position.w;
     let view = stable_normalize(-input.relative);
@@ -218,13 +218,13 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     let pixel = input.clip_position.xy;
     if textureLoad(water_depth, vec2<i32>(pixel), 0) > 0.0 {
         let own = water_ground(pixel);
-        below = max(input.relative.y - own.y, 0.0);
+        below = max(input.relative.y - own.y, 0.0); // optics: what the view meets behind the pixel
         behind.ground = own;
         if refracts {
             behind = water_behind(input.relative, normal, view, pixel, own,
                 vec3<f32>(0.0, 1.0, 0.0));
         }
-        through = max(length(behind.ground - input.relative), 0.0);
+        through = max(length(behind.ground - input.relative), 0.0); // optics: the view's way through the water
     }
     let transmit = water_transmitted(through, 0.0);
     // Foam on crests the waves compress and along shores, in patches and

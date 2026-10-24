@@ -150,10 +150,7 @@ impl Value {
     /// matrix's part, or the whole of anything else.
     fn lane(&self, index: usize) -> Taint {
         match self {
-            Value::Lanes(lanes) => lanes
-                .get(index)
-                .cloned()
-                .unwrap_or_else(|| self.collapse()),
+            Value::Lanes(lanes) => lanes.get(index).cloned().unwrap_or_else(|| self.collapse()),
             Value::Whole(taint) | Value::Matrix(taint) => taint.clone(),
             Value::Members(_) => self.collapse(),
         }
@@ -178,9 +175,12 @@ impl Value {
             return self.clone();
         };
         match (self, step) {
-            (Value::Members(members), Step::Index(index)) => members
-                .get(index as usize)
-                .map_or_else(|| Value::Whole(self.collapse()), |member| member.at_steps(rest)),
+            (Value::Members(members), Step::Index(index)) => {
+                members.get(index as usize).map_or_else(
+                    || Value::Whole(self.collapse()),
+                    |member| member.at_steps(rest),
+                )
+            }
             (Value::Lanes(_), Step::Index(index)) => Value::Whole(self.lane(index as usize)),
             (Value::Lanes(_) | Value::Members(_), Step::Any) => Value::Whole(self.collapse()),
             (Value::Whole(taint) | Value::Matrix(taint), _) => Value::Whole(taint.clone()),

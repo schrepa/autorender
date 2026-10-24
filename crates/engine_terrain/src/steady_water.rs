@@ -286,7 +286,9 @@ impl codec::Codec for SteadyWater {
         let rush = codec::get_grid(input, stride)?;
         let wet = codec::get_grid(input, stride)?;
         let lip = codec::get_grid(input, stride)?;
-        let grids = [&surface, &x, &z, &foam, &energy, &heave, &swirl, &rush, &wet, &lip];
+        let grids = [
+            &surface, &x, &z, &foam, &energy, &heave, &swirl, &rush, &wet, &lip,
+        ];
         if grids.iter().any(|grid| grid.len() != count)
             || !(cell.is_finite() && cell > 0.0)
             || sources.iter().any(|source| source.cell as usize >= count)
@@ -340,7 +342,10 @@ impl SteadyWater {
         if !(cell.is_finite() && cell > 0.0) {
             return Err(codec::CodecError("invalid settled water"));
         }
-        Ok((SettledHead { key, cell, summary }, bytes.len() - input.left()))
+        Ok((
+            SettledHead { key, cell, summary },
+            bytes.len() - input.left(),
+        ))
     }
 }
 
@@ -729,7 +734,10 @@ impl WaterPart {
             && self.rough.len() == count(self.cells)
             && self.reach.len() == count(self.cells)
             && self.rough.iter().all(|rough| rough.is_finite())
-            && self.reach.iter().all(|&reach| usize::from(reach) <= REACHES)
+            && self
+                .reach
+                .iter()
+                .all(|&reach| usize::from(reach) <= REACHES)
     }
 }
 
@@ -804,17 +812,18 @@ impl<'a> Reading<'a> {
             let z = zs.binary_search(&part.key.z).unwrap_or_else(|at| at);
             grid[z * columns + x] = Some(part);
         }
-        let parts: Vec<&WaterPart> = grid
-            .into_iter()
-            .collect::<Option<_>>()
-            .ok_or(MISSING)?;
+        let parts: Vec<&WaterPart> = grid.into_iter().collect::<Option<_>>().ok_or(MISSING)?;
         // Along an axis, each line of parts' first corner or cell and how
         // many, as `span` finds them in its first part.
         let along = |axis: usize, span: fn(&WaterPart) -> (i64, u32), count: u32| {
             let spans: Vec<(i64, u32)> = if axis == 0 {
                 parts[..columns].iter().map(|part| span(part)).collect()
             } else {
-                parts.iter().step_by(columns).map(|part| span(part)).collect()
+                parts
+                    .iter()
+                    .step_by(columns)
+                    .map(|part| span(part))
+                    .collect()
             };
             places(region.first[axis], count, &spans)
         };
@@ -1219,7 +1228,10 @@ impl StoredBlocks {
             let (x, z) = ((place & 0xffff) * side, (place >> 16) * side);
             for k in 0..=side {
                 for l in 0..=side {
-                    ground.push(corner((x + l).min(self.cells[0]), (z + k).min(self.cells[1])));
+                    ground.push(corner(
+                        (x + l).min(self.cells[0]),
+                        (z + k).min(self.cells[1]),
+                    ));
                 }
             }
             let cells = slot * BLOCK_CELLS..(slot + 1) * BLOCK_CELLS;
@@ -1393,6 +1405,10 @@ impl SettleStart {
     /// where its blocks are not stored; the water its rivers bring to them,
     /// cells in order; its summary, each flowing cell breaking white as its
     /// water does at its depth over its bed; and how its water settled.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub fn finish(&self, means: &[[f32; 4]], steps: u32, settled: bool) -> Vec<SteadyWater> {
         let area = f64::from(self.cell * self.cell);
         let mut made = Vec::with_capacity(self.kept.len());
@@ -1649,9 +1665,8 @@ impl SteadySummary {
                 }
             }
         }
-        let mean = |total: f32, count: f32| {
-            f16_bits(if count > 0.0 { total / count } else { f32::NAN })
-        };
+        let mean =
+            |total: f32, count: f32| f16_bits(if count > 0.0 { total / count } else { f32::NAN });
         Self {
             velocity: [
                 sums.iter().map(|sum| mean(sum[0], sum[2])).collect(),
@@ -1669,7 +1684,10 @@ impl SteadySummary {
             return None;
         }
         let at = (z * SUMMARY_SIDE + x) as usize;
-        let velocity = [f16_value(self.velocity[0][at]), f16_value(self.velocity[1][at])];
+        let velocity = [
+            f16_value(self.velocity[0][at]),
+            f16_value(self.velocity[1][at]),
+        ];
         let foam = f16_value(self.foam[at]);
         let flowing = !velocity[0].is_nan();
         Some(SteadySquare {
@@ -1841,9 +1859,8 @@ fn tent(point: Vec2, spacing: f32, square: f32) -> impl Iterator<Item = (i64, i6
         })
     };
     let (u, v) = (point.x / square - 0.5, point.y / square - 0.5);
-    covered(v).flat_map(move |(j, along_z)| {
-        covered(u).map(move |(i, along_x)| (i, j, along_x * along_z))
-    })
+    covered(v)
+        .flat_map(move |(j, along_z)| covered(u).map(move |(i, along_x)| (i, j, along_x * along_z)))
 }
 
 /// The generalized minmod of `a`, `b` and `c`, as the shallow-water scheme
@@ -2054,7 +2071,13 @@ impl Tile {
         let place =
             |x: usize, z: usize| origin + Vec2::new(x as f32 - 1.0, z as f32 - 1.0) * spacing;
         let ground = |point: Vec2| self.ground_at(point - origin);
-        let planes = Planes::of(place(0, 0), place(stride - 1, stride - 1), cell, cells, &ground);
+        let planes = Planes::of(
+            place(0, 0),
+            place(stride - 1, stride - 1),
+            cell,
+            cells,
+            &ground,
+        );
         let count = stride * stride;
         let mut surface = vec![f32::NAN; count];
         let mut info = vec![[0_u32; 3]; count];
@@ -2208,7 +2231,11 @@ impl Tile {
                 info[at][0] = pack(flow, foam / shallow_water::FOAM_MOST, sheeted, lake, width);
                 flows[at] = flow;
                 stirred[at] = Some(if blend.weight > 0.0 {
-                    [blend.turbulence / blend.weight, blend.white / blend.weight, 0.0]
+                    [
+                        blend.turbulence / blend.weight,
+                        blend.white / blend.weight,
+                        0.0,
+                    ]
                 } else {
                     [0.0; 3]
                 });
@@ -2314,7 +2341,10 @@ impl Steadying {
     /// Works for about `budget` units (a sample generated each): once done,
     /// the tile's water, `None` within where none stands on it; an error
     /// where its ground does not generate or read back.
-    pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<Option<TileWater>>, String> {
+    pub(crate) fn advance(
+        &mut self,
+        budget: &mut u64,
+    ) -> Result<Option<Option<TileWater>>, String> {
         let Some(made) = self.generator.advance(budget) else {
             if self.generator.failed() {
                 return Err("the ground's heights are invalid".into());
@@ -2322,8 +2352,7 @@ impl Steadying {
             return Ok(None);
         };
         // The tile as its record holds it: its water stands on those heights.
-        let tile: Tile =
-            codec::decode(&codec::encode(&made)).map_err(|error| error.to_string())?;
+        let tile: Tile = codec::decode(&codec::encode(&made)).map_err(|error| error.to_string())?;
         let pyramid = &self.pyramid;
         let water = match &self.reads {
             SettledReads::Records(records) => {

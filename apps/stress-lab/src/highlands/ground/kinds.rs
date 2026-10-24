@@ -8,7 +8,9 @@ use std::f32::consts::TAU;
 
 use engine::prelude::math::{max, min, sin_cos};
 
-use super::noise::{Cells, Noise, Rng, blur, hash, lerp, mix, saturate, scale, smoothstep, texture, unit};
+use super::noise::{
+    Cells, Noise, Rng, blur, hash, lerp, mix, saturate, scale, smoothstep, texture, unit,
+};
 use super::{Maps, Rgb, Texel};
 
 // Grass.
@@ -758,7 +760,11 @@ pub(super) fn cobble(size: usize) -> Maps {
         let fine = grit.unit(u, v);
         let mut texel = Texel {
             albedo: scale(
-                mix(COBBLE_GAP, COBBLE_SILT, smoothstep(0.4, 0.7, silt.unit(u, v))),
+                mix(
+                    COBBLE_GAP,
+                    COBBLE_SILT,
+                    smoothstep(0.4, 0.7, silt.unit(u, v)),
+                ),
                 0.8 + 0.4 * fine,
             ),
             height: 0.02 * fine,
@@ -788,4 +794,3 @@ pub(super) fn cobble(size: usize) -> Maps {
     });
     Maps::new(size, texels, 3.5)
 }
-

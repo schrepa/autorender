@@ -241,23 +241,27 @@ impl ShadowPipelines {
                 (shadow::vs_moving_masked_skinned, shadow::fs_moving_masked),
             ),
         ];
-        let casters = kinds.each_ref().map(|(label, layouts, buffers, (vertex, fragment), _)| {
-            caster_pipeline(
-                device, &module, label, *layouts, *vertex, buffers, false, *fragment,
-            )
-        });
-        let moving = kinds.each_ref().map(|(label, layouts, buffers, _, (vertex, fragment))| {
-            caster_pipeline(
-                device,
-                &module,
-                &format!("{label}-moving"),
-                *layouts,
-                *vertex,
-                buffers,
-                false,
-                Some(*fragment),
-            )
-        });
+        let casters = kinds
+            .each_ref()
+            .map(|(label, layouts, buffers, (vertex, fragment), _)| {
+                caster_pipeline(
+                    device, &module, label, *layouts, *vertex, buffers, false, *fragment,
+                )
+            });
+        let moving = kinds
+            .each_ref()
+            .map(|(label, layouts, buffers, _, (vertex, fragment))| {
+                caster_pipeline(
+                    device,
+                    &module,
+                    &format!("{label}-moving"),
+                    *layouts,
+                    *vertex,
+                    buffers,
+                    false,
+                    Some(*fragment),
+                )
+            });
         // The clear binds nothing but shares the plain casters' layout: each
         // distinct layout costs Firefox a root signature.
         let clear_moving = caster_pipeline(

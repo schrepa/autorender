@@ -211,8 +211,8 @@ impl SkyMaps {
         self.write(queue, bytemuck::Zeroable::zeroed());
     }
 
-    /// This frame's work under `settings` (sanitized) around the camera at
-    /// `eye`: the map it redraws, if any, after `changed` still casters
+    /// This frame's work under `settings` (sanitized) around the detail eye
+    /// at `eye`: the map it redraws, if any, after `changed` still casters
     /// marked every map stale; writes the lookup uniform.
     pub(crate) fn prepare(
         &mut self,

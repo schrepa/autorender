@@ -23,9 +23,7 @@ impl Flow<'_> {
         let span = frame.function.expressions.get_span(handle);
         let slot = match *expression {
             Expression::Access { base, index } => access(frame, base, index),
-            Expression::AccessIndex { base, index } => {
-                self.access_index(frame, base, index, span)
-            }
+            Expression::AccessIndex { base, index } => self.access_index(frame, base, index, span),
             Expression::FunctionArgument(index) => argument(frame, index as usize),
             Expression::GlobalVariable(global) => {
                 if self.module.global_variables[global].space == AddressSpace::Handle {
@@ -43,7 +41,11 @@ impl Flow<'_> {
                 Slot::Value(value) => Slot::Value(value.clone()),
             },
             Expression::CallResult(function) => {
-                let value = frame.calls.get(&handle).cloned().unwrap_or_else(Value::clean);
+                let value = frame
+                    .calls
+                    .get(&handle)
+                    .cloned()
+                    .unwrap_or_else(Value::clean);
                 // Functions named for positions relative to the eye give them.
                 let name = self.module.functions[function].name.as_deref();
                 if name.is_some_and(|name| name.split('_').any(|word| word == RELATIVE)) {
@@ -133,7 +135,11 @@ impl Flow<'_> {
                 }
             }
             Expression::AtomicResult { .. } | Expression::WorkGroupUniformLoadResult { .. } => {
-                frame.calls.get(&handle).cloned().unwrap_or_else(Value::clean)
+                frame
+                    .calls
+                    .get(&handle)
+                    .cloned()
+                    .unwrap_or_else(Value::clean)
             }
             _ => Value::clean(),
         }
@@ -203,7 +209,11 @@ impl Flow<'_> {
         if place.relative {
             more.extend(self.source(Read::Relative, frame.of, &frame.name, span));
         }
-        if more.is_empty() { value } else { value.with(&more) }
+        if more.is_empty() {
+            value
+        } else {
+            value.with(&more)
+        }
     }
 
     /// What module variable `global` holds at `steps`: the camera's reads,
@@ -216,12 +226,20 @@ impl Flow<'_> {
         steps: &[Step],
         span: Span,
     ) -> Value {
-        if self.camera.as_ref().is_some_and(|(camera, _)| *camera == global) {
+        if self
+            .camera
+            .as_ref()
+            .is_some_and(|(camera, _)| *camera == global)
+        {
             return self.camera_read(frame, steps, span);
         }
         match self.module.global_variables[global].space {
             AddressSpace::Private | AddressSpace::WorkGroup => {
-                let mut value = self.globals.get(&global).cloned().unwrap_or_else(Value::clean);
+                let mut value = self
+                    .globals
+                    .get(&global)
+                    .cloned()
+                    .unwrap_or_else(Value::clean);
                 if let Some(own) = frame.globals.get(&global) {
                     value.join(own);
                 }
@@ -364,10 +382,22 @@ impl Flow<'_> {
         match lanes_of(type_of(frame.info, module, handle)) {
             Some(count) if !is_matrix(left) && !is_matrix(right) => Value::Lanes(
                 (0..count)
-                    .map(|lane| first.lane(lane).union(&second.lane(lane)).copied().collect())
+                    .map(|lane| {
+                        first
+                            .lane(lane)
+                            .union(&second.lane(lane))
+                            .copied()
+                            .collect()
+                    })
                     .collect(),
             ),
-            _ => Value::Whole(first.collapse().union(&second.collapse()).copied().collect()),
+            _ => Value::Whole(
+                first
+                    .collapse()
+                    .union(&second.collapse())
+                    .copied()
+                    .collect(),
+            ),
         }
     }
 
@@ -433,7 +463,10 @@ impl Flow<'_> {
         handle: Handle<Expression>,
         operands: &[Handle<Expression>],
     ) -> Value {
-        let values: Vec<Value> = operands.iter().map(|&operand| frame.value(operand)).collect();
+        let values: Vec<Value> = operands
+            .iter()
+            .map(|&operand| frame.value(operand))
+            .collect();
         match lanes_of(type_of(frame.info, self.module, handle)) {
             Some(count) => Value::Lanes(
                 (0..count)
@@ -477,7 +510,13 @@ fn argument(frame: &Frame<'_>, index: usize) -> Slot {
     if frame.pointees.get(index).is_some_and(Option::is_some) {
         Slot::Place(Place::of(Root::Argument(index)))
     } else {
-        Slot::Value(frame.arguments.get(index).cloned().unwrap_or_else(Value::clean))
+        Slot::Value(
+            frame
+                .arguments
+                .get(index)
+                .cloned()
+                .unwrap_or_else(Value::clean),
+        )
     }
 }
 

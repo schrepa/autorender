@@ -178,8 +178,8 @@ pub fn roughness(bed: Option<&Bed>) -> f32 {
 /// the D84 counting within [`SHALLOWEST`] and [`DEEPEST`]. Water running
 /// down sloping ground is held back φ² = 1 + |∇b|² times as hard.
 pub fn resistance(depth: f32, roughness: f32) -> f32 {
-    let grain = roughness.abs().max(depth / DEEPEST);
-    let relative = (depth / grain).clamp(SHALLOWEST, DEEPEST);
+    let grain = engine_math::max(roughness.abs(), depth / DEEPEST);
+    let relative = engine_math::clamp(depth / grain, SHALLOWEST, DEEPEST);
     if roughness >= 0.0 {
         let eighth = 1.0 / (FERGUSON_A2 * FERGUSON_A2 * relative * relative)
             + 1.0 / (FERGUSON_A1 * FERGUSON_A1 * relative.cbrt());

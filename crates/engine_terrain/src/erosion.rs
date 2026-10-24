@@ -91,7 +91,14 @@ impl Erosion {
         spacing: f32,
         each: impl FnMut(usize, f32),
     ) {
-        Self::read_row(&self.change, self.range, (self.spacing, spacing), xs, z, each);
+        Self::read_row(
+            &self.change,
+            self.range,
+            (self.spacing, spacing),
+            xs,
+            z,
+            each,
+        );
     }
 
     /// The meters erosion adds at terrain-local `(x, z)` for each of `xs`

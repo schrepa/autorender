@@ -370,7 +370,11 @@ impl SurfaceTrees {
         let bound = || {
             frame.iter().enumerate().filter_map(|(index, subdivided)| {
                 let group = trees.get(&(*subdivided)?.id)?.group.get()?;
-                Some(((index as u64 * SLOT) as u32, index as u64 * ARGS_BYTES, group))
+                Some((
+                    (index as u64 * SLOT) as u32,
+                    index as u64 * ARGS_BYTES,
+                    group,
+                ))
             })
         };
         let bytes = frame.len() as u64 * ARGS_BYTES;
@@ -393,7 +397,9 @@ impl SurfaceTrees {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/terrain-subdivision"),
-                timestamp_writes: profiler.span("terrain_subdivision").map(|span| span.compute()),
+                timestamp_writes: profiler
+                    .span("terrain_subdivision")
+                    .map(|span| span.compute()),
             });
             pass.set_bind_group(0, camera_group, &[]);
             for (slot, args, group) in bound() {
@@ -406,7 +412,8 @@ impl SurfaceTrees {
             }
         }
         let tag = (frame.len() as u32, self.rests.get());
-        self.readbacks.record(device, encoder, &self.counters, bytes, tag);
+        self.readbacks
+            .record(device, encoder, &self.counters, bytes, tag);
     }
 
     /// Makes the passes' pipelines and the camera's group, through the
@@ -473,18 +480,19 @@ impl SurfaceTrees {
     /// Requests the map of this frame's counters once it is submitted.
     pub(crate) fn after_submit(&self) {
         let (totals, rests) = (Rc::clone(&self.totals), Rc::clone(&self.rests));
-        self.readbacks.after_submit(move |words, (terrains, rested)| {
-            if rested != rests.get() {
-                return;
-            }
-            let mut sums = [0_u32; 2];
-            for terrain in 0..terrains as usize {
-                let at = terrain * SUBDIVISION_ARGS as usize;
-                sums[0] = sums[0].saturating_add(words.get(at + 3));
-                sums[1] = sums[1].saturating_add(words.get(at + 9));
-            }
-            totals.set(sums);
-        });
+        self.readbacks
+            .after_submit(move |words, (terrains, rested)| {
+                if rested != rests.get() {
+                    return;
+                }
+                let mut sums = [0_u32; 2];
+                for terrain in 0..terrains as usize {
+                    let at = terrain * SUBDIVISION_ARGS as usize;
+                    sums[0] = sums[0].saturating_add(words.get(at + 3));
+                    sums[1] = sums[1].saturating_add(words.get(at + 9));
+                }
+                totals.set(sums);
+            });
     }
 
     /// What the subdivisions drew, as last read back.
@@ -535,7 +543,7 @@ fn seed(queue: &wgpu::Queue, buffer: &wgpu::Buffer, depth: u32) {
 fn finest_spacing(side: f32, depth: u32) -> f32 {
     let halvings = (depth - 1) / 2;
     let leg = side / (1_u64 << halvings) as f32;
-    let leg = if (depth - 1) % 2 == 0 {
+    let leg = if (depth - 1).is_multiple_of(2) {
         leg
     } else {
         leg * std::f32::consts::FRAC_1_SQRT_2

@@ -232,9 +232,6 @@ pub(crate) struct TerrainViews<'a> {
     /// casts into at a level of detail each one's texels choose: the map
     /// whose lists each reads, and its planes and texels.
     pub regions: &'a [(usize, crate::shadows::KeptRefresh)],
-    /// Whether reflection probes capture faces this frame, which draw every
-    /// leaf.
-    pub probes: bool,
     /// Terrain settings, and whether shadows run, which horizon maps
     /// serve.
     pub settings: engine_core::TerrainSettings,
@@ -369,7 +366,8 @@ impl TerrainPass {
             .write_directory(device, queue, terrains, &self.atlas);
         let vt_pages = self.vt.wanted(&views.settings);
         self.maps.prepare(device, queue, mips, terrains, vt_pages);
-        self.tables.write_palette(queue, terrains, (&self.maps, views.settings.pinned_levels));
+        self.tables
+            .write_palette(queue, terrains, (&self.maps, views.settings.pinned_levels));
         // Bounce light's levels around the detail eye, which the horizon
         // records place, in the slots the horizon maps' layers hold.
         let room = crate::terrain_horizons::room(device, terrains.terrains.len());
@@ -683,7 +681,11 @@ impl TerrainPass {
 
     /// Whether any terrain drawing this frame has holes.
     pub(crate) fn has_holes(&self) -> bool {
-        self.patches.frame.terrains.iter().any(|terrain| terrain.holes)
+        self.patches
+            .frame
+            .terrains
+            .iter()
+            .any(|terrain| terrain.holes)
     }
 
     /// The ground that arrived, left or changed this frame, over which the

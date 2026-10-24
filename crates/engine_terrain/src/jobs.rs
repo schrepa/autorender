@@ -564,7 +564,8 @@ impl MacroJob {
     /// Whether its map's sides are whole blocks, at most
     /// [`MAX_MACRO_TEXELS`].
     fn valid(&self) -> bool {
-        (MACRO_BLOCK..=MAX_MACRO_TEXELS).contains(&self.size) && self.size % MACRO_BLOCK == 0
+        (MACRO_BLOCK..=MAX_MACRO_TEXELS).contains(&self.size)
+            && self.size.is_multiple_of(MACRO_BLOCK)
     }
 }
 
@@ -587,7 +588,7 @@ pub fn far_record(pages: &[(u8, u16, u16)], side: u32, texels: &[u8]) -> Vec<u8>
     let mut planes = vec![0_u8; texels.len()];
     if area > 0 {
         for (layer, texels) in texels.chunks_exact(area * 4).enumerate() {
-            for (at, texel) in texels.chunks_exact(4).enumerate() {
+            for (at, texel) in texels.as_chunks::<4>().0.iter().enumerate() {
                 for (channel, &value) in texel.iter().enumerate() {
                     planes[(layer * 4 + channel) * area + at] = value;
                 }
@@ -627,7 +628,7 @@ pub fn far_texels(record: &[u8]) -> Result<Vec<u8>, CodecError> {
     }
     let mut texels = vec![0_u8; planes.len()];
     for (layer, layer_texels) in texels.chunks_exact_mut(area * 4).enumerate() {
-        for (at, texel) in layer_texels.chunks_exact_mut(4).enumerate() {
+        for (at, texel) in layer_texels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             for (channel, value) in texel.iter_mut().enumerate() {
                 *value = planes[(layer * 4 + channel) * area + at];
             }
@@ -644,11 +645,14 @@ pub fn far_texels(record: &[u8]) -> Result<Vec<u8>, CodecError> {
     Ok(texels)
 }
 
+/// A far page: its mip and page along x and z.
+pub type FarPage = (u8, u16, u16);
+
 /// Takes the pages, their side and their count off the end of what
 /// reading far pages made ([`far_texels`]), leaving `texels` their texels
 /// alone: the pages (each one's mip and page along x and z) and the texels
 /// a side.
-pub fn far_pages(texels: &mut Vec<u8>) -> Result<(Vec<(u8, u16, u16)>, u32), CodecError> {
+pub fn far_pages(texels: &mut Vec<u8>) -> Result<(Vec<FarPage>, u32), CodecError> {
     let invalid = CodecError("invalid far pages");
     let word = |bytes: &[u8]| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     let trailer = texels.len().checked_sub(8).ok_or(invalid)?;
@@ -659,7 +663,9 @@ pub fn far_pages(texels: &mut Vec<u8>) -> Result<(Vec<(u8, u16, u16)>, u32), Cod
         .and_then(|bytes| trailer.checked_sub(bytes))
         .ok_or(invalid)?;
     let pages = texels[first..trailer]
-        .chunks_exact(5)
+        .as_chunks::<5>()
+        .0
+        .iter()
         .map(|page| {
             (
                 page[0],
@@ -747,10 +753,7 @@ impl GroundMaking {
             return Err("heights of tiles standing in for none of their level".into());
         }
         let quads = TILE_QUADS as usize;
-        let samples = [
-            columns as usize * quads + 1,
-            rows as usize * quads + 1,
-        ];
+        let samples = [columns as usize * quads + 1, rows as usize * quads + 1];
         Ok(Self {
             layers: recipe.layers.clone(),
             pyramid,
@@ -879,7 +882,7 @@ enum Running {
     Macro(Box<(Arc<Layers>, Pyramid, MacroJob)>),
     Steadied(Box<Steadying>),
     Shading(Box<ShadingMaking>),
-    FarTexels(Box<Vec<u8>>),
+    FarTexels(Vec<u8>),
 }
 
 /// What a worker holds of terrains, and runs their jobs over: stacks,
@@ -1078,7 +1081,7 @@ impl TerrainWorker {
                 reader.finish().map_err(invalid)?;
                 Running::Shading(Box::new(self.shading(job)?))
             }
-            JobKind::FarTexels => Running::FarTexels(Box::new(input.to_vec())),
+            JobKind::FarTexels => Running::FarTexels(input.to_vec()),
         };
         self.running.insert(id, running);
         Ok(())
@@ -1277,8 +1280,7 @@ impl TerrainWorker {
     /// are `record` ([`shading_key`]).
     fn shared_shading(&self, record: &[u8; 32], key: TileKey) -> Result<TileShading, String> {
         let name = shading_key(record);
-        let shading: TileShading = match self.records.get(&name).map(|bytes| bytes.split_first())
-        {
+        let shading: TileShading = match self.records.get(&name).map(|bytes| bytes.split_first()) {
             Some(Some((&SHADING, rest))) => {
                 codec::decode(rest).map_err(|error| error.to_string())?
             }

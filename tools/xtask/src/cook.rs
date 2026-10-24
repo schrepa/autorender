@@ -74,11 +74,7 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), String> {
             check_pack(root, &program, preset)?;
         } else {
             let pack = format!("{COOKED}/{preset}.pack");
-            run(
-                root,
-                &program,
-                &["--preset", preset, "--cook", &pack],
-            )?;
+            run(root, &program, &["--preset", preset, "--cook", &pack])?;
         }
     }
     write_index(&folder)

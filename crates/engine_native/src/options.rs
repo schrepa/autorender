@@ -685,8 +685,7 @@ impl HostOptions {
         let mut jobs = self.jobs.clone();
         if !self.workers_given {
             let cores = std::thread::available_parallelism().map_or(1, usize::from);
-            jobs.workers =
-                policy::cook_workers(u32::try_from(cores).unwrap_or(u32::MAX)) as usize;
+            jobs.workers = policy::cook_workers(u32::try_from(cores).unwrap_or(u32::MAX)) as usize;
         }
         let mut game = Offscreen::launch_with(size, self.gpu, jobs.pool(true), build)?;
         self.settings.apply(game.host_mut());

@@ -501,7 +501,10 @@ impl AppHost {
     /// interval where the host knows it, else a sixtieth of a second.
     fn resolution_budget(&self, settings: &engine_core::DynamicResolution) -> f64 {
         settings.budget_ms.map_or_else(
-            || self.refresh_ms.unwrap_or(crate::host::policy::FRAME_INTERVAL_MS),
+            || {
+                self.refresh_ms
+                    .unwrap_or(crate::host::policy::FRAME_INTERVAL_MS)
+            },
             f64::from,
         )
     }
@@ -588,8 +591,8 @@ impl AppHost {
             {
                 self.dynamic.frame(settings, ms, budget, true);
             }
-        } else if let Some(interval) = interval
-            .filter(|&ms| ms > 0.0 && ms < crate::host::policy::PACE_INTERVAL_LIMIT_MS)
+        } else if let Some(interval) =
+            interval.filter(|&ms| ms > 0.0 && ms < crate::host::policy::PACE_INTERVAL_LIMIT_MS)
         {
             self.dynamic.frame(settings, interval, budget, false);
         }

@@ -547,17 +547,24 @@
       "type": "object"
     },
     "OccupancyStats": {
-      "description": "The occupancy map around the camera.",
+      "description": "The occupancy maps around the detail eye.",
       "properties": {
+        "averages": {
+          "description": "Times a map took the mean of the finer one inside it where that one\nchanged.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "redraws": {
-          "description": "Times the map was drawn: it follows the camera in steps and redraws\nwhen objects change.",
+          "description": "Times a map redrew cells: each follows the detail eye in steps and\nredraws where objects change.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }
       },
       "required": [
-        "redraws"
+        "redraws",
+        "averages"
       ],
       "type": "object"
     },
@@ -721,62 +728,29 @@
       "type": "object"
     },
     "ShadowStats": {
-      "description": "The sun's shadow maps.",
+      "description": "The sun's shadow clipmap.",
       "properties": {
         "active": {
           "description": "Whether the sun cast shadows this frame.",
           "type": "boolean"
         },
-        "cache_tiles": {
-          "description": "Tiles of the near cascades' caches of the objects terrains place\nthis frame redrew: the strips their windows uncovered, where objects\ncame or went, or all of a cache whose band moved.",
+        "casters": {
+          "description": "Casters the redrawn tiles drew, read back a few frames late; `None`\nbefore the first read-back.",
           "format": "uint32",
           "minimum": 0,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "draws": {
-          "description": "Indexed draws into the shadow maps, beside the camera pass's\n`draw_calls`.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "kept_casters": {
-          "description": "Casters the kept map drew, read back like the near map's: redraws\nonly.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "kept_redraw": {
-          "description": "The kept map's redraw: 0 none, 1 a rectangle of dirty tiles, 2 the\nwhole map (every still caster).",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "level_casters": {
-          "description": "Casters the kept levels drew, read back like the near map's.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "level_tiles": {
-          "description": "Kept-level tiles this frame redrew.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "levels_pending": {
-          "description": "Kept-level tiles no level holds yet: lookups read coarser maps there.",
+          "description": "Indexed draws into the clipmap's tiles, beside the camera pass's\n`draw_calls`.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "moving_casters": {
-          "description": "Casters the moving map drew, read back like the near map's: in a\nsettled scene, the moving renderables.",
+          "description": "Moving casters' draws into the tiles they cross, read back like\n`casters`.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -784,14 +758,20 @@
             "null"
           ]
         },
-        "near_casters": {
-          "description": "Casters the near map drew, read back a few frames late; `None` before\nthe first read-back.",
+        "moving_left_out": {
+          "description": "Moving casters' draws into tiles they cross that their draw groups'\nroom left out, read back like `casters`.",
           "format": "uint32",
           "minimum": 0,
           "type": [
             "integer",
             "null"
           ]
+        },
+        "moving_tiles": {
+          "description": "Tiles moving casters drew over this frame.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "sky_drawn": {
           "description": "Sky occlusion's maps this frame drew: one at most, while the camera\nstrays from them or their still meshes change.",
@@ -804,15 +784,47 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "tiles_drawn": {
+          "description": "Tiles this frame redrew.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tiles_marked": {
+          "description": "Tiles the pixels read back latest read, at the levels their size on\nscreen picks: those the clipmap draws.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tiles_missing": {
+          "description": "Tiles pixels read that hold no drawn slot yet, for want of slots or\nof the redraw budget: lookups read a coarser level there.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tiles_reclaimed": {
+          "description": "Kept tiles whose slots this frame gave to tiles pixels read.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tiles_resident": {
+          "description": "Tiles holding a slot of the atlas: those pixels read and those kept\nfrom before while slots last.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
         "active",
         "draws",
-        "kept_redraw",
-        "level_tiles",
-        "levels_pending",
-        "cache_tiles",
+        "tiles_marked",
+        "tiles_resident",
+        "tiles_drawn",
+        "tiles_reclaimed",
+        "tiles_missing",
+        "moving_tiles",
         "sky_maps",
         "sky_drawn"
       ],
@@ -838,26 +850,48 @@
       ],
       "type": "object"
     },
-    "TerrainRenderStats": {
-      "description": "Terrains.",
+    "TerrainBounceStats": {
+      "description": "Terrains' bounce light.",
       "properties": {
-        "back_facing_patches": {
-          "description": "Patches within the camera's frustum it skips as every triangle faces\naway from the eye: none of them could show.",
+        "dropped": {
+          "description": "Terrains whose bounce light the horizon maps' layers or the probes'\nbuffers could not hold this frame, which take none.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "bounce_probes": {
-          "description": "The probe columns bounce light relit around the camera this frame.",
+        "levels": {
+          "description": "The most levels of probes a terrain's bounce light relit this frame:\nthose whose reach meets the terrain, the coarsest always.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "bounced": {
+        "probes": {
+          "description": "The probes bounce light relit this frame, over every level around\nthe detail eye.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "relit": {
           "description": "Terrains whose bounce light relit this frame: every frame, however\nthe sun and sky stand.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        }
+      },
+      "required": [
+        "relit",
+        "probes",
+        "levels",
+        "dropped"
+      ],
+      "type": "object"
+    },
+    "TerrainRenderStats": {
+      "description": "Terrains.",
+      "properties": {
+        "bounce": {
+          "$ref": "#/$defs/TerrainBounceStats",
+          "description": "Bounce light this frame."
         },
         "dropped_materials": {
           "description": "Surface materials past the palette's capacity, or whose maps the\nshared arrays cannot hold (block compressed, or sized unlike the first\nmaterial's), which show a plain color instead.",
@@ -883,8 +917,8 @@
           "minimum": 0,
           "type": "integer"
         },
-        "fallback_patches": {
-          "description": "Patches standing in for finer levels not resident yet.",
+        "fallback_tiles": {
+          "description": "Tiles the camera's view draws and shows that are not resident yet,\nwhose ground coarser tiles stand in for.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -895,14 +929,14 @@
           "minimum": 0,
           "type": "integer"
         },
-        "hidden_patches": {
-          "description": "Patches within the camera's frustum it skips as nearer ground hides\nthem from the eye: none of them could show.",
+        "horizons": {
+          "description": "Terrains casting long sun shadows through horizon maps.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "horizons": {
-          "description": "Terrains casting long sun shadows through horizon maps.",
+        "leaves": {
+          "description": "Leaves of the terrains' subdivisions the camera drew, as read back a\nfew frames later.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -925,12 +959,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "patches": {
-          "description": "Patches the camera drew.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "placed_far_objects": {
           "description": "Of those, objects standing far away, which hide where the tiles\nholding them instead are resident.",
           "format": "uint32",
@@ -949,8 +977,20 @@
           "minimum": 0,
           "type": "integer"
         },
+        "refused_splits": {
+          "description": "Splits the subdivisions refused for want of room for their leaves\n(`TerrainSettings::subdivision_leaves`), as read back: the ground\nthere stays coarser.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "shadow_patches": {
-          "description": "Patches drawn into shadow maps.",
+          "description": "Patches the shadow clipmap's regions drew of the ground.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shallow_subdivisions": {
+          "description": "Terrains whose subdivision the device's storage bindings keep\nshallower than `TerrainSettings::subdivision_depth` asks.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -968,7 +1008,7 @@
           "type": "integer"
         },
         "triangles": {
-          "description": "Triangles the camera drew.",
+          "description": "Triangles of those leaves' meshlets.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1017,21 +1057,20 @@
         }
       },
       "required": [
-        "patches",
+        "leaves",
         "triangles",
+        "refused_splits",
+        "shallow_subdivisions",
         "shadow_patches",
-        "back_facing_patches",
-        "hidden_patches",
         "tiles",
         "loading_tiles",
         "gpu_controls",
         "dropped_tiles",
-        "fallback_patches",
+        "fallback_tiles",
         "horizons",
         "sky_maps",
         "lighting_uploads",
-        "bounced",
-        "bounce_probes",
+        "bounce",
         "macro_maps",
         "dropped_materials",
         "vt_slots",
@@ -1154,8 +1193,14 @@
           "minimum": 0,
           "type": "integer"
         },
-        "patches": {
-          "description": "Terrain patches holding water drawn.",
+        "dropped_leaves": {
+          "description": "Leaves of terrains' subdivisions past the room the listing of\nwater's leaves held the last read-back frame, which went untested,\nso water over them did not draw: the room grows to hold them a few\nframes later.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "leaves": {
+          "description": "Leaves of terrains' subdivisions water may stand over that the last\nread-back frame drew, a few frames late.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1168,7 +1213,8 @@
         }
       },
       "required": [
-        "patches",
+        "leaves",
+        "dropped_leaves",
         "blocks",
         "dropped_blocks",
         "simulated_cells"
@@ -1190,10 +1236,6 @@
     "clouds": {
       "$ref": "#/$defs/CloudStats",
       "description": "Clouds."
-    },
-    "contact_shadows": {
-      "$ref": "#/$defs/Applied",
-      "description": "Contact shadows."
     },
     "culled_instances": {
       "description": "Valid instances culling proved outside the view.",
@@ -1312,7 +1354,7 @@
     },
     "occupancy": {
       "$ref": "#/$defs/OccupancyStats",
-      "description": "The occupancy map."
+      "description": "The occupancy maps."
     },
     "ocean": {
       "$ref": "#/$defs/OceanStats",
@@ -1542,7 +1584,6 @@
     "render_passes",
     "shadows",
     "ambient_occlusion",
-    "contact_shadows",
     "bloom",
     "local_lights",
     "sun_shafts",

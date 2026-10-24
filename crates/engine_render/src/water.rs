@@ -202,8 +202,12 @@ impl Leaves {
         let fits = self.list.room() / 4 / u64::from(terrains);
         let within = fits.min(u64::from(u32::MAX)) as u32 / 32 * 32;
         let room = wanted.max(self.room).min(within);
-        let mut replaced = self.list.grow(device, u64::from(terrains) * u64::from(room) * 4);
-        replaced |= self.bits.grow(device, u64::from(terrains) * u64::from(room / 8));
+        let mut replaced = self
+            .list
+            .grow(device, u64::from(terrains) * u64::from(room) * 4);
+        replaced |= self
+            .bits
+            .grow(device, u64::from(terrains) * u64::from(room / 8));
         if u64::from(terrains) * size_of::<WaterDraw>() as u64 > self.draws.size() {
             self.draws = draws_buffer(device, terrains.next_power_of_two());
             replaced = true;
@@ -991,12 +995,9 @@ impl WaterPass {
         (camera, profiler): (&wgpu::BindGroup, &GpuProfiler),
     ) {
         let leaves = &self.leaves;
-        let (Some(tiles), Some((_, groups)), Some([test, list]), Some(lists)) = (
-            &self.tiles,
-            &self.group,
-            &leaves.pipelines,
-            &leaves.lists,
-        ) else {
+        let (Some(tiles), Some((_, groups)), Some([test, list]), Some(lists)) =
+            (&self.tiles, &self.group, &leaves.pipelines, &leaves.lists)
+        else {
             return;
         };
         let stride = size_of::<WaterDraw>() as u64;

@@ -19,7 +19,9 @@ use engine_core::terrain_data::shallow_water::{UNHELD, step_seconds};
 
 use crate::gpu_layouts::constants::SIM_STEPPING;
 use crate::gpu_layouts::water::SimSlot;
-use crate::water_kernels::{Capacity, Kernels, SlotBuffers, encode_steps, grid, slot_largest_bytes};
+use crate::water_kernels::{
+    Capacity, Kernels, SlotBuffers, encode_steps, grid, slot_largest_bytes,
+};
 
 /// The most steps a frame runs, and the most seconds a frame simulates:
 /// longer frames simulate less time than passed. Eight steps of cells half
@@ -142,7 +144,12 @@ impl WaterSim {
             &[SimSlot {
                 shape: [square.cells, square.cells, SIM_STEPPING, current.sourced],
                 step: [square.cell, step, 0.0, 0.0],
-                blocks: [stored.blocks[0], stored.blocks[1], stored.stored() as u32, 0],
+                blocks: [
+                    stored.blocks[0],
+                    stored.blocks[1],
+                    stored.stored() as u32,
+                    0,
+                ],
             }],
         );
     }

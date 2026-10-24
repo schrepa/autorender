@@ -11,8 +11,6 @@ export interface FrameStats {
   bloom: Applied;
   /** Clouds. */
   clouds: CloudStats;
-  /** Contact shadows. */
-  contact_shadows: Applied;
   /** Valid instances culling proved outside the view. */
   culled_instances: number;
   /** Whether frustum culling is on. */
@@ -85,7 +83,7 @@ export interface FrameStats {
   navigation: NavStats;
   /** Occlusion culling. */
   occlusion_culling: CullingStats;
-  /** The occupancy map. */
+  /** The occupancy maps. */
   occupancy: OccupancyStats;
   /** The sea. */
   ocean: OceanStats;
@@ -455,11 +453,16 @@ export interface NavStats {
   work: number;
 }
 
-/** The occupancy map around the camera. */
+/** The occupancy maps around the detail eye. */
 export interface OccupancyStats {
   /**
-   * Times the map was drawn: it follows the camera in steps and redraws
-   * when objects change.
+   * Times a map took the mean of the finer one inside it where that one
+   * changed.
+   */
+  averages: number;
+  /**
+   * Times a map redrew cells: each follows the detail eye in steps and
+   * redraws where objects change.
    */
   redraws: number;
 }
@@ -542,47 +545,32 @@ export interface ResolutionStats {
   render_width: number;
 }
 
-/** The sun's shadow maps. */
+/** The sun's shadow clipmap. */
 export interface ShadowStats {
   /** Whether the sun cast shadows this frame. */
   active: boolean;
   /**
-   * Tiles of the near cascades' caches of the objects terrains place
-   * this frame redrew: the strips their windows uncovered, where objects
-   * came or went, or all of a cache whose band moved.
+   * Casters the redrawn tiles drew, read back a few frames late; `None`
+   * before the first read-back.
    */
-  cache_tiles: number;
+  casters: number | null;
   /**
-   * Indexed draws into the shadow maps, beside the camera pass's
+   * Indexed draws into the clipmap's tiles, beside the camera pass's
    * `draw_calls`.
    */
   draws: number;
   /**
-   * Casters the kept map drew, read back like the near map's: redraws
-   * only.
-   */
-  kept_casters: number | null;
-  /**
-   * The kept map's redraw: 0 none, 1 a rectangle of dirty tiles, 2 the
-   * whole map (every still caster).
-   */
-  kept_redraw: number;
-  /** Casters the kept levels drew, read back like the near map's. */
-  level_casters: number | null;
-  /** Kept-level tiles this frame redrew. */
-  level_tiles: number;
-  /** Kept-level tiles no level holds yet: lookups read coarser maps there. */
-  levels_pending: number;
-  /**
-   * Casters the moving map drew, read back like the near map's: in a
-   * settled scene, the moving renderables.
+   * Moving casters' draws into the tiles they cross, read back like
+   * `casters`.
    */
   moving_casters: number | null;
   /**
-   * Casters the near map drew, read back a few frames late; `None` before
-   * the first read-back.
+   * Moving casters' draws into tiles they cross that their draw groups'
+   * room left out, read back like `casters`.
    */
-  near_casters: number | null;
+  moving_left_out: number | null;
+  /** Tiles moving casters drew over this frame. */
+  moving_tiles: number;
   /**
    * Sky occlusion's maps this frame drew: one at most, while the camera
    * strays from them or their still meshes change.
@@ -594,6 +582,25 @@ export interface ShadowStats {
    * at most, and until a direction's are drawn it counts as open sky.
    */
   sky_maps: number;
+  /** Tiles this frame redrew. */
+  tiles_drawn: number;
+  /**
+   * Tiles the pixels read back latest read, at the levels their size on
+   * screen picks: those the clipmap draws.
+   */
+  tiles_marked: number;
+  /**
+   * Tiles pixels read that hold no drawn slot yet, for want of slots or
+   * of the redraw budget: lookups read a coarser level there.
+   */
+  tiles_missing: number;
+  /** Kept tiles whose slots this frame gave to tiles pixels read. */
+  tiles_reclaimed: number;
+  /**
+   * Tiles holding a slot of the atlas: those pixels read and those kept
+   * from before while slots last.
+   */
+  tiles_resident: number;
 }
 
 /** The physically based sky, and the exposure frames show. */
@@ -608,20 +615,34 @@ export interface SkyStats {
   tables: number;
 }
 
-/** Terrains. */
-export interface TerrainRenderStats {
+/** Terrains' bounce light. */
+export interface TerrainBounceStats {
   /**
-   * Patches within the camera's frustum it skips as every triangle faces
-   * away from the eye: none of them could show.
+   * Terrains whose bounce light the horizon maps' layers or the probes'
+   * buffers could not hold this frame, which take none.
    */
-  back_facing_patches: number;
-  /** The probe columns bounce light relit around the camera this frame. */
-  bounce_probes: number;
+  dropped: number;
+  /**
+   * The most levels of probes a terrain's bounce light relit this frame:
+   * those whose reach meets the terrain, the coarsest always.
+   */
+  levels: number;
+  /**
+   * The probes bounce light relit this frame, over every level around
+   * the detail eye.
+   */
+  probes: number;
   /**
    * Terrains whose bounce light relit this frame: every frame, however
    * the sun and sky stand.
    */
-  bounced: number;
+  relit: number;
+}
+
+/** Terrains. */
+export interface TerrainRenderStats {
+  /** Bounce light this frame. */
+  bounce: TerrainBounceStats;
   /**
    * Surface materials past the palette's capacity, or whose maps the
    * shared arrays cannot hold (block compressed, or sized unlike the first
@@ -642,17 +663,20 @@ export interface TerrainRenderStats {
    * the device's texture array layers.
    */
   dropped_vt_pages: number;
-  /** Patches standing in for finer levels not resident yet. */
-  fallback_patches: number;
+  /**
+   * Tiles the camera's view draws and shows that are not resident yet,
+   * whose ground coarser tiles stand in for.
+   */
+  fallback_tiles: number;
   /** Tiles the GPU gave control values this frame. */
   gpu_controls: number;
-  /**
-   * Patches within the camera's frustum it skips as nearer ground hides
-   * them from the eye: none of them could show.
-   */
-  hidden_patches: number;
   /** Terrains casting long sun shadows through horizon maps. */
   horizons: number;
+  /**
+   * Leaves of the terrains' subdivisions the camera drew, as read back a
+   * few frames later.
+   */
+  leaves: number;
   /**
    * Maps of terrains' lighting this frame uploaded, as it arrived or
    * changed: sky and horizon maps, one each per terrain. The sun moving
@@ -666,8 +690,6 @@ export interface TerrainRenderStats {
    * bakes give their ground.
    */
   macro_maps: number;
-  /** Patches the camera drew. */
-  patches: number;
   /**
    * Of those, objects standing far away, which hide where the tiles
    * holding them instead are resident.
@@ -684,13 +706,24 @@ export interface TerrainRenderStats {
    * on the GPU every frame.
    */
   placed_objects: number;
-  /** Patches drawn into shadow maps. */
+  /**
+   * Splits the subdivisions refused for want of room for their leaves
+   * (`TerrainSettings::subdivision_leaves`), as read back: the ground
+   * there stays coarser.
+   */
+  refused_splits: number;
+  /** Patches the shadow clipmap's regions drew of the ground. */
   shadow_patches: number;
+  /**
+   * Terrains whose subdivision the device's storage bindings keep
+   * shallower than `TerrainSettings::subdivision_depth` asks.
+   */
+  shallow_subdivisions: number;
   /** Terrains whose sky visibility maps are here. */
   sky_maps: number;
   /** Tiles resident on the GPU. */
   tiles: number;
-  /** Triangles the camera drew. */
+  /** Triangles of those leaves' meshlets. */
   triangles: number;
   /** Virtual texture pages baked this frame (absent or stale). */
   vt_bakes: number;
@@ -767,8 +800,18 @@ export interface WaterStats {
    * layers, whose water does not draw.
    */
   dropped_blocks: number;
-  /** Terrain patches holding water drawn. */
-  patches: number;
+  /**
+   * Leaves of terrains' subdivisions past the room the listing of
+   * water's leaves held the last read-back frame, which went untested,
+   * so water over them did not draw: the room grows to hold them a few
+   * frames later.
+   */
+  dropped_leaves: number;
+  /**
+   * Leaves of terrains' subdivisions water may stand over that the last
+   * read-back frame drew, a few frames late.
+   */
+  leaves: number;
   /**
    * Cells along a side of the square around the camera over which
    * rivers run live: 0 while none do, fewer than the water settings ask

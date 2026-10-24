@@ -35,7 +35,9 @@ use std::sync::Arc;
 use bytemuck::Zeroable;
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::terrain_data::bounce::{PROBE_BYTES, bin_moments};
-use engine_core::{MAX_BOUNCE_LEVELS, RenderTerrain, RenderTerrains, TerrainBounce, TerrainSettings};
+use engine_core::{
+    MAX_BOUNCE_LEVELS, RenderTerrain, RenderTerrains, TerrainBounce, TerrainSettings,
+};
 
 use crate::bindings::BOUNCE;
 use crate::buffers::Growable;
@@ -597,8 +599,7 @@ impl Bounce {
         }
         let levels = self.widest.iter().rposition(|&widest| widest > 0);
         let levels = levels.map_or(0, |last| last + 1);
-        self.gather_groups
-            .resize_with(levels, GroupCache::default);
+        self.gather_groups.resize_with(levels, GroupCache::default);
         let mut gathers = Vec::with_capacity(levels);
         for (records, group) in self.terrains.iter().zip(&mut self.gather_groups) {
             gathers.push(group.bind(
@@ -711,12 +712,7 @@ fn terrain_record(
     BounceTerrain {
         place: [terrain.origin.x, terrain.origin.z, extent.x, extent.y],
         grid: [bounce.probes, bounce.texels(), palette, colors],
-        layers: [
-            GROUND_LAYERS * slot,
-            slot,
-            BOUNCE_LAYERS as u32 * slot,
-            sky,
-        ],
+        layers: [GROUND_LAYERS * slot, slot, BOUNCE_LAYERS as u32 * slot, sky],
         sources: [bases[0], bases[1], bases[2], index as u32],
         level: [0; 4],
         kept: [0; 4],
@@ -748,7 +744,7 @@ fn levels(
         .max(short)
         .next_multiple_of(2)
         .min(probes);
-    let mut levels = 1;
+    let mut levels: u32 = 1;
     while probes >> (levels - 1) > columns {
         levels += 1;
     }
@@ -803,7 +799,10 @@ fn mean_offset(probes: u32, level: u32) -> u32 {
 /// side: a record for each probe of each level from the third on.
 fn mean_bytes(probes: u32) -> usize {
     let levels = (2..u32::BITS).take_while(|&level| probes >> level > 0);
-    levels.map(|level| (probes >> level).pow(2) as usize).sum::<usize>() * PROBE_BYTES
+    levels
+        .map(|level| (probes >> level).pow(2) as usize)
+        .sum::<usize>()
+        * PROBE_BYTES
 }
 
 /// The means of `bounce`'s probes from its third level on, each level's
@@ -867,11 +866,7 @@ fn mean_of(four: [&[u8]; 4]) -> [u8; PROBE_BYTES] {
             .map(|&record| share(record) * u32::from(record[2 * bin + 1]))
             .sum();
         mean[2 * bin] = ((filled + 2) / 4) as u8;
-        mean[2 * bin + 1] = if filled > 0 {
-            ((coded + filled / 2) / filled) as u8
-        } else {
-            0
-        };
+        mean[2 * bin + 1] = (coded + filled / 2).checked_div(filled).unwrap_or(0) as u8;
     }
     mean
 }

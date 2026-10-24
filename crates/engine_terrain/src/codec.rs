@@ -175,7 +175,7 @@ pub(crate) fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32
 
 /// Writes `planes`, square planes of bytes `side` texels a side one after
 /// another, each byte as its difference (wrapping) from what its written
-/// neighbours predict (left plus up less their corner, as [`put_grid`]
+/// neighbours predict (left plus up less their corner, as `put_grid`
 /// predicts), which smooth maps leave mostly small for the cook's
 /// compression.
 pub fn put_planes(out: &mut Writer, planes: &[u8], side: usize) {
@@ -261,11 +261,7 @@ pub(crate) fn get_wide_planes(
 /// compression. `values` holds whole records.
 pub(crate) fn put_records(out: &mut Writer, values: &[u8], stride: usize) {
     out.put(&(values.len() as u64));
-    let count = if stride == 0 {
-        0
-    } else {
-        values.len() / stride
-    };
+    let count = values.len().checked_div(stride).unwrap_or(0);
     let mut residuals = Vec::with_capacity(values.len());
     for place in 0..stride {
         let mut before = 0_u8;

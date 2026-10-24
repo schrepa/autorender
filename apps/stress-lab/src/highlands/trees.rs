@@ -66,9 +66,12 @@ fn conifer_record(world: &mut World, seed: u32, detail: usize) -> engine::Result
 /// Conifer `seed`'s shadow proxy as a record ([`records::mesh`]): its
 /// handle, reserved until the record is here.
 fn shadow_record(world: &mut World, seed: u32) -> engine::Result<MeshHandle> {
-    records::mesh(world, "highlands_conifer_shadow", &seed.to_le_bytes(), move || {
-        shadow_proxy(seed)
-    })
+    records::mesh(
+        world,
+        "highlands_conifer_shadow",
+        &seed.to_le_bytes(),
+        move || shadow_proxy(seed),
+    )
 }
 
 /// The bark and needle atlas as a texture record ([`records::textures`]),

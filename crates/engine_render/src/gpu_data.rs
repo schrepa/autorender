@@ -834,9 +834,8 @@ pub(crate) use crate::gpu_layouts::scene::BatchData;
 
 pub(crate) use crate::gpu_layouts::scene::SkinnedData;
 
-/// Clip-space depth of the near and far planes: depth is reversed,
-/// so nearer is larger and the depth buffer clears to the far plane.
-pub(crate) const NEAR_DEPTH: f32 = 1.0;
+/// Clip-space depth of the far plane: depth is reversed, so nearer is
+/// larger and the depth buffer clears to the far plane.
 pub(crate) const FAR_DEPTH: f32 = 0.0;
 
 /// Inward clip planes (WebGPU depth range) of a view-projection matrix and its

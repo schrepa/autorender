@@ -153,11 +153,6 @@ impl MapTextures {
             table,
         }
     }
-
-    /// The atlas's layout.
-    pub(super) fn layout(&self) -> AtlasLayout {
-        self.key.atlas
-    }
 }
 
 pub(super) struct ShadowMaps {

@@ -22,9 +22,9 @@ fn mark_level(level: u32, light: vec3<f32>) {
             continue;
         }
         let bit = (held * side + at.cell.y) * side + at.cell.x;
-        let set = 1u << (bit % 32u);
-        if (atomicLoad(&shadow_marks[bit / 32u]) & set) == 0u {
-            atomicOr(&shadow_marks[bit / 32u], set);
+        let mask = 1u << (bit % 32u);
+        if (atomicLoad(&shadow_marks[bit / 32u]) & mask) == 0u {
+            atomicOr(&shadow_marks[bit / 32u], mask);
         }
         return;
     }

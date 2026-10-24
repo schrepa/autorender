@@ -488,7 +488,12 @@ impl VirtualTexture {
         self.stale_changed(terrains, changed);
         self.move_windows(terrains, eye);
         self.ask(terrains, eye);
-        self.far_pages((device, queue), terrains, (sources, settings.pixel_error), maps);
+        self.far_pages(
+            (device, queue),
+            terrains,
+            (sources, settings.pixel_error),
+            maps,
+        );
         self.stats.bakes = (self.bakes.list.len() + self.far.means()) as u32;
         self.write(device, queue, (directory, base, generation), kept.len());
         self.stats.slots = self.capacity;
@@ -706,8 +711,11 @@ impl VirtualTexture {
                     let key = (*key)?;
                     let changed = self.changed[slot]?;
                     let asked = self.asked[slot] + KEEP_FRAMES > frame;
-                    (asked && changed + SETTLE_FRAMES <= frame)
-                        .then_some((changed, slot as u32, key))
+                    (asked && changed + SETTLE_FRAMES <= frame).then_some((
+                        changed,
+                        slot as u32,
+                        key,
+                    ))
                 })
                 .collect();
             stale.sort_unstable_by_key(|&(changed, slot, _)| (changed, slot));
@@ -895,7 +903,10 @@ impl VirtualTexture {
             "engine/terrain-vt-bake",
             &TERRAIN_VT_BAKE,
             &self.bake_layout,
-            &[crate::buffers::entry("terrain_vt_bakes", &self.bakes.buffer)],
+            &[crate::buffers::entry(
+                "terrain_vt_bakes",
+                &self.bakes.buffer,
+            )],
         );
         let mut start = 0;
         while start < self.bakes.list.len() {

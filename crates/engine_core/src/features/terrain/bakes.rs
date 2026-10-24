@@ -66,7 +66,11 @@ pub(super) fn bake(
         // As its layers can hold whole heightmaps, its identity is
         // its input's hash.
         let identity = content_hash(&input).to_le_bytes();
-        let record = RecordKey::new(&engine_terrain::sources::BAKES, BakeJob::KIND.name(), &identity);
+        let record = RecordKey::new(
+            &engine_terrain::sources::BAKES,
+            BakeJob::KIND.name(),
+            &identity,
+        );
         state.bake.key = Some(record);
         state.bake.job = Some(slots.jobs.submit_record(
             BakeJob::KIND.name(),

@@ -126,9 +126,8 @@ impl River {
     pub(crate) fn heading(&self, segment: usize, t: f32) -> Vec2 {
         let last = self.points.len().saturating_sub(1);
         let point = |index: usize| Vec2::from(self.points[index.min(last)]);
-        let tangent = |index: usize| {
-            (point(index + 1) - point(index.saturating_sub(1))).normalize_or_zero()
-        };
+        let tangent =
+            |index: usize| (point(index + 1) - point(index.saturating_sub(1))).normalize_or_zero();
         let (start, end) = (tangent(segment), tangent(segment + 1));
         (start + (end - start) * t)
             .try_normalize()
@@ -148,7 +147,7 @@ pub(crate) struct Station {
 }
 
 /// A terrain's rivers, where the deepest point of each one's channel lies
-/// across it at each of its points ([`shifts`]), the widest half width of
+/// across it at each of its points (`shifts`), the widest half width of
 /// any, and a grid of the river segments within their banks' reach of each
 /// cell.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -443,8 +442,12 @@ impl Rivers {
         });
         // Its knobs and those of the segments beside it, listed segment by
         // segment.
-        let first = line.knobs.partition_point(|knob| knob.segment + 1 < segment);
-        let end = line.knobs.partition_point(|knob| knob.segment <= segment + 1);
+        let first = line
+            .knobs
+            .partition_point(|knob| knob.segment + 1 < segment);
+        let end = line
+            .knobs
+            .partition_point(|knob| knob.segment <= segment + 1);
         Segment {
             line,
             shifts: &self.shifts[river as usize],
@@ -458,10 +461,7 @@ impl Rivers {
             } else {
                 Vec2::Y
             },
-            next: line
-                .points
-                .get(index + 2)
-                .map(|&next| Vec2::from(next) - b),
+            next: line.points.get(index + 2).map(|&next| Vec2::from(next) - b),
             crest,
             riser,
             drop,
@@ -543,7 +543,11 @@ impl Rivers {
         let (line, index) = (segment.line, segment.index);
         let at =
             |values: &[f32]| values[index] + (values[index + 1] - values[index]) * reading.along;
-        let nearer = if reading.along < 0.5 { index } else { index + 1 };
+        let nearer = if reading.along < 0.5 {
+            index
+        } else {
+            index + 1
+        };
         Some(Bed {
             reach: line.reach[nearer],
             d50: at(&line.d50),
@@ -631,8 +635,11 @@ fn shifts(river: &River) -> Vec<f32> {
             continue;
         }
         // Per meter, positive where the line turns right.
-        let curvature =
-            2.0 * before.normalize_or_zero().perp_dot(after.normalize_or_zero()) / lengths;
+        let curvature = 2.0
+            * before
+                .normalize_or_zero()
+                .perp_dot(after.normalize_or_zero())
+            / lengths;
         let bend = curvature * river.half[index];
         shifts[index] = -river.half[index] * bend / (1.0 + bend.abs() / LEAN);
     }
@@ -736,7 +743,7 @@ impl Segment<'_> {
     /// line's own ends and the outer side of a bend after it, where no
     /// other segment's part of the line lies nearer. Across the line the
     /// section is a parabola from the bed at the channel's deepest point
-    /// ([`shifts`]) up to the banks' top (the bed plus the depth) at either
+    /// (`shifts`) up to the banks' top (the bed plus the depth) at either
     /// edge, so a bend's outer bank stands steeper than its inner one, then
     /// banks rising at [`BANK_SLOPE`]; the square takes its lowest, at its
     /// point nearest the deepest. Values run linearly along the segment, but
@@ -753,7 +760,8 @@ impl Segment<'_> {
         let held = if projected < 0.0 {
             self.index == 0
         } else if projected > 1.0 {
-            self.next.is_none_or(|next| (point - self.b).dot(next) < 0.0)
+            self.next
+                .is_none_or(|next| (point - self.b).dot(next) < 0.0)
         } else {
             true
         };
@@ -829,9 +837,7 @@ impl Taken {
     #[inline]
     fn add(&mut self, id: [u32; 2], reading: &Reading) {
         self.edge = min(self.edge, reading.edge);
-        if reading.section < self.section
-            || (reading.section == self.section && id < self.holder)
-        {
+        if reading.section < self.section || (reading.section == self.section && id < self.holder) {
             self.section = reading.section;
             self.holder = id;
         }
@@ -965,14 +971,22 @@ impl RiverRaster {
     pub(crate) fn water(&self, rivers: &Rivers, row: usize, column: usize) -> Option<RiverWater> {
         let point = Vec2::new(self.xs[column], self.zs[row]);
         rivers
-            .water(&self.taken[row * self.xs.len() + column], point, self.spacing)
+            .water(
+                &self.taken[row * self.xs.len() + column],
+                point,
+                self.spacing,
+            )
             .map(|(water, _)| water)
     }
 
     /// The bed at the raster's sample (row, column), as `water` reads its water.
     pub(crate) fn bed(&self, rivers: &Rivers, row: usize, column: usize) -> Option<Bed> {
         let point = Vec2::new(self.xs[column], self.zs[row]);
-        rivers.bed(&self.taken[row * self.xs.len() + column], point, self.spacing)
+        rivers.bed(
+            &self.taken[row * self.xs.len() + column],
+            point,
+            self.spacing,
+        )
     }
 
     /// Every sample's meters to the nearest river's edge as a tile holds
@@ -1086,7 +1100,11 @@ pub(crate) fn trace(
         let last = course.len() - 1;
         // Where it joins other water, its last sample carries its own.
         let drains = |index: usize| {
-            let at = if joins && index == last { index - 1 } else { index };
+            let at = if joins && index == last {
+                index - 1
+            } else {
+                index
+            };
             area[course[at]]
         };
         let mut shaping = vec![0];

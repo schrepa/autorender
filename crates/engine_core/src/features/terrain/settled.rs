@@ -318,7 +318,10 @@ impl Settled {
                 self.summaries.get(&key).copied() != region && !self.failed.contains_key(&key)
             })
             .count() as u64;
-        let running = self.waters.iter().filter(|(_, watering)| watering.job.is_some());
+        let running = self
+            .waters
+            .iter()
+            .filter(|(_, watering)| watering.job.is_some());
         records + self.waters_waiting + running.count() as u64
     }
 
@@ -1062,9 +1065,7 @@ fn take_arrived(
         settled.revision += 1;
         let bytes = match output {
             Ok(bytes) => bytes,
-            Err(error)
-                if matches!(asked.phase, Phase::Fetching(_)) && error == MISSING_RECORD =>
-            {
+            Err(error) if matches!(asked.phase, Phase::Fetching(_)) && error == MISSING_RECORD => {
                 settled.missing.insert(asked.record);
                 continue;
             }
@@ -1288,7 +1289,12 @@ fn take_waters(state: &mut TerrainState, slots: &mut JobBudget<'_>, work: &Work,
         if taken && work.expired() {
             break;
         }
-        let Some(id) = state.settled.waters.get(&key).and_then(|watering| watering.job) else {
+        let Some(id) = state
+            .settled
+            .waters
+            .get(&key)
+            .and_then(|watering| watering.job)
+        else {
             continue;
         };
         let Some(output) = slots.jobs.take(id) else {
@@ -1385,8 +1391,7 @@ fn wants(
         for dz in -1..=1_i32 {
             for dx in -1..=1_i32 {
                 let (x, z) = (i32::from(key.x) + dx, i32::from(key.z) + dz);
-                if (dx, dz) == (0, 0) || x < 0 || z < 0 || x >= columns as i32 || z >= rows as i32
-                {
+                if (dx, dz) == (0, 0) || x < 0 || z < 0 || x >= columns as i32 || z >= rows as i32 {
                     continue;
                 }
                 let at = TileKey::new(0, x as u16, z as u16);
@@ -1572,18 +1577,20 @@ fn give_waters(state: &mut TerrainState, work: &Work) {
         .given
         .retain(|key, _| store.contains(key) || store.in_memory(key));
     let settled = &state.settled;
-    let giving: Vec<(TileKey, Arc<Tile>, Arc<Option<TileWater>>, RecordKey)> = settled
+    // Each tile to give its settled water: its key, ground, water and record.
+    type Giving = (TileKey, Arc<Tile>, Arc<Option<TileWater>>, RecordKey);
+    let giving: Vec<Giving> = settled
         .waters
         .iter()
         .filter_map(|(key, watering)| {
             let water = watering.made.clone()?;
             let tile = store.get(&key)?;
             let held_back = store.watered(&key).is_some_and(Option::is_some);
-            let over = settled.tiles.get(&key).map(|(_, record)| *record) == Some(watering.reads.tile);
-            let holds = settled
-                .given
-                .get(&key)
-                .is_some_and(|(given, record)| Arc::ptr_eq(given, tile) && *record == watering.record);
+            let over =
+                settled.tiles.get(&key).map(|(_, record)| *record) == Some(watering.reads.tile);
+            let holds = settled.given.get(&key).is_some_and(|(given, record)| {
+                Arc::ptr_eq(given, tile) && *record == watering.record
+            });
             (!store.loads(&key) && !held_back && over && !holds)
                 .then(|| (key, Arc::clone(tile), water, watering.record))
         })

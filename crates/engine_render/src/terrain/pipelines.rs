@@ -121,75 +121,74 @@ impl TerrainPipelines {
             deformation.map().1,
             leaves.generation(),
         );
-        let build = |label: &str,
-                     material_maps: &[wgpu::TextureView; 3],
-                     surface_leaves: &wgpu::Buffer| {
-            crate::pipelines::group(
-                device,
-                label,
-                &TERRAIN,
-                &self.layout,
-                &[
-                    ("terrain_heights", crate::pipelines::view(heights)),
-                    (
-                        "terrain_view",
-                        wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &sources.patches.views,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(size_of::<ViewUniform>() as u64),
-                        }),
-                    ),
-                    (
-                        "terrain",
-                        wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &tables.uniforms,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(size_of::<TerrainUniform>() as u64),
-                        }),
-                    ),
-                    crate::buffers::entry("terrain_holes", &tables.holes),
-                    ("terrain_normals", crate::pipelines::view(normals)),
-                    (
-                        "terrain_sky_sampler",
-                        crate::pipelines::sampler(&sources.atlas.sky_sampler),
-                    ),
-                    crate::buffers::entry("terrain_directory", &tables.directory),
-                    ("terrain_control", crate::pipelines::view(control)),
-                    (
-                        "terrain_palette",
-                        wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &tables.palette,
-                            offset: 0,
-                            size: None,
-                        }),
-                    ),
-                    ("terrain_albedo", crate::pipelines::view(&material_maps[0])),
-                    (
-                        "terrain_material_data",
-                        crate::pipelines::view(&material_maps[1]),
-                    ),
-                    (
-                        "terrain_vt_sheets",
-                        crate::pipelines::view(&material_maps[2]),
-                    ),
-                    (
-                        "terrain_material_sampler",
-                        crate::pipelines::sampler(&maps.sampler),
-                    ),
-                    ("terrain_sky", crate::pipelines::view(sky.view())),
-                    (
-                        "terrain_macro",
-                        crate::pipelines::view(sources.macro_maps.view()),
-                    ),
-                    crate::buffers::entry("terrain_deformation", deformation.map().0),
-                    (
-                        "terrain_control_sampler",
-                        crate::pipelines::sampler(&sources.atlas.control_sampler),
-                    ),
-                    crate::buffers::entry("terrain_surface_leaves", surface_leaves),
-                ],
-            )
-        };
+        let build =
+            |label: &str, material_maps: &[wgpu::TextureView; 3], surface_leaves: &wgpu::Buffer| {
+                crate::pipelines::group(
+                    device,
+                    label,
+                    &TERRAIN,
+                    &self.layout,
+                    &[
+                        ("terrain_heights", crate::pipelines::view(heights)),
+                        (
+                            "terrain_view",
+                            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &sources.patches.views,
+                                offset: 0,
+                                size: wgpu::BufferSize::new(size_of::<ViewUniform>() as u64),
+                            }),
+                        ),
+                        (
+                            "terrain",
+                            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &tables.uniforms,
+                                offset: 0,
+                                size: wgpu::BufferSize::new(size_of::<TerrainUniform>() as u64),
+                            }),
+                        ),
+                        crate::buffers::entry("terrain_holes", &tables.holes),
+                        ("terrain_normals", crate::pipelines::view(normals)),
+                        (
+                            "terrain_sky_sampler",
+                            crate::pipelines::sampler(&sources.atlas.sky_sampler),
+                        ),
+                        crate::buffers::entry("terrain_directory", &tables.directory),
+                        ("terrain_control", crate::pipelines::view(control)),
+                        (
+                            "terrain_palette",
+                            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &tables.palette,
+                                offset: 0,
+                                size: None,
+                            }),
+                        ),
+                        ("terrain_albedo", crate::pipelines::view(&material_maps[0])),
+                        (
+                            "terrain_material_data",
+                            crate::pipelines::view(&material_maps[1]),
+                        ),
+                        (
+                            "terrain_vt_sheets",
+                            crate::pipelines::view(&material_maps[2]),
+                        ),
+                        (
+                            "terrain_material_sampler",
+                            crate::pipelines::sampler(&maps.sampler),
+                        ),
+                        ("terrain_sky", crate::pipelines::view(sky.view())),
+                        (
+                            "terrain_macro",
+                            crate::pipelines::view(sources.macro_maps.view()),
+                        ),
+                        crate::buffers::entry("terrain_deformation", deformation.map().0),
+                        (
+                            "terrain_control_sampler",
+                            crate::pipelines::sampler(&sources.atlas.control_sampler),
+                        ),
+                        crate::buffers::entry("terrain_surface_leaves", surface_leaves),
+                    ],
+                )
+            };
         if self.group.stale(&key) {
             let group = build("engine/terrain-group", &maps.views, leaves);
             // The runtime virtual texture's bakes bind a stand-in for the

@@ -34,7 +34,13 @@ async function subdivided() {
 
 try {
   assert.ok(settled.terrain.leaves > 0 && settled.terrain.triangles > 0, "terrain draws");
-  assert.ok(settled.terrain.shadow_patches > 0, "terrain casts shadows");
+  // The ground casts into the shadow clipmap's tiles as they draw, which
+  // finer texels make every one of again.
+  const shadows = (await command("inspect", { component: "Shadows" })).result.value;
+  await command("environment", { shadows: { ...shadows, finest_texel: shadows.finest_texel / 2 } });
+  const cast = await rendersUntil(rendering => rendering.terrain.shadow_patches > 0, "terrain casts shadows");
+  await command("environment", { shadows });
+  await settle();
   assert.equal(settled.terrain.dropped_tiles, 0);
   assert.equal(settled.terrain.dropped_materials, 0);
   assert.ok(settled.terrain.placed_objects > 0, `crates stand on the meadow: ${settled.terrain.placed_objects}`);
@@ -50,7 +56,7 @@ try {
   }
   assert.equal(presented.terrain.placed_impostors, 1, `the balls' impostor comes: ${JSON.stringify(presented)}`);
   assert.equal(presented.level_of_detail.dropped_impostors, 0);
-  checks.push({ check: "streams and draws", tiles: settled.terrain.tiles, leaves: settled.terrain.leaves, triangles: settled.terrain.triangles, placed_impostors: presented.terrain.placed_impostors, placed_far: settled.terrain.placed_far_objects });
+  checks.push({ check: "streams and draws", tiles: settled.terrain.tiles, leaves: settled.terrain.leaves, triangles: settled.terrain.triangles, shadow_patches: cast.terrain.shadow_patches, placed_impostors: presented.terrain.placed_impostors, placed_far: settled.terrain.placed_far_objects });
 
   // Discovery and inspection.
   const listing = await command("describe");

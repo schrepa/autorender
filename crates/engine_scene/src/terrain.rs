@@ -407,27 +407,29 @@ impl PreparedTerrain {
         terrain.surface.assets = self
             .assets
             .iter()
-            .map(|(mesh, material, lods, parts, shadow, sway, collider)| PlacementAsset {
-                mesh: meshes[*mesh],
-                material: materials[*material],
-                lods: lods
-                    .iter()
-                    .map(|&(mesh, error)| PlacementLod {
-                        mesh: meshes[mesh],
-                        error,
-                    })
-                    .collect(),
-                parts: parts
-                    .iter()
-                    .map(|(material, part)| PlacementPart {
-                        material: materials[*material],
-                        meshes: part.iter().map(|&mesh| meshes[mesh]).collect(),
-                    })
-                    .collect(),
-                shadow: shadow.map(|mesh| meshes[mesh]),
-                sway: *sway,
-                collider: *collider,
-            })
+            .map(
+                |(mesh, material, lods, parts, shadow, sway, collider)| PlacementAsset {
+                    mesh: meshes[*mesh],
+                    material: materials[*material],
+                    lods: lods
+                        .iter()
+                        .map(|&(mesh, error)| PlacementLod {
+                            mesh: meshes[mesh],
+                            error,
+                        })
+                        .collect(),
+                    parts: parts
+                        .iter()
+                        .map(|(material, part)| PlacementPart {
+                            material: materials[*material],
+                            meshes: part.iter().map(|&mesh| meshes[mesh]).collect(),
+                        })
+                        .collect(),
+                    shadow: shadow.map(|mesh| meshes[mesh]),
+                    sway: *sway,
+                    collider: *collider,
+                },
+            )
             .collect();
         terrain
     }
@@ -524,6 +526,10 @@ impl SceneTerrain {
     /// material's document material index and each asset's mesh and
     /// material indices.
     #[expect(clippy::type_complexity, reason = "the surface and its indices")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn surface(
         &self,
         path: &str,

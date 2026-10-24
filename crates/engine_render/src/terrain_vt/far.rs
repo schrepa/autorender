@@ -122,6 +122,9 @@ struct Means {
     pipeline: Option<wgpu::ComputePipeline>,
 }
 
+/// What mapping a read back buffer gave: its bytes, or why it failed.
+type Mapped = Result<Vec<u8>, String>;
+
 /// A set's slots read back: the record's key and pages, the slots in their
 /// order, the buffer, whether a frame copied the slots into it and asked
 /// for its map, and what the map gave.
@@ -132,7 +135,7 @@ struct Reading {
     buffer: wgpu::Buffer,
     copied: bool,
     mapping: bool,
-    mapped: Rc<RefCell<Option<Result<Vec<u8>, String>>>>,
+    mapped: Rc<RefCell<Option<Mapped>>>,
 }
 
 /// Every textured terrain's far pages, by terrain id; which slots they pin;
@@ -242,7 +245,9 @@ impl FarPages {
         }
         let count = means.records.len() as u32;
         let layer_bytes = u64::from(READ_ROW * SLOT_TEXELS);
-        means.texels.grow(device, layer_bytes * (LAYERS as u64) * u64::from(count));
+        means
+            .texels
+            .grow(device, layer_bytes * (LAYERS as u64) * u64::from(count));
         let layout = &means.layout;
         let pipeline = means.pipeline.get_or_insert_with(|| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -912,8 +917,8 @@ impl VirtualTexture {
         };
         let row = (SLOT_TEXELS * 4) as usize;
         let mut texels = Vec::with_capacity(pages.len() * LAYERS * LAYER_BYTES);
-        for image in bytes.chunks_exact((READ_ROW * SLOT_TEXELS) as usize) {
-            for line in image.chunks_exact(READ_ROW as usize) {
+        for image in bytes.as_chunks::<{ (READ_ROW * SLOT_TEXELS) as usize }>().0 {
+            for line in image.as_chunks::<{ READ_ROW as usize }>().0 {
                 texels.extend_from_slice(&line[..row]);
             }
         }

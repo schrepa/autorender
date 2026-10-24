@@ -73,7 +73,7 @@ impl FarTerrain {
         let level = self.level;
         let [_, tiles_z] = self.pyramid.tiles(level);
         let ours = |&(owner, key): &(u64, TileKey)| owner == id && u32::from(key.level) == level;
-        for &(_, key) in atlas.changed.iter().filter(|change| ours(*change)) {
+        for &(_, key) in atlas.changed.iter().filter(|change| ours(change)) {
             let at = usize::from(key.x) * tiles_z as usize + usize::from(key.z);
             if let Some(hashes) = self.tiles.get_mut(at) {
                 *hashes = None;

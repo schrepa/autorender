@@ -228,7 +228,7 @@ struct FallShade {
 }
 
 fn shade_fall(input: FallOutput) -> FallShade {
-    let world = input.relative + camera.position.xyz;
+    let world = eye_world(input.relative);
     // Where water is simulated, its water runs over the rock itself: of
     // the sheets, only what falls high over the simulated water below
     // draws, as a fall's curtain does.
@@ -259,7 +259,7 @@ fn shade_fall(input: FallOutput) -> FallShade {
     let tangent = normalize(input.tangent.xyz);
     let across = cross(tangent, normal);
     // The face the eye sees, and how squarely.
-    let facing = dot(normal, view);
+    let facing = dot(normal, view); // optics: the face of the sheet the eye sees
     let seen = select(-normal, normal, facing >= 0.0);
     let squarely = max(abs(facing), 0.05);
     // Where the water passing here was across the sheet and when it left
@@ -270,7 +270,7 @@ fn shade_fall(input: FallOutput) -> FallShade {
     // earlier as it has run farther.
     let shift = fall_shift(number);
     let p = vec2<f32>(side * half, (time - flown) * lip_speed);
-    let crossing = (seen * dot(view, seen) - view) * (thickness / squarely);
+    let crossing = (seen * dot(view, seen) - view) * (thickness / squarely); // optics: the view's way through the sheet
     let far_p = p + vec2<f32>(dot(crossing, across), -dot(crossing, tangent) * lip_speed / speed);
     // Down a chute its pattern draws out into streaks along the water, and
     // rolls pass down it in bands across it.
@@ -360,7 +360,7 @@ fn shade_fall(input: FallOutput) -> FallShade {
     let clear = (1.0 - pow(0.45, 1.0 / squarely))
         * mix(smoothstep(FALL_POOLED.x, FALL_POOLED.y, speed), 1.0, aloft);
     let behind = water_ground(input.clip_position.xy);
-    let meeting = smoothstep(0.0, FALL_SOFT, length(behind) - length(input.relative));
+    let meeting = smoothstep(0.0, FALL_SOFT, length(behind) - length(input.relative)); // optics: what the view meets behind the sheet
     // A boil's foam breaks into patches toward its rim.
     let rim = input.state.w * smoothstep(0.25, 0.7, out);
     let coverage = cover * mix(clear, 1.0, patches) * smoothstep(-0.3, 0.0, flown) * meeting

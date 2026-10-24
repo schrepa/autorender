@@ -12,7 +12,7 @@
 //! takes: pools and riffles where it runs gently, a plane bed steeper, steps
 //! with pools behind their crests steeper still, and a cascade of steps and
 //! boulders steepest. Its water runs at the flow it carries most of the
-//! time, a [`FLOODS`]th of its floods', standing in its channel as deep as
+//! time, a `FLOODS`th of its floods', standing in its channel as deep as
 //! Manning's law has that flow stand in it, and level behind a step's crest
 //! where a step holds it back. Where its water drops steeper than water
 //! clings to, by its critical depth twice over or more, the river falls:
@@ -112,8 +112,8 @@ pub(crate) fn friction_slope(discharge: f32, width: f32, depth: f32, d84: f32) -
     let relative = radius / d84;
     let [deep, shallow] = FERGUSON.map(|coefficient| coefficient * coefficient);
     // The square of the speed over the shear velocity, (g R S)^1/2.
-    let ratio = deep * shallow * relative * relative
-        / (deep + shallow * libm::powf(relative, 5.0 / 3.0));
+    let ratio =
+        deep * shallow * relative * relative / (deep + shallow * libm::powf(relative, 5.0 / 3.0));
     speed * speed / (GRAVITY * radius * ratio)
 }
 

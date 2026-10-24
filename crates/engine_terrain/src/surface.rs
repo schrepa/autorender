@@ -237,7 +237,10 @@ impl ExtraRules for SteepLayer {
         if self.slope[0] < self.slope[1] {
             Ok(())
         } else {
-            Err(InvalidSetting::new("slope", "must rise: its first slope below its second"))
+            Err(InvalidSetting::new(
+                "slope",
+                "must rise: its first slope below its second",
+            ))
         }
     }
 }
@@ -467,6 +470,10 @@ fn fold(
 }
 
 impl Compiled {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn from(mask: &Mask, path: &str, depth: usize) -> Result<Self, BiomeError> {
         let fail = |rule: &str| BiomeError {
             path: path.to_owned(),

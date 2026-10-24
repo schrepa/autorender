@@ -784,10 +784,7 @@ export interface PresentationStateView {
  * entity whose renderer slot drew it, where one did.
  */
 export interface ProbeResult {
-  /**
-   * Whether what drew it casts sun shadows, and for placed objects
-   * whether the kept map holds them.
-   */
+  /** Whether what drew it casts sun shadows. */
   casts_shadows: boolean;
   /**
    * Its depth in the depth buffer (reversed: 1 nearest, 0 the far
@@ -810,13 +807,13 @@ export interface ProbeResult {
   fading: boolean;
   /** Fragments that passed the depth test there as the frame drew it. */
   fragments: number;
-  kept_shadows: boolean;
   /** What drew it; `None` where nothing did. */
   kind?: DrawnKind | null;
   /**
    * Its level of detail: meshes' and placed objects' 0 for their own
    * mesh and 1 up for their simplifications, impostor cards' the level
-   * past the simplifications, terrain's patch level.
+   * past the simplifications, terrain's leaf level (the pyramid level
+   * whose spacing its subdivision leaf's meshlet vertices stand apart).
    */
   level: number;
   /** Its shading normal, unit length; `None` for the sky. */
@@ -836,8 +833,8 @@ export interface ProbeResult {
   shaded?: number[] | null;
   shadowed: boolean;
   /**
-   * Which lookup decided its sun shadow, which cascade or level among
-   * several, and whether it leaves the pixel in shadow.
+   * Which lookup decided its sun shadow, which level of the clipmap, and
+   * whether it leaves the pixel in shadow.
    */
   sun: SunLookup;
   sun_index: number;
@@ -1030,7 +1027,7 @@ export interface StepResult {
 }
 
 /** Which lookup decided a pixel's sun shadow, in the order shading looks. */
-export type SunLookup = "none" | "cascade" | "level" | "kept" | "moving" | "horizon" | "beyond";
+export type SunLookup = "none" | "level" | "horizon" | "beyond";
 
 /** A point swept and its height. */
 export interface SweepExample {
@@ -1064,8 +1061,12 @@ export interface SweepRays {
 export interface TerrainControlResult {
   /** Where the detail eye stays frozen, where it does (world space). */
   frozen_at?: number[] | null;
-  /** The settings' pixel error, where terrain settings exist. */
   pixel_error?: number | null;
+  /**
+   * The settings' subdivision error and pixel error, where terrain
+   * settings exist.
+   */
+  subdivision_error?: number | null;
   /** Controls change the session's world, not the scene's source. */
   temporary: boolean;
   /** Always true: terrain draws as asked. */
@@ -1115,8 +1116,8 @@ export interface TerrainProbe {
    */
   sky: number;
   /**
-   * The tile it lies in at its patch's level ([`PixelProbe::level`]),
-   * 256 cells a side, counted along x and z from the terrain's origin.
+   * The level-0 tile it lies in, 256 cells a side, counted along x and z
+   * from the terrain's origin.
    */
   tile: number[];
 }
@@ -1170,7 +1171,12 @@ export interface TerrainStats {
   coloring: number;
   /** Wanted tiles beyond the tile budget or the device's capacity. */
   dropped_tiles: number;
-  fallback_patches: number;
+  /**
+   * Tiles the camera's view draws (within their level's range of the
+   * eye, or pinned) that are to load and not resident yet: coarser tiles'
+   * ground stands in for theirs.
+   */
+  fallback_tiles: number;
   falls: number;
   lighting: number;
   /**
@@ -1191,11 +1197,6 @@ export interface TerrainStats {
    */
   loading_tiles: number;
   missing_tiles: number;
-  /**
-   * Patches the camera draws, and of those how many stand in for finer
-   * levels not resident yet.
-   */
-  patches: number;
   prefetching_tiles: number;
   /** Tiles resident now. */
   resident_tiles: number;
@@ -1222,8 +1223,7 @@ export interface TerrainStats {
   shaded_tiles: number;
   shading_records: number;
   stale_water_tiles: number;
-  surroundings_patches: number;
-  /** Of the resident tiles and patches, those of terrains' surroundings. */
+  /** Of the resident tiles, those of terrains' surroundings. */
   surroundings_tiles: number;
   terrains: number;
   tunnels: number;

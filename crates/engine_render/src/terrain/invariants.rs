@@ -124,7 +124,7 @@ impl TerrainPass {
         let records = self.patches.records();
         let mut ranges: Vec<Range<u32>> = Vec::new();
         for terrain in &self.patches.frame.terrains {
-            ranges.push(terrain.kept.clone());
+            ranges.extend(terrain.maps.iter().map(|(_, range)| range.clone()));
             debug_assert!(
                 u64::from(terrain.uniform) + SLOT <= tables.uniforms.size(),
                 "T4: a uniform at {} past the buffer",

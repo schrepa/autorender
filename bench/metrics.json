@@ -1444,7 +1444,7 @@
       "direction": null
     },
     {
-      "name": "terrain.bounce_levels",
+      "name": "terrain.bounce.levels",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",
@@ -1455,7 +1455,7 @@
       "direction": null
     },
     {
-      "name": "terrain.bounce_probes",
+      "name": "terrain.bounce.probes",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",
@@ -1466,7 +1466,7 @@
       "direction": null
     },
     {
-      "name": "terrain.bounced",
+      "name": "terrain.bounce.relit",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",
@@ -1477,7 +1477,7 @@
       "direction": null
     },
     {
-      "name": "terrain.dropped_bounce",
+      "name": "terrain.bounce.dropped",
       "kind": "work",
       "rule": "not-above",
       "statistic": "the last sampled frame's value",
@@ -1764,6 +1764,17 @@
     },
     {
       "name": "terrain.vt_slots",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain.white_water",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",

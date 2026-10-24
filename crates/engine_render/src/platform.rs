@@ -286,7 +286,11 @@ thread_local! {
 /// A map's result that arrived on another thread than its callback's
 /// store's: that thread, the callback's key there, and the result.
 #[cfg(not(target_arch = "wasm32"))]
-type Arrived = (std::thread::ThreadId, u64, Result<(), wgpu::BufferAsyncError>);
+type Arrived = (
+    std::thread::ThreadId,
+    u64,
+    Result<(), wgpu::BufferAsyncError>,
+);
 
 /// The map results that arrived on other threads than their callbacks'
 /// stores', in the order they arrived.

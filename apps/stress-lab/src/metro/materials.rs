@@ -309,7 +309,7 @@ impl Library {
         set: Set,
         slot: Slot,
     ) -> engine::Result<Option<TextureRef>> {
-        if !self.textures.contains_key(&set) {
+        if let std::collections::hash_map::Entry::Vacant(vacant) = self.textures.entry(set) {
             let maps = Slot::of(set);
             let named: Vec<(&str, TextureUsage)> =
                 maps.iter().map(|&(_, name, usage)| (name, usage)).collect();
@@ -320,8 +320,7 @@ impl Library {
                 crate::kit::records::textures((records, assets), name, &named, move || {
                     sources(set, &made)
                 })?;
-            self.textures
-                .insert(set, slots.into_iter().zip(handles).collect());
+            vacant.insert(slots.into_iter().zip(handles).collect());
         }
         let found = self.textures[&set]
             .iter()

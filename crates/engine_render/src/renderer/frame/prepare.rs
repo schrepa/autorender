@@ -198,7 +198,10 @@ impl Renderer {
         self.terrain.pipelines.specialize(shading);
         self.features.ground_cover.get_mut().specialize(shading);
         let water_views = crate::debug_view::shows_water(snapshot.environment.debug_view.view);
-        self.features.water.get_mut().specialize(shading, water_views);
+        self.features
+            .water
+            .get_mut()
+            .specialize(shading, water_views);
     }
 
     /// Uploads the frame's new meshes (with their levels of detail and
@@ -932,7 +935,11 @@ impl Renderer {
                 slot_capacity: self.instances.capacity,
                 mesh_layout: self.mesh_layout,
                 placement: &placement,
-                terrain: snapshot.terrain.terrains.iter().any(|terrain| terrain.drawn),
+                terrain: snapshot
+                    .terrain
+                    .terrains
+                    .iter()
+                    .any(|terrain| terrain.drawn),
                 pixel_angle: crate::gpu_data::pixel_angle(
                     snapshot.view_projection,
                     self.display.region.display.height,

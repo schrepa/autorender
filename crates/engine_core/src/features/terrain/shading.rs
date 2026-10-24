@@ -245,9 +245,7 @@ fn take_arrived(state: &mut TerrainState, slots: &mut JobBudget<'_>, frame: u64)
         shading.asked.remove(&key);
         let bytes = match output {
             Ok(bytes) => bytes,
-            Err(error)
-                if matches!(asked.phase, Phase::Fetching(_)) && error == MISSING_RECORD =>
-            {
+            Err(error) if matches!(asked.phase, Phase::Fetching(_)) && error == MISSING_RECORD => {
                 shading.missing.insert(asked.record);
                 continue;
             }
@@ -269,9 +267,10 @@ fn take_arrived(state: &mut TerrainState, slots: &mut JobBudget<'_>, frame: u64)
             }
             Err(error) => {
                 shading.failed.insert(key, frame);
-                state
-                    .failures
-                    .record(frame, format!("{kind}: its output does not decode: {error}"));
+                state.failures.record(
+                    frame,
+                    format!("{kind}: its output does not decode: {error}"),
+                );
             }
         }
     }
@@ -301,8 +300,8 @@ fn wanted(state: &mut TerrainState, recipe: &str, pinned: u32, eye: Vec2) -> Vec
     let cooking = state.shading.cooking;
     let mut wants: Vec<Want> = Vec::with_capacity(resident.len());
     let mut listed: TileMap<usize> = TileMap::default();
-    let mut list = |wants: &mut Vec<Want>, key: TileKey, class: u8, held: bool| {
-        match listed.get(&key) {
+    let mut list =
+        |wants: &mut Vec<Want>, key: TileKey, class: u8, held: bool| match listed.get(&key) {
             Some(&at) => wants[at].held |= held,
             None => {
                 listed.insert(key, wants.len());
@@ -313,8 +312,7 @@ fn wanted(state: &mut TerrainState, recipe: &str, pinned: u32, eye: Vec2) -> Vec
                     held,
                 });
             }
-        }
-    };
+        };
     for &key in &resident {
         list(&mut wants, key, VIEW_JOBS, true);
     }
@@ -364,12 +362,11 @@ fn keep(state: &mut TerrainState, slots: &mut JobBudget<'_>, wants: &[Want]) {
     let store = &state.store;
     let shading = &mut state.shading;
     let found = &shading.found;
-    let current = |key: &TileKey, record: RecordKey| {
-        found.get(key).is_some_and(|(_, now)| *now == record)
-    };
-    let stale = shading.asked.keys_where(|key, asked| {
-        !wanted.contains_key(key) || !current(key, asked.record)
-    });
+    let current =
+        |key: &TileKey, record: RecordKey| found.get(key).is_some_and(|(_, now)| *now == record);
+    let stale = shading
+        .asked
+        .keys_where(|key, asked| !wanted.contains_key(key) || !current(key, asked.record));
     for key in stale {
         if let Some(asked) = shading.asked.remove(&key) {
             slots.jobs.cancel(asked.phase.job());

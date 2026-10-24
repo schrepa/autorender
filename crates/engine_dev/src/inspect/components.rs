@@ -6,6 +6,10 @@ use super::*;
 
 impl DevTools {
     /// The camera, meshes and the core's components entities carry.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn register_components(&mut self, schemas: &Value) {
         self.register_resource::<Camera>(
             InspectorDescriptor::generated(schemas, "Camera")

@@ -95,7 +95,7 @@ pub fn emit_sets(sets: &[Set<'_>]) {
         let modules = Modules::of(&manifest);
         source.push_str(
             "/// The hashes of the code making each kind of this crate's records:\n\
-             /// the modules making it and what they use ([`engine_sources::Set`]).\n\
+             /// the modules making it and what they use (`engine_sources::Set`).\n\
              pub mod sources {\n",
         );
         for set in sets {
@@ -659,7 +659,8 @@ fn code(text: &str) -> String {
             }
             at += 1;
             while at < chars.len() {
-                if chars[at] == '"' && (1..=hashes).all(|offset| chars.get(at + offset) == Some(&'#'))
+                if chars[at] == '"'
+                    && (1..=hashes).all(|offset| chars.get(at + offset) == Some(&'#'))
                 {
                     at += 1 + hashes;
                     break;

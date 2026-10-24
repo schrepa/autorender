@@ -226,7 +226,13 @@ pub(crate) fn control_at(
         }
         _ => RiverInputs::FAR,
     };
-    control_with((layers, rules), [x, z], (height, shape), (spacing, rivers), weights)
+    control_with(
+        (layers, rules),
+        [x, z],
+        (height, shape),
+        (spacing, rivers),
+        weights,
+    )
 }
 
 /// [`control_at`] at samples `spacing` meters apart, with what masks read of

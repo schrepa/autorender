@@ -23,6 +23,10 @@ use crate::scatter::{
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{Tile, TileKey};
 
+/// A part's levels as its group draws them (`Renderer::part_levels`), and
+/// their meshes.
+type PartLevels = (Vec<(u32, u32, i32)>, Vec<MeshHandle>);
+
 /// Placed objects' draw groups and slots.
 #[derive(Default)]
 pub(super) struct ScatterDraws {
@@ -473,13 +477,12 @@ impl Renderer {
                 else {
                     continue;
                 };
-                let parts: Vec<(usize, Vec<(u32, u32, i32)>, Vec<MeshHandle>)> = asset
+                let parts: Vec<(usize, PartLevels)> = asset
                     .parts
                     .iter()
                     .enumerate()
                     .filter_map(|(part, rendered)| {
-                        let (levels, meshes) = self.part_levels(rendered, levels.len())?;
-                        Some((part, levels, meshes))
+                        Some((part, self.part_levels(rendered, levels.len())?))
                     })
                     .collect();
                 let bounds = asset.mesh.mesh.bounds();
@@ -493,7 +496,7 @@ impl Renderer {
                 // proxy too.
                 let (low, high) = parts
                     .iter()
-                    .map(|&(part, _, _)| asset.parts[part].meshes[0].mesh.bounds())
+                    .map(|&(part, _)| asset.parts[part].meshes[0].mesh.bounds())
                     .chain(proxy.map(|(mesh, _)| mesh.mesh.bounds()))
                     .fold((bounds.min(), bounds.max()), |(low, high), held| {
                         (low.min(held.min()), high.max(held.max()))
@@ -506,7 +509,10 @@ impl Renderer {
                     Some((mesh, range)) => (Some(false), vec![range], vec![mesh.handle]),
                     None if material.is_transparent() => (None, Vec::new(), Vec::new()),
                     None => (
-                        Some(matches!(material.alpha_mode(), engine_core::AlphaMode::Mask { .. })),
+                        Some(matches!(
+                            material.alpha_mode(),
+                            engine_core::AlphaMode::Mask { .. }
+                        )),
                         casters,
                         meshes.clone(),
                     ),
@@ -544,7 +550,7 @@ impl Renderer {
                     part: false,
                 });
                 covers.push(cover);
-                for (part, part_levels, part_meshes) in parts {
+                for (part, (part_levels, part_meshes)) in parts {
                     let rendered = &asset.parts[part];
                     layouts.push(GroupLayout {
                         casters: Vec::new(),
@@ -650,7 +656,7 @@ impl Renderer {
         &self,
         part: &engine_core::RenderPlacementPart,
         levels: usize,
-    ) -> Option<(Vec<(u32, u32, i32)>, Vec<MeshHandle>)> {
+    ) -> Option<PartLevels> {
         let first = self.meshes.get(&part.meshes.first()?.handle)?;
         if first.skinned {
             return None;

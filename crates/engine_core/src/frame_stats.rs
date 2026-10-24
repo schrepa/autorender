@@ -441,13 +441,32 @@ pub struct DetailStats {
     pub meshes_without_levels: u32,
 }
 
+/// Terrains' bounce light.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct TerrainBounceStats {
+    /// Terrains whose bounce light relit this frame: every frame, however
+    /// the sun and sky stand.
+    pub relit: u32,
+    /// The probes bounce light relit this frame, over every level around
+    /// the detail eye.
+    pub probes: u32,
+    /// The most levels of probes a terrain's bounce light relit this frame:
+    /// those whose reach meets the terrain, the coarsest always.
+    pub levels: u32,
+    /// Terrains whose bounce light the horizon maps' layers or the probes'
+    /// buffers could not hold this frame, which take none.
+    pub dropped: u32,
+}
+
 /// Terrains.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TerrainRenderStats {
-    /// Leaves of the terrains' subdivisions the camera drew and their
-    /// meshlets' triangles, as read back a few frames later.
+    /// Leaves of the terrains' subdivisions the camera drew, as read back a
+    /// few frames later.
     pub leaves: u32,
+    /// Triangles of those leaves' meshlets.
     pub triangles: u32,
     /// Splits the subdivisions refused for want of room for their leaves
     /// (`TerrainSettings::subdivision_leaves`), as read back: the ground
@@ -456,7 +475,7 @@ pub struct TerrainRenderStats {
     /// Terrains whose subdivision the device's storage bindings keep
     /// shallower than `TerrainSettings::subdivision_depth` asks.
     pub shallow_subdivisions: u32,
-    /// Patches the kept shadow levels drew of the ground.
+    /// Patches the shadow clipmap's regions drew of the ground.
     pub shadow_patches: u32,
     /// Tiles resident on the GPU.
     pub tiles: u32,
@@ -477,18 +496,8 @@ pub struct TerrainRenderStats {
     /// changed: sky and horizon maps, one each per terrain. The sun moving
     /// uploads none.
     pub lighting_uploads: u32,
-    /// Terrains whose bounce light relit this frame: every frame, however
-    /// the sun and sky stand.
-    pub bounced: u32,
-    /// The probes bounce light relit this frame, over every level around
-    /// the detail eye.
-    pub bounce_probes: u32,
-    /// The most levels of probes a terrain's bounce light relit this frame:
-    /// those whose reach meets the terrain, the coarsest always.
-    pub bounce_levels: u32,
-    /// Terrains whose bounce light the horizon maps' layers or the probes'
-    /// buffers could not hold this frame, which take none.
-    pub dropped_bounce: u32,
+    /// Bounce light this frame.
+    pub bounce: TerrainBounceStats,
     /// Terrains whose macro color maps are here: the tint and growth their
     /// bakes give their ground.
     pub macro_maps: u32,

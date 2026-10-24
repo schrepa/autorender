@@ -61,7 +61,6 @@ impl Renderer {
                 eye: snapshot.camera_position,
                 detail_eye: snapshot.detail_eye,
                 regions: self.shadows.region_views(),
-                probes,
                 settings: snapshot.environment.terrain.sanitized(),
                 shadows: snapshot.environment.shadows.enabled,
                 fades,

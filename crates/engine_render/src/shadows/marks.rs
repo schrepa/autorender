@@ -71,7 +71,11 @@ impl Marks {
     pub(super) fn take(&self, epoch: u64) -> Vec<u32> {
         let mut read = self.read_back.borrow_mut();
         let words = std::mem::take(&mut read.words);
-        if read.epoch == epoch { words } else { Vec::new() }
+        if read.epoch == epoch {
+            words
+        } else {
+            Vec::new()
+        }
     }
 
     /// Records the marks of the frame's pixels, `size` of them from the

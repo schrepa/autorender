@@ -609,7 +609,9 @@ pub(crate) fn bake(
         .zip(&in_lake)
         .filter(|&(&drained, &lake)| drained >= channel_area && !lake)
         .count();
-    let max_area = area.iter().fold(0.0_f32, |most, &drained| max(most, drained));
+    let max_area = area
+        .iter()
+        .fold(0.0_f32, |most, &drained| max(most, drained));
     let lines = trace(
         &Channels {
             area: &area,
@@ -958,10 +960,7 @@ pub(crate) fn image_level(image_spacing: f32, levels: usize, spacing: f32) -> us
     level
 }
 
-crate::codec::record!(HydrologyLayer {
-    level,
-    discharge,
-});
+crate::codec::record!(HydrologyLayer { level, discharge });
 crate::codec::record!(HydrologyStats {
     samples,
     channel_samples,

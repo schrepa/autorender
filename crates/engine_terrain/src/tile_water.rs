@@ -231,7 +231,10 @@ impl TileWater {
         let step = |shift: u32| f32::from((obstacle >> shift) as u8 as i8) * WATER_OBSTACLE_STEP;
         let radius = f32::from((obstacle >> 16) as u8) * WATER_RADIUS_STEP;
         let toward = Vec2::new(step(0), step(8)) - offset;
-        [state >> 24, pack_obstacle(toward, radius, jump_of(obstacle))]
+        [
+            state >> 24,
+            pack_obstacle(toward, radius, jump_of(obstacle)),
+        ]
     }
 }
 
@@ -586,8 +589,16 @@ fn toward(way: Vec2) -> Option<(i32, i32)> {
     const ASIDE: f32 = std::f32::consts::SQRT_2 - 1.0;
     let (along, across) = (way.x.abs(), way.y.abs());
     let sign = |value: f32| if value < 0.0 { -1 } else { 1 };
-    let x = if along > across * ASIDE { sign(way.x) } else { 0 };
-    let z = if across > along * ASIDE { sign(way.y) } else { 0 };
+    let x = if along > across * ASIDE {
+        sign(way.x)
+    } else {
+        0
+    };
+    let z = if across > along * ASIDE {
+        sign(way.y)
+    } else {
+        0
+    };
     (x != 0 || z != 0).then_some((x, z))
 }
 
@@ -893,7 +904,12 @@ impl Tile {
             return None;
         };
         let (mut surface, mut info) = self.water().map_or_else(
-            || (vec![f32::NAN; stride * stride], vec![[0; 3]; stride * stride]),
+            || {
+                (
+                    vec![f32::NAN; stride * stride],
+                    vec![[0; 3]; stride * stride],
+                )
+            },
             |water| (water.surfaces().to_vec(), water.info().to_vec()),
         );
         for (row, reached) in columns.iter().enumerate() {

@@ -577,7 +577,12 @@ impl TileAtlas {
         if gpu && (heights || rivers) {
             let texels = tile.river_texels();
             if let Some(texels) = &texels {
-                write_layer(queue, &arrays.rivers, layer, (bytemuck::cast_slice(&texels[..]), 8));
+                write_layer(
+                    queue,
+                    &arrays.rivers,
+                    layer,
+                    (bytemuck::cast_slice(&texels[..]), 8),
+                );
             }
             let surface = surfaces[&key.0];
             let spacing = tile.spacing();
@@ -605,7 +610,12 @@ impl TileAtlas {
                     &borrowed
                 }
             };
-            write_layer(queue, &arrays.control, layer, (bytemuck::cast_slice(values), 4));
+            write_layer(
+                queue,
+                &arrays.control,
+                layer,
+                (bytemuck::cast_slice(values), 4),
+            );
         }
         control
     }
@@ -641,8 +651,18 @@ impl TileAtlas {
             }
         };
         let arrays = self.arrays.as_ref().expect("allocated above");
-        write_layer(queue, &arrays.control, layer, (bytemuck::cast_slice(&control[..]), 4));
-        write_layer(queue, &arrays.normals, layer, (bytemuck::cast_slice(&gradients[..]), 4));
+        write_layer(
+            queue,
+            &arrays.control,
+            layer,
+            (bytemuck::cast_slice(&control[..]), 4),
+        );
+        write_layer(
+            queue,
+            &arrays.normals,
+            layer,
+            (bytemuck::cast_slice(&gradients[..]), 4),
+        );
         true
     }
 
@@ -702,7 +722,12 @@ impl TileAtlas {
             for &key in &touched {
                 self.refade(key, fades);
             }
-            faded.extend(before.iter().filter(|key| !self.fading.contains(*key)).copied());
+            faded.extend(
+                before
+                    .iter()
+                    .filter(|key| !self.fading.contains(*key))
+                    .copied(),
+            );
             let began = self.fading.iter().filter(|key| !before.contains(*key));
             self.entered.extend(began.copied());
         } else {
@@ -1135,12 +1160,7 @@ pub(super) fn fade_half(normals: f32, materials: f32) -> u32 {
 
 /// Writes `texels` of `bytes` bytes each, a tile's samples with their
 /// border, into `layer` of `texture`.
-fn write_layer(
-    queue: &Queue,
-    texture: &wgpu::Texture,
-    layer: u32,
-    (texels, bytes): (&[u8], u32),
-) {
+fn write_layer(queue: &Queue, texture: &wgpu::Texture, layer: u32, (texels, bytes): (&[u8], u32)) {
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
             texture,
@@ -1167,10 +1187,7 @@ fn write_layer(
 }
 
 /// The tile `tiles`, a terrain's list in key order, lists under `key`.
-fn listed_tile(
-    tiles: &[Arc<engine_core::Tile>],
-    key: TileKey,
-) -> Option<&Arc<engine_core::Tile>> {
+fn listed_tile(tiles: &[Arc<engine_core::Tile>], key: TileKey) -> Option<&Arc<engine_core::Tile>> {
     let at = tiles.binary_search_by_key(&key, |tile| tile.key()).ok()?;
     tiles.get(at)
 }

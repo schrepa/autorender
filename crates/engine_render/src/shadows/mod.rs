@@ -65,8 +65,8 @@ mod sky;
 
 use std::cell::Cell;
 
-use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
 use engine_core::terrain_data::Pyramid;
+use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
 
 use crate::batches::BatchPlan;
 use crate::bindings::SHADOW_POSES;
@@ -79,7 +79,6 @@ use crate::shadow_fit::{ClipPlan, ClipSettings, ClipStats, Clipmap, LightBasis, 
 
 use crate::gpu_layouts::constants::MOVING_MAP;
 use crate::gpu_layouts::constants::SHADOW_GROUP as GROUP;
-use crate::gpu_layouts::constants::SHADOW_MAPS as MAPS;
 use crate::gpu_layouts::constants::SHADOW_REGIONS;
 use crate::gpu_layouts::constants::SHADOW_SKINNED_GROUP as SKINNED_GROUP;
 use crate::gpu_layouts::constants::SKY_MAP;
@@ -94,6 +93,10 @@ use pipelines::ShadowPipelines;
 use regions::{FrameRegions, SelectionCounts};
 use selection::{Selection, map_factor, map_start};
 use sky::{SkyDraw, SkyMaps};
+
+// The maps a frame's casters list into: the regions', then the moving
+// tiles' and the sky map redrawn this frame.
+const MAPS: usize = SHADOW_REGIONS + 2;
 
 // Uniform offset alignment between views: each region's, the moving
 // tiles', the compose view and the redrawn sky map's.
@@ -714,7 +717,7 @@ impl ShadowPass {
             device,
             queue,
             &snapshot.environment.sky_occlusion.sanitized(),
-            snapshot.camera_position,
+            snapshot.detail_eye,
             still_changed || groups_changed,
         );
         let pipelines = self.pipelines.as_ref().expect("created above");
@@ -801,7 +804,12 @@ impl ShadowPass {
             );
             match self.maps.regions_bound() {
                 Some(regions) => {
-                    compose.bind(device, "engine/shadow-compose-group", layout, entries(regions));
+                    compose.bind(
+                        device,
+                        "engine/shadow-compose-group",
+                        layout,
+                        entries(regions),
+                    );
                 }
                 None => compose.clear(),
             }

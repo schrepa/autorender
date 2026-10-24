@@ -18,7 +18,7 @@
 fn fs_debug_terrain(input: TerrainOutput) -> DebugTargets {
     terrain_holes_test(input.cell);
     let relative = input.relative.xyz;
-    let world = relative + camera.position.xyz;
+    let world = eye_world(relative);
     let seen = terrain_seen(relative, terrain_forward_look(relative));
     let shares = terrain_shares(seen.site, seen.shading);
     let ground = terrain_shared_ground(shares, seen.site);

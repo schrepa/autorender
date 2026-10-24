@@ -196,10 +196,7 @@ pub(super) fn ground_tiles(
         let low = Vec2::new(f32::from(key.x), f32::from(key.z)) * size;
         state.around.as_ref().is_some_and(|around| {
             let (first, last) = around.cutout;
-            low.x >= first.x
-                && low.y >= first.y
-                && low.x + size <= last.x
-                && low.y + size <= last.y
+            low.x >= first.x && low.y >= first.y && low.x + size <= last.x && low.y + size <= last.y
         })
     };
     let mut tiles = Vec::new();

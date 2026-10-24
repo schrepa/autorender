@@ -175,7 +175,12 @@ impl WaterWindow {
         let [heave, along_x, along_z] = water.unsteady;
         let depth = depth + clamp(heave, -0.5 * depth, 0.5 * depth);
         let velocity = Vec2::from(water.velocity) + Vec2::new(along_x, along_z);
-        [bed + depth, depth * velocity.x, depth * velocity.y, water.foam]
+        [
+            bed + depth,
+            depth * velocity.x,
+            depth * velocity.y,
+            water.foam,
+        ]
     }
 
     /// The cells just past its edges as their water stands
@@ -249,6 +254,7 @@ impl WaterWindow {
     /// where it has no more): its ground, water, roughness, beds' words and
     /// sources there, the cells just past that square's edges standing as it
     /// holds them, on its datum.
+    #[must_use]
     pub fn within(&self, cells: u32) -> Self {
         let n = self.cells as usize;
         let m = cells.min(self.cells) as usize;

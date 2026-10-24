@@ -52,21 +52,19 @@ const SETTINGS_OPTIONS: &[&str] = &["size", "jobcache", "rocks"];
 /// The generated sets workloads read, each with the command that builds
 /// it into a folder: `cargo run` arguments, the folder last. The tools build
 /// with the quick profile: their output does not depend on it.
-const GENERATED: &[(&str, &[&str])] = &[
-    (
-        "stress/dense",
-        &[
-            "-p",
-            "engine_vgbuild",
-            "--profile",
-            "quick",
-            "--locked",
-            "--bin",
-            "dense_assets",
-            "--",
-        ],
-    ),
-];
+const GENERATED: &[(&str, &[&str])] = &[(
+    "stress/dense",
+    &[
+        "-p",
+        "engine_vgbuild",
+        "--profile",
+        "quick",
+        "--locked",
+        "--bin",
+        "dense_assets",
+        "--",
+    ],
+)];
 
 pub fn bench(root: &Path, options: &[String]) -> Result<(), String> {
     match options.iter().map(String::as_str).collect::<Vec<_>>()[..] {

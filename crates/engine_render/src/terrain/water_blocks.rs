@@ -440,7 +440,11 @@ impl WaterBlocks {
             depth_or_array_layers: 1,
         };
         for (texture, bytes, texel) in [
-            (&arrays.surface, bytemuck::cast_slice(surfaces), SURFACE_BYTES),
+            (
+                &arrays.surface,
+                bytemuck::cast_slice(surfaces),
+                SURFACE_BYTES,
+            ),
             (&arrays.info, bytemuck::cast_slice(info), INFO_BYTES),
         ] {
             queue.write_texture(
@@ -466,6 +470,10 @@ impl WaterBlocks {
     /// their bits, which say where water stands over each patch, there or
     /// in a finer resident tile within it, worked out level by level up
     /// each of `terrains`' pyramids, through tiles not resident too.
+    #[expect(
+        clippy::iter_over_hash_type,
+        reason = "bits gather and words land by tile and layer, in any order"
+    )]
     fn write_directory(
         &mut self,
         device: &wgpu::Device,

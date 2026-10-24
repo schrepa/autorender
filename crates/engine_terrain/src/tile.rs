@@ -596,7 +596,7 @@ impl Tile {
     /// What the bed holds under the water at `local`, meters from the
     /// tile's first corner, as the water's sample nearest it holds it: its
     /// reach's code and its nearest obstacle, offset from `local`
-    /// ([`TileWater::bed_words`]); none outside the tile or where it holds
+    /// (`TileWater::bed_words`); none outside the tile or where it holds
     /// no water.
     pub fn bed_words(&self, local: Vec2) -> [u32; 2] {
         let (Some(water), Some((i, j, fu, fv))) = (self.water.as_ref(), self.cell(local)) else {
@@ -770,7 +770,7 @@ impl SurfaceInputs {
 /// tiles and for tiles' shading to average.
 pub(crate) fn control_row(
     (rules, layers): (&BiomeRules, &Layers),
-    (heights, rivers): (&[f32], (Option<&[u16]>, Option<&[u16]>)),
+    (heights, rivers): (&[f32], beds::RiverRows<'_>),
     (xs, z, spacing): (&[f32], f32, f32),
     (row, columns): (usize, Range<usize>),
     (out, inputs): (&mut [u32], &mut SurfaceInputs),
@@ -1148,9 +1148,10 @@ impl Generator {
                     *raster = None;
                 }
             }
-            self.river_edges = self.layers.hydrology_layer().and_then(|(index, _)| {
-                self.rasters.get(index)?.as_ref()?.edges()
-            });
+            self.river_edges = self
+                .layers
+                .hydrology_layer()
+                .and_then(|(index, _)| self.rasters.get(index)?.as_ref()?.edges());
             return Stage::Samples {
                 row: Self::HEIGHT_ROWS.0,
             };
@@ -1209,7 +1210,8 @@ impl Generator {
                 if matches!(self.layers.layers()[layer], Layer::Hydrology(_)) {
                     if let Some(raster) = self.rasters.get(layer).and_then(Option::as_ref) {
                         let at = (row + 1) as usize;
-                        self.layers.cut_rivers(raster, at, &mut self.row, &self.xs, z);
+                        self.layers
+                            .cut_rivers(raster, at, &mut self.row, &self.xs, z);
                     }
                 } else {
                     self.layers.apply_local(

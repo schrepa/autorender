@@ -34,13 +34,14 @@ const VT_STEEP: vec2<f32> = vec2<f32>(0.65, 0.75);
 // under it to its own: long enough that no arrival pops, as switches do
 // over about half a second.
 const VT_FADE_SECONDS: f32 = 0.5;
-// The texels a pixel whose footprint spans `along` (its two axes) reads:
-// its long side's, so a page texel covers the whole pixel and one bilinear
-// read filters it (the exact path's maps filter anisotropically up to 16 to
-// 1, which here would read many times the texels from memory, unlike the
-// materials' maps repeating in cache).
-fn terrain_vt_texel(along: vec2<f32>) -> f32 {
-    return max(along.x, along.y);
+// The texels a pixel spanning `span` reads (across the view and along it,
+// seen from the detail eye: `detail_span`): its long side's, so a page
+// texel covers the whole pixel and one bilinear read filters it (the exact
+// path's maps filter anisotropically up to 16 to 1, which here would read
+// many times the texels from memory, unlike the materials' maps repeating
+// in cache).
+fn terrain_vt_texel(span: vec2<f32>) -> f32 {
+    return max(span.x, span.y);
 }
 
 // Two unit vectors across `normal`, the frame the texture's normal turns
@@ -141,8 +142,8 @@ fn terrain_vt_texels(site: TerrainSite, dither: f32) -> TerrainVtTexels {
     if mips < 2u {
         return texels;
     }
-    let along = vec2<f32>(length(site.world_dx), length(site.world_dy));
-    let lod = log2(terrain_vt_texel(along) / terrain.vt_scale.x);
+    let lod = log2(terrain_vt_texel(vec2<f32>(site.texel, site.footprint))
+        / terrain.vt_scale.x);
     // The share of the ground the pages take over: none where a pixel spans
     // half the finest texel or less, or on steep ground; all of it where it
     // spans a whole one on gentler ground; smoothly between, so no edge
@@ -378,8 +379,10 @@ fn cs_terrain_vt_feedback(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let screen = vec2<f32>(size);
-    let point = terrain_relative_at(vec2<f32>(pixel) + 0.5, bitcast<f32>(here.y), screen);
-    // Its derivatives toward neighbors on the same terrain, either side.
+    let world = eye_world(terrain_relative_at(vec2<f32>(pixel) + 0.5, bitcast<f32>(here.y),
+        screen));
+    // Its steps toward neighbors on the same terrain, either side, across
+    // which its surface faces.
     var steps = array<vec3<f32>, 2>();
     for (var axis = 0u; axis < 2u; axis++) {
         let offset = select(vec2<u32>(0u, 1u), vec2<u32>(1u, 0u), axis == 0u);
@@ -396,17 +399,18 @@ fn cs_terrain_vt_feedback(@builtin(global_invocation_id) id: vec3<u32>) {
         if other.x != mine {
             return;
         }
-        steps[axis] = (terrain_relative_at(vec2<f32>(neighbor) + 0.5, bitcast<f32>(other.y), screen)
-            - point) * sign;
+        steps[axis] = (eye_world(terrain_relative_at(vec2<f32>(neighbor) + 0.5,
+            bitcast<f32>(other.y), screen)) - world) * sign;
     }
     let normal = cross(steps[1], steps[0]);
     if !(abs(normal.y) >= VT_STEEP.x * length(normal)) {
         return;
     }
-    // Per display pixel, as the resolves' sites measure it (`terrain_seen`).
-    let along = vec2<f32>(length(steps[0]), length(steps[1])) * material_detail();
-    let lod = log2(terrain_vt_texel(along) / terrain.vt_scale.x);
-    let local = point.xz + camera.position.xz - terrain.origin.xz;
+    // What a pixel spans there seen from the detail eye, as the resolves'
+    // sites measure it (`terrain_seen`).
+    let lod = log2(terrain_vt_texel(detail_span(world, normalize(normal)))
+        / terrain.vt_scale.x);
+    let local = world.xz - terrain.origin.xz;
     let mips = terrain.vt.y;
     // The resolve's two mips, and one either side for its smoother measure,
     // from where the pages begin to take over (`terrain_vt_texels`).

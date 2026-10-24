@@ -197,7 +197,11 @@ fn trits_of(packed: u32) -> [u32; 5] {
         (2, 2, bits(1, 0, c))
     } else {
         let c1 = bits(1, 1, c);
-        (bits(4, 4, c), bits(3, 2, c), (c1 << 1) | (bits(0, 0, c) & !c1 & 1))
+        (
+            bits(4, 4, c),
+            bits(3, 2, c),
+            (c1 << 1) | (bits(0, 0, c) & !c1 & 1),
+        )
     };
     [t0, t1, t2, t3, t4]
 }
@@ -207,9 +211,8 @@ fn quints_of(packed: u32) -> [u32; 3] {
     let bits = |high: u32, low: u32, of: u32| (of >> low) & ((1 << (high - low + 1)) - 1);
     if bits(2, 1, packed) == 0b11 && bits(6, 5, packed) == 0 {
         let q0 = bits(0, 0, packed);
-        let high = (q0 << 2)
-            | ((bits(4, 4, packed) & !q0 & 1) << 1)
-            | (bits(3, 3, packed) & !q0 & 1);
+        let high =
+            (q0 << 2) | ((bits(4, 4, packed) & !q0 & 1) << 1) | (bits(3, 3, packed) & !q0 & 1);
         return [4, 4, high];
     }
     let (q2, c) = if bits(2, 1, packed) == 0b11 {
@@ -479,7 +482,8 @@ struct Fit {
 /// endpoint values `low` and `high` at weight `weight` (0 to 64), read as a
 /// byte.
 fn decoded(low: u32, high: u32, weight: u32) -> u32 {
-    let interpolated = (((low << 8) | low) * (64 - weight) + ((high << 8) | high) * weight + 32) >> 6;
+    let interpolated =
+        (((low << 8) | low) * (64 - weight) + ((high << 8) | high) * weight + 32) >> 6;
     (interpolated * 255 + 32_768) / 65_536
 }
 
@@ -601,21 +605,19 @@ fn starting_ends(texels: &[[f32; 4]; 16], layout: Layout) -> [[f32; 2]; 4] {
     for color in texels {
         for &row in &on_line {
             for &column in &on_line {
-                covariance[row][column] += (color[row] - mean[row]) * (color[column] - mean[column]);
+                covariance[row][column] +=
+                    (color[row] - mean[row]) * (color[column] - mean[column]);
             }
         }
     }
     let mut axis = [0.0_f32; 4];
-    let widest = on_line
-        .iter()
-        .copied()
-        .fold(on_line[0], |widest, channel| {
-            if covariance[channel][channel] > covariance[widest][widest] {
-                channel
-            } else {
-                widest
-            }
-        });
+    let widest = on_line.iter().copied().fold(on_line[0], |widest, channel| {
+        if covariance[channel][channel] > covariance[widest][widest] {
+            channel
+        } else {
+            widest
+        }
+    });
     axis[widest] = 1.0;
     for _ in 0..8 {
         let mut next = [0.0_f32; 4];

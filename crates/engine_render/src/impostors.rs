@@ -879,10 +879,8 @@ impl ImpostorAtlas {
             .material
             .as_ref()
             .is_some_and(|material| material.windows().is_some());
-        let variants = || {
-            std::iter::once(source.variant)
-                .chain(source.parts.iter().map(|part| part.variant))
-        };
+        let variants =
+            || std::iter::once(source.variant).chain(source.parts.iter().map(|part| part.variant));
         let masked = variants().any(Variant::alpha_mask);
         let foliage = variants().any(shades_as_foliage);
         let record = ImpostorRecord::new(

@@ -702,7 +702,10 @@ impl ScatterPass {
                     crate::buffers::entry("slot_poses", &self.poses),
                     crate::buffers::entry("slot_colors", &self.colors),
                     crate::buffers::entry("slot_palette", &self.palette),
-                    ("shadow_regions", crate::pipelines::view(&self.regions_placeholder.view)),
+                    (
+                        "shadow_regions",
+                        crate::pipelines::view(&self.regions_placeholder.view),
+                    ),
                 ],
             )
         });

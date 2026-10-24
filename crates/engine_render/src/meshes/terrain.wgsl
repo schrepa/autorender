@@ -224,7 +224,7 @@ fn vs_terrain_temporal(@builtin(instance_index) leaf: u32,
     temporal.relative = output.relative;
     temporal.cell = output.cell;
     temporal.previous = (camera.previous_view_projection
-        * vec4<f32>(output.relative.xyz + camera.position.xyz, 1.0)).xyw;
+        * vec4<f32>(eye_world(output.relative.xyz), 1.0)).xyw;
     return temporal;
 }
 
@@ -962,10 +962,12 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 
 // Where a fragment is and how it is seen, as the ground's passes read it:
 // its world position and how that changes per pixel on the terrain's smooth
-// surface, a pixel's footprint there (meters, its long
-// side), the footprint the maps' anisotropic filtering resolves (its short
-// side, or a sixteenth of its long side where filtering runs out), the
-// terrain's normal and the way toward the eye; the share of its cover's
+// surface, which its maps filter by; a pixel's footprint there seen from
+// the detail eye, which its detail hands over by (meters, its long side,
+// along the view: `detail_span`), and the footprint the maps' anisotropic
+// filtering resolves (its short side, across the view, never under a
+// sixteenth of the long one); the terrain's normal and the way toward the
+// eye; the share of its cover's
 // leaves blades no longer show there, and the meters a pixel spans across
 // the view there as level of detail measures objects (`terrain_across`),
 // by which placed objects retire. The virtual texture's bakes, whose pages
@@ -1832,7 +1834,7 @@ struct TerrainLook {
 // How a fragment of its own triangle `relative` to the eye looks: from
 // the triangle, without the virtual texture.
 fn terrain_forward_look(relative: vec3<f32>) -> TerrainLook {
-    let world = relative + camera.position.xyz;
+    let world = eye_world(relative);
     let ray = relative / max(length(relative), 1.0e-6);
     var look: TerrainLook;
     look.world_dx = dpdx(world);
@@ -1860,7 +1862,7 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     // The true surface's point the drawn one stands for: a step back along
     // the displacement there, so materials lie where their heights moved the
     // ground.
-    let drawn = relative + camera.position.xyz;
+    let drawn = eye_world(relative);
     let world = drawn - terrain_displacement(drawn, drawn.xz - terrain.origin.xz);
     let away = length(relative);
     let ray = relative / max(away, 1.0e-6);
@@ -1870,8 +1872,8 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     let shading = terrain_pixel_shading(world);
     let geometric = terrain_surface_normal(local, shading);
     // How the point moves per pixel on the plane of the terrain's smooth
-    // normal: where the rays one pixel over meet that plane,
-    // which change smoothly across the triangles drawn, so fading detail and
+    // normal, which its maps filter by: where the rays one pixel over meet
+    // that plane, which change smoothly across the triangles drawn, so
     // mipmaps change with them rather than from one triangle to the next.
     let facing = min(dot(geometric, ray), -0.015625);
     // Its materials as finely as the display shows them: per display pixel
@@ -1879,14 +1881,15 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     let detail = material_detail();
     let smooth_dx = away * detail * (ray_dx - ray * (dot(geometric, ray_dx) / facing));
     let smooth_dy = away * detail * (ray_dy - ray * (dot(geometric, ray_dy) / facing));
-    let along = vec2<f32>(length(smooth_dx), length(smooth_dy));
-    let footprint = max(along.x, along.y);
+    // What a pixel spans there seen from the detail eye, which its detail
+    // hands over by: along the view, its long side, and across it.
+    let span = detail_span(world, geometric);
     var site: TerrainSite;
     site.world = world;
     site.world_dx = smooth_dx;
     site.world_dy = smooth_dy;
-    site.footprint = footprint;
-    site.texel = max(min(along.x, along.y), footprint / 16.0);
+    site.footprint = span.y;
+    site.texel = span.x;
     site.geometric = geometric;
     site.toward = -ray;
     site.thinned = terrain_thinned(world);
@@ -1901,7 +1904,7 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
 fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     let seen = terrain_seen(relative, look);
     let site = seen.site;
-    let world = relative + camera.position.xyz;
+    let world = eye_world(relative);
     let local = world.xz - terrain.origin.xz;
     let geometric = site.geometric;
     // The shadow clipmap's levels' ground over this point, which it looks
@@ -2071,7 +2074,7 @@ fn terrain_resolved(position: vec4<f32>, dither: f32) -> TerrainResolved {
     resolved.point = widened(seen, select(vec3<f32>(0.0), dpdxFine(seen.normal), same.x),
         select(vec3<f32>(0.0), dpdyFine(seen.normal), same.y));
     resolved.previous = (camera.previous_view_projection
-        * vec4<f32>(relative + camera.position.xyz, 1.0)).xyw;
+        * vec4<f32>(eye_world(relative), 1.0)).xyw;
     return resolved;
 }
 

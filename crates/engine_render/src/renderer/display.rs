@@ -306,8 +306,11 @@ pub(super) struct FrameTimer {
     readbacks: ReadbackRing<(u32, u32)>,
     // The last frame read back, its milliseconds and render size, until
     // taken.
-    read: Rc<Cell<Option<(f64, (u32, u32))>>>,
+    read: Rc<Cell<Option<ReadFrame>>>,
 }
+
+/// A frame read back: its milliseconds and render size.
+type ReadFrame = (f64, (u32, u32));
 
 /// Bytes of the two timestamps a frame resolves.
 const FRAME_STAMP_BYTES: u64 = 16;
@@ -371,9 +374,8 @@ impl FrameTimer {
         let read = Rc::clone(&self.read);
         let period = f64::from(period);
         self.readbacks.after_submit(move |words, size| {
-            let stamp = |word: usize| {
-                u64::from(words.get(word)) | (u64::from(words.get(word + 1)) << 32)
-            };
+            let stamp =
+                |word: usize| u64::from(words.get(word)) | (u64::from(words.get(word + 1)) << 32);
             let (begin, end) = (stamp(0), stamp(2));
             if end > begin {
                 read.set(Some(((end - begin) as f64 * period / 1.0e6, size)));

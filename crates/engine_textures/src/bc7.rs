@@ -15,9 +15,7 @@ use engine_math::{max, min};
 const WEIGHTS: [&[u32]; 3] = [
     &[0, 21, 43, 64],
     &[0, 9, 18, 27, 37, 46, 55, 64],
-    &[
-        0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64,
-    ],
+    &[0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64],
 ];
 
 fn weights(bits: u32) -> &'static [u32] {
@@ -480,7 +478,11 @@ fn assign(
             length += *step * *step;
         }
         let last = palette_weights.len() - 1;
-        let scale = if length > 0 { 64.0 / length as f32 } else { 0.0 };
+        let scale = if length > 0 {
+            64.0 / length as f32
+        } else {
+            0.0
+        };
         for &texel in members {
             let color = &texels[texel];
             let mut guess = 0;
@@ -494,8 +496,8 @@ fn assign(
                 guess = NEAREST_ENTRY[(index_bits - 2) as usize][weight] as usize;
             }
             let mut nearest = (u32::MAX, 0);
-            for index in guess.saturating_sub(1)..=(guess + 1).min(last) {
-                let entry = &palette[index];
+            let (low, high) = (guess.saturating_sub(1), (guess + 1).min(last));
+            for (index, entry) in palette.iter().enumerate().take(high + 1).skip(low) {
                 let mut error = 0;
                 for channel in 0..span.count {
                     let difference = entry[channel] - color[span.first + channel] as i32;
@@ -641,7 +643,11 @@ fn encode_mode(
     let separate = mode.rotation_bits > 0;
     let joint = Span {
         first: 0,
-        count: if separate || mode.alpha_bits == 0 { 3 } else { 4 },
+        count: if separate || mode.alpha_bits == 0 {
+            3
+        } else {
+            4
+        },
     };
     let (color_index, alpha_index) = if selection == 1 {
         (mode.index_bits[1], mode.index_bits[0])
@@ -733,7 +739,12 @@ fn pack(candidate: Candidate) -> [u8; 16] {
     };
     for (subset, fit) in fits.iter_mut().enumerate() {
         let members = (0..16).filter(|&texel| subset_of(mode.subsets, partition, texel) == subset);
-        anchor(fit, members, anchor_of(mode.subsets, partition, subset), color_index);
+        anchor(
+            fit,
+            members,
+            anchor_of(mode.subsets, partition, subset),
+            color_index,
+        );
     }
     if let Some(alpha) = &mut alpha {
         anchor(alpha, 0..16, 0, alpha_index);
@@ -835,7 +846,11 @@ fn ranked(texels: &Texels, subsets: usize, limit: usize, span: Span, keep: usize
         })
         .collect();
     scored.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-    scored.into_iter().take(keep).map(|(_, partition)| partition).collect()
+    scored
+        .into_iter()
+        .take(keep)
+        .map(|(_, partition)| partition)
+        .collect()
 }
 
 /// Squared error per texel below which a block keeps what one subset fit.
@@ -884,7 +899,11 @@ pub(crate) fn encode_block(texels: &[[u8; 4]; 16]) -> [u8; 16] {
         }
         // Mode 0 takes the first 16 of mode 2's partitions.
         let three = ranked(&colors, 3, 64, rgb, 64);
-        for &partition in three.iter().filter(|&&partition| partition < 16).take(TRIED3) {
+        for &partition in three
+            .iter()
+            .filter(|&&partition| partition < 16)
+            .take(TRIED3)
+        {
             consider(&mut best, 0, (partition, 0, 0));
         }
         for &partition in three.iter().take(TRIED3) {

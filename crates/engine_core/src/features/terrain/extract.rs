@@ -156,9 +156,8 @@ pub struct RenderPlacementLayer {
 impl RenderPlacementLayer {
     /// Whether its objects stand on surface material `material`.
     pub fn stands_on(&self, material: usize) -> bool {
-        self.materials.is_none_or(|set| {
-            material < 256 && set[material / 64] & (1 << (material % 64)) != 0
-        })
+        self.materials
+            .is_none_or(|set| material < 256 && set[material / 64] & (1 << (material % 64)) != 0)
     }
 }
 
@@ -370,7 +369,9 @@ fn extract_layers(rules: &Biomes, layers: &mut Vec<RenderPlacementLayer>) {
         }
         let held = &mut layers[index];
         held.level = layer.level;
-        held.far = layer.far.map_or((layer.level, 0.0), |far| (far.level, far.share));
+        held.far = layer
+            .far
+            .map_or((layer.level, 0.0), |far| (far.level, far.share));
         // Layers count their objects per hectare.
         held.density = layer.density / 10_000.0;
         held.scale = layer.scale;
@@ -388,8 +389,14 @@ fn extract_layers(rules: &Biomes, layers: &mut Vec<RenderPlacementLayer>) {
         let total: f32 = layer.assets.iter().map(|choice| choice.weight).sum();
         held.assets.clear();
         held.assets.extend(layer.assets.iter().filter_map(|choice| {
-            let asset = rules.assets.iter().position(|known| *known == choice.asset)?;
-            Some((asset as u16, choice.weight / total.max(f32::MIN_POSITIVE)))
+            let asset = rules
+                .assets
+                .iter()
+                .position(|known| *known == choice.asset)?;
+            Some((
+                asset as u16,
+                choice.weight / engine_math::max(total, f32::MIN_POSITIVE),
+            ))
         }));
     }
 }

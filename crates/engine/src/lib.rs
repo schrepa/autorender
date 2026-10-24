@@ -52,8 +52,8 @@ mod games {
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, AnimatedProperty,
         AnimationChannel, AnimationClip, AnimationPlayer, AnimationPlugin, AnimationSystems, App,
         AssetBudget, AssetError, AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, ClipHandle,
-        Clouds, Cover, Cube, DebugView, DebugViewMode, Decal, DecalBlend,
-        DecalSettings, Deformation, DeformationPlugin, Deformer, Dither, Engine, EngineConfig,
+        Clouds, Cover, Cube, DebugView, DebugViewMode, Decal, DecalBlend, DecalSettings,
+        Deformation, DeformationPlugin, Deformer, Dither, Engine, EngineConfig,
         EngineEntityCommands, Environment, Feature, Filter, FixedPostSimulation,
         FixedPreSimulation, FixedSimulation, FixedSimulationSystems, FixedTickEnd,
         FixedTickEndSystems, FixedTime, Floating, Foliage, FrameReport, FrameTime, GlobalTransform,
@@ -85,13 +85,14 @@ pub use games::*;
 // size `Mesh::from_virtual` takes by default, and what hosts and tools read.
 pub use engine_core::{
     AnimationSample, DEFAULT_FALLBACK_TRIANGLES, DetailShares, DrawnKind, EnvironmentSection,
-    ErrorCode, Features, HierarchyReport, InvalidSetting, LodLevel, MAX_EMITTER_PARTICLES,
-    MAX_HIERARCHY_DEPTH, MAX_LIGHT_RANGE, MAX_MOVING_TILES, MAX_OCEAN_WAVES, MAX_SHADOW_LEVELS,
-    MAX_SPLINE_POINTS, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION,
-    MAX_TRACK_DEPTH, MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MaterialShare, MeshLods, OceanPoint,
-    OceanSurface, OceanWave, OceanWaves, PixelProbe, PluginGroupBuilder, SplineChunks, SunLookup,
-    TerrainProbe, TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit, Viewport,
-    VirtualMesh, WaterProbe, WaterReach, has_feature,
+    ErrorCode, Features, HierarchyReport, InvalidSetting, LodLevel, MAX_BOUNCE_LEVELS,
+    MAX_EMITTER_PARTICLES, MAX_HIERARCHY_DEPTH, MAX_LIGHT_RANGE, MAX_MOVING_TILES,
+    MAX_OCCUPANCY_LEVELS, MAX_OCEAN_WAVES, MAX_SHADOW_LEVELS, MAX_SPLINE_POINTS, MAX_SPOT_DEGREES,
+    MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION, MAX_TRACK_DEPTH, MAX_TRANSFORM_NODES,
+    MIN_SPOT_DEGREES, MaterialShare, MeshLods, OceanPoint, OceanSurface, OceanWave, OceanWaves,
+    PixelProbe, PluginGroupBuilder, SplineChunks, SunLookup, TerrainProbe, TextureFamily,
+    TextureFormat, TextureSampling, TransformNodeLimit, Viewport, VirtualMesh, WaterProbe,
+    WaterReach, has_feature,
 };
 
 /// Terrain authoring: layer stacks, masks, stamps, bakes, placement and
@@ -142,8 +143,8 @@ pub mod stats {
         Applied, CellStats, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn,
         ErosionStats, ExposureStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats,
         LightStats, Names, NavStats, OccupancyStats, OceanStats, PathStats, PhysicsStats,
-        ProbeStats, RenderStats, ShadowStats, SkyStats, TerrainRenderStats, TerrainStats,
-        VirtualGeometryStats, WaterStats,
+        ProbeStats, RenderStats, ShadowStats, SkyStats, TerrainBounceStats, TerrainRenderStats,
+        TerrainStats, VirtualGeometryStats, WaterStats,
     };
 }
 

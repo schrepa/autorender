@@ -435,6 +435,10 @@ impl OccupancyPass {
     /// targets, the covers or the settings changed, or the eye left the
     /// maps' reference height by more than the finest map's reach. Returns
     /// what shading reads of the maps; `None` without them.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,

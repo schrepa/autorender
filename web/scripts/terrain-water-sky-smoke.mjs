@@ -288,22 +288,22 @@ try {
   // sun lights the ground; off, nothing relights and the ground takes no
   // light from the ground around it.
   let bounced = (await command("environment", { terrain: fast })).result.rendering;
-  for (let frame = 0; frame < 400 && bounced.terrain.bounced === 0; frame++) {
+  for (let frame = 0; frame < 400 && bounced.terrain.bounce.relit === 0; frame++) {
     await new Promise(resolve => setTimeout(resolve, 25));
     bounced = (await command("render")).result.rendering;
   }
   // The terrain's alone: its surroundings take none.
-  assert.equal(bounced.terrain.bounced, 1, `the terrain's probes relight: ${JSON.stringify(bounced.terrain)}`);
-  assert.ok(bounced.terrain.bounce_probes > 0, "probes relight around the camera");
+  assert.equal(bounced.terrain.bounce.relit, 1, `the terrain's probes relight: ${JSON.stringify(bounced.terrain)}`);
+  assert.ok(bounced.terrain.bounce.probes > 0, "probes relight around the camera");
   await settle();
   const relit = await capture("bounce-light");
   const unlit = await command("environment", { terrain: { ...fast, bounce: false } });
-  assert.equal(unlit.result.rendering.terrain.bounced, 0, "without bounce light nothing relights");
+  assert.equal(unlit.result.rendering.terrain.bounce.relit, 0, "without bounce light nothing relights");
   await settle();
   const estimated = await capture("bounce-estimated");
   const bounce = await differentPixels(page, [relit, estimated]);
   assert.ok(bounce.changed > 1000, `bounce light shows: ${bounce.changed} pixels`);
-  checks.push({ check: "bounce light", probes: bounced.terrain.bounce_probes, pixels: bounce.changed });
+  checks.push({ check: "bounce light", probes: bounced.terrain.bounce.probes, pixels: bounce.changed });
 
   // Aerial perspective: thick air from the eye hazes the
   // terrain; none leaves it as it was.

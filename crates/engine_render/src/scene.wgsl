@@ -254,21 +254,21 @@ fn occupancy_cover(world: vec3<f32>, map: u32) -> f32 {
 
 // The share of the sky light placed objects' covers leave at `world`:
 // under a cover, its density's worth less; within it, less the deeper
-// below its top; above it or outside the maps, all of it. The map a
-// pixel's size there picks gives it (`detail_level`, its reach seen from
-// the detail eye), or the finest from there whose window holds the point,
-// blended with the next coarser one as the levels hand over; past the
-// coarsest a level holding no cover, so covers fade out over the outer half
-// of its reach. A map's texels are the mean of the finer one's where they
-// overlap, so a handover changes how sharp covers show, not how much.
+// below its top; above it or outside the maps, all of it. The map the
+// point's distance from the detail eye picks gives it (`detail_level` over
+// half the finest map's reach), or the finest from there whose window holds
+// the point, blended with the next coarser one as the levels hand over;
+// past the coarsest a level holding no cover, so covers fade out over the
+// outer half of its reach. A map's texels are the mean of the finer one's
+// where they overlap, so a handover changes how sharp covers show, not how
+// much.
 fn occupancy_visibility(world: vec3<f32>) -> f32 {
     let strength = lighting.occupancy.w;
     if !OCCUPANCY || strength <= 0.0 {
         return 1.0;
     }
     let maps = u32(lighting.occupancy_maps.x);
-    let picked = detail_level(detail_across(world), 0.5 * lighting.occupancy.z * camera.options.y,
-        maps + 1u);
+    let picked = detail_level(detail_distance(world), 0.5 * lighting.occupancy.z, maps + 1u);
     var map = picked.level;
     var blend = picked.blend;
     var hidden = -1.0;
@@ -374,7 +374,7 @@ fn material_detail() -> f32 {
 fn stable_normalize(value: vec3<f32>) -> vec3<f32> {
     let scale = maximum_abs(value);
     // Interpolation between opposing vertex normals can produce a zero vector.
-    if scale == 0.0 {
+    if scale == 0.0 { // optics: a zero vector's guard, whatever it measures
         return vec3<f32>(0.0, 1.0, 0.0);
     }
     return normalize(value / scale);
@@ -1064,9 +1064,9 @@ fn bounce_held(texel: vec2<f32>, first: u32, normal: vec3<f32>, above: f32) -> v
 }
 
 // Bounce light at `world` on a surface of `normal`, from the first terrain
-// whose probes relight it: from the level of them a pixel's size there
-// picks (`detail_level`, the finest level's reach seen from the detail
-// eye), or the finest from there whose window holds the point, the coarsest
+// whose probes relight it: from the level of them the point's distance
+// from the detail eye picks (`detail_level` over half the finest level's
+// reach), or the finest from there whose window holds the point, the coarsest
 // holding the whole terrain; between that level's probe columns, blended
 // with the next coarser level's as the levels hand over, each coarser
 // probe the mean of the finer ones under it, so a handover changes how
@@ -1093,8 +1093,7 @@ fn bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> Bounce
         }
         let arranged = terrain_horizon_records[at + 3u];
         let levels = u32(header.z);
-        let picked = detail_level(detail_across(world), 0.5 * arranged.y * camera.options.y,
-            levels);
+        let picked = detail_level(detail_distance(world), 0.5 * arranged.y, levels);
         var level = max(picked.level, u32(arranged.w));
         var blend = select(0.0, picked.blend, level == picked.level);
         var texel = bounce_texel(at, level, uv);

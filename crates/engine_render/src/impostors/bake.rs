@@ -104,7 +104,12 @@ fn draw_layer(
                     .map(|part| (&part.draw, part.extended, part.group, part.variant)),
             )
             .map(|(draw, extended, group, variant)| {
-                (draw, extended, group, variant.with_extended(extended).uber())
+                (
+                    draw,
+                    extended,
+                    group,
+                    variant.with_extended(extended).uber(),
+                )
             })
             .collect();
     let layout = &pipelines.bake_pipeline_layout;
@@ -218,7 +223,10 @@ fn draw_tile(
     (column, row): (u32, u32),
 ) {
     let side = tile_frames(shape);
-    let (columns, rows) = (side.min(shape.frames - column), side.min(shape.frames - row));
+    let (columns, rows) = (
+        side.min(shape.frames - column),
+        side.min(shape.frames - row),
+    );
     let group = bake_group(
         device,
         drawn.0,

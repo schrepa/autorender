@@ -470,8 +470,7 @@ fn reduce(polygon: &mut Vec<[f64; 2]>, bounds: [f64; 4]) -> bool {
         for edge in 0..count {
             let at = |step: usize| polygon[(edge + step) % count];
             // `count - 1` steps on is one back.
-            let Some((added, point)) = meeting([at(count - 1), at(0), at(1), at(2)], bounds)
-            else {
+            let Some((added, point)) = meeting([at(count - 1), at(0), at(1), at(2)], bounds) else {
                 continue;
             };
             if best.is_none_or(|(least, _, _)| added < least) {
@@ -666,7 +665,10 @@ impl<'a> Trimmed<'a> {
 
 /// The `values` of a mesh's own vertices `kept`, then the `added` ones.
 fn joined<T: Copy>(values: &[T], kept: &[usize], added: impl IntoIterator<Item = T>) -> Vec<T> {
-    kept.iter().map(|&vertex| values[vertex]).chain(added).collect()
+    kept.iter()
+        .map(|&vertex| values[vertex])
+        .chain(added)
+        .collect()
 }
 
 /// A vertex a polygon adds: its card's corners and its place on the card.

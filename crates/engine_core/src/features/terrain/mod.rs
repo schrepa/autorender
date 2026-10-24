@@ -97,6 +97,7 @@ use plan::*;
 pub use queries::*;
 pub use residency::*;
 pub use settings::*;
+pub use settled::{SETTLED_KIND, SETTLED_PARITY, settled_alike};
 use settled::{SettleQueue, Settled};
 use shading::Shadings;
 pub use stats::*;
@@ -105,7 +106,6 @@ pub(crate) use streaming::*;
 pub use surroundings::*;
 use tile_map::TileMap;
 pub use water::*;
-pub use settled::{SETTLED_KIND, SETTLED_PARITY, settled_alike};
 pub use water_sim::{GHOST_DRY, WaterGhost, WaterSourceCell, WaterWindow};
 pub use wind::*;
 

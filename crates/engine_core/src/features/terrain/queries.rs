@@ -394,7 +394,11 @@ impl WalkedTerrain {
             gait: *gait,
         };
         let input = job.identity();
-        let record = RecordKey::new(&engine_terrain::sources::PORTALS, PortalsJob::KIND.name(), &input);
+        let record = RecordKey::new(
+            &engine_terrain::sources::PORTALS,
+            PortalsJob::KIND.name(),
+            &input,
+        );
         (input, record)
     }
 
@@ -407,7 +411,11 @@ impl WalkedTerrain {
             stamps: self.reaching(key),
         };
         let input = job.identity();
-        let record = RecordKey::new(&engine_terrain::sources::TILES, TileJob::KIND.name(), &input);
+        let record = RecordKey::new(
+            &engine_terrain::sources::TILES,
+            TileJob::KIND.name(),
+            &input,
+        );
         (input, record)
     }
 }

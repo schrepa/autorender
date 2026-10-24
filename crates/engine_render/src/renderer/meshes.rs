@@ -202,7 +202,10 @@ impl Renderer {
         } else {
             variant
         };
-        (mesh, self.bind_mesh(pass, binds, (kind, variant), (group, mesh)))
+        (
+            mesh,
+            self.bind_mesh(pass, binds, (kind, variant), (group, mesh)),
+        )
     }
 
     /// Binds what `batch` draws in masked surfaces' depth pre-pass of an

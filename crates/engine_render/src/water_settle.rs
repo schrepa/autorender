@@ -299,13 +299,13 @@ impl WaterSettle {
             .filter(|square| square.phase == Phase::Stepping)
             .map(|square| square.stepping.max(1))
             .sum();
-        if stepping > 0 {
-            let budget = if self.cooking {
-                COOK_CELL_STEPS
-            } else {
-                PLAY_CELL_STEPS
-            };
-            let most = (budget / stepping).clamp(1, u64::from(LOOK_EVERY)) as u32;
+        let budget = if self.cooking {
+            COOK_CELL_STEPS
+        } else {
+            PLAY_CELL_STEPS
+        };
+        if let Some(most) = budget.checked_div(stepping) {
+            let most = most.clamp(1, u64::from(LOOK_EVERY)) as u32;
             self.steps = 1 << (u32::BITS - 1 - most.leading_zeros());
         }
         let looks = self.write_squares(queue);
@@ -389,7 +389,12 @@ impl WaterSettle {
             squares[slot] = SimSlot {
                 shape: [x, z, flags, start.sources.len() as u32],
                 step: [start.cell, 0.0, 0.0, 0.0],
-                blocks: [stored.blocks[0], stored.blocks[1], stored.stored() as u32, 0],
+                blocks: [
+                    stored.blocks[0],
+                    stored.blocks[1],
+                    stored.stored() as u32,
+                    0,
+                ],
             };
         }
         if let Some(buffers) = self.buffers.as_ref() {
@@ -402,11 +407,7 @@ impl WaterSettle {
     /// Sets up the read backs at the frame's end: the sums of each slot
     /// of `looks` whose region looks, and the averaged water of each of
     /// `wanted`, whose regions settled.
-    fn ask_readbacks(
-        &mut self,
-        device: &wgpu::Device,
-        (looks, wanted): (Vec<usize>, Vec<usize>),
-    ) {
+    fn ask_readbacks(&mut self, device: &wgpu::Device, (looks, wanted): (Vec<usize>, Vec<usize>)) {
         let Some(buffers) = self.buffers.as_ref() else {
             return;
         };
@@ -419,7 +420,10 @@ impl WaterSettle {
             };
             let blocks = square.start.stored.stored() as u64;
             let offset = (buffers.averages_at(slot as u32) + (SIM_CELL_SUMS + means) * held) * 16;
-            copies.push(((slot, square.load, false), (offset, SIM_BLOCK_LOOKS * blocks * 16)));
+            copies.push((
+                (slot, square.load, false),
+                (offset, SIM_BLOCK_LOOKS * blocks * 16),
+            ));
         }
         for slot in wanted {
             let Some(square) = self.squares[slot].as_ref() else {
@@ -675,12 +679,7 @@ impl WaterSettle {
 /// cell of it holds water no lake holds or rivers bring water to one), its
 /// cells' stepping counted; the ranges to clear before it steps: its sums,
 /// and its cells' waves, outflow's shares and seconds.
-fn load(
-    queue: &wgpu::Queue,
-    buffers: &SlotBuffers,
-    slot: u32,
-    square: &mut Square,
-) -> [Clear; 2] {
+fn load(queue: &wgpu::Queue, buffers: &SlotBuffers, slot: u32, square: &mut Square) -> [Clear; 2] {
     let start = &square.start;
     let n = start.water.len() as u64;
     buffers.write_table(queue, slot, &start.stored);
@@ -787,7 +786,12 @@ fn looked(square: &mut Square, sums: &[[f32; 4]]) -> bool {
     let (mut energy, mut heave, mut swirl, mut clamped) = (0.0_f64, 0.0_f64, 0.0_f64, 0.0);
     let (mut against, mut against_cells) = (0.0_f64, 0.0_f64);
     let blocks = square.start.stored.stored();
-    for block in sums.chunks_exact(SIM_BLOCK_LOOKS as usize).take(blocks) {
+    for block in sums
+        .as_chunks::<{ SIM_BLOCK_LOOKS as usize }>()
+        .0
+        .iter()
+        .take(blocks)
+    {
         let [water, motion, edge] = [block[0], block[1], block[2]];
         volume += f64::from(water[0]);
         speed += f64::from(water[1]);
@@ -918,7 +922,9 @@ fn at_least_one(value: f64) -> f64 {
 /// `bytes` read back as groups of four floats.
 fn floats(bytes: &[u8]) -> Vec<[f32; 4]> {
     bytes
-        .chunks_exact(16)
+        .as_chunks::<16>()
+        .0
+        .iter()
         .map(|chunk| {
             let float = |at: usize| {
                 f32::from_le_bytes([chunk[at], chunk[at + 1], chunk[at + 2], chunk[at + 3]])

@@ -621,7 +621,7 @@ fn vs_water_temporal(@builtin(vertex_index) vertex: u32,
         @builtin(instance_index) instance: u32) -> WaterTemporalOutput {
     let output = water_output(vertex, instance);
     return water_temporal(output, (camera.previous_view_projection
-        * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw);
+        * vec4<f32>(eye_world(output.relative), 1.0)).xyw);
 }
 
 // The listing of terrains' water's leaves (`water.rs`): each frame one pass
@@ -1082,7 +1082,7 @@ fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: 
         let below = max(dot(relative - ground, plane), 0.0);
         let reach = min(below / max(sinking, 0.1), WATER_REACH);
         let clip = camera.view_projection
-            * vec4<f32>(relative + bent * reach + camera.position.xyz, 1.0);
+            * vec4<f32>(eye_world(relative + bent * reach), 1.0);
         if clip.w > 1.0e-6 {
             let moved = (vec2<f32>(clip.x, -clip.y) / clip.w * 0.5 + 0.5) * size;
             if all(moved >= vec2<f32>(0.0)) && all(moved < size)
@@ -1148,7 +1148,7 @@ struct WaterLit {
 // wet. One shadow lookup serves the sun's three, and the sun's share of the
 // light falling on the water.
 fn water_light(surface: WaterSurface) -> WaterLit {
-    let world = surface.relative + camera.position.xyz;
+    let world = eye_world(surface.relative);
     let distance = length(surface.relative);
     let view = stable_normalize(-surface.relative);
     let up = vec3<f32>(0.0, 1.0, 0.0);
@@ -2061,8 +2061,8 @@ fn water_chop(p: vec2<f32>, flow: vec2<f32>, depth: f32, froude: f32, turbulence
 }
 
 // Caustics (Guardado and Sánchez-Crespo): how much brighter the sun's
-// light falls on the bed `bed` meters under the water's point `relative`
-// (less the eye) of normal `normal`, where the waves gather it as they
+// light falls on the bed `bed` meters under the water's point `world` of
+// normal `normal`, where the waves gather it as they
 // refract it down: the area a pixel's beam of sunlight lands on through a
 // level surface over the area it lands on through the waves (the inverse
 // of the Jacobian of where the refracted rays land, from its change across
@@ -2080,12 +2080,12 @@ const WATER_CAUSTIC_MOST: f32 = 1.5;
 const WATER_CAUSTIC_DEPTH: f32 = 1.5;
 const WATER_CAUSTIC_PIXELS: vec2<f32> = vec2<f32>(0.03, 0.08);
 
-fn water_caustics(relative: vec3<f32>, normal: vec3<f32>, bed: f32) -> f32 {
+fn water_caustics(world: vec3<f32>, normal: vec3<f32>, bed: f32) -> f32 {
     let sun = lighting.sun.xyz;
     let into = refract(-sun, normal, 1.0 / WATER_IOR);
     let level = refract(-sun, vec3<f32>(0.0, 1.0, 0.0), 1.0 / WATER_IOR);
-    let landing = relative.xz + into.xz * (bed / max(-into.y, 0.1));
-    let level_landing = relative.xz + level.xz * (bed / max(-level.y, 0.1));
+    let landing = world.xz + into.xz * (bed / max(-into.y, 0.1));
+    let level_landing = world.xz + level.xz * (bed / max(-level.y, 0.1));
     let spread = abs(determinant(mat2x2<f32>(dpdx(landing), dpdy(landing))));
     let level_spread = abs(determinant(mat2x2<f32>(dpdx(level_landing), dpdy(level_landing))));
     if level_spread <= 0.0 {
@@ -2388,7 +2388,7 @@ fn water_simulated(point: vec2<f32>) -> bool {
 // Tiles' water at `input`, refracting the scene's color when `refracts`;
 // or the simulated water, when `simulated`.
 fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShade {
-    let world = input.relative + camera.position.xyz;
+    let world = eye_world(input.relative);
     if !simulated && water_simulated(world.xz) {
         discard;
     }
@@ -2458,7 +2458,7 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     // water's samples, which the triangles blend their offsets to: only
     // where a pixel's samples agree on one, the obstacle staying put as the
     // point moves across the pixel.
-    let anchor = input.relative.xz + input.obstacle.xy;
+    let anchor = world.xz + input.obstacle.xy;
     let anchoring = (length(dpdx(anchor)) + length(dpdy(anchor)))
         / max(length(world_dx.xz) + length(world_dy.xz), 1.0e-6);
     let anchored = 1.0 - smoothstep(0.1, 0.4, anchoring);
@@ -2494,8 +2494,9 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     let roughness = water_roughness(waves.z * strength * strength + chop.waves.z
         + stationary.z);
     let view = stable_normalize(-input.relative);
-    // Under the sea, the sea's water stands instead.
-    if water.ocean.y > 0.5 && input.relative.y < water.ocean.x {
+    // Under the sea, the sea's water stands instead: its level
+    // (`water.ocean.x`) is held relative to the eye.
+    if water.ocean.y > 0.5 && world.y < eye_world(vec3<f32>(0.0, water.ocean.x, 0.0)).y {
         discard;
     }
     // What lies behind: the opaque surface behind the pixel and, where the
@@ -2512,10 +2513,10 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     // pixel, the meters it lies under the surface's plane, and how fast that
     // changes across it; and the bed under the pixel, where the waves gather
     // the sun's light.
-    let standing = max(dot(input.relative - own, plane) / plane.y, 0.0);
+    let standing = max(dot(input.relative - own, plane) / plane.y, 0.0); // optics: what the view meets behind the pixel
     let standing_change = abs(dpdx(standing)) + abs(dpdy(standing));
     let bed = min(depth, standing);
-    let gathered = water_caustics(input.relative, normal, bed);
+    let gathered = water_caustics(world, normal, bed);
     // The water ends at its waterline, where its depth or its height over
     // what stands in it comes to nothing; thin water shows by how fast it
     // runs: calm shallows fade in over WATER_SHORE of depth, while racing
@@ -2531,9 +2532,9 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     // rock: the sheet draws its white and its body.
     let steep = length(input.slope);
     let film = smoothstep(WATER_FILM.x, WATER_FILM.y, steep) * input.foam.z;
-    let through = min(max(length(behind.ground - input.relative), 0.0),
-        depth * plane.y / max(dot(view, plane), 0.1));
-    let down = clamp(dot(input.relative - behind.ground, plane) / plane.y, 0.0, through);
+    let through = min(max(length(behind.ground - input.relative), 0.0), // optics: the view's way through the water
+        depth * plane.y / max(dot(view, plane), 0.1)); // optics: the view's way through the water
+    let down = clamp(dot(input.relative - behind.ground, plane) / plane.y, 0.0, through); // optics: the light's way down to what the view meets
     // The water holds bubbles where white water is born in it and where it
     // carries the foam its flow churned up.
     let aerated = max(input.state.y, saturate(input.churned / WATER_FOAM_MOST));
@@ -2940,7 +2941,7 @@ fn vs_sim_water(@builtin(vertex_index) index: u32) -> WaterOutput {
 fn vs_sim_water_temporal(@builtin(vertex_index) index: u32) -> WaterTemporalOutput {
     let output = sim_water_output(index);
     return water_temporal(output, (camera.previous_view_projection
-        * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw);
+        * vec4<f32>(eye_world(output.relative), 1.0)).xyw);
 }
 
 @fragment

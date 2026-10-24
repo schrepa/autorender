@@ -176,7 +176,9 @@ impl FrameRegions<'_> {
         let side = self.layout.slot as f32;
         for tile in &self.plan.moving {
             let index = usize::from(tile.index);
-            let slot = self.layout.texels(self.layout.still + u32::from(tile.index));
+            let slot = self
+                .layout
+                .texels(self.layout.still + u32::from(tile.index));
             let clip = MapRegion {
                 rect: self.clipmap.tile_rect(tile.level, tile.tile),
                 depth: self.clipmap.band(tile.level),

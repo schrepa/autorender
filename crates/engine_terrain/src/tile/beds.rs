@@ -68,7 +68,11 @@ fn flood_meters(step: u16) -> f32 {
 /// or knobs are carved into it in bit 3, and from bit 4 its d84 as a
 /// multiple of its d50 above one, in steps of [`RATIO_STEP`].
 fn form(bed: &Bed) -> u16 {
-    let ratio = if bed.d50 > 0.0 { bed.d84 / bed.d50 } else { 1.0 };
+    let ratio = if bed.d50 > 0.0 {
+        bed.d84 / bed.d50
+    } else {
+        1.0
+    };
     let steps = clamp(((ratio - 1.0) / RATIO_STEP).round(), 0.0, RATIO_STEPS) as u16;
     bed.reach as u16 | u16::from(bed.carved) << 3 | steps << 4
 }
@@ -90,6 +94,11 @@ fn no_beds() -> Box<[u16]> {
     planes[FLOOD * SAMPLES..(FLOOD + 1) * SAMPLES].fill(RIVER_EDGE_FAR);
     planes.into_boxed_slice()
 }
+
+/// A tile's rivers as surface masks read them, row by row with the border:
+/// its edges (steps, [`river_step`]) and the planes of its beds, each
+/// missing where the tile has none.
+pub(crate) type RiverRows<'a> = (Option<&'a [u16]>, Option<&'a [u16]>);
 
 /// What surface masks read of the rivers at a point of a tile's ground:
 /// meters from the nearest river's edge, and the grain, power and flood of
@@ -113,7 +122,7 @@ impl RiverInputs {
 
     /// Sample `at` of a tile's `edges` (steps, [`river_step`]) and planes of
     /// `beds`, row by row with the border, as the GPU reads its texel.
-    pub(crate) fn held((edges, beds): (Option<&[u16]>, Option<&[u16]>), at: usize) -> Self {
+    pub(crate) fn held((edges, beds): RiverRows<'_>, at: usize) -> Self {
         let plane = |index: usize| beds.map(|beds| beds[index * SAMPLES + at]);
         Self {
             river: edges.map_or(RIVER_FAR, |edges| river_meters(edges[at])),
@@ -165,7 +174,9 @@ impl Tile {
         beds: Option<Box<[u16]>>,
     ) -> Option<Self> {
         if edges.as_ref().is_some_and(|edges| edges.len() != SAMPLES)
-            || beds.as_ref().is_some_and(|beds| beds.len() != PLANES * SAMPLES)
+            || beds
+                .as_ref()
+                .is_some_and(|beds| beds.len() != PLANES * SAMPLES)
         {
             return None;
         }
@@ -260,12 +271,15 @@ impl Tile {
         let Some((i, j, fu, fv)) = self.cell(local) else {
             return RiverInputs::FAR;
         };
-        let held = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)]
-            .map(|(x, z)| self.river_inputs(x, z));
+        let held =
+            [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)].map(|(x, z)| self.river_inputs(x, z));
         let corners = if fu + fv <= 1.0 { [0, 1, 2] } else { [3, 2, 1] };
         let blend = |value: fn(RiverInputs) -> f32| on_triangle(held.map(value), fu, fv);
         let reached = |value: fn(RiverInputs) -> f32| {
-            if corners.iter().all(|&corner| value(held[corner]) < RIVER_FAR) {
+            if corners
+                .iter()
+                .all(|&corner| value(held[corner]) < RIVER_FAR)
+            {
                 blend(value)
             } else {
                 RIVER_FAR

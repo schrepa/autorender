@@ -337,7 +337,11 @@ impl SlotBuffers {
         let at = self.table_at(slot);
         let places = at + u64::from(self.capacity.mapped);
         queue.write_buffer(&self.blocks, at * 4, bytemuck::cast_slice(&stored.table));
-        queue.write_buffer(&self.blocks, places * 4, bytemuck::cast_slice(&stored.places));
+        queue.write_buffer(
+            &self.blocks,
+            places * 4,
+            bytemuck::cast_slice(&stored.places),
+        );
     }
 
     /// Where slot `slot`'s entries start in each buffer, as the shader

@@ -345,12 +345,12 @@
           "const": "cards"
         },
         {
-          "description": "Which sun shadow lookup decided it: the near cascades green, from\nbright (the first) to dark, the kept levels cyan to blue, the kept far\nmap indigo, the moving map orange, a terrain's horizon purple, past\nthe shadow distance gray; darker where it lies in shadow, black\nwithout sun shadows.",
+          "description": "Which sun shadow lookup decided it: the clipmap's levels green to\nblue, from the finest, a terrain's horizon purple, where no level is\ndrawn gray; darker where it lies in shadow, black without sun\nshadows.",
           "type": "string",
           "const": "shadows"
         },
         {
-          "description": "How it casts sun shadows: meshes red, placed objects orange (yellow\nwhere the kept map holds them), virtual geometry violet, impostor\ncards casting cards of their own magenta, terrain brown, what casts\nnone gray.",
+          "description": "How it casts sun shadows: meshes red, placed objects orange,\nvirtual geometry violet, impostor cards casting cards of their own\nmagenta, terrain brown, what casts none gray.",
           "type": "string",
           "const": "casters"
         },
@@ -365,7 +365,7 @@
           "const": "normals"
         },
         {
-          "description": "Terrain's tiles and patches: tile edges red, patch edges dark, the\nground between gray; everything else as in `cards`.",
+          "description": "Terrain's level-0 tiles and patches (sixteen samples a side): tile\nedges red, patch edges dark, the ground between gray; everything else\nas in `cards`.",
           "type": "string",
           "const": "tiles"
         },
@@ -1477,13 +1477,6 @@
       "description": "Ambient occlusion; an intensity of 0 turns it off.",
       "type": "object",
       "properties": {
-        "far_radius": {
-          "description": "The radius distant surfaces occlude within at most: beyond where\n`radius` spans a fiftieth of the view's height on screen, the\nradius grows with distance to keep that span, up to this one, so\ndistant creases, streets and valleys keep their occlusion. 0, or\nany radius up to `radius`, keeps the radius the same at every\ndistance.",
-          "type": "number",
-          "format": "float",
-          "default": 0.0,
-          "minimum": 0.0
-        },
         "intensity": {
           "description": "How much creases and corners darken the ambient light; 0 turns it\noff.",
           "type": "number",
@@ -1493,7 +1486,7 @@
           "minimum": 0.0
         },
         "radius": {
-          "description": "World distance within which geometry occludes.",
+          "description": "World distance within which geometry occludes, the same at every\ndistance: where it shrinks on screen to what the finest occupancy\nmap's texels span where that map hands over, the occlusion fades\nout, as the maps and terrains' probes hold coarser shade.",
           "type": "number",
           "format": "float",
           "default": 2.5,
@@ -1935,35 +1928,6 @@
       },
       "additionalProperties": false
     },
-    "SceneBounds": {
-      "description": "A world box (minimum and maximum corners).",
-      "type": "object",
-      "properties": {
-        "max": {
-          "type": "array",
-          "items": {
-            "type": "number",
-            "format": "float"
-          },
-          "maxItems": 3,
-          "minItems": 3
-        },
-        "min": {
-          "type": "array",
-          "items": {
-            "type": "number",
-            "format": "float"
-          },
-          "maxItems": 3,
-          "minItems": 3
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "min",
-        "max"
-      ]
-    },
     "SceneCamera": {
       "description": "Right-handed, Y-up perspective camera. Lens values are in world units.",
       "type": "object",
@@ -2264,42 +2228,6 @@
           ]
         }
       ]
-    },
-    "SceneContactShadows": {
-      "description": "Contact shadow settings.",
-      "type": "object",
-      "properties": {
-        "distance": {
-          "description": "Meters from the camera within which surfaces trace, their shadows\nfading out over its last third.",
-          "type": "number",
-          "format": "float",
-          "default": 80.0,
-          "maximum": 1000.0,
-          "minimum": 1.0
-        },
-        "enabled": {
-          "description": "Whether contact shadows trace.",
-          "type": "boolean",
-          "default": true
-        },
-        "length": {
-          "description": "How far each ray reaches toward the sun, in meters.",
-          "type": "number",
-          "format": "float",
-          "default": 0.6000000238418579,
-          "maximum": 4.0,
-          "minimum": 0.05
-        },
-        "strength": {
-          "description": "How much of the sun's light a hit takes away; 0 turns them off.",
-          "type": "number",
-          "format": "float",
-          "default": 0.8500000238418579,
-          "maximum": 1.0,
-          "minimum": 0.0
-        }
-      },
-      "additionalProperties": false
     },
     "SceneDebugView": {
       "description": "Debug view settings: what frames show each pixel as, for agents and\npeople finding out why a pixel looks as it does. Off by default; a\nview draws with its own pipelines, created the first time it shows,\nand leaves screen effects, decals, transparent surfaces and temporal\nantialiasing out.",
@@ -2722,16 +2650,6 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneClouds"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "contact_shadows": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneContactShadows"
             },
             {
               "type": "null"
@@ -4254,20 +4172,20 @@
       "type": "object",
       "properties": {
         "enabled": {
-          "description": "Whether the map is drawn.",
+          "description": "Whether the maps are drawn.",
           "type": "boolean",
           "default": true
         },
-        "far_radius": {
-          "description": "Meters the coarser far map reaches, with as many texels: none at\nor within `radius`.",
-          "type": "number",
-          "format": "float",
-          "default": 4096.0,
-          "maximum": 65536.0,
-          "minimum": 0.0
+        "levels": {
+          "description": "Maps around the detail eye, the finest first, each read where a\npixel's size picks it: covers darken out to `radius` times two to\none less than their count, fading out over the outer half of the\ncoarsest map's reach.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 4,
+          "maximum": 8,
+          "minimum": 1
         },
         "radius": {
-          "description": "Meters around the camera within which covers darken, less over the\nouter two fifths.",
+          "description": "Meters around the detail eye the finest map holds: each coarser\none reaches twice as far.",
           "type": "number",
           "format": "float",
           "default": 512.0,
@@ -4275,12 +4193,13 @@
           "minimum": 64.0
         },
         "resolution": {
-          "description": "The map's texels a side, rounded up to a multiple of 16: the\ncells its window follows the camera by, sixteen a side, span\nwhole texels.",
+          "description": "Each map's texels a side, a multiple of 32: the cells its window\nfollows the eye by, sixteen a side, span whole texels, and each\ncell of a finer map whole texels of the next.",
           "type": "integer",
           "format": "uint32",
           "default": 1024,
           "maximum": 4096,
-          "minimum": 128
+          "minimum": 128,
+          "multipleOf": 32
         },
         "strength": {
           "description": "How much of the sky light full cover takes away.",
@@ -4787,68 +4706,61 @@
       "description": "Sun shadows; omitted fields take the engine defaults.",
       "type": "object",
       "properties": {
-        "bounds": {
-          "description": "Region to keep shadows for: the whole scene gives the sharpest,\nstable shadows. Without it the maps follow the camera. Corners\nfinite, `min` at most `max` on every axis.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneBounds"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "cascades": {
-          "description": "Sharper maps (cascades) splitting `near_distance`, each reaching a\nthird as far as the next; 3 when omitted.",
-          "type": [
-            "integer",
-            "null"
-          ],
+        "atlas_slots": {
+          "description": "Tiles the atlas holds; tiles pixels read beyond these show a\ncoarser level.",
+          "type": "integer",
           "format": "uint32",
-          "maximum": 4,
-          "minimum": 1
-        },
-        "distance": {
-          "description": "Shadows fade out this far from the camera (world units).",
-          "type": "number",
-          "format": "float",
-          "default": 500.0,
-          "exclusiveMinimum": 0.0
+          "default": 1024,
+          "maximum": 4096,
+          "minimum": 64
         },
         "enabled": {
           "description": "Whether the sun casts shadows.",
           "type": "boolean",
           "default": true
         },
-        "level_extent": {
-          "description": "Side of the finest kept level (world units), which each next level\nis four times; 256 when omitted.",
+        "finest_texel": {
+          "description": "World size of the finest level's texels: shadows are this sharp\nat most, where pixels are smaller.",
           "type": "number",
           "format": "float",
-          "exclusiveMinimum": 0.0
+          "default": 0.03999999910593033,
+          "maximum": 1.0,
+          "minimum": 0.005
         },
         "levels": {
-          "description": "Kept levels: maps of still casters following the camera, sharper\nthan the far maps where they reach, each with half the far maps'\n`resolution` per side; none when omitted. Worlds larger than their\nshadows' sharpness give them two or three.",
+          "description": "Levels of the clipmap around the camera, each with texels twice\nthe size of the one inside it: sixteen reach from the finest\ntexel to about a kilometer a texel.",
           "type": "integer",
           "format": "uint32",
-          "maximum": 3,
+          "default": 16,
+          "maximum": 20,
+          "minimum": 1
+        },
+        "moving_tiles": {
+          "description": "Tiles moving casters draw over each frame at most, coarse levels\nfirst; they cast nothing on the tiles past these.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 256,
+          "maximum": 256,
           "minimum": 0
         },
-        "near_distance": {
-          "description": "View distance of the sharper maps that follow the camera, less\nthan `distance`.",
-          "type": "number",
-          "format": "float",
-          "default": 100.0,
-          "exclusiveMinimum": 0.0
-        },
-        "resolution": {
-          "description": "Texels per side of the far maps.",
+        "redraw_budget": {
+          "description": "Tiles a frame redraws at most, coarse levels first; the rest\nredraw over the next frames, a coarser level showing meanwhile.",
           "type": "integer",
           "format": "uint32",
-          "default": 2048,
+          "default": 32,
+          "maximum": 4096,
+          "minimum": 1
+        },
+        "tile_texels": {
+          "description": "Texels along a side of a tile, the square that takes memory and\nredraws.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 128,
           "enum": [
-            1024,
-            2048,
-            4096
+            64,
+            128,
+            256,
+            512
           ],
           "minimum": 0
         }
@@ -5615,6 +5527,13 @@
           "maximum": 2.0,
           "minimum": 0.0
         },
+        "displacement": {
+          "description": "Meters its maps' heights move the ground itself where that depth\nspans a few pixels: 0, none, to 2.",
+          "type": "number",
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0
+        },
         "height_contrast": {
           "type": "number",
           "format": "float",
@@ -5726,20 +5645,29 @@
       "type": "object",
       "properties": {
         "bounce": {
-          "description": "Bounce light, with long sun shadows: probes over each terrain\nwhose transfer is cooked from its finest pinned level and its\nsurface's rules, nothing of the sun or sky in it, gather every\nframe the light the ground around sends them as the sun, its\nshadows and the sky light it now, so slopes the sun lights light\nthe valleys beside them through the day. Terrain takes its light\nfrom the ground around it there, and what stands on terrain that\nlight and the share of the sky the ground leaves it. Surroundings\ntake none.",
+          "description": "Bounce light, with long sun shadows: probes over each terrain\nwhose transfer is cooked from its finest pinned level and its\nsurface's rules, nothing of the sun or sky in it, gather every\nframe the light the ground around sends them as the sun, its\nshadows and the sky light it now, so slopes the sun lights light\nthe valleys beside them through the day. They relight in nested\nlevels around the detail eye, the coarsest over the whole terrain,\nso every place takes the same light wherever the eye stands.\nTerrain takes its light from the ground around it there, and what\nstands on terrain that light and the share of the sky the ground\nleaves it. Surroundings, and all ground with bounce light off,\ntake none.",
           "type": "boolean",
           "default": true
         },
-        "bounce_reach": {
-          "description": "Meters around the camera within which probes relight every frame,\nas many columns as the horizon maps' texels at most. Past them lies\nthe far field, where terrain takes an estimate of the light around\nit (as all ground does with bounce light off, and surroundings)\nand what stands on it the open sky.",
-          "type": "number",
-          "format": "float",
-          "default": 2048.0,
-          "maximum": 32768.0,
-          "minimum": 64.0
+        "bounce_columns": {
+          "description": "Probe columns along each side of every level of probes relit\naround the detail eye, an even count: the finest level at the\nterrain's own columns, each coarser one twice as far apart and\nreaching twice as far, the coarsest holding the whole terrain. A\nlevel shades within half its side, less two and a half columns, of\nthe eye. Each level's window takes a square of these texels of the\nhorizon maps (`shadow_resolution` a side); a terrain whose levels\nthey cannot hold takes no bounce light.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 64,
+          "maximum": 1024,
+          "minimum": 8,
+          "multipleOf": 2
+        },
+        "bounce_levels": {
+          "description": "Levels of probes a terrain relights at most: as many as its\ncoarsest needs to hold the whole terrain, whose columns grow past\n`bounce_columns` where these leave it short.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 8,
+          "maximum": 8,
+          "minimum": 1
         },
         "bounce_spacing": {
-          "description": "Meters between probe columns at most: a terrain takes the power of\ntwo of them along its longer side within this spacing, at most\n512 (larger terrains spread theirs wider). Each block of two by two\ncolumns holds one probe where the ground around stays open and\nfour where it rises around them, in two layers: about 100 bytes a\nprobe in the record, 7 to 27 MB a terrain of 512 columns.",
+          "description": "Meters between the finest level's probe columns at most: a terrain\ntakes the power of two of them along its longer side within this\nspacing, at most 512 (larger terrains spread theirs wider). Each\nblock of two by two columns holds one probe where the ground around\nstays open and four where it rises around them, in two layers:\nabout 100 bytes a probe in the record, 7 to 27 MB a terrain of 512\ncolumns.",
           "type": "number",
           "format": "float",
           "default": 16.0,
@@ -5816,7 +5744,7 @@
           "minimum": 1
         },
         "pixel_error": {
-          "description": "Pixels a level's samples span before the next coarser level takes\nover; smaller draws more triangles.",
+          "description": "Pixels a level's samples span where its tiles load and shade the\nground, before the next coarser level's take over; smaller loads\nfiner tiles farther out.",
           "type": "number",
           "format": "float",
           "default": 6.0,
@@ -5863,9 +5791,33 @@
           "minimum": 64
         },
         "sky_visibility": {
-          "description": "Ambient light on terrain scaled by how much sky its ground sees,\nand taken from the sky it sees: each terrain's sky visibility map,\ncooked with its lighting from its finest pinned level, where\nvalleys and hollows see less sky and take the light of the ground\naround them instead (bounce light's, or past its reach an\nestimate of their own).",
+          "description": "Ambient light on terrain scaled by how much sky its ground sees,\nand taken from the sky it sees: each terrain's sky visibility map,\ncooked with its lighting from its finest pinned level, where\nvalleys and hollows see less sky and take the light of the ground\naround them instead, as bounce light gathers it.",
           "type": "boolean",
           "default": true
+        },
+        "subdivision_depth": {
+          "description": "The deepest level of each terrain's subdivision: two levels halve\nits leaves' sides, and each takes twice the memory, a bit for every\nleaf it could hold and a quarter more for their counts. 27 holds\nleaves a meter across on an 8-kilometer terrain in 20 MB; devices\nwhose storage bindings hold less keep it shallower, counted.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 27,
+          "maximum": 29,
+          "minimum": 10
+        },
+        "subdivision_error": {
+          "description": "Pixels the ground's drawn triangles may stray from its true\nsurface, seen from the detail eye: each terrain's subdivision\nsplits its leaves straying more and merges those whose halves\nwould not, refining a level every other frame. Smaller draws more\ntriangles.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 64.0,
+          "minimum": 0.25
+        },
+        "subdivision_leaves": {
+          "description": "The most leaves each terrain's subdivision draws, 28 bytes each on\nthe GPU: past them leaves split no more, counted, and the ground\nthere stays coarser.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 131072,
+          "maximum": 4000000,
+          "minimum": 1024
         },
         "sun_shadows": {
           "description": "Long sun shadows through each terrain's horizon map,\nwith shadows on: the near shadow maps then draw terrain near their\nreceivers, the kept shadow levels hold its ground as far as they\nreach, and the horizon map shadows the rest. Off, terrain casts\ninto the shadow maps alone. The map holds the\nhorizons in sixteen directions, cooked with the terrain's lighting\nfrom its finest pinned level, so the sun moves freely.",

@@ -84,7 +84,6 @@ gpu_consts! {
     pub(crate) const SHADOW_REGIONS: usize = MAX_VIEWS - 1 => ["REGIONS" in SHADOW_SHADER];
     pub(crate) const MOVING_MAP: usize = SHADOW_REGIONS => ["MOVING_MAP" in SHADOW_SHADER];
     pub(crate) const SKY_MAP: usize = SHADOW_REGIONS + 1 => ["SKY_MAP" in SHADOW_SHADER];
-    pub(crate) const SHADOW_MAPS: usize = SHADOW_REGIONS + 2 => ["MAPS" in SHADOW_SHADER];
     /// Instance IDs the moving map holds for each of a draw group's casters:
     /// its draws into that many tiles, past which its draws are counted and
     /// left out.

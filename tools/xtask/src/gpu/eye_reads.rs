@@ -30,14 +30,6 @@ const ALLOWED: &[(&str, &str)] = &[
         "virtual geometry's normal cones, tested from the eye (culling)",
     ),
     (
-        "crates/engine_render/src/shadows/mod.rs",
-        "the near cascades and far maps fitted to the camera's view (culling)",
-    ),
-    (
-        "crates/engine_render/src/shadows/regions.rs",
-        "where the camera's view sweeps casters toward the sun (culling)",
-    ),
-    (
         "crates/engine_render/src/temporal.rs",
         "temporally antialiased frames' camera uniform (transforms)",
     ),

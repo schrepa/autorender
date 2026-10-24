@@ -327,7 +327,7 @@ impl Records {
                         Sources::Made(made.map_err(|error| format!("{}: {error}", batch.set.name)));
                 }
                 MakeSources::Job { kind, input, .. } => {
-                    batch.sources = Sources::Making(jobs.submit(*kind, input.clone(), priority));
+                    batch.sources = Sources::Making(jobs.submit(kind, input.clone(), priority));
                 }
             },
             &Sources::Making(job) => {

@@ -28,7 +28,12 @@ const SHADERS: &str = "crates/engine_render/src/";
 /// The measures every handover reads, and the one way from an eye-relative
 /// position back to a world position: what they give depends on where the
 /// camera stands no more.
-const MEASURES: [&str; 4] = ["detail_distance", "detail_across", "detail_span", "eye_world"];
+const MEASURES: [&str; 4] = [
+    "detail_distance",
+    "detail_across",
+    "detail_span",
+    "eye_world",
+];
 
 /// Optics: functions depending on where the camera stands or how it looks
 /// as light and sight do, each with what it is. They are not followed:
@@ -39,45 +44,51 @@ const OPTICS: &[(&str, &str)] = &[
     ("air_sky", "the sky's air along a view"),
     ("air_transmittance", "the sky's air along a view"),
     ("atmospheric", "fog and air between a point and the eye"),
-    ("atmospheric_cover", "fog and air between a point and the eye"),
+    (
+        "atmospheric_cover",
+        "fog and air between a point and the eye",
+    ),
     ("behind_clouds", "the sky behind the clouds along a view"),
     ("box_projected", "reflection probes' parallax"),
     ("cap_share", "a highlight's energy"),
-    ("cascade_visibility", "a shadow map lookup"),
     ("cloud_dome_direction", "the clouds' dome along a view"),
     ("cloud_passing", "the clouds' shadow lookup"),
     ("cover_seen", "what a view through blades meets"),
     ("crown_softness", "a shadow map lookup"),
     ("crown_spread", "a shadow map lookup"),
-    ("debug_kept_level", "the debug view of the shadow lookups"),
     ("debug_sun", "the debug view of the shadow lookups"),
     ("decal_point", "the side of a decal's surface the eye sees"),
     ("distribution", "the BRDF's microfacets"),
     ("dominant_direction", "a highlight's reflection"),
     ("environment_brdf", "the BRDF's split sum"),
-    ("environment_light", "reflections of environment maps and probes"),
+    (
+        "environment_light",
+        "reflections of environment maps and probes",
+    ),
     ("fall_cover", "what the eye sees through falling water"),
-    ("far_maps_visibility", "a shadow map lookup"),
-    ("far_surface_visibility", "a shadow map lookup"),
-    ("far_visibility", "a shadow map lookup"),
-    ("finish", "lighting a surface: its BRDF, highlights and shadows"),
+    (
+        "finish",
+        "lighting a surface: its BRDF, highlights and shadows",
+    ),
     ("fog", "fog between a point and the eye"),
     ("fresnel", "Fresnel's reflectance"),
     ("fs_particle", "soft particles against what lies behind"),
     ("fs_particle_mist", "the view's path through mist"),
-    ("gather_uv", "a shadow map lookup"),
     ("grade", "grading the light that reaches the eye"),
-    ("handover_threshold", "a shadow map lookup"),
     ("haze", "the sky's haze along a view"),
     ("height_depth", "fog and air between a point and the eye"),
     ("impostor_basis", "an impostor's frames, seen from the eye"),
     ("impostor_card", "an impostor's frames, seen from the eye"),
-    ("impostor_direction", "an impostor's frames, seen from the eye"),
-    ("impostor_octahedral", "an impostor's frames, seen from the eye"),
-    ("level_depths", "a shadow map lookup"),
+    (
+        "impostor_direction",
+        "an impostor's frames, seen from the eye",
+    ),
+    (
+        "impostor_octahedral",
+        "an impostor's frames, seen from the eye",
+    ),
     ("level_visibility", "a shadow map lookup"),
     ("local_light", "lighting by local lights"),
-    ("map_point", "a shadow map lookup"),
     ("map_visibility", "a shadow map lookup"),
     ("mist_noise", "the view's path through mist"),
     ("octahedral_coordinates", "encoding a normal facing the eye"),
@@ -98,6 +109,10 @@ const OPTICS: &[(&str, &str)] = &[
     ("terrain_canopy", "the ground a canopy hides along the view"),
     ("terrain_canopy_look", "a canopy seen along the view"),
     ("terrain_canopy_through", "a canopy seen along the view"),
+    (
+        "terrain_filtered",
+        "the maps' filtering by the view's derivatives",
+    ),
     ("terrain_parallax", "the relief's ray march"),
     ("terrain_resolved", "the depth edges of what hides what"),
     ("terrain_visibility", "the terrain's horizon lookup"),
@@ -105,16 +120,25 @@ const OPTICS: &[(&str, &str)] = &[
     ("toward_viewer", "an impostor's frames, seen from the eye"),
     ("transmitted", "light through leaves toward the eye"),
     ("transparent_targets", "refraction through glass"),
-    ("underwater_cover", "the sea's water between a point and the eye"),
+    (
+        "underwater_cover",
+        "the sea's water between a point and the eye",
+    ),
     ("underwater_light", "the sea's water along a view"),
-    ("view_clouds_at", "the clouds in front of what the view meets"),
+    (
+        "view_clouds_at",
+        "the clouds in front of what the view meets",
+    ),
     ("visibility", "the BRDF's shadowing and masking"),
     ("vs_particle", "particles facing the eye"),
     ("water_behind", "refraction through water"),
     ("water_edge", "water seen against what lies under it"),
     ("water_facing", "the side of water's surface the eye sees"),
     ("water_scattered", "light the water scatters toward the eye"),
-    ("with_night_sky", "the night sky along a view, its stars a pixel wide"),
+    (
+        "with_night_sky",
+        "the night sky along a view, its stars a pixel wide",
+    ),
 ];
 
 /// A line marked optics: its dependence on the camera is legitimate.
@@ -163,7 +187,9 @@ impl Layout {
             return false;
         };
         let end = range.end.max(range.start + 1);
-        let first = self.marked.partition_point(|&(_, line_end)| line_end <= range.start);
+        let first = self
+            .marked
+            .partition_point(|&(_, line_end)| line_end <= range.start);
         self.marked
             .get(first)
             .is_some_and(|&(line_start, _)| line_start < end)
@@ -238,7 +264,12 @@ pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
             continue;
         };
         let module = &checked.module;
-        declared.extend(module.functions.iter().filter_map(|(_, function)| function.name.clone()));
+        declared.extend(
+            module
+                .functions
+                .iter()
+                .filter_map(|(_, function)| function.name.clone()),
+        );
         declared.extend(module.entry_points.iter().map(|entry| entry.name.clone()));
         let marked = |span: Span| layout.marked(span);
         let followed = flow::follow(module, &checked.info, &trusted, &marked);
@@ -304,7 +335,11 @@ fn report(layout: &Layout, flow: &Flow<'_>, found: &mut Found) {
 /// A read of the camera feeding a decision through the calls `via`.
 fn fed(layout: &Layout, source: &Source, via: &[Call]) -> String {
     let (path, line) = layout.at(source.span);
-    let mut text = format!("{} ({path}:{line}, in `{}`)", read(source.read), source.function);
+    let mut text = format!(
+        "{} ({path}:{line}, in `{}`)",
+        read(source.read),
+        source.function
+    );
     if !via.is_empty() {
         let calls: Vec<String> = via
             .iter()

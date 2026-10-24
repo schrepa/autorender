@@ -211,7 +211,10 @@ impl PatchDraws {
         for &slot in &atlas.held_changes {
             let before = self.kept_ground.remove(&slot);
             let now = atlas.held.get(&slot).and_then(|tile| {
-                let terrain = terrains.terrains.iter().find(|terrain| terrain.id == slot.0)?;
+                let terrain = terrains
+                    .terrains
+                    .iter()
+                    .find(|terrain| terrain.id == slot.0)?;
                 Some((Arc::clone(tile), ground_box(terrain, slot.1, tile.bounds())))
             });
             let change = match (&before, &now) {
@@ -410,9 +413,7 @@ fn kept_patches(
     let side = PATCHES_PER_TILE;
     let [tiles_x, tiles_z] = pyramid.tiles(top);
     stack.clear();
-    stack.extend(
-        (0..tiles_z * side).flat_map(|z| (0..tiles_x * side).map(move |x| (top, x, z))),
-    );
+    stack.extend((0..tiles_z * side).flat_map(|z| (0..tiles_x * side).map(move |x| (top, x, z))));
     // How far the ground of a level's descendants down to the finest may
     // stray from its own heights.
     let stray = |from: u32| {
@@ -756,8 +757,7 @@ fn terrain_uniform(
                 ]
             });
             // 1 where its coarser levels shade with level 0's averaged.
-            let averaged =
-                engine_core::terrain_data::TileShading::shades(1, terrain.surroundings);
+            let averaged = engine_core::terrain_data::TileShading::shades(1, terrain.surroundings);
             [material, low, high, if averaged { 1.0 } else { 0.0 }]
         },
     }

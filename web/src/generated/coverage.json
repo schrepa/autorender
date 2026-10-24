@@ -757,6 +757,7 @@
         "agent",
         "culling",
         "gpu-presentation",
+        "terrain",
         "terrain-surface",
         "terrain-water-sky"
       ],
@@ -946,14 +947,6 @@
       "stats": true
     },
     {
-      "inspector": "ContactShadows",
-      "section": "contact_shadows",
-      "smokes": [
-        "terrain-surface"
-      ],
-      "stats": true
-    },
-    {
       "inspector": "Water",
       "section": "water",
       "smokes": [
@@ -1084,7 +1077,6 @@
       "inspector": "Resolution",
       "section": "resolution",
       "smokes": [
-        "agent",
         "debug-view",
         "native",
         "terrain-surface",

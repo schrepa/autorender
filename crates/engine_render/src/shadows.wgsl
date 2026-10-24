@@ -167,7 +167,6 @@ const FOOTPRINT_UNIT: f32 = 4.0;
 // group's casters, over at most MOVING_TILES tiles.
 const MOVING_MAP: u32 = 7u;
 const SKY_MAP: u32 = 8u;
-const MAPS: u32 = 9u;
 const MOVING_PAIRS: u32 = 8u;
 const MOVING_TILES: u32 = 256u;
 const TOTALS: u32 = 4u;
@@ -264,9 +263,9 @@ fn mark_tiles(mask: u32, low: vec2<f32>, high: vec2<f32>, moving: bool, group: u
                 }
                 let bit = (level * side + cell.y) * side + cell.x;
                 let word = mask + bit / 32u;
-                let set = 1u << (bit % 32u);
-                if (atomicLoad(&counters.words[word]) & set) == 0u {
-                    atomicOr(&counters.words[word], set);
+                let flag = 1u << (bit % 32u);
+                if (atomicLoad(&counters.words[word]) & flag) == 0u {
+                    atomicOr(&counters.words[word], flag);
                 }
                 let tile = entry >> 16u;
                 if moving && tile != 0u {

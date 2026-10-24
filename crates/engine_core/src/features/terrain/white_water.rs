@@ -107,7 +107,11 @@ struct Site {
 /// tiles in key order.
 fn held(terrains: &Terrains) -> Vec<Held> {
     let mut found = Vec::new();
-    for state in terrains.entries.iter().filter(|state| state.around.is_none()) {
+    for state in terrains
+        .entries
+        .iter()
+        .filter(|state| state.around.is_none())
+    {
         for (key, (water, record)) in state.settled.held.iter() {
             found.push(Held {
                 terrain: state.entity,
@@ -147,7 +151,11 @@ fn sites(water: &SteadyWater, falls: &[Fall]) -> Vec<Site> {
             else {
                 continue;
             };
-            let energy = if energy.is_finite() { max(energy, 0.0) } else { 0.0 };
+            let energy = if energy.is_finite() {
+                max(energy, 0.0)
+            } else {
+                0.0
+            };
             let lip = if lip.is_finite() { lip } else { 0.0 };
             if energy < SPRAY_ENERGY && lip < SPRAY_LIP {
                 continue;

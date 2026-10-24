@@ -499,7 +499,8 @@ impl Clipmap {
         let rows = at(low.y).max(clip.origin[1])..=at(high.y).min(clip.origin[1] + side - 1);
         for row in rows {
             for column in columns.clone() {
-                let cell = &mut clip.cells[((row & (side - 1)) * side + (column & (side - 1))) as usize];
+                let cell =
+                    &mut clip.cells[((row & (side - 1)) * side + (column & (side - 1))) as usize];
                 cell.dirty |= cell.drawn;
             }
         }
@@ -629,7 +630,8 @@ impl Clipmap {
                         }
                         let clip = &self.levels[level];
                         let tile = [clip.origin[0] + column, clip.origin[1] + row];
-                        let cell = ((tile[1] & (side - 1)) * side + (tile[0] & (side - 1))) as usize;
+                        let cell =
+                            ((tile[1] & (side - 1)) * side + (tile[0] & (side - 1))) as usize;
                         let held = clip.cells[cell];
                         let Some(slot) = held.slot.filter(|_| held.marked_at(frame)) else {
                             continue;
@@ -658,7 +660,8 @@ impl Clipmap {
                         let held = &mut self.levels[level].cells[cell];
                         held.drawn = true;
                         held.dirty = false;
-                        let moving = self.table[level * (side * side) as usize + cell] & 0xffff_0000;
+                        let moving =
+                            self.table[level * (side * side) as usize + cell] & 0xffff_0000;
                         self.set_entry(level, cell, moving | entry(Some(slot), None));
                         left -= 1;
                     }

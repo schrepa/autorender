@@ -350,10 +350,6 @@ pub(crate) struct Plateau(pub f32);
 
 /// Spawns the terrain, its materials' maps read from `files` where the page
 /// supplied them; returns the height the hamlet stands at.
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
 pub(crate) fn populate(
     world: &mut World,
     config: &StressConfig,
@@ -429,7 +425,6 @@ pub(crate) fn populate(
             layer: HydrologyLayer {
                 level: 0,
                 discharge: 3.2,
-                ..HydrologyLayer::default()
             },
             baked: None,
         }),
