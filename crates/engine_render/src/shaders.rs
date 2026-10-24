@@ -179,6 +179,14 @@ shaders! {
         "shadows.wgsl",
         "impostor_frames.wgsl",
     ];
+    /// The shadow clipmap's tiles the depth buffer's pixels read, after the
+    /// scene declarations.
+    SHADOW_MARKS_SHADER = [
+        "scene.wgsl",
+        "color.wgsl",
+        "math.wgsl",
+        "shadow_marks.wgsl",
+    ];
     /// Ambient occlusion, bloom and their composite.
     POST_SHADER = [
         "color.wgsl",
@@ -397,11 +405,15 @@ entry_points! {
     }
     shadow = SHADOW_SHADER {
         vertex: [
-            vs_affine, vs_clear, vs_affine_masked, vs_affine_skinned, vs_affine_masked_skinned,
-            vs_impostor_card, vs_compose
+            vs_affine, vs_affine_masked, vs_affine_skinned, vs_affine_masked_skinned,
+            vs_impostor_card, vs_compose, vs_moving, vs_moving_masked, vs_moving_skinned,
+            vs_moving_masked_skinned, vs_clear_moving
         ],
-        fragment: [fs_impostor_card, fs_masked, fs_compose],
+        fragment: [fs_impostor_card, fs_masked, fs_compose, fs_moving, fs_moving_masked],
         compute: [select_skinned, select_casters, count_casters],
+    }
+    shadow_marks = SHADOW_MARKS_SHADER {
+        compute: [mark_shadow_tiles],
     }
     post = POST_SHADER {
         vertex: [vs_fullscreen],

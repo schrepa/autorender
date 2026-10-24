@@ -349,8 +349,7 @@ const ROAD: [[f32; 2]; 74] = [
 pub(crate) struct Plateau(pub f32);
 
 /// Spawns the terrain, its materials' maps read from `files` where the page
-/// supplied them; returns the region shadows cover and the height the
-/// hamlet stands at.
+/// supplied them; returns the height the hamlet stands at.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -360,7 +359,7 @@ pub(crate) fn populate(
     config: &StressConfig,
     hamlet: f32,
     files: &HashMap<String, StressFile>,
-) -> engine::Result<((Vec3, Vec3), f32)> {
+) -> engine::Result<f32> {
     let half = SIZE * 0.5;
     // Terrain-local: the terrain's first corner is at -half.
     let local = |point: [f32; 2]| [point[0] + half, point[1] + half];
@@ -509,13 +508,7 @@ pub(crate) fn populate(
     lanterns(world, &ROAD, half)?;
     hiker::hiker(world, &ROAD, half)?;
     bodies::request(world, config)?;
-    Ok((
-        (
-            Vec3::new(-half, -50.0, -half),
-            Vec3::new(half, 1600.0, half),
-        ),
-        level,
-    ))
+    Ok(level)
 }
 
 /// Moss settling on boulders' tops, and lichen on the cave's rock.

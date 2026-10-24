@@ -66,6 +66,7 @@ impl Renderer {
                 self.encode_visibility_resolve(state, encoder, view, node, phase.index());
             }
             Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
+            Pass::ShadowMarks => self.encode_shadow_marks(encoder),
             Pass::Feature(pass) => {
                 report.draws += self.encode_feature(pass, state, encoder, view, node);
             }
@@ -143,6 +144,7 @@ impl Renderer {
             | Resource::Occupancy
             | Resource::Casters
             | Resource::ShadowMaps
+            | Resource::ShadowMarks
             | Resource::Clusters
             | Resource::Lights
             | Resource::Pyramid
@@ -260,8 +262,20 @@ impl Renderer {
         }
     }
 
-    /// The shadow maps, with the clusters virtual
-    /// geometry selected for them.
+    /// The marks of the shadow clipmap's tiles the frame's pixels read,
+    /// from the depth buffer its opaque phases drew at its render size.
+    fn encode_shadow_marks(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        self.shadows.encode_marks(
+            &self.device,
+            encoder,
+            (&self.camera.buffer, self.depth.view.bound()),
+            self.display.region.render.pixels(),
+            &self.profiler,
+        );
+    }
+
+    /// The shadow clipmap's regions, atlas and sky map, with the clusters
+    /// virtual geometry selected for the regions.
     fn encode_shadow_maps(
         &mut self,
         state: &FrameState<'_>,
@@ -299,7 +313,7 @@ impl Renderer {
                             )
                         })
                 },
-                // Terrain: the camera's patches in this map.
+                // Terrain: its ground laid out for this region.
                 terrain_draw: &|pass, map| {
                     let Some(pipeline) = terrain
                         .pipelines
@@ -322,7 +336,7 @@ impl Renderer {
                     }
                     draws
                 },
-                // Placed objects culled for this map.
+                // Placed objects culled for this region.
                 scatter_draw: &|pass, map, casters, cards| {
                     if state.scatter {
                         self.draw_scatter_shadow(pass, map, casters, cards)

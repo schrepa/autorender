@@ -78,7 +78,6 @@ macro_rules! environment_sections {
             wind: Wind { opt_in: false, feature: Terrain },
             foliage: Foliage { opt_in: false, feature: Core },
             occupancy: Occupancy { opt_in: false, feature: Terrain },
-            contact_shadows: ContactShadows { opt_in: false, feature: Core },
             water: Water { opt_in: false, feature: Terrain },
             ocean: Ocean { opt_in: false, feature: Ocean },
             deformation: Deformation { opt_in: false, feature: Deformation },

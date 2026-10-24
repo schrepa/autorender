@@ -1471,9 +1471,6 @@ pub(crate) struct Spawned {
     pub moving_nodes: u32,
     pub sensor_nodes: u32,
     pub probes: Vec<Entity>,
-    /// World region holding every block and the air above them, for the
-    /// shadows.
-    pub bounds: (Vec3, Vec3),
 }
 
 /// Builds and spawns the city of `config` into `world`.
@@ -1564,20 +1561,10 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Resu
         entities.push(id);
     }
     set_parents(world, &parents)?;
-    // The outermost block ring, one ring of margin for streets and traffic,
-    // and the tallest spires.
-    let ring = city
-        .blocks
-        .iter()
-        .map(|&(bx, bz, _)| bx.abs().max(bz.abs()))
-        .max()
-        .unwrap_or(0);
-    let half = (ring as f32 + 1.5) * PERIOD;
     Ok(Spawned {
         transform_nodes: entities.len() as u32,
         moving_nodes,
         sensor_nodes,
         probes,
-        bounds: (Vec3::new(-half, -2.0, -half), Vec3::new(half, 300.0, half)),
     })
 }

@@ -25,9 +25,9 @@ pub(super) struct GroupSources<'a> {
 }
 
 /// Bindings of the first group: [`CAMERA`]'s.
-const CAMERA_BINDINGS: usize = 19;
+const CAMERA_BINDINGS: usize = 18;
 /// Bindings of terrain's resolves' first group: `CAMERA_TERRAIN`'s.
-const TERRAIN_BINDINGS: usize = 17;
+const TERRAIN_BINDINGS: usize = 16;
 
 pub(super) struct CameraBindings {
     pub(super) layout: crate::pipelines::GroupLayout,
@@ -227,7 +227,7 @@ fn terrain_entries<'a>(
     (camera, lighting, cloud_shadows): (&'a wgpu::Buffer, &'a wgpu::Buffer, &'a wgpu::Buffer),
     sources: &GroupSources<'a>,
 ) -> [(&'static str, Bound<'a>); TERRAIN_BINDINGS] {
-    let [shadow, near, far, sampler, texel_sampler, levels] = sources.shadows.entries();
+    let [shadow, atlas, tiles, sampler, texel_sampler] = sources.shadows.entries();
     let [horizons, horizon_records, horizon_sampler] = sources.horizons.entries();
     let (environment, environment_sampler) = sources.environment.binding();
     let (coverage, heights) = sources.occupancy.views();
@@ -235,8 +235,8 @@ fn terrain_entries<'a>(
         ("camera", Bound::fixed(camera.as_entire_binding())),
         ("lighting", Bound::fixed(lighting.as_entire_binding())),
         shadow,
-        near,
-        far,
+        atlas,
+        tiles,
         sampler,
         texel_sampler,
         ("environment_maps", environment),
@@ -247,7 +247,6 @@ fn terrain_entries<'a>(
         horizon_sampler,
         ("occupancy_coverage", coverage),
         ("occupancy_heights", heights),
-        levels,
         (
             "cloud_shadows",
             Bound::fixed(cloud_shadows.as_entire_binding()),
@@ -264,7 +263,7 @@ fn camera_entries<'a>(
     (refraction, refraction_sampler): (Bound<'a>, Bound<'a>),
     sources: &GroupSources<'a>,
 ) -> [(&'static str, Bound<'a>); CAMERA_BINDINGS] {
-    let [shadow, near, far, sampler, texel_sampler, levels] = sources.shadows.entries();
+    let [shadow, atlas, tiles, sampler, texel_sampler] = sources.shadows.entries();
     let [horizons, horizon_records, horizon_sampler] = sources.horizons.entries();
     let (environment, environment_sampler) = sources.environment.binding();
     let (coverage, heights) = sources.occupancy.views();
@@ -272,8 +271,8 @@ fn camera_entries<'a>(
         ("camera", Bound::fixed(camera.as_entire_binding())),
         ("lighting", Bound::fixed(lighting.as_entire_binding())),
         shadow,
-        near,
-        far,
+        atlas,
+        tiles,
         sampler,
         texel_sampler,
         ("refraction_source", refraction),
@@ -286,7 +285,6 @@ fn camera_entries<'a>(
         horizon_sampler,
         ("occupancy_coverage", coverage),
         ("occupancy_heights", heights),
-        levels,
         (
             "cloud_shadows",
             Bound::fixed(cloud_shadows.as_entire_binding()),

@@ -1,22 +1,18 @@
 //! Terrain: every resident tile's heights in one texture
 //! array, the camera's patches as instances of one shared grid with skirts,
-//! and their pipelines in the opaque passes, the shadow maps drawn every
-//! frame, the kept shadow levels and reflection probe faces.
+//! and their pipelines in the opaque passes, the regions of the shadow
+//! clipmap's tiles a frame redraws and reflection probe faces.
 //!
 //! Tiles upload as frames list them and release when they leave the list;
 //! the array grows by doubling up to the device's layers, beyond which
-//! tiles drop (counted) and their patches do not draw. Each view culls the
-//! camera's patches by their bounds: the camera's frustum, each shadow
-//! map's sides; the camera also skips those whose every triangle faces away
+//! tiles drop (counted) and their patches do not draw. The camera culls its
+//! patches by its frustum, skipping those whose every triangle faces away
 //! from it and those nearer ground hides (`culling`), from what each tile
-//! was made with. Every view drawn each frame draws the same vertices, at
-//! the positions the camera sees, so terrain shadows itself without acne.
-//! Where terrains cast long shadows through their horizon maps, the near
-//! cascades draw terrain near their receivers; kept shadow levels, which
-//! must not depend on where the eye stood, hold the ground as far as they
-//! reach at a level of detail of their own, unmorphed, over the region a
-//! level redraws (`patches`), and redraw over ground that arrives, leaves
-//! or changes; the horizon maps shadow the rest.
+//! was made with. The shadow clipmap's tiles, which must not depend on
+//! where the eye stood, hold the ground at a level of detail each level's
+//! texels choose, unmorphed, over the regions a frame redraws (`patches`),
+//! and redraw over ground that arrives, leaves or changes; past the last
+//! level the horizon maps shadow alone.
 //!
 //! Each tile's normal map, the gradient of the smooth surface through its
 //! heights at each sample, lies in a parallel array: computed once on
@@ -195,8 +191,8 @@ pub(crate) struct CoverSources<'a> {
 }
 
 /// One terrain's draws this frame: its uniform slot, the camera's patches,
-/// every patch (for probe faces) and each shadow map's, the kept shadow
-/// level redrawn this frame's ground among them. The camera's and
+/// every patch (for probe faces) and the ground of each region of shadow
+/// tiles redrawn this frame. The camera's and
 /// every patch's ranges end with the patches with holes, which draw with
 /// their own pipelines: as many as `*_holes`. And the rectangle of the
 /// screen the camera's patches cover, in normalized device coordinates
@@ -265,11 +261,10 @@ pub(crate) struct TerrainViews<'a> {
     /// which streaming selected the patches around and their vertices morph
     /// by: the camera's eye unless frozen.
     pub detail_eye: Vec3,
-    /// Shadow maps drawn every frame and their world-to-clip matrices.
-    pub maps: &'a [(usize, Mat4)],
-    /// This frame's redraw of a kept shadow level, which the ground casts
-    /// into at a level of detail the level's texels choose.
-    pub kept: Option<crate::shadows::KeptRefresh>,
+    /// The regions of shadow tiles this frame redraws, which the ground
+    /// casts into at a level of detail each one's texels choose: the map
+    /// whose lists each reads, and its planes and texels.
+    pub regions: &'a [(usize, crate::shadows::KeptRefresh)],
     /// Whether reflection probes capture faces this frame, which draw every
     /// patch.
     pub probes: bool,
@@ -392,8 +387,8 @@ impl TerrainPass {
     /// Uploads tiles the frame's terrains list and the GPU lacks, releases
     /// those they no longer list, noting the ground that arrived, left or
     /// changed ([`Self::ground_changes`]), and lays out this frame's patches
-    /// for the camera, reflection probe faces, the shadow maps of `views`
-    /// and the kept shadow level it redraws.
+    /// for the camera, reflection probe faces and the regions of shadow
+    /// tiles `views` redraws.
     /// `max_layers` is the device's texture array layers; `mips` renders
     /// surface materials' mip levels. Returns whether any terrain draws.
     pub(crate) fn prepare(
@@ -475,7 +470,6 @@ impl TerrainPass {
             tables: &self.tables,
             sky: &self.sky,
             macro_maps: &self.macro_maps,
-            horizons: &self.horizons,
             shading: self.deformation.shading(),
             textures: &textures,
         };
@@ -675,7 +669,7 @@ impl TerrainPass {
     }
 
     /// The ground that arrived, left or changed this frame, over which the
-    /// kept shadow levels holding it redraw.
+    /// shadow clipmap's tiles holding it redraw.
     pub(crate) fn ground_changes(&self) -> &[patches::GroundChange] {
         self.patches.ground_changes()
     }

@@ -20,19 +20,15 @@ const DEBUG_KIND_SKY: u32 = 11u;
 const DEBUG_LEVEL_SHIFT: u32 = 4u;
 // A card fading in or out over its mesh.
 const DEBUG_FADING: u32 = 0x100u;
-// The sun's lookup: none (no sun shadows), the near cascades from the
-// first, the kept levels from the finest, the kept far map, the moving map,
-// a terrain's horizon, past the shadow distance; DEBUG_SHADOWED where it
-// leaves the point in shadow.
+// The sun's lookup: none (no sun shadows), the clipmap's levels from the
+// finest, a terrain's horizon, no level drawn there; DEBUG_SHADOWED where
+// it leaves the point in shadow.
 const DEBUG_SOURCE_SHIFT: u32 = 16u;
 const DEBUG_SUN_NONE: u32 = 0u;
-const DEBUG_SUN_CASCADE: u32 = 1u;
-const DEBUG_SUN_LEVEL: u32 = 5u;
-const DEBUG_SUN_KEPT: u32 = 8u;
-const DEBUG_SUN_MOVING: u32 = 9u;
-const DEBUG_SUN_HORIZON: u32 = 10u;
-const DEBUG_SUN_BEYOND: u32 = 11u;
-const DEBUG_SHADOWED: u32 = 0x10u;
+const DEBUG_SUN_LEVEL: u32 = 1u;
+const DEBUG_SUN_HORIZON: u32 = 21u;
+const DEBUG_SUN_BEYOND: u32 = 22u;
+const DEBUG_SHADOWED: u32 = 0x80u;
 // Terrain pixels: on a tile's edge, on a patch's, in their record, with the
 // patch within its tile above DEBUG_PATCH_SHIFT; a material slot holding
 // none.
@@ -60,7 +56,7 @@ struct DebugTargets {
 // show of `point`, drawn by `record`'s draw, with `object` and `detail`.
 fn debug_targets(record: u32, object: u32, detail: u32, point: SurfacePoint) -> DebugTargets {
     let sun = debug_sun(point.world + point.shadow_offset, point.geometric, point.world_dx,
-        point.world_dy, point.distance, point.on_terrain);
+        point.world_dy, point.on_terrain);
     var targets: DebugTargets;
     targets.ids = vec4<u32>(record | (sun << DEBUG_SOURCE_SHIFT), object, detail,
         pack2x16snorm(octahedral_coordinates(stable_normalize(point.normal))));
@@ -87,85 +83,24 @@ fn debug_shadowed(source: u32, visible: f32) -> u32 {
     return source | select(0u, DEBUG_SHADOWED, visible < 0.5);
 }
 
-// The finest kept level `level_visibility` reads at `world`: the first
-// whose reach around the detail eye, window and depth band hold the point,
-// while its texels are not too small for a pixel's footprint there.
-fn debug_kept_level(world: vec3<f32>, normal: vec3<f32>) -> u32 {
-    let axes = mat3x3<f32>(shadow.light[0].xyz, shadow.light[1].xyz, shadow.light[2].xyz);
-    let light = world * axes;
-    let light_normal = normal * axes;
-    let footprint = max(detail_footprint(world, normal), 1.0e-6);
-    let distance = detail_distance(world);
-    let margin = 2.0 / shadow.level_state.y;
-    for (var level = 0u; level < u32(shadow.level_state.x); level++) {
-        let window = shadow.level_windows[level];
-        if 2.0 * window.z / footprint <= 0.35 || distance >= shadow.level_scales[level].w {
-            continue;
-        }
-        let scales = shadow.level_scales[level];
-        let at = light + light_normal * window.z;
-        let position = vec3<f32>(at.xy * scales.x, (at.z - scales.y) * scales.z);
-        let local = position.xy - window.xy;
-        if all(local >= vec2<f32>(margin)) && all(local <= vec2<f32>(1.0 - margin))
-            && position.z > 0.0 && position.z < 1.0 {
-            return level;
-        }
-    }
-    return 0u;
-}
-
 // Which lookup decides the sun at the surface point `world` (a DEBUG_SUN_
 // value), in `sun_visibility`'s order, with DEBUG_SHADOWED where it leaves
-// the point in shadow: a terrain's horizon, then the near cascade holding
-// the point, then past the shadow distance nothing, else the far maps,
-// whichever leaves less: the moving map, or for still casters the kept
-// levels where one holds the point and the kept far map elsewhere.
+// the point in shadow: a terrain's horizon, then the clipmap's level that
+// `map_lookup` reads first, or none where no level holds a drawn tile
+// there.
 fn debug_sun(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
-        distance: f32, on_terrain: bool) -> u32 {
+        on_terrain: bool) -> u32 {
     if shadow.state.x == 0.0 {
         return DEBUG_SUN_NONE;
     }
     if terrain_visibility(world, on_terrain) <= 0.0 {
         return DEBUG_SUN_HORIZON | DEBUG_SHADOWED;
     }
-    let beyond = select(vec4<f32>(0.0), vec4<f32>(1.0), vec4<f32>(distance) >= shadow.reach);
-    let cascade = u32(dot(beyond, vec4<f32>(1.0)));
-    let cascades = select(u32(shadow.state.z), 0u, camera.options.x != 0.0);
-    if cascade < cascades {
-        let visible = cascade_visibility(cascade, world, normal, dx, dy);
-        if visible >= 0.0 {
-            return debug_shadowed(DEBUG_SUN_CASCADE + cascade, visible);
-        }
-    }
-    if distance >= shadow.offsets.x {
+    let found = map_lookup(world, normal, dx, dy);
+    if found.y < 0.0 {
         return DEBUG_SUN_BEYOND;
     }
-    let size = shadow.sizes.y;
-    let point = map_point(shadow.far, world + normal * shadow.offsets.y, dx, dy, size,
-        shadow.offsets.z);
-    let uv = point.texel / size;
-    let inside = all(abs(uv * 2.0 - vec2<f32>(1.0)) < vec2<f32>(1.0)) && point.depth < 1.0;
-    let corner = gather_uv(point, size);
-    var moving = 1.0;
-    var kept = 1.0;
-    if inside {
-        moving = plane_visibility(textureGather(far_shadows, shadow_texels, corner, FAR_MOVING),
-            point);
-        kept = plane_visibility(textureGather(far_shadows, shadow_texels, corner, FAR_KEPT),
-            point);
-    }
-    if shadow.state.y == 0.0 {
-        return debug_shadowed(DEBUG_SUN_MOVING, moving);
-    }
-    let levels = level_visibility(world, normal, dx, dy);
-    let still = levels.x + levels.y * kept;
-    if moving < still {
-        return debug_shadowed(DEBUG_SUN_MOVING, moving);
-    }
-    if levels.y < 1.0 {
-        return debug_shadowed(DEBUG_SUN_LEVEL + debug_kept_level(world, normal), still);
-    }
-    return debug_shadowed(DEBUG_SUN_KEPT, still);
+    return debug_shadowed(DEBUG_SUN_LEVEL + u32(found.y), found.x);
 }
 
 // Meshes' and virtual geometry's vertex outputs with the second stream's

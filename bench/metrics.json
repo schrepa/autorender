@@ -146,17 +146,6 @@
       "direction": null
     },
     {
-      "name": "contact_shadows.active",
-      "kind": "work",
-      "rule": "equal",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "boolean",
-      "direction": null
-    },
-    {
       "name": "culled_instances",
       "kind": "work",
       "rule": "shown",
@@ -1213,10 +1202,10 @@
       "direction": null
     },
     {
-      "name": "shadows.cache_tiles",
+      "name": "shadows.casters",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "the last sampled frame's value (absent where the frame has none)",
       "runtimes": [
         "native"
       ],
@@ -1225,61 +1214,6 @@
     },
     {
       "name": "shadows.draws",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "shadows.kept_casters",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "shadows.kept_redraw",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "shadows.level_casters",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "shadows.level_tiles",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "shadows.levels_pending",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",
@@ -1301,10 +1235,21 @@
       "direction": null
     },
     {
-      "name": "shadows.near_casters",
+      "name": "shadows.moving_left_out",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadows.moving_tiles",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
       "runtimes": [
         "native"
       ],
@@ -1324,6 +1269,61 @@
     },
     {
       "name": "shadows.sky_maps",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadows.tiles_drawn",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadows.tiles_marked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadows.tiles_missing",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadows.tiles_reclaimed",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadows.tiles_resident",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",

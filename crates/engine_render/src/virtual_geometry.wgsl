@@ -22,18 +22,14 @@
 // every coarser group made from it); otherwise the clusters it was made
 // into draw in its place and it is requested. Groups drawn are marked used.
 //
-// Every view but the kept shadow map's projects errors as the camera sees
-// them, so shadow maps cast the surfaces the camera draws and nothing
-// shadows itself for want of the same detail. The kept map
-// holds still casters whatever the camera sees: its view projects every
-// error from beyond any distance, keeping its clusters within half its
-// texel, the error its other casters draw with. A shadow view projects distances below the nearest of its
-// receivers as that distance: casters closer to the camera only shadow
-// receivers farther away, where coarser detail does not show. Where the
-// camera sees none of a sphere, nothing there receives shadows on screen:
-// shadow views also accept errors up to their map's texel error there. Both
-// only loosen with larger spheres farther away, so every cut still covers
-// each surface once.
+// The camera's view projects errors as the camera sees them, distances
+// below the nearest it holds (a guard for the eye's own position) as that
+// distance. The regions of shadow tiles hold their casters whatever the
+// camera sees: each one's view projects every error from beyond any
+// distance, keeping its clusters within half its texel, the error its
+// other casters draw with. A view may accept errors up to its unseen error
+// where the camera sees none of a sphere. These only loosen with larger
+// spheres farther away, so every cut still covers each surface once.
 //
 // Arena records use absolute indices: nodes name their children and groups,
 // groups their clusters, and clusters their group, the group they came from,

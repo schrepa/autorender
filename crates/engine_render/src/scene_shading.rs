@@ -17,25 +17,23 @@ pub(crate) struct SceneShading(u8);
 
 impl SceneShading {
     const SHADOW_MAPS: u8 = 1;
-    const KEPT_LEVELS: u8 = 2;
-    const TERRAIN_HORIZONS: u8 = 4;
-    const CLOUD_SHADOWS: u8 = 8;
-    const OCCUPANCY: u8 = 16;
-    const PROBES: u8 = 32;
-    const WINDOWS: u8 = 64;
-    const BOUNCE: u8 = 128;
+    const TERRAIN_HORIZONS: u8 = 2;
+    const CLOUD_SHADOWS: u8 = 4;
+    const OCCUPANCY: u8 = 8;
+    const PROBES: u8 = 16;
+    const WINDOWS: u8 = 32;
+    const BOUNCE: u8 = 64;
 
     /// Every feature, as pipelines given none of the constants look up.
-    pub(crate) const ALL: Self = Self(255);
+    pub(crate) const ALL: Self = Self(127);
 
     /// The features `snapshot`'s settings let its frame hold, read as the
     /// passes filling their uniforms and bindings read them: shadows off
-    /// zero the shadow lookups' uniform, and kept levels follow its
-    /// settings; horizon maps exist for casting terrains with shadows on,
-    /// and their bounce layers with bounce light on too; clouds give shadows
-    /// while they cover the sky; covers darken with a strength; the probe
-    /// grid lists probes while they are on; windows light room by room while
-    /// their section is on.
+    /// zero the shadow lookups' uniform; horizon maps exist for casting
+    /// terrains with shadows on, and their bounce layers with bounce light
+    /// on too; clouds give shadows while they cover the sky; covers darken
+    /// with a strength; the probe grid lists probes while they are on;
+    /// windows light room by room while their section is on.
     pub(crate) fn of(snapshot: &RenderSnapshot) -> Self {
         let environment = &snapshot.environment;
         let shadows = environment.shadows.sanitized();
@@ -45,7 +43,6 @@ impl SceneShading {
         let horizons = environment.shadows.enabled && terrain.enabled && terrain.sun_shadows;
         let features = [
             (Self::SHADOW_MAPS, shadows.enabled),
-            (Self::KEPT_LEVELS, shadows.enabled && shadows.levels > 0),
             (Self::TERRAIN_HORIZONS, horizons),
             (
                 Self::CLOUD_SHADOWS,
@@ -68,11 +65,10 @@ impl SceneShading {
     }
 
     /// The override constants of pipelines shading the scene.
-    pub(crate) fn constants(self) -> [(&'static str, f64); 8] {
+    pub(crate) fn constants(self) -> [(&'static str, f64); 7] {
         let set = |bit: u8| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("SHADOW_MAPS", set(Self::SHADOW_MAPS)),
-            ("KEPT_LEVELS", set(Self::KEPT_LEVELS)),
             ("TERRAIN_HORIZONS", set(Self::TERRAIN_HORIZONS)),
             ("CLOUD_SHADOWS", set(Self::CLOUD_SHADOWS)),
             ("OCCUPANCY", set(Self::OCCUPANCY)),

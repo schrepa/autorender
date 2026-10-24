@@ -18,7 +18,6 @@
 
 use std::sync::Arc;
 
-use engine_core::collections::HashMap;
 use engine_core::terrain_data::lighting::HORIZON_LAYERS;
 use engine_core::{RenderTerrain, RenderTerrains, TerrainLighting, TerrainSettings};
 
@@ -30,9 +29,6 @@ use crate::terrain_bounce::BounceWindow;
 /// A horizon map texel: two directions' crest heights and distances, or the
 /// ground's height, filtered; or bounce light's coefficients.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// Texels of the horizon map within which terrain still draws into the
-/// near cascades, which shadow fine detail its texels miss.
-const CASCADE_TEXELS: f32 = 4.0;
 
 /// A terrain's record without a map: its place covers no ground and it
 /// holds no bounce light.
@@ -63,8 +59,6 @@ pub(crate) struct Horizons {
     records_written: Vec<[f32; 4]>,
     // The lighting each terrain's layers hold.
     held: Vec<Option<Arc<TerrainLighting>>>,
-    // Each terrain's reach of its near cascade casters, by terrain ID.
-    reaches: HashMap<u64, f32>,
     /// Terrains whose maps uploaded this frame.
     pub(crate) uploaded: u32,
 }
@@ -101,7 +95,6 @@ impl Horizons {
             ),
             records_written: Vec::new(),
             held: Vec::new(),
-            reaches: HashMap::default(),
             uploaded: 0,
         }
     }
@@ -181,12 +174,6 @@ impl Horizons {
         })
     }
 
-    /// How far toward the sun of a near cascade's receivers terrain `id`
-    /// still casts into it, when its horizon map shadows the rest.
-    pub(crate) fn cascade_reach(&self, id: u64) -> Option<f32> {
-        self.reaches.get(&id).copied()
-    }
-
     /// Uploads the maps of every terrain whose lighting arrived or changed
     /// since and writes their records, with shadows on and terrain
     /// `settings` casting at their resolution, each placing the window of
@@ -202,7 +189,6 @@ impl Horizons {
         (windows, slots): (&[Option<BounceWindow>], u32),
     ) {
         self.uploaded = 0;
-        self.reaches.clear();
         if !(shadows && settings.enabled && settings.sun_shadows) || terrains.terrains.is_empty() {
             self.release();
             return;
@@ -258,8 +244,6 @@ impl Horizons {
                         window,
                     };
                     records.extend(record(terrain, lighting, place, settings));
-                    let texel = max_extent(terrain) / size as f32;
-                    self.reaches.insert(terrain.id, CASCADE_TEXELS * texel);
                 }
                 // Nothing reads a terrain without its map: its place
                 // covers no ground.

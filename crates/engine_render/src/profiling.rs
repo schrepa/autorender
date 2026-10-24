@@ -2,7 +2,7 @@
 //! spans: each frame allocates two timestamp queries for every span its
 //! passes record, a pass writes a span's begin, its end, or both, and the
 //! report names samples by span. Spans covering several passes (the opaque
-//! phases, the near cascades, occlusion culling's pyramid and test) are the
+//! phases, the shadow regions, occlusion culling's pyramid and test) are the
 //! same span asked for again within the frame. Readback is bounded and
 //! never waits on the GPU: WebGPU completes maps through its event loop.
 //! Where the device times work inside passes and counts pipeline

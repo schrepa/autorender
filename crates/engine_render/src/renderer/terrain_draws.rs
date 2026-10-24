@@ -35,8 +35,7 @@ impl Renderer {
             [frame.camera.jitter[0], frame.camera.jitter[1]]
         });
         let culling = terrains.relative_view_projection;
-        let maps = self.shadows.drawn_maps();
-        let casts = !maps.is_empty();
+        let casts = snapshot.environment.shadows.enabled;
         // Runtime deformation's map before the terrain's
         // uniforms, which shade with it.
         self.terrain.deformation.prepare(
@@ -61,8 +60,7 @@ impl Renderer {
                 culling,
                 eye: snapshot.camera_position,
                 detail_eye: snapshot.detail_eye,
-                maps,
-                kept: self.shadows.level_refresh(),
+                regions: self.shadows.region_views(),
                 probes,
                 settings: snapshot.environment.terrain.sanitized(),
                 shadows: snapshot.environment.shadows.enabled,
@@ -72,8 +70,8 @@ impl Renderer {
             },
             (self.display.max_layers, self.materials.mips()),
         );
-        // The kept shadow levels redraw over ground that arrived, left or
-        // changed.
+        // The shadow clipmap redraws its tiles over ground that arrived, left
+        // or changed.
         for change in self.terrain.ground_changes() {
             self.shadows
                 .dirty_ground((change.min, change.max), (&change.pyramid, change.level));

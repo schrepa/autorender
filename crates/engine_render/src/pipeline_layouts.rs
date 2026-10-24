@@ -15,12 +15,12 @@ use crate::bindings::{
     LIGHT_SHADING, MATERIAL, MIPMAPS, OCCUPANCY, PARTICLES, POST, PRESENTATION_COMPACT,
     PRESENTATION_COMPOSE, PRESENTATION_CULL, PRESENTATION_FADES, PRESENTATION_LEVEL,
     PRESENTATION_SKIN_BOUNDS, PRESENTATION_TESTS, PYRAMID_DOWN, PYRAMID_FIRST, RETAINED_POSES,
-    SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW, SHAFTS,
-    SKY_TABLES, TAA_RESOLVE, TEMPORAL_POSES, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS,
-    TERRAIN_RESOLVE, TERRAIN_VT_BAKE, TERRAIN_VT_CAMERA, TERRAIN_VT_FEEDBACK, TERRAIN_VT_TERRAIN,
-    TRANSPARENT_COMPOSITE, Table, VIRTUAL_BIN, VIRTUAL_POSES, VIRTUAL_SEED, VIRTUAL_SELECT,
-    VIRTUAL_SHADOW, VIRTUAL_TRAVERSE, VISIBILITY_CLASSIFY, VISIBILITY_PASS, VISIBILITY_RESOLVE,
-    WATER, WATER_BEHIND, WATER_SIM, WATER_WAVES,
+    SCATTER_CULL, SCATTER_SNAP, SHADOW_MARKS, SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED,
+    SHADOW_VIEW, SHAFTS, SKY_TABLES, TAA_RESOLVE, TEMPORAL_POSES, TERRAIN, TERRAIN_CONTROL,
+    TERRAIN_NORMALS, TERRAIN_RESOLVE, TERRAIN_VT_BAKE, TERRAIN_VT_CAMERA, TERRAIN_VT_FEEDBACK,
+    TERRAIN_VT_TERRAIN, TRANSPARENT_COMPOSITE, Table, VIRTUAL_BIN, VIRTUAL_POSES, VIRTUAL_SEED,
+    VIRTUAL_SELECT, VIRTUAL_SHADOW, VIRTUAL_TRAVERSE, VISIBILITY_CLASSIFY, VISIBILITY_PASS,
+    VISIBILITY_RESOLVE, WATER, WATER_BEHIND, WATER_SIM, WATER_WAVES,
 };
 
 /// What a pipeline layout keeps within, for each stage (and, for dynamic
@@ -133,13 +133,14 @@ pipeline_layouts! {
     PARTICLE_PIPELINES = [CAMERA, PARTICLES];
     SHAFT_PIPELINES = [CAMERA, SHAFTS];
     /// Shadow casters: plain, masked by their material, impostor cards;
-    /// terrain's; and their selection.
+    /// terrain's; their selection; and the marks of the tiles pixels read.
     CASTER_PIPELINES = [SHADOW_VIEW, SHADOW_POSES];
     MASKED_CASTER_PIPELINES = [SHADOW_VIEW, SHADOW_POSES, MATERIAL];
     IMPOSTOR_CASTER_PIPELINES = [SHADOW_VIEW, SHADOW_POSES, IMPOSTOR_DRAW];
     TERRAIN_CASTER_PIPELINES = [SHADOW_VIEW, TERRAIN];
     SHADOW_SELECT_PIPELINES = [SHADOW_SELECT];
     SHADOW_SKINNED_PIPELINES = [SHADOW_SKINNED];
+    SHADOW_MARKS_PIPELINES = [SHADOW_MARKS];
     /// The screen effects, temporal antialiasing's resolve and
     /// transparency's composite.
     POST_PIPELINES = [POST];
@@ -196,5 +197,7 @@ pipeline_layouts! {
 /// effect. Water's simulation builds its layout only once water is
 /// simulated, and terrain bounce light its own once a terrain's transfer
 /// arrives; the debug views' and auto exposure's layouts count though no
-/// start builds them unless they are on.
-pub const LAYOUT_BUDGET: usize = 72;
+/// start builds them unless they are on. The shadow clipmap's marks take
+/// one of their own: the one pass reading the depth buffer with the
+/// camera, which tells which tiles get memory.
+pub const LAYOUT_BUDGET: usize = 73;

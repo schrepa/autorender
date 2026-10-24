@@ -1,7 +1,7 @@
 // Sun shafts, prepended with scene.wgsl and effects.wgsl: at
 // quarter resolution, each view ray marches through the fog to the depth
 // buffer's surface or the gathering distance, adding the sunlight each step
-// scatters toward the eye where the far shadow maps let the sun through,
+// scatters toward the eye where the shadow clipmap lets the sun through,
 // dimmed by the fog in front of it. The ray's length goes with the light, so
 // the filter of post.wgsl can bring it to half resolution without crossing
 // silhouettes. The composite scales the result by the sun's color.
@@ -42,7 +42,7 @@ fn fs_shafts(@builtin(position) position: vec4<f32>) -> @location(0) vec2<f32> {
     for (var i = 0u; i < SHAFT_STEPS; i++) {
         let point = eye + direction * ((f32(i) + noise) * step);
         let local = density * exp(-falloff * max(point.y, -1000.0));
-        scattered += far_visibility(point) * local * exp(-optical) * step;
+        scattered += air_visibility(point) * local * exp(-optical) * step;
         optical += local * step;
     }
     // Henyey-Greenstein phase toward the sun.

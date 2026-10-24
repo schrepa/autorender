@@ -1,51 +1,54 @@
-//! Sun shadows: depth maps seen from the atmosphere's sun.
+//! Sun shadows: a clipmap of depth maps seen from the atmosphere's sun,
+//! around the detail eye (the camera's, unless the freeze key holds one).
 //!
-//! Near cascades, layers of one texture, cover the first stretch of the view,
-//! each reaching a third as far as the next: each a square about the camera,
-//! its cache's window. On GPU-presented frames with objects terrains place,
-//! each cascade keeps those in a cache of its own (`shadow_fit::NearCaches`),
-//! camera-following and toroidal as the kept levels are, which redraws only
-//! the strips its window uncovers, the tiles where objects came or went, or
-//! everything once its band moves; every frame the cascade is composed from
-//! its cache, then the rest of its casters (terrain, meshes, those moving)
-//! drawn over it, as they are into every cascade of other frames. Two far
-//! maps share one projection over the shadow region: the kept
-//! map holds casters whose pose stayed the same for a few frames and is
-//! redrawn only where that changes, a rectangle of its 16x16 tiles per
-//! frame, or whole after its projection or the sun moved; the moving map
-//! holds every other caster and is redrawn every frame. One compute pass
-//! selects each map's casters from every candidate, visible or culled, into
-//! indirect draws per mesh; on GPU-presented frames it also keeps each
-//! slot's stillness and marks dirty tiles, read back a few frames later.
-//! CPU-prepared frames draw every caster into the moving map and leave the
-//! kept map unread. Kept levels, layers of another texture,
-//! hold still casters sharper than the kept map near the detail eye
-//! (the camera's, unless the freeze key holds one): each
-//! follows it a tile at a time, and a frame redraws the tiles one level
-//! uncovered, or a region of its dirty tiles. Terrain's ground casts there
-//! too, at a level of detail the level's texels choose rather than the
-//! camera's (`terrain::patches`), so a cached level never depends on where
-//! the eye stood when it was drawn; the ground's own pixels look the level
-//! up from their height on that level's ground (`meshes/terrain.wgsl`'s
-//! `terrain_kept_lift`), so the ground the level holds never shadows itself
-//! whatever level the ground draws at; tiles of ground arriving, leaving or
-//! changing mark the tiles over them dirty. Lookups read the finest level holding a receiver within its
-//! reach around the detail eye, handing over to the next across the reach's
-//! outer half and as its texels shrink under a pixel, then the kept map.
-//! Casters with virtual geometry are selected like the others; virtual
-//! geometry selects their clusters for each map drawn, as the camera sees
-//! them in the maps drawn every frame and within half a texel in the kept
-//! map, and draws them after its own selection:
+//! Its levels, each with texels twice the size and a window twice the
+//! reach of the one inside it, lie in light space on fixed grids of square
+//! tiles; each window follows the detail eye a tile at a time, and the
+//! tiles it uncovers start over (`shadow_fit`). A tile has memory, one slot
+//! of a depth atlas, only while the depth buffer's pixels read it: after
+//! the opaque passes a compute pass marks, for each pixel, the tile holding
+//! its point at the level whose texels match what the pixel spans, seen
+//! from the detail eye, and the next coarser where lookups blend it in
+//! (`marks`); read back a few frames later, the marks give those tiles free
+//! slots, then the slots of the tiles pixels read least recently. Each
+//! frame a budget of tiles redraws, coarse levels first, those never drawn
+//! before those whose still casters changed: in regions, squares of tiles
+//! drawn together into a layer of their own, every caster over a region
+//! drawn once, then each tile composed from its region into its slot.
+//! On GPU-presented frames casters whose pose stayed the same for a few
+//! frames stay in the tiles they were drawn into; one that moves or comes
+//! to rest marks the drawn tiles under it dirty. CPU-prepared frames track
+//! no stillness: they keep casters with virtual geometry alone, and every
+//! other caster moves. Moving casters draw every frame over the drawn tiles
+//! they cross, into slots of their own past the still casters', through
+//! each tile's route onto its slot, and lookups take the lesser of a tile's
+//! two slots. Lookups read the level a pixel's size picks and
+//! blend in the next coarser (`scene.wgsl`'s `map_visibility`); where a
+//! level is not drawn yet, the first coarser one that is stands in, and
+//! past the last level terrain's horizons alone shadow.
+//!
+//! Terrain's ground casts into each region at a level of detail its texels
+//! choose, unmorphed, rather than the camera's (`terrain::patches`), so a
+//! kept tile never depends on where the eye stood when it was drawn; the
+//! ground's own pixels look each level up from their height on that level's
+//! ground (`meshes/terrain.wgsl`'s `terrain_kept_lift`), so the ground a
+//! level holds never shadows itself whatever level the ground draws at;
+//! tiles of ground arriving, leaving or changing mark the tiles over them
+//! dirty. Placed objects cast their mean bend in the wind there. Casters
+//! with virtual geometry are selected like the others; virtual geometry
+//! selects their clusters for each region, within half its texels whatever
+//! the camera sees, and draws them after its own selection:
 //! [`ShadowPass::encode_selection`], then [`ShadowPass::encode_maps`].
 //!
 //! Sky occlusion's maps (`sky`) are drawn by the same pass: still mesh
 //! casters seen from fixed directions of the sky, one map a frame at most,
-//! selected beside the sun's maps.
+//! selected beside the regions.
 //!
-//! Its parts: the maps and their lookups (`maps`), each frame's caster
-//! groups (`casters`), where the maps look (`regions`), the selection of
-//! each map's casters (`selection`), the depth pipelines (`pipelines`) and
-//! the sky maps (`sky`). What the kept map holds is `shadow_fit::KeptMap`.
+//! Its parts: the textures and their lookups (`maps`), each frame's caster
+//! groups (`casters`), what each frame draws besides its tiles (`regions`),
+//! the selection of each map's casters (`selection`), the marks (`marks`),
+//! the pipelines (`pipelines`) and the sky maps (`sky`). What the clipmap
+//! holds is `shadow_fit::Clipmap`.
 
 #![expect(
     clippy::expect_used,
@@ -54,6 +57,7 @@
 
 mod casters;
 mod maps;
+mod marks;
 mod pipelines;
 mod regions;
 mod selection;
@@ -61,80 +65,57 @@ mod sky;
 
 use std::cell::Cell;
 
-use engine_core::{
-    MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot,
-    glam::{Mat4, Vec3},
-    terrain_data::Pyramid,
-};
+use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
+use engine_core::terrain_data::Pyramid;
 
 use crate::batches::BatchPlan;
 use crate::bindings::SHADOW_POSES;
-use crate::cached::GroupCache;
-use crate::gpu_data::{DRAW_ARGS_BYTES, MAX_CASCADES, ShadowCullUniform};
+use crate::cached::{Bound, GroupCache};
+use crate::gpu_data::{ComposeData, DRAW_ARGS_BYTES, RouteUniform, ShadowCullUniform};
 use crate::mesh_arena::{Bindings, Ids, MeshDraw};
 use crate::profiling::GpuProfiler;
 use crate::renderer::FramePoses;
-use crate::shadow_fit::{
-    KeptLevels, KeptMap, LevelRefresh, LightBasis, NearCaches, REFRESH_TILES, Refresh, TileSpan,
-    ground_level,
-};
+use crate::shadow_fit::{ClipPlan, ClipSettings, ClipStats, Clipmap, LightBasis, ground_level};
 
-pub(crate) use crate::gpu_layouts::constants::KEPT_LEVELS;
-pub(crate) use crate::gpu_layouts::constants::KEPT_MAP;
-use crate::gpu_layouts::constants::LEVEL_REFRESH;
-pub(crate) use crate::gpu_layouts::constants::MOVING_MAP;
-use crate::gpu_layouts::constants::REFRESH;
+use crate::gpu_layouts::constants::MOVING_MAP;
 use crate::gpu_layouts::constants::SHADOW_GROUP as GROUP;
 use crate::gpu_layouts::constants::SHADOW_MAPS as MAPS;
+use crate::gpu_layouts::constants::SHADOW_REGIONS;
 use crate::gpu_layouts::constants::SHADOW_SKINNED_GROUP as SKINNED_GROUP;
 use crate::gpu_layouts::constants::SKY_MAP;
 use crate::gpu_layouts::constants::SKY_REFRESH;
-use crate::gpu_layouts::constants::STILLNESS;
 pub(crate) use crate::gpu_layouts::constants::VIRTUAL_SHADOW_PLANES;
 use casters::CasterGroups;
 pub(crate) use casters::ShadowGroup;
 pub(crate) use maps::SHADOW_FORMAT;
 use maps::{ShadowMaps, map_pass};
+use marks::Marks;
 use pipelines::ShadowPipelines;
-use regions::{Regions, SelectionCounts};
-use selection::Selection;
+use regions::{FrameRegions, SelectionCounts};
+use selection::{Selection, map_factor, map_start};
 use sky::{SkyDraw, SkyMaps};
 
-// Uniform offset alignment between view matrices: each near cascade's, the
-// far maps', the redrawn kept level's, the redrawn sky map's, then each
-// near cache's pages', four each, and each cascade's compose view.
+// Uniform offset alignment between views: each region's, the moving
+// tiles', the compose view and the redrawn sky map's.
 const VIEW_STRIDE: u64 = 256;
-const FAR_VIEW: u64 = MAX_CASCADES as u64 * VIEW_STRIDE;
-const LEVEL_VIEW: u64 = FAR_VIEW + VIEW_STRIDE;
-const SKY_VIEW: u64 = LEVEL_VIEW + VIEW_STRIDE;
-const PAGE_VIEW: u64 = SKY_VIEW + VIEW_STRIDE;
-const COMPOSE_VIEW: u64 = PAGE_VIEW + 4 * MAX_CASCADES as u64 * VIEW_STRIDE;
-const VIEWS_BYTES: u64 = COMPOSE_VIEW + MAX_CASCADES as u64 * VIEW_STRIDE;
-// Floats of the near caches' page and compose views.
-const NEAR_VIEW_FLOATS: usize = ((VIEWS_BYTES - PAGE_VIEW) / 4) as usize;
+const MOVING_VIEW: u64 = SHADOW_REGIONS as u64 * VIEW_STRIDE;
+const COMPOSE_VIEW: u64 = MOVING_VIEW + VIEW_STRIDE;
+const SKY_VIEW: u64 = COMPOSE_VIEW + VIEW_STRIDE;
+const VIEWS_BYTES: u64 = SKY_VIEW + VIEW_STRIDE;
 
-/// The maps placed objects read the lists of this frame's near cache
-/// redraws as, the `n`th redraw's `NEAR_CACHE_MAPS + n`: past every map
-/// caster selection lists.
-const NEAR_CACHE_MAPS: usize = MAPS;
-
-/// A shadow map drawn this frame whose virtual casters' clusters virtual
-/// geometry selects: its planes around where casters can
-/// darken visible receivers (unused ones hold everything), the camera
-/// distance its receivers start at (`None` at the camera), its texel's
-/// world size, the direction it looks along (away from the sun), the
+/// A region of tiles drawn this frame whose virtual casters' clusters
+/// virtual geometry selects: the map its casters list as, its planes
+/// around where casters can darken its receivers (unused ones hold
+/// everything), the direction it looks along (away from the sun), the
 /// offset of its view matrix, and the world error its clusters keep
-/// whatever the camera sees (the kept map's), or `None` to project errors
-/// as the camera sees them.
+/// whatever the camera sees.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct VirtualShadowView {
     pub map: usize,
     pub planes: [[f32; 4]; VIRTUAL_SHADOW_PLANES],
-    pub min_distance: Option<f32>,
-    pub texel: f32,
     pub direction: Vec3,
     pub view_offset: u32,
-    pub error: Option<f32>,
+    pub error: f32,
 }
 
 /// Where this frame's casters come from.
@@ -209,11 +190,7 @@ pub(crate) struct ShadowInputs<'a> {
     pub terrain: bool,
 }
 
-/// What depth passes draw: each mesh's uploaded draw (and whether it is
-/// skinned), each masked material's group, and the clusters of a map's
-/// virtual casters, drawn last in its pass, which returns its
-/// draws.
-/// Draws placed objects into a map with the caster pipelines
+/// Draws placed objects into a region's layer with the caster pipelines
 /// (by `masked + 2 * skinned`), and their impostor cards with the cards'
 /// pipeline once prepared; returns the draws.
 pub(crate) type ScatterDraw<'a> = dyn Fn(
@@ -224,27 +201,30 @@ pub(crate) type ScatterDraw<'a> = dyn Fn(
     ) -> u32
     + 'a;
 
-/// A redraw of the kept map or of a kept level
-/// for placed objects, and of a kept level for terrain's ground: the
-/// inward world planes around the region redrawn and its texel's world
-/// size.
+/// A region of tiles a frame redraws, as terrain's ground and placed
+/// objects cull their casters for it: the inward world planes around it
+/// and its texel's world size.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct KeptRefresh {
     pub planes: [[f32; 4]; 6],
     pub texel: f32,
 }
 
+/// What depth passes draw: each mesh's uploaded draw (and whether it is
+/// skinned), each masked material's group, the clusters of a region's
+/// virtual casters, terrain's patches and placed objects, each returning
+/// its draws.
 pub(crate) struct MapSources<'a> {
     pub meshes: &'a dyn Fn(MeshHandle) -> Option<(MeshDraw<'a>, bool)>,
     pub materials: &'a dyn Fn(MaterialHandle) -> Option<&'a wgpu::BindGroup>,
     pub virtual_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
-    /// Terrain's patches in a map, drawn first.
+    /// Terrain's patches in a region, drawn first.
     pub terrain_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
-    /// Placed objects in a map, drawn next.
+    /// Placed objects in a region, drawn next.
     pub scatter_draw: &'a ScatterDraw<'a>,
 }
 
-/// What each shadow map draws.
+/// What each region draws.
 #[derive(Clone, Copy)]
 enum Casters {
     /// Terrain's patches.
@@ -257,8 +237,8 @@ enum Casters {
     Virtual,
 }
 
-/// Each shadow map's casters in drawing order: depth alone is written, so
-/// the order changes no texel, but it is one order for every map.
+/// Each region's casters in drawing order: depth alone is written, so
+/// the order changes no texel, but it is one order for every region.
 const CASTERS: [Casters; 4] = [
     Casters::Terrain,
     Casters::Scatter,
@@ -290,47 +270,21 @@ pub(crate) struct ShadowFrame {
     candidates: u32,
     // Skinned slots selected by their palette bounds (GPU-presented frames).
     skinned: u32,
-    // Near cascades drawn and looked up.
-    cascades: u32,
-    refresh: Option<Refresh>,
-    // The kept level redrawn, and the tiles no level holds
-    // yet.
-    level_refresh: Option<LevelRefresh>,
-    level_pending: u32,
-    // Tiles of the near caches redrawn.
-    cache_tiles: u32,
+    // The regions redrawn, the tiles composed from them and the moving
+    // tiles.
+    regions: u32,
+    composes: u32,
+    moving: u32,
     // The sky map redrawn.
     sky: Option<SkyDraw>,
     pose_index: usize,
+    tiles: ClipStats,
 }
 
 impl ShadowFrame {
-    /// Kept-map redraw of this frame, for profiling counters: 0 none, 1
-    /// tiles, 2 the whole map.
-    pub(crate) fn refresh_kind(&self) -> u8 {
-        match self.refresh {
-            None => 0,
-            Some(Refresh::Tiles(_)) => 1,
-            Some(Refresh::Whole) => 2,
-        }
-    }
-
-    /// Kept-level tiles this frame redraws.
-    pub(crate) fn level_tiles(&self) -> u32 {
-        self.level_refresh.map_or(0, |refresh| {
-            let region = refresh.region;
-            (region.columns[1] - region.columns[0] + 1) * (region.rows[1] - region.rows[0] + 1)
-        })
-    }
-
-    /// Kept-level tiles no level holds yet, which lookups read coarser.
-    pub(crate) fn level_pending(&self) -> u32 {
-        self.level_pending
-    }
-
-    /// Tiles of the near cascades' caches this frame redraws.
-    pub(crate) fn cache_tiles(&self) -> u32 {
-        self.cache_tiles
+    /// This frame's counts of the clipmap's tiles.
+    pub(crate) fn tiles(&self) -> ClipStats {
+        self.tiles
     }
 }
 
@@ -344,42 +298,33 @@ pub(crate) struct ShadowPass {
     // Terrains whose horizon records lookups loop over, as
     // last set, which the lookup uniform carries.
     horizon_records: f32,
-    kept: KeptMap,
-    levels: KeptLevels,
-    // The near cascades' caches; whether objects terrains place are
-    // resident, which the caches hold, and whether this frame keeps them;
-    // this frame's redraws of them, and the views placed objects cull
-    // those by; and their page and compose views as last written.
-    near: NearCaches,
-    cache_placed: bool,
-    caching: bool,
-    near_refreshes: Vec<(usize, TileSpan)>,
-    near_views: Vec<(usize, KeptRefresh)>,
-    written_near_views: Vec<f32>,
+    clipmap: Clipmap,
+    // This frame's regions, composes and moving tiles, and its regions as
+    // terrain and placed objects cull for them.
+    plan: ClipPlan,
+    region_views: Vec<(usize, KeptRefresh)>,
     casters: CasterGroups,
     selection: Selection,
+    marks: Marks,
     // Pose bindings of each pose buffer, while it exists, and the same with
-    // the near caches, which composing binds.
+    // the regions' layers, which composing binds.
     pose_groups: [GroupCache<4>; 2],
     compose_groups: [GroupCache<4>; 2],
-    // Maps drawn this frame that select virtual casters' clusters.
+    // Regions drawn this frame that select virtual casters' clusters.
     virtual_views: Vec<VirtualShadowView>,
-    // Maps drawn every frame and their world-to-clip matrices, which
-    // terrain's patches are culled by.
-    drawn_maps: Vec<(usize, Mat4)>,
-    // Whether this frame keeps still casters in the kept map (GPU-presented
-    // frames), and its redraws of it and of a kept level, for placed objects.
-    keeps_still: bool,
-    kept_refresh: Option<KeptRefresh>,
-    level_refresh: Option<KeptRefresh>,
     // Advances whenever the caster groups change.
     groups_generation: u64,
-    // The caster groups, mesh layout and map errors (bits) the draw
-    // arguments' template was last updated for.
-    template_key: Option<(u64, u64, [u32; MAPS])>,
-    // The view matrices and cull uniform last written.
+    // Each caster group's mesh placement, and the caster groups, mesh
+    // layout and whether levels of detail were on that it was found for.
+    caster_draws: Vec<CasterDraw>,
+    draws_key: Option<(u64, u64, bool)>,
+    // The views, cull uniform and routes last written.
     written_views: Option<Vec<f32>>,
     written_cull: Option<ShadowCullUniform>,
+    written_routes: Option<Box<RouteUniform>>,
+    // The tiles composed this frame, an instance each, and their buffer.
+    composes: Vec<ComposeData>,
+    compose_buffer: crate::buffers::Growable,
     // The storage each frame lists its mesh casters in, which borrow the
     // frame's meshes and materials, kept from frame to frame.
     caster_storage: Cell<Vec<Caster<'static>>>,
@@ -387,7 +332,7 @@ pub(crate) struct ShadowPass {
     // the redrawn sky map's view matrix last written.
     sky: SkyMaps,
     sky_groups: u64,
-    written_sky_view: Option<Mat4>,
+    written_sky_view: Option<engine_core::glam::Mat4>,
 }
 
 impl ShadowPass {
@@ -402,27 +347,28 @@ impl ShadowPass {
             material_layout: material_layout.clone(),
             maps: ShadowMaps::new(device),
             horizon_records: 0.0,
-            kept: KeptMap::default(),
-            levels: KeptLevels::default(),
-            near: NearCaches::default(),
-            cache_placed: false,
-            caching: false,
-            near_refreshes: Vec::new(),
-            near_views: Vec::new(),
-            written_near_views: Vec::new(),
+            clipmap: Clipmap::default(),
+            plan: ClipPlan::default(),
+            region_views: Vec::new(),
             casters: CasterGroups::new(),
-            selection: Selection::new(device),
+            selection: selection::Selection::new(device),
+            marks: Marks::new(device),
             pose_groups: Default::default(),
             compose_groups: Default::default(),
             virtual_views: Vec::new(),
-            drawn_maps: Vec::new(),
-            keeps_still: false,
-            kept_refresh: None,
-            level_refresh: None,
             groups_generation: 0,
-            template_key: None,
+            caster_draws: Vec::new(),
+            draws_key: None,
             written_views: None,
             written_cull: None,
+            written_routes: None,
+            composes: Vec::new(),
+            compose_buffer: crate::buffers::Growable::new(
+                device,
+                "engine/shadow-composes",
+                size_of::<ComposeData>() as u64,
+                wgpu::BufferUsages::VERTEX,
+            ),
             caster_storage: Cell::default(),
             sky: SkyMaps::new(device),
             sky_groups: 0,
@@ -447,9 +393,9 @@ impl ShadowPass {
     }
 
     /// Bindings of the main passes' first group (`bindings::CAMERA`): the
-    /// lookup uniform, the near cascades, the far maps, the comparison
-    /// sampler, the texel sampler of receiver planes and the kept levels.
-    pub(crate) fn entries(&self) -> [(&'static str, crate::cached::Bound<'_>); 6] {
+    /// lookup uniform, the atlas, the table of slots, the comparison
+    /// sampler and the texel sampler of receiver planes.
+    pub(crate) fn entries(&self) -> [(&'static str, crate::cached::Bound<'_>); 5] {
         self.maps.entries()
     }
 
@@ -464,105 +410,51 @@ impl ShadowPass {
         self.casters.batch_group(index)
     }
 
-    /// Maps drawn this frame whose virtual casters' clusters virtual
+    /// Regions drawn this frame whose virtual casters' clusters virtual
     /// geometry selects; empty without such casters.
     pub(crate) fn virtual_views(&self) -> &[VirtualShadowView] {
         &self.virtual_views
     }
 
-    /// Maps drawn every frame this frame (near cascades and the moving map)
-    /// and their world-to-clip matrices; empty without shadows.
-    pub(crate) fn drawn_maps(&self) -> &[(usize, Mat4)] {
-        &self.drawn_maps
+    /// This frame's regions of tiles as terrain's ground and placed objects
+    /// cull their casters for them: the map whose lists each reads, the
+    /// inward world planes around it and its texel's world size.
+    pub(crate) fn region_views(&self) -> &[(usize, KeptRefresh)] {
+        &self.region_views
     }
 
-    /// Whether this frame keeps still casters in the kept map rather than
-    /// the moving one: placed objects cast there alone.
-    pub(crate) fn keeps_still(&self) -> bool {
-        self.keeps_still
-    }
-
-    /// This frame's redraw of the kept map, while it keeps still casters:
-    /// its world-to-clip matrix and the inward world planes around the
-    /// region redrawn.
-    pub(crate) fn kept_refresh(&self) -> Option<KeptRefresh> {
-        self.kept_refresh
-    }
-
-    /// This frame's redraw of a kept level, likewise.
-    pub(crate) fn level_refresh(&self) -> Option<KeptRefresh> {
-        self.level_refresh
-    }
-
-    /// Whether this frame composes the near cascades from their caches:
-    /// placed objects cast into the caches' redraws, not into the
-    /// cascades.
-    pub(crate) fn caches_near(&self) -> bool {
-        self.caching
-    }
-
-    /// This frame's redraws of the near cascades' caches, while it keeps
-    /// them: the map placed objects read each one's lists as, and the
-    /// inward world planes around its tiles with its texel's world size.
-    pub(crate) fn near_refreshes(&self) -> &[(usize, KeptRefresh)] {
-        &self.near_views
-    }
-
-    /// Whether objects terrains place are resident, which the near
-    /// cascades cache from the next frame on.
-    pub(crate) fn cache_placed(&mut self, placed: bool) {
-        self.cache_placed = placed;
-    }
-
-    /// Marks the tiles of the kept map, levels and near caches under the
-    /// world box `min`..`max` dirty: placed objects within it appeared or
-    /// left.
+    /// Marks dirty the clipmap's drawn tiles under the world box
+    /// `min`..`max`: placed objects within it appeared or left.
     pub(crate) fn dirty_kept(&mut self, min: Vec3, max: Vec3) {
-        self.kept.dirty_box(min, max);
-        self.levels.dirty_box(min, max);
-        self.near.dirty_box(min, max);
+        self.clipmap.dirty_box(min, max);
     }
 
-    /// Marks every kept and cached tile dirty: what placed objects cast
-    /// changed.
+    /// Marks every drawn tile dirty: what placed objects cast changed.
     pub(crate) fn dirty_kept_all(&mut self) {
-        self.kept.dirty_all();
-        self.levels.dirty_all();
-        self.near.dirty_all();
+        self.clipmap.dirty_all();
     }
 
-    /// Marks dirty the tiles of the kept levels under the world box
-    /// `min`..`max`, where a tile of level `level` of a terrain over
-    /// `pyramid` arrived, left or changed: those of the levels whose ground
-    /// draws at that level or finer, which may draw that tile.
+    /// Marks dirty the drawn tiles under the world box `min`..`max`, where
+    /// a tile of level `level` of a terrain over `pyramid` arrived, left or
+    /// changed: those of the levels whose ground draws at that level or
+    /// finer, which may draw that tile.
     pub(crate) fn dirty_ground(
         &mut self,
         (min, max): (Vec3, Vec3),
         (pyramid, level): (&Pyramid, u32),
     ) {
-        let Some(texels) = self.maps.textures().map(|maps| maps.resolution / 2) else {
-            return;
-        };
-        for index in 0..self.levels.len() {
-            if level >= ground_level(pyramid, self.levels.texel(index, texels)) {
-                self.levels.dirty_level_box(index, min, max);
+        for index in 0..self.clipmap.len() {
+            if level >= ground_level(pyramid, self.clipmap.texel(index)) {
+                self.clipmap.dirty_level_box(index, min, max);
             }
         }
     }
 
-    /// Texels along a side of map `map` drawn every frame (see
-    /// [`Self::drawn_maps`]): near cascades hold half the far maps'; 0
-    /// without maps.
-    pub(crate) fn drawn_map_texels(&self, map: usize) -> u32 {
-        self.maps
-            .textures()
-            .map_or(0, |maps| maps.drawn_texels(map))
-    }
-
-    /// The selected casters' IDs (each map's region `map * capacity`, then
-    /// each group's) and indirect arguments (five words per map and group,
-    /// `map * groups + group`), the ID capacity per map, and a key that
-    /// changes when the buffers do.
+    /// The selected casters' IDs (each map's region from
+    /// `selection::map_start`, then each group's) and indirect arguments
+    /// (five words per map and group, `map * groups + group`), the ID
+    /// capacity of a region's map, and a key that changes when the buffers
+    /// do.
     pub(crate) fn caster_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u32, u64) {
         (
             &self.selection.ids,
@@ -572,7 +464,7 @@ impl ShadowPass {
         )
     }
 
-    /// The view matrices of every map, at each map's view offset, once
+    /// The view matrices of every view, at each view's offset, once
     /// shadows ran.
     pub(crate) fn view_buffer(&self) -> Option<&wgpu::Buffer> {
         self.pipelines
@@ -580,17 +472,16 @@ impl ShadowPass {
             .map(|pipelines| &pipelines.view_buffer)
     }
 
-    /// The latest caster totals of the near cascades together, the moving
-    /// map, the kept map and the kept levels read back from GPU-selected
-    /// frames, a few frames old; the kept totals count only frames that
-    /// redrew part of them.
-    pub(crate) fn caster_counts(&self) -> Option<[u32; 4]> {
+    /// The latest caster totals read back from GPU-selected frames, a few
+    /// frames old: the casters the regions drew, the moving casters' draws
+    /// over the moving tiles, and those the moving map left out.
+    pub(crate) fn caster_counts(&self) -> Option<[u32; 3]> {
         self.selection.caster_counts()
     }
 
-    /// Bytes of shadow maps and selection buffers.
+    /// Bytes of the textures, marks and selection buffers.
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.maps.capacity_bytes() + self.selection.capacity_bytes()
+        self.maps.capacity_bytes() + self.selection.capacity_bytes() + self.marks.capacity_bytes()
     }
 
     /// Plans this frame's draw groups, one per mesh: of the plan's batches
@@ -607,16 +498,16 @@ impl ShadowPass {
         if self.casters.plan(plan, frame, gpu) {
             self.groups_generation += 1;
             self.selection.groups_changed();
-            if self.casters.source() == Source::Presented {
-                // Removed casters leave their kept shadows: redraw every tile.
-                self.kept.dirty_all();
-                self.levels.dirty_all();
-            }
+            // Removed casters leave their shadows in the tiles kept, and
+            // frames of the other source keep other casters: they redraw.
+            self.clipmap.dirty_all();
         }
     }
 
-    /// Prepares this frame's shadow maps and lookups, or disables lookups
-    /// when shadows are off.
+    /// Prepares this frame's shadows: places the clipmap around the detail
+    /// eye, takes what earlier frames read back, plans its slots, redraws
+    /// and moving tiles, and writes what its passes and lookups read; or
+    /// disables lookups when shadows are off.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -633,217 +524,181 @@ impl ShadowPass {
             poses,
             ..
         } = inputs;
-        // Dirty tiles mark still casters that changed: the sky maps hold
-        // them too.
-        let dirty = self.selection.take_dirty_tiles();
-        let level_dirty = self.selection.take_level_tiles();
-        let still_changed = dirty
-            .iter()
-            .chain(level_dirty.iter().flatten())
-            .any(|&word| word != 0);
-        self.kept.merge(dirty);
-        self.levels.merge(level_dirty);
         self.virtual_views.clear();
-        self.drawn_maps.clear();
-        self.keeps_still = false;
-        self.kept_refresh = None;
-        self.level_refresh = None;
-        let was_caching = std::mem::take(&mut self.caching);
-        self.near_refreshes.clear();
-        self.near_views.clear();
+        self.region_views.clear();
         let settings = snapshot.environment.shadows.sanitized();
         if !settings.enabled || (self.casters.groups().is_empty() && !inputs.terrain) {
             if !settings.enabled {
                 self.maps.release();
             }
             self.sky.release(queue);
-            self.kept.keep_while(settings.enabled);
             // Shadows off: lookups see state.x 0.
             self.maps.write_uniform(queue, bytemuck::Zeroable::zeroed());
             return None;
         }
         let source = self.casters.source();
+        let classify = source == Source::Presented;
         self.pipelines
             .get_or_insert_with(|| ShadowPipelines::new(device, &self.material_layout));
-        if self.maps.ensure(
-            device,
-            settings.resolution,
-            (settings.cascades, settings.levels, self.cache_placed),
-        ) {
-            // New maps hold nothing: the kept one, levels and caches are
-            // redrawn whole.
-            self.kept.invalidate();
-            self.levels.invalidate();
-            self.near.invalidate();
-        }
-        // The far region: the settings' bounds, or a cube around an anchor
-        // that follows the camera a quarter of the distance at a time.
+        // The textures, then the clipmap placed around the detail eye, which
+        // the freeze key pins.
+        let limit = device.limits().max_texture_dimension_2d;
+        let (layout, made) = self.maps.ensure(device, &settings, limit);
         let basis = LightBasis::new(snapshot.environment.atmosphere.sanitized().sun_direction);
-        let eye = snapshot.camera_position;
-        let far = self.kept.place(
-            basis,
-            settings.bounds,
-            settings.distance,
-            eye,
-            settings.resolution,
-        );
-        // Kept levels follow the detail eye, which the freeze key pins, and
-        // the near cascades' caches the camera, whose view they fit.
-        self.levels.place(
+        let restarted = self.clipmap.place(
             basis,
             snapshot.detail_eye,
-            settings.levels,
-            settings.level_extent,
+            ClipSettings {
+                levels: settings.levels,
+                finest_texel: settings.finest_texel,
+                tile_texels: settings.tile_texels,
+                slots: layout.still,
+            },
         );
-        self.place_near(basis, eye, &settings, snapshot.environment.wind.velocity);
-        let classify = source == Source::Presented;
+        if made && !restarted {
+            // New textures hold nothing: every tile redraws.
+            self.clipmap.invalidate();
+        }
+        // What earlier frames read back of this placement: the tiles pixels
+        // read, those whose still casters changed (the sky maps hold them
+        // too) and those moving casters crossed.
+        let epoch = self.clipmap.epoch();
+        let marked = self.marks.take(epoch);
+        let (dirty, moving) = self.selection.take_masks(epoch);
+        let still_changed = dirty.iter().any(|&word| word != 0);
+        self.clipmap.merge_marks(&marked);
+        self.clipmap.merge_dirty(&dirty);
+        self.clipmap.merge_moving(&moving);
+        let mask_words = self.clipmap.mask_words();
+        self.marks.ensure(device, mask_words);
         if classify
             && self
                 .selection
                 .ensure_stillness(device, inputs.slot_capacity)
         {
-            // Stillness starts over: the kept map and levels must be redrawn
-            // whole.
-            self.kept.invalidate();
-            self.levels.invalidate();
+            // Stillness starts over: kept casters' footprints are lost, so
+            // every tile redraws.
+            self.clipmap.dirty_all();
         }
-        let level_refresh = if classify {
-            self.levels.refresh(REFRESH_TILES)
+        // Selection outputs: masks not read back from counters made anew are
+        // lost, so every tile redraws.
+        if self.selection.ensure_outputs(
+            device,
+            (self.casters.groups().len(), self.casters.total()),
+            mask_words,
+        ) {
+            self.clipmap.dirty_all();
+        }
+        // Moving casters draw over moving tiles where there are mesh
+        // casters.
+        let moving_budget = if self.casters.groups().is_empty() {
+            0
         } else {
-            None
+            layout.moving
         };
-        // GPU-presented frames keep what terrains place in the near
-        // cascades' caches while any is resident.
-        self.caching = classify
-            && self.cache_placed
-            && self.maps.textures().is_some_and(maps::MapTextures::caches);
-        if self.caching {
-            if !was_caching {
-                self.near.invalidate();
-            }
-            self.near.refresh(&mut self.near_refreshes);
-        }
-        let regions = Regions::new(basis, far, &settings, &self.near)
-            .with_levels(&self.levels, level_refresh);
-        let (near_clips, far_clip) = regions.clips();
-        self.drawn_maps.extend(
-            near_clips
-                .iter()
-                .take(regions.near().len())
-                .copied()
-                .enumerate()
-                .chain([(MOVING_MAP, far_clip)]),
+        self.clipmap.plan(
+            (
+                settings.redraw_budget,
+                crate::shadow_fit::region_tiles(settings.tile_texels),
+            ),
+            moving_budget,
+            &mut self.plan,
         );
-        let refresh = if classify { self.kept.refresh() } else { None };
-        self.keeps_still = classify;
-        let far_texel = far.texel(settings.resolution);
-        self.kept_refresh = refresh.map(|refresh| KeptRefresh {
-            planes: regions.rect_planes(regions.refresh_rect(Some(refresh))),
-            texel: far_texel,
-        });
-        self.level_refresh = regions.level_draw().map(|draw| {
-            let mut planes = regions.rect_planes(draw.rect);
-            // Casters beyond the band's far depth darken none of its
-            // receivers.
-            planes[4] = (-basis.rows[2]).extend(draw.page.depth[1]).to_array();
-            KeptRefresh {
-                planes,
-                texel: draw.page.texel(settings.resolution / 2),
-            }
-        });
-        self.plan_near_views(&regions, basis, settings.resolution / 2);
-        // Selection outputs, and the draw arguments' template: each group's
-        // mesh placement at the level of detail each map draws it at.
-        self.selection
-            .ensure_outputs(device, self.casters.groups().len(), self.casters.total());
-        // The template follows the groups, their meshes' placement and the
-        // maps' errors.
-        let errors = regions.errors();
-        let template_key = (
+        let frame_regions = FrameRegions {
+            basis,
+            clipmap: &self.clipmap,
+            plan: &self.plan,
+            layout,
+        };
+        frame_regions.region_views(&mut self.region_views);
+        // The draw arguments' template: each group's mesh placement at the
+        // level of detail each map draws it at, written where either or the
+        // selection's buffers changed.
+        let draws_key = (
             self.groups_generation,
             inputs.mesh_layout,
-            errors.map(f32::to_bits),
+            snapshot.environment.level_of_detail.enabled,
         );
-        if self.template_key != Some(template_key) {
-            self.template_key = Some(template_key);
-            let draws: Vec<CasterDraw> = self
+        if self.draws_key != Some(draws_key) {
+            self.draws_key = Some(draws_key);
+            self.caster_draws = self
                 .casters
                 .groups()
                 .iter()
                 .map(|group| (inputs.placement)(group.mesh))
                 .collect();
-            let levels: Vec<u8> = errors
-                .iter()
-                .flat_map(|&error| draws.iter().map(move |draw| draw.level_within(error)))
-                .collect();
-            let update = self.selection.update_template(
-                device,
-                queue,
-                &self.casters,
-                levels,
-                |index, level| draws[index].range(level),
-                inputs.mesh_layout,
-            );
-            if update.kept_levels {
-                // Casters drawn at other levels than the kept map holds redraw
-                // it whole.
-                self.kept.invalidate();
-            }
-            if update.level_levels {
-                self.levels.invalidate();
-            }
-            if update.dirty_replaced {
-                self.kept.dirty_all();
-                self.levels.dirty_all();
-            }
+        }
+        let draws = &self.caster_draws;
+        let levels: Vec<u8> = frame_regions
+            .errors()
+            .iter()
+            .flat_map(|&error| draws.iter().map(move |draw| draw.level_within(error)))
+            .collect();
+        self.selection.update_template(
+            device,
+            queue,
+            &self.casters,
+            levels,
+            |index, level| draws[index].range(level),
+            inputs.mesh_layout,
+        );
+        if self
+            .casters
+            .groups()
+            .iter()
+            .any(|group| group.virtual_geometry)
+        {
+            frame_regions.virtual_views(&mut self.virtual_views);
         }
         let pipelines = self.pipelines.as_ref().expect("created above");
-        let mut views = regions.view_matrices();
-        // After each map's matrix, the wind placed objects sway in
-        // at this frame's time, then the eye whose distance fades its layers.
+        // The views: the regions' with the wind's mean bend placed objects
+        // cast, the moving tiles' with the wind at this frame's time and the
+        // eye fading its layers, and the compose view.
         let wind = snapshot.environment.wind;
-        let wind = [
+        let gusting = [
             wind.velocity[0],
             wind.velocity[1],
             wind.gusts,
             snapshot.elapsed_seconds,
         ];
-        let viewer = eye.extend(1.0).to_array();
-        for slot in views.as_chunks_mut::<{ VIEW_STRIDE as usize / 4 }>().0 {
-            slot[16..20].copy_from_slice(&wind);
-            slot[20..24].copy_from_slice(&viewer);
-        }
+        let views = frame_regions.view_matrices((wind.velocity, gusting), snapshot.camera_position);
         if self.written_views.as_deref() != Some(&views[..]) {
             queue.write_buffer(&pipelines.view_buffer, 0, bytemuck::cast_slice(&views));
-            self.written_views = Some(views.to_vec());
+            self.written_views = Some(views);
         }
-        if self.caching {
-            self.write_near_views(queue, basis, ([wind[0], wind[1]], settings.resolution / 2));
+        let routes = frame_regions.routes();
+        if self
+            .written_routes
+            .as_deref()
+            .is_none_or(|written| *written != routes)
+        {
+            queue.write_buffer(&pipelines.routes, 0, bytemuck::bytes_of(&routes));
+            self.written_routes = Some(Box::new(routes));
         }
-        let pipelines = self.pipelines.as_ref().expect("created above");
+        frame_regions.composes(settings.tile_texels, &mut self.composes);
+        if !self.composes.is_empty() {
+            let bytes: &[u8] = bytemuck::cast_slice(&self.composes);
+            self.compose_buffer.grow(device, bytes.len() as u64);
+            queue.write_buffer(&self.compose_buffer, 0, bytes);
+        }
         let (candidates, skinned) = match (presented, source) {
             (Some(presented), Source::Presented) => (presented.count, presented.skinned_count),
             (_, Source::Listed) => (self.casters.listed.len() as u32, 0),
             _ => (0, 0),
         };
-        let cull = regions.selection(
-            snapshot,
-            &settings,
-            refresh,
-            classify,
-            SelectionCounts {
+        let mut cull = frame_regions.selection(
+            &SelectionCounts {
                 candidates,
                 skinned,
                 groups: self.casters.groups().len() as u32,
                 capacity: self.selection.id_capacity as u32,
-                virtual_geometry: self
-                    .casters
-                    .groups()
-                    .iter()
-                    .any(|group| group.virtual_geometry),
-                levels: &self.levels,
+                classify,
             },
-            &mut self.virtual_views,
+            mask_words as u32,
+        );
+        let lookup = frame_regions.lookup_uniform(
+            settings.tile_texels,
+            snapshot.environment.foliage.sanitized().crown_depth,
         );
         // Sky occlusion's map redrawn this frame, after still casters or the
         // caster groups changed.
@@ -853,10 +708,10 @@ impl ShadowPass {
             device,
             queue,
             &snapshot.environment.sky_occlusion.sanitized(),
-            eye,
+            snapshot.camera_position,
             still_changed || groups_changed,
         );
-        let mut cull = cull;
+        let pipelines = self.pipelines.as_ref().expect("created above");
         if let Some(draw) = sky {
             cull.sky = draw.rows;
             cull.sky_rect = draw.rect;
@@ -865,7 +720,7 @@ impl ShadowPass {
             if self.written_sky_view != Some(draw.clip) {
                 let mut view = [0.0_f32; 20];
                 view[..16].copy_from_slice(&draw.clip.to_cols_array());
-                view[16..].copy_from_slice(&wind);
+                view[16..].copy_from_slice(&gusting);
                 queue.write_buffer(
                     &pipelines.view_buffer,
                     SKY_VIEW,
@@ -881,10 +736,11 @@ impl ShadowPass {
             queue.write_buffer(&pipelines.cull, 0, bytemuck::bytes_of(&cull));
             self.written_cull = Some(cull);
         }
-        let mut lookup = regions.lookup_uniform(&settings, classify, &self.levels);
+        let mut lookup = lookup;
         lookup.level_state[3] = self.horizon_records;
-        lookup.offsets[3] = snapshot.environment.foliage.sanitized().crown_depth;
         self.maps.write_uniform(queue, lookup);
+        let (table, changed) = self.clipmap.take_table();
+        self.maps.write_table(queue, table, &changed);
         // Bindings: the selection inputs, and poses of this frame.
         self.selection.bind(
             device,
@@ -893,114 +749,23 @@ impl ShadowPass {
             presented.as_ref(),
             poses,
             skinned,
+            self.maps.table(),
         );
         self.bind_poses(device, poses);
         Some(ShadowFrame {
             candidates,
             skinned,
-            cascades: regions.near().len() as u32,
-            refresh,
-            level_refresh: regions.level_draw().map(|draw| draw.refresh),
-            level_pending: self.levels.pending(),
-            cache_tiles: self
-                .near_refreshes
-                .iter()
-                .map(|(_, span)| span.tiles())
-                .sum(),
+            regions: self.plan.regions.len() as u32,
+            composes: self.plan.composes.len() as u32,
+            moving: self.plan.moving.len() as u32,
             sky,
             pose_index: poses.parity,
+            tiles: self.clipmap.stats(),
         })
     }
 
-    /// Places the near cascades' caches in light `basis` around the camera
-    /// at `eye`: one for each cascade of `settings`, as many texels a side,
-    /// holding what terrains place as the mean `wind` (its velocity) bends
-    /// it.
-    fn place_near(
-        &mut self,
-        basis: LightBasis,
-        eye: Vec3,
-        settings: &engine_core::Shadows,
-        wind: [f32; 2],
-    ) {
-        let mut reaches = [0.0; MAX_CASCADES];
-        let mut cascades = 0;
-        for reach in settings.cascade_reaches().take(MAX_CASCADES) {
-            reaches[cascades] = reach;
-            cascades += 1;
-        }
-        let texels = settings.resolution / 2;
-        self.near
-            .place(basis, eye, (&reaches[..cascades], texels), wind);
-    }
-
-    /// The views placed objects cull this frame's near cache redraws by,
-    /// each read as its map of [`NEAR_CACHE_MAPS`]: around its tiles and a
-    /// texel more in `regions`' light `basis`, to its band's far depth,
-    /// beyond which casters darken none of its receivers; for caches
-    /// `texels` a side.
-    fn plan_near_views(&mut self, regions: &Regions, basis: LightBasis, texels: u32) {
-        self.near_views.clear();
-        for (number, &(cache, span)) in self.near_refreshes.iter().enumerate() {
-            let Some(region) = self.near.region(cache) else {
-                continue;
-            };
-            let texel = self.near.texel(cache, texels);
-            let mut planes = regions.rect_planes(span.rect(self.near.tile(cache), texel));
-            planes[4] = (-basis.rows[2]).extend(region.depth[1]).to_array();
-            self.near_views
-                .push((NEAR_CACHE_MAPS + number, KeptRefresh { planes, texel }));
-        }
-    }
-
-    /// Writes where their changed the near caches' page views, through
-    /// which their redraws draw, and each cascade's compose view, holding
-    /// its cache's offsets in its first column: for caches `texels` a side
-    /// in light `basis`. Caches cast what terrains place as `wind` bends it
-    /// on average, without gusts at time zero, the same in every tile.
-    fn write_near_views(
-        &mut self,
-        queue: &wgpu::Queue,
-        basis: LightBasis,
-        (wind, texels): ([f32; 2], u32),
-    ) {
-        let Some(pipelines) = &self.pipelines else {
-            return;
-        };
-        let mut views = [0.0_f32; NEAR_VIEW_FLOATS];
-        let stride = VIEW_STRIDE as usize / 4;
-        for cache in 0..self.near.len() {
-            let first = self.near.first_page(cache);
-            for (slot, [x, y]) in [[0, 0], [1, 0], [0, 1], [1, 1]].into_iter().enumerate() {
-                let Some(page) = self.near.page(cache, [first[0] + x, first[1] + y]) else {
-                    continue;
-                };
-                let start = (4 * cache + slot) * stride;
-                views[start..start + 16].copy_from_slice(&page.clip(&basis).to_cols_array());
-                views[start + 16..start + 20].copy_from_slice(&[wind[0], wind[1], 0.0, 0.0]);
-            }
-            let start = (4 * MAX_CASCADES + cache) * stride;
-            let [x, y] = self.near.offsets(cache, texels);
-            views[start] = x as f32;
-            views[start + 1] = y as f32;
-        }
-        if self.written_near_views != views {
-            queue.write_buffer(&pipelines.view_buffer, PAGE_VIEW, bytemuck::cast_slice(&views));
-            self.written_near_views.clear();
-            self.written_near_views.extend_from_slice(&views);
-        }
-    }
-
-    /// The offset of near cache `cache`'s view of page `page` of its map,
-    /// one of the two its window lies on along each axis.
-    fn page_view(&self, cache: usize, page: [i32; 2]) -> u32 {
-        let first = self.near.first_page(cache);
-        let slot = ((page[1] - first[1]) * 2 + (page[0] - first[0])).clamp(0, 3) as u64;
-        (PAGE_VIEW + (4 * cache as u64 + slot) * VIEW_STRIDE) as u32
-    }
-
-    /// Binds `poses` for depth passes, with a placeholder for the near
-    /// caches, which those may draw into, and with the caches for
+    /// Binds `poses` for depth passes, with a placeholder for the regions'
+    /// layers, which those may draw into, and with the layers for
     /// composing.
     fn bind_poses(&mut self, device: &wgpu::Device, poses: &FramePoses<'_>) {
         let Some(pipelines) = &self.pipelines else {
@@ -1013,12 +778,12 @@ impl ShadowPass {
                 compose.clear();
                 continue;
             };
-            let entries = |caches| {
+            let entries = |regions| {
                 [
                     ("slot_poses", buffer.clone()),
                     ("slot_colors", poses.colors.bound()),
                     ("slot_palette", poses.palettes[parity].bound()),
-                    ("near_cache", caches),
+                    ("shadow_regions", regions),
                 ]
             };
             let layout = (&SHADOW_POSES, &pipelines.pose_layout);
@@ -1026,65 +791,15 @@ impl ShadowPass {
                 device,
                 "engine/shadow-pose-group",
                 layout,
-                entries(self.maps.caches_placeholder()),
+                entries(self.maps.regions_placeholder()),
             );
-            match self.maps.caches_bound() {
-                Some(caches) => {
-                    compose.bind(device, "engine/shadow-compose-group", layout, entries(caches));
+            match self.maps.regions_bound() {
+                Some(regions) => {
+                    compose.bind(device, "engine/shadow-compose-group", layout, entries(regions));
                 }
                 None => compose.clear(),
             }
         }
-    }
-
-    /// Records this frame's redraws of the near cascades' caches into
-    /// `maps`' caches, timed by `profiler` (`shadow_caches`): each region
-    /// cleared on each page it lies on, then the objects terrains place
-    /// drawn there through its page's view by `scatter_draw`, which the
-    /// depth passes' pipelines and the poses `pose_group` binds serve.
-    /// Returns the draws.
-    fn encode_caches(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        (pipelines, maps): (&ShadowPipelines, &maps::MapTextures),
-        pose_group: &wgpu::BindGroup,
-        scatter_draw: &ScatterDraw<'_>,
-        profiler: &GpuProfiler,
-    ) -> u32 {
-        let texels = maps.near_texels();
-        let first = self.near_refreshes.first().map(|&(cache, _)| cache);
-        let last = self.near_refreshes.last().map(|&(cache, _)| cache);
-        let mut draws = 0;
-        for (cache, layer) in maps.cache_layers.iter().enumerate() {
-            if !self.near_refreshes.iter().any(|&(index, _)| index == cache) {
-                continue;
-            }
-            // Passes between the first and the last write no timestamps.
-            let (begin, end) = (Some(cache) == first, Some(cache) == last);
-            let timestamps = (begin || end)
-                .then(|| profiler.span_in("shadow_maps", "shadow_caches"))
-                .flatten()
-                .map(|span| span.render_part(begin, end));
-            let mut pass = map_pass(encoder, layer, wgpu::LoadOp::Load, timestamps);
-            pass.set_bind_group(1, pose_group, &[]);
-            let refreshes = self.near_refreshes.iter().enumerate();
-            for (number, &(_, span)) in refreshes.filter(|(_, refresh)| refresh.0 == cache) {
-                for (region, page) in span.pieces() {
-                    let [x, y, width, height] = region.scissor(texels);
-                    pass.set_scissor_rect(x, y, width, height);
-                    pass.set_bind_group(0, &pipelines.view_group, &[self.page_view(cache, page)]);
-                    pass.set_pipeline(&pipelines.clear);
-                    pass.draw(0..3, 0..1);
-                    draws += scatter_draw(
-                        &mut pass,
-                        NEAR_CACHE_MAPS + number,
-                        &pipelines.casters,
-                        pipelines.impostor_casters.as_ref(),
-                    );
-                }
-            }
-        }
-        draws
     }
 
     /// Records caster selection of `frame`, timed by `profiler`
@@ -1103,12 +818,41 @@ impl ShadowPass {
         if self.casters.groups().is_empty() {
             return;
         }
+        let epoch = self.clipmap.epoch();
         self.selection.encode(
             device,
             encoder,
             pipelines,
-            frame,
-            self.casters.groups().len(),
+            (frame, self.casters.groups().len()),
+            epoch,
+            profiler,
+        );
+    }
+
+    /// Records the marks of the tiles the frame's pixels read, `size` of
+    /// them, from the depth buffer `depth` seen through the camera uniform
+    /// `camera`, after the opaque passes; timed by `profiler`
+    /// (`shadow_marks`).
+    pub(crate) fn encode_marks(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        (camera, depth): (&wgpu::Buffer, Bound<'_>),
+        size: (u32, u32),
+        profiler: &GpuProfiler,
+    ) {
+        let (Some(pipelines), Some(_)) = (&self.pipelines, self.maps.textures()) else {
+            return;
+        };
+        let epoch = self.clipmap.epoch();
+        self.marks.encode(
+            device,
+            encoder,
+            pipelines,
+            (camera, self.maps.uniform()),
+            depth,
+            size,
+            epoch,
             profiler,
         );
     }
@@ -1116,14 +860,6 @@ impl ShadowPass {
     /// Creates the pipeline of placed objects' impostor cards,
     /// whose group 2 `impostor_layout` binds, once shadows have
     /// pipelines.
-    /// Sets how many terrains' horizon records the lookups loop over
-    /// once the terrain's horizon maps are prepared, after
-    /// the frame's lookup uniform: written before the frame is submitted.
-    pub(crate) fn set_horizon_records(&mut self, queue: &wgpu::Queue, count: u32) {
-        self.horizon_records = count as f32;
-        self.maps.write_horizon_records(queue, self.horizon_records);
-    }
-
     pub(crate) fn prepare_impostor_casters(
         &mut self,
         device: &wgpu::Device,
@@ -1136,13 +872,22 @@ impl ShadowPass {
         }
     }
 
+    /// Sets how many terrains' horizon records the lookups loop over
+    /// once the terrain's horizon maps are prepared, after
+    /// the frame's lookup uniform: written before the frame is submitted.
+    pub(crate) fn set_horizon_records(&mut self, queue: &wgpu::Queue, count: u32) {
+        self.horizon_records = count as f32;
+        self.maps.write_horizon_records(queue, self.horizon_records);
+    }
+
     /// Records the depth passes of `frame` from `sources`, after
     /// [`Self::encode_selection`] and virtual geometry's selection, timed by
-    /// `profiler` (`shadow_caches` over the near caches' redraws,
-    /// `shadow_near` from the first cascade to the last, `shadow_moving`,
-    /// `shadow_kept` and `shadow_levels`); returns the indexed draws, one
-    /// per mesh group and map drawn. The near caches redraw first, each
-    /// cascade composed from its own while this frame keeps them.
+    /// `profiler` (`shadow_regions` over the regions' layers, `shadow_atlas`
+    /// over the atlas's pass and `shadow_sky`); returns the indexed draws,
+    /// one per mesh group and region or the moving map drawn. Each region's
+    /// casters draw into its layer; then in the atlas each tile redrawn is
+    /// composed from its region into its slot, and the moving tiles' slots
+    /// are cleared and their moving casters drawn over them.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -1173,9 +918,7 @@ impl ShadowPass {
             self.selection.id_capacity,
         );
         let pose_group = self.pose_groups[frame.pose_index].get();
-        let compose_group = self.compose_groups[frame.pose_index]
-            .get()
-            .filter(|_| self.caching);
+        let compose_group = self.compose_groups[frame.pose_index].get();
         // Casters in pipeline, vertex buffer and material order,
         // which passes switch once per run: depth alone is written, so the
         // order changes no texel. Virtual geometry draws its casters'
@@ -1217,41 +960,46 @@ impl ShadowPass {
                 caster.index,
             )
         });
-        let draw_meshes = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
-            let Some(pose_group) = pose_group else {
-                return;
-            };
-            pass.set_pipeline(&pipelines.casters[0]);
-            pass.set_bind_group(1, pose_group, &[]);
-            let mut bound = 0;
-            let mut bindings = Bindings::default();
-            for caster in &casters {
-                if caster.choice != bound {
-                    pass.set_pipeline(&pipelines.casters[caster.choice]);
-                    bound = caster.choice;
-                }
-                if let Some(material) = caster.material {
-                    bindings.group(pass, 2, material);
-                }
-                if let Some(skin) = caster.skin {
-                    bindings.vertex(pass, 2, skin);
-                }
-                bindings.vertex(pass, 0, caster.draw.vertices);
-                bindings.index(pass, caster.draw.indices);
-                let caster_ids = if self.selection.regions_in_args {
-                    Ids::Whole(ids)
-                } else {
-                    let start = map * id_capacity + groups[caster.index].start as usize;
-                    Ids::Region(ids.slice(start as u64 * 4..))
+        // The mesh casters of map `map` through `set`, the casters' or the
+        // moving casters' pipelines.
+        let draw_meshes =
+            |pass: &mut wgpu::RenderPass<'_>, map: usize, set: &[wgpu::RenderPipeline; 4]| {
+                let Some(pose_group) = pose_group else {
+                    return;
                 };
-                bindings.ids(pass, 1, caster_ids);
-                pass.draw_indexed_indirect(
-                    args,
-                    (map as u64 * group_count + caster.index as u64) * DRAW_ARGS_BYTES,
-                );
-                draws.set(draws.get() + 1);
-            }
-        };
+                pass.set_pipeline(&set[0]);
+                pass.set_bind_group(1, pose_group, &[]);
+                let mut bound = 0;
+                let mut bindings = Bindings::default();
+                let start = map_start(map, id_capacity);
+                for caster in &casters {
+                    if caster.choice != bound {
+                        pass.set_pipeline(&set[caster.choice]);
+                        bound = caster.choice;
+                    }
+                    if let Some(material) = caster.material {
+                        bindings.group(pass, 2, material);
+                    }
+                    if let Some(skin) = caster.skin {
+                        bindings.vertex(pass, 2, skin);
+                    }
+                    bindings.vertex(pass, 0, caster.draw.vertices);
+                    bindings.index(pass, caster.draw.indices);
+                    let caster_ids = if self.selection.regions_in_args {
+                        Ids::Whole(ids)
+                    } else {
+                        let first =
+                            start + map_factor(map) as usize * groups[caster.index].start as usize;
+                        Ids::Region(ids.slice(first as u64 * 4..))
+                    };
+                    bindings.ids(pass, 1, caster_ids);
+                    pass.draw_indexed_indirect(
+                        args,
+                        (map as u64 * group_count + caster.index as u64) * DRAW_ARGS_BYTES,
+                    );
+                    draws.set(draws.get() + 1);
+                }
+            };
         let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
             for casters in CASTERS {
                 match casters {
@@ -1265,7 +1013,7 @@ impl ShadowPass {
                                 pipelines.impostor_casters.as_ref(),
                             ),
                     ),
-                    Casters::Meshes => draw_meshes(pass, map),
+                    Casters::Meshes => draw_meshes(pass, map, &pipelines.casters),
                     // Clusters draw in the frames binding poses, as meshes.
                     Casters::Virtual => {
                         if pose_group.is_some() {
@@ -1275,113 +1023,76 @@ impl ShadowPass {
                 }
             }
         };
-        // Profiled frames time the near cascades together, the moving map and
-        // the kept map.
-        let last_cascade = (frame.cascades as usize).saturating_sub(1);
-        let writes = |map: usize| {
-            let (span, begin, end) = match map {
-                MOVING_MAP => ("shadow_moving", true, true),
-                KEPT_MAP => ("shadow_kept", true, true),
-                KEPT_LEVELS => ("shadow_levels", true, true),
-                SKY_MAP => ("shadow_sky", true, true),
-                cascade => ("shadow_near", cascade == 0, cascade == last_cascade),
-            };
+        // Profiled frames time the regions together, the atlas's pass and
+        // the sky map.
+        let last_region = (frame.regions as usize).saturating_sub(1);
+        let writes = |span: &'static str, begin: bool, end: bool| {
             (begin || end)
                 .then(|| profiler.span_in("shadow_maps", span))
                 .flatten()
                 .map(|span| span.render_part(begin, end))
         };
-        if let (Some(pose_group), Some(_)) = (pose_group, compose_group) {
-            draws.set(
-                draws.get()
-                    + self.encode_caches(
-                        encoder,
-                        (pipelines, maps),
-                        pose_group,
-                        scatter_draw,
-                        profiler,
-                    ),
-            );
-        }
-        // Each near cascade in use (map and view matrix `cascade`), its
-        // cache's depths first where it is composed from one, then the
-        // moving map.
-        let cascades = (0..frame.cascades as usize).map(|cascade| {
-            (
-                cascade,
-                &maps.near_layers[cascade],
-                cascade as u64 * VIEW_STRIDE,
-            )
-        });
-        for (map, view, offset) in cascades.chain([(MOVING_MAP, &maps.moving, FAR_VIEW)]) {
-            let mut pass = map_pass(encoder, view, wgpu::LoadOp::Clear(1.0), writes(map));
-            if let Some(compose) = compose_group.filter(|_| map < MOVING_MAP) {
-                let compose_view = COMPOSE_VIEW + map as u64 * VIEW_STRIDE;
-                pass.set_pipeline(&pipelines.compose);
-                pass.set_bind_group(0, &pipelines.view_group, &[compose_view as u32]);
-                pass.set_bind_group(1, compose, &[]);
-                pass.draw(0..3, map as u32..map as u32 + 1);
+        // Each region redrawn: its layer cleared, then its casters, through
+        // its view; GPU-presented and CPU-prepared frames alike.
+        for (region, layer) in maps.region_layers.iter().enumerate() {
+            if region >= frame.regions as usize {
+                break;
             }
-            pass.set_bind_group(0, &pipelines.view_group, &[offset as u32]);
-            draw_selected(&mut pass, map);
+            let timestamps = writes("shadow_regions", region == 0, region == last_region);
+            let mut pass = map_pass(encoder, layer, wgpu::LoadOp::Clear(1.0), timestamps);
+            pass.set_bind_group(
+                0,
+                &pipelines.view_group,
+                &[(region as u64 * VIEW_STRIDE) as u32],
+            );
+            draw_selected(&mut pass, region);
         }
-        if let Some(refresh) = frame.refresh {
-            let whole = refresh == Refresh::Whole;
+        // The atlas: each tile redrawn composed from its region into its
+        // slot, then the moving tiles' slots cleared and their moving
+        // casters drawn over them through their routes.
+        let composing = frame.composes > 0 && compose_group.is_some();
+        let moving = frame.moving > 0 && pose_group.is_some();
+        if composing || moving {
             let mut pass = map_pass(
                 encoder,
-                &maps.kept,
-                if whole {
-                    wgpu::LoadOp::Clear(1.0)
-                } else {
-                    wgpu::LoadOp::Load
-                },
-                writes(KEPT_MAP),
-            );
-            // Tiles refresh in GPU-presented frames, which bind poses.
-            if let Refresh::Tiles(region) = refresh
-                && let Some(pose_group) = pose_group
-            {
-                let [x, y, width, height] = region.scissor(maps.resolution);
-                pass.set_scissor_rect(x, y, width, height);
-                pass.set_bind_group(0, &pipelines.view_group, &[FAR_VIEW as u32]);
-                pass.set_bind_group(1, pose_group, &[]);
-                pass.set_pipeline(&pipelines.clear);
-                pass.draw(0..3, 0..1);
-            }
-            pass.set_bind_group(0, &pipelines.view_group, &[FAR_VIEW as u32]);
-            draw_selected(&mut pass, KEPT_MAP);
-        }
-        // A region of a kept level: cleared, then its still
-        // casters and the ground drawn through its page's view; GPU-presented
-        // frames alone redraw levels, and bind poses.
-        if let (Some(refresh), Some(pose_group)) = (frame.level_refresh, pose_group) {
-            let mut pass = map_pass(
-                encoder,
-                &maps.level_layers[refresh.level],
+                &maps.atlas_view,
                 wgpu::LoadOp::Load,
-                writes(KEPT_LEVELS),
+                writes("shadow_atlas", true, true),
             );
-            let [x, y, width, height] = refresh.region.scissor(maps.resolution / 2);
-            pass.set_scissor_rect(x, y, width, height);
-            pass.set_bind_group(0, &pipelines.view_group, &[LEVEL_VIEW as u32]);
-            pass.set_bind_group(1, pose_group, &[]);
-            pass.set_pipeline(&pipelines.clear);
-            pass.draw(0..3, 0..1);
-            draw_selected(&mut pass, KEPT_LEVELS);
+            if let (true, Some(compose)) = (composing, compose_group) {
+                pass.set_pipeline(&pipelines.compose);
+                pass.set_bind_group(0, &pipelines.view_group, &[COMPOSE_VIEW as u32]);
+                pass.set_bind_group(1, compose, &[]);
+                pass.set_vertex_buffer(0, self.compose_buffer.slice(..));
+                pass.draw(0..6, 0..frame.composes);
+            }
+            if let (true, Some(pose_group)) = (moving, pose_group) {
+                pass.set_pipeline(&pipelines.clear_moving);
+                pass.set_bind_group(0, &pipelines.view_group, &[MOVING_VIEW as u32]);
+                pass.set_bind_group(1, pose_group, &[]);
+                pass.draw(0..6, 0..frame.moving);
+                draw_meshes(&mut pass, MOVING_MAP, &pipelines.moving);
+            }
         }
         // Sky occlusion's map redrawn this frame: its still mesh casters
         // alone, neither terrain, placed objects nor virtual geometry.
         if let Some(view) = frame.sky.and_then(|draw| self.sky.layer_view(draw.layer)) {
-            let mut pass = map_pass(encoder, view, wgpu::LoadOp::Clear(1.0), writes(SKY_MAP));
+            let mut pass = map_pass(
+                encoder,
+                view,
+                wgpu::LoadOp::Clear(1.0),
+                writes("shadow_sky", true, true),
+            );
             pass.set_bind_group(0, &pipelines.view_group, &[SKY_VIEW as u32]);
-            draw_meshes(&mut pass, SKY_MAP);
+            draw_meshes(&mut pass, SKY_MAP, &pipelines.casters);
         }
         self.caster_storage.set(recycle(casters));
         draws.get()
     }
 
-    /// Requests maps of dirty tiles recorded in the frame just submitted.
+    /// Requests maps of what the frame just submitted read back.
     pub(crate) fn after_submit(&mut self) {
         self.selection.after_submit();
+        self.marks.after_submit();
     }
 }

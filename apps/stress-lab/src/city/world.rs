@@ -30,7 +30,7 @@ impl StressWorld for CityWorld {
         world: &mut World,
         config: &StressConfig,
         _files: &HashMap<String, StressFile>,
-    ) -> engine::Result<(u32, (Vec3, Vec3))> {
+    ) -> engine::Result<u32> {
         let city = populate(world, config)?;
         world.insert_resource(Workload {
             transform_nodes: city.transform_nodes,
@@ -39,7 +39,7 @@ impl StressWorld for CityWorld {
             probes: city.probes,
             overlap_hits: Vec::with_capacity(if config.queries_per_tick > 0 { 128 } else { 0 }),
         });
-        Ok((city.moving_nodes, city.bounds))
+        Ok(city.moving_nodes)
     }
 
     fn add_systems(&self, app: &mut App, moving_nodes: u32) {

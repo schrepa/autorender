@@ -8,7 +8,7 @@
       "camera": {"position": [0, 4, 12], "target": [0, 1, 0], "fov_degrees": 50, "near": 0.1, "far": 400},
       "environment": {
         "atmosphere": {"preset": "dusk", "fog_density": 0.002, "contrast": 1.1, "aerial_density": 0.0001},
-        "shadows": {"cascades": 2},
+        "shadows": {"levels": 12},
         "bloom": {"intensity": 0.4},
         "sun_shafts": {},
         "decals": {},

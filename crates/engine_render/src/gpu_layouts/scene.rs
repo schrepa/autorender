@@ -2,16 +2,12 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use super::constants::SKY_LAYERS;
+use super::constants::{SHADOW_REGIONS, SKY_LAYERS};
 
-/// Most near shadow cascades.
-pub(crate) const MAX_CASCADES: usize = engine_core::MAX_SHADOW_CASCADES as usize;
-/// Most kept shadow levels.
-pub(crate) const MAX_LEVELS: usize = engine_core::MAX_KEPT_LEVELS as usize;
-/// Planes of a map's caster volume ([`ShadowCullUniform::planes`]): the
-/// view frustum's sides, near and far planes, and the receivers' first and
-/// last view depths, those facing the sun.
-pub(crate) const CASTER_PLANES: usize = 8;
+/// Most levels of the shadow clipmap.
+pub(crate) const MAX_LEVELS: usize = engine_core::MAX_SHADOW_LEVELS as usize;
+/// Most tiles moving casters draw over in a frame.
+pub(crate) const MAX_MOVING_TILES: usize = engine_core::MAX_MOVING_TILES as usize;
 
 /// A slot pose as WGSL `Rows` reads it: core's three affine rows, with the
 /// implicit final row [0, 0, 0, 1]. Frames upload `RenderFrame::pose_rows`
@@ -35,9 +31,8 @@ gpu_structs! {
     /// The unjittered `inverse_view_projection` turns pixels into sky rays and
     /// `position` (xyz) is the eye, for view-dependent lighting;
     /// its w is presentation time in seconds, for animated surfaces.
-    /// `options.x` is 1 while a reflection probe captures a cube face:
-    /// its surfaces read shadows from the far maps alone, which
-    /// hold every caster whatever the main camera sees; `options.y` is the angle
+    /// `options.x` is 1 while a reflection probe captures a cube face;
+    /// `options.y` is the angle
     /// a display pixel spans at the view's center ([`pixel_angle`](crate::gpu_data::pixel_angle));
     /// `options.z` turns fades' dither each temporally antialiased frame;
     /// `options.w` is the mip bias material textures sample with
@@ -217,100 +212,65 @@ gpu_structs! {
         pub layer: [f32; 4],
     }
 
-    /// WGSL `Shadow` uniform of `scene.wgsl`:
-    /// world to each near cascade, to the far shadow maps and to light space,
-    /// each kept level's part of it, and their settings.
+    /// WGSL `Shadow` uniform of `scene.wgsl`: world to light space and the
+    /// shadow clipmap's levels, whose tiles lie in the slots of one atlas.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct ShadowUniform as ["Shadow"] {
-        /// World to each near cascade: x and y in [-1, 1] across it, z in
-        /// [0, 1].
-        pub near: [[[f32; 4]; 4]; MAX_CASCADES],
-        /// World to both far maps.
-        pub far: [[f32; 4]; 4],
-        /// Shadows on, the kept far map holds casters, the near cascades in use,
-        /// and the distance where shadows begin to fade.
-        pub state: [f32; 4],
-        /// View distance each near cascade reaches; unreachable beyond those in
-        /// use.
-        pub reach: [f32; 4],
-        /// Normal offsets (world units) of lookups in each near cascade.
-        pub near_offsets: [f32; 4],
-        /// Steepest receiver plane (depth per texel) of each near cascade.
-        pub near_limits: [f32; 4],
-        /// Distance where shadows are gone, the normal offset (world units) of
-        /// far lookups, the far maps' steepest receiver plane, and the meters
-        /// into crowns the sun reaches (foliage's crown depth).
-        pub offsets: [f32; 4],
-        /// Texels a side of the near cascades and the far maps; zw unused.
-        pub sizes: [f32; 4],
-        /// World to light space: the sun's right, up and
-        /// away-from-sun axes, which every kept level scales.
+        /// World to light space: the sun's right, up and away-from-sun
+        /// axes.
         pub light: [[f32; 4]; 3],
-        /// Each kept level's light space: one over its width (x and y in level
-        /// widths, whose fractions place a point in its toroidal map), and its
-        /// band's nearest depth and one over its depth (z in [0, 1]); then the
-        /// meters around the detail eye within which it holds every point,
-        /// across whose outer part lookups hand over to the next level.
-        pub level_scales: [[f32; 4]; MAX_LEVELS],
-        /// Each level's window: its first corner in level widths, the normal
-        /// offset (world units) of its lookups and its steepest receiver plane.
-        pub level_windows: [[f32; 4]; MAX_LEVELS],
-        /// The tiles of each level holding their casters: a bit per tile slot,
-        /// eight words a level.
-        pub level_valid: [[u32; 4]; 2 * MAX_LEVELS],
-        /// Levels in use, their texels a side, a bit for each level with
-        /// tiles not yet drawn, and the terrain horizon records' count.
+        /// Shadows on (x, 0 off) and the meters into crowns the sun reaches
+        /// (y, foliage's crown depth); zw unused.
+        pub state: [f32; 4],
+        /// Levels in use, the finest level's texel (world units), texels
+        /// along a tile's side, and the terrain horizon records' count.
         pub level_state: [f32; 4],
+        /// Tiles along a side of each level's window, slots along a row of
+        /// the atlas, and one over the atlas's width and height in texels.
+        pub atlas: [f32; 4],
+        /// Each level's window: light-space x and y of its first tile's
+        /// corner, its tiles' width and its texels' (world units).
+        pub windows: [[f32; 4]; MAX_LEVELS],
+        /// Each level's depth band: its nearest depth from the sun and one
+        /// over its depth, the normal offset of its lookups (world units)
+        /// and its steepest receiver plane (depth per texel).
+        pub bands: [[f32; 4]; MAX_LEVELS],
     }
 
-    /// A shadow map's caster selection, as `shadows.wgsl` reads it. Each draw
-    /// group's ID region start is in a storage buffer beside it.
+    /// Caster selection, as `shadows.wgsl` reads it: the regions of tiles
+    /// redrawn this frame and every level's window, whose tiles moving
+    /// casters draw over. Each draw group's ID region start is in a storage
+    /// buffer beside it.
     #[derive(Clone, Copy, Pod, Zeroable)]
     pub(crate) struct ShadowCullUniform as ["Cull" in SHADOW_SHADER] {
         /// World to light space: the sun's right, up and away-from-sun axes.
         pub light: [[f32; 4]; 3],
-        /// Light-space rectangles (minimum x and y, maximum x and y) of each
-        /// near cascade, the far maps and the region of the kept map redrawn
-        /// this frame.
-        pub near: [[f32; 4]; MAX_CASCADES],
-        pub far: [f32; 4],
-        pub refresh: [f32; 4],
-        /// The part of the far maps the moving map selects casters from: where
-        /// visible receivers can be.
-        pub moving: [f32; 4],
-        /// Light-space depth beyond which casters cannot darken receivers of
-        /// each near cascade; then (y and z) of the far maps and the refreshed
-        /// region, and (w) of the moving map's selection.
-        pub near_depths: [f32; 4],
-        pub depths: [f32; 4],
+        /// Each region of tiles this frame redraws: its light-space
+        /// rectangle (minimum x and y, maximum x and y).
+        pub regions: [[f32; 4]; SHADOW_REGIONS],
+        /// Each region's farthest receiver depth from the sun (x), beyond
+        /// which casters darken none of its receivers; yzw unused.
+        pub region_depths: [[f32; 4]; SHADOW_REGIONS],
+        /// Each level's window: light-space x and y of its first tile's
+        /// corner and its tiles' width; w unused.
+        pub windows: [[f32; 4]; MAX_LEVELS],
         pub candidates: u32,
         pub groups: u32,
-        /// Instance IDs per map.
+        /// Instance IDs of each region's map, and of the sky map.
         pub capacity: u32,
-        /// `STILLNESS | REFRESH` of the shader.
+        /// `STILLNESS | SKY_REFRESH` of the shader.
         pub mode: u32,
-        /// Kept-map tiles: light-space x and y of the first tile's corner, and
-        /// the tile width and height.
-        pub tiles: [f32; 4],
-        /// Near cascades drawn this frame.
-        pub cascades: u32,
-        /// Skinned slots `select_skinned` visits on GPU-presented frames.
-        pub skinned: u32,
-        /// Kept levels in use.
-        pub levels: u32,
-        pub pad: u32,
-        /// The light-space rectangle of the kept level redrawn this frame, and
-        /// its depth band's nearest and farthest depths (zw unused).
-        pub level_refresh: [f32; 4],
-        pub level_depths: [f32; 4],
-        /// Each kept level's tiles: light-space x and y of its first tile's
-        /// corner and the tile width; w unused.
-        pub level_tiles: [[f32; 4]; MAX_LEVELS],
-        /// Inward world planes (`xyz . p + w >= 0` inside) bounding where
-        /// casters can darken each near cascade's receivers, then the moving
-        /// map's: their part of the view swept toward the sun; unused planes
-        /// pass everything.
-        pub planes: [[[f32; 4]; CASTER_PLANES]; MAX_CASCADES + 1],
+        /// Regions this frame redraws, levels in use, skinned slots
+        /// `select_skinned` visits on GPU-presented frames, and tiles along
+        /// a side of a level's window.
+        pub counts: [u32; 4],
+        /// The words of the counters: those of a mask of every level's
+        /// tiles, where the dirty tiles' mask starts after the totals, where
+        /// the moving tiles' does, and where the draw groups' starts do.
+        pub words: [u32; 4],
+        /// The slot of the first moving tile, past the still casters'
+        /// slots; yzw unused.
+        pub moving: [u32; 4],
         /// The sky map redrawn this frame (`SKY_REFRESH`): world to its
         /// space, its right, up and away-from-the-sky axes; its rectangle
         /// there; and (x) the depth beyond which casters hide no sky from
@@ -320,7 +280,30 @@ gpu_structs! {
         pub sky_depths: [f32; 4],
     }
 
-    /// WGSL `Post` uniform of `effects.wgsl`: 272
+    /// The routes of this frame's moving tiles, as `shadows.wgsl` draws
+    /// moving casters through them into the atlas: each tile's world to the
+    /// atlas's clip space, mapping its tile onto its slot, and its slot's
+    /// texels (first x and y, then past the last); and two over the atlas's
+    /// width and height (zw unused).
+    #[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
+    pub(crate) struct RouteUniform as ["Routes" in SHADOW_SHADER] {
+        pub clips: [[[f32; 4]; 4]; MAX_MOVING_TILES],
+        pub slots: [[f32; 4]; MAX_MOVING_TILES],
+        pub atlas: [f32; 4],
+    }
+
+    /// A tile composed from its region's layer into its slot of the atlas,
+    /// an instance of `shadows.wgsl`'s `vs_compose`: the slot's texels
+    /// (first x and y, then past the last), and the region's layer with
+    /// what to add to an atlas texel of the slot for the region's texel
+    /// holding it (w unused).
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct ComposeData {
+        pub place: [f32; 4],
+        pub source: [i32; 4],
+    }
+
+    /// WGSL `Post` uniform of `effects.wgsl`: 288
     /// bytes.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct PostUniform as ["Post"] {
@@ -349,10 +332,6 @@ gpu_structs! {
         pub shafts: [f32; 4],
         /// The sun's exposed color; w unused.
         pub sun: [f32; 4],
-        /// Contact shadows: each ray's reach in meters, the
-        /// share of sunlight a hit takes away, the distance within which
-        /// surfaces trace, and 1 when they run.
-        pub contact: [f32; 4],
         /// The unit direction toward the sun; w: 1 when 8-bit color writes
         /// dither.
         pub sun_direction: [f32; 4],

@@ -3197,7 +3197,6 @@ pub(crate) struct Spawned {
     pub moving_nodes: u32,
     pub sensor_nodes: u32,
     pub probes: Vec<Entity>,
-    pub bounds: (Vec3, Vec3),
 }
 
 /// Builds and spawns the metro of `config` into `world`.
@@ -3390,18 +3389,10 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Resu
                 .with_blend(PROBE_BLEND),
         ));
     }
-    let ring = city
-        .blocks
-        .iter()
-        .map(|&(bx, bz, _)| bx.abs().max(bz.abs()))
-        .max()
-        .unwrap_or(0);
-    let half = (ring as f32 + 1.5) * PERIOD;
     Ok(Spawned {
         transform_nodes: entities.len() as u32,
         moving_nodes,
         sensor_nodes,
         probes,
-        bounds: (v(-half, -2.0, -half), v(half, 300.0, half)),
     })
 }

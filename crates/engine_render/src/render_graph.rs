@@ -72,10 +72,13 @@ resources! {
     Placed: Frame,
     /// What placed objects cover around the camera, kept between its draws.
     Occupancy: Kept,
-    /// Shadow casters each map draws, and the maps (the kept map is kept
-    /// between frames).
+    /// Shadow casters each region of tiles draws, and the shadow clipmap's
+    /// atlas, table and sky maps, kept between frames.
     Casters: Frame,
     ShadowMaps: Kept,
+    /// The marks of the clipmap's tiles the frame's pixels read, read back
+    /// later.
+    ShadowMarks: Kept,
     /// Virtual geometry's selected clusters and the pages they request.
     Clusters: Kept,
     /// Local lights binned into view clusters.
@@ -232,7 +235,7 @@ pub(crate) enum Pass {
     ShadowSelect,
     /// Virtual geometry's cluster selection.
     VirtualSelect,
-    /// The shadow maps.
+    /// The shadow clipmap's regions, atlas and sky map.
     ShadowMaps,
     /// Tracks pressed into the deformation map.
     Deformation,
@@ -270,6 +273,9 @@ pub(crate) enum Pass {
     },
     /// The depth pyramid and occlusion test between the opaque phases.
     OcclusionTest,
+    /// The marks of the shadow clipmap's tiles the frame's pixels read,
+    /// from the depth the opaque phases drew.
+    ShadowMarks,
     /// A feature's pass, which the feature declares and encodes.
     Feature(FeaturePass),
     /// Reflection probe faces captured after the frame.
@@ -335,6 +341,7 @@ passes! {
     visibility_phase_two: VisibilityIds { phase: Phase::Two },
     visibility_tiles_phase_two: Classify { phase: Phase::Two },
     visibility_resolve_phase_two: Resolve { phase: Phase::Two },
+    shadow_marks: ShadowMarks,
     decals: Feature(FeaturePass::Decals),
     water: Feature(FeaturePass::Water),
     cloud_march: Feature(FeaturePass::CloudMarch),
@@ -759,7 +766,7 @@ pub(crate) const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 const FAR: f32 = 0.0;
 
 /// Declares the work a frame of `shape` does before its opaque passes into
-/// `graph`: GPU presentation, shadow casters and maps, cluster selection,
+/// `graph`: GPU presentation, shadow casters and tiles, cluster selection,
 /// tracks, the virtual texture's bakes and terrains' bounce light.
 fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
     use Resource::*;
@@ -768,7 +775,7 @@ fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
         graph.add(Pass::Presentation).write(Poses).write(Visible);
     }
     // Shadow casters first: virtual geometry selects the clusters of the
-    // virtual ones with the camera's, then the maps draw.
+    // virtual ones with the camera's, then the tiles draw.
     if shape.shadows {
         graph
             .add(Pass::ShadowSelect)
@@ -897,6 +904,10 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             }
             resolve.depth(Depth, Access::ReadOnly);
         }
+    }
+    // The tiles the frame's pixels read, once every opaque phase drew.
+    if shape.shadows {
+        graph.add(Pass::ShadowMarks).read(Depth).write(ShadowMarks);
     }
     if shape.probes {
         graph

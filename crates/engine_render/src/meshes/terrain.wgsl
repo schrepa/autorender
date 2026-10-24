@@ -335,8 +335,8 @@ fn terrain_pixel_shading(world: vec3<f32>) -> TerrainShadingLevel {
     return terrain_shading_level(detail_distance(world) * camera.options.y);
 }
 
-// Texels of a kept shadow level a sample of the ground it holds spans at
-// least (`gpu_layouts::constants::GROUND_TEXELS`).
+// Texels of a level of the shadow clipmap a sample of the ground it holds
+// spans at least (`gpu_layouts::constants::GROUND_TEXELS`).
 const KEPT_GROUND_TEXELS: f32 = 2.0;
 
 // The height above the terrain's origin of its ground at terrain-local
@@ -386,18 +386,21 @@ fn terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight {
     return held;
 }
 
-// The meters each kept shadow level's ground stands above the ground's
-// point `world`, terrain-local `local` (`scene.wgsl`'s `kept_lift`): each
-// level holds the ground of the finest level whose samples span at least
-// KEPT_GROUND_TEXELS of its texels (`shadow_fit::ground_level`), drawn
-// whole, so the point looks the level up from its height on that ground,
-// where the level's ground meets itself whatever level draws it here.
-fn terrain_kept_lift(world: vec3<f32>, local: vec2<f32>) -> vec4<f32> {
-    var lift = vec4<f32>(0.0);
-    let count = min(u32(shadow.level_state.x), 4u);
+// The meters the ground of four levels of the shadow clipmap stands above
+// the ground's point `world`, terrain-local `local` (`scene.wgsl`'s
+// `kept_lift`), from the level a pixel's size picks there, which lookups
+// read first: each level holds the ground of the finest pyramid level whose
+// samples span at least KEPT_GROUND_TEXELS of its texels
+// (`shadow_fit::ground_level`), drawn whole, so the point looks the level
+// up from its height on that ground, where the level's ground meets itself
+// whatever level draws it here.
+fn terrain_kept_lift(world: vec3<f32>, local: vec2<f32>) -> KeptLift {
+    var lift: KeptLift;
+    lift.first = shadow_level(world).level;
+    let count = u32(shadow.level_state.x);
     let levels = terrain.directory.y;
-    for (var kept = 0u; kept < count; kept++) {
-        let texel = 2.0 * shadow.level_windows[kept].z;
+    for (var index = 0u; index < 4u && lift.first + index < count; index++) {
+        let texel = shadow.windows[lift.first + index].w;
         var level = 0u;
         while level + 1u < levels
             && terrain.anchor.w * f32(1u << level) < KEPT_GROUND_TEXELS * texel {
@@ -405,7 +408,7 @@ fn terrain_kept_lift(world: vec3<f32>, local: vec2<f32>) -> vec4<f32> {
         }
         let held = terrain_level_height(local, level);
         if held.found {
-            lift[kept] = held.height + terrain.origin.y - world.y;
+            lift.lifts[index] = held.height + terrain.origin.y - world.y;
         }
     }
     return lift;
@@ -1719,8 +1722,8 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     let world = relative + camera.position.xyz;
     let local = world.xz - terrain.origin.xz;
     let geometric = site.geometric;
-    // The kept shadow levels' ground over this point, which it looks them
-    // up from.
+    // The shadow clipmap's levels' ground over this point, which it looks
+    // them up from.
     kept_lift = terrain_kept_lift(world, local);
     // The runtime virtual texture's ground where its pages show, their
     // detail and macro colors baked in; computed here elsewhere and under
