@@ -203,8 +203,9 @@ fn subdivision_seen(low: vec3<f32>, high: vec3<f32>) -> bool {
 // How a leaf stands: whether the terrain draws it (within its edges, not
 // wholly within its cutout, over ground some level holds), and whether it
 // wants splitting: across those edges, which its leaves split to follow, or
-// straying from the true surface by more pixels than the target where the
-// camera sees it, SUBDIVISION_UNSEEN times as many where it does not.
+// where the meshlet it draws strays from the true surface by more pixels
+// than the target where the camera sees it, SUBDIVISION_UNSEEN times as
+// many where it does not.
 struct SubdivisionMeasure {
     drawn: bool,
     splits: bool,
@@ -236,7 +237,9 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
     // How far its sides' middles and its center stray from the plane
     // through its corners: the surface's curvature over it, none over flat
     // ground however near, each in the pixels it spans seen from the detail
-    // eye.
+    // eye; and the error the leaf draws, its meshlet's pieces a
+    // 2^SURFACE_MESHLET_LEVEL-th of its sides, over which a smoothly
+    // curving surface strays as the square of that less.
     let ab = subdivision_point((triangle.a + triangle.b) * 0.5);
     let bc = subdivision_point((triangle.b + triangle.c) * 0.5);
     let ca = subdivision_point((triangle.c + triangle.a) * 0.5);
@@ -246,7 +249,8 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
         dot(ca.world - a.world, unit), dot(center.world - a.world, unit)));
     let across = max(vec4<f32>(detail_across(ab.world), detail_across(bc.world),
         detail_across(ca.world), detail_across(center.world)), vec4<f32>(1.0e-6));
-    let pixels = strays / across;
+    let parts = f32(1u << SURFACE_MESHLET_LEVEL);
+    let pixels = strays / across / (parts * parts);
     // Seen where its points' box, widened by how far it strays, reaches
     // into the camera's frustum.
     let stray = vec3<f32>(max(max(strays.x, strays.y), max(strays.z, strays.w)));
