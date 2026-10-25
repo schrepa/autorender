@@ -884,6 +884,11 @@ fn sun_highlight(point: SurfacePoint, sun: vec3<f32>, n_l: f32) -> vec3<f32> {
     return fresnel(point.f0, max(dot(point.view, half_vector), 0.0)) * (lobe * n_l);
 }
 
+// The share of the roughness past which surfaces reflect only the sky
+// (`lighting.effects.z`) over which, below it, their screen-space
+// reflections fade out, so no edge shows where roughness crosses it.
+const REFLECTION_FADE: f32 = 0.2;
+
 // Lit, fogged and graded color of `point` with `local` light added.
 fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let normal = point.normal;
@@ -980,9 +985,11 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
         * foliage_occlusion(point);
     shaded.glow = glow_weight(fogged);
     // Reflectivity for screen-space reflections: the environment BRDF's
-    // share, fading out toward the roughness limit and through fog.
+    // share, fading out over the last REFLECTION_FADE of the roughness limit
+    // and through fog.
     if lighting.effects.w != 0.0 {
-        let smooth_enough = saturate(2.0 * (1.0 - point.roughness / lighting.effects.z));
+        let smooth_enough = saturate((1.0 - point.roughness / lighting.effects.z)
+            / REFLECTION_FADE);
         shaded.reflect = saturate(luminance(brdf) * specular) * smooth_enough * (1.0 - covered);
     }
     return shaded;

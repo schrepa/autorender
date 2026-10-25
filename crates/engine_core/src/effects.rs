@@ -319,8 +319,9 @@ settings! {
     pub struct Reflections {
         /// How strongly glossy surfaces reflect the screen; 0 turns them off.
         pub intensity: f32 = 1.0 => range(0.0, 1.0),
-        /// Surfaces rougher than this reflect only the sky.
-        pub max_roughness: f32 = 0.5 => range(0.05, 1.0),
+        /// Surfaces rougher than this reflect only the sky: their
+        /// reflections of the screen fade out over its last fifth.
+        pub max_roughness: f32 = 0.75 => range(0.05, 1.0),
         /// World distance reflection rays travel.
         pub distance: f32 = 120.0 => range(0.001, 100_000.0),
     }

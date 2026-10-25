@@ -108,6 +108,30 @@ fn world_at(pixel: vec2<i32>) -> vec4<f32> {
     return vec4<f32>(world.xyz / world.w, select(0.0, 1.0, depth > 0.0));
 }
 
+// The unit normal, facing the eye, of the surface the depth buffer holds at
+// `pixel`, whose world position is `p`; none (zero) where its neighbors
+// give no direction. The nearer neighbor on each axis keeps silhouettes
+// from bending it. On the screen's edges the neighbor past the edge is the
+// pixel itself, which gives no direction: the one inside stands in.
+fn depth_normal(pixel: vec2<i32>, p: vec3<f32>) -> vec3<f32> {
+    let last = vec2<i32>(post.size.xy) - 1;
+    let right = world_at(min(pixel + vec2<i32>(1, 0), last)).xyz - p;
+    let left = p - world_at(max(pixel - vec2<i32>(1, 0), vec2<i32>(0))).xyz;
+    let down = world_at(min(pixel + vec2<i32>(0, 1), last)).xyz - p;
+    let up = p - world_at(max(pixel - vec2<i32>(0, 1), vec2<i32>(0))).xyz;
+    let across = select(right, left,
+        pixel.x == last.x || (pixel.x > 0 && dot(left, left) < dot(right, right)));
+    let along = select(down, up,
+        pixel.y == last.y || (pixel.y > 0 && dot(up, up) < dot(down, down)));
+    let normal = cross(along, across);
+    let length_squared = dot(normal, normal);
+    if !(length_squared > 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let unit = normal * inverseSqrt(length_squared);
+    return select(unit, -unit, dot(unit, post.eye.xyz - p) < 0.0);
+}
+
 // Scalable ambient obscurance (McGuire et al.) over eight samples: each
 // sample closer to the surface's tangent plane than the radius occludes by
 // how far above that plane, and how close, it is, at the share of its
@@ -208,27 +232,10 @@ fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
         return vec4<f32>(1.0, 0.0, 0.0, 0.0);
     }
     let p = center.xyz;
-    // The normal from the nearer neighbor on each axis keeps silhouettes
-    // from bending it. On the screen's edges the neighbor past the edge is
-    // the pixel itself, which gives no direction: the one inside stands in.
-    let right = world_at(min(pixel + vec2<i32>(1, 0), last)).xyz - p;
-    let left = p - world_at(max(pixel - vec2<i32>(1, 0), vec2<i32>(0))).xyz;
-    let down = world_at(min(pixel + vec2<i32>(0, 1), last)).xyz - p;
-    let up = p - world_at(max(pixel - vec2<i32>(0, 1), vec2<i32>(0))).xyz;
-    let across = select(right, left,
-        pixel.x == last.x || (pixel.x > 0 && dot(left, left) < dot(right, right)));
-    let along = select(down, up,
-        pixel.y == last.y || (pixel.y > 0 && dot(up, up) < dot(down, down)));
-    let to_eye = post.eye.xyz - p;
-    let distance = length(to_eye);
-    var normal = cross(along, across);
-    let length_squared = dot(normal, normal);
-    if !(length_squared > 0.0) {
+    let distance = length(post.eye.xyz - p);
+    let normal = depth_normal(pixel, p);
+    if all(normal == vec3<f32>(0.0)) {
         return vec4<f32>(1.0, distance, 0.0, 0.0);
-    }
-    normal = normal * inverseSqrt(length_squared);
-    if dot(normal, to_eye) < 0.0 {
-        normal = -normal;
     }
     // Interleaved gradient noise turns the spiral per pixel. It stays the
     // same every frame: changing it would let the temporal resolve's clamp
@@ -379,6 +386,14 @@ const REFLECTION_SOLID: f32 = 1.0;
 // matching it narrows to 0.244 of its peak there (as in cone-traced
 // reflections).
 const REFLECTION_CONE: f32 = 1.19;
+// The least cosine with the view a reflecting surface's shading normal
+// keeps where the surface itself faces the eye at least as squarely: bumps
+// turned past the view bend back to it, so their rays leave the surface.
+const REFLECTION_FACING: f32 = 0.05;
+// The share of the screen at its edges, and of a ray's reach at its end,
+// over which reflections fade out, so neither edge shows; hits nearer keep
+// all their weight.
+const REFLECTION_EDGE: f32 = 0.1;
 const FLOAT_MAX: f32 = 0x1.fffffep+127f;
 // The pixel of each 2x2 block the half-resolution reflection passes trace:
 // the first without temporal antialiasing; with it, another each frame
@@ -481,14 +496,18 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         return vec4<f32>(0.0);
     }
     let p = center.xyz;
-    // The normal the lighting shaded (with normal maps and ripples) and the
+    // The normal the lighting shaded (with normal maps and waves) and the
     // roughness, bent back toward the eye where bumps turn it past the view
-    // so the ray leaves the surface.
+    // so the ray leaves the surface: to REFLECTION_FACING or, where the
+    // surface the depth buffer holds faces the eye less squarely, as
+    // squarely as it does, so surfaces seen grazing keep their own mirror
+    // image.
     let shading = textureLoad(surface_texture, pixel, 0);
     let roughness = shading.z;
     let to_eye = normalize(post.eye.xyz - p);
+    let facing = min(REFLECTION_FACING, max(dot(depth_normal(pixel, p), to_eye), 0.0));
     var normal = unfolded_normal(shading.xy * 2.0 - 1.0);
-    normal = normalize(normal + max(0.05 - dot(normal, to_eye), 0.0) * to_eye);
+    normal = normalize(normal + max(facing - dot(normal, to_eye), 0.0) * to_eye);
     let direction = reflect(-to_eye, normal);
     // The ray's segment: `distance` long, ending nine tenths of the way to
     // the eye plane when it heads toward the camera.
@@ -586,7 +605,8 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let uv = point.xy * post.size.zw;
     let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
     let fraction = min(travelled / max(post.reflections.x, 1.0e-6), 1.0);
-    let fade = saturate(edge * 10.0) * (1.0 - fraction * fraction) * confidence;
+    let fade = saturate(edge / REFLECTION_EDGE) * saturate((1.0 - fraction) / REFLECTION_EDGE)
+        * confidence;
     // The light reflected over the roughness lobe: the cone's width where it
     // lands, in pixels, picks the blurred scene level read, mirrors reading
     // the scene itself.

@@ -87,22 +87,26 @@ const WATER_UNDULAR: vec2<f32> = vec2<f32>(5.0, 0.2);
 // Water's waves at a point as a pixel shows them: every source's slopes it
 // resolves, summed (meters a meter); the variance of the slopes it hides;
 // the place's whole slope variance, resolved and hidden, a Gaussian
-// surface's share steeper than a slope s being e^(−s²/spread); and how near
+// surface's share steeper than a slope s being e^(−s²/spread); how near
 // the tops of the resolved waves' crests the point stands (0 to 1), their
 // summed height over WATER_CREST_HEIGHTS roots of their summed heights'
-// variance.
+// variance; and the place's whole heights' variance, resolved and hidden
+// (square meters), as `spread` sums their slopes'.
 struct WaterWaves {
     slopes: vec2<f32>,
     hidden: f32,
     spread: f32,
     crest: f32,
+    heights: f32,
 }
 
 // Waves standing about what stands in the water as a pixel shows them
-// (`drawn`), and the variance of all their slopes, resolved and hidden.
+// (`drawn`), and the variance of all their slopes and of all their heights,
+// resolved and hidden.
 struct WaterStanding {
     drawn: WaterRead,
     spread: f32,
+    heights: f32,
 }
 
 // Waves of the turbulence tile at two rungs of a ladder of fixed scales an
@@ -290,6 +294,13 @@ fn water_turned_source(meters: f32, height: f32, stretch: vec2<f32>) -> WaterTur
     return waves;
 }
 
+// The variance of the heights of waves `waves` (`water_turned_source`'s),
+// their rungs blended keeping their spread as their slopes' are.
+fn water_turned_heights(waves: WaterTurnedWaves) -> f32 {
+    return dot(waves.shown * waves.shown, waves.height * waves.height)
+        / dot(waves.shown, waves.shown);
+}
+
 // Waves `waves` (`water_turned_source`'s) at `p` (meters along x and z),
 // which changes by `dx` and `dy` a pixel, running along `heading` and
 // salted by `salt`, as a pixel reads them (`WaterRead`): each rung read
@@ -403,6 +414,7 @@ fn water_resolved(sum: WaterStanding, gradient: vec2<f32>, height: f32, amplitud
     added.drawn.height += height * kept;
     added.drawn.heights += 0.5 * amplitude * amplitude * kept * kept;
     added.spread += steep;
+    added.heights += 0.5 * amplitude * amplitude;
     return added;
 }
 
@@ -515,6 +527,7 @@ fn water_flow_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, at: WaterAt,
     }
     var running: WaterRead;
     var stirred = 0.0;
+    var stirred_heights = 0.0;
     if flowing > 0.0 {
         let middle = max(depth, WATER_BREAK_THINNEST)
             * sqrt(WATER_EDDY_WAVES.x * WATER_EDDY_WAVES.y);
@@ -523,12 +536,21 @@ fn water_flow_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, at: WaterAt,
         running = water_carried_waves(p, dx, dy, flow, heading, shear,
             water_wave_life(middle, eddy, shear), time, stagger, gains, eddies);
         stirred = eddies.spread;
+        stirred_heights = water_turned_heights(eddies);
     }
     var read = water_waves_mixed(still, running, flowing);
     // The wind's slopes' variance is its gains' squares however the water
     // moves; the eddies' shows as far as the blend shows running water.
-    var spread = dot(gains, gains) + stirred * flowing * flowing
+    let running_share = flowing * flowing
         / ((1.0 - flowing) * (1.0 - flowing) + flowing * flowing);
+    var spread = dot(gains, gains) + stirred * running_share;
+    // Their heights' alike: each wind tile's root mean square height at its
+    // gain, and the eddies' as far as running water shows.
+    var heights = stirred_heights * running_share;
+    for (var tile = 0u; tile < WATER_WIND_TILES; tile++) {
+        let lifted = gains[tile] * water_tile_height(tile);
+        heights += lifted * lifted;
+    }
     let rise = smoothstep(WATER_STAND_FROUDE.x, WATER_STAND_FROUDE.y, froude);
     if rise > 0.0 {
         let head = speed * speed / (2.0 * WATER_GRAVITY);
@@ -536,16 +558,19 @@ fn water_flow_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, at: WaterAt,
             vec2<f32>(1.0, WATER_STAND_STRETCH));
         read = water_waves_added(read, water_turned_read(bed, p, dx, dy, heading, 0x5bd1e995u));
         spread += bed.spread;
+        heights += water_turned_heights(bed);
     }
     // As finely as the display shows them: the mip bias.
     let standing = water_standing(at.obstacle, flow, depth, froude,
         max(length(dx), length(dy)) * material_detail(), anchored);
     read = water_waves_added(read, standing.drawn);
     spread += standing.spread;
+    heights += standing.heights;
     var waves: WaterWaves;
     waves.slopes = read.slopes;
     waves.hidden = read.hidden;
     waves.spread = spread;
+    waves.heights = heights;
     if read.heights > 1.0e-12 {
         waves.crest = saturate(read.height / (WATER_CREST_HEIGHTS * sqrt(read.heights)));
     }

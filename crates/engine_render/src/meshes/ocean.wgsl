@@ -15,6 +15,12 @@
 // shores, and sunlight glows through crests seen against it.
 
 const OCEAN_TAU: f32 = 6.283185307179586;
+// The mean over a sea of how near the top of a crest each point stands,
+// its height over √2 of the heights' root mean square (where a sine's
+// crests stand) and at most 1, its heights spreading as a Gaussian's:
+// (φ(0) − φ(√2))/√2 plus the share standing higher, ≈ 0.257. A pixel
+// spanning many crests shows their mean.
+const OCEAN_CREST_SHARE: f32 = 0.257;
 
 struct OceanOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -154,6 +160,25 @@ fn shade_ocean_below(input: OceanOutput) -> WaterShade {
     return result;
 }
 
+// The sea's waves over the still sea's point `still` (less the eye) as a
+// pixel spanning `footprint` meters of it resolves them, as `ocean_normal`
+// keeps them (`ocean_keep` for samples half a pixel apart: waves shorter
+// than four pixels fade, those shorter than two are gone): the meters they
+// raise it over the still sea (x), the variance of the heights the pixel
+// resolves (y) and that of all their heights (z), a wave `a` high adding
+// a²/2.
+fn ocean_heights(still: vec2<f32>, footprint: f32) -> vec3<f32> {
+    var heights = vec3<f32>(0.0);
+    let count = u32(water.ocean_grid.w);
+    for (var index = 0u; index < count; index++) {
+        let wave = water.ocean_waves[index];
+        let kept = wave.z * ocean_keep(max(length(wave.xy), 1.0e-6), 0.5 * footprint);
+        heights += vec3<f32>(kept * sin(dot(wave.xy, still) + wave.w), 0.5 * kept * kept,
+            0.5 * wave.z * wave.z);
+    }
+    return heights;
+}
+
 // The surface's normal at the still sea's point `still` (less the eye)
 // from every wave longer than a few of `footprint`-meter pixels (xyz), and
 // how much the waves compress it there (w).
@@ -252,11 +277,18 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     // its highlights, as a rougher surface would, and so do the ripples
     // finer than the pixel.
     let roughness = water_roughness(hidden + ripples.hidden);
-    // Sunlight through crests seen against it.
-    let crest_height = saturate(input.still.z / max(water.foam.w, 1.0e-3) * 0.5 + 0.5);
-    let against = pow(saturate(dot(-view, lighting.sun.xyz)), 4.0) * saturate(lighting.sun.y * 4.0);
-    let glow = (water.color.rgb * 3.0 + vec3<f32>(0.0, 0.04, 0.035)) * lighting.sun_color.rgb
-        * (against * crest_height * crest_height * crest_height * (1.0 - foam));
+    // Its crests (`ocean_heights`): how near their tops it stands, the
+    // height its waves and the tiles' raise it over √2 of the root of the
+    // variance of the heights the pixel resolves (where a sine's crests
+    // stand), and their mean OCEAN_CREST_SHARE for the share of that
+    // variance the pixel spans unresolved; the sun's light crosses them
+    // through walls as thick as WATER_CREST_WALL of the root mean square
+    // height of all its waves, lit as terrains' water's crests are.
+    let swell = ocean_heights(still, footprint);
+    let resolved = swell.y + ripples.heights;
+    let peak = mix(OCEAN_CREST_SHARE,
+        saturate((swell.x + ripples.height) * inverseSqrt(max(2.0 * resolved, 1.0e-12))),
+        saturate(resolved / max(swell.z + ripples.heights, 1.0e-12)));
     var surface: WaterSurface;
     surface.relative = input.relative;
     surface.world_dx = world_dx;
@@ -267,9 +299,9 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     surface.foam = foam;
     surface.scatter = water.color.rgb;
     surface.transmit = transmit;
-    surface.glow = glow;
-    // The sea's crests glow by `glow` instead.
-    surface.crest = 0.0;
+    surface.crest = peak;
+    surface.crest_wall = water_extinction(0.0)
+        * (WATER_CREST_WALL * sqrt(swell.z + ripples.heights));
     let lit = water_light(surface);
     // Of what the surface lets through, foam covers what lies below; the
     // sea thins out to nothing where it meets the shore and around what
