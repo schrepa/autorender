@@ -37,6 +37,7 @@ const INTERNAL: &[&str] = &[
     "lod_input",
     "state_atmosphere_rules",
     "table_data",
+    "wind_waves",
 ];
 
 /// Fails at a public name of engine_core that no facade list or

@@ -408,6 +408,20 @@ try {
     await until(authored, "the fixture is left as authored");
     checks.push({ check: "edits", raised: risen - authored, change: raised.largest_change });
   }
+  // A river drawn live is given to the terrain's hydrology as authored
+  // rivers are: it applies once under its ID, the inspector lists it to
+  // save, and drawing no points under its ID takes it away.
+  {
+    const stream = { id: "smoke-river", points: [[-260, 120], [-200, 150], [-140, 190]], width: [3], discharge: [2] };
+    const drawn = (await command("terrain_river", stream)).result;
+    assert.ok(drawn.applied && drawn.rivers === 1 && drawn.dirty, `the river draws: ${JSON.stringify(drawn)}`);
+    assert.equal((await command("terrain_river", stream)).result.applied, false, "drawing the same river again leaves it alone");
+    const listed = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
+    assert.deepEqual(listed.rivers.map(river => river.id), ["smoke-river"], `the inspector lists the drawn rivers: ${JSON.stringify(listed.rivers)}`);
+    const taken = (await command("terrain_river", { id: "smoke-river" })).result;
+    assert.ok(taken.applied && taken.rivers === 0, `no points take the river away: ${JSON.stringify(taken)}`);
+    checks.push({ check: "drawn rivers", drawn: drawn.rivers, taken: taken.rivers });
+  }
   // Walks cross ground an agent stands on: around a hole
   // cut across the straight line, never into it, and longer than the
   // straight line; options out of range are refused. A walk's search
