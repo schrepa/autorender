@@ -380,7 +380,7 @@
           "const": "sky"
         },
         {
-          "description": "How much detail terrain's ground shows: green where all its\nmaterials' maps show, yellow where their color alone does, red where\ntheir means stand in, blue where it shows as its cover's canopy.",
+          "description": "How terrain's ground shows its materials' maps: green where their\ndetail shows, filtered over the pixel, yellow as that filtering\naverages their normal maps' slopes into roughness, red where a whole\nrepeat spans less than a pixel and their means stand in, blue where it\nshows as its cover's canopy.",
           "type": "string",
           "const": "detail"
         },
@@ -3130,20 +3130,12 @@
           "minimum": 1
         },
         "pixels": {
-          "description": "How wide on screen (pixels) blades stand as they retire: each\nretires, in a fixed order, once it spans fewer than this times a\nfactor of its own from a half to two, and tiers, each reaching\ntwice as far as the last, end where the last has. 0 grows cover\nwithin the radius alone.",
+          "description": "How wide on screen (pixels) blades stand as they retire: each\nretires, in a fixed order, once it spans fewer than this times a\nfactor of its own from a half to two, the ground showing it as its\ncover's canopy, so cover reaches as far as its last blade stands.",
           "type": "number",
           "format": "float",
           "default": 1.0,
           "maximum": 16.0,
-          "minimum": 0.0
-        },
-        "radius": {
-          "description": "Meters from the camera within which cover grows densest, its blades\nwidening as they thin. Past it the ground shows as its cover's\ncanopy, and sparser tiers of blades as wide as there reach on.",
-          "type": "number",
-          "format": "float",
-          "default": 40.0,
-          "maximum": 200.0,
-          "minimum": 2.0
+          "minimum": 0.25
         }
       },
       "additionalProperties": false

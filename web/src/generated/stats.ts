@@ -353,7 +353,10 @@ export interface GroundCoverStats {
   dropped: number;
   /** Meters from the eye ground cover reached this frame, rounded. */
   reach: number;
-  /** The most tiers it grew in: the radius's and doublings past it. */
+  /**
+   * The most tiers it grew in: the first, where every blade stands, and
+   * doublings past it.
+   */
   tiers: number;
 }
 

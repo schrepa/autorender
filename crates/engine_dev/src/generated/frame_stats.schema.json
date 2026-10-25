@@ -308,7 +308,7 @@
           "type": "integer"
         },
         "tiers": {
-          "description": "The most tiers it grew in: the radius's and doublings past it.",
+          "description": "The most tiers it grew in: the first, where every blade stands, and\ndoublings past it.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"

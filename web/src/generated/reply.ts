@@ -285,16 +285,22 @@ export interface DescribedType {
 }
 
 /**
- * How much detail a terrain pixel's ground shows, each a share of its
- * materials, 0 to 1, to 1/255.
+ * How a terrain pixel's ground shows its materials' maps, each a share of
+ * its materials, 0 to 1, to 1/255.
  */
 export interface DetailShares {
+  /**
+   * Where that filtering averages their normal maps' slopes into
+   * roughness, at most `detailed`.
+   */
+  averaged: number;
   /** Where the cover's canopy stands in for the ground. */
   canopy: number;
-  /** Where their maps' color shows, with or without the rest. */
-  colored: number;
-  /** Where all their maps show. */
-  full: number;
+  /**
+   * Where their maps' detail shows, filtered over the pixel, rather than
+   * their means standing in.
+   */
+  detailed: number;
 }
 
 /** Stable machine-readable code and affected field; messages are for people. */
@@ -1098,7 +1104,7 @@ export type TerrainKey = string | number;
  * no virtual texture page stands in.
  */
 export interface TerrainProbe {
-  /** How much detail the ground shows. */
+  /** How the ground shows its materials' maps. */
   detail: DetailShares;
   /**
    * The surface materials shading blends there and their shares,
