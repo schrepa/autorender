@@ -308,13 +308,7 @@
           "type": "integer"
         },
         "tiers": {
-          "description": "The most tiers it grew in: the first, where every blade stands, and\ndoublings past it.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "widened": {
-          "description": "How wide blades that thin stand on screen, in hundredths of the\nsettings' pixels: 100, or more where the budget, or what one storage\nbinding holds, takes in fewer blades than the view would, fewer of\nthem standing wider to cover as much ground.",
+          "description": "The most tiers it grew in: the radius's and doublings past it.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -324,8 +318,7 @@
         "blades",
         "dropped",
         "reach",
-        "tiers",
-        "widened"
+        "tiers"
       ],
       "type": "object"
     },

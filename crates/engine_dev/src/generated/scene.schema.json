@@ -3227,7 +3227,7 @@
           "default": true
         },
         "max_blades": {
-          "description": "An optional budget of blades a frame: where the view would take\nin more, the blades that thin stand wider, fewer covering as much\nground; any past it still drop and count.",
+          "description": "An optional budget of blades a frame; beyond it the farthest drop.",
           "type": [
             "integer",
             "null"
@@ -3236,12 +3236,20 @@
           "minimum": 1
         },
         "pixels": {
-          "description": "The pixels on screen blades span at least while they stand,\nacross and up: where blades as wide as their roots would span\nfewer across, a share of them stands in a fixed order, each\nwidened by its inverse to span these pixels, so they cover as\nmuch ground, their colors drawn toward their canopy's by the root\nof the share standing; and once their height spans fewer than\nthese times a factor of their own from a half to two, they retire\nin that order, the ground showing them as its cover's canopy, so\ncover reaches as far as its last blade stands that tall. By\ndefault the pixels temporal antialiasing draws steadily\n(`STEADY_PIXELS`); twice the pixels stand about a quarter as many\nblades for the same cover.",
+          "description": "How wide on screen (pixels) blades stand as they retire: each\nretires, in a fixed order, once it spans fewer than this times a\nfactor of its own from a half to two, and tiers, each reaching\ntwice as far as the last, end where the last has. 0 grows cover\nwithin the radius alone.",
           "type": "number",
           "format": "float",
-          "default": 4.0,
+          "default": 1.0,
           "maximum": 16.0,
-          "minimum": 0.25
+          "minimum": 0.0
+        },
+        "radius": {
+          "description": "Meters from the camera within which cover grows densest, its blades\nwidening as they thin. Past it the ground shows as its cover's\ncanopy, and sparser tiers of blades as wide as there reach on.",
+          "type": "number",
+          "format": "float",
+          "default": 40.0,
+          "maximum": 200.0,
+          "minimum": 2.0
         }
       },
       "additionalProperties": false
