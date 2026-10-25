@@ -3236,10 +3236,10 @@
           "minimum": 1
         },
         "pixels": {
-          "description": "The pixels on screen blades span at least while they stand,\nacross and up: where blades as wide as their roots would span\nfewer across, a share of them stands in a fixed order, each\nwidened by its inverse to span these pixels, so they cover as\nmuch ground; and once their height spans fewer than these times a\nfactor of their own from a half to two, they retire in that\norder, the ground showing them as its cover's canopy, so cover\nreaches as far as its last blade stands that tall. Two pixels,\nwhich temporal antialiasing resolves steadily, stand about a\nquarter as many blades as one for the same cover.",
+          "description": "The pixels on screen blades span at least while they stand,\nacross and up: where blades as wide as their roots would span\nfewer across, a share of them stands in a fixed order, each\nwidened by its inverse to span these pixels, so they cover as\nmuch ground, their colors drawn toward their canopy's by the root\nof the share standing; and once their height spans fewer than\nthese times a factor of their own from a half to two, they retire\nin that order, the ground showing them as its cover's canopy, so\ncover reaches as far as its last blade stands that tall. By\ndefault the pixels temporal antialiasing draws steadily\n(`STEADY_PIXELS`); twice the pixels stand about a quarter as many\nblades for the same cover.",
           "type": "number",
           "format": "float",
-          "default": 2.0,
+          "default": 4.0,
           "maximum": 16.0,
           "minimum": 0.25
         }
