@@ -1733,9 +1733,10 @@ impl codec::Codec for SteadySummary {
 }
 
 /// The bits of the half float nearest `value` (ties to even), as a
-/// summary holds its values: NaN stays NaN, and finite values beyond the
-/// largest half float hold to it.
-fn f16_bits(value: f32) -> u16 {
+/// summary holds its values, and an error pyramid its bounds before they
+/// round up ([`crate::ErrorPyramid`]): NaN stays NaN, and finite values
+/// beyond the largest half float hold to it.
+pub(crate) fn f16_bits(value: f32) -> u16 {
     let bits = value.to_bits();
     let sign = ((bits >> 16) & 0x8000) as u16;
     let biased = (bits >> 23) & 0xff;
@@ -1767,7 +1768,7 @@ fn f16_bits(value: f32) -> u16 {
 
 /// The value of the half float whose bits are `bits` ([`f16_bits`]'s),
 /// exactly: NaN for NaN.
-fn f16_value(bits: u16) -> f32 {
+pub(crate) fn f16_value(bits: u16) -> f32 {
     let sign = u32::from(bits & 0x8000) << 16;
     let exponent = u32::from((bits >> 10) & 0x1f);
     let mantissa = u32::from(bits & 0x3ff);
@@ -2158,7 +2159,7 @@ impl Tile {
 
     /// The water of this tile of `pyramid`, of a coarser level than 0,
     /// running, foaming, churning and breaking as settled water's summaries
-    /// say ([`SteadySummary`]): each sample its own water reaches takes the
+    /// say ([`SteadySummary`]): each sample its own water stands over takes the
     /// mean velocity, foam, swirl and white water of the summaries' squares
     /// under its footprint, `squares` giving each by its place on the
     /// terrain's lattice of squares (`None` where no summary holds it),
@@ -2168,7 +2169,8 @@ impl Tile {
     /// spacing; and its shear, where it plunges and the reach of its bed
     /// ([`Tile::bed`]); still and clear where none of them holds water, and
     /// as its own water ran where no summary holds any square under it. Its
-    /// water's surface, lakes, width and falls' sheets stay its own; `None`
+    /// water's surface, lakes, width and falls' sheets stay its own, and its
+    /// dry samples take theirs from it anew ([`TileWater::surfaces`]); `None`
     /// where it holds none.
     #[must_use]
     pub fn flowing(
@@ -2182,13 +2184,15 @@ impl Tile {
         let origin = pyramid.tile_origin(self.key());
         let square = pyramid.tile_size(0) / SUMMARY_SIDE as f32;
         let surface: Box<[f32]> = own.surfaces().into();
+        let heights = self.heights();
         let mut info: Box<[[u32; 3]]> = own.info().into();
         let mut flows: Vec<Vec2> = info.iter().map(|words| unpack(words[0]).0).collect();
         let mut stirred = vec![None; info.len()];
         for z in 0..stride {
             for x in 0..stride {
                 let at = z * stride + x;
-                if !surface[at].is_finite() {
+                let wet = surface[at] > heights[at];
+                if !wet {
                     continue;
                 }
                 let point = origin + Vec2::new(x as f32 - 1.0, z as f32 - 1.0) * spacing;

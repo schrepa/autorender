@@ -16,11 +16,12 @@
 //! ([`Tile::steadied`], [`Tile::flowing`], a job's record that the tile
 //! then holds: [`Tile::holding`]), its whitewater the foam the settled water
 //! carries, a share of [`crate::shallow_water::FOAM_MOST`]: rivers' own
-//! water carries none, nor runs in any state. However it was written, every
-//! dry sample beside water holds a surface its water meets the ground by
-//! ([`skirt`]), so shores fall where the ground rises through the water,
-//! between samples, never at a sample; and every sample knows its nearest
-//! obstacle ([`obstacles`]).
+//! water carries none, nor runs in any state. However it was written, the
+//! dry samples within [`WATER_REACH`] rings of water hold its surface
+//! continued under the banks, and no others any ([`extend`]), so shores fall
+//! where the ground rises through the water, between samples, never at a
+//! sample, and a mesh standing on the surface reaches past them; and every
+//! sample knows its nearest obstacle ([`obstacles`]).
 
 use std::ops::Range;
 
@@ -90,6 +91,18 @@ const MOST_RADIUS: f32 = 0.5 * 127.0 * WATER_OBSTACLE_STEP;
 /// What a sample outside every part ([`parts`]) holds as its part, and one
 /// nearest no seed ([`nearest`]) as its seed.
 const NONE: u32 = u32::MAX;
+/// Rings of dry samples beside water, each the dry samples among the eight
+/// neighbors of the ring inside it, that hold the water's surface continued
+/// under its banks: the samples a mesh standing on the surface may reach
+/// past the shore, as a subdivision splits its pieces until they lie within
+/// them where the shore is wider (an [`crate::ErrorPyramid`]'s
+/// [`crate::WIDE_SHORE`]).
+pub const WATER_REACH: u32 = 4;
+/// A sample's ring as [`extend`] counts them: none yet, waiting to be
+/// worked out in the ring being made, and a ring the rest stop at.
+const NO_RING: u8 = u8::MAX;
+const QUEUED: u8 = u8::MAX - 1;
+const STOPPED: u8 = u8::MAX - 2;
 
 /// The water at a point of a tile: the surface it stands at (terrain-local
 /// meters), its depth over the tile's ground there, its flow along x and z
@@ -120,21 +133,21 @@ pub struct WaterState {
 
 /// A tile's water: each sample's surface (NaN where no water reaches) and
 /// words ([`Self::info`]), in the layout of its heights, and which of its
-/// patches hold water over their ground.
+/// patches hold a surface, wet or continued under the banks.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TileWater {
     surface: Box<[f32]>,
     info: Box<[[u32; 3]]>,
-    wet: [u64; 4],
+    held: [u64; 4],
 }
 
 impl TileWater {
     /// The water of a tile whose samples, `spacing` meters apart, stand at
     /// `heights`, from its samples' `surface` and words `info` (the jump of
     /// each one's obstacle word as what made the water marks it): its
-    /// shores skirted ([`skirt`]) and each sample's nearest obstacle found
-    /// ([`obstacles`]); `None` when the sizes do not match or no sample's
-    /// surface stands over its ground.
+    /// surface continued under the banks ([`extend`]) and each sample's
+    /// nearest obstacle found ([`obstacles`]); `None` when the sizes do not
+    /// match or no sample's surface stands over its ground.
     pub(crate) fn new(
         mut surface: Box<[f32]>,
         mut info: Box<[[u32; 3]]>,
@@ -145,35 +158,39 @@ impl TileWater {
         if surface.len() != stride * stride
             || info.len() != stride * stride
             || heights.len() != stride * stride
+            || !surface.iter().zip(heights).any(|(s, h)| s > h)
         {
             return None;
         }
-        skirt(&mut surface, &mut info, heights);
-        let mut wet = [0_u64; 4];
+        extend(&mut surface, &mut info, heights);
+        let mut held = [0_u64; 4];
         let (patch, patches) = (PATCH_QUADS as usize, PATCHES_PER_TILE as usize);
         for pz in 0..patches {
             for px in 0..patches {
                 let holds = (pz * patch..=(pz + 1) * patch).any(|z| {
                     (px * patch..=(px + 1) * patch).any(|x| {
                         let at = (z + 1) * stride + x + 1;
-                        surface[at] > heights[at]
+                        surface[at].is_finite()
                     })
                 });
                 if holds {
                     let index = pz * patches + px;
-                    wet[index / 64] |= 1 << (index % 64);
+                    held[index / 64] |= 1 << (index % 64);
                 }
             }
         }
-        if wet.iter().all(|&bits| bits == 0) {
-            return None;
-        }
         obstacles(&surface, &mut info, heights, spacing);
-        Some(Self { surface, info, wet })
+        Some(Self {
+            surface,
+            info,
+            held,
+        })
     }
 
     /// Every sample's surface, the border included, row by row: the
-    /// layout GPU tiles upload.
+    /// layout GPU tiles upload. Wet samples' stand over their ground; those
+    /// of the dry samples within [`WATER_REACH`] rings of them continue it
+    /// under the banks, at or below their ground; the rest are NaN.
     pub fn surfaces(&self) -> &[f32] {
         &self.surface
     }
@@ -191,10 +208,13 @@ impl TileWater {
         &self.info
     }
 
-    /// Whether any sample of patch `(x, z)` stands under its water.
+    /// Whether any sample of patch `(x, z)`, its edges included, holds a
+    /// surface of its water: wet, or dry with the surface continued under it
+    /// ([`Self::surfaces`]). Whether water stands at a point is its depth's
+    /// to say ([`crate::Tile::water_at`]).
     pub fn patch_holds_water(&self, x: u32, z: u32) -> bool {
         let index = (z * PATCHES_PER_TILE + x) as usize;
-        self.wet[index / 64] & (1 << (index % 64)) != 0
+        self.held[index / 64] & (1 << (index % 64)) != 0
     }
 
     /// The surface of sample `(x, z)`, -1 to 257 along each axis.
@@ -240,125 +260,165 @@ impl TileWater {
 
 /// A tile's water as its record holds it, apart from its tile: its samples'
 /// surfaces at their nearest steps of the height grid
-/// ([`crate::codec::HEIGHT_STEP`]), their words and which patches hold
-/// water, read back as they were written, shores, states and obstacles
-/// and all.
+/// ([`crate::codec::HEIGHT_STEP`]), their words and which patches hold a
+/// surface, read back as they were written, the surface under the banks,
+/// states and obstacles and all.
 impl crate::codec::Codec for TileWater {
     fn write(&self, out: &mut crate::codec::Writer) {
         crate::codec::put_grid(out, &self.surface, TILE_STRIDE as usize);
-        out.put(&self.info).put(&self.wet);
+        out.put(&self.info).put(&self.held);
     }
 
     fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
         let stride = TILE_STRIDE as usize;
         let surface = crate::codec::get_grid(input, stride)?;
         let info: Box<[[u32; 3]]> = input.get()?;
-        let wet: [u64; 4] = input.get()?;
+        let held: [u64; 4] = input.get()?;
         if surface.len() != stride * stride || info.len() != stride * stride {
             return Err(crate::codec::CodecError("invalid tile water"));
         }
-        Ok(Self { surface, info, wet })
+        Ok(Self {
+            surface,
+            info,
+            held,
+        })
     }
 }
 
-/// Gives the dry samples beside water (any of their eight neighbors' surface
-/// standing over its ground) a surface for the water to meet their ground
-/// by, unless they hold one already, with their wet neighbors' flow,
-/// whitewater, kind, width, state and jump, averaged, and the reach most of
-/// them run in (a reach is never averaged): those neighbors' surface,
-/// averaged, where their ground stands at or above it, so the shore falls
-/// on the triangles between them where the ground rises through the water.
-/// Samples whose ground lies below it lie past where the water ends (beside
-/// a channel whose ground lies lower than its banks' top, a road's ditch):
-/// they stand dry, as far under their surface as their wet neighbors stand
-/// under theirs, so the shore falls halfway to them. Dry samples beside no
-/// water lose any surface, so none lingers where water was held back
-/// before.
-fn skirt(surface: &mut [f32], info: &mut [[u32; 3]], heights: &[f32]) {
+/// Continues the water's surface under its banks: gives the dry samples
+/// within [`WATER_REACH`] rings of water (each ring the dry samples among
+/// the eight neighbors of the ring inside it, the wet samples the first's)
+/// a surface for the water to meet their ground by and for meshes standing
+/// on it to reach past the shore, and every other dry sample none, so none
+/// lingers where water was held back before. Each ring is made from the
+/// rings inside it alone, each of its samples from its neighbors in the
+/// ring just inside ([`continued`]), so the order samples are visited in
+/// changes nothing; the rings stop at a sample whose ground lies below the
+/// surface it would take, so no surface crosses it.
+fn extend(surface: &mut [f32], info: &mut [[u32; 3]], heights: &[f32]) {
     let stride = TILE_STRIDE as usize;
-    let wet = |at: usize| surface[at] > heights[at];
-    let mut changes = Vec::new();
-    for z in 0..stride {
-        for x in 0..stride {
-            let at = z * stride + x;
-            if wet(at) {
-                continue;
-            }
-            let (mut level, mut depth, mut flow, mut white, mut lakes, mut width, mut count) =
-                (0.0, 0.0, Vec2::ZERO, 0.0, 0, 0.0, 0);
-            let (mut state, mut reaches, mut jump) = (WaterState::default(), [0_u32; 6], 0.0);
+    let mut rings: Vec<u8> = surface
+        .iter()
+        .zip(heights)
+        .map(|(level, ground)| if level > ground { 0 } else { NO_RING })
+        .collect();
+    for (at, &ring) in rings.iter().enumerate() {
+        if ring == NO_RING {
+            surface[at] = f32::NAN;
+            info[at] = [0; 3];
+        }
+    }
+    let mut inside: Vec<usize> = (0..rings.len()).filter(|&at| rings[at] == 0).collect();
+    for ring in 1..=WATER_REACH as u8 {
+        // The dry samples beside the ring inside, each once.
+        let mut queued = Vec::new();
+        for &from in &inside {
+            let (x, z) = (from % stride, from / stride);
             for nz in z.saturating_sub(1)..(z + 2).min(stride) {
                 for nx in x.saturating_sub(1)..(x + 2).min(stride) {
                     let near = nz * stride + nx;
-                    if wet(near) {
-                        let [packed, stirred, obstacle] = info[near];
-                        let (near_flow, near_white, lake, near_width) = unpack(packed);
-                        let near_state = unpack_state(stirred);
-                        level += surface[near];
-                        depth += surface[near] - heights[near];
-                        flow += near_flow;
-                        white += near_white;
-                        lakes += usize::from(lake);
-                        width += near_width;
-                        state.turbulence += near_state.turbulence;
-                        state.breaking += near_state.breaking;
-                        state.shear += near_state.shear;
-                        reaches[reach_code(near_state.reach) as usize] += 1;
-                        jump += jump_of(obstacle);
-                        count += 1;
+                    if rings[near] == NO_RING {
+                        rings[near] = QUEUED;
+                        queued.push(near);
                     }
                 }
             }
-            if count == 0 {
-                if surface[at].is_finite() {
-                    changes.push((at, f32::NAN, [0; 3]));
-                }
-                continue;
+        }
+        let made: Vec<(f32, [u32; 3], bool)> = queued
+            .iter()
+            .map(|&at| continued(at, ring - 1, (&*surface, &*info, heights), &rings))
+            .collect();
+        inside.clear();
+        for (&at, &(level, words, stops)) in queued.iter().zip(&made) {
+            surface[at] = level;
+            info[at] = words;
+            rings[at] = if stops { STOPPED } else { ring };
+            if !stops {
+                inside.push(at);
             }
-            if surface[at].is_finite() {
-                continue;
-            }
-            let share = 1.0 / count as f32;
-            let level = level * share;
-            let standing = if heights[at] >= level {
-                level
-            } else {
-                heights[at] - depth * share
-            };
-            // The reach most of them run in, the first of those as many do.
-            let most = (0..reaches.len()).fold(0, |most, code| {
-                if reaches[code] > reaches[most] {
-                    code
-                } else {
-                    most
-                }
-            });
-            changes.push((
-                at,
-                standing,
-                [
-                    pack(
-                        flow * share,
-                        white * share,
-                        false,
-                        lakes * 2 > count,
-                        width * share,
-                    ),
-                    pack_state(WaterState {
-                        turbulence: state.turbulence * share,
-                        breaking: state.breaking * share,
-                        shear: state.shear * share,
-                        reach: reach_of(most as u32),
-                    }),
-                    pack_obstacle(Vec2::ZERO, 0.0, jump * share),
-                ],
-            ));
         }
     }
-    for (at, level, words) in changes {
-        surface[at] = level;
-        info[at] = words;
+}
+
+/// What dry sample `at` takes from its neighbors in ring `inner` of the
+/// water standing at `surface` with words `info` over `heights`, its rings
+/// as [`extend`] counts them (`rings`): their surface, averaged, where its
+/// ground stands at or above it, so the shore falls on the triangles
+/// between them where the ground rises through the water, with their flow,
+/// whitewater, kind, width, state and jump, averaged, and the reach most of
+/// them run in (a reach is never averaged); and whether the rings stop at
+/// it. A sample whose ground lies below that surface lies past where the
+/// water ends (beside a channel whose ground lies lower than its banks'
+/// top, a road's ditch, the land behind a levee): it stands dry, as far
+/// under its surface as they stand from theirs, so the shore falls halfway
+/// to it from wet ones, and the rings stop there.
+fn continued(
+    at: usize,
+    inner: u8,
+    (surface, info, heights): (&[f32], &[[u32; 3]], &[f32]),
+    rings: &[u8],
+) -> (f32, [u32; 3], bool) {
+    let stride = TILE_STRIDE as usize;
+    let (x, z) = (at % stride, at / stride);
+    let (mut level, mut apart, mut flow, mut white, mut lakes, mut width, mut count) =
+        (0.0, 0.0, Vec2::ZERO, 0.0, 0, 0.0, 0);
+    let (mut state, mut reaches, mut jump) = (WaterState::default(), [0_u32; 6], 0.0);
+    for nz in z.saturating_sub(1)..(z + 2).min(stride) {
+        for nx in x.saturating_sub(1)..(x + 2).min(stride) {
+            let near = nz * stride + nx;
+            if rings[near] != inner {
+                continue;
+            }
+            let [packed, stirred, obstacle] = info[near];
+            let (near_flow, near_white, lake, near_width) = unpack(packed);
+            let near_state = unpack_state(stirred);
+            level += surface[near];
+            apart += (surface[near] - heights[near]).abs();
+            flow += near_flow;
+            white += near_white;
+            lakes += usize::from(lake);
+            width += near_width;
+            state.turbulence += near_state.turbulence;
+            state.breaking += near_state.breaking;
+            state.shear += near_state.shear;
+            reaches[reach_code(near_state.reach) as usize] += 1;
+            jump += jump_of(obstacle);
+            count += 1;
+        }
     }
+    let share = 1.0 / count as f32;
+    let level = level * share;
+    let stops = heights[at] < level;
+    let standing = if stops {
+        heights[at] - apart * share
+    } else {
+        level
+    };
+    // The reach most of them run in, the first of those as many do.
+    let most = (0..reaches.len()).fold(0, |most, code| {
+        if reaches[code] > reaches[most] {
+            code
+        } else {
+            most
+        }
+    });
+    let words = [
+        pack(
+            flow * share,
+            white * share,
+            false,
+            lakes * 2 > count,
+            width * share,
+        ),
+        pack_state(WaterState {
+            turbulence: state.turbulence * share,
+            breaking: state.breaking * share,
+            shear: state.shear * share,
+            reach: reach_of(most as u32),
+        }),
+        pack_obstacle(Vec2::ZERO, 0.0, jump * share),
+    ];
+    (standing, words, stops)
 }
 
 /// One sample's flow (meters a second along x and z), whitewater (0 to 1),
@@ -803,7 +863,7 @@ fn nearest(seeds: &[bool]) -> Vec<u32> {
 /// flat across the river, without whitewater and in no state; a lake of
 /// `lakes` holding a sample in its water or shore takes it where it stands
 /// higher. Shores fall where the ground rises through the water, between
-/// the channel's samples and the dry ones beside them ([`skirt`]).
+/// the channel's samples and the dry ones beside them ([`extend`]).
 /// Surroundings keep water only where they show their bakes whole
 /// (`shown`): where the bakes fade, so does the channel they cut.
 pub(crate) fn water_rows(
@@ -875,10 +935,10 @@ impl Tile {
                 .collect()
         };
         let (xs, zs) = (positions(x + dx), positions(z + dz));
-        // A sample past the regions' bounds skirts the water within them.
+        // The regions' samples alone: the surface under the banks is made
+        // again from the wet samples wherever they lie (`extend`).
         let within = |values: &[f32], low: f32, high: f32| {
-            values.partition_point(|&value| value < low - spacing)
-                ..values.partition_point(|&value| value <= high + spacing)
+            values.partition_point(|&at| at < low)..values.partition_point(|&at| at <= high)
         };
         // Each row's columns the regions reach, from the first to the last.
         let stride = TILE_STRIDE as usize;

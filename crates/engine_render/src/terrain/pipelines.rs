@@ -1,7 +1,8 @@
 //! Terrain's pipelines and the terrain group: its subdivisions' leaves in
 //! the opaque passes (forward, or deferred as visibility and resolves),
 //! reflection probe faces and the shadow maps drawn every frame, the kept
-//! levels' patches, and the group binding the arrays, tables, views,
+//! levels' patches, and the group binding the arrays (the tiles' error
+//! pyramids among them, which the subdivisions' passes read), tables, views,
 //! leaves, material, sky and macro color maps and deformation's map they
 //! read.
 
@@ -100,7 +101,9 @@ impl TerrainPipelines {
     /// Rebuilds the terrain group, the bakes' and the subdivisions', when
     /// what `sources` binds was replaced.
     pub(super) fn ensure_group(&mut self, device: &wgpu::Device, sources: &GroupSources<'_>) {
-        let Some((heights, normals, control)) = sources.atlas.views() else {
+        let (Some((heights, normals, control)), Some((ground_errors, water_errors))) =
+            (sources.atlas.views(), sources.atlas.errors())
+        else {
             return;
         };
         let (tables, maps, sky, deformation) = (
@@ -186,6 +189,8 @@ impl TerrainPipelines {
                             crate::pipelines::sampler(&sources.atlas.control_sampler),
                         ),
                         crate::buffers::entry("terrain_surface_leaves", surface_leaves),
+                        ("terrain_errors", crate::pipelines::view(ground_errors)),
+                        ("water_errors", crate::pipelines::view(water_errors)),
                     ],
                 )
             };

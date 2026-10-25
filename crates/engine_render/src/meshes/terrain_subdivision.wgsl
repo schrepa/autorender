@@ -1,9 +1,20 @@
 // Terrain's subdivision, after `meshes/terrain.wgsl`: each frame, every
 // terrain the camera draws splits and merges the leaves of a concurrent
 // binary tree over its square (Dupuy et al., "Concurrent Binary Trees (with
-// application to longest edge bisection)", HPG 2020) by how far each leaf's
-// flat triangle strays from the true surface in pixels seen from the detail
-// eye, and lists the leaves the frame draws (`terrain_surface.wgsl`).
+// application to longest edge bisection)", HPG 2020) by how far the meshlet
+// each leaf draws strays from its surface in pixels seen from the detail
+// eye, and lists the leaves the frame draws (`terrain_surface.wgsl`). A
+// terrain holding water has a second tree for its water, run by the same
+// code over its own buffers: a ground's tree measures the ground, a water's
+// the water's surface, and draws only the leaves over water.
+//
+// A leaf's error is exact, not sampled: every resident tile carries error
+// pyramids of its ground and of its water's surface, each cell of its
+// samples' grid holding the most a triangle of the bisection lying in it
+// strays from the samples' surface, and a leaf's meshlet strays by at most
+// the most of the cells of its pieces' size it covers, read where the finest
+// resident tile holds each (`surface_ground_error`, `surface_water`). Deep
+// materials add how far their displacement bends over the meshlet.
 //
 // The tree is the paper's bitfield, a bit for each node of its deepest
 // level, set at the first of each leaf's, under the counts of its levels
@@ -30,15 +41,15 @@
 // Splits stop where a terrain's leaves would outnumber its room, counted.
 
 // A terrain's subdivision: the side of its square (meters, terrain-local
-// from its origin) and the pixels a leaf's flat triangle may stray from the
-// true surface seen from the detail eye; its tree's deepest level, where its
-// bitfield starts in `subdivision_tree` (words, after the counts), where its
-// leaves start in `subdivision_leaves` and `subdivision_nodes` and how many
-// it holds at most; 1 on frames merging leaves (0: splitting) and its place
-// in `subdivision_args`; the ground it draws (terrain-local, least corner
-// then greatest) and the ground surroundings leave to the terrain they
-// surround (all 0 without); and the camera's frustum, its planes inward in
-// the world.
+// from its origin), the pixels a leaf's meshlet may stray from its surface
+// seen from the detail eye, and 1 for a tree of its water's surface (0: of
+// its ground); its tree's deepest level, where its bitfield starts in
+// `subdivision_tree` (words, after the counts), where its leaves start in
+// `subdivision_leaves` and `subdivision_nodes` and how many it holds at
+// most; 1 on frames merging leaves (0: splitting) and its place in
+// `subdivision_args`; the ground it draws (terrain-local, least corner then
+// greatest) and the ground surroundings leave to the terrain they surround
+// (all 0 without); and the camera's frustum, its planes inward in the world.
 struct TerrainSubdivision {
     square: vec4<f32>,
     tree: vec4<u32>,
@@ -170,20 +181,25 @@ fn subdivision_neighbor(node: u32) -> u32 {
     return across;
 }
 
-// A point of a leaf as the ground draws it: on the true surface (world),
-// displaced where deep materials displace it, and whether any level holds
+// A point of a leaf: on the ground's true surface (world), moved by `lift`
+// where deep materials displace it as a ground's tree draws it (`displaced`;
+// a water's tree reads the ground alone), and whether any level holds
 // ground there.
 struct SubdivisionPoint {
     world: vec3<f32>,
+    lift: vec3<f32>,
     found: bool,
 }
 
-fn subdivision_point(local: vec2<f32>) -> SubdivisionPoint {
+fn subdivision_point(local: vec2<f32>, displaced: bool) -> SubdivisionPoint {
     let held = terrain_level_height(local, 0u);
     var point: SubdivisionPoint;
     point.found = held.found;
     point.world = terrain.origin.xyz + vec3<f32>(local.x, held.height, local.y);
-    point.world += terrain_displacement(point.world, local);
+    if displaced {
+        point.lift = terrain_displacement(point.world, local);
+        point.world += point.lift;
+    }
     return point;
 }
 
@@ -200,12 +216,13 @@ fn subdivision_seen(low: vec3<f32>, high: vec3<f32>) -> bool {
     return true;
 }
 
-// How a leaf stands: whether the terrain draws it (within its edges, not
-// wholly within its cutout, over ground some level holds), and whether it
-// wants splitting: across those edges, which its leaves split to follow, or
-// where the meshlet it draws strays from the true surface by more pixels
-// than the target where the camera sees it, SUBDIVISION_UNSEEN times as
-// many where it does not.
+// How a leaf stands: whether its tree draws it (within the terrain's edges,
+// not wholly within its cutout, and over ground some level holds, or on a
+// water's tree over water: `surface_water`), and whether it wants
+// splitting: across those edges, which its leaves split to follow, or where
+// the meshlet it draws may stray from its surface by more pixels than the
+// target, at the size of its nearest pixel seen from the detail eye, where
+// the camera sees it, SUBDIVISION_UNSEEN times as many where it does not.
 struct SubdivisionMeasure {
     drawn: bool,
     splits: bool,
@@ -221,11 +238,19 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
         || (all(low >= cutout.xy) && all(high <= cutout.zw)) {
         return measure;
     }
-    let a = subdivision_point(triangle.a);
-    let b = subdivision_point(triangle.b);
-    let c = subdivision_point(triangle.c);
-    let center = subdivision_point((triangle.a + triangle.b + triangle.c) / 3.0);
-    measure.drawn = a.found || b.found || c.found || center.found;
+    let water = subdivision.square.z > 0.5;
+    var over = SurfaceWater(false, 0.0);
+    if water {
+        over = surface_water(triangle);
+        if !over.holds {
+            return measure;
+        }
+    }
+    let a = subdivision_point(triangle.a, !water);
+    let b = subdivision_point(triangle.b, !water);
+    let c = subdivision_point(triangle.c, !water);
+    let center = subdivision_point((triangle.a + triangle.b + triangle.c) / 3.0, !water);
+    measure.drawn = water || a.found || b.found || c.found || center.found;
     if !measure.drawn {
         return measure;
     }
@@ -234,33 +259,56 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
         measure.splits = true;
         return measure;
     }
-    // How far its sides' middles and its center stray from the plane
-    // through its corners: the surface's curvature over it, none over flat
-    // ground however near, each in the pixels it spans seen from the detail
-    // eye; and the error the leaf draws, its meshlet's pieces a
-    // 2^SURFACE_MESHLET_LEVEL-th of its sides, over which a smoothly
-    // curving surface strays as the square of that less.
-    let ab = subdivision_point((triangle.a + triangle.b) * 0.5);
-    let bc = subdivision_point((triangle.b + triangle.c) * 0.5);
-    let ca = subdivision_point((triangle.c + triangle.a) * 0.5);
-    let normal = cross(b.world - a.world, c.world - a.world);
-    let unit = normal / max(length(normal), 1.0e-12);
-    let strays = abs(vec4<f32>(dot(ab.world - a.world, unit), dot(bc.world - a.world, unit),
-        dot(ca.world - a.world, unit), dot(center.world - a.world, unit)));
-    let across = max(vec4<f32>(detail_across(ab.world), detail_across(bc.world),
-        detail_across(ca.world), detail_across(center.world)), vec4<f32>(1.0e-6));
-    let parts = f32(1u << SURFACE_MESHLET_LEVEL);
-    let pixels = strays / across / (parts * parts);
-    // Seen where its points' box, widened by how far it strays, reaches
-    // into the camera's frustum.
-    let stray = vec3<f32>(max(max(strays.x, strays.y), max(strays.z, strays.w)));
-    let lowest = min(min(min(a.world, b.world), min(c.world, center.world)),
-        min(min(ab.world, bc.world), ca.world)) - stray;
-    let highest = max(max(max(a.world, b.world), max(c.world, center.world)),
-        max(max(ab.world, bc.world), ca.world)) + stray;
-    let allowed = subdivision.square.y
-        * select(SUBDIVISION_UNSEEN, 1.0, subdivision_seen(lowest, highest));
-    measure.splits = max(max(pixels.x, pixels.y), max(pixels.z, pixels.w)) > allowed;
+    let ab = subdivision_point((triangle.a + triangle.b) * 0.5, !water);
+    let bc = subdivision_point((triangle.b + triangle.c) * 0.5, !water);
+    let ca = subdivision_point((triangle.c + triangle.a) * 0.5, !water);
+    // How far its meshlet may stray from its surface (meters), and how far
+    // its surface may stand above its points and that bound: the ground's
+    // not at all; the water's by its depth over its ground, which the
+    // leaf's side holds, as water deeper than its leaves are wide lies flat
+    // and open, where its leaves do not split.
+    var bound = over.error;
+    var rise = max(high.x - low.x, high.y - low.y);
+    if !water {
+        // Deep materials' displacement: how far it moves its sides' middles
+        // and its center off the plane through its corners beyond what it
+        // moves its corners, over its meshlet's pieces, a
+        // 2^SURFACE_MESHLET_LEVEL-th of its sides, over which a smoothly
+        // curving displacement strays as the square of that less.
+        let normal = cross(b.world - a.world, c.world - a.world);
+        let unit = normal / max(length(normal), 1.0e-12);
+        let bent = abs(vec4<f32>(dot(ab.lift - (a.lift + b.lift) * 0.5, unit),
+            dot(bc.lift - (b.lift + c.lift) * 0.5, unit),
+            dot(ca.lift - (c.lift + a.lift) * 0.5, unit),
+            dot(center.lift - (a.lift + b.lift + c.lift) / 3.0, unit)));
+        let parts = f32(1u << SURFACE_MESHLET_LEVEL);
+        let displacement = max(max(bent.x, bent.y), max(bent.z, bent.w)) / (parts * parts);
+        bound = surface_ground_error(triangle) + displacement;
+        rise = 0.0;
+    }
+    // The size of its nearest pixel, the least a pixel spans seen from the
+    // detail eye at its points (and on a water's tree at them risen as far
+    // as its surface may stand); seen where the box of its points, widened
+    // by its bound and up by its rise, reaches into the camera's frustum.
+    let up = vec3<f32>(0.0, rise, 0.0);
+    let risen = vec3<f32>(0.0, bound + rise, 0.0);
+    var points = array<vec3<f32>, 7>(a.world, b.world, c.world, center.world, ab.world,
+        bc.world, ca.world);
+    var across = detail_across(points[0]);
+    var lowest = points[0];
+    var highest = points[0];
+    for (var index = 0u; index < 7u; index++) {
+        let point = points[index];
+        across = min(across, detail_across(point));
+        if water {
+            across = min(across, detail_across(point + risen));
+        }
+        lowest = min(lowest, point);
+        highest = max(highest, point);
+    }
+    let seen = subdivision_seen(lowest - vec3<f32>(bound), highest + vec3<f32>(bound) + up);
+    let allowed = subdivision.square.y * select(SUBDIVISION_UNSEEN, 1.0, seen);
+    measure.splits = bound / max(across, 1.0e-6) > allowed;
     return measure;
 }
 

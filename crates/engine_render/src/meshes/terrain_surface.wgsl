@@ -2,8 +2,10 @@
 // `terrain_vertex.wgsl`: the leaves each terrain's subdivision lists this
 // frame (`meshes/terrain_subdivision.wgsl`), triangles of longest edge
 // bisection over the terrain's square, each drawn as a meshlet bisecting it
-// evenly further; and the ground's true height, which the leaves draw within
-// about a pixel and everything standing on the ground reads.
+// evenly further; the ground's true height, which the leaves draw within
+// about a pixel and everything standing on the ground reads; and how far a
+// leaf's meshlet strays from the ground or the water's surface, read from
+// the error pyramids of the resident tiles under it.
 
 // Each terrain's levels, finest first, from `terrain.directory.x`: four
 // words each (where its tiles' entries start, its tiles along x and z, and
@@ -130,4 +132,170 @@ fn surface_relative(local: vec2<f32>, height: f32) -> vec3<f32> {
     let from_anchor = local - vec2<f32>(bitcast<vec2<i32>>(terrain.surface.zw)) * top;
     return vec3<f32>(from_anchor.x + terrain.anchor.x, height + terrain.anchor.y,
         from_anchor.y + terrain.anchor.z);
+}
+
+// Each resident tile's error pyramids, at its layer of the height array
+// (`engine_terrain::ErrorPyramid`): mip k - 1 holds a texel for each cell of
+// 2^k of its samples a side (128 x 128 cells of 2 samples down to one of
+// 256), the most a triangle of longest edge bisection lying in the cell, its
+// corners on the surface, strays from the surface the tile's samples stand
+// at (meters, rounded up): its ground's (`terrain_errors`) and its water's
+// surface's (`water_errors`), which holds -1 over cells where no sample is
+// wet and 65504 over those where one is and another holds no surface (a
+// shore wider than the surface continues under its banks). Only the
+// subdivision's passes read them.
+@group(1) @binding(62) var terrain_errors: texture_2d_array<f32>;
+@group(1) @binding(63) var water_errors: texture_2d_array<f32>;
+// The pyramids' mips (`gpu_layouts::constants::ERROR_MIPS`).
+const SURFACE_ERROR_MIPS: u32 = 8u;
+
+// How a leaf's meshlet stands over a surface, as the error pyramids of the
+// tiles under it bound it: whether a wet sample lies under the leaf or
+// within one of its pieces of it (`holds`, over the water's surface), and
+// the most its pieces stray from the surface's samples (meters).
+struct SurfaceWater {
+    holds: bool,
+    error: f32,
+}
+
+// The finest level, from level `first` on, holding a resident tile over
+// block `block` (counted along x and z in level `first`'s tiles), and that
+// tile's layer; the layer 0xffffffff where none does.
+fn surface_tile(block: vec2<u32>, first: u32) -> vec2<u32> {
+    let base = terrain.directory.x;
+    for (var index = first; index < terrain.directory.y; index++) {
+        let header = base + index * 4u;
+        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tile = block >> vec2<u32>(min(index - first, 31u));
+        if any(tile >= tiles) {
+            continue;
+        }
+        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        if layer != 0xffffffffu {
+            return vec2<u32>(index, layer);
+        }
+    }
+    return vec2<u32>(0u, 0xffffffffu);
+}
+
+// Whether the square `half` from `middle` each way reaches over the inner
+// side of the edge from `tail` to `head` of a triangle turning as `turn`'s
+// sign says: its corner farthest into the triangle lies past the edge.
+fn surface_inside(tail: vec2<f32>, head: vec2<f32>, turn: f32, middle: vec2<f32>,
+        half: f32) -> bool {
+    let normal = turn * vec2<f32>(tail.y - head.y, head.x - tail.x);
+    return dot(normal, middle - tail) + half * (abs(normal.x) + abs(normal.y)) > 0.0;
+}
+
+// Whether the square of a piece whose least corner is `corner`, widened by
+// `widen` pieces each way, overlaps the triangle from `a` to `b` to `c` over
+// an area (all in pieces, so exactly): neither a side of the triangle's
+// bounds nor one of its edges leaves the square wholly outside it.
+fn surface_overlaps(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, corner: vec2<f32>,
+        widen: f32) -> bool {
+    let low = corner - vec2<f32>(widen);
+    let high = corner + vec2<f32>(1.0 + widen);
+    if any(high <= min(min(a, b), c)) || any(low >= max(max(a, b), c)) {
+        return false;
+    }
+    let middle = (low + high) * 0.5;
+    let half = 0.5 + widen;
+    let turn = sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+    return surface_inside(a, b, turn, middle, half) && surface_inside(b, c, turn, middle, half)
+        && surface_inside(c, a, turn, middle, half);
+}
+
+// How a leaf's meshlet stands over a surface whose tiles' error pyramids are
+// `errors`. Its pieces each lie in a dyadic square a 2^SURFACE_MESHLET_LEVEL-th
+// of the leaf's own a side (halves of it at odd depths, quarters cut by both
+// diagonals at even ones), so the most of the pyramids' cells of that size
+// the leaf covers bounds them: each read from the finest resident tile
+// holding it, at the mip of its size there, adding nothing where it is no
+// wider than that tile's samples, which splitting further draws no better.
+// Cells within a piece of the leaf count toward `holds` too where `around`
+// says. The directory is walked once for each tile of the first level whose
+// tiles hold a cell whole that the cells fall in.
+fn surface_cells(triangle: SurfaceTriangle, errors: texture_2d_array<f32>, around: bool)
+        -> SurfaceWater {
+    var found = SurfaceWater(false, 0.0);
+    let low = min(min(triangle.a, triangle.b), triangle.c);
+    let high = max(max(triangle.a, triangle.b), triangle.c);
+    // The leaf's dyadic square, as wide as the longer side of its bounds (its
+    // legs at odd depths, its hypotenuse at even ones), and its pieces'.
+    let side = max(high.x - low.x, high.y - low.y);
+    let parts = i32(1u << SURFACE_MESHLET_LEVEL);
+    let piece = side / f32(parts);
+    let origin = floor(low / side) * side;
+    // The leaf in pieces from its square's least corner, and its square's
+    // first cell counted from the terrain's origin, exact powers of two
+    // apart throughout.
+    let a = (triangle.a - origin) / piece;
+    let b = (triangle.b - origin) / piece;
+    let c = (triangle.c - origin) / piece;
+    let first = vec2<i32>(origin / piece);
+    // Octaves from a level-0 tile's side to a piece's, the first level whose
+    // tiles hold a cell whole, and the cells along a side of one of those
+    // tiles as a power of two.
+    let octaves = i32(round(log2(piece / (256.0 * terrain.anchor.w))));
+    let level = u32(max(octaves, 0));
+    let block = u32(i32(level) - octaves);
+    let reach = select(0, 1, around);
+    let cells_low = first - vec2<i32>(reach);
+    let cells_high = first + vec2<i32>(parts - 1 + reach);
+    let blocks_low = cells_low >> vec2<u32>(block);
+    let blocks_high = cells_high >> vec2<u32>(block);
+    for (var bz = blocks_low.y; bz <= blocks_high.y; bz++) {
+        for (var bx = blocks_low.x; bx <= blocks_high.x; bx++) {
+            if bx < 0 || bz < 0 {
+                continue;
+            }
+            let held = surface_tile(vec2<u32>(vec2<i32>(bx, bz)), level);
+            if held.y == 0xffffffffu {
+                continue;
+            }
+            // Cells along a side of the tile holding them, as a power of
+            // two: the mip holding them, and past its finest the octaves by
+            // which they are narrower than its cells, and than the tile's
+            // samples.
+            let fit = u32(i32(held.x) - octaves);
+            let mip = SURFACE_ERROR_MIPS - 1u - min(fit, SURFACE_ERROR_MIPS - 1u);
+            let narrow = min(fit - min(fit, SURFACE_ERROR_MIPS - 1u), 31u);
+            let span = min(fit, 31u);
+            let start = max(cells_low, vec2<i32>(bx, bz) << vec2<u32>(block));
+            let end = min(cells_high, ((vec2<i32>(bx, bz) + 1) << vec2<u32>(block)) - 1);
+            for (var z = start.y; z <= end.y; z++) {
+                for (var x = start.x; x <= end.x; x++) {
+                    let corner = vec2<f32>(vec2<i32>(x, z) - first);
+                    let over = surface_overlaps(a, b, c, corner, 0.0);
+                    if !over && !(around && surface_overlaps(a, b, c, corner, 1.0)) {
+                        continue;
+                    }
+                    let cell = vec2<u32>(vec2<i32>(x, z));
+                    let within = cell - ((cell >> vec2<u32>(span)) << vec2<u32>(span));
+                    let texel = vec2<i32>(within >> vec2<u32>(narrow));
+                    let bound = textureLoad(errors, texel, i32(held.y), i32(mip)).x;
+                    found.holds = found.holds || bound >= 0.0;
+                    if over && fit < SURFACE_ERROR_MIPS {
+                        found.error = max(found.error, bound);
+                    }
+                }
+            }
+        }
+    }
+    return found;
+}
+
+// The most the pieces of a leaf's meshlet stray from the ground's samples
+// (meters), as its tiles' error pyramids bound it (`surface_cells`).
+fn surface_ground_error(triangle: SurfaceTriangle) -> f32 {
+    return surface_cells(triangle, terrain_errors, false).error;
+}
+
+// Whether a wet sample lies under a leaf or within one of its pieces of it,
+// and the most the pieces of its meshlet stray from the water's surface:
+// 65504 or more where a cell it covers is a shore wider than the surface
+// continues under its banks, which splits it until its pieces lie where
+// the surface reaches (`surface_cells`).
+fn surface_water(triangle: SurfaceTriangle) -> SurfaceWater {
+    return surface_cells(triangle, water_errors, true);
 }

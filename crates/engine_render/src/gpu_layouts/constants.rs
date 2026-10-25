@@ -157,6 +157,10 @@ gpu_consts! {
     // crate::terrain
     /// A directory entry of a tile not resident.
     pub(crate) const NOT_RESIDENT: u32 = u32::MAX => ["NOT_RESIDENT"];
+    /// Mips of each tile's error pyramids, a cell of 2 samples a side a
+    /// texel at the finest, up to one of the tile's 256
+    /// (`engine_terrain::ErrorPyramid`).
+    pub(crate) const ERROR_MIPS: u32 = engine_core::terrain_data::ERROR_MIPS => ["SURFACE_ERROR_MIPS"];
     /// Vertices along a patch side, and the grid's before the skirts'.
     pub(crate) const TERRAIN_GRID: u32 = engine_core::terrain_data::PATCH_QUADS + 1 => ["TERRAIN_GRID"];
     pub(crate) const TERRAIN_GRID_VERTICES: u32 = TERRAIN_GRID * TERRAIN_GRID => ["TERRAIN_GRID_VERTICES"];

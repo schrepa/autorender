@@ -82,6 +82,7 @@ shared_groups! {
             water_sim_cells, water_sim_ground, water_sim_beds, water_directory, water_leaves,
             water_leaf_record
         ],
+        errors: 62..64 [terrain_errors, water_errors],
     }
     SHADER @ 2 {
         poses: 0..6 [poses, colors, previous_poses, palette, previous_palette, grounds],

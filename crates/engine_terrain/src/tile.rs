@@ -14,8 +14,8 @@ use crate::rivers::RiverRaster;
 use crate::surface::{BiomeRules, Control, RowInputs, RowScratch, SampleShape, smooth_gradient};
 use crate::tile_water::{TileWater, WaterPoint, WaterState};
 use crate::{
-    HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placing, Pyramid, TILE_QUADS,
-    TILE_SAMPLES, TILE_STRIDE, TileKey, TileShading,
+    ErrorPyramid, HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placing, Pyramid,
+    TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey, TileShading,
 };
 
 mod beds;
@@ -64,9 +64,10 @@ pub(crate) fn river_meters(step: u16) -> f32 {
 /// with a surface each sample's control value; each sample's meters to the
 /// nearest river's edge where rivers reach it, and the bed of the river
 /// holding it where it lies in one; what culling knows of each of its
-/// patches, made with it; and for a terrain's tiles of level 1 and coarser,
-/// once it arrived, the shading they take from a record of their own, level
-/// 0's averaged.
+/// patches, made with it; the error pyramids of its ground and of its
+/// water's surface ([`ErrorPyramid`]), made with them; and for a terrain's
+/// tiles of level 1 and coarser, once it arrived, the shading they take from
+/// a record of their own, level 0's averaged.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tile {
     key: TileKey,
@@ -80,6 +81,10 @@ pub struct Tile {
     placing: Option<Placing>,
     // The water standing on it, the world's one water there.
     water: Option<TileWater>,
+    // The error pyramids of its ground and of its water, never encoded:
+    // they are made again wherever its heights or water are.
+    ground_errors: Arc<ErrorPyramid>,
+    water_errors: Option<Arc<ErrorPyramid>>,
     shading: Option<Arc<TileShading>>,
     bounds: [f32; 2],
     patch_bounds: Box<[[f32; 2]]>,
@@ -139,7 +144,8 @@ impl Tile {
     }
 
     /// [`Self::new`] but for what culling knows of its patches, which a
-    /// tile read back holds already.
+    /// tile read back holds already: its bounds and its ground's error
+    /// pyramid made from its heights.
     fn shaped(
         key: TileKey,
         spacing: f32,
@@ -154,6 +160,7 @@ impl Tile {
             return None;
         }
         let holes = holes.filter(|bits| bits.iter().any(|&word| word != 0));
+        let ground_errors = Arc::new(ErrorPyramid::ground(&heights));
         let mut tile = Self {
             key,
             spacing,
@@ -165,6 +172,8 @@ impl Tile {
             placed: None,
             placing: None,
             water: None,
+            ground_errors,
+            water_errors: None,
             shading: None,
             bounds: [0.0; 2],
             patch_bounds: vec![[0.0; 2]; (PATCHES_PER_TILE * PATCHES_PER_TILE) as usize]
@@ -298,8 +307,17 @@ impl Tile {
     /// stands over its ground or the sizes do not match.
     #[must_use]
     pub(crate) fn with_water(mut self, surface: Box<[f32]>, info: Box<[[u32; 3]]>) -> Self {
-        self.water = TileWater::new(surface, info, &self.heights, self.spacing);
+        let water = TileWater::new(surface, info, &self.heights, self.spacing);
+        self.hold(water);
         self
+    }
+
+    /// Holds `water` as the water standing on it, with its error pyramid.
+    fn hold(&mut self, water: Option<TileWater>) {
+        self.water_errors = water
+            .as_ref()
+            .map(|water| Arc::new(ErrorPyramid::water(water.surfaces(), &self.heights)));
+        self.water = water;
     }
 
     /// The water standing on the tile, if any does.
@@ -307,13 +325,29 @@ impl Tile {
         self.water.as_ref()
     }
 
+    /// The error pyramid of its ground: the most the triangles of a
+    /// subdivision standing on its samples stray from them, by cell.
+    pub fn ground_errors(&self) -> &ErrorPyramid {
+        &self.ground_errors
+    }
+
+    /// The error pyramid of its water's surface, wet or continued under the
+    /// banks ([`TileWater::surfaces`]); [`ErrorPyramid::dry`] where no water
+    /// stands on it.
+    pub fn water_errors(&self) -> &ErrorPyramid {
+        match &self.water_errors {
+            Some(errors) => errors,
+            None => ErrorPyramid::dry(),
+        }
+    }
+
     /// The tile holding `water` in place of its own: water made over its
     /// samples as its record holds them, as a job of its settled water
-    /// makes it ([`Tile::steadied`], [`Tile::flowing`]). Its ground,
-    /// objects and shading stay as they are.
+    /// makes it ([`Tile::steadied`], [`Tile::flowing`]), with its error
+    /// pyramid. Its ground, objects and shading stay as they are.
     #[must_use]
     pub fn holding(&self, water: Option<TileWater>) -> Self {
-        Self {
+        let mut tile = Self {
             key: self.key,
             spacing: self.spacing,
             heights: self.heights.clone(),
@@ -323,13 +357,17 @@ impl Tile {
             river_beds: self.river_beds.clone(),
             placed: self.placed.clone(),
             placing: self.placing,
-            water,
+            water: None,
+            ground_errors: Arc::clone(&self.ground_errors),
+            water_errors: None,
             shading: self.shading.clone(),
             bounds: self.bounds,
             patch_bounds: self.patch_bounds.clone(),
             patch_holes: self.patch_holes,
             patch_culling: self.patch_culling.clone(),
-        }
+        };
+        tile.hold(water);
+        tile
     }
 
     /// The shading the tile shades with, once its record arrived: level 0's
@@ -1371,8 +1409,9 @@ impl Layers {
 /// A tile's key, spacing, samples, holes, control values, meters to
 /// rivers' edges and their beds, placed objects and which of them, and its
 /// water as its own record holds it ([`TileWater`]'s); reading rebuilds its
-/// bounds as [`Tile::new`] does. Its shading is a record of its own
-/// ([`TileShading`]), which a tile read back holds none of.
+/// bounds and its error pyramids as [`Tile::new`] and its water make them.
+/// Its shading is a record of its own ([`TileShading`]), which a tile read
+/// back holds none of.
 /// Tiles travel with their heights and water surfaces at their nearest
 /// steps of the height grid ([`crate::codec::HEIGHT_STEP`]): a tile read
 /// back is the record every host shows.
@@ -1428,7 +1467,7 @@ impl crate::codec::Codec for Tile {
             tile = tile.with_control(control).ok_or(invalid)?;
         }
         tile = tile.with_rivers(river_edges, river_beds).ok_or(invalid)?;
-        tile.water = water;
+        tile.hold(water);
         tile.placed = placed;
         tile.placing = placing;
         Ok(tile)
