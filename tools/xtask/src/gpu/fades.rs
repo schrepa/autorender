@@ -4,15 +4,16 @@
 //! comparison turned into a number) by a size on screen (what the detail
 //! eye's measures give, `scene.wgsl`'s `detail_distance`, `detail_across`
 //! and `detail_span`, and a pixel's derivatives) only to filter it, a
-//! pattern drawn wherever its features span about two pixels and finer
-//! ones averaged (a level of its mipmaps or of a pyramid, its mean, its
-//! variance into roughness), or to hand over between two representations
-//! with the same mean (an impostor and its mesh, blades and their canopy,
-//! occlusion's levels); never to fade it toward nothing. Every such
-//! decision lies in a function [`FILTERS`] lists, each with what stands in
-//! for the detail it decides on, or on a line marked
-//! `// filter: <what stands in>`; any other fails the build. Sizes are
-//! followed as the handover check follows the camera
+//! pattern drawn wherever its features span about two pixels, or the
+//! steady size temporal antialiasing holds (`scene.wgsl`'s
+//! `STEADY_PIXELS`), and finer ones averaged (a level of its mipmaps or of
+//! a pyramid, its mean, its variance into roughness), or to hand over
+//! between two representations with the same mean (an impostor and its
+//! mesh, blades and their canopy, occlusion's levels); never to fade it
+//! toward nothing. Every such decision lies in a function [`FILTERS`]
+//! lists, each with what stands in for the detail it decides on, or on a
+//! line marked `// filter: <what stands in>`; any other fails the build.
+//! Sizes are followed as the handover check follows the camera
 //! (`handovers::sweep`): through expressions, locals, arguments, results
 //! and calls; a direction (`normalize`'s) holds none, and what a texture
 //! gives is its texels as filtering averages them.
@@ -61,13 +62,8 @@ const FILTERS: &[(&str, &str)] = &[
     ),
     (
         "ocean_keep",
-        "the sea's waves a pixel or a sample spacing resolves, the shorter ones' slopes as \
-         roughness",
-    ),
-    (
-        "ocean_normal",
-        "the sea's waves longer than two pixels tilting it, the shorter ones' slopes as \
-         roughness",
+        "the sea's waves a sample spacing or the steady size resolves, the shorter ones' \
+         slopes as roughness",
     ),
     (
         "placed_thinned",
@@ -103,8 +99,8 @@ const FILTERS: &[(&str, &str)] = &[
     ),
     (
         "water_contact",
-        "foam against what stands behind the pixel, a band narrower than the pixel showing \
-         its share",
+        "foam against what stands behind the pixel, a band narrower than the steady size \
+         spreading its share over it",
     ),
     (
         "water_drawn",
@@ -113,25 +109,30 @@ const FILTERS: &[(&str, &str)] = &[
     ("water_edge", "a waterline as sharp as a pixel resolves it"),
     (
         "water_froth",
-        "foam's grain as far as the pixel resolves it, the rest averaged into its cover",
+        "foam's grain as far as the steady size resolves it, the rest averaged into its cover",
     ),
     (
         "water_resolved",
-        "standing waves whole where their features span two pixels, the finer ones' slopes as \
-         roughness",
+        "standing waves whole where their features span the steady size, the finer ones' \
+         slopes as roughness",
     ),
     (
         "water_tile_sample",
-        "the waves' tiles through their levels and anisotropy, the slopes they average as \
-         variance",
+        "the waves' tiles through the levels and anisotropy whose texels span the steady \
+         size, the slopes they average as variance",
     ),
     (
         "water_turned_read",
-        "the turbulence tile's rungs the pixel resolves, the finer ones' slopes as roughness",
+        "the turbulence tile's rungs the steady size resolves, the finer ones' slopes as \
+         roughness",
+    ),
+    (
+        "water_turning",
+        "the water's normal turning within the pixel, its spread as roughness (Kaplanyan)",
     ),
     (
         "water_wind_waves",
-        "the wind's tiles the pixel resolves, the finer ones' slopes as roughness",
+        "the wind's tiles the steady size resolves, the finer ones' slopes as roughness",
     ),
     (
         "widened",

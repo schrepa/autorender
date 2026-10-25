@@ -5,11 +5,12 @@
 // tile turned to the flow and drawn out along it, one to two depths long and
 // as high as the eddies' speed squared over gravity; short waves the bed
 // holds still where the water runs near the speed of its own waves; and
-// waves standing about what it flows past. Every source is drawn as far as a
-// pixel resolves its waves, and what the pixel averages of their slopes
-// roughens the surface instead (LEAN mapping), never faded; a source with no
-// share, or whose waves a pixel hides whole, reads no texture, its slopes'
-// variance known from what raised them.
+// waves standing about what it flows past. Every source is drawn as far as
+// its waves span the steady size (STEADY_PIXELS), and what a pixel averages
+// of the finer ones' slopes roughens the surface instead (LEAN mapping),
+// never faded; a source with no share, or whose waves the steady size hides
+// whole, reads no texture, its slopes' variance known from what raised
+// them.
 
 // Patterns the flow carries (Vlachos's flow maps), each drawn in two sets
 // half a life apart, each set carried from half a life before its middle to
@@ -63,19 +64,16 @@ const WATER_TURN_PATCH: f32 = 0.5;
 const WATER_CREST_HEIGHTS: f32 = 1.41421356;
 // Standing waves (Neyret and Praizelin; Yu, Neyret and Steed): the least
 // radius (meters) of what stands in the water, and the least speed (meters
-// a second) of the water flowing past it, that raise any; the pixels a
-// standing wave's features must span to show whole, what a pixel averages
-// of finer ones roughening the water instead; how far upstream of its
-// obstacle's middle a pillow heaps up, how long it runs along the flow and
-// how high it rises at most, in radii (the water it heaps up spills round
-// the obstacle); a front's crest's half width, in depths and at least
-// (meters), and the radii over which fronts fall off downstream; the share
-// of the velocity head the waves standing past obstacles in slower water
-// rise by, how much their wake widens a meter downstream, and the
-// wavelengths over which trains fall off; and the length and height of an
-// undular jump's waves, in depths.
+// a second) of the water flowing past it, that raise any; how far upstream
+// of its obstacle's middle a pillow heaps up, how long it runs along the
+// flow and how high it rises at most, in radii (the water it heaps up
+// spills round the obstacle); a front's crest's half width, in depths and
+// at least (meters), and the radii over which fronts fall off downstream;
+// the share of the velocity head the waves standing past obstacles in
+// slower water rise by, how much their wake widens a meter downstream, and
+// the wavelengths over which trains fall off; and the length and height of
+// an undular jump's waves, in depths.
 const WATER_STANDING_LEAST: vec2<f32> = vec2<f32>(0.0625, 0.2);
-const WATER_STANDING_PIXELS: f32 = 2.0;
 const WATER_PILLOW: vec3<f32> = vec3<f32>(0.5, 0.7, 0.5);
 const WATER_FRONT_CREST: vec2<f32> = vec2<f32>(2.0, 0.03);
 const WATER_FRONT_REACH: f32 = 8.0;
@@ -224,20 +222,19 @@ fn water_stretched(stretch: vec2<f32>) -> f32 {
 // `water_tile` blends its reads (Heitz and Neyret). Turning each read about
 // a middle nearby keeps a turning flow from shearing it. Its slopes (xy,
 // meters a meter, of unit variance before the stretch draws them out), the
-// variance of those the pixel hides (z), and its height in its root mean
-// square heights (w).
+// variance of those it hides at the steady size (z, `water_tile_sample`),
+// and its height in its root mean square heights (w).
 fn water_turned_tile(rung: f32, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>,
         heading: vec2<f32>, stretch: vec2<f32>, salt: u32) -> vec4<f32> {
     let tile = WATER_TURBULENCE_TILE;
     let side = vec2<f32>(-heading.y, heading.x);
     // The rung's periods a meter along the heading and across it, as its
-    // waves are drawn out; read as finely as the display shows them: the mip
-    // bias.
+    // waves are drawn out; read at the steady size (`water_steady`).
     let repeats = water_tile_repeats(tile) * exp2(-rung);
     let scale = repeats / stretch;
-    let detail = material_detail();
-    let turned_dx = vec2<f32>(dot(dx, heading), dot(dx, side)) * scale * detail;
-    let turned_dy = vec2<f32>(dot(dy, heading), dot(dy, side)) * scale * detail;
+    let steady = water_steady();
+    let turned_dx = vec2<f32>(dot(dx, heading), dot(dx, side)) * scale * steady;
+    let turned_dy = vec2<f32>(dot(dy, heading), dot(dy, side)) * scale * steady;
     let spacing = WATER_TURN_PATCH / repeats;
     let triangle = water_triangle(p / spacing);
     var corners = triangle.corners;
@@ -304,17 +301,18 @@ fn water_turned_heights(waves: WaterTurnedWaves) -> f32 {
 // Waves `waves` (`water_turned_source`'s) at `p` (meters along x and z),
 // which changes by `dx` and `dy` a pixel, running along `heading` and
 // salted by `salt`, as a pixel reads them (`WaterRead`): each rung read
-// turned (`water_turned_tile`), salted by its place on the ladder, so a rung
-// shows the same waves however the water around it changes; a rung whose
-// longest waves, as drawn, span no more than the pixel's narrower side
-// hidden whole, its slopes' variance known without reading it; and the
-// rungs blended keeping their spread, their heights' variance whole while
-// their read heights average out as the pixel comes to span many waves.
+// turned at the steady size (`water_turned_tile`), salted by its place on
+// the ladder, so a rung shows the same waves however the water around it
+// changes; a rung whose longest waves, as drawn, span no more than the
+// steady size across the pixel's narrower side hidden whole, its slopes'
+// variance known without reading it; and the rungs blended keeping their
+// spread, their heights' variance whole while their read heights average
+// out as the pixel comes to span many waves.
 fn water_turned_read(waves: WaterTurnedWaves, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>,
         heading: vec2<f32>, salt: u32) -> WaterRead {
-    // The meters the pixel spans across its narrower side, as finely as the
-    // display shows them: the mip bias.
-    let narrowest = min(length(dx), length(dy)) * material_detail();
+    // The meters the steady size spans across the pixel's narrower side
+    // (`water_steady`).
+    let narrowest = min(length(dx), length(dy)) * water_steady();
     let longest = water_tile_band(WATER_TURBULENCE_TILE).x
         * max(waves.stretch.x, waves.stretch.y);
     let stretched = water_stretched(waves.stretch);
@@ -400,13 +398,13 @@ fn water_carried_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flow: vec2<f3
 // Standing waves `sum` with a part added whose slopes are `gradient`
 // (meters a meter) and height `height` (meters), `amplitude` meters high at
 // its tallest there, its features `width` meters across, as a pixel
-// spanning `pixel` meters shows it: whole where they span
-// WATER_STANDING_PIXELS pixels, averaging out as they narrow below that,
-// what the pixel averages of their slopes hiding in their variance; its
-// heights' variance a sine's as tall.
+// spanning `pixel` meters shows it: whole where they span the steady size
+// (STEADY_PIXELS pixels), averaging out as they narrow below that, what the
+// pixel averages of their slopes hiding in their variance; its heights'
+// variance a sine's as tall.
 fn water_resolved(sum: WaterStanding, gradient: vec2<f32>, height: f32, amplitude: f32,
         width: f32, pixel: f32) -> WaterStanding {
-    let kept = saturate(width / (WATER_STANDING_PIXELS * max(pixel, 1.0e-6)));
+    let kept = saturate(width / (STEADY_PIXELS * max(pixel, 1.0e-6)));
     let steep = dot(gradient, gradient);
     var added = sum;
     added.drawn.slopes += gradient * kept;
@@ -560,7 +558,8 @@ fn water_flow_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, at: WaterAt,
         spread += bed.spread;
         heights += water_turned_heights(bed);
     }
-    // As finely as the display shows them: the mip bias.
+    // A pixel of the display (the mip bias), whose steady size their
+    // features must span to show whole (`water_resolved`).
     let standing = water_standing(at.obstacle, flow, depth, froude,
         max(length(dx), length(dy)) * material_detail(), anchored);
     read = water_waves_added(read, standing.drawn);

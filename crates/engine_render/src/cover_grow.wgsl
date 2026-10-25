@@ -10,7 +10,9 @@
 // their size on screen alone (`terrain_variety.wgsl`'s `cover_share`):
 // where blades as wide as their roots would span fewer than the settings'
 // pixels, as small a share of them stands, by their fixed ranks, widened
-// as many times so they span those pixels and cover as much ground
+// as many times so they span those pixels and cover as much ground, their
+// colors drawn toward their canopy's mean by the root of that share so a
+// pixel of fewer, wider blades varies as one of all of them would
 // (stochastic simplification, Cook, Halstead, Planck and Ryu 2007); and as
 // their height spans fewer than those pixels they retire in the same order,
 // the ground showing the leaves they leave as its canopy, their average
@@ -349,6 +351,20 @@ fn colors_at(local: vec2<f32>) -> vec4<f32> {
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
+// The color ground cover's canopy shows on average where a blade stands,
+// its kind's roots and tips `root` and `tip` before each blade's own shade
+// and its leaves' area `leaves` per square meter of ground, on ground of
+// normal `up` seen along `toward` (a unit vector toward the detail eye):
+// its tips' share of the colors a view meets among all its kind's blades
+// there (`cover_seen` through the leaves it crosses, `cover_depth`, the
+// density's setting applied), as the ground's canopy shows them where they
+// retire (`meshes/terrain.wgsl`'s `terrain_canopy_look`).
+fn canopy_mean(root: vec3<f32>, tip: vec3<f32>, leaves: f32, up: vec3<f32>,
+        toward: vec3<f32>) -> vec3<f32> {
+    let seen = cover_seen(cover_depth(leaves * grow.scale.x, toward, up));
+    return mix(root, tip, seen.tip);
+}
+
 // The cell's ground at its center, read once for its lanes, and its finest
 // resident level there.
 var<workgroup> cell_height: f32;
@@ -535,28 +551,40 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         }
         // As wide as the share standing here is small, so they cover as
         // much ground as all of them would.
-        let width = spec.shape.w * cover_widening(away, thin);
+        let widening = cover_widening(away, thin);
+        let width = spec.shape.w * widening;
         if !in_view(root + vec3<f32>(0.0, 0.5 * height, 0.0), max(height, width)) {
             continue;
         }
-        // Each blade's own shade about the tint the ground's own detail and
-        // macro colors give the ground at its root, so the blades a pixel
-        // holds average to what that ground shows.
+        // The tint the ground's own detail and macro colors give the ground
+        // at its root, so the blades a pixel holds average to what that
+        // ground shows, and each blade's own shade about it. Each blade
+        // stands for as many as it is widened, so a pixel averages that many
+        // times fewer: its colors draw toward the mean its canopy shows
+        // there (`canopy_mean`) by the root of the share standing, so the
+        // pixel varies as one averaging all of them would (Cook, Halstead,
+        // Planck and Ryu 2007's contrast preservation).
+        let normal = ground_normal(local);
         let textured = select(0.0, 1.0, palette[entry].params.w > 0.0);
-        let variation = (0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u)))
-            * ground_detail(world_xz, textured, 0.0) * macro_tint(colors_at(local), 1.0);
+        let tint = ground_detail(world_xz, textured, 0.0) * macro_tint(colors_at(local), 1.0);
+        let shade = 0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u));
+        let root_tint = palette[entry].far.rgb * tint;
+        let tip_tint = spec.color.rgb * tint;
+        let mean = canopy_mean(root_tint, tip_tint, palette[entry].canopy.w, normal,
+            (grow.eye.xyz - root) / max(away, 1.0e-3));
+        let contrast = inverseSqrt(widening);
         var blade: CoverBlade;
         blade.root = root;
         blade.height = height;
         let facing = unit(hash(seed ^ 0x85ebca6bu)) * TAU;
         if grow.foliage.x > 0.0 {
-            blade.facing = grounded_facing(facing, ground_normal(local));
+            blade.facing = grounded_facing(facing, normal);
         } else {
             blade.facing = bitcast<u32>(facing);
         }
         blade.width = width;
-        blade.root_color = pack_color(palette[entry].far.rgb * variation, 0.0);
-        blade.tip_color = pack_color(spec.color.rgb * variation, spec.color.w);
+        blade.root_color = pack_color(mix(mean, root_tint * shade, contrast), 0.0);
+        blade.tip_color = pack_color(mix(mean, tip_tint * shade, contrast), spec.color.w);
         // Kept blades fill the list from both ends: those whose height
         // spans fewer than STRAIGHT_PIXELS pixels, where no pixel shows
         // their curve, from the back, drawn straight with fewer joints.

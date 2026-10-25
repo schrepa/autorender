@@ -145,7 +145,9 @@ fn placed_thinned(thin: vec4<f32>, away: f32) -> f32 {
 // within that, and past it as wide as spans those pixels on screen, so they
 // never stand narrower; stochastic simplification of aggregate detail
 // (Cook, Halstead, Planck and Ryu 2007) keeps as small a share of them,
-// by their fixed ranks, so they cover as much ground (`cover_share`).
+// by their fixed ranks, so they cover as much ground (`cover_share`), and
+// draws their colors toward their canopy's by that share's root
+// (`cover_grow.wgsl`).
 fn cover_widening(away: f32, thin: f32) -> f32 {
     return max(away / max(thin, 1.0e-6), 1.0);
 }
@@ -207,6 +209,26 @@ fn cover_projection(rise: f32) -> vec2<f32> {
     let side = COVER_SIDE_PROJECTION * sqrt(max(1.0 - rise * rise, 0.0));
     let top = COVER_TOP_PROJECTION * abs(rise);
     return vec2<f32>(sqrt(side * side + top * top), side / max(side + top, 1.0e-6));
+}
+
+// The least cosine between a view and the ground's normal `cover_depth`
+// counts: views within about two degrees of the ground cross as many
+// leaves as one at two degrees, their path through the blades' layer
+// staying finite, long past the depth at which they meet only tips.
+const COVER_GRAZING: f32 = 0.03;
+
+// How many times their leaves' area a view along `toward` (a unit vector
+// toward the eye) crosses through blades whose leaves' area is `leaves` per
+// square meter of ground of normal `up`: the share of it blades turn toward
+// a view rising as this one does (`cover_projection`), along its path
+// through their layer, which stands up from the ground and so crosses as
+// many times its leaves as the ground's normal is upright over the view's
+// cosine to it. The ground's canopy (`meshes/terrain.wgsl`'s
+// `terrain_canopy`) and the blades' contrast (`cover_grow.wgsl`) count it
+// alike.
+fn cover_depth(leaves: f32, toward: vec3<f32>, up: vec3<f32>) -> f32 {
+    let facing = max(abs(dot(toward, up)), COVER_GRAZING);
+    return leaves * cover_projection(toward.y).x * up.y / facing;
 }
 
 // What a view sees of ground cover's blades on average: the share of their

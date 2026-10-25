@@ -543,6 +543,7 @@ gpu_consts! {
 }
 
 gpu_mirrors! {
+    engine_core::STEADY_PIXELS => ["STEADY_PIXELS"];
     engine_core::table_data::sky::MULTIPLE_SIDE => ["SKY_MULTIPLE_SIZE"];
     engine_core::table_data::falls::BUBBLES => ["FALL_MAP_BUBBLES"];
     engine_core::terrain_data::hydraulics::GRAVITY => ["SIM_GRAVITY" in WATER_SIM_SHADER, "WATER_GRAVITY", "WAVE_GRAVITY" in WATER_WAVES_SHADER];

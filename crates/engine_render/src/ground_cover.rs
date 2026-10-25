@@ -4,13 +4,16 @@
 //! of strips in the opaque pass (`meshes/cover.wgsl`). Blades stand by their
 //! size on screen alone (`terrain_variety.wgsl`'s `cover_share`): where
 //! blades as wide as their roots would span fewer pixels than the settings
-//! ask, a share of them stands by their fixed ranks, each widened by its
-//! inverse, so they cover as much ground (stochastic simplification of
-//! aggregate detail, Cook, Halstead, Planck and Ryu 2007); and they retire
-//! in that order as their height spans fewer, the ground showing the leaves
-//! they leave as its canopy. Every blade stands in a first tier of cells of
-//! level-0 samples; past it tiers of cells twice as wide each reach on to
-//! where the last retires. Where the blades the view takes in would pass
+//! ask (by default the steady size, `engine_core::STEADY_PIXELS`), a share
+//! of them stands by their fixed ranks, each widened by its inverse, so
+//! they cover as much ground, their colors drawn toward their canopy's mean
+//! by the root of that share, so they vary over a pixel as all of them
+//! would (stochastic simplification of aggregate detail, Cook, Halstead,
+//! Planck and Ryu 2007); and they retire in that order as their height
+//! spans fewer, the ground showing the leaves they leave as its canopy.
+//! Every blade stands in a first tier of cells of level-0 samples; past it
+//! tiers of cells twice as wide each reach on to where the last retires.
+//! Where the blades the view takes in would pass
 //! the settings' budget, or what one storage binding holds, they widen
 //! further, fewer covering as much ground, so a budget coarsens the grass,
 //! never its cover; blades past the buffer's capacity still drop and count,

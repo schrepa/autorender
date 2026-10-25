@@ -29,9 +29,10 @@
 // its current where it runs, with the waves its eddies raise, one to two
 // depths long and as high as their speed squared over gravity; short waves
 // its bed holds still where it runs near the speed of its own waves; and
-// waves standing about what it flows past. Each is drawn as far as a pixel
-// resolves it, and what the pixel averages of its slopes roughens the
-// surface. It mirrors the sky, the sun's disc and,
+// waves standing about what it flows past. Each is drawn as far as it spans
+// the steady size (STEADY_PIXELS), and what the pixel averages of its
+// slopes, and how far those drawn turn across it, roughens the surface. It
+// mirrors the sky, the sun's disc and,
 // through screen-space reflections, the scene; its body, tinted by the
 // sediment it carries, scatters the light entering it back toward the
 // eye; and what lies under it shows through, bent by the waves where the
@@ -1179,10 +1180,12 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
         flowing, anchored, time, stagger);
     // They ride its surface, tilting as it falls; and the slopes they hide
     // within a pixel roughen it, so where they run rough, it glints rather
-    // than mirroring the sky (Bruneton, Neyret and Holzschuch).
+    // than mirroring the sky (Bruneton, Neyret and Holzschuch), as does how
+    // far the normal of those it draws turns across the pixel
+    // (`water_turning`), so their glints widen instead of sparkling.
     let slopes = waves.slopes - at.slope;
     let normal = normalize(vec3<f32>(-slopes.x, 1.0, -slopes.y));
-    let roughness = water_roughness(waves.hidden);
+    let roughness = water_roughness(waves.hidden + water_turning(normal));
     let view = stable_normalize(-point);
     // Under the sea, the sea's water stands instead: its level
     // (`water.ocean.x`) is held relative to the eye.
