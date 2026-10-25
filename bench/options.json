@@ -146,7 +146,11 @@
         "water_froude",
         "water_turbulence",
         "water_white",
-        "water_reach"
+        "water_reach",
+        "water_foam",
+        "water_span",
+        "water_eddies",
+        "water_roughness"
       ],
       "what": "the debug view frames show in place of the shaded image, over the scene's"
     },

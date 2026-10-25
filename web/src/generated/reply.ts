@@ -1317,11 +1317,19 @@ export type WaterKind = "river" | "lake" | "fall" | "sea";
 
 /**
  * What a terrain's water is doing at a pixel, tiles' or simulated, as the
- * water's debug views show it.
+ * water's debug views show it: its numbers to a half float's precision,
+ * its shares to 1/255.
  */
 export interface WaterProbe {
   /** Meters of water over the ground. */
   depth: number;
+  /**
+   * Its eddies' turbulent Froude number: the speed they turn at over
+   * √(g·depth), from which they break its surface white.
+   */
+  eddies: number;
+  /** The foam it carries, 0 (none) to 1 (the most water carries). */
+  foam: number;
   /**
    * Its speed over its shallow waves' (√(g·depth)): under 1 it runs
    * calm, over 1 it shoots.
@@ -1332,11 +1340,18 @@ export interface WaterProbe {
    * (lakes).
    */
   reach?: WaterReach | null;
+  /** The roughness its shading gives its surface, 0 to 1. */
+  roughness: number;
+  /**
+   * Meters across its water body: a river's width, a lake's equal-area
+   * diameter.
+   */
+  span: number;
   /** Meters a second it runs. */
   speed: number;
-  /** How turbulent it runs, 0 to 1, to 1/255. */
+  /** How turbulent it runs, 0 to 1. */
   turbulence: number;
-  /** How much white water is born there, 0 to 1, to 1/255. */
+  /** How much white water is born there, 0 to 1. */
   white: number;
 }
 

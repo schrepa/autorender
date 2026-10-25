@@ -234,9 +234,9 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     // drawn from: its wind, gusting, over unlimited fetch and deep water, so
     // the sea and its ripples are one spectrum.
     let shortest = OCEAN_TAU / max(length(water.ocean_waves[max(count, 1u) - 1u].xy), 1.0e-6);
-    let ripples = water_wind_waves(world.xz, world_dx.xz, world_dy.xz,
-        water_wind_bands(water_wind_speed(world.xz, time), WATER_OPEN_FETCH, WATER_OPEN_DEPTH,
-            shortest));
+    let gains = water_wind_bands(water_wind_speed(world.xz, time), WATER_OPEN_FETCH,
+        WATER_OPEN_DEPTH, shortest);
+    let ripples = water_wind_waves(world.xz, world_dx.xz, world_dy.xz, gains);
     let slopes = ripples.slopes - waved.xz / max(waved.y, 1.0e-3);
     let normal = normalize(vec3<f32>(-slopes.x, 1.0, -slopes.y));
     let compression = waved.w;

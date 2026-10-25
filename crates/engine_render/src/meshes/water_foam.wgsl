@@ -25,12 +25,11 @@ const FALL_MAP_FOAM_SPREAD: vec2<f32> = vec2<f32>(0.34, 0.18);
 const WATER_FOAM_BUBBLE: f32 = 0.0625;
 const WATER_FOAM_FINER: f32 = 3.0;
 // How long a set of foam's carried bubbles lives (`water_froth`): as long as
-// the flow's shear takes to strain it by WATER_FOAM_STRAIN, its bubbles
+// the flow's shear takes to strain it by WATER_STRAIN as the waves', its bubbles
 // drawn out by two fifths at either end of its life before it starts over
 // (Neyret's latency); from WATER_FOAM_SHORTEST seconds, below which it would
 // churn faster than white water does, to the life of the foam it shows
 // (`engine_terrain::shallow_water::FOAM_LIFE`).
-const WATER_FOAM_STRAIN: f32 = 0.8;
 const WATER_FOAM_SHORTEST: f32 = 1.0;
 const WATER_FOAM_LIFE: f32 = 20.0;
 // The share of the surface below which foam shows nothing: less than an
@@ -54,9 +53,6 @@ const WATER_FOAM_HOLLOW: f32 = 0.35;
 // (Gerstner's), here running water's turbulent waves', half a meter long,
 // so foam gathers on their crests (Vlachos, Portal 2).
 const WATER_FOAM_RIDE: f32 = 0.08;
-// The slope past which a wave's crest folds: Stokes's limit, a height a
-// seventh of its length, π/7 at a sine's steepest.
-const WATER_FOLDING: f32 = 0.44879895;
 // The meters a second over which water running against what stands in it
 // tears air in, from the first to the second (Ervine, McKeogh and Elsawy
 // 1980: about the meter a second past which water draws air in).
@@ -78,7 +74,7 @@ fn water_resolved_share(footprint: f32, size: f32) -> f32 {
 // The share of water's surface its folding crests whiten, the slopes of all
 // its waves, resolved and hidden, spreading `spread` (their variance, σ²),
 // of which the pixel hides `hidden`: a Gaussian surface's slopes, their
-// sizes Rayleigh-distributed, pass the breaking slope s_b (WATER_FOLDING)
+// sizes Rayleigh-distributed, pass the breaking slope s_b (WATER_STEEPEST)
 // over exp(−s_b²/σ²) of it. Where the pixel resolves the waves, that share
 // lies on their crests, the points standing nearest their tops (`crest`,
 // taken as the share of the surface standing lower); where it hides them,
@@ -86,7 +82,7 @@ fn water_resolved_share(footprint: f32, size: f32) -> f32 {
 // however near its crest's top a point stands.
 fn water_folding(spread: f32, hidden: f32, crest: f32) -> f32 {
     let variance = max(spread, 1.0e-6);
-    let share = exp(-WATER_FOLDING * WATER_FOLDING / variance);
+    let share = exp(-WATER_STEEPEST * WATER_STEEPEST / variance);
     let on_crests = saturate((crest - 1.0) / max(share, 1.0e-6) + 1.5)
         * saturate(share / WATER_FOAM_LEAST);
     return mix(share, on_crests, saturate(1.0 - hidden / variance));
@@ -182,7 +178,7 @@ struct WaterFroth {
 // water carries drains into, two octaves of each alike. It moves only as
 // the water moves it: carried along the flow in two sets half a life apart
 // (`water_set`), each living as long as the flow's shear lets it before it
-// shows drawn out (WATER_FOAM_STRAIN), in whole octaves of lives, the next
+// shows drawn out (WATER_STRAIN), in whole octaves of lives, the next
 // longer blended in over the upper half of the place's own octave as detail
 // levels hand over; where the water carries it less than a bubble over a
 // life it stands still, one set and no clock. The sets blend keeping their
@@ -218,7 +214,7 @@ fn water_froth(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, amounts: vec2<f32>, f
         // The place's own life, and how many bubbles the water carries the
         // grain over it: less than one, and the grain stands still.
         let speed = length(flow);
-        let life = clamp(WATER_FOAM_STRAIN / max(shear, 1.0e-6), WATER_FOAM_SHORTEST,
+        let life = clamp(WATER_STRAIN / max(shear, 1.0e-6), WATER_FOAM_SHORTEST,
             WATER_FOAM_LIFE);
         let moving = saturate(speed * life / WATER_FOAM_BUBBLE);
         var sum = vec4<f32>(0.0);

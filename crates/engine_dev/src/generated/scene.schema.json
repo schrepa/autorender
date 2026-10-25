@@ -413,6 +413,26 @@
           "description": "The reach of the stream it runs in, by the stream's slope: pools\nblue, plane beds cyan, steps and pools green, cascades orange, falls\nred; water no stream holds (lakes) violet.",
           "type": "string",
           "const": "water_reach"
+        },
+        {
+          "description": "The foam it carries, as its flow churns it up, carries it and loses\nit (`engine_terrain::shallow_water`), from dark brown (none) through\nsand to white (the most water carries).",
+          "type": "string",
+          "const": "water_foam"
+        },
+        {
+          "description": "How far across its water body is, the fetch the wind has over it: a\nriver's width, a lake's equal-area diameter, on a logarithmic scale\nfrom violet (a quarter meter) through teal (32 meters) to pale\nyellow (4096 meters or more).",
+          "type": "string",
+          "const": "water_span"
+        },
+        {
+          "description": "Its eddies' turbulent Froude number: the speed they turn at,\n(g·U·S·depth)^(1/3) for its speed U and its surface's slope S, over\n√(g·depth); from dark (calm) through orange, where they start\nbreaking its surface white (`engine_terrain::BREAK_ONSET`), to white,\nwhere they break it white all over (`engine_terrain::BREAK_FULL`).",
+          "type": "string",
+          "const": "water_eddies"
+        },
+        {
+          "description": "The roughness its shading gives its surface, from black (0, a\nmirror) through copper to white (1): calm water's, widened by the\nslopes of the waves a pixel hides.",
+          "type": "string",
+          "const": "water_roughness"
         }
       ]
     },
@@ -4254,14 +4274,6 @@
           "type": "boolean",
           "default": false
         },
-        "foam": {
-          "description": "How much foam crests and shores gather.",
-          "type": "number",
-          "format": "float",
-          "default": 0.5,
-          "maximum": 1.0,
-          "minimum": 0.0
-        },
         "level": {
           "description": "The height of the still sea, world meters.",
           "type": "number",
@@ -4571,10 +4583,10 @@
           "minimum": 0.0
         },
         "max_roughness": {
-          "description": "Surfaces rougher than this reflect only the sky.",
+          "description": "Surfaces rougher than this reflect only the sky: their\nreflections of the screen fade out over its last fifth.",
           "type": "number",
           "format": "float",
-          "default": 0.5,
+          "default": 0.75,
           "maximum": 1.0,
           "minimum": 0.05
         }
@@ -6371,7 +6383,7 @@
       "additionalProperties": false
     },
     "SceneWater": {
-      "description": "Water settings.",
+      "description": "Water settings: how terrains' water looks (its color, clarity and\nsediment) and how it draws and runs live; its movement and foam come\nfrom its state, under the scene's wind.",
       "type": "object",
       "properties": {
         "clarity": {
@@ -6404,22 +6416,6 @@
           "type": "boolean",
           "default": true
         },
-        "foam": {
-          "description": "How much foam shores and rapids gather; 0 none.",
-          "type": "number",
-          "format": "float",
-          "default": 0.6000000238418579,
-          "maximum": 1.0,
-          "minimum": 0.0
-        },
-        "foam_width": {
-          "description": "The meters of water shallower than which shores foam.",
-          "type": "number",
-          "format": "float",
-          "default": 0.6000000238418579,
-          "maximum": 10.0,
-          "minimum": 0.05
-        },
         "live_cell": {
           "description": "The meters across the live window's cells: the square\n`simulated` asks for runs in cells this size, each starting from\nthe settled water's cells around it.",
           "type": "number",
@@ -6427,22 +6423,6 @@
           "default": 0.5,
           "maximum": 8.0,
           "minimum": 0.25
-        },
-        "ripple_size": {
-          "description": "The meters across the largest ripples.",
-          "type": "number",
-          "format": "float",
-          "default": 5.0,
-          "maximum": 100.0,
-          "minimum": 0.1
-        },
-        "ripples": {
-          "description": "How strongly ripples tilt the surface.",
-          "type": "number",
-          "format": "float",
-          "default": 0.30000001192092896,
-          "maximum": 1.0,
-          "minimum": 0.0
         },
         "sediment": {
           "description": "How strongly the fine sediment water carries scatters light, per\nmeter: light passing through fades by it as well as by what the\nwater's clarity takes, and the water's body scatters back\n`sediment_color` by the sediment's share of the two; 0 none.",
