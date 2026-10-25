@@ -1193,6 +1193,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "dropped_touches": {
+          "description": "Solids standing in that square past the most its water takes, which\npush none of it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "leaves": {
           "description": "Leaves of terrains' water's subdivisions the last read-back frame\ndrew, a few frames late.",
           "format": "uint32",
@@ -1210,6 +1216,12 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "touches": {
+          "description": "Solids standing in that square whose push its water takes this\nframe, nearest the eye first: bodies and colliders, at most\n`SIM_TOUCHES`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
@@ -1217,7 +1229,9 @@
         "refused",
         "blocks",
         "dropped_blocks",
-        "simulated_cells"
+        "simulated_cells",
+        "touches",
+        "dropped_touches"
       ],
       "type": "object"
     }

@@ -801,6 +801,11 @@ export interface WaterStats {
    */
   dropped_blocks: number;
   /**
+   * Solids standing in that square past the most its water takes, which
+   * push none of it.
+   */
+  dropped_touches: number;
+  /**
    * Leaves of terrains' water's subdivisions the last read-back frame
    * drew, a few frames late.
    */
@@ -817,4 +822,10 @@ export interface WaterStats {
    * where the device's storage bindings cannot hold its buffers.
    */
   simulated_cells: number;
+  /**
+   * Solids standing in that square whose push its water takes this
+   * frame, nearest the eye first: bodies and colliders, at most
+   * `SIM_TOUCHES`.
+   */
+  touches: number;
 }
