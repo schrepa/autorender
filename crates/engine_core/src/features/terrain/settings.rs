@@ -42,7 +42,7 @@ settings! {
         /// splits its leaves straying more and merges those whose halves
         /// would not, refining a level every other frame. Smaller draws more
         /// triangles.
-        pub subdivision_error: f32 = 1.0 => range(0.25, 64.0),
+        pub subdivision_error: f32 = 2.0 => range(0.25, 64.0),
         /// The deepest level of each terrain's subdivision: two levels halve
         /// its leaves' sides, and each takes twice the memory, a bit for every
         /// leaf it could hold and a quarter more for their counts. 27 holds

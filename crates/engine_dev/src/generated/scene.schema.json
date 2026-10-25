@@ -5807,7 +5807,7 @@
           "description": "Pixels the ground's drawn triangles may stray from its true\nsurface, seen from the detail eye: each terrain's subdivision\nsplits its leaves straying more and merges those whose halves\nwould not, refining a level every other frame. Smaller draws more\ntriangles.",
           "type": "number",
           "format": "float",
-          "default": 1.0,
+          "default": 2.0,
           "maximum": 64.0,
           "minimum": 0.25
         },
