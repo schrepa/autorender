@@ -6,7 +6,8 @@
 //! which way it runs and how much foam rides it. Drawing reads the same
 //! sources' data, so what water does matches what it shows. The other way,
 //! the solids standing in the world ([`WaterObstacles`]) hold water back
-//! where they rest on a river's bed.
+//! where they rest on a river's bed, and push the water running live around
+//! the camera toward their own velocity, churning its foam.
 
 use bevy_ecs::prelude::*;
 use glam::{Mat3, Vec3};
@@ -77,17 +78,37 @@ impl WaterSources {
 
 /// A solid standing in the world, as water meets it: its world center, the
 /// axes mapping the unit cube (or ball, when `round`) to it, columns scaled
-/// by its extents.
+/// by its extents, and its velocity (world meters a second; none for a
+/// collider, which stands still).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WaterObstacle {
     pub center: Vec3,
     pub axes: Mat3,
     pub round: bool,
+    pub velocity: Vec3,
+}
+
+impl WaterObstacle {
+    /// How far it reaches from its center along world x, y and z: a box the
+    /// sum of its axes' parts along each, a ball (an ellipsoid) their
+    /// length.
+    pub fn reach(&self) -> Vec3 {
+        let rows = self.axes.transpose();
+        let along = |row: Vec3| {
+            if self.round {
+                row.length()
+            } else {
+                row.abs().element_sum()
+            }
+        };
+        Vec3::new(along(rows.x_axis), along(rows.y_axis), along(rows.z_axis))
+    }
 }
 
 /// The solids that may stand in the world's water this fixed tick: physics
-/// lists its bodies and the colliders near rivers, and terrains' rivers are
-/// held back where one rests on a bed. Without it nothing holds them back.
+/// lists its bodies and the colliders near rivers and within the squares of
+/// live water, terrains' rivers are held back where one rests on a bed, and
+/// those standing in live water push it. Without it nothing holds them back.
 #[derive(Resource, Default, Debug)]
 pub struct WaterObstacles {
     pub obstacles: Vec<WaterObstacle>,

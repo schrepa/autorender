@@ -959,7 +959,9 @@ tables! {
     /// two states, their faces, the fluxes through them, the cells rivers
     /// bring water to and those just past the squares' edges as their water
     /// settled, the slots' tables of blocks, each cell's waves and seconds,
-    /// the slots' squares and the sums settling squares keep.
+    /// the slots' squares, the sums settling squares keep, and the solids
+    /// standing in the live square's water: its eight storage buffers, the
+    /// most a compute stage binds, and three uniforms.
     const WATER_SIM: Table = Table {
         label: "engine/water-sim-layout",
         serves: [WATER_SIM_SHADER @ 0],
@@ -974,6 +976,7 @@ tables! {
             write(7, "sim_steps", C),
             uniform_of(8, "sim_slots", size_of::<water::SimSlots>(), C),
             write(9, "sim_averages", C),
+            uniform_of(10, "sim_touches", size_of::<water::SimTouches>(), C),
         ],
     };
 

@@ -1,8 +1,9 @@
 //! The solids standing in the world's water, which physics lists each fixed
-//! tick for terrains' rivers to meet ([`WaterObstacles`]): its bodies where
-//! the last step left them, and the colliders (sensors aside) within reach
-//! of terrains' rivers, such as an authored dam. Worlds without rivers list
-//! none.
+//! tick for terrains' water to meet ([`WaterObstacles`]): its bodies where
+//! and as fast as the last step left them, and the colliders (sensors
+//! aside) within reach of terrains' rivers or within the squares their
+//! water runs live over around the camera, such as an authored dam or a
+//! pier, standing still. Worlds without rivers or live water list none.
 
 use bevy_ecs::prelude::*;
 use engine_collision::{ColliderShape, CollisionWorld};
@@ -11,10 +12,12 @@ use glam::Vec3;
 
 use crate::PhysicsWorld;
 
-/// The colliders near rivers at a collision revision.
+/// The colliders within the reaches listed, at a collision revision and
+/// over those reaches.
 #[derive(Default)]
 pub(crate) struct Standing {
     revision: Option<u64>,
+    reaches: Vec<(Vec3, Vec3)>,
     colliders: Vec<WaterObstacle>,
 }
 
@@ -26,7 +29,9 @@ pub(crate) fn obstruct(
     mut obstacles: ResMut<WaterObstacles>,
     mut standing: Local<Standing>,
 ) {
-    let reaches: Vec<(Vec3, Vec3)> = terrains
+    // Rivers' bounds and the live squares, as high and low as anything
+    // stands.
+    let rivers = terrains
         .iter()
         .flat_map(|terrains| terrains.waters())
         .filter_map(|(_, origin, layers)| {
@@ -38,8 +43,17 @@ pub(crate) fn obstruct(
                     origin + Vec3::new(high.x, 1.0e5, high.y),
                 )
             })
-        })
-        .collect();
+        });
+    let live = terrains
+        .iter()
+        .flat_map(|terrains| terrains.water_windows())
+        .map(|(low, high)| {
+            (
+                Vec3::new(low.x, -1.0e5, low.y),
+                Vec3::new(high.x, 1.0e5, high.y),
+            )
+        });
+    let reaches: Vec<(Vec3, Vec3)> = rivers.chain(live).collect();
     if reaches.is_empty() {
         if !obstacles.obstacles.is_empty() {
             obstacles.obstacles.clear();
@@ -49,7 +63,7 @@ pub(crate) fn obstruct(
     let revision = collision
         .as_ref()
         .map(|collision| collision.report().revision);
-    if revision != standing.revision {
+    if revision != standing.revision || reaches != standing.reaches {
         standing.revision = revision;
         standing.colliders.clear();
         if let Some(collision) = &collision {
@@ -64,10 +78,12 @@ pub(crate) fn obstruct(
                         center: found.solid.center,
                         axes: found.solid.axes,
                         round: matches!(found.solid.shape, ColliderShape::Sphere { .. }),
+                        velocity: Vec3::ZERO,
                     });
                 }
             }
         }
+        standing.reaches = reaches;
     }
     let listed = &mut obstacles.obstacles;
     listed.clear();

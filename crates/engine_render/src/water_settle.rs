@@ -398,7 +398,7 @@ impl WaterSettle {
             };
         }
         if let Some(buffers) = self.buffers.as_ref() {
-            buffers.write_frames(queue, [0, 0]);
+            buffers.write_frames(queue);
             buffers.write_squares(queue, &squares);
         }
         looks

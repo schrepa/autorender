@@ -1,7 +1,7 @@
 //! Upload structs of `crate::water`.
 
 use bytemuck::{Pod, Zeroable};
-use engine_core::MAX_OCEAN_WAVES;
+use engine_core::{MAX_OCEAN_WAVES, SIM_TOUCHES};
 
 use super::constants::{SIM_SLOTS, WAVE_TILES};
 
@@ -31,13 +31,11 @@ gpu_structs! {
 
     /// WGSL `SimFrame` of `water_sim.wgsl`: the stage, the slots the
     /// buffers hold, the blocks a slot's pool holds and the blocks a
-    /// slot's table maps; the cells the square around the camera moved by;
-    /// and the most cells rivers bring water to a slot holds and the faces
-    /// along its west and south edges a slot holds.
+    /// slot's table maps; and the most cells rivers bring water to a slot
+    /// holds and the faces along its west and south edges a slot holds.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimFrame as ["SimFrame" in WATER_SIM_SHADER] {
         pub stage: [u32; 4],
-        pub shift: [i32; 4],
         pub inputs: [u32; 4],
     }
 
@@ -56,6 +54,32 @@ gpu_structs! {
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimSlots as ["SimSlots" in WATER_SIM_SHADER] {
         pub slot: [SimSlot; SIM_SLOTS],
+    }
+
+    /// WGSL `SimTouch` of `water_sim.wgsl`: a solid standing in the live
+    /// square's water, its center over the square's first corner and datum
+    /// (meters) and 1 for a ball, else 0; the inverse of the axes mapping
+    /// the unit cube (or ball) to it, a column each; its velocity (meters a
+    /// second) and the meters it reaches up and down from its center; and
+    /// its footprint's least and greatest corners over the square (meters,
+    /// x and z).
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct SimTouch as ["SimTouch" in WATER_SIM_SHADER] {
+        pub center: [f32; 4],
+        pub inverse: [[f32; 4]; 3],
+        pub velocity: [f32; 4],
+        pub reach: [f32; 4],
+    }
+
+    /// WGSL `SimTouches` of `water_sim.wgsl`: how many solids stand in the
+    /// live square's water this frame, then nothing; the blocks of the
+    /// square they reach, the first along x and z and how many along each;
+    /// and each solid, nearest the eye first.
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct SimTouches as ["SimTouches" in WATER_SIM_SHADER] {
+        pub count: [u32; 4],
+        pub blocks: [u32; 4],
+        pub touch: [SimTouch; SIM_TOUCHES],
     }
 
     /// WGSL `WaveFrame` of `water_waves.wgsl`.

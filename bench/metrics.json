@@ -1994,6 +1994,17 @@
       "direction": "lower"
     },
     {
+      "name": "water.dropped_touches",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "water.leaves",
       "kind": "work",
       "rule": "shown",
@@ -2017,6 +2028,17 @@
     },
     {
       "name": "water.simulated_cells",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water.touches",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",

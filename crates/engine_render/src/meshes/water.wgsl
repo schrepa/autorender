@@ -97,7 +97,8 @@
 // which their water gives way to it. Where water is simulated around the
 // camera (`water_sim.rs`), `sim` holds its square's first corner along x
 // and z, the meters across a cell and the cells along a side (none, zero),
-// and `sim_datum` the height its heights stand above (x, world meters).
+// and `sim_datum` the height its heights stand above (x, world meters) and
+// the blocks its blocks' slots turn by along x and z (yz).
 // `sediment` holds the color the fine sediment terrains' water carries
 // scatters back (rgb, linear) and how strongly it scatters light, per meter
 // (w); the sea carries none. `lift` holds the pixels the drawn ground (x,
@@ -133,7 +134,7 @@ struct WaterUniform {
 // lip; read with the waves' sampler, repeating.
 @group(1) @binding(55) var water_fall_map: texture_2d<f32>;
 // The simulated water as its blocks hold it (`water_sim.wgsl`'s, every
-// block of the window's square in order, SIM_WATER_BLOCK cells along each
+// block of the window's square in its slot, SIM_WATER_BLOCK cells along each
 // side): each cell's surface (world meters), its flow along x and z (square
 // meters a second) and the foam it carries, a block's row by row; and each
 // block's ground, SIM_BLOCK_GROUND entries of it: at its cells' corners (a
@@ -1432,12 +1433,14 @@ struct SimWaterTemporalOutput {
 
 // Where the simulated water holds cell (i, j), the nearest inside its
 // square for one past its edge: its block's first cell (its blocks stand
-// in order, row by row) and its place in the block.
+// row by row, each turned along x and z by the blocks `water.sim_datum.yz`
+// says, around the square's blocks) and its place in the block.
 fn sim_water_at(i: i32, j: i32) -> u32 {
     let n = i32(water.sim.w);
     let at = vec2<u32>(clamp(vec2<i32>(i, j), vec2<i32>(0), vec2<i32>(n - 1)));
     let blocks = (u32(n) + SIM_WATER_BLOCK - 1u) / SIM_WATER_BLOCK;
-    let block = (at.y / SIM_WATER_BLOCK) * blocks + at.x / SIM_WATER_BLOCK;
+    let place = (at / SIM_WATER_BLOCK + vec2<u32>(water.sim_datum.yz)) % blocks;
+    let block = place.y * blocks + place.x;
     let local = at % SIM_WATER_BLOCK;
     return (block * SIM_WATER_BLOCK + local.y) * SIM_WATER_BLOCK + local.x;
 }

@@ -14,9 +14,11 @@
 //! wind push them; the solver steps; and each dynamic body's pose is written
 //! to its transform, which interpolates between ticks. Bodies over terrain
 //! whose solids collision does not hold yet stand still until it does.
-//! Then the bodies and the colliders near rivers are listed as what stands
-//! in the world's water, where rivers meet them: those resting on a bed hold
-//! the river back. Worlds without bodies or rivers do no work.
+//! Then the bodies, with their velocities, and the colliders near rivers or
+//! within the squares of water running live around the camera are listed
+//! as what stands in the world's water: those resting on a bed hold the
+//! river back, and those standing in live water push it. Worlds without
+//! bodies, rivers or live water do no work.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
@@ -48,8 +50,8 @@ pub struct PhysicsPlugin;
 pub enum PhysicsSystems {
     /// Bodies move.
     Step,
-    /// The solids standing in the world's water are listed for rivers to
-    /// meet ([`engine_core::WaterObstacles`]).
+    /// The solids standing in the world's water are listed for rivers and
+    /// live water to meet ([`engine_core::WaterObstacles`]).
     Obstruct,
 }
 
