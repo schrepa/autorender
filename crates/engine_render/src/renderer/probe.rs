@@ -398,8 +398,8 @@ fn terrain_probe((record, object, detail): (u32, u32, u32), bytes: &[u8]) -> Ter
         materials,
         sky: share(object, 0),
         detail: DetailShares {
-            full: share(object, 1),
-            colored: share(object, 2),
+            detailed: share(object, 1),
+            averaged: share(object, 2),
             canopy: share(object, 3),
         },
     }

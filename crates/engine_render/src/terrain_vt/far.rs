@@ -3,13 +3,14 @@
 //! cook's pack ships. Those of its finest far mip shade as any page of
 //! their texel size does, at the levels that size gives, but never finer
 //! than the terrain's finest pinned level, the finest resident everywhere,
-//! whose heights they read: at texels of eight meters and more, every
-//! material repeating within 64 meters shows its maps' means. Each coarser
-//! far mip's pages are the 2x2 means of the one below
-//! (`terrain_vt_far.wgsl`), so a coarser page is the average of the finer
-//! one by construction. Pages of every mip from
-//! the finest whose texels span eight meters or more and whose pages along
-//! the terrain's longer side number [`FAR_ACROSS`] at most pin their slots
+//! whose heights they read: their texels span every repeat of the terrain's
+//! materials' maps, so each material shows its maps' means, all their
+//! filtering would read there, and pages read no map. Each coarser far
+//! mip's pages are the 2x2 means of the one below (`terrain_vt_far.wgsl`),
+//! so a coarser page is the average of the finer one by construction.
+//! Pages of every mip from the finest whose texels span eight meters or
+//! more and the terrain's widest repeat, and whose pages along the
+//! terrain's longer side number [`FAR_ACROSS`] at most, pin their slots
 //! (where they take at most half the slots the sheets may hold): they stay
 //! while the terrain is textured, never go stale and never give way to
 //! other pages, so far ground shows textured from its first frames and only
@@ -47,7 +48,8 @@ use crate::shaders::entry::terrain_vt_far;
 use engine_core::RecordKey;
 use engine_core::terrain_data::jobs;
 
-/// The finest mip far pages begin at: texels of eight meters.
+/// The finest mip far pages begin at, texels of eight meters, where a
+/// terrain's materials repeat no wider (`far_mip`).
 const FAR_FINEST: usize = 11;
 /// Pages along a terrain's longer side its finest far mip holds at most.
 const FAR_ACROSS: u32 = 8;
@@ -448,15 +450,30 @@ fn far_across(extent: engine_core::glam::Vec2, mip: usize) -> [i32; 2] {
     [extent.x, extent.y].map(|side| ((side / span).ceil() as i32).max(1))
 }
 
-/// The finest far mip of a terrain of `extent`: from [`FAR_FINEST`], the
-/// first whose pages along the longer side number [`FAR_ACROSS`] at most;
-/// none where no mip's do.
-fn far_mip(extent: engine_core::glam::Vec2) -> Option<usize> {
+/// The finest far mip of a terrain of `extent` whose materials with maps
+/// repeat within `widest` meters: from [`FAR_FINEST`], the first whose
+/// texels span `widest`, where those maps show their means
+/// (`meshes/terrain.wgsl`'s `terrain_mapped`), and whose pages along the
+/// longer side number [`FAR_ACROSS`] at most; none where no mip's do.
+fn far_mip(extent: engine_core::glam::Vec2, widest: f32) -> Option<usize> {
     (FAR_FINEST..MIPS).find(|&mip| {
-        far_across(extent, mip)
-            .iter()
-            .all(|&pages| pages <= FAR_ACROSS as i32)
+        texel_size(mip) >= widest
+            && far_across(extent, mip)
+                .iter()
+                .all(|&pages| pages <= FAR_ACROSS as i32)
     })
+}
+
+/// The meters the widest repeat of `terrain`'s materials with maps spans.
+fn widest_repeat(terrain: &engine_core::RenderTerrain) -> f32 {
+    let maps = terrain.maps.iter().chain(std::iter::repeat(&None));
+    terrain
+        .surface
+        .iter()
+        .zip(maps)
+        .filter(|(_, maps)| maps.is_some())
+        .map(|(look, _)| look.tiling)
+        .fold(0.0, engine_core::math::max)
 }
 
 /// How many far pages a terrain of `extent` takes from mip `first`.
@@ -622,8 +639,8 @@ impl VirtualTexture {
         self.far.waiting = 0;
         for (index, terrain) in terrains.terrains.iter().enumerate() {
             let extent = terrain.pyramid.extent();
-            let (true, Some(first)) = (self.terrains.contains_key(&terrain.id), far_mip(extent))
-            else {
+            let finest = far_mip(extent, widest_repeat(terrain));
+            let (true, Some(first)) = (self.terrains.contains_key(&terrain.id), finest) else {
                 continue;
             };
             // Far pages take half the slots the sheets may hold at most,

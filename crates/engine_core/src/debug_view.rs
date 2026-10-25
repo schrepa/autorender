@@ -3,8 +3,8 @@
 //! is an impostor card, which level of sun shadows decided its shadow, how it
 //! casts sun shadows, how many fragments covered it, its normal, what
 //! terrain's ground is made of: its tiles and patches, surface materials,
-//! the sky it sees and how much detail it shows; or what terrains' water is
-//! doing, each field of its state: its depth, speed, Froude number,
+//! the sky it sees and how it shows its materials' maps; or what terrains'
+//! water is doing, each field of its state: its depth, speed, Froude number,
 //! turbulence, white water, the reach it runs in, the foam it carries, how
 //! far across its water body is, its eddies' turbulent Froude number and
 //! the roughness its shading gives it. Renderers draw them
@@ -94,9 +94,11 @@ modes! {
     /// The share of the sky terrain's ground sees, unlit, from black (none)
     /// to white (all of it).
     Sky = "sky",
-    /// How much detail terrain's ground shows: green where all its
-    /// materials' maps show, yellow where their color alone does, red where
-    /// their means stand in, blue where it shows as its cover's canopy.
+    /// How terrain's ground shows its materials' maps: green where their
+    /// detail shows, filtered over the pixel, yellow as that filtering
+    /// averages their normal maps' slopes into roughness, red where a whole
+    /// repeat spans less than a pixel and their means stand in, blue where it
+    /// shows as its cover's canopy.
     Detail = "detail",
     /// How deep terrains' water stands, tiles' and simulated alike, from
     /// pale (none) through blue (half a meter) to navy (two meters or
@@ -237,15 +239,17 @@ pub struct MaterialShare {
     pub share: f32,
 }
 
-/// How much detail a terrain pixel's ground shows, each a share of its
-/// materials, 0 to 1, to 1/255.
+/// How a terrain pixel's ground shows its materials' maps, each a share of
+/// its materials, 0 to 1, to 1/255.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DetailShares {
-    /// Where all their maps show.
-    pub full: f32,
-    /// Where their maps' color shows, with or without the rest.
-    pub colored: f32,
+    /// Where their maps' detail shows, filtered over the pixel, rather than
+    /// their means standing in.
+    pub detailed: f32,
+    /// Where that filtering averages their normal maps' slopes into
+    /// roughness, at most `detailed`.
+    pub averaged: f32,
     /// Where the cover's canopy stands in for the ground.
     pub canopy: f32,
 }
@@ -267,7 +271,7 @@ pub struct TerrainProbe {
     /// The share of the sky the ground sees, 0 (none) to 1 (all of it), to
     /// 1/255.
     pub sky: f32,
-    /// How much detail the ground shows.
+    /// How the ground shows its materials' maps.
     pub detail: DetailShares,
 }
 

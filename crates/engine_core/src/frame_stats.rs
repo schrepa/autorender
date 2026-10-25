@@ -552,7 +552,8 @@ pub struct GroundCoverStats {
     pub dropped: u32,
     /// Meters from the eye ground cover reached this frame, rounded.
     pub reach: u32,
-    /// The most tiers it grew in: the radius's and doublings past it.
+    /// The most tiers it grew in: the first, where every blade stands, and
+    /// doublings past it.
     pub tiers: u32,
 }
 
