@@ -14,17 +14,15 @@
 // ground, whose zero crossing is the shore, and what its samples' words say
 // of the water (its flow, foam, white water and what stands in it), blended
 // on the level's triangles, so none of it moves as the eye does and no leaf
-// shapes it. Its foam's lace and relief and the waves standing about what
-// stands in it hand over to their means as a pixel seen from the detail eye
-// comes to span their detail along the view (`detail_span`), while the
-// pixel's own derivatives filter them. The waves' tiles
-// (`water_waves.wgsl`) tilt it where it stands still and their finest run
-// with its flow where it moves, carried along in sets that start over
-// before its shear stretches them; running water's chop comes from its
-// current, the eddies it carries and short waves standing on its bed where
-// it runs near or above the speed of its own waves, and what they
-// hide within a pixel roughens it; waves the bed holds still stand about
-// what the water flows past. It mirrors the sky, the sun's disc and,
+// shapes it. Its waves come from that water alone (`water_flow.wgsl`): the
+// wind's, as its spectrum raises them over the water's span and depth
+// (`water_spectrum.wgsl`), standing where the water is still and riding
+// its current where it runs, with the waves its eddies raise, one to two
+// depths long and as high as their speed squared over gravity; short waves
+// its bed holds still where it runs near the speed of its own waves; and
+// waves standing about what it flows past. Each is drawn as far as a pixel
+// resolves it, and what the pixel averages of its slopes roughens the
+// surface. It mirrors the sky, the sun's disc and,
 // through screen-space reflections, the scene; its body, tinted by the
 // sediment it carries, scatters the light entering it back toward the
 // eye; and what lies under it shows through, bent by the waves where the
@@ -237,9 +235,6 @@ const WATER_RACING: vec2<f32> = vec2<f32>(0.8, 1.6);
 // and the meters of depth Froude numbers read thinner water as.
 const WATER_GRAVITY: f32 = 9.81;
 const WATER_THINNEST: f32 = 0.01;
-// The share of the wind's finest ripples water running 2 m/s or faster
-// keeps: its current's chop (`water_chop`) takes over from them.
-const WATER_RUNNING_RIPPLES: f32 = 0.5;
 // The share of a tile's period between the corners of the grid its random
 // offsets hang on (`water_tile`).
 const WATER_PATCH: f32 = 0.5;
@@ -1120,24 +1115,6 @@ fn water_covering(shade: WaterShade, pixel: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(stored(shade.shaded.color + shade.behind, pixel) * shade.fade, shade.fade);
 }
 
-// Patterns carried along the flow (Vlachos's flow maps): ripples, foam's
-// lace and white water, each drawn in two sets half a cycle apart, each
-// set carried from half a cycle before its middle to half a cycle after,
-// where it starts over unseen and anew in the noise, so it shows clearest
-// where the flow has not yet stretched it (Neyret's latency). A cycle lasts
-// as long as the flow's shear takes to strain the pattern by WATER_STRAIN,
-// within its kind's bounds (seconds), in whole octaves: each place takes
-// the two octaves nearest its own, crossfading over the middle share
-// WATER_BAND_BLEND of each, so cycles change smoothly across the water.
-// Strain fades what the flow has drawn out as it runs (Chentanez and
-// Müller: e^(−Ω τ |∇u|), Ω being WATER_STRAIN_FADE).
-const WATER_STRAIN: f32 = 0.8;
-const WATER_CYCLES: vec2<f32> = vec2<f32>(0.25, 3.2);
-const WATER_BAND_BLEND: vec2<f32> = vec2<f32>(0.25, 0.75);
-const WATER_STRAIN_FADE: f32 = 1.0;
-// The meters across the patches of water whose patterns start over
-// together.
-const WATER_FLOW_PHASE: f32 = 40.0;
 // Foam's lace, which lies on calm water only: the meters across its larger
 // cells (its finer ones a third of that), how wide (in cells) its bubbles
 // string at the waterline, the meters from the waterline it reaches out
@@ -1180,53 +1157,6 @@ const WATER_FOAM_CYCLES: vec2<f32> = vec2<f32>(1.0, 6.4);
 const WATER_FOAM_STAGGER: f32 = 29.0;
 const WATER_FOAM_STAGGERED: f32 = 0.8;
 const WATER_FOAM_WASH: f32 = 0.35;
-
-// The cycles a carried pattern of a kind cycling within `cycles` (seconds,
-// the shortest and the longest) takes where the flow strains it by
-// `strain` a second: the octave of the shortest at or below its own cycle
-// (`first`, seconds, and `index`, octaves above the shortest), and how much
-// the octave above it, twice as long, shows.
-struct WaterBands {
-    first: f32,
-    index: u32,
-    toward: f32,
-}
-
-fn water_bands(strain: f32, cycles: vec2<f32>) -> WaterBands {
-    let own = clamp(WATER_STRAIN / max(strain, 1.0e-4), cycles.x, cycles.y);
-    let octave = log2(own / cycles.x);
-    let below = floor(octave);
-    var bands: WaterBands;
-    bands.first = cycles.x * exp2(below);
-    bands.index = u32(below);
-    bands.toward = smoothstep(WATER_BAND_BLEND.x, WATER_BAND_BLEND.y, octave - below);
-    return bands;
-}
-
-// One of the two sets (`which`) of a pattern carried in cycles of `cycle`
-// seconds, at `time`, the place's clock running `stagger` cycles ahead:
-// the seconds it has been carried from its middle (negative before it),
-// how much it shows, how far through its cycle it is (0 as it starts) and
-// where it lies in the noise, anew each cycle and salted by `salt` (up to
-// 64 of the noise's units along each axis).
-struct WaterSet {
-    seconds: f32,
-    weight: f32,
-    age: f32,
-    offset: vec2<f32>,
-}
-
-fn water_set(time: f32, stagger: f32, cycle: f32, which: u32, salt: u32) -> WaterSet {
-    let shifted = time / cycle + stagger + 0.5 * f32(which);
-    let life = floor(shifted);
-    var carried: WaterSet;
-    carried.age = shifted - life;
-    carried.seconds = (carried.age - 0.5) * cycle;
-    carried.weight = 1.0 - abs(2.0 * carried.age - 1.0);
-    let key = ((u32(life) * 2u + which) * 0x9e3779b9u) ^ salt;
-    carried.offset = vec2<f32>(terrain_hash_of(key), terrain_hash_of(key ^ 0x68e31da4u)) * 64.0;
-    return carried;
-}
 
 // The edge between the cells of a jittered grid nearest `p` (in cells),
 // the bisector of the two of their points nearest it (cellular noise,
@@ -1424,508 +1354,6 @@ fn water_carried_lace(p: vec2<f32>, current: vec2<f32>, shear: f32, time: f32, s
         }
     }
     return vec2<f32>(covered, lace);
-}
-
-// The wind's finest waves where water flows along `flow` (meters a second),
-// shearing `shear` a second, `share` of them as `water_waves_at` gives
-// them, at `time`, the place's clock running `stagger` cycles ahead: the
-// finest ride the current (Gonzalez-Ochoa, Uncharted 4's rapids), so they
-// are carried along with it in sets cycling as fast as its strain asks,
-// faded as the flow strains them and blended keeping their spread,
-// Σwᵢxᵢ/√Σwᵢ² of slopes whose mean is none (Yu, Neyret, Bruneton and
-// Holzschuch). What strain fades of their slopes hides in the variance,
-// roughening the water instead.
-fn water_flowing_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, share: f32,
-        flow: vec2<f32>, shear: f32, time: f32, stagger: f32) -> vec3<f32> {
-    let tile = WATER_WAVE_TILES - 1u;
-    let repeats = water.waves[tile];
-    // As finely as the display shows them: the mip bias.
-    let detail = material_detail();
-    let tile_dx = dx * (repeats * detail);
-    let tile_dy = dy * (repeats * detail);
-    let bands = water_bands(shear, WATER_CYCLES);
-    var slopes = vec2<f32>(0.0);
-    var variance = 0.0;
-    var weights = 0.0;
-    for (var band = 0u; band < 2u; band++) {
-        let shown = select(1.0 - bands.toward, bands.toward, band == 1u);
-        if shown <= 0.0 {
-            continue;
-        }
-        let cycle = bands.first * f32(1u + band);
-        let salt = (tile * 0xcb1ab31fu) ^ ((bands.index + band) * 0x632be5abu);
-        for (var which = 0u; which < 2u; which++) {
-            let carried = water_set(time, stagger, cycle, which, salt);
-            let weight = shown * carried.weight;
-            if weight <= 0.0 {
-                continue;
-            }
-            let at = (p - flow * carried.seconds) * repeats + carried.offset;
-            let read = water_tile(tile, at, tile_dx, tile_dy);
-            let fade = exp(-WATER_STRAIN_FADE * abs(carried.seconds) * shear);
-            slopes += read.xy * (weight * fade);
-            variance += (read.z + (1.0 - fade * fade) * dot(read.xy, read.xy)) * weight * weight;
-            weights += weight * weight;
-        }
-    }
-    let kept = max(weights, 1.0e-6);
-    return vec3<f32>(slopes * (inverseSqrt(kept) * share), variance / kept * share * share);
-}
-
-// Standing waves (Neyret and Praizelin; Yu, Neyret and Steed): the least
-// radius (meters) of what stands in the water, and the least speed (meters
-// a second) of the water flowing past it, that raise any; the pixels a
-// standing wave must span to show, finer ones roughening the water
-// instead; how far upstream of its obstacle's middle a pillow heaps up, how
-// long it runs along the flow and how high it rises at most, in radii (the
-// water it heaps up spills round the obstacle); a front's crest's half width,
-// in depths and at least (meters), and the radii over which fronts fall off
-// downstream; the share of the velocity head the waves standing past
-// obstacles in slower water rise by, how much their wake widens a meter
-// downstream, and the wavelengths over which trains fall off; and the
-// length and height of an undular jump's waves, in depths.
-const WATER_STANDING_LEAST: vec2<f32> = vec2<f32>(0.0625, 0.2);
-const WATER_STANDING_PIXELS: f32 = 3.0;
-const WATER_PILLOW: vec3<f32> = vec3<f32>(0.5, 0.7, 0.5);
-const WATER_CREST: vec2<f32> = vec2<f32>(2.0, 0.03);
-const WATER_FRONT_REACH: f32 = 8.0;
-const WATER_TRAIN: f32 = 0.3;
-const WATER_WAKE: f32 = 0.25;
-const WATER_TRAIN_REACH: f32 = 6.0;
-const WATER_UNDULAR: vec2<f32> = vec2<f32>(5.0, 0.2);
-// How much standing waves breathe either way as slow noise
-// WATER_BREATH_SIZE meters across passes over them, carried at
-// WATER_BREATH_CARRIED of the flow in sets cycling every WATER_BREATH_CYCLE
-// seconds.
-const WATER_BREATHING: f32 = 0.3;
-const WATER_BREATH_SIZE: f32 = 3.0;
-const WATER_BREATH_CARRIED: f32 = 0.5;
-const WATER_BREATH_CYCLE: f32 = 6.0;
-
-// How high standing waves rise at `p` (meters along x and z), as a share of
-// their height about 1, where water flows along `flow` (meters a second),
-// at `time`, the place's clock running `stagger` cycles ahead.
-fn water_breathing(p: vec2<f32>, flow: vec2<f32>, time: f32, stagger: f32) -> f32 {
-    var sum = 0.0;
-    var weights = 0.0;
-    for (var which = 0u; which < 2u; which++) {
-        let carried = water_set(time, stagger, WATER_BREATH_CYCLE, which, 0x2c1b3c6du);
-        let at = (p - flow * (WATER_BREATH_CARRIED * carried.seconds)) / WATER_BREATH_SIZE
-            + carried.offset;
-        sum += (water_noise(at).x - 0.5) * carried.weight;
-        weights += carried.weight * carried.weight;
-    }
-    return 1.0 + 2.0 * WATER_BREATHING * sum * inverseSqrt(max(weights, 1.0e-6));
-}
-
-// A standing wave's slopes `gradient` (meters a meter), its features
-// `width` meters across, as a pixel spanning `footprint` meters seen from
-// the detail eye shows them: whole where they span WATER_STANDING_PIXELS
-// pixels, handing over to the roughness of what the pixel hides as they
-// narrow below that (xy: the slopes kept, z: the variance hidden).
-fn water_resolved(gradient: vec2<f32>, width: f32, footprint: f32) -> vec3<f32> {
-    let kept = saturate(width / (WATER_STANDING_PIXELS * max(footprint, 1.0e-6)));
-    return vec3<f32>(gradient * kept, dot(gradient, gradient) * (1.0 - kept * kept));
-}
-
-// The waves standing in water `depth` meters deep flowing along `flow`
-// (meters a second) at Froude number `froude`, about the obstacle nearest
-// it, `obstacle` (its offset from the point along x and z and its radius,
-// meters, and how strongly a drop or jump lies just upstream), rising
-// `breathing` of their height, for a pixel spanning `footprint` meters seen
-// from the detail eye (`water_resolved`): slopes of the surface fixed where
-// the bed is, which the flow never smears (xy, meters a meter), and the
-// variance of those finer than the pixel (z). A pillow heaps up just
-// upstream of the obstacle, as wide as it and as high as the water's
-// velocity head U²/2g, or WATER_PILLOW.z of its radius; in supercritical
-// water, a front trails each side at the half
-// angle asin(1/Fr) (30° at Froude 2), a narrow crest falling off
-// downstream; in slower water, waves stand in its wake 2πU²/g apart, the
-// length of the waves its current holds still; and below a drop or jump,
-// where the water runs slower than Froude 1.7 as below an undular jump, a
-// train stands of waves about five depths long.
-fn water_standing(obstacle: vec4<f32>, flow: vec2<f32>, depth: f32, froude: f32,
-        breathing: f32, footprint: f32) -> vec3<f32> {
-    let radius = obstacle.z;
-    let speed = length(flow);
-    if radius < WATER_STANDING_LEAST.x || speed < WATER_STANDING_LEAST.y {
-        return vec3<f32>(0.0);
-    }
-    let heading = flow / speed;
-    let side = vec2<f32>(-heading.y, heading.x);
-    // Meters downstream of the obstacle's middle, and across the flow.
-    let apart = -obstacle.xy;
-    let along = dot(apart, heading);
-    let across = dot(apart, side);
-    let head = speed * speed / (2.0 * WATER_GRAVITY);
-    let run = WATER_PILLOW.y * radius;
-    let ahead = (along + WATER_PILLOW.x * radius) / run;
-    let wide = across / radius;
-    let pillow = min(head, WATER_PILLOW.z * radius) * breathing
-        * exp(-ahead * ahead - wide * wide);
-    var standing = water_resolved(
-        (heading * (ahead / run) + side * (wide / radius)) * (-2.0 * pillow), run, footprint);
-    let supercritical = smoothstep(1.0, 1.3, froude);
-    if supercritical > 0.0 {
-        let sine = 1.0 / max(froude, 1.0);
-        let cosine = sqrt(max(1.0 - sine * sine, 0.0));
-        // Meters out from the front's crest, and the way out.
-        let beside = (abs(across) - radius) * cosine - along * sine;
-        let outward = side * (cosine * select(-1.0, 1.0, across >= 0.0)) - heading * sine;
-        let crest = max(WATER_CREST.x * depth, WATER_CREST.y);
-        let trailing = smoothstep(-radius, 0.0, along)
-            * exp(-max(along, 0.0) / (WATER_FRONT_REACH * radius));
-        let front = min(head, depth) * breathing * supercritical * trailing
-            * exp(-(beside / crest) * (beside / crest));
-        standing += water_resolved(outward * (-2.0 * front * beside / (crest * crest)), crest,
-            footprint);
-    }
-    let subcritical = 1.0 - smoothstep(0.8, 1.0, froude);
-    let past = along - radius;
-    if subcritical > 0.0 && past > 0.0 {
-        let wavelength = 4.0 * PI * head;
-        let wake = radius + WATER_WAKE * past;
-        let height = WATER_TRAIN * head * breathing * subcritical * smoothstep(0.0, radius, past)
-            * exp(-past / (WATER_TRAIN_REACH * wavelength) - (across / wake) * (across / wake));
-        let rate = 2.0 * PI / wavelength;
-        standing += water_resolved(heading * (-height * rate * sin(rate * along)),
-            0.25 * wavelength, footprint);
-    }
-    let undular = obstacle.w * (1.0 - smoothstep(1.4, 1.7, froude));
-    if undular > 0.0 {
-        let wavelength = WATER_UNDULAR.x * max(depth, WATER_THINNEST);
-        let height = WATER_UNDULAR.y * depth * undular * breathing
-            * exp(-length(apart) / (WATER_TRAIN_REACH * wavelength));
-        let rate = 2.0 * PI / wavelength;
-        standing += water_resolved(heading * (-height * rate * sin(rate * along)),
-            0.25 * wavelength, footprint);
-    }
-    return standing;
-}
-
-// The chop running water's current makes (`water_chop`). The turbulence's
-// imprint it carries: eddies and boils span one to two depths, so its
-// wavelength is WATER_CHOP_DEPTHS of the depth, within WATER_CHOP_SHORTEST
-// and WATER_CHOP_LONGEST meters, with an octave WATER_CHOP_OCTAVE times
-// shorter riding it, WATER_CHOP_FINE as steep; and the root mean square of
-// its slopes on turbulent water running a meter a second
-// (WATER_CHOP_SLOPE): a quarter of that on still water, rising by three
-// quarters of it a meter a second up to 2 m/s, as Catlike Coding's flow
-// tutorials scale chop with the flow's speed, and half of it where the
-// water runs calm.
-const WATER_CHOP_DEPTHS: f32 = 2.0;
-const WATER_CHOP_SHORTEST: f32 = 0.08;
-const WATER_CHOP_LONGEST: f32 = 1.2;
-const WATER_CHOP_OCTAVE: f32 = 2.3;
-const WATER_CHOP_FINE: f32 = 0.6;
-const WATER_CHOP_SLOPE: f32 = 0.35;
-// Short waves standing on the bed where water runs near or above the speed
-// of its own waves (`water_standing_chop`): waves running upstream as fast
-// as the current carries them down stand still, deep-water waves 2πU²/g
-// long, within WATER_STAND_SHORTEST and WATER_STAND_LONGEST meters, drawn
-// WATER_STAND_STRETCH times as long across the flow as along it so their
-// crests lie across it; the Froude numbers over which they rise, from none
-// to all; and the root mean square of their slopes once risen on turbulent
-// water (WATER_STAND_SLOPE), three fifths of that where the water runs
-// calm.
-const WATER_STAND_SHORTEST: f32 = 0.15;
-const WATER_STAND_LONGEST: f32 = 3.0;
-const WATER_STAND_STRETCH: f32 = 2.5;
-const WATER_STAND_FROUDE: vec2<f32> = vec2<f32>(0.6, 1.2);
-const WATER_STAND_SLOPE: f32 = 0.3;
-// Chop's shape (`water_ridge`): value noise about its middle, s, ridged as
-// (1 − √(s² + e²))², sharp where the noise crosses its middle and broad in
-// its troughs, as steep waves' crests are and their troughs are not
-// (Musgrave's ridged noise). The noise's cells a wavelength
-// spans: value noise crosses its middle about every second cell. The root
-// mean square of a ridge's slopes, its heights a cell: value noise's
-// quintic blend of uniform lattice values gives its gradient a mean square
-// of 0.37 a cell squared, which the ridge and its square raise about
-// eightfold. The least share of the noise its crests round over, e; and
-// how far each wavelength's lattice turns from the next shorter's (the
-// golden angle), so their axes never line up.
-const WATER_CHOP_CELLS: f32 = 2.0;
-const WATER_CHOP_RIDGE: f32 = 1.7;
-const WATER_CHOP_ROUND: f32 = 0.06;
-const WATER_CHOP_TURN: f32 = 2.3999632;
-// Chop's crests: the root mean square of its slopes at which they count
-// wholly, the steepest a wave stands before it breaks (Stokes's limit, a
-// height a seventh of its length: a sine's slopes of 0.45 at most, 0.32 in
-// root mean square); the share of their height over which they rise to
-// their tops (`water_ridge`'s w, 1 on the crest), from the first to the
-// second; and the share of the surface they cover, which a pixel spanning
-// many of them shows.
-const WATER_CHOP_BREAKING: f32 = 0.32;
-const WATER_CHOP_CREST: vec2<f32> = vec2<f32>(0.75, 0.95);
-const WATER_CHOP_COVER: f32 = 0.2;
-
-// The chop a current makes: its slopes (xy, meters a meter) and the
-// variance of those finer than the pixel (z), as `water_waves_at` gives
-// waves; and how near the tops of its crests the water stands (0 to 1).
-struct WaterChop {
-    waves: vec3<f32>,
-    crest: f32,
-}
-
-// Chop summed over its parts: their slopes and the variance of those finer
-// than the pixel (xyz, as `WaterChop` holds them); and, of their heights
-// (meters), the sum over what the pixel resolves of them, each weighted by
-// how near the top of its crest the water stands (`tops`) and not
-// (`resolved`), and the sum of them all (`heights`).
-struct WaterChopSum {
-    waves: vec3<f32>,
-    tops: f32,
-    resolved: f32,
-    heights: f32,
-}
-
-// The ridge of noise about its middle `centered` (about -1 to 1), which
-// changes by `gradient` a meter, for a pixel spanning `pixel` meters:
-// (1 − √(s² + e²))², its crest rounded over e, WATER_CHOP_ROUND of the
-// noise or what the pixel spans of it if more (at most half), so no crest
-// is sharper than the pixel shows. Its slopes for a ridge a meter high (xy,
-// meters a meter); the square of those its rounding hides within the
-// pixel, where the pixel spans both flanks of its crest (z); and its
-// height as a share of its crest's (w, 1 on the crest).
-fn water_ridge(centered: f32, gradient: vec2<f32>, pixel: f32) -> vec4<f32> {
-    let rate = length(gradient);
-    let rounding = min(max(WATER_CHOP_ROUND, rate * pixel), 0.5);
-    let rounded = sqrt(centered * centered + rounding * rounding);
-    let ridge = max(1.0 - rounded, 0.0);
-    let flank = 2.0 * ridge * rate;
-    let top = ridge / (1.0 - rounding);
-    return vec4<f32>(gradient * (-2.0 * ridge * centered / rounded),
-        flank * flank * (rounding * rounding - WATER_CHOP_ROUND * WATER_CHOP_ROUND)
-            / (rounded * rounded), top * top);
-}
-
-// Chop `sum` with a part of it added, `height` meters high, the root mean
-// square of its slopes `slope`, shaped as `ridge` says (`water_ridge`'s)
-// and `kept` of it resolved: its slopes as far as the pixel resolves them,
-// and in the variance the rest of their spread and what its rounding
-// hides.
-fn water_chop_part(sum: WaterChopSum, ridge: vec4<f32>, height: f32, slope: f32,
-        kept: f32) -> WaterChopSum {
-    var added = sum;
-    added.waves += vec3<f32>(ridge.xy * (height * kept),
-        ridge.z * height * height * kept * kept + slope * slope * (1.0 - kept * kept));
-    added.tops += ridge.w * height * kept;
-    added.resolved += height * kept;
-    added.heights += height;
-    return added;
-}
-
-// The turbulence's imprint water flowing along `flow` (meters a second),
-// `depth` meters deep and shearing `shear` a second, carries at `time`, the
-// place's clock running `stagger` cycles ahead, the root mean square of its
-// slopes `slope`, for a pixel spanning `pixel` meters: ridged noise
-// (`water_ridge`) of the wavelength its depth sets, an octave
-// WATER_CHOP_OCTAVE times shorter riding it. Each is drawn from a ladder of
-// fixed wavelengths WATER_CHOP_OCTAVE apart, the two rungs nearest it
-// crossfading over WATER_BAND_BLEND as cycles' bands do, so the noise never
-// stretches where the depth changes; each rung's lattice turns
-// WATER_CHOP_TURN from the next shorter's. It is carried along with the
-// flow in sets as ripples are (`water_flowing_waves`), the sets' noise
-// blended keeping its spread before it is ridged, so its crests stay sharp.
-// What strain fades of its slopes, and what the pixel cannot resolve of a
-// rung whose wavelength spans fewer than WATER_WAVE_PIXELS pixels, hides in
-// the variance.
-fn water_carried_chop(p: vec2<f32>, flow: vec2<f32>, depth: f32, shear: f32, time: f32,
-        stagger: f32, slope: f32, pixel: f32) -> WaterChopSum {
-    let wavelength = clamp(WATER_CHOP_DEPTHS * depth, WATER_CHOP_SHORTEST, WATER_CHOP_LONGEST);
-    let octave = log(wavelength / WATER_CHOP_SHORTEST) / log(WATER_CHOP_OCTAVE);
-    let below = floor(octave);
-    let toward = smoothstep(WATER_BAND_BLEND.x, WATER_BAND_BLEND.y, octave - below);
-    // Each rung's share of the slopes' square, the shortest first: the
-    // finer octave's, the coarser's or the finer's, and the coarser's.
-    let fine = WATER_CHOP_FINE * WATER_CHOP_FINE / (1.0 + WATER_CHOP_FINE * WATER_CHOP_FINE);
-    let shares = vec3<f32>(fine * (1.0 - toward), mix(1.0 - fine, fine, toward),
-        (1.0 - fine) * toward);
-    // Each rung's meters across a cell of its noise, how much of it the
-    // pixel resolves, and its lattice's turn (cosine and sine).
-    var cells = vec3<f32>(0.0);
-    var kept = vec3<f32>(0.0);
-    var turns: array<vec2<f32>, 3>;
-    var drawn = false;
-    for (var rung = 0u; rung < 3u; rung++) {
-        let meters = WATER_CHOP_SHORTEST * pow(WATER_CHOP_OCTAVE, below + f32(rung) - 1.0);
-        cells[rung] = meters / WATER_CHOP_CELLS;
-        if shares[rung] > 0.0 {
-            kept[rung] = smoothstep(0.5 * WATER_WAVE_PIXELS, WATER_WAVE_PIXELS, meters / pixel);
-            let turn = (below + f32(rung)) * WATER_CHOP_TURN;
-            turns[rung] = vec2<f32>(cos(turn), sin(turn));
-            drawn = drawn || kept[rung] > 0.0;
-        }
-    }
-    // Each rung's noise about its middle and its gradient (in its lattice's
-    // cells) over the sets, each weighted as it shows and as strain leaves
-    // it; and the sums of those weights' squares, without strain and with.
-    var centered = vec3<f32>(0.0);
-    var gradients: array<vec2<f32>, 3>;
-    var weights = 0.0;
-    var fadings = 0.0;
-    if drawn {
-        let bands = water_bands(shear, WATER_CYCLES);
-        for (var band = 0u; band < 2u; band++) {
-            let shown = select(1.0 - bands.toward, bands.toward, band == 1u);
-            if shown <= 0.0 {
-                continue;
-            }
-            let cycle = bands.first * f32(1u + band);
-            let salt = ((bands.index + band) * 0x632be5abu) ^ 0x3c6ef372u;
-            for (var which = 0u; which < 2u; which++) {
-                let carried = water_set(time, stagger, cycle, which, salt);
-                let weight = shown * carried.weight;
-                if weight <= 0.0 {
-                    continue;
-                }
-                let fading = weight * exp(-WATER_STRAIN_FADE * abs(carried.seconds) * shear);
-                let at = p - flow * carried.seconds;
-                for (var rung = 0u; rung < 3u; rung++) {
-                    if kept[rung] <= 0.0 {
-                        continue;
-                    }
-                    let turn = turns[rung];
-                    let scaled = at / cells[rung];
-                    let noise = water_noise(vec2<f32>(turn.x * scaled.x - turn.y * scaled.y,
-                        turn.y * scaled.x + turn.x * scaled.y) + carried.offset);
-                    centered[rung] += fading * (noise.x - 0.5);
-                    gradients[rung] += fading * noise.yz;
-                }
-                weights += weight * weight;
-                fadings += fading * fading;
-            }
-        }
-    }
-    // The sets' noise blended keeping its spread, from -1 to 1 about its
-    // middle, and the share of its slopes strain leaves.
-    let blend = 2.0 * inverseSqrt(max(fadings, 1.0e-12));
-    let strained = sqrt(fadings / max(weights, 1.0e-12));
-    var sum = WaterChopSum(vec3<f32>(0.0), 0.0, 0.0, 0.0);
-    for (var rung = 0u; rung < 3u; rung++) {
-        if shares[rung] <= 0.0 {
-            continue;
-        }
-        let part = slope * sqrt(shares[rung]);
-        var ridge = vec4<f32>(0.0);
-        if kept[rung] > 0.0 {
-            // Its gradient a meter, turned back from its lattice's.
-            let turn = turns[rung];
-            let turned = gradients[rung] * (blend / cells[rung]);
-            ridge = water_ridge(centered[rung] * blend, vec2<f32>(
-                turn.x * turned.x + turn.y * turned.y, turn.x * turned.y - turn.y * turned.x),
-                pixel);
-        }
-        sum = water_chop_part(sum, ridge, part * cells[rung] / WATER_CHOP_RIDGE, part,
-            kept[rung] * strained);
-    }
-    return sum;
-}
-
-// Short waves standing on the bed where water flows along `flow` (meters a
-// second) near or above the speed of its own waves, the root mean square of
-// their slopes `slope`, for a pixel spanning `pixel` meters: ridged noise
-// (`water_ridge`) 2πU²/g long along the flow and WATER_STAND_STRETCH times
-// as long across it, drawn from a ladder of fixed wavelengths an octave
-// apart as `water_carried_chop` draws its own. They stand where the bed
-// is, never carried. Each rung is drawn in cells a wavelength across, in
-// four grids half a cell apart, each read turned to run along the flow
-// about its cell's middle, so it shears no more than the flow turns across
-// a cell, and the four blended by weights falling from their cells'
-// middles to none at their edges, keeping their spread (Catlike Coding's
-// directional flow).
-fn water_standing_chop(p: vec2<f32>, flow: vec2<f32>, slope: f32, pixel: f32) -> WaterChopSum {
-    let speed = length(flow);
-    let heading = flow / max(speed, 1.0e-6);
-    let side = vec2<f32>(-heading.y, heading.x);
-    let wavelength = clamp(2.0 * PI * speed * speed / WATER_GRAVITY, WATER_STAND_SHORTEST,
-        WATER_STAND_LONGEST);
-    let octave = log2(wavelength / WATER_STAND_SHORTEST);
-    let below = floor(octave);
-    let toward = smoothstep(WATER_BAND_BLEND.x, WATER_BAND_BLEND.y, octave - below);
-    // The root mean square of the stretched ridge's slopes, its heights a
-    // cell of its noise along the flow.
-    let spread = WATER_CHOP_RIDGE
-        * sqrt(0.5 + 0.5 / (WATER_STAND_STRETCH * WATER_STAND_STRETCH));
-    var sum = WaterChopSum(vec3<f32>(0.0), 0.0, 0.0, 0.0);
-    for (var rung = 0u; rung < 2u; rung++) {
-        let share = select(1.0 - toward, toward, rung == 1u);
-        if share <= 0.0 {
-            continue;
-        }
-        let meters = WATER_STAND_SHORTEST * exp2(below + f32(rung));
-        // Meters across a cell of its noise along the flow.
-        let along = meters / WATER_CHOP_CELLS;
-        let part = slope * sqrt(share);
-        let kept = smoothstep(0.5 * WATER_WAVE_PIXELS, WATER_WAVE_PIXELS, meters / pixel);
-        var ridge = vec4<f32>(0.0);
-        if kept > 0.0 {
-            let salt = 4u * (u32(below) + rung);
-            var centered = 0.0;
-            var gradient = vec2<f32>(0.0);
-            var weights = 0.0;
-            for (var grid = 0u; grid < 4u; grid++) {
-                let at = p / meters + vec2<f32>(f32(grid & 1u), f32(grid >> 1u)) * 0.5;
-                let cell = floor(at);
-                let local = at - cell;
-                let tent = 1.0 - abs(2.0 * local - 1.0);
-                let weight = tent.x * tent.y;
-                if weight <= 0.0 {
-                    continue;
-                }
-                let offset = (local - 0.5) * meters;
-                let noise = water_noise(vec2<f32>(dot(offset, heading),
-                    dot(offset, side) / WATER_STAND_STRETCH) / along
-                    + water_corner_offset(vec2<i32>(cell), salt + grid) * 64.0);
-                centered += weight * (noise.x - 0.5);
-                gradient += weight * (heading * noise.y + side * (noise.z / WATER_STAND_STRETCH));
-                weights += weight * weight;
-            }
-            let blend = 2.0 * inverseSqrt(max(weights, 1.0e-12));
-            ridge = water_ridge(centered * blend, gradient * (blend / along), pixel);
-        }
-        sum = water_chop_part(sum, ridge, part * along / spread, part, kept);
-    }
-    return sum;
-}
-
-// The chop where water `depth` meters deep flows along `flow` (meters a
-// second) at Froude number `froude`, as turbulent as `turbulence` says (0
-// to 1) and shearing `shear` a second, at `time`, the place's clock running
-// `stagger` cycles ahead, its standing waves rising `breathing` of their
-// height, for a pixel spanning `footprint` meters, `share` of it: the
-// turbulence's imprint the current carries (`water_carried_chop`), as steep
-// as WATER_CHOP_SLOPE says, and short waves standing on its bed
-// (`water_standing_chop`), as steep as WATER_STAND_SLOPE says, rising as
-// its Froude number nears 1. Its crest: where its parts' heights together
-// sit near their tops, the more the steeper it is, wholly where it is as
-// steep as waves before they break; where the pixel spans many crests, the
-// share of the surface they cover.
-fn water_chop(p: vec2<f32>, flow: vec2<f32>, depth: f32, froude: f32, turbulence: f32,
-        shear: f32, time: f32, stagger: f32, breathing: f32, footprint: f32,
-        share: f32) -> WaterChop {
-    let speed = length(flow);
-    // As finely as the display shows it: the mip bias.
-    let pixel = footprint * material_detail();
-    let carried = WATER_CHOP_SLOPE * (0.25 + 0.75 * min(speed, 2.0))
-        * mix(0.5, 1.0, turbulence);
-    var sum = water_carried_chop(p, flow, depth, shear, time, stagger, carried, pixel);
-    let standing = WATER_STAND_SLOPE
-        * smoothstep(WATER_STAND_FROUDE.x, WATER_STAND_FROUDE.y, froude)
-        * mix(0.6, 1.0, turbulence) * breathing;
-    if standing > 0.0 {
-        let stood = water_standing_chop(p, flow, standing, pixel);
-        sum.waves += stood.waves;
-        sum.tops += stood.tops;
-        sum.resolved += stood.resolved;
-        sum.heights += stood.heights;
-    }
-    let steep = sqrt(carried * carried + standing * standing);
-    let top = sum.tops / max(sum.resolved, 1.0e-9);
-    let resolved = sum.resolved / max(sum.heights, 1.0e-9);
-    let crest = saturate(steep / WATER_CHOP_BREAKING)
-        * mix(WATER_CHOP_COVER, smoothstep(WATER_CHOP_CREST.x, WATER_CHOP_CREST.y, top), resolved);
-    return WaterChop(vec3<f32>(sum.waves.xy * share, sum.waves.z * share * share), crest * share);
 }
 
 // Caustics (Guardado and Sánchez-Crespo): how much brighter the sun's
@@ -2289,16 +1717,12 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let turbulence = at.words.state.x;
     let born = at.words.state.y;
     let shear = at.words.state.z;
-    // Still water's waves run with the wind as they evolve; flowing water
-    // keeps the wind's finest ripples, carried along with it in sets that
-    // start over before its shear stretches them, and wears the chop its
-    // current makes; between, the two blend, so nothing changes at once
-    // where a river meets a lake.
+    // How fast it runs, its Froude number, and how fast its eddies turn
+    // (`water_eddy_speed`): shallow water running fast down a steep surface
+    // stirs fast eddies, deep slow water slow ones.
     let speed = length(flow);
-    let flowing = smoothstep(0.05, 0.3, speed);
-    // How fast it runs, still to 2 m/s: running water raises no swell, and
-    // its current's chop takes over from the wind's ripples.
-    let running = saturate(speed * 0.5);
+    let froude = speed / sqrt(WATER_GRAVITY * max(depth, WATER_THINNEST));
+    let eddy = water_eddy_speed(speed, length(at.slope), depth);
     // The plane its surface lies in without its waves, tilted as it falls:
     // the eye looks down onto it, light enters through it and what lies
     // behind the pixel stands under it, so water running down toward the eye
@@ -2306,25 +1730,14 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let plane = normalize(vec3<f32>(at.slope.x, 1.0, at.slope.y));
     // How far the pixel spans on the water, which filters the patterns it
     // shows of it; and how far it spans along the view on that plane seen
-    // from the detail eye (`detail_span`), which those patterns hand over to
-    // their means by before they shimmer.
+    // from the detail eye (`detail_span`), which any handover by size on
+    // screen measures.
     let footprint = max(length(world_dx.xz), length(world_dy.xz));
     let seen = detail_span(world, plane).y;
     // Each place's patterns start over at their own times, so the flow
     // never pulses all at once (Vlachos's phase noise): the cycles its
     // clock runs ahead by.
     let stagger = water_noise(world.xz / WATER_FLOW_PHASE).x;
-    var waves = vec3<f32>(0.0);
-    if flowing < 1.0 {
-        waves = water_waves_at(world.xz, world_dx.xz, world_dy.xz, vec3<f32>(1.0));
-    }
-    if flowing > 0.0 {
-        let moving = water_flowing_waves(world.xz, world_dx.xz, world_dy.xz,
-            mix(1.0, WATER_RUNNING_RIPPLES, running), flow, shear, time, stagger);
-        waves = water_blended(waves, moving, flowing);
-    }
-    let gusts = water_gusts(world.xz, time);
-    let strength = water.ripples.x * gusts;
     // Waves stand where the bed holds them, about the obstacle nearest the
     // water's samples: only where a pixel's samples agree on one, the
     // obstacle staying put as the point moves across the pixel.
@@ -2332,37 +1745,25 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let anchoring = (length(dpdx(anchor)) + length(dpdy(anchor)))
         / max(length(world_dx.xz) + length(world_dy.xz), 1.0e-6);
     let anchored = 1.0 - smoothstep(0.1, 0.4, anchoring);
-    let froude = speed / sqrt(WATER_GRAVITY * max(depth, WATER_THINNEST));
-    // Waves standing about obstacles, and where the water runs near or
-    // above the speed of its own waves, breathe as slow noise passes over
-    // them.
-    var breathing = 1.0;
-    if anchored > 0.0 || (flowing > 0.0 && froude > WATER_STAND_FROUDE.x) {
-        breathing = water_breathing(world.xz, flow, time, stagger);
-    }
-    var stationary = vec3<f32>(0.0);
-    if anchored > 0.0 {
-        stationary = water_standing(at.obstacle, flow, depth, froude, breathing, seen)
-            * anchored;
-    }
-    // Running water's current chops it: the eddies it carries, and short
-    // waves standing on its bed where it runs near or above the speed of its
-    // own waves; and its crest, how near the tops of the chop's crests it
-    // stands (0 to 1).
-    var chop = WaterChop(vec3<f32>(0.0), 0.0);
-    if flowing > 0.0 {
-        chop = water_chop(world.xz, flow, depth, froude, turbulence, shear, time, stagger,
-            breathing, footprint, flowing);
-    }
-    let crest = chop.crest;
-    // Its ripples, chop and standing waves ride its surface, tilting as it
-    // falls; and the slopes they hide within a pixel roughen it, so where
-    // chop churns it, it glints sharply rather than mirroring the sky
-    // (Bruneton, Neyret and Holzschuch).
-    let slopes = waves.xy * strength + chop.waves.xy + stationary.xy - at.slope;
+    // How far it is from still to running: still water's waves stand where
+    // they evolve, running water's ride its current, and between, the two
+    // blend, so nothing changes at once where a river meets a lake.
+    let flowing = smoothstep(0.05, 0.3, speed);
+    // The wind's waves: each of its tiles as strong as its spectrum gives
+    // that tile's band where the wind, gusting, blows over as much water as
+    // the water's body spans, as deep as it is here.
+    let gains = water_wind_gains(water_wind_speed(world.xz, time), at.words.span, depth);
+    // Its waves, from its state alone (`water_flow_waves`): the wind's and
+    // its eddies', the short waves its bed holds and those standing about
+    // what it flows past.
+    let waves = water_flow_waves(world.xz, world_dx.xz, world_dy.xz, at, gains, eddy, froude,
+        flowing, anchored, time, stagger);
+    // They ride its surface, tilting as it falls; and the slopes they hide
+    // within a pixel roughen it, so where they run rough, it glints rather
+    // than mirroring the sky (Bruneton, Neyret and Holzschuch).
+    let slopes = waves.slopes - at.slope;
     let normal = normalize(vec3<f32>(-slopes.x, 1.0, -slopes.y));
-    let roughness = water_roughness(waves.z * strength * strength + chop.waves.z
-        + stationary.z);
+    let roughness = water_roughness(waves.hidden);
     let view = stable_normalize(-point);
     // Under the sea, the sea's water stands instead: its level
     // (`water.ocean.x`) is held relative to the eye.

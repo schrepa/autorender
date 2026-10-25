@@ -46,6 +46,7 @@ shaders! {
         "fullscreen.wgsl",
         "meshes/cover.wgsl",
         "meshes/water.wgsl",
+        "meshes/water_flow.wgsl",
         "meshes/water_falls.wgsl",
         "meshes/ocean.wgsl",
         "meshes/debug.wgsl",
