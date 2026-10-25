@@ -198,9 +198,6 @@ const WATER_IOR: f32 = 1.333;
 // Calm water's roughness, and the most its waves' hidden slopes roughen it.
 const WATER_SMOOTH: f32 = 0.05;
 const WATER_ROUGHEST: f32 = 0.6;
-// How much the sun's disc widens its mirrored lobe (alpha): the half
-// vectors of its rays span half the disc's angle, about 0.0023 radians.
-const WATER_SUN_ALPHA: f32 = 0.0023;
 // How strongly water's body scatters light forward (Henyey and
 // Greenstein's g), and its phase's mean over the backward half, where light
 // entering the surface turns back toward an eye above it.
@@ -212,9 +209,6 @@ const WATER_PHASE_MEAN: f32 = 0.4498;
 const WATER_FOAM_ALBEDO: f32 = 0.65;
 const WATER_FOAM_SKY: f32 = 0.6;
 const WATER_FOAM_ROUGH: vec2<f32> = vec2<f32>(0.3, 0.7);
-// The lowest the eye's mirrored view dips: slopes turned from the eye would
-// mirror what lies below the horizon.
-const WATER_HORIZON: f32 = 0.02;
 // Meters the bent view runs at most to what it shows: the water hides what
 // lies farther.
 const WATER_REACH: f32 = 4.0;
@@ -856,16 +850,23 @@ fn water_roughness(variance: f32) -> f32 {
 // 55 % (Koepke).
 const WATER_BUBBLES: f32 = 3.0;
 const WATER_BUBBLE_ALBEDO: f32 = 0.2;
-// How much more of the light its body scatters water lets out at the top of
-// a crest of its chop, where that light crosses less water on its way out
-// (wave peaks lit through, as Sea of Thieves lights them): half again.
-const WATER_CREST_BODY: f32 = 0.5;
+// The meters of water the sun's light crosses through a crest for each
+// meter of its waves' root mean square height: a crest at Stokes's limit, a
+// seventh as high as it is long, stands L/π wide on average above the
+// still level, 7·2√2/π ≈ 6.3 root mean square heights of a sine.
+const WATER_CREST_WALL: f32 = 6.3;
+
+// How fast light dies in water `aerated` (0 to 1) with the bubbles churning
+// water holds, each channel per meter: what the water takes, and what its
+// sediment and bubbles scatter.
+fn water_extinction(aerated: f32) -> vec3<f32> {
+    return water.absorption.rgb + water.sediment.w + WATER_BUBBLES * aerated;
+}
 
 // What light keeps of each channel over `meters` of water `aerated` (0 to
-// 1) with the bubbles churning water holds: what the water takes, and what
-// its sediment and bubbles scatter.
+// 1) with the bubbles churning water holds (`water_extinction`).
 fn water_transmitted(meters: f32, aerated: f32) -> vec3<f32> {
-    return exp(-(water.absorption.rgb + water.sediment.w + WATER_BUBBLES * aerated) * meters);
+    return exp(-water_extinction(aerated) * meters);
 }
 
 // The color water `aerated` (0 to 1) with the bubbles churning water holds
@@ -879,19 +880,19 @@ fn water_body(aerated: f32) -> vec3<f32> {
         + vec3<f32>(WATER_BUBBLE_ALBEDO * bubbles)) / max(own + sediment + bubbles, 1.0e-6);
 }
 
-// The normal that mirrors the eye's view along `view` no lower than
-// WATER_HORIZON: `normal`, or, for slopes turned from the eye, the normal
-// mirroring the view just over the horizon instead. Seen from under the
-// water, below the plane its surface lies in (`plane`, its normal),
-// `normal`.
+// The normal that mirrors the eye's view along `view` above the horizon, so
+// water however far off mirrors what stands just above it: `normal`, or,
+// for slopes turned so far from the eye that they would mirror what lies
+// below the horizon, the normal mirroring the view as far above it
+// instead: they would see the next wave's face, turned toward them about as
+// far, which mirrors the view back up. Seen from under the water, below the
+// plane its surface lies in (`plane`, its normal), `normal`.
 fn water_facing(normal: vec3<f32>, view: vec3<f32>, plane: vec3<f32>) -> vec3<f32> {
     let mirrored = reflect(-view, normal);
-    let across = length(mirrored.xz);
-    if dot(view, plane) <= 0.0 || mirrored.y >= WATER_HORIZON || across < 1.0e-6 {
+    if dot(view, plane) <= 0.0 || mirrored.y >= 0.0 {
         return normal;
     }
-    let level = mirrored.xz / across * sqrt(1.0 - WATER_HORIZON * WATER_HORIZON);
-    return normalize(view + vec3<f32>(level.x, WATER_HORIZON, level.y));
+    return normalize(view + vec3<f32>(mirrored.x, -mirrored.y, mirrored.z));
 }
 
 // Henyey and Greenstein's phase for light scattering through `cosine` over
@@ -975,9 +976,11 @@ fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: 
 // as terrains' water falls), which the eye looks down onto and light
 // enters through; the share of it foam covers; the color its body scatters
 // back, and what it keeps of each channel of the light on its way to what
-// lies below and back; light it adds of its own (the sea's crests lit
-// through); and how near the top of a crest of its chop it stands (0 to
-// 1), where the light its body scatters crosses less water on its way out.
+// lies below and back; how near the top of a crest of its waves it stands
+// (0 to 1); and how many times over each channel of light dies by e
+// crossing the walls of its crests (`water_extinction` over
+// WATER_CREST_WALL of its waves' root mean square heights), where the sun's
+// light crosses on toward the eye.
 struct WaterSurface {
     relative: vec3<f32>,
     world_dx: vec3<f32>,
@@ -996,8 +999,8 @@ struct WaterSurface {
     foam: f32,
     scatter: vec3<f32>,
     transmit: vec3<f32>,
-    glow: vec3<f32>,
     crest: f32,
+    crest_wall: vec3<f32>,
 }
 
 // A water surface's light, fogged and graded, its reflectance, and the
@@ -1011,10 +1014,11 @@ struct WaterLit {
 // The light of water surface `surface`: the sky and scene it mirrors and
 // the sun's disc, by Fresnel's share; the light its body scatters back
 // toward the eye, for as much as it stops on its way to what lies below and
-// back, through what the surface lets out; and its foam, a white layer
-// lit by its own relief, darker in its hollows and glinting where it lies
-// wet. One shadow lookup serves the sun's three, and the sun's share of the
-// light falling on the water.
+// back, and the sun's light its crests scatter on toward the eye as it
+// crosses them, through what the surface lets out; and its foam, a white
+// layer lit by its own relief, darker in its hollows and glinting where it
+// lies wet. One shadow lookup serves all the sun's light on it, and the
+// sun's share of the light falling on the water.
 fn water_light(surface: WaterSurface) -> WaterLit {
     let world = eye_world(surface.relative);
     let distance = length(surface.relative);
@@ -1035,20 +1039,50 @@ fn water_light(surface: WaterSurface) -> WaterLit {
             * sun_visibility(world, up, surface.world_dx, surface.world_dy, distance, false);
     }
     // The sun's disc mirrored: its lobe widened by the half vectors the
-    // disc spans (Karis), which also keeps calm water's glint from
-    // flickering in single pixels.
+    // disc's rays span (Karis), which also keeps calm water's glint from
+    // flickering in single pixels. They span half the disc's angular radius
+    // (`lighting.highlights.y`, its sine; none for a point sun) within the
+    // plane of incidence and that over their cosine with the view out of it,
+    // as many as a round lobe holds whose radius is the two's geometric
+    // mean, so a mirror shows the disc as bright as it is however grazing
+    // the view; the waves' spread of normals adds to it as a variance. A
+    // rough surface draws a low sun out into a long path of glitter toward
+    // the eye.
     var glint = vec3<f32>(0.0);
     let n_l = dot(normal, sun);
     if n_l > 0.0 && any(sunlight > vec3<f32>(0.0)) {
-        let widened = alpha + WATER_SUN_ALPHA;
         let half_vector = normalize(view + sun);
-        glint = fresnel(f0, max(dot(view, half_vector), 0.0)) * sunlight
+        let v_h = max(dot(view, half_vector), 1.0e-4);
+        let disc = 0.5 * lighting.highlights.y;
+        let widened = sqrt(alpha * alpha + disc * disc / v_h);
+        glint = fresnel(f0, v_h) * sunlight
             * (distribution(max(dot(normal, half_vector), 0.0), widened)
                 * visibility(n_v, n_l, widened) * n_l * lighting.sun_color.w);
     }
-    let body = surface.scatter * (vec3<f32>(1.0) - surface.transmit)
-        * water_scattered(view, sunlight, surface.plane) * (1.0 - reflectance)
-        * (1.0 + WATER_CREST_BODY * surface.crest);
+    // Its crests lit through (Sea of Thieves' peak mask, Ang 2018, from the
+    // body's own coefficients): at a crest the eye looks through a wall of
+    // water, and the sun's light entering its far flank, which faces the sun
+    // as the near one faces the eye, crosses it unbent between its two
+    // faces, the body scattering it toward the eye by its phase about the
+    // sun's own heading, most strongly forward, against the sun. Scattered
+    // once on its way through a wall where a channel dies by e x times over,
+    // x·e^-x of it goes on toward the eye, where the deep body sends back its
+    // color over light's two legs through it, down and back (μ₀ + μ about
+    // 2): crests of small waves in clear water let the light by, thick ones
+    // stop it, and those about one dying by e thick glow most, paler than
+    // the deep body for having taken less of the red.
+    var crest_light = vec3<f32>(0.0);
+    let far = 2.0 * dot(surface.normal, surface.plane) * surface.plane - surface.normal;
+    let far_in = dot(far, sun);
+    let above = dot(view, surface.plane) > 0.0; // optics: crests are lit through as seen from above the water
+    if surface.crest > 0.0 && far_in > 0.0 && above && any(sunlight > vec3<f32>(0.0)) {
+        let wall = surface.crest_wall;
+        crest_light = surface.scatter * sunlight * wall * exp(-wall)
+            * (2.0 * surface.crest * (1.0 - fresnel(f0, far_in).r)
+                * water_phase(dot(-sun, view)));
+    }
+    let body = (surface.scatter * (vec3<f32>(1.0) - surface.transmit)
+        * water_scattered(view, sunlight, surface.plane) + crest_light) * (1.0 - reflectance);
     // Foam scatters the sun's light, as the waves it rides face it, and the
     // light around it: the sky's, of which water in its channel sees
     // WATER_FOAM_SKY, and the ground's around it for the rest, sunlit and
@@ -1096,8 +1130,13 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     point.on_terrain = false;
     point.sun_shade = 1.0;
     var lit: WaterLit;
-    lit.shaded = finish(point, mix(body + glint, foam, surface.foam) + surface.glow);
+    lit.shaded = finish(point, mix(body + glint, foam, surface.foam));
     lit.reflectance = reflectance;
+    // Screen-space reflections stand in for what it mirrors of what lies
+    // around, at most that share of its light (`ambient`: its body takes no
+    // diffuse light of the sky), so its glints, its lit crests and its foam
+    // keep theirs where they outshine what it mirrors.
+    lit.shaded.reflect = min(lit.shaded.reflect, lit.shaded.ambient);
     let sunlit = luminance(sunlight) * max(sun.y, 0.0);
     lit.sunny = sunlit / max(sunlit + luminance(sky), 1.0e-6);
     return lit;
@@ -2531,19 +2570,24 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     surface.roughness = roughness;
     surface.plane = plane;
     surface.foam_tilt = foam_tilt;
-    surface.foam_shade = WATER_FOAM_HOLLOW * drawn.hollow * drawn.cover / layers;
-    surface.foam_thin = (drawn.thin * drawn.cover + lace) / layers;
+    surface.foam_shade = foam_shade;
+    surface.foam_thin = foam_thin;
     surface.foam = foam;
     surface.scatter = water_body(aerated);
     surface.transmit = transmit;
-    surface.glow = vec3<f32>(0.0);
-    surface.crest = crest;
+    // Its crests where its waves put them, the walls the sun's light crosses
+    // there as thick as WATER_CREST_WALL of the root mean square height of
+    // all its waves, resolved and hidden.
+    surface.crest = waves.crest;
+    surface.crest_wall = water_extinction(aerated) * (WATER_CREST_WALL * sqrt(waves.heights));
     let lit = water_light(surface);
     // The waves' caustics brighten the sun's share of the light on the bed,
-    // fading as it lies deeper, as turbulence scatters the light, and as
-    // the pixel spans more of the waves gathering it.
-    let caustic = 1.0 + (gathered - 1.0) * lit.sunny * exp(-bed / WATER_CAUSTIC_DEPTH)
-        * (1.0 - turbulence) * (1.0 - smoothstep(WATER_CAUSTIC_PIXELS.x, WATER_CAUSTIC_PIXELS.y,
+    // fading as it lies deeper, as the bubbles churning water holds scatter
+    // that light on its way down, and as the pixel spans more of the waves
+    // gathering it.
+    let caustic = 1.0 + (gathered - 1.0) * lit.sunny
+        * exp(-bed * (1.0 / WATER_CAUSTIC_DEPTH + WATER_BUBBLES * aerated))
+        * (1.0 - smoothstep(WATER_CAUSTIC_PIXELS.x, WATER_CAUSTIC_PIXELS.y,
             footprint / max(bed, 1.0e-3)));
     // Of what the surface lets through, the ground shows darker for being
     // wet however thin the water; foam covers it.
