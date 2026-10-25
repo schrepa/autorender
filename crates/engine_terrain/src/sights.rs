@@ -173,7 +173,7 @@ impl Hydrology {
                 );
                 LakeSight {
                     level: water.levels[lake],
-                    area: samples as f32 * water.spacing * water.spacing,
+                    area: water.areas[lake],
                     middle,
                     shore: shore.map_or(middle, |sample| {
                         at((sample % water.width) as f32, (sample / water.width) as f32)

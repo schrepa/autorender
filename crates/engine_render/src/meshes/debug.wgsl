@@ -41,9 +41,10 @@ const DEBUG_NO_MATERIAL: u32 = 0xffu;
 // shallow-water scheme).
 const DEBUG_GRAVITY: f32 = 9.81;
 const DEBUG_DRY: f32 = 1.0e-4;
-// Whether the frame shows one of the water's views (DEBUG_VIEW_WATER_* of
-// `debug_view.wgsl`), which draw tiles' and simulated water wherever it
-// lies; the other views draw it where it covers at least half the pixel.
+// Whether the frame shows one of the water's views of its state
+// (DEBUG_VIEW_WATER_* of `debug_view.wgsl`), which draw tiles' and
+// simulated water wherever it lies; the other views draw it where it covers
+// at least half the pixel.
 override DEBUG_WATER_VIEWS: bool = false;
 
 struct DebugTargets {
@@ -259,10 +260,13 @@ fn fs_debug_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> Deb
 // drawn at the point `mesh` of its mesh over the point `point` of its
 // surface: the tiles', which gives way where water is simulated, or the
 // simulated water's (`simulated`). Its object word holds its depth (meters)
-// and its detail word its speed (meters a second), as floats' bits; the
-// third target its Froude number, as a float's bits, then its turbulence and
-// white water (a byte each, 0 to 1) with its reach in the top byte (0 for
-// none, else one more than `engine_terrain::Reach`).
+// and its speed (meters a second), its detail word how far across its water
+// body is (meters) and the roughness its shading gives it, each pair half
+// floats; the third target its Froude number and its eddies' turbulent
+// Froude number (`water_eddy_froude`), half floats, then its turbulence,
+// white water and the foam it carries (a byte each, 0 to 1, the foam a share
+// of WATER_FOAM_MOST) with its reach in the top byte (0 for none, else one
+// more than `engine_terrain::Reach`).
 fn debug_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
         simulated: bool) -> DebugTargets {
     let shade = shade_water(mesh, point, pixel, at, false, simulated);
@@ -273,10 +277,11 @@ fn debug_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let depth = at.depth;
     let speed = length(at.words.flow);
     let froude = speed / sqrt(DEBUG_GRAVITY * max(depth, DEBUG_DRY));
-    var targets = debug_targets(DEBUG_KIND_WATER, bitcast<u32>(depth), bitcast<u32>(speed),
-        seen);
-    targets.terrain = vec2<u32>(bitcast<u32>(froude),
-        pack4x8unorm(vec4<f32>(at.words.state.xy, 0.0, 0.0))
+    let eddies = water_eddy_froude(speed, length(at.slope), depth);
+    var targets = debug_targets(DEBUG_KIND_WATER, pack2x16float(vec2<f32>(depth, speed)),
+        pack2x16float(vec2<f32>(at.words.span, shade.shaded.roughness)), seen);
+    targets.terrain = vec2<u32>(pack2x16float(vec2<f32>(froude, eddies)),
+        pack4x8unorm(vec4<f32>(at.words.state.xy, at.words.foam / WATER_FOAM_MOST, 0.0))
             | (min(at.words.reach, 0xffu) << 24u));
     return targets;
 }

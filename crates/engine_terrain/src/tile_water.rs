@@ -1,11 +1,13 @@
 //! Water as a terrain tile holds it, the one place the world's water is:
 //! per sample, in the layout of the tile's heights, the surface water stands
 //! at wherever any reaches (NaN where none does), and beside it three words
-//! ([`TileWater::info`]): its flow, its whitewater and whether a lake holds
-//! it; its state, how turbulent it runs, how white it breaks, its shear and
-//! the reach of the stream it runs in; and its nearest obstacle, rock
-//! breaking its surface or a boulder under it, with whether a drop or a
-//! jump lies just upstream. Depth is never held: it is the surface less the
+//! ([`TileWater::info`]): its flow, its whitewater, how far across its
+//! water body is (its span: a river's width, a lake's equal-area diameter,
+//! the fetch the wind has over it) and whether a lake holds it; its state,
+//! how turbulent it runs, how white it breaks, its shear and the reach of
+//! the stream it runs in; and its nearest obstacle, rock breaking its
+//! surface or a boulder under it, with whether a drop or a jump lies just
+//! upstream. Depth is never held: it is the surface less the
 //! tile's ground at the same point, on the triangles every consumer splits
 //! cells into ([`crate::Tile::water_at`]), so drawing, physics, queries,
 //! placement and navigation read one water. Tile generation writes it from
@@ -38,9 +40,17 @@ use crate::{
 
 /// Meters a second either way the packed flow spans.
 pub const WATER_FLOW_RANGE: f32 = 8.0;
-/// Meters of half width the packed width of a river's water spans: wider
-/// water packs as this wide, as lakes do.
-pub const WATER_WIDTH_RANGE: f32 = 63.0;
+/// The narrowest and the widest span the packed span tells apart (meters
+/// across a water body: a river's width, a lake's equal-area diameter), a
+/// quarter meter to a lake about 13 km² in area; wider water packs as the
+/// widest. Its code is a signed byte's magnitude, 1 to 127 on a logarithmic
+/// scale between them, each of its 126 steps 2^(1/9), about 8%, wider than
+/// the one before.
+pub const WATER_SPAN_LEAST: f32 = 0.25;
+pub const WATER_SPAN_MOST: f32 = 4096.0;
+/// Steps of the packed span's code from [`WATER_SPAN_LEAST`] to
+/// [`WATER_SPAN_MOST`]: a signed byte's magnitude, from 1 to 127.
+const SPAN_STEPS: f32 = 126.0;
 /// Per second of shear the packed shear spans: water's velocity changing by
 /// eight meters a second over a meter, past what torrents shear.
 pub const WATER_SHEAR_RANGE: f32 = 8.0;
@@ -90,7 +100,7 @@ const BUMP: f32 = 0.3;
 const MOST_RADIUS: f32 = 0.5 * 127.0 * WATER_OBSTACLE_STEP;
 /// What a sample outside every part ([`parts`]) holds as its part, and one
 /// nearest no seed ([`nearest`]) as its seed.
-const NONE: u32 = u32::MAX;
+pub(crate) const NONE: u32 = u32::MAX;
 /// Rings of dry samples beside water, each the dry samples among the eight
 /// neighbors of the ring inside it, that hold the water's surface continued
 /// under its banks: the samples a mesh standing on the surface may reach
@@ -106,14 +116,15 @@ const STOPPED: u8 = u8::MAX - 2;
 
 /// The water at a point of a tile: the surface it stands at (terrain-local
 /// meters), its depth over the tile's ground there, its flow along x and z
-/// (meters a second), its whitewater (0 to 1), whether a lake holds it and
-/// its state.
+/// (meters a second), its whitewater (0 to 1), how far across its water
+/// body is (its span, meters), whether a lake holds it and its state.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WaterPoint {
     pub surface: f32,
     pub depth: f32,
     pub flow: Vec2,
     pub white: f32,
+    pub span: f32,
     pub lake: bool,
     pub state: WaterState,
 }
@@ -196,8 +207,8 @@ impl TileWater {
     }
 
     /// Every sample's words, in the layout of [`Self::surfaces`], as GPU
-    /// tiles upload them, each four bytes, low first: its flow, whitewater
-    /// and kind ([`pack`]); its state ([`WaterState`]: its turbulence, how
+    /// tiles upload them, each four bytes, low first: its flow, whitewater,
+    /// span and kind ([`pack`]); its state ([`WaterState`]: its turbulence, how
     /// strongly it breaks white and its shear as a share of
     /// [`WATER_SHEAR_RANGE`], in 255ths, and 0 for no reach, else its reach
     /// plus one); and its nearest obstacle (the offset to the obstacle's
@@ -224,8 +235,8 @@ impl TileWater {
         self.surface[((z + 1) * stride + x + 1) as usize]
     }
 
-    /// The flow, whitewater, kind and half width of sample `(x, z)`, -1 to
-    /// 257 along each axis ([`unpack`]).
+    /// The flow, whitewater, kind and span of sample `(x, z)`, -1 to 257
+    /// along each axis ([`unpack`]).
     #[inline]
     pub(crate) fn sample_info(&self, x: i32, z: i32) -> (Vec2, f32, bool, f32) {
         let stride = TILE_STRIDE as i32;
@@ -242,17 +253,19 @@ impl TileWater {
 
     /// What the bed holds under a point `offset` meters from sample `(x,
     /// z)`, -1 to 257 along each axis, as that sample's words hold it: its
-    /// reach's code ([`reach_code`]), and its nearest obstacle packed as
+    /// reach's code ([`reach_code`]) in the first word's low byte, beside
+    /// its span's code as [`pack`] packs it (negative where a lake holds
+    /// it) in the byte above; and its nearest obstacle packed as
     /// [`pack_obstacle`] packs it, offset from the point instead of the
     /// sample.
     pub(crate) fn bed_words(&self, x: i32, z: i32, offset: Vec2) -> [u32; 2] {
         let stride = TILE_STRIDE as i32;
-        let [_, state, obstacle] = self.info[((z + 1) * stride + x + 1) as usize];
+        let [packed, state, obstacle] = self.info[((z + 1) * stride + x + 1) as usize];
         let step = |shift: u32| f32::from((obstacle >> shift) as u8 as i8) * WATER_OBSTACLE_STEP;
         let radius = f32::from((obstacle >> 16) as u8) * WATER_RADIUS_STEP;
         let toward = Vec2::new(step(0), step(8)) - offset;
         [
-            state >> 24,
+            state >> 24 | (packed >> 24) << 8,
             pack_obstacle(toward, radius, jump_of(obstacle)),
         ]
     }
@@ -345,7 +358,7 @@ fn extend(surface: &mut [f32], info: &mut [[u32; 3]], heights: &[f32]) {
 /// as [`extend`] counts them (`rings`): their surface, averaged, where its
 /// ground stands at or above it, so the shore falls on the triangles
 /// between them where the ground rises through the water, with their flow,
-/// whitewater, kind, width, state and jump, averaged, and the reach most of
+/// whitewater, kind, span, state and jump, averaged, and the reach most of
 /// them run in (a reach is never averaged); and whether the rings stop at
 /// it. A sample whose ground lies below that surface lies past where the
 /// water ends (beside a channel whose ground lies lower than its banks'
@@ -360,7 +373,7 @@ fn continued(
 ) -> (f32, [u32; 3], bool) {
     let stride = TILE_STRIDE as usize;
     let (x, z) = (at % stride, at / stride);
-    let (mut level, mut apart, mut flow, mut white, mut lakes, mut width, mut count) =
+    let (mut level, mut apart, mut flow, mut white, mut lakes, mut span, mut count) =
         (0.0, 0.0, Vec2::ZERO, 0.0, 0, 0.0, 0);
     let (mut state, mut reaches, mut jump) = (WaterState::default(), [0_u32; 6], 0.0);
     for nz in z.saturating_sub(1)..(z + 2).min(stride) {
@@ -370,14 +383,14 @@ fn continued(
                 continue;
             }
             let [packed, stirred, obstacle] = info[near];
-            let (near_flow, near_white, lake, near_width) = unpack(packed);
+            let (near_flow, near_white, lake, near_span) = unpack(packed);
             let near_state = unpack_state(stirred);
             level += surface[near];
             apart += (surface[near] - heights[near]).abs();
             flow += near_flow;
             white += near_white;
             lakes += usize::from(lake);
-            width += near_width;
+            span += near_span;
             state.turbulence += near_state.turbulence;
             state.breaking += near_state.breaking;
             state.shear += near_state.shear;
@@ -408,7 +421,7 @@ fn continued(
             white * share,
             false,
             lakes * 2 > count,
-            width * share,
+            span * share,
         ),
         pack_state(WaterState {
             turbulence: state.turbulence * share,
@@ -422,14 +435,16 @@ fn continued(
 }
 
 /// One sample's flow (meters a second along x and z), whitewater (0 to 1),
-/// whether a fall's sheet runs over it, kind and the half width of a
-/// river's water there (meters) packed as the four signed bytes of a word,
+/// whether a fall's sheet runs over it, whether a lake holds it and how far
+/// across its water body is (its span, meters: a river's full width, a
+/// lake's equal-area diameter) packed as the four signed bytes of a word,
 /// low first, which shaders read as snorm shares: the flow as a share of
 /// [`WATER_FLOW_RANGE`] either way, the whitewater (negative, a step from
-/// zero at least, where a sheet runs over it), and 127 where a lake holds
-/// the water, else the width as 126ths of [`WATER_WIDTH_RANGE`]. Still
-/// water packs to zero.
-pub fn pack(flow: Vec2, white: f32, sheeted: bool, lake: bool, width: f32) -> u32 {
+/// zero at least, where a sheet runs over it), and the span's code (its
+/// nearest step on a logarithmic scale from [`WATER_SPAN_LEAST`], 1, to
+/// [`WATER_SPAN_MOST`], 127; 0 where none is known), negative where a lake
+/// holds the water. Still water packs to zero.
+pub fn pack(flow: Vec2, white: f32, sheeted: bool, lake: bool, span: f32) -> u32 {
     let byte =
         |value: f32| u32::from((engine_math::clamp(value, -1.0, 1.0) * 127.0).round() as i8 as u8);
     let white = if sheeted {
@@ -437,33 +452,52 @@ pub fn pack(flow: Vec2, white: f32, sheeted: bool, lake: bool, width: f32) -> u3
     } else {
         white
     };
+    // A lake's code is a step at least, so its sign holds.
     let kind = if lake {
-        127
+        -span_code(span).max(1)
     } else {
-        (engine_math::clamp(width / WATER_WIDTH_RANGE, 0.0, 1.0) * 126.0).round() as u32
+        span_code(span)
     };
     byte(flow.x / WATER_FLOW_RANGE)
         | byte(flow.y / WATER_FLOW_RANGE) << 8
         | byte(white) << 16
-        | kind << 24
+        | u32::from(kind as u8) << 24
 }
 
 /// [`pack`] undone: flow, whitewater, whether a lake holds the water and its
-/// half width (a lake's [`WATER_WIDTH_RANGE`]).
+/// span (meters; none where none is known).
 pub fn unpack(info: u32) -> (Vec2, f32, bool, f32) {
     let share = |shift: u32| engine_math::max(f32::from((info >> shift) as u8 as i8) / 127.0, -1.0);
-    let kind = engine_math::max(f32::from((info >> 24) as u8 as i8), 0.0);
-    let lake = kind > 126.5;
+    let kind = (info >> 24) as u8 as i8;
     (
         Vec2::new(share(0), share(8)) * WATER_FLOW_RANGE,
         share(16).abs(),
-        lake,
-        if lake {
-            WATER_WIDTH_RANGE
-        } else {
-            kind / 126.0 * WATER_WIDTH_RANGE
-        },
+        kind < 0,
+        span_of(kind),
     )
+}
+
+/// The code a span of `span` meters packs as: none (0) where none is known,
+/// else the nearest of its steps on a logarithmic scale from
+/// [`WATER_SPAN_LEAST`] (1) to [`WATER_SPAN_MOST`] (127), libm's logarithms
+/// making it the same on every host.
+fn span_code(span: f32) -> i8 {
+    if span.is_nan() || span <= 0.0 {
+        return 0;
+    }
+    let octaves = libm::log2f(WATER_SPAN_MOST / WATER_SPAN_LEAST);
+    let steps = libm::log2f(span / WATER_SPAN_LEAST) / octaves * SPAN_STEPS;
+    engine_math::clamp(steps.round() + 1.0, 1.0, SPAN_STEPS + 1.0) as i8
+}
+
+/// The span (meters) the code `code` packs ([`span_code`]), whatever its
+/// sign: none for none.
+fn span_of(code: i8) -> f32 {
+    let steps = engine_math::min(f32::from(code).abs(), SPAN_STEPS + 1.0);
+    if steps < 1.0 {
+        return 0.0;
+    }
+    WATER_SPAN_LEAST * libm::powf(WATER_SPAN_MOST / WATER_SPAN_LEAST, (steps - 1.0) / SPAN_STEPS)
 }
 
 /// One sample's state packed as the four bytes of a word, low first: its
@@ -803,7 +837,7 @@ fn parts(inside: &[bool]) -> (Vec<u32>, Vec<Part>) {
 /// and back, every sample taking the nearest seed of a neighbor it has
 /// swept where that seed lies nearer to it than its own; the seed's index,
 /// [`NONE`] where no sample is marked.
-fn nearest(seeds: &[bool]) -> Vec<u32> {
+pub(crate) fn nearest(seeds: &[bool]) -> Vec<u32> {
     let stride = TILE_STRIDE as i32;
     let mut nearest: Vec<u32> = (0..seeds.len())
         .map(|at| if seeds[at] { at as u32 } else { NONE })
@@ -860,10 +894,12 @@ fn nearest(seeds: &[bool]) -> Vec<u32> {
 /// first of `rows`: its samples at x positions `xs` and its rows at z
 /// positions `zs`. Each sample takes the water of the river whose channel
 /// holds it as the tile's raster says (`river`, by stored row and column),
-/// flat across the river, without whitewater and in no state; a lake of
-/// `lakes` holding a sample in its water or shore takes it where it stands
-/// higher. Shores fall where the ground rises through the water, between
-/// the channel's samples and the dry ones beside them ([`extend`]).
+/// flat across the river, its span the channel's width there, without
+/// whitewater and in no state; a lake of `lakes` holding a sample in its
+/// water or shore takes it where it stands higher, its span the lake's
+/// equal-area diameter. Shores fall where the ground rises through the
+/// water, between the channel's samples and the dry ones beside them
+/// ([`extend`]).
 /// Surroundings keep water only where they show their bakes whole
 /// (`shown`): where the bakes fade, so does the channel they cut.
 pub(crate) fn water_rows(
@@ -888,15 +924,15 @@ pub(crate) fn water_rows(
             match lakes.lake_reach(x, z) {
                 // A river keeps its own water where it runs above the lake
                 // beside it.
-                Some(level) if !water.is_some_and(|water| water.surface > level) => {
+                Some((level, span)) if !water.is_some_and(|water| water.surface > level) => {
                     surface[at] = level;
-                    info[at] = [pack(Vec2::ZERO, 0.0, false, true, 0.0), 0, 0];
+                    info[at] = [pack(Vec2::ZERO, 0.0, false, true, span), 0, 0];
                 }
                 _ => {
                     if let Some(water) = water {
                         surface[at] = water.surface;
                         info[at] = [
-                            pack(water.flow, 0.0, water.sheeted, false, water.half),
+                            pack(water.flow, 0.0, water.sheeted, false, water.span),
                             0,
                             0,
                         ];

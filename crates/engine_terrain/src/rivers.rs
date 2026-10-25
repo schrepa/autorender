@@ -518,7 +518,7 @@ impl Rivers {
                     surface,
                     flow: line.heading(index, reading.along) * at(&line.speed, reading.along),
                     sheeted: line.sheeted_at(index),
-                    half: at(&line.half, reading.along),
+                    span: 2.0 * at(&line.half, reading.along),
                 },
                 reading.section,
             )
@@ -865,14 +865,14 @@ impl Taken {
 
 /// A river's water at a sample: its surface, flat across the river
 /// (terrain-local meters), its flow along x and z (meters a second),
-/// whether a fall's sheet runs over it, and half its channel's width there
-/// (meters).
+/// whether a fall's sheet runs over it, and how far across its channel is
+/// there, its span (meters).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RiverWater {
     pub(crate) surface: f32,
     pub(crate) flow: Vec2,
     pub(crate) sheeted: bool,
-    pub(crate) half: f32,
+    pub(crate) span: f32,
 }
 
 /// The rivers near a tile rasterized once over samples at x positions

@@ -276,8 +276,11 @@ gpu_consts! {
     pub(crate) const WATER_TILE_WORDS: u32 = WATER_TILE_PATCHES * WATER_TILE_PATCHES => ["WATER_TILE_WORDS"];
     /// Meters a second either way a block's packed flow spans.
     pub(crate) const WATER_FLOW_RANGE: f32 = engine_core::terrain_data::WATER_FLOW_RANGE => ["WATER_FLOW_RANGE"];
-    /// Meters of half width a block's packed width of a river's water spans.
-    pub(crate) const WATER_WIDTH_RANGE: f32 = engine_core::terrain_data::WATER_WIDTH_RANGE => ["WATER_WIDTH_RANGE"];
+    /// The narrowest and the widest span (meters across a water body) a
+    /// block's packed span tells apart, between which the span's code
+    /// steps and its debug view ramps.
+    pub(crate) const WATER_SPAN_LEAST: f32 = engine_core::terrain_data::WATER_SPAN_LEAST => ["WATER_SPAN_LEAST", "DEBUG_SPAN_LEAST" in DEBUG_VIEW_SHADER];
+    pub(crate) const WATER_SPAN_MOST: f32 = engine_core::terrain_data::WATER_SPAN_MOST => ["WATER_SPAN_MOST", "DEBUG_SPAN_MOST" in DEBUG_VIEW_SHADER];
     /// Per second of shear a block's packed shear spans.
     pub(crate) const WATER_SHEAR_RANGE: f32 = engine_core::terrain_data::WATER_SHEAR_RANGE => ["WATER_SHEAR_RANGE"];
     /// Meters a step of a block's packed offsets to obstacles spans, and of
@@ -420,6 +423,10 @@ gpu_consts! {
     pub(crate) const DEBUG_VIEW_WATER_TURBULENCE: u32 = 15 => ["DEBUG_VIEW_WATER_TURBULENCE" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_WATER_WHITE: u32 = 16 => ["DEBUG_VIEW_WATER_WHITE" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_WATER_REACH: u32 = 17 => ["DEBUG_VIEW_WATER_REACH" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_WATER_FOAM: u32 = 18 => ["DEBUG_VIEW_WATER_FOAM" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_WATER_SPAN: u32 = 19 => ["DEBUG_VIEW_WATER_SPAN" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_WATER_EDDIES: u32 = 20 => ["DEBUG_VIEW_WATER_EDDIES" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_WATER_ROUGHNESS: u32 = 21 => ["DEBUG_VIEW_WATER_ROUGHNESS" in DEBUG_VIEW_SHADER];
     /// Gravity, and the meters of water under which it lies dry, by which
     /// debug views reckon water's Froude number (`meshes/debug.wgsl`): the
     /// shallow-water scheme's.
@@ -567,8 +574,8 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::SLOWEST => ["SIM_SLOWEST" in WATER_SIM_SHADER];
     engine_core::terrain_data::TURBULENT_SPEED => ["WATER_TURBULENT_SPEED"];
     engine_core::terrain_data::TURBULENT_SWIRL => ["WATER_TURBULENT_SWIRL"];
-    engine_core::terrain_data::BREAK_ONSET => ["WATER_BREAK_ONSET"];
-    engine_core::terrain_data::BREAK_FULL => ["WATER_BREAK_FULL"];
+    engine_core::terrain_data::BREAK_ONSET => ["WATER_BREAK_ONSET", "DEBUG_BREAK_ONSET" in DEBUG_VIEW_SHADER];
+    engine_core::terrain_data::BREAK_FULL => ["WATER_BREAK_FULL", "DEBUG_BREAK_FULL" in DEBUG_VIEW_SHADER];
     engine_core::terrain_data::BREAK_THINNEST => ["WATER_BREAK_THINNEST"];
     engine_core::PAGE_WORDS => ["PAGE_WORDS" in VIRTUAL_SHADER, "VIRTUAL_PAGE_WORDS" in SHADER];
     engine_core::NO_PARENT => ["NO_PARENT" in PRESENTATION_SHADER];

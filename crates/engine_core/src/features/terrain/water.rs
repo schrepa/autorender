@@ -1,10 +1,13 @@
-//! Water: the lakes and rivers terrains' hydrology bakes
-//! find, drawn where they stand. Lakes lie still under the
-//! wind's ripples, rivers run along their channels as their water settles
-//! there by the shallow-water equations, near the camera and far from it;
-//! light passing through water fades over the distance it travels to the
-//! ground behind it toward its scattered color, foam gathers where it runs
-//! shallow along shores and where the settled water churns it up, and its
+//! Water: the lakes and rivers terrains' hydrology bakes find, drawn where
+//! they stand. Rivers run along their channels as their water settles there
+//! by the shallow-water equations, near the camera and far from it, and
+//! lakes lie still. How water moves and foams follows from its state alone,
+//! what its tiles or the live simulation hold at each place (its depth,
+//! flow, the foam it carries, how turbulent it runs and how far across its
+//! water body is), under the scene's wind ([`crate::Wind`]); each body's
+//! look is its color, its clarity and the sediment it carries with that
+//! sediment's color: light passing through water fades over the distance it
+//! travels to the ground behind it toward its scattered color, and its
 //! surface reflects the sky and, through screen-space reflections, the
 //! scene.
 
@@ -14,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use engine_settings::settings;
 
 settings! {
-    /// Water settings.
+    /// Water settings: how terrains' water looks (its color, clarity and
+    /// sediment) and how it draws and runs live; its movement and foam come
+    /// from its state, under the scene's wind.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -36,14 +41,6 @@ settings! {
         pub sediment: f32 = 0.15 => range(0.0, 50.0),
         /// The color the water's sediment scatters back, linear.
         pub sediment_color: [f32; 3] = [0.05, 0.065, 0.03] => range(0.0, 1.0),
-        /// How strongly ripples tilt the surface.
-        pub ripples: f32 = 0.3 => range(0.0, 1.0),
-        /// The meters across the largest ripples.
-        pub ripple_size: f32 = 5.0 => range(0.1, 100.0),
-        /// How much foam shores and rapids gather; 0 none.
-        pub foam: f32 = 0.6 => range(0.0, 1.0),
-        /// The meters of water shallower than which shores foam.
-        pub foam_width: f32 = 0.6 => range(0.05, 10.0),
         /// The meters across the square around the camera over which
         /// rivers run live as the shallow-water equations say, in cells
         /// `live_cell` across, starting from their water as it settled

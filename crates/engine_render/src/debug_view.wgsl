@@ -14,7 +14,7 @@ struct DebugViewUniform {
 @group(0) @binding(1) var debug_ids: texture_2d<u32>;
 @group(0) @binding(2) var debug_count: texture_2d<f32>;
 // Terrain's tiles and materials (`meshes/terrain_debug.wgsl`), and water's
-// numbers (`meshes/debug.wgsl`).
+// numbers (`meshes/debug.wgsl`'s `debug_water`).
 @group(0) @binding(3) var debug_terrain: texture_2d<u32>;
 
 const DEBUG_VIEW_KINDS: u32 = 1u;
@@ -34,6 +34,10 @@ const DEBUG_VIEW_WATER_FROUDE: u32 = 14u;
 const DEBUG_VIEW_WATER_TURBULENCE: u32 = 15u;
 const DEBUG_VIEW_WATER_WHITE: u32 = 16u;
 const DEBUG_VIEW_WATER_REACH: u32 = 17u;
+const DEBUG_VIEW_WATER_FOAM: u32 = 18u;
+const DEBUG_VIEW_WATER_SPAN: u32 = 19u;
+const DEBUG_VIEW_WATER_EDDIES: u32 = 20u;
+const DEBUG_VIEW_WATER_ROUGHNESS: u32 = 21u;
 
 // What drew a pixel (`meshes/debug.wgsl`): its kind, level and flags, and
 // the sun's lookup above DEBUG_SOURCE_SHIFT.
@@ -112,6 +116,33 @@ const DEBUG_WATER_TURBULENCE = array<vec3<f32>, 3>(
 // Water without white water, which turns white as white water is born:
 // its red is the white water's share.
 const DEBUG_WATER_CLEAR = vec3<f32>(0.0, 0.12, 0.35);
+// The foam water carries, as a share of the most it carries: dark brown,
+// sand, white.
+const DEBUG_WATER_FOAMS = array<vec3<f32>, 3>(
+    vec3<f32>(0.1, 0.07, 0.05), vec3<f32>(0.72, 0.58, 0.36), vec3<f32>(1.0, 0.98, 0.92),
+);
+// How far across its water body is, by its logarithm from the narrowest
+// span the words tell apart to the widest (`engine_terrain`'s
+// `WATER_SPAN_LEAST`, `WATER_SPAN_MOST`): violet, teal (32 meters), pale
+// yellow.
+const DEBUG_SPAN_LEAST: f32 = 0.25;
+const DEBUG_SPAN_MOST: f32 = 4096.0;
+const DEBUG_WATER_SPANS = array<vec3<f32>, 3>(
+    vec3<f32>(0.3, 0.05, 0.45), vec3<f32>(0.1, 0.62, 0.58), vec3<f32>(0.98, 0.95, 0.6),
+);
+// The eddies' turbulent Froude number: dark (calm), orange where they start
+// breaking the water's surface white (`engine_terrain::BREAK_ONSET`), white
+// where they break it white all over (`BREAK_FULL`).
+const DEBUG_BREAK_ONSET: f32 = 0.45;
+const DEBUG_BREAK_FULL: f32 = 0.85;
+const DEBUG_WATER_EDDIES = array<vec3<f32>, 3>(
+    vec3<f32>(0.04, 0.05, 0.12), vec3<f32>(0.95, 0.5, 0.1), vec3<f32>(1.0, 1.0, 0.95),
+);
+// The roughness water shades with, 0 to 1: black (a mirror), copper,
+// white.
+const DEBUG_WATER_ROUGHNESS = array<vec3<f32>, 3>(
+    vec3<f32>(0.0, 0.0, 0.0), vec3<f32>(0.75, 0.42, 0.22), vec3<f32>(1.0, 1.0, 1.0),
+);
 // Reaches, by one more than `engine_terrain::Reach`: none violet, pools
 // blue, plane beds cyan, steps and pools green, cascades orange, falls red.
 const DEBUG_REACHES = array<vec3<f32>, 6>(
@@ -336,28 +367,55 @@ fn debug_froude_color(froude: f32) -> vec3<f32> {
         saturate((froude - 1.0) / (DEBUG_WATER_FROUDE_TOP - 1.0)));
 }
 
+// Water's eddies at turbulent Froude number `froude`: up the ramp's first
+// half to where they start breaking the water's surface white
+// (DEBUG_BREAK_ONSET), up its second to where they break it white all over
+// (DEBUG_BREAK_FULL).
+fn debug_eddies_color(froude: f32) -> vec3<f32> {
+    let calm = saturate(froude / DEBUG_BREAK_ONSET);
+    let breaking = saturate((froude - DEBUG_BREAK_ONSET) / (DEBUG_BREAK_FULL - DEBUG_BREAK_ONSET));
+    return debug_ramp(DEBUG_WATER_EDDIES, 0.5 * (calm + breaking));
+}
+
 // Water's numbers (`meshes/debug.wgsl`'s `debug_water`) as the water's view
-// `view` shows them: its depth and speed (`ids`' object and detail words)
-// and its Froude number (`numbers.x`), as floats' bits; its turbulence and
-// white water, a byte each, and its reach in the top byte (`numbers.y`).
+// `view` shows them: its depth and speed (`ids`' object word), its span and
+// roughness (its detail word), and its Froude number and its eddies'
+// (`numbers.x`), each pair half floats; its turbulence, white water and
+// carried foam, a byte each, and its reach in the top byte (`numbers.y`).
 fn debug_water_color(view: u32, ids: vec4<u32>, numbers: vec2<u32>) -> vec3<f32> {
+    let motion = unpack2x16float(ids.y);
+    let body = unpack2x16float(ids.z);
+    let froudes = unpack2x16float(numbers.x);
     let state = unpack4x8unorm(numbers.y);
     switch view {
         case DEBUG_VIEW_WATER_DEPTH: {
-            return debug_ramp(DEBUG_WATER_DEPTHS,
-                sqrt(max(bitcast<f32>(ids.y), 0.0) / DEBUG_WATER_DEEPEST));
+            return debug_ramp(DEBUG_WATER_DEPTHS, sqrt(max(motion.x, 0.0) / DEBUG_WATER_DEEPEST));
         }
         case DEBUG_VIEW_WATER_SPEED: {
-            return debug_ramp(DEBUG_WATER_SPEEDS, bitcast<f32>(ids.z) / DEBUG_WATER_FASTEST);
+            return debug_ramp(DEBUG_WATER_SPEEDS, motion.y / DEBUG_WATER_FASTEST);
         }
         case DEBUG_VIEW_WATER_FROUDE: {
-            return debug_froude_color(bitcast<f32>(numbers.x));
+            return debug_froude_color(froudes.x);
         }
         case DEBUG_VIEW_WATER_TURBULENCE: {
             return debug_ramp(DEBUG_WATER_TURBULENCE, state.x);
         }
         case DEBUG_VIEW_WATER_WHITE: {
             return mix(DEBUG_WATER_CLEAR, vec3<f32>(1.0), state.y);
+        }
+        case DEBUG_VIEW_WATER_FOAM: {
+            return debug_ramp(DEBUG_WATER_FOAMS, state.z);
+        }
+        case DEBUG_VIEW_WATER_SPAN: {
+            let octaves = log2(DEBUG_SPAN_MOST / DEBUG_SPAN_LEAST);
+            let span = log2(max(body.x, DEBUG_SPAN_LEAST) / DEBUG_SPAN_LEAST);
+            return debug_ramp(DEBUG_WATER_SPANS, span / octaves);
+        }
+        case DEBUG_VIEW_WATER_EDDIES: {
+            return debug_eddies_color(froudes.y);
+        }
+        case DEBUG_VIEW_WATER_ROUGHNESS: {
+            return debug_ramp(DEBUG_WATER_ROUGHNESS, body.y);
         }
         default: {
             return DEBUG_REACHES[min(numbers.y >> 24u, 5u)];
@@ -400,7 +458,9 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
             surface = false;
         }
         case DEBUG_VIEW_WATER_DEPTH, DEBUG_VIEW_WATER_SPEED, DEBUG_VIEW_WATER_FROUDE,
-            DEBUG_VIEW_WATER_TURBULENCE, DEBUG_VIEW_WATER_WHITE, DEBUG_VIEW_WATER_REACH: {
+            DEBUG_VIEW_WATER_TURBULENCE, DEBUG_VIEW_WATER_WHITE, DEBUG_VIEW_WATER_REACH,
+            DEBUG_VIEW_WATER_FOAM, DEBUG_VIEW_WATER_SPAN, DEBUG_VIEW_WATER_EDDIES,
+            DEBUG_VIEW_WATER_ROUGHNESS: {
             // The water's views: tiles' and simulated water against
             // everything else, unlit.
             color = select(DEBUG_OTHER, DEBUG_SKY, kind == DEBUG_KIND_SKY);

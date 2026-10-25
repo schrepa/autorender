@@ -593,9 +593,10 @@ impl Tile {
 
     /// The water at `local`, meters from the tile's first corner, on the
     /// triangles [`Self::sample`] reads the ground on: its surface, its
-    /// depth over that ground, its flow, whitewater, kind and state (its
-    /// reach the first corner's); `None` where no water reaches the
-    /// triangle's corners or its surface stands at or below the ground.
+    /// depth over that ground, its flow, whitewater, span, kind and state
+    /// (its kind and reach the first corner's); `None` where no water
+    /// reaches the triangle's corners or its surface stands at or below the
+    /// ground.
     pub fn water_at(&self, local: Vec2) -> Option<WaterPoint> {
         let water = self.water.as_ref()?;
         let (i, j, fu, fv) = self.cell(local)?;
@@ -621,6 +622,7 @@ impl Tile {
                 on_triangle(info.map(|(flow, _, _, _)| flow.y), fu, fv),
             ),
             white: on_triangle(info.map(|(_, white, _, _)| white), fu, fv),
+            span: on_triangle(info.map(|(_, _, _, span)| span), fu, fv),
             lake: info[corners[0]].2,
             state: WaterState {
                 turbulence: on_triangle(states.map(|state| state.turbulence), fu, fv),
@@ -633,9 +635,9 @@ impl Tile {
 
     /// What the bed holds under the water at `local`, meters from the
     /// tile's first corner, as the water's sample nearest it holds it: its
-    /// reach's code and its nearest obstacle, offset from `local`
-    /// (`TileWater::bed_words`); none outside the tile or where it holds
-    /// no water.
+    /// reach's code beside its span's, and its nearest obstacle, offset from
+    /// `local` (`TileWater::bed_words`); none outside the tile or where it
+    /// holds no water.
     pub fn bed_words(&self, local: Vec2) -> [u32; 2] {
         let (Some(water), Some((i, j, fu, fv))) = (self.water.as_ref(), self.cell(local)) else {
             return [0; 2];

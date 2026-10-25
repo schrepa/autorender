@@ -421,19 +421,27 @@ fn water_reach(code: u32) -> Option<WaterReach> {
 }
 
 /// A water pixel's numbers (`meshes/debug.wgsl`'s `debug_water`): its
-/// draw's `object` and `detail` words (its depth and speed), then the
-/// terrain target's texel in `bytes` (its Froude number; its turbulence,
-/// white water and reach).
+/// draw's `object` word (its depth and speed) and `detail` word (its span
+/// and roughness), then the terrain target's texel in `bytes` (its Froude
+/// number and its eddies', each pair half floats; its turbulence, white
+/// water, carried foam and reach).
 fn water_probe((object, detail): (u32, u32), bytes: &[u8]) -> WaterProbe {
-    let (froude, state) = (word(bytes, TERRAIN), word(bytes, TERRAIN + 4));
+    let (froudes, state) = (word(bytes, TERRAIN), word(bytes, TERRAIN + 4));
     let share = |byte: u32| f32::from(((state >> (byte * 8)) & 0xff) as u8) / 255.0;
+    let halves = |pair: u32| (half(pair as u16), half((pair >> 16) as u16));
+    let ((depth, speed), (span, roughness)) = (halves(object), halves(detail));
+    let (froude, eddies) = halves(froudes);
     WaterProbe {
-        depth: f32::from_bits(object),
-        speed: f32::from_bits(detail),
-        froude: f32::from_bits(froude),
+        depth,
+        speed,
+        froude,
         turbulence: share(0),
         white: share(1),
         reach: water_reach(state >> 24),
+        foam: share(2),
+        span,
+        eddies,
+        roughness,
     }
 }
 

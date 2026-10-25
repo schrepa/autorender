@@ -21,8 +21,10 @@ use crate::gpu_layouts::constants::{
     DEBUG_KIND_VIRTUAL, DEBUG_LEVEL_SHIFT, DEBUG_VIEW_CARDS, DEBUG_VIEW_CASTERS, DEBUG_VIEW_DETAIL,
     DEBUG_VIEW_KINDS, DEBUG_VIEW_LEVELS, DEBUG_VIEW_MATERIALS, DEBUG_VIEW_NORMALS,
     DEBUG_VIEW_OVERDRAW, DEBUG_VIEW_SHADOWS, DEBUG_VIEW_SKY, DEBUG_VIEW_TILES,
-    DEBUG_VIEW_WATER_DEPTH, DEBUG_VIEW_WATER_FROUDE, DEBUG_VIEW_WATER_REACH,
-    DEBUG_VIEW_WATER_SPEED, DEBUG_VIEW_WATER_TURBULENCE, DEBUG_VIEW_WATER_WHITE,
+    DEBUG_VIEW_WATER_DEPTH, DEBUG_VIEW_WATER_EDDIES, DEBUG_VIEW_WATER_FOAM,
+    DEBUG_VIEW_WATER_FROUDE, DEBUG_VIEW_WATER_REACH, DEBUG_VIEW_WATER_ROUGHNESS,
+    DEBUG_VIEW_WATER_SPAN, DEBUG_VIEW_WATER_SPEED, DEBUG_VIEW_WATER_TURBULENCE,
+    DEBUG_VIEW_WATER_WHITE,
 };
 use crate::gpu_layouts::debug_view::DebugViewUniform;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -36,8 +38,10 @@ pub(crate) const IDS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Ui
 /// The fragments that passed the depth test at each pixel, added.
 pub(crate) const COUNT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 /// Terrain's tile and surface materials at each terrain pixel
-/// (`meshes/terrain_debug.wgsl`), and water's Froude number, turbulence,
-/// white water and reach at each water pixel (`meshes/debug.wgsl`).
+/// (`meshes/terrain_debug.wgsl`), and water's Froude numbers (its flow's
+/// and its eddies'), turbulence, white water, carried foam and reach at
+/// each water pixel (`meshes/debug.wgsl`). The targets take 28 bytes a
+/// sample together, of the 32 every device lets color attachments take.
 pub(crate) const TERRAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
 
 /// The debug targets' states in pipeline order: what drew each pixel,
@@ -201,6 +205,10 @@ fn view_value(view: DebugViewMode) -> u32 {
         DebugViewMode::WaterTurbulence => DEBUG_VIEW_WATER_TURBULENCE,
         DebugViewMode::WaterWhite => DEBUG_VIEW_WATER_WHITE,
         DebugViewMode::WaterReach => DEBUG_VIEW_WATER_REACH,
+        DebugViewMode::WaterFoam => DEBUG_VIEW_WATER_FOAM,
+        DebugViewMode::WaterSpan => DEBUG_VIEW_WATER_SPAN,
+        DebugViewMode::WaterEddies => DEBUG_VIEW_WATER_EDDIES,
+        DebugViewMode::WaterRoughness => DEBUG_VIEW_WATER_ROUGHNESS,
     }
 }
 
@@ -217,6 +225,10 @@ pub(crate) fn shows_water(view: DebugViewMode) -> bool {
             | DebugViewMode::WaterTurbulence
             | DebugViewMode::WaterWhite
             | DebugViewMode::WaterReach
+            | DebugViewMode::WaterFoam
+            | DebugViewMode::WaterSpan
+            | DebugViewMode::WaterEddies
+            | DebugViewMode::WaterRoughness
     )
 }
 
