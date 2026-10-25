@@ -1,6 +1,7 @@
 //! What each expression of a function stands for, from what its operands
-//! stand for: reads of the camera and of positions relative to the eye
-//! start dependences, and decisions' operands stop there.
+//! stand for: reads of the camera and of positions relative to the eye, or
+//! what the detail eye's measures give and a pixel's derivatives, start
+//! dependences, and decisions' operands stop there.
 
 use naga::{
     AddressSpace, Expression, GlobalVariable, Handle, MathFunction, RelationalFunction, ScalarKind,
@@ -8,12 +9,13 @@ use naga::{
 };
 
 use super::{
-    Flow, Frame, Member, Place, RELATIVE, Read, Root, Slot, Step, Taint, Value, lanes_of, type_of,
+    Flow, Frame, Member, Place, RELATIVE, Read, Root, SIZES, Slot, Step, Taint, Value, Watch,
+    lanes_of, type_of,
 };
 
 impl Flow<'_> {
     /// What expression `handle` of the frame's function stands for; on a
-    /// line marked optics, its value depends on nothing.
+    /// marked line, its value depends on nothing.
     pub(super) fn evaluate(
         &mut self,
         frame: &Frame<'_>,
@@ -46,14 +48,34 @@ impl Flow<'_> {
                     .get(&handle)
                     .cloned()
                     .unwrap_or_else(Value::clean);
-                // Functions named for positions relative to the eye give them.
+                // Functions named for positions relative to the eye give
+                // them; the detail eye's measures give sizes on screen.
                 let name = self.module.functions[function].name.as_deref();
-                if name.is_some_and(|name| name.split('_').any(|word| word == RELATIVE)) {
-                    let taint = self.source(Read::Relative, frame.of, &frame.name, span);
-                    Slot::Value(value.with(&taint))
-                } else {
-                    Slot::Value(value)
+                let read = match self.watch {
+                    Watch::Camera
+                        if name.is_some_and(|name| {
+                            name.split('_').any(|word| word == RELATIVE)
+                        }) =>
+                    {
+                        Some(Read::Relative)
+                    }
+                    Watch::Sizes if name.is_some_and(|name| SIZES.contains(&name)) => {
+                        Some(Read::Measure)
+                    }
+                    Watch::Camera | Watch::Sizes => None,
+                };
+                match read {
+                    Some(read) => {
+                        let taint = self.source(read, frame.of, &frame.name, span);
+                        Slot::Value(value.with(&taint))
+                    }
+                    None => Slot::Value(value),
                 }
+            }
+            // A pixel's derivatives are sizes on screen.
+            Expression::Derivative { expr, .. } if self.watch == Watch::Sizes => {
+                let taint = self.source(Read::Derivative, frame.of, &frame.name, span);
+                Slot::Value(frame.value(expr).with(&taint))
             }
             _ => Slot::Value(self.value(frame, handle, expression)),
         };
@@ -88,6 +110,14 @@ impl Flow<'_> {
                         .map(|&component| value.lane(component as usize))
                         .collect(),
                 )
+            }
+            // What a texture gives is its texels as filtering averages them
+            // over the pixel, wherever a size on screen moves the read (a
+            // level's half texel kept inside a frame).
+            Expression::ImageSample { .. } | Expression::ImageLoad { .. }
+                if self.watch == Watch::Sizes =>
+            {
+                Value::clean()
             }
             // What a texture gives follows where it is read; how it is
             // filtered (levels, gradients) is the view's own.
@@ -147,7 +177,7 @@ impl Flow<'_> {
 
     /// A member, lane, column or element `index` of `base`: a place's part
     /// for pointers, a value's part otherwise, eye-relative where the
-    /// member is named `relative`.
+    /// member is named `relative` and the camera is watched.
     fn access_index(
         &mut self,
         frame: &Frame<'_>,
@@ -155,7 +185,7 @@ impl Flow<'_> {
         index: u32,
         span: Span,
     ) -> Slot {
-        let relative = self.names_relative(frame, base, index);
+        let relative = self.watch == Watch::Camera && self.names_relative(frame, base, index);
         match frame.slot(base) {
             Slot::Place(place) => {
                 Slot::Place(place.step(Step::Index(index), relative, &Taint::new()))
@@ -402,8 +432,10 @@ impl Flow<'_> {
     }
 
     /// A built-in function's result: decisions' operands stop where they
-    /// decide (all of `smoothstep`'s and `step`'s, `mix`'s weight);
-    /// functions of each lane go lane by lane; the rest mix everything.
+    /// decide (all of `smoothstep`'s and `step`'s, `mix`'s weight, and
+    /// `saturate`'s where sizes on screen are watched); a direction
+    /// (`normalize`'s) holds no size; functions of each lane go lane by
+    /// lane; the rest mix everything.
     fn math(
         &self,
         frame: &Frame<'_>,
@@ -414,6 +446,9 @@ impl Flow<'_> {
         let operands: Vec<Handle<Expression>> = arguments.into_iter().flatten().collect();
         match fun {
             MathFunction::SmoothStep | MathFunction::Step => Value::clean(),
+            MathFunction::Saturate | MathFunction::Normalize if self.watch == Watch::Sizes => {
+                Value::clean()
+            }
             MathFunction::Mix => self.lanewise(frame, handle, &operands[..operands.len().min(2)]),
             MathFunction::Abs
             | MathFunction::Min

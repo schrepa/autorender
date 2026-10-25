@@ -180,22 +180,16 @@ fn bake_mask(texels: MaterialTexels, color: vec4<f32>) {
 fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool)
         -> BakeTargets {
     let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
-    // Bakes sample their materials' own mips.
-    var texels = material_texels(uv, uv1, 0.0);
+    // Bakes sample their materials' own mips, as filtering at a frame's
+    // texels reads them; world-mapped maps bake through the mesh's own
+    // coordinates, which repeat about as often as its maker meant it to
+    // stand, filtered at the frame's texels as fragments filter them at
+    // their pixels, cards taking over where a texel spans a pixel.
+    let texels = material_texels(uv, uv1, 0.0);
     let local = input.local_v.xyz;
     let local_dx = dpdx(local);
     let local_dy = dpdy(local);
     let geometric = geometric_normal(input.normal_u.xyz, front);
-    // World-mapped maps bake through the mesh's own
-    // coordinates, which repeat about as often as its maker meant it to
-    // stand: as much of them as a repeat's texels across a frame show, as
-    // fragments show as much as a repeat's pixels do, cards taking over
-    // where a texel spans a pixel.
-    let footprint = max(length(dpdx(uv)), length(dpdy(uv)));
-    if material_flag(VARIANT_WORLD_MAPPING, WORLD_MAPPING) {
-        texels = world_mean_texels(texels,
-            select(0.0, world_map_detail(footprint), footprint > 0.0), geometric);
-    }
     var normal = geometric;
     if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
         normal = mapped_normal(geometric, local_dx, local_dy, texels.normal_dx,
@@ -523,8 +517,8 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     let size = f32(frames * texels);
     let footprint = max(length(dpdx(input.frames_ab.xy)), length(dpdy(input.frames_ab.xy)))
         * size * material_detail();
-    let level = clamp(log2(max(footprint, 1.0e-6)), 0.0,
-        f32(countTrailingZeros(texels) - 1u));
+    let coarsest = f32(countTrailingZeros(texels) - 1u);
+    let level = clamp(log2(max(footprint, 1.0e-6)), 0.0, coarsest); // filter: the atlas's level whose texels match the pixel
     let inset = 0.5 * exp2(ceil(level)) / size;
     let span = 1.0 / f32(frames);
     let scale = 1.0 + MASK_MIP_SCALE * level;

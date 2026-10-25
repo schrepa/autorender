@@ -2,7 +2,8 @@
 //! parses and validates with naga, and every WGSL struct mirroring an upload
 //! struct (`engine_render::gpu_layouts`) matches its Rust layout. Last, no
 //! handover reads the camera where it should read the detail eye: in
-//! shaders (`handovers`), and on the CPU (`eye_reads`).
+//! shaders (`handovers`), and on the CPU (`eye_reads`); and no shader fades
+//! a pattern by its size on screen where it should filter it (`fades`).
 
 use std::path::Path;
 
@@ -18,6 +19,7 @@ use engine_render::shaders::{ENTRIES, Stage};
 use naga::valid::{Capabilities, ValidationFlags, Validator};
 
 mod eye_reads;
+mod fades;
 mod handovers;
 mod inter_stage;
 
@@ -1398,6 +1400,7 @@ pub fn check(root: &Path) -> Result<(), String> {
     let unused = check_unused(&modules);
     let structs = check_upload_structs(root);
     let handovers = handovers::check(&modules);
+    let fades = fades::check(&modules);
     let eye_reads = eye_reads::check(root);
     let errors: Vec<String> = [
         mirrors.as_ref().err(),
@@ -1411,6 +1414,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         unused.as_ref().err(),
         structs.as_ref().err(),
         handovers.as_ref().err(),
+        fades.as_ref().err(),
         eye_reads.as_ref().err(),
     ]
     .into_iter()
@@ -1424,7 +1428,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         ));
     }
     println!(
-        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} fragment stages read only locations a vertex stage of their module writes alike; {} bindings of shared groups within their features' ranges; {} pipeline layouts within every device's limits and their budget; {} WGSL functions, none written twice; {} WGSL constants mirror {} Rust ones; {} shader decisions, none reading the camera but through the detail eye's measures or in optics; {} files reading the camera's eye on the CPU, each for its reason.",
+        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} fragment stages read only locations a vertex stage of their module writes alike; {} bindings of shared groups within their features' ranges; {} pipeline layouts within every device's limits and their budget; {} WGSL functions, none written twice; {} WGSL constants mirror {} Rust ones; {} shader decisions, none reading the camera but through the detail eye's measures or in optics; {} filters and matched handovers deciding by sizes on screen, and no fade; {} files reading the camera's eye on the CPU, each for its reason.",
         modules.len(),
         mirrors?,
         layouts().len(),
@@ -1438,6 +1442,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         shared?,
         constants().count(),
         handovers?,
+        fades?,
         eye_reads?
     );
     Ok(())

@@ -10,7 +10,10 @@
 //! measures give (`scene.wgsl`'s `detail_distance`, `detail_across` and
 //! `detail_span`) and an eye-relative position turned back into a world
 //! position (`eye_world`) depend on the camera no more; neither do the
-//! optics [`OPTICS`] lists, nor a line marked `// optics: <why>`.
+//! optics [`OPTICS`] lists, nor a line marked `// optics: <why>`. What a
+//! decision does with the sizes the measures give is the size check's
+//! (`fades`), which follows sizes on screen through the same flow
+//! ([`sweep`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,20 +23,16 @@ use super::Checked;
 
 mod flow;
 
+pub(super) use flow::Watch;
 use flow::{Call, Decision, Flow, Read, Source};
 
 /// Where the shader files lie, from the repository's root.
 const SHADERS: &str = "crates/engine_render/src/";
 
-/// The measures every handover reads, and the one way from an eye-relative
-/// position back to a world position: what they give depends on where the
-/// camera stands no more.
-const MEASURES: [&str; 4] = [
-    "detail_distance",
-    "detail_across",
-    "detail_span",
-    "eye_world",
-];
+/// The one way from an eye-relative position back to a world position:
+/// what it gives depends on where the camera stands no more, as what the
+/// detail eye's measures (`flow::SIZES`) give does.
+const EYE_WORLD: &str = "eye_world";
 
 /// Optics: functions depending on where the camera stands or how it looks
 /// as light and sight do, each with what it is. They are not followed:
@@ -150,7 +149,7 @@ const CALLS_SHOWN: usize = 3;
 
 /// A shader module's source as the files it concatenates (each file's
 /// start in the module, its path and its lines' starts within it) and the
-/// lines marked optics (their starts and ends in the module).
+/// lines carrying a check's mark (their starts and ends in the module).
 struct Layout {
     module: &'static str,
     files: Vec<File>,
@@ -181,7 +180,7 @@ impl Layout {
         }
     }
 
-    /// Whether `span` touches a line marked optics.
+    /// Whether `span` touches a marked line.
     fn marked(&self, span: Span) -> bool {
         let Some(range) = span.to_range() else {
             return false;
@@ -196,9 +195,19 @@ impl Layout {
     }
 }
 
+/// Every shader module's layout with the lines carrying a mark, the marked
+/// lines by file and line, and those saying nothing after the mark.
+struct Layouts {
+    layouts: Vec<Layout>,
+    lines: BTreeSet<(&'static str, usize)>,
+    unexplained: Vec<String>,
+}
+
 /// Every shader module's layout, from the files `engine_render::shaders`
-/// lists in the modules' order, and the marks of optics that say not why.
-fn layouts() -> (Vec<Layout>, Vec<String>) {
+/// lists in the modules' order, with the lines carrying `mark`, of which
+/// those saying nothing after it, which should say `says`, are problems.
+fn layouts(mark: &str, says: &str) -> Layouts {
+    let mut lines = BTreeSet::new();
     let mut unexplained = Vec::new();
     let mut files = engine_render::shaders::FILES.iter().copied().peekable();
     let mut layouts = Vec::new();
@@ -214,15 +223,16 @@ fn layouts() -> (Vec<Layout>, Vec<String>) {
                 break;
             }
             files.next();
-            let mut lines = Vec::new();
+            let mut starts = Vec::new();
             let mut offset = 0;
             for (index, line) in text.split_inclusive('\n').enumerate() {
-                lines.push(offset);
-                if let Some(found) = line.find(MARK) {
+                starts.push(offset);
+                if let Some(found) = line.find(mark) {
                     layout.marked.push((at + offset, at + offset + line.len()));
-                    if line[found + MARK.len()..].trim().is_empty() {
+                    lines.insert((path, index + 1));
+                    if line[found + mark.len()..].trim().is_empty() {
                         unexplained.push(format!(
-                            "{SHADERS}{path}:{}: marks a line `{MARK}` without saying why",
+                            "{SHADERS}{path}:{}: marks a line `{mark}` without saying {says}",
                             index + 1
                         ));
                     }
@@ -232,7 +242,7 @@ fn layouts() -> (Vec<Layout>, Vec<String>) {
             layout.files.push(File {
                 start: at,
                 path,
-                lines,
+                lines: starts,
             });
             at += text.len();
         }
@@ -240,27 +250,61 @@ fn layouts() -> (Vec<Layout>, Vec<String>) {
     }
     unexplained.sort();
     unexplained.dedup();
-    (layouts, unexplained)
+    Layouts {
+        layouts,
+        lines,
+        unexplained,
+    }
 }
 
-/// Whether the function `name` is trusted: a measure or an optics.
+/// Whether the function `name` is trusted to read the camera besides the
+/// measures the flow trusts (`flow::SIZES`): the way back to the world, or
+/// an optics.
 fn trusted(name: &str) -> bool {
-    MEASURES.contains(&name) || OPTICS.iter().any(|&(optics, _)| optics == name)
+    name == EYE_WORLD || OPTICS.iter().any(|&(optics, _)| optics == name)
 }
 
-/// A decision reading the camera: its file, line, function and kind, and
-/// what feeds it, in every module holding it.
+/// A decision reading what a flow watches: its file, line, function and
+/// kind, and what feeds it, in every module holding it.
 type Found = BTreeMap<(String, usize, String, Decision), BTreeSet<String>>;
 
-/// Every module's handovers by the camera; returns how many decisions the
-/// shaders make.
-pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
-    let (layouts, mut problems) = layouts();
+/// What following a watch through every module found: each decision it
+/// reaches outside the trusted functions and the marked lines, as reports
+/// show it (its file, line, function and kind, and what feeds it); the
+/// problems besides (marks saying nothing, listed functions no shader
+/// declares, flows that never settled); how many decisions the followed
+/// functions make; and how many lines carry the mark.
+pub(super) struct Swept {
+    pub found: Vec<String>,
+    pub problems: Vec<String>,
+    pub decisions: usize,
+    pub marks: usize,
+}
+
+/// Follows `watch` through every module of `modules`: the functions
+/// `trusted` names are not followed, each function `listed` (in `list`) is
+/// one some shader declares, and the lines carrying `mark`, which should
+/// say `says`, decide nothing.
+pub(super) fn sweep(
+    modules: &[Checked],
+    watch: Watch,
+    trusted: &dyn Fn(&str) -> bool,
+    listed: &[(&str, &str)],
+    list: &str,
+    mark: &str,
+    says: &str,
+) -> Swept {
+    let marks = layouts(mark, says);
+    let mut problems = marks.unexplained;
     let mut found = Found::new();
     let mut declared = BTreeSet::new();
     let mut decisions = 0;
     for checked in modules {
-        let Some(layout) = layouts.iter().find(|layout| layout.module == checked.name) else {
+        let Some(layout) = marks
+            .layouts
+            .iter()
+            .find(|layout| layout.module == checked.name)
+        else {
             continue;
         };
         let module = &checked.module;
@@ -272,34 +316,27 @@ pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
         );
         declared.extend(module.entry_points.iter().map(|entry| entry.name.clone()));
         let marked = |span: Span| layout.marked(span);
-        let followed = flow::follow(module, &checked.info, &trusted, &marked);
+        let followed = flow::follow(module, &checked.info, watch, trusted, &marked);
         decisions += followed.decisions();
         report(layout, &followed, &mut found);
         for name in &followed.unsettled {
             problems.push(format!(
-                "{}: the camera's flow through `{name}` never settled",
-                checked.name
+                "{}: the flow of {} through `{name}` never settled",
+                checked.name,
+                watched(watch)
             ));
         }
     }
-    for &(name, _) in OPTICS {
+    for &(name, _) in listed {
         if !declared.contains(name) {
             problems.push(format!(
-                "tools/xtask/src/gpu/handovers.rs lists `{name}` in OPTICS, which no shader \
-                 declares: remove it"
+                "{list} lists `{name}`, which no shader declares: remove it"
             ));
         }
     }
-    if !found.is_empty() {
-        problems.push(format!(
-            "{} decisions read the camera outside the detail eye's measures and the optics; \
-             measure detail from the detail eye (scene.wgsl's `detail_distance`, \
-             `detail_across`, `detail_span`), turn eye-relative positions back with \
-             `eye_world`, or, where it is optics, list the function in \
-             tools/xtask/src/gpu/handovers.rs (OPTICS) or mark the line `{MARK} <why>`:",
-            found.len()
-        ));
-        for ((path, line, function, kind), feeds) in found {
+    let found = found
+        .into_iter()
+        .map(|((path, line, function, kind), feeds)| {
             let shown: Vec<&str> = feeds.iter().take(SHOWN).map(String::as_str).collect();
             let mut text = format!(
                 "{path}:{line}: in `{function}`, {} reads {}",
@@ -309,18 +346,50 @@ pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
             if feeds.len() > SHOWN {
                 text.push_str(&format!("; and {} more", feeds.len() - SHOWN));
             }
-            problems.push(text);
-        }
+            text
+        })
+        .collect();
+    Swept {
+        found,
+        problems,
+        decisions,
+        marks: marks.lines.len(),
+    }
+}
+
+/// Every module's handovers by the camera; returns how many decisions the
+/// shaders make.
+pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
+    let swept = sweep(
+        modules,
+        Watch::Camera,
+        &trusted,
+        OPTICS,
+        "tools/xtask/src/gpu/handovers.rs (OPTICS)",
+        MARK,
+        "why",
+    );
+    let mut problems = swept.problems;
+    if !swept.found.is_empty() {
+        problems.push(format!(
+            "{} decisions read the camera outside the detail eye's measures and the optics; \
+             measure detail from the detail eye (scene.wgsl's `detail_distance`, \
+             `detail_across`, `detail_span`), turn eye-relative positions back with \
+             `eye_world`, or, where it is optics, list the function in \
+             tools/xtask/src/gpu/handovers.rs (OPTICS) or mark the line `{MARK} <why>`:",
+            swept.found.len()
+        ));
+        problems.extend(swept.found);
     }
     if problems.is_empty() {
-        Ok(decisions)
+        Ok(swept.decisions)
     } else {
         Err(problems.join("\n"))
     }
 }
 
-/// Adds the module's handovers by the camera to `found`: each decision,
-/// where it lies, and what reads of the camera feed it.
+/// Adds the module's decisions by what its flow watches to `found`: each
+/// decision, where it lies, and what reads feed it.
 fn report(layout: &Layout, flow: &Flow<'_>, found: &mut Found) {
     for (&(sink, source), via) in &flow.findings {
         let site = &flow.sinks[sink];
@@ -332,7 +401,7 @@ fn report(layout: &Layout, flow: &Flow<'_>, found: &mut Found) {
     }
 }
 
-/// A read of the camera feeding a decision through the calls `via`.
+/// A read feeding a decision through the calls `via`.
 fn fed(layout: &Layout, source: &Source, via: &[Call]) -> String {
     let (path, line) = layout.at(source.span);
     let mut text = format!(
@@ -358,6 +427,14 @@ fn fed(layout: &Layout, source: &Source, via: &[Call]) -> String {
     text
 }
 
+/// What a flow watching `watch` follows, as reports name it.
+fn watched(watch: Watch) -> &'static str {
+    match watch {
+        Watch::Camera => "the camera",
+        Watch::Sizes => "sizes on screen",
+    }
+}
+
 fn decision(decision: Decision) -> &'static str {
     match decision {
         Decision::Smoothstep => "`smoothstep`",
@@ -369,6 +446,7 @@ fn decision(decision: Decision) -> &'static str {
         Decision::BreakIf => "a `break if` condition",
         Decision::Switch => "a `switch` selector",
         Decision::Number => "a comparison turned into a number",
+        Decision::Saturate => "`saturate`",
     }
 }
 
@@ -379,5 +457,9 @@ fn read(read: Read) -> &'static str {
         Read::PixelAngle => "a pixel's angle outside the measures (`camera.options.y`)",
         Read::ViewAxis => "a camera matrix's eye or axis",
         Read::Relative => "an eye-relative position (`relative`)",
+        Read::Measure => {
+            "a size the detail eye measures (`detail_distance`, `detail_across` or `detail_span`)"
+        }
+        Read::Derivative => "a pixel's derivatives (`dpdx`, `dpdy` or `fwidth`)",
     }
 }
