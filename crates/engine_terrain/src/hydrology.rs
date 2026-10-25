@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use glam::Vec2;
 
-use crate::bed::bankfull_width;
+use crate::bed::bankfull;
 use crate::layers::HeightImage;
 use crate::noise::hash;
 use crate::rivers::{Channels, RiverLine, Rivers, trace};
@@ -55,7 +55,7 @@ settings! {
         /// channels full to their banks: every channel carries this times the
         /// area draining through it, which sets how wide and deep its channel
         /// stands, as channels full to their banks widen and deepen
-        /// downstream, shaped by the slope of its reach.
+        /// downstream.
         pub discharge: f32 = DISCHARGE => range(0.001, 1000.0),
     }
 }
@@ -624,7 +624,7 @@ pub(crate) fn bake(
         },
         (width, spacing),
         channel_area,
-        |drained| bankfull_width(drained * runoff),
+        |drained| bankfull(drained * runoff).0,
     );
     let hydrology = Hydrology {
         spacing: apart,
