@@ -973,18 +973,13 @@ fn terrain_across(world: vec3<f32>) -> f32 {
 // How many times their leaves' area a view at `site` crosses through the
 // blades no longer shown there (`site.thinned`) of a cover whose leaves'
 // area is `leaves` per square meter of ground, the density's setting
-// applied: the share of it blades turn toward a view rising as this one
-// does (`cover_projection`), along its path through their layer, which
-// stands up from the ground and so crosses as many times its leaves as the
-// ground's normal is upright over the view's cosine to it; none without
-// them.
+// applied, as `terrain_variety.wgsl`'s `cover_depth` counts them; none
+// without them.
 fn terrain_canopy(leaves: f32, site: TerrainSite) -> f32 {
     if site.thinned <= 0.0 || leaves <= 0.0 {
         return 0.0;
     }
-    let facing = max(abs(dot(site.toward, site.geometric)), 0.03);
-    return site.thinned * leaves * terrain.cover.y * cover_projection(site.toward.y).x
-        * site.geometric.y / facing;
+    return site.thinned * cover_depth(leaves * terrain.cover.y, site.toward, site.geometric);
 }
 
 // How the blades a view meets at `site` face the sun on average, `side`

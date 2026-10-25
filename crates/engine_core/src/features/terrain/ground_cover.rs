@@ -4,15 +4,27 @@
 //! where it lies ([`Cover`]); the [`GroundCover`] settings place, budget and
 //! sway it. Blades stand by their size on screen alone: as they narrow, a
 //! share of them stands in a fixed order, each widened by its inverse so
-//! they cover as much ground; as they grow short on screen they retire in
-//! that order, and the ground shows the leaves they leave as its canopy,
-//! what they show on average.
+//! they cover as much ground, and their colors drawn toward their canopy's
+//! so they vary as much; as they grow short on screen they retire in that
+//! order, and the ground shows the leaves they leave as its canopy, what
+//! they show on average.
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
 use crate::environment::InvalidSetting;
 use engine_settings::{ExtraRules, settings};
+
+/// The pixels a pattern's features must span to draw steadily under
+/// temporal antialiasing. Its frames sample each pixel up to half a pixel
+/// off its middle, which moves the phase at which a pixel samples a pattern
+/// `p` pixels long by up to `1 / (2 p)` of its period from frame to frame:
+/// no more than an eighth of it where `p` is 4. Finer patterns draw as
+/// their average: waves' slopes as roughness through their variance, blades
+/// as their canopy, foam's bubbles as their expected cover. Shaders mirror
+/// it (`STEADY_PIXELS`), and blades span it at least by default
+/// ([`GroundCover::pixels`]).
+pub const STEADY_PIXELS: f32 = 4.0;
 
 settings! {
     extra_rules;
@@ -72,13 +84,15 @@ settings! {
         /// across and up: where blades as wide as their roots would span
         /// fewer across, a share of them stands in a fixed order, each
         /// widened by its inverse to span these pixels, so they cover as
-        /// much ground; and once their height spans fewer than these times a
-        /// factor of their own from a half to two, they retire in that
-        /// order, the ground showing them as its cover's canopy, so cover
-        /// reaches as far as its last blade stands that tall. Two pixels,
-        /// which temporal antialiasing resolves steadily, stand about a
-        /// quarter as many blades as one for the same cover.
-        pub pixels: f32 = 2.0 => range(0.25, 16.0),
+        /// much ground, their colors drawn toward their canopy's by the root
+        /// of the share standing; and once their height spans fewer than
+        /// these times a factor of their own from a half to two, they retire
+        /// in that order, the ground showing them as its cover's canopy, so
+        /// cover reaches as far as its last blade stands that tall. By
+        /// default the pixels temporal antialiasing draws steadily
+        /// (`STEADY_PIXELS`); twice the pixels stand about a quarter as many
+        /// blades for the same cover.
+        pub pixels: f32 = STEADY_PIXELS => range(0.25, 16.0),
         /// Scales every cover's density. Blades sway in the world's `Wind`.
         pub density: f32 = 1.0 => range(0.0, 4.0),
         /// An optional budget of blades a frame: where the view would take
