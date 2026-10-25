@@ -312,13 +312,20 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "widened": {
+          "description": "How wide blades that thin stand on screen, in hundredths of the\nsettings' pixels: 100, or more where the budget, or what one storage\nbinding holds, takes in fewer blades than the view would, fewer of\nthem standing wider to cover as much ground.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
         "blades",
         "dropped",
         "reach",
-        "tiers"
+        "tiers",
+        "widened"
       ],
       "type": "object"
     },

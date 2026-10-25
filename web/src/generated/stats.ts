@@ -358,6 +358,13 @@ export interface GroundCoverStats {
    * doublings past it.
    */
   tiers: number;
+  /**
+   * How wide blades that thin stand on screen, in hundredths of the
+   * settings' pixels: 100, or more where the budget, or what one storage
+   * binding holds, takes in fewer blades than the view would, fewer of
+   * them standing wider to cover as much ground.
+   */
+  widened: number;
 }
 
 /** Workers, their jobs and the host's output cache. */

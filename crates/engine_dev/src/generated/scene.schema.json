@@ -3121,7 +3121,7 @@
           "default": true
         },
         "max_blades": {
-          "description": "An optional budget of blades a frame; beyond it the farthest drop.",
+          "description": "An optional budget of blades a frame: where the view would take\nin more, the blades that thin stand wider, fewer covering as much\nground; any past it still drop and count.",
           "type": [
             "integer",
             "null"
@@ -3130,7 +3130,7 @@
           "minimum": 1
         },
         "pixels": {
-          "description": "How wide on screen (pixels) blades stand as they retire: each\nretires, in a fixed order, once it spans fewer than this times a\nfactor of its own from a half to two, the ground showing it as its\ncover's canopy, so cover reaches as far as its last blade stands.",
+          "description": "The pixels on screen blades span at least while they stand,\nacross and up: where blades as wide as their roots would span\nfewer across, a share of them stands in a fixed order, each\nwidened by its inverse to span these pixels, so they cover as\nmuch ground; and once their height spans fewer than these times a\nfactor of their own from a half to two, they retire in that\norder, the ground showing them as its cover's canopy, so cover\nreaches as far as its last blade stands that tall.",
           "type": "number",
           "format": "float",
           "default": 1.0,
