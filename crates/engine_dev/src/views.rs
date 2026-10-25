@@ -2,8 +2,8 @@ use serde::Serialize;
 
 /// A heightfield terrain on this entity as a scene's `terrain` field:
 /// its origin, tiles, spacing, layers or file, material, collision and
-/// surroundings, with its streaming state: resident tiles by level, and its
-/// surroundings' once they stream.
+/// surroundings, with its streaming state: resident tiles by level, its
+/// edits and drawn rivers, and its surroundings' once they stream.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainView {
@@ -30,6 +30,10 @@ pub struct TerrainView {
     /// terrain-local, which a scene saves as a `{"stamp": ...}` layer after
     /// its others.
     pub edits: Vec<TerrainEditView>,
+    /// Its drawn rivers, in order: each one's `id` and its `river`,
+    /// terrain-local, which a scene saves among the `lines` of a
+    /// `{"rivers": ...}` layer just before its hydrology layer.
+    pub rivers: Vec<TerrainRiverView>,
     /// Its surroundings once they stream, after its bakes:
     /// how far they reach past its edges along x and z, their level-0 tiles
     /// along a side and sample spacing, their resident tiles and whether
@@ -54,6 +58,14 @@ pub struct SurroundingsView {
 pub struct TerrainEditView {
     pub id: String,
     pub stamp: engine_core::terrain_data::Stamp,
+}
+
+/// One river drawn over a terrain: its id and its river (terrain-local).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct TerrainRiverView {
+    pub id: String,
+    pub river: engine_core::GivenRiver,
 }
 
 /// A path layer: its index in the stack, whether its
@@ -94,8 +106,11 @@ pub struct ErosionView {
 /// A terrain's hydrology bake: whether it is in progress
 /// (tiles wait for it), and once done the samples it read, those channels
 /// run through, those of filled pits, the largest area draining through
-/// one (square meters), the waterfalls rivers drop over, how its rivers and
-/// lakes flow and its first falls.
+/// one (square meters), the waterfalls rivers drop over, the rivers
+/// following given ones, the river points whose channel the heights
+/// already hold (nothing is cut there), how its rivers and lakes flow, its
+/// first falls and its largest rivers, with what of each was given and
+/// what derived.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct HydrologyView {
@@ -105,13 +120,45 @@ pub struct HydrologyView {
     pub lake_samples: Option<usize>,
     pub max_area: Option<f32>,
     pub falls: Option<usize>,
+    pub given: Option<usize>,
+    pub uncut: Option<usize>,
     pub flow: Option<RiverFlowView>,
     /// The first [`FALLS_SHOWN`] falls.
     pub fall_list: Vec<FallView>,
+    /// The [`RIVERS_SHOWN`] rivers carrying the greatest floods.
+    pub rivers: Vec<RiverView>,
 }
 
-/// Falls a terrain's view lists at most.
+/// Falls and rivers a terrain's view lists at most.
 pub const FALLS_SHOWN: usize = 16;
+pub const RIVERS_SHOWN: usize = 16;
+
+/// A river of a terrain's hydrology bake: its name (a given river's), the
+/// given river its courses follow (its rivers layer's index in the
+/// terrain's baked stack and its line's in that layer; null for one the
+/// bake traced), its courses and the meters they run, its first and last
+/// points (terrain-local x and z), the least and most meters across its
+/// channel and of its channel's depth at its middle, and of its bankfull
+/// flood (cubic meters a second), whether each was given rather than
+/// derived, and the share of its points where the heights already hold its
+/// channel, which nothing cuts there.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct RiverView {
+    pub name: Option<String>,
+    pub given: Option<[u32; 2]>,
+    pub courses: usize,
+    pub length: f32,
+    pub first: [f32; 2],
+    pub last: [f32; 2],
+    pub width: [f32; 2],
+    pub depth: [f32; 2],
+    pub flood: [f32; 2],
+    pub given_width: bool,
+    pub given_depth: bool,
+    pub given_flood: bool,
+    pub uncut: f32,
+}
 
 /// A terrain's water in world space: how its rivers and lakes flow, its
 /// first [`FALLS_SHOWN`] falls, its largest lakes and where its rivers carry

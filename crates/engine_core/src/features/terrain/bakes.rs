@@ -1,4 +1,5 @@
-//! Baking a terrain's layers: one record, every bake of its stack.
+//! Baking a terrain's layers: one record, every bake of its stack, and
+//! again from its hydrology on whenever the rivers drawn over it change.
 
 use super::*;
 
@@ -18,6 +19,7 @@ pub(super) fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
                 Layer::Noise(_)
                 | Layer::Heightmap(_)
                 | Layer::Stamp(_)
+                | Layer::Rivers(_)
                 | Layer::Hydrology(_)
                 | Layer::Erosion(_)
                 | Layer::Path(_) => None,
@@ -34,17 +36,19 @@ pub(super) fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
 }
 
 /// Bakes run before any tile loads: `state`'s layers (`authored`, until
-/// baked) take every bake as one record, which the host's packs and store
-/// hand back or a job makes, asked for once `slots` admits it and again a
-/// while after it failed. Whether a bake is not done yet, which no tile
-/// loads behind.
+/// baked, with the rivers drawn over it given before its hydrology) take
+/// every bake as one record, which the host's packs and store hand back or
+/// a job makes, asked for once `slots` admits it and again a while after it
+/// failed. Rivers drawn since its layers baked bake them again from its
+/// hydrology on, its tiles kept where its rivers and roads stay. Whether a
+/// bake is not done yet, which no tile loads behind.
 pub(super) fn bake(
     state: &mut TerrainState,
     authored: &Arc<Layers>,
     slots: &mut JobBudget<'_>,
     frame: u64,
 ) -> bool {
-    let layers = state.baked.clone().unwrap_or_else(|| authored.clone());
+    let layers = state.bake_source(authored);
     if layers.unbaked().is_none() {
         return false;
     }
@@ -72,6 +76,7 @@ pub(super) fn bake(
             &identity,
         );
         state.bake.key = Some(record);
+        state.bake.drawn = Some(state.terrain.rivers.clone());
         state.bake.job = Some(slots.jobs.submit_record(
             BakeJob::KIND.name(),
             input,
@@ -84,6 +89,11 @@ pub(super) fn bake(
         return true;
     };
     state.bake.job = None;
+    let drawn = state
+        .bake
+        .drawn
+        .take()
+        .unwrap_or_else(|| state.terrain.rivers.clone());
     let baked = match job_output(
         BakeJob::KIND.name(),
         output,
@@ -107,11 +117,14 @@ pub(super) fn bake(
             Layer::Noise(_)
             | Layer::Heightmap(_)
             | Layer::Stamp(_)
+            | Layer::Rivers(_)
             | Layer::Hydrology(_)
             | Layer::Erosion(_)
             | Layer::Path(_) => {}
         }
     }
+    let before = state.baked.clone();
     finish_bake(state, Arc::new(baked));
+    state.redrawn(drawn, before.as_deref());
     false
 }

@@ -1,7 +1,9 @@
 //! The layer stack: procedural noise with erosion, imported heightmaps,
 //! stamps, what an erosion bake wears away, the channels a
 //! hydrology bake carves and roads, applied
-//! in order to every sample; later layers win.
+//! in order to every sample; later layers win. Rivers layers give the
+//! hydrology bake after them its first courses and change no height
+//! themselves.
 
 use std::sync::Arc;
 
@@ -11,6 +13,7 @@ use glam::{Vec2, Vec4};
 use serde::{Deserialize, Serialize};
 
 use crate::bake::{ErosionBake, HydrologyBake, PathBake, Stage};
+use crate::given::{GivenRiver, RiversLayer};
 use crate::hydrology::Hydrology;
 use crate::noise::{
     gradient_noise, gradient_noise4, gradient_value, gradient_value4, gullies, gullies4, max4,
@@ -452,18 +455,24 @@ pub struct HeightmapLayer {
 }
 
 impl HeightmapLayer {
+    /// The meters between its image's samples: along whichever axis they
+    /// lie further apart.
+    pub(crate) fn texel(&self) -> f32 {
+        let image = &self.image;
+        max(
+            self.size.x / (image.width - 1) as f32,
+            self.size.y / (image.height - 1) as f32,
+        )
+    }
+
     /// The image level terrain samples `spacing` meters apart read: the
     /// coarsest whose samples lie no further apart than the terrain's, so
     /// neighboring terrain levels differ only by the detail the coarser one
     /// leaves out.
     fn level_for(&self, spacing: f32) -> usize {
-        let image = &self.image;
-        let texel = max(
-            self.size.x / (image.width - 1) as f32,
-            self.size.y / (image.height - 1) as f32,
-        );
+        let texel = self.texel();
         let mut level = 0;
-        while level < image.levels() && texel * (2_u32 << level) as f32 <= spacing * 1.0001 {
+        while level < self.image.levels() && texel * (2_u32 << level) as f32 <= spacing * 1.0001 {
             level += 1;
         }
         level
@@ -499,6 +508,9 @@ pub enum Layer {
     Noise(NoiseLayer),
     Heightmap(HeightmapLayer),
     Stamp(Stamp),
+    /// Rivers given to the hydrology layer after it, which runs them as its
+    /// first courses: no height of its own.
+    Rivers(Arc<RiversLayer>),
     /// Where water runs over the layers before it and the channels it
     /// carves: nothing until baked.
     Hydrology(HydrologyStage),
@@ -1165,17 +1177,32 @@ impl Layers {
     /// places.
     pub const MAX_COORDINATE: f32 = 1.0e7;
 
+    /// `layers` validated: each layer's fields keep their rules, and every
+    /// rivers layer has a hydrology layer after it, which runs its rivers.
     pub fn new(layers: Vec<Layer>) -> Result<Self, LayerError> {
         for (index, layer) in layers.iter().enumerate() {
             let (kind, checked) = match layer {
                 Layer::Noise(noise) => ("noise", noise.validate()),
                 Layer::Heightmap(map) => ("heightmap", map.validate()),
                 Layer::Stamp(stamp) => ("stamp", stamp.validate()),
+                Layer::Rivers(rivers) => ("rivers", rivers.validate()),
                 Layer::Erosion(stage) => ("erosion", stage.layer.validate()),
                 Layer::Path(stage) => ("path", stage.layer.validate()),
                 Layer::Hydrology(stage) => ("hydrology", stage.layer.validate()),
             };
             checked.map_err(|invalid| LayerError::new(index, kind, invalid))?;
+        }
+        let last_hydrology = layers
+            .iter()
+            .rposition(|layer| matches!(layer, Layer::Hydrology(_)));
+        if let Some(index) = layers.iter().enumerate().position(|(index, layer)| {
+            matches!(layer, Layer::Rivers(_)) && last_hydrology.is_none_or(|last| last < index)
+        }) {
+            return Err(LayerError::new(
+                index,
+                "rivers",
+                InvalidSetting::new("lines", "need a hydrology layer after them, which runs them"),
+            ));
         }
         let tables = layers
             .iter()
@@ -1183,6 +1210,7 @@ impl Layers {
                 Layer::Noise(noise) => Some(NoiseTables::new(*noise)),
                 Layer::Heightmap(_)
                 | Layer::Stamp(_)
+                | Layer::Rivers(_)
                 | Layer::Hydrology(_)
                 | Layer::Erosion(_)
                 | Layer::Path(_) => None,
@@ -1207,9 +1235,11 @@ impl Layers {
         self.layers.iter().any(|layer| match layer {
             Layer::Stamp(stamp) => matches!(stamp.op, StampOp::Hole),
             Layer::Path(stage) => stage.layer.tunnel_cut > 0.0,
-            Layer::Noise(_) | Layer::Heightmap(_) | Layer::Hydrology(_) | Layer::Erosion(_) => {
-                false
-            }
+            Layer::Noise(_)
+            | Layer::Heightmap(_)
+            | Layer::Rivers(_)
+            | Layer::Hydrology(_)
+            | Layer::Erosion(_) => false,
         })
     }
 
@@ -1290,6 +1320,99 @@ impl Layers {
         })
     }
 
+    /// These layers, as authored, with `drawn` rivers given just before
+    /// their first hydrology layer, as a terrain draws rivers over its
+    /// layers while it streams: a rivers layer of their own, precise as
+    /// drawn. The layers before that one take the bakes `baked` (the same
+    /// layers baked) holds of them, and it and those after it bake anew, so
+    /// a terrain bakes again only what drawn rivers change; without a
+    /// hydrology layer to give them to, the layers stay as they are.
+    #[must_use]
+    pub fn with_drawn(&self, drawn: &[GivenRiver], baked: Option<&Self>) -> Self {
+        let Some(first) = self
+            .layers
+            .iter()
+            .position(|layer| matches!(layer, Layer::Hydrology(_)))
+        else {
+            return self.clone();
+        };
+        let mut layers: Vec<Layer> = self.layers.iter().map(unbaked).collect();
+        let mut tables = self.tables.clone();
+        if let Some(baked) = baked {
+            for (layer, done) in layers[..first].iter_mut().zip(&baked.layers) {
+                if unbaked(done) == *layer {
+                    *layer = done.clone();
+                }
+            }
+        }
+        if !drawn.is_empty() {
+            layers.insert(
+                first,
+                Layer::Rivers(Arc::new(RiversLayer {
+                    lines: drawn.to_vec(),
+                    ..RiversLayer::default()
+                })),
+            );
+            tables.insert(first, None);
+        }
+        Self {
+            layers,
+            tables,
+            offset: self.offset,
+            fade: self.fade,
+        }
+    }
+
+    /// Where tiles generated from these layers differ from those `before`
+    /// gives, as their bakes found them: the terrain-local bounds of each
+    /// change, the rivers and roads that differ out as far as they reach;
+    /// `None` where anything else differs, which may change the ground
+    /// anywhere. Rivers layers change no height of their own.
+    pub fn changes_from(&self, before: &Self) -> Option<Vec<(Vec2, Vec2)>> {
+        let shown = |stack: &Self| -> Vec<Layer> {
+            stack
+                .layers
+                .iter()
+                .filter(|layer| !matches!(layer, Layer::Rivers(_)))
+                .cloned()
+                .collect()
+        };
+        let (now, then) = (shown(self), shown(before));
+        if now.len() != then.len() || self.offset != before.offset || self.fade != before.fade {
+            return None;
+        }
+        let mut regions = Vec::new();
+        for (now, then) in now.iter().zip(&then) {
+            if now == then {
+                continue;
+            }
+            match (now, then) {
+                (Layer::Hydrology(now), Layer::Hydrology(then)) if now.layer == then.layer => {
+                    let (Some(now), Some(then)) = (&now.baked, &then.baked) else {
+                        return None;
+                    };
+                    if now.flow != then.flow
+                        || now.wetness != then.wetness
+                        || now.lakes != then.lakes
+                        || now.water != then.water
+                    {
+                        return None;
+                    }
+                    regions.extend(now.rivers.changes_from(&then.rivers));
+                }
+                (Layer::Path(now), Layer::Path(then)) if now.layer == then.layer => {
+                    let (Some(now), Some(then)) = (&now.baked, &then.baked) else {
+                        return None;
+                    };
+                    let ((low, high), (from, to)) = (now.bounds(), then.bounds());
+                    regions.push((low.min(from), high.max(to)));
+                }
+                _ => return None,
+            }
+        }
+        Some(regions)
+    }
+
     /// Layer `index`, to set what its bake found.
     pub(crate) fn layer_mut(&mut self, index: usize) -> Option<&mut Layer> {
         self.layers.get_mut(index)
@@ -1323,6 +1446,7 @@ impl Layers {
                 Layer::Noise(_)
                 | Layer::Heightmap(_)
                 | Layer::Stamp(_)
+                | Layer::Rivers(_)
                 | Layer::Hydrology(_)
                 | Layer::Erosion(_)
                 | Layer::Path(_) => None,
@@ -1352,6 +1476,7 @@ impl Layers {
             Layer::Noise(_)
             | Layer::Heightmap(_)
             | Layer::Stamp(_)
+            | Layer::Rivers(_)
             | Layer::Hydrology(_)
             | Layer::Erosion(_)
             | Layer::Path(_) => None,
@@ -1377,6 +1502,7 @@ impl Layers {
                 Layer::Noise(_)
                 | Layer::Heightmap(_)
                 | Layer::Stamp(_)
+                | Layer::Rivers(_)
                 | Layer::Hydrology(_)
                 | Layer::Erosion(_)
                 | Layer::Path(_) => nearest,
@@ -1405,6 +1531,7 @@ impl Layers {
             Layer::Noise(_)
             | Layer::Heightmap(_)
             | Layer::Stamp(_)
+            | Layer::Rivers(_)
             | Layer::Hydrology(_)
             | Layer::Erosion(_)
             | Layer::Path(_) => false,
@@ -1430,6 +1557,7 @@ impl Layers {
             Layer::Noise(_)
             | Layer::Heightmap(_)
             | Layer::Stamp(_)
+            | Layer::Rivers(_)
             | Layer::Hydrology(_)
             | Layer::Erosion(_)
             | Layer::Path(_) => false,
@@ -1451,7 +1579,9 @@ impl Layers {
         spacing: f32,
     ) {
         match &self.layers[index] {
-            Layer::Noise(_) => {}
+            // Rivers given change no height: the hydrology layer after them
+            // cuts their channels.
+            Layer::Noise(_) | Layer::Rivers(_) => {}
             Layer::Path(stage) => {
                 let Some(profile) = &stage.baked else {
                     return;
@@ -1558,6 +1688,25 @@ impl Layers {
     }
 }
 
+/// `layer` as authored: what its bake found, if it bakes, undone.
+fn unbaked(layer: &Layer) -> Layer {
+    match layer {
+        Layer::Hydrology(stage) => Layer::Hydrology(HydrologyStage {
+            layer: stage.layer,
+            baked: None,
+        }),
+        Layer::Erosion(stage) => Layer::Erosion(ErosionStage {
+            layer: stage.layer,
+            baked: None,
+        }),
+        Layer::Path(stage) => Layer::Path(PathStage {
+            layer: stage.layer.clone(),
+            baked: None,
+        }),
+        Layer::Noise(_) | Layer::Heightmap(_) | Layer::Stamp(_) | Layer::Rivers(_) => layer.clone(),
+    }
+}
+
 /// Whether the disk of `radius` about `center` reaches the square from
 /// `min` to `max`.
 fn reaches(center: [f32; 2], radius: f32, min: Vec2, max: Vec2) -> bool {
@@ -1637,6 +1786,7 @@ tagged!(Layer, "invalid layer" {
     3 => Hydrology(stage),
     4 => Erosion(stage),
     5 => Path(stage),
+    6 => Rivers(layer),
 });
 
 /// The stack's layers with their bakes, its offset and its fade; reading

@@ -1,16 +1,18 @@
-//! Temporary edits of generated terrains, with undo and redo.
+//! Temporary edits of generated terrains, with undo and redo, and rivers
+//! drawn over them.
 
 use std::sync::Arc;
 
 use engine_core::{
-    Engine, Feature, Terrain, TerrainEdit, Terrains,
-    bevy_ecs::prelude::Entity,
+    Engine, Feature, GivenRiver, Terrain, TerrainEdit, TerrainRiver, Terrains,
+    bevy_ecs::prelude::{Entity, World},
     glam::Vec2,
     terrain_data::{Stamp, StampOp},
 };
 use engine_scene::SceneInstance;
 use engine_settings::ErrorCode;
 
+use super::TerrainRiverControl;
 use super::results::{Reach, TerrainEdited};
 use crate::DevError;
 use crate::coordinate;
@@ -33,6 +35,49 @@ pub(super) enum TerrainEditing {
 /// moved.
 const CHANGE_SAMPLES: usize = 9;
 
+/// The terrain entity `name` names in `scene` (the first terrain when
+/// `None`).
+fn terrain_entity(
+    world: &mut World,
+    scene: Option<&SceneInstance>,
+    name: Option<&str>,
+) -> Result<Entity, DevError> {
+    match name {
+        Some(name) => scene
+            .and_then(|scene| scene.entity(name))
+            .filter(|&entity| world.get::<Terrain>(entity).is_some())
+            .ok_or_else(|| {
+                DevError::new(
+                    ErrorCode::UnknownTerrain,
+                    "$.terrain",
+                    format!("no terrain entity {name} in the scene"),
+                )
+            }),
+        None => world
+            .query::<(Entity, &Terrain)>()
+            .iter(world)
+            .map(|(entity, _)| entity)
+            .next()
+            .ok_or_else(|| DevError::new(ErrorCode::UnknownTerrain, "$.terrain", "no terrain")),
+    }
+}
+
+/// Whether `id` is an authored ID, which edits and drawn rivers go by.
+fn valid_id(id: &str) -> Result<(), DevError> {
+    if engine_settings::is_id(id) {
+        Ok(())
+    } else {
+        Err(DevError::new(
+            ErrorCode::InvalidRequest,
+            "$.id",
+            format!(
+                "id must be 1 to {} letters, digits, '_', '-' and '.'",
+                engine_settings::MAX_ID_BYTES
+            ),
+        ))
+    }
+}
+
 /// Runs `editing` on the terrain `name` names in `scene` (the first terrain
 /// when `None`), taking edits undo removed from and putting them back on
 /// `redo`; its result.
@@ -48,24 +93,7 @@ pub(super) fn edit_terrain(
     editing: TerrainEditing,
 ) -> Result<TerrainEdited, DevError> {
     let world = engine.app.world_mut();
-    let entity = match name {
-        Some(name) => scene
-            .and_then(|scene| scene.entity(name))
-            .filter(|&entity| world.get::<Terrain>(entity).is_some())
-            .ok_or_else(|| {
-                DevError::new(
-                    ErrorCode::UnknownTerrain,
-                    "$.terrain",
-                    format!("no terrain entity {name} in the scene"),
-                )
-            })?,
-        None => world
-            .query::<(Entity, &Terrain)>()
-            .iter(world)
-            .map(|(entity, _)| entity)
-            .next()
-            .ok_or_else(|| DevError::new(ErrorCode::UnknownTerrain, "$.terrain", "no terrain"))?,
-    };
+    let entity = terrain_entity(world, scene, name)?;
     let terrain = world.get::<Terrain>(entity).cloned().expect("found above");
     let origin = terrain.origin;
     let mut edits = terrain.edits.to_vec();
@@ -86,16 +114,7 @@ pub(super) fn edit_terrain(
             falloff,
             change,
         } => {
-            if !engine_settings::is_id(&id) {
-                return Err(DevError::new(
-                    ErrorCode::InvalidRequest,
-                    "$.id",
-                    format!(
-                        "id must be 1 to {} letters, digits, '_', '-' and '.'",
-                        engine_settings::MAX_ID_BYTES
-                    ),
-                ));
-            }
+            valid_id(&id)?;
             let x = coordinate(center[0], "$.center[0]")?;
             let z = coordinate(center[1], "$.center[1]")?;
             let (radius, falloff) = (radius as f32, falloff as f32);
@@ -211,6 +230,131 @@ pub(super) fn edit_terrain(
     };
     if let Some(mut terrain) = world.get_mut::<Terrain>(entity) {
         terrain.edits = Arc::from(edits);
+    }
+    Ok(result)
+}
+
+/// Draws `drawing`'s river (world points, which the terrain holds
+/// terrain-local) under its id on the terrain its `terrain` names in
+/// `scene` (the first terrain when `None`), replacing the one drawn under
+/// that id, or takes that one away where it names no points; its result.
+pub(super) fn draw_river(
+    engine: &mut Engine,
+    scene: Option<&SceneInstance>,
+    drawing: &TerrainRiverControl,
+) -> Result<TerrainEdited, DevError> {
+    let world = engine.app.world_mut();
+    let entity = terrain_entity(world, scene, drawing.terrain.as_deref())?;
+    feature::<Terrains>(world, Feature::Terrain)?;
+    let terrain = world.get::<Terrain>(entity).cloned().expect("found above");
+    if !terrain.layers.has_hydrology() {
+        return Err(DevError::new(
+            ErrorCode::InvalidRequest,
+            "$.terrain",
+            "the terrain has no hydrology layer to give rivers to",
+        ));
+    }
+    valid_id(&drawing.id)?;
+    let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
+    // Where rivers lie, world: their points' bounds out past the widest
+    // half each gives its channel.
+    let reach = |rivers: &[&GivenRiver]| -> Option<Reach> {
+        let mut bounds: Option<(Vec2, Vec2)> = None;
+        for river in rivers {
+            let half = river.width.iter().fold(0.0_f32, |widest, &width| {
+                engine_core::math::max(widest, 0.5 * width)
+            });
+            for &point in &river.points {
+                let point = Vec2::from(point) + origin;
+                let (low, high) = (point - Vec2::splat(half), point + Vec2::splat(half));
+                bounds = Some(bounds.map_or((low, high), |(from, to)| {
+                    (from.min(low), to.max(high))
+                }));
+            }
+        }
+        bounds.map(|(low, high)| Reach {
+            min: low.to_array(),
+            max: high.to_array(),
+        })
+    };
+    let mut rivers = terrain.rivers.to_vec();
+    let standing = rivers.iter().position(|drawn| *drawn.id == *drawing.id);
+    let unchanged = |rivers: &[TerrainRiver], dirty: Option<Reach>| TerrainEdited::River {
+        temporary: true,
+        applied: false,
+        id: drawing.id.clone(),
+        rivers: rivers.len(),
+        dirty,
+    };
+    let dirty = if drawing.points.is_empty() {
+        // No points take the river drawn under the id away.
+        let Some(at) = standing else {
+            return Ok(unchanged(&rivers, None));
+        };
+        let gone = rivers.remove(at);
+        reach(&[&gone.river])
+    } else {
+        let points = drawing
+            .points
+            .iter()
+            .enumerate()
+            .map(|(index, &[x, z])| -> Result<[f32; 2], DevError> {
+                let x = coordinate(x, &format!("$.points[{index}][0]"))?;
+                let z = coordinate(z, &format!("$.points[{index}][1]"))?;
+                Ok([x - origin.x, z - origin.y])
+            })
+            .collect::<Result<Vec<_>, DevError>>()?;
+        let values =
+            |values: &[f64]| -> Vec<f32> { values.iter().map(|&value| value as f32).collect() };
+        let river = GivenRiver {
+            name: drawing.name.clone(),
+            points,
+            width: values(&drawing.width),
+            depth: values(&drawing.depth),
+            discharge: values(&drawing.discharge),
+        };
+        // The river's own rules, named as the request names its fields.
+        river.validate().map_err(|invalid| {
+            DevError::new(
+                ErrorCode::OutOfRange,
+                format!("$.{}", invalid.field),
+                invalid.rule,
+            )
+        })?;
+        if standing.is_some_and(|at| rivers[at].river == river) {
+            return Ok(unchanged(&rivers, reach(&[&river])));
+        }
+        let most = engine_core::terrain_data::MAX_GIVEN_RIVERS;
+        if standing.is_none() && rivers.len() >= most {
+            return Err(DevError::new(
+                ErrorCode::OutOfRange,
+                "$.id",
+                format!("a terrain holds at most {most} drawn rivers"),
+            ));
+        }
+        let dirty = match standing {
+            Some(at) => reach(&[&rivers[at].river, &river]),
+            None => reach(&[&river]),
+        };
+        let drawn = TerrainRiver {
+            id: Arc::from(drawing.id.as_str()),
+            river,
+        };
+        match standing {
+            Some(at) => rivers[at] = drawn,
+            None => rivers.push(drawn),
+        }
+        dirty
+    };
+    let result = TerrainEdited::River {
+        temporary: true,
+        applied: true,
+        id: drawing.id.clone(),
+        rivers: rivers.len(),
+        dirty,
+    };
+    if let Some(mut terrain) = world.get_mut::<Terrain>(entity) {
+        terrain.rivers = Arc::from(rivers);
     }
     Ok(result)
 }

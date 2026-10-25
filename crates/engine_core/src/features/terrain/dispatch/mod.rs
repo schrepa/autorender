@@ -90,7 +90,19 @@ fn load_records(
     slots: &mut JobBudget<'_>,
     frame: u64,
 ) {
-    let Some(recipe) = state.recipe.as_ref().map(|recipe| recipe.key.clone()) else {
+    // A recipe of other layers than its tiles generate from now, as just
+    // after its bakes changed them, waits to be shared again.
+    let Some(recipe) = state
+        .recipe
+        .as_ref()
+        .filter(|recipe| {
+            state
+                .baked
+                .as_ref()
+                .is_none_or(|baked| Arc::ptr_eq(baked, &recipe.stack))
+        })
+        .map(|recipe| recipe.key.clone())
+    else {
         return;
     };
     let generation = state.store.generation();

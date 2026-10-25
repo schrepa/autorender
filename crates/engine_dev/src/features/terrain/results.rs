@@ -1,6 +1,6 @@
 //! What terrain's queries and edits answer: the ground under points, a
 //! sweep comparing what queries, rays and layers say the ground is, a route,
-//! and what an edit, undo or redo did.
+//! and what an edit, undo, redo or river drawn did.
 
 use serde::Serialize;
 
@@ -155,11 +155,29 @@ pub struct RouteFound {
     pub hairpin_steps: usize,
 }
 
-/// What `terrain_edit`, `terrain_undo` and `terrain_redo` answer.
+/// What `terrain_edit`, `terrain_undo`, `terrain_redo` and `terrain_river`
+/// answer.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum TerrainEdited {
+    /// A river drawn, replaced or taken away, or standing already.
+    River {
+        /// Controls change the session's world, not the scene's source.
+        temporary: bool,
+        /// Whether it applied: false where the same river stands under its
+        /// ID, or none stands under it to take away.
+        applied: bool,
+        /// Its ID.
+        id: String,
+        /// Rivers drawn now.
+        rivers: usize,
+        /// Where the river drawn, replaced or taken away lies; where the
+        /// terrain's rivers then differ, its tiles regenerate once its
+        /// hydrology bakes again.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dirty: Option<Reach>,
+    },
     /// An edit, applied or standing already.
     Edit {
         /// Controls change the session's world, not the scene's source.

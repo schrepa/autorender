@@ -645,8 +645,8 @@ impl TerrainStreaming {
 
 impl Terrains {
     /// Follows the terrains `present` now: those gone retire, those
-    /// changed start over, edits and what stands on them change in place,
-    /// and new ones join.
+    /// changed start over, edits, drawn rivers (which their bakes take up)
+    /// and what stands on them change in place, and new ones join.
     fn follow(&mut self, present: Vec<(Entity, Terrain)>) {
         let retired = &mut self.retired;
         self.entries.retain(|state| {
@@ -671,6 +671,8 @@ impl Terrains {
                         if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
                             state.edit(terrain.edits.clone());
                         }
+                        // Bakes again over its tiles kept.
+                        state.terrain.rivers = terrain.rivers.clone();
                         // Surroundings follow on their own.
                         state.terrain.surroundings = terrain.surroundings;
                         // What placement layers stand and the bridges'

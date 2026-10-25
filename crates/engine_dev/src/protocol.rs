@@ -73,7 +73,7 @@ use crate::features::{
     ocean::WaterQuery,
     terrain::{
         TerrainControl, TerrainEditControl, TerrainHeightQuery, TerrainRedoControl,
-        TerrainRouteQuery, TerrainSweepQuery, TerrainUndoControl,
+        TerrainRiverControl, TerrainRouteQuery, TerrainSweepQuery, TerrainUndoControl,
     },
     world_streaming::WorldChangesControl,
 };
@@ -100,6 +100,7 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("terrain_edit", "Terrain"),
     ("terrain_undo", "Terrain"),
     ("terrain_redo", "Terrain"),
+    ("terrain_river", "Terrain"),
     ("deform", "Tracks"),
     ("nav_go", "NavAgent"),
     ("animation", "AnimationPlayer"),
@@ -416,6 +417,7 @@ pub enum BrowserControl {
     TerrainEdit(TerrainEditControl),
     TerrainUndo(TerrainUndoControl),
     TerrainRedo(TerrainRedoControl),
+    TerrainRiver(TerrainRiverControl),
     Deform(DeformControl),
     NavGo(NavGoControl),
     Animation(AnimationControl),
@@ -627,6 +629,7 @@ impl BrowserControl {
             Self::TerrainEdit(control) => Control::Feature(Box::new(control)),
             Self::TerrainUndo(control) => Control::Feature(Box::new(control)),
             Self::TerrainRedo(control) => Control::Feature(Box::new(control)),
+            Self::TerrainRiver(control) => Control::Feature(Box::new(control)),
             Self::Deform(control) => Control::Feature(Box::new(control)),
             Self::NavGo(control) => Control::Feature(Box::new(control)),
             Self::Animation(control) => Control::Feature(Box::new(control)),
@@ -693,6 +696,7 @@ impl BrowserControl {
             | Self::TerrainEdit(_)
             | Self::TerrainUndo(_)
             | Self::TerrainRedo(_)
+            | Self::TerrainRiver(_)
             | Self::Deform(_)
             | Self::WorldChanges(_)
             | Self::NavGo(_)

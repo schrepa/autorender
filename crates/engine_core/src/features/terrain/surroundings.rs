@@ -178,6 +178,7 @@ impl Terrains {
                 },
                 collision: false,
                 edits: Arc::from(Vec::new()),
+                rivers: Arc::from(Vec::new()),
                 surroundings: None,
             };
             let mut state = TerrainState::new(entity, terrain);

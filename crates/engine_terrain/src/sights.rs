@@ -1,17 +1,19 @@
 //! What a hydrology bake's water shows those inspecting it, read here so
 //! its lake grid and river lines stay the crate's own: its largest lakes,
-//! where its rivers carry most, run fastest against their waves and meet
-//! with the most water, how they flow, where pools stand behind what holds
-//! them back, and the courses rivers run along for worlds placing things
-//! in them. Water itself is read from tiles ([`crate::Tile::water_at`]).
+//! its largest rivers with what of them was given and what derived, where
+//! its rivers carry most, run fastest against their waves and meet with
+//! the most water, how they flow, where pools stand behind what holds them
+//! back, and the courses rivers run along for worlds placing things in
+//! them. Water itself is read from tiles ([`crate::Tile::water_at`]).
 
 use engine_math::collections::HashMap;
-use engine_math::max;
+use engine_math::{max, min};
 use glam::Vec2;
 
-use crate::hydraulics::GRAVITY;
+use crate::hydraulics::{FLOODS, GRAVITY, distances};
+use crate::layers::Layer;
 use crate::rivers::River;
-use crate::{Bed, Hydrology, Pool, RiverFlow, Rivers};
+use crate::{Bed, Hydrology, Layers, Pool, RiverFlow, Rivers};
 
 /// A lake: its level (terrain-local meters), the area its water covers
 /// (square meters), and its middle and a sample of its shore (terrain-local
@@ -37,6 +39,31 @@ pub struct RiverSight {
     pub half: f32,
     pub speed: f32,
     pub discharge: f32,
+}
+
+/// A river as inspection lists it: its name (a given river's, as given),
+/// the given river its courses follow (its rivers layer's index in the
+/// stack and its own in that layer; none for a course the bake traced), its
+/// courses and the meters they run, its first and last points
+/// (terrain-local x and z), the least and most of its channel's width and
+/// depth (meters) and of its bankfull flood (cubic meters a second),
+/// whether those were given rather than derived, and the share of its
+/// points where the heights already hold its channel, which nothing cuts.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RiverListing {
+    pub name: Option<String>,
+    pub given: Option<[u32; 2]>,
+    pub courses: usize,
+    pub length: f32,
+    pub first: [f32; 2],
+    pub last: [f32; 2],
+    pub width: [f32; 2],
+    pub depth: [f32; 2],
+    pub flood: [f32; 2],
+    pub given_width: bool,
+    pub given_depth: bool,
+    pub given_flood: bool,
+    pub uncut: f32,
 }
 
 /// How a bake's rivers and lakes flow: how many there are, the river
@@ -116,6 +143,92 @@ impl RiverCourse<'_> {
     /// a confluence or a lake's outlet, whose rivers or lake bring it.
     pub fn head(&self) -> bool {
         self.river.head
+    }
+
+    /// The given river it follows: its rivers layer's index in the stack
+    /// and its own in that layer; none for a course the bake traced.
+    pub fn given(&self) -> Option<[u32; 2]> {
+        self.river.given.source
+    }
+
+    /// Whether its channel is cut into the ground at `point`: not where the
+    /// heights already hold it.
+    pub fn cut(&self, point: usize) -> bool {
+        self.river.cut[point]
+    }
+}
+
+impl Layers {
+    /// Its first baked hydrology's rivers as inspection lists them: each
+    /// given river whole, its courses together, and each course the bake
+    /// traced, the `count` carrying the greatest floods, largest first.
+    pub fn river_listing(&self, count: usize) -> Vec<RiverListing> {
+        let Some((_, hydrology)) = self.hydrology_layer() else {
+            return Vec::new();
+        };
+        let name = |[layer, line]: [u32; 2]| match self.layers().get(layer as usize) {
+            Some(Layer::Rivers(rivers)) => rivers
+                .lines
+                .get(line as usize)
+                .and_then(|river| river.name.clone()),
+            _ => None,
+        };
+        let mut listings: Vec<RiverListing> = Vec::new();
+        let mut held: Vec<(usize, usize)> = Vec::new();
+        let mut by_source: HashMap<[u32; 2], usize> = HashMap::default();
+        for river in hydrology.rivers.rivers() {
+            let (Some(&first), Some(&last)) = (river.points.first(), river.points.last()) else {
+                continue;
+            };
+            let given = river.given;
+            let at = match given.source {
+                Some(source) if by_source.contains_key(&source) => by_source[&source],
+                source => {
+                    if let Some(source) = source {
+                        by_source.insert(source, listings.len());
+                    }
+                    listings.push(RiverListing {
+                        name: source.and_then(name),
+                        given: source,
+                        courses: 0,
+                        length: 0.0,
+                        first,
+                        last,
+                        width: [f32::INFINITY, 0.0],
+                        depth: [f32::INFINITY, 0.0],
+                        flood: [f32::INFINITY, 0.0],
+                        given_width: given.width,
+                        given_depth: given.depth,
+                        given_flood: given.flood,
+                        uncut: 0.0,
+                    });
+                    held.push((0, 0));
+                    listings.len() - 1
+                }
+            };
+            let listing = &mut listings[at];
+            listing.courses += 1;
+            let points: Vec<Vec2> = river.points.iter().map(|&point| Vec2::from(point)).collect();
+            listing.length += distances(&points).last().copied().unwrap_or(0.0);
+            listing.last = last;
+            let widen = |range: &mut [f32; 2], value: f32| {
+                range[0] = min(range[0], value);
+                range[1] = max(range[1], value);
+            };
+            for index in 0..river.points.len() {
+                widen(&mut listing.width, 2.0 * river.half[index]);
+                widen(&mut listing.depth, river.depth[index]);
+                widen(&mut listing.flood, FLOODS * river.discharge[index]);
+            }
+            held[at].0 += river.cut.iter().filter(|&&cut| !cut).count();
+            held[at].1 += river.cut.len();
+        }
+        for (listing, &(uncut, points)) in listings.iter_mut().zip(&held) {
+            listing.uncut = uncut as f32 / max(points as f32, 1.0);
+        }
+        listings.sort_by(|a, b| b.flood[1].total_cmp(&a.flood[1]));
+        listings.truncate(count);
+        listings
     }
 }
 

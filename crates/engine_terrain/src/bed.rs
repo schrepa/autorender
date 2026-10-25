@@ -286,8 +286,9 @@ pub(crate) fn power(flood: f32, slope: f32, width: f32) -> f32 {
 /// A river's channel along its line as its floods size it: at each point
 /// the discharge of its flood (cubic meters a second), its reach's slope
 /// (meters a meter) and shares of each form, its channel's width and depth
-/// at its middle (meters), and the level of its banks (terrain-local
-/// meters).
+/// at its middle (meters), the level of its banks (terrain-local meters),
+/// and whether it is cut into the ground there: not where the heights
+/// already hold it.
 pub(crate) struct Bankfull {
     pub(crate) floods: Vec<f32>,
     pub(crate) slopes: Vec<f32>,
@@ -295,6 +296,7 @@ pub(crate) struct Bankfull {
     pub(crate) widths: Vec<f32>,
     pub(crate) depths: Vec<f32>,
     pub(crate) banks: Vec<f32>,
+    pub(crate) cut: Vec<bool>,
 }
 
 /// The forms a river's bed takes along its line: at each point how much

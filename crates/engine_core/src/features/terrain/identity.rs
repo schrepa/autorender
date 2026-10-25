@@ -4,26 +4,29 @@
 
 use std::sync::Arc;
 
-use engine_terrain::Stamp;
+use engine_terrain::{GivenRiver, Stamp};
 
-use super::{Terrain, TerrainEdit, TerrainSurface};
+use super::{Terrain, TerrainEdit, TerrainRiver, TerrainSurface};
 use crate::content_hash;
 
 /// What a terrain's tiles are made from, by content: a hash of its edits'
-/// stamps and of whether tiles hold control values, which is all that
-/// changes while a terrain streams ([`Terrain::same`] starts it over for
-/// anything else). Resident tiles and the jobs making them carry the
-/// generation they were made from; another generation's tiles are not
-/// the ground now, while the same content always has the same generation.
+/// stamps, of the rivers drawn over the layers its bakes hold and of
+/// whether tiles hold control values, which is all that changes while a
+/// terrain streams ([`Terrain::same`] starts it over for anything else).
+/// Resident tiles and the jobs making them carry the generation they were
+/// made from; another generation's tiles are not the ground now, while the
+/// same content always has the same generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Generation(u128);
 
 impl Generation {
-    /// The generation of tiles made under `edits`, holding control values
-    /// where `materials`.
-    pub(super) fn of(edits: &[TerrainEdit], materials: bool) -> Self {
+    /// The generation of tiles made under `edits` over bakes holding the
+    /// rivers `drawn`, holding control values where `materials`.
+    pub(super) fn of(edits: &[TerrainEdit], drawn: &[TerrainRiver], materials: bool) -> Self {
         let stamps: Vec<Stamp> = edits.iter().map(|edit| edit.stamp).collect();
+        let rivers: Vec<GivenRiver> = drawn.iter().map(|drawn| drawn.river.clone()).collect();
         let mut bytes = engine_terrain::codec::encode(&stamps);
+        bytes.extend(engine_terrain::codec::encode(&rivers));
         bytes.push(u8::from(materials));
         Self(content_hash(&bytes))
     }
@@ -43,6 +46,8 @@ impl Terrain {
             collision,
             // Applied over the tiles kept, tile by tile.
             edits: _,
+            // Baked again, the tiles kept where its rivers stay.
+            rivers: _,
             // Followed on their own.
             surroundings: _,
         } = self;
