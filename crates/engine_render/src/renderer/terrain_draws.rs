@@ -63,6 +63,7 @@ impl Renderer {
                 regions: self.shadows.region_views(),
                 settings: snapshot.environment.terrain.sanitized(),
                 shadows: snapshot.environment.shadows.enabled,
+                water: snapshot.environment.water.sanitized(),
                 fades,
                 now: snapshot.elapsed_seconds,
                 cover: canopy,

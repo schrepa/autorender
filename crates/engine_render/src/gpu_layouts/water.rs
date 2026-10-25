@@ -8,7 +8,8 @@ use super::constants::{SIM_SLOTS, WAVE_TILES};
 gpu_structs! {
     /// WGSL `WaterUniform` of `meshes/water.wgsl`; the sea's parts are zero
     /// for terrains' water, whose projection is the terrain view's, and the
-    /// sea carries no sediment.
+    /// sea carries no sediment and stands on no subdivision, its `lift`
+    /// zero.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct WaterUniform as ["WaterUniform"] {
         pub relative_view_projection: [[f32; 4]; 4],
@@ -25,6 +26,7 @@ gpu_structs! {
         pub sim: [f32; 4],
         pub sim_datum: [f32; 4],
         pub sediment: [f32; 4],
+        pub lift: [f32; 4],
     }
 
     /// WGSL `SimFrame` of `water_sim.wgsl`: the stage, the slots the
@@ -61,26 +63,6 @@ gpu_structs! {
     pub(crate) struct WaveFrame as ["WaveFrame" in WATER_WAVES_SHADER] {
         pub tiles: [[f32; 4]; WAVE_TILES],
         pub clock: [f32; 4],
-    }
-
-    /// WGSL `WaterLeafRecord` of `meshes/water.wgsl`: where a terrain's
-    /// water lists the leaves of its subdivision over which water stands:
-    /// its first listed leaf, its first word of their bits, the most leaves
-    /// it tests and lists, and its draw (`WaterDraw`).
-    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct WaterLeafRecord as ["WaterLeafRecord"] {
-        pub places: [u32; 4],
-    }
-
-    /// WGSL `WaterDraw` of `meshes/water.wgsl`, which the listing of a
-    /// terrain's water's leaves writes: its indirect draw (a leaf's
-    /// vertices, the leaves listed, and zeros) and its counts (its
-    /// subdivision's leaves, as their own draw counts them, those holding
-    /// water, and zeros).
-    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct WaterDraw as ["WaterDraw"] {
-        pub args: [u32; 4],
-        pub counts: [u32; 4],
     }
 
     /// WGSL `FallInput` of `meshes/water_falls.wgsl`: a vertex of a waterfall's

@@ -236,6 +236,9 @@ pub(crate) struct TerrainViews<'a> {
     /// serve.
     pub settings: engine_core::TerrainSettings,
     pub shadows: bool,
+    /// Water settings, sanitized: whether terrains' water subdivides, and
+    /// how finely.
+    pub water: engine_core::Water,
     /// Whether tiles that arrive grow out of their parents over a few frames:
     /// ordinary frames; exact ones draw every tile as it
     /// is. And the frame's presentation time in seconds, which their fades
@@ -254,7 +257,8 @@ pub(crate) struct TerrainPass {
     /// What shaders look up: fades and holes, the directory, palette and
     /// covers, and each terrain's uniform.
     pub(crate) tables: TerrainTables,
-    /// Each terrain's subdivision, whose leaves the camera's ground draws.
+    /// Each terrain's subdivisions, whose leaves the camera's ground and the
+    /// water its tiles hold draw.
     pub(crate) surface: SurfaceTrees,
     /// This frame's uniforms, views and the kept level's patches.
     pub(crate) patches: PatchDraws,
@@ -356,8 +360,7 @@ impl TerrainPass {
             self.tables
                 .write_holes(device, queue, (&self.atlas, edited), max_layers);
         }
-        self.water
-            .sync(device, queue, (&self.atlas, terrains), max_layers);
+        self.water.sync(device, queue, &self.atlas, max_layers);
         self.patches.follow_ground(terrains, &self.atlas);
         self.atlas.fade(views.fades, self.tables.fade_words);
         let fades = (&self.atlas.fades[..], self.atlas.fades_dirty.clone());
@@ -413,7 +416,9 @@ impl TerrainPass {
             return false;
         }
         self.tables.size_uniforms(device, terrains);
-        self.surface.prepare(device, queue, terrains, views);
+        let water = &self.water;
+        self.surface
+            .prepare(device, queue, terrains, views, |id| water.holds(id));
         let parts = patches::Layout {
             atlas: &self.atlas,
             tables: &self.tables,

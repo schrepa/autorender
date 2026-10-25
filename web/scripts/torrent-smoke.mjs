@@ -152,7 +152,7 @@ try {
       white: seen.water > 0 ? seen.white / seen.water : 0,
       varied: seen.water > 0 ? seen.varied / seen.water : 0,
     };
-    report[stream] = { ...seen, shares, water_patches: shaded.rendering.water.patches };
+    report[stream] = { ...seen, shares, water_leaves: shaded.rendering.water.leaves };
     measurements.push(
       { name: `${stream} water`, value: shares.water * 100, unit: "%", note: "pixels of the view the water's views show water at" },
       { name: `${stream} white water`, value: shares.white * 100, unit: "%", note: "water pixels bright in every channel of the white water view" },

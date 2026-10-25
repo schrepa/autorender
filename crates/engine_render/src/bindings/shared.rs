@@ -77,10 +77,9 @@ shared_groups! {
             sky_table_sampler, sky_clouds_old, sky_domes
         ],
         view_clouds: 46..50 [view_clouds, view_cloud_front, view_cloud_depth, view_cloud_sampler],
-        water: 50..62 [
+        water: 50..61 [
             water_surface, water_info, water, water_waves, water_wave_sampler, water_fall_map,
-            water_sim_cells, water_sim_ground, water_sim_beds, water_directory, water_leaves,
-            water_leaf_record
+            water_sim_cells, water_sim_ground, water_sim_beds, water_directory, water_tree
         ],
     }
     SHADER @ 2 {
@@ -91,9 +90,7 @@ shared_groups! {
         impostor_bakes: 15..17 [impostor_bake, impostor_shade],
         terrain: 18..19 [terrain_ids_texture],
         virtual_texture: 19..21 [terrain_vt_wanted, terrain_vt_bakes],
-        water: 22..27 [
-            water_depth, water_scene, water_leaf_bits, water_leaf_list, water_leaf_draws
-        ],
+        water: 22..24 [water_depth, water_scene],
         subdivision: 27..32 [
             subdivision, subdivision_tree, subdivision_nodes, subdivision_leaves, subdivision_args
         ],
