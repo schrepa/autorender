@@ -294,8 +294,15 @@ gpu_consts! {
     /// Texels along a side of a tile of water's waves: wave numbers of its
     /// spectrum, and points of its slopes.
     pub(crate) const WAVE_TEXELS: u32 = engine_core::table_data::waves::TEXELS => ["WAVE_TEXELS" in WATER_WAVES_SHADER];
-    /// Tiles of water's waves, each repeating at its own length.
-    pub(crate) const WAVE_TILES: usize = engine_core::table_data::waves::TILES => ["WAVE_TILES" in WATER_WAVES_SHADER, "WATER_WAVE_TILES"];
+    /// Tiles of water's waves, each repeating at its own length: the wind's,
+    /// which evolve each frame, then the current's turbulence, which stands
+    /// still.
+    pub(crate) const WAVE_TILES: usize = engine_core::table_data::waves::TILES => ["WAVE_TILES" in WATER_WAVES_SHADER, "WATER_TILES"];
+    pub(crate) const WIND_TILES: u32 = engine_core::table_data::waves::WIND_TILES as u32 => ["WAVE_WIND_TILES" in WATER_WAVES_SHADER, "WATER_WIND_TILES"];
+    pub(crate) const TURBULENCE_TILE: u32 = engine_core::table_data::waves::TURBULENCE_TILE as u32 => ["WATER_TURBULENCE_TILE"];
+    /// The most anisotropy the waves' sampler filters to: along a pixel's
+    /// longer side it averages at most this many times as finely as across.
+    pub(crate) const WAVE_ANISOTROPY: u16 = 8 => ["WATER_WAVE_ANISOTROPY"];
     /// Invocations transforming a line of a tile: a butterfly each.
     pub(crate) const WAVE_LINE_GROUP: u32 = 128 => ["@evolve_rows" in WATER_WAVES_SHADER, "@transform_columns" in WATER_WAVES_SHADER];
     /// Workgroup side of the moments' levels.
@@ -536,7 +543,15 @@ gpu_consts! {
 gpu_mirrors! {
     engine_core::table_data::sky::MULTIPLE_SIDE => ["SKY_MULTIPLE_SIZE"];
     engine_core::table_data::falls::SPREAD => ["FALL_MAP_SPREAD"];
-    engine_core::terrain_data::hydraulics::GRAVITY => ["SIM_GRAVITY" in WATER_SIM_SHADER, "WATER_GRAVITY"];
+    engine_core::terrain_data::hydraulics::GRAVITY => ["SIM_GRAVITY" in WATER_SIM_SHADER, "WATER_GRAVITY", "WAVE_GRAVITY" in WATER_WAVES_SHADER];
+    engine_core::wind_waves::FETCH_ALPHA => ["WATER_FETCH_ALPHA"];
+    engine_core::wind_waves::FETCH_ALPHA_POWER => ["WATER_FETCH_ALPHA_POWER"];
+    engine_core::wind_waves::FETCH_PEAK => ["WATER_FETCH_PEAK"];
+    engine_core::wind_waves::RAISED_ALPHA => ["WATER_RAISED_ALPHA"];
+    engine_core::wind_waves::RAISED_PEAK => ["WATER_RAISED_PEAK"];
+    engine_core::wind_waves::PEAK_ENHANCEMENT => ["WATER_PEAK_ENHANCEMENT"];
+    engine_core::wind_waves::PEAK_BELOW => ["WATER_PEAK_BELOW"];
+    engine_core::wind_waves::PEAK_ABOVE => ["WATER_PEAK_ABOVE"];
     engine_core::terrain_data::shallow_water::THETA => ["SIM_THETA" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::THIN => ["SIM_THIN" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::DRY => ["SIM_DRY" in WATER_SIM_SHADER];

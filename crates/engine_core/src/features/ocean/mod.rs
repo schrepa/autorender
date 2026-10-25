@@ -20,14 +20,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::environment::InvalidSetting;
 use crate::math::{clamp, max, min, sin_cos};
+use crate::terrain_data::hydraulics::GRAVITY;
 use crate::{FixedTime, Parent, Transform};
 use engine_settings::{ExtraRules, settings};
 
+pub mod wind_waves;
+
 /// Most waves a sea holds ([`Ocean::waves`]).
 pub const MAX_OCEAN_WAVES: usize = 16;
-
-/// Gravity's pull on the waves (meters per second squared).
-const GRAVITY: f32 = 9.81;
 
 settings! {
     extra_rules;
@@ -171,20 +171,22 @@ impl Ocean {
         }
     }
 
-    /// The sea's waves: [`Ocean::waves`] of them from the Pierson-Moskowitz
-    /// spectrum of a sea the wind has fully raised, from three quarters of
-    /// its peak frequency to three and a half times it, each as high as
-    /// its share of the spectrum. They head within a spread around the
-    /// wind that widens for shorter waves, alternately to either side,
-    /// with seeded phases, and every wave's points circle by the same share
-    /// of its height, sized so the surface's crests sharpen by
-    /// [`Ocean::choppiness`] without folding over.
+    /// The sea's waves: [`Ocean::waves`] of them from the spectrum of a sea
+    /// the wind has fully raised (the wind's sea over unlimited fetch and
+    /// deep water, [`wind_waves::WindSea`]), from three quarters of its peak
+    /// frequency to three and a half times it, each as high as its share of
+    /// the spectrum. They head within a spread around the wind that widens
+    /// for shorter waves, alternately to either side, with seeded phases,
+    /// and every wave's points circle by the same share of its height,
+    /// sized so the surface's crests sharpen by [`Ocean::choppiness`]
+    /// without folding over.
     pub fn spectrum(&self) -> OceanWaves {
         let settings = self.sanitized();
         let [x, z] = settings.wind;
         let speed = (x * x + z * z).sqrt();
         let heading = [x / speed, z / speed];
-        let peak = 0.877 * GRAVITY / speed;
+        let sea = wind_waves::WindSea::new(speed, f32::INFINITY, f32::INFINITY);
+        let peak = sea.peak;
         let count = settings.waves as usize;
         let (low, high) = (0.75 * peak, 3.5 * peak);
         let ratio = if count > 1 {
@@ -214,9 +216,7 @@ impl Ocean {
             } else {
                 (peak, 0.5 * peak)
             };
-            // The fully raised sea's spectral density at this frequency.
-            let density = 0.0081 * GRAVITY * GRAVITY / frequency.powi(5)
-                * (-1.25 * (peak / frequency).powi(4)).exp();
+            let density = sea.density(frequency);
             let amplitude = (2.0 * density * width).sqrt();
             let number = frequency * frequency / GRAVITY;
             let share = if count > 1 {

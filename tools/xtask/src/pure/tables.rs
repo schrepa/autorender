@@ -34,10 +34,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         format!("the fall map holds {levels} levels")
     });
 
-    let shape = waves::WaveShape {
-        wind: environment.wind.velocity,
-        size: environment.water.ripple_size,
-    };
+    let shape = waves::WaveShape::blown(environment.wind.velocity);
     let spectra = worker.both(TableKind::WaveSpectra, &shape.identity(), observed)?;
     observed.hash("wave spectra", &spectra);
     let decoded = waves::decode(&spectra)?;

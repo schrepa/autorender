@@ -288,8 +288,8 @@ impl StaticTables {
 
 /// What the scene's settings want the tables for: the cloud noise while
 /// clouds cover any sky; the sky's tables for the physically based sky's
-/// air; and the fall map and the wave spectra for the wind and the
-/// ripples' size while the sea draws or a terrain's bakes give it water.
+/// air; and the fall map and the wave spectra for the wind's heading while
+/// the sea draws or a terrain's bakes give it water.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Wants {
     clouds: bool,
@@ -315,12 +315,8 @@ impl Wants {
                 bottom: sky.planet_radius,
                 top: sky.planet_radius + sky.atmosphere_height,
             }),
-            water: (environment.ocean.enabled || (environment.water.enabled && water)).then_some(
-                WaveShape {
-                    wind: environment.wind.velocity,
-                    size: environment.water.ripple_size,
-                },
-            ),
+            water: (environment.ocean.enabled || (environment.water.enabled && water))
+                .then_some(WaveShape::blown(environment.wind.velocity)),
         }
     }
 
