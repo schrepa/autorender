@@ -348,6 +348,11 @@ gpu_consts! {
     // crate::ground_cover
     /// Bytes of a blade (`CoverBlade`).
     pub(crate) const BLADE_BYTES: u64 = 32 => ["size_of CoverBlade"];
+    /// The share of ground cover's radius within which it grows densest:
+    /// past it blades thin as this share of the radius over the distance,
+    /// widening as much to cover as much ground, up to its inverse at the
+    /// radius (`terrain_variety.wgsl`'s `cover_share`).
+    pub(crate) const COVER_CORE: f32 = 0.2 => ["COVER_CORE"];
     /// Joints along a blade too short on screen to show its curve, which
     /// the blades' second indirect draw draws straight.
     pub(crate) const STRAIGHT_JOINTS: u32 = 3 => ["STRAIGHT_JOINTS"];

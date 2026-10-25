@@ -684,18 +684,18 @@ fn terrain_uniform(
         );
     let relative = (anchor - eye).as_vec3();
     let tables = parts.tables;
-    let densest = (tables.cover_densities.get(index))
-        .copied()
-        .unwrap_or([0.0; 3]);
     let cover = match views.cover {
         None => [0.0; 4],
         // Surroundings grow no blades: their grassy
         // ground shows as canopy from the eye on.
-        Some((cover, _)) if terrain.surroundings => [0.0, cover.density, densest[2], 0.0],
+        Some((cover, _)) if terrain.surroundings => [0.0, 0.0, cover.density, 0.0],
         // Elsewhere as blades retire, by their law.
         Some((cover, pixels)) => {
-            let retire = crate::ground_cover::cover_retire(&cover, densest[2], pixels);
-            [retire, cover.density, densest[2], 0.0]
+            let width = (tables.cover_densities.get(index))
+                .copied()
+                .unwrap_or([0.0; 2])[1];
+            let span = crate::ground_cover::cover_span(&cover, width, pixels);
+            [cover.radius, span, cover.density, 0.0]
         }
     };
     let (vt, vt_scale, vt_layout) = parts

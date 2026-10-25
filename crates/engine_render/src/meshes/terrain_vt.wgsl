@@ -213,12 +213,13 @@ fn terrain_vt_ground(texels: TerrainVtTexels, site: TerrainSite) -> TerrainGroun
     ground.vegetated = canopy_texel.a;
     if ground.vegetated > 0.0 {
         let leaves = turn_texel.w * VT_LEAVES;
+        let canopy = ground.vegetated * terrain_canopy(leaves, site);
         let look = terrain_canopy_look(ground.albedo, canopy_texel.rgb, leaves, site);
-        let canopy = ground.vegetated * look.share;
         ground.albedo = mix(ground.albedo, look.color, canopy);
-        ground.roughness = mix(ground.roughness, look.roughness, canopy);
+        ground.roughness = mix(ground.roughness, COVER_ROUGHNESS, canopy);
         ground.occlusion = mix(ground.occlusion, look.occlusion, canopy);
-        ground.normal = stable_normalize(mix(ground.normal, look.normal, canopy));
+        ground.normal = stable_normalize(mix(ground.normal, terrain_blade_normal(site.geometric),
+            canopy));
         ground.canopy = canopy;
     }
     return ground;

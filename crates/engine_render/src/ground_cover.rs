@@ -1,25 +1,16 @@
 //! Ground cover: the blades of every terrain's surface
 //! materials' covers around the detail eye, grown each frame by a compute
 //! pass (`cover_grow.wgsl`) into one buffer and drawn with one indirect draw
-//! of strips in the opaque pass (`meshes/cover.wgsl`). Blades stand by their
-//! size on screen alone (`terrain_variety.wgsl`'s `cover_share`): where
-//! blades as wide as their roots would span fewer pixels than the settings
-//! ask (by default the steady size, `engine_core::STEADY_PIXELS`), a share
-//! of them stands by their fixed ranks, each widened by its inverse, so
-//! they cover as much ground, their colors drawn toward their canopy's mean
-//! by the root of that share, so they vary over a pixel as all of them
-//! would (stochastic simplification of aggregate detail, Cook, Halstead,
-//! Planck and Ryu 2007); and they retire in that order as their height
-//! spans fewer, the ground showing the leaves they leave as its canopy.
-//! Every blade stands in a first tier of cells of level-0 samples; past it
-//! tiers of cells twice as wide each reach on to where the last retires.
-//! Where the blades the view takes in would pass
-//! the settings' budget, or what one storage binding holds, they widen
-//! further, fewer covering as much ground, so a budget coarsens the grass,
-//! never its cover; blades past the buffer's capacity still drop and count,
-//! cells growing in order outward from the eye's corner of each grid, so
-//! the farthest tend to drop first. Nothing here exists until a frame has
-//! cover to grow.
+//! of strips in the opaque pass (`meshes/cover.wgsl`). Within the radius
+//! cells are level-0 samples; past it tiers of cells twice as wide each
+//! reach on while any blade still stands: blades retire in their ranks'
+//! order as they span fewer pixels on screen than the settings ask, those
+//! past the radius narrowing as they recede, and the ground shows the leaves
+//! they leave as its canopy. Blades past the buffer's capacity (the most the
+//! tiers and densities can grow, or the settings' budget) drop and count;
+//! cells grow in order outward from the eye's corner of each grid, so the
+//! farthest tend to drop first. Nothing here exists until a frame has cover
+//! to grow.
 
 use crate::shaders::entry::cover_grow;
 use engine_core::collections::HashMap;
@@ -32,7 +23,7 @@ use engine_core::glam::{Mat4, Vec3, Vec4};
 use crate::bindings::{COVER_DRAW, COVER_GROW};
 use crate::buffers::ReadbackRing;
 use crate::cached::Cached;
-use crate::gpu_layouts::constants::BLADE_BYTES;
+use crate::gpu_layouts::constants::{BLADE_BYTES, COVER_CORE};
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::Targets;
 use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
@@ -59,14 +50,10 @@ struct Growth {
     cells: u32,
 }
 
-/// Tiers a terrain's cover grows in at most: the first, where every blade
-/// stands, and doublings past it, the last reaching all the way to where
-/// the last blade retires. A validity bound (the first tier reaches as far
-/// as blades stand as wide as their roots, the last where their height
-/// retires them, a few doublings further, more only as the budget widens
-/// them), keeping a tier's finest cells within what a workgroup counts, not
-/// a budget.
-const MAX_TIERS: usize = 12;
+/// Tiers a terrain's cover grows in at most: the radius's and doublings
+/// past it. A validity bound (the radius times 128 reaches past any
+/// terrain), not a budget.
+const MAX_TIERS: usize = 8;
 
 pub(crate) struct GroundCoverPass {
     grow_layout: crate::pipelines::GroupLayout,
@@ -97,11 +84,9 @@ pub(crate) struct GroundCoverPass {
     readbacks: ReadbackRing<u32>,
     // Blades grown and those past capacity, read back a few frames late.
     totals: Rc<Cell<Option<[u32; 2]>>>,
-    // This frame's farthest reach (meters), most tiers, and how many times
-    // the settings' pixels the budget widens the blades that thin.
+    // This frame's farthest reach (meters) and most tiers.
     reach: f32,
     tiers: u32,
-    widened: f32,
 }
 
 impl GroundCoverPass {
@@ -148,15 +133,12 @@ impl GroundCoverPass {
             totals: Rc::new(Cell::new(None)),
             reach: 0.0,
             tiers: 0,
-            widened: 1.0,
         }
     }
 
-    /// Meters from the eye this frame's cover reaches, its most tiers, and
-    /// how many times the settings' pixels the budget widens the blades
-    /// that thin.
-    pub(crate) fn reach(&self) -> (f32, u32, f32) {
-        (self.reach, self.tiers, self.widened)
+    /// Meters from the eye this frame's cover reaches, and its most tiers.
+    pub(crate) fn reach(&self) -> (f32, u32) {
+        (self.reach, self.tiers)
     }
 
     /// Blades the last read-back frame drew, and those past capacity.
@@ -172,8 +154,8 @@ impl GroundCoverPass {
     /// Plans this frame's growth for every terrain whose materials have
     /// cover, with `settings` on, seen through `culling` (world) on a view
     /// `height` pixels tall at presentation time `time`, its blades growing
-    /// and retiring by their size on screen from the detail eye `eye`.
-    /// Returns whether any grows.
+    /// and retiring by their distance from the detail eye `eye`. Returns
+    /// whether any grows.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -186,7 +168,6 @@ impl GroundCoverPass {
         self.growths.clear();
         self.reach = 0.0;
         self.tiers = 0;
-        self.widened = 1.0;
         let previous = self.previous_time.replace(time).unwrap_or(time);
         let grows = self.plan(
             device,
@@ -224,66 +205,47 @@ impl GroundCoverPass {
             return false;
         }
         let planes = planes(culling);
+        let radius = settings.radius;
         let pixels_per_meter = pixels_per_meter(culling, height);
         let shading = sources.shading;
-        // Blades one storage binding holds, within the settings' budget.
-        let room = (self.blades.room() / BLADE_BYTES).min(u64::from(u32::MAX)) as u32;
-        let budget = settings
-            .max_blades
-            .map_or(room, |budget| budget.min(room))
-            .max(1);
-        // Where the blades the view takes in at the settings' pixels would
-        // pass the budget, those that thin widen further until they fit:
-        // fewer, wider blades covering as much ground.
-        let grown: f32 = (terrains.terrains.iter().enumerate())
-            .filter_map(|(index, render)| {
-                CoverLaw::of(terrain, (index, render), &settings, (pixels_per_meter, 1.0))
-            })
-            .map(|law| law.blades())
-            .sum();
-        let widened = engine_core::math::max(grown * view_share(culling) / budget as f32, 1.0);
-        self.widened = widened;
         let mut uniforms = std::mem::take(&mut self.grow_uniforms);
         uniforms.clear();
         let mut most = 0.0;
         for (index, render) in terrains.terrains.iter().enumerate() {
-            let view = (pixels_per_meter, widened);
-            let Some(law) = CoverLaw::of(terrain, (index, render), &settings, view) else {
+            let (directory, palette, [densest, width], colors) = terrain.cover_terrain(index);
+            let density = densest * settings.density;
+            // Surroundings grow no blades.
+            if density <= 0.0 || !render.drawn || render.surroundings {
                 continue;
-            };
-            let (directory, palette, _, colors) = terrain.cover_terrain(index);
+            }
             let spacing = render.pyramid.spacing(0);
-            let candidates = engine_core::math::max((law.density * spacing * spacing).ceil(), 1.0);
+            let candidates = engine_core::math::max((density * spacing * spacing).ceil(), 1.0);
             let local = eye - render.origin;
-            let reach = cover_reach(law.retire);
-            // Every blade stands within the first tier, of level-0 cells: as
-            // far as none thins or retires yet (`cover_share`).
-            let whole = engine_core::math::min(law.thin, 0.5 * law.retire);
-            let mut tiers = [(0.0, whole, 1.0); MAX_TIERS];
+            let span = cover_span(&settings, width, pixels_per_meter);
+            let reach = tier_reach(radius, span);
+            let mut tiers = [(0.0, radius, 1.0); MAX_TIERS];
             let mut count = 1;
-            while count < MAX_TIERS {
+            while reach > 0.0 && count < MAX_TIERS {
                 let (_, outer, scale) = tiers[count - 1];
                 if outer >= reach {
                     break;
                 }
-                let last = count + 1 == MAX_TIERS;
-                let next = if last {
-                    reach
-                } else {
-                    engine_core::math::min(2.0 * outer, reach)
-                };
-                tiers[count] = (outer, next, 2.0 * scale);
+                tiers[count] = (
+                    outer,
+                    engine_core::math::min(2.0 * outer, reach),
+                    2.0 * scale,
+                );
                 count += 1;
             }
             let reached = tiers[count - 1].1;
             self.reach = engine_core::math::max(self.reach, reached);
             self.tiers = self.tiers.max(count as u32);
             for &(inner, outer, scale) in &tiers[..count] {
-                // Each tier past the first tries the finest cells'
+                // Each tier past the radius tries the finest cells'
                 // candidates its nearest blades' share reaches.
                 let tried = if scale > 1.0 {
                     engine_core::math::min(
-                        (candidates * cover_share(inner, law.thin, law.retire)).ceil(),
+                        (candidates * cover_share(inner, radius, span)).ceil(),
                         candidates,
                     )
                 } else {
@@ -306,12 +268,12 @@ impl GroundCoverPass {
                         colors as f32,
                         terrain.cover_tallest(),
                     ],
-                    tier: [inner, law.thin, law.retire, scale],
+                    tier: [inner, radius, span, scale],
                     planes,
                     deform_grid: shading.grid,
                     deform: shading.scale,
                     foliage: [f32::from(u8::from(grounded)), 0.0, 0.0, 0.0],
-                    view: [pixels_per_meter, terrain.cover_widest(), 0.0, 0.0],
+                    view: [pixels_per_meter, 0.0, 0.0, 0.0],
                 };
                 self.growths.push(Growth {
                     offset: (uniforms.len() as u64 * SLOT) as u32,
@@ -319,7 +281,7 @@ impl GroundCoverPass {
                 });
                 uniforms.push(uniform);
             }
-            most += law.blades();
+            most += cover_area(radius, reach, span) * density;
         }
         if self.growths.is_empty() {
             self.grow_uniforms = uniforms;
@@ -328,6 +290,7 @@ impl GroundCoverPass {
         // Room for the most blades the discs can grow, or the budget, within
         // what one storage binding holds: growth leaves the rest out and
         // counts them.
+        let room = (self.blades.room() / BLADE_BYTES).min(u64::from(u32::MAX)) as u32;
         let capacity = settings
             .max_blades
             .map_or(most.ceil() as u32, |budget| budget.min(most.ceil() as u32))
@@ -564,87 +527,63 @@ pub(crate) fn pixels_per_meter(culling: Mat4, height: f32) -> f32 {
     culling.row(1).truncate().length() * height * 0.5
 }
 
-/// The share of a turn around the eye a view seen through `culling` takes
-/// in across: its horizontal field of view over a whole turn, the share of
-/// the cover around the eye it draws.
-fn view_share(culling: Mat4) -> f32 {
-    let across = engine_core::math::max(culling.row(0).truncate().length(), 1.0e-6);
-    engine_core::math::min(2.0 * (1.0 / across).atan() / std::f32::consts::TAU, 1.0)
+/// The meters from the eye at which blades past the radius span
+/// `settings.pixels` pixels on screen, seen at `pixels_per_meter`, on a
+/// terrain whose densest cover's blades are `width` meters wide at their
+/// roots: past the radius they keep the width it gives them, `1 /
+/// COVER_CORE` times their roots' (`terrain_variety.wgsl`'s
+/// `cover_widening`). Every cover on the terrain retires by its densest's
+/// span, so the canopy, which knows no blade's width, thins by one law with
+/// them. 0 where `pixels` is 0, which grows cover within the radius alone.
+pub(crate) fn cover_span(settings: &GroundCover, width: f32, pixels_per_meter: f32) -> f32 {
+    if settings.pixels > 0.0 {
+        width / COVER_CORE * pixels_per_meter / settings.pixels
+    } else {
+        0.0
+    }
 }
 
-/// How cover grows on one terrain this frame: its densest cover's blades a
-/// square meter, the settings' density applied, and the meters from the eye
-/// past which its blades thin and widen and around which they retire
-/// (`terrain_variety.wgsl`'s `cover_share`).
-#[derive(Clone, Copy)]
-struct CoverLaw {
-    density: f32,
-    thin: f32,
-    retire: f32,
+/// Meters from the eye cover's tiers reach, for cover growing densest
+/// within `radius` whose blades past it span the settings' pixels `span`
+/// meters away: twice that, where the last of them, by its rank, retires
+/// spanning half as many (`terrain_variety.wgsl`'s `seen_share`); 0, no
+/// tiers, where that falls within the radius.
+pub(crate) fn tier_reach(radius: f32, span: f32) -> f32 {
+    let reach = 2.0 * span;
+    if reach > radius { reach } else { 0.0 }
 }
 
-impl CoverLaw {
-    /// The law of terrain `render`, the `index`th of the frame's, under
-    /// `settings`, seen at `pixels_per_meter`, the blades that thin standing
-    /// `widened` times the settings' pixels wide on screen; `None` where it
-    /// grows none: surroundings, terrains not drawn and those without cover.
-    fn of(
-        terrain: &TerrainPass,
-        (index, render): (usize, &engine_core::RenderTerrain),
-        settings: &GroundCover,
-        (pixels_per_meter, widened): (f32, f32),
-    ) -> Option<Self> {
-        let (_, _, [densest, width, height], _) = terrain.cover_terrain(index);
-        let density = densest * settings.density;
-        // Surroundings grow no blades.
-        if density <= 0.0 || !render.drawn || render.surroundings {
-            return None;
-        }
-        Some(Self {
-            density,
-            thin: width * pixels_per_meter / (settings.pixels * widened),
-            retire: cover_retire(settings, height, pixels_per_meter),
+/// The square meters of densest cover the radius and tiers out to `reach`
+/// (0 without tiers) grow, their blades past the radius spanning the
+/// settings' pixels `span` meters away: their area weighted by
+/// `cover_share`, summed ring by ring.
+fn cover_area(radius: f32, reach: f32, span: f32) -> f32 {
+    const RINGS: u32 = 256;
+    let end = engine_core::math::max(radius, reach);
+    let width = end / RINGS as f32;
+    (0..RINGS)
+        .map(|ring| {
+            let away = (ring as f32 + 0.5) * width;
+            std::f32::consts::TAU * away * width * cover_share(away, radius, span)
         })
+        .sum()
+}
+
+/// `terrain_variety.wgsl`'s `cover_share`: the most of the densest cover
+/// growing `away` meters from the eye.
+fn cover_share(away: f32, radius: f32, span: f32) -> f32 {
+    let distance = engine_core::math::max(away, 1.0e-3);
+    let mut share = engine_core::math::min(1.0, COVER_CORE * radius / distance);
+    if span <= 0.0 {
+        return share * (1.0 - smoothstep(0.5 * radius, radius, away));
     }
-
-    /// The blades it grows all around the eye: its density over the ground
-    /// its blades stand on, by their share, ring by ring out to its reach.
-    fn blades(&self) -> f32 {
-        const RINGS: u32 = 256;
-        let width = cover_reach(self.retire) / RINGS as f32;
-        let area: f32 = (0..RINGS)
-            .map(|ring| {
-                let away = (ring as f32 + 0.5) * width;
-                std::f32::consts::TAU * away * width * cover_share(away, self.thin, self.retire)
-            })
-            .sum();
-        area * self.density
+    if distance > radius {
+        let ratio = radius / distance;
+        share = COVER_CORE * ratio * ratio;
     }
-}
-
-/// The meters from the eye at which blades `height` meters tall, on a
-/// terrain whose densest cover stands that tall on average, span
-/// `settings.pixels` pixels on screen, seen at `pixels_per_meter`, around
-/// which they retire (`terrain_variety.wgsl`'s `cover_shown`). Every cover
-/// on the terrain retires by its densest's height, so the canopy, which
-/// knows no blade's height, takes over by one law with them.
-pub(crate) fn cover_retire(settings: &GroundCover, height: f32, pixels_per_meter: f32) -> f32 {
-    height * pixels_per_meter / settings.pixels
-}
-
-/// Meters from the eye cover reaches, for blades retiring around `retire`
-/// meters: twice that, where the last of them, by its rank, retires
-/// spanning half as many pixels (`terrain_variety.wgsl`'s `seen_share`).
-fn cover_reach(retire: f32) -> f32 {
-    2.0 * retire
-}
-
-/// `terrain_variety.wgsl`'s `cover_share`: the share of the densest cover's
-/// blades standing `away` meters from the eye, for blades thinning past
-/// `thin` meters and retiring around `retire`.
-fn cover_share(away: f32, thin: f32, retire: f32) -> f32 {
-    let widening = engine_core::math::max(away / engine_core::math::max(thin, 1.0e-6), 1.0);
-    seen_share(retire / engine_core::math::max(away, 1.0e-3)) / widening
+    let widening =
+        engine_core::math::clamp(distance / (COVER_CORE * radius), 1.0, 1.0 / COVER_CORE);
+    share * seen_share(span * COVER_CORE * widening / distance)
 }
 
 /// `terrain_variety.wgsl`'s `seen_share`: the share of things retiring by
@@ -652,6 +591,11 @@ fn cover_share(away: f32, thin: f32, retire: f32) -> f32 {
 fn seen_share(pixels: f32) -> f32 {
     let octaves = engine_core::math::max(pixels, 1.0e-6).log2();
     engine_core::math::clamp(0.5 + 0.5 * octaves, 0.0, 1.0)
+}
+
+fn smoothstep(from: f32, to: f32, value: f32) -> f32 {
+    let t = engine_core::math::clamp((value - from) / (to - from), 0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// The view's frustum planes from its view-projection (world), each
@@ -740,23 +684,20 @@ impl RenderFeature for GroundCoverPass {
         GroundCoverPass::capacity_bytes(self)
     }
 
-    /// Blades the last read-back frame drew and those past capacity, how
-    /// far and in how many tiers the cover reaches, and how far the budget
-    /// widens the blades that thin.
+    /// Blades the last read-back frame drew and those past capacity, and how
+    /// far and in how many tiers the cover reaches.
     fn stats(
         this: Option<&Self>,
         _frame: Option<&CoverFrame>,
         _snapshot: &engine_core::RenderSnapshot,
     ) -> engine_core::GroundCoverStats {
-        let (totals, (reach, tiers, widened)) = this.map_or(([0; 2], (0.0, 0, 1.0)), |cover| {
-            (cover.totals(), cover.reach())
-        });
+        let (totals, (reach, tiers)) =
+            this.map_or(([0; 2], (0.0, 0)), |cover| (cover.totals(), cover.reach()));
         engine_core::GroundCoverStats {
             blades: totals[0],
             dropped: totals[1],
             reach: reach.round() as u32,
             tiers,
-            widened: (100.0 * widened).round() as u32,
         }
     }
 }

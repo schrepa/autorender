@@ -110,14 +110,20 @@ fn terrain_macro_texel(local: vec2<f32>, footprint: f32) -> vec4<f32> {
     return textureSampleLevel(terrain_macro, terrain_material_sampler, uv, layer - 1u, lod);
 }
 
-// The tint the terrain's own detail and macro colors give `ground` at
-// `world`, filtered over `footprint` meters (a pixel's, or a page's
-// texel's): its detail (`ground_detail`) and the macro colors' tint, as both
-// tint the blades growing on it, the same wherever the eye stands. Pages
-// bake it in; pixels computing their ground apply it.
+// The tint the terrain's detail and macro colors give `ground` at `world`,
+// filtered over `footprint` meters (a pixel's, or a page's texel's): plain
+// colors vary at every scale, maps carry their own detail and vary
+// broadly, and the macro colors tint it as they do the blades growing on
+// it, the same wherever the eye stands. Pages bake it in; pixels computing
+// their ground apply it.
 fn terrain_tint(world: vec3<f32>, ground: TerrainGround, footprint: f32) -> vec3<f32> {
+    let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
+    let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
+    let fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, footprint);
+    let plain = (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
+    let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
     let colors = terrain_macro_texel(world.xz - terrain.origin.xz, footprint);
-    return ground_detail(world.xz, ground.mapped, footprint) * macro_tint(colors, ground.vegetated);
+    return mix(plain, mapped, ground.mapped) * macro_tint(colors, ground.vegetated);
 }
 
 struct TerrainOutput {
@@ -226,6 +232,34 @@ fn vs_terrain_temporal(@builtin(instance_index) leaf: u32,
     return temporal;
 }
 
+// Value noise of the material, 0 to 1.
+fn terrain_value(p: vec2<f32>) -> f32 {
+    let cell = floor(p);
+    let f = p - cell;
+    let u = f * f * (3.0 - 2.0 * f);
+    // The four corners' hashes: the next cell's products are the cell's
+    // plus each multiplier (wrapping integers), one product per axis.
+    let q = vec2<u32>(vec2<i32>(cell));
+    let x0 = q.x * 0x8da6b343u;
+    let x1 = x0 + 0x8da6b343u;
+    let y0 = q.y * 0xd8163841u;
+    let y1 = y0 + 0xd8163841u;
+    let a = terrain_hash_of(x0 ^ y0);
+    let b = terrain_hash_of(x1 ^ y0);
+    let c = terrain_hash_of(x0 ^ y1);
+    let d = terrain_hash_of(x1 ^ y1);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// The hash of a lattice cell, 0 to 1, from its coordinates' products, x
+// times 0x8da6b343 and y times 0xd8163841 (wrapping), mixed.
+fn terrain_hash_of(mixed: u32) -> f32 {
+    var h = mixed;
+    h = (h ^ (h >> 16u)) * 0x7feb352du;
+    h = (h ^ (h >> 15u)) * 0x846ca68bu;
+    return f32((h ^ (h >> 16u)) >> 8u) * (1.0 / 16777216.0);
+}
+
 // Two values of the hash `terrain_hash_of` mixes from `mixed`, each 0 to 1:
 // its high and low halves.
 fn terrain_hash2(mixed: u32) -> vec2<f32> {
@@ -249,6 +283,20 @@ fn terrain_value2(p: vec2<f32>) -> vec2<f32> {
     let y1 = y0 + 0xd8163841u;
     return mix(mix(terrain_hash2(x0 ^ y0), terrain_hash2(x1 ^ y0), u.x),
         mix(terrain_hash2(x0 ^ y1), terrain_hash2(x1 ^ y1), u.x), u.y);
+}
+
+// Noise of feature size `size` meters at `p`, as a pixel spanning
+// `footprint` meters averages it: whole while the pixel spans half a
+// feature or less, its mean once it spans a whole one. A noise computed
+// where it shows has no mipmaps to filter it, and a pixel spanning its
+// features would otherwise show one of them at random.
+fn terrain_detail(p: vec2<f32>, size: f32, footprint: f32) -> f32 {
+    let kept = saturate(2.0 - 2.0 * footprint / size);
+    // Averaged away entirely, it is its mean.
+    if kept == 0.0 {
+        return 0.5;
+    }
+    return 0.5 + (terrain_value(p / size) - 0.5) * kept;
 }
 
 // How much of the next coarser level's normals (x) and surface materials
@@ -946,20 +994,19 @@ struct TerrainSite {
 }
 
 // The share of the cover's leaves blades no longer show at `world` by their
-// law (`terrain.cover`, `terrain_variety.wgsl`'s `cover_shown`), from the
-// detail eye as the blades are: those retired as their height shrinks on
-// screen, the blades thinning nearer covering as much ground widened; all
-// of them where a terrain's surroundings show its cover as canopy from the
-// eye on; none without cover.
+// law (`terrain.cover`, `terrain_variety.wgsl`'s `cover_share`), from the
+// detail eye as the blades are: all of them where a terrain's surroundings
+// show its cover as canopy from the eye on; none without cover.
 fn terrain_thinned(world: vec3<f32>) -> f32 {
     let cover = terrain.cover;
-    if cover.y <= 0.0 {
+    if cover.z <= 0.0 {
         return 0.0;
     }
     if cover.x <= 0.0 {
         return 1.0;
     }
-    return 1.0 - cover_shown(detail_distance(world), cover.x);
+    let away = detail_distance(world);
+    return 1.0 - cover_shown(away, cover_share(away, cover.x, cover.y), cover.x);
 }
 
 // The meters a pixel spans across the view at `world` as level of detail
@@ -970,93 +1017,66 @@ fn terrain_across(world: vec3<f32>) -> f32 {
     return detail_across(world);
 }
 
-// How many times their leaves' area a view at `site` crosses through the
-// blades no longer shown there (`site.thinned`) of a cover whose leaves'
-// area is `leaves` per square meter of ground, the density's setting
-// applied, as `terrain_variety.wgsl`'s `cover_depth` counts them; none
-// without them.
+// The normal blades standing on ground of normal `ground` light with, on
+// average (`meshes/cover.wgsl`): leaning most of the way up
+// from their sides toward the sun, which face it by two over pi on
+// average.
+fn terrain_blade_normal(ground: vec3<f32>) -> vec3<f32> {
+    let across = vec3<f32>(lighting.sun.x, 0.0, lighting.sun.z);
+    let side = across * (0.6366 / max(length(across), 1.0e-4));
+    return stable_normalize(mix(side, ground, 0.6));
+}
+
+// How many times its leaves' area a view at `site` crosses through a
+// cover whose leaves' area is `leaves` per square meter of ground, the
+// density's setting applied: G = 0.5 of it across its way, as leaves facing
+// every way show, over the sine of its angle to the ground.
+fn terrain_canopy_depth(leaves: f32, site: TerrainSite) -> f32 {
+    let sine = max(abs(dot(site.toward, site.geometric)), 0.03);
+    return 0.5 * leaves * terrain.cover.z / sine;
+}
+
+// How much of the ground at `site` a cover whose leaves' area is `leaves` per
+// square meter shows as its canopy: as much of the leaves as its blades no
+// longer show by their law (`terrain.cover`) hides of the ground along the
+// view, 1 - exp(-depth), all of it at grazing views.
 fn terrain_canopy(leaves: f32, site: TerrainSite) -> f32 {
     if site.thinned <= 0.0 || leaves <= 0.0 {
         return 0.0;
     }
-    return site.thinned * cover_depth(leaves * terrain.cover.y, site.toward, site.geometric);
+    return site.thinned * (1.0 - exp(-terrain_canopy_depth(leaves, site)));
 }
 
-// How the blades a view meets at `site` face the sun on average, `side`
-// of them met by their upright sides and the rest by their leaning faces
-// from above (`cover_projection`): the share seen from their side away
-// from the sun, which shows COVER_FAR_SIDE of their color (x), and how far
-// their lit faces turn toward the sun across the ground, the mean |cos| of
-// their azimuths to it (y). Faces met by their sides count by how squarely
-// they face the view, so with the angle psi between the view's way and the
-// sun's across the ground (1 - cos psi) / 2 of them are seen through, none
-// with the sun behind the eye and all looking toward it, and they turn
-// (sin psi + (pi / 2 - psi) cos psi) / 2 toward the sun; those met from
-// above are seen through half the time and turn 2 / pi toward it.
-fn terrain_canopy_through(site: TerrainSite, side: f32) -> vec2<f32> {
+// The share of their color blades show seen from `site` on average: those
+// seen from their side away from the sun show COVER_FAR_SIDE of it, and of
+// blades facing every way, as many are as the angle between the view's way
+// and the sun's across the ground is of a half turn: none with the sun
+// behind the eye, all looking toward it, half seen from straight above.
+fn terrain_canopy_through(site: TerrainSite) -> f32 {
     let lengths = length(site.toward.xz) * length(lighting.sun.xz);
-    var cosine = 0.0;
+    var through = 0.5;
     if lengths > 1.0e-4 {
-        cosine = clamp(dot(site.toward.xz, lighting.sun.xz) / lengths, -1.0, 1.0);
+        through = acos(clamp(dot(site.toward.xz, lighting.sun.xz) / lengths, -1.0, 1.0)) / PI;
     }
-    let sine = sqrt(1.0 - cosine * cosine);
-    let sides = vec2<f32>(0.5 - 0.5 * cosine, 0.5 * (sine + (0.5 * PI - acos(cosine)) * cosine));
-    return mix(vec2<f32>(0.5, 2.0 / PI), sides, side);
+    return mix(1.0, COVER_FAR_SIDE, through);
 }
 
-// The normal the blades a view meets at `site` light with on average, as
-// `meshes/cover.wgsl` turns each: its face on the sun's side, turned
-// `aligned` toward the sun across the ground (`terrain_canopy_through`)
-// over COVER_LIT_ACROSS of it, leaning COVER_UPRIGHT of the way up, and
-// their bases taking the ground's normal `grounded` of the way
-// (`cover_grounded`). It is the mean of normals spread about it, shorter
-// than a unit.
-fn terrain_blade_normal(site: TerrainSite, aligned: f32, grounded: f32) -> vec3<f32> {
-    let across = vec3<f32>(lighting.sun.x, 0.0, lighting.sun.z);
-    let toward = across * (COVER_LIT_ACROSS * aligned / max(length(across), 1.0e-4));
-    let lit = mix(toward, vec3<f32>(0.0, 1.0, 0.0), COVER_UPRIGHT)
-        / length(vec2<f32>(1.0 - COVER_UPRIGHT, COVER_UPRIGHT));
-    return mix(lit, site.geometric, grounded);
-}
-
-// What the canopy of a cover's blades shows at `site` where they retire,
-// their tips' color `tip` and their leaves' area `leaves` per square meter,
-// standing on ground of color `root`, which their roots take: the share of
-// the ground the blades no longer shown hide along the view, 1 - exp(-depth)
-// (`terrain_canopy`), and what those blades show there on average as
-// `meshes/cover.wgsl` shades them: the colors and the light a view meets
-// among them (`terrain_variety.wgsl`'s `cover_seen`), their far sides
-// dimmer (`terrain_canopy_through`), their roughness, and the mean of their
-// normals, whose length is the share of the sun's light along it their
-// faces keep, so their color takes it and their occlusion gives it back to
-// the sky's light, and whose spread about it roughens them
-// (`spread_slopes`).
+// What the canopy of a cover's blades shows at `site`, their tips' color
+// `tip` and their leaves' area `leaves` per square meter, standing on
+// ground of color `root`, which their roots take: the colors and the light
+// of the blades a view meets there on average (`terrain_variety.wgsl`'s
+// `cover_seen`), their far sides dimmer (`terrain_canopy_through`).
 struct TerrainCanopyLook {
-    share: f32,
     color: vec3<f32>,
     occlusion: f32,
-    roughness: f32,
-    normal: vec3<f32>,
 }
 
 fn terrain_canopy_look(root: vec3<f32>, tip: vec3<f32>, leaves: f32, site: TerrainSite)
         -> TerrainCanopyLook {
+    let seen = cover_seen(terrain_canopy_depth(leaves, site));
     var look: TerrainCanopyLook;
-    let depth = terrain_canopy(leaves, site);
-    if depth <= 0.0 {
-        return look;
-    }
-    look.share = 1.0 - exp(-depth);
-    let seen = cover_seen(depth);
-    let through = terrain_canopy_through(site, cover_projection(site.toward.y).y);
-    let mean = terrain_blade_normal(site, through.y,
-        cover_grounded(seen, terrain.cover.z, lighting.foliage.w));
-    let kept = max(length(mean), 1.0e-4);
-    look.normal = mean / kept;
-    look.color = mix(root, tip, seen.tip) * mix(1.0, COVER_FAR_SIDE, through.x) * kept;
-    look.occlusion = min(seen.occlusion / kept, 1.0);
-    let alpha = COVER_ROUGHNESS * COVER_ROUGHNESS;
-    look.roughness = sqrt(sqrt(min(alpha * alpha + spread_slopes(kept), 1.0)));
+    look.color = mix(root, tip, seen.tip) * terrain_canopy_through(site);
+    look.occlusion = seen.occlusion;
     return look;
 }
 
@@ -1219,18 +1239,22 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     }
     if entry.canopy.w > 0.0 {
         // Ground under cover shows as its canopy where blades retire: the
-        // blades a view meets there on average, as they are shaded, and the
-        // sun passing through them (their leaf share, `terrain_point_seen`).
-        let canopy = terrain_canopy_look(color, entry.canopy.rgb, entry.canopy.w, site);
-        if canopy.share > 0.0 {
-            color = mix(color, canopy.color, canopy.share);
-            roughness = mix(roughness, canopy.roughness, canopy.share);
-            occlusion = mix(occlusion, canopy.occlusion, canopy.share);
-            metalness *= 1.0 - canopy.share;
-            turned = mix(turned, canopy.normal, canopy.share);
+        // colors a view meets among them on average, rough and shaded
+        // among them as they are, and lit as blades are, their sides
+        // toward the sun and the sun passing through them (their leaf
+        // share, `terrain_point_seen`).
+        let canopy = terrain_canopy(entry.canopy.w, site);
+        if canopy > 0.0 {
+            let look = terrain_canopy_look(color, entry.canopy.rgb, entry.canopy.w, site);
+            color = mix(color, look.color, canopy);
+            roughness = mix(roughness, COVER_ROUGHNESS, canopy);
+            // The sky they reflect too: a flat ground seen along it would
+            // mirror much more of it than blades facing the eye do.
+            occlusion = mix(occlusion, look.occlusion, canopy);
+            turned = mix(turned, terrain_blade_normal(site.geometric), canopy);
         }
         (*ground).vegetated += weight;
-        (*ground).canopy += weight * canopy.share;
+        (*ground).canopy += weight * canopy;
         (*ground).canopy_color += weight * entry.canopy.rgb;
         (*ground).leaves += weight * entry.canopy.w;
     }
