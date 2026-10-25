@@ -522,7 +522,9 @@
     },
     {
       "op": "terrain_river",
-      "smokes": []
+      "smokes": [
+        "terrain"
+      ]
     },
     {
       "op": "deform",
