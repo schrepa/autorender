@@ -168,14 +168,29 @@ gpu_consts! {
     // crate::terrain::surface
     /// The halvings of a subdivision leaf's sides its meshlet cuts it by,
     /// each two bisections, so every side holds as many parts whatever its
-    /// neighbor; and the vertices it draws, three for each of its pieces,
-    /// four to that power, a non-indexed list.
+    /// neighbor; the points of its lattice, its corners and the points
+    /// cutting it into those parts, where its pieces' corners stand; and the
+    /// indices its draw takes, three for each of its pieces, four to that
+    /// power, each naming the point its corner stands at. The meshlet's
+    /// indices (`terrain::surface`) and its vertices
+    /// (`meshes/terrain_surface.wgsl`'s `surface_vertex`) number the points
+    /// by one rule: rows from the leaf's right angle out, each a point
+    /// longer than the one before.
     pub(crate) const SURFACE_MESHLET_LEVEL: u32 = 2 => ["SURFACE_MESHLET_LEVEL"];
-    pub(crate) const SURFACE_MESHLET_VERTICES: u32 = 3 << (2 * SURFACE_MESHLET_LEVEL) => ["SURFACE_MESHLET_VERTICES"];
+    pub(crate) const SURFACE_MESHLET_VERTICES: u32 = ((1 << SURFACE_MESHLET_LEVEL) + 1) * ((1 << SURFACE_MESHLET_LEVEL) + 2) / 2 => ["SURFACE_MESHLET_VERTICES"];
+    pub(crate) const SURFACE_MESHLET_INDICES: u32 = 3 << (2 * SURFACE_MESHLET_LEVEL) => ["SURFACE_MESHLET_INDICES"];
     /// Lanes of the subdivision's passes over leaves.
     pub(crate) const SUBDIVISION_GROUP: u32 = 64 => ["SUBDIVISION_GROUP", "@subdivide_decide", "@subdivide_apply"];
-    /// Words each terrain takes of the subdivision's indirect arguments.
+    /// Words each tree takes of the subdivision's counters and indirect
+    /// arguments, and where its words lie among them: after its dispatches'
+    /// arguments, its leaves as the frame found them; its draw's indexed
+    /// arguments (`wgpu::util::DrawIndexedIndirectArgs`); then the leaves its
+    /// splits reserved and the splits its room refused.
     pub(crate) const SUBDIVISION_ARGS: u32 = 16 => ["SUBDIVISION_ARGS"];
+    pub(crate) const SUBDIVISION_LEAVES: u32 = (size_of::<wgpu::util::DispatchIndirectArgs>() / 4) as u32 => ["SUBDIVISION_LEAVES"];
+    pub(crate) const SUBDIVISION_DRAW: u32 = SUBDIVISION_LEAVES + 1 => ["SUBDIVISION_DRAW"];
+    pub(crate) const SUBDIVISION_RESERVED: u32 = SUBDIVISION_DRAW + (size_of::<wgpu::util::DrawIndexedIndirectArgs>() / 4) as u32 => ["SUBDIVISION_RESERVED"];
+    pub(crate) const SUBDIVISION_REFUSED: u32 = SUBDIVISION_RESERVED + 1 => ["SUBDIVISION_REFUSED"];
     /// The deepest levels of a subdivision's tree it keeps no counts of,
     /// which the bitfield's words count.
     pub(crate) const SUBDIVISION_COUNTED: u32 = 8 => ["SUBDIVISION_COUNTED"];

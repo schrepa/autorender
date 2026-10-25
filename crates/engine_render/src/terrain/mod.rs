@@ -11,12 +11,12 @@
 //! bisection wherever a leaf's meshlet may stray more than the settings'
 //! pixels from the ground's true surface, seen from the detail eye, as the
 //! tiles' error pyramids bound it (`atlas`), and its
-//! leaves draw that surface, deep materials displacing it, with one indirect
-//! draw per terrain and view. The shadow clipmap's tiles, which must not
-//! depend on where the eye stood, hold the ground at a level of detail each
-//! level's texels choose, unmorphed, over the regions a frame redraws
-//! (`patches`), and redraw over ground that arrives, leaves or changes;
-//! past the last level the horizon maps shadow alone.
+//! leaves draw that surface, deep materials displacing it, with one indexed
+//! indirect draw per terrain and view. The shadow clipmap's tiles, which
+//! must not depend on where the eye stood, hold the ground at a level of
+//! detail each level's texels choose, unmorphed, over the regions a frame
+//! redraws (`patches`), and redraw over ground that arrives, leaves or
+//! changes; past the last level the horizon maps shadow alone.
 //!
 //! Each tile's normal map, the gradient of the smooth surface through its
 //! heights at each sample, lies in a parallel array: computed once on
@@ -87,7 +87,7 @@ mod water_blocks;
 use atlas::TileAtlas;
 pub(crate) use patches::{PatchDraws, planes, visible};
 use pipelines::{GroupSources, TerrainPipelines};
-pub(crate) use surface::SurfaceTrees;
+pub(crate) use surface::{SurfaceDraw, SurfaceTrees};
 use tables::TerrainTables;
 pub(crate) use water_blocks::TerrainWaterDraws;
 
@@ -523,30 +523,22 @@ impl TerrainPass {
     }
 
     /// Draws the leaves of this frame's subdivision of `terrain`, seen by the
-    /// view at `view`, with the pipeline the caller set; returns the draws.
+    /// view at `view`, with the pipeline the caller set (`SurfaceDraw`, valid
+    /// once the frame's subdivision pass has listed them); returns the draws.
     pub(crate) fn draw_surface(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         terrain: &FrameTerrain,
         view: u32,
     ) -> u32 {
-        let (Some(group), Some((args, offset))) =
-            (self.pipelines.group(), self.surface_draw(terrain.terrain))
+        let (Some(group), Some(leaves)) =
+            (self.pipelines.group(), self.surface.draw(terrain.terrain))
         else {
             return 0;
         };
         pass.set_bind_group(1, group, &[view, terrain.uniform]);
-        pass.draw_indirect(args, offset);
+        leaves.record(pass);
         1
-    }
-
-    /// The indirect draw arguments of the leaves of this frame's subdivision
-    /// of the frame's terrain `terrain` (`wgpu::util::DrawIndirectArgs`: a
-    /// meshlet's `SURFACE_MESHLET_VERTICES` vertices, an instance a leaf) and
-    /// their byte offset, valid once the frame's subdivision pass has listed
-    /// them; `None` where the terrain does not draw.
-    pub(crate) fn surface_draw(&self, terrain: usize) -> Option<(&wgpu::Buffer, u64)> {
-        self.surface.draw(terrain)
     }
 
     /// The leaves of this frame's subdivisions, which tiles' water draws on

@@ -585,8 +585,8 @@ fn water_lift(world: vec3<f32>) -> f32 {
     return (water.lift.x + water.lift.y) * detail_across(world);
 }
 
-// Vertex `vertex` of the leaf at `instance` of the subdivision of the
-// terrain's water (`water_tree`): the leaf's meshlet's point
+// Lattice vertex `vertex` of the leaf at `instance` of the subdivision of
+// the terrain's water (`water_tree`): the point of the leaf's meshlet
 // (`surface_vertex`) at the water's surface field there (`water_field`),
 // lifted over it (`water_lift`); a meter under the ground where no level
 // holds the field there, as samples no water reaches stand.

@@ -24,6 +24,11 @@
 //! arguments among its counters, which the frame then copies to the buffer
 //! the second pass's dispatches and the draws take them from, since no
 //! dispatch may take its arguments from a buffer it binds to write.
+//!
+//! Each tree's leaves draw in one indexed indirect draw, an instance a
+//! leaf, through one index buffer made once: the meshlet's pieces, each
+//! corner naming the point of its lattice it stands at
+//! (`meshlet_indices`), so each point's vertex runs once.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -33,7 +38,8 @@ use crate::bindings::{TERRAIN_SUBDIVISION, TERRAIN_VT_CAMERA};
 use crate::buffers::{Growable, ReadbackRing};
 use crate::cached::{Bound, GroupCache, Versioned};
 use crate::gpu_layouts::constants::{
-    SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES,
+    SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SUBDIVISION_LEAVES,
+    SUBDIVISION_REFUSED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES,
 };
 use crate::gpu_layouts::terrain::SubdivisionUniform;
 use crate::shaders::entry::meshes;
@@ -45,10 +51,38 @@ const NODE_BYTES: u64 = 4;
 /// Bytes of a tree's counters and indirect arguments, and where its draw's
 /// start in them.
 const ARGS_BYTES: u64 = SUBDIVISION_ARGS as u64 * 4;
-const DRAW_OFFSET: u64 = 16;
+const DRAW_OFFSET: u64 = SUBDIVISION_DRAW as u64 * 4;
 /// The shallowest tree a device's bindings are asked to hold: its counts
 /// start two levels under the root.
 const SHALLOWEST: u32 = SUBDIVISION_COUNTED + 2;
+/// The format of the meshlet's indices (`meshlet_indices`), which name
+/// every point of its lattice.
+const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint16;
+const _: () = assert!(
+    SURFACE_MESHLET_VERTICES <= 1 << 16,
+    "16-bit indices name every point of the meshlet's lattice"
+);
+
+/// A tree's draw of the frame's leaves: an instance a leaf, each the
+/// meshlet's `SURFACE_MESHLET_INDICES` indices into its lattice
+/// (`meshlet_indices`), by the tree's indexed indirect arguments
+/// (`wgpu::util::DrawIndexedIndirectArgs`, which `subdivide_begin` writes)
+/// at their byte offset.
+#[derive(Clone)]
+pub(crate) struct SurfaceDraw {
+    indices: wgpu::Buffer,
+    args: wgpu::Buffer,
+    offset: u64,
+}
+
+impl SurfaceDraw {
+    /// Records the draw into `pass`, through the pipeline and groups set
+    /// there.
+    pub(crate) fn record(&self, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_index_buffer(self.indices.slice(..), INDEX_FORMAT);
+        pass.draw_indexed_indirect(&self.args, self.offset);
+    }
+}
 
 /// What a tree's leaves follow, which picks its measure
 /// (`TerrainSubdivision::square.z`): a terrain's ground, or the water its
@@ -117,11 +151,12 @@ pub(crate) struct SurfaceTrees {
     targets: [f32; 2],
     // The frame's leaves and nodes, every tree's; their counters, which the
     // subdivision's passes write, and the indirect arguments copied from
-    // them.
+    // them; and the meshlet's indices, every tree's draws'.
     leaves: Growable,
     nodes: Growable,
     counters: Growable,
     args: Growable,
+    indices: wgpu::Buffer,
     // Each frame tree's uniform, a slot each, and the bytes written.
     uniforms: Versioned<wgpu::Buffer>,
     uniforms_written: Vec<u8>,
@@ -175,6 +210,11 @@ impl SurfaceTrees {
                 ARGS_BYTES,
                 wgpu::BufferUsages::INDIRECT,
             ),
+            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("engine/terrain-surface-indices"),
+                contents: bytemuck::cast_slice(&meshlet_indices()),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
             uniforms: Versioned::new(crate::buffers::uniform(
                 device,
                 "engine/terrain-subdivision",
@@ -211,11 +251,12 @@ impl SurfaceTrees {
         &self.uniforms
     }
 
-    /// Bytes of the trees and of the frame's leaves, nodes, counters and
-    /// arguments.
+    /// Bytes of the trees, of the frame's leaves, nodes, counters and
+    /// arguments, and of the meshlet's indices.
     pub(super) fn capacity_bytes(&self) -> u64 {
         let trees: u64 = self.trees.values().map(|tree| tree.buffer.size()).sum();
-        trees + self.leaves.size() + self.nodes.size() + self.counters.size() + self.args.size()
+        let frame = self.leaves.size() + self.nodes.size() + self.counters.size();
+        trees + frame + self.args.size() + self.indices.size()
     }
 
     /// The subdivision of frame terrain `index`'s ground this frame, where
@@ -249,19 +290,16 @@ impl SurfaceTrees {
         self.rests.set(self.rests.get() + 1);
     }
 
-    /// The indirect draw arguments of frame terrain `index`'s ground's
-    /// leaves and their byte offset, once it subdivides this frame.
-    pub(super) fn draw(&self, index: usize) -> Option<(&wgpu::Buffer, u64)> {
-        self.ground(index)
-            .map(|_| (&**self.args, index as u64 * ARGS_BYTES + DRAW_OFFSET))
+    /// The draw of frame terrain `index`'s ground's leaves, once it
+    /// subdivides this frame.
+    pub(super) fn draw(&self, index: usize) -> Option<SurfaceDraw> {
+        self.ground(index).map(|_| self.slot_draw(index))
     }
 
     /// The tree of frame terrain `index`'s water this frame: its uniform's
-    /// offset among the trees' (`Self::uniforms`), and the indirect draw
-    /// arguments of its leaves (`wgpu::util::DrawIndirectArgs`: a meshlet's
-    /// `SURFACE_MESHLET_VERTICES` vertices, an instance a leaf) and their
-    /// byte offset; `None` where its water does not subdivide.
-    pub(super) fn water(&self, index: usize) -> Option<(u32, &wgpu::Buffer, u64)> {
+    /// offset among the trees' (`Self::uniforms`), and the draw of its
+    /// leaves; `None` where its water does not subdivide.
+    pub(super) fn water(&self, index: usize) -> Option<(u32, SurfaceDraw)> {
         let slot = (self.grounds..self.frame.len()).find(|&slot| {
             self.frame
                 .get(slot)
@@ -269,12 +307,16 @@ impl SurfaceTrees {
                 .flatten()
                 .is_some_and(|subdivided| subdivided.terrain == index)
         })?;
-        let slot = slot as u64;
-        Some((
-            (slot * SLOT) as u32,
-            &**self.args,
-            slot * ARGS_BYTES + DRAW_OFFSET,
-        ))
+        Some(((slot as u64 * SLOT) as u32, self.slot_draw(slot)))
+    }
+
+    /// The draw of the leaves of the frame's tree at slot `slot`.
+    fn slot_draw(&self, slot: usize) -> SurfaceDraw {
+        SurfaceDraw {
+            indices: self.indices.clone(),
+            args: wgpu::Buffer::clone(&self.args),
+            offset: slot as u64 * ARGS_BYTES + DRAW_OFFSET,
+        }
     }
 
     /// The pixels the ground's leaves (x) and the water's (y) may stray from
@@ -615,8 +657,10 @@ impl SurfaceTrees {
                 for slot in 0..slots as usize {
                     let at = slot * SUBDIVISION_ARGS as usize;
                     let sum = if slot < grounds as usize { 0 } else { 2 };
-                    sums[sum] = sums[sum].saturating_add(words.get(at + 3));
-                    sums[sum + 1] = sums[sum + 1].saturating_add(words.get(at + 9));
+                    let leaves = words.get(at + SUBDIVISION_LEAVES as usize);
+                    let refused = words.get(at + SUBDIVISION_REFUSED as usize);
+                    sums[sum] = sums[sum].saturating_add(leaves);
+                    sums[sum + 1] = sums[sum + 1].saturating_add(refused);
                 }
                 totals.set(sums);
             });
@@ -627,7 +671,7 @@ impl SurfaceTrees {
         let [leaves, refused, _, _] = self.totals.get();
         SurfaceStats {
             leaves,
-            triangles: leaves.saturating_mul(SURFACE_MESHLET_VERTICES / 3),
+            triangles: leaves.saturating_mul(SURFACE_MESHLET_INDICES / 3),
             refused,
             shallow: self.shallow,
         }
@@ -683,6 +727,43 @@ fn finest_spacing(side: f32, depth: u32) -> f32 {
         leg * std::f32::consts::FRAC_1_SQRT_2
     };
     leg / (1 << SURFACE_MESHLET_LEVEL) as f32
+}
+
+/// The meshlet's indices: three for each of its pieces, in the order and
+/// turning the bisections cutting a leaf into them give
+/// (`meshes/terrain_surface.wgsl`: the first from the leaf's first
+/// bisection on, each piece's corners as `surface_half` turns them), each
+/// the point of its lattice its corner stands at (`lattice_vertex`). The
+/// bisections are replayed on the lattice's own coordinates, a leg's parts
+/// from the leaf's right angle toward its longest edge's first end and
+/// toward its last, where every middle they take is whole.
+fn meshlet_indices() -> Vec<u16> {
+    let parts = 1_u32 << SURFACE_MESHLET_LEVEL;
+    (0..SURFACE_MESHLET_INDICES / 3)
+        .flat_map(|piece| {
+            let mut corners = [[parts, 0], [0, parts], [0, 0]];
+            for bit in (0..2 * SURFACE_MESHLET_LEVEL).rev() {
+                let [a, b, c] = corners;
+                let middle = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+                corners = if ((piece >> bit) & 1) == 0 {
+                    [c, a, middle]
+                } else {
+                    [b, c, middle]
+                };
+            }
+            corners.map(|[i, j]| lattice_vertex(i, j))
+        })
+        .collect()
+}
+
+/// The number of the point of the meshlet's lattice `i` of a leaf's legs'
+/// parts from its right angle toward its longest edge's first end and `j`
+/// toward its last: rows of `i + j` from the right angle out, each a point
+/// longer than the one before, and by `j` along each, as
+/// `meshes/terrain_surface.wgsl`'s `surface_vertex` reads it back.
+fn lattice_vertex(i: u32, j: u32) -> u16 {
+    let row = i + j;
+    (row * (row + 1) / 2 + j) as u16
 }
 
 /// The planes of the frustum of `culling`, a projection of positions

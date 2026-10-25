@@ -151,10 +151,12 @@ struct TerrainSurfaceVertex {
     spacing: f32,
 }
 
-// Vertex `vertex` of leaf `leaf` of this frame's subdivision: on the
-// ground's true surface, moved along its smooth normal where deep materials
-// displace it (`terrain_displacement`). Every quantity it reads is a
-// function of where it stands, so leaves sharing a side meet without cracks.
+// Lattice vertex `vertex` of leaf `leaf` of this frame's subdivision
+// (`surface_vertex`): on the ground's true surface, moved along its smooth
+// normal where deep materials displace it (`terrain_displacement`). Every
+// quantity it reads is a function of where it stands, so leaves sharing a
+// side meet without cracks and each of the meshlet's pieces meeting at the
+// point draws it alike.
 fn terrain_surface_vertex(leaf: u32, vertex: u32) -> TerrainSurfaceVertex {
     let triangle = surface_leaf(leaf);
     var point: TerrainSurfaceVertex;
