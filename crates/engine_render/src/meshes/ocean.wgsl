@@ -5,8 +5,9 @@
 // than a few of their cells; pixels shade with every wave longer than a
 // few pixels, and the slopes of shorter ones roughen the surface instead,
 // so distant water glitters rather than aliasing. The CPU's queries
-// (`engine_core::OceanWaves`) sum the same waves. The waves' tiles ripple
-// it as they do terrains' water, and it is lit as they are
+// (`engine_core::OceanWaves`) sum the same waves. The wind's tiles ripple
+// it with the waves shorter than its own, sized by the same spectrum
+// (`water_wind_bands`), and it is lit as terrains' water is
 // (`water_light`): what lies under it shows through, bent where the frame
 // copies the scene's color and dimmed channel by channel over the view's
 // path to it (the light reaching it already dims through the water above,
@@ -190,9 +191,6 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     let world_dy = dpdy(world);
     // Meters of still sea a pixel spans.
     let footprint = max(max(length(dpdx(still)), length(dpdy(still))), 1.0e-4);
-    // The waves' tiles ripple the sea's own waves.
-    let ripples = water_waves_at(world.xz, world_dx.xz, world_dy.xz, vec3<f32>(1.0));
-    let strength = water.ripples.x * water_gusts(world.xz, time);
     // Every wave longer than a few pixels tilts and stretches the surface;
     // shorter waves' slopes roughen it instead.
     let waved = ocean_normal(still, footprint);
@@ -205,7 +203,16 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
         let slope = number * wave.z;
         hidden += (1.0 - keep * keep) * slope * slope * 0.5;
     }
-    let normal = normalize(waved.xyz + vec3<f32>(-ripples.x, 0.0, -ripples.y) * strength);
+    // The wind's tiles ripple it with the waves shorter than its own
+    // shortest (they run longest first), sized by the spectrum its own are
+    // drawn from: its wind, gusting, over unlimited fetch and deep water, so
+    // the sea and its ripples are one spectrum.
+    let shortest = OCEAN_TAU / max(length(water.ocean_waves[max(count, 1u) - 1u].xy), 1.0e-6);
+    let ripples = water_wind_waves(world.xz, world_dx.xz, world_dy.xz,
+        water_wind_bands(water_wind_speed(world.xz, time), WATER_OPEN_FETCH, WATER_OPEN_DEPTH,
+            shortest));
+    let slopes = ripples.slopes - waved.xz / max(waved.y, 1.0e-3);
+    let normal = normalize(vec3<f32>(-slopes.x, 1.0, -slopes.y));
     let compression = waved.w;
     // The ground behind the sea, unless only the sky is: how deep it
     // stands under the surface, the meters the view travels through the
@@ -244,7 +251,7 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     // Calm water is a mirror; the slopes of waves too short to draw spread
     // its highlights, as a rougher surface would, and so do the ripples
     // finer than the pixel.
-    let roughness = water_roughness(2.0 * hidden + ripples.z * strength * strength);
+    let roughness = water_roughness(hidden + ripples.hidden);
     // Sunlight through crests seen against it.
     let crest_height = saturate(input.still.z / max(water.foam.w, 1.0e-3) * 0.5 + 0.5);
     let against = pow(saturate(dot(-view, lighting.sun.xyz)), 4.0) * saturate(lighting.sun.y * 4.0);

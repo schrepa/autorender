@@ -9,16 +9,16 @@ gpu_structs! {
     /// WGSL `WaterUniform` of `meshes/water.wgsl`; the sea's parts are zero
     /// for terrains' water, whose projection is the terrain view's, and the
     /// sea carries no sediment and stands on no subdivision, its `lift`
-    /// zero.
+    /// zero. The sea's `wind` is its own, gusting as the scene's does.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct WaterUniform as ["WaterUniform"] {
         pub relative_view_projection: [[f32; 4]; 4],
         pub origin: [f32; 4],
         pub color: [f32; 4],
-        pub ripples: [f32; 4],
+        pub wind: [f32; 4],
         pub foam: [f32; 4],
         pub absorption: [f32; 4],
-        pub waves: [f32; 4],
+        pub waves: [[f32; 4]; WAVE_TILES],
         pub ocean: [f32; 4],
         pub ocean_grid: [f32; 4],
         pub ocean_waves: [[f32; 4]; MAX_OCEAN_WAVES],

@@ -79,14 +79,16 @@
 // Water, or the sea: the camera's view and projection without its
 // translation (the sea's; terrains' water draws through the terrain's
 // view); the color deep water scatters back (rgb) and the meters through
-// which half the light passes (w); the ripples' strength (x), how strongly
-// the wind gusts (y) and its velocity along x and z (zw); how much foam
+// which half the light passes (w); the wind's velocity along x and z (xy,
+// the sea's own for the sea) and how strongly it gusts (z); how much foam
 // gathers and the meters of
 // water shallower than which shores foam, with, for the sea, the
 // compression below which crests foam and the waves' summed height; how
-// fast the water takes each channel of light, per meter (rgb); and how many
-// times a meter each of the waves' tiles repeats (xyz). The sea's parts
-// (`meshes/ocean.wgsl`): its wind's heading
+// fast the water takes each channel of light, per meter (rgb); and each of
+// the waves' tiles (`water_spectrum.wgsl`): how many times a meter it
+// repeats, the longest and the shortest waves it holds (meters) and the
+// root mean square height of its waves at unit slope variance (meters).
+// The sea's parts (`meshes/ocean.wgsl`): its wind's heading
 // (`origin`, xy: a unit vector), its still level less the eye, its grid's
 // finest cell, cells around and rings a cell apart; the rings' growth, the
 // meters it reaches, cells around a sector and its waves; each wave's
@@ -108,10 +110,10 @@ struct WaterUniform {
     relative_view_projection: mat4x4<f32>,
     origin: vec4<f32>,
     color: vec4<f32>,
-    ripples: vec4<f32>,
+    wind: vec4<f32>,
     foam: vec4<f32>,
     absorption: vec4<f32>,
-    waves: vec4<f32>,
+    waves: array<vec4<f32>, WATER_TILES>,
     ocean: vec4<f32>,
     ocean_grid: vec4<f32>,
     ocean_waves: array<vec4<f32>, 16>,
@@ -204,13 +206,8 @@ const WATER_GRADIENT_RANGE: f32 = 4.0;
 // back, the surface turns part back down. Water a few centimeters deep
 // darkens it as much.
 const WATER_WET: f32 = 0.35;
-// The waves' tiles (`gpu_layouts::constants::WAVE_TILES`).
-const WATER_WAVE_TILES: u32 = 3u;
 // Water's index of refraction over air's.
 const WATER_IOR: f32 = 1.333;
-// Calm water's roughness, and the most its waves' hidden slopes roughen it.
-const WATER_SMOOTH: f32 = 0.05;
-const WATER_ROUGHEST: f32 = 0.6;
 // How much the sun's disc widens its mirrored lobe (alpha): the half
 // vectors of its rays span half the disc's angle, about 0.0023 radians.
 const WATER_SUN_ALPHA: f32 = 0.0023;
@@ -253,16 +250,6 @@ const WATER_THINNEST: f32 = 0.01;
 // The share of the wind's finest ripples water running 2 m/s or faster
 // keeps: its current's chop (`water_chop`) takes over from them.
 const WATER_RUNNING_RIPPLES: f32 = 0.5;
-// The share of a tile's period between the corners of the grid its random
-// offsets hang on (`water_tile`).
-const WATER_PATCH: f32 = 0.5;
-// Pixels a tile's period spans below which it blurs into its variance; and
-// those a chop's wavelength spans below which its slopes start to hide in
-// its variance, all of them once it spans half as many.
-const WATER_WAVE_PIXELS: f32 = 32.0;
-// Meters across the patches of stronger and calmer wind sweeping over
-// water.
-const WATER_GUST_SIZE: f32 = 40.0;
 
 // Tiles' water's vertex: where it draws, and its point of the water's mesh
 // less the eye, where its pixels read the water.
@@ -740,131 +727,6 @@ fn water_gradient_noise3(p: vec3<f32>) -> f32 {
         mix(water_corner3(x0 ^ y1 ^ z1, f - vec3<f32>(0.0, 1.0, 1.0)),
             water_corner3(x1 ^ y1 ^ z1, f - vec3<f32>(1.0)), u.x), u.y);
     return saturate(0.5 + 0.8 * mix(low, high, u.z));
-}
-
-// Where corner `corner` of the grid `water_tile` hangs tile `tile`'s
-// offset: a random point of the tile (in its periods).
-fn water_corner_offset(corner: vec2<i32>, tile: u32) -> vec2<f32> {
-    let key = (u32(corner.x) * 0x8da6b343u) ^ (u32(corner.y) * 0xd8163841u) ^ (tile * 0xcb1ab31fu);
-    return vec2<f32>(terrain_hash_of(key), terrain_hash_of(key ^ 0x68e31da4u));
-}
-
-// The triangle of a grid of equilateral triangles, skewed into squares,
-// holding `grid` (in its cells' sides): its three corners (in the skewed
-// grid) and the weights `grid` takes of each.
-struct WaterTriangle {
-    corners: array<vec2<i32>, 3>,
-    weights: vec3<f32>,
-}
-
-fn water_triangle(grid: vec2<f32>) -> WaterTriangle {
-    let skewed = vec2<f32>(grid.x, 1.15470054 * grid.y - 0.57735027 * grid.x);
-    let cell = floor(skewed);
-    let local = skewed - cell;
-    let base = vec2<i32>(cell);
-    let third = 1.0 - local.x - local.y;
-    var triangle: WaterTriangle;
-    triangle.weights = vec3<f32>(third, local.y, local.x);
-    triangle.corners = array<vec2<i32>, 3>(base, base + vec2<i32>(0, 1), base + vec2<i32>(1, 0));
-    if third <= 0.0 {
-        triangle.weights = vec3<f32>(-third, 1.0 - local.y, 1.0 - local.x);
-        triangle.corners = array<vec2<i32>, 3>(base + vec2<i32>(1, 1), base + vec2<i32>(1, 0),
-            base + vec2<i32>(0, 1));
-    }
-    return triangle;
-}
-
-// Tile `tile`'s waves at `uv` (in its periods), which changes by `dx` and
-// `dy` per pixel: their slopes (xy) and the variance of those finer than
-// the pixel (z), what its levels' averages lose of the slopes' square.
-// Each pixel reads the tile at the random offsets of the three corners of
-// the triangle of a skewed grid holding it, blended by its weights there
-// so that their variance stays the tile's (tiling and blending, Heitz and
-// Neyret, Deliot and Heitz): the waves, a Gaussian field, look the same
-// everywhere and never repeat. A tile whose period spans fewer than
-// WATER_WAVE_PIXELS pixels blurs into its variance, all of it once a pixel
-// spans about a tenth of a period. Where its texels span more than a pixel,
-// its levels' averages hide nothing of it: what filtering between texels
-// loses of the slopes' square (lines along the texels' edges) is no waves'
-// variance, so it fades out as texels grow past a pixel.
-fn water_tile(tile: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec3<f32> {
-    let spread = max(length(dx), length(dy));
-    let excess = max(spread * WATER_WAVE_PIXELS, 1.0);
-    let blur = excess * excess;
-    if spread * blur >= 1.0 {
-        let mean = textureSampleLevel(water_waves, water_wave_sampler, vec2<f32>(0.5), tile,
-            f32(textureNumLevels(water_waves) - 1u));
-        return vec3<f32>(0.0, 0.0, mean.z);
-    }
-    let texels = sqrt(length(dx) * length(dy)) * blur * f32(textureDimensions(water_waves).x);
-    let hidden = saturate(log2(max(texels, 1.0e-6)) + 1.0);
-    let triangle = water_triangle(uv / WATER_PATCH);
-    var corners = triangle.corners;
-    let weights = triangle.weights;
-    var slopes = vec2<f32>(0.0);
-    var variance = 0.0;
-    for (var corner = 0u; corner < 3u; corner++) {
-        let moments = textureSampleGrad(water_waves, water_wave_sampler,
-            uv + water_corner_offset(corners[corner], tile), tile, dx * blur, dy * blur);
-        let weight = weights[corner];
-        slopes += moments.xy * weight;
-        variance += max(moments.z - dot(moments.xy, moments.xy), 0.0) * weight * weight;
-    }
-    let spread_kept = dot(weights, weights);
-    return vec3<f32>(slopes * inverseSqrt(spread_kept), variance / spread_kept * hidden);
-}
-
-// The waves at `p` (meters along x and z), which changes by `dx` and `dy`
-// per pixel, each tile's slopes scaled by its share of `tiles` (none read
-// where it is 0): their slopes (xy) and the variance of those finer than
-// the pixel (z).
-fn water_waves_at(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, tiles: vec3<f32>) -> vec3<f32> {
-    var waves = vec3<f32>(0.0);
-    // As finely as the display shows them: the mip bias.
-    let detail = material_detail();
-    for (var tile = 0u; tile < WATER_WAVE_TILES; tile++) {
-        let share = tiles[tile];
-        if share <= 0.0 {
-            continue;
-        }
-        let repeats = water.waves[tile];
-        let read = water_tile(tile, p * repeats, dx * (repeats * detail),
-            dy * (repeats * detail));
-        waves += vec3<f32>(read.xy * share, read.z * share * share);
-    }
-    return waves;
-}
-
-// Waves `first` blended `toward` waves `second`, their slopes keeping their
-// spread (they are independent): as `water_waves_at` gives them.
-fn water_blended(first: vec3<f32>, second: vec3<f32>, toward: f32) -> vec3<f32> {
-    let keep = inverseSqrt((1.0 - toward) * (1.0 - toward) + toward * toward);
-    return vec3<f32>(mix(first.xy, second.xy, toward) * keep, mix(first.z, second.z, toward));
-}
-
-// How much the wind's gusts scale the waves at `p` at `time`: patches of
-// stronger and calmer wind, WATER_GUST_SIZE meters across and drawn out
-// along it, sweep over the water with it (cat's paws), as strongly as it
-// gusts.
-fn water_gusts(p: vec2<f32>, time: f32) -> f32 {
-    let wind = water.ripples.zw;
-    let speed = length(wind);
-    let heading = select(vec2<f32>(1.0, 0.0), wind / speed, speed > 1.0e-3);
-    let moving = p - wind * time;
-    let streaked = vec2<f32>(dot(moving, heading) / 2.5,
-        dot(moving, vec2<f32>(-heading.y, heading.x))) / WATER_GUST_SIZE;
-    let patches = water_noise(streaked).x * 0.65
-        + water_noise(streaked * 2.3 + vec2<f32>(5.2, 1.3)).x * 0.35;
-    let gusting = smoothstep(0.2, 0.8, patches);
-    return max(mix(1.0 - 1.2 * water.ripples.y, 1.0 + water.ripples.y, gusting), 0.15);
-}
-
-// The roughness of water whose waves hide `variance` of their slopes'
-// square within a pixel: calm water's, widened by that variance as a
-// microfacet distribution's (LEAN mapping, Olano and Baker).
-fn water_roughness(variance: f32) -> f32 {
-    let calm = WATER_SMOOTH * WATER_SMOOTH;
-    return min(sqrt(sqrt(calm * calm + variance)), WATER_ROUGHEST);
 }
 
 // What scatters light in water's body besides the water. The fine sediment

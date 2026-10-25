@@ -1,22 +1,30 @@
-//! Water's waves (`water_waves.wgsl`): [`WAVE_TILES`] tiles of wind-driven
-//! waves that terrains' water and the sea shade with, each repeating at
-//! its own length. Their spectra, drawn from fixed noise for the wind and
-//! the ripples' size, are one of the scene's static tables
-//! (`engine_core::table_data::waves` makes them), which upload as they
-//! arrive. Each frame the spectra evolve (gravity and surface tension set
-//! each wave's speed; frequencies are rounded so the waves loop every
-//! [`LOOP_SECONDS`]) and an inverse transform turns them into the slopes of
-//! the surface, whose moments (the slopes, and the square of their length)
-//! fill a texture array with its mip levels. Water reads the slopes where
-//! it stands and, from what the levels' averages lose of the square, the
-//! roughness of what a pixel spans.
+//! Water's waves (`water_waves.wgsl`): [`WAVE_TILES`] tiles of waves that
+//! terrains' water and the sea shade with, each repeating at its own
+//! period: [`WIND_TILES`] of the wind's, each holding its own band of wave
+//! lengths, then one of the current's turbulence. Their spectra, drawn from
+//! fixed noise for the wind's heading, are one of the scene's static tables
+//! (`engine_core::table_data::waves` makes them, with each tile's period,
+//! band and height), which upload as they arrive. Each frame the wind's
+//! spectra evolve (gravity and surface tension set each wave's speed;
+//! frequencies are rounded so the waves loop every [`LOOP_SECONDS`]) and an
+//! inverse transform turns them into the slopes and heights of the surface,
+//! whose moments (the slopes, the square of their length and the height)
+//! fill a texture array with its mip levels. The turbulence's tile stands
+//! still, its waves moving only as the current carries them, so it is
+//! transformed once its spectrum arrives. Water reads the slopes where it
+//! stands and, from what the levels' averages lose of the square, the
+//! roughness of what a pixel spans (`meshes/water_spectrum.wgsl`).
 
+use std::cell::Cell;
 use std::f64::consts::TAU;
 
-use engine_core::math::max;
+use engine_core::table_data::waves::WaveTile;
 
 use crate::bindings::WATER_WAVES;
-use crate::gpu_layouts::constants::{WAVE_LEVEL_GROUP, WAVE_LINE_GROUP, WAVE_TEXELS, WAVE_TILES};
+use crate::gpu_layouts::constants::{
+    TURBULENCE_TILE, WAVE_ANISOTROPY, WAVE_LEVEL_GROUP, WAVE_LINE_GROUP, WAVE_TEXELS, WAVE_TILES,
+    WIND_TILES,
+};
 use crate::gpu_layouts::water::WaveFrame;
 use crate::shaders::entry::water_waves;
 
@@ -37,9 +45,11 @@ pub(crate) struct WaterWaves {
     sampler: wgpu::Sampler,
     // The rows' pass's group, the columns' and each level's.
     groups: Vec<wgpu::BindGroup>,
-    // The spectra uploaded, and their tiles' meters.
+    // The spectra uploaded and their tiles, and whether the turbulence's
+    // tile has yet to be transformed since.
     uploaded: Option<u64>,
-    sizes: [f32; WAVE_TILES],
+    tiles: [WaveTile; WAVE_TILES],
+    still: Cell<bool>,
 }
 
 impl WaterWaves {
@@ -92,7 +102,7 @@ impl WaterWaves {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: 8,
+            anisotropy_clamp: WAVE_ANISOTROPY,
             ..Default::default()
         });
         let group = |label, source: &wgpu::TextureView, target: &wgpu::TextureView| {
@@ -129,7 +139,8 @@ impl WaterWaves {
             sampler,
             groups,
             uploaded: None,
-            sizes: [0.0; WAVE_TILES],
+            tiles: [WaveTile::default(); WAVE_TILES],
+            still: Cell::new(false),
         }
     }
 
@@ -139,11 +150,19 @@ impl WaterWaves {
         (&self.sampled, &self.sampler)
     }
 
-    /// Per meter, how many times each tile repeats (the inverse of its
-    /// meters), as water's uniform holds them.
-    pub(crate) fn repeats(&self) -> [f32; 4] {
-        let [first, second, third] = self.sizes.map(|size| 1.0 / max(size, 1.0e-3));
-        [first, second, third, 0.0]
+    /// Each tile as water's uniform holds it: how many times a meter it
+    /// repeats (the inverse of its period), the longest and the shortest
+    /// waves it holds (meters) and the root mean square height of its waves
+    /// at unit slope variance (meters); none before spectra arrive.
+    pub(crate) fn tiles(&self) -> [[f32; 4]; WAVE_TILES] {
+        self.tiles.map(|tile| {
+            let repeats = if tile.period > 0.0 {
+                1.0 / tile.period
+            } else {
+                0.0
+            };
+            [repeats, tile.longest, tile.shortest, tile.height]
+        })
     }
 
     /// Bytes of the moments with their levels, the rows' transforms and the
@@ -172,7 +191,8 @@ impl WaterWaves {
             && self.uploaded != Some(spectra.id)
         {
             self.uploaded = Some(spectra.id);
-            self.sizes = spectra.table.shape.sizes();
+            self.tiles = spectra.table.tiles;
+            self.still.set(true);
             queue.write_buffer(
                 &self.spectrum,
                 0,
@@ -187,9 +207,19 @@ impl WaterWaves {
         let fraction = loops - loops.floor();
         let coarse = (fraction * LOOP_STEPS).floor() / LOOP_STEPS;
         let frame = WaveFrame {
-            tiles: self
-                .sizes
-                .map(|size| [(TAU / f64::from(size)) as f32, 0.0, 0.0, 0.0]),
+            tiles: self.tiles.map(|tile| {
+                let per_texel = if tile.period > 0.0 {
+                    (TAU / f64::from(tile.period)) as f32
+                } else {
+                    0.0
+                };
+                let heights = if tile.height > 0.0 {
+                    1.0 / tile.height
+                } else {
+                    0.0
+                };
+                [per_texel, heights, 0.0, 0.0]
+            }),
             clock: [
                 coarse as f32,
                 (fraction - coarse) as f32,
@@ -200,8 +230,9 @@ impl WaterWaves {
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&frame));
     }
 
-    /// Evolves the spectra prepared into the moments and their levels,
-    /// timed by `profiler` (`water_waves`).
+    /// Evolves the wind's spectra prepared into the moments and their
+    /// levels, and the turbulence's the first time after it arrives, timed
+    /// by `profiler` (`water_waves`).
     pub(crate) fn encode(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -214,7 +245,13 @@ impl WaterWaves {
             label: Some("engine/water-waves"),
             timestamp_writes: profiler.span("water_waves").map(|span| span.compute()),
         });
-        let tiles = WAVE_TILES as u32;
+        // The turbulence's tile, the last, keeps the moments it was
+        // transformed to.
+        let tiles = if self.still.replace(false) {
+            WAVE_TILES as u32
+        } else {
+            WIND_TILES
+        };
         pass.set_pipeline(rows);
         pass.set_bind_group(0, &self.groups[0], &[]);
         pass.dispatch_workgroups(WAVE_TEXELS, tiles, 1);
@@ -256,4 +293,8 @@ fn pipelines(
 const _: () = assert!(
     WAVE_LINE_GROUP * 2 == WAVE_TEXELS,
     "an invocation takes a butterfly of a line"
+);
+const _: () = assert!(
+    TURBULENCE_TILE == WIND_TILES && WAVE_TILES == WIND_TILES as usize + 1,
+    "the turbulence's tile follows the wind's, the last"
 );

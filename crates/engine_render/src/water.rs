@@ -20,8 +20,10 @@
 //! channel by channel over the light's path; other frames blend water over
 //! the ground.
 //!
-//! Water's waves (`crate::water_waves`) evolve before it draws, the same
-//! tiles of them for terrains' water and the sea.
+//! Water's waves (`crate::water_waves`) evolve before it draws: the same
+//! tiles of the wind's waves for terrains' water and the sea, each place
+//! sizing them by the sea its wind raises there, and the tile of the
+//! current's turbulence.
 //!
 //! Where terrains' rivers leave their beds, their jets draw last, as
 //! sheets (`crate::water_falls`) over the water they land in, writing their
@@ -51,6 +53,7 @@ use engine_core::{
 };
 
 use crate::bindings::{WATER, WATER_BEHIND};
+use crate::gpu_layouts::constants::WAVE_TILES;
 use crate::gpu_layouts::terrain::{SubdivisionUniform, TerrainUniform, ViewUniform};
 use crate::profiling::Span;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -337,7 +340,7 @@ impl WaterPass {
         // Terrains' water and the sea ripple with the same waves.
         let waves = self.waves.get_or_insert_with(|| WaterWaves::new(device));
         waves.prepare(device, queue, tables.waves.as_ref(), seconds);
-        let repeats = waves.repeats();
+        let wave_tiles = waves.tiles();
         if let (None, Some(map)) = (&self.fall_map, &tables.fall_map) {
             self.fall_map = Some(FallMap::new(device, queue, &map.table));
         }
@@ -372,10 +375,10 @@ impl WaterPass {
             let sediment = settings.sediment_color;
             let uniform = WaterUniform {
                 color: [red, green, blue, settings.clarity],
-                ripples: ripples(settings, wind),
+                wind: blowing(wind.velocity, wind.gusts),
                 foam: [settings.foam, settings.foam_width, 0.0, 0.0],
                 absorption: absorption(settings.color, settings.clarity),
-                waves: repeats,
+                waves: wave_tiles,
                 ocean: sea,
                 sim: simulated.map_or([0.0; 4], |(square, _)| square),
                 sim_datum: simulated.map_or([0.0; 4], |(_, datum)| datum),
@@ -391,9 +394,9 @@ impl WaterPass {
             device,
             queue,
             (cull, view),
-            (settings, ocean),
+            ocean,
             (eye, wind, seconds),
-            repeats,
+            wave_tiles,
         );
         if self.tiles.is_none() && !sea && !falling {
             return None;
@@ -547,17 +550,18 @@ impl WaterPass {
     }
 
     /// Prepares the sea culled through `cull` and drawn through `view`
-    /// (both eye-relative) from `eye`, its ripples as `water`'s in `wind`, the
-    /// waves' tiles repeating `repeats` times a meter, its own waves at
-    /// simulation time `seconds`; returns whether any of it draws.
+    /// (both eye-relative) from `eye`, rippled by the waves' tiles as
+    /// `wave_tiles` describes them in its own wind, gusting as `wind` does,
+    /// its own waves at simulation time `seconds`; returns whether any of it
+    /// draws.
     fn prepare_ocean(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (cull, view): (Mat4, Mat4),
-        (water, ocean): (Water, Ocean),
+        ocean: Ocean,
         (eye, wind, seconds): (Vec3, Wind, f64),
-        repeats: [f32; 4],
+        wave_tiles: [[f32; 4]; WAVE_TILES],
     ) -> bool {
         let (true, Some(waves), Some(map)) = (ocean.enabled, &self.waves, &self.fall_map) else {
             self.ocean = None;
@@ -627,11 +631,11 @@ impl WaterPass {
             relative_view_projection: view.to_cols_array_2d(),
             origin: [heading[0], heading[1], speed, 0.0],
             color: [red, green, blue, ocean.clarity],
-            ripples: ripples(water, wind),
+            wind: blowing(ocean.wind, wind.gusts),
             // Shores foam as wide as the waves rise.
             foam: [ocean.foam, 0.4 + amplitude, crests, amplitude],
             absorption: absorption(ocean.color, ocean.clarity),
-            waves: repeats,
+            waves: wave_tiles,
             ocean: [
                 ocean.level - eye.y,
                 cell,
@@ -1014,15 +1018,10 @@ pub(crate) fn underwater(environment: &Environment, eye: Vec3, seconds: f64) -> 
     [color.x, color.y, color.z, ocean.clarity]
 }
 
-/// The water uniform's ripples: their strength in `water`, and how strongly
-/// `wind` gusts and its velocity.
-fn ripples(water: Water, wind: Wind) -> [f32; 4] {
-    [
-        water.ripples,
-        wind.gusts,
-        wind.velocity[0],
-        wind.velocity[1],
-    ]
+/// The water uniform's wind: its velocity `velocity` (meters a second along
+/// x and z) and how strongly it gusts, `gusts`.
+fn blowing(velocity: [f32; 2], gusts: f32) -> [f32; 4] {
+    [velocity[0], velocity[1], gusts, 0.0]
 }
 
 /// Per meter, how fast water whose light halves over `clarity` meters and
