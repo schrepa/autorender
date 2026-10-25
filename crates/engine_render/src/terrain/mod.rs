@@ -504,6 +504,12 @@ impl TerrainPass {
         self.tables.cover_tallest
     }
 
+    /// The widest root any terrain material's cover grows blades from, as
+    /// the last preparation wrote the covers (meters).
+    pub(crate) fn cover_widest(&self) -> f32 {
+        self.tables.cover_widest
+    }
+
     /// Terrain `index`'s place in the directory and palette, its densest
     /// cover (blades per square meter) and that cover's blades' root width
     /// and mean height (meters), as the last preparation wrote them, and its

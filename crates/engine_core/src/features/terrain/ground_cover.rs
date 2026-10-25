@@ -2,10 +2,11 @@
 //! terrain's surface materials, which renderers generate every frame around
 //! the camera and never store. A surface material names the cover growing
 //! where it lies ([`Cover`]); the [`GroundCover`] settings place, budget and
-//! sway it. Blades stand as wide as their roots at every distance and retire
-//! by their size on screen alone, in a fixed order as they narrow, and the
-//! ground shows the leaves they leave as its canopy, what they show on
-//! average.
+//! sway it. Blades stand by their size on screen alone: as they narrow, a
+//! share of them stands in a fixed order, each widened by its inverse so
+//! they cover as much ground; as they grow short on screen they retire in
+//! that order, and the ground shows the leaves they leave as its canopy,
+//! what they show on average.
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
@@ -67,14 +68,20 @@ settings! {
     pub struct GroundCover {
         /// Whether terrains grow their cover.
         pub enabled: bool = true => any,
-        /// How wide on screen (pixels) blades stand as they retire: each
-        /// retires, in a fixed order, once it spans fewer than this times a
-        /// factor of its own from a half to two, the ground showing it as its
-        /// cover's canopy, so cover reaches as far as its last blade stands.
+        /// The pixels on screen blades span at least while they stand,
+        /// across and up: where blades as wide as their roots would span
+        /// fewer across, a share of them stands in a fixed order, each
+        /// widened by its inverse to span these pixels, so they cover as
+        /// much ground; and once their height spans fewer than these times a
+        /// factor of their own from a half to two, they retire in that
+        /// order, the ground showing them as its cover's canopy, so cover
+        /// reaches as far as its last blade stands that tall.
         pub pixels: f32 = 1.0 => range(0.25, 16.0),
         /// Scales every cover's density. Blades sway in the world's `Wind`.
         pub density: f32 = 1.0 => range(0.0, 4.0),
-        /// An optional budget of blades a frame; beyond it the farthest drop.
+        /// An optional budget of blades a frame: where the view would take
+        /// in more, the blades that thin stand wider, fewer covering as much
+        /// ground; any past it still drop and count.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_blades: Option<u32> = None => budget,
     }

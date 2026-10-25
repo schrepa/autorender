@@ -355,6 +355,17 @@
       "direction": null
     },
     {
+      "name": "ground_cover.widened",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "percent",
+      "direction": null
+    },
+    {
       "name": "instances",
       "kind": "work",
       "rule": "shown",

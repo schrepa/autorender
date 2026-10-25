@@ -946,9 +946,11 @@ struct TerrainSite {
 }
 
 // The share of the cover's leaves blades no longer show at `world` by their
-// law (`terrain.cover`, `terrain_variety.wgsl`'s `cover_share`), from the
-// detail eye as the blades are: all of them where a terrain's surroundings
-// show its cover as canopy from the eye on; none without cover.
+// law (`terrain.cover`, `terrain_variety.wgsl`'s `cover_shown`), from the
+// detail eye as the blades are: those retired as their height shrinks on
+// screen, the blades thinning nearer covering as much ground widened; all
+// of them where a terrain's surroundings show its cover as canopy from the
+// eye on; none without cover.
 fn terrain_thinned(world: vec3<f32>) -> f32 {
     let cover = terrain.cover;
     if cover.y <= 0.0 {
@@ -957,7 +959,7 @@ fn terrain_thinned(world: vec3<f32>) -> f32 {
     if cover.x <= 0.0 {
         return 1.0;
     }
-    return 1.0 - cover_share(detail_distance(world), cover.x);
+    return 1.0 - cover_shown(detail_distance(world), cover.x);
 }
 
 // The meters a pixel spans across the view at `world` as level of detail
