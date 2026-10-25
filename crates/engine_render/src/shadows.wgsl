@@ -786,8 +786,9 @@ fn fs_impostor_card(input: CardOutput) {
     let size = f32(textureDimensions(impostor_albedo).x);
     let dx = dpdx(input.uv) * size;
     let dy = dpdy(input.uv) * size;
-    let level = clamp(0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1.0e-12)), 0.0,
-        f32(textureNumLevels(impostor_albedo) - 1u));
+    let coarsest = f32(textureNumLevels(impostor_albedo) - 1u);
+    let squared = max(max(dot(dx, dx), dot(dy, dy)), 1.0e-12);
+    let level = clamp(0.5 * log2(squared), 0.0, coarsest); // filter: the atlas's level whose texels match the map's
     let span = 1.0 / f32(input.frame.w);
     let cell = vec2<f32>(input.frame.yz) * span;
     let inset = 0.5 * exp2(ceil(level)) / size;

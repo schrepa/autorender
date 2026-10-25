@@ -1,13 +1,14 @@
-//! How the camera flows through a shader module: which values depend on
-//! where the camera stands or how it looks, and which decisions they reach.
-//! Each function is followed once, callees before callers, into a summary
-//! of what its result, the variables its pointers reach and the module's
-//! private variables depend on in terms of its arguments' parts, and of the
-//! decisions its arguments feed; a call applies its callee's summary to what
-//! it passes. A local or variable holds every value stored into it, in any
-//! order, so a function is followed until nothing it holds grows. Stages
-//! are followed apart: what a vertex stage writes reaches no fragment stage,
-//! but positions named `relative`, which are relative to the eye.
+//! How what a flow watches ([`Watch`]) runs through a shader module: which
+//! values depend on where the camera stands or how it looks, or on a size
+//! on screen, and which decisions they reach. Each function is followed
+//! once, callees before callers, into a summary of what its result, the
+//! variables its pointers reach and the module's private variables depend
+//! on in terms of its arguments' parts, and of the decisions its arguments
+//! feed; a call applies its callee's summary to what it passes. A local or
+//! variable holds every value stored into it, in any order, so a function
+//! is followed until nothing it holds grows. Stages are followed apart:
+//! what a vertex stage writes reaches no fragment stage, but positions
+//! named `relative`, which are relative to the eye.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -31,7 +32,27 @@ const DEPTH: usize = 8;
 const ROUNDS: usize = 256;
 const PASSES: usize = 16;
 
-/// What a value read from the camera is.
+/// The detail eye's measures (`scene.wgsl`'s): what each gives depends on
+/// where the camera stands no more, and is a distance or a size on screen
+/// seen from the detail eye.
+const SIZES: [&str; 3] = ["detail_distance", "detail_across", "detail_span"];
+
+/// What a flow follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::gpu) enum Watch {
+    /// Where the camera stands and how it looks: its eye, the detail eye
+    /// and a pixel's angle read outside the measures, a camera matrix's eye
+    /// or axes, and positions relative to the eye.
+    Camera,
+    /// Sizes on screen: what the detail eye's measures ([`SIZES`]) give, and
+    /// a pixel's derivatives. A direction (`normalize`'s) holds none, and
+    /// what a texture gives is its texels as filtering averages them,
+    /// wherever a size moves the read; `saturate` decides, as the ramp a
+    /// fade takes.
+    Sizes,
+}
+
+/// What a value read from the camera, or a size on screen, is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Read {
     /// The camera's eye, `camera.position.xyz`.
@@ -44,6 +65,10 @@ pub(super) enum Read {
     ViewAxis,
     /// A position relative to the eye: a value named `relative`.
     Relative,
+    /// What one of the detail eye's measures ([`SIZES`]) gives.
+    Measure,
+    /// A pixel's derivatives: `dpdx`, `dpdy` or `fwidth`.
+    Derivative,
 }
 
 /// A decision a value reaches.
@@ -58,25 +83,27 @@ pub(super) enum Decision {
     BreakIf,
     Switch,
     Number,
+    /// `saturate`, a decision where sizes on screen are watched.
+    Saturate,
 }
 
-/// Where a function reads the camera: what it reads, and the earliest place
-/// it does.
+/// Where a function reads what the flow watches: what it reads, and the
+/// earliest place it does.
 pub(super) struct Source {
     pub read: Read,
     pub function: String,
     pub span: Span,
 }
 
-/// A decision a function makes by the camera.
+/// A decision a function makes by what the flow watches.
 pub(super) struct Sink {
     pub decision: Decision,
     pub function: String,
     pub span: Span,
 }
 
-/// A call a dependence on the camera passed through: the caller, and where
-/// it calls.
+/// A call a dependence on what the flow watches passed through: the
+/// caller, and where it calls.
 #[derive(Clone, Debug)]
 pub(super) struct Call {
     pub function: String,
@@ -439,8 +466,9 @@ struct Summary {
 }
 
 impl Summary {
-    /// A function trusted to depend on the camera only as it should, the
-    /// measures and the optics: what it gives depends on nothing.
+    /// A function trusted to depend on what the flow watches only as it
+    /// should (the camera's measures and optics, the filters of sizes on
+    /// screen): what it gives depends on nothing.
     fn trusted(arguments: usize) -> Summary {
         Summary {
             parts: Vec::new(),
@@ -454,8 +482,8 @@ impl Summary {
 
 /// A function being followed: what its arguments, expressions, locals and
 /// pointer arguments' targets hold so far, which expressions are constant
-/// and which lie on lines marked optics, what its calls returned, and what
-/// it returns, stores in private variables and feeds into decisions.
+/// and which lie on marked lines, what its calls returned, and what it
+/// returns, stores in private variables and feeds into decisions.
 struct Frame<'f> {
     of: Of,
     name: String,
@@ -494,12 +522,13 @@ impl Frame<'_> {
     }
 }
 
-/// A shader module followed: where its functions read the camera, the
-/// decisions those reads reach (by sink and source, with the calls the
-/// dependence came in through, innermost first), how many decisions its
-/// functions make, and those whose flow never settled.
+/// A shader module followed: where its functions read what the flow
+/// watches, the decisions those reads reach (by sink and source, with the
+/// calls the dependence came in through, innermost first), how many
+/// decisions its functions make, and those whose flow never settled.
 pub(super) struct Flow<'a> {
     module: &'a Module,
+    watch: Watch,
     trusted: &'a dyn Fn(&str) -> bool,
     marked: &'a dyn Fn(Span) -> bool,
     camera: Option<(Handle<GlobalVariable>, Vec<Member>)>,
@@ -514,21 +543,28 @@ pub(super) struct Flow<'a> {
     pub unsettled: Vec<String>,
 }
 
-/// Follows every function and entry point of `module`, which `info`
-/// describes. Functions `trusted` names are not followed and give values
-/// depending on nothing; so do expressions on spans `marked` calls optics,
-/// and decisions there are not counted.
+/// Follows what `watch` names through every function and entry point of
+/// `module`, which `info` describes. Functions `trusted` names are not
+/// followed and give values depending on nothing, nor are the detail eye's
+/// measures ([`SIZES`]), whose calls give sizes on screen where sizes are
+/// watched; expressions on spans `marked` (the lines the check's mark
+/// explains) depend on nothing too, and decisions there are not counted.
 pub(super) fn follow<'a>(
     module: &'a Module,
     info: &'a ModuleInfo,
+    watch: Watch,
     trusted: &'a dyn Fn(&str) -> bool,
     marked: &'a dyn Fn(Span) -> bool,
 ) -> Flow<'a> {
     let mut flow = Flow {
         module,
+        watch,
         trusted,
         marked,
-        camera: camera(module),
+        camera: match watch {
+            Watch::Camera => camera(module),
+            Watch::Sizes => None,
+        },
         summaries: vec![None; module.functions.len()],
         globals: BTreeMap::new(),
         source_ids: BTreeMap::new(),
@@ -545,7 +581,7 @@ pub(super) fn follow<'a>(
         let before = flow.globals.clone();
         for (handle, function) in module.functions.iter() {
             let name = function.name.clone().unwrap_or_default();
-            let summary = if (flow.trusted)(&name) {
+            let summary = if SIZES.contains(&name.as_str()) || (flow.trusted)(&name) {
                 Summary::trusted(function.arguments.len())
             } else {
                 let of = Of::Function(handle.index());
@@ -599,8 +635,9 @@ impl Flow<'_> {
 
     /// Follows `function` until what it holds settles, then gathers the
     /// decisions it makes, into its summary. Entry points read their inputs
-    /// named `relative` as eye-relative and the rest as depending on
-    /// nothing; other functions read their arguments' parts.
+    /// named `relative` as eye-relative where the camera is watched, and the
+    /// rest as depending on nothing; other functions read their arguments'
+    /// parts.
     fn function(
         &mut self,
         of: Of,
@@ -649,7 +686,9 @@ impl Flow<'_> {
         let mut pointees = Vec::new();
         for (index, argument) in function.arguments.iter().enumerate() {
             let value = if entry {
-                let taint = if argument.name.as_deref() == Some(RELATIVE) {
+                let taint = if self.watch == Watch::Camera
+                    && argument.name.as_deref() == Some(RELATIVE)
+                {
                     self.source(Read::Relative, of, &name, argument_span(function, index))
                 } else {
                     Taint::new()

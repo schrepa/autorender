@@ -32,7 +32,7 @@ fn fs_debug_terrain(input: TerrainOutput) -> DebugTargets {
     let tile = vec2<i32>(floor(input.cell / 256.0));
     let within = vec2<u32>(clamp(floor(fract(input.cell / 256.0) * 16.0), vec2<f32>(0.0),
         vec2<f32>(15.0)));
-    let width = fwidth(input.cell) * 1.5;
+    let width = fwidth(input.cell) * 1.5; // filter: none, the view's edge lines a pixel and a half wide
     let tile_edge = abs(fract(input.cell / 256.0 + 0.5) - 0.5) * 256.0;
     let patch_edge = abs(fract(input.cell / 16.0 + 0.5) - 0.5) * 16.0;
     let record = DEBUG_KIND_TERRAIN | (level << DEBUG_LEVEL_SHIFT)

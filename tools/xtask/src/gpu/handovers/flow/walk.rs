@@ -9,7 +9,7 @@ use naga::{
 
 use super::{
     Call, Decision, Flow, Frame, Origin, Place, Root, Sink, Slot, Step, Summary, Taint, Value,
-    bounds_loop, clean,
+    Watch, bounds_loop, clean,
 };
 
 impl Flow<'_> {
@@ -205,13 +205,18 @@ impl Flow<'_> {
     }
 
     /// The decisions the frame's expressions make: `select` conditions,
-    /// `smoothstep` and `step`, `mix`'s weight, and comparisons turned into
-    /// numbers.
+    /// `smoothstep` and `step`, `mix`'s weight, comparisons turned into
+    /// numbers, and `saturate` where sizes on screen are watched.
     pub(super) fn expression_decisions(&mut self, frame: &mut Frame<'_>) {
         let function = frame.function;
         for (handle, expression) in function.expressions.iter() {
             let (decision, operands): (Decision, Vec<Handle<Expression>>) = match *expression {
                 Expression::Select { condition, .. } => (Decision::Select, vec![condition]),
+                Expression::Math {
+                    fun: MathFunction::Saturate,
+                    arg,
+                    ..
+                } if self.watch == Watch::Sizes => (Decision::Saturate, vec![arg]),
                 Expression::Math {
                     fun: MathFunction::SmoothStep,
                     arg,
@@ -266,7 +271,7 @@ impl Flow<'_> {
 
     /// Decision `decision` of the frame, at `span` and known by `key`,
     /// reading what `taint` says: counted, and fed by what it depends on
-    /// unless its line is marked optics.
+    /// unless its line is marked.
     fn decide(
         &mut self,
         frame: &mut Frame<'_>,
