@@ -5,9 +5,9 @@
 //! cascade of boulders steeper again and falls steepest, each form's
 //! quantities blending into the next's across a fifth of the slope either
 //! side of where they meet. Its bankfull flood sizes its channel as
-//! channels widen and deepen downstream (Leopold and Maddock 1953), the
-//! ratio of its width to its depth held within the band its form keeps.
-//! The flood's depth and the slope set its grains, the median as large as
+//! channels widen and deepen downstream (Leopold and Maddock 1953), no
+//! wider for its depth than banks that hold keep channels (Rosgen 1994).
+//! The flood's mean depth and slope set its grains, the median as large as
 //! the flood moves no more than its form's share past the stress that
 //! starts grains moving, a stress rising with slope (Lamb, Dietrich and
 //! Venditti 2008), and its power. Steps of the clasts floods leave stand in
@@ -24,7 +24,7 @@
 
 use std::f32::consts::{PI, TAU};
 
-use engine_math::{clamp, cos, max};
+use engine_math::{clamp, cos, max, min};
 use glam::Vec2;
 use serde::Serialize;
 
@@ -54,19 +54,18 @@ const BLEND: f32 = 0.2;
 /// How channels full to their banks widen and deepen downstream with the
 /// discharge Q they carry (cubic meters a second; downstream hydraulic
 /// geometry, Leopold and Maddock 1953): 2.0 Q^0.54 meters across at their
-/// banks, and 0.26 Q^0.34 meters deep at their middle.
+/// banks, and 0.26 Q^0.34 meters deep on the mean, their section's area
+/// over its width, as hydraulic geometry measures depth.
 const WIDTH_LAW: [f32; 2] = [2.0, 0.54];
 const DEPTH_LAW: [f32; 2] = [0.26, 0.34];
-/// The ratios of a channel's width to its depth each form keeps it within,
-/// Pool to Falls: wide and shallow over pools and riffles, narrow and deep
-/// down steps and cascades; falls keep a cascade's.
-const WIDTH_DEPTH: [[f32; 2]; 5] = [
-    [15.0, 33.0],
-    [12.0, 24.0],
-    [9.0, 19.0],
-    [6.0, 14.0],
-    [6.0, 14.0],
-];
+/// The most times its mean depth a channel stands wide where its banks
+/// hold: soil bound by roots in meadows, and boulders and rock down steep
+/// mountain reaches, keep channels under 12 (Rosgen 1994's E and A
+/// streams).
+const WIDTH_DEPTH: f32 = 12.0;
+/// A channel's mean depth against its depth at its middle: two thirds, as
+/// its section is a parabola.
+const MEAN_DEPTH: f32 = 2.0 / 3.0;
 /// The critical Shields stress of grains on a bed falling a meter a meter,
 /// gentler beds' the less as the fourth root of their slope (Lamb, Dietrich
 /// and Venditti 2008), and grains' submerged specific gravity (quartz's).
@@ -89,9 +88,9 @@ const WATER_DENSITY: f32 = 1000.0;
 const POOLS_APART: f32 = 6.0;
 const POOL_DEPTH: f32 = 0.2;
 /// The size of the clasts steps form from against their bankfull flood's
-/// depth, Pool to Falls: none on gentle beds, which form no steps, half as
-/// large as the flood is deep on steps and pools and as large on cascades;
-/// falls keep a cascade's.
+/// mean depth, Pool to Falls: none on gentle beds, which form no steps,
+/// half as large as the flood is deep on steps and pools and as large on
+/// cascades; falls keep a cascade's.
 const STEP_CLASTS: [f32; 5] = [0.0, 0.0, 0.5, 1.0, 1.0];
 /// A step's height against the clasts it forms from.
 const STEP_HEIGHT: f32 = 0.8;
@@ -250,39 +249,30 @@ impl Shares {
     }
 }
 
-/// The meters across its banks a channel stands where it carries `flood`
-/// full to them (cubic meters a second), as channels widen downstream
-/// ([`WIDTH_LAW`]).
-pub(crate) fn bankfull_width(flood: f32) -> f32 {
-    WIDTH_LAW[0] * libm::powf(flood, WIDTH_LAW[1])
-}
-
-/// The width and the depth at its middle (meters) of a channel carrying
-/// `flood` full to its banks in a reach of `shares`: as channels widen and
-/// deepen downstream ([`WIDTH_LAW`], [`DEPTH_LAW`]), reshaped at the same
-/// section to the ratio of width to depth nearest theirs within the band its
-/// form keeps ([`WIDTH_DEPTH`]).
-pub(crate) fn bankfull(flood: f32, shares: &Shares) -> (f32, f32) {
-    let width = bankfull_width(flood);
+/// The width across its banks and the depth at its middle (meters) of a
+/// channel carrying `flood` full to its banks (cubic meters a second): as
+/// channels widen and deepen downstream ([`WIDTH_LAW`], [`DEPTH_LAW`]),
+/// narrowed at the same section to [`WIDTH_DEPTH`] times its mean depth
+/// where the laws stand it wider, its middle half as deep again as its
+/// mean ([`MEAN_DEPTH`]).
+pub(crate) fn bankfull(flood: f32) -> (f32, f32) {
+    let width = WIDTH_LAW[0] * libm::powf(flood, WIDTH_LAW[1]);
     let depth = DEPTH_LAW[0] * libm::powf(flood, DEPTH_LAW[1]);
-    let ratio = clamp(
-        width / depth,
-        shares.blend(WIDTH_DEPTH.map(|band| band[0])),
-        shares.blend(WIDTH_DEPTH.map(|band| band[1])),
-    );
+    let ratio = min(width / depth, WIDTH_DEPTH);
     let section = width * depth;
-    ((section * ratio).sqrt(), (section / ratio).sqrt())
+    ((section * ratio).sqrt(), (section / ratio).sqrt() / MEAN_DEPTH)
 }
 
 /// The median grain and the grain 84% of grains are finer than (meters) of
-/// a bed under a bankfull flood `depth` meters deep falling `slope`, in a
-/// reach of `shares`: the flood's Shields stress on the median grain (its
-/// depth times its slope over the grain's submerged specific gravity and
-/// size) stands its form's [`EXCESS`] over the critical stress, which rises
-/// with slope ([`CRITICAL_SHIELDS`]).
+/// a bed under a bankfull flood `depth` meters deep at its channel's middle
+/// falling `slope`, in a reach of `shares`: the flood's Shields stress on
+/// the median grain (its mean depth, [`MEAN_DEPTH`] of its middle's, times
+/// its slope over the grain's submerged specific gravity and size) stands
+/// its form's [`EXCESS`] over the critical stress, which rises with slope
+/// ([`CRITICAL_SHIELDS`]).
 pub(crate) fn grains(depth: f32, slope: f32, shares: &Shares) -> (f32, f32) {
     let critical = CRITICAL_SHIELDS * libm::powf(slope, 0.25);
-    let median = depth * slope / (SUBMERGED * critical * shares.blend(EXCESS));
+    let median = MEAN_DEPTH * depth * slope / (SUBMERGED * critical * shares.blend(EXCESS));
     (median, D84_MEDIAN * median)
 }
 
@@ -377,6 +367,13 @@ struct Row {
     number: u32,
 }
 
+/// The size of the clasts steps form from (meters) at a river's point
+/// `index` in the channel `bankfull` sizes: [`STEP_CLASTS`] of its flood's
+/// mean depth, as its reach's shares blend them.
+fn clasts(bankfull: &Bankfull, index: usize) -> f32 {
+    MEAN_DEPTH * bankfull.depths[index] * bankfull.shares[index].blend(STEP_CLASTS)
+}
+
 /// The steps of a river whose points stand `along` meters along its line
 /// from the first, in the channel `bankfull` sizes, the river `key` names,
 /// where the terrain's finest samples lie `finest` meters apart. Steps
@@ -416,7 +413,7 @@ fn steps(along: &[f32], bankfull: &Bankfull, (key, finest): (u32, f32)) -> Steps
         .collect();
     let spacing: Vec<f32> = (0..count)
         .map(|index| {
-            let height = STEP_HEIGHT * bankfull.depths[index] * shares[index].blend(STEP_CLASTS);
+            let height = STEP_HEIGHT * clasts(bankfull, index);
             clamp(
                 height / (steepness[index] * slopes[index]),
                 STEPS_APART[0] * widths[index],
@@ -510,9 +507,7 @@ fn knobs(
 ) -> Vec<Knob> {
     let (shares, widths) = (&bankfull.shares[..], &bankfull.widths[..]);
     let count = points.len();
-    let clasts: Vec<f32> = (0..count)
-        .map(|index| bankfull.depths[index] * shares[index].blend(STEP_CLASTS))
-        .collect();
+    let clasts: Vec<f32> = (0..count).map(|index| clasts(bankfull, index)).collect();
     let stepping: Vec<f32> = shares
         .iter()
         .map(|shares| shares.share(Reach::Steps))

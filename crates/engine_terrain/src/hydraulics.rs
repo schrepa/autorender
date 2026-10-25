@@ -1,7 +1,7 @@
 //! Rivers' channels and their water. Every point of a river carries the
 //! discharge its drained area yields in flood, which fills its channel to
 //! its banks: the flood sizes its channel and the slope of its reach shapes
-//! the channel and its bed (`bed.rs`). Its banks stand along the river's
+//! its bed (`bed.rs`). Its banks stand along the river's
 //! long profile: the ground along its line, never rising downstream, so it
 //! cuts through the rims of hollows shallower than a lake rather than
 //! pooling behind them, and falling at least the gentlest slope a channel
@@ -208,13 +208,13 @@ fn beside(points: &[Vec2], widths: &[f32], ground: &dyn Fn(Vec2) -> f32) -> Vec<
 
 /// `course`'s channel as its floods size it, each square meter it drains
 /// bringing `runoff` in flood, its points `along` meters along its line from
-/// the first. Its reach's slope, read along the profile of the ground
-/// beneath it over as many widths as channels carrying its floods stand
-/// wide, sets its reach's form, and with its floods, the channel carrying
-/// them full to its banks, at least [`bed::NARROWEST`] of the grid's
-/// samples wide; its banks then stand along the profile of that
-/// ground, held [`HELD_DEPTH`] of the channel's depth below the lower ground
-/// either side of it ([`beside`]), so its flood stays in it.
+/// the first: the channel carrying them full to its banks, at least
+/// [`bed::NARROWEST`] of the grid's samples wide. Its reach's slope, read
+/// along the profile of the ground beneath it over as many widths as that
+/// channel stands wide, sets its reach's form; its banks then stand along
+/// the profile of that ground, held [`HELD_DEPTH`] of the channel's depth
+/// below the lower ground either side of it ([`beside`]), so its flood stays
+/// in it.
 fn channel(course: &Course<'_>, flow: &Flow, along: &[f32]) -> Bankfull {
     let line = course.line;
     let floods: Vec<f32> = line.area.iter().map(|&area| area * flow.runoff).collect();
@@ -224,20 +224,15 @@ fn channel(course: &Course<'_>, flow: &Flow, along: &[f32]) -> Bankfull {
         .iter()
         .map(|&point| (course.ground)(point))
         .collect();
-    let spans: Vec<f32> = floods
-        .iter()
-        .map(|&flood| max(bed::bankfull_width(flood), narrowest))
-        .collect();
-    let slopes = slopes(&profile(&ground, along, course.start), along, &spans);
-    let shares: Vec<Shares> = slopes.iter().map(|&slope| Shares::of(slope)).collect();
     let (widths, depths): (Vec<f32>, Vec<f32>) = floods
         .iter()
-        .zip(&shares)
-        .map(|(&flood, shares)| {
-            let (width, depth) = bed::bankfull(flood, shares);
+        .map(|&flood| {
+            let (width, depth) = bed::bankfull(flood);
             (max(width, narrowest), depth)
         })
         .unzip();
+    let slopes = slopes(&profile(&ground, along, course.start), along, &widths);
+    let shares: Vec<Shares> = slopes.iter().map(|&slope| Shares::of(slope)).collect();
     let sides = beside(&line.points, &widths, course.ground);
     let held: Vec<f32> = (0..ground.len())
         .map(|index| min(ground[index], sides[index] - HELD_DEPTH * depths[index]))
