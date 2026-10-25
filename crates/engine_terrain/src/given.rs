@@ -257,10 +257,10 @@ struct Piece {
     onward: bool,
 }
 
-/// The centripetal Catmull-Rom spline through `p[1]` and `p[2]`, `t` (0 to
-/// 1) of the way from one to the other: Barry and Goldman's pyramid over
-/// knots apart by the square root of the distance between points, which
-/// never cusps or loops within a span.
+/// The centripetal Catmull-Rom spline through `p[1]` and `p[2]`, a share
+/// `t` (from 0 to 1) of the way from one to the other: Barry and Goldman's
+/// pyramid over knots apart by the square root of the distance between
+/// points, which never cusps or loops within a span.
 fn centripetal(p: [Vec2; 4], t: f32) -> Vec2 {
     let knot = |a: Vec2, b: Vec2| a.distance(b).sqrt();
     let t1 = knot(p[0], p[1]);
@@ -361,6 +361,11 @@ fn resample(river: &GivenRiver) -> Option<(Vec<Vec2>, Vec<f32>)> {
     Some((points, along))
 }
 
+/// A stretch of a given river ([`stretches`]): its points, how far along
+/// the river each lies, whether it starts at the river's first point and
+/// ends at its last, and whether its water runs on from its end.
+type Stretch = (Vec<Vec2>, Vec<f32>, [bool; 2], bool);
+
 /// The stretches of a river's `points` (each `along` its own) a bake's
 /// `grid` holds outside lakes, as a lake holds a course whose ground lies
 /// below its level: two points or more each, with whether each starts at
@@ -371,7 +376,7 @@ fn stretches(
     (points, along): (&[Vec2], &[f32]),
     grid: &Grid<'_>,
     water: &WaterGrid,
-) -> Vec<(Vec<Vec2>, Vec<f32>, [bool; 2], bool)> {
+) -> Vec<Stretch> {
     let extent = Vec2::new((grid.width - 1) as f32, (grid.rows() - 1) as f32) * grid.spacing;
     let held = |point: Vec2| point.cmpge(Vec2::ZERO).all() && point.cmple(extent).all();
     let kept = |point: Vec2| {
@@ -772,12 +777,15 @@ fn key(point: Vec2) -> [u32; 2] {
     [point.x.to_bits(), point.y.to_bits()]
 }
 
+/// The pieces starting at each point, by its bits ([`key`]).
+type Starting = HashMap<[u32; 2], Vec<usize>>;
+
 /// How `pieces` meet: those starting at each point, by its bits ([`key`]);
 /// for each piece, those ending where it starts; and every piece after
 /// those ending where it starts, the first ready first, pieces in a loop,
 /// which no data should hold, last in order.
-fn meetings(pieces: &[Piece]) -> (HashMap<[u32; 2], Vec<usize>>, Vec<Vec<usize>>, Vec<usize>) {
-    let mut starting: HashMap<[u32; 2], Vec<usize>> = HashMap::default();
+fn meetings(pieces: &[Piece]) -> (Starting, Vec<Vec<usize>>, Vec<usize>) {
+    let mut starting: Starting = HashMap::default();
     let mut ending: HashMap<[u32; 2], Vec<usize>> = HashMap::default();
     for (number, piece) in pieces.iter().enumerate() {
         starting
@@ -822,6 +830,9 @@ fn meetings(pieces: &[Piece]) -> (HashMap<[u32; 2], Vec<usize>>, Vec<Vec<usize>>
     (starting, fed, sequence)
 }
 
+/// A piece passing its water on, and the sample it passes it to.
+type Passed = (usize, u32);
+
 /// Where `pieces` whose water runs on from their end (where their rivers
 /// end or a lake takes them, and no piece starts) pass it on: down the
 /// courses of `drained` from the sample of `grid` nearest their end while
@@ -831,11 +842,11 @@ fn meetings(pieces: &[Piece]) -> (HashMap<[u32; 2], Vec<usize>>, Vec<Vec<usize>>
 /// the water on from (where no other river's channel or a lake takes it),
 /// ascending, each with the point the river bringing it ends at.
 fn onward(
-    (pieces, starting): (&[Piece], &HashMap<[u32; 2], Vec<usize>>),
+    (pieces, starting): (&[Piece], &Starting),
     (offsets, owner): (&[usize], &[u32]),
     grid: &Grid<'_>,
     drained: &Drained<'_>,
-) -> (Vec<(usize, u32)>, Vec<(u32, Vec2)>) {
+) -> (Vec<Passed>, Vec<(u32, Vec2)>) {
     let piece_of = |owned: u32| offsets.partition_point(|&offset| offset <= owned as usize) - 1;
     let mut passed = Vec::new();
     let mut continued: Vec<(u32, Vec2)> = Vec::new();
@@ -879,7 +890,7 @@ fn onward(
 fn gathered(
     drained: &Drained<'_>,
     (offsets, owner): (&[usize], &[u32]),
-    (fed, sequence, passed): (&[Vec<usize>], &[usize], &[(usize, u32)]),
+    (fed, sequence, passed): (&[Vec<usize>], &[usize], &[Passed]),
     cell: f32,
 ) -> (Vec<f32>, Vec<Vec<f32>>) {
     let pieces = fed.len();

@@ -83,9 +83,9 @@ impl ErrorPyramid {
         })
     }
 
-    /// The bits of the half floats of level `mip`, whose cells span 2^(mip +
-    /// 1) samples a side: [`ERROR_CELLS`] cells a side at the finest (0),
-    /// each coarser level half as many, row by row along z.
+    /// The bits of the half floats of level `mip`, whose cells span
+    /// 2^(mip + 1) samples a side: [`ERROR_CELLS`] cells a side at the
+    /// finest (0), each coarser level half as many, row by row along z.
     pub fn mip(&self, mip: u32) -> &[u16] {
         let side = |level: u32| (ERROR_CELLS >> level) as usize;
         let start: usize = (0..mip).map(|finer| side(finer) * side(finer)).sum();
