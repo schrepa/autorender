@@ -57,7 +57,7 @@ use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource, Targets};
 use crate::scene_shading::SceneShading;
 use crate::targets::{FrameSize, ScreenTarget};
-use crate::terrain::TerrainWaterDraws;
+use crate::terrain::{SurfaceDraw, TerrainWaterDraws};
 use crate::water_fall_map::FallMap;
 use crate::water_falls::{fall_layout, sheets};
 use crate::water_sim::WaterSim;
@@ -105,10 +105,9 @@ struct OceanDraw {
 }
 
 /// Tiles' water this frame: each terrain drawing it, its uniform's offset,
-/// its water's tree's and that tree's draw (the arguments' buffer and byte
-/// offset).
+/// its water's tree's and that tree's draw of its leaves.
 struct TileDraws {
-    terrains: Vec<(u32, u32, wgpu::Buffer, u64)>,
+    terrains: Vec<(u32, u32, SurfaceDraw)>,
 }
 
 /// Terrains' falls' sheets: their vertices and triangles' indices, and the
@@ -445,9 +444,7 @@ impl WaterPass {
             self.group = Some((generations, group));
         }
         self.tiles = Some(TileDraws {
-            terrains: (tiles.terrains.iter())
-                .map(|&(uniform, tree, draw, offset)| (uniform, tree, draw.clone(), offset))
-                .collect(),
+            terrains: tiles.terrains.clone(),
         });
     }
 
@@ -831,9 +828,9 @@ impl WaterPass {
             pass.set_bind_group(2, &behind.group, &[]);
             // Each terrain's water's leaves, through its uniform and its
             // water's tree's, seen by the camera's view, the first.
-            for (uniform, tree, args, offset) in &tiles.terrains {
+            for (uniform, tree, leaves) in &tiles.terrains {
                 pass.set_bind_group(1, group, &[0, *uniform, *tree]);
-                pass.draw_indirect(args, *offset);
+                leaves.record(pass);
                 draws += 1;
             }
         }

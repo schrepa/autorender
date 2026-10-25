@@ -82,9 +82,9 @@ impl Texels {
 /// the subdivisions and their trees' uniforms, the water blocks' arrays and
 /// water's directory, with generations advancing when any of them is
 /// another texture or buffer; each frame terrain whose water subdivides,
-/// its uniform's offset, its water's tree's and that tree's draw (its
-/// arguments' buffer and byte offset); the pixels the drawn ground (x) and
-/// water's mesh (y) may stray from their surfaces seen from the detail eye;
+/// its uniform's offset, its water's tree's and that tree's draw of its
+/// leaves; the pixels the drawn ground (x) and water's mesh (y) may stray
+/// from their surfaces seen from the detail eye;
 /// the blocks resident and dropped this frame for want of layers; and the
 /// leaves the water's subdivisions drew and the splits their room refused,
 /// as last read back.
@@ -99,7 +99,7 @@ pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) info: &'a wgpu::TextureView,
     pub(crate) water_directory: &'a wgpu::Buffer,
     pub(crate) generation: [u64; 7],
-    pub(crate) terrains: Vec<(u32, u32, &'a wgpu::Buffer, u64)>,
+    pub(crate) terrains: Vec<(u32, u32, SurfaceDraw)>,
     pub(crate) targets: [f32; 2],
     pub(crate) blocks: [u32; 2],
     pub(crate) subdivided: [u32; 2],
@@ -191,8 +191,8 @@ impl WaterBlocks {
         let terrains = (terrains.terrains.iter().enumerate())
             .filter_map(|(index, terrain)| {
                 let uniform = pass.tables.uniform_of(terrain.id)?;
-                let (tree, draw, offset) = pass.surface.water(index)?;
-                Some((uniform, tree, draw, offset))
+                let (tree, leaves) = pass.surface.water(index)?;
+                Some((uniform, tree, leaves))
             })
             .collect();
         Some(TerrainWaterDraws {

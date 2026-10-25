@@ -2,10 +2,11 @@
 // `terrain_vertex.wgsl`: the leaves each terrain's subdivision lists this
 // frame (`meshes/terrain_subdivision.wgsl`), triangles of longest edge
 // bisection over the terrain's square, each drawn as a meshlet bisecting it
-// evenly further; the ground's true height, which the leaves draw within
-// about a pixel and everything standing on the ground reads; and how far a
-// leaf's meshlet strays from the ground or the water's surface, read from
-// the error pyramids of the resident tiles under it.
+// evenly further, indexed over the lattice of its pieces' corners; the
+// ground's true height, which the leaves draw within about a pixel and
+// everything standing on the ground reads; and how far a leaf's meshlet
+// strays from the ground or the water's surface, read from the error
+// pyramids of the resident tiles under it.
 
 // Each terrain's levels, finest first, from `terrain.directory.x`: four
 // words each (where its tiles' entries start, its tiles along x and z, and
@@ -29,10 +30,14 @@ struct SurfaceTriangle {
 @group(1) @binding(36) var<storage, read> terrain_surface_leaves: array<SurfaceTriangle>;
 
 // The halvings of a leaf's sides its meshlet cuts it by, each two
-// bisections, and the vertices it draws: three for each of its four to that
-// power pieces, a non-indexed list.
+// bisections; the points of its lattice, where its pieces' corners stand
+// (`surface_vertex`); and the indices its draw takes, three for each of its
+// four to that power pieces, each naming the point its corner stands at
+// (`terrain/surface.rs`'s `meshlet_indices`, which number the points as
+// `surface_vertex` does).
 const SURFACE_MESHLET_LEVEL: u32 = 2u;
-const SURFACE_MESHLET_VERTICES: u32 = 48u;
+const SURFACE_MESHLET_VERTICES: u32 = 15u;
+const SURFACE_MESHLET_INDICES: u32 = 48u;
 
 // Leaf `leaf`, the instance index of the surface's indirect draws, of this
 // frame's subdivision of the terrain whose uniform is bound.
@@ -53,19 +58,62 @@ fn surface_half(triangle: SurfaceTriangle, half: u32) -> SurfaceTriangle {
     return SurfaceTriangle(triangle.b, triangle.c, middle);
 }
 
-// The terrain-local x and z of vertex `vertex` of a leaf's meshlet: corner
-// `vertex % 3` of piece `vertex / 3`, the piece its bits pick, the first
-// from the leaf's first bisection on. Every side of the leaf is cut into the
-// same even parts whatever its neighbor's depth, so meshlets of leaves
-// sharing a side share its points.
-fn surface_vertex(triangle: SurfaceTriangle, vertex: u32) -> vec2<f32> {
-    let piece = vertex / 3u;
-    var part = triangle;
-    for (var bit = 2u * SURFACE_MESHLET_LEVEL; bit > 0u; bit--) {
-        part = surface_half(part, (piece >> (bit - 1u)) & 1u);
+// The point `steps` of the 2^SURFACE_MESHLET_LEVEL parts of a leaf's side
+// from its end `tail` toward its end `head`, halving the side toward it as
+// the meshlet's bisections halve it: the same to the bit counted from either
+// end, so leaves sharing the side meet on its points whatever their depths.
+fn surface_along(tail: vec2<f32>, head: vec2<f32>, steps: u32) -> vec2<f32> {
+    var low = tail;
+    var high = head;
+    for (var bit = SURFACE_MESHLET_LEVEL; bit > 0u; bit--) {
+        let middle = (low + high) * 0.5;
+        if ((steps >> (bit - 1u)) & 1u) == 0u {
+            high = middle;
+        } else {
+            low = middle;
+        }
     }
-    let corner = vertex % 3u;
-    return select(select(part.c, part.b, corner == 1u), part.a, corner == 0u);
+    return select(low, head, steps == (1u << SURFACE_MESHLET_LEVEL));
+}
+
+// The terrain-local x and z of lattice vertex `vertex` of a leaf's meshlet:
+// the point `i` of its legs' 2^SURFACE_MESHLET_LEVEL parts from its right
+// angle toward its longest edge's first end and `j` toward its last. The
+// lattice's points are numbered in rows of `i + j` from the right angle out,
+// each a point longer than the one before, and by `j` along each, as the
+// meshlet's indices name its pieces' corners (`terrain/surface.rs`'s
+// `meshlet_indices`); the longest edge's are the last. Every side of the
+// leaf is cut into the same even parts whatever its neighbor's depth, each
+// of its points halved out of that side alone (`surface_along`), so
+// meshlets of leaves sharing a side share its points; a point inside stands
+// where the leaf's corners weigh it.
+fn surface_vertex(triangle: SurfaceTriangle, vertex: u32) -> vec2<f32> {
+    let parts = 1u << SURFACE_MESHLET_LEVEL;
+    // Its row and the row's first point, from the longest edge's in.
+    var row = parts;
+    var first = SURFACE_MESHLET_VERTICES - parts - 1u;
+    while vertex < first {
+        first -= row;
+        row--;
+    }
+    let j = vertex - first;
+    let i = row - j;
+    // The side it lies on, the longest edge from its first end or a leg
+    // from the right angle; or inside, where the corners weigh it.
+    var tail = triangle.c;
+    var head = triangle.b;
+    var steps = j;
+    if row == parts {
+        tail = triangle.a;
+    } else if j == 0u {
+        head = triangle.a;
+        steps = i;
+    } else if i != 0u {
+        let share = vec2<f32>(f32(i), f32(j)) / f32(parts);
+        return triangle.c + (triangle.a - triangle.c) * share.x
+            + (triangle.b - triangle.c) * share.y;
+    }
+    return surface_along(tail, head, steps);
 }
 
 // The height above the terrain's origin of its ground at terrain-local

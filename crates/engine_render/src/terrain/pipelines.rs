@@ -466,7 +466,8 @@ fn pipeline_layout(
 /// A pipeline drawing a subdivision's leaves, cutting holes or not,
 /// through `vertex` and `fragment`, which shades a scene of the features
 /// given (pipelines shading nothing take none); leaves read no vertex
-/// buffers, only their instance and vertex indices.
+/// buffers, only their instance and the lattice vertex their meshlet's
+/// indices name (`surface::SurfaceDraw`).
 fn geometry(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,

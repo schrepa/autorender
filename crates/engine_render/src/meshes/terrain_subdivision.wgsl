@@ -65,15 +65,22 @@ struct TerrainSubdivision {
 @group(2) @binding(29) var<storage, read_write> subdivision_nodes: array<u32>;
 // The leaves the frame draws (`terrain_surface_leaves`).
 @group(2) @binding(30) var<storage, read_write> subdivision_leaves: array<SurfaceTriangle>;
-// Every terrain's SUBDIVISION_ARGS words: its dispatches' arguments, its
-// leaves as the frame found them and its draw's arguments, as begin writes
-// them, then the leaves its splits reserved and the splits its room refused.
+// Every tree's SUBDIVISION_ARGS words: its dispatches' arguments, its
+// leaves as the frame found them and its draw's indexed arguments, as begin
+// writes them, then the leaves its splits reserved and the splits its room
+// refused.
 @group(2) @binding(31) var<storage, read_write> subdivision_args: array<atomic<u32>>;
 
-// Lanes of the passes over leaves, and the words each terrain takes of
-// `subdivision_args`.
+// Lanes of the passes over leaves; the words each tree takes of
+// `subdivision_args`, and where among them lie its leaves as the frame found
+// them, its draw's arguments, the leaves its splits reserved and the splits
+// its room refused.
 const SUBDIVISION_GROUP: u32 = 64u;
 const SUBDIVISION_ARGS: u32 = 16u;
+const SUBDIVISION_LEAVES: u32 = 3u;
+const SUBDIVISION_DRAW: u32 = 4u;
+const SUBDIVISION_RESERVED: u32 = 9u;
+const SUBDIVISION_REFUSED: u32 = 10u;
 // The deepest levels the tree keeps no counts of: their nodes span at most
 // four of the bitfield's words, which count them.
 const SUBDIVISION_COUNTED: u32 = 8u;
@@ -401,10 +408,11 @@ fn subdivision_chain(node: u32, apply: bool) -> u32 {
     return count;
 }
 
-// The frame's indirect arguments of the terrain, from the leaves its tree
-// holds as the frame found it: the decisions' and changes' dispatches, a
-// lane a leaf; its draws, a meshlet a leaf (`terrain::TerrainPass::surface_draw`);
-// and its room's counters cleared.
+// The frame's indirect arguments of the tree, from the leaves it holds as
+// the frame found it: the decisions' and changes' dispatches, a lane a leaf;
+// its draw, a meshlet an instance, each its SURFACE_MESHLET_INDICES indices
+// from the first into its lattice (`terrain::SurfaceDraw`); and its room's
+// counters cleared.
 @compute @workgroup_size(1)
 fn subdivide_begin() {
     let args = subdivision.frame.y * SUBDIVISION_ARGS;
@@ -412,13 +420,17 @@ fn subdivide_begin() {
     atomicStore(&subdivision_args[args], (leaves + SUBDIVISION_GROUP - 1u) / SUBDIVISION_GROUP);
     atomicStore(&subdivision_args[args + 1u], 1u);
     atomicStore(&subdivision_args[args + 2u], 1u);
-    atomicStore(&subdivision_args[args + 3u], leaves);
-    atomicStore(&subdivision_args[args + 4u], SURFACE_MESHLET_VERTICES);
-    atomicStore(&subdivision_args[args + 5u], leaves);
-    atomicStore(&subdivision_args[args + 6u], 0u);
-    atomicStore(&subdivision_args[args + 7u], 0u);
-    atomicStore(&subdivision_args[args + 8u], 0u);
-    atomicStore(&subdivision_args[args + 9u], 0u);
+    atomicStore(&subdivision_args[args + SUBDIVISION_LEAVES], leaves);
+    // Its indices, its instances, its first index, the base its indices
+    // count from and its first instance.
+    let draw = args + SUBDIVISION_DRAW;
+    atomicStore(&subdivision_args[draw], SURFACE_MESHLET_INDICES);
+    atomicStore(&subdivision_args[draw + 1u], leaves);
+    atomicStore(&subdivision_args[draw + 2u], 0u);
+    atomicStore(&subdivision_args[draw + 3u], 0u);
+    atomicStore(&subdivision_args[draw + 4u], 0u);
+    atomicStore(&subdivision_args[args + SUBDIVISION_RESERVED], 0u);
+    atomicStore(&subdivision_args[args + SUBDIVISION_REFUSED], 0u);
 }
 
 // Each leaf: listed for the frame's draws, all its corners on one point
@@ -428,7 +440,7 @@ fn subdivide_begin() {
 @compute @workgroup_size(SUBDIVISION_GROUP)
 fn subdivide_decide(@builtin(global_invocation_id) id: vec3<u32>) {
     let args = subdivision.frame.y * SUBDIVISION_ARGS;
-    if id.x >= atomicLoad(&subdivision_args[args + 3u]) {
+    if id.x >= atomicLoad(&subdivision_args[args + SUBDIVISION_LEAVES]) {
         return;
     }
     let node = subdivision_leaf(id.x);
@@ -459,7 +471,7 @@ fn subdivide_decide(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(SUBDIVISION_GROUP)
 fn subdivide_apply(@builtin(global_invocation_id) id: vec3<u32>) {
     let args = subdivision.frame.y * SUBDIVISION_ARGS;
-    let leaves = atomicLoad(&subdivision_args[args + 3u]);
+    let leaves = atomicLoad(&subdivision_args[args + SUBDIVISION_LEAVES]);
     if id.x >= leaves {
         return;
     }
@@ -470,8 +482,8 @@ fn subdivide_apply(@builtin(global_invocation_id) id: vec3<u32>) {
         let adds = subdivision_chain(node, false);
         let room = subdivision.tree.w - min(leaves, subdivision.tree.w);
         if adds > 0u {
-            if atomicAdd(&subdivision_args[args + 8u], adds) + adds > room {
-                atomicAdd(&subdivision_args[args + 9u], 1u);
+            if atomicAdd(&subdivision_args[args + SUBDIVISION_RESERVED], adds) + adds > room {
+                atomicAdd(&subdivision_args[args + SUBDIVISION_REFUSED], 1u);
             } else {
                 subdivision_chain(node, true);
             }
