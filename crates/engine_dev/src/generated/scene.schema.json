@@ -567,7 +567,7 @@
       "type": "object",
       "properties": {
         "discharge": {
-          "description": "Cubic meters a second each square kilometer drained brings the\nchannels full to their banks: every channel carries this times the\narea draining through it, which sets how wide and deep its channel\nstands, as channels full to their banks widen and deepen\ndownstream, shaped by the slope of its reach.",
+          "description": "Cubic meters a second each square kilometer drained brings the\nchannels full to their banks: every channel carries this times the\narea draining through it, which sets how wide and deep its channel\nstands, as channels full to their banks widen and deepen\ndownstream.",
           "type": "number",
           "format": "float",
           "default": 1.0,

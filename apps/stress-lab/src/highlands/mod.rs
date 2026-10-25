@@ -420,7 +420,7 @@ pub(crate) fn populate(
         // begin where they span two meters, and each runs as wide and deep
         // as its floods must to carry what it drains: an alpine 3.2 cubic
         // meters a second a square kilometer, which makes the largest river
-        // some twenty meters across.
+        // some sixteen meters across and two deep.
         Layer::Hydrology(HydrologyStage {
             layer: HydrologyLayer {
                 level: 0,
