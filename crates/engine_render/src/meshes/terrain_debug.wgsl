@@ -5,8 +5,9 @@
 // apart), whether it lies on a level-0 tile's edge or a patch's (sixteen
 // samples) and, above DEBUG_PATCH_SHIFT, the patch it lies in within that
 // tile (x in the low four bits, z in the next four); its object word the
-// share of the sky it sees and its detail's shares (full, colored, canopy),
-// a byte each; its detail word its materials' shares, a byte each; its
+// share of the sky it sees and its detail's shares (showing its maps'
+// detail, of their slopes averaged into roughness, canopy), a byte each;
+// its detail word its materials' shares, a byte each; its
 // normal the terrain's smooth one. The third target holds its tile (x and
 // z, signed 16 bits each) and its materials (a byte each,
 // DEBUG_NO_MATERIAL for none).
@@ -39,7 +40,7 @@ fn fs_debug_terrain(input: TerrainOutput) -> DebugTargets {
         | select(0u, DEBUG_TILE_EDGE, any(tile_edge < width * 2.0))
         | select(0u, DEBUG_PATCH_EDGE, any(patch_edge < width))
         | ((within.x | (within.y << 4u)) << DEBUG_PATCH_SHIFT);
-    let made = pack4x8unorm(vec4<f32>(sky, ground.full, ground.colored, ground.canopy));
+    let made = pack4x8unorm(vec4<f32>(sky, ground.detailed, ground.averaged, ground.canopy));
     var targets = debug_targets(record, made, pack4x8unorm(shares.weights), point);
     let ids = min(shares.ids, vec4<u32>(DEBUG_NO_MATERIAL));
     let tiles = bitcast<vec2<u32>>(tile) & vec2<u32>(0xffffu);

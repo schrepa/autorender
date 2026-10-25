@@ -138,7 +138,7 @@ fn cover_point(blade: CoverBlade, along: f32, across: f32, time: f32) -> CoverPo
     point.world = spine + side * (0.5 * across * width);
     // The face's normal, turned across the width so the blade reads round.
     let face = normalize(cross(side, tangent));
-    point.normal = normalize(face + side * (0.45 * across));
+    point.normal = normalize(face + side * (COVER_ROUND * across));
     return point;
 }
 
@@ -148,7 +148,7 @@ fn cover_color(blade: CoverBlade, along: f32) -> vec3<f32> {
     let tip = unpack4x8unorm(blade.tip_color).rgb;
     let linear_root = root * root;
     let linear_tip = tip * tip;
-    return mix(linear_root, linear_tip, smoothstep(0.0, 0.7, along));
+    return mix(linear_root, linear_tip, smoothstep(0.0, COVER_TIP_ALONG, along));
 }
 
 fn cover_output(instance: u32, vertex: u32, time: f32) -> CoverOutput {
@@ -199,8 +199,8 @@ fn vs_cover_temporal(@builtin(instance_index) instance: u32,
 // lights as the side facing the sun does, the far side seen
 // through the blade a little dimmer, and their normal leans most of the way
 // up, so they light much as the ground they stand on. The ground's canopy
-// shows their average where they retire (`terrain_variety.wgsl`'s
-// `cover_seen`).
+// shows these same terms averaged where they retire (`meshes/terrain.wgsl`'s
+// `terrain_canopy_look`, `terrain_variety.wgsl`'s `cover_seen`).
 fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     var face = normalize(input.normal);
     if !front {
@@ -208,9 +208,9 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     }
     let through = dot(face, lighting.sun.xyz) < 0.0;
     let lit = select(face, -face, through);
-    var normal = normalize(mix(lit, vec3<f32>(0.0, 1.0, 0.0), 0.6));
+    var normal = normalize(mix(lit, vec3<f32>(0.0, 1.0, 0.0), COVER_UPRIGHT));
     // With foliage's ground blend, bases take the ground's normal, so
-    // they light as the ground's canopy around them does.
+    // they light as the ground they rise from does.
     if lighting.foliage.w > 0.0 && input.ground != 0u {
         let tilt = vec2<f32>(f32((input.ground >> 16u) & 0xffu), f32(input.ground >> 24u))
             / 255.0 * 2.0 - 1.0;

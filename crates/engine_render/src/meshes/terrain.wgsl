@@ -32,8 +32,9 @@ override TERRAIN_HOLES: bool = false;
 // and roughness; its tiling in meters, height contrast, projection and its
 // maps' layer plus one (0 without maps); its normal scale, occlusion
 // strength, metalness and mean occlusion; and its maps' mean color and
-// roughness, its factors applied, which stand in for them where they
-// repeat too small on screen to show.
+// roughness, its factors applied, which stand in for them where a whole
+// repeat spans less than a pixel, as their mipmaps' last level does there
+// (`terrain_mapped`).
 struct TerrainPaletteEntry {
     color: vec4<f32>,
     params: vec4<f32>,
@@ -41,9 +42,10 @@ struct TerrainPaletteEntry {
     far: vec4<f32>,
     // The meters its heights span where the ground's relief shows (none
     // where it displaces the ground), the meters tracks sink it at most, the
-    // variance of its normal maps' slopes at their scale, which its
-    // roughness takes over where they fade, and the meters its heights
-    // displace the ground (`terrain_displacement`).
+    // mean square slope its normal maps' mean holds, all their slopes
+    // averaged (`spread_slopes`), which roughens it where their means stand
+    // in, and the meters its heights displace the ground
+    // (`terrain_displacement`).
     relief: vec4<f32>,
     // Its cover's canopy: its blades' tip color (linear), and their
     // leaves' area per square meter of ground (0 without cover).
@@ -60,8 +62,8 @@ struct TerrainPaletteEntry {
     placed: vec4<f32>,
     placed_size: vec4<f32>,
     placed_thinning: vec4<f32>,
-    // Its height map's mean and deviation (x, y), which height blending
-    // shows on average where its maps fade.
+    // Its height map's mean (x), which height blending takes where its maps'
+    // means stand in.
     heights: vec4<f32>,
 }
 // As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
@@ -108,20 +110,14 @@ fn terrain_macro_texel(local: vec2<f32>, footprint: f32) -> vec4<f32> {
     return textureSampleLevel(terrain_macro, terrain_material_sampler, uv, layer - 1u, lod);
 }
 
-// The tint the terrain's detail and macro colors give `ground` at `world`,
-// filtered over `footprint` meters (a pixel's, or a page's texel's): plain
-// colors vary at every scale, maps carry their own detail and vary
-// broadly, and the macro colors tint it as they do the blades growing on
-// it, the same wherever the eye stands. Pages bake it in; pixels computing
-// their ground apply it.
+// The tint the terrain's own detail and macro colors give `ground` at
+// `world`, filtered over `footprint` meters (a pixel's, or a page's
+// texel's): its detail (`ground_detail`) and the macro colors' tint, as both
+// tint the blades growing on it, the same wherever the eye stands. Pages
+// bake it in; pixels computing their ground apply it.
 fn terrain_tint(world: vec3<f32>, ground: TerrainGround, footprint: f32) -> vec3<f32> {
-    let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
-    let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
-    let fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, footprint);
-    let plain = (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
-    let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
     let colors = terrain_macro_texel(world.xz - terrain.origin.xz, footprint);
-    return mix(plain, mapped, ground.mapped) * macro_tint(colors, ground.vegetated);
+    return ground_detail(world.xz, ground.mapped, footprint) * macro_tint(colors, ground.vegetated);
 }
 
 struct TerrainOutput {
@@ -230,34 +226,6 @@ fn vs_terrain_temporal(@builtin(instance_index) leaf: u32,
     return temporal;
 }
 
-// Value noise of the material, 0 to 1.
-fn terrain_value(p: vec2<f32>) -> f32 {
-    let cell = floor(p);
-    let f = p - cell;
-    let u = f * f * (3.0 - 2.0 * f);
-    // The four corners' hashes: the next cell's products are the cell's
-    // plus each multiplier (wrapping integers), one product per axis.
-    let q = vec2<u32>(vec2<i32>(cell));
-    let x0 = q.x * 0x8da6b343u;
-    let x1 = x0 + 0x8da6b343u;
-    let y0 = q.y * 0xd8163841u;
-    let y1 = y0 + 0xd8163841u;
-    let a = terrain_hash_of(x0 ^ y0);
-    let b = terrain_hash_of(x1 ^ y0);
-    let c = terrain_hash_of(x0 ^ y1);
-    let d = terrain_hash_of(x1 ^ y1);
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-// The hash of a lattice cell, 0 to 1, from its coordinates' products, x
-// times 0x8da6b343 and y times 0xd8163841 (wrapping), mixed.
-fn terrain_hash_of(mixed: u32) -> f32 {
-    var h = mixed;
-    h = (h ^ (h >> 16u)) * 0x7feb352du;
-    h = (h ^ (h >> 15u)) * 0x846ca68bu;
-    return f32((h ^ (h >> 16u)) >> 8u) * (1.0 / 16777216.0);
-}
-
 // Two values of the hash `terrain_hash_of` mixes from `mixed`, each 0 to 1:
 // its high and low halves.
 fn terrain_hash2(mixed: u32) -> vec2<f32> {
@@ -281,17 +249,6 @@ fn terrain_value2(p: vec2<f32>) -> vec2<f32> {
     let y1 = y0 + 0xd8163841u;
     return mix(mix(terrain_hash2(x0 ^ y0), terrain_hash2(x1 ^ y0), u.x),
         mix(terrain_hash2(x0 ^ y1), terrain_hash2(x1 ^ y1), u.x), u.y);
-}
-
-// Noise of feature size `size` meters at `p`, fading to its mean where a
-// pixel spans more than its features (`footprint` meters).
-fn terrain_detail(p: vec2<f32>, size: f32, footprint: f32) -> f32 {
-    let fade = saturate(2.0 - 2.0 * footprint / size);
-    // Faded out entirely, it is its mean.
-    if fade == 0.0 {
-        return 0.5;
-    }
-    return 0.5 + (terrain_value(p / size) - 0.5) * fade;
 }
 
 // How much of the next coarser level's normals (x) and surface materials
@@ -736,8 +693,10 @@ fn terrain_wet_ground(roughness: f32, wet: f32) -> vec2<f32> {
 
 // What a terrain fragment's ground shows: its linear albedo, roughness,
 // occlusion and metalness, its normal, and the share of it that has maps;
-// for its macro colors and detail, the shares of it growing
-// cover, showing as canopy, showing all its maps and showing their color.
+// for its macro colors and detail, the shares of it growing cover and
+// showing as canopy; and the shares showing its maps' detail, filtered over
+// the pixel, rather than their means, and of their normal maps' slopes that
+// filtering averages into its roughness.
 struct TerrainGround {
     albedo: vec3<f32>,
     roughness: f32,
@@ -747,8 +706,8 @@ struct TerrainGround {
     mapped: f32,
     vegetated: f32,
     canopy: f32,
-    full: f32,
-    colored: f32,
+    detailed: f32,
+    averaged: f32,
     // The cover's tip colors and leaves, each weighted by its material's
     // share, which the runtime virtual texture keeps.
     canopy_color: vec3<f32>,
@@ -863,14 +822,21 @@ fn terrain_map(map: texture_2d_array<f32>, layer: u32, mapping: TerrainMapping,
 
 // The normal of a material's normal map on axis `axis`'s plane in
 // `lattice` at `world` on the terrain's `normal`, deflections scaled by
-// `scale`: the plane's tangent-space normal (x along its first coordinate,
-// y up its image, z out), turned back from the lattice, added to the
-// terrain's normal in that plane (whiteout blending).
+// `scale`: the plane's tangent-space normal filtered over the pixel (x
+// along its first coordinate, y up its image, z out), turned back from the
+// lattice, added to the terrain's normal in that plane (whiteout
+// blending); and (w) the mean square slope the filtering averaged away,
+// which the filtered normal's shortening gives (`spread_slopes`), scaled
+// as its deflections are. The mipmaps hold their texels' mean normals
+// unnormalized, so the shortening holds every slope a pixel spans.
 fn terrain_plane_normal(mapping: TerrainMapping, world: vec3<f32>, world_dx: vec3<f32>,
         world_dy: vec3<f32>, axis: u32, lattice: u32, normal: vec3<f32>, scale: f32)
-        -> vec3<f32> {
-    let sampled = terrain_plane_texel(terrain_material_data, 2u * mapping.layer, mapping, world,
+        -> vec4<f32> {
+    let filtered = terrain_plane_texel(terrain_material_data, 2u * mapping.layer, mapping, world,
         world_dx, world_dy, axis, lattice).xyz * 2.0 - 1.0;
+    let shortened = length(filtered);
+    let lost = spread_slopes(shortened) * scale * scale;
+    let sampled = filtered / max(shortened, 1.0e-4);
     var n = vec3<f32>(sampled.xy * scale, sampled.z);
     if lattice == 1u {
         // Slopes in the second lattice, in the plane's: its turn, or its
@@ -884,22 +850,25 @@ fn terrain_plane_normal(mapping: TerrainMapping, world: vec3<f32>, world_dx: vec
     }
     if axis == 0u {
         // Along +z, up +y, out along x.
-        return stable_normalize(vec3<f32>(abs(n.z) * normal.x, n.y + normal.y, n.x + normal.z));
+        return vec4<f32>(stable_normalize(vec3<f32>(abs(n.z) * normal.x, n.y + normal.y,
+            n.x + normal.z)), lost);
     }
     if axis == 2u {
         // Along +x, up +y, out along z.
-        return stable_normalize(vec3<f32>(n.x + normal.x, n.y + normal.y, abs(n.z) * normal.z));
+        return vec4<f32>(stable_normalize(vec3<f32>(n.x + normal.x, n.y + normal.y,
+            abs(n.z) * normal.z)), lost);
     }
     // Along +x, up -z, out along y.
-    return stable_normalize(vec3<f32>(n.x + normal.x, abs(n.z) * normal.y, normal.z - n.y));
+    return vec4<f32>(stable_normalize(vec3<f32>(n.x + normal.x, abs(n.z) * normal.y,
+        normal.z - n.y)), lost);
 }
 
 // The normal of a material's normal maps in `lattice` at `world` on the
-// terrain's `normal`, deflections scaled by `scale`, mixed over its
-// planes.
+// terrain's `normal`, deflections scaled by `scale`, and the mean square
+// slope their filtering averaged away (w), mixed over its planes.
 fn terrain_mapped_normal(mapping: TerrainMapping, world: vec3<f32>, world_dx: vec3<f32>,
-        world_dy: vec3<f32>, lattice: u32, normal: vec3<f32>, scale: f32) -> vec3<f32> {
-    var mixed = vec3<f32>(0.0);
+        world_dy: vec3<f32>, lattice: u32, normal: vec3<f32>, scale: f32) -> vec4<f32> {
+    var mixed = vec4<f32>(0.0);
     if mapping.planes.x > 0.0 {
         mixed += mapping.planes.x
             * terrain_plane_normal(mapping, world, world_dx, world_dy, 0u, lattice, normal, scale);
@@ -917,40 +886,28 @@ fn terrain_mapped_normal(mapping: TerrainMapping, world: vec3<f32>, world_dx: ve
 
 // How much of a material repeating every `tiling` meters shows its second
 // lattice at `world`: in patches about three repeats across, varying up
-// cliffs as well as across the ground; where a pixel's `footprint` spans a
-// patch, its maps are too fine to repeat visibly and the first shows alone.
-fn terrain_second_lattice(world: vec3<f32>, tiling: f32, footprint: f32) -> f32 {
-    let size = tiling * 3.1;
-    let fade = saturate(2.0 - 2.0 * footprint / size);
-    if fade == 0.0 {
-        return 0.0;
-    }
-    let p = (world.xz + world.y * vec2<f32>(0.71, -0.43)) / size;
-    return smoothstep(0.4, 0.6, terrain_value(p + vec2<f32>(7.3, -2.9))) * fade;
+// cliffs as well as across the ground. Wherever its maps show
+// (`terrain_mapped`) a patch spans more than three of the footprints their
+// filtering resolves.
+fn terrain_second_lattice(world: vec3<f32>, tiling: f32) -> f32 {
+    let p = (world.xz + world.y * vec2<f32>(0.71, -0.43)) / (tiling * 3.1);
+    return smoothstep(0.4, 0.6, terrain_value(p + vec2<f32>(7.3, -2.9)));
 }
 
-// How much of its maps a material repeating every `tiling` meters shows
-// where a pixel spans `footprint` meters: all of them while a repeat spans
-// 16 pixels or more, none from 8 down, where the mipmaps' last levels would
-// show little but their mean, which stands in.
-fn terrain_map_detail(footprint: f32, tiling: f32) -> f32 {
-    return 1.0 - smoothstep(0.0625, 0.125, footprint / tiling);
-}
-
-// How much of its normal maps' deflection a material shows: all while a
-// repeat spans 64 pixels or more, none from 32 down, where their mipmaps
-// have smoothed out.
-fn terrain_relief(footprint: f32, tiling: f32) -> f32 {
-    return 1.0 - smoothstep(0.015625, 0.03125, footprint / tiling);
+// Whether material `entry` shows its maps at `site`: while it has maps and
+// a whole repeat spans more than the footprint their filtering resolves
+// (`site.texel`). Past that their mipmaps' last level is all the filtering
+// reads, their means the palette holds, which stand in without reading
+// them; nearer every map reads through its mipmaps and anisotropic
+// filtering by the pixel's own derivatives, at every distance alike.
+fn terrain_mapped(entry: TerrainPaletteEntry, site: TerrainSite) -> bool {
+    return entry.params.w > 0.0 && site.texel < entry.params.x;
 }
 
 // How far under the highest raised weight materials still show where their
 // heights blend them, sharing the ground by how far they reach into the
-// band; and the deviation of that band's ramp between two materials,
-// sqrt(2 (3 - 4 ln 2)) of its width, which blurs which of them leads as a
-// spread of their heights does.
+// band.
 const TERRAIN_HEIGHT_BAND: f32 = 0.08;
-const TERRAIN_BAND_SPREAD: f32 = 0.6744 * TERRAIN_HEIGHT_BAND;
 
 // The share of `second` (0 to 1) after the two lattices' heights `first`
 // and `raised` meet as materials do, as sharply as `contrast` asks.
@@ -965,11 +922,12 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 // Where a fragment is and how it is seen, as the ground's passes read it:
 // its world position and how that changes per pixel on the terrain's smooth
 // surface, which its maps filter by; a pixel's footprint there seen from
-// the detail eye, which its detail hands over by (meters, its long side,
-// along the view: `detail_span`), and the footprint the maps' anisotropic
-// filtering resolves (its short side, across the view, never under a
-// sixteenth of the long one); the terrain's normal and the way toward the
-// eye; the share of its cover's
+// the detail eye (meters, its long side, along the view: `detail_span`),
+// which noise computed where it shows averages over, and the footprint the
+// maps' anisotropic filtering resolves (its short side, across the view,
+// never under a sixteenth of the long one), against which a whole repeat of
+// a material's maps shows them or their means (`terrain_mapped`); the
+// terrain's normal and the way toward the eye; the share of its cover's
 // leaves blades no longer show there, and the meters a pixel spans across
 // the view there as level of detail measures objects (`terrain_across`),
 // by which placed objects retire. The virtual texture's bakes, whose pages
@@ -993,14 +951,13 @@ struct TerrainSite {
 // show its cover as canopy from the eye on; none without cover.
 fn terrain_thinned(world: vec3<f32>) -> f32 {
     let cover = terrain.cover;
-    if cover.z <= 0.0 {
+    if cover.y <= 0.0 {
         return 0.0;
     }
     if cover.x <= 0.0 {
         return 1.0;
     }
-    let away = detail_distance(world);
-    return 1.0 - cover_shown(away, cover_share(away, cover.x, cover.y), cover.x);
+    return 1.0 - cover_share(detail_distance(world), cover.x);
 }
 
 // The meters a pixel spans across the view at `world` as level of detail
@@ -1011,66 +968,98 @@ fn terrain_across(world: vec3<f32>) -> f32 {
     return detail_across(world);
 }
 
-// The normal blades standing on ground of normal `ground` light with, on
-// average (`meshes/cover.wgsl`): leaning most of the way up
-// from their sides toward the sun, which face it by two over pi on
-// average.
-fn terrain_blade_normal(ground: vec3<f32>) -> vec3<f32> {
-    let across = vec3<f32>(lighting.sun.x, 0.0, lighting.sun.z);
-    let side = across * (0.6366 / max(length(across), 1.0e-4));
-    return stable_normalize(mix(side, ground, 0.6));
-}
-
-// How many times its leaves' area a view at `site` crosses through a
-// cover whose leaves' area is `leaves` per square meter of ground, the
-// density's setting applied: G = 0.5 of it across its way, as leaves facing
-// every way show, over the sine of its angle to the ground.
-fn terrain_canopy_depth(leaves: f32, site: TerrainSite) -> f32 {
-    let sine = max(abs(dot(site.toward, site.geometric)), 0.03);
-    return 0.5 * leaves * terrain.cover.z / sine;
-}
-
-// How much of the ground at `site` a cover whose leaves' area is `leaves` per
-// square meter shows as its canopy: as much of the leaves as its blades no
-// longer show by their law (`terrain.cover`) hides of the ground along the
-// view, 1 - exp(-depth), all of it at grazing views.
+// How many times their leaves' area a view at `site` crosses through the
+// blades no longer shown there (`site.thinned`) of a cover whose leaves'
+// area is `leaves` per square meter of ground, the density's setting
+// applied: the share of it blades turn toward a view rising as this one
+// does (`cover_projection`), along its path through their layer, which
+// stands up from the ground and so crosses as many times its leaves as the
+// ground's normal is upright over the view's cosine to it; none without
+// them.
 fn terrain_canopy(leaves: f32, site: TerrainSite) -> f32 {
     if site.thinned <= 0.0 || leaves <= 0.0 {
         return 0.0;
     }
-    return site.thinned * (1.0 - exp(-terrain_canopy_depth(leaves, site)));
+    let facing = max(abs(dot(site.toward, site.geometric)), 0.03);
+    return site.thinned * leaves * terrain.cover.y * cover_projection(site.toward.y).x
+        * site.geometric.y / facing;
 }
 
-// The share of their color blades show seen from `site` on average: those
-// seen from their side away from the sun show COVER_FAR_SIDE of it, and of
-// blades facing every way, as many are as the angle between the view's way
-// and the sun's across the ground is of a half turn: none with the sun
-// behind the eye, all looking toward it, half seen from straight above.
-fn terrain_canopy_through(site: TerrainSite) -> f32 {
+// How the blades a view meets at `site` face the sun on average, `side`
+// of them met by their upright sides and the rest by their leaning faces
+// from above (`cover_projection`): the share seen from their side away
+// from the sun, which shows COVER_FAR_SIDE of their color (x), and how far
+// their lit faces turn toward the sun across the ground, the mean |cos| of
+// their azimuths to it (y). Faces met by their sides count by how squarely
+// they face the view, so with the angle psi between the view's way and the
+// sun's across the ground (1 - cos psi) / 2 of them are seen through, none
+// with the sun behind the eye and all looking toward it, and they turn
+// (sin psi + (pi / 2 - psi) cos psi) / 2 toward the sun; those met from
+// above are seen through half the time and turn 2 / pi toward it.
+fn terrain_canopy_through(site: TerrainSite, side: f32) -> vec2<f32> {
     let lengths = length(site.toward.xz) * length(lighting.sun.xz);
-    var through = 0.5;
+    var cosine = 0.0;
     if lengths > 1.0e-4 {
-        through = acos(clamp(dot(site.toward.xz, lighting.sun.xz) / lengths, -1.0, 1.0)) / PI;
+        cosine = clamp(dot(site.toward.xz, lighting.sun.xz) / lengths, -1.0, 1.0);
     }
-    return mix(1.0, COVER_FAR_SIDE, through);
+    let sine = sqrt(1.0 - cosine * cosine);
+    let sides = vec2<f32>(0.5 - 0.5 * cosine, 0.5 * (sine + (0.5 * PI - acos(cosine)) * cosine));
+    return mix(vec2<f32>(0.5, 2.0 / PI), sides, side);
 }
 
-// What the canopy of a cover's blades shows at `site`, their tips' color
-// `tip` and their leaves' area `leaves` per square meter, standing on
-// ground of color `root`, which their roots take: the colors and the light
-// of the blades a view meets there on average (`terrain_variety.wgsl`'s
-// `cover_seen`), their far sides dimmer (`terrain_canopy_through`).
+// The normal the blades a view meets at `site` light with on average, as
+// `meshes/cover.wgsl` turns each: its face on the sun's side, turned
+// `aligned` toward the sun across the ground (`terrain_canopy_through`)
+// over COVER_LIT_ACROSS of it, leaning COVER_UPRIGHT of the way up, and
+// their bases taking the ground's normal `grounded` of the way
+// (`cover_grounded`). It is the mean of normals spread about it, shorter
+// than a unit.
+fn terrain_blade_normal(site: TerrainSite, aligned: f32, grounded: f32) -> vec3<f32> {
+    let across = vec3<f32>(lighting.sun.x, 0.0, lighting.sun.z);
+    let toward = across * (COVER_LIT_ACROSS * aligned / max(length(across), 1.0e-4));
+    let lit = mix(toward, vec3<f32>(0.0, 1.0, 0.0), COVER_UPRIGHT)
+        / length(vec2<f32>(1.0 - COVER_UPRIGHT, COVER_UPRIGHT));
+    return mix(lit, site.geometric, grounded);
+}
+
+// What the canopy of a cover's blades shows at `site` where they retire,
+// their tips' color `tip` and their leaves' area `leaves` per square meter,
+// standing on ground of color `root`, which their roots take: the share of
+// the ground the blades no longer shown hide along the view, 1 - exp(-depth)
+// (`terrain_canopy`), and what those blades show there on average as
+// `meshes/cover.wgsl` shades them: the colors and the light a view meets
+// among them (`terrain_variety.wgsl`'s `cover_seen`), their far sides
+// dimmer (`terrain_canopy_through`), their roughness, and the mean of their
+// normals, whose length is the share of the sun's light along it their
+// faces keep, so their color takes it and their occlusion gives it back to
+// the sky's light, and whose spread about it roughens them
+// (`spread_slopes`).
 struct TerrainCanopyLook {
+    share: f32,
     color: vec3<f32>,
     occlusion: f32,
+    roughness: f32,
+    normal: vec3<f32>,
 }
 
 fn terrain_canopy_look(root: vec3<f32>, tip: vec3<f32>, leaves: f32, site: TerrainSite)
         -> TerrainCanopyLook {
-    let seen = cover_seen(terrain_canopy_depth(leaves, site));
     var look: TerrainCanopyLook;
-    look.color = mix(root, tip, seen.tip) * terrain_canopy_through(site);
-    look.occlusion = seen.occlusion;
+    let depth = terrain_canopy(leaves, site);
+    if depth <= 0.0 {
+        return look;
+    }
+    look.share = 1.0 - exp(-depth);
+    let seen = cover_seen(depth);
+    let through = terrain_canopy_through(site, cover_projection(site.toward.y).y);
+    let mean = terrain_blade_normal(site, through.y,
+        cover_grounded(seen, terrain.cover.z, lighting.foliage.w));
+    let kept = max(length(mean), 1.0e-4);
+    look.normal = mean / kept;
+    look.color = mix(root, tip, seen.tip) * mix(1.0, COVER_FAR_SIDE, through.x) * kept;
+    look.occlusion = min(seen.occlusion / kept, 1.0);
+    let alpha = COVER_ROUGHNESS * COVER_ROUGHNESS;
+    look.roughness = sqrt(sqrt(min(alpha * alpha + spread_slopes(kept), 1.0)));
     return look;
 }
 
@@ -1117,31 +1106,23 @@ fn terrain_placed_share(entry: TerrainPaletteEntry, site: TerrainSite) -> f32 {
     return covered * (1.0 - shown);
 }
 
-// One material of a fragment's blend after its first pass: its occlusion,
-// roughness, metalness and height texel, the share of its second lattice,
-// how much of all its maps shows and how much of its color map, the second
-// lattice's share by its pattern alone; its weight raised by its height
-// (its texel's where its maps show, its heights' mean where they fade) and
-// by its heights' mean, and how widely its heights spread that, each as
-// sharply as its height contrast asks; and its weight times that contrast.
+// One material of a fragment's blend after its first pass: whether it
+// shows its maps (`terrain_mapped`), its occlusion, roughness, metalness
+// and height texel filtered over the pixel, and the share of its second
+// lattice; its weight raised by its height (its texel's where it shows its
+// maps, its heights' mean where that stands in) as sharply as its height
+// contrast asks, and its weight times that contrast.
 struct TerrainSlot {
+    mapped: bool,
     texel: vec4<f32>,
     second: f32,
-    detail: f32,
-    colored: f32,
-    pattern: f32,
     raised: f32,
-    lead: f32,
-    spread: f32,
     contrast: f32,
 }
 
 // The first pass of material `material` at weight `weight`: its heights
-// where its maps show, its heights' mean and spread where they fade, and its
-// height contrast, so materials without maps blend by their weights alone.
-// All its maps show while a repeat spans enough pixels along the
-// footprint's long side; its color map alone farther out, as long as its
-// filtering keeps it.
+// where it shows its maps, their mean where that stands in, and its height
+// contrast, so materials without maps blend by their weights alone.
 fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
     var slot: TerrainSlot;
     slot.texel = vec4<f32>(1.0, 1.0, 1.0, 0.5);
@@ -1150,47 +1131,42 @@ fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
         return slot;
     }
     let entry = terrain_material(material);
-    var sharpness = 0.0;
-    if entry.params.w > 0.0 {
-        slot.detail = terrain_map_detail(site.footprint, entry.params.x);
-        slot.colored = terrain_map_detail(site.texel, entry.params.x);
-        sharpness = entry.params.y;
-    }
-    if slot.colored > 0.0 {
-        slot.pattern = terrain_second_lattice(site.world, entry.params.x, site.texel);
-        slot.second = slot.pattern;
-    }
-    let contrast = entry.params.y * slot.detail;
-    if slot.detail > 0.0 {
+    let sharpness = select(0.0, entry.params.y, entry.params.w > 0.0);
+    var height = entry.heights.x;
+    slot.mapped = terrain_mapped(entry, site);
+    if slot.mapped {
         let mapping = terrain_mapping(entry, site.geometric);
-        let second = slot.pattern;
+        let pattern = terrain_second_lattice(site.world, entry.params.x);
         var first = vec4<f32>(0.0);
         var other = vec4<f32>(0.0);
-        if second < 1.0 {
+        if pattern < 1.0 {
             first = terrain_map(terrain_material_data, 2u * mapping.layer + 1u, mapping,
                 site.world, site.world_dx, site.world_dy, 0u);
         }
-        if second > 0.0 {
+        if pattern > 0.0 {
             other = terrain_map(terrain_material_data, 2u * mapping.layer + 1u, mapping,
                 site.world, site.world_dx, site.world_dy, 1u);
         }
-        slot.second = second;
-        if second > 0.0 && second < 1.0 {
-            slot.second = terrain_lattice_share(second, first.a, other.a, contrast);
+        slot.second = pattern;
+        if pattern > 0.0 && pattern < 1.0 {
+            slot.second = terrain_lattice_share(pattern, first.a, other.a, sharpness);
         }
         slot.texel = mix(first, other, slot.second);
+        height = slot.texel.a;
     }
-    let heights = entry.heights;
-    slot.raised = weight + sharpness * mix(heights.x, slot.texel.a, slot.detail);
-    slot.lead = weight + sharpness * heights.x;
-    slot.spread = sharpness * heights.y;
+    slot.raised = weight + sharpness * height;
     slot.contrast = weight * sharpness;
     return slot;
 }
 
 // Adds material `material`'s share `weight` of the ground to `ground` and
-// its normal to `normal`, from its first pass `slot`: its maps' colors
-// and normals where they show, their means beyond, or its plain color.
+// its normal to `normal`, from its first pass `slot`: where it shows its
+// maps, their color, roughness, occlusion, metalness and normals filtered
+// over the pixel, the slopes its normal maps' filtering averages away
+// roughening it instead (`terrain_plane_normal`), so its highlights widen
+// as the relief it no longer resolves would widen them while its light and
+// shade read the filtered normal; their means where those stand in, the
+// slopes their mean averages away roughening it alike; or its plain color.
 fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<function, vec3<f32>>,
         material: u32, weight: f32, slot: TerrainSlot, site: TerrainSite) {
     if weight <= 0.0 {
@@ -1202,74 +1178,41 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     var occlusion = entry.maps.w;
     var metalness = entry.maps.z;
     var turned = site.geometric;
-    // Each lattice's color texels, kept for the full maps' pass below.
-    var first_albedo = vec3<f32>(0.0);
-    var second_albedo = vec3<f32>(0.0);
-    var have_first = false;
-    var have_second = false;
-    if slot.colored > slot.detail {
-        // Past its maps' full detail, its color map alone, the lattices
-        // shared by their pattern.
+    var lost = entry.relief.z;
+    if slot.mapped {
         let mapping = terrain_mapping(entry, site.geometric);
+        let scale = entry.maps.x;
         var albedo = vec3<f32>(0.0);
-        if slot.pattern < 1.0 {
-            first_albedo = terrain_map(terrain_albedo, mapping.layer, mapping, site.world,
-                site.world_dx, site.world_dy, 0u).rgb;
-            have_first = true;
-            albedo += (1.0 - slot.pattern) * first_albedo;
-        }
-        if slot.pattern > 0.0 {
-            second_albedo = terrain_map(terrain_albedo, mapping.layer, mapping, site.world,
-                site.world_dx, site.world_dy, 1u).rgb;
-            have_second = true;
-            albedo += slot.pattern * second_albedo;
-        }
-        color = mix(color, entry.color.rgb * albedo, slot.colored);
-    }
-    // Normal maps where their deflections still show, fading with the
-    // other maps.
-    let shown = terrain_relief(site.texel, entry.params.x) * slot.detail;
-    if slot.detail > 0.0 {
-        let mapping = terrain_mapping(entry, site.geometric);
-        let relief = entry.maps.x;
-        let deflected = shown > 0.0 && relief > 0.0;
-        var albedo = vec3<f32>(0.0);
-        var mapped = vec3<f32>(0.0);
+        var mapped = vec4<f32>(0.0);
         if slot.second < 1.0 {
-            var texel = first_albedo;
-            if !have_first {
-                texel = terrain_map(terrain_albedo, mapping.layer, mapping, site.world,
-                    site.world_dx, site.world_dy, 0u).rgb;
-            }
-            albedo += (1.0 - slot.second) * texel;
-            if deflected {
+            albedo += (1.0 - slot.second) * terrain_map(terrain_albedo, mapping.layer, mapping,
+                site.world, site.world_dx, site.world_dy, 0u).rgb;
+            if scale > 0.0 {
                 mapped += (1.0 - slot.second) * terrain_mapped_normal(mapping, site.world,
-                    site.world_dx, site.world_dy, 0u, site.geometric, relief);
+                    site.world_dx, site.world_dy, 0u, site.geometric, scale);
             }
         }
         if slot.second > 0.0 {
-            var texel = second_albedo;
-            if !have_second {
-                texel = terrain_map(terrain_albedo, mapping.layer, mapping, site.world,
-                    site.world_dx, site.world_dy, 1u).rgb;
-            }
-            albedo += slot.second * texel;
-            if deflected {
+            albedo += slot.second * terrain_map(terrain_albedo, mapping.layer, mapping,
+                site.world, site.world_dx, site.world_dy, 1u).rgb;
+            if scale > 0.0 {
                 mapped += slot.second * terrain_mapped_normal(mapping, site.world,
-                    site.world_dx, site.world_dy, 1u, site.geometric, relief);
+                    site.world_dx, site.world_dy, 1u, site.geometric, scale);
             }
         }
-        color = mix(color, entry.color.rgb * albedo, slot.detail);
-        roughness = mix(roughness, entry.color.w * slot.texel.g, slot.detail);
-        occlusion = mix(occlusion, 1.0 + entry.maps.y * (slot.texel.r - 1.0), slot.detail);
-        metalness *= mix(1.0, slot.texel.b, slot.detail);
-        if deflected {
-            turned = stable_normalize(mix(site.geometric, mapped, shown));
+        color = entry.color.rgb * albedo;
+        roughness = entry.color.w * slot.texel.g;
+        occlusion = 1.0 + entry.maps.y * (slot.texel.r - 1.0);
+        metalness *= slot.texel.b;
+        lost = mapped.w;
+        if scale > 0.0 {
+            turned = stable_normalize(mapped.xyz);
+        }
+        (*ground).detailed += weight;
+        if entry.relief.z > 0.0 {
+            (*ground).averaged += weight * saturate(lost / entry.relief.z);
         }
     }
-    // The slopes normal maps no longer show roughen the surface instead,
-    // as their variance widens its highlights.
-    let lost = entry.relief.z * (1.0 - shown);
     if lost > 0.0 {
         let alpha = roughness * roughness;
         roughness = sqrt(sqrt(min(alpha * alpha + lost, 1.0)));
@@ -1277,26 +1220,20 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     if entry.params.w > 0.0 {
         (*ground).mapped += weight;
     }
-    (*ground).full += weight * slot.detail;
-    (*ground).colored += weight * slot.colored;
     if entry.canopy.w > 0.0 {
         // Ground under cover shows as its canopy where blades retire: the
-        // colors a view meets among them on average, rough and shaded
-        // among them as they are, and lit as blades are, their sides
-        // toward the sun and the sun passing through them (their leaf
-        // share, `terrain_point_seen`).
-        let canopy = terrain_canopy(entry.canopy.w, site);
-        if canopy > 0.0 {
-            let look = terrain_canopy_look(color, entry.canopy.rgb, entry.canopy.w, site);
-            color = mix(color, look.color, canopy);
-            roughness = mix(roughness, COVER_ROUGHNESS, canopy);
-            // The sky they reflect too: a flat ground seen along it would
-            // mirror much more of it than blades facing the eye do.
-            occlusion = mix(occlusion, look.occlusion, canopy);
-            turned = mix(turned, terrain_blade_normal(site.geometric), canopy);
+        // blades a view meets there on average, as they are shaded, and the
+        // sun passing through them (their leaf share, `terrain_point_seen`).
+        let canopy = terrain_canopy_look(color, entry.canopy.rgb, entry.canopy.w, site);
+        if canopy.share > 0.0 {
+            color = mix(color, canopy.color, canopy.share);
+            roughness = mix(roughness, canopy.roughness, canopy.share);
+            occlusion = mix(occlusion, canopy.occlusion, canopy.share);
+            metalness *= 1.0 - canopy.share;
+            turned = mix(turned, canopy.normal, canopy.share);
         }
         (*ground).vegetated += weight;
-        (*ground).canopy += weight * canopy;
+        (*ground).canopy += weight * canopy.share;
         (*ground).canopy_color += weight * entry.canopy.rgb;
         (*ground).leaves += weight * entry.canopy.w;
     }
@@ -1326,41 +1263,11 @@ struct TerrainShares {
 }
 
 // The ground at `site` at `shading`'s levels: up to four materials, each
-// raised by its height map as sharply as its height contrast asks, so
-// stones and tufts stand through what they meet before it covers them,
-// and where its maps fade by the share that shows on average.
+// raised by its height map, filtered over the pixel, as sharply as its
+// height contrast asks, so stones and tufts stand through what they meet
+// before it covers them.
 fn terrain_ground(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainGround {
     return terrain_shared_ground(terrain_shares(site, shading), site);
-}
-
-// The standard normal distribution's share under `x`, as Page's (1977)
-// fit gives it, within 0.0002.
-fn terrain_normal_share(x: f32) -> f32 {
-    let t = clamp(x, -6.0, 6.0);
-    return 0.5 + 0.5 * tanh(0.7978846 * (t + 0.044715 * t * t * t));
-}
-
-// The shares height blending shows on average among materials of weights
-// `weights` whose heights raise them to `lead` on average, spread as widely
-// as `spread` (their height contrast times their heights' deviation): about
-// the chance each one's raised weight is the highest, its lead over each
-// other's blurred by both spreads and the band's, those chances' product,
-// normalized.
-fn terrain_mean_shares(weights: vec4<f32>, lead: vec4<f32>, spread: vec4<f32>) -> vec4<f32> {
-    let present = weights > vec4<f32>(0.0);
-    var chances = select(vec4<f32>(0.0), vec4<f32>(1.0), present);
-    for (var a = 0u; a < 4u; a++) {
-        for (var b = a + 1u; b < 4u; b++) {
-            if present[a] && present[b] {
-                let deviation = sqrt(spread[a] * spread[a] + spread[b] * spread[b]
-                    + TERRAIN_BAND_SPREAD * TERRAIN_BAND_SPREAD);
-                let ahead = terrain_normal_share((lead[a] - lead[b]) / deviation);
-                chances[a] *= ahead;
-                chances[b] *= 1.0 - ahead;
-            }
-        }
-    }
-    return chances / max(dot(chances, vec4<f32>(1.0)), 1.0e-6);
 }
 
 fn terrain_shares(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainShares {
@@ -1375,19 +1282,7 @@ fn terrain_shares(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainSha
     let contrast = vec4<f32>(first.contrast, second.contrast, third.contrast, fourth.contrast);
     let highest = max(max(raised.x, raised.y), max(raised.z, raised.w));
     let lifted = max(raised - vec4<f32>(highest - TERRAIN_HEIGHT_BAND), vec4<f32>(0.0));
-    var shares = lifted / max(dot(lifted, vec4<f32>(1.0)), 1.0e-6);
-    // Where maps fade, the shares height blending shows on average, so the
-    // mix holds still as detail hands over: all of them where no material
-    // shows its heights, none where all do; materials whose heights raise
-    // nothing count as shown.
-    let detail = vec4<f32>(first.detail, second.detail, third.detail, fourth.detail);
-    let known = select(vec4<f32>(1.0), detail, contrast > vec4<f32>(0.0));
-    let shown = dot(blend.weights, known) / max(dot(blend.weights, vec4<f32>(1.0)), 1.0e-6);
-    if shown < 1.0 && any(contrast > vec4<f32>(0.0)) {
-        let lead = vec4<f32>(first.lead, second.lead, third.lead, fourth.lead);
-        let spread = vec4<f32>(first.spread, second.spread, third.spread, fourth.spread);
-        shares = mix(terrain_mean_shares(blend.weights, lead, spread), shares, shown);
-    }
+    let shares = lifted / max(dot(lifted, vec4<f32>(1.0)), 1.0e-6);
     let weights = mix(blend.weights, shares,
         saturate(contrast.x + contrast.y + contrast.z + contrast.w));
     return TerrainShares(blend.ids, weights, first, second, third, fourth);
@@ -1424,14 +1319,14 @@ fn terrain_relief_layer(material: u32, weight: f32, site: TerrainSite) -> Terrai
         return layer;
     }
     let entry = terrain_material(material);
-    // Materials with maps, close enough to show them.
-    if entry.params.w <= 0.0 {
+    // Materials showing their maps; their means stand level.
+    if !terrain_mapped(entry, site) {
         return layer;
     }
     layer.mapping = terrain_mapping(entry, site.geometric);
     layer.dx = site.world_dx;
     layer.dy = site.world_dy;
-    layer.depth = entry.relief.x * weight * terrain_map_detail(site.footprint, entry.params.x);
+    layer.depth = entry.relief.x * weight;
     return layer;
 }
 
@@ -1883,8 +1778,8 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     let detail = material_detail();
     let smooth_dx = away * detail * (ray_dx - ray * (dot(geometric, ray_dx) / facing));
     let smooth_dy = away * detail * (ray_dy - ray * (dot(geometric, ray_dy) / facing));
-    // What a pixel spans there seen from the detail eye, which its detail
-    // hands over by: along the view, its long side, and across it.
+    // What a pixel spans there seen from the detail eye: along the view, its
+    // long side, and across it, which its maps' filtering resolves.
     let span = detail_span(world, geometric);
     var site: TerrainSite;
     site.world = world;

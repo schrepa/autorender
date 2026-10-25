@@ -6,10 +6,10 @@
 //! control values or the surface the GPU gives them from), its surface
 //! materials' palette entries and its macro colors' identity. Far pages
 //! read no material map:
-//! at their texels, eight meters and more, the maps of any material
-//! repeating within 64 meters show only their means, which the palette
-//! holds, so pages cooked on one family of compressed formats serve every
-//! other.
+//! their texels, eight meters and more, span every repeat of the terrain's
+//! materials' maps (`terrain_vt/far.rs`), where those show only their means,
+//! which the palette holds, so pages cooked on one family of compressed
+//! formats serve every other.
 //!
 //! Each tile's hashes are made once it stands settled after it arrived or
 //! changed, and the surface's once as it arrives; a terrain's hash is made

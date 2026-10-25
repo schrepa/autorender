@@ -290,13 +290,15 @@ fn debug_materials_color(materials: u32, shares: vec4<f32>) -> vec3<f32> {
     return color;
 }
 
-// How much detail terrain's ground shows, from its shares (full, colored,
-// canopy): green where all its maps show, yellow where their color alone
-// does, red where their means stand in, blue toward its cover's canopy.
+// How terrain's ground shows its materials' maps, from its shares (showing
+// their detail, of their slopes averaged, canopy): green where their detail
+// shows, filtered over the pixel, yellow as that filtering averages their
+// normal maps' slopes into roughness, red where a whole repeat spans less
+// than a pixel and their means stand in, blue toward its cover's canopy.
 fn debug_detail_color(made: vec4<f32>) -> vec3<f32> {
-    let color = vec3<f32>(0.1, 0.65, 0.15) * made.y
-        + vec3<f32>(0.85, 0.75, 0.1) * max(made.z - made.y, 0.0)
-        + vec3<f32>(0.75, 0.12, 0.1) * (1.0 - made.z);
+    let color = vec3<f32>(0.1, 0.65, 0.15) * max(made.y - made.z, 0.0)
+        + vec3<f32>(0.85, 0.75, 0.1) * made.z
+        + vec3<f32>(0.75, 0.12, 0.1) * (1.0 - made.y);
     return mix(color, vec3<f32>(0.15, 0.3, 0.9), made.w);
 }
 

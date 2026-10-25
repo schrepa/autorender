@@ -6,31 +6,28 @@
 // cell's expected blades at which it grows, plus a share of one. A
 // candidate grows where that falls under its material's density at its
 // point times the cell's area (both cover materials of a control value
-// share it by their blend). Density falls with distance as the radius's
-// fifth over the distance, so every ring of the radius's disc holds about
-// as many blades, which widen to cover as much ground; past the radius,
-// sparser as the square of the distance at the width the radius gave them,
-// so they narrow on screen as they recede; and blades narrower on screen
-// than the settings' pixels retire in their ranks' order, none standing
-// past the tiers' reach (`terrain_variety.wgsl`'s `cover_share`); without
-// tiers cover thins out over the radius's outer half. The ground shows the
-// leaves retired blades leave as its canopy, their average
+// share it by their blend), times the share of blades still wide enough on
+// screen there: blades keep their roots' width at every distance and
+// retire in their ranks' order as they narrow on screen past the settings'
+// pixels, all standing within half the meters at which they span them and
+// none from twice those (`terrain_variety.wgsl`'s `cover_share`). The
+// ground shows the leaves retired blades leave as its canopy, their average
 // (`meshes/terrain.wgsl`). A workgroup takes one cell of a tier's grid: the
-// radius's cells are the finest level's, and each tier beyond has cells twice
-// as wide as the last, trying only the first indices of the finest cells
-// within them that its density can reach, so wherever a blade grows it is
-// the same blade. Candidates near their threshold grow short, so blades
-// rise as the eye nears instead of popping in. Blades stand on the ground's
-// true surface, which the terrain draws within about a pixel
-// (`terrain_ground.wgsl`).
+// first tier's cells, where every blade stands, are the finest level's, and
+// each tier beyond has cells twice as wide as the last, trying only the
+// first indices of the finest cells within them that its density can
+// reach, so wherever a blade grows it is the same blade. Candidates near
+// their threshold grow short, so blades rise as the eye nears instead of
+// popping in. Blades stand on the ground's true surface, which the terrain
+// draws within about a pixel (`terrain_ground.wgsl`).
 // Survivors in the view append to the frame's blades; past capacity they
-// are only counted. Blades take the tint of the ground's macro colors, as
-// the ground does (`terrain_variety.wgsl`).
+// are only counted. Blades take the tint the ground's own detail and macro
+// colors give the ground, as the ground does (`terrain_variety.wgsl`).
 
 struct Grow {
     // The terrain's origin (world) and its level-0 sample spacing.
     origin: vec4<f32>,
-    // The detail eye (world) and the radius cover grows within.
+    // The detail eye (world) and the meters from it this tier reaches.
     eye: vec4<f32>,
     // The first cell of the grid (terrain-local, in cells), the cells along
     // its side, and the candidates each cell of the finest level holds.
@@ -43,10 +40,9 @@ struct Grow {
     // tier tries, the terrain's macro colors' layer plus one
     // (0 until they arrive), and the tallest blade any material grows.
     scale: vec4<f32>,
-    // This tier: the meters from the eye it starts at, the
-    // radius, the meters away blades past the radius span the settings'
-    // pixels (0: cover within the radius alone), and how many level-0
-    // samples wide its cells are.
+    // This tier: the meters from the eye it starts at, the meters away the
+    // blades span the settings' pixels (y), and how many level-0 samples
+    // wide its cells are (w).
     tier: vec4<f32>,
     // The view's frustum planes (world).
     planes: array<vec4<f32>, 6>,
@@ -376,11 +372,11 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     }
     let corner = vec2<f32>(cell) * spacing;
     let center = grow.origin.xz + corner + vec2<f32>(0.5 * spacing);
-    let radius = grow.eye.w;
+    let outer = grow.eye.w;
     let inner = grow.tier.x;
     let half_diagonal = 0.7072 * spacing;
     let across = distance(center, grow.eye.xz);
-    if across > radius + half_diagonal {
+    if across > outer + half_diagonal {
         return;
     }
     if lane == 0u {
@@ -402,17 +398,15 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     // seen from above a tier's blades stand well within its inner distance
     // across the ground: only cells whose farthest ground (sloping up to
     // twice as steep as level across them) stays nearer than the tier skip.
-    if nearest > radius || center_away + 3.0 * half_diagonal < inner {
+    if nearest > outer || center_away + 3.0 * half_diagonal < inner {
         return;
     }
     // The finest cells' candidates whose indices the cell's nearest point's
     // share could reach, of those the tier tries: each index stands for a
     // blade more of a finest cell's expected blades.
-    let radius_densest = grow.tier.y;
-    let span = grow.tier.z;
+    let span = grow.tier.y;
     let held = f32(grow.grid.w);
-    let tried = min(u32(grow.scale.y),
-        u32(ceil(held * cover_share(nearest, radius_densest, span))));
+    let tried = min(u32(grow.scale.y), u32(ceil(held * cover_share(nearest, span))));
     let finest = side * side;
     // Whether any candidate's blade can show, before any reads its ground:
     // the samples its ground stands on across the cell (`true_ground`'s, of
@@ -492,7 +486,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         let local = vec2<f32>(at) * grow.origin.w + offset;
         let world_xz = grow.origin.xz + local;
         // No nearer than across the ground, it can grow no denser.
-        if rank >= held * cover_share(distance(world_xz, grow.eye.xz), radius_densest, span) {
+        if rank >= held * cover_share(distance(world_xz, grow.eye.xz), span) {
             continue;
         }
         let ground = true_ground(local);
@@ -501,7 +495,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         }
         let root = vec3<f32>(world_xz.x, grow.origin.y + ground.height - 0.02, world_xz.y);
         let away = distance(root, grow.eye.xyz);
-        if away > radius || away < inner {
+        if away > outer || away < inner {
             continue;
         }
         // The control value's two materials share the candidates by
@@ -517,7 +511,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         let edge = smoothstep(0.0, 0.5, select(1.0 - share, share, second));
         let entry = min(grow.counts.z + material, PALETTE_ENTRIES - 1u);
         let spec = covers[entry];
-        let falloff = cover_share(away, radius_densest, span);
+        let falloff = cover_share(away, span);
         let keep = spec.shape.x * grow.scale.x * area * falloff;
         if rank >= keep {
             continue;
@@ -535,8 +529,12 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         if !in_view(root + vec3<f32>(0.0, 0.5 * height, 0.0), height) {
             continue;
         }
+        // Each blade's own shade about the tint the ground's own detail and
+        // macro colors give the ground at its root, so the blades a pixel
+        // holds average to what that ground shows.
+        let textured = select(0.0, 1.0, palette[entry].params.w > 0.0);
         let variation = (0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u)))
-            * macro_tint(colors_at(local), 1.0);
+            * ground_detail(world_xz, textured, 0.0) * macro_tint(colors_at(local), 1.0);
         var blade: CoverBlade;
         blade.root = root;
         blade.height = height;
@@ -546,9 +544,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         } else {
             blade.facing = bitcast<u32>(facing);
         }
-        // Wider where fewer stand within the radius, covering as much
-        // ground; past it as wide as there, narrowing on screen.
-        blade.width = spec.shape.w * cover_widening(away, radius_densest);
+        blade.width = spec.shape.w;
         blade.root_color = pack_color(palette[entry].far.rgb * variation, 0.0);
         blade.tip_color = pack_color(spec.color.rgb * variation, spec.color.w);
         // Kept blades fill the list from both ends: those whose height

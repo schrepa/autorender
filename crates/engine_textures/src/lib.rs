@@ -1,7 +1,8 @@
 //! The cook's textures: an RGBA8 image cooked into what devices sample.
 //! Its mip chain averages as its usage reads it (colors in linear light,
-//! normals renormalized, data channel by channel); its summary is its
-//! base level's ([`engine_assets::TextureSummary`]); every level is
+//! normals as vectors, as short as their spread leaves their mean, data
+//! channel by channel); its summary is its base level's
+//! ([`engine_assets::TextureSummary`]); every level is
 //! compressed for a device family, BC7 for desktops and ASTC 4 × 4 for
 //! phones and Apple's GPUs. A cooked texture travels as a record: a small
 //! header (format, size, levels, whether alpha masks emission, the

@@ -210,7 +210,7 @@ try {
   const total = made.materials.reduce((sum, share) => sum + share.share, 0);
   assert.ok(Math.abs(total - 1) < 0.05, `the materials' shares make the whole: ${JSON.stringify(made.materials)}`);
   assert.ok(made.sky >= 0 && made.sky <= 1, JSON.stringify(made));
-  assert.ok(made.detail.colored >= made.detail.full - 0.01, JSON.stringify(made.detail));
+  assert.ok(made.detail.detailed >= made.detail.averaged - 0.01, JSON.stringify(made.detail));
   assert.equal(ground.water, null, JSON.stringify(ground));
   // Off pixels, and pixels not terrain's, read no ground, nor water.
   const above = (await terrain.command("probe", { x: Math.floor(width / 2), y: 1 })).result;

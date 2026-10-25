@@ -9,14 +9,14 @@
 //! only when the materials with maps or their textures change; materials
 //! whose maps differ in size, levels or format, or carry no summary, show
 //! their colors instead and count as dropped. Each layer's summaries
-//! ([`engine_core::Texture::summary`]) stand in for its maps where they
-//! repeat too small on screen to show: the variance of its normal map's
-//! slopes roughens it there, and its height map's mean and deviation share
-//! the ground as height blending does on average. The runtime virtual texture
-//! (`terrain_vt.rs`) keeps its sheets in a renderable array of their own,
-//! three layers a sheet, as many as it asks for (up to the device's
-//! layers), which grows by copying itself; it has sheets only while the
-//! arrays hold materials.
+//! ([`engine_core::Texture::summary`]) stand in for its maps where a whole
+//! repeat spans less than a pixel, as their mipmaps' last level would: the
+//! slopes its normal map's mean normal averages away roughen it there, and
+//! its height map's mean raises it as height blending does. The runtime
+//! virtual texture (`terrain_vt.rs`) keeps its sheets in a renderable array
+//! of their own, three layers a sheet, as many as it asks for (up to the
+//! device's layers), which grows by copying itself; it has sheets only
+//! while the arrays hold materials.
 
 use engine_core::{RenderSurfaceMaps, RenderTerrains, Texture, TextureFormat, TextureHandle};
 
@@ -75,8 +75,8 @@ pub(crate) struct TerrainMaps {
 }
 
 /// A layer's mean linear base color, roughness and occlusion texels, the
-/// mean square of its normal map's slopes at scale 1, and its height map's
-/// mean and deviation.
+/// mean square slope at scale 1 its normal map's mean normal averages away,
+/// and its height map's mean.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Means {
     pub color: [f32; 3],
@@ -84,7 +84,6 @@ pub(crate) struct Means {
     pub occlusion: f32,
     pub slopes: f32,
     pub height: f32,
-    pub height_deviation: f32,
 }
 
 /// What every layer of the arrays shares: the size, levels and format of
@@ -429,10 +428,11 @@ fn sheet_bytes() -> u64 {
 }
 
 /// The means of `maps`' base color, decoded from sRGB, and of its
-/// metallic-roughness map's roughness and occlusion, 1 without them; of
-/// the squares of its normal map's slopes, 0 without one; and the mean and
-/// deviation of the height its metallic-roughness map's alpha holds, the
-/// default layer's middle height without one: each map's summary.
+/// metallic-roughness map's roughness and occlusion, 1 without them; the
+/// slopes its normal map's mean normal averages away (`averaged_slopes`),
+/// 0 without one; and the mean of the height its metallic-roughness map's
+/// alpha holds, the default layer's middle height without one: each map's
+/// summary.
 fn means(maps: &RenderSurfaceMaps) -> Means {
     let [base_color, normal, metallic_roughness] =
         textures(maps).map(|texture| texture.and_then(Texture::summary));
@@ -441,10 +441,21 @@ fn means(maps: &RenderSurfaceMaps) -> Means {
         color: base_color.map_or([1.0; 3], |summary| summary.color),
         roughness: metallic_roughness.map_or(1.0, |summary| summary.mean[1]),
         occlusion: metallic_roughness.map_or(1.0, |summary| summary.mean[0]),
-        slopes: normal.map_or(0.0, |summary| summary.slopes),
+        slopes: normal.map_or(0.0, |summary| averaged_slopes(summary.mean)),
         height: metallic_roughness.map_or(middle, |summary| summary.mean[3]),
-        height_deviation: metallic_roughness.map_or(0.0, |summary| summary.deviation[3]),
     }
+}
+
+/// The mean square slope, both axes summed, that a normal map whose
+/// channels' means as stored are `channels` averages away into its texels'
+/// mean normal: from that mean's shortening (`terrain_variety.wgsl`'s
+/// `spread_slopes`, Toksvig 2005), as its mipmaps' last level holds it,
+/// their texels' normals averaged unnormalized.
+fn averaged_slopes(channels: [f32; 4]) -> f32 {
+    let mean = [0, 1, 2].map(|channel| 2.0 * channels[channel] - 1.0);
+    let length = (mean[0] * mean[0] + mean[1] * mean[1] + mean[2] * mean[2]).sqrt();
+    let kept = engine_core::math::clamp(length, 1.0e-4, 1.0);
+    2.0 * (1.0 - kept) / kept
 }
 
 /// The textures `maps` names, as its layers hold them.

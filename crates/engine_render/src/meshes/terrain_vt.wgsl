@@ -209,18 +209,16 @@ fn terrain_vt_ground(texels: TerrainVtTexels, site: TerrainSite) -> TerrainGroun
     ground.normal = stable_normalize(frame[0] * turn.x + frame[1] * turn.y + site.geometric * up);
     ground.occlusion = turn_texel.z;
     ground.mapped = 1.0;
-    ground.full = 1.0;
-    ground.colored = 1.0;
+    ground.detailed = 1.0;
     ground.vegetated = canopy_texel.a;
     if ground.vegetated > 0.0 {
         let leaves = turn_texel.w * VT_LEAVES;
-        let canopy = ground.vegetated * terrain_canopy(leaves, site);
         let look = terrain_canopy_look(ground.albedo, canopy_texel.rgb, leaves, site);
+        let canopy = ground.vegetated * look.share;
         ground.albedo = mix(ground.albedo, look.color, canopy);
-        ground.roughness = mix(ground.roughness, COVER_ROUGHNESS, canopy);
+        ground.roughness = mix(ground.roughness, look.roughness, canopy);
         ground.occlusion = mix(ground.occlusion, look.occlusion, canopy);
-        ground.normal = stable_normalize(mix(ground.normal, terrain_blade_normal(site.geometric),
-            canopy));
+        ground.normal = stable_normalize(mix(ground.normal, look.normal, canopy));
         ground.canopy = canopy;
     }
     return ground;
@@ -238,8 +236,8 @@ fn terrain_vt_shown(exact: TerrainGround, page: TerrainGround, shown: f32) -> Te
     ground.mapped = mix(exact.mapped, page.mapped, shown);
     ground.vegetated = mix(exact.vegetated, page.vegetated, shown);
     ground.canopy = mix(exact.canopy, page.canopy, shown);
-    ground.full = mix(exact.full, page.full, shown);
-    ground.colored = mix(exact.colored, page.colored, shown);
+    ground.detailed = mix(exact.detailed, page.detailed, shown);
+    ground.averaged = mix(exact.averaged, page.averaged, shown);
     ground.canopy_color = mix(exact.canopy_color, page.canopy_color, shown);
     ground.leaves = mix(exact.leaves, page.leaves, shown);
     return ground;
@@ -320,8 +318,10 @@ fn terrain_vt_site(world: vec3<f32>, size: f32, geometric: vec3<f32>) -> Terrain
 // One texel of a page: the exact path's ground at its center, as seen
 // where a pixel's footprint spans the texel, at the shading levels that
 // footprint gives (`terrain_shading_level`), measured on the ground's slope
-// at the levels the texel's size gives on level ground, its materials
-// sharing it as their maps' detail there shows them; no eye enters it.
+// at the levels the texel's size gives on level ground, its materials'
+// maps filtered over the texel as a pixel's are over its footprint and the
+// slopes that averages away roughening it, so pages of every mip, near and
+// far, hold the ground by the one rule pixels show it by; no eye enters it.
 // Without the cover's canopy, which pixels lay over it as seen from them. A
 // far page's texel shades no finer than the level it reads
 // (`terrain_vt_shading`). A bake draws one sheet's pages.
