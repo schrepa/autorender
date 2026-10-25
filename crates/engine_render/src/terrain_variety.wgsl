@@ -139,14 +139,34 @@ fn placed_thinned(thin: vec4<f32>, away: f32) -> f32 {
     return keep;
 }
 
+// How many times wider than their roots ground cover's blades stand `away`
+// meters from the detail eye, for cover whose blades as wide as their roots
+// span the settings' pixels `thin` meters away: as wide as their roots
+// within that, and past it as wide as spans those pixels on screen, so they
+// never stand narrower; stochastic simplification of aggregate detail
+// (Cook, Halstead, Planck and Ryu 2007) keeps as small a share of them,
+// by their fixed ranks, so they cover as much ground (`cover_share`).
+fn cover_widening(away: f32, thin: f32) -> f32 {
+    return max(away / max(thin, 1.0e-6), 1.0);
+}
+
+// The share of ground cover's leaves its blades show `away` meters from the
+// detail eye, for cover whose blades' height spans the settings' pixels
+// `retire` meters away: those still tall enough on screen to stand
+// (`seen_share`), all of them within half `retire` and none from twice it,
+// by their size on screen alone. The ground shows the rest as its canopy,
+// their average (`meshes/terrain.wgsl`'s `terrain_thinned`).
+fn cover_shown(away: f32, retire: f32) -> f32 {
+    return seen_share(retire / max(away, 1.0e-3));
+}
+
 // Ground cover's density as a share of its densest, `away` meters from the
-// detail eye, for cover whose blades, as wide as their roots, span the
-// settings' pixels `span` meters away: the share of them still wide enough
-// on screen to stand (`seen_share`), all of them within half `span` and none
-// from twice it, by their size on screen alone; the same for its blades and
-// the canopy shown where they retire.
-fn cover_share(away: f32, span: f32) -> f32 {
-    return seen_share(span / max(away, 1.0e-3));
+// detail eye, for cover whose blades thin past `thin` meters and retire
+// around `retire` (`cover_widening`, `cover_shown`): the leaves they show
+// over how much wider they stand, so the blades standing there, by their
+// fixed ranks and widened, cover just as much ground as all of them would.
+fn cover_share(away: f32, thin: f32, retire: f32) -> f32 {
+    return cover_shown(away, retire) / cover_widening(away, thin);
 }
 
 // Ground cover's blades as `meshes/cover.wgsl` shades them, which their

@@ -6,12 +6,14 @@
 // cell's expected blades at which it grows, plus a share of one. A
 // candidate grows where that falls under its material's density at its
 // point times the cell's area (both cover materials of a control value
-// share it by their blend), times the share of blades still wide enough on
-// screen there: blades keep their roots' width at every distance and
-// retire in their ranks' order as they narrow on screen past the settings'
-// pixels, all standing within half the meters at which they span them and
-// none from twice those (`terrain_variety.wgsl`'s `cover_share`). The
-// ground shows the leaves retired blades leave as its canopy, their average
+// share it by their blend), times the share of blades standing there by
+// their size on screen alone (`terrain_variety.wgsl`'s `cover_share`):
+// where blades as wide as their roots would span fewer than the settings'
+// pixels, as small a share of them stands, by their fixed ranks, widened
+// as many times so they span those pixels and cover as much ground
+// (stochastic simplification, Cook, Halstead, Planck and Ryu 2007); and as
+// their height spans fewer than those pixels they retire in the same order,
+// the ground showing the leaves they leave as its canopy, their average
 // (`meshes/terrain.wgsl`). A workgroup takes one cell of a tier's grid: the
 // first tier's cells, where every blade stands, are the finest level's, and
 // each tier beyond has cells twice as wide as the last, trying only the
@@ -40,8 +42,9 @@ struct Grow {
     // tier tries, the terrain's macro colors' layer plus one
     // (0 until they arrive), and the tallest blade any material grows.
     scale: vec4<f32>,
-    // This tier: the meters from the eye it starts at, the meters away the
-    // blades span the settings' pixels (y), and how many level-0 samples
+    // This tier: the meters from the eye it starts at; the meters past which
+    // blades thin and widen (y) and around which they retire (z)
+    // (`terrain_variety.wgsl`'s `cover_share`); and how many level-0 samples
     // wide its cells are (w).
     tier: vec4<f32>,
     // The view's frustum planes (world).
@@ -53,7 +56,8 @@ struct Grow {
     // Foliage: 1 while blades keep their ground's normal (its bases blend
     // into the ground).
     foliage: vec4<f32>,
-    // The view: pixels a meter spans a meter from the eye (x).
+    // The view: pixels a meter spans a meter from the eye (x); and the
+    // widest root any material's blades grow from (y, meters).
     view: vec4<f32>,
 }
 
@@ -404,15 +408,17 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     // The finest cells' candidates whose indices the cell's nearest point's
     // share could reach, of those the tier tries: each index stands for a
     // blade more of a finest cell's expected blades.
-    let span = grow.tier.y;
+    let thin = grow.tier.y;
+    let retire = grow.tier.z;
     let held = f32(grow.grid.w);
-    let tried = min(u32(grow.scale.y), u32(ceil(held * cover_share(nearest, span))));
+    let tried = min(u32(grow.scale.y), u32(ceil(held * cover_share(nearest, thin, retire))));
     let finest = side * side;
     // Whether any candidate's blade can show, before any reads its ground:
     // the samples its ground stands on across the cell (`true_ground`'s, of
     // the finest level resident at its middle and the next coarser, where
     // the cell reaches past that level's tile) bound its root, and the
-    // tallest blade its sphere. Cells whose bound would read more samples
+    // tallest blade, or the widest as wide as it stands at the cell's far
+    // side, its sphere. Cells whose bound would read more samples
     // than four for each candidate (each reads four heights or more), or for
     // each lane, go unbounded. One lane plans it and all read the samples.
     let middle = corner + vec2<f32>(0.5 * spacing);
@@ -462,12 +468,13 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             // Roots stand 2 cm under the ground; blade spheres center
             // half their height above them.
             let tallest = grow.scale.w;
+            let widest = grow.view.y * cover_widening(center_away + half_diagonal, thin);
             let low = ordered_to_height(~atomicLoad(&cell_low));
             let high = ordered_to_height(atomicLoad(&cell_high));
             let origin = grow.origin.xyz + vec3<f32>(corner.x, -0.02, corner.y);
             cell_seen = u32(box_in_view(origin + vec3<f32>(0.0, low, 0.0),
                 origin + vec3<f32>(spacing, high + 0.5 * tallest, spacing),
-                tallest + CELL_MARGIN));
+                max(tallest, widest) + CELL_MARGIN));
         }
         if workgroupUniformLoad(&cell_seen) == 0u {
             return;
@@ -486,7 +493,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         let local = vec2<f32>(at) * grow.origin.w + offset;
         let world_xz = grow.origin.xz + local;
         // No nearer than across the ground, it can grow no denser.
-        if rank >= held * cover_share(distance(world_xz, grow.eye.xz), span) {
+        if rank >= held * cover_share(distance(world_xz, grow.eye.xz), thin, retire) {
             continue;
         }
         let ground = true_ground(local);
@@ -511,7 +518,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         let edge = smoothstep(0.0, 0.5, select(1.0 - share, share, second));
         let entry = min(grow.counts.z + material, PALETTE_ENTRIES - 1u);
         let spec = covers[entry];
-        let falloff = cover_share(away, span);
+        let falloff = cover_share(away, thin, retire);
         let keep = spec.shape.x * grow.scale.x * area * falloff;
         if rank >= keep {
             continue;
@@ -526,7 +533,10 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         if height < 0.02 {
             continue;
         }
-        if !in_view(root + vec3<f32>(0.0, 0.5 * height, 0.0), height) {
+        // As wide as the share standing here is small, so they cover as
+        // much ground as all of them would.
+        let width = spec.shape.w * cover_widening(away, thin);
+        if !in_view(root + vec3<f32>(0.0, 0.5 * height, 0.0), max(height, width)) {
             continue;
         }
         // Each blade's own shade about the tint the ground's own detail and
@@ -544,7 +554,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         } else {
             blade.facing = bitcast<u32>(facing);
         }
-        blade.width = spec.shape.w;
+        blade.width = width;
         blade.root_color = pack_color(palette[entry].far.rgb * variation, 0.0);
         blade.tip_color = pack_color(spec.color.rgb * variation, spec.color.w);
         // Kept blades fill the list from both ends: those whose height

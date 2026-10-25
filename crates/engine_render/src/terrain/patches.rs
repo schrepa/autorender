@@ -694,8 +694,8 @@ fn terrain_uniform(
         Some((cover, _)) if terrain.surroundings => [0.0, cover.density, densest[2], 0.0],
         // Elsewhere as blades retire, by their law.
         Some((cover, pixels)) => {
-            let span = crate::ground_cover::cover_span(&cover, densest[1], pixels);
-            [span, cover.density, densest[2], 0.0]
+            let retire = crate::ground_cover::cover_retire(&cover, densest[2], pixels);
+            [retire, cover.density, densest[2], 0.0]
         }
     };
     let (vt, vt_scale, vt_layout) = parts
