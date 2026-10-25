@@ -341,15 +341,20 @@ impl WaterPass {
         if let (None, Some(map)) = (&self.fall_map, &tables.fall_map) {
             self.fall_map = Some(FallMap::new(device, queue, &map.table));
         }
-        // Rivers simulated where a terrain's window stands.
-        let window = terrains
+        // Rivers simulated where a terrain's window stands, pushed by the
+        // solids standing in it.
+        let live = terrains
             .iter()
-            .find_map(|terrain| terrain.water_window.as_ref())
+            .find_map(|terrain| {
+                let window = terrain.water_window.as_ref()?;
+                Some((window, &terrain.water_touches[..], terrain.water_touches_beyond))
+            })
             .filter(|_| settings.enabled);
-        self.sim.prepare(device, queue, window, seconds);
+        self.sim.prepare(device, queue, live, seconds);
         let (simulated, sim_generation) = self.sim.drawn();
         // The square of the window that runs: its first corner, the meters
-        // across a cell and its cells along a side, and its datum.
+        // across a cell and its cells along a side; its datum and the
+        // blocks its slots turn by along x and z.
         let simulated = simulated.map(|drawn| {
             let window = drawn.window;
             let square = [
@@ -358,7 +363,8 @@ impl WaterPass {
                 window.cell,
                 window.cells as f32,
             ];
-            (square, [window.datum, 0.0, 0.0, 0.0])
+            let [wrap_x, wrap_z] = drawn.wrap;
+            (square, [window.datum, wrap_x as f32, wrap_z as f32, 0.0])
         });
         if let Some(tiles) = tiles {
             self.prepare_tiles(device, &tiles, sim_generation);
@@ -934,8 +940,9 @@ impl RenderFeature for WaterPass {
 
     /// The leaves the water's subdivisions drew and the splits their room
     /// refused, as last read back; tiles' water blocks resident and
-    /// dropped; the cells along a side of the simulated square; and the
-    /// sea's sectors drawn and their triangles.
+    /// dropped; the cells along a side of the simulated square, and the
+    /// solids pushing its water with those standing in it past the most that
+    /// do; and the sea's sectors drawn and their triangles.
     fn stats(
         this: Option<&Self>,
         frame: Option<&WaterFrame>,
@@ -945,6 +952,9 @@ impl RenderFeature for WaterPass {
             .and(this)
             .and_then(|this| this.sim.drawn().0)
             .map_or(0, |drawn| drawn.window.cells);
+        let [touches, dropped_touches] = frame
+            .and(this)
+            .map_or([0; 2], |this| this.sim.touches());
         let [leaves, refused] = frame.map_or([0; 2], |frame| frame.subdivided);
         (
             WaterStats {
@@ -953,6 +963,8 @@ impl RenderFeature for WaterPass {
                 blocks: frame.map_or(0, |frame| frame.blocks[0]),
                 dropped_blocks: frame.map_or(0, |frame| frame.blocks[1]),
                 simulated_cells: simulated,
+                touches,
+                dropped_touches,
             },
             OceanStats {
                 sectors: frame.map_or(0, |frame| frame.sectors),

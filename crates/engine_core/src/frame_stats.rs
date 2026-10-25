@@ -588,6 +588,13 @@ pub struct WaterStats {
     /// rivers run live: 0 while none do, fewer than the water settings ask
     /// where the device's storage bindings cannot hold its buffers.
     pub simulated_cells: u32,
+    /// Solids standing in that square whose push its water takes this
+    /// frame, nearest the eye first: bodies and colliders, at most
+    /// `SIM_TOUCHES`.
+    pub touches: u32,
+    /// Solids standing in that square past the most its water takes, which
+    /// push none of it.
+    pub dropped_touches: u32,
 }
 
 /// The sea.

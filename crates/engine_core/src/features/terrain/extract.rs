@@ -229,6 +229,11 @@ pub struct RenderTerrain {
     /// The square around the camera its water is simulated over: renderers
     /// run the simulation there and draw its water instead of the tiles'.
     pub water_window: Option<Arc<WaterWindow>>,
+    /// The solids standing in that square this frame, nearest the eye
+    /// first, as many as push its water ([`SIM_TOUCHES`]), and how many more
+    /// stand there, pushing none: renderers push its water with them.
+    pub water_touches: Vec<crate::WaterObstacle>,
+    pub water_touches_beyond: u32,
     /// Its lighting, once here: the sky its ground sees and its horizons,
     /// which renderers upload as it changes.
     pub lighting: Option<Arc<TerrainLighting>>,
@@ -301,6 +306,8 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 gpu_surface: None,
                 falls: Arc::from(Vec::new()),
                 water_window: None,
+                water_touches: Vec::new(),
+                water_touches_beyond: 0,
                 lighting: None,
                 bounce: None,
                 macro_map: None,
@@ -353,6 +360,18 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         render.errors.extend_from_slice(state.store.errors());
         render.falls = state.falls.clone();
         render.water_window = state.hydrology.window.clone();
+        render.water_touches.clear();
+        render.water_touches_beyond = 0;
+        if let (Some(window), Some(obstacles)) = (
+            state.hydrology.window.as_deref(),
+            world.get_resource::<crate::WaterObstacles>(),
+        ) {
+            render.water_touches_beyond = window.touching(
+                &obstacles.obstacles,
+                camera.position,
+                &mut render.water_touches,
+            );
+        }
         render.lighting.clone_from(&state.whole.lighting.made);
         render.bounce.clone_from(&state.whole.bounce.made);
         render.macro_map = state.whole.colors.map(assets);

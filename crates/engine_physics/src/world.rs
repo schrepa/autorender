@@ -208,7 +208,8 @@ impl PhysicsWorld {
             .is_ok()
     }
 
-    /// Each body as water meets it, where the last step left it.
+    /// Each body as water meets it, where and as fast as the last step left
+    /// it.
     pub(crate) fn solids(&self) -> impl Iterator<Item = engine_core::WaterObstacle> + '_ {
         let solver = self.solver.as_ref();
         self.bodies.iter().filter_map(move |body| {
@@ -218,6 +219,7 @@ impl PhysicsWorld {
                 axes: glam::Mat3::from_quat(*rigid.rotation())
                     * glam::Mat3::from_diagonal(body.form.half),
                 round: body.form.round,
+                velocity: rigid.linvel(),
             })
         })
     }

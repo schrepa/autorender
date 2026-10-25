@@ -34,11 +34,17 @@
 // blocks it stores are open, as a settling rectangle's edges are: water
 // running over them toward a block it does not store leaves, and none
 // comes back.
-// - the square around the camera (`water_sim.rs`) stores every block and
-//   steps every cell by the frame's seconds, and over its edges water flows
-//   to and from the cells just past them, which stand as the water settled
+// - the square around the camera (`water_sim.rs`) stores every block, each
+//   in the slot of its place on the terrain's lattice of blocks, and steps
+//   every cell by the frame's seconds, and over its edges water flows to
+//   and from the cells just past them, which stand as the water settled
 //   there (the ring), and comes in as the water settled there brings it:
-//   water left alone stays as it settled;
+//   water left alone stays as it settled. Before each step the solids
+//   standing in its water push it (`sim_touch`): toward their own velocity
+//   where they fill its depth, so it flows around what stands still and is
+//   pushed ahead of what moves, its wakes, bow waves and rings coming out
+//   of the shallow-water equations themselves, and churning its foam where
+//   they pass it fast enough to tear air in;
 // - regions settling tiles' water (`water_settle.rs`) step each cell by as
 //   long as its own and its neighbors' fastest waves allow, which reaches
 //   the steady state in far fewer steps; their water leaves freely over
@@ -113,13 +119,11 @@ const SIM_LOOKING: u32 = 16u;
 const SIM_SPARSE: u32 = 32u;
 
 // The stage (0: the first, 1: the second), the slots the buffers hold, the
-// blocks a slot's pool holds and the blocks a slot's table maps; as the
-// square around the camera follows it, the cells it moved by along x and
-// z; and the most cells rivers bring water to a slot holds, and the faces
-// along its west and south edges a slot holds (its cells along x and z).
+// blocks a slot's pool holds and the blocks a slot's table maps; and the
+// most cells rivers bring water to a slot holds, and the faces along its
+// west and south edges a slot holds (its cells along x and z).
 struct SimFrame {
     stage: vec4<u32>,
-    shift: vec4<i32>,
     inputs: vec4<u32>,
 }
 
@@ -203,6 +207,35 @@ struct SimSlots {
 // water its cells beside blocks the pool does not store held, and those
 // cells.
 @group(0) @binding(9) var<storage, read_write> sim_averages: array<vec4<f32>>;
+
+// The most solids that push the square around the camera's water a frame
+// (`engine_core::SIM_TOUCHES`).
+const SIM_TOUCHES: u32 = 32u;
+
+// A solid standing in the square around the camera's water: its center
+// over the square's first corner and its datum (meters) and 1 where it is a
+// ball, else 0 (w); the inverse of the axes mapping the unit cube (or ball)
+// to it, a column each; its velocity (meters a second) and the meters it
+// reaches up and down from its center (w); and the least and greatest
+// corners of its footprint over the square's first corner (meters, x and
+// z).
+struct SimTouch {
+    center: vec4<f32>,
+    inverse: array<vec4<f32>, 3>,
+    velocity: vec4<f32>,
+    reach: vec4<f32>,
+}
+
+// The solids standing in the square around the camera's water this frame:
+// how many (x); the blocks of the square they reach, the first along x and
+// z, then how many along each; and each one, nearest the eye first.
+struct SimTouches {
+    count: vec4<u32>,
+    blocks: vec4<u32>,
+    touch: array<SimTouch, SIM_TOUCHES>,
+}
+
+@group(0) @binding(10) var<uniform> sim_touches: SimTouches;
 
 // A slot's rectangle as a dispatch runs it.
 struct Square {
@@ -1184,43 +1217,106 @@ fn sim_update(
     }
 }
 
-// The square followed the camera by `frame.shift` cells: each cell takes
-// the water and foam of the cell standing where it does in the square as it
-// was, where that one held any, into the second state, which holds the
-// water as it settled where it held none.
-@compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_carry(
-    @builtin(workgroup_id) group: vec3<u32>,
-    @builtin(num_workgroups) count: vec3<u32>,
-    @builtin(local_invocation_id) local: vec3<u32>,
-) {
-    let q = sim_square(group.z);
-    let cell = sim_cell_of(q, group, count, local);
-    if !cell.runs {
-        return;
+// The speeds (meters a second) at which water passing a solid starts to
+// tear air in, and at which it churns foam as a churn of one does
+// (`sim_churn`'s, holding half the most): Ervine, McKeogh and Elsawy (1980)
+// find water drawing air in from about 0.7 to 1.3 meters a second.
+const SIM_TEARING: vec2<f32> = vec2<f32>(0.7, 1.3);
+
+// Where along the upright line through `point` (meters over the square's
+// first corner, x and z) solid `touch` stands: the lowest and the highest
+// heights over the square's datum it spans there (meters), the lowest above
+// the highest where it stands nowhere on the line. In its unit cube or
+// ball the line runs from `at`, at the datum, by `up` a meter: a ball holds
+// it where |at + y·up| ≤ 1, a box where each of its parts lies within 1.
+fn sim_touch_span(touch: SimTouch, point: vec2<f32>) -> vec2<f32> {
+    let inverse = mat3x3<f32>(touch.inverse[0].xyz, touch.inverse[1].xyz,
+        touch.inverse[2].xyz);
+    let at = inverse * (vec3<f32>(point.x, 0.0, point.y) - touch.center.xyz);
+    let up = inverse[1];
+    if touch.center.w > 0.5 {
+        let rise = dot(up, up);
+        let along = dot(at, up);
+        let reach = along * along - rise * (dot(at, at) - 1.0);
+        if rise <= 0.0 || reach < 0.0 {
+            return vec2<f32>(1.0, -1.0);
+        }
+        return (vec2<f32>(-along) + vec2<f32>(-1.0, 1.0) * sqrt(reach)) / rise;
     }
-    let from_cell = sim_at(q, i32(cell.i) + frame.shift.x, i32(cell.j) + frame.shift.y);
-    if from_cell == SIM_NO_BLOCK {
-        return;
+    var span = touch.center.y + vec2<f32>(-touch.velocity.w, touch.velocity.w);
+    for (var k = 0; k < 3; k++) {
+        if up[k] != 0.0 {
+            let ends = (vec2<f32>(-1.0, 1.0) - at[k]) / up[k];
+            span = vec2<f32>(max(span.x, min(ends.x, ends.y)), min(span.y, max(ends.x, ends.y)));
+        } else if abs(at[k]) > 1.0 {
+            return vec2<f32>(1.0, -1.0);
+        }
     }
-    let base = sim_cells_base(q);
-    sim_cells[base + sim_held() + cell.at] = sim_cells[base + from_cell];
+    return span;
 }
 
-// The water carried over is what the steps start from.
+// The solids standing in the square around the camera's water push it
+// before each step, a workgroup for each block they reach: in each cell
+// whose middle lies under one's footprint, where it reaches below the
+// water's surface there, the water's flow relaxes over the step toward the
+// solid's velocity times its depth (Brinkman penalization of the shallow
+// water's momentum, dq/dt = −(χ/τ)·(q − h·u), χ the share of the cell's
+// depth the solid fills and τ the step's seconds, solved exactly over the
+// step), so water flows around a solid standing still and is pushed ahead
+// of one moving; and where it stands up through the surface, the cell's
+// foam churns as `sim_churn` churns it, by how much faster than
+// SIM_TEARING.x the water passes it, a share of the span to SIM_TEARING.y
+// churning one, toward SIM_FOAM_MOST. A lake holding a cell still at its
+// level, a solid churns its foam alone. Solids over one cell push it in
+// turn, nearest the eye first.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_restart(
+fn sim_touch(
     @builtin(workgroup_id) group: vec3<u32>,
-    @builtin(num_workgroups) count: vec3<u32>,
     @builtin(local_invocation_id) local: vec3<u32>,
 ) {
-    let q = sim_square(group.z);
-    let cell = sim_cell_of(q, group, count, local);
-    if !cell.runs {
+    let q = sim_square(0u);
+    let cell = (sim_touches.blocks.xy + group.xy) * WATER_SIM_GROUP + local.xy;
+    if !sim_has(q, SIM_STEPPING) || cell.x >= q.nx || cell.y >= q.nz {
         return;
     }
+    let at = sim_at(q, i32(cell.x), i32(cell.y));
+    if at == SIM_NO_BLOCK {
+        return;
+    }
+    let still = sim_held_at(q, at);
     let base = sim_cells_base(q);
-    sim_cells[base + cell.at] = sim_cells[base + sim_held() + cell.at];
+    var water = sim_cells[base + at];
+    let bed = sim_bed(q, at);
+    let h = water.x - bed;
+    if h <= SIM_DRY {
+        return;
+    }
+    let middle = (vec2<f32>(cell) + 0.5) * q.dx;
+    let flowing = vec2<f32>(sim_velocity(h, water.y), sim_velocity(h, water.z));
+    for (var k = 0u; k < sim_touches.count.x; k++) {
+        let touch = sim_touches.touch[k];
+        if any(middle < touch.reach.xy) || any(middle > touch.reach.zw) {
+            continue;
+        }
+        let span = sim_touch_span(touch, middle);
+        let filled = min(span.y, water.x) - max(span.x, bed);
+        if filled <= 0.0 {
+            continue;
+        }
+        let solid = touch.velocity.xz;
+        if span.y > water.x {
+            let churn = max(length(flowing - solid) - SIM_TEARING.x, 0.0)
+                / (SIM_TEARING.y - SIM_TEARING.x);
+            let kept = exp(-churn * q.live / SIM_FOAM_LIFE);
+            water.w = SIM_FOAM_MOST + (water.w - SIM_FOAM_MOST) * kept;
+        }
+        if !still {
+            let carried = h * solid;
+            let flow = carried + (water.yz - carried) * exp(-min(filled / h, 1.0));
+            water = vec4<f32>(water.x, flow, water.w);
+        }
+    }
+    sim_cells[base + at] = water;
 }
 
 // The flow of head a face's water loses (square meters a second times

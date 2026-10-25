@@ -25,6 +25,7 @@ const INTERNAL: &[&str] = &[
     "LodInput",
     "MAX_DEV_TICKS",
     "RenderTables",
+    "SIM_TOUCHES",
     "StaticTable",
     "StaticTables",
     "WaterGhost",
