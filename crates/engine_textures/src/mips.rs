@@ -1,6 +1,8 @@
 //! Mip chains: each level the box average of the one above, as its usage
-//! reads its texels: colors in linear light (alpha linear), normals
-//! renormalized, data channel by channel, each rounded to the nearest byte.
+//! reads its texels: colors in linear light (alpha linear), normals as
+//! vectors, shorter than unit by as much as their spread (the slopes they
+//! average away, which shading reads back, Toksvig 2005), data channel by
+//! channel, each rounded to the nearest byte.
 
 use std::sync::OnceLock;
 
@@ -114,12 +116,7 @@ fn average(texels: &[[u8; 4]], usage: Usage) -> [u8; 4] {
                     *sum += f32::from(value) / 127.5 - 1.0;
                 }
             }
-            let length = normal.iter().map(|value| value * value).sum::<f32>().sqrt();
-            let normal = if length > 1.0e-6 {
-                normal.map(|value| value / length)
-            } else {
-                [0.0, 0.0, 1.0]
-            };
+            let normal = normal.map(|sum| sum / count as f32);
             [
                 unorm_byte(normal[0] * 0.5 + 0.5),
                 unorm_byte(normal[1] * 0.5 + 0.5),

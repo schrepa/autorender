@@ -192,8 +192,11 @@ struct MaterialTexels {
     normal_dy: vec2<f32>,
     // What masked tests scale the base color's alpha by.
     coverage: f32,
-    // World-mapped normal maps' normal, world space.
+    // World-mapped normal maps' normal, world space, and the variance of the
+    // slopes their filtering averaged away (`hidden_slopes`); none for the
+    // others.
     world_normal: vec3<f32>,
+    slopes: f32,
     // The metallic-roughness map's alpha, heights where its maps keep them;
     // 1 without one.
     height: f32,
@@ -293,17 +296,43 @@ fn world_shares(normal: vec3<f32>) -> vec3<f32> {
     return shares / max(shares.x + shares.y + shares.z, 1.0e-6);
 }
 
+// `map`'s mean texel: its mip chain's last level.
+fn map_mean(map: texture_2d<f32>, map_sampler: sampler) -> vec4<f32> {
+    return textureSampleLevel(map, map_sampler, vec2<f32>(0.5), f32(textureNumLevels(map) - 1u));
+}
+
 // Map `index` of `map` at `world` (changing by `dx` across and `dy` down a
 // pixel) on axis `axis`'s plane, one repeat every `emissive.w` meters,
-// through its transform.
+// through its transform, as filtering at the pixel reads it at every
+// distance: through its mipmaps and anisotropy by the pixel's derivatives.
+// Where the pixel spans a whole repeat on its shorter side, filtering reads
+// the last level, its stored mean, which stands in without a filtered read.
 fn world_map_texel(map: texture_2d<f32>, map_sampler: sampler, index: u32, world: vec3<f32>,
         dx: vec3<f32>, dy: vec3<f32>, axis: u32) -> vec4<f32> {
     let scale = 1.0 / max(material_maps.emissive.w, 1.0e-6);
     let uv = world_plane(world, axis) * scale;
-    let grad_x = world_plane(dx, axis) * scale;
-    let grad_y = world_plane(dy, axis) * scale;
-    return textureSampleGrad(map, map_sampler, map_uv(index, uv, uv),
-        map_gradient(index, grad_x, grad_x), map_gradient(index, grad_y, grad_y));
+    let across = world_plane(dx, axis) * scale;
+    let down = world_plane(dy, axis) * scale;
+    let grad_x = map_gradient(index, across, across);
+    let grad_y = map_gradient(index, down, down);
+    if min(dot(grad_x, grad_x), dot(grad_y, grad_y)) >= 1.0 { // filter: the map's last level, its mean, which filtering reads there
+        return map_mean(map, map_sampler);
+    }
+    return textureSampleGrad(map, map_sampler, map_uv(index, uv, uv), grad_x, grad_y);
+}
+
+// The most a unit normal stored in eight bits a channel rounds shorter:
+// half a step of 2/255 on each of its three channels, all along it.
+const NORMAL_ROUNDING: f32 = 1.7320508 / 255.0;
+
+// The variance of the slopes (meters a meter) a normal map's filtered texel
+// `sampled` hides, its deflections scaled by `scale`: averaging normals
+// whose slopes spread by a variance σ² leaves their mean shorter than unit
+// by about σ²/2 of its length (Toksvig 2005), past what rounding its texels
+// to eight bits a channel shortens it.
+fn hidden_slopes(sampled: vec3<f32>, scale: f32) -> f32 {
+    let mean = max(length(sampled), 1.0e-4);
+    return 2.0 * max(1.0 - mean - NORMAL_ROUNDING, 0.0) / mean * scale * scale;
 }
 
 // A world-mapped normal map's tangent-space `sampled` normal on axis
@@ -321,59 +350,13 @@ fn world_plane_normal(sampled: vec3<f32>, axis: u32, normal: vec3<f32>, scale: f
     return stable_normalize(vec3<f32>(n.x + normal.x, abs(n.z) * normal.y, normal.z - n.y));
 }
 
-// How much of a world-mapped material's maps show where a
-// pixel spans `footprint` repeats of them: all while a repeat spans 16
-// pixels or more, none from 8 down, where their mipmaps' last levels would
-// show little but their strata as even stripes and their means stand in,
-// as terrains' do.
-fn world_map_detail(footprint: f32) -> f32 {
-    return 1.0 - smoothstep(0.0625, 0.125, footprint);
-}
-
-// `map`'s mean texel: its mip chain's last level.
-fn map_mean(map: texture_2d<f32>, map_sampler: sampler) -> vec4<f32> {
-    return textureSampleLevel(map, map_sampler, vec2<f32>(0.5), f32(textureNumLevels(map) - 1u));
-}
-
-// `texels` with only `detail` of their maps showing, their means standing
-// in for the rest; the normal map's deflection fades toward the surface's
-// `normal` in world space.
-fn world_mean_texels(texels: MaterialTexels, detail: f32, normal: vec3<f32>) -> MaterialTexels {
-    var result = texels;
-    let mean = 1.0 - detail;
-    result.base = texels.base * detail + mean * map_mean(base_color_texture, base_color_sampler);
-    if material_flag(VARIANT_METALLIC_ROUGHNESS_MAP, METALLIC_ROUGHNESS_MAP) {
-        let mapped = map_mean(metallic_roughness_texture, metallic_roughness_sampler);
-        result.factors = texels.factors * detail + mean * mapped.gb;
-        result.height = texels.height * detail + mean * mapped.a;
-        if material_flag(VARIANT_PACKED_OCCLUSION, PACKED_OCCLUSION) {
-            result.occlusion = texels.occlusion * detail + mean * mapped.r;
-        }
-    }
-    if material_flag(VARIANT_OCCLUSION_MAP, OCCLUSION_MAP) && !material_flag(VARIANT_PACKED_OCCLUSION, PACKED_OCCLUSION) {
-        result.occlusion = texels.occlusion * detail
-            + mean * map_mean(occlusion_texture, occlusion_sampler).r;
-    }
-    if material_flag(VARIANT_EMISSIVE_MAP, EMISSIVE_MAP) {
-        result.emissive = texels.emissive * detail
-            + mean * map_mean(emissive_texture, emissive_sampler).rgb;
-    }
-    if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
-        result.world_normal = texels.world_normal * detail + mean * normal;
-        result.normal = mix(vec3<f32>(0.0, 0.0, 1.0), texels.normal, detail);
-    }
-    return result;
-}
-
 // The texels of a world-mapped material at `world` on a
 // surface of `normal`, changing by `dx` across and `dy` down a pixel: each
-// map blended over the projections the surface faces, its normal map's
-// normal in world space, as much of them as a repeat's size on screen
-// shows.
+// map blended over the projections the surface faces as filtering at the
+// pixel reads it (`world_map_texel`), its normal map's normal in world
+// space and the variance of the slopes its filtering averaged away.
 fn world_texels(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>)
         -> MaterialTexels {
-    let detail = world_map_detail(max(length(dx), length(dy))
-        / max(material_maps.emissive.w, 1.0e-6));
     var texels = untextured();
     let shares = world_shares(normal);
     var base = vec4<f32>(0.0);
@@ -381,9 +364,10 @@ fn world_texels(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32
     var occlusion = 0.0;
     var emissive = vec3<f32>(0.0);
     var mapped = vec3<f32>(0.0);
+    var hidden = 0.0;
     for (var axis = 0u; axis < 3u; axis++) {
         let share = shares[axis];
-        if share <= 0.0 || detail <= 0.0 {
+        if share <= 0.0 {
             continue;
         }
         base += share * world_map_texel(base_color_texture, base_color_sampler, 0u, world, dx, dy,
@@ -404,6 +388,7 @@ fn world_texels(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32
             let sampled = world_map_texel(normal_texture, normal_sampler, 2u, world, dx, dy, axis)
                 .xyz * 2.0 - 1.0;
             mapped += share * world_plane_normal(sampled, axis, normal, material_maps.params.x);
+            hidden += share * hidden_slopes(sampled, material_maps.params.x);
         }
     }
     texels.base = base;
@@ -422,9 +407,7 @@ fn world_texels(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32
     }
     if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
         texels.world_normal = mapped;
-    }
-    if detail < 1.0 {
-        return world_mean_texels(texels, detail, normal);
+        texels.slopes = hidden;
     }
     return texels;
 }
@@ -546,6 +529,13 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
         metalness *= texels.factors.y;
         point.occlusion = 1.0 + material_maps.params.y * (texels.occlusion - 1.0);
         point.emissive = material_maps.emissive.rgb * texels.emissive;
+    }
+    if texels.slopes > 0.0 {
+        // The slopes world-mapped normal maps' filtering averaged away
+        // roughen the surface instead, their variance widening its
+        // highlights as a microfacet distribution's does.
+        let alpha = roughness * roughness;
+        roughness = sqrt(sqrt(min(alpha * alpha + texels.slopes, 1.0)));
     }
     point.roughness = max(roughness, 0.03);
     point.alpha = point.roughness * point.roughness;
@@ -904,7 +894,7 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     // triangles, its levels of detail, its ground's: its normal maps and
     // horizon maps shade it.
     var facing = 1.0;
-    let face = cross(point.world_dx, point.world_dy);
+    let face = cross(point.world_dx, point.world_dy); // filter: none, the face's own plane across the pixel, a direction
     if dot(face, face) > 1.0e-20 && all(point.shadow_offset == vec3<f32>(0.0))
         && !point.on_terrain {
         let toward = select(-1.0, 1.0, dot(face, point.geometric) >= 0.0);

@@ -119,8 +119,9 @@ pub(crate) struct DomeBinding<'a> {
     pub key: (u64, [u8; 2], bool),
 }
 
-/// The noise's volumes on the GPU, the shapes' and the detail's, with the
-/// table they were uploaded from.
+/// The noise's volumes on the GPU, the shapes' and the detail's with its
+/// mipmaps, which the march reads as wide as its rays' cones
+/// (`clouds.wgsl`'s `detail_lod`), with the table they were uploaded from.
 struct NoiseVolumes {
     id: u64,
     _textures: [wgpu::Texture; 2],
@@ -129,10 +130,40 @@ struct NoiseVolumes {
     bytes: u64,
 }
 
+/// The levels below `texels`, a cube `side` texels a side, a byte a texel
+/// (rows along x, then y, then layers along z), down to one texel: each the
+/// mean of every 2 × 2 × 2 block of the level above, rounded to the nearest
+/// byte, as mipmaps average what a footprint spans.
+fn levels_below(side: u32, texels: &[u8]) -> Vec<Vec<u8>> {
+    let mut levels: Vec<Vec<u8>> = Vec::new();
+    let mut side = side as usize;
+    while side > 1 {
+        let half = side / 2;
+        let above = levels.last().map_or(texels, Vec::as_slice);
+        let mut level = Vec::with_capacity(half * half * half);
+        for z in 0..half {
+            for y in 0..half {
+                for x in 0..half {
+                    let mut sum = 0_u32;
+                    for corner in 0..8_usize {
+                        let (dx, dy, dz) = (corner & 1, (corner >> 1) & 1, corner >> 2);
+                        let at = ((2 * z + dz) * side + 2 * y + dy) * side + 2 * x + dx;
+                        sum += u32::from(above[at]);
+                    }
+                    level.push(((sum + 4) / 8) as u8);
+                }
+            }
+        }
+        levels.push(level);
+        side = half;
+    }
+    levels
+}
+
 impl NoiseVolumes {
     /// `noise`'s volumes, uploaded.
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, noise: &StaticTable<CloudNoise>) -> Self {
-        let volume = |label, side: u32, texels: &[u8]| {
+        let volume = |label, side: u32, levels: &[&[u8]]| {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
@@ -140,37 +171,55 @@ impl NoiseVolumes {
                     height: side,
                     depth_or_array_layers: side,
                 },
-                mip_level_count: 1,
+                mip_level_count: levels.len() as u32,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D3,
                 format: wgpu::TextureFormat::R8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
-            queue.write_texture(
-                texture.as_image_copy(),
-                texels,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(side),
-                    rows_per_image: Some(side),
-                },
-                texture.size(),
-            );
+            for (level, &texels) in (0_u32..).zip(levels) {
+                let side = (side >> level).max(1);
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: level,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    texels,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(side),
+                        rows_per_image: Some(side),
+                    },
+                    wgpu::Extent3d {
+                        width: side,
+                        height: side,
+                        depth_or_array_layers: side,
+                    },
+                );
+            }
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             (texture, view)
         };
         use engine_core::table_data::clouds::{DETAIL_SIZE, SHAPE_SIZE};
         let table = &noise.table;
-        let (shape_texture, shape) = volume("engine/cloud-noise-shape", SHAPE_SIZE, &table.shape);
+        let (shape_texture, shape) =
+            volume("engine/cloud-noise-shape", SHAPE_SIZE, &[table.shape.as_slice()]);
+        let below = levels_below(DETAIL_SIZE, &table.detail);
+        let detail_levels: Vec<&[u8]> = std::iter::once(table.detail.as_slice())
+            .chain(below.iter().map(Vec::as_slice))
+            .collect();
         let (detail_texture, detail) =
-            volume("engine/cloud-noise-detail", DETAIL_SIZE, &table.detail);
+            volume("engine/cloud-noise-detail", DETAIL_SIZE, &detail_levels);
+        let bytes = table.shape.len() + detail_levels.iter().map(|level| level.len()).sum::<usize>();
         Self {
             id: noise.id,
             _textures: [shape_texture, detail_texture],
             shape,
             detail,
-            bytes: (table.shape.len() + table.detail.len()) as u64,
+            bytes: bytes as u64,
         }
     }
 }
@@ -299,6 +348,8 @@ impl CloudPass {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        // The detail's levels blend as a ray's cone widens, so its wisps
+        // average away with no step between levels.
         let noise_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/cloud-noise-sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -306,6 +357,7 @@ impl CloudPass {
             address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         let view_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
