@@ -801,17 +801,16 @@ export interface WaterStats {
    */
   dropped_blocks: number;
   /**
-   * Leaves of terrains' subdivisions past the room the listing of
-   * water's leaves held the last read-back frame, which went untested,
-   * so water over them did not draw: the room grows to hold them a few
-   * frames later.
-   */
-  dropped_leaves: number;
-  /**
-   * Leaves of terrains' subdivisions water may stand over that the last
-   * read-back frame drew, a few frames late.
+   * Leaves of terrains' water's subdivisions the last read-back frame
+   * drew, a few frames late.
    */
   leaves: number;
+  /**
+   * Splits terrains' water's subdivisions refused for want of room for
+   * their leaves (`Water::subdivision_leaves`), as read back a few frames
+   * late: the water there stays coarser.
+   */
+  refused: number;
   /**
    * Cells along a side of the square around the camera over which
    * rivers run live: 0 while none do, fewer than the water settings ask

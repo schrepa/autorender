@@ -6484,6 +6484,22 @@
           "default": 1.0,
           "maximum": 8.0,
           "minimum": 0.25
+        },
+        "subdivision_error": {
+          "description": "Pixels the water's drawn triangles may stray from its surface,\nseen from the detail eye: each terrain's water subdivides a tree\nof its own, splitting its leaves straying more and merging those\nwhose halves would not, as the ground's does. Smaller draws more\ntriangles. The water draws as many pixels over its surface as\nthis and the ground's own error together, so the ground drawn\nunder it never hides it.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 64.0,
+          "minimum": 0.25
+        },
+        "subdivision_leaves": {
+          "description": "The most leaves each terrain's water's subdivision draws, 28\nbytes each on the GPU: past them leaves split no more, counted,\nand the water there stays coarser.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 65536,
+          "maximum": 4000000,
+          "minimum": 1024
         }
       },
       "additionalProperties": false

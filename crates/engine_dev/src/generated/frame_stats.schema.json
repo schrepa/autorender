@@ -1193,14 +1193,14 @@
           "minimum": 0,
           "type": "integer"
         },
-        "dropped_leaves": {
-          "description": "Leaves of terrains' subdivisions past the room the listing of\nwater's leaves held the last read-back frame, which went untested,\nso water over them did not draw: the room grows to hold them a few\nframes later.",
+        "leaves": {
+          "description": "Leaves of terrains' water's subdivisions the last read-back frame\ndrew, a few frames late.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "leaves": {
-          "description": "Leaves of terrains' subdivisions water may stand over that the last\nread-back frame drew, a few frames late.",
+        "refused": {
+          "description": "Splits terrains' water's subdivisions refused for want of room for\ntheir leaves (`Water::subdivision_leaves`), as read back a few frames\nlate: the water there stays coarser.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1214,7 +1214,7 @@
       },
       "required": [
         "leaves",
-        "dropped_leaves",
+        "refused",
         "blocks",
         "dropped_blocks",
         "simulated_cells"
