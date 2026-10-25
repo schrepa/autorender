@@ -138,6 +138,42 @@ const FILTERS: &[(&str, &str)] = &[
         "wind_shown",
         "sway moving an object less than a pixel stilled, its mean bend kept",
     ),
+    (
+        "cs_terrain_vt_feedback",
+        "the virtual texture's pages a pixel's footprint asks for: the level whose texels match it",
+    ),
+    (
+        "terrain_displacement",
+        "the ground's relief displaced only where it moves the surface a pixel or more, a flat surface standing in below",
+    ),
+    (
+        "terrain_parallax",
+        "the ground's relief and tracks moved along the view as far as they move it a pixel or more, the surface standing in below",
+    ),
+    (
+        "terrain_resolved",
+        "the depth edges of what hides what, and the virtual texture's pages blended in as the pixel's dither picks them",
+    ),
+    (
+        "terrain_seen",
+        "where the view ray meets the ground: relief moved as far as it moves a pixel, and the shading levels the pixel's footprint picks",
+    ),
+    (
+        "terrain_vt_entry",
+        "a virtual texture page of the mip whose texels match the pixel",
+    ),
+    (
+        "terrain_vt_page",
+        "a virtual texture page of the mip whose texels match the pixel",
+    ),
+    (
+        "terrain_vt_shown",
+        "the virtual texture's pages handing over to the ground computed there, baked from the same ground at their texels",
+    ),
+    (
+        "terrain_vt_texels",
+        "the virtual texture's pages whose texels match the pixel, handing over to the ground computed there, baked from it",
+    ),
 ];
 
 /// A line marked filter: its decision by a size on screen filters, or

@@ -1126,7 +1126,7 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     if simulated {
         let facing = cross(world_dx, world_dy);
         let upright = abs(facing.y) / max(length(facing), 1.0e-12);
-        falling = 1.0 - smoothstep(SIM_SHEER.x, SIM_SHEER.y, upright);
+        falling = 1.0 - smoothstep(SIM_SHEER.x, SIM_SHEER.y, upright); // filter: a direction, how upright the surface stands
         if falling > 0.99 {
             discard;
         }
@@ -1163,7 +1163,7 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let anchor = world.xz + at.obstacle.xy;
     let anchoring = (length(dpdx(anchor)) + length(dpdy(anchor)))
         / max(length(world_dx.xz) + length(world_dy.xz), 1.0e-6);
-    let anchored = 1.0 - smoothstep(0.1, 0.4, anchoring);
+    let anchored = 1.0 - smoothstep(0.1, 0.4, anchoring); // filter: where a pixel's samples disagree on the obstacle, its waves average out
     // How far it is from still to running: still water's waves stand where
     // they evolve, running water's ride its current, and between, the two
     // blend, so nothing changes at once where a river meets a lake.
@@ -1278,7 +1278,7 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // gathering it.
     let caustic = 1.0 + (gathered - 1.0) * lit.sunny
         * exp(-bed * (1.0 / WATER_CAUSTIC_DEPTH + WATER_BUBBLES * aerated))
-        * (1.0 - smoothstep(WATER_CAUSTIC_PIXELS.x, WATER_CAUSTIC_PIXELS.y,
+        * (1.0 - smoothstep(WATER_CAUSTIC_PIXELS.x, WATER_CAUSTIC_PIXELS.y, // filter: caustics averaging to their mean of 1
             footprint / max(bed, 1.0e-3)));
     // Of what the surface lets through, the ground shows darker for being
     // wet however thin the water; foam covers it.

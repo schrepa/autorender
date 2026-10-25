@@ -75,8 +75,10 @@ settings! {
         /// much ground; and once their height spans fewer than these times a
         /// factor of their own from a half to two, they retire in that
         /// order, the ground showing them as its cover's canopy, so cover
-        /// reaches as far as its last blade stands that tall.
-        pub pixels: f32 = 1.0 => range(0.25, 16.0),
+        /// reaches as far as its last blade stands that tall. Two pixels,
+        /// which temporal antialiasing resolves steadily, stand about a
+        /// quarter as many blades as one for the same cover.
+        pub pixels: f32 = 2.0 => range(0.25, 16.0),
         /// Scales every cover's density. Blades sway in the world's `Wind`.
         pub density: f32 = 1.0 => range(0.0, 4.0),
         /// An optional budget of blades a frame: where the view would take

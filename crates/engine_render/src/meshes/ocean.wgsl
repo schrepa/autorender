@@ -225,7 +225,7 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     for (var index = 0u; index < count; index++) {
         let wave = water.ocean_waves[index];
         let number = max(length(wave.xy), 1.0e-6);
-        let keep = saturate(OCEAN_TAU / (number * 2.0 * footprint) - 1.0);
+        let keep = saturate(OCEAN_TAU / (number * 2.0 * footprint) - 1.0); // filter: waves under two pixels into roughness
         let slope = number * wave.z;
         hidden += (1.0 - keep * keep) * slope * slope * 0.5;
     }
