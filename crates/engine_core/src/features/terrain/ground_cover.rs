@@ -2,29 +2,15 @@
 //! terrain's surface materials, which renderers generate every frame around
 //! the camera and never store. A surface material names the cover growing
 //! where it lies ([`Cover`]); the [`GroundCover`] settings place, budget and
-//! sway it. Blades stand by their size on screen alone: as they narrow, a
-//! share of them stands in a fixed order, each widened by its inverse so
-//! they cover as much ground, and their colors drawn toward their canopy's
-//! so they vary as much; as they grow short on screen they retire in that
-//! order, and the ground shows the leaves they leave as its canopy, what
-//! they show on average.
+//! sway it. Past its radius cover grows on in tiers as long as blades stay
+//! wide enough on screen, retiring in a fixed order as they narrow, and the
+//! ground shows the leaves they leave as its canopy, their average.
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
 use crate::environment::InvalidSetting;
 use engine_settings::{ExtraRules, settings};
-
-/// The pixels a pattern's features must span to draw steadily under
-/// temporal antialiasing. Its frames sample each pixel up to half a pixel
-/// off its middle, which moves the phase at which a pixel samples a pattern
-/// `p` pixels long by up to `1 / (2 p)` of its period from frame to frame:
-/// no more than an eighth of it where `p` is 4. Finer patterns draw as
-/// their average: waves' slopes as roughness through their variance, blades
-/// as their canopy, foam's bubbles as their expected cover. Shaders mirror
-/// it (`STEADY_PIXELS`), and blades span it at least by default
-/// ([`GroundCover::pixels`]).
-pub const STEADY_PIXELS: f32 = 4.0;
 
 settings! {
     extra_rules;
@@ -80,24 +66,19 @@ settings! {
     pub struct GroundCover {
         /// Whether terrains grow their cover.
         pub enabled: bool = true => any,
-        /// The pixels on screen blades span at least while they stand,
-        /// across and up: where blades as wide as their roots would span
-        /// fewer across, a share of them stands in a fixed order, each
-        /// widened by its inverse to span these pixels, so they cover as
-        /// much ground, their colors drawn toward their canopy's by the root
-        /// of the share standing; and once their height spans fewer than
-        /// these times a factor of their own from a half to two, they retire
-        /// in that order, the ground showing them as its cover's canopy, so
-        /// cover reaches as far as its last blade stands that tall. By
-        /// default the pixels temporal antialiasing draws steadily
-        /// (`STEADY_PIXELS`); twice the pixels stand about a quarter as many
-        /// blades for the same cover.
-        pub pixels: f32 = STEADY_PIXELS => range(0.25, 16.0),
+        /// Meters from the camera within which cover grows densest, its blades
+        /// widening as they thin. Past it the ground shows as its cover's
+        /// canopy, and sparser tiers of blades as wide as there reach on.
+        pub radius: f32 = 40.0 => range(2.0, 200.0),
+        /// How wide on screen (pixels) blades stand as they retire: each
+        /// retires, in a fixed order, once it spans fewer than this times a
+        /// factor of its own from a half to two, and tiers, each reaching
+        /// twice as far as the last, end where the last has. 0 grows cover
+        /// within the radius alone.
+        pub pixels: f32 = 1.0 => range(0.0, 16.0),
         /// Scales every cover's density. Blades sway in the world's `Wind`.
         pub density: f32 = 1.0 => range(0.0, 4.0),
-        /// An optional budget of blades a frame: where the view would take
-        /// in more, the blades that thin stand wider, fewer covering as much
-        /// ground; any past it still drop and count.
+        /// An optional budget of blades a frame; beyond it the farthest drop.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_blades: Option<u32> = None => budget,
     }

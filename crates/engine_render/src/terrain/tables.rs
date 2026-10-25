@@ -61,12 +61,10 @@ pub(crate) struct TerrainTables {
     pub(super) covers: wgpu::Buffer,
     covers_written: Vec<CoverEntry>,
     covers_spare: Vec<CoverEntry>,
-    // Each terrain's densest cover, and its blades' root width and mean
-    // height.
-    pub(super) cover_densities: Vec<[f32; 3]>,
-    // The tallest blade any material's cover grows, and the widest root.
+    // Each terrain's densest cover and its blades' root width.
+    pub(super) cover_densities: Vec<[f32; 2]>,
+    // The tallest blade any material's cover grows.
     pub(super) cover_tallest: f32,
-    pub(super) cover_widest: f32,
 }
 
 impl TerrainTables {
@@ -119,7 +117,6 @@ impl TerrainTables {
             covers_spare: Vec::new(),
             cover_densities: Vec::new(),
             cover_tallest: 0.0,
-            cover_widest: 0.0,
         }
     }
 
@@ -271,8 +268,8 @@ impl TerrainTables {
                 .push(if kept.len() == terrain.surface.len() {
                     kept.iter()
                         .filter_map(|look| look.cover)
-                        .map(|cover| [cover.density, cover.width, blade_height(&cover)])
-                        .fold([0.0; 3], |densest, cover| {
+                        .map(|cover| [cover.density, cover.width])
+                        .fold([0.0; 2], |densest, cover| {
                             if cover[0] > densest[0] {
                                 cover
                             } else {
@@ -280,7 +277,7 @@ impl TerrainTables {
                             }
                         })
                 } else {
-                    [0.0; 3]
+                    [0.0; 2]
                 });
             entries.extend(kept.iter().map(|look| {
                 look.cover.map_or(CoverEntry::zeroed(), |cover| CoverEntry {
@@ -292,10 +289,6 @@ impl TerrainTables {
         self.cover_tallest = entries
             .iter()
             .flat_map(|entry| [entry.shape[1], entry.shape[2]])
-            .fold(0.0, engine_core::math::max);
-        self.cover_widest = entries
-            .iter()
-            .map(|entry| entry.shape[3])
             .fold(0.0, engine_core::math::max);
         if entries.is_empty() || entries == self.covers_written {
             self.covers_spare = entries;
@@ -559,14 +552,14 @@ fn palette_entry(
     // Its cover's canopy: the blades' tip color, which shaders mix with the
     // ground's at their roots as a view meets them (`terrain_variety.wgsl`'s
     // `cover_seen`), and their leaves' area: blades a square meter, each as
-    // wide as its root, curving up and tapering over the height they stand
-    // on average.
+    // wide as its root and tapering up the height they stand on average.
     let canopy = look.cover.map_or([0.0; 4], |cover| {
+        let height = COVER_RISEN * 0.5 * (cover.height[0] + cover.height[1]);
         [
             cover.color[0],
             cover.color[1],
             cover.color[2],
-            cover.density * blade_height(&cover) * cover.width * COVER_FILLED,
+            cover.density * height * cover.width * COVER_FILLED,
         ]
     });
     // Materials displacing the ground show no relief, which parallax
@@ -605,17 +598,10 @@ const RELIEF_MOST: f32 = 0.06;
 /// short, rising with it (`cover_grow.wgsl`), seven eighths.
 const COVER_RISEN: f32 = 0.875;
 
-/// A blade's area over its root width times its height: its width tapering
-/// as 1 - along^1.5 along its curve, which rises from upright at its root
-/// to leaning at its tip (`meshes/cover.wgsl`'s `cover_point`, at its mean
-/// curl) and runs longer than its height, the taper's integral along it.
-const COVER_FILLED: f32 = 0.6274;
-
-/// The meters `cover`'s blades stand on average (COVER_RISEN of their
-/// heights' middle).
-fn blade_height(cover: &engine_core::Cover) -> f32 {
-    COVER_RISEN * 0.5 * (cover.height[0] + cover.height[1])
-}
+/// The share of the rectangle a blade's root width and height span that it
+/// fills, tapering as 1 - along^1.5 (`meshes/cover.wgsl`): the taper's
+/// integral.
+const COVER_FILLED: f32 = 0.6;
 
 /// One placement layer's objects as the ground takes them on where they
 /// retire, summed over the assets it chooses: the share of ground they

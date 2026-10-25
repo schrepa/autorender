@@ -33,6 +33,11 @@ const FILTERS: &[(&str, &str)] = &[
         "a cutout's coverage, kept over its mipmaps' levels as masked fragments keep it",
     ),
     (
+        "cover_share",
+        "ground cover's blades thinning and retiring by their distance and size on screen, the \
+         ground's canopy showing the leaves they leave, their average",
+    ),
+    (
         "detail_level",
         "a pyramid's level whose texels match the pixel, the next blended in as brilinear \
          filtering blends mipmaps",

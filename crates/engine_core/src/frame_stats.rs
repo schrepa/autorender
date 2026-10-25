@@ -552,14 +552,8 @@ pub struct GroundCoverStats {
     pub dropped: u32,
     /// Meters from the eye ground cover reached this frame, rounded.
     pub reach: u32,
-    /// The most tiers it grew in: the first, where every blade stands, and
-    /// doublings past it.
+    /// The most tiers it grew in: the radius's and doublings past it.
     pub tiers: u32,
-    /// How wide blades that thin stand on screen, in hundredths of the
-    /// settings' pixels: 100, or more where the budget, or what one storage
-    /// binding holds, takes in fewer blades than the view would, fewer of
-    /// them standing wider to cover as much ground.
-    pub widened: u32,
 }
 
 /// The occupancy maps around the detail eye.
