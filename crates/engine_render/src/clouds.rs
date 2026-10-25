@@ -205,15 +205,19 @@ impl NoiseVolumes {
         };
         use engine_core::table_data::clouds::{DETAIL_SIZE, SHAPE_SIZE};
         let table = &noise.table;
-        let (shape_texture, shape) =
-            volume("engine/cloud-noise-shape", SHAPE_SIZE, &[table.shape.as_slice()]);
+        let (shape_texture, shape) = volume(
+            "engine/cloud-noise-shape",
+            SHAPE_SIZE,
+            &[table.shape.as_slice()],
+        );
         let below = levels_below(DETAIL_SIZE, &table.detail);
         let detail_levels: Vec<&[u8]> = std::iter::once(table.detail.as_slice())
             .chain(below.iter().map(Vec::as_slice))
             .collect();
         let (detail_texture, detail) =
             volume("engine/cloud-noise-detail", DETAIL_SIZE, &detail_levels);
-        let bytes = table.shape.len() + detail_levels.iter().map(|level| level.len()).sum::<usize>();
+        let bytes =
+            table.shape.len() + detail_levels.iter().map(|level| level.len()).sum::<usize>();
         Self {
             id: noise.id,
             _textures: [shape_texture, detail_texture],

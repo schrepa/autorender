@@ -48,10 +48,7 @@ impl WindSea {
         // The fetch over the length the wind's speed sets, g F / U².
         let reach = GRAVITY * fetch / (speed * speed);
         Self {
-            alpha: max(
-                FETCH_ALPHA * pow(reach, -FETCH_ALPHA_POWER),
-                RAISED_ALPHA,
-            ),
+            alpha: max(FETCH_ALPHA * pow(reach, -FETCH_ALPHA_POWER), RAISED_ALPHA),
             peak: max(FETCH_PEAK * pow(reach, -1.0 / 3.0), RAISED_PEAK) * GRAVITY / speed,
             depth,
         }

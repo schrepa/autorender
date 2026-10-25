@@ -260,7 +260,10 @@ pub(crate) fn bankfull(flood: f32) -> (f32, f32) {
     let depth = DEPTH_LAW[0] * libm::powf(flood, DEPTH_LAW[1]);
     let ratio = min(width / depth, WIDTH_DEPTH);
     let section = width * depth;
-    ((section * ratio).sqrt(), (section / ratio).sqrt() / MEAN_DEPTH)
+    (
+        (section * ratio).sqrt(),
+        (section / ratio).sqrt() / MEAN_DEPTH,
+    )
 }
 
 /// The median grain and the grain 84% of grains are finer than (meters) of

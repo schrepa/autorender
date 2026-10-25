@@ -53,9 +53,8 @@ impl Flow<'_> {
                 let name = self.module.functions[function].name.as_deref();
                 let read = match self.watch {
                     Watch::Camera
-                        if name.is_some_and(|name| {
-                            name.split('_').any(|word| word == RELATIVE)
-                        }) =>
+                        if name
+                            .is_some_and(|name| name.split('_').any(|word| word == RELATIVE)) =>
                     {
                         Some(Read::Relative)
                     }

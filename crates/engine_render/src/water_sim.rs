@@ -167,7 +167,10 @@ impl WaterSim {
         let steps = min((elapsed / longest).ceil(), STEPS_AT_MOST);
         self.steps = steps as u32;
         let pushing = touching(square, touches);
-        self.touches = [pushing.as_ref().map_or(0, |pushing| pushing.count[0]), beyond];
+        self.touches = [
+            pushing.as_ref().map_or(0, |pushing| pushing.count[0]),
+            beyond,
+        ];
         if self.steps == 0 {
             return;
         }

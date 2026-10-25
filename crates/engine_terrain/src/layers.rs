@@ -1201,7 +1201,10 @@ impl Layers {
             return Err(LayerError::new(
                 index,
                 "rivers",
-                InvalidSetting::new("lines", "need a hydrology layer after them, which runs them"),
+                InvalidSetting::new(
+                    "lines",
+                    "need a hydrology layer after them, which runs them",
+                ),
             ));
         }
         let tables = layers

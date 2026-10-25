@@ -345,7 +345,10 @@ impl Rivers {
                     high = high.max(Vec2::from(point));
                 }
                 let pad = Vec2::splat(
-                    river.half.iter().fold(0.0_f32, |widest, &half| max(widest, half))
+                    river
+                        .half
+                        .iter()
+                        .fold(0.0_f32, |widest, &half| max(widest, half))
                         + BANK_REACH,
                 );
                 regions.push((low - pad, high + pad));
@@ -1174,8 +1177,7 @@ pub(crate) fn trace(
     } = *channels;
     let count = area.len();
     let given = |sample: usize| within.is_some_and(|within| within[sample]);
-    let channel =
-        |sample: usize| area[sample] >= channel_area && !lakes[sample] && !given(sample);
+    let channel = |sample: usize| area[sample] >= channel_area && !lakes[sample] && !given(sample);
     let mut inflows = vec![0_u8; count];
     for (sample, &receiver) in receivers.iter().enumerate() {
         if channel(sample) && receiver != u32::MAX {

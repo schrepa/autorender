@@ -686,13 +686,12 @@ impl Flow<'_> {
         let mut pointees = Vec::new();
         for (index, argument) in function.arguments.iter().enumerate() {
             let value = if entry {
-                let taint = if self.watch == Watch::Camera
-                    && argument.name.as_deref() == Some(RELATIVE)
-                {
-                    self.source(Read::Relative, of, &name, argument_span(function, index))
-                } else {
-                    Taint::new()
-                };
+                let taint =
+                    if self.watch == Watch::Camera && argument.name.as_deref() == Some(RELATIVE) {
+                        self.source(Read::Relative, of, &name, argument_span(function, index))
+                    } else {
+                        Taint::new()
+                    };
                 shaped(module, argument.ty, &mut Vec::new(), &mut |_| taint.clone())
             } else {
                 shaped(module, argument.ty, &mut Vec::new(), &mut |path| {

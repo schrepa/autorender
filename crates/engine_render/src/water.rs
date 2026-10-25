@@ -350,7 +350,11 @@ impl WaterPass {
             .iter()
             .find_map(|terrain| {
                 let window = terrain.water_window.as_ref()?;
-                Some((window, &terrain.water_touches[..], terrain.water_touches_beyond))
+                Some((
+                    window,
+                    &terrain.water_touches[..],
+                    terrain.water_touches_beyond,
+                ))
             })
             .filter(|_| settings.enabled);
         self.sim.prepare(device, queue, live, seconds);
@@ -964,9 +968,7 @@ impl RenderFeature for WaterPass {
             .and(this)
             .and_then(|this| this.sim.drawn().0)
             .map_or(0, |drawn| drawn.window.cells);
-        let [touches, dropped_touches] = frame
-            .and(this)
-            .map_or([0; 2], |this| this.sim.touches());
+        let [touches, dropped_touches] = frame.and(this).map_or([0; 2], |this| this.sim.touches());
         let [leaves, refused] = frame.map_or([0; 2], |frame| frame.subdivided);
         (
             WaterStats {

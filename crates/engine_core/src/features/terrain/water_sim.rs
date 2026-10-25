@@ -652,7 +652,12 @@ impl Gathering {
             }
             let (from, to) = ((at - row * side) as i64, (end - row * side) as i64);
             let columns = corner[0] + from..corner[0] + to;
-            let run = gather_run(state, (self.cell, self.datum), corner[1] + row as i64, columns);
+            let run = gather_run(
+                state,
+                (self.cell, self.datum),
+                corner[1] + row as i64,
+                columns,
+            );
             for (offset, block) in run.into_iter().enumerate() {
                 self.blocks[at + offset] = Some(Arc::new(block));
             }
@@ -814,7 +819,10 @@ fn gather_run(
         .map(|column| {
             let corner = ((column - start) * side) as usize;
             let at = |k: usize| {
-                let (i, j) = (column * side + (k % SIDE) as i64, row * side + (k / SIDE) as i64);
+                let (i, j) = (
+                    column * side + (k % SIDE) as i64,
+                    row * side + (k / SIDE) as i64,
+                );
                 middle(i, j)
             };
             let beds: [(f32, [u32; 2]); BLOCK_CELLS] = std::array::from_fn(|k| {
@@ -855,7 +863,10 @@ fn sources(
     let covered = |x: i64, z: i64| {
         before.is_some_and(|window| {
             let held = i64::from(window.cells);
-            let (i, j) = (first[0] + x - window.first[0], first[1] + z - window.first[1]);
+            let (i, j) = (
+                first[0] + x - window.first[0],
+                first[1] + z - window.first[1],
+            );
             (0..held).contains(&i) && (0..held).contains(&j)
         })
     };

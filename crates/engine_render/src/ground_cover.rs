@@ -745,8 +745,9 @@ impl RenderFeature for GroundCoverPass {
         _frame: Option<&CoverFrame>,
         _snapshot: &engine_core::RenderSnapshot,
     ) -> engine_core::GroundCoverStats {
-        let (totals, (reach, tiers, widened)) =
-            this.map_or(([0; 2], (0.0, 0, 1.0)), |cover| (cover.totals(), cover.reach()));
+        let (totals, (reach, tiers, widened)) = this.map_or(([0; 2], (0.0, 0, 1.0)), |cover| {
+            (cover.totals(), cover.reach())
+        });
         engine_core::GroundCoverStats {
             blades: totals[0],
             dropped: totals[1],

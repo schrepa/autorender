@@ -497,7 +497,11 @@ fn span_of(code: i8) -> f32 {
     if steps < 1.0 {
         return 0.0;
     }
-    WATER_SPAN_LEAST * libm::powf(WATER_SPAN_MOST / WATER_SPAN_LEAST, (steps - 1.0) / SPAN_STEPS)
+    WATER_SPAN_LEAST
+        * libm::powf(
+            WATER_SPAN_MOST / WATER_SPAN_LEAST,
+            (steps - 1.0) / SPAN_STEPS,
+        )
 }
 
 /// One sample's state packed as the four bytes of a word, low first: its

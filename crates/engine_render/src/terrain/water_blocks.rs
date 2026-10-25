@@ -453,11 +453,7 @@ impl WaterBlocks {
                 bytemuck::cast_slice(&texels.surfaces),
                 SURFACE_BYTES,
             ),
-            (
-                &arrays.info,
-                bytemuck::cast_slice(&texels.info),
-                INFO_BYTES,
-            ),
+            (&arrays.info, bytemuck::cast_slice(&texels.info), INFO_BYTES),
         ] {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -498,8 +494,7 @@ impl WaterBlocks {
         words.resize(layers as usize * entry, NO_WATER_BLOCK);
         for (slot, &layer) in &atlas.slots {
             let at = layer as usize * entry;
-            if let (Some(held), Some(tile)) =
-                (words.get_mut(at..at + entry), self.tiles.get(slot))
+            if let (Some(held), Some(tile)) = (words.get_mut(at..at + entry), self.tiles.get(slot))
             {
                 held.copy_from_slice(&tile.blocks);
             }

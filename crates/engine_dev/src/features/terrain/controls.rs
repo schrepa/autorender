@@ -267,9 +267,8 @@ pub(super) fn draw_river(
             for &point in &river.points {
                 let point = Vec2::from(point) + origin;
                 let (low, high) = (point - Vec2::splat(half), point + Vec2::splat(half));
-                bounds = Some(bounds.map_or((low, high), |(from, to)| {
-                    (from.min(low), to.max(high))
-                }));
+                bounds =
+                    Some(bounds.map_or((low, high), |(from, to)| (from.min(low), to.max(high))));
             }
         }
         bounds.map(|(low, high)| Reach {

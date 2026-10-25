@@ -208,7 +208,11 @@ impl Layers {
             };
             let listing = &mut listings[at];
             listing.courses += 1;
-            let points: Vec<Vec2> = river.points.iter().map(|&point| Vec2::from(point)).collect();
+            let points: Vec<Vec2> = river
+                .points
+                .iter()
+                .map(|&point| Vec2::from(point))
+                .collect();
             listing.length += distances(&points).last().copied().unwrap_or(0.0);
             listing.last = last;
             let widen = |range: &mut [f32; 2], value: f32| {

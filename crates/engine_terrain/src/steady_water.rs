@@ -1793,7 +1793,11 @@ fn spans(own: Option<&TileWater>) -> Vec<f32> {
     let Some(own) = own else {
         return vec![WATER_SPAN_LEAST; count];
     };
-    let held: Vec<bool> = own.surfaces().iter().map(|level| level.is_finite()).collect();
+    let held: Vec<bool> = own
+        .surfaces()
+        .iter()
+        .map(|level| level.is_finite())
+        .collect();
     nearest(&held)
         .iter()
         .map(|&seed| {

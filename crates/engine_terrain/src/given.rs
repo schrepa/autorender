@@ -485,11 +485,8 @@ fn join(runs: &mut [Run], spacing: f32) {
                     continue;
                 }
                 for segment in 0..them.points.len() - 1 {
-                    let (distance, t) = distance_to_segment(
-                        point,
-                        them.points[segment],
-                        them.points[segment + 1],
-                    );
+                    let (distance, t) =
+                        distance_to_segment(point, them.points[segment], them.points[segment + 1]);
                     if distance <= reach && best.is_none_or(|(nearest, ..)| distance < nearest) {
                         best = Some((distance, other, segment, t));
                     }
@@ -588,8 +585,16 @@ fn split_runs(runs: &[Run]) -> Vec<Piece> {
 
 /// The sample of `grid` nearest terrain-local `point`, within the grid.
 fn nearest(grid: &Grid<'_>, point: Vec2) -> usize {
-    let x = clamp((point.x / grid.spacing).round(), 0.0, (grid.width - 1) as f32) as usize;
-    let z = clamp((point.y / grid.spacing).round(), 0.0, (grid.rows() - 1) as f32) as usize;
+    let x = clamp(
+        (point.x / grid.spacing).round(),
+        0.0,
+        (grid.width - 1) as f32,
+    ) as usize;
+    let z = clamp(
+        (point.y / grid.spacing).round(),
+        0.0,
+        (grid.rows() - 1) as f32,
+    ) as usize;
     z * grid.width + x
 }
 
@@ -775,7 +780,10 @@ fn meetings(pieces: &[Piece]) -> (HashMap<[u32; 2], Vec<usize>>, Vec<Vec<usize>>
     let mut starting: HashMap<[u32; 2], Vec<usize>> = HashMap::default();
     let mut ending: HashMap<[u32; 2], Vec<usize>> = HashMap::default();
     for (number, piece) in pieces.iter().enumerate() {
-        starting.entry(key(piece.points[0])).or_default().push(number);
+        starting
+            .entry(key(piece.points[0]))
+            .or_default()
+            .push(number);
         ending
             .entry(key(piece.points[piece.points.len() - 1]))
             .or_default()

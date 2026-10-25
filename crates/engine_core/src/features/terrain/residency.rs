@@ -312,11 +312,9 @@ impl TerrainState {
         };
         let pyramid = self.terrain.pyramid;
         let under = |key: &TileKey| {
-            changed.as_ref().is_none_or(|regions| {
-                regions
-                    .iter()
-                    .any(|&bounds| covers(bounds, &pyramid, *key))
-            })
+            changed
+                .as_ref()
+                .is_none_or(|regions| regions.iter().any(|&bounds| covers(bounds, &pyramid, *key)))
         };
         let generation = Generation::of(&self.terrain.edits, &self.baked_rivers, self.materials);
         self.store.invalidate(generation, under);

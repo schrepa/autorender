@@ -434,7 +434,11 @@ impl SlotBuffers {
 /// where they have one, each one's ring.
 fn inputs(device: &wgpu::Device, (capacity, slots): (Capacity, u32), ring: bool) -> wgpu::Buffer {
     let all = u64::from(slots);
-    let rings = if ring { all * entries(capacity).ring } else { 0 };
+    let rings = if ring {
+        all * entries(capacity).ring
+    } else {
+        0
+    };
     crate::buffers::storage(
         device,
         "engine/water-sim-inputs",

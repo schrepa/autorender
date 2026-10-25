@@ -543,8 +543,7 @@ impl TransverseMercator {
             + n * tan
                 * (a * a / 2.0
                     + (5.0 - t + 9.0 * c + 4.0 * c * c) * a.powi(4) / 24.0
-                    + (61.0 - 58.0 * t + t * t + 600.0 * c - 330.0 * e_prime2) * a.powi(6)
-                        / 720.0);
+                    + (61.0 - 58.0 * t + t * t + 600.0 * c - 330.0 * e_prime2) * a.powi(6) / 720.0);
         [east, north]
     }
 }
@@ -605,7 +604,8 @@ fn read_rivers(
         Some("Feature") => vec![&document],
         _ => return Err(format!("{name}: a GeoJSON FeatureCollection or Feature")),
     };
-    let on = |point: &[f64; 2]| (0.0..=size).contains(&point[0]) && (0.0..=size).contains(&point[1]);
+    let on =
+        |point: &[f64; 2]| (0.0..=size).contains(&point[0]) && (0.0..=size).contains(&point[1]);
     let mut rivers = Vec::new();
     for feature in features {
         let (geometry, properties) = (&feature["geometry"], &feature["properties"]);
@@ -869,7 +869,8 @@ fn run() -> Result<(), String> {
                         .points
                         .windows(2)
                         .map(|pair| {
-                            f64::from(pair[1][0] - pair[0][0]).hypot(f64::from(pair[1][1] - pair[0][1]))
+                            f64::from(pair[1][0] - pair[0][0])
+                                .hypot(f64::from(pair[1][1] - pair[0][1]))
                         })
                         .sum()
                 };
@@ -952,13 +953,9 @@ fn run() -> Result<(), String> {
     )
     .map_err(|error| format!("{}: {error}", scene_file.display()))?;
     let river_lines = rivers.as_ref().map(|layer| layer.lines.len());
-    let river_points: Option<usize> = rivers.as_ref().map(|layer| {
-        layer
-            .lines
-            .iter()
-            .map(|river| river.points.len())
-            .sum()
-    });
+    let river_points: Option<usize> = rivers
+        .as_ref()
+        .map(|layer| layer.lines.iter().map(|river| river.points.len()).sum());
     let report = json!({
         "id": options.id,
         "inputs": rasters.iter().map(|raster| raster.description.clone()).collect::<Vec<_>>(),

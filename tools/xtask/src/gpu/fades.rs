@@ -97,7 +97,10 @@ const FILTERS: &[(&str, &str)] = &[
         "the ground's level whose samples span the pixel error, the next blended in as \
          trilinear filtering turns between mipmaps",
     ),
-    ("water_caustics", "the caustics a pixel's beam of sunlight gathers"),
+    (
+        "water_caustics",
+        "the caustics a pixel's beam of sunlight gathers",
+    ),
     (
         "water_contact",
         "foam against what stands behind the pixel, a band narrower than the pixel showing \
