@@ -11,8 +11,9 @@
 // (`water_light`): what lies under it shows through, bent where the frame
 // copies the scene's color and dimmed channel by channel over the view's
 // path to it (the light reaching it already dims through the water above,
-// `atmospheric`). Foam gathers where the waves compress crests and along
-// shores, and sunlight glows through crests seen against it.
+// `atmospheric`). Its foam is white water where its crests fold and its
+// waves run up its shores (`meshes/water_foam.wgsl`), floating on the still
+// sea's points, and sunlight glows through crests seen against it.
 
 const OCEAN_TAU: f32 = 6.283185307179586;
 // The mean over a sea of how near the top of a crest each point stands,
@@ -259,20 +260,27 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
         through = max(length(behind.ground - input.relative), 0.0); // optics: the view's way through the water
     }
     let transmit = water_transmitted(through, 0.0);
-    // Foam on crests the waves compress and along shores, in patches and
-    // streaks drawn out along the sea's wind, evening out with distance.
-    let heading = water.origin.xy;
-    let streaked = vec2<f32>(dot(world.xz, heading) * 0.35,
-        dot(world.xz, vec2<f32>(-heading.y, heading.x)));
-    let moving = streaked - vec2<f32>(time * 0.6, 0.0);
-    let noise = water_noise(moving * 0.45).x * 0.55 + water_noise(moving * 1.6).x * 0.3
-        + water_noise(world.xz * 4.3 + vec2<f32>(time * 0.3, 0.0)).x * 0.15;
-    let grain = mix(0.5, noise, saturate(1.6 - footprint * 2.0));
-    let shore = 1.0 - smoothstep(0.0, water.foam.y, below);
-    let crest = smoothstep(0.0, 1.0, (water.foam.z - compression) / 0.12);
-    // The densest foam where crests break hardest, thinning into lace.
-    let lace = smoothstep(0.2, 0.75, grain + 0.35 * crest);
-    let foam = water.foam.x * max(crest * lace, shore * smoothstep(0.25, 0.65, grain + 0.3 * shore));
+    // Foam (`meshes/water_foam.wgsl`): white water where the sea's crests
+    // fold, where its waves compress the surface past the whitecap threshold
+    // its wind sets (`water.foam.x`) and where its tiles' slopes pass the
+    // breaking slope, on their crests where the pixel resolves them (their
+    // heights' rank); and where its waves run up its shores fast enough to
+    // tear air in, a wave as high as all of them (`water.foam.y`) running
+    // √(g/h) times its height in water h deep. It floats on the still sea's
+    // points, so it rides the waves, and its relief tilts the normal it is
+    // lit by.
+    let foam_capping = saturate((water.foam.x - compression) / WATER_FOAM_CAPPING + 0.5);
+    let foam_crest = 1.0 / (1.0 + exp(-clamp(ripples.height
+        * inverseSqrt(max(ripples.heights, 1.0e-12)) / WATER_LOGISTIC, -30.0, 30.0)));
+    let foam_folding = water_folding(dot(gains, gains), ripples.hidden, foam_crest);
+    let foam_contact = water_contact(below, abs(dpdx(below)) + abs(dpdy(below)), footprint,
+        water.foam.y * sqrt(WATER_GRAVITY / max(below, WATER_BREAK_THINNEST)));
+    let foam_floats = eye_world(vec3<f32>(still.x, 0.0, still.y)).xz;
+    let froth = water_froth(foam_floats, dpdx(foam_floats), dpdy(foam_floats),
+        vec2<f32>(1.0 - (1.0 - foam_capping) * (1.0 - foam_folding) * (1.0 - foam_contact), 0.0),
+        vec2<f32>(0.0), 0.0, time, 0.0, detail_span(world, vec3<f32>(0.0, 1.0, 0.0)).y);
+    let foam = froth.cover;
+    let foam_tilt = water_foam_tilt(froth.height, normal, world_dx, world_dy);
     // Calm water is a mirror; the slopes of waves too short to draw spread
     // its highlights, as a rougher surface would, and so do the ripples
     // finer than the pixel.
@@ -297,6 +305,9 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     surface.roughness = roughness;
     surface.plane = vec3<f32>(0.0, 1.0, 0.0);
     surface.foam = foam;
+    surface.foam_tilt = foam_tilt;
+    surface.foam_shade = froth.shade;
+    surface.foam_thin = froth.thin;
     surface.scatter = water.color.rgb;
     surface.transmit = transmit;
     surface.crest = peak;

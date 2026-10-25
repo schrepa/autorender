@@ -549,7 +549,7 @@ gpu_consts! {
 
 gpu_mirrors! {
     engine_core::table_data::sky::MULTIPLE_SIDE => ["SKY_MULTIPLE_SIZE"];
-    engine_core::table_data::falls::SPREAD => ["FALL_MAP_SPREAD"];
+    engine_core::table_data::falls::BUBBLES => ["FALL_MAP_BUBBLES"];
     engine_core::terrain_data::hydraulics::GRAVITY => ["SIM_GRAVITY" in WATER_SIM_SHADER, "WATER_GRAVITY", "WAVE_GRAVITY" in WATER_WAVES_SHADER];
     engine_core::wind_waves::FETCH_ALPHA => ["WATER_FETCH_ALPHA"];
     engine_core::wind_waves::FETCH_ALPHA_POWER => ["WATER_FETCH_ALPHA_POWER"];
@@ -575,7 +575,7 @@ gpu_mirrors! {
     engine_core::terrain_data::NO_BLOCK => ["SIM_NO_BLOCK" in WATER_SIM_SHADER];
     engine_core::terrain_data::BLOCK_GROUND => ["SIM_BLOCK_GROUND" in WATER_SIM_SHADER, "SIM_BLOCK_GROUND" in SHADER];
     engine_core::terrain_data::shallow_water::WET_MOST => ["SIM_WET_MOST" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::FOAM_LIFE => ["SIM_FOAM_LIFE" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::FOAM_LIFE => ["SIM_FOAM_LIFE" in WATER_SIM_SHADER, "WATER_FOAM_LIFE"];
     engine_core::terrain_data::shallow_water::FOAM_MOST => ["SIM_FOAM_MOST" in WATER_SIM_SHADER, "WATER_FOAM_MOST"];
     engine_core::terrain_data::shallow_water::FOAM_WET => ["SIM_FOAM_WET" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_LOSS => ["SIM_FOAM_LOSS" in WATER_SIM_SHADER];

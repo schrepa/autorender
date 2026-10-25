@@ -37,6 +37,8 @@ const MEANDER_CELLS: [usize; 2] = [64, 64];
 const BUBBLE_CELLS: usize = 16;
 const BUBBLE_ALONG: usize = BUBBLE_CELLS / STRETCH as usize;
 const BUBBLE_WALL: f32 = 0.2;
+/// Foam's bubbles' cells across the map, [`STRETCH`] times as many along it.
+pub const BUBBLES: usize = TEXELS / BUBBLE_CELLS;
 /// How far the strands and fibers spread about their middle (their
 /// standard deviation).
 pub const SPREAD: f32 = 0.17;
