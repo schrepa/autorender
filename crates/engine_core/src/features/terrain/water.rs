@@ -57,6 +57,18 @@ settings! {
         /// `simulated` asks for runs in cells this size, each starting from
         /// the settled water's cells around it.
         pub live_cell: f32 = 0.5 => range(0.25, 8.0),
+        /// Pixels the water's drawn triangles may stray from its surface,
+        /// seen from the detail eye: each terrain's water subdivides a tree
+        /// of its own, splitting its leaves straying more and merging those
+        /// whose halves would not, as the ground's does. Smaller draws more
+        /// triangles. The water draws as many pixels over its surface as
+        /// this and the ground's own error together, so the ground drawn
+        /// under it never hides it.
+        pub subdivision_error: f32 = 1.0 => range(0.25, 64.0),
+        /// The most leaves each terrain's water's subdivision draws, 28
+        /// bytes each on the GPU: past them leaves split no more, counted,
+        /// and the water there stays coarser.
+        pub subdivision_leaves: u32 = 65_536 => range(1024, 4_000_000),
     }
 }
 

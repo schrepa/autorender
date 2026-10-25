@@ -256,9 +256,9 @@ gpu_consts! {
     pub(crate) const NO_WATER_SURFACE: f32 = -1.0e30 => ["NO_WATER_SURFACE"];
     /// Patches along a side of a tile, and the words each layer of the
     /// height array takes in water's directory: the block of each of its
-    /// tile's patches, then a bit for each.
+    /// tile's patches.
     pub(crate) const WATER_TILE_PATCHES: u32 = engine_core::terrain_data::PATCHES_PER_TILE => ["WATER_TILE_PATCHES"];
-    pub(crate) const WATER_TILE_WORDS: u32 = WATER_TILE_PATCHES * WATER_TILE_PATCHES * 33 / 32 => ["WATER_TILE_WORDS"];
+    pub(crate) const WATER_TILE_WORDS: u32 = WATER_TILE_PATCHES * WATER_TILE_PATCHES => ["WATER_TILE_WORDS"];
     /// Meters a second either way a block's packed flow spans.
     pub(crate) const WATER_FLOW_RANGE: f32 = engine_core::terrain_data::WATER_FLOW_RANGE => ["WATER_FLOW_RANGE"];
     /// Meters of half width a block's packed width of a river's water spans.
@@ -269,12 +269,11 @@ gpu_consts! {
     /// their packed radius.
     pub(crate) const WATER_OBSTACLE_STEP: f32 = engine_core::terrain_data::WATER_OBSTACLE_STEP => ["WATER_OBSTACLE_STEP"];
     pub(crate) const WATER_RADIUS_STEP: f32 = engine_core::terrain_data::WATER_RADIUS_STEP => ["WATER_RADIUS_STEP"];
-
-    // crate::water
-    /// Leaves a workgroup of the test of terrains' water's leaves takes at
-    /// a time, and the words of their bits the listing takes at once.
-    pub(crate) const WATER_LEAF_GROUP: u32 = 64 => ["WATER_LEAF_GROUP", "@cs_water_leaves" in SHADER];
-    pub(crate) const WATER_LIST_GROUP: u32 = 256 => ["WATER_LIST_GROUP", "@cs_water_list" in SHADER];
+    /// Meters a meter a block's packed gradients reach, how fast a sample's
+    /// surface or depth falls along x or z: a surface falling more than four
+    /// meters a meter (76 degrees) runs off as a fall's sheet, and a bank
+    /// rising faster stands as a wall, so steeper ones pack as this steep.
+    pub(crate) const WATER_GRADIENT_RANGE: f32 = 4.0 => ["WATER_GRADIENT_RANGE"];
 
     // crate::water_waves
     /// Texels along a side of a tile of water's waves: wave numbers of its

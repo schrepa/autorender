@@ -141,8 +141,7 @@ pipeline_layouts! {
     /// Ground cover's blades.
     COVER_PIPELINES = [CAMERA, COVER_DRAW];
     LIT_COVER_PIPELINES = [CAMERA, COVER_DRAW, EMPTY, LIGHT_SHADING];
-    /// Water over the opaque scene and the listing of the leaves terrains'
-    /// water draws on, particles and sun shafts.
+    /// Water over the opaque scene, particles and sun shafts.
     WATER_PIPELINES = [CAMERA, WATER, WATER_BEHIND];
     PARTICLE_PIPELINES = [CAMERA, PARTICLES];
     SHAFT_PIPELINES = [CAMERA, SHAFTS];

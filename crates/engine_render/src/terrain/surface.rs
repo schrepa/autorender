@@ -1,22 +1,26 @@
-//! Each terrain's subdivision: the concurrent binary tree over its square
+//! Each terrain's subdivisions: the concurrent binary tree over its square
 //! whose leaves the camera's ground draws (`meshes/terrain_subdivision.wgsl`,
-//! `meshes/terrain_surface.wgsl`), kept on the GPU from frame to frame, and
-//! what a frame binds and dispatches for it: each terrain's uniform and
-//! tree, the leaves the frame lists for every terrain and their nodes, and
-//! every terrain's counters, read back for the frame's stats, with the
-//! indirect arguments copied from them.
+//! `meshes/terrain_surface.wgsl`), and, where its tiles hold water, a second
+//! tree over the same square, measured by the water's surface, whose leaves
+//! its water draws (`crate::water`); kept on the GPU from frame to frame,
+//! and what a frame binds and dispatches for them: each tree's uniform, the
+//! leaves the frame lists for every tree and their nodes, and every tree's
+//! counters, read back for the frame's stats, with the indirect arguments
+//! copied from them.
 //!
-//! A terrain's tree is a buffer of its counts, then its bitfield, sized by
-//! its depth: made when the terrain first draws, or anew when its square or
-//! depth change or its room shrinks, holding the square's two halves as
-//! leaves, which split from there over the frames that follow. Its depth is
-//! the settings', or less where the device's storage bindings cannot hold
-//! the tree (counted). Each frame terrain takes as many leaves as the
-//! settings give one, or fewer where the leaves' binding cannot hold them
-//! all, from where the ones before it end; its uniform, counters and
-//! arguments sit at its index.
+//! A tree is a buffer of its counts, then its bitfield, sized by its depth:
+//! made when it first subdivides, or anew when its square or depth change
+//! or its room shrinks, holding the square's two halves as leaves, which
+//! split from there over the frames that follow. Its depth is the
+//! settings', or less where the device's storage bindings cannot hold the
+//! tree (counted). Each frame the ground's trees take the first slots, each
+//! frame terrain's at its index, and the water's trees the slots after them;
+//! a tree's uniform, counters and arguments sit at its slot. Each tree
+//! takes as many leaves as its settings give one, or fewer where the
+//! leaves' binding cannot hold every tree's, from where the ones before it
+//! end.
 //!
-//! A frame's subdivision is two passes: the first writes each terrain's
+//! A frame's subdivision is two passes: the first writes each tree's
 //! arguments among its counters, which the frame then copies to the buffer
 //! the second pass's dispatches and the draws take them from, since no
 //! dispatch may take its arguments from a buffer it binds to write.
@@ -38,18 +42,37 @@ use crate::shaders::entry::meshes;
 const LEAF_BYTES: u64 = 24;
 /// Bytes of a leaf's node and decision.
 const NODE_BYTES: u64 = 4;
-/// Bytes of a terrain's counters and indirect arguments, and where its
-/// draw's start in them.
+/// Bytes of a tree's counters and indirect arguments, and where its draw's
+/// start in them.
 const ARGS_BYTES: u64 = SUBDIVISION_ARGS as u64 * 4;
 const DRAW_OFFSET: u64 = 16;
 /// The shallowest tree a device's bindings are asked to hold: its counts
 /// start two levels under the root.
 const SHALLOWEST: u32 = SUBDIVISION_COUNTED + 2;
 
-/// One terrain's tree: its buffer of counts and bitfield, its deepest
-/// level, its square's side, the most leaves its room has held since it was
-/// made, which it may hold, and the group binding it with the frame's
-/// shared buffers.
+/// What a tree's leaves follow, which picks its measure
+/// (`TerrainSubdivision::square.z`): a terrain's ground, or the water its
+/// tiles hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Measure {
+    Ground,
+    Water,
+}
+
+impl Measure {
+    /// `TerrainSubdivision::square.z` of its trees.
+    fn code(self) -> f32 {
+        match self {
+            Self::Ground => 0.0,
+            Self::Water => 1.0,
+        }
+    }
+}
+
+/// One tree: its buffer of counts and bitfield, its deepest level, its
+/// square's side, the most leaves its room has held since it was made,
+/// which it may hold, and the group binding it with the frame's shared
+/// buffers.
 struct Tree {
     buffer: Versioned<wgpu::Buffer>,
     depth: u32,
@@ -58,19 +81,21 @@ struct Tree {
     group: GroupCache<5>,
 }
 
-/// A frame terrain's subdivision: its tree's terrain, where its leaves
-/// start among the frame's, and the meters between its finest leaves'
-/// meshlet vertices.
+/// A frame tree's subdivision: its terrain and what its leaves follow, the
+/// terrain's index among the frame's, where its leaves start among the
+/// frame's, and the meters between its finest leaves' meshlet vertices.
 #[derive(Clone, Copy)]
 struct Subdivided {
     id: u64,
+    measure: Measure,
+    terrain: usize,
     first: u32,
     finest: f32,
 }
 
-/// What the subdivisions drew as last read back: the leaves of every
-/// terrain the camera drew and their triangles, and the splits their room
-/// refused; and the frame's terrains whose trees the device's storage
+/// What the ground's subdivisions drew as last read back: the leaves of
+/// every terrain the camera drew and their triangles, and the splits their
+/// room refused; and the frame's terrains whose trees the device's storage
 /// bindings keep shallower than the settings ask.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct SurfaceStats {
@@ -81,18 +106,23 @@ pub(crate) struct SurfaceStats {
 }
 
 pub(crate) struct SurfaceTrees {
-    trees: HashMap<u64, Tree>,
-    // Each frame terrain's subdivision, by index; none for those not
-    // drawing.
+    trees: HashMap<(u64, Measure), Tree>,
+    // Each frame tree's subdivision, by slot: each frame terrain's ground at
+    // its index, none for those not drawing, then the water's trees; and the
+    // ground's slots, one for each frame terrain.
     frame: Vec<Option<Subdivided>>,
-    // The frame's leaves and nodes, every terrain's; their counters, which
-    // the subdivision's passes write, and the indirect arguments copied from
+    grounds: usize,
+    // The pixels the ground's and the water's leaves may stray from their
+    // surfaces this frame.
+    targets: [f32; 2],
+    // The frame's leaves and nodes, every tree's; their counters, which the
+    // subdivision's passes write, and the indirect arguments copied from
     // them.
     leaves: Growable,
     nodes: Growable,
     counters: Growable,
     args: Growable,
-    // Each frame terrain's uniform, a slot each, and the bytes written.
+    // Each frame tree's uniform, a slot each, and the bytes written.
     uniforms: Versioned<wgpu::Buffer>,
     uniforms_written: Vec<u8>,
     /// What the terrain group binds for the leaves in the subdivision's own
@@ -104,11 +134,12 @@ pub(crate) struct SurfaceTrees {
     pipelines: Option<[wgpu::ComputePipeline; 3]>,
     // Frames subdivided, whose parity picks splitting or merging.
     frames: u64,
-    // Read-backs of the counters, each of its terrains and the rests before
-    // it; the leaves and refused splits the last one summed; and the rests,
+    // Read-backs of the counters, each of its slots, the ground's first of
+    // them, and the rests before it; the leaves and refused splits the last
+    // one summed, the ground's trees' then the water's; and the rests,
     // which leave read-backs recorded before them unsummed.
-    readbacks: ReadbackRing<(u32, u64)>,
-    totals: Rc<Cell<[u32; 2]>>,
+    readbacks: ReadbackRing<(u32, u32, u64)>,
+    totals: Rc<Cell<[u32; 4]>>,
     rests: Rc<Cell<u64>>,
     shallow: u32,
 }
@@ -118,6 +149,8 @@ impl SurfaceTrees {
         Self {
             trees: HashMap::default(),
             frame: Vec::new(),
+            grounds: 0,
+            targets: [0.0; 2],
             leaves: Growable::new(
                 device,
                 "engine/terrain-surface-leaves",
@@ -136,12 +169,11 @@ impl SurfaceTrees {
                 ARGS_BYTES,
                 wgpu::BufferUsages::COPY_SRC,
             ),
-            // Water copies its leaves' count from the draws' arguments.
             args: Growable::new(
                 device,
                 "engine/terrain-surface-args",
                 ARGS_BYTES,
-                wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
+                wgpu::BufferUsages::INDIRECT,
             ),
             uniforms: Versioned::new(crate::buffers::uniform(
                 device,
@@ -161,16 +193,22 @@ impl SurfaceTrees {
             pipelines: None,
             frames: 0,
             readbacks: ReadbackRing::new("engine/terrain-surface-readback"),
-            totals: Rc::new(Cell::new([0; 2])),
+            totals: Rc::new(Cell::new([0; 4])),
             rests: Rc::new(Cell::new(0)),
             shallow: 0,
         }
     }
 
-    /// The leaves the frame draws, every terrain's, which the terrain group
-    /// binds.
+    /// The leaves the frame draws, every tree's, which the terrain group and
+    /// water's group bind.
     pub(super) fn leaves(&self) -> &Versioned<wgpu::Buffer> {
         &self.leaves
+    }
+
+    /// Each frame tree's uniform, a slot each, which water's draws bind at
+    /// its trees' slots (`Self::water`) for where their leaves start.
+    pub(super) fn uniforms(&self) -> &Versioned<wgpu::Buffer> {
+        &self.uniforms
     }
 
     /// Bytes of the trees and of the frame's leaves, nodes, counters and
@@ -180,18 +218,23 @@ impl SurfaceTrees {
         trees + self.leaves.size() + self.nodes.size() + self.counters.size() + self.args.size()
     }
 
-    /// Where frame terrain `index`'s leaves start among the frame's, and the
-    /// meters between its finest leaves' meshlet vertices; zeroes where it
-    /// does not draw.
-    pub(super) fn of(&self, index: usize) -> (u32, f32) {
-        self.frame
-            .get(index)
-            .copied()
+    /// The subdivision of frame terrain `index`'s ground this frame, where
+    /// it draws.
+    fn ground(&self, index: usize) -> Option<Subdivided> {
+        (index < self.grounds)
+            .then(|| self.frame.get(index).copied().flatten())
             .flatten()
+    }
+
+    /// Where frame terrain `index`'s ground's leaves start among the
+    /// frame's, and the meters between its finest leaves' meshlet vertices;
+    /// zeroes where it does not draw.
+    pub(super) fn of(&self, index: usize) -> (u32, f32) {
+        self.ground(index)
             .map_or((0, 0.0), |subdivided| (subdivided.first, subdivided.finest))
     }
 
-    /// Whether any frame terrain subdivides.
+    /// Whether any frame tree subdivides.
     pub(super) fn any(&self) -> bool {
         self.frame.iter().any(Option::is_some)
     }
@@ -200,91 +243,123 @@ impl SurfaceTrees {
     /// none drawn.
     pub(super) fn rest(&mut self) {
         self.frame.clear();
+        self.grounds = 0;
         self.shallow = 0;
-        self.totals.set([0; 2]);
+        self.totals.set([0; 4]);
         self.rests.set(self.rests.get() + 1);
     }
 
-    /// The indirect draw arguments of frame terrain `index`'s leaves and
-    /// their byte offset, once it subdivides this frame.
+    /// The indirect draw arguments of frame terrain `index`'s ground's
+    /// leaves and their byte offset, once it subdivides this frame.
     pub(super) fn draw(&self, index: usize) -> Option<(&wgpu::Buffer, u64)> {
-        self.frame
-            .get(index)
-            .copied()
-            .flatten()
+        self.ground(index)
             .map(|_| (&**self.args, index as u64 * ARGS_BYTES + DRAW_OFFSET))
     }
 
+    /// The tree of frame terrain `index`'s water this frame: its uniform's
+    /// offset among the trees' (`Self::uniforms`), and the indirect draw
+    /// arguments of its leaves (`wgpu::util::DrawIndirectArgs`: a meshlet's
+    /// `SURFACE_MESHLET_VERTICES` vertices, an instance a leaf) and their
+    /// byte offset; `None` where its water does not subdivide.
+    pub(super) fn water(&self, index: usize) -> Option<(u32, &wgpu::Buffer, u64)> {
+        let slot = (self.grounds..self.frame.len()).find(|&slot| {
+            self.frame
+                .get(slot)
+                .copied()
+                .flatten()
+                .is_some_and(|subdivided| subdivided.terrain == index)
+        })?;
+        let slot = slot as u64;
+        Some((
+            (slot * SLOT) as u32,
+            &**self.args,
+            slot * ARGS_BYTES + DRAW_OFFSET,
+        ))
+    }
+
+    /// The pixels the ground's leaves (x) and the water's (y) may stray from
+    /// their surfaces seen from the detail eye, as this frame's trees take
+    /// them.
+    pub(super) fn targets(&self) -> [f32; 2] {
+        self.targets
+    }
+
     /// Lays out this frame's subdivisions of `terrains` drawing, as `views`
-    /// see them: each one's tree (made or made anew where its square or
-    /// depth changed or its room shrank), its leaves' room and its uniform,
-    /// written where it changed.
+    /// see them: each one's ground's tree, and its water's where water's
+    /// settings draw it and its tiles hold water (`holds_water`, by
+    /// terrain), each made or made anew where its square or depth changed or
+    /// its room shrank, with its leaves' room and its uniform, written where
+    /// it changed.
     pub(super) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         terrains: &RenderTerrains,
         views: &TerrainViews<'_>,
+        holds_water: impl Fn(u64) -> bool,
     ) {
         self.frames += 1;
         self.shallow = 0;
         self.frame.clear();
-        self.trees
-            .retain(|id, _| terrains.terrains.iter().any(|terrain| terrain.id == *id));
-        let count = terrains.terrains.len() as u64;
-        let settings = &views.settings;
-        // Every terrain's leaves within the leaves' binding.
-        let room = self.leaves.room() / LEAF_BYTES / count.max(1);
-        let capacity = room.min(u64::from(settings.subdivision_leaves)) as u32;
-        let leaves = count * u64::from(capacity);
+        let (settings, water) = (&views.settings, &views.water);
+        let subdivides_water = |terrain: &RenderTerrain| water.enabled && holds_water(terrain.id);
+        // A terrain's ground's tree stays while it does, its water's while
+        // its tiles hold water.
+        self.trees.retain(|&(id, measure), _| {
+            terrains.terrains.iter().any(|terrain| {
+                terrain.id == id && (measure == Measure::Ground || subdivides_water(terrain))
+            })
+        });
+        let watered: Vec<usize> = (terrains.terrains.iter().enumerate())
+            .filter(|&(_, terrain)| terrain.drawn && subdivides_water(terrain))
+            .map(|(index, _)| index)
+            .collect();
+        let count = terrains.terrains.len();
+        let slots = (count + watered.len()) as u64;
+        // Every tree's leaves within the leaves' binding.
+        let share = self.leaves.room() / LEAF_BYTES / slots.max(1);
+        let rooms = [
+            share.min(u64::from(settings.subdivision_leaves)) as u32,
+            share.min(u64::from(water.subdivision_leaves)) as u32,
+        ];
+        let leaves =
+            count as u64 * u64::from(rooms[0]) + watered.len() as u64 * u64::from(rooms[1]);
         self.leaves.grow(device, leaves * LEAF_BYTES);
         self.nodes.grow(device, leaves * NODE_BYTES);
-        self.counters.grow(device, count * ARGS_BYTES);
-        self.args.grow(device, count * ARGS_BYTES);
-        // Read-backs hold the counters of as many terrains as were drawing
+        self.counters.grow(device, slots * ARGS_BYTES);
+        self.args.grow(device, slots * ARGS_BYTES);
+        // Read-backs hold the counters of as many trees as were subdividing
         // when they were made.
-        if self.uniforms_written.len() as u64 != count * SLOT {
+        if self.uniforms_written.len() as u64 != slots * SLOT {
             self.readbacks.clear();
         }
-        if count * SLOT > self.uniforms.size() {
+        if slots * SLOT > self.uniforms.size() {
             self.uniforms.replace(crate::buffers::uniform(
                 device,
                 "engine/terrain-subdivision",
-                (count * SLOT).next_power_of_two(),
+                (slots * SLOT).next_power_of_two(),
             ));
             self.uniforms_written.clear();
         }
+        self.targets = [settings.subdivision_error, water.subdivision_error];
         let planes = world_planes(views.culling, views.eye);
-        let mut bytes = vec![0_u8; (count * SLOT) as usize];
+        let mut bytes = vec![0_u8; (slots * SLOT) as usize];
+        let depth = settings.subdivision_depth;
         for (index, terrain) in terrains.terrains.iter().enumerate() {
-            if !terrain.drawn {
+            if terrain.drawn {
+                let leaves = (index as u32 * rooms[0], rooms[0]);
+                let tree = (terrain, index, Measure::Ground);
+                self.lay_out((device, queue), tree, (depth, leaves), planes, &mut bytes);
+            } else {
                 self.frame.push(None);
-                continue;
             }
-            let wanted = (settings.subdivision_depth, capacity);
-            let (side, depth) = self.tree(device, queue, terrain, wanted);
-            let first = index as u32 * capacity;
-            let uniform = SubdivisionUniform {
-                square: [side, settings.subdivision_error, 0.0, 0.0],
-                tree: [depth, counts_words(depth), first, capacity],
-                frame: [(self.frames % 2) as u32, index as u32, 0, 0],
-                extent: {
-                    let extent = terrain.pyramid.extent();
-                    [0.0, 0.0, extent.x, extent.y]
-                },
-                cutout: terrain
-                    .cutout
-                    .map_or([0.0; 4], |(low, high)| [low.x, low.y, high.x, high.y]),
-                planes,
-            };
-            let at = index * SLOT as usize;
-            bytes[at..at + size_of::<SubdivisionUniform>()]
-                .copy_from_slice(bytemuck::bytes_of(&uniform));
-            self.frame.push(Some(Subdivided {
-                id: terrain.id,
-                first,
-                finest: finest_spacing(side, depth),
-            }));
+        }
+        self.grounds = count;
+        let after_ground = count as u32 * rooms[0];
+        for (place, &index) in watered.iter().enumerate() {
+            let leaves = (after_ground + place as u32 * rooms[1], rooms[1]);
+            let tree = (&terrains.terrains[index], index, Measure::Water);
+            self.lay_out((device, queue), tree, (depth, leaves), planes, &mut bytes);
         }
         if bytes != self.uniforms_written {
             queue.write_buffer(&self.uniforms, 0, &bytes);
@@ -292,16 +367,62 @@ impl SurfaceTrees {
         }
     }
 
-    /// The side of `terrain`'s square and its tree's deepest level, `wanted`
-    /// or as deep as the device's storage bindings hold (counted), for a
-    /// room of `capacity` leaves: its tree made with the square's two halves
-    /// as its leaves where it has none, or anew where its square or depth
-    /// changed or the room shrank below the leaves it may hold.
+    /// Lays out the frame's next tree at the next slot: frame terrain
+    /// `index`'s, `terrain`'s, following `measure`, of deepest level
+    /// `depth` or as deep as the device's bindings hold, its `room` leaves
+    /// from `first` on among the frame's; its uniform written into `bytes`
+    /// at its slot, culling through the camera's frustum `planes`.
+    fn lay_out(
+        &mut self,
+        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        (terrain, index, measure): (&RenderTerrain, usize, Measure),
+        (depth, (first, room)): (u32, (u32, u32)),
+        planes: [[f32; 4]; 6],
+        bytes: &mut [u8],
+    ) {
+        let slot = self.frame.len();
+        let (side, depth) = self.tree(device, queue, (terrain, measure), (depth, room));
+        let target = match measure {
+            Measure::Ground => self.targets[0],
+            Measure::Water => self.targets[1],
+        };
+        let uniform = SubdivisionUniform {
+            square: [side, target, measure.code(), 0.0],
+            tree: [depth, counts_words(depth), first, room],
+            frame: [(self.frames % 2) as u32, slot as u32, 0, 0],
+            extent: {
+                let extent = terrain.pyramid.extent();
+                [0.0, 0.0, extent.x, extent.y]
+            },
+            cutout: terrain
+                .cutout
+                .map_or([0.0; 4], |(low, high)| [low.x, low.y, high.x, high.y]),
+            planes,
+        };
+        let at = slot * SLOT as usize;
+        bytes[at..at + size_of::<SubdivisionUniform>()]
+            .copy_from_slice(bytemuck::bytes_of(&uniform));
+        self.frame.push(Some(Subdivided {
+            id: terrain.id,
+            measure,
+            terrain: index,
+            first,
+            finest: finest_spacing(side, depth),
+        }));
+    }
+
+    /// The side of `terrain`'s square and the deepest level of its tree
+    /// following `measure`, `wanted` or as deep as the device's storage
+    /// bindings hold (counted for its ground's, which its water's is as
+    /// deep as), for a room of `capacity` leaves: the tree made with the
+    /// square's two halves as its leaves where there is none, or anew where
+    /// its square or depth changed or the room shrank below the leaves it
+    /// may hold.
     fn tree(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        terrain: &RenderTerrain,
+        (terrain, measure): (&RenderTerrain, Measure),
         (wanted, capacity): (u32, u32),
     ) -> (f32, u32) {
         let limits = device.limits();
@@ -313,11 +434,11 @@ impl SurfaceTrees {
         while depth > SHALLOWEST && tree_bytes(depth) > room {
             depth -= 1;
         }
-        self.shallow += u32::from(depth < wanted);
+        self.shallow += u32::from(depth < wanted && measure == Measure::Ground);
         let pyramid = &terrain.pyramid;
         let [tiles_x, tiles_z] = pyramid.tiles(0);
         let side = pyramid.tile_size(0) * tiles_x.max(tiles_z).next_power_of_two() as f32;
-        match self.trees.get_mut(&terrain.id) {
+        match self.trees.get_mut(&(terrain.id, measure)) {
             Some(tree) if tree.depth == depth && tree.side == side && tree.room <= capacity => {
                 tree.room = capacity;
             }
@@ -330,7 +451,7 @@ impl SurfaceTrees {
                 );
                 seed(queue, &buffer, depth);
                 self.trees.insert(
-                    terrain.id,
+                    (terrain.id, measure),
                     Tree {
                         buffer: Versioned::new(buffer),
                         depth,
@@ -344,11 +465,11 @@ impl SurfaceTrees {
         (side, depth)
     }
 
-    /// Records this frame's subdivisions: each terrain's arguments, then its
+    /// Records this frame's subdivisions: each tree's arguments, then its
     /// leaves listed and its decisions applied, through the camera's uniform
     /// `camera` and the terrain group standing in for the leaves
     /// (`terrain_group`, with the terrain group's layout), timed by
-    /// `profiler`; and a copy of every terrain's counters to read back.
+    /// `profiler`; and a copy of every tree's counters to read back.
     pub(super) fn encode(
         &mut self,
         device: &wgpu::Device,
@@ -366,15 +487,17 @@ impl SurfaceTrees {
             return;
         };
         let (frame, trees) = (&self.frame, &self.trees);
-        // Each frame terrain subdividing: its uniforms' offset, its
-        // arguments' and its tree's group.
+        // Each frame tree subdividing: its terrain's uniform's offset, its
+        // own uniform's, its arguments' and its group.
         let bound = || {
-            frame.iter().enumerate().filter_map(|(index, subdivided)| {
-                let group = trees.get(&(*subdivided)?.id)?.group.get()?;
+            frame.iter().enumerate().filter_map(|(slot, subdivided)| {
+                let subdivided = (*subdivided)?;
+                let tree = trees.get(&(subdivided.id, subdivided.measure))?;
                 Some((
-                    (index as u64 * SLOT) as u32,
-                    index as u64 * ARGS_BYTES,
-                    group,
+                    (subdivided.terrain as u64 * SLOT) as u32,
+                    (slot as u64 * SLOT) as u32,
+                    slot as u64 * ARGS_BYTES,
+                    tree.group.get()?,
                 ))
             })
         };
@@ -387,8 +510,8 @@ impl SurfaceTrees {
             });
             pass.set_pipeline(&pipelines[0]);
             pass.set_bind_group(0, camera_group, &[]);
-            for (slot, _, group) in bound() {
-                pass.set_bind_group(1, terrain_group, &[0, slot]);
+            for (terrain, slot, _, group) in bound() {
+                pass.set_bind_group(1, terrain_group, &[0, terrain]);
                 pass.set_bind_group(2, group, &[slot]);
                 pass.dispatch_workgroups(1, 1, 1);
             }
@@ -403,8 +526,8 @@ impl SurfaceTrees {
                     .map(|span| span.compute()),
             });
             pass.set_bind_group(0, camera_group, &[]);
-            for (slot, args, group) in bound() {
-                pass.set_bind_group(1, terrain_group, &[0, slot]);
+            for (terrain, slot, args, group) in bound() {
+                pass.set_bind_group(1, terrain_group, &[0, terrain]);
                 pass.set_bind_group(2, group, &[slot]);
                 pass.set_pipeline(&pipelines[1]);
                 pass.dispatch_workgroups_indirect(&self.args, args);
@@ -412,15 +535,15 @@ impl SurfaceTrees {
                 pass.dispatch_workgroups_indirect(&self.args, args);
             }
         }
-        let tag = (frame.len() as u32, self.rests.get());
+        let tag = (self.grounds as u32, frame.len() as u32, self.rests.get());
         self.readbacks
             .record(device, encoder, &self.counters, bytes, tag);
     }
 
     /// Makes the passes' pipelines and the camera's group, through the
     /// camera's uniform `camera` and the terrain group's layout
-    /// `terrain_layout`, unless they exist; and binds every frame terrain's
-    /// tree with the frame's shared buffers.
+    /// `terrain_layout`, unless they exist; and binds every frame tree with
+    /// the frame's shared buffers.
     fn bind(
         &mut self,
         device: &wgpu::Device,
@@ -460,7 +583,7 @@ impl SurfaceTrees {
             }),
         );
         for subdivided in self.frame.iter().flatten() {
-            let Some(tree) = self.trees.get_mut(&subdivided.id) else {
+            let Some(tree) = self.trees.get_mut(&(subdivided.id, subdivided.measure)) else {
                 continue;
             };
             tree.group.bind(
@@ -482,29 +605,39 @@ impl SurfaceTrees {
     pub(crate) fn after_submit(&self) {
         let (totals, rests) = (Rc::clone(&self.totals), Rc::clone(&self.rests));
         self.readbacks
-            .after_submit(move |words, (terrains, rested)| {
+            .after_submit(move |words, (grounds, slots, rested)| {
                 if rested != rests.get() {
                     return;
                 }
-                let mut sums = [0_u32; 2];
-                for terrain in 0..terrains as usize {
-                    let at = terrain * SUBDIVISION_ARGS as usize;
-                    sums[0] = sums[0].saturating_add(words.get(at + 3));
-                    sums[1] = sums[1].saturating_add(words.get(at + 9));
+                // The ground's trees' leaves and refused splits, then the
+                // water's.
+                let mut sums = [0_u32; 4];
+                for slot in 0..slots as usize {
+                    let at = slot * SUBDIVISION_ARGS as usize;
+                    let sum = if slot < grounds as usize { 0 } else { 2 };
+                    sums[sum] = sums[sum].saturating_add(words.get(at + 3));
+                    sums[sum + 1] = sums[sum + 1].saturating_add(words.get(at + 9));
                 }
                 totals.set(sums);
             });
     }
 
-    /// What the subdivisions drew, as last read back.
+    /// What the ground's subdivisions drew, as last read back.
     pub(crate) fn stats(&self) -> SurfaceStats {
-        let [leaves, refused] = self.totals.get();
+        let [leaves, refused, _, _] = self.totals.get();
         SurfaceStats {
             leaves,
             triangles: leaves.saturating_mul(SURFACE_MESHLET_VERTICES / 3),
             refused,
             shallow: self.shallow,
         }
+    }
+
+    /// The leaves the water's subdivisions drew and the splits their room
+    /// refused, as last read back.
+    pub(super) fn water_stats(&self) -> [u32; 2] {
+        let [_, _, leaves, refused] = self.totals.get();
+        [leaves, refused]
     }
 }
 

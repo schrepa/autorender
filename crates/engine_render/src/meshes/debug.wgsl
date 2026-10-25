@@ -255,36 +255,43 @@ fn fs_debug_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> Deb
 }
 
 // Water where its shading covers at least half the pixel, or in the
-// water's views wherever it lies: the tiles', which gives way where water
-// is simulated, or the simulated water's (`simulated`). Its object word
-// holds its depth (meters) and its detail word its speed (meters a second),
-// as floats' bits; the third target its Froude number, as a float's bits,
-// then its turbulence and white water (a byte each, 0 to 1) with its reach
-// in the top byte (0 for none, else one more than `engine_terrain::Reach`).
-fn debug_water(input: WaterOutput, simulated: bool) -> DebugTargets {
-    let shade = shade_water(input, false, simulated);
+// water's views wherever it lies, at the pixel `pixel` as `at` holds it,
+// drawn at the point `mesh` of its mesh over the point `point` of its
+// surface: the tiles', which gives way where water is simulated, or the
+// simulated water's (`simulated`). Its object word holds its depth (meters)
+// and its detail word its speed (meters a second), as floats' bits; the
+// third target its Froude number, as a float's bits, then its turbulence and
+// white water (a byte each, 0 to 1) with its reach in the top byte (0 for
+// none, else one more than `engine_terrain::Reach`).
+fn debug_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
+        simulated: bool) -> DebugTargets {
+    let shade = shade_water(mesh, point, pixel, at, false, simulated);
     if shade.coverage < 0.5 && !DEBUG_WATER_VIEWS { // optics: water covers as its shading sees it
         discard;
     }
-    let point = debug_point(eye_world(input.relative), shade.shaded.normal);
-    let depth = input.water.x;
-    let speed = length(input.water.yz);
+    let seen = debug_point(eye_world(point), shade.shaded.normal);
+    let depth = at.depth;
+    let speed = length(at.words.flow);
     let froude = speed / sqrt(DEBUG_GRAVITY * max(depth, DEBUG_DRY));
     var targets = debug_targets(DEBUG_KIND_WATER, bitcast<u32>(depth), bitcast<u32>(speed),
-        point);
+        seen);
     targets.terrain = vec2<u32>(bitcast<u32>(froude),
-        pack4x8unorm(vec4<f32>(input.state.xy, 0.0, 0.0)) | (min(input.reach, 0xffu) << 24u));
+        pack4x8unorm(vec4<f32>(at.words.state.xy, 0.0, 0.0))
+            | (min(at.words.reach, 0xffu) << 24u));
     return targets;
 }
 
 @fragment
 fn fs_debug_water(input: WaterOutput) -> DebugTargets {
-    return debug_water(input, false);
+    let at = water_drawn(input.relative);
+    return debug_water(input.relative, water_on_surface(input.relative, at),
+        input.clip_position.xy, at, false);
 }
 
 @fragment
-fn fs_debug_sim_water(input: WaterOutput) -> DebugTargets {
-    return debug_water(input, true);
+fn fs_debug_sim_water(input: SimWaterOutput) -> DebugTargets {
+    return debug_water(input.relative, input.relative, input.clip_position.xy,
+        sim_water_values(input), true);
 }
 
 @fragment

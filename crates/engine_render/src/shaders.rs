@@ -329,8 +329,6 @@ entry_points! {
             subdivide_begin,
             subdivide_decide,
             subdivide_apply,
-            cs_water_leaves,
-            cs_water_list,
         ],
     }
     terrain_normals = TERRAIN_NORMALS_SHADER {
