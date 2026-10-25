@@ -681,6 +681,7 @@ export interface OpResults {
   terrain_edit: TerrainEdited;
   terrain_height: TerrainHeightResult;
   terrain_redo: TerrainEdited;
+  terrain_river: TerrainEdited;
   terrain_route: TerrainRouteResult;
   terrain_sweep: TerrainSweepResult;
   terrain_undo: TerrainEdited;
@@ -1079,8 +1080,11 @@ export interface TerrainControlResult {
   terrain_changed: boolean;
 }
 
-/** What `terrain_edit`, `terrain_undo` and `terrain_redo` answer. */
-export type TerrainEdited = { applied: boolean; dirty: Reach; edits: number; id: string; largest_change: number; temporary: boolean } | { dirty?: Reach | null; edits: number; temporary: boolean; undone?: string | null } | { dirty?: Reach | null; edits: number; redone?: string | null; temporary: boolean };
+/**
+ * What `terrain_edit`, `terrain_undo`, `terrain_redo` and `terrain_river`
+ * answer.
+ */
+export type TerrainEdited = { applied: boolean; dirty?: Reach | null; id: string; rivers: number; temporary: boolean } | { applied: boolean; dirty: Reach; edits: number; id: string; largest_change: number; temporary: boolean } | { dirty?: Reach | null; edits: number; temporary: boolean; undone?: string | null } | { dirty?: Reach | null; edits: number; redone?: string | null; temporary: boolean };
 
 /**
  * What `terrain_height` answers: each point's ground, null where no tile

@@ -7,6 +7,7 @@
     "terrain_edit",
     "terrain_undo",
     "terrain_redo",
+    "terrain_river",
     "deform",
     "nav_go",
     "animation",

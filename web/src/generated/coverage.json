@@ -521,6 +521,10 @@
       ]
     },
     {
+      "op": "terrain_river",
+      "smokes": []
+    },
+    {
       "op": "deform",
       "smokes": [
         "terrain-surface"

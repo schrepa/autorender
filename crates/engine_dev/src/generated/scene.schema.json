@@ -547,6 +547,71 @@
         "share"
       ]
     },
+    "GivenRiver": {
+      "description": "One river given: the line it runs along, from upstream, and what its\ndata says of its channel. Its width, depth and discharge each hold\none value for the whole river or one for each of its points; what it\nleaves out the bake derives, as for its own courses.",
+      "type": "object",
+      "properties": {
+        "depth": {
+          "description": "Meters its channel's middle lies below its banks; omitted, as\ndeep as downstream hydraulic geometry stands a channel its flood\nfills.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float",
+            "exclusiveMinimum": 0.0,
+            "maximum": 500.0
+          }
+        },
+        "discharge": {
+          "description": "Cubic meters a second its bankfull flood carries, which fills its\nchannel to its banks; omitted, what the area draining into it\nbrings, as its hydrology layer's discharge says.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float",
+            "exclusiveMinimum": 0.0,
+            "maximum": 1000000.0
+          }
+        },
+        "name": {
+          "description": "Its name, as its data or its author calls it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1024
+        },
+        "points": {
+          "description": "Terrain-local meters along x and z it runs through, from\nupstream: it runs along the smooth line through them.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float",
+              "maximum": 10000000.0,
+              "minimum": -10000000.0
+            },
+            "maxItems": 2,
+            "minItems": 2
+          },
+          "maxItems": 16384,
+          "minItems": 2
+        },
+        "width": {
+          "description": "Meters across its channel from bank to bank; omitted, as wide as\ndownstream hydraulic geometry stands a channel its flood fills.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float",
+            "exclusiveMinimum": 0.0,
+            "maximum": 50000.0
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "points"
+      ]
+    },
     "Grounded": {
       "description": "Stands its entity on the terrain: its translation's y is\nkept `offset` meters above the ground under its x and z. Unparented\nentities only; without a resident tile under it (or over a hole) the\nentity keeps its translation, as walking navigation agents keep theirs:\ntheir walks stand them, on bridges' decks too.",
       "type": "object",
@@ -563,11 +628,11 @@
       "additionalProperties": false
     },
     "HydrologyLayer": {
-      "description": "A layer that bakes where water runs over the layers below it and cuts\nchannels into them.",
+      "description": "A layer that bakes where water runs over the layers below it and cuts\nchannels into them: the rivers the rivers layers below it give, then\nthose it finds where the water left gathers.",
       "type": "object",
       "properties": {
         "discharge": {
-          "description": "Cubic meters a second each square kilometer drained brings the\nchannels full to their banks: every channel carries this times the\narea draining through it, which sets how wide and deep its channel\nstands, as channels full to their banks widen and deepen\ndownstream.",
+          "description": "Cubic meters a second each square kilometer drained brings the\nchannels full to their banks: every channel whose flood is not\ngiven carries this times the area draining through it, which sets\nhow wide and deep its channel stands where that is not given, as\nchannels full to their banks widen and deepen downstream.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -1483,6 +1548,47 @@
         "mask",
         "from",
         "to"
+      ]
+    },
+    "RiversLayer": {
+      "description": "Rivers given over the terrain: lines its developer draws, or an\nimport tool writes from vector data, which the hydrology bake after\nit runs as its courses, sized as they say, deriving only what they\nleave out and the courses of water no given river gathers. `source`\nand `attribution` (up to 1024 characters each) record where they\ncame from and the credit their data requires, as the import tool\nwrites them.",
+      "type": "object",
+      "properties": {
+        "attribution": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1024
+        },
+        "lines": {
+          "description": "The rivers.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GivenRiver"
+          },
+          "maxItems": 4096,
+          "minItems": 1
+        },
+        "precision": {
+          "description": "Meters its rivers' lines may stand off their true middles, as\nprecise as their data is: the bake moves each point that far at\nmost across its line toward the lowest ground, never over a rise;\n0 keeps them where they are given.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 1000.0,
+          "minimum": 0.0
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "lines"
       ]
     },
     "SceneAlphaMode": {
@@ -5232,7 +5338,7 @@
       "additionalProperties": false
     },
     "SceneTerrain": {
-      "description": "A heightfield terrain on this entity.\n\nIts first corner (least x and z) lies at `origin` in world space,\nwhatever the entity's transform; heights rise from the origin's y. Its\nheights come from `layers`, applied in order to every sample (later\nlayers win): an imported terrain is a heightmap layer\n(`terrain_import` writes one). Its tiles load as records, the cook's\nor made by the same jobs. Level-0 tiles span 256 samples `spacing`\nmeters apart; coarser levels halve the tiles up to one.",
+      "description": "A heightfield terrain on this entity.\n\nIts first corner (least x and z) lies at `origin` in world space,\nwhatever the entity's transform; heights rise from the origin's y. Its\nheights come from `layers`, applied in order to every sample (later\nlayers win): an imported terrain is a heightmap layer, its known\nrivers a rivers layer before its hydrology layer (`terrain_import`\nwrites both). Its tiles load as records, the cook's\nor made by the same jobs. Level-0 tiles span 256 samples `spacing`\nmeters apart; coarser levels halve the tiles up to one.",
       "type": "object",
       "properties": {
         "collision": {
@@ -5400,7 +5506,7 @@
       ]
     },
     "SceneTerrainLayer": {
-      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), an imported heightmap, an erosion\nbake of the layers before it, where rivers wear valleys\nand slopes creep, a hydrology bake of them, which\ncarves channels where water gathers, fills lakes and rivers with water\nand feeds the `flow`, `wetness` and `lake` masks, or a\npath: a road leveling the layers before it along its\nline, which feeds the `path` mask (the `terrain_route` request finds\nroutes for them). Terrains load no tiles until their bakes are done.",
+      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), an imported heightmap, rivers\ngiven (drawn, or written by `terrain_import` from vector data) to the\nhydrology layer after them, which runs them as given before deriving any\nof its own, an erosion\nbake of the layers before it, where rivers wear valleys\nand slopes creep, a hydrology bake of them, which\ncarves channels where water gathers, fills lakes and rivers with water\nand feeds the `flow`, `wetness` and `lake` masks, or a\npath: a road leveling the layers before it along its\nline, which feeds the `path` mask (the `terrain_route` request finds\nroutes for them). Terrains load no tiles until their bakes are done.",
       "oneOf": [
         {
           "type": "object",
@@ -5436,6 +5542,18 @@
           "additionalProperties": false,
           "required": [
             "heightmap"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rivers": {
+              "$ref": "#/$defs/RiversLayer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "rivers"
           ]
         },
         {
