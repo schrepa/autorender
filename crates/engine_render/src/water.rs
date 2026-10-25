@@ -373,7 +373,6 @@ impl WaterPass {
             let uniform = WaterUniform {
                 color: [red, green, blue, settings.clarity],
                 ripples: ripples(settings, wind),
-                foam: [settings.foam, settings.foam_width, 0.0, 0.0],
                 absorption: absorption(settings.color, settings.clarity),
                 waves: repeats,
                 ocean: sea,
@@ -616,20 +615,29 @@ impl WaterPass {
         }
         let [red, green, blue] = ocean.color;
         // Whitecaps cover a share of the sea growing with the wind's speed
-        // to the power 3.41 (Monahan's fit; about 2 % at 12 m/s), twice it
-        // at full foam: crests foam where the waves compress the surface
-        // more than that share of it, which the spectrum's shape fixes.
+        // to the power 3.41 (Monahan's fit; about 2 % at 12 m/s): crests
+        // whiten where the waves compress the surface more than that share
+        // of it, which the spectrum's shape fixes.
         let speed = ocean.wind[0].hypot(ocean.wind[1]);
-        let share = 3.84e-6 * speed.powf(3.41) * 2.0 * ocean.foam;
+        let share = 3.84e-6 * speed.powf(3.41);
         let crests = 0.67 + 0.069 * (max(share, 1.0e-4) / 0.01).ln();
+        // Its shores' foam reads its waves as one wave holding all their
+        // variance, running up them.
+        let swell = waves
+            .waves()
+            .iter()
+            .map(|wave| wave.amplitude * wave.amplitude)
+            .sum::<f32>()
+            .sqrt();
         let heading = [ocean.wind[0] / speed, ocean.wind[1] / speed];
         let uniform = WaterUniform {
             relative_view_projection: view.to_cols_array_2d(),
             origin: [heading[0], heading[1], speed, 0.0],
             color: [red, green, blue, ocean.clarity],
             ripples: ripples(water, wind),
-            // Shores foam as wide as the waves rise.
-            foam: [ocean.foam, 0.4 + amplitude, crests, amplitude],
+            // Its crests' whitecaps, the wave its shores' foam reads, and how
+            // high its waves rise together.
+            foam: [crests, swell, 0.0, amplitude],
             absorption: absorption(ocean.color, ocean.clarity),
             waves: repeats,
             ocean: [

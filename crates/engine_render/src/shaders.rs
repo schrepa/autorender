@@ -48,6 +48,7 @@ shaders! {
         "meshes/water.wgsl",
         "meshes/water_falls.wgsl",
         "meshes/ocean.wgsl",
+        "meshes/water_foam.wgsl",
         "meshes/debug.wgsl",
         "meshes/terrain_debug.wgsl",
     ];
