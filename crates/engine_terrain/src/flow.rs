@@ -743,9 +743,11 @@ impl RiverFlow {
             power: line.power.clone(),
             flood: line.flood.clone(),
             carved: line.carved.clone(),
+            cut: line.cut.clone(),
             crest: line.crest.clone(),
             knobs: line.knobs.clone(),
             head: line.head,
+            given: line.given,
         }
     }
 

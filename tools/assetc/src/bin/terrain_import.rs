@@ -13,7 +13,8 @@
 //! cargo run -p engine_assetc --release --bin terrain_import -- \
 //!     --out DIR --id NAME [--center A,B] [--size METERS] [--spacing METERS]
 //!     [--extent W,H] [--range LOW,HIGH] [--detail METERS] [--materials DIR]
-//!     [--attribution TEXT] [--sea LEVEL] INPUT...
+//!     [--attribution TEXT] [--sea LEVEL] [--rivers GEOJSON]
+//!     [--river-precision METERS] [--river-attribution TEXT] INPUT...
 //! ```
 //!
 //! It writes `DIR/NAME/height.r16`, the report `DIR/NAME/import.json` and a
@@ -21,7 +22,18 @@
 //! box at its middle): a terrain `--size` meters across
 //! (a multiple of 256, 16384 by default) whose first layer is the import,
 //! with `--detail` meters of noise (8 by default, 0 for none) and the
-//! import's rivers (a hydrology bake) on top,
+//! import's rivers (a hydrology bake) on top, running first the rivers of
+//! `--rivers` where given: a GeoJSON file's LineStrings and
+//! MultiLineStrings (OpenStreetMap waterways, a national hydrography
+//! dataset), longitude and latitude for geographic inputs, the inputs' own
+//! x and y otherwise, each feature's `name`, `width`, `depth` and
+//! `discharge` properties (numbers, or text starting with one, such as
+//! OpenStreetMap's tags; meters, and cubic meters a second of its bankfull
+//! flood) where present, as a rivers layer before the hydrology layer. Its
+//! lines may stand `--river-precision` meters off the rivers' true middles
+//! (the heightmap's spacing by default), which the bake moves them toward
+//! the lowest ground at most; data whose licence requires credit needs
+//! `--river-attribution`.
 //! an alpine surface (textured with the KTX2 maps copied from
 //! `--materials`, each material's `NAME_albedo`, `NAME_normal` and
 //! `NAME_orm`, plain colors without), and a camera facing the highest
@@ -41,6 +53,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
+use engine_core::{GivenRiver, RiversLayer};
 use serde_json::{Value, json};
 use tiff::decoder::{Decoder, DecodingResult, Limits};
 use tiff::tags::Tag;
@@ -54,7 +67,8 @@ fn main() {
 
 const USAGE: &str = "usage: terrain_import --out DIR --id NAME [--center A,B] [--size METERS] \
      [--spacing METERS] [--extent W,H] [--range LOW,HIGH] [--detail METERS] [--materials DIR] \
-     [--attribution TEXT] [--sea LEVEL] INPUT...";
+     [--attribution TEXT] [--sea LEVEL] [--rivers GEOJSON] [--river-precision METERS] \
+     [--river-attribution TEXT] INPUT...";
 
 /// What the command line asks for.
 struct Options {
@@ -70,6 +84,9 @@ struct Options {
     materials: Option<PathBuf>,
     attribution: Option<String>,
     sea: Option<f64>,
+    rivers: Option<PathBuf>,
+    river_precision: Option<f64>,
+    river_attribution: Option<String>,
 }
 
 fn pair(text: &str, name: &str) -> Result<[f64; 2], String> {
@@ -99,6 +116,9 @@ fn options() -> Result<Options, String> {
         materials: None,
         attribution: None,
         sea: None,
+        rivers: None,
+        river_precision: None,
+        river_attribution: None,
     };
     while let Some(argument) = arguments.next() {
         let mut value = |name: &str| {
@@ -142,6 +162,21 @@ fn options() -> Result<Options, String> {
                     return Err("--sea must be within 10000 meters of zero".into());
                 }
                 options.sea = Some(level);
+            }
+            "--rivers" => options.rivers = Some(PathBuf::from(value("--rivers")?)),
+            "--river-precision" => {
+                let text = value("--river-precision")?;
+                let precision: f64 = text
+                    .parse()
+                    .map_err(|error| format!("--river-precision {text}: {error}"))?;
+                let most = f64::from(engine_core::terrain_data::MAX_PRECISION);
+                if !(precision.is_finite() && (0.0..=most).contains(&precision)) {
+                    return Err(format!("--river-precision must be 0 to {most} meters"));
+                }
+                options.river_precision = Some(precision);
+            }
+            "--river-attribution" => {
+                options.river_attribution = Some(value("--river-attribution")?);
             }
             flag if flag.starts_with("--") => {
                 return Err(format!("unknown option {flag}\n{USAGE}"));
@@ -488,6 +523,146 @@ impl TransverseMercator {
                 / cos1;
         [latitude.to_degrees(), longitude.to_degrees()]
     }
+
+    /// The meters east and north of the center of the point at `latitude`
+    /// and `longitude` (degrees), by Snyder's series (equations 8-9 to
+    /// 8-15).
+    fn forward(&self, latitude: f64, longitude: f64) -> [f64; 2] {
+        let (e2, e_prime2) = (self.e2, self.e_prime2);
+        let phi = latitude.to_radians();
+        let (sin, cos) = phi.sin_cos();
+        let tan = sin / cos;
+        let n = WGS84_A / (1.0 - e2 * sin * sin).sqrt();
+        let t = tan * tan;
+        let c = e_prime2 * cos * cos;
+        let a = (longitude.to_radians() - self.longitude) * cos;
+        let east = n
+            * (a + (1.0 - t + c) * a.powi(3) / 6.0
+                + (5.0 - 18.0 * t + t * t + 72.0 * c - 58.0 * e_prime2) * a.powi(5) / 120.0);
+        let north = self.meridian(phi) - self.meridian_origin
+            + n * tan
+                * (a * a / 2.0
+                    + (5.0 - t + 9.0 * c + 4.0 * c * c) * a.powi(4) / 24.0
+                    + (61.0 - 58.0 * t + t * t + 600.0 * c - 330.0 * e_prime2) * a.powi(6)
+                        / 720.0);
+        [east, north]
+    }
+}
+
+/// What a GeoJSON feature's property `value` gives a river: a number above
+/// zero and at most `most`, or text starting with one (as OpenStreetMap's
+/// tags, "12" or "12 m"), for the whole line; a list of `count` of them,
+/// one for each point; nothing otherwise.
+fn given_values(value: &Value, count: usize, most: f32) -> Vec<f32> {
+    let number = |value: &Value| -> Option<f32> {
+        let number: f64 = match value {
+            Value::Number(number) => number.as_f64()?,
+            Value::String(text) => {
+                let text = text.trim();
+                let end = text
+                    .find(|letter: char| !(letter.is_ascii_digit() || letter == '.'))
+                    .unwrap_or(text.len());
+                text[..end].parse().ok()?
+            }
+            _ => return None,
+        };
+        let number = number as f32;
+        (number > 0.0 && number <= most).then_some(number)
+    };
+    match value {
+        Value::Array(values) if values.len() == count => values
+            .iter()
+            .map(number)
+            .collect::<Option<Vec<f32>>>()
+            .unwrap_or_default(),
+        value => number(value).map_or_else(Vec::new, |number| vec![number]),
+    }
+}
+
+/// The rivers of the GeoJSON file at `path`: each LineString's, and each
+/// line of a MultiLineString's, coordinates as `place` puts them on the
+/// terrain (terrain-local meters), with its feature's `name`, `width`,
+/// `depth` and `discharge` where present; lines none of whose points lies
+/// on the terrain `size` meters across left out, and lines of more points
+/// than a river runs through split end to end.
+fn read_rivers(
+    path: &Path,
+    place: &dyn Fn(f64, f64) -> [f64; 2],
+    size: f64,
+) -> Result<Vec<GivenRiver>, String> {
+    use engine_core::terrain_data::{
+        MAX_CREDIT, MAX_DEPTH, MAX_DISCHARGE, MAX_RIVER_POINTS, MAX_WIDTH,
+    };
+    let name = path.display().to_string();
+    let text = std::fs::read_to_string(path).map_err(|error| format!("{name}: {error}"))?;
+    let document: Value =
+        serde_json::from_str(&text).map_err(|error| format!("{name}: {error}"))?;
+    let features: Vec<&Value> = match document["type"].as_str() {
+        Some("FeatureCollection") => document["features"]
+            .as_array()
+            .map(|features| features.iter().collect())
+            .unwrap_or_default(),
+        Some("Feature") => vec![&document],
+        _ => return Err(format!("{name}: a GeoJSON FeatureCollection or Feature")),
+    };
+    let on = |point: &[f64; 2]| (0.0..=size).contains(&point[0]) && (0.0..=size).contains(&point[1]);
+    let mut rivers = Vec::new();
+    for feature in features {
+        let (geometry, properties) = (&feature["geometry"], &feature["properties"]);
+        let lines: Vec<&Value> = match geometry["type"].as_str() {
+            Some("LineString") => vec![&geometry["coordinates"]],
+            Some("MultiLineString") => geometry["coordinates"]
+                .as_array()
+                .map(|lines| lines.iter().collect())
+                .unwrap_or_default(),
+            _ => continue,
+        };
+        for line in lines {
+            let Some(coordinates) = line.as_array() else {
+                continue;
+            };
+            let points: Vec<[f64; 2]> = coordinates
+                .iter()
+                .filter_map(|point| {
+                    let pair = point.as_array()?;
+                    Some(place(pair.first()?.as_f64()?, pair.get(1)?.as_f64()?))
+                })
+                .collect();
+            let count = points.len();
+            if count < 2 || count != coordinates.len() || !points.iter().any(on) {
+                continue;
+            }
+            let width = given_values(&properties["width"], count, MAX_WIDTH);
+            let depth = given_values(&properties["depth"], count, MAX_DEPTH);
+            let discharge = given_values(&properties["discharge"], count, MAX_DISCHARGE);
+            let named: Option<String> = properties["name"]
+                .as_str()
+                .map(|name| name.chars().take(MAX_CREDIT).collect());
+            let mut start = 0;
+            while start + 1 < count {
+                let end = (start + MAX_RIVER_POINTS - 1).min(count - 1);
+                let part = |values: &[f32]| {
+                    if values.len() == count {
+                        values[start..=end].to_vec()
+                    } else {
+                        values.to_vec()
+                    }
+                };
+                rivers.push(GivenRiver {
+                    name: named.clone(),
+                    points: points[start..=end]
+                        .iter()
+                        .map(|point| [point[0] as f32, point[1] as f32])
+                        .collect(),
+                    width: part(&width),
+                    depth: part(&depth),
+                    discharge: part(&discharge),
+                });
+                start = end;
+            }
+        }
+    }
+    Ok(rivers)
 }
 
 #[expect(
@@ -670,6 +845,83 @@ fn run() -> Result<(), String> {
             "terrain_import: warning: no --attribution; elevation data licences usually require one"
         );
     }
+    // The rivers given, where the terrain's square holds them: GeoJSON's
+    // longitude and latitude through the projection, the inputs' own x and
+    // y otherwise, then terrain-local as the heightmap's samples lie.
+    let rivers = match &options.rivers {
+        Some(path) => {
+            let place = |first: f64, second: f64| -> [f64; 2] {
+                let [east, north] = match &projection {
+                    Some(projection) => projection.forward(second, first),
+                    None => [first - center[0], second - center[1]],
+                };
+                [east + 0.5 * size, 0.5 * size - north]
+            };
+            let mut lines = read_rivers(path, &place, size)?;
+            let most = engine_core::terrain_data::MAX_GIVEN_RIVERS;
+            if lines.len() > most {
+                eprintln!(
+                    "terrain_import: warning: {} rivers on the terrain; keeping the {most} longest",
+                    lines.len()
+                );
+                let length = |river: &GivenRiver| -> f64 {
+                    river
+                        .points
+                        .windows(2)
+                        .map(|pair| {
+                            f64::from(pair[1][0] - pair[0][0]).hypot(f64::from(pair[1][1] - pair[0][1]))
+                        })
+                        .sum()
+                };
+                lines.sort_by(|a, b| length(b).total_cmp(&length(a)));
+                lines.truncate(most);
+            }
+            if lines.is_empty() {
+                eprintln!(
+                    "terrain_import: warning: no river of {} lies on the terrain",
+                    path.display()
+                );
+                None
+            } else {
+                if options.river_attribution.is_none() {
+                    eprintln!(
+                        "terrain_import: warning: no --river-attribution; waterway data licences usually require one"
+                    );
+                }
+                let described = format!(
+                    "{} ({} lines); {}",
+                    path.display(),
+                    lines.len(),
+                    if geographic {
+                        "longitude and latitude, as the heightmap's projection places them"
+                    } else {
+                        "the inputs' own x and y"
+                    }
+                );
+                let layer = RiversLayer {
+                    source: Some(
+                        described
+                            .chars()
+                            .take(engine_core::terrain_data::MAX_CREDIT)
+                            .collect(),
+                    ),
+                    lines,
+                    // As precise as the heightmap's samples by default.
+                    precision: options
+                        .river_precision
+                        .unwrap_or(spacing)
+                        .min(f64::from(engine_core::terrain_data::MAX_PRECISION))
+                        as f32,
+                    attribution: options.river_attribution.clone(),
+                };
+                layer
+                    .validate()
+                    .map_err(|invalid| format!("{}: {invalid}", path.display()))?;
+                Some(layer)
+            }
+        }
+        None => None,
+    };
     // The terrain's materials: the maps beside the scene where given.
     let maps = match &options.materials {
         Some(directory) => {
@@ -691,6 +943,7 @@ fn run() -> Result<(), String> {
         &heights,
         &source,
         maps,
+        rivers.as_ref(),
     );
     let scene_file = options.out.join(format!("{}.scene.json", options.id));
     std::fs::write(
@@ -698,6 +951,14 @@ fn run() -> Result<(), String> {
         serde_json::to_string_pretty(&scene).expect("scenes serialize"),
     )
     .map_err(|error| format!("{}: {error}", scene_file.display()))?;
+    let river_lines = rivers.as_ref().map(|layer| layer.lines.len());
+    let river_points: Option<usize> = rivers.as_ref().map(|layer| {
+        layer
+            .lines
+            .iter()
+            .map(|river| river.points.len())
+            .sum()
+    });
     let report = json!({
         "id": options.id,
         "inputs": rasters.iter().map(|raster| raster.description.clone()).collect::<Vec<_>>(),
@@ -714,6 +975,11 @@ fn run() -> Result<(), String> {
         "seabed_samples": seabed,
         "source": source,
         "attribution": options.attribution,
+        "rivers": river_lines,
+        "river_points": river_points,
+        "river_precision": rivers.as_ref().map(|layer| layer.precision),
+        "river_source": rivers.as_ref().and_then(|layer| layer.source.clone()),
+        "river_attribution": options.river_attribution,
         "heightmap": format!("{}/height.r16", options.id),
         "scene": format!("{}.scene.json", options.id),
     });
@@ -943,7 +1209,8 @@ const LOOKS: [Look; 9] = [
 ];
 
 /// The scene: the terrain, its alpine surface over the import's heights
-/// from `low` to `high`, and a camera facing its highest summit.
+/// from `low` to `high`, its `rivers` where given, and a camera facing its
+/// highest summit.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -955,6 +1222,7 @@ fn scene(
     heights: &[f64],
     source: &str,
     maps: bool,
+    rivers: Option<&RiversLayer>,
 ) -> Value {
     let size = options.size;
     let id = &options.id;
@@ -1085,7 +1353,11 @@ fn scene(
         // gullies.
         layers.push(json!({"noise": {"seed": 7, "height": options.detail, "offset": -0.5 * options.detail, "wavelength": 260.0, "ridges": 0.35, "warp": 0.25, "erosion": 0.6, "smoothing": 0.7, "valleys": 0.0, "roughness": 0.55, "blend": "add"}}));
     }
-    // Its streams and rivers, carved and filled.
+    // The rivers its data gives, which its hydrology runs first, then its
+    // streams and rivers, carved and filled.
+    if let Some(rivers) = rivers {
+        layers.push(json!({ "rivers": rivers }));
+    }
     layers.push(json!({"hydrology": {"level": 4}}));
     json!({
         "id": id,

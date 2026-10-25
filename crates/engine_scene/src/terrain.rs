@@ -7,12 +7,13 @@ use engine_settings::ErrorCode;
 use std::sync::Arc;
 
 use engine_core::bevy_ecs::world::EntityWorldMut;
+use engine_core::terrain_data::MAX_CREDIT;
 use engine_core::{
     Biome, Biomes, Blend, Cover, ErosionLayer, ErosionStage, HeightImage, HeightmapLayer,
     HydrologyLayer, HydrologyStage, Layer, Layers, MaterialHandle, MeshHandle, NoiseLayer,
     PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
-    PlacementLod, PlacementPart, Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Surroundings,
-    Terrain, TerrainSurface,
+    PlacementLod, PlacementPart, Pyramid, RiversLayer, Stamp, SurfaceMaterial, SurfaceProjection,
+    Surroundings, Terrain, TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use engine_settings::{Rule, Setting};
@@ -27,8 +28,9 @@ use crate::{SceneDocument, SceneError, SceneFiles, SceneMaterial, SceneMesh, fil
 /// Its first corner (least x and z) lies at `origin` in world space,
 /// whatever the entity's transform; heights rise from the origin's y. Its
 /// heights come from `layers`, applied in order to every sample (later
-/// layers win): an imported terrain is a heightmap layer
-/// (`terrain_import` writes one). Its tiles load as records, the cook's
+/// layers win): an imported terrain is a heightmap layer, its known
+/// rivers a rivers layer before its hydrology layer (`terrain_import`
+/// writes both). Its tiles load as records, the cook's
 /// or made by the same jobs. Level-0 tiles span 256 samples `spacing`
 /// meters apart; coarser levels halve the tiles up to one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -436,7 +438,10 @@ impl PreparedTerrain {
 }
 
 /// One layer of a terrain's stack: procedural noise with erosion, a stamp
-/// (raise, lower, flatten or cut holes), an imported heightmap, an erosion
+/// (raise, lower, flatten or cut holes), an imported heightmap, rivers
+/// given (drawn, or written by `terrain_import` from vector data) to the
+/// hydrology layer after them, which runs them as given before deriving any
+/// of its own, an erosion
 /// bake of the layers before it, where rivers wear valleys
 /// and slopes creep, a hydrology bake of them, which
 /// carves channels where water gathers, fills lakes and rivers with water
@@ -451,6 +456,7 @@ pub enum SceneTerrainLayer {
     Noise(NoiseLayer),
     Stamp(Stamp),
     Heightmap(SceneHeightmap),
+    Rivers(RiversLayer),
     Hydrology(HydrologyLayer),
     Erosion(ErosionLayer),
     Path(PathLayer),
@@ -504,8 +510,6 @@ fn state_heightmap_rules(schema: &mut schemars::Schema) {
 
 /// The largest heightmap side, in samples.
 const MAX_HEIGHTMAP: u32 = 16_384;
-/// The most characters a heightmap's source or attribution holds.
-const MAX_CREDIT: usize = 1024;
 
 impl SceneTerrain {
     /// The files it references: its heightmaps, as buffers.
@@ -514,6 +518,7 @@ impl SceneTerrain {
             SceneTerrainLayer::Heightmap(map) => Some(&map.uri),
             SceneTerrainLayer::Noise(_)
             | SceneTerrainLayer::Stamp(_)
+            | SceneTerrainLayer::Rivers(_)
             | SceneTerrainLayer::Hydrology(_)
             | SceneTerrainLayer::Erosion(_)
             | SceneTerrainLayer::Path(_) => None,
@@ -751,6 +756,7 @@ impl SceneTerrain {
             surface,
             collision: self.collision,
             edits: std::sync::Arc::from(Vec::new()),
+            rivers: std::sync::Arc::from(Vec::new()),
             surroundings,
         })
     }
@@ -768,6 +774,7 @@ impl SceneTerrain {
                     SceneTerrainLayer::Heightmap(map) => {
                         Layer::Heightmap(map.prepare(&format!("{at}.heightmap"), files)?)
                     }
+                    SceneTerrainLayer::Rivers(layer) => Layer::Rivers(Arc::new(layer.clone())),
                     SceneTerrainLayer::Hydrology(layer) => Layer::Hydrology(HydrologyStage {
                         layer: *layer,
                         baked: None,
@@ -868,6 +875,7 @@ impl SceneTerrain {
             .map(|layer| match layer {
                 Layer::Noise(noise) => SceneTerrainLayer::Noise(*noise),
                 Layer::Stamp(stamp) => SceneTerrainLayer::Stamp(*stamp),
+                Layer::Rivers(layer) => SceneTerrainLayer::Rivers(layer.as_ref().clone()),
                 Layer::Hydrology(stage) => SceneTerrainLayer::Hydrology(stage.layer),
                 Layer::Erosion(stage) => SceneTerrainLayer::Erosion(stage.layer),
                 Layer::Path(stage) => SceneTerrainLayer::Path(stage.layer.as_ref().clone()),

@@ -435,6 +435,12 @@ pub struct Terrain {
     /// order: replacing them regenerates only the tiles under the edits
     /// added or taken away.
     pub edits: Arc<[TerrainEdit]>,
+    /// Rivers drawn over its layers, in order: given to its first
+    /// hydrology layer after any its rivers layers give it, as a rivers
+    /// layer of their own just before it. Replacing them bakes its hydrology
+    /// and what follows it again, and regenerates only the tiles where its
+    /// rivers or roads then differ.
+    pub rivers: Arc<[TerrainRiver]>,
     /// Ground generated around it to the horizon.
     pub surroundings: Option<Surroundings>,
 }
@@ -448,6 +454,15 @@ pub struct TerrainEdit {
     pub stamp: Stamp,
 }
 
+/// A river drawn over a generated terrain: a given river (terrain-local),
+/// under an `id` that drawing the same river again leaves alone and another
+/// river replaces.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerrainRiver {
+    pub id: Arc<str>,
+    pub river: GivenRiver,
+}
+
 impl Terrain {
     /// A terrain generated from `layers`.
     pub fn generated(origin: Vec3, pyramid: Pyramid, layers: Layers) -> Self {
@@ -458,6 +473,7 @@ impl Terrain {
             surface: TerrainSurface::default(),
             collision: true,
             edits: Arc::from(Vec::new()),
+            rivers: Arc::from(Vec::new()),
             surroundings: None,
         }
     }

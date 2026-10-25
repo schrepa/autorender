@@ -1,14 +1,19 @@
-//! Rivers' channels and their water. Every point of a river carries the
-//! discharge its drained area yields in flood, which fills its channel to
-//! its banks: the flood sizes its channel and the slope of its reach shapes
-//! its bed (`bed.rs`). Its banks stand along the river's
-//! long profile: the ground along its line, never rising downstream, so it
-//! cuts through the rims of hollows shallower than a lake rather than
-//! pooling behind them, and falling at least the gentlest slope a channel
-//! is taken to fall, from the level of the lake it leaves or below the banks
-//! of the rivers meeting where it begins; and a share of its depth below the
-//! lower ground either side of it, so where it runs across a hillside its
-//! flood stays in it. Its bed lies its depth below, in the forms its reach
+//! Rivers' channels and their water. Every point of a river carries its
+//! bankfull flood, given or what its drained area yields, which fills its
+//! channel to its banks: the flood sizes what was not given of its channel
+//! and the slope of its reach shapes its bed (`bed.rs`). Its banks stand
+//! along the river's long profile: the ground along its line, never rising
+//! downstream, so it cuts through the rims of hollows shallower than a lake
+//! rather than pooling behind them, and falling at least the gentlest slope
+//! a channel is taken to fall, from the level of the lake it leaves or below
+//! the banks of the rivers meeting where it begins; and a share of its
+//! depth below the lower ground either side of it, so where it runs across
+//! a hillside its flood stays in it. Where an imported heightmap resolves
+//! its channel, the ground it is cut into is the finest heights' lowest
+//! across it, and where those heights already hold the channel (its banks
+//! stand over that ground by the depth its flood needs, and its water over
+//! it) its flood stands its depth over it and nothing is cut, nor any step
+//! or knob carved. Its bed lies its depth below, in the forms its reach
 //! takes: pools and riffles where it runs gently, a plane bed steeper, steps
 //! with pools behind their crests steeper still, and a cascade of steps and
 //! boulders steepest. Its water runs at the flow it carries most of the
@@ -31,7 +36,7 @@ use glam::{Vec2, Vec3};
 
 use crate::bed::{self, Bankfull, Crest, Forms, Knob, Reach, Shares};
 use crate::hydrology::Fall;
-use crate::rivers::{River, RiverLine};
+use crate::rivers::{Given, River, RiverLine};
 
 /// Gravity water falls and waves run under (meters a second squared).
 pub const GRAVITY: f32 = 9.81;
@@ -54,7 +59,7 @@ pub(crate) const FLOODS: f32 = 3.0;
 /// either side of it at least, so the flood filling it stays in it, and the
 /// meters past its edge that ground is read at.
 const HELD_DEPTH: f32 = 0.25;
-const BESIDE: f32 = 1.0;
+pub(crate) const BESIDE: f32 = 1.0;
 /// Ferguson's (2007) law of flow over a bed of grains, its speed U against
 /// its shear velocity u* where its hydraulic radius stands R over the bed's
 /// D84: U/u* = a1 a2 (R/D84) / (a1² + a2² (R/D84)^5/3)^1/2, a1 for flow
@@ -92,13 +97,30 @@ pub(crate) struct Flow {
 
 /// A river's line with what holds it: the ground it is cut into
 /// (terrain-local meters at terrain-local x and z, read between the samples
-/// of its bake's grid), and the level it starts at where it leaves a lake
-/// (the lake's) or a confluence (the lowest banks of the rivers ending
-/// there).
+/// of its bake's grid), what the finest heights give across its channel at
+/// a point running a way (a unit vector) half a width (meters) either side,
+/// where imported elevation resolves it, and the level it starts at where
+/// it leaves a lake (the lake's) or a confluence (the lowest banks of the
+/// rivers ending there).
 pub(crate) struct Course<'a> {
     pub(crate) line: &'a RiverLine,
     pub(crate) ground: &'a dyn Fn(Vec2) -> f32,
+    pub(crate) across: &'a dyn Fn(Vec2, Vec2, f32) -> Option<Across>,
     pub(crate) start: Option<f32>,
+}
+
+/// What the finest heights give across a river's channel at a point, where
+/// an imported heightmap gives the ground there fine enough to resolve it:
+/// how far it does (0 where the channel spans one of its samples, 1 from
+/// [`bed::NARROWEST`] of them on, in proportion between), the lowest ground
+/// across the channel, the lower of the ground at its two edges, and the
+/// lower of the ground [`BESIDE`] meters past them (terrain-local meters).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Across {
+    pub(crate) share: f32,
+    pub(crate) lowest: f32,
+    pub(crate) banks: f32,
+    pub(crate) beside: f32,
 }
 
 /// The slope friction takes from water `depth` deep at the middle of a
@@ -207,37 +229,110 @@ fn beside(points: &[Vec2], widths: &[f32], ground: &dyn Fn(Vec2) -> f32) -> Vec<
 }
 
 /// `course`'s channel as its floods size it, each square meter it drains
-/// bringing `runoff` in flood, its points `along` meters along its line from
-/// the first: the channel carrying them full to its banks, at least
-/// [`bed::NARROWEST`] of the grid's samples wide. Its reach's slope, read
-/// along the profile of the ground beneath it over as many widths as that
-/// channel stands wide, sets its reach's form; its banks then stand along
-/// the profile of that ground, held [`HELD_DEPTH`] of the channel's depth
-/// below the lower ground either side of it ([`beside`]), so its flood stays
-/// in it.
+/// bringing `runoff` in flood where its flood is not given, its points
+/// `along` meters along its line from the first: the channel carrying them
+/// full to its banks, as wide and deep as given, or else as hydraulic
+/// geometry stands it and at least [`bed::NARROWEST`] of the grid's samples
+/// wide. The ground beneath it is the grid's, or where an imported heightmap
+/// resolves its channel the finest heights' lowest across it, in proportion
+/// as it does. Its reach's slope, read along the profile of that ground over
+/// as many widths as the channel stands wide, sets its reach's form; its
+/// banks then stand along the profile of that ground, held [`HELD_DEPTH`] of
+/// the channel's depth below the lower ground either side of it
+/// ([`beside`]), so its flood stays in it; but where the finest heights
+/// already hold the channel (their ground at its edges stands over their
+/// lowest across it by its depth, wholly resolved), its depth over that
+/// lowest ground. There nothing is cut where its water, standing as its
+/// flow does, stands over that ground.
 fn channel(course: &Course<'_>, flow: &Flow, along: &[f32]) -> Bankfull {
     let line = course.line;
-    let floods: Vec<f32> = line.area.iter().map(|&area| area * flow.runoff).collect();
+    let count = line.points.len();
+    // What was given at each point: width, depth and flood, NaN where not.
+    let given = |index: usize, value: usize| {
+        line.given
+            .as_ref()
+            .map_or(f32::NAN, |given| given.values[index][value])
+    };
+    let floods: Vec<f32> = (0..count)
+        .map(|index| {
+            let flood = given(index, 2);
+            if flood.is_finite() {
+                flood
+            } else {
+                line.area[index] * flow.runoff
+            }
+        })
+        .collect();
     let narrowest = bed::NARROWEST * flow.finest;
-    let ground: Vec<f32> = line
+    let grid: Vec<f32> = line
         .points
         .iter()
         .map(|&point| (course.ground)(point))
         .collect();
-    let (widths, depths): (Vec<f32>, Vec<f32>) = floods
-        .iter()
-        .map(|&flood| {
-            let (width, depth) = bed::bankfull(flood);
-            (max(width, narrowest), depth)
+    let (widths, depths): (Vec<f32>, Vec<f32>) = (0..count)
+        .map(|index| {
+            let (width, depth) = bed::bankfull(floods[index]);
+            let (given_width, given_depth) = (given(index, 0), given(index, 1));
+            (
+                if given_width.is_finite() {
+                    given_width
+                } else {
+                    max(width, narrowest)
+                },
+                if given_depth.is_finite() {
+                    given_depth
+                } else {
+                    depth
+                },
+            )
         })
         .unzip();
+    let across: Vec<Option<Across>> = (0..count)
+        .map(|index| {
+            let (before, after) = (index.saturating_sub(1), (index + 1).min(count - 1));
+            let way = (line.points[after] - line.points[before]).normalize_or(Vec2::X);
+            (course.across)(line.points[index], way, 0.5 * widths[index])
+        })
+        .collect();
+    let finest = |values: &[f32], index: usize, of: fn(&Across) -> f32| match &across[index] {
+        Some(found) => values[index] + (of(found) - values[index]) * found.share,
+        None => values[index],
+    };
+    let ground: Vec<f32> = (0..count)
+        .map(|index| finest(&grid, index, |found| found.lowest))
+        .collect();
     let slopes = slopes(&profile(&ground, along, course.start), along, &widths);
     let shares: Vec<Shares> = slopes.iter().map(|&slope| Shares::of(slope)).collect();
     let sides = beside(&line.points, &widths, course.ground);
-    let held: Vec<f32> = (0..ground.len())
-        .map(|index| min(ground[index], sides[index] - HELD_DEPTH * depths[index]))
+    let holds: Vec<bool> = (0..count)
+        .map(|index| {
+            across[index].is_some_and(|found| {
+                found.share >= 1.0 && found.banks - found.lowest >= depths[index]
+            })
+        })
         .collect();
-    let banks = profile(&held, along, course.start);
+    let tops: Vec<f32> = (0..count)
+        .map(|index| match across[index] {
+            Some(found) if holds[index] => found.lowest + depths[index],
+            _ => min(
+                ground[index],
+                finest(&sides, index, |found| found.beside) - HELD_DEPTH * depths[index],
+            ),
+        })
+        .collect();
+    let banks = profile(&tops, along, course.start);
+    // Where its water, standing as the flow it carries most of the time
+    // does (the share of its depth [`river`] stands it), stands over the
+    // heights' lowest ground, they hold it.
+    let share = libm::powf(1.0 / FLOODS, 6.0 / 13.0);
+    let cut = (0..count)
+        .map(|index| {
+            !(holds[index]
+                && across[index].is_some_and(|found| {
+                    banks[index] - (1.0 - share) * depths[index] > found.lowest
+                }))
+        })
+        .collect();
     Bankfull {
         floods,
         slopes,
@@ -245,6 +340,7 @@ fn channel(course: &Course<'_>, flow: &Flow, along: &[f32]) -> Bankfull {
         widths,
         depths,
         banks,
+        cut,
     }
 }
 
@@ -497,6 +593,28 @@ fn cut_beneath(values: &mut [f32], jets: &[Jet], along: &[f32]) {
     }
 }
 
+/// `forms` where a river's channel is `cut` into the ground at each point:
+/// where the heights hold it instead, its bed is theirs, so no step or knob
+/// is carved there and its water stands behind no step's crest.
+fn uncarved(mut forms: Forms, cut: &[bool]) -> Forms {
+    for (index, &carved) in cut.iter().enumerate() {
+        if !carved {
+            forms.dips[index] = 0.0;
+            forms.held[index] = f32::NAN;
+            forms.stepped[index] = false;
+        }
+    }
+    for (crest, pair) in forms.crests.iter_mut().zip(cut.windows(2)) {
+        if !(pair[0] && pair[1]) {
+            *crest = None;
+        }
+    }
+    forms
+        .knobs
+        .retain(|knob| cut[knob.segment as usize] && cut[knob.segment as usize + 1]);
+    forms
+}
+
 /// What a river's bed is at each of its points: its reach, its median grain
 /// and D84 (meters), the power of its bankfull flood (watts a square meter
 /// of bed) and whether steps or knobs are carved there; at each point the
@@ -590,7 +708,10 @@ pub(crate) fn river(course: &Course<'_>, flow: &Flow) -> (River, Vec<Fall>) {
         banks,
         ..
     } = &bankfull;
-    let forms = bed::forms((&line.points, &along), &bankfull, flow.finest);
+    let forms = uncarved(
+        bed::forms((&line.points, &along), &bankfull, flow.finest),
+        &bankfull.cut,
+    );
     // Its bed lies its channel's depth below its banks, deeper in its
     // forms.
     let mut bed: Vec<f32> = (0..count)
@@ -657,6 +778,15 @@ pub(crate) fn river(course: &Course<'_>, flow: &Flow) -> (River, Vec<Fall>) {
         (widths, &discharges, &line.area),
     );
     let beds = beds(&bankfull, forms, (&jets, &airborne, &sheeted));
+    let given = line.given.as_ref().map_or_else(Given::default, |given| {
+        let first = given.values.first().copied().unwrap_or([f32::NAN; 3]);
+        Given {
+            source: Some(given.source),
+            width: first[0].is_finite(),
+            depth: first[1].is_finite(),
+            flood: first[2].is_finite(),
+        }
+    });
     let river = River {
         points: line.points.iter().map(|point| point.to_array()).collect(),
         discharge: discharges,
@@ -673,9 +803,11 @@ pub(crate) fn river(course: &Course<'_>, flow: &Flow) -> (River, Vec<Fall>) {
         power: beds.power,
         flood: banks.clone(),
         carved: beds.carved,
+        cut: bankfull.cut.clone(),
         crest: beds.crest,
         knobs: beds.knobs,
         head: line.head && course.start.is_none(),
+        given,
     };
     (river, falls)
 }

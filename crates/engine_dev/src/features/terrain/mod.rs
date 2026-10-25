@@ -1,6 +1,6 @@
 //! Terrain's development tools: the inspectors of terrains, their streaming,
-//! prefetch places and the development view; the controls of the view and
-//! of edits; and the queries of heights, sweeps and routes.
+//! prefetch places and the development view; the controls of the view, of
+//! edits and of rivers drawn; and the queries of heights, sweeps and routes.
 
 mod controls;
 mod queries;
@@ -23,7 +23,7 @@ use crate::protocol::stamp_rule;
 use crate::results::result;
 use crate::views::TerrainDebugView;
 use crate::{Context, DevError, DevTools, InspectorDescriptor, InspectorKind};
-use controls::{TerrainEditing, edit_terrain};
+use controls::{TerrainEditing, draw_river, edit_terrain};
 pub use queries::TerrainKey;
 pub(crate) use queries::terrain_key;
 pub use queries::{TerrainHeightQuery, TerrainRouteQuery, TerrainSweepQuery};
@@ -236,6 +236,14 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
                 stamp: edit.stamp,
             })
             .collect(),
+        rivers: terrain
+            .rivers
+            .iter()
+            .map(|drawn| crate::views::TerrainRiverView {
+                id: drawn.id.to_string(),
+                river: drawn.river.clone(),
+            })
+            .collect(),
         surroundings: world
             .get_resource::<engine_core::Terrains>()
             .and_then(|terrains| terrains.surroundings(entity))
@@ -250,7 +258,8 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
 }
 
 /// The hydrology bake of the terrain on `entity`: its progress, what it
-/// found, how its rivers flow and its first falls (terrain-local).
+/// found, how its rivers flow, its first falls and its largest rivers
+/// (terrain-local).
 fn hydrology_view(terrains: &engine_core::Terrains, entity: Entity) -> crate::views::HydrologyView {
     let bakes = terrains.bakes(entity);
     let stats = bakes.hydrology;
@@ -263,6 +272,29 @@ fn hydrology_view(terrains: &engine_core::Terrains, entity: Entity) -> crate::vi
         lake_samples: stats.map(|stats| stats.lake_samples),
         max_area: stats.map(|stats| stats.max_area),
         falls: stats.map(|stats| stats.falls),
+        given: stats.map(|stats| stats.given),
+        uncut: stats.map(|stats| stats.uncut),
+        rivers: baked
+            .as_deref()
+            .map(|layers| layers.river_listing(crate::views::RIVERS_SHOWN))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|river| crate::views::RiverView {
+                name: river.name,
+                given: river.given,
+                courses: river.courses,
+                length: river.length,
+                first: river.first,
+                last: river.last,
+                width: river.width,
+                depth: river.depth,
+                flood: river.flood,
+                given_width: river.given_width,
+                given_depth: river.given_depth,
+                given_flood: river.given_flood,
+                uncut: river.uncut,
+            })
+            .collect(),
         flow: found.map(river_flow),
         fall_list: found
             .map(|found| {
@@ -524,6 +556,61 @@ impl EngineControl for TerrainEditControl {
             },
         )
         .map(result::terrain_edit)
+    }
+}
+
+/// Temporarily draw a river over a generated terrain, or take one away,
+/// and render while paused: `points` (world `[x, z]`, from upstream, two
+/// or more; the river runs along the smooth line through them) with
+/// optional `width` (meters across its channel), `depth` (meters its
+/// channel's middle lies below its banks) and `discharge` (cubic meters a
+/// second its bankfull flood carries), each one value for the whole river
+/// or one for each point, and an optional `name`, under `id` (letters,
+/// digits, `_`, `-` and `.`); no points take away the river drawn under
+/// `id`. Drawing the same river under an `id` again leaves the terrain
+/// alone; another replaces it. What a river leaves out the terrain's
+/// hydrology derives, as for its own rivers. The terrain bakes its
+/// hydrology and what follows it again with every drawn river given just
+/// before it, and only the tiles where its rivers or roads then differ
+/// regenerate. Returns whether it applied, the rivers drawn, and where the
+/// river drawn, replaced or taken away lies (world `min` and `max`
+/// `[x, z]`). `terrain` names a scene's terrain entity (the first terrain
+/// when omitted), which needs a hydrology layer. The `Terrain` inspector
+/// lists the drawn rivers to save into the scene as a rivers layer before
+/// its hydrology layer.
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TerrainRiverControl {
+    #[serde(default)]
+    pub terrain: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+    )]
+    pub id: String,
+    #[serde(default)]
+    pub points: Vec<[f64; 2]>,
+    #[serde(default)]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::GivenRiver::rule_of("width")))))]
+    pub width: Vec<f64>,
+    #[serde(default)]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::GivenRiver::rule_of("depth")))))]
+    pub depth: Vec<f64>,
+    #[serde(default)]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::GivenRiver::rule_of("discharge")))))]
+    pub discharge: Vec<f64>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+impl EngineControl for TerrainRiverControl {
+    fn changed(&self) -> &'static str {
+        "terrain edited"
+    }
+
+    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
+        draw_river(engine, scene, self).map(result::terrain_river)
     }
 }
 

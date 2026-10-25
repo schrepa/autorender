@@ -65,9 +65,11 @@ pub(super) struct TerrainState {
     pub(super) standing: u64,
     /// The ranges its levels' tiles streamed by at the last update.
     pub(super) ranges: Vec<f32>,
-    /// The layers tiles generate from once its bakes are done, and what
-    /// the last hydrology and erosion bakes found.
+    /// The layers tiles generate from once its bakes are done, the rivers
+    /// drawn over the layers they hold, and what the last hydrology and
+    /// erosion bakes found.
     pub(super) baked: Option<Arc<Layers>>,
+    pub(super) baked_rivers: Arc<[TerrainRiver]>,
     pub(super) hydrology: HydrologyState,
     pub(super) erosion: Option<ErosionStats>,
     /// Its roads' bridges, terrain-local, once every bake
@@ -114,12 +116,14 @@ pub(super) struct TerrainState {
 }
 
 /// A terrain's bakes as one record: the job asked for while under way,
-/// the frame it last failed at, and the record's key once asked for.
+/// the frame it last failed at, the record's key once asked for, and the
+/// rivers drawn over the layers it bakes.
 #[derive(Default)]
 pub(super) struct BakeRecord {
     pub(super) job: Option<JobId>,
     pub(super) failed: Option<u64>,
     pub(super) key: Option<RecordKey>,
+    pub(super) drawn: Option<Arc<[TerrainRiver]>>,
 }
 
 /// Bytes of one of a tile's arrays on the GPU, heights or control values:
@@ -139,7 +143,7 @@ impl TerrainState {
     pub(super) fn new(entity: Entity, terrain: Terrain) -> Self {
         Self {
             entity,
-            store: TileStore::new(terrain.pyramid, Generation::of(&terrain.edits, true)),
+            store: TileStore::new(terrain.pyramid, Generation::of(&terrain.edits, &[], true)),
             terrain,
             failed: TileMap::default(),
             drawn: false,
@@ -147,6 +151,7 @@ impl TerrainState {
             standing: 0,
             ranges: Vec::new(),
             baked: None,
+            baked_rivers: Arc::from(Vec::new()),
             hydrology: HydrologyState::default(),
             erosion: None,
             bridges: Arc::from(Vec::new()),
@@ -197,8 +202,10 @@ impl TerrainState {
         };
         if materials != self.materials {
             self.materials = materials;
-            self.store
-                .invalidate(Generation::of(&self.terrain.edits, materials), |_| true);
+            self.store.invalidate(
+                Generation::of(&self.terrain.edits, &self.baked_rivers, materials),
+                |_| true,
+            );
         }
     }
 
@@ -270,7 +277,48 @@ impl TerrainState {
         let pyramid = self.terrain.pyramid;
         let under = |key: &TileKey| changed.iter().any(|stamp| reaches(stamp, &pyramid, *key));
         // Tiles kept in memory under the edits are no longer the ground.
-        let generation = Generation::of(&self.terrain.edits, self.materials);
+        let generation = Generation::of(&self.terrain.edits, &self.baked_rivers, self.materials);
+        self.store.invalidate(generation, under);
+    }
+
+    /// The layers its bakes run toward: its baked layers where they hold
+    /// the rivers drawn over it now; otherwise its `authored` layers with
+    /// those rivers given before its hydrology ([`Layers::with_drawn`]),
+    /// over the bakes before its hydrology its baked layers hold.
+    pub(super) fn bake_source(&self, authored: &Arc<Layers>) -> Arc<Layers> {
+        let base = self.baked.clone().unwrap_or_else(|| authored.clone());
+        if *self.baked_rivers == *self.terrain.rivers || !authored.has_hydrology() {
+            return base;
+        }
+        let drawn: Vec<GivenRiver> = self
+            .terrain
+            .rivers
+            .iter()
+            .map(|drawn| drawn.river.clone())
+            .collect();
+        Arc::new(authored.with_drawn(&drawn, self.baked.as_deref()))
+    }
+
+    /// Takes its baked layers, holding the rivers `drawn` over them, in
+    /// place of `before`, which its resident tiles were made from: the
+    /// resident tiles where the two differ ([`Layers::changes_from`]), all
+    /// of them where they differ but in rivers and roads, regenerate, drawn
+    /// as they were until then.
+    pub(super) fn redrawn(&mut self, drawn: Arc<[TerrainRiver]>, before: Option<&Layers>) {
+        self.baked_rivers = drawn;
+        let changed = match (before, self.baked.as_deref()) {
+            (Some(before), Some(after)) => after.changes_from(before),
+            _ => None,
+        };
+        let pyramid = self.terrain.pyramid;
+        let under = |key: &TileKey| {
+            changed.as_ref().is_none_or(|regions| {
+                regions
+                    .iter()
+                    .any(|&bounds| covers(bounds, &pyramid, *key))
+            })
+        };
+        let generation = Generation::of(&self.terrain.edits, &self.baked_rivers, self.materials);
         self.store.invalidate(generation, under);
     }
 
@@ -493,12 +541,18 @@ pub(super) struct Retired {
 /// Whether `stamp` reaches tile `key`'s ground, or its samples' two beyond
 /// (its border and the normals there).
 pub(super) fn reaches(stamp: &Stamp, pyramid: &Pyramid, key: TileKey) -> bool {
+    let center = Vec2::from(stamp.center);
+    let radius = Vec2::splat(stamp.radius + stamp.falloff);
+    covers((center - radius, center + radius), pyramid, key)
+}
+
+/// Whether the terrain-local bounds from `low` to `high` reach tile
+/// `key`'s ground, or its samples' two beyond (its border and the normals
+/// there).
+pub(super) fn covers((low, high): (Vec2, Vec2), pyramid: &Pyramid, key: TileKey) -> bool {
     let spacing = pyramid.spacing(u32::from(key.level));
     let size = TILE_QUADS as f32 * spacing;
     let first = Vec2::new(f32::from(key.x), f32::from(key.z)) * size - Vec2::splat(2.0 * spacing);
     let last = first + Vec2::splat(size + 4.0 * spacing);
-    let center = Vec2::from(stamp.center);
-    let radius = Vec2::splat(stamp.radius + stamp.falloff);
-    let (low, high) = (center - radius, center + radius);
     first.x <= high.x && first.y <= high.y && last.x >= low.x && last.y >= low.y
 }

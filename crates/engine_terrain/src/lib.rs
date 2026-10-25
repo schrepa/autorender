@@ -12,7 +12,8 @@
 //!
 //! Heights come from a [`Layers`] stack (procedural noise with erosion,
 //! imported heightmaps and stamps, later layers winning) evaluated tile by
-//! tile. Each tile is a pure function of its key, so tiles stream in any
+//! tile; rivers layers give its hydrology bake the rivers someone drew or
+//! imported. Each tile is a pure function of its key, so tiles stream in any
 //! order and neighbors agree on shared samples. A terrain's tiles of level 1
 //! and coarser shade with level 0's materials and normals averaged
 //! ([`TileShading`]), records of their own made from the level finer.
@@ -35,6 +36,7 @@ pub mod bounce;
 pub mod codec;
 mod erosion;
 mod flow;
+mod given;
 pub mod gpu;
 pub mod hydraulics;
 mod hydrology;
@@ -62,6 +64,10 @@ pub use bake::{Bake, BakeKind, Baked, ErosionBake, HydrologyBake, PathBake, Stag
 pub use bed::{Bed, Reach};
 pub use erosion::{Erosion, ErosionLayer, ErosionStats};
 pub use flow::{Block, Pool, RiverFlow, WEIR};
+pub use given::{
+    GivenRiver, MAX_CREDIT, MAX_DEPTH, MAX_DISCHARGE, MAX_GIVEN_RIVERS, MAX_PRECISION,
+    MAX_RIVER_POINTS, MAX_WIDTH, RiversLayer,
+};
 pub use hydrology::{
     FLOW_RANGE, Fall, Hydrology, HydrologyLayer, HydrologySample, HydrologyStats, LAKE_RANGE,
     RIVER_FAR, WETNESS_RANGE,
@@ -86,7 +92,7 @@ pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use rivers::{RIVER_STEP, Rivers};
 pub use select::{LodRanges, WantedTile, WantedView, wanted_tiles};
 pub use shading::TileShading;
-pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverSight};
+pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverListing, RiverSight};
 pub use steady_water::{
     BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, MARGIN, NO_BLOCK, REGION_CELLS, SUMMARY_SIDE,
     SettleRegion, SettleStart, SettledKey, SteadyCell, SteadySource, SteadySquare, SteadyStats,

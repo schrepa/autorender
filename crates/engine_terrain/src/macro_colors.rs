@@ -306,6 +306,7 @@ pub fn macro_colors(
             Layer::Noise(_)
             | Layer::Heightmap(_)
             | Layer::Stamp(_)
+            | Layer::Rivers(_)
             | Layer::Hydrology(_)
             | Layer::Path(_) => None,
         })

@@ -681,11 +681,19 @@ fn refresh(
     released: &mut Vec<String>,
 ) -> Option<(String, Arc<[TileKey]>)> {
     let asking = water.filter(|water| water.enabled && state.around.is_none());
-    let (Some(water), Some(stack), Some(baked)) = (
-        asking,
-        state.recipe.as_ref().map(|recipe| recipe.stack_key.clone()),
-        state.baked.clone(),
-    ) else {
+    // The stack its recipe shares, once that holds its baked layers: just
+    // after its bakes changed them, the recipe waits to be shared again.
+    let baked = state.baked.clone();
+    let stack = state
+        .recipe
+        .as_ref()
+        .filter(|recipe| {
+            baked
+                .as_ref()
+                .is_some_and(|baked| Arc::ptr_eq(baked, &recipe.stack))
+        })
+        .map(|recipe| recipe.stack_key.clone());
+    let (Some(water), Some(stack), Some(baked)) = (asking, stack, baked) else {
         cancel_all(state, slots);
         state.settled.release_all(released);
         let cooking = state.settled.cooking;

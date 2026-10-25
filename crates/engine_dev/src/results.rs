@@ -75,6 +75,7 @@ results! {
     terrain_edit: crate::features::terrain::TerrainEdited,
     terrain_undo: crate::features::terrain::TerrainEdited,
     terrain_redo: crate::features::terrain::TerrainEdited,
+    terrain_river: crate::features::terrain::TerrainEdited,
     frames: crate::results::FramesResult,
     capture: crate::results::CaptureResult,
     probe: crate::results::ProbeResult,
