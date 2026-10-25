@@ -2,7 +2,8 @@
  * The water's debug views over the Highlands' streams, in real Chrome: the
  * scene's torrent, rapids and meadow-river views, each shaded and in every
  * view of the water's state (depth, speed, Froude number, turbulence, white
- * water, reach). The torrent view holds water; a twentieth to three fifths
+ * water, reach, carried foam, span, the eddies' turbulent Froude number and
+ * roughness). The torrent view holds water; a twentieth to three fifths
  * of it reads white in the white water view, where white water is born at
  * drops and rocks rather than spread as a sheet; its turbulence varies; and
  * the pixel probe reads a torrent pixel's numbers. The water's views show
@@ -22,7 +23,8 @@ const command = commander(page, { deadline: 600_000 });
 /** The scene's named views of its streams. */
 const streams = ["torrent", "rapids", "meadow_river"];
 /** The water's views, each showing one of its numbers. */
-const waterViews = ["water_depth", "water_speed", "water_froude", "water_turbulence", "water_white", "water_reach"];
+const waterViews = ["water_depth", "water_speed", "water_froude", "water_turbulence", "water_white", "water_reach",
+  "water_foam", "water_span", "water_eddies", "water_roughness"];
 /** The reaches the probe names. */
 const reaches = ["pool", "plane", "steps", "cascade", "falls"];
 /** Frame statistics that are not work (bench.rs NOT_WORK): they change
@@ -185,6 +187,9 @@ try {
     assert.ok(Number.isFinite(water.froude) && water.froude >= 0, JSON.stringify(water));
     assert.ok(water.turbulence >= 0 && water.turbulence <= 1 && water.white >= 0 && water.white <= 1, JSON.stringify(water));
     assert.ok(water.reach === null || reaches.includes(water.reach), JSON.stringify(water));
+    assert.ok(water.foam >= 0 && water.foam <= 1 && water.roughness >= 0 && water.roughness <= 1, JSON.stringify(water));
+    assert.ok(Number.isFinite(water.span) && water.span > 0, JSON.stringify(water));
+    assert.ok(Number.isFinite(water.eddies) && water.eddies >= 0, JSON.stringify(water));
     assert.equal(probed.terrain, null, JSON.stringify(probed));
     report.probe = probed;
   }

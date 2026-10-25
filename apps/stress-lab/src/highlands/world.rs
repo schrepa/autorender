@@ -1,6 +1,6 @@
 //! The highlands as a Stress Lab world: the tower field on a plateau of a
 //! streamed terrain under golden hour, wind and clouds, framed from where
-//! the valleys open out, and views down onto its running water.
+//! the valleys open out, and views of its water near and far.
 
 use engine::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
@@ -272,13 +272,17 @@ fn close_view(world: &World, config: &StressConfig) -> (Vec3, Vec3) {
     )
 }
 
-/// The views down onto running water: each one's name, the camera's world
-/// position, and the yaw (degrees from -z toward +x) and pitch (degrees
-/// from level, negative down) it looks along.
-const WATER_VIEWS: [(&str, [f32; 3], f32, f32); 3] = [
+/// The views of the water: down onto running water (`torrent`, `rapids`,
+/// `meadow_river`), far over water, which shows whether its waves band at a
+/// distance (`band`), and close along a stream (`close_stream`); each one's
+/// name, the camera's world position, and the yaw (degrees from -z toward
+/// +x) and pitch (degrees from level, negative down) it looks along.
+const WATER_VIEWS: [(&str, [f32; 3], f32, f32); 5] = [
     ("torrent", [-1584.0, 675.0, -2973.0], 0.0, -34.0),
     ("rapids", [-3008.0, 228.0, -168.0], 0.0, -30.0),
     ("meadow_river", [-266.0, 671.0, -2986.0], 0.0, -32.0),
+    ("band", [-300.0, 730.0, -3180.0], -10.0, -38.0),
+    ("close_stream", [1474.5, 605.9, 743.3], 112.0, -18.0),
 ];
 
 /// A camera at world `position` looking along `yaw` and `pitch` (degrees,

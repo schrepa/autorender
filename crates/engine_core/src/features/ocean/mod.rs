@@ -5,10 +5,11 @@
 //! Queries find the surface's height and normal over any point at any
 //! time, as frames draw it: frames draw it from a grid around the camera
 //! whose cells widen with distance, the waves shorter than a cell left to
-//! the shading. Light passing through the sea fades toward its scattered
-//! color over the distance to the ground behind it, foam gathers on
-//! crests the waves compress and along shores, and sunlight glows through
-//! crests seen against it.
+//! the shading. Its look is its color and its clarity: light passing
+//! through the sea fades toward its scattered color over the distance to the
+//! ground behind it. Foam gathers on crests as strongly as its waves
+//! compress them, and along shores, with no setting of its own; sunlight
+//! glows through crests seen against it.
 //!
 //! Frames draw the waves at the simulation time they present
 //! ([`crate::PresentedTime`]), so entities [`Floating`] on the sea, which ride
@@ -58,8 +59,6 @@ settings! {
         pub color: [f32; 3] = [0.004, 0.032, 0.055] => range(0.0, 1.0),
         /// The meters of water through which half the light passes.
         pub clarity: f32 = 8.0 => range(0.1, 100.0),
-        /// How much foam crests and shores gather.
-        pub foam: f32 = 0.5 => range(0.0, 1.0),
         /// The meters from the camera the sea draws.
         pub reach: f32 = 20_000.0 => range(100.0, 100_000.0),
     }

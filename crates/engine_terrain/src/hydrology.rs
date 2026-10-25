@@ -144,8 +144,8 @@ pub struct Hydrology {
 /// under the banks, so water meets the ground where they cross; elsewhere
 /// they lie well below the ground. Each lake has a number: the samples
 /// holding its water and those reaching past its shore name it (from 1; 0
-/// for none), and `levels` holds its level by number. Rivers stand on lines
-/// of their own ([`Rivers`]).
+/// for none), and `levels` and `areas` hold its level and the area its
+/// water covers by number. Rivers stand on lines of their own ([`Rivers`]).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WaterGrid {
     pub width: usize,
@@ -163,6 +163,9 @@ pub(crate) struct WaterGrid {
     pub lake: Vec<u16>,
     /// Each lake's level (terrain-local meters), lake 1 first.
     pub levels: Vec<f32>,
+    /// The square meters each lake's water covers, its connected samples'
+    /// squares, lake 1 first.
+    pub areas: Vec<f32>,
 }
 
 /// Samples past the shore water's surface reaches under the banks.
@@ -592,7 +595,7 @@ pub(crate) fn bake(
             );
             water
                 .lake_reach(x, z)
-                .is_some_and(|level| heights[sample] < level)
+                .is_some_and(|(level, _)| heights[sample] < level)
         })
         .collect();
     let mut rank = vec![0_u32; heights.len()];
@@ -754,16 +757,19 @@ struct Found<'a> {
 }
 
 /// Where lakes stand over the grid of `heights` (`width` samples wide,
-/// `spacing` meters apart), from what the bake `found`, each numbered.
+/// `spacing` meters apart), from what the bake `found`, each numbered and
+/// the area its water covers measured.
 fn water(heights: &[f32], found: &Found<'_>, width: usize, spacing: f32) -> WaterGrid {
     let Found { filled, lakes } = *found;
     let count = heights.len();
     let height = count / width;
     let (last_x, last_z) = (width as i32 - 1, height as i32 - 1);
-    // Lakes stand level at their spill heights, each connected one numbered.
+    // Lakes stand level at their spill heights, each connected one numbered
+    // and its samples' squares summed, in the grid's order on every host.
     let mut surface = vec![f32::NAN; count];
     let mut lake = vec![0_u16; count];
     let mut levels = Vec::new();
+    let mut areas = Vec::new();
     let mut region = Vec::new();
     for start in 0..count {
         if !lakes[start] || lake[start] != 0 || levels.len() >= usize::from(u16::MAX) {
@@ -792,6 +798,7 @@ fn water(heights: &[f32], found: &Found<'_>, width: usize, spacing: f32) -> Wate
                 }
             }
         }
+        areas.push(region.len() as f32 * spacing * spacing);
     }
     // Depths over the ground, then surfaces reaching past the
     // shore: dry samples beside water take its level, a sample at a time,
@@ -848,6 +855,7 @@ fn water(heights: &[f32], found: &Found<'_>, width: usize, spacing: f32) -> Wate
         flow: vec![[0.0; 2]; count],
         lake,
         levels,
+        areas,
     }
 }
 
@@ -897,12 +905,12 @@ impl WaterGrid {
         level
     }
 
-    /// The level of the lake whose water or shore holds terrain-local
-    /// `(x, z)` by half or more, the four samples around it blended: the
-    /// lake of the one of them nearest it. Tiles' water stands at it there
-    /// ([`crate::tile_water::water_rows`]): out under its banks, never past
-    /// its outlet, whose ground falls away.
-    pub(crate) fn lake_reach(&self, x: f32, z: f32) -> Option<f32> {
+    /// The level and the span of the lake whose water or shore holds
+    /// terrain-local `(x, z)` by half or more, the four samples around it
+    /// blended: the lake of the one of them nearest it ([`Self::span`]).
+    /// Tiles' water stands at it there ([`crate::tile_water::water_rows`]):
+    /// out under its banks, never past its outlet, whose ground falls away.
+    pub(crate) fn lake_reach(&self, x: f32, z: f32) -> Option<(f32, f32)> {
         if self.levels.is_empty() {
             return None;
         }
@@ -936,7 +944,14 @@ impl WaterGrid {
             .iter()
             .filter(|(lake, _)| *lake != 0)
             .max_by(|a, b| a.1.total_cmp(&b.1))?;
-        Some(self.levels[usize::from(*lake) - 1])
+        Some((self.levels[usize::from(*lake) - 1], self.span(*lake)))
+    }
+
+    /// How far across lake `number` (from 1) is: the diameter of a circle
+    /// as large as its water, 2√(A/π) (meters), the fetch the wind has over
+    /// it whichever way it blows.
+    fn span(&self, number: u16) -> f32 {
+        2.0 * (self.areas[usize::from(number) - 1] / std::f32::consts::PI).sqrt()
     }
 
     /// The sample nearest terrain-local `(x, z)`; `None` off the grid.
@@ -1003,4 +1018,5 @@ crate::codec::record!(WaterGrid {
     flow,
     lake,
     levels,
+    areas,
 });

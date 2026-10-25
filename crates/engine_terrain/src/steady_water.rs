@@ -50,8 +50,8 @@ use crate::hydraulics::GRAVITY;
 use crate::shallow_water::{self, CELL_MEANS, DRY, UNHELD, WET_MOST, resistance, velocity};
 use crate::tile::on_triangle;
 use crate::tile_water::{
-    TileWater, WATER_WIDTH_RANGE, WaterState, breaking, lipped, pack, pack_obstacle, pack_state,
-    plunges, shears, turbulence, unpack,
+    NONE, TileWater, WATER_SPAN_LEAST, WaterState, breaking, lipped, nearest, pack, pack_obstacle,
+    pack_state, plunges, shears, turbulence, unpack,
 };
 use crate::{Bed, Generator, Layers, Pyramid, Reach, Stamp, TILE_STRIDE, Tile, TileKey};
 
@@ -1781,9 +1781,30 @@ pub(crate) fn f16_value(bits: u16) -> f32 {
     f32::from_bits(sign | magnitude)
 }
 
-/// Meters of half width the water of a sample its own water left dry packs
-/// as: a river's, about the width foam reaches out from its shores by.
-const SETTLED_HALF_WIDTH: f32 = 8.0;
+/// The span each sample of a tile packs the settled water standing on it
+/// with, in the layout of its samples, its own water being `own`: what its
+/// own water's words hold where they hold a surface, wet or continued under
+/// the banks, and where the settled water spread past them, what those of
+/// the sample nearest it holding one hold ([`nearest`]), the water body it
+/// spread from; the least span the words tell apart ([`WATER_SPAN_LEAST`])
+/// in a tile whose own water holds none.
+fn spans(own: Option<&TileWater>) -> Vec<f32> {
+    let count = (TILE_STRIDE * TILE_STRIDE) as usize;
+    let Some(own) = own else {
+        return vec![WATER_SPAN_LEAST; count];
+    };
+    let held: Vec<bool> = own.surfaces().iter().map(|level| level.is_finite()).collect();
+    nearest(&held)
+        .iter()
+        .map(|&seed| {
+            if seed == NONE {
+                WATER_SPAN_LEAST
+            } else {
+                unpack(own.info()[seed as usize][0]).3
+            }
+        })
+        .collect()
+}
 
 /// The values cells or squares blend into a sample by: whether a record
 /// holds any of them; the weights of those holding water, of those a lake
@@ -2054,10 +2075,11 @@ impl Tile {
     /// tile's ground at its corners) and lips blend alike, held still where
     /// most are lakes', and it takes its shear, where it plunges and the
     /// reach of its bed ([`Tile::bed`]); dry where none holds any, and as its
-    /// own water stood where no record holds the cells around it. The width
-    /// its water packs as and whether a fall's sheet runs over it stay its
-    /// own. Surfaces stand at their steps of the height grid, as records
-    /// hold them; `None` where no water stands on it.
+    /// own water stood where no record holds the cells around it. Whether a
+    /// fall's sheet runs over it stays its own, and so does its span, the
+    /// span of the water body its own water held nearest it where it held
+    /// none there. Surfaces stand at their steps of the height grid, as
+    /// records hold them; `None` where no water stands on it.
     #[must_use]
     pub fn steadied(
         &self,
@@ -2084,6 +2106,7 @@ impl Tile {
         let mut info = vec![[0_u32; 3]; count];
         let mut flows = vec![Vec2::ZERO; count];
         let mut stirred = vec![None; count];
+        let spans = spans(own);
         for z in 0..stride {
             for x in 0..stride {
                 let at = z * stride + x;
@@ -2124,13 +2147,7 @@ impl Tile {
                 if blend.weight <= 0.0 {
                     continue;
                 }
-                let (_, _, _, own_width) = unpack(own_info[0]);
                 let sheeted = own_surface.is_finite() && own_info[0] & (1 << 23) != 0;
-                let width = if own_surface.is_finite() {
-                    own_width
-                } else {
-                    SETTLED_HALF_WIDTH
-                };
                 let flow = blend.flow();
                 surface[at] = codec::on_grid(blend.level / blend.weight);
                 info[at][0] = pack(
@@ -2138,7 +2155,7 @@ impl Tile {
                     blend.foam / blend.weight / shallow_water::FOAM_MOST,
                     sheeted,
                     blend.held * 2.0 > blend.weight,
-                    min(width, WATER_WIDTH_RANGE),
+                    spans[at],
                 );
                 flows[at] = flow;
                 stirred[at] = Some([
@@ -2169,7 +2186,7 @@ impl Tile {
     /// spacing; and its shear, where it plunges and the reach of its bed
     /// ([`Tile::bed`]); still and clear where none of them holds water, and
     /// as its own water ran where no summary holds any square under it. Its
-    /// water's surface, lakes, width and falls' sheets stay its own, and its
+    /// water's surface, lakes, spans and falls' sheets stay its own, and its
     /// dry samples take theirs from it anew ([`TileWater::surfaces`]); `None`
     /// where it holds none.
     #[must_use]
@@ -2220,7 +2237,7 @@ impl Tile {
                 if !blend.known {
                     continue;
                 }
-                let (_, _, lake, width) = unpack(info[at][0]);
+                let (_, _, lake, span) = unpack(info[at][0]);
                 let sheeted = info[at][0] & (1 << 23) != 0;
                 let foam = if blend.weight > 0.0 {
                     blend.foam / blend.weight
@@ -2232,7 +2249,7 @@ impl Tile {
                 } else {
                     blend.flow / blend.moving
                 };
-                info[at][0] = pack(flow, foam / shallow_water::FOAM_MOST, sheeted, lake, width);
+                info[at][0] = pack(flow, foam / shallow_water::FOAM_MOST, sheeted, lake, span);
                 flows[at] = flow;
                 stirred[at] = Some(if blend.weight > 0.0 {
                     [
