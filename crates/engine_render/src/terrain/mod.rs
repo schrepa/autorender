@@ -8,8 +8,9 @@
 //! the array grows by doubling up to the device's layers, beyond which
 //! tiles drop (counted) and the ground draws the coarser levels resident
 //! there. A terrain's subdivision splits its square by longest edge
-//! bisection wherever a leaf's flat triangle strays more than the settings'
-//! pixels from the ground's true surface, seen from the detail eye, and its
+//! bisection wherever a leaf's meshlet may stray more than the settings'
+//! pixels from the ground's true surface, seen from the detail eye, as the
+//! tiles' error pyramids bound it (`atlas`), and its
 //! leaves draw that surface, deep materials displacing it, with one indirect
 //! draw per terrain and view. The shadow clipmap's tiles, which must not
 //! depend on where the eye stood, hold the ground at a level of detail each

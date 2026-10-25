@@ -560,7 +560,9 @@ tables! {
     /// hold the ground at a level of their own. Vertices read the frame's
     /// leaves of the terrains' subdivisions and the true surface under them,
     /// and where deep materials displace it their blend, normals and heights,
-    /// which the subdivision's compute passes measure leaves by alike.
+    /// which the subdivision's compute passes measure leaves by alike, with
+    /// the error pyramids of every tile's ground and water, which they alone
+    /// read.
     const TERRAIN: Table = Table {
         label: "engine/terrain-layout",
         serves: [SHADER @ 1, TERRAIN_SHADOW_SHADER @ 1],
@@ -600,6 +602,10 @@ tables! {
             texture(35, "terrain_macro", Float, D2Array, F),
             // The frame's leaves of every terrain's subdivision.
             read(36, "terrain_surface_leaves", V),
+            // Each tile's error pyramids, its ground's and its water's
+            // surface's, a layer each beside its heights' (`atlas.rs`).
+            texture(62, "terrain_errors", Unfilterable, D2Array, C),
+            texture(63, "water_errors", Unfilterable, D2Array, C),
         ],
     };
 
