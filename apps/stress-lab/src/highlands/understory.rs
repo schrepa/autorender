@@ -271,7 +271,8 @@ fn logs(forest: &Mask) -> PlacementLayer {
             Mask::Max(vec![
                 Mask::Multiply(vec![
                     remap(forest.clone(), 0.12, 0.25),
-                    Mask::Invert(Box::new(remap(forest.clone(), 0.45, 0.7))),
+                    // Falling as the canopy closes.
+                    remap(forest.clone(), 0.7, 0.45),
                 ]),
                 Mask::Constant(0.5),
             ]),
