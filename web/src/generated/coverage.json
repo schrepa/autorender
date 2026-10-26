@@ -835,14 +835,6 @@
       "stats": false
     },
     {
-      "inspector": "SunShafts",
-      "section": "sun_shafts",
-      "smokes": [
-        "agent"
-      ],
-      "stats": true
-    },
-    {
       "inspector": "Reflections",
       "section": "reflections",
       "smokes": [
@@ -1015,9 +1007,10 @@
       "inspector": "Haze",
       "section": "haze",
       "smokes": [
+        "agent",
         "terrain-water-sky"
       ],
-      "stats": false
+      "stats": true
     },
     {
       "inspector": "NightSky",

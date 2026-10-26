@@ -169,10 +169,13 @@ impl WaterWaves {
             group("engine/water-wave-fold-rows", &level(1), &all_rows),
             group("engine/water-wave-fold-columns", &all_rows, &caps(0)),
         ];
-        folds.extend(
-            (1..LEVELS)
-                .map(|index| group("engine/water-whitecap-level", &caps(index - 1), &caps(index))),
-        );
+        folds.extend((1..LEVELS).map(|index| {
+            group(
+                "engine/water-whitecap-level",
+                &caps(index - 1),
+                &caps(index),
+            )
+        }));
         Self {
             layout,
             pipelines: None,
@@ -329,7 +332,12 @@ impl WaterWaves {
         });
         let tiles = WIND_TILES as u32;
         transform(&mut pass, [rows, columns, levels], &self.groups, tiles);
-        transform(&mut pass, [fold_rows, fold_columns, levels], &self.folds, tiles);
+        transform(
+            &mut pass,
+            [fold_rows, fold_columns, levels],
+            &self.folds,
+            tiles,
+        );
     }
 }
 

@@ -24,7 +24,6 @@
         "no-occlusion",
         "no-bloom",
         "no-lights",
-        "no-shafts",
         "no-reflections",
         "no-particles",
         "no-refraction",

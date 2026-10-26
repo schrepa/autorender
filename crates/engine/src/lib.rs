@@ -68,14 +68,14 @@ mod games {
         Records, ReflectionProbe, ReflectionProbeSettings, Reflections, Refraction, Sampler,
         Shadows, Skin, Sky, SkyOcclusion, SplineMesh, Spot, StreamSet, Streamed, StreamedId,
         StreamedItem, StreamingFocus, SubpixelCulling, Surface, TemporalAntialiasing, Terrain,
-        TerrainPlugin, TerrainSample, TerrainSettings, Terrains, Texture, TextureHandle, TextureRef,
-        TextureSet, TextureSource, TextureUsage, TimeOfDay, TimeOfDayPlugin, Tint, TopLayer, Track,
-        TrackDepth, Tracks, Transform, TransformEditError, Transmission, UvTransform, ViewSync,
-        ViewSyncSystems, VirtualGeometry, Water, WaterKind, WaterObstacle, WaterObstacles,
-        WaterSample, WaterSource, WaterSources, Wind, Windows, WorldCells, WorldChanges,
-        WorldStreaming, WorldStreamingPlugin, WorldSync, WorldSyncSystems, Wrap, edit_transform,
-        math, remove_streamed, reset_all_interpolation, reset_interpolation, set_parent,
-        set_parents, trim_cards,
+        TerrainPlugin, TerrainSample, TerrainSettings, Terrains, Texture, TextureHandle,
+        TextureRef, TextureSet, TextureSource, TextureUsage, TimeOfDay, TimeOfDayPlugin, Tint,
+        TopLayer, Track, TrackDepth, Tracks, Transform, TransformEditError, Transmission,
+        UvTransform, ViewSync, ViewSyncSystems, VirtualGeometry, Water, WaterKind, WaterObstacle,
+        WaterObstacles, WaterSample, WaterSource, WaterSources, Wind, Windows, WorldCells,
+        WorldChanges, WorldStreaming, WorldStreamingPlugin, WorldSync, WorldSyncSystems, Wrap,
+        edit_transform, math, remove_streamed, reset_all_interpolation, reset_interpolation,
+        set_parent, set_parents, trim_cards,
     };
 }
 pub use games::*;

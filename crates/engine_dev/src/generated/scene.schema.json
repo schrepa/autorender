@@ -3047,16 +3047,6 @@
             }
           ]
         },
-        "sun_shafts": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneSunShafts"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "temporal_antialiasing": {
           "anyOf": [
             {
@@ -3276,13 +3266,45 @@
       ]
     },
     "SceneHaze": {
-      "description": "Haze: distant surfaces fade into the sky behind them. Fog and the air\ntake the sky's own light, blurred, in each view's direction (looking\ndown, the sky's just above the horizon, so far ground melts into the\nlit haze there), and the air begins at the eye, at least as thick as\n`visibility` asks, thinning with height as the atmosphere's (or the\nphysically based sky's) air does, as thick as `strength` makes it.",
+      "description": "Haze: distant surfaces fade into the sky behind them, and the near\nair glows where the sun lights it. Fog and the air take the sky's own\nlight, blurred, in each view's direction (looking down, the sky's just\nabove the horizon, so far ground melts into the lit haze there), and\nthe air begins at the eye, at least as thick as `visibility` asks,\nthinning with height as the atmosphere's (or the physically based\nsky's) air does, as thick as `strength` makes it. Within `reach` of\nthe eye each view marches the fog and the air for the sunlight they\nscatter toward the eye, concentrated around the sun by `forward`,\nwhere shadows and the clouds' shadows let the sun through; there the\nair's density drifts with the wind in patches about `size` across,\n`spread` either side of its mean. Beyond the reach the glow of the\nsun the sky's light holds stands in for it. Shadows are optional:\nwithout them the sun lights all of the near air.",
       "type": "object",
       "properties": {
         "enabled": {
-          "description": "Whether fog and the air take the sky's light.",
+          "description": "Whether fog and the air take the sky's light, and the near air\nthe sun's.",
           "type": "boolean",
           "default": true
+        },
+        "forward": {
+          "description": "How strongly the near air scatters the sun's light forward, the\nasymmetry of its phase (Henyey and Greenstein's, as Mie\nscattering's): 0 scatters it alike every way, higher concentrates\nit around the sun.",
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579,
+          "maximum": 0.95,
+          "minimum": 0.0
+        },
+        "reach": {
+          "description": "The distance (world units) along each view over which the near\nair's sunlight is marched, shadowed; 0 leaves all of it to the\nsky's glow.",
+          "type": "number",
+          "format": "float",
+          "default": 300.0,
+          "maximum": 100000.0,
+          "minimum": 0.0
+        },
+        "size": {
+          "description": "The size (world units) of the near air's largest patches; patches\nhalf and a quarter as large drift within them.",
+          "type": "number",
+          "format": "float",
+          "default": 60.0,
+          "maximum": 100000.0,
+          "minimum": 0.1
+        },
+        "spread": {
+          "description": "How far the near air's density strays from its mean in its\ndrifting patches, as a share of it: 0 not at all, 1 from clear to\ntwice as thick.",
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579,
+          "maximum": 1.0,
+          "minimum": 0.0
         },
         "strength": {
           "description": "How thick the air is, as a multiple of what `visibility` (or the\natmosphere's own air) makes it: 0 clear, 1 as thick as that.",
@@ -5224,37 +5246,6 @@
           "description": "Whether GPU-presented frames cull sub-pixel instances.",
           "type": "boolean",
           "default": true
-        }
-      },
-      "additionalProperties": false
-    },
-    "SceneSunShafts": {
-      "description": "Sun shafts: sunlight scattered by the fog between shadow\ncasters. Requires shadows; an intensity of 0 turns them\noff.",
-      "type": "object",
-      "properties": {
-        "anisotropy": {
-          "description": "Forward scattering: higher concentrates light toward the sun.",
-          "type": "number",
-          "format": "float",
-          "default": 0.6000000238418579,
-          "maximum": 0.95,
-          "minimum": 0.0
-        },
-        "distance": {
-          "description": "World distance along each view ray light is gathered over.",
-          "type": "number",
-          "format": "float",
-          "default": 300.0,
-          "maximum": 100000.0,
-          "minimum": 0.001
-        },
-        "intensity": {
-          "description": "How bright the shafts are; 0 turns them off.",
-          "type": "number",
-          "format": "float",
-          "default": 1.0,
-          "maximum": 4.0,
-          "minimum": 0.0
         }
       },
       "additionalProperties": false

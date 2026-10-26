@@ -47,6 +47,8 @@ export interface FrameStats {
   frame: number;
   /** Ground cover. */
   ground_cover: GroundCoverStats;
+  /** The haze's march: the sunlight the near air scatters. */
+  haze: Applied;
   /**
    * Number of mesh instances submitted (before GPU clipping). GPU-culled
    * frames report the read-back visible count limited by the instance
@@ -154,8 +156,6 @@ export interface FrameStats {
   sky: SkyStats;
   /** Sub-pixel culling. */
   subpixel_culling: CullingStats;
-  /** Sun shafts. */
-  sun_shafts: Applied;
   /** Temporal antialiasing. */
   temporal_antialiasing: Applied;
   /** Terrains. */

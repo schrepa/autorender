@@ -1318,6 +1318,10 @@
       "$ref": "#/$defs/GroundCoverStats",
       "description": "Ground cover."
     },
+    "haze": {
+      "$ref": "#/$defs/Applied",
+      "description": "The haze's march: the sunlight the near air scatters."
+    },
     "instances": {
       "description": "Number of mesh instances submitted (before GPU clipping). GPU-culled\nframes report the read-back visible count limited by the instance\nbudget, or the budgeted candidate count before any read-back.",
       "format": "uint32",
@@ -1494,10 +1498,6 @@
       "$ref": "#/$defs/CullingStats",
       "description": "Sub-pixel culling."
     },
-    "sun_shafts": {
-      "$ref": "#/$defs/Applied",
-      "description": "Sun shafts."
-    },
     "temporal_antialiasing": {
       "$ref": "#/$defs/Applied",
       "description": "Temporal antialiasing."
@@ -1600,7 +1600,7 @@
     "ambient_occlusion",
     "bloom",
     "local_lights",
-    "sun_shafts",
+    "haze",
     "reflections",
     "particles",
     "refraction",

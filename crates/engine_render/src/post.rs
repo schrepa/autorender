@@ -494,9 +494,8 @@ impl PostPass {
                 half_texel: [1.0 / half.0, 1.0 / half.1],
                 trace_index: self.trace_index,
                 haze_turn: turn,
-                haze_history: history.map_or([0.0; 2], |last| {
-                    [last.drawn.0 as f32, last.drawn.1 as f32]
-                }),
+                haze_history: history
+                    .map_or([0.0; 2], |last| [last.drawn.0 as f32, last.drawn.1 as f32]),
             },
         );
         let uniform = PostUniform {

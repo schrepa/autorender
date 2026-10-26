@@ -479,10 +479,6 @@ export const STRESS_CATALOG = {
       "label": "No local lights"
     },
     {
-      "value": "no-shafts",
-      "label": "No sun shafts"
-    },
-    {
       "value": "no-reflections",
       "label": "No reflections"
     },
