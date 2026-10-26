@@ -3,8 +3,10 @@
 //! what the effects pass reads for it.
 //! The frame's targets, the effects pass, its stats and the uniform's
 //! "runs" flags all follow the same gates; the post composite and the
-//! temporal resolve apply the effects alike (`effect_shade` and
-//! `effect_light` in effects.wgsl).
+//! temporal resolve apply the effects alike (`effect_shade`, `reflected`
+//! and `effect_light` in effects.wgsl), the resolve ambient occlusion and
+//! reflections before its blend, so they enter the history, and sun shafts
+//! and bloom after it.
 
 use engine_core::Environment;
 

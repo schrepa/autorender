@@ -15,9 +15,12 @@
 // viewport, and every pixel after a reset, show this frame's color alone:
 // its nearest sample where one lies within half a display pixel, else its
 // samples around blended bilinearly. Ambient occlusion darkens this frame's
-// color before blending, so the history averages its noise; bloom reaches
-// the canvas only. Writes the canvas and the next history together, both at
-// the display's size.
+// color and the reflections are laid over it before blending, each render
+// pixel taking those at its own center, so the history averages the
+// occlusion's noise and gathers the reflections traced from another pixel of
+// each 2x2 block every frame; sun shafts and bloom reach the canvas only.
+// Writes the canvas and the next history together, both at the display's
+// size.
 
 struct Resolve {
     // Size of one display pixel in texture coordinates: the canvas's and the
@@ -52,8 +55,8 @@ struct Resolve {
 @group(0) @binding(5) var occlusion: texture_2d<f32>;
 @group(0) @binding(6) var bloom: texture_2d<f32>;
 @group(0) @binding(7) var<uniform> post: Post;
-// Reflections at half resolution; like bloom and sun shafts,
-// they reach the canvas only.
+// Reflections at half resolution, traced at render pixels: each render
+// pixel's color takes them before the blend, so they enter the history.
 @group(0) @binding(8) var reflections: texture_2d<f32>;
 // The depth buffer (reversed: nearer surfaces are greater), for the nearest
 // surface around each pixel.
@@ -133,10 +136,20 @@ fn nearest_motion(pixel: vec2<i32>, last: vec2<i32>) -> vec2<f32> {
     return textureLoad(motion, nearest, 0).xy;
 }
 
+// `color`, this frame's at `position` (render pixels of the jittered
+// samples, continuous) darkened by its shade, with the reflections there,
+// which were traced at render pixels at half resolution: a render pixel's
+// are the bilinear read at its center.
+fn reflected_at(color: vec3<f32>, position: vec2<f32>) -> vec3<f32> {
+    return reflected(color, reflections, history_sampler, position / resolve.render.xy, post);
+}
+
 // This frame's color at render pixel `pixel` offset by `offset` (within the
-// pixels drawn, `last` the last), darkened by `shade`, in YCoCg.
+// pixels drawn, `last` the last), darkened by `shade` and with its
+// reflections, in YCoCg.
 fn neighbor(pixel: vec2<i32>, offset: vec2<i32>, last: vec2<i32>, shade: f32) -> vec3<f32> {
-    return ycocg(textureLoad(scene, clamp(pixel + offset, vec2<i32>(0), last), 0).rgb * shade);
+    let at = clamp(pixel + offset, vec2<i32>(0), last);
+    return ycocg(reflected_at(textureLoad(scene, at, 0).rgb * shade, vec2<f32>(at) + 0.5));
 }
 
 // This frame's color at `position` (render pixels of the jittered samples,
@@ -163,10 +176,12 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     let last = vec2<i32>(resolve.render.xy) - 1;
     let pixel = clamp(vec2<i32>(floor(jittered)), vec2<i32>(0), last);
     let texel = textureLoad(scene, pixel, 0);
-    // The neighborhood darkens with this pixel: its box scales alike.
+    // The neighborhood darkens with this pixel: its box scales alike. Each
+    // render pixel takes its own reflections, so the history holds them and
+    // the box spans how they vary.
     let effects = screen_effects(occlusion, depth_texture, pixel, post);
     let shade = effect_shade(texel.a, effects, post);
-    let current = texel.rgb * shade;
+    let current = reflected_at(texel.rgb * shade, vec2<f32>(pixel) + 0.5);
     // How far that sample lies from this pixel's center, in display pixels:
     // within half of one it counts fully, from a whole one not at all.
     let away = (vec2<f32>(pixel) + 0.5 - resolve.render.zw - rendered)
@@ -174,7 +189,7 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     let near = saturate(2.0 - 2.0 * max(abs(away.x), abs(away.y)));
     var color = current;
     if near < 1.0 {
-        color = upsampled(jittered, last) * shade;
+        color = reflected_at(upsampled(jittered, last) * shade, jittered);
     }
     var offset = textureLoad(motion, pixel, 0).xy;
     if resolve.options.y != 0.0 {
@@ -184,10 +199,10 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     // NaN motion fails these comparisons too.
     if resolve.history_valid != 0u && all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0)) {
         let center = ycocg(current);
-        let left = ycocg(textureLoad(scene, max(pixel - vec2<i32>(1, 0), vec2<i32>(0)), 0).rgb * shade);
-        let right = ycocg(textureLoad(scene, min(pixel + vec2<i32>(1, 0), last), 0).rgb * shade);
-        let up = ycocg(textureLoad(scene, max(pixel - vec2<i32>(0, 1), vec2<i32>(0)), 0).rgb * shade);
-        let down = ycocg(textureLoad(scene, min(pixel + vec2<i32>(0, 1), last), 0).rgb * shade);
+        let left = neighbor(pixel, vec2<i32>(-1, 0), last, shade);
+        let right = neighbor(pixel, vec2<i32>(1, 0), last, shade);
+        let up = neighbor(pixel, vec2<i32>(0, -1), last, shade);
+        let down = neighbor(pixel, vec2<i32>(0, 1), last, shade);
         var low = min(center, min(min(left, right), min(up, down)));
         var high = max(center, max(max(left, right), max(up, down)));
         // Rounded: halfway from the cross's range to that of all eight
@@ -221,7 +236,8 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     color = max(color, vec3<f32>(0.0));
     var output: Outputs;
     output.history = vec4<f32>(color, 1.0);
-    let shown = effect_light(color, effects, reflections, bloom, history_sampler, screen, post);
+    // Sun shafts and bloom reach the canvas only.
+    let shown = effect_light(color, effects, bloom, history_sampler, screen, post);
     // The UNORM canvas stores encoded color.
     var encoded = encode_srgb(shown);
     // Dithered 8-bit writes turn their noise every frame: the history then

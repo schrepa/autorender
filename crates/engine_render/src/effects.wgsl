@@ -124,15 +124,19 @@ fn screen_effects(effects: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2
     return near / near_total;
 }
 
-// The scene reflected at `uv` replacing the share of `color`
+// The scene reflected at `uv` across the view replacing the share of `color`
 // its reflectivity and confidence give it; misses keep the sky reflection
-// already in `color`.
+// already in `color`. The composite and the resolve apply it to the shaded
+// scene before the effects that add light (`effect_light`); the resolve
+// reflects each render pixel's color before blending it with the history,
+// which then gathers the pixels each 2x2 block traces in turn.
 fn reflected(color: vec3<f32>, reflections: texture_2d<f32>, linear: sampler,
         uv: vec2<f32>, settings: Post) -> vec3<f32> {
     if settings.reflections.z == 0.0 {
         return color;
     }
-    let reflection = textureSampleLevel(reflections, linear, uv, 0.0);
+    let reflection = textureSampleLevel(reflections, linear,
+        half_uv(uv, textureDimensions(reflections), settings), 0.0);
     return mix(color, reflection.rgb, saturate(reflection.a * settings.reflections.y));
 }
 
@@ -171,11 +175,11 @@ fn effect_shade(ambient: f32, effects: vec2<f32>, settings: Post) -> f32 {
 }
 
 // `color` with the effects that add light laid over it at `uv` across the
-// view: the reflections, the sun shafts' light in `effects`, then bloom.
-fn effect_light(color: vec3<f32>, effects: vec2<f32>, reflections: texture_2d<f32>,
-        bloom: texture_2d<f32>, linear: sampler, uv: vec2<f32>, settings: Post) -> vec3<f32> {
-    let mirrored = reflected(color, reflections, linear,
-        half_uv(uv, textureDimensions(reflections), settings), settings);
-    let lit = shafted(mirrored, effects.y, settings);
+// view: the sun shafts' light in `effects`, then bloom. Both are smooth and
+// reach the canvas only: the composite lays them over the reflected scene,
+// the resolve over its blend with the history.
+fn effect_light(color: vec3<f32>, effects: vec2<f32>, bloom: texture_2d<f32>,
+        linear: sampler, uv: vec2<f32>, settings: Post) -> vec3<f32> {
+    let lit = shafted(color, effects.y, settings);
     return glowing(lit, bloom, linear, half_uv(uv, textureDimensions(bloom), settings), settings);
 }
