@@ -89,7 +89,7 @@ pub use engine_tables as table_data;
 pub use engine_terrain as terrain_data;
 pub use engine_terrain::{
     AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Blend,
-    Control, Erosion, ErosionLayer, ErosionStage, ErosionStats, FarPlacement, GivenRiver,
+    Control, Erosion, ErosionLayer, ErosionStage, ErosionStats, Facing, FarPlacement, GivenRiver,
     HeightImage, HeightmapLayer, Hydrology, HydrologyLayer, HydrologySample, HydrologyStage,
     HydrologyStats, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, PathLayer, PathProfile,
     PathStage, PathStats, Placed, PlacementChoice, PlacementLayer, Pyramid, PyramidError, Remap,

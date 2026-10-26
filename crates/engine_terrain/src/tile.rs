@@ -11,7 +11,9 @@ use engine_math::{clamp, max, min};
 use crate::hydrology::RIVER_FAR;
 use crate::layers::{Layer, Layers, state_len};
 use crate::rivers::RiverRaster;
-use crate::surface::{BiomeRules, Control, RowInputs, RowScratch, SampleShape, smooth_gradient};
+use crate::surface::{
+    BiomeRules, Control, RowInputs, RowScratch, SampleShape, erosion_row, smooth_gradient,
+};
 use crate::tile_water::{TileWater, WaterPoint, WaterState};
 use crate::{
     ErrorPyramid, HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placing, Pyramid,
@@ -779,22 +781,29 @@ pub struct Generator {
 pub(crate) struct SurfaceInputs {
     zs: Vec<f32>,
     height: Vec<f32>,
-    gradient: Vec<f32>,
+    gradient: Vec<[f32; 2]>,
     curvature: Vec<f32>,
     water: Vec<HydrologySample>,
+    erosion: Vec<f32>,
     path: Vec<PathSample>,
     scratch: RowScratch,
     weights: Vec<(u8, f32)>,
 }
 
 impl SurfaceInputs {
+    /// Readies the rows for `len` samples: empty, but for what erosion
+    /// changed at each, 0 until read.
     fn clear(&mut self, len: usize) {
-        for row in [&mut self.height, &mut self.gradient, &mut self.curvature] {
+        for row in [&mut self.height, &mut self.curvature] {
             row.clear();
             row.reserve(len);
         }
+        self.gradient.clear();
+        self.gradient.reserve(len);
         self.water.clear();
         self.path.clear();
+        self.erosion.clear();
+        self.erosion.resize(len, 0.0);
     }
 }
 
@@ -802,12 +811,13 @@ impl SurfaceInputs {
 /// (0 to 258, samples -1 to 257) at its stored `columns`, into `out`, one a
 /// column: from the smooth surface through the tile's stored `heights`
 /// around each sample ([`SampleShape`]), border samples reading their
-/// nearest neighbors inside, and from each sample's meters to the nearest
+/// nearest neighbors inside, from each sample's meters to the nearest
 /// river's edge and its bed the tile holds (`rivers`, its edges' steps and
-/// its beds' planes); `xs` holds each stored column's x and `z` is the
-/// row's, in the layers' frame, its samples `spacing` meters apart. What the
-/// rules give a tile's samples on the CPU, for generators to give their
-/// tiles and for tiles' shading to average.
+/// its beds' planes), and from what the stack's erosions changed there;
+/// `xs` holds each stored column's x and `z` is the row's, in the layers'
+/// frame, its samples `spacing` meters apart. What the rules give a tile's
+/// samples on the CPU, for generators to give their tiles and for tiles'
+/// shading to average.
 pub(crate) fn control_row(
     (rules, layers): (&BiomeRules, &Layers),
     (heights, rivers): (&[f32], beds::RiverRows<'_>),
@@ -819,9 +829,13 @@ pub(crate) fn control_row(
     // Inputs the masks never read are left unread.
     let reads = rules.reads();
     let (up, down) = (row.saturating_sub(1), (row + 1).min(stride - 1));
-    // The row's inputs, then its control values all at once.
+    // The row's inputs, then its control values all at once; what the
+    // erosions changed is read along the whole row at once.
     inputs.clear(columns.len());
-    for column in columns.clone() {
+    if reads.erosion {
+        erosion_row(layers, &xs[columns.clone()], z, spacing, &mut inputs.erosion);
+    }
+    for (index, column) in columns.clone().enumerate() {
         let held = RiverInputs::held(rivers, row * stride + column);
         let (left, right) = (column.saturating_sub(1), (column + 1).min(stride - 1));
         let at = |r: usize, c: usize| heights[r * stride + c];
@@ -839,7 +853,7 @@ pub(crate) fn control_row(
             _ => HydrologySample::default(),
         };
         inputs.height.push(height);
-        inputs.gradient.push(shape.slope());
+        inputs.gradient.push(shape.gradient);
         inputs.curvature.push(shape.curvature);
         inputs.water.push(HydrologySample {
             flow: water.flow * shown,
@@ -847,6 +861,7 @@ pub(crate) fn control_row(
             lake: water.lake * shown,
             ..water
         });
+        inputs.erosion[index] *= shown;
         inputs.path.push(if shown > 0.0 && reads.path {
             layers.path_at(x, z)
         } else {
@@ -863,6 +878,7 @@ pub(crate) fn control_row(
         gradient: &inputs.gradient,
         curvature: &inputs.curvature,
         water: &inputs.water,
+        erosion: &inputs.erosion,
         path: &inputs.path,
     };
     rules.control_row(&row_inputs, out, (&mut inputs.scratch, &mut inputs.weights));
