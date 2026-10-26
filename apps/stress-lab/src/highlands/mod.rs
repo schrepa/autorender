@@ -13,13 +13,16 @@
 //! to their floods' line, and higher where they spray.
 //! Boulders lie on its meadows and in its steep streams, stones on its
 //! scree and its cobble beds, outcrops on its rock, and spruce forests
-//! cover the lower slopes.
+//! cover the lower slopes, downy birch on their wet ground, along their
+//! streams, at their outer edges and in small stands beyond them, and
+//! young spruces and birches where they thin out.
 //! Gravel roads wind from the plateau down to the crater
 //! lake, west over a river on a stone bridge and east
 //! through a ridge in a tunnel. Lanterns line the road to
 //! the lake, streamed: they exist only near the camera. A
 //! hiker walks the road's first stretch and back.
 
+mod birches;
 mod bodies;
 mod caves;
 mod ground;
@@ -558,7 +561,7 @@ const LICHEN: TopLayer = TopLayer {
     roughness: 0.85,
 };
 
-/// How far up boulders' bases and spruces' trunks blend into the ground
+/// How far up boulders' bases and trees' trunks blend into the ground
 /// where the terrain places them: a few centimeters up a meter-wide
 /// boulder, a quarter meter up a trunk.
 const SOIL: Grounding = Grounding { height: 0.12 };
@@ -723,11 +726,11 @@ fn surface(
     files: &HashMap<String, StressFile>,
     authored: Vec<AuthoredPlacement>,
 ) -> engine::Result<TerrainSurface> {
-    // The shapes and the bark atlas are records: their handles now, their
-    // content once hosts hand it back or it is built in place. Boulders
-    // come at one detail, their coarser levels their meshes' own; spruces
-    // at each of their levels, and as the solid crowns shadow maps draw in
-    // their place.
+    // The shapes and the trees' atlases are records: their handles now,
+    // their content once hosts hand it back or it is built in place.
+    // Boulders come at one detail, their coarser levels their meshes' own;
+    // trees at each of their levels, and as the solid crowns shadow maps
+    // draw in their place.
     let boulders = (0..BOULDERS as u32)
         .map(|seed| rocks::boulder_record(world, seed))
         .collect::<engine::Result<Vec<_>>>()?;
@@ -741,8 +744,9 @@ fn surface(
         assets.insert_material(material)?
     };
     let spruces = (0..SPRUCES as u32)
-        .map(|seed| trees::spruce(world, seed, needles))
+        .map(|seed| trees::spruce(world, seed, &trees::SPRUCE, needles))
         .collect::<engine::Result<Vec<_>>>()?;
+    let forest = forest_trees(world, needles)?;
     let materials = world.resource_scope(|world, mut records: Mut<Records>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
         let mut loaded = HashMap::default();
@@ -806,21 +810,10 @@ fn surface(
             shadow: None,
         });
     }
-    for spruce in spruces {
-        // Spruces bend in the wind: a third of a meter at ten
-        // meters up in full wind.
-        // Their trunks collide, up to where the lowest whorls spread.
-        placed.push(PlacementAsset {
-            sway: 0.35,
-            collider: Some(PlacedCollider::new(
-                PlacedShape::Cuboid {
-                    half_extents: [0.28, 2.0, 0.28],
-                },
-                [0.0, 1.5, 0.0],
-            )),
-            ..spruce
-        });
-    }
+    // Trees sway in the wind and their trunks collide as each one's size
+    // asks.
+    placed.extend(spruces);
+    placed.extend(forest);
     // The rock the cave is hewn in, which the boulders framing its mouth
     // wear too: the scanned rock face where present, its color pulled
     // toward the terrain rock's when converted; otherwise the terrain
@@ -861,6 +854,37 @@ fn surface(
         ..surface
     })
     .map_err(engine::Error::from)
+}
+
+/// The forest's trees beside its spruces, as placement assets in the order
+/// [`rules`] lists them after the spruces: downy birches of a few shapes
+/// over their own bark and leaf atlas, their leaves cut out by its alpha;
+/// then young spruces in the spruces' `needles`, and young birches; their
+/// trunks blending into the forest floor as the spruces' do. Young trees'
+/// shapes take seeds past their elders'.
+fn forest_trees(
+    world: &mut World,
+    needles: MaterialHandle,
+) -> engine::Result<Vec<PlacementAsset>> {
+    let atlas = birches::atlas_record(world)?;
+    let leaves = {
+        let material = trees::material(atlas)?.with_grounding(ROOTS)?;
+        let mut assets = world.resource_mut::<AssetLibrary>();
+        assets.insert_material(material)?
+    };
+    let mut placed = Vec::with_capacity(BIRCHES + YOUNG_SPRUCES + YOUNG_BIRCHES);
+    for seed in 0..BIRCHES as u32 {
+        placed.push(birches::birch(world, seed, &birches::BIRCH, leaves)?);
+    }
+    for seed in SPRUCES..SPRUCES + YOUNG_SPRUCES {
+        let young = trees::spruce(world, seed as u32, &trees::YOUNG_SPRUCE, needles)?;
+        placed.push(young);
+    }
+    for seed in BIRCHES..BIRCHES + YOUNG_BIRCHES {
+        let young = birches::birch(world, seed as u32, &birches::YOUNG_BIRCH, leaves)?;
+        placed.push(young);
+    }
+    Ok(placed)
 }
 
 /// The cave's mouth: the world point at its center, and the
@@ -1385,6 +1409,11 @@ fn cave_interior(mesh: &Mesh, points: &[Vec3], inward: Vec3) -> (Vec3, Vec3) {
 /// Boulder and spruce shapes the placement layers choose from.
 const BOULDERS: usize = 5;
 const SPRUCES: usize = 3;
+/// Birch, young spruce and young birch shapes the forest's other layers
+/// choose from ([`tree_layers`]).
+const BIRCHES: usize = 3;
+const YOUNG_SPRUCES: usize = 3;
+const YOUNG_BIRCHES: usize = 2;
 
 /// `look`'s ground material's maps ([`ground::sources`]) as an engine
 /// material tinted by its tint: base color, normal, and occlusion (red),
@@ -1523,19 +1552,14 @@ fn in_terrain_rock(
     reason = "longer than the line ceiling; it may only shrink"
 )]
 fn rules() -> Biomes {
-    // Where spruces stand in broad stands below the tree line on gentle
-    // ground, thinning at their edges and kept out of stream beds; their
-    // needles litter the ground there.
+    // Where the forest grows, in broad stands below the tree line on gentle
+    // ground, thinning at their edges and kept out of stream beds: spruces
+    // and birches share it ([`birch_share`]), young trees regenerating
+    // where it fades ([`tree_layers`]); their needles and leaves litter the
+    // ground there.
     let forest = || {
         Mask::Multiply(vec![
-            remap(
-                Mask::Add(vec![
-                    scaled(noise(320.0, 31, 3), 0.75),
-                    scaled(noise(45.0, 32, 2), 0.25),
-                ]),
-                0.45,
-                0.62,
-            ),
+            remap(canopy(), 0.45, 0.62),
             Mask::Invert(Box::new(Mask::Height([560.0, 640.0]))),
             Mask::Invert(Box::new(Mask::Slope([24.0, 34.0]))),
             Mask::Invert(Box::new(Mask::Flow([4.95, 5.15]))),
@@ -1549,23 +1573,22 @@ fn rules() -> Biomes {
         assets: (0..BOULDERS)
             .map(|index| format!("boulder{index}"))
             .chain((0..SPRUCES).map(|index| format!("spruce{index}")))
+            .chain((0..BIRCHES).map(|index| format!("birch{index}")))
+            .chain((0..YOUNG_SPRUCES).map(|index| format!("young_spruce{index}")))
+            .chain((0..YOUNG_BIRCHES).map(|index| format!("young_birch{index}")))
             .collect(),
         // Boulders in clumps over the meadows, resting on the lowest ground
         // under them, stones strewn on scree, outcrops on
         // rock, and spruce forests in broad stands below the tree line on
         // gentle ground, thinning at their edges: placed on two-kilometer
-        // tiles, which stay resident farther away; and boulders and stones
-        // in the streams ([`stream_rocks`]).
+        // tiles, which stay resident farther away; boulders and stones
+        // in the streams ([`stream_rocks`]); and the forest's birches and
+        // young trees ([`tree_layers`]).
         placed: Vec::new(),
         placements: [
             PlacementLayer {
                 id: "spruces".into(),
-                assets: (0..SPRUCES)
-                    .map(|index| PlacementChoice {
-                        asset: format!("spruce{index}"),
-                        weight: 1.0,
-                    })
-                    .collect(),
+                assets: tree_choices("spruce", SPRUCES),
                 density: 420.0,
                 footprint: 3.5,
                 materials: vec![
@@ -1574,7 +1597,11 @@ fn rules() -> Biomes {
                     "dirt".into(),
                     "forest_floor".into(),
                 ],
-                mask: forest(),
+                // The forest the birches leave them.
+                mask: Mask::Multiply(vec![
+                    forest(),
+                    Mask::Invert(Box::new(birch_share(0.0))),
+                ]),
                 scale: [0.65, 1.15],
                 align: 0.04,
                 sink: 0.3,
@@ -1655,6 +1682,7 @@ fn rules() -> Biomes {
         ]
         .into_iter()
         .chain(stream_rocks())
+        .chain(tree_layers(forest))
         .collect(),
         materials: LOOKS.iter().map(|look| look.name.to_owned()).collect(),
         biomes: vec![Biome {
@@ -1943,6 +1971,200 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             }),
         },
     ]
+}
+
+/// The forest's outline: broad noise from 0 to 1, ragged at its edges,
+/// which the forest's stands fill where it passes about a half ([`rules`]'
+/// `forest`) and birches take at their outer edges ([`birch_share`]).
+fn canopy() -> Mask {
+    Mask::Add(vec![
+        scaled(noise(320.0, 31, 3), 0.75),
+        scaled(noise(45.0, 32, 2), 0.25),
+    ])
+}
+
+/// The share of the forest downy birch takes, at least `least`: its wet
+/// ground, the hollows and flushes birch bears waterlogged and spruce
+/// does not; its streams' banks, from a meter beyond their water to a
+/// dozen meters out; and stretches of its outer edges, where its canopy
+/// opens and the pioneer comes in first.
+fn birch_share(least: f32) -> Mask {
+    Mask::Max(vec![
+        remap(
+            Mask::Add(vec![
+                Mask::Wetness([8.5, 12.0]),
+                scaled(noise(64.0, 81, 2), 0.4),
+                Mask::Constant(-0.2),
+            ]),
+            0.3,
+            0.6,
+        ),
+        Mask::Multiply(vec![
+            remap(
+                Mask::Add(vec![
+                    Mask::River([12.0, 2.0]),
+                    scaled(noise(48.0, 82, 2), 0.3),
+                    Mask::Constant(-0.15),
+                ]),
+                0.35,
+                0.65,
+            ),
+            Mask::River([0.0, 1.0]),
+        ]),
+        Mask::Multiply(vec![
+            remap(canopy(), 0.58, 0.5),
+            remap(noise(90.0, 83, 2), 0.4, 0.6),
+        ]),
+        Mask::Constant(least),
+    ])
+}
+
+/// Small stands of downy birch beyond the forest: patches of broad noise,
+/// more of them the wetter the ground, on gentle ground up to the birches'
+/// line, which stands above the spruces' as the mountain birch belt stands
+/// above the conifers in the Scandes, and kept out of channels, lakes and
+/// roads as the forest is.
+fn birch_stands() -> Mask {
+    Mask::Multiply(vec![
+        remap(
+            Mask::Add(vec![
+                scaled(noise(130.0, 84, 2), 0.8),
+                scaled(Mask::Wetness([7.0, 12.0]), 0.2),
+            ]),
+            0.62,
+            0.74,
+        ),
+        Mask::Invert(Box::new(Mask::Height([620.0, 700.0]))),
+        Mask::Invert(Box::new(Mask::Slope([22.0, 32.0]))),
+        Mask::Invert(Box::new(Mask::Flow([4.95, 5.15]))),
+        Mask::Invert(Box::new(Mask::Lake([0.1, 0.6]))),
+        Mask::Invert(Box::new(Mask::Path([10.0, 4.0]))),
+    ])
+}
+
+/// Young trees a hectare holds at most where they regenerate: saplings
+/// whose crowns, a little over two meters wide, close at that density,
+/// about the stocking at which Nordic silviculture leaves the sapling
+/// stands spruce and birch regenerate into naturally to grow on (Hynynen
+/// et al. 2010, "Silviculture of birch in northern Europe").
+const YOUNG_TREES: f32 = 2000.0;
+/// The meters between young trees' candidates: a square for each at that
+/// density, with room to spare.
+const YOUNG_FOOTPRINT: f32 = 2.0;
+/// The least share of the young trees downy birch takes: the pioneer,
+/// whose light, wind-borne seeds reach every opening edge.
+const PIONEERS: f32 = 0.4;
+
+/// The forest's layers beside its spruces: downy birches where the forest
+/// gives them its ground ([`birch_share`]), on the spruces' tiles and
+/// footprints and as densely, so that together they stand as densely as
+/// the forest, and in small stands beyond it ([`birch_stands`]); and young
+/// spruces and birches regenerating in the band where the forest fades,
+/// densest where it stands half closed and none where it is closed or
+/// absent, at most [`YOUNG_TREES`] a hectare, birches the share the forest
+/// gives them there and at least [`PIONEERS`], the two summing to the
+/// band. The saplings stand from breast height to about six meters, the
+/// thicket a regenerating edge holds above its ground cover, on kilometer
+/// tiles. Birches stand on wet grass too.
+fn tree_layers(forest: impl Fn() -> Mask) -> [PlacementLayer; 3] {
+    let young = |share: Mask| {
+        Mask::Multiply(vec![
+            forest(),
+            Mask::Invert(Box::new(forest())),
+            Mask::Constant(4.0),
+            share,
+        ])
+    };
+    [
+        PlacementLayer {
+            id: "birches".into(),
+            assets: tree_choices("birch", BIRCHES),
+            density: 420.0,
+            footprint: 3.5,
+            materials: vec![
+                "grass".into(),
+                "dry_grass".into(),
+                "dirt".into(),
+                "forest_floor".into(),
+                "wet_grass".into(),
+            ],
+            mask: Mask::Max(vec![
+                Mask::Multiply(vec![forest(), birch_share(0.0)]),
+                Mask::Multiply(vec![birch_stands(), Mask::Invert(Box::new(forest()))]),
+            ]),
+            scale: [0.7, 1.15],
+            align: 0.04,
+            sink: 0.25,
+            bed: 0.0,
+            level: 3,
+            // A third of them stand on the pinned four-kilometer tiles too,
+            // as the spruces do.
+            far: Some(FarPlacement {
+                level: 4,
+                share: 0.3,
+            }),
+        },
+        PlacementLayer {
+            id: "young_spruces".into(),
+            assets: tree_choices("young_spruce", YOUNG_SPRUCES),
+            density: YOUNG_TREES,
+            footprint: YOUNG_FOOTPRINT,
+            materials: vec![
+                "grass".into(),
+                "dry_grass".into(),
+                "dirt".into(),
+                "forest_floor".into(),
+            ],
+            mask: young(Mask::Invert(Box::new(birch_share(PIONEERS)))),
+            scale: [0.45, 1.35],
+            align: 0.04,
+            sink: 0.08,
+            bed: 0.0,
+            level: 2,
+            // The larger half stand on the two-kilometer tiles too, where
+            // they still span a pixel or two at 1080p and retire by their
+            // size beyond.
+            far: Some(FarPlacement {
+                level: 3,
+                share: 0.5,
+            }),
+        },
+        PlacementLayer {
+            id: "young_birches".into(),
+            assets: tree_choices("young_birch", YOUNG_BIRCHES),
+            density: YOUNG_TREES,
+            footprint: YOUNG_FOOTPRINT,
+            materials: vec![
+                "grass".into(),
+                "dry_grass".into(),
+                "dirt".into(),
+                "forest_floor".into(),
+                "wet_grass".into(),
+            ],
+            mask: young(birch_share(PIONEERS)),
+            scale: [0.45, 1.3],
+            align: 0.04,
+            sink: 0.08,
+            bed: 0.0,
+            level: 2,
+            // As the young spruces.
+            far: Some(FarPlacement {
+                level: 3,
+                share: 0.5,
+            }),
+        },
+    ]
+}
+
+/// Each of a tree's `count` shapes, `name` and its index, as a placement
+/// layer's choice, all as likely.
+fn tree_choices(name: &str, count: usize) -> Vec<PlacementChoice> {
+    (0..count)
+        .map(|index| PlacementChoice {
+            asset: format!("{name}{index}"),
+            weight: 1.0,
+        })
+        .collect()
 }
 
 /// Each of the boulder shapes as a placement layer's choice, all as likely.
