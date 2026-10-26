@@ -290,10 +290,65 @@ pub struct Steep {
     pub gradient: [f32; 2],
 }
 
+settings! {
+    /// How strongly each cause tints a surface's macro colors
+    /// ([`crate::macro_colors`]): the share of its brightness the ground
+    /// gains or loses where the cause is whole, in the cause's own hue; 0
+    /// turns the cause off. Plants grow lusher as far as the causes darken
+    /// the ground and drier as far as they pale it. The causes the bakes and
+    /// the ground's shape find move it by 15 percent and more, past the
+    /// light's spread within a patch, so they read from afar; the noise's
+    /// patches stay faint, as strong noise reads as camouflage.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct MacroCauses {
+        /// Wet ground, where water gathers and runs as the hydrology bake
+        /// found it and along lakes' shores, darkens as water fills its pores
+        /// (Lagarde 2013): porous ground soaked keeps a fifth of its albedo,
+        /// the damp ground of hollows and banks about seven tenths.
+        pub wet: f32 = 0.3 => range(0.0, 1.0),
+        /// Ground erosion laid down, and lakes' shores, show paler, sandier
+        /// silt: fine mineral grains no humus has darkened yet.
+        pub deposit: f32 = 0.2 => range(0.0, 1.0),
+        /// Ground erosion wore away shows the paler, grayer subsoil and rock
+        /// under the humus-dark topsoil it lost.
+        pub worn: f32 = 0.2 => range(0.0, 1.0),
+        /// Slopes from 30 degrees to 50 hold thin soil over rock, which
+        /// shows through it paler and grayer.
+        pub steep: f32 = 0.15 => range(0.0, 1.0),
+        /// Ridges, wind-scoured and thin-soiled, weather paler and lichened;
+        /// hollows hold shade and deep soil, darker and browner.
+        pub relief: f32 = 0.15 => range(0.0, 1.0),
+        /// Dust settles paler and warmer within six meters of roads.
+        pub dust: f32 = 0.2 => range(0.0, 1.0),
+        /// Slopes turned to the sun's side ([`Self::heading`]) dry out paler
+        /// and warmer, and those turned from it stay damp, darker and
+        /// mossier, as far as the direct sun they take differs from level
+        /// ground's.
+        pub aspect: f32 = 0.2 => range(0.0, 1.0),
+        /// The sun's side, toward the midday sun: degrees from -z toward +x,
+        /// as views give yaw. 180, +z, keeps north at -z, as views assume:
+        /// the midday sun stands south of the northern mid-latitudes; 0
+        /// turns it north for the southern ones.
+        pub heading: f32 = 180.0 => range(-360.0, 360.0),
+        /// The noise's broad patches, a few hundred meters across, lighter
+        /// and darker.
+        pub broad: f32 = 0.06 => range(0.0, 1.0),
+        /// The noise's finer patches, some 45 meters across, lighter and
+        /// darker.
+        pub patchy: f32 = 0.03 => range(0.0, 1.0),
+        /// The noise's widest patches, some 600 meters across, warmer and
+        /// cooler: the share red gains or loses, blue moving the other way.
+        pub warmth: f32 = 0.04 => range(0.0, 1.0),
+    }
+}
+
 /// A surface as authored: its materials' IDs, in the order control values
-/// index them, its biomes, the material covering its steep ground, and the
-/// IDs of the assets its placement layers stand on it, in the order
-/// placements index them.
+/// index them, its biomes, the material covering its steep ground, the IDs
+/// of the assets its placement layers stand on it, in the order placements
+/// index them, and how strongly each cause tints its terrain's macro
+/// colors.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Biomes {
     pub materials: Vec<String>,
@@ -303,6 +358,10 @@ pub struct Biomes {
     pub placements: Vec<crate::PlacementLayer>,
     /// Objects authors stand on it.
     pub placed: Vec<crate::AuthoredPlacement>,
+    /// How strongly each cause tints its terrain's macro colors, which the
+    /// terrain's recipe carries with the rest of the surface to their job:
+    /// a change makes the colors anew.
+    pub macro_colors: MacroCauses,
 }
 
 /// What a surface refused: the path of the offending value and why.
@@ -1040,7 +1099,8 @@ impl Control {
 impl Biomes {
     /// Validates and prepares the surface: 1 to 255 materials with unique
     /// IDs, 1 to 255 biomes with unique IDs, each with 1 to 64 layers
-    /// naming its materials, and a steep layer naming one.
+    /// naming its materials, a steep layer naming one, and its macro colors'
+    /// causes within their rules.
     pub fn compile(&self) -> Result<BiomeRules, BiomeError> {
         let fail = |path: String, rule: &str| BiomeError {
             path,
@@ -1131,6 +1191,9 @@ impl Biomes {
             }
             None => None,
         };
+        if let Err(invalid) = self.macro_colors.validate() {
+            return Err(fail(format!("macro_colors.{}", invalid.field), &invalid.rule));
+        }
         let cost = 1 + biomes
             .iter()
             .map(|biome| {
@@ -1496,6 +1559,19 @@ record!(Biome {
     wetness,
 });
 record!(SteepLayer { material, slope });
+record!(MacroCauses {
+    wet,
+    deposit,
+    worn,
+    steep,
+    relief,
+    dust,
+    aspect,
+    heading,
+    broad,
+    patchy,
+    warmth,
+});
 record!(Biomes {
     materials,
     biomes,
@@ -1503,4 +1579,5 @@ record!(Biomes {
     assets,
     placements,
     placed,
+    macro_colors,
 });
