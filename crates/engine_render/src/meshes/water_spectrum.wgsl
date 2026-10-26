@@ -1,7 +1,6 @@
 // Water's waves as its tiles hold them (`water_waves.rs`): WATER_WIND_TILES
 // tiles of the wind's waves of fixed periods, each holding its own band of
-// lengths, then the tile of the current's turbulence
-// (WATER_TURBULENCE_TILE), every tile at unit slope variance. The wind's
+// lengths at unit slope variance. The wind's
 // tiles' periods never divide one another (each the last's over the cube
 // of the golden ratio) and each one's lattice turns by its own angle from
 // the world's axes (`water_tile_turn`), so no tile's repeat lines up with
@@ -22,12 +21,8 @@
 // recovering downwind (`terrain_shelter`), so valley streams lie calm while
 // open lakes keep their breeze.
 
-// The wind's tiles, the tile of the current's turbulence after them, and
-// every tile (`gpu_layouts::constants::WIND_TILES`, `TURBULENCE_TILE`,
-// `WAVE_TILES`).
+// The wind's tiles (`gpu_layouts::constants::WIND_TILES`).
 const WATER_WIND_TILES: u32 = 4u;
-const WATER_TURBULENCE_TILE: u32 = 4u;
-const WATER_TILES: u32 = 5u;
 // The most anisotropy the waves' sampler filters to
 // (`gpu_layouts::constants::WAVE_ANISOTROPY`): along a pixel's longer side
 // it averages at most this many times as finely as across.
@@ -86,8 +81,7 @@ fn water_tile_repeats(tile: u32) -> f32 {
 }
 
 // The longest and the shortest waves tile `tile` holds (x and y, meters)
-// as it repeats `water_tile_repeats` times a meter; read at another scale,
-// they scale alike.
+// as it repeats `water_tile_repeats` times a meter.
 fn water_tile_band(tile: u32) -> vec2<f32> {
     return water.waves[tile].yz;
 }

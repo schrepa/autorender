@@ -22,8 +22,7 @@
 //!
 //! Water's waves (`crate::water_waves`) evolve before it draws: the same
 //! tiles of the wind's waves for terrains' water and the sea, each place
-//! sizing them by the sea its wind raises there, and the tile of the
-//! current's turbulence.
+//! sizing them by the sea its wind raises there.
 //!
 //! Where terrains' rivers leave their beds, their jets draw last, as
 //! sheets (`crate::water_falls`) over the water they land in, writing their
@@ -53,7 +52,7 @@ use engine_core::{
 };
 
 use crate::bindings::{WATER, WATER_BEHIND};
-use crate::gpu_layouts::constants::WAVE_TILES;
+use crate::gpu_layouts::constants::WIND_TILES;
 use crate::gpu_layouts::terrain::{SubdivisionUniform, TerrainUniform, ViewUniform};
 use crate::profiling::Span;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -571,7 +570,7 @@ impl WaterPass {
         (cull, view): (Mat4, Mat4),
         ocean: Ocean,
         (eye, wind, seconds): (Vec3, Wind, f64),
-        (wave_tiles, wave_turns): ([[f32; 4]; WAVE_TILES], [[f32; 4]; WAVE_TILES]),
+        (wave_tiles, wave_turns): ([[f32; 4]; WIND_TILES], [[f32; 4]; WIND_TILES]),
     ) -> bool {
         let (true, Some(waves), Some(map)) = (ocean.enabled, &self.waves, &self.fall_map) else {
             self.ocean = None;

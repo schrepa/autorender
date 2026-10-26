@@ -3,7 +3,7 @@
 use bytemuck::{Pod, Zeroable};
 use engine_core::{MAX_OCEAN_WAVES, SIM_TOUCHES};
 
-use super::constants::{SIM_SLOTS, WAVE_TILES};
+use super::constants::{SIM_SLOTS, WIND_TILES};
 
 gpu_structs! {
     /// WGSL `WaterUniform` of `meshes/water.wgsl`; the sea's parts are zero
@@ -18,8 +18,8 @@ gpu_structs! {
         pub wind: [f32; 4],
         pub foam: [f32; 4],
         pub absorption: [f32; 4],
-        pub waves: [[f32; 4]; WAVE_TILES],
-        pub turns: [[f32; 4]; WAVE_TILES],
+        pub waves: [[f32; 4]; WIND_TILES],
+        pub turns: [[f32; 4]; WIND_TILES],
         pub ocean: [f32; 4],
         pub ocean_grid: [f32; 4],
         pub ocean_waves: [[f32; 4]; MAX_OCEAN_WAVES],
@@ -86,7 +86,7 @@ gpu_structs! {
     /// WGSL `WaveFrame` of `water_waves.wgsl`.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct WaveFrame as ["WaveFrame" in WATER_WAVES_SHADER] {
-        pub tiles: [[f32; 4]; WAVE_TILES],
+        pub tiles: [[f32; 4]; WIND_TILES],
         pub clock: [f32; 4],
     }
 

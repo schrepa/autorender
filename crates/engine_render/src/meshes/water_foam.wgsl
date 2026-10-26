@@ -51,8 +51,8 @@ const WATER_FOAM_DRAINED: f32 = 0.5;
 const WATER_FOAM_HOLLOW: f32 = 0.35;
 // The meters foam rides toward the waves' crests for each unit of their
 // slope: a wave moves what floats on it by its slope over its wave number
-// (Gerstner's), here running water's turbulent waves', half a meter long,
-// so foam gathers on their crests (Vlachos, Portal 2).
+// (Gerstner's), here of waves half a meter long, whichever the surface
+// draws, so foam gathers on their crests (Vlachos, Portal 2).
 const WATER_FOAM_RIDE: f32 = 0.08;
 // The meters a second over which water running against what stands in it
 // tears air in, from the first to the second (Ervine, McKeogh and Elsawy
