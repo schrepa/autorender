@@ -555,6 +555,11 @@ gpu_consts! {
     pub(crate) const CLOUD_REACH: f32 = 60000.0 => ["REACH" in CLOUDS_SHADER, "CLOUD_PARALLAX_REACH"];
     /// Vertices drawn per cluster of virtual geometry: three a triangle.
     pub(crate) const CLUSTER_DRAWN_VERTICES: u32 = 3 * engine_core::CLUSTER_TRIANGLES => ["CLUSTER_VERTICES" in VIRTUAL_SHADER];
+    /// The radians a meter at which surface tension speeds water's waves as
+    /// much as gravity does, where they run slowest (capillary waves are
+    /// shorter, under about 1.7 cm): the waves' tiles evolve by it, and
+    /// running water's waves stand on its bed past their slowest speed.
+    pub(crate) const WAVE_CAPILLARY: f32 = 370.0 => ["WAVE_CAPILLARY" in WATER_WAVES_SHADER, "WATER_CAPILLARY"];
 }
 
 gpu_mirrors! {
