@@ -11,6 +11,9 @@
 //! Boulders lie on its meadows and in its steep streams, stones on its
 //! scree and its cobble beds, outcrops on its rock, and spruce forests
 //! cover the lower slopes.
+//! Talus gathers on the aprons below its rock faces and erratics on its
+//! ridges and benches; junipers grow on its dry heath and at the forests'
+//! edges, and logs and stumps lie in the forests ([`understory`]).
 //! Gravel roads wind from the plateau down to the crater
 //! lake, west over a river on a stone bridge and east
 //! through a ridge in a tunnel. Lanterns line the road to
@@ -19,11 +22,14 @@
 
 mod bodies;
 mod caves;
+mod deadfall;
 mod ground;
 mod hiker;
 mod looks;
 mod rocks;
+mod shrubs;
 mod trees;
+mod understory;
 mod world;
 
 use engine::collections::HashMap;
@@ -807,6 +813,10 @@ fn surface(
         material: wall_rock,
         wall,
     });
+    // The understory and the rock where it gathers, after the boulders and
+    // spruces, as `rules()` names them: talus in the boulders' stone, the
+    // rest over the spruces' atlas.
+    placed.extend(understory::placed(world, atlas, rock)?);
     // Bridges are built of the boulders' weathered stone.
     TerrainSurface::new(
         &Biomes {
@@ -1473,7 +1483,8 @@ fn in_terrain_rock(
 /// of the grains their floods leave ([`stream_beds`]), gravel on the roads
 /// and snow on the peaks; rock over all of them wherever the ground is
 /// steep; the ground wet along the streams ([`wetness`]); and the
-/// boulders, stones and spruces placed over them.
+/// boulders, stones and spruces placed over them, and the understory
+/// ([`understory`]).
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -1505,13 +1516,15 @@ fn rules() -> Biomes {
         assets: (0..BOULDERS)
             .map(|index| format!("boulder{index}"))
             .chain((0..SPRUCES).map(|index| format!("spruce{index}")))
+            .chain(understory::assets())
             .collect(),
         // Boulders in clumps over the meadows, resting on the lowest ground
         // under them, stones strewn on scree, outcrops on
         // rock, and spruce forests in broad stands below the tree line on
         // gentle ground, thinning at their edges: placed on two-kilometer
-        // tiles, which stay resident farther away; and boulders and stones
-        // in the streams ([`stream_rocks`]).
+        // tiles, which stay resident farther away; boulders and stones in
+        // the streams ([`stream_rocks`]); and the understory and the rock
+        // where it gathers ([`understory::layers`]).
         placed: Vec::new(),
         placements: [
             PlacementLayer {
@@ -1533,6 +1546,7 @@ fn rules() -> Biomes {
                 mask: forest(),
                 scale: [0.65, 1.15],
                 align: 0.04,
+                downhill: 0.0,
                 sink: 0.3,
                 bed: 0.0,
                 level: 3,
@@ -1557,6 +1571,7 @@ fn rules() -> Biomes {
                 ]),
                 scale: [0.6, 2.4],
                 align: 0.3,
+                downhill: 0.0,
                 sink: 0.1,
                 bed: 0.45,
                 level: 0,
@@ -1577,6 +1592,7 @@ fn rules() -> Biomes {
                 mask: Mask::one(),
                 scale: [0.12, 0.45],
                 align: 0.8,
+                downhill: 0.0,
                 sink: 0.08,
                 bed: 0.0,
                 level: 0,
@@ -1600,6 +1616,7 @@ fn rules() -> Biomes {
                 mask: Mask::one(),
                 scale: [2.0, 5.0],
                 align: 0.6,
+                downhill: 0.0,
                 sink: 0.5,
                 bed: 0.0,
                 level: 0,
@@ -1611,6 +1628,7 @@ fn rules() -> Biomes {
         ]
         .into_iter()
         .chain(stream_rocks())
+        .chain(understory::layers(&forest()))
         .collect(),
         materials: LOOKS.iter().map(|look| look.name.to_owned()).collect(),
         biomes: vec![Biome {
@@ -1797,6 +1815,7 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             ]),
             scale: [0.6, 1.6],
             align: 0.7,
+            downhill: 0.0,
             sink: 0.3,
             bed: 0.3,
             level: 0,
@@ -1821,6 +1840,7 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             ]),
             scale: [0.3, 1.0],
             align: 0.7,
+            downhill: 0.0,
             sink: 0.1,
             bed: 0.3,
             level: 0,

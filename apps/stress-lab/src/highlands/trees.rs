@@ -113,28 +113,28 @@ pub(crate) fn material(atlas: TextureHandle) -> Result<Material, AssetError> {
 
 /// The atlas's texels ([`atlas`]), drawn once: what its texture record
 /// cooks, and what every level's cards are cut to.
-fn texels() -> &'static [u8] {
+pub(crate) fn texels() -> &'static [u8] {
     static TEXELS: OnceLock<Vec<u8>> = OnceLock::new();
     TEXELS.get_or_init(atlas)
 }
 
 /// The atlas's side in texels.
-const ATLAS: u32 = 512;
+pub(crate) const ATLAS: u32 = 512;
 
 /// The alpha below which the atlas's texels are cut out: the material's
 /// mask, and the needles every level's cards are cut to.
-const CUTOFF: f32 = 0.5;
+pub(crate) const CUTOFF: f32 = 0.5;
 
 /// Bark texture coordinates span this much of the atlas's width: its left
 /// half less a margin, so filtering never reaches the needles.
-const BARK: [f32; 2] = [0.01, 0.49];
+pub(crate) const BARK: [f32; 2] = [0.01, 0.49];
 /// Texture coordinates amid the bark, which covers the atlas there
 /// throughout: those of every vertex of a shadow proxy.
-const BARK_MIDDLE: [f32; 2] = [0.5 * (BARK[0] + BARK[1]), 0.5];
+pub(crate) const BARK_MIDDLE: [f32; 2] = [0.5 * (BARK[0] + BARK[1]), 0.5];
 /// The needle spray's horizontal center and half width in the atlas, and
 /// its vertical span (base at the bottom).
-const SPRAY: [f32; 2] = [0.75, 0.235];
-const SPRAY_SPAN: [f32; 2] = [0.99, 0.01];
+pub(crate) const SPRAY: [f32; 2] = [0.75, 0.235];
+pub(crate) const SPRAY_SPAN: [f32; 2] = [0.99, 0.01];
 
 /// How much of a card's normal is its branch's, leaning out from the trunk
 /// and [`LEAN`] up, rather than its face's own: the crown lights as one

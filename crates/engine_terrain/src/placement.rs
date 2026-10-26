@@ -7,7 +7,9 @@
 //! point: the share of a square the density fills, times the layer's mask
 //! and the share of the surface materials it stands on there; its scale
 //! falls across the layer's range as its rank under that density rises, so
-//! the objects ranked first are the largest. Placement
+//! the objects ranked first are the largest; it turns at random about the
+//! vertical, and down the ground's slope as strongly as its layer turns its
+//! objects downhill. Placement
 //! is a pure function of a tile's heights and control values; each
 //! candidate belongs to the tile of the layer's level holding its point.
 //! Coarser levels stay resident farther from the camera, so their layers'
@@ -99,6 +101,16 @@ settings! {
         /// normal.
         #[serde(default)]
         pub align: f32 = 0.0 => range(0.0, 1.0),
+        /// How strongly its objects turn their length, their meshes' x
+        /// axis, down the ground's slope: each points the way of its random
+        /// turn, a unit vector, plus the ground's downhill gradient (the
+        /// slope's tangent, pointing downhill) times this. Level ground
+        /// leaves them at random and steeper ground turns them further
+        /// downhill, as fallen trees lie: where the gradient times this
+        /// reaches 2, every one within thirty degrees of downhill. 0 turns
+        /// them at random everywhere.
+        #[serde(default, skip_serializing_if = "is_zero_f32")]
+        pub downhill: f32 = 0.0 => at_least(0.0),
         /// How deep they sink, in meters at scale 1, below the lowest ground
         /// within their bed.
         #[serde(default)]
@@ -376,6 +388,7 @@ pub(crate) struct CompiledPlacement {
     reads: Reads,
     scale: [f32; 2],
     align: f32,
+    downhill: f32,
     sink: f32,
     bed: f32,
 }
@@ -454,6 +467,7 @@ pub(crate) fn compile(
             mask,
             scale: layer.scale,
             align: layer.align,
+            downhill: layer.downhill,
             sink: layer.sink,
             bed: layer.bed,
         });
@@ -784,8 +798,16 @@ pub(crate) fn place_row(
         // thinning keeps are the largest.
         let ranked = rank / full;
         let scale = layer.scale[1] - (layer.scale[1] - layer.scale[0]) * ranked;
-        // Turned at random.
-        let yaw = unit(hash(square ^ 0x85eb_ca6b)) * std::f32::consts::TAU;
+        // Turned at random, and down the ground's slope as strongly as the
+        // layer turns its objects downhill: toward its random turn plus the
+        // downhill gradient times that strength.
+        let (turn_sin, turn_cos) =
+            sin_cos(unit(hash(square ^ 0x85eb_ca6b)) * std::f32::consts::TAU);
+        let downhill = layer.downhill / max(normal.y, 1.0e-3);
+        let yaw = libm::atan2f(
+            turn_sin + normal.z * downhill,
+            turn_cos + normal.x * downhill,
+        );
         // Its up leans toward the ground's normal as far as the
         // layer aligns; a wobble keeps upright objects from
         // standing too straight.
@@ -842,6 +864,7 @@ crate::codec::record!(PlacementLayer {
     mask,
     scale,
     align,
+    downhill,
     sink,
     bed,
     level,
