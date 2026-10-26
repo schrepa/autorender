@@ -79,7 +79,9 @@ impl Bake for HydrologyBake {
                 | Layer::Stamp(_)
                 | Layer::Hydrology(_)
                 | Layer::Erosion(_)
-                | Layer::Path(_) => None,
+                | Layer::Path(_)
+                | Layer::Steps(_)
+                | Layer::Hummocks(_) => None,
             })
             .collect();
         let (mut hydrology, lines) = bake(
@@ -188,7 +190,9 @@ impl<'a> Imported<'a> {
                 | Layer::Rivers(_)
                 | Layer::Hydrology(_)
                 | Layer::Erosion(_)
-                | Layer::Path(_) => None,
+                | Layer::Path(_)
+                | Layer::Steps(_)
+                | Layer::Hummocks(_) => None,
             })
             .collect();
         Self {

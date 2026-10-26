@@ -218,7 +218,12 @@ impl Layers {
                     .baked
                     .is_none()
                     .then(|| BakeKind::Path(stage.layer.clone())),
-                Layer::Noise(_) | Layer::Heightmap(_) | Layer::Stamp(_) | Layer::Rivers(_) => None,
+                Layer::Noise(_)
+                | Layer::Heightmap(_)
+                | Layer::Stamp(_)
+                | Layer::Rivers(_)
+                | Layer::Steps(_)
+                | Layer::Hummocks(_) => None,
             };
             kind.map(|kind| (index, kind))
         })
@@ -246,7 +251,12 @@ impl Layers {
             | (Layer::Erosion(_), Baked::Hydrology(_) | Baked::Path(_))
             | (Layer::Path(_), Baked::Hydrology(_) | Baked::Erosion(_))
             | (
-                Layer::Noise(_) | Layer::Heightmap(_) | Layer::Stamp(_) | Layer::Rivers(_),
+                Layer::Noise(_)
+                | Layer::Heightmap(_)
+                | Layer::Stamp(_)
+                | Layer::Rivers(_)
+                | Layer::Steps(_)
+                | Layer::Hummocks(_),
                 Baked::Hydrology(_) | Baked::Erosion(_) | Baked::Path(_),
             ) => unreachable!("a bake's result goes to the layer of its kind that it baked"),
         }

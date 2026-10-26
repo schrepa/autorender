@@ -22,7 +22,9 @@ pub(super) fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
                 | Layer::Rivers(_)
                 | Layer::Hydrology(_)
                 | Layer::Erosion(_)
-                | Layer::Path(_) => None,
+                | Layer::Path(_)
+                | Layer::Steps(_)
+                | Layer::Hummocks(_) => None,
             })
             .flatten()
             .collect::<Vec<_>>()
@@ -120,7 +122,9 @@ pub(super) fn bake(
             | Layer::Rivers(_)
             | Layer::Hydrology(_)
             | Layer::Erosion(_)
-            | Layer::Path(_) => {}
+            | Layer::Path(_)
+            | Layer::Steps(_)
+            | Layer::Hummocks(_) => {}
         }
     }
     let before = state.baked.clone();

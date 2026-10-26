@@ -10,10 +10,10 @@ use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::terrain_data::MAX_CREDIT;
 use engine_core::{
     Biome, Biomes, Blend, Cover, ErosionLayer, ErosionStage, HeightImage, HeightmapLayer,
-    HydrologyLayer, HydrologyStage, Layer, Layers, MaterialHandle, MeshHandle, NoiseLayer,
-    PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
-    PlacementLod, PlacementPart, Pyramid, RiversLayer, Stamp, SurfaceMaterial, SurfaceProjection,
-    Surroundings, Terrain, TerrainSurface,
+    HummocksLayer, HydrologyLayer, HydrologyStage, Layer, Layers, MaterialHandle, MeshHandle,
+    NoiseLayer, PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
+    PlacementLod, PlacementPart, Pyramid, RiversLayer, Stamp, StepsLayer, SurfaceMaterial,
+    SurfaceProjection, Surroundings, Terrain, TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use engine_settings::{Rule, Setting};
@@ -445,10 +445,12 @@ impl PreparedTerrain {
 /// bake of the layers before it, where rivers wear valleys
 /// and slopes creep, a hydrology bake of them, which
 /// carves channels where water gathers, fills lakes and rivers with water
-/// and feeds the `flow`, `wetness` and `lake` masks, or a
+/// and feeds the `flow`, `wetness` and `lake` masks, a
 /// path: a road leveling the layers before it along its
 /// line, which feeds the `path` mask (the `terrain_route` request finds
-/// routes for them). Terrains load no tiles until their bakes are done.
+/// routes for them), or relief by cause where the hydrology bake's maps
+/// place it, off its water: rock steps on steep ground and earth hummocks
+/// on wet, gentle ground. Terrains load no tiles until their bakes are done.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -460,6 +462,8 @@ pub enum SceneTerrainLayer {
     Hydrology(HydrologyLayer),
     Erosion(ErosionLayer),
     Path(PathLayer),
+    Steps(StepsLayer),
+    Hummocks(HummocksLayer),
 }
 
 /// An imported heightmap: a file of little-endian 16-bit samples, row by row
@@ -521,7 +525,9 @@ impl SceneTerrain {
             | SceneTerrainLayer::Rivers(_)
             | SceneTerrainLayer::Hydrology(_)
             | SceneTerrainLayer::Erosion(_)
-            | SceneTerrainLayer::Path(_) => None,
+            | SceneTerrainLayer::Path(_)
+            | SceneTerrainLayer::Steps(_)
+            | SceneTerrainLayer::Hummocks(_) => None,
         })
     }
 
@@ -787,6 +793,8 @@ impl SceneTerrain {
                         layer: Arc::new(layer.clone()),
                         baked: None,
                     }),
+                    SceneTerrainLayer::Steps(steps) => Layer::Steps(*steps),
+                    SceneTerrainLayer::Hummocks(hummocks) => Layer::Hummocks(*hummocks),
                 })
             })
             .collect::<Result<Vec<_>, SceneError>>()?;
@@ -879,6 +887,8 @@ impl SceneTerrain {
                 Layer::Hydrology(stage) => SceneTerrainLayer::Hydrology(stage.layer),
                 Layer::Erosion(stage) => SceneTerrainLayer::Erosion(stage.layer),
                 Layer::Path(stage) => SceneTerrainLayer::Path(stage.layer.as_ref().clone()),
+                Layer::Steps(steps) => SceneTerrainLayer::Steps(*steps),
+                Layer::Hummocks(hummocks) => SceneTerrainLayer::Hummocks(*hummocks),
                 Layer::Heightmap(map) => SceneTerrainLayer::Heightmap(SceneHeightmap {
                     uri: map.uri.clone().unwrap_or_default(),
                     width: map.image.width(),
