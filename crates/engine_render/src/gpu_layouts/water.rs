@@ -19,6 +19,7 @@ gpu_structs! {
         pub foam: [f32; 4],
         pub absorption: [f32; 4],
         pub waves: [[f32; 4]; WAVE_TILES],
+        pub turns: [[f32; 4]; WAVE_TILES],
         pub ocean: [f32; 4],
         pub ocean_grid: [f32; 4],
         pub ocean_waves: [[f32; 4]; MAX_OCEAN_WAVES],
