@@ -344,7 +344,7 @@ impl WaterPass {
             self.fall_map = Some(FallMap::new(device, queue, &map.table));
         }
         // Rivers simulated where a terrain's window stands, pushed by the
-        // solids standing in it.
+        // solids standing in it, the wind dragging their surface.
         let live = terrains
             .iter()
             .find_map(|terrain| {
@@ -356,7 +356,7 @@ impl WaterPass {
                 ))
             })
             .filter(|_| settings.enabled);
-        self.sim.prepare(device, queue, live, seconds);
+        self.sim.prepare(device, queue, live, (wind, seconds));
         let (simulated, sim_generation) = self.sim.drawn();
         // The square of the window that runs: its first corner, the meters
         // across a cell and its cells along a side; its datum and the

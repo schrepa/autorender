@@ -1,7 +1,8 @@
 //! The shallow-water scheme's passes (`water_sim.wgsl`) and the buffers
 //! they run over: slots side by side, each a pool of blocks of cells
 //! ([`StoredBlocks`]) with its table, and the blocks' ground, cells, faces'
-//! depths, fluxes, sources, waves, outflow's shares, seconds and sums. The
+//! depths (between steps, the currents their cells' surfaces run at),
+//! fluxes, sources, waves, outflow's shares, seconds and sums. The
 //! square simulated around the camera (`water_sim.rs`) is one slot storing
 //! every block of it, with a ring past its edges and the solids standing in
 //! its water, which push it before each step; regions settling for their
@@ -9,6 +10,7 @@
 //! blocks its water can reach, and no solid touches them. One scheme runs
 //! both: what sets them apart is each slot's flags ([`SimSlot`]).
 
+use bytemuck::Zeroable;
 use engine_core::terrain_data::shallow_water::CELL_MEANS;
 use engine_core::terrain_data::{BLOCK_CELLS, BLOCK_GROUND, StoredBlocks};
 
@@ -39,6 +41,7 @@ pub(crate) struct Pipelines {
     update: wgpu::ComputePipeline,
     source: wgpu::ComputePipeline,
     touch: wgpu::ComputePipeline,
+    drift: wgpu::ComputePipeline,
     churn: wgpu::ComputePipeline,
     churned: wgpu::ComputePipeline,
     tally: wgpu::ComputePipeline,
@@ -77,6 +80,7 @@ impl Kernels {
                 update: entry(water_sim::sim_update),
                 source: entry(water_sim::sim_source),
                 touch: entry(water_sim::sim_touch),
+                drift: entry(water_sim::sim_drift),
                 churn: entry(water_sim::sim_churn),
                 churned: entry(water_sim::sim_churned),
                 tally: entry(water_sim::sim_tally),
@@ -324,15 +328,17 @@ impl SlotBuffers {
     }
 
     /// Writes each stage's frame: the stage, the slots' count, the blocks
-    /// a slot's pool holds and those its table maps, and the cells rivers
+    /// a slot's pool holds and those its table maps, the cells rivers
     /// bring water to and the faces along its west and south edges a slot
-    /// holds.
-    pub(crate) fn write_frames(&self, queue: &wgpu::Queue) {
+    /// holds, and `wind`, the free wind over the water (meters a second
+    /// along x and z), which drags its surface and the foam riding it.
+    pub(crate) fn write_frames(&self, queue: &wgpu::Queue, wind: [f32; 2]) {
         let capacity = self.capacity;
         for (stage, buffer) in self.frames.iter().enumerate() {
             let frame = SimFrame {
                 stage: [stage as u32, self.slots, capacity.blocks, capacity.mapped],
                 inputs: [capacity.sources, capacity.edges, 0, 0],
+                wind: [wind[0], wind[1], 0.0, 0.0],
             };
             queue.write_buffer(buffer, 0, bytemuck::bytes_of(&frame));
         }
@@ -354,13 +360,17 @@ impl SlotBuffers {
     }
 
     /// Writes the solids standing in the live square's water this frame,
-    /// which push it before each step its frame runs; none touch it where
-    /// `touches` holds none.
+    /// which push it before each step its frame runs, the foam it carries
+    /// piling against them; none touch it where `touches` holds none, its
+    /// uniform then holding none for the foam's carry to find.
     pub(crate) fn write_touches(&mut self, queue: &wgpu::Queue, touches: Option<&SimTouches>) {
         self.touched = touches.map(|touches| [touches.blocks[2], touches.blocks[3]]);
-        if let Some(touches) = touches {
-            queue.write_buffer(&self.touches, 0, bytemuck::bytes_of(touches));
-        }
+        let none = SimTouches::zeroed();
+        queue.write_buffer(
+            &self.touches,
+            0,
+            bytemuck::bytes_of(touches.unwrap_or(&none)),
+        );
     }
 
     /// Writes `stored`, the blocks slot `slot` stores, into its table.
@@ -455,8 +465,9 @@ fn inputs(device: &wgpu::Device, (capacity, slots): (Capacity, u32), ring: bool)
 /// stages (each finding the faces' fluxes, the share of its outflow each
 /// cell can give and updating the cells, each slot stepping locally
 /// finding its cells' seconds from the first's waves), what rivers bring,
-/// and the foam; and, where slots step locally (settling, which sums its
-/// water), each cell's water into its sums.
+/// the current each cell's surface runs at and the foam riding it; and,
+/// where slots step locally (settling, which sums its water), each cell's
+/// water into its sums.
 pub(crate) fn encode_steps(
     pass: &mut wgpu::ComputePass<'_>,
     pipelines: &Pipelines,
@@ -497,6 +508,8 @@ pub(crate) fn encode_steps(
             pass.set_pipeline(&pipelines.source);
             pass.dispatch_workgroups(sourced.div_ceil(WATER_SIM_SOURCE_GROUP), 1, slots);
         }
+        pass.set_pipeline(&pipelines.drift);
+        pass.dispatch_workgroups(cells_x, cells_z, slots);
         pass.set_pipeline(&pipelines.churn);
         pass.dispatch_workgroups(cells_x, cells_z, slots);
         pass.set_pipeline(&pipelines.churned);

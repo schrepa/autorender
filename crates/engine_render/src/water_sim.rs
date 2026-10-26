@@ -13,9 +13,10 @@
 //! water as it settled, staged in one write the frame's encoding copies
 //! into their slots before the steps, while its table, its rivers' sources
 //! and its ring are written anew. Before each step the solids standing in
-//! its water push it toward their own velocity and churn its foam. Where
-//! one of the device's storage bindings cannot hold a buffer of the window,
-//! its middle square whose buffers they hold runs instead.
+//! its water push it toward their own velocity and churn its foam, which
+//! rides its surface, dragged by the scene's wind. Where one of the device's
+//! storage bindings cannot hold a buffer of the window, its middle square
+//! whose buffers they hold runs instead.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -25,7 +26,7 @@ use engine_core::glam::{Vec2, Vec3};
 use engine_core::math::{max, min};
 use engine_core::terrain_data::shallow_water::{UNHELD, step_seconds};
 use engine_core::terrain_data::{BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, StoredBlocks};
-use engine_core::{SIM_TOUCHES, WaterObstacle, WaterWindow};
+use engine_core::{SIM_TOUCHES, WaterObstacle, WaterWindow, Wind};
 
 use crate::gpu_layouts::constants::SIM_STEPPING;
 use crate::gpu_layouts::water::{SimSlot, SimTouch, SimTouches};
@@ -105,18 +106,19 @@ impl WaterSim {
 
     /// Prepares the live window `live`, with the solids standing in it
     /// (nearest the eye first) and how many more stand there, for this frame
-    /// at simulation time `seconds`, over the square of it the device's
-    /// bindings hold: its buffers anew where a square of another size came;
-    /// where one of its size moved, its table, sources and ring; in its
-    /// slots the blocks they do not hold; the solids pushing its water; and
-    /// as many steps as the time since the last frame takes. Drops it where
-    /// there is no window, or no square of it fits.
+    /// at simulation time `seconds` in the scene's wind `wind`, over the
+    /// square of it the device's bindings hold: its buffers anew where a
+    /// square of another size came; where one of its size moved, its table,
+    /// sources and ring; in its slots the blocks they do not hold; the
+    /// solids pushing its water; the wind dragging its surface; and as many
+    /// steps as the time since the last frame takes. Drops it where there is
+    /// no window, or no square of it fits.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         live: Option<(&Arc<WaterWindow>, &[WaterObstacle], u32)>,
-        seconds: f64,
+        (wind, seconds): (Wind, f64),
     ) {
         if let Some(current) = self.window.as_mut() {
             current.settle_taken();
@@ -176,7 +178,10 @@ impl WaterSim {
         }
         let step = min(elapsed / max(steps, 1.0), longest);
         let stored = &current.stored;
-        current.buffers.write_frames(queue);
+        // The wind's mean drags the surface: its gusts come and go within
+        // seconds (`Wind::at`), carrying what floats back and forth by a few
+        // centimeters in a breeze.
+        current.buffers.write_frames(queue, wind.velocity);
         current.buffers.write_squares(
             queue,
             &[SimSlot {
