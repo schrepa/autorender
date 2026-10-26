@@ -402,7 +402,7 @@ pub(crate) fn populate(
                 level: 3,
                 rounds: 20,
                 incision: 0.003,
-                debris: 2.0,
+                debris: 0.006,
                 creep: 6.0,
             },
             baked: None,
@@ -1472,7 +1472,8 @@ fn in_terrain_rock(
 /// forests, lush grass where water gathers, beds along streams and rivers
 /// of the grains their floods leave ([`stream_beds`]), gravel on the roads
 /// and snow on the peaks; rock over all of them wherever the ground is
-/// steep; the ground wet along the streams ([`wetness`]); and the
+/// steep; silt on the bars and banks floods still build; the ground damp
+/// in hollows and wet in torrents' spray ([`wetness`]); and the
 /// boulders, stones and spruces placed over them.
 #[expect(
     clippy::too_many_lines,
@@ -1533,6 +1534,7 @@ fn rules() -> Biomes {
                 mask: forest(),
                 scale: [0.65, 1.15],
                 align: 0.04,
+                downhill: 0.0,
                 sink: 0.3,
                 bed: 0.0,
                 level: 3,
@@ -1557,6 +1559,7 @@ fn rules() -> Biomes {
                 ]),
                 scale: [0.6, 2.4],
                 align: 0.3,
+                downhill: 0.0,
                 sink: 0.1,
                 bed: 0.45,
                 level: 0,
@@ -1577,6 +1580,7 @@ fn rules() -> Biomes {
                 mask: Mask::one(),
                 scale: [0.12, 0.45],
                 align: 0.8,
+                downhill: 0.0,
                 sink: 0.08,
                 bed: 0.0,
                 level: 0,
@@ -1600,6 +1604,7 @@ fn rules() -> Biomes {
                 mask: Mask::one(),
                 scale: [2.0, 5.0],
                 align: 0.6,
+                downhill: 0.0,
                 sink: 0.5,
                 bed: 0.0,
                 level: 0,
@@ -1656,6 +1661,22 @@ fn rules() -> Biomes {
                         0.6,
                     ),
                 ),
+                // Silt where erosion laid ground down beside streams and
+                // rivers whose floods still reach it, bare on the bars and
+                // banks they keep building; ground built up farther out is
+                // old, deep soil, grassed long ago.
+                layer(
+                    "silt",
+                    remap(
+                        Mask::Add(vec![
+                            Mask::Multiply(vec![Mask::Deposit(LAID), Mask::River(FLOODED)]),
+                            scaled(noise(4.0, 85, 1), 0.4),
+                            Mask::Constant(-0.2),
+                        ]),
+                        0.45,
+                        0.55,
+                    ),
+                ),
             ]
             .into_iter()
             .chain(stream_beds())
@@ -1686,6 +1707,8 @@ fn rules() -> Biomes {
             material: "rock".into(),
             slope: [35.0, 40.0],
         }),
+        // The engine's macro colors, their sun's side +z, south.
+        macro_colors: engine::terrain::data::MacroCauses::default(),
     }
 }
 
@@ -1702,6 +1725,22 @@ const BOULDER_POWER: [f32; 2] = [150.0, 400.0];
 /// The stream power over which a stream's spray wets its banks higher,
 /// from not at all to as high as its bed reaches.
 const SPRAY_POWER: [f32; 2] = [200.0, 2000.0];
+/// The bake's wetness index, ln(a / tan b), over which the soil of hollows
+/// saturates as water gathers in it, from none of them to all: past where
+/// lush grass begins, as saturated areas spread from the wettest ground
+/// (TOPMODEL, Beven and Kirkby 1979).
+const SATURATED: [f32; 2] = [11.5, 14.0];
+/// How wet saturated soil stands: damp, its pores full of water but none
+/// standing over it.
+const DAMP: f32 = 0.5;
+/// Meters erosion laid down over which silt lies bare where floods still
+/// reach it: a bar or bank built up faster than grass grows up through it,
+/// from half a meter, wholly at two.
+const LAID: [f32; 2] = [0.5, 2.0];
+/// Meters from a stream's water within which its floods still lay silt
+/// bare, wholly within a meter of its edge and none past six: overbank
+/// deposits thin fast away from the channel (Pizzuto 1987).
+const FLOODED: [f32; 2] = [6.0, 1.0];
 
 /// Streams' and rivers' beds, with a meter and a half of their banks and
 /// ragged edges, of the grains their floods leave ([`GRAINS`]): sand,
@@ -1749,20 +1788,25 @@ fn coarser_than(grain: f32) -> Mask {
     Mask::Grain([grain * (1.0 - GRAIN_BLEND), grain * (1.0 + GRAIN_BLEND)])
 }
 
-/// How wet the ground stands, 0 to 1: soaked to the channel's edge and
-/// drying over two and a half meters of bank, finely ragged, and wet
-/// further up the banks of streams spending more power ([`SPRAY_POWER`]),
-/// whose spray wets them.
+/// How wet the ground stands where its water leaves it dry, 0 to 1 (the
+/// water the tiles hold soaks the ground under it and wets it over the
+/// capillary fringe above it itself): damp in the hollows whose soil
+/// saturates ([`SATURATED`], [`DAMP`]), raggedly, and wet further up the
+/// banks of streams spending more power ([`SPRAY_POWER`]), whose spray wets
+/// them.
 fn wetness() -> Mask {
     Mask::Max(vec![
-        remap(
-            Mask::Add(vec![
-                Mask::River([2.5, 0.0]),
-                scaled(noise(1.5, 71, 2), 0.25),
-                Mask::Constant(-0.12),
-            ]),
-            0.2,
-            0.8,
+        scaled(
+            remap(
+                Mask::Add(vec![
+                    Mask::Wetness(SATURATED),
+                    scaled(noise(6.0, 71, 2), 0.3),
+                    Mask::Constant(-0.15),
+                ]),
+                0.2,
+                0.8,
+            ),
+            DAMP,
         ),
         remap(
             Mask::Add(vec![
@@ -1797,6 +1841,7 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             ]),
             scale: [0.6, 1.6],
             align: 0.7,
+            downhill: 0.0,
             sink: 0.3,
             bed: 0.3,
             level: 0,
@@ -1821,6 +1866,7 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             ]),
             scale: [0.3, 1.0],
             align: 0.7,
+            downhill: 0.0,
             sink: 0.1,
             bed: 0.3,
             level: 0,

@@ -27,7 +27,7 @@ pub(super) struct Look {
     pub(super) deform: f32,
 }
 
-pub(super) const LOOKS: [Look; 11] = [
+pub(super) const LOOKS: [Look; 12] = [
     Look {
         name: "grass",
         maps: "grass",
@@ -213,5 +213,22 @@ pub(super) const LOOKS: [Look; 11] = [
         relief: 0.03,
         displacement: 0.0,
         deform: 0.04,
+    },
+    // Silt floods lay bare on bars and banks: the streams' sand's maps a
+    // shade darker and warmer, buff, its ripples larger and fainter,
+    // taking tracks deeply.
+    Look {
+        name: "silt",
+        maps: "sand",
+        color: [0.24, 0.21, 0.17],
+        roughness: 0.88,
+        tint: [0.95, 0.93, 0.88],
+        tiling: 3.0,
+        height_contrast: 0.3,
+        projection: SurfaceProjection::Top,
+        cover: None,
+        relief: 0.008,
+        displacement: 0.0,
+        deform: 0.06,
     },
 ];
