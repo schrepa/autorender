@@ -80,6 +80,9 @@ pub fn create_workload_with(
     set_view(&mut engine, "overview")?;
     engine.app.add_plugins(FlyCameraPlugin);
     engine.app.add_systems(Presentation, aim_when_bodies_come);
+    engine
+        .app
+        .add_systems(Presentation, hold_standing_eye.after(CameraSystems));
     content.add_systems(&mut engine.app, moving_nodes);
     if config.queries_per_tick > 0 {
         engine
@@ -204,6 +207,111 @@ pub(crate) const VIEWS: [(&str, &str); 4] = [
     ("bodies", "The bodies"),
 ];
 
+/// The standing eye view's name before its numbers: `stand:x,z,yaw,pitch`
+/// stands the eye at world `x` and `z` (meters), [`EYE_HEIGHT`] above the
+/// ground under it, looking along `yaw` (degrees from -z toward +x) and
+/// `pitch` (degrees from level, negative down), as the highlands' water
+/// views give them.
+const STAND: &str = "stand:";
+
+/// A standing adult's eye height above the ground, in meters: the standing
+/// eye view's eye stands this high over the ground under it.
+const EYE_HEIGHT: f32 = 1.7;
+
+/// The standing eye view, held over the ground each frame as the ground
+/// under it streams in and settles: the eye's world x and z, the unit
+/// direction it looks along, and where the hold last put it. It lets go
+/// once the fly camera's input moves or turns the camera, or the camera
+/// stands anywhere else.
+#[derive(Resource, Clone, Copy)]
+struct StandingEye {
+    x: f32,
+    z: f32,
+    direction: Vec3,
+    eye: Vec3,
+}
+
+impl StandingEye {
+    /// The standing eye view `place` names (`x,z,yaw,pitch`, after
+    /// [`STAND`]) in `world`: its eye over the ground under it where that
+    /// has loaded, else over the world's level, y = 0.
+    fn new(world: &World, place: &str) -> engine::Result<Self> {
+        let malformed = || {
+            engine::Error::game_rule(format!(
+                "view {STAND}x,z,yaw,pitch takes x and z in world meters and yaw and pitch in degrees, pitch less than 90 from level, not {STAND}{place}"
+            ))
+        };
+        let numbers: Vec<f32> = place
+            .split(',')
+            .map(|number| number.trim().parse::<f32>())
+            .collect::<Result<_, _>>()
+            .map_err(|_| malformed())?;
+        let [x, z, yaw, pitch] = numbers[..] else {
+            return Err(malformed());
+        };
+        if numbers.iter().any(|number| !number.is_finite()) || pitch.abs() >= 90.0 {
+            return Err(malformed());
+        }
+        let (yaw_sin, yaw_cos) = math::sin_cos(yaw.to_radians());
+        let (pitch_sin, pitch_cos) = math::sin_cos(pitch.to_radians());
+        let ground = Ground::sample_in(world, x, z).map_or(0.0, |ground| ground.height);
+        Ok(Self {
+            x,
+            z,
+            direction: Vec3::new(yaw_sin * pitch_cos, pitch_sin, -yaw_cos * pitch_cos),
+            eye: Vec3::new(x, ground + EYE_HEIGHT, z),
+        })
+    }
+
+    /// Its camera: at the eye, its field of view 60 degrees high, its near
+    /// plane a fifth of a meter out and its far plane 20 km out, as the
+    /// water views' are.
+    fn camera(&self) -> Camera {
+        Camera {
+            position: self.eye,
+            target: self.eye + self.direction,
+            near: 0.2,
+            far: 20_000.0,
+            vertical_fov_radians: 60.0_f32.to_radians(),
+        }
+    }
+}
+
+/// Holds the standing eye over the ground under it as the ground streams
+/// in and settles, its target moving with it, until the fly camera's input
+/// moves or turns the camera or the camera stands anywhere else.
+fn hold_standing_eye(world: &mut World) {
+    let Some(standing) = world.get_resource::<StandingEye>().copied() else {
+        return;
+    };
+    let input = world
+        .get_resource::<InputState>()
+        .copied()
+        .unwrap_or_default();
+    let steered = [
+        input.move_forward,
+        input.move_right,
+        input.move_up,
+        input.look_yaw,
+        input.look_pitch,
+    ]
+    .into_iter()
+    .any(|amount| amount != 0.0);
+    if steered || world.resource::<Camera>().position != standing.eye {
+        world.remove_resource::<StandingEye>();
+        return;
+    }
+    let Some(ground) = Ground::sample_in(world, standing.x, standing.z) else {
+        return;
+    };
+    let held = StandingEye {
+        eye: Vec3::new(standing.x, ground.height + EYE_HEIGHT, standing.z),
+        ..standing
+    };
+    world.insert_resource(held.camera());
+    world.insert_resource(held);
+}
+
 /// The bodies' view was asked for before there were any: the camera turns
 /// to them when they come.
 #[derive(Resource)]
@@ -306,7 +414,9 @@ pub fn set_view(engine: &mut Engine, view: &str) -> engine::Result<()> {
 }
 
 /// Puts `world`'s camera at view `view`. The bodies' view, asked for before
-/// there are any, looks over the world until they come.
+/// there are any, looks over the world until they come; the standing eye
+/// view ([`STAND`]) holds its eye over the ground as it loads
+/// ([`hold_standing_eye`]).
 fn aim(world: &mut World, view: &str) -> engine::Result<()> {
     let bodies = (view == "bodies").then(|| bodies_view(world)).flatten();
     let awaiting = view == "bodies" && bodies.is_none();
@@ -316,10 +426,19 @@ fn aim(world: &mut World, view: &str) -> engine::Result<()> {
         world.remove_resource::<AwaitingBodies>();
     }
     let view = if awaiting { "overview" } else { view };
+    let standing = view
+        .strip_prefix(STAND)
+        .map(|place| StandingEye::new(world, place))
+        .transpose()?;
     let config = world.resource::<StressConfig>();
     let span = (config.renderables as f32).sqrt().ceil() * SPACING;
     let content = config.scene.world();
-    let camera = match content.camera(world, config, view).or(bodies) {
+    let camera = match standing
+        .as_ref()
+        .map(StandingEye::camera)
+        .or_else(|| content.camera(world, config, view))
+        .or(bodies)
+    {
         Some(camera) => camera,
         None => match view {
             "overview" => Camera {
@@ -347,13 +466,18 @@ fn aim(world: &mut World, view: &str) -> engine::Result<()> {
             _ => {
                 let names: Vec<&str> = VIEWS.iter().map(|(name, _)| *name).collect();
                 return Err(engine::Error::game_rule(format!(
-                    "view must be one of {}",
+                    "view must be one of {}, or {STAND}x,z,yaw,pitch",
                     names.join(", ")
                 )));
             }
         },
     };
     let speed = content.camera_speed(span);
+    if let Some(standing) = standing {
+        world.insert_resource(standing);
+    } else {
+        world.remove_resource::<StandingEye>();
+    }
     world.insert_resource(camera);
     world.insert_resource(FlyCameraController::from_camera(&camera).with_speed(speed));
     Ok(())

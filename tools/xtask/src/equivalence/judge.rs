@@ -33,7 +33,7 @@ impl Difference {
 }
 
 /// Decodes an 8-bit RGB or RGBA PNG: its width, height and RGBA pixels.
-fn decode(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
+pub(crate) fn decode(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
     let file =
         fs::File::open(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let mut decoder = png::Decoder::new(std::io::BufReader::new(file));

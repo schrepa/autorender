@@ -356,7 +356,7 @@ fn prepare_build(
 
 /// Builds the program from `source` into `folder`, with its symbols, and
 /// records the build's identity there.
-fn build_arm(
+pub(crate) fn build_arm(
     root: &Path,
     source: &Path,
     folder: &Path,

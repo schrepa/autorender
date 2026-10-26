@@ -53,6 +53,7 @@ use matrix::{Cell, MATRIX, read_matrix};
 use session::run_cell;
 use sides::{Side, commit_side, prune, working_tree};
 
+pub(crate) use judge::decode;
 pub(crate) use matrix::check;
 
 /// The folders under which builds, the base's checkout and runs go.
