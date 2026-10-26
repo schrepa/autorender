@@ -10,6 +10,20 @@
 // and the square of their length) and its height, which the mip levels
 // average: what averaging loses of the square is how rough the water looks
 // from afar (LEAN mapping), and the height averages away as the waves do.
+//
+// The wind's tiles' waves also move the water toward their crests, as
+// Gerstner's do: choppy waves carry it by g D where their gain is g, D = i
+// (k/|k|) h (Tessendorf 2001's −i (k/|k|) h, its sign turned so crests
+// gather water). Their compression T = −∂D/∂x, from (kx²/|k|) h,
+// (kz²/|k|) h and (kx kz/|k|) h, three real fields carried by two more
+// transforms at unit gain, is symmetric, and the surface's area changes by
+// det(I − g T) = (1 − g λ₁)(1 − g λ₂), λ₁ ≥ λ₂ its eigenvalues, positive
+// where it compresses, at the crests: it folds where g λ₁ reaches 1. Each
+// texel's whitecaps keep the largest λ₁ it has had, fading by e every
+// WATER_WHITECAP_FADE seconds of the waves' clock (`water_waves.rs`) and
+// never less than none, so the foam stays where a crest folded as the crest
+// runs on; and its square, which the levels average as the moments', how
+// far it varies within what a level averages.
 
 const WAVE_TEXELS: u32 = 256u;
 const WAVE_STAGES: u32 = 8u;
@@ -25,7 +39,9 @@ const WAVE_CAPILLARY: f32 = 370.0;
 // the inverse of its waves' root mean square height at unit slope variance
 // (y, none before its spectrum arrives); and the loop's phase now, coarse
 // and fine (x and y: seconds into the loop over its seconds, split so high
-// frequencies keep their precision), and its seconds over two pi (z).
+// frequencies keep their precision), its seconds over two pi (z), and the
+// share of the whitecaps the last frame left that this one keeps (w,
+// e^(−Δt/τ) over the waves' seconds since; none once new spectra arrive).
 struct WaveFrame {
     tiles: array<vec4<f32>, WAVE_WIND_TILES>,
     clock: vec4<f32>,
@@ -35,15 +51,18 @@ struct WaveFrame {
 // Each tile's spectrum, row by row: at each wave number its amplitude and
 // the amplitude of the opposite one (complex, xy and zw).
 @group(0) @binding(1) var<storage, read> wave_spectrum: array<vec4<f32>>;
-// What a pass reads: the rows transformed (the columns' pass) or a level of
-// the moments (each level's).
+// What a pass reads: the rows transformed (the columns' passes) or a level
+// of the moments or the whitecaps (each level's).
 @group(0) @binding(2) var wave_source: texture_2d_array<f32>;
-// What a pass writes: the rows transformed, the moments, or a level of
-// them.
+// What a pass writes: the rows transformed, the moments, the whitecaps, or
+// a level of them.
 @group(0) @binding(3) var wave_target: texture_storage_2d_array<rgba16float, write>;
+// The whitecaps' first level as the last frame left it, which the folds'
+// columns' pass fades.
+@group(0) @binding(4) var wave_before: texture_2d_array<f32>;
 
-// Two lines of the transform, the slopes' (xy) and the heights' (zw), in
-// two halves the stages pass between.
+// Two lines of the transform, the slopes' (xy) and the heights' (zw), or
+// the compression's (`wave_folding`), in two halves the stages pass between.
 var<workgroup> wave_line: array<vec4<f32>, 512>;
 
 // The inverse transform of the two lines in wave_line[0..WAVE_TEXELS], each
@@ -69,16 +88,21 @@ fn wave_transform(thread: u32) -> u32 {
     return source;
 }
 
-// Tile `tile`'s spectrum at texel `texel` (x along the row) now: each wave
-// number's amplitude turned back by its frequency over the time since the
-// loop began, so its wave runs along it, and its opposite's the other way,
-// so the field stays real; then times
-// i k along x plus i times i k along z, the slopes' spectra packed as one
-// (xy), and over the tile's root mean square height, the heights' (zw).
-fn wave_evolved(tile: u32, texel: vec2<u32>) -> vec4<f32> {
+// Tile `tile`'s wave at texel `texel` (x along the row) now: its wave number
+// (radians a meter along x and z), and its height's amplitude (complex), the
+// wave number's amplitude turned back by its frequency over the time since
+// the loop began, so its wave runs along it, and its opposite's the other
+// way, so the field stays real.
+struct WaveAmplitude {
+    number: vec2<f32>,
+    height: vec2<f32>,
+}
+
+fn wave_amplitude(tile: u32, texel: vec2<u32>) -> WaveAmplitude {
     let amplitudes = wave_spectrum[(tile * WAVE_TEXELS + texel.y) * WAVE_TEXELS + texel.x];
-    let number = (vec2<f32>(texel) - f32(WAVE_TEXELS / 2u)) * waves.tiles[tile].x;
-    let k = length(number);
+    var wave: WaveAmplitude;
+    wave.number = (vec2<f32>(texel) - f32(WAVE_TEXELS / 2u)) * waves.tiles[tile].x;
+    let k = length(wave.number);
     let frequency = sqrt(WAVE_GRAVITY * k * (1.0 + k * k / (WAVE_CAPILLARY * WAVE_CAPILLARY)));
     // Frequencies rounded to whole cycles of the loop, so the waves repeat
     // seamlessly when it does.
@@ -86,11 +110,62 @@ fn wave_evolved(tile: u32, texel: vec2<u32>) -> vec4<f32> {
     let turns = fract(fract(cycles * waves.clock.x) + cycles * waves.clock.y);
     let angle = turns * WAVE_TAU;
     let turn = vec2<f32>(cos(angle), -sin(angle));
-    let height = complex_product(amplitudes.xy, turn)
+    wave.height = complex_product(amplitudes.xy, turn)
         + complex_product(vec2<f32>(amplitudes.z, -amplitudes.w), vec2<f32>(turn.x, -turn.y));
+    return wave;
+}
+
+// Tile `tile`'s spectrum at texel `texel` now (`wave_amplitude`): times i k
+// along x plus i times i k along z, the slopes' spectra packed as one (xy),
+// and over the tile's root mean square height, the heights' (zw).
+fn wave_evolved(tile: u32, texel: vec2<u32>) -> vec4<f32> {
+    let wave = wave_amplitude(tile, texel);
     // i kx h + i (i kz h) = h (-kz + i kx)
-    return vec4<f32>(complex_product(height, vec2<f32>(-number.y, number.x)),
-        height * waves.tiles[tile].y);
+    return vec4<f32>(complex_product(wave.height, vec2<f32>(-wave.number.y, wave.number.x)),
+        wave.height * waves.tiles[tile].y);
+}
+
+// Wind tile `tile`'s spectrum at texel `texel` now (`wave_amplitude`) as its
+// waves' compression T at unit gain: (kx²/|k|) h plus i times (kz²/|k|) h,
+// T's two diagonal fields packed as one (xy), and (kx kz/|k|) h, the field
+// off its diagonal (zw). Wave number zero holds no wave.
+fn wave_folding(tile: u32, texel: vec2<u32>) -> vec4<f32> {
+    let wave = wave_amplitude(tile, texel);
+    let along = wave.number / max(length(wave.number), 1.0e-6);
+    return vec4<f32>(complex_product(wave.height, wave.number * along),
+        wave.height * (wave.number.x * along.y));
+}
+
+// Row `row` of tile `tile` as the workgroup's invocations wrote it into
+// wave_line, transformed along x, invocation `thread` storing its two
+// texels.
+fn wave_rows(row: u32, tile: u32, thread: u32) {
+    workgroupBarrier();
+    let at = wave_transform(thread);
+    for (var half = 0u; half < 2u; half++) {
+        let column = thread + half * (WAVE_TEXELS / 2u);
+        textureStore(wave_target, vec2<u32>(column, row), tile, wave_line[at + column]);
+    }
+}
+
+// Column `column` of tile `tile`'s rows transformed (`wave_source`) into
+// wave_line, invocation `thread` loading its two texels, transformed along
+// z; returns where in wave_line the result starts.
+fn wave_columns(column: u32, tile: u32, thread: u32) -> u32 {
+    for (var half = 0u; half < 2u; half++) {
+        let row = thread + half * (WAVE_TEXELS / 2u);
+        wave_line[row] = textureLoad(wave_source, vec2<u32>(column, row), tile, 0);
+    }
+    workgroupBarrier();
+    return wave_transform(thread);
+}
+
+// The point at row `row` of column `column` transformed, wave_line holding
+// the column from `at` (`wave_columns`). The spectrum's middle texel is wave
+// number zero, which flips every other point's sign.
+fn wave_point(at: u32, column: u32, row: u32) -> vec4<f32> {
+    let sign = select(1.0, -1.0, ((column + row) & 1u) == 1u);
+    return wave_line[at + row] * sign;
 }
 
 // Each row (x) of each tile (y): evolved, then transformed along x.
@@ -104,35 +179,64 @@ fn evolve_rows(@builtin(local_invocation_id) local: vec3<u32>,
         let column = thread + half * (WAVE_TEXELS / 2u);
         wave_line[column] = wave_evolved(tile, vec2<u32>(column, row));
     }
-    workgroupBarrier();
-    let at = wave_transform(thread);
-    for (var half = 0u; half < 2u; half++) {
-        let column = thread + half * (WAVE_TEXELS / 2u);
-        textureStore(wave_target, vec2<u32>(column, row), tile, wave_line[at + column]);
-    }
+    wave_rows(row, tile, thread);
 }
 
 // Each column (x) of each tile's (y) rows: transformed along z, then its
-// slopes' moments and its height into the first level. The spectrum's
-// middle texel is wave number zero, which flips every other point's sign.
+// slopes' moments and its height into the first level.
 @compute @workgroup_size(128)
 fn transform_columns(@builtin(local_invocation_id) local: vec3<u32>,
         @builtin(workgroup_id) group: vec3<u32>) {
     let column = group.x;
     let tile = group.y;
-    let thread = local.x;
+    let at = wave_columns(column, tile, local.x);
     for (var half = 0u; half < 2u; half++) {
-        let row = thread + half * (WAVE_TEXELS / 2u);
-        wave_line[row] = textureLoad(wave_source, vec2<u32>(column, row), tile, 0);
-    }
-    workgroupBarrier();
-    let at = wave_transform(thread);
-    for (var half = 0u; half < 2u; half++) {
-        let row = thread + half * (WAVE_TEXELS / 2u);
-        let sign = select(1.0, -1.0, ((column + row) & 1u) == 1u);
-        let line = wave_line[at + row] * sign;
+        let row = local.x + half * (WAVE_TEXELS / 2u);
+        let line = wave_point(at, column, row);
         textureStore(wave_target, vec2<u32>(column, row), tile,
             vec4<f32>(line.xy, dot(line.xy, line.xy), line.z));
+    }
+}
+
+// Each row (x) of each wind tile (y) of its waves' compression
+// (`wave_folding`): evolved, then transformed along x.
+@compute @workgroup_size(128)
+fn evolve_fold_rows(@builtin(local_invocation_id) local: vec3<u32>,
+        @builtin(workgroup_id) group: vec3<u32>) {
+    let row = group.x;
+    let tile = group.y;
+    let thread = local.x;
+    for (var half = 0u; half < 2u; half++) {
+        let column = thread + half * (WAVE_TEXELS / 2u);
+        wave_line[column] = wave_folding(tile, vec2<u32>(column, row));
+    }
+    wave_rows(row, tile, thread);
+}
+
+// Each column (x) of each wind tile's (y) rows of its compression:
+// transformed along z into T, whose largest eigenvalue, (Txx + Tzz)/2 plus
+// the root of ((Txx − Tzz)/2)² + Txz², the whitecaps keep where it passes
+// what they kept, faded by the share of it this frame keeps
+// (`waves.clock.w`), into the first level: what they keep rounded to a half
+// float (x), its square (y), and what the rounding lost (z), so the fade's
+// small steps from frame to frame keep their precision however many frames
+// a second run.
+@compute @workgroup_size(128)
+fn transform_fold_columns(@builtin(local_invocation_id) local: vec3<u32>,
+        @builtin(workgroup_id) group: vec3<u32>) {
+    let column = group.x;
+    let tile = group.y;
+    let at = wave_columns(column, tile, local.x);
+    for (var half = 0u; half < 2u; half++) {
+        let row = local.x + half * (WAVE_TEXELS / 2u);
+        let compression = wave_point(at, column, row).xyz;
+        let largest = 0.5 * (compression.x + compression.y)
+            + length(vec2<f32>(0.5 * (compression.x - compression.y), compression.z));
+        let before = textureLoad(wave_before, vec2<u32>(column, row), tile, 0);
+        let kept = max((before.x + before.z) * waves.clock.w, largest);
+        let rounded = quantizeToF16(kept);
+        textureStore(wave_target, vec2<u32>(column, row), tile,
+            vec4<f32>(rounded, kept * kept, kept - rounded, 0.0));
     }
 }
 

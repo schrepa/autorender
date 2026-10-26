@@ -282,7 +282,7 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     let foam_capping = saturate((water.foam.x - compression) / WATER_FOAM_CAPPING + 0.5);
     let foam_crest = 1.0 / (1.0 + exp(-clamp(ripples.height
         * inverseSqrt(max(ripples.heights, 1.0e-12)) / WATER_LOGISTIC, -30.0, 30.0)));
-    let foam_folding = water_folding(dot(gains, gains), ripples.hidden, foam_crest);
+    let foam_folding = water_folding(dot(gains, gains), ripples.hidden, foam_crest, vec2<f32>(0.0));
     let foam_contact = water_contact(below, abs(dpdx(below)) + abs(dpdy(below)), footprint,
         water.foam.y * sqrt(WATER_GRAVITY / max(below, WATER_BREAK_THINNEST)));
     let foam_floats = eye_world(vec3<f32>(still.x, 0.0, still.y)).xz;

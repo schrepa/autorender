@@ -132,6 +132,11 @@ struct WaterUniform {
 // (`water_waves.wgsl`), and the sampler repeating them.
 @group(1) @binding(53) var water_waves: texture_2d_array<f32>;
 @group(1) @binding(54) var water_wave_sampler: sampler;
+// The wind's tiles' whitecaps, a layer a tile, with their levels averaged as
+// the moments' are (`water_waves.wgsl`): the largest compression each texel
+// has had at unit gain, fading by e every `water_waves.rs`'s
+// WATER_WHITECAP_FADE seconds (x), and its square (y).
+@group(1) @binding(61) var water_whitecaps: texture_2d_array<f32>;
 // Falling water's map (`water_fall_map.rs`): its strands (r) and their
 // fibers (g) spread about a half, its foam's bubbles' walls (b) and
 // bubbles (a), FALL_MAP meters across and along the water as it leaves its
@@ -1256,7 +1261,12 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // water runs as a film, the sheet draws its white. It floats where the
     // waves carry it, toward their crests by their slopes, and its relief
     // tilts the normal it is lit by.
-    let foam_folding = water_folding(waves.spread, waves.hidden, waves.crest);
+    // Its crests fold where the wind's tiles' waves have, their foam
+    // lingering where they broke (`water_wind_whitecaps`), and where the
+    // waves the tiles do not hold, their slopes' variance less the tiles'
+    // (their gains' squares), break by their statistics.
+    let foam_folding = water_folding(max(waves.spread - dot(gains, gains), 0.0), waves.hidden,
+        waves.crest, water_wind_whitecaps(world.xz, world_dx.xz, world_dy.xz, gains));
     let foam_contact = water_contact(mesh_standing, mesh_change, footprint, max(speed, eddy));
     let foam_fresh = 1.0 - (1.0 - born) * (1.0 - foam_folding) * (1.0 - foam_contact);
     let foam_carried = saturate(at.words.foam / WATER_FOAM_MOST);

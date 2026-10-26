@@ -3,8 +3,9 @@
 // simulated (`water_sim.wgsl`'s `sim_churn`: where it loses energy, plunges
 // or jumps, along its eddy lines and where it converges, fading to 1/e in
 // WATER_FOAM_LIFE), drained as it ages; and it turns white, its foam fresh,
-// where it breaks, where its crests fold past the breaking slope
-// (`water_folding`) and where it runs fast against what stands in it
+// where it breaks, where its crests fold (`water_folding`: where the wind's
+// waves have folded, the foam lingering for seconds, and where other waves
+// pass the breaking slope) and where it runs fast against what stands in it
 // (`water_contact`). Each is a share of the surface, and one bubble texture
 // shows them all (`water_froth`): falling water's map's bubbles and the
 // walls between them, carried only as the water moves them, which a pixel
@@ -72,21 +73,36 @@ fn water_resolved_share(footprint: f32, size: f32) -> f32 {
     return 1.0 / (1.0 + ratio * ratio);
 }
 
-// The share of water's surface its folding crests whiten, the slopes of all
-// its waves, resolved and hidden, spreading `spread` (their variance, σ²),
+// The share of water's surface its folding crests whiten: where the wind's
+// tiles' waves have folded (a) and where the waves no tile follows break
+// (b), two independent shares, 1 − (1 − a)(1 − b). The tiles' waves have
+// folded where the sum of each one's gain times its faded compression
+// passes 1 (`whitecaps`: its mean over the pixel and the variance its reads
+// average away, `water_wind_whitecaps`; none for water reading no tiles'
+// whitecaps), their foam lingering where a crest broke as the crest runs
+// on: a is the sum's share past 1, taken as logistic of its spread, which
+// spans what the reads average and how much the sum changes across the
+// steady size (`water_steady`), so its edge draws no finer than the steady
+// size and far water whitens as near water does on average. The other
+// waves' slopes, resolved and hidden, spread `spread` (their variance, σ²),
 // of which the pixel hides `hidden`: a Gaussian surface's slopes, their
 // sizes Rayleigh-distributed, pass the breaking slope s_b (WATER_STEEPEST)
-// over exp(−s_b²/σ²) of it. Where the pixel resolves the waves, that share
-// lies on their crests, the points standing nearest their tops (`crest`,
-// taken as the share of the surface standing lower); where it hides them,
-// it is the share itself. A share too small to show whitens nothing,
-// however near its crest's top a point stands.
-fn water_folding(spread: f32, hidden: f32, crest: f32) -> f32 {
+// over b = exp(−s_b²/σ²) of it. Where the pixel resolves those waves, that
+// share lies on their crests, the points standing nearest their tops
+// (`crest`, taken as the share of the surface standing lower); where it
+// hides them, it is the share itself. A share too small to show whitens
+// nothing, however near its crest's top a point stands. Its derivatives
+// need it called in uniform control flow.
+fn water_folding(spread: f32, hidden: f32, crest: f32, whitecaps: vec2<f32>) -> f32 {
+    let change = fwidth(whitecaps.x) * water_steady();
+    let edge = sqrt(whitecaps.y + change * change / 12.0) * WATER_LOGISTIC;
+    let folded = 1.0 / (1.0 + exp(-clamp((whitecaps.x - 1.0) / max(edge, 1.0e-6), -30.0, 30.0)));
     let variance = max(spread, 1.0e-6);
     let share = exp(-WATER_STEEPEST * WATER_STEEPEST / variance);
     let on_crests = saturate((crest - 1.0) / max(share, 1.0e-6) + 1.5)
         * saturate(share / WATER_FOAM_LEAST);
-    return mix(share, on_crests, saturate(1.0 - hidden / variance));
+    let breaking = mix(share, on_crests, saturate(1.0 - hidden / variance));
+    return 1.0 - (1.0 - folded) * (1.0 - breaking);
 }
 
 // How strongly water foams against what stands in it behind the pixel
