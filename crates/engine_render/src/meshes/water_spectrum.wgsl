@@ -100,15 +100,10 @@ fn water_tile_height(tile: u32) -> f32 {
 
 // The cosine and sine (x and y) of the angle tile `tile`'s lattice turns by
 // from the world's axes, from +x toward +z: water reads the tile at each
-// world point turned by it (`water_turned_by`), and turns its slopes back.
+// world point turned by it, its product with that unit complex number
+// (`complex_product`), and turns its slopes back by its conjugate.
 fn water_tile_turn(tile: u32) -> vec2<f32> {
     return water.turns[tile].xy;
-}
-
-// `v` turned by the angle whose cosine and sine `turn` holds (x and y),
-// from +x toward +z.
-fn water_turned_by(v: vec2<f32>, turn: vec2<f32>) -> vec2<f32> {
-    return vec2<f32>(v.x * turn.x - v.y * turn.y, v.x * turn.y + v.y * turn.x);
 }
 
 // A random point of a pattern (in its periods) by which reads at corner
@@ -321,11 +316,11 @@ fn water_wind_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, gains: vec4<f32>
         if kept > 0.0 {
             let repeats = water_tile_repeats(tile);
             let turn = water_tile_turn(tile);
-            let sampled = water_tile_sample(tile, water_turned_by(p, turn) * repeats,
-                water_turned_by(dx, turn) * (repeats * steady),
-                water_turned_by(dy, turn) * (repeats * steady));
+            let sampled = water_tile_sample(tile, complex_product(p, turn) * repeats,
+                complex_product(dx, turn) * (repeats * steady),
+                complex_product(dy, turn) * (repeats * steady));
             // Its slopes turned back into the world.
-            let slopes = water_turned_by(sampled.xy, vec2<f32>(turn.x, -turn.y));
+            let slopes = complex_product(sampled.xy, vec2<f32>(turn.x, -turn.y));
             moments = vec4<f32>(slopes * kept,
                 sampled.z + (1.0 - kept * kept) * dot(slopes, slopes), sampled.w * kept);
         }

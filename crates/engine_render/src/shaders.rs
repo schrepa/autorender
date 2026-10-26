@@ -91,6 +91,7 @@ shaders! {
     ];
     /// Water's waves: their spectra evolved and transformed into slopes.
     WATER_WAVES_SHADER = [
+        "math.wgsl",
         "water_waves.wgsl",
     ];
     /// Water simulated by the shallow-water equations around the camera and
