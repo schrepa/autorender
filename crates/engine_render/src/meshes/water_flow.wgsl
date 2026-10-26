@@ -369,9 +369,10 @@ fn water_flow_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, at: WaterAt,
     let depth = at.depth;
     let shear = at.words.state.z;
     // The boils first: within them the surface spreads, calming the wind's
-    // waves on it, whether they stand or ride the current.
+    // waves on it, whether they stand or ride the current, as far as the
+    // blend shows running water, where they rise.
     let boils = water_boils(p, dx, dy, flow, depth, eddy, time);
-    let calmed = gains * boils.calm;
+    let calmed = gains * (1.0 - flowing * (1.0 - boils.calm));
     var still: WaterRead;
     if flowing < 1.0 {
         still = water_wind_waves(p, dx, dy, calmed);

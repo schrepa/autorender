@@ -26,6 +26,7 @@
 //! where the sum of its gains times them passes 1, where its waves have
 //! folded (`meshes/water_foam.wgsl`'s `water_folding`).
 
+use std::cell::Cell;
 use std::f64::consts::TAU;
 
 use engine_core::table_data::waves::WaveTile;
