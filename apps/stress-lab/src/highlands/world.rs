@@ -70,19 +70,26 @@ impl StressWorld for HighlandsWorld {
         // rivers are traced along: the cook settles every watered tile at
         // that size, and the settled water stands everywhere.
         //
-        // The water runs as glacial streams do, milky with the rock flour
-        // the ice grinds: its grains, microns across, scatter light strongly
-        // and send back blue-green, which turns mountain water turquoise.
-        // The water itself is a deep blue-green halving the light in a
-        // meter, and the flour scatters 0.8 a meter on top, a little more
-        // than the water takes, so its teal leads the body's color. Seen 30
-        // degrees down through 30 centimeters, the light runs about 0.9
-        // meters in the water: a third of the stones under it shows through
-        // a body two thirds of the way to its deep teal.
+        // The water runs clear, as streams fed by springs and snowmelt do:
+        // deep, it sends back only the little light the water itself
+        // scatters, in the blue and green it takes least, a dark teal. Light
+        // halves over 4.5 meters in it, as in a clear lake, whose water
+        // takes about 0.33, 0.11 and 0.06 a meter of red, green and blue,
+        // 0.153 a meter weighted by luminance, and ln 2 / 0.153 ≈ 4.5. Its
+        // color shares that out, the channels it holds least going first:
+        // about 0.47, 0.070 and 0.059 a meter, blue slowest, red eight times
+        // as fast and green a fifth faster, so the bed seen through it tints
+        // teal. A trace of fine silt scatters 0.01 a meter on top, a
+        // fifteenth of what the water takes: its paler grains lighten the
+        // body by about two fifths, hardly turning its teal. Seen 30 degrees
+        // down through 30 centimeters, the light runs about 0.9 meters in
+        // the water: about 0.87 of it reaches the stones under it and comes
+        // back, so most of the bed shows through a body an eighth of the way
+        // to its dark teal.
         world.insert_resource(Water {
-            color: [0.005, 0.035, 0.04],
-            clarity: 1.0,
-            sediment: 0.8,
+            color: [0.003, 0.02, 0.024],
+            clarity: 4.5,
+            sediment: 0.01,
             sediment_color: [0.04, 0.16, 0.15],
             simulation_cell: 1.0,
             // Over the 256 meters around the camera, as far as its finest
