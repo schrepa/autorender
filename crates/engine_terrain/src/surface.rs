@@ -585,7 +585,9 @@ pub(crate) fn erosions(layers: &Layers) -> impl Iterator<Item = &Erosion> {
         | Layer::Stamp(_)
         | Layer::Rivers(_)
         | Layer::Hydrology(_)
-        | Layer::Path(_) => None,
+        | Layer::Path(_)
+        | Layer::Steps(_)
+        | Layer::Hummocks(_) => None,
     })
 }
 
