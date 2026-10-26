@@ -9,8 +9,11 @@
 //! patches. A tile's blocks upload as it arrives and free as it leaves or
 //! changes, following the tiles the atlas held anew. Water's directory
 //! lists, for each layer of the height array, the blocks of its tile's
-//! patches, laid out again as tiles or their water change: shaders read a
-//! tile's water at any point through it (`crate::water`).
+//! patches, laid out again as tiles or their water change, in the terrain's
+//! directory buffer after the virtual texture's windows and tables: shaders
+//! read a tile's water at any point through it, water's pass
+//! (`crate::water`) and the ground's fragments, which wet the ground at its
+//! waterline and bind no more storage buffers than they did.
 
 #![expect(
     clippy::expect_used,
@@ -78,9 +81,9 @@ impl Texels {
 }
 
 /// What water's pass draws tiles' water with: the height array, the views'
-/// and terrains' uniforms, the terrain's directory, this frame's leaves of
-/// the subdivisions and their trees' uniforms, the water blocks' arrays and
-/// water's directory, with generations advancing when any of them is
+/// and terrains' uniforms, the terrain's directory with water's in it, this
+/// frame's leaves of the subdivisions and their trees' uniforms and the
+/// water blocks' arrays, with generations advancing when any of them is
 /// another texture or buffer; each frame terrain whose water subdivides,
 /// its uniform's offset, its water's tree's and that tree's draw of its
 /// leaves; the pixels the drawn ground (x) and water's mesh (y) may stray
@@ -97,8 +100,7 @@ pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) trees: &'a wgpu::Buffer,
     pub(crate) surfaces: &'a wgpu::TextureView,
     pub(crate) info: &'a wgpu::TextureView,
-    pub(crate) water_directory: &'a wgpu::Buffer,
-    pub(crate) generation: [u64; 7],
+    pub(crate) generation: [u64; 6],
     pub(crate) terrains: Vec<(u32, u32, SurfaceDraw)>,
     pub(crate) targets: [f32; 2],
     pub(crate) blocks: [u32; 2],
@@ -115,18 +117,38 @@ pub(crate) struct WaterBlocks {
     /// Blocks uploaded this frame, and dropped for want of layers.
     pub(crate) uploads: u32,
     pub(crate) dropped: u32,
-    // Water's directory, the words it holds and those they replaced, kept
-    // for the next layout, and the height array's layers it was laid out
-    // for; and the terrains holding water.
-    directory: crate::buffers::Growable,
+    // Water's directory: the words the terrain's directory buffer holds of
+    // it and those they replaced, kept for the next layout; the height
+    // array's layers it was laid out for, and where it was written (the
+    // word it starts at and the buffer's generation); whether tiles changed
+    // since; and the terrains holding water.
     directory_written: Vec<u32>,
     directory_spare: Vec<u32>,
     directory_layers: Option<u32>,
+    directory_at: Option<(u32, u64)>,
+    directory_stale: bool,
     holding: BTreeSet<u64>,
+    // The surfaces' array the terrain group binds before a block uploads,
+    // while water's directory names none: a texel.
+    stand_in: wgpu::TextureView,
 }
 
 impl WaterBlocks {
     pub(super) fn new(device: &wgpu::Device) -> Self {
+        let stand_in = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("engine/water-surfaces-stand-in"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SURFACE_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
         Self {
             arrays: None,
             generation: 0,
@@ -135,16 +157,16 @@ impl WaterBlocks {
             next: 0,
             uploads: 0,
             dropped: 0,
-            directory: crate::buffers::Growable::new(
-                device,
-                "engine/water-directory",
-                16,
-                wgpu::BufferUsages::empty(),
-            ),
             directory_written: Vec::new(),
             directory_spare: Vec::new(),
             directory_layers: None,
+            directory_at: None,
+            directory_stale: true,
             holding: BTreeSet::new(),
+            stand_in: stand_in.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            }),
         }
     }
 
@@ -153,6 +175,15 @@ impl WaterBlocks {
         self.arrays
             .as_ref()
             .map(|arrays| (&arrays.surface_view, &arrays.info_view))
+    }
+
+    /// The surface array's view the terrain group binds, whose surfaces
+    /// beside their ground the ground's fragments wet it by at its
+    /// waterline: a stand-in before a block uploads.
+    pub(super) fn surface_view(&self) -> &wgpu::TextureView {
+        self.arrays
+            .as_ref()
+            .map_or(&self.stand_in, |arrays| &arrays.surface_view)
     }
 
     /// Blocks resident.
@@ -166,14 +197,13 @@ impl WaterBlocks {
         self.holding.contains(&id)
     }
 
-    /// Bytes of the arrays and the directory.
+    /// Bytes of the arrays.
     pub(super) fn capacity_bytes(&self) -> u64 {
-        let arrays = self.arrays.as_ref().map_or(0, |arrays| {
+        self.arrays.as_ref().map_or(0, |arrays| {
             u64::from(arrays.layers)
                 * u64::from(LAYER_TEXELS * LAYER_TEXELS)
                 * u64::from(SURFACE_BYTES + INFO_BYTES)
-        });
-        arrays + self.directory.size()
+        })
     }
 
     /// What water's pass draws tiles' water with this frame, of `pass`'s
@@ -204,13 +234,11 @@ impl WaterBlocks {
             trees,
             surfaces,
             info,
-            water_directory: &self.directory,
             generation: [
                 pass.atlas.generation,
                 pass.tables.uniform_generation,
                 self.generation,
                 pass.tables.directory_generation,
-                self.directory.generation(),
                 leaves_generation,
                 trees.generation(),
             ],
@@ -226,8 +254,8 @@ impl WaterBlocks {
     /// at the keys whose held tile changed since the last sync; a tile
     /// replaced under its key keeps the blocks whose texels stay the same
     /// (its water made again where its rivers run otherwise). Layers grow up
-    /// to `max_layers`. Where any tile changed, or the height array's layers
-    /// did, water's directory is laid out again.
+    /// to `max_layers`. Where any tile changed, water's directory is laid
+    /// out again as it is next written ([`Self::write_directory`]).
     pub(super) fn sync(
         &mut self,
         device: &wgpu::Device,
@@ -270,8 +298,8 @@ impl WaterBlocks {
             let blocks = self.upload(device, queue, tile, None, max_layers);
             self.tiles.insert(slot, blocks);
         }
-        if !changes.is_empty() || self.directory_layers != Some(atlas.layers()) {
-            self.write_directory(device, queue, atlas);
+        if !changes.is_empty() {
+            self.directory_stale = true;
         }
     }
 
@@ -473,21 +501,36 @@ impl WaterBlocks {
         }
     }
 
-    /// Lays water's directory out for the layers `atlas` holds and writes
-    /// the words that changed: each resident tile's patches' blocks; and
-    /// notes the terrains whose tiles hold any.
+    /// Lays water's directory out for the layers `atlas` holds where tiles
+    /// changed since, or the layers did, and writes the words that changed
+    /// into the terrain's directory buffer `directory` from its word `base`,
+    /// all of them into a new buffer (another `generation`) or at another
+    /// place: each resident tile's patches' blocks; and notes the terrains
+    /// whose tiles hold any. Words past what the buffer holds, which it
+    /// could not grow to, are left out.
     #[expect(
         clippy::iter_over_hash_type,
         reason = "terrains gather and words land by tile and layer, in any order"
     )]
-    fn write_directory(&mut self, device: &wgpu::Device, queue: &Queue, atlas: &TileAtlas) {
+    pub(super) fn write_directory(
+        &mut self,
+        queue: &Queue,
+        atlas: &TileAtlas,
+        (directory, base, generation): (&wgpu::Buffer, u32, u64),
+    ) {
+        let layers = atlas.layers();
+        let whole = self.directory_at != Some((base, generation));
+        if !whole && !self.directory_stale && self.directory_layers == Some(layers) {
+            return;
+        }
+        self.directory_stale = false;
+        self.directory_at = Some((base, generation));
         self.holding.clear();
         for (&(id, _), tile) in &self.tiles {
             if tile.blocks.iter().any(|&block| block != NO_WATER_BLOCK) {
                 self.holding.insert(id);
             }
         }
-        let layers = atlas.layers();
         let entry = TILE_WORDS as usize;
         let mut words = std::mem::take(&mut self.directory_spare);
         words.clear();
@@ -500,15 +543,16 @@ impl WaterBlocks {
             }
         }
         self.directory_layers = Some(layers);
-        let grown = self.directory.grow(device, (words.len() * 4) as u64);
-        let run = if grown {
+        let run = if whole {
             0..words.len()
         } else {
             changed_run(&self.directory_written, &words)
         };
+        let room = (directory.size() / 4) as usize;
+        let run = run.start..run.end.min(room.saturating_sub(base as usize));
         if !run.is_empty() {
-            let offset = (run.start * 4) as u64;
-            queue.write_buffer(&self.directory, offset, bytemuck::cast_slice(&words[run]));
+            let offset = ((base as usize + run.start) * 4) as u64;
+            queue.write_buffer(directory, offset, bytemuck::cast_slice(&words[run]));
         }
         self.directory_spare = std::mem::replace(&mut self.directory_written, words);
     }

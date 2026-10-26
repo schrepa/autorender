@@ -760,6 +760,8 @@ fn terrain_uniform(
             let averaged = engine_core::terrain_data::TileShading::shades(1, terrain.surroundings);
             [material, low, high, if averaged { 1.0 } else { 0.0 }]
         },
+        // Where water's directory starts, which every terrain's tiles share.
+        water: [tables.water_base, 0, 0, 0],
     }
 }
 

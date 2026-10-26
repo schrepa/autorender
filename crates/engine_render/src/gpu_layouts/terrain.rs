@@ -97,6 +97,10 @@ gpu_structs! {
         /// ground whole (`TerrainSettings::pixel_error`), as its tiles'
         /// ranges count them; yzw unused.
         pub pixel_error: [f32; 4],
+        /// Its tiles' water: where water's directory starts in the
+        /// directory buffer, after the virtual texture's windows and tables;
+        /// yzw unused.
+        pub water: [u32; 4],
     }
 
     /// WGSL `TerrainSubdivision` (`meshes/terrain_subdivision.wgsl`): a

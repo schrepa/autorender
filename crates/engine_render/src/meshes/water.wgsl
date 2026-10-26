@@ -66,11 +66,13 @@
 // (`water_gradients`: w, four signed bytes).
 @group(1) @binding(50) var water_surface: texture_2d_array<f32>;
 @group(1) @binding(51) var water_info: texture_2d_array<u32>;
-// Water's directory (`terrain/water_blocks.rs`), WATER_TILE_WORDS words for
-// each layer of the terrain's height array: the block of each patch of the
-// tile in it, row by row (NO_WATER_BLOCK where none of its samples holds a
-// surface).
-@group(1) @binding(59) var<storage, read> water_directory: array<u32>;
+// Water's directory (`terrain/water_blocks.rs`) lies in `terrain_directory`
+// from `terrain.water.x`, after the virtual texture's windows and tables:
+// WATER_TILE_WORDS words for each layer of the terrain's height array, the
+// block of each patch of the tile in it, row by row (NO_WATER_BLOCK where
+// none of its samples holds a surface). The ground's fragments read the
+// water's surfaces through it too, where the ground wets at its waterline
+// (`meshes/terrain.wgsl`'s `terrain_waterline`).
 // The subdivision of the terrain's water (`terrain/surface.rs`), whose
 // leaves its draws take, a meshlet an instance, from `tree.z` of the frame's
 // (`terrain_surface_leaves`).
@@ -395,8 +397,8 @@ fn water_cell(local: vec2<f32>, level: u32) -> WaterCell {
         let corner = min(vec2<u32>(within), vec2<u32>(tile_quads - 1u));
         let tile_patch = corner / quads;
         cell.level = index;
-        cell.block = water_directory[layer * WATER_TILE_WORDS + tile_patch.y * WATER_TILE_PATCHES
-            + tile_patch.x];
+        cell.block = terrain_directory[terrain.water.x + layer * WATER_TILE_WORDS
+            + tile_patch.y * WATER_TILE_PATCHES + tile_patch.x];
         cell.first = corner - tile_patch * quads;
         cell.within = within - vec2<f32>(corner);
         return cell;
