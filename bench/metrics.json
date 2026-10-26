@@ -355,6 +355,17 @@
       "direction": null
     },
     {
+      "name": "haze.active",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "boolean",
+      "direction": null
+    },
+    {
       "name": "instances",
       "kind": "work",
       "rule": "shown",
@@ -1419,17 +1430,6 @@
         "native"
       ],
       "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "sun_shafts.active",
-      "kind": "work",
-      "rule": "equal",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "boolean",
       "direction": null
     },
     {

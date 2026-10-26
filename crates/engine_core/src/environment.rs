@@ -65,7 +65,6 @@ macro_rules! environment_sections {
             local_lights: LocalLightSettings { opt_in: false, feature: Core },
             highlights: Highlights { opt_in: false, feature: Core },
             windows: Windows { opt_in: true, feature: Core },
-            sun_shafts: SunShafts { opt_in: true, feature: Core },
             reflections: Reflections { opt_in: true, feature: Core },
             particles: ParticleSettings { opt_in: false, feature: Core },
             refraction: Refraction { opt_in: true, feature: Core },

@@ -409,19 +409,6 @@
       }
     },
     {
-      "name": "metro-no-shafts",
-      "tier": "full",
-      "note": "Metro without sun shafts, through the Stress Lab's effects switch (the environment control cannot remove an opt-in section).",
-      "scene": "metro",
-      "options": { "effects": "no-shafts" },
-      "ticks": 30,
-      "views": ["overview", "close"],
-      "captures": ["exact", "gpu:0.5"],
-      "unstable": {
-        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
-      }
-    },
-    {
       "name": "metro-no-reflections",
       "tier": "full",
       "note": "Metro without screen-space reflections, through the Stress Lab's effects switch (the environment control cannot remove an opt-in section).",
@@ -514,11 +501,11 @@
       }
     },
     {
-      "name": "garden-sun-shafts",
+      "name": "garden-haze-unmarched",
       "tier": "full",
-      "note": "The garden with sun shafts switched on by the environment control.",
+      "note": "The garden with the haze's march switched off (no reach) by the environment control: all the sunlight the air scatters comes from the analytic haze.",
       "source": "web/scripts/fixtures/garden.scene.json",
-      "environment": { "sun_shafts": {} },
+      "environment": { "haze": { "reach": 0 } },
       "ticks": 30,
       "views": ["scene"],
       "captures": ["exact", "gpu:0.5"]

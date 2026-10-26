@@ -38,5 +38,4 @@ pub use observation::{StressSample, StressSnapshot, stress_observation, stress_s
 pub use presets::{Preset, preset, presets};
 pub use scene::{
     StressFile, create_workload, create_workload_with, look, set_view, stress_reflections,
-    stress_shafts,
 };

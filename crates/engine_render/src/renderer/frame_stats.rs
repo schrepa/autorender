@@ -216,7 +216,7 @@ impl Renderer {
                 features.light_frame(),
                 snapshot,
             ),
-            sun_shafts: effects.sun_shafts,
+            haze: effects.haze,
             reflections: effects.reflections,
             particles: Transparency::stats(
                 Some(self.features.transparency.get()),

@@ -66,10 +66,8 @@ pub fn create_workload_with(
     let world = engine.app.world_mut();
     let moving_nodes = content.populate(world, &config, files)?;
     content.environment(world);
-    // Sun shafts and screen-space reflections
-    // are opt-in engine effects; street lamps near the camera light the
-    // city, brighter as the look darkens.
-    world.insert_resource(stress_shafts());
+    // Screen-space reflections are an opt-in engine effect; street lamps
+    // near the camera light the city, brighter as the look darkens.
     world.insert_resource(content.reflections());
     world.insert_resource(LocalLightSettings {
         distance: 220.0,
@@ -151,7 +149,6 @@ fn query_workload(
     metrics.queries_ms += metrics::now_ms() - start;
 }
 
-/// Sun shafts strong enough to read over the scenes' light fog.
 /// The collision budgets workloads measure under: the dense sensor
 /// workload exceeds the pair budgets on purpose.
 pub(crate) fn stress_collision_budgets() -> engine::collision::CollisionConfig {
@@ -161,13 +158,6 @@ pub(crate) fn stress_collision_budgets() -> engine::collision::CollisionConfig {
         max_sensor_pairs: Some(16_384),
         max_query_candidates: Some(10_000),
         max_query_hits: Some(1024),
-    }
-}
-
-pub fn stress_shafts() -> SunShafts {
-    SunShafts {
-        intensity: 1.5,
-        ..SunShafts::default()
     }
 }
 
@@ -195,12 +185,11 @@ pub(crate) const LOOKS: [Look; 5] = [
 
 /// The rendering effects the page can switch off (`no-NAME`): each one's
 /// name and what it is in menus.
-pub(crate) const EFFECTS: [(&str, &str); 9] = [
+pub(crate) const EFFECTS: [(&str, &str); 8] = [
     ("shadows", "shadows"),
     ("occlusion", "ambient occlusion"),
     ("bloom", "bloom"),
     ("lights", "local lights"),
-    ("shafts", "sun shafts"),
     ("reflections", "reflections"),
     ("particles", "particles"),
     ("refraction", "refraction"),

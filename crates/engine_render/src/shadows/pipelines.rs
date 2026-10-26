@@ -79,7 +79,7 @@ fn caster_pipeline(
             // Both faces cast: open and single-sided meshes shadow too.
             primitive: wgpu::PrimitiveState::default(),
             // Receiver planes keep lit surfaces off
-            // their own depth; a unit of bias covers the sun shafts'
+            // their own depth; a unit of bias covers the haze's march's
             // plain comparisons.
             depth: Some(wgpu::DepthStencilState {
                 format: SHADOW_FORMAT,

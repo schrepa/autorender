@@ -545,11 +545,15 @@ pub(crate) fn apply_night(
 /// (Koschmieder: a fiftieth of what lies level with the eye is left at
 /// 3.912 over the extinction), twice the distance to the far plane of
 /// `view_projection` unless set; then as thick as its strength makes it.
+/// Where the view `marches` the haze (`screen_effects::haze_runs`), its
+/// march's reach, within which the march gives `atmospheric`'s glow of the
+/// sun instead, forward scattering, spread and size.
 pub(crate) fn apply_haze(
     lighting: &mut crate::gpu_data::LightingUniform,
     haze: &engine_core::Haze,
     view_projection: glam::Mat4,
     eye: Vec3,
+    marches: bool,
 ) {
     let haze = haze.sanitized();
     if !haze.enabled {
@@ -569,4 +573,7 @@ pub(crate) fn apply_haze(
     lighting.aerial[0] = 0.0;
     lighting.aerial[1] = engine_core::math::max(lighting.aerial[1], at_zero) * haze.strength;
     lighting.aerial_color[3] = 1.0;
+    if marches {
+        lighting.haze_march = [haze.reach, haze.forward, haze.spread, 1.0 / haze.size];
+    }
 }

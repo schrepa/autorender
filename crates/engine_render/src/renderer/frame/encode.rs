@@ -156,6 +156,7 @@ impl Renderer {
             | Resource::Lights
             | Resource::Pyramid
             | Resource::Effects
+            | Resource::Haze
             | Resource::Exposure
             | Resource::Probes
             | Resource::CloudView

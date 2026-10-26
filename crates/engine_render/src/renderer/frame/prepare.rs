@@ -503,13 +503,17 @@ impl Renderer {
         );
         // Whether 8-bit color writes dither.
         lighting.grade[3] = f32::from(u8::from(snapshot.environment.dither.enabled));
-        // The night sky, and haze: the air taking the sky's light.
+        // The night sky, and haze: the air taking the sky's light, and the
+        // near air's sunlight the screen effects march.
         crate::sky::apply_night(&mut lighting, &snapshot.environment);
         crate::sky::apply_haze(
             &mut lighting,
             &snapshot.environment.haze,
             snapshot.view_projection,
             snapshot.camera_position,
+            !kind.debug
+                && !self.features.post.disabled()
+                && crate::screen_effects::haze_runs(&snapshot.environment),
         );
         // Under the sea, its water veils everything.
         lighting.underwater = crate::water::underwater(
@@ -705,7 +709,8 @@ impl Renderer {
         }
         let lights = self.prepare_lights(frame, kind, temporal_frame);
         let lit = lights.is_some();
-        let PostPrep { post, refraction } = self.prepare_post(snapshot, temporal_frame);
+        let PostPrep { post, refraction } =
+            self.prepare_post(snapshot, temporal_frame, kind.display);
         let post_frame = post.as_ref().map(|post| *post.frame());
         let transparency = self.prepare_transparency(
             snapshot,
@@ -1152,12 +1157,13 @@ impl Renderer {
         )
     }
 
-    /// Screen effects and refraction's targets;
-    /// returns the effects and whether glass refracts.
+    /// Screen effects and refraction's targets, `display` frames keeping
+    /// the haze's history; returns the effects and whether glass refracts.
     fn prepare_post(
         &mut self,
         snapshot: &RenderSnapshot,
         temporal_frame: &Option<TemporalFrame>,
+        display: bool,
     ) -> PostPrep {
         // Screen effects, which temporal frames apply in their resolve (whose
         // history averages the occlusion noise), and auto exposure's meter.
@@ -1183,7 +1189,7 @@ impl Renderer {
                     queue,
                     snapshot,
                     (region, depth),
-                    temporal_frame.is_some(),
+                    (temporal_frame.is_some(), display),
                     self.shadows.sky_bindings(),
                 ))
             },

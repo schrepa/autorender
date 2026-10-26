@@ -1,5 +1,5 @@
 //! Rendering effects of the scene: sun shadows, ambient
-//! occlusion and bloom, sun shafts,
+//! occlusion and bloom,
 //! screen-space reflections and refraction through glass.
 //! Every extracted frame carries sanitized copies with the
 //! atmosphere; renderers skip the work of disabled effects.
@@ -31,9 +31,7 @@
 //! under objects. Bloom makes light glow beyond bright pixels such as
 //! emissive surfaces, sun glints and the sun itself: emission and highlights
 //! usually exceed its default threshold, which applies to brightness before
-//! tone mapping; sunlit walls do not. Sun shafts are sunlight the fog
-//! scatters toward the eye, with a glow around the sun; they read the fog's
-//! density and height falloff as the medium. Screen-space reflections fall
+//! tone mapping; sunlit walls do not. Screen-space reflections fall
 //! back to the sky where their rays leave the screen. Refraction bends the
 //! opaque scene seen through transmissive materials along their index of
 //! refraction and thickness and blurs it by their roughness; frames without
@@ -268,41 +266,6 @@ impl AutoExposure {
             enabled: false,
             ..Self::default()
         }
-    }
-}
-
-settings! {
-    /// Sun shafts: sunlight scattered by the fog between shadow
-    /// casters. Requires shadows; an intensity of 0 turns them
-    /// off.
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneSunShafts")
-    )]
-    #[serde(default, deny_unknown_fields)]
-    pub struct SunShafts {
-        /// How bright the shafts are; 0 turns them off.
-        pub intensity: f32 = 1.0 => range(0.0, 4.0),
-        /// Forward scattering: higher concentrates light toward the sun.
-        pub anisotropy: f32 = 0.6 => range(0.0, 0.95),
-        /// World distance along each view ray light is gathered over.
-        pub distance: f32 = 300.0 => range(0.001, 100_000.0),
-    }
-}
-
-impl SunShafts {
-    /// What a world without these settings reads as: no sun shafts.
-    pub fn off() -> Self {
-        Self {
-            intensity: 0.0,
-            ..Self::default()
-        }
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.intensity > 0.0
     }
 }
 

@@ -5,7 +5,7 @@
 //! "runs" flags all follow the same gates; the post composite and the
 //! temporal resolve apply the effects alike (`effect_shade`, `reflected`
 //! and `effect_light` in effects.wgsl), the resolve ambient occlusion and
-//! reflections before its blend, so they enter the history, and sun shafts
+//! reflections before its blend, so they enter the history, and the haze
 //! and bloom after it.
 
 use engine_core::Environment;
@@ -13,21 +13,29 @@ use engine_core::Environment;
 use crate::render_graph::{NodeBuilder, Resource};
 
 /// What the effects' uniform fields read beyond the settings: the size of
-/// a half-resolution texel in texture coordinates, and which pixel of each
-/// 2x2 block reflections trace this frame.
+/// a half-resolution texel in texture coordinates, which pixel of each
+/// 2x2 block reflections trace this frame, the turn of the haze's jitter
+/// this frame, and the half-resolution texels across and down the haze's
+/// history holds (none without one).
 pub(crate) struct UniformFrame {
     pub(crate) half_texel: [f32; 2],
     pub(crate) trace_index: u32,
+    pub(crate) haze_turn: f32,
+    pub(crate) haze_history: [f32; 2],
 }
 
-/// Whether sun shafts run under `environment`: light gathered through the
-/// shadow clipmap, which they need, from the fog they march, which must
-/// scatter: the physical sky's air has none (its lighting zeroes the fog).
-pub(crate) fn shafts_run(environment: &Environment) -> bool {
-    environment.sun_shafts.sanitized().enabled()
-        && environment.shadows.enabled
-        && !environment.sky.sanitized().enabled
-        && environment.atmosphere.sanitized().fog_density > 0.0
+/// Whether the haze's march runs under `environment`: haze on, with a
+/// reach, through air that scatters: the haze's own, as thick as its
+/// strength makes it, or the fog, which the physically based sky's
+/// lighting zeroes. Shadows and the clouds' shadows shade it where they
+/// are on; without them the sun lights all of its air.
+pub(crate) fn haze_runs(environment: &Environment) -> bool {
+    let haze = environment.haze.sanitized();
+    let atmosphere = environment.atmosphere.sanitized();
+    let fog = !environment.sky.sanitized().enabled
+        && atmosphere.fog_density > 0.0
+        && atmosphere.fog_max > 0.0;
+    haze.enabled && haze.reach > 0.0 && (haze.strength > 0.0 || fog)
 }
 
 /// Whether frames under `environment` draw into the screen effects'
@@ -140,14 +148,16 @@ screen_effects! {
         },
         reads: [Depth, Scene, Glow, Surface],
     },
-    /// Sun shafts ([`shafts_run`]).
-    shafts {
-        gate: |environment| shafts_run(environment),
-        uniform: |settings, on, _| {
-            let shafts = settings.sun_shafts.sanitized();
-            [shafts.intensity, shafts.anisotropy, shafts.distance, on]
+    /// The haze's march ([`haze_runs`]): the sunlight the near air scatters
+    /// through the shadow clipmap and the clouds' shadows, at half
+    /// resolution, filtered over time with the history the last frame left.
+    haze {
+        gate: |environment| haze_runs(environment),
+        uniform: |_settings, on, frame| {
+            let [across, down] = frame.haze_history;
+            [frame.haze_turn, across, down, on]
         },
-        reads: [Depth, ShadowMaps],
+        reads: [Depth, ShadowMaps, CloudDome, Haze],
     },
     /// Sky occlusion: sky light fading where still meshes hide the sky, from
     /// the shadow pass's sky maps (`shadows::sky`), which need shadows.

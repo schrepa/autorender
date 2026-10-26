@@ -151,6 +151,11 @@ gpu_structs! {
         /// along x and z each second (world units), and how many stars
         /// show, as a multiple.
         pub night_shape: [f32; 4],
+        /// The haze's march: how far along the view it gives the sunlight
+        /// the air scatters (0 where the view marches none), the forward
+        /// scattering of its phase, how far its density strays from its
+        /// mean, and one over the size of its largest patches (meters).
+        pub haze_march: [f32; 4],
     }
 
     /// Separate per-instance color, opacity and packed surface; unchanged colors
@@ -308,7 +313,7 @@ gpu_structs! {
         pub source: [i32; 4],
     }
 
-    /// WGSL `Post` uniform of `effects.wgsl`: 304
+    /// WGSL `Post` uniform of `effects.wgsl`: 368
     /// bytes.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct PostUniform as ["Post"] {
@@ -335,10 +340,14 @@ gpu_structs! {
         /// Ray distance, strength, 1 when reflections run, and which pixel of
         /// each 2x2 block the half-resolution reflections trace this frame.
         pub reflections: [f32; 4],
-        /// Strength, forward scattering, distance and 1 when sun shafts run.
-        pub shafts: [f32; 4],
-        /// The sun's exposed color; w unused.
-        pub sun: [f32; 4],
+        /// The haze: the turn of its march's jitter this frame, the
+        /// half-resolution texels across and down its history holds (0
+        /// without one), and 1 when it runs.
+        pub haze: [f32; 4],
+        /// Last frame's unjittered world to clip space and its eye (w
+        /// unused), which the haze's history reprojects through.
+        pub previous_view_projection: [[f32; 4]; 4],
+        pub previous_eye: [f32; 4],
         /// The unit direction toward the sun; w: 1 when 8-bit color writes
         /// dither.
         pub sun_direction: [f32; 4],

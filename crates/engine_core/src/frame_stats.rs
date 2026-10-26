@@ -154,8 +154,8 @@ pub struct RenderStats {
     pub bloom: Applied,
     /// Local lights.
     pub local_lights: LightStats,
-    /// Sun shafts.
-    pub sun_shafts: Applied,
+    /// The haze's march: the sunlight the near air scatters.
+    pub haze: Applied,
     /// Screen-space reflections.
     pub reflections: Applied,
     /// Particles.

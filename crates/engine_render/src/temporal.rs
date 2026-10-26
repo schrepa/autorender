@@ -98,7 +98,7 @@ pub(crate) struct TemporalPass {
     no_particles: wgpu::TextureView,
     // Frames writing history `p` read history `1 - p` through group `p`,
     // over the screen effects' targets.
-    resolve_groups: [GroupCache<11>; 2],
+    resolve_groups: [GroupCache<12>; 2],
     // Pose groups for (current, previous) buffer pairs, index 2 * current +
     // previous.
     pose_groups: [GroupCache<6>; 4],
@@ -404,7 +404,7 @@ impl TemporalPass {
         let Some(targets) = self.targets.get() else {
             return resolve;
         };
-        let ([scene, occlusion, bloom, reflections], settings) = post.resolve_inputs();
+        let ([scene, occlusion, bloom, reflections, haze], settings) = post.resolve_inputs();
         let target = |view| Bound::of(targets, crate::pipelines::view(view));
         let revealed =
             revealed.unwrap_or_else(|| Bound::fixed(crate::pipelines::view(&self.no_particles)));
@@ -425,6 +425,7 @@ impl TemporalPass {
                     ("occlusion", occlusion.clone()),
                     ("bloom", bloom.clone()),
                     ("reflections", reflections.clone()),
+                    ("haze", haze.clone()),
                     ("post", settings.clone()),
                     ("depth_texture", depth.bound()),
                     ("revealed", revealed.clone()),
