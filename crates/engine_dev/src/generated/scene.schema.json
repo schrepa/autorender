@@ -807,7 +807,7 @@
           "minimum": 0.0
         },
         "deposit": {
-          "description": "Ground erosion laid down, and lakes' shores, show paler, sandier\nsilt: fine mineral grains no humus has darkened yet.",
+          "description": "Ground erosion laid down holds deep soil, built up over the bakes'\nwhole span: darker and browner with humus, its plants lusher, as\nfloodplains and the feet of slopes are. Lakes' shores show paler,\nsandier grains the waves keep washed.",
           "type": "number",
           "format": "float",
           "default": 0.20000000298023224,
