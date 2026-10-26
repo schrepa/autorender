@@ -243,10 +243,10 @@ fn water_bed_kernels(p: vec2<f32>, size: f32, salt: u32, flow: vec2<f32>, top: f
 // spread (`water_waves_mixed`). A kernel draws as far as its waves span the
 // steady size along its way (`water_stream_shown`); what it leaves hides in
 // the variance, which a Gabor field holds exactly: its heights' variance
-// times k², plus its envelope's 1/σ², summed over the headings by the
-// midpoint rule (WATER_BED_POINTS). A rung whose longest waves span no more
-// than the steady size across the pixel's narrowest way reads no kernel,
-// all its slopes' variance hidden.
+// times k², along each heading's way, plus its envelope's 1/σ², alike every
+// way, summed over the headings by the midpoint rule (WATER_BED_POINTS). A
+// rung whose longest waves span no more than the steady size across the
+// pixel's narrowest way reads no kernel, all its slopes' variance hidden.
 fn water_standing_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flow: vec2<f32>,
         depth: f32) -> WaterStream {
     var stream: WaterStream;
@@ -281,8 +281,11 @@ fn water_standing_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flow: vec2<f
     let narrowest = water_stream_footprint(dx, dy).x * steady;
     // The kernels' moments over their headings, either side of straight
     // upstream alike: their heights' squares and their slopes' (but their
-    // envelopes'), all and as far as the pixel draws them.
+    // envelopes'), all and as far as the pixel draws them; and the
+    // covariance of the slopes it leaves undrawn (`water_spread`), each
+    // heading's along its way.
     var moments = vec4<f32>(0.0);
+    var undrawn = vec3<f32>(0.0);
     for (var point = 0u; point < WATER_BED_POINTS; point++) {
         let drawn = (f32(point) + 0.5) / f32(WATER_BED_POINTS);
         let standing = top - reach * drawn * drawn;
@@ -296,6 +299,8 @@ fn water_standing_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flow: vec2<f
         let share = along * along * along * along;
         let steep = share * number * number;
         moments += vec4<f32>(share, steep, share * shown, steep * shown);
+        undrawn += (0.5 * steep) * ((1.0 - first * first) * water_spread(across - heading * along)
+            + (1.0 - second * second) * water_spread(-across - heading * along));
     }
     // The two rungs nearest the longest waves' length.
     let octave = log2(2.0 * PI / longest);
@@ -320,7 +325,8 @@ fn water_standing_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flow: vec2<f
         spreads[rung] = tall * tall * lift;
         heights[rung] = tall * tall;
         var read: WaterRead;
-        read.hidden = spreads[rung] * (1.0 - (moments.w + moments.z * narrowing) / slopes);
+        read.hidden = (spreads[rung] / slopes)
+            * (undrawn + water_spread_even(narrowing * (moments.x - moments.z)));
         read.heights = heights[rung] * moments.z / moments.x;
         if 2.0 * PI / longest > narrowest { // filter: a rung no wave of which spans the steady size, its slopes' variance as roughness
             let amplitude = tall * WATER_BED_ENVELOPE * sqrt(2.0 * f32(WATER_BED_POINTS)
@@ -439,13 +445,13 @@ fn water_boils_read(p: vec2<f32>, flow: vec2<f32>, size: f32, life: f32, height:
 // whose boils span no more than the steady size across the pixel's widest
 // way (`water_steady`), or live no longer than WATER_SHORTEST_LIFE, over
 // which their coming and going reads as flicker, reads none, handing over
-// across an octave: what it leaves hides its slopes' variance, and its calm
-// averages over its cover, 1 − cover × WATER_BOIL_CALM × the dome's mean
-// share (a third) × its rise's mean over the area it covers
-// (WATER_BOIL_RISE). Their variances over space and their lives are in
-// closed form: their slopes', (2/3) cover A² / (R² WATER_BOIL_AREA), and
-// their heights' about the surface they rise from,
-// cover A² WATER_BOIL_RISE_SQUARED / 5.
+// across an octave: what it leaves hides its slopes' variance, alike every
+// way about its round boils, and its calm averages over its cover,
+// 1 − cover × WATER_BOIL_CALM × the dome's mean share (a third) × its
+// rise's mean over the area it covers (WATER_BOIL_RISE). Their variances
+// over space and their lives are in closed form: their slopes', (2/3) cover
+// A² / (R² WATER_BOIL_AREA), and their heights' about the surface they rise
+// from, cover A² WATER_BOIL_RISE_SQUARED / 5.
 fn water_boils(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flow: vec2<f32>, depth: f32,
         eddy: f32, time: f32) -> WaterStream {
     var stream: WaterStream;
@@ -482,7 +488,7 @@ fn water_boils(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flow: vec2<f32>, dept
         let resolved = saturate(size / max(widest, 1.0e-9) - 1.0); // filter: boils no wider than the steady size, their slopes' variance as roughness and their calm as its mean
         let shown = resolved * saturate(life / WATER_SHORTEST_LIFE - 1.0);
         var read: WaterRead;
-        read.hidden = (1.0 - shown * shown) * spreads[rung];
+        read.hidden = water_spread_even((1.0 - shown * shown) * spreads[rung]);
         read.heights = shown * shown * heights[rung];
         if shown > 0.0 {
             let bands = water_bands(life);

@@ -31,9 +31,11 @@
 // than the slowest of its own waves (`water_stream.wgsl`); and
 // waves standing about what it flows past. Each is drawn as far as it spans
 // the steady size (STEADY_PIXELS), and what the pixel averages of its
-// slopes, and how far those drawn turn across it, roughens the surface. It
-// mirrors the sky, the sun's disc and,
-// through screen-space reflections, the scene; its body, tinted by the
+// slopes, and how far those drawn turn across it, roughens the surface
+// along the view and across it, as the ellipse of those slopes projects
+// into the view. It mirrors the sky, the sun's disc and,
+// through screen-space reflections, the scene, drawn out along the view
+// where it grazes the water; its body, tinted by the
 // sediment it carries, scatters the light entering it back toward the
 // eye; and what lies under it shows through, bent by the waves where the
 // frame copies the scene's color, brighter where the waves gather the sun's
@@ -786,6 +788,52 @@ fn water_facing(normal: vec3<f32>, view: vec3<f32>, plane: vec3<f32>) -> vec3<f3
     return normalize(view + vec3<f32>(mirrored.x, -mirrored.y, mirrored.z));
 }
 
+// The way the eye looks along water (a unit vector along x and z, away from
+// the eye): its view `view` (toward the eye) laid flat; along x where it
+// looks straight down.
+fn water_heading(view: vec3<f32>) -> vec2<f32> {
+    let away = -view.xz;
+    let squared = dot(away, away);
+    let laid = away * inverseSqrt(max(squared, 1.0e-30));
+    return select(vec2<f32>(1.0, 0.0), laid, squared > 1.0e-12); // optics: the view's frame on water
+}
+
+// The tangent of water's normal `normal` along the view `view` (toward the
+// eye), away from the eye: where the plane of incidence meets the surface,
+// along which its slopes tilt the mirrored ray up and down; across it lies
+// `cross(normal, tangent)`. Any tangent where the eye looks straight along
+// the normal.
+fn water_view_tangent(normal: vec3<f32>, view: vec3<f32>) -> vec3<f32> {
+    let laid = normal * dot(view, normal) - view;
+    let squared = dot(laid, laid);
+    let side = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(normal.x) > 0.5);
+    let tangent = laid * inverseSqrt(max(squared, 1.0e-30));
+    let any_tangent = normalize(side - normal * dot(side, normal));
+    return select(any_tangent, tangent, squared > 1.0e-12); // optics: the view's frame on water
+}
+
+// Trowbridge-Reitz (GGX) distribution of water's microfacet normals, their
+// slopes spreading `alphas` along the view and across it (Burley 2012): the
+// half vector's cosines with the view's tangent (`along`), the tangent
+// across it (`across`) and the normal (`n_h`).
+fn water_distribution(along: f32, across: f32, n_h: f32, alphas: vec2<f32>) -> f32 {
+    let a2 = alphas.x * alphas.y;
+    let v = vec3<f32>(alphas.y * along, alphas.x * across, a2 * n_h);
+    let w2 = a2 / dot(v, v);
+    return a2 * w2 * w2 / PI;
+}
+
+// Smith-GGX visibility, height-correlated (Heitz 2014), of water's
+// microfacets spreading `alphas` along the view and across it: the view's
+// and the light's cosines with the normal (`n_v`, `n_l`) and with the
+// view's tangents along and across it (`view_tangents`, `light_tangents`).
+fn water_visibility(n_v: f32, n_l: f32, view_tangents: vec2<f32>, light_tangents: vec2<f32>,
+        alphas: vec2<f32>) -> f32 {
+    let lambda_v = n_l * length(vec3<f32>(alphas * view_tangents, n_v));
+    let lambda_l = n_v * length(vec3<f32>(alphas * light_tangents, n_l));
+    return 0.5 / (lambda_v + lambda_l);
+}
+
 // Henyey and Greenstein's phase for light scattering through `cosine` over
 // its mean across the backward half: 1 on average where light entering the
 // water turns back toward an eye above it.
@@ -862,10 +910,11 @@ fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: 
 }
 
 // A water surface to light: its point less the eye and how it changes per
-// pixel; its waves' normal and the roughness of what a pixel spans of them;
-// the normal of the plane it lies in without them (up for the sea, tilted
-// as terrains' water falls), which the eye looks down onto and light
-// enters through; the share of it foam covers; the color its body scatters
+// pixel; its waves' normal and the roughness of what a pixel spans of them,
+// along the view and across it (`water_roughness`); the normal of the plane
+// it lies in without them (up for the sea, tilted as terrains' water
+// falls), which the eye looks down onto and light enters through; the
+// share of it foam covers; the color its body scatters
 // back, and what it keeps of each channel of the light on its way to what
 // lies below and back; how near the top of a crest of its waves it stands
 // (0 to 1); and how many times over each channel of light dies by e
@@ -877,7 +926,7 @@ struct WaterSurface {
     world_dx: vec3<f32>,
     world_dy: vec3<f32>,
     normal: vec3<f32>,
-    roughness: f32,
+    roughness: vec2<f32>,
     plane: vec3<f32>,
     // How the relief of the foam on it tilts the normal the foam is lit by
     // off the waves' (a surface gradient, meters a meter), how much its
@@ -916,39 +965,47 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     let view = stable_normalize(-surface.relative);
     let up = vec3<f32>(0.0, 1.0, 0.0);
     let normal = water_facing(surface.normal, view, surface.plane);
-    // Foam is rough where it heaps, and smoother where it lies thin and wet.
+    // Foam is rough where it heaps, and smoother where it lies thin and wet,
+    // alike every way.
     let foam_roughness = mix(WATER_FOAM_ROUGH.y, WATER_FOAM_ROUGH.x, surface.foam_thin);
-    let roughness = mix(surface.roughness, foam_roughness, surface.foam);
-    let alpha = roughness * roughness;
+    let roughness = mix(surface.roughness, vec2<f32>(foam_roughness), surface.foam);
+    let alphas = roughness * roughness;
     let n_v = max(dot(normal, view), 1.0e-4);
     let f0 = vec3<f32>(0.02);
-    let reflectance = saturate(luminance(environment_brdf(f0, roughness, n_v)));
+    // The waves mask what it mirrors by their slopes along the view, the
+    // way the eye looks across them.
+    let reflectance = saturate(luminance(environment_brdf(f0, roughness.x, n_v)));
     let sun = lighting.sun.xyz;
     var sunlight = vec3<f32>(0.0);
     if sun.y > 0.0 {
         sunlight = lighting.sun_color.rgb
             * sun_visibility(world, up, surface.world_dx, surface.world_dy, distance, false);
     }
-    // The sun's disc mirrored: its lobe widened by the half vectors the
-    // disc's rays span (Karis), which also keeps calm water's glint from
-    // flickering in single pixels. They span half the disc's angular radius
-    // (`lighting.highlights.y`, its sine; none for a point sun) within the
-    // plane of incidence and that over their cosine with the view out of it,
-    // as many as a round lobe holds whose radius is the two's geometric
-    // mean, so a mirror shows the disc as bright as it is however grazing
-    // the view; the waves' spread of normals adds to it as a variance. A
-    // rough surface draws a low sun out into a long path of glitter toward
-    // the eye.
+    // The sun's disc mirrored, its lobe the waves' ellipse of slopes along
+    // the view and across it (`water_distribution`, `water_visibility`),
+    // widened by the half vectors the disc's rays span (Karis), which also
+    // keeps calm water's glint from flickering in single pixels. They span
+    // half the disc's angular radius (`lighting.highlights.y`, its sine; none
+    // for a point sun) within the plane of incidence, along the view, and
+    // that over their cosine with the view out of it, across the view, each
+    // way's spread adding to the waves' as a variance, so a mirror shows the
+    // disc as bright as it is however grazing the view. A rough surface draws
+    // a low sun out into a long path of glitter toward the eye.
     var glint = vec3<f32>(0.0);
     let n_l = dot(normal, sun);
     if n_l > 0.0 && any(sunlight > vec3<f32>(0.0)) {
         let half_vector = normalize(view + sun);
         let v_h = max(dot(view, half_vector), 1.0e-4);
         let disc = 0.5 * lighting.highlights.y;
-        let widened = sqrt(alpha * alpha + disc * disc / v_h);
+        let widened = sqrt(alphas * alphas + vec2<f32>(disc * disc, disc * disc / (v_h * v_h)));
+        let along = water_view_tangent(normal, view);
+        let across = cross(normal, along);
+        let tangents = mat2x3<f32>(along, across);
         glint = fresnel(f0, v_h) * sunlight
-            * (distribution(max(dot(normal, half_vector), 0.0), widened)
-                * visibility(n_v, n_l, widened) * n_l * lighting.sun_color.w);
+            * (water_distribution(dot(along, half_vector), dot(across, half_vector),
+                max(dot(normal, half_vector), 0.0), widened)
+                * water_visibility(n_v, n_l, view * tangents, sun * tangents, widened) * n_l
+                * lighting.sun_color.w);
     }
     // Its crests lit through (Sea of Thieves' peak mask, Ang 2018, from the
     // body's own coefficients): at a crest the eye looks through a wall of
@@ -996,8 +1053,11 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     }
     let foam = WATER_FOAM_ALBEDO * (1.0 - surface.foam_shade)
         * (mix(around, sky, WATER_FOAM_SKY) + sunlight * max(foam_n_l, 0.0)) + foam_glint;
-    // The mirrored sky and scene come through `finish`; the sun's light is
-    // the water's own.
+    // The mirrored sky and scene come through `finish`, rough as the waves
+    // are along the view and smoother by what they lack of it across: its
+    // screen-space reflections replace the share of the water's light its
+    // mirrored sky makes up, so its glints, its lit crests and its foam keep
+    // theirs. The sun's light is the water's own.
     var point: SurfacePoint;
     point.albedo = surface.scatter;
     point.opacity = 1.0;
@@ -1005,8 +1065,9 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     point.emissive = vec3<f32>(0.0);
     point.occlusion = 1.0;
     point.bounce = vec3<f32>(0.0);
-    point.roughness = roughness;
-    point.alpha = alpha;
+    point.roughness = roughness.x;
+    point.alpha = alphas.x;
+    point.smoother_across = roughness.x - roughness.y;
     point.f0 = f0;
     point.diffuse_color = vec3<f32>(0.0);
     point.geometric = up;
@@ -1023,11 +1084,6 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     var lit: WaterLit;
     lit.shaded = finish(point, mix(body + glint, foam, surface.foam));
     lit.reflectance = reflectance;
-    // Screen-space reflections stand in for what it mirrors of what lies
-    // around, at most that share of its light (`ambient`: its body takes no
-    // diffuse light of the sky), so its glints, its lit crests and its foam
-    // keep theirs where they outshine what it mirrors.
-    lit.shaded.reflect = min(lit.shaded.reflect, lit.shaded.ambient);
     let sunlit = luminance(sunlight) * max(sun.y, 0.0);
     lit.sunny = sunlit / max(sunlit + luminance(sky), 1.0e-6);
     return lit;
@@ -1195,16 +1251,19 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let waves = water_flow_waves(world.xz, world_dx.xz, world_dy.xz, at, gains, eddy, froude,
         flowing, anchored, time, stagger);
     // They ride its surface, tilting as it falls; and the slopes they hide
-    // within a pixel roughen it, so where they run rough, it glints rather
-    // than mirroring the sky (Bruneton, Neyret and Holzschuch), as does how
-    // far the normal of those it draws turns across the pixel
-    // (`water_turning`), so their glints widen instead of sparkling, and as
-    // do the wind's waves finer than its tiles hold, which light wind raises
-    // none of (`water_roughness`).
+    // within a pixel roughen it, along the view and across it as their
+    // ellipse projects into the view, so where they run rough, it glints
+    // rather than mirroring the sky, its glints and what it mirrors drawn out
+    // along the view (Bruneton, Neyret and Holzschuch), as does how far the
+    // normal of those it draws turns across the pixel (`water_turning`), so
+    // their glints widen instead of sparkling, and as do the wind's waves
+    // finer than its tiles hold, which light wind raises none of
+    // (`water_roughness`).
     let slopes = waves.slopes - at.slope;
     let normal = normalize(vec3<f32>(-slopes.x, 1.0, -slopes.y));
-    let roughness = water_roughness(waves.hidden + water_turning(normal), sea);
     let view = stable_normalize(-point);
+    let roughness = water_roughness(waves.hidden + water_turning(slopes), sea,
+        water_heading(view));
     // Under the sea, the sea's water stands instead: its level
     // (`water.ocean.x`) is held relative to the eye.
     if water.ocean.y > 0.5 && world.y < eye_world(vec3<f32>(0.0, water.ocean.x, 0.0)).y {
@@ -1267,8 +1326,9 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // lingering where they broke (`water_wind_whitecaps`), and where the
     // waves the tiles do not hold, their slopes' variance less the tiles'
     // (their gains' squares), break by their statistics.
-    let foam_folding = water_folding(max(waves.spread - dot(gains, gains), 0.0), waves.hidden,
-        waves.crest, water_wind_whitecaps(world.xz, world_dx.xz, world_dy.xz, gains));
+    let foam_folding = water_folding(max(waves.spread - dot(gains, gains), 0.0),
+        waves.hidden.x + waves.hidden.y, waves.crest,
+        water_wind_whitecaps(world.xz, world_dx.xz, world_dy.xz, gains));
     let foam_contact = water_contact(mesh_standing, mesh_change, footprint, max(speed, eddy));
     let foam_fresh = 1.0 - (1.0 - born) * (1.0 - foam_folding) * (1.0 - foam_contact);
     let foam_carried = saturate(at.words.foam / WATER_FOAM_MOST);
@@ -1318,6 +1378,19 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
         * (1.0 - atmospheric_cover(camera.position.xyz, world)));
     result.fade = fade;
     result.wind = wind;
+    return water_mirroring(result);
+}
+
+// Water's shade `shade` with the shares screen-space reflections take of
+// what its pixel shows (`finish`'s of its own light): what it mirrors of
+// its sky makes up the less of all it shows the more of what lies under it
+// shows through, and both what it mirrors and the scene it mirrors in its
+// place go as far as it covers the pixel, fading with its shores.
+fn water_mirroring(shade: WaterShade) -> WaterShade {
+    var result = shade;
+    let own = luminance(shade.shaded.color);
+    result.shaded.mirrored *= shade.fade * own / max(own + luminance(shade.behind), 1.0e-6);
+    result.shaded.reflect *= shade.fade;
     return result;
 }
 

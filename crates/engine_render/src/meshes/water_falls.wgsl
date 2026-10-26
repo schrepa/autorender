@@ -409,6 +409,10 @@ fn shade_fall(input: FallOutput) -> FallShade {
     let shown = near_cover + far_cover * (1.0 - near_cover) * FALL_FAR_SHADE;
     shade.shaded.color *= shown / max(cover, 1.0e-4);
     shade.coverage = coverage;
+    // Screen-space reflections take their shares of what the pixel shows as
+    // far as the sheet covers it.
+    shade.shaded.mirrored *= coverage;
+    shade.shaded.reflect *= coverage;
     if coverage < 0.01 {
         discard;
     }

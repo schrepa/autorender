@@ -32,7 +32,10 @@
 //! emissive surfaces, sun glints and the sun itself: emission and highlights
 //! usually exceed its default threshold, which applies to brightness before
 //! tone mapping; sunlit walls do not. Screen-space reflections fall
-//! back to the sky where their rays leave the screen. Refraction bends the
+//! back to the sky where their rays leave the screen; where they meet the
+//! scene, it takes the place of the sky a surface mirrors, drawn out into
+//! streaks along the view where the view grazes the surface, as its
+//! slopes spread the mirrored rays. Refraction bends the
 //! opaque scene seen through transmissive materials along their index of
 //! refraction and thickness and blurs it by their roughness; frames without
 //! glass never pay for it.
@@ -282,7 +285,8 @@ settings! {
     pub struct Reflections {
         /// How strongly glossy surfaces reflect the screen; 0 turns them off.
         pub intensity: f32 = 1.0 => range(0.0, 1.0),
-        /// Surfaces rougher than this reflect only the sky: their
+        /// Surfaces rougher than this across the view, the way their
+        /// mirrored lobe stays narrowest, reflect only the sky: their
         /// reflections of the screen fade out over its last fifth.
         pub max_roughness: f32 = 0.75 => range(0.05, 1.0),
         /// World distance reflection rays travel.

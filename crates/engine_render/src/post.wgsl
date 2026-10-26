@@ -39,10 +39,11 @@
 // Ambient occlusion before its filter: visibility, and the distance from
 // the eye (0 where only sky is).
 @group(0) @binding(12) var raw_occlusion: texture_2d<f32>;
-// Reflections: the surface the opaque pass shaded (its
-// shading normal, octahedral in [0, 1], and roughness), and the scene
+// Reflections: the surface the opaque pass shaded (`surface_texel`: its
+// shading normal, its roughness along the view and across it, and the
+// share of its light its mirrored environment makes up), and the scene
 // blurred down half-resolution levels for rough surfaces.
-@group(0) @binding(13) var surface_texture: texture_2d<f32>;
+@group(0) @binding(13) var surface_texture: texture_2d<u32>;
 @group(0) @binding(14) var scene_levels: texture_2d<f32>;
 // The bloom level a pass halving both chains reads beside the scene level
 // in `source`.
@@ -438,10 +439,18 @@ const REFLECTION_THICKNESS_SHARE: f32 = 0.05;
 // visible surface stands in for it through this much more depth (a solid
 // object's), fading over it.
 const REFLECTION_SOLID: f32 = 1.0;
-// A roughness lobe's half-width in radians per GGX alpha: the Phong lobe
-// matching it narrows to 0.244 of its peak there (as in cone-traced
-// reflections).
+// A roughness lobe's half-width in radians per GGX alpha within the plane of
+// incidence, the Phong lobe matching it narrowing to REFLECTION_LOBE_EDGE of
+// its peak there (as in cone-traced reflections); across that plane, that
+// times the cosine of the view with the normal, as slopes across the view
+// turn the mirrored ray out of the plane by that much less than slopes
+// along it turn it within (Bruneton, Neyret and Holzschuch 2010).
 const REFLECTION_CONE: f32 = 1.19;
+const REFLECTION_LOBE_EDGE: f32 = 0.244;
+// The most taps a lobe is read with along its long axis on screen: as a
+// texture unit's anisotropic filter takes at most as many (8x) along a
+// footprint's longer side, past which they read a coarser level.
+const REFLECTION_TAPS: u32 = 8u;
 // The least cosine with the view a reflecting surface's shading normal
 // keeps where the surface itself faces the eye at least as squarely: bumps
 // turned past the view bend back to it, so their rays leave the surface.
@@ -528,6 +537,86 @@ fn world_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     return world.xyz / world.w;
 }
 
+// The surface the opaque pass shaded at a pixel (`surface_texel`'s words):
+// its shading normal, its roughness along the view and across it, and the
+// share of its light its mirrored environment makes up.
+struct Mirroring {
+    normal: vec3<f32>,
+    roughness: vec2<f32>,
+    mirrored: f32,
+}
+
+fn mirroring_at(pixel: vec2<i32>) -> Mirroring {
+    let words = textureLoad(surface_texture, pixel, 0);
+    var mirroring: Mirroring;
+    mirroring.normal = unfolded_normal(vec2<f32>(words.xy) / 65535.0 * 2.0 - 1.0);
+    mirroring.roughness = unpack4x8unorm(words.z).xy;
+    mirroring.mirrored = f32(words.w) / 65535.0;
+    return mirroring;
+}
+
+// The scene at `at` (render pixels, continuous) as a lobe whose blur spans
+// 2^`level` pixels reads it: mirrors the scene itself, wider lobes the
+// scene's blurred half-resolution levels, blending over the first octave.
+fn blurred_scene(at: vec2<f32>, level: f32) -> vec3<f32> {
+    if level <= 0.0 {
+        return textureSampleLevel(scene, linear, drawn_uv(at), 0.0).rgb;
+    }
+    let blurred = textureSampleLevel(scene_levels, linear,
+        half_uv(at * post.size.zw, textureDimensions(scene_levels), post),
+        max(level - 1.0, 0.0)).rgb;
+    if level >= 1.0 {
+        return blurred;
+    }
+    return mix(textureSampleLevel(scene, linear, drawn_uv(at), 0.0).rgb, blurred, level);
+}
+
+// The scene's light over a reflection's lobe where it lands about `hit`
+// (render pixels, continuous), its half-lengths there `lengths` (pixels):
+// along the ray's way on screen `way`, the plane of incidence seen edge on
+// from the eye it passes through, and across it. Read at taps along the
+// long axis, as many as it spans the short one's width (a pixel at least)
+// over, up to REFLECTION_TAPS, each at the level whose blur spans the lobe
+// across or the taps' spacing, whichever is wider, and weighted by the
+// lobe's Gaussian profile, REFLECTION_LOBE_EDGE of its peak at the
+// half-length. A tap counts only where what it shows stands above the
+// plane the reflecting surface at `p` lies in (`plane`, its normal: none
+// counts every tap) by more than a pixel spans there: the lobe's rays leave
+// that plane, so they never meet what lies on it, the reflecting surface
+// itself, or under it. Where no tap counts, the hit's own stands in.
+fn lobe_light(hit: vec2<f32>, way: vec2<f32>, lengths: vec2<f32>, p: vec3<f32>,
+        plane: vec3<f32>) -> vec3<f32> {
+    let last = vec2<i32>(post.size.xy) - 1;
+    let squared = dot(way, way);
+    let along = select(vec2<f32>(0.0, 1.0), way * inverseSqrt(max(squared, 1.0e-30)),
+        squared > 1.0e-12);
+    let count = u32(clamp(ceil(lengths.x / max(lengths.y, 0.5)), 1.0, f32(REFLECTION_TAPS)));
+    let spacing = 2.0 * lengths.x / f32(count);
+    let level = log2(max(max(2.0 * lengths.y, spacing), 1.0));
+    if count == 1u {
+        return blurred_scene(hit, level);
+    }
+    let no_plane = all(plane == vec3<f32>(0.0));
+    var sum = vec3<f32>(0.0);
+    var total = 0.0;
+    for (var tap = 0u; tap < count; tap++) {
+        let offset = f32(2u * tap + 1u) / f32(count) - 1.0;
+        let at = hit + along * (offset * lengths.x);
+        let seen = world_at(clamp(vec2<i32>(floor(at)), vec2<i32>(0), last));
+        let above = dot(seen.xyz - p, plane) > distance(seen.xyz, post.eye.xyz) / post.eye.w;
+        if seen.w != 0.0 && !above && !no_plane {
+            continue;
+        }
+        let weight = pow(REFLECTION_LOBE_EDGE, offset * offset);
+        sum += blurred_scene(at, level) * weight;
+        total += weight;
+    }
+    if total <= 0.0 {
+        return blurred_scene(hit, level);
+    }
+    return sum / total;
+}
+
 // Screen-space reflections at half resolution: from each
 // reflective pixel (the glow target's second channel), a ray along the
 // mirror direction of its depth normal crosses the screen as a straight
@@ -539,7 +628,13 @@ fn world_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
 // pixel the ray passes behind is its hit, reflected where the ray passes
 // close to that surface (or, heading toward the camera, within a solid
 // object's depth of it), fading toward the screen edges, the ray's end and
-// the surface's thickness; misses weigh nothing.
+// the surface's thickness; misses weigh nothing. What it reflects is the
+// scene over the lobe the surface's roughness spreads the ray into
+// (`lobe_light`): long along the ray's way on screen, short across it, so
+// grazing views draw it out into streaks. It writes, both premultiplied by
+// how surely the ray met the scene, the scene's light as the surface's
+// reflectivity mirrors it, and the share of the surface's own light its
+// mirrored environment made up, which that light replaces (`reflected`).
 @fragment
 fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let last = vec2<i32>(post.size.xy) - 1;
@@ -556,14 +651,14 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     // The normal the lighting shaded (with normal maps and waves) and the
     // roughness, bent back toward the eye where bumps turn it past the view
     // so the ray leaves the surface: to REFLECTION_FACING or, where the
-    // surface the depth buffer holds faces the eye less squarely, as
-    // squarely as it does, so surfaces seen grazing keep their own mirror
-    // image.
-    let shading = textureLoad(surface_texture, pixel, 0);
-    let roughness = shading.z;
+    // surface the depth buffer holds (`plane`, its normal) faces the eye less
+    // squarely, as squarely as it does, so surfaces seen grazing keep their
+    // own mirror image.
+    let mirroring = mirroring_at(pixel);
     let to_eye = normalize(post.eye.xyz - p);
-    let facing = min(REFLECTION_FACING, max(dot(depth_normal(pixel, p), to_eye), 0.0));
-    var normal = unfolded_normal(shading.xy * 2.0 - 1.0);
+    let plane = depth_normal(pixel, p);
+    let facing = min(REFLECTION_FACING, max(dot(plane, to_eye), 0.0));
+    var normal = mirroring.normal;
     normal = normalize(normal + max(facing - dot(normal, to_eye), 0.0) * to_eye);
     let direction = reflect(-to_eye, normal);
     // The ray's segment: `distance` long, ending nine tenths of the way to
@@ -664,27 +759,24 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let fraction = min(travelled / max(post.reflections.x, 1.0e-6), 1.0);
     let fade = saturate(edge / REFLECTION_EDGE) * saturate((1.0 - fraction) / REFLECTION_EDGE)
         * confidence;
-    // The light reflected over the roughness lobe: the cone's width where it
-    // lands, in pixels, picks the blurred scene level read, mirrors reading
-    // the scene itself.
-    let width = 2.0 * travelled * REFLECTION_CONE * roughness * roughness * post.eye.w
-        / max(distance(ray_point, post.eye.xyz), 1.0e-4);
-    let level = log2(max(width, 1.0));
-    var color = textureSampleLevel(scene, linear, drawn_uv(point.xy), 0.0).rgb;
-    if level > 0.0 {
-        let blurred = textureSampleLevel(scene_levels, linear,
-            half_uv(uv, textureDimensions(scene_levels), post), max(level - 1.0, 0.0)).rgb;
-        color = mix(color, blurred, saturate(level));
-    }
-    return vec4<f32>(color, reflectivity * fade);
+    // The light reflected over the roughness lobe: its half-lengths where it
+    // lands, in pixels, along the plane of incidence and across it
+    // (REFLECTION_CONE), the cosine of the view with the normal narrowing it
+    // across, so grazing views draw it out along the ray's way.
+    let pixels = travelled * post.eye.w / max(distance(ray_point, post.eye.xyz), 1.0e-4);
+    let alphas = mirroring.roughness * mirroring.roughness;
+    let lengths = REFLECTION_CONE * pixels
+        * vec2<f32>(alphas.x, alphas.y * max(dot(normal, to_eye), 0.0));
+    let color = lobe_light(point.xy, ray.xy, lengths, p, plane);
+    return vec4<f32>(color * (reflectivity * fade), mirroring.mirrored * fade);
 }
 
 // The traced reflections over each half-resolution texel's 3x3 neighbors
-// on the same surface (depth within 2% of its own), weighted by a tent and
-// by each sample's reflection weight: neighboring rays' hits and misses
-// blend instead of speckling. With temporal antialiasing the resolve
-// reflects each render pixel before blending it with the history, which
-// then also gathers each block's four pixels over frames.
+// on the same surface (depth within 2% of its own), weighted by a tent:
+// premultiplied by how surely each ray met the scene, neighboring rays'
+// hits and misses blend instead of speckling. With temporal antialiasing
+// the resolve reflects each render pixel before blending it with the
+// history, which then also gathers each block's four pixels over frames.
 @fragment
 fn fs_reflections_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let texel = vec2<i32>(position.xy);
@@ -704,15 +796,11 @@ fn fs_reflections_filter(@builtin(position) position: vec4<f32>) -> @location(0)
             // relative differences of the two agree.
             let same = abs(neighbor_depth - depth) <= 0.02 * max(depth, neighbor_depth);
             let weight = f32((2 - abs(x)) * (2 - abs(y))) * select(0.0, 1.0, same);
-            let sample = textureLoad(traced, neighbor, 0);
-            sum += vec4<f32>(sample.rgb * sample.a, sample.a) * weight;
+            sum += textureLoad(traced, neighbor, 0) * weight;
             total += weight;
         }
     }
-    if !(sum.a > 0.0) {
-        return vec4<f32>(0.0);
-    }
-    return vec4<f32>(sum.rgb / sum.a, sum.a / total);
+    return sum / total;
 }
 
 // A pixel's glowing light: its color times its decoded glow.

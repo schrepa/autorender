@@ -137,12 +137,16 @@ fn haze_at(hazed: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2<i32>,
     return effect_at(hazed, depth, pixel, settings).rgb;
 }
 
-// The scene reflected at `uv` across the view replacing the share of `color`
-// its reflectivity and confidence give it; misses keep the sky reflection
-// already in `color`. The composite and the resolve apply it to the shaded
-// scene before the effects that add light (`effect_light`); the resolve
-// reflects each render pixel's color before blending it with the history,
-// which then gathers the pixels each 2x2 block traces in turn.
+// The scene reflected at `uv` across the view: the reflections' texel,
+// premultiplied by how surely their rays met the scene, takes away the
+// share of `color` its mirrored environment made up (a) and adds the
+// scene's light the surface mirrors in its place (rgb), both by the
+// reflections' strength, within the graded range the scene holds; misses
+// keep the environment's reflection already in `color`. The composite and
+// the resolve apply it to the shaded scene before the effects that add
+// light (`effect_light`); the resolve reflects each render pixel's color
+// before blending it with the history, which then gathers the pixels each
+// 2x2 block traces in turn.
 fn reflected(color: vec3<f32>, reflections: texture_2d<f32>, linear: sampler,
         uv: vec2<f32>, settings: Post) -> vec3<f32> {
     if settings.reflections.z == 0.0 {
@@ -150,7 +154,9 @@ fn reflected(color: vec3<f32>, reflections: texture_2d<f32>, linear: sampler,
     }
     let reflection = textureSampleLevel(reflections, linear,
         half_uv(uv, textureDimensions(reflections), settings), 0.0);
-    return mix(color, reflection.rgb, saturate(reflection.a * settings.reflections.y));
+    let strength = settings.reflections.y;
+    return min(color * (1.0 - saturate(reflection.a * strength)) + reflection.rgb * strength,
+        vec3<f32>(1.0));
 }
 
 // `color` with the haze's exposed light `light` laid over it: light added

@@ -46,6 +46,9 @@ const WATER_FLOW_PHASE: f32 = 40.0;
 // the variance along the flow, over two squared, and half across it),
 // 5π² ln 2 / 3.
 const WATER_EDDY_SLOPES: f32 = 11.401814;
+// The share of those slopes' variance that lies along the flow: of the 5/8
+// drawing them out keeps, the 1/8 along it, against the 1/2 across it.
+const WATER_EDDY_ALONG: f32 = 0.2;
 // The steepest slope a wave stands at before it breaks (Stokes's limit, a
 // height a seventh of its length: a sine's slopes of π/7 at most, 0.32 in
 // root mean square).
@@ -75,16 +78,16 @@ const WATER_TRAIN_REACH: f32 = 6.0;
 const WATER_UNDULAR: vec2<f32> = vec2<f32>(5.0, 0.2);
 
 // Water's waves at a point as a pixel shows them: every source's slopes it
-// resolves, summed (meters a meter); the variance of the slopes it hides;
-// the place's whole slope variance, resolved and hidden, a Gaussian
-// surface's share steeper than a slope s being e^(−s²/spread); how near
-// the tops of the resolved waves' crests the point stands (0 to 1), their
-// summed height over WATER_CREST_HEIGHTS roots of their summed heights'
-// variance; and the place's whole heights' variance, resolved and hidden
-// (square meters), as `spread` sums their slopes'.
+// resolves, summed (meters a meter); the covariance of the slopes it hides
+// (`water_spread`); the place's whole slope variance, resolved and hidden,
+// a Gaussian surface's share steeper than a slope s being e^(−s²/spread);
+// how near the tops of the resolved waves' crests the point stands (0 to
+// 1), their summed height over WATER_CREST_HEIGHTS roots of their summed
+// heights' variance; and the place's whole heights' variance, resolved and
+// hidden (square meters), as `spread` sums their slopes'.
 struct WaterWaves {
     slopes: vec2<f32>,
-    hidden: f32,
+    hidden: vec3<f32>,
     spread: f32,
     crest: f32,
     heights: f32,
@@ -210,7 +213,8 @@ fn water_stirred(eddy: f32, depth: f32) -> vec2<f32> {
 // octaves of its lives (`water_bands`, `water_set`), faded as the flow
 // strains them and blended keeping their spread, Σwᵢxᵢ/√Σwᵢ² of waves whose
 // mean is none (Yu, Neyret, Bruneton and Holzschuch). What strain fades of
-// their slopes hides in the variance, roughening the water instead.
+// their slopes hides in the covariance along them, roughening the water
+// instead.
 fn water_carried_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flow: vec2<f32>,
         shear: f32, life: f32, time: f32, stagger: f32, gains: vec4<f32>) -> WaterRead {
     let bands = water_bands(life);
@@ -233,8 +237,8 @@ fn water_carried_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flow: vec2<f3
             let read = water_wind_waves(at, dx, dy, gains);
             let faded = weight * exp(-WATER_STRAIN_FADE * abs(carried.seconds) * shear);
             sum.slopes += read.slopes * faded;
-            sum.hidden += read.hidden * weight * weight
-                + (weight * weight - faded * faded) * dot(read.slopes, read.slopes);
+            sum.hidden += read.hidden * (weight * weight)
+                + (weight * weight - faded * faded) * water_spread(read.slopes);
             sum.height += read.height * faded;
             sum.heights += read.heights * faded * faded;
             weights += weight * weight;
@@ -253,15 +257,15 @@ fn water_carried_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flow: vec2<f3
 // its tallest there, its features `width` meters across, as a pixel
 // spanning `pixel` meters shows it: whole where they span the steady size
 // (STEADY_PIXELS pixels), averaging out as they narrow below that, what the
-// pixel averages of their slopes hiding in their variance; its heights'
-// variance a sine's as tall.
+// pixel averages of their slopes hiding in their covariance, along them;
+// its heights' variance a sine's as tall.
 fn water_resolved(sum: WaterStanding, gradient: vec2<f32>, height: f32, amplitude: f32,
         width: f32, pixel: f32) -> WaterStanding {
     let kept = saturate(width / (STEADY_PIXELS * max(pixel, 1.0e-6)));
     let steep = dot(gradient, gradient);
     var added = sum;
     added.drawn.slopes += gradient * kept;
-    added.drawn.hidden += steep * (1.0 - kept * kept);
+    added.drawn.hidden += water_spread(gradient) * (1.0 - kept * kept);
     added.drawn.height += height * kept;
     added.drawn.heights += 0.5 * amplitude * amplitude * kept * kept;
     added.spread += steep;
@@ -385,11 +389,15 @@ fn water_flow_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, at: WaterAt,
     var read = water_waves_mixed(still, running, flowing);
     // The wind's slopes' variance is its calmed gains' squares however the
     // water moves; the boils' and the eddies' show as far as the blend shows
-    // running water, the eddies' all hidden.
+    // running water, the eddies' all hidden, WATER_EDDY_ALONG of theirs
+    // along the flow and the rest across it.
     let running_share = flowing * flowing
         / ((1.0 - flowing) * (1.0 - flowing) + flowing * flowing);
     let stirred = water_stirred(eddy, depth) * running_share;
-    read.hidden += stirred.x;
+    let speed = length(flow);
+    let heading = select(vec2<f32>(1.0, 0.0), flow / speed, speed > 0.0);
+    read.hidden += stirred.x * (WATER_EDDY_ALONG * water_spread(heading)
+        + (1.0 - WATER_EDDY_ALONG) * water_spread(vec2<f32>(-heading.y, heading.x)));
     var spread = dot(calmed, calmed) + boils.spread * running_share + stirred.x;
     // Their heights' alike: each wind tile's root mean square height at its
     // calmed gain, and the boils' and the eddies' as far as running water

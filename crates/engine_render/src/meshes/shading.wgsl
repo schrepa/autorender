@@ -26,8 +26,13 @@ struct SurfacePoint {
     // glTF emission, and how much indirect light reaches the point.
     emissive: vec3<f32>,
     occlusion: f32,
+    // Roughness along the view (and its square, GGX's alpha), and how much
+    // smoother than that the point is across it: water's, as its ellipse
+    // of slopes projects into the view (`water_light`); zero elsewhere,
+    // whose slopes spread alike every way.
     roughness: f32,
     alpha: f32,
+    smoother_across: f32,
     f0: vec3<f32>,
     diffuse_color: vec3<f32>,
     normal: vec3<f32>,
@@ -66,16 +71,20 @@ struct SurfacePoint {
 
 // Shaded light of a surface: graded color (and its linear light before the
 // grade, which reflection probes capture), the ambient share of its light
-// (for ambient occlusion), its glow weight, its reflectivity, shading normal
-// and roughness for screen-space reflections, and its coverage.
+// (for ambient occlusion), its glow weight; for screen-space reflections its
+// reflectivity, the share of its light its mirrored environment makes up,
+// which they replace, its shading normal and its roughness along the view
+// and across it; and its coverage.
 struct Shaded {
     color: vec3<f32>,
     linear: vec3<f32>,
     ambient: f32,
     glow: f32,
     reflect: f32,
+    mirrored: f32,
     normal: vec3<f32>,
     roughness: f32,
+    across: f32,
     opacity: f32,
 }
 
@@ -876,7 +885,8 @@ fn sun_highlight(point: SurfacePoint, sun: vec3<f32>, n_l: f32) -> vec3<f32> {
 
 // The share of the roughness past which surfaces reflect only the sky
 // (`lighting.effects.z`) over which, below it, their screen-space
-// reflections fade out, so no edge shows where roughness crosses it.
+// reflections fade out, so no edge shows where their roughness across the
+// view crosses it.
 const REFLECTION_FADE: f32 = 0.2;
 
 // Lit, fogged and graded color of `point` with `local` light added.
@@ -969,18 +979,25 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     shaded.opacity = point.opacity;
     shaded.normal = normal;
     shaded.roughness = point.roughness;
+    shaded.across = point.roughness - point.smoother_across;
     shaded.linear = fogged;
     shaded.color = grade(fogged);
     shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered)
         * foliage_occlusion(point);
     shaded.glow = glow_weight(fogged);
-    // Reflectivity for screen-space reflections: the environment BRDF's
-    // share, fading out over the last REFLECTION_FADE of the roughness limit
-    // and through fog.
+    // For screen-space reflections: the environment BRDF's share, by which
+    // the scene they show is mirrored, and the share of the light the
+    // mirrored environment makes up, which that scene replaces; both fading
+    // out over the last REFLECTION_FADE of the roughness limit by the
+    // roughness across the view, the narrow way of a mirrored lobe, and
+    // through fog.
     if lighting.effects.w != 0.0 {
-        let smooth_enough = saturate((1.0 - point.roughness / lighting.effects.z)
+        let smooth_enough = saturate((1.0 - shaded.across / lighting.effects.z)
             / REFLECTION_FADE);
-        shaded.reflect = saturate(luminance(brdf) * specular) * smooth_enough * (1.0 - covered);
+        let faded = smooth_enough * (1.0 - covered);
+        shaded.reflect = saturate(luminance(brdf) * specular) * faded;
+        shaded.mirrored = saturate(luminance(reflection * (point.occlusion * covered_sky))
+            / max(luminance(lit), 1.0e-6)) * faded;
     }
     return shaded;
 }
@@ -1314,10 +1331,16 @@ fn octahedral_coordinates(normal: vec3<f32>) -> vec2<f32> {
     return select(n.xy, (vec2<f32>(1.0) - abs(n.yx)) * sign, n.z < 0.0);
 }
 
-// The surface target's texel: the shading normal, octahedral in [0, 1], and
-// the roughness.
-fn surface_texel(shaded: Shaded) -> vec4<f32> {
-    return vec4<f32>(octahedral_coordinates(shaded.normal) * 0.5 + 0.5, shaded.roughness, 1.0);
+// The surface target's texel (`post::SURFACE_FORMAT`, four 16-bit words):
+// the shading normal, octahedral in [0, 1], a word each coordinate; its
+// roughness along the view and across it, a byte each; and the share of
+// its light its mirrored environment makes up, which screen-space
+// reflections replace.
+fn surface_texel(shaded: Shaded) -> vec4<u32> {
+    let normal = pack2x16unorm(octahedral_coordinates(shaded.normal) * 0.5 + 0.5);
+    let roughness = pack4x8unorm(vec4<f32>(shaded.roughness, shaded.across, 0.0, 0.0));
+    return vec4<u32>(normal & 0xffffu, normal >> 16u, roughness,
+        pack2x16unorm(vec2<f32>(shaded.mirrored, 0.0)));
 }
 
 // `pixel` is the fragment's.
