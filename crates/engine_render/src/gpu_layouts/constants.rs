@@ -279,8 +279,8 @@ gpu_consts! {
     /// The narrowest and the widest span (meters across a water body) a
     /// block's packed span tells apart, between which the span's code
     /// steps and its debug view ramps.
-    pub(crate) const WATER_SPAN_LEAST: f32 = engine_core::terrain_data::WATER_SPAN_LEAST => ["WATER_SPAN_LEAST", "DEBUG_SPAN_LEAST" in DEBUG_VIEW_SHADER];
-    pub(crate) const WATER_SPAN_MOST: f32 = engine_core::terrain_data::WATER_SPAN_MOST => ["WATER_SPAN_MOST", "DEBUG_SPAN_MOST" in DEBUG_VIEW_SHADER];
+    pub(crate) const WATER_SPAN_LEAST: f32 = engine_core::terrain_data::WATER_SPAN_LEAST => ["WATER_SPAN_LEAST"];
+    pub(crate) const WATER_SPAN_MOST: f32 = engine_core::terrain_data::WATER_SPAN_MOST => ["WATER_SPAN_MOST"];
     /// Per second of shear a block's packed shear spans.
     pub(crate) const WATER_SHEAR_RANGE: f32 = engine_core::terrain_data::WATER_SHEAR_RANGE => ["WATER_SHEAR_RANGE"];
     /// Meters a step of a block's packed offsets to obstacles spans, and of
@@ -434,11 +434,21 @@ gpu_consts! {
     pub(crate) const DEBUG_VIEW_WATER_SPAN: u32 = 19 => ["DEBUG_VIEW_WATER_SPAN" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_WATER_EDDIES: u32 = 20 => ["DEBUG_VIEW_WATER_EDDIES" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_WATER_ROUGHNESS: u32 = 21 => ["DEBUG_VIEW_WATER_ROUGHNESS" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_WATER_WIND: u32 = 22 => ["DEBUG_VIEW_WATER_WIND" in DEBUG_VIEW_SHADER];
     /// Gravity, and the meters of water under which it lies dry, by which
     /// debug views reckon water's Froude number (`meshes/debug.wgsl`): the
     /// shallow-water scheme's.
     pub(crate) const DEBUG_GRAVITY: f32 = engine_core::terrain_data::hydraulics::GRAVITY => ["DEBUG_GRAVITY" in SHADER];
     pub(crate) const DEBUG_DRY: f32 = engine_core::terrain_data::shallow_water::DRY => ["DEBUG_DRY" in SHADER];
+    /// Steps of a water pixel's span in the debug targets: a byte's codes
+    /// past none (0), from `WATER_SPAN_LEAST` (1) to `WATER_SPAN_MOST` (255)
+    /// on a logarithmic scale, each about 4% wider than the one before
+    /// (`meshes/debug.wgsl`'s `debug_span_code`).
+    pub(crate) const DEBUG_SPAN_STEPS: f32 = 254.0 => ["DEBUG_SPAN_STEPS"];
+    /// The most the wind blows over water as a share of the free wind's, a
+    /// gust's most: gusts at their strongest (`Wind::gusts` 1) double it.
+    /// A water pixel's byte in the debug targets holds a share of it.
+    pub(crate) const DEBUG_WIND_MOST: f32 = 2.0 => ["DEBUG_WIND_MOST" in SHADER];
     /// What drew a pixel of the debug targets (`meshes/debug.wgsl`): its
     /// kind in the low four bits of its draw's record, its level of detail
     /// in the four above, then flags; the sun's lookup above

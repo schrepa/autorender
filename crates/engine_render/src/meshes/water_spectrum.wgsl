@@ -18,6 +18,9 @@
 // there, gusts and all, over the fetch its water's span gives, cut by its
 // depth (TMA), each tile scaled by the root of the slope variance that sea
 // holds in the tile's band.
+// Terrain upwind shelters the wind over water: behind a crest it slows,
+// recovering downwind (`terrain_shelter`), so valley streams lie calm while
+// open lakes keep their breeze.
 
 // The wind's tiles, the tile of the current's turbulence after them, and
 // every tile (`gpu_layouts::constants::WIND_TILES`, `TURBULENCE_TILE`,
@@ -179,23 +182,24 @@ fn water_wave_span(dx: vec2<f32>, dy: vec2<f32>) -> f32 {
     return max(min(first, second), max(first, second) / WATER_WAVE_ANISOTROPY);
 }
 
-// The wind's speed (meters a second) at world `p` (x and z) at `time`, its
-// gusts included: patches of stronger and calmer wind, WATER_GUST_SIZE
-// meters across and drawn out along it, sweep over the water with it (cat's
-// paws), varying its speed by as much as it gusts either way
-// (`water.wind.z`, `Wind::gusts`), as gusts vary the push placed objects
-// sway by.
-fn water_wind_speed(p: vec2<f32>, time: f32) -> f32 {
+// The wind's speed (meters a second) over water at `world` at `time`, its
+// gusts included and the terrain upwind sheltering it: patches of stronger
+// and calmer wind, WATER_GUST_SIZE meters across and drawn out along it,
+// sweep over the water with it (cat's paws), varying its speed by as much as
+// it gusts either way (`water.wind.z`, `Wind::gusts`), as gusts vary the
+// push placed objects sway by; and behind upwind terrain it slows, gusts and
+// all, recovering downwind (`terrain_shelter`).
+fn water_wind_speed(world: vec3<f32>, time: f32) -> f32 {
     let wind = water.wind.xy;
     let speed = length(wind);
     let heading = select(vec2<f32>(1.0, 0.0), wind / speed, speed > 1.0e-3);
-    let moving = p - wind * time;
+    let moving = world.xz - wind * time;
     let streaked = vec2<f32>(dot(moving, heading) / 2.5,
         dot(moving, vec2<f32>(-heading.y, heading.x))) / WATER_GUST_SIZE;
     let patches = water_noise(streaked).x * 0.65
         + water_noise(streaked * 2.3 + vec2<f32>(5.2, 1.3)).x * 0.35;
     let gusting = smoothstep(0.2, 0.8, patches);
-    return speed * (1.0 + water.wind.z * (2.0 * gusting - 1.0));
+    return speed * (1.0 + water.wind.z * (2.0 * gusting - 1.0)) * terrain_shelter(world, heading);
 }
 
 // For each wind tile, the root of the slope variance its band holds of the
@@ -271,8 +275,9 @@ fn water_wind_bands(speed: f32, fetch: f32, depth: f32, longest: f32) -> vec4<f3
 }
 
 // For each wind tile, the root of the slope variance its band holds where
-// wind of `speed` meters a second blows over `fetch` meters of water
-// `depth` meters deep, every wave the tiles hold counted
+// wind of `speed` meters a second (as it reaches the water, gusting and
+// sheltered by the terrain upwind: `water_wind_speed`) blows over `fetch`
+// meters of water `depth` meters deep, every wave the tiles hold counted
 // (`water_wind_bands`): what the tile's slopes scale by there, 0 where it
 // holds none.
 fn water_wind_gains(speed: f32, fetch: f32, depth: f32) -> vec4<f32> {

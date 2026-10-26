@@ -13,8 +13,8 @@ use crate::gpu_layouts::constants::{
     DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
     DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SEA, DEBUG_KIND_SKY,
     DEBUG_KIND_TERRAIN, DEBUG_KIND_VIRTUAL, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL,
-    DEBUG_PATCH_SHIFT, DEBUG_SHADOWED, DEBUG_SOURCE_SHIFT, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON,
-    DEBUG_SUN_LEVEL,
+    DEBUG_PATCH_SHIFT, DEBUG_SHADOWED, DEBUG_SOURCE_SHIFT, DEBUG_SPAN_STEPS, DEBUG_SUN_BEYOND,
+    DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL, DEBUG_WIND_MOST, WATER_SPAN_LEAST, WATER_SPAN_MOST,
 };
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::max;
@@ -420,28 +420,41 @@ fn water_reach(code: u32) -> Option<WaterReach> {
     .map(WaterReach::from)
 }
 
+/// The meters across a water body a water pixel's span byte `code` names
+/// (`meshes/debug.wgsl`'s `debug_span_code`): none for 0, else its step on a
+/// logarithmic scale from `WATER_SPAN_LEAST` (1) to `WATER_SPAN_MOST`.
+fn water_span(code: u8) -> f32 {
+    if code == 0 {
+        return 0.0;
+    }
+    WATER_SPAN_LEAST
+        * (WATER_SPAN_MOST / WATER_SPAN_LEAST).powf(f32::from(code - 1) / DEBUG_SPAN_STEPS)
+}
+
 /// A water pixel's numbers (`meshes/debug.wgsl`'s `debug_water`): its
-/// draw's `object` word (its depth and speed) and `detail` word (its span
-/// and roughness), then the terrain target's texel in `bytes` (its Froude
-/// number and its eddies', each pair half floats; its turbulence, white
-/// water, carried foam and reach).
+/// draw's `object` word (its depth and speed, half floats) and `detail`
+/// word (its span's code, its roughness and its wind's share of
+/// `DEBUG_WIND_MOST` times the free wind's, a byte each), then the terrain
+/// target's texel in `bytes` (its Froude number and its eddies', half
+/// floats; its turbulence, white water, carried foam and reach).
 fn water_probe((object, detail): (u32, u32), bytes: &[u8]) -> WaterProbe {
     let (froudes, state) = (word(bytes, TERRAIN), word(bytes, TERRAIN + 4));
-    let share = |byte: u32| f32::from(((state >> (byte * 8)) & 0xff) as u8) / 255.0;
+    let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
     let halves = |pair: u32| (half(pair as u16), half((pair >> 16) as u16));
-    let ((depth, speed), (span, roughness)) = (halves(object), halves(detail));
+    let (depth, speed) = halves(object);
     let (froude, eddies) = halves(froudes);
     WaterProbe {
         depth,
         speed,
         froude,
-        turbulence: share(0),
-        white: share(1),
+        turbulence: share(state, 0),
+        white: share(state, 1),
         reach: water_reach(state >> 24),
-        foam: share(2),
-        span,
+        foam: share(state, 2),
+        span: water_span((detail & 0xff) as u8),
         eddies,
-        roughness,
+        roughness: share(detail, 1),
+        wind: share(detail, 2) * DEBUG_WIND_MOST,
     }
 }
 

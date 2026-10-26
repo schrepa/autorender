@@ -41,6 +41,13 @@ const DEBUG_NO_MATERIAL: u32 = 0xffu;
 // shallow-water scheme).
 const DEBUG_GRAVITY: f32 = 9.81;
 const DEBUG_DRY: f32 = 1.0e-4;
+// Steps of a water pixel's span on its logarithmic scale, a byte's codes
+// past none (0), from WATER_SPAN_LEAST (1) to WATER_SPAN_MOST (255); and the
+// most the wind blows over water as a share of the free wind's, a gust's
+// most, which its byte holds a share of
+// (`gpu_layouts::constants::DEBUG_SPAN_STEPS`, `DEBUG_WIND_MOST`).
+const DEBUG_SPAN_STEPS: f32 = 254.0;
+const DEBUG_WIND_MOST: f32 = 2.0;
 // Whether the frame shows one of the water's views of its state
 // (DEBUG_VIEW_WATER_* of `debug_view.wgsl`), which draw tiles' and
 // simulated water wherever it lies; the other views draw it where it covers
@@ -255,18 +262,34 @@ fn fs_debug_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> Deb
     return debug_targets(DEBUG_KIND_COVER, 0u, 0u, cover_surface(input, front));
 }
 
+// The byte of a span of `span` meters across a water body, as a share of
+// its top: none (0) where none is known, else its nearest step on a
+// logarithmic scale from WATER_SPAN_LEAST (1) to WATER_SPAN_MOST
+// (DEBUG_SPAN_STEPS more), each about 4% wider than the one before.
+fn debug_span_code(span: f32) -> f32 {
+    if span <= 0.0 {
+        return 0.0;
+    }
+    let octaves = log2(WATER_SPAN_MOST / WATER_SPAN_LEAST);
+    let steps = clamp(round(log2(span / WATER_SPAN_LEAST) / octaves * DEBUG_SPAN_STEPS), 0.0,
+        DEBUG_SPAN_STEPS);
+    return (steps + 1.0) / (DEBUG_SPAN_STEPS + 1.0);
+}
+
 // Water where its shading covers at least half the pixel, or in the
 // water's views wherever it lies, at the pixel `pixel` as `at` holds it,
 // drawn at the point `mesh` of its mesh over the point `point` of its
 // surface: the tiles', which gives way where water is simulated, or the
 // simulated water's (`simulated`). Its object word holds its depth (meters)
-// and its speed (meters a second), its detail word how far across its water
-// body is (meters) and the roughness its shading gives it, each pair half
-// floats; the third target its Froude number and its eddies' turbulent
-// Froude number (`water_eddy_froude`), half floats, then its turbulence,
-// white water and the foam it carries (a byte each, 0 to 1, the foam a share
-// of WATER_FOAM_MOST) with its reach in the top byte (0 for none, else one
-// more than `engine_terrain::Reach`).
+// and its speed (meters a second), half floats; its detail word four bytes:
+// how far across its water body is (`debug_span_code`), the roughness its
+// shading gives it, the wind's speed over it as its shading reckons it,
+// gusting and sheltered (`water_wind_speed`), as a share of DEBUG_WIND_MOST
+// times the free wind's, and none; the third target its Froude number and
+// its eddies' turbulent Froude number (`water_eddy_froude`), half floats,
+// then its turbulence, white water and the foam it carries (a byte each, 0
+// to 1, the foam a share of WATER_FOAM_MOST) with its reach in the top byte
+// (0 for none, else one more than `engine_terrain::Reach`).
 fn debug_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
         simulated: bool) -> DebugTargets {
     let shade = shade_water(mesh, point, pixel, at, false, simulated);
@@ -278,8 +301,11 @@ fn debug_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let speed = length(at.words.flow);
     let froude = speed / sqrt(DEBUG_GRAVITY * max(depth, DEBUG_DRY));
     let eddies = water_eddy_froude(speed, length(at.slope), depth);
+    // The wind over it as a share of the free wind's, none where none blows.
+    let wind = shade.wind / max(length(water.wind.xy), 1.0e-6);
     var targets = debug_targets(DEBUG_KIND_WATER, pack2x16float(vec2<f32>(depth, speed)),
-        pack2x16float(vec2<f32>(at.words.span, shade.shaded.roughness)), seen);
+        pack4x8unorm(vec4<f32>(debug_span_code(at.words.span), shade.shaded.roughness,
+            wind / DEBUG_WIND_MOST, 0.0)), seen);
     targets.terrain = vec2<u32>(pack2x16float(vec2<f32>(froude, eddies)),
         pack4x8unorm(vec4<f32>(at.words.state.xy, at.words.foam / WATER_FOAM_MOST, 0.0))
             | (min(at.words.reach, 0xffu) << 24u));
