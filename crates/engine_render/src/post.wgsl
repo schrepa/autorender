@@ -397,7 +397,8 @@ const REFLECTION_EDGE: f32 = 0.1;
 const FLOAT_MAX: f32 = 0x1.fffffep+127f;
 // The pixel of each 2x2 block the half-resolution reflection passes trace:
 // the first without temporal antialiasing; with it, another each frame
-// (`post.reflections.w`), so the resolve's history gathers every block.
+// (`post.reflections.w`), and the resolve reflects each render pixel before
+// its blend, so its history gathers each block's four pixels.
 const BLOCK_PIXELS = array<vec2<i32>, 4>(
     vec2<i32>(0, 0), vec2<i32>(1, 1), vec2<i32>(1, 0), vec2<i32>(0, 1),
 );
@@ -625,8 +626,9 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
 // The traced reflections over each half-resolution texel's 3x3 neighbors
 // on the same surface (depth within 2% of its own), weighted by a tent and
 // by each sample's reflection weight: neighboring rays' hits and misses
-// blend instead of speckling. Frames with temporal antialiasing then also
-// gather each block's four pixels over frames.
+// blend instead of speckling. With temporal antialiasing the resolve
+// reflects each render pixel before blending it with the history, which
+// then also gathers each block's four pixels over frames.
 @fragment
 fn fs_reflections_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let texel = vec2<i32>(position.xy);
@@ -820,7 +822,8 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     }
     let effects = screen_effects(occlusion, depth_texture, pixel, post);
     let shaded = texel.rgb * effect_shade(texel.a, effects, post);
-    let color = effect_light(shaded, effects, reflections, bloom, linear, uv, post);
+    let mirrored = reflected(shaded, reflections, linear, uv, post);
+    let color = effect_light(mirrored, effects, bloom, linear, uv, post);
     // The UNORM canvas stores encoded color, dithered when 8-bit writes are.
     var encoded = encode_srgb(color);
     if post.sun_direction.w != 0.0 {
