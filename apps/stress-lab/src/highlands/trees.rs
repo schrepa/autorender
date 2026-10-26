@@ -136,7 +136,7 @@ pub(crate) fn material(atlas: TextureHandle) -> Result<Material, AssetError> {
 
 /// The atlas's texels ([`atlas`]), drawn once: what its texture record
 /// cooks, and what every level's cards are cut to.
-fn texels() -> &'static [u8] {
+pub(crate) fn texels() -> &'static [u8] {
     static TEXELS: OnceLock<Vec<u8>> = OnceLock::new();
     TEXELS.get_or_init(atlas)
 }
@@ -150,10 +150,10 @@ pub(super) const CUTOFF: f32 = 0.5;
 
 /// Bark texture coordinates span this much of the atlas's width: its left
 /// half less a margin, so filtering never reaches the needles.
-const BARK: [f32; 2] = [0.01, 0.49];
+pub(crate) const BARK: [f32; 2] = [0.01, 0.49];
 /// Texture coordinates amid the bark, which covers the atlas there
 /// throughout: those of every vertex of a shadow proxy.
-const BARK_MIDDLE: [f32; 2] = [0.5 * (BARK[0] + BARK[1]), 0.5];
+pub(super) const BARK_MIDDLE: [f32; 2] = [0.5 * (BARK[0] + BARK[1]), 0.5];
 
 /// Where a spray lies in an atlas, as texture coordinates: its horizontal
 /// center and half width, and the heights of its base and its tip.
@@ -166,7 +166,7 @@ pub(super) struct SprayMap {
 }
 
 /// The needle spray in the atlas, its base at the bottom.
-const NEEDLES: SprayMap = SprayMap {
+pub(super) const NEEDLES: SprayMap = SprayMap {
     center: 0.75,
     half: 0.235,
     base: 0.99,
