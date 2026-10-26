@@ -184,7 +184,12 @@ fn shadow_proxy(seed: u32) -> engine::Result<Mesh> {
     let mut builder = Builder::default();
     let top = Vec3::new(0.0, PROXY * shape.height, 0.0);
     let apex = builder.push(top, Vec3::Y, BARK_MIDDLE, [1.0; 3]);
-    let under = builder.push(Vec3::new(0.0, -0.05, 0.0), Vec3::NEG_Y, BARK_MIDDLE, [1.0; 3]);
+    let under = builder.push(
+        Vec3::new(0.0, -0.05, 0.0),
+        Vec3::NEG_Y,
+        BARK_MIDDLE,
+        [1.0; 3],
+    );
     let first = builder.vertices.len() as u32;
     for rise in PROXY_RINGS {
         let (up, out) = math::sin_cos(rise * FRAC_PI_2);
@@ -213,7 +218,9 @@ fn shadow_proxy(seed: u32) -> engine::Result<Mesh> {
         builder
             .indices
             .extend([at(rings - 1, side), apex, at(rings - 1, side + 1)]);
-        builder.indices.extend([at(0, side), at(0, side + 1), under]);
+        builder
+            .indices
+            .extend([at(0, side), at(0, side + 1), under]);
     }
     builder.mesh().map_err(|error| {
         engine::Error::from(error).context(format!("juniper {seed}'s shadow proxy"))

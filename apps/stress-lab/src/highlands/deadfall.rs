@@ -168,8 +168,7 @@ fn log_mesh(seed: u32) -> engine::Result<Mesh> {
         } else {
             0.0
         };
-        let point = size.axis(t)
-            + Vec3::new(splinter, sin * radius * (1.0 - SAG), cos * radius);
+        let point = size.axis(t) + Vec3::new(splinter, sin * radius * (1.0 - SAG), cos * radius);
         (point, out)
     };
     let mut builder = Builder::default();
@@ -333,12 +332,7 @@ fn stump_mesh(seed: u32) -> engine::Result<Mesh> {
     } else {
         size.height * (1.0 - 0.3 * JAGGED)
     };
-    let center = builder.push(
-        Vec3::new(0.0, middle, 0.0),
-        Vec3::Y,
-        BARK_MIDDLE,
-        [0.8; 3],
-    );
+    let center = builder.push(Vec3::new(0.0, middle, 0.0), Vec3::Y, BARK_MIDDLE, [0.8; 3]);
     let first = builder.vertices.len() as u32;
     for side in 0..STUMP_SIDES {
         let angle = TAU * side as f32 / STUMP_SIDES as f32;

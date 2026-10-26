@@ -625,7 +625,11 @@ impl CoverLaw {
             if outer >= reach {
                 break;
             }
-            tiers[count] = (outer, engine_core::math::min(2.0 * outer, reach), 2.0 * scale);
+            tiers[count] = (
+                outer,
+                engine_core::math::min(2.0 * outer, reach),
+                2.0 * scale,
+            );
             count += 1;
         }
         (tiers, count)

@@ -1072,7 +1072,12 @@ impl TerrainWorker {
                     return Err("macro colors of an invalid size or level".into());
                 }
                 let causes = recipe.rules.authored().macro_colors;
-                Running::Macro(Box::new((recipe.layers.clone(), recipe.pyramid, causes, job)))
+                Running::Macro(Box::new((
+                    recipe.layers.clone(),
+                    recipe.pyramid,
+                    causes,
+                    job,
+                )))
             }
             JobKind::Steadied => {
                 let job: SteadiedJob = reader.get().map_err(invalid)?;

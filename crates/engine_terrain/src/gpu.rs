@@ -137,9 +137,8 @@ impl SurfaceData {
         words[header::MATERIALS] = materials;
         words[header::WET_BIOMES] = rules.wet_biomes() as u32;
         let reads = rules.reads();
-        words[header::READS] = u32::from(reads.water)
-            | (u32::from(reads.path) << 1)
-            | (u32::from(reads.erosion) << 2);
+        words[header::READS] =
+            u32::from(reads.water) | (u32::from(reads.path) << 1) | (u32::from(reads.erosion) << 2);
         if let Some(hydrology) = layers.hydrology() {
             words[header::HYDROLOGY] = words.len() as u32;
             write_hydrology(hydrology, &mut words);

@@ -680,8 +680,20 @@ impl Builder {
         let across = Vec3::new(-branch.outward.z, 0.0, branch.outward.x);
         let hanging = branch.direction.cross(across).normalize_or(Vec3::Y);
         let crown = (branch.outward + Vec3::Y * LEAN).normalize_or(Vec3::Y);
-        self.card(&spine, across * (0.45 * branch.length), crown, branch.color, NEEDLES);
-        self.card(&spine, hanging * (0.3 * branch.length), crown, branch.color, NEEDLES);
+        self.card(
+            &spine,
+            across * (0.45 * branch.length),
+            crown,
+            branch.color,
+            NEEDLES,
+        );
+        self.card(
+            &spine,
+            hanging * (0.3 * branch.length),
+            crown,
+            branch.color,
+            NEEDLES,
+        );
     }
 
     /// The leader: two crossed upright cards `length` meters long topping
@@ -755,7 +767,8 @@ impl Builder {
         }
         let peak = self.push(tip, Vec3::Y, bark, [1.0; 3]);
         for side in 0..4 {
-            self.indices.extend([first + side, peak, first + (side + 1) % 4]);
+            self.indices
+                .extend([first + side, peak, first + (side + 1) % 4]);
         }
     }
 

@@ -812,7 +812,11 @@ impl Compiled {
             Self::Gradient(ends) => ramps(out, gradients.map(slope_of), *ends),
             Self::Curvature(ends) => ramps(out, row.curvature.iter().copied(), *ends),
             Self::Facing { toward, ends } => {
-                ramps(out, gradients.map(|gradient| facing(*toward, gradient)), *ends);
+                ramps(
+                    out,
+                    gradients.map(|gradient| facing(*toward, gradient)),
+                    *ends,
+                );
             }
             Self::Worn(ends) => ramps(out, row.erosion.iter().copied().map(worn), *ends),
             Self::Deposit(ends) => ramps(out, row.erosion.iter().copied().map(deposit), *ends),
@@ -1194,7 +1198,10 @@ impl Biomes {
             None => None,
         };
         if let Err(invalid) = self.macro_colors.validate() {
-            return Err(fail(format!("macro_colors.{}", invalid.field), &invalid.rule));
+            return Err(fail(
+                format!("macro_colors.{}", invalid.field),
+                &invalid.rule,
+            ));
         }
         let cost = 1 + biomes
             .iter()

@@ -154,7 +154,9 @@ fn name(value: &Value) -> Option<String> {
         .as_str()
         .filter(|name| {
             !name.is_empty()
-                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         })
         .map(str::to_owned)
 }
@@ -162,11 +164,16 @@ fn name(value: &Value) -> Option<String> {
 /// `value` as a place of a ladder.
 fn place(value: &Value) -> Option<Place> {
     let fields = value.as_object()?;
-    if fields.keys().any(|field| !PLACE_FIELDS.contains(&field.as_str())) {
+    if fields
+        .keys()
+        .any(|field| !PLACE_FIELDS.contains(&field.as_str()))
+    {
         return None;
     }
     let number = |value: &Value| value.as_f64().filter(|number| number.is_finite());
-    let target = value["target"].as_array().filter(|target| target.len() == 2)?;
+    let target = value["target"]
+        .as_array()
+        .filter(|target| target.len() == 2)?;
     Some(Place {
         name: name(&value["name"])?,
         target: [number(&target[0])?, number(&target[1])?],
@@ -178,9 +185,17 @@ fn place(value: &Value) -> Option<Place> {
 fn read_ladder(path: &Path) -> Result<(Ladder, Value), String> {
     let file = crate::measure::read_json(path)?;
     let wrong = |what: &str| format!("{}: {what}", path.display());
-    let fields = file.as_object().ok_or_else(|| wrong("a ladder is a JSON object"))?;
-    if let Some(field) = fields.keys().find(|field| !FIELDS.contains(&field.as_str())) {
-        return Err(wrong(&format!("{field} is not a field ({})", FIELDS.join(", "))));
+    let fields = file
+        .as_object()
+        .ok_or_else(|| wrong("a ladder is a JSON object"))?;
+    if let Some(field) = fields
+        .keys()
+        .find(|field| !FIELDS.contains(&field.as_str()))
+    {
+        return Err(wrong(&format!(
+            "{field} is not a field ({})",
+            FIELDS.join(", ")
+        )));
     }
     let list = |key: &str| file[key].as_array().filter(|items| !items.is_empty());
     let preset = name(&file["preset"])
@@ -214,7 +229,9 @@ fn read_ladder(path: &Path) -> Result<(Ladder, Value), String> {
         && once(looks.clone())
         && once(distances.iter().map(f64::to_string).collect());
     if !listed_once {
-        return Err(wrong("each place's name, each look and each distance is listed once"));
+        return Err(wrong(
+            "each place's name, each look and each distance is listed once",
+        ));
     }
     let ladder = Ladder {
         preset,
@@ -246,7 +263,9 @@ fn program(root: &Path, given: Option<&Path>) -> Result<(PathBuf, Value), String
     let folder = root.join("target").join("ladder");
     let mut build = crate::measure::build_arm(root, root, &folder, &sha, &backend)?;
     build["uncommitted_changes"] = (!changed.is_empty()).into();
-    if cfg!(windows) && let Some(library) = crate::measure::dxc() {
+    if cfg!(windows)
+        && let Some(library) = crate::measure::dxc()
+    {
         let beside = folder.join("dxcompiler.dll");
         if crate::measure::file_hash(&beside).ok() != crate::measure::file_hash(&library).ok() {
             fs::copy(&library, &beside)
@@ -282,7 +301,10 @@ impl Eye {
 
     /// The Stress Lab's view of it: `stand:x,z,yaw,pitch`.
     fn view(&self) -> String {
-        format!("stand:{:.3},{:.3},{:.3},{:.3}", self.x, self.z, self.yaw, self.pitch)
+        format!(
+            "stand:{:.3},{:.3},{:.3},{:.3}",
+            self.x, self.z, self.yaw, self.pitch
+        )
     }
 }
 
@@ -610,7 +632,9 @@ fn within(center: f64, side: f64, scale: f64, count: usize) -> Range<usize> {
 /// of the octave from it (`size` × √2), where one does.
 fn covering(bands: &[Band], size: f64) -> Option<&Band> {
     let middle = size * std::f64::consts::SQRT_2;
-    bands.iter().find(|band| (band.meters[0]..band.meters[1]).contains(&middle))
+    bands
+        .iter()
+        .find(|band| (band.meters[0]..band.meters[1]).contains(&middle))
 }
 
 /// The runs of place `place` under look `look`, in the ladder's order of
@@ -679,11 +703,19 @@ fn contact_sheet(captures: &[Option<&Path>], path: &Path) -> Result<(), String> 
     let blank = (SIZE.0 as usize / SHEET_SCALE, SIZE.1 as usize / SHEET_SCALE);
     let slots: Vec<(usize, usize)> = thumbnails
         .iter()
-        .map(|small| small.as_ref().map_or(blank, |small| (small.width, small.height)))
+        .map(|small| {
+            small
+                .as_ref()
+                .map_or(blank, |small| (small.width, small.height))
+        })
         .collect();
     let width = slots.iter().map(|&(width, _)| width).sum::<usize>()
         + SHEET_GAP * slots.len().saturating_sub(1);
-    let height = slots.iter().map(|&(_, height)| height).max().unwrap_or(blank.1);
+    let height = slots
+        .iter()
+        .map(|&(_, height)| height)
+        .max()
+        .unwrap_or(blank.1);
     let mut sheet = vec![SHEET_BACKGROUND; width * height * 3];
     let mut left = 0;
     for (small, &(slot_width, _)) in thumbnails.iter().zip(&slots) {
@@ -704,8 +736,7 @@ fn write_png(path: &Path, width: usize, height: usize, pixels: &[u8]) -> Result<
     let failed =
         |error: &dyn std::fmt::Display| format!("cannot write {}: {error}", path.display());
     let file = fs::File::create(path).map_err(|error| failed(&error))?;
-    let mut encoder =
-        png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
     encoder.set_color(png::ColorType::Rgb);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().map_err(|error| failed(&error))?;
@@ -816,7 +847,10 @@ fn report(inputs: Value, ladder: &Ladder, runs: &[Run], sheets: &[PathBuf]) -> V
         }
     }
     let runs: Vec<Value> = runs.iter().map(|run| run_json(run, ladder)).collect();
-    let sheets: Vec<String> = sheets.iter().map(|sheet| sheet.display().to_string()).collect();
+    let sheets: Vec<String> = sheets
+        .iter()
+        .map(|sheet| sheet.display().to_string())
+        .collect();
     json!({
         "inputs": inputs,
         "runs": runs,
@@ -845,7 +879,10 @@ fn print_tables(ladder: &Ladder, runs: &[Run]) {
     for (place, spot) in ladder.places.iter().enumerate() {
         for (look, name) in ladder.looks.iter().enumerate() {
             let rows = table(runs, place, look);
-            println!("{} ({name}): contrast (RMS, stops) by world size (m)", spot.name);
+            println!(
+                "{} ({name}): contrast (RMS, stops) by world size (m)",
+                spot.name
+            );
             println!("  {:>10}{header}", "distance");
             for (run, bands) in &rows {
                 let contrast = bands.iter().map(|band| band.map(|band| band.contrast));
@@ -909,7 +946,11 @@ pub fn ladder(root: &Path, arguments: &[String]) -> Result<(), String> {
     )
     .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
     print_tables(&ladder, &runs);
-    println!("Wrote {} and {} contact sheets beside it.", path.display(), sheets.len());
+    println!(
+        "Wrote {} and {} contact sheets beside it.",
+        path.display(),
+        sheets.len()
+    );
     let failed: Vec<String> = runs
         .iter()
         .filter_map(|run| {

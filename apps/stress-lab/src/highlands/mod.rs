@@ -872,10 +872,7 @@ fn surface(
 /// then young spruces in the spruces' `needles`, and young birches; their
 /// trunks blending into the forest floor as the spruces' do. Young trees'
 /// shapes take seeds past their elders'.
-fn forest_trees(
-    world: &mut World,
-    needles: MaterialHandle,
-) -> engine::Result<Vec<PlacementAsset>> {
+fn forest_trees(world: &mut World, needles: MaterialHandle) -> engine::Result<Vec<PlacementAsset>> {
     let atlas = birches::atlas_record(world)?;
     let leaves = {
         let material = trees::material(atlas)?.with_grounding(ROOTS)?;
@@ -1611,10 +1608,7 @@ fn rules() -> Biomes {
                     "wet_grass".into(),
                 ],
                 // The forest the birches leave them.
-                mask: Mask::Multiply(vec![
-                    forest(),
-                    Mask::Invert(Box::new(birch_share(0.0))),
-                ]),
+                mask: Mask::Multiply(vec![forest(), Mask::Invert(Box::new(birch_share(0.0)))]),
                 scale: [0.65, 1.15],
                 align: 0.04,
                 downhill: 0.0,
@@ -1635,7 +1629,12 @@ fn rules() -> Biomes {
                 assets: boulder_choices(),
                 density: 18.0,
                 footprint: 7.0,
-                materials: vec!["grass".into(), "dry_grass".into(), "dirt".into(), "wet_grass".into()],
+                materials: vec![
+                    "grass".into(),
+                    "dry_grass".into(),
+                    "dirt".into(),
+                    "wet_grass".into(),
+                ],
                 mask: Mask::Multiply(vec![
                     remap(noise(90.0, 21, 2), 0.45, 0.75),
                     Mask::Invert(Box::new(Mask::Path([6.0, 2.0]))),

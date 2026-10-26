@@ -262,7 +262,7 @@
       "type": "object",
       "properties": {
         "color": {
-          "description": "The linear color of the blades' tips; roots take the ground's.",
+          "description": "The linear color of the blades' tips; roots take the ground's.\nLusher ground darkens and greens them, drier ground pales them.",
           "type": "array",
           "default": [
             0.12999999523162842,
@@ -279,7 +279,7 @@
           "minItems": 3
         },
         "density": {
-          "description": "Blades per square meter where the material lies alone.",
+          "description": "Blades per square meter where the material lies alone, on ground\nhalfway between dry and lush: lusher ground grows more, drier\nground fewer.",
           "type": "number",
           "format": "float",
           "default": 90.0,
@@ -287,7 +287,7 @@
           "minimum": 0.0
         },
         "height": {
-          "description": "The shortest and tallest blades, meters, shortest first.",
+          "description": "The shortest and tallest blades, meters, shortest first, on\nground halfway between dry and lush: lusher ground grows them\ntaller, drier ground shorter.",
           "type": "array",
           "default": [
             0.11999999731779099,
@@ -311,7 +311,7 @@
           "minimum": 0.0
         },
         "width": {
-          "description": "Blade width at the root, meters.",
+          "description": "Blade width at the root, meters. A terrain's blades widen as they\nthin with distance only while every cover's shortest stays at\nmost a tenth as wide as it is tall, as grass leaves are: narrower\nroots widen further.",
           "type": "number",
           "format": "float",
           "default": 0.02500000037252903,
@@ -493,11 +493,11 @@
           "minimum": 0.0
         },
         "debris": {
-          "description": "How much faster water cuts steep ground, as the debris flows of\nsteep headwaters scour it: `1 + debris * slope` times as fast as\nstream power alone, so steep slopes carve gullies rather than\nstand smooth.",
+          "description": "How fast the debris flows of steep headwaters scour each round,\non top of the rivers: their erodibility times the time step for\neach unit of slope, so they cut as the square of the slope where\nstream power cuts as the slope, and steep slopes carve gullies\nrather than stand smooth.",
           "type": "number",
           "format": "float",
-          "default": 2.0,
-          "maximum": 100.0,
+          "default": 0.004000000189989805,
+          "maximum": 1.0,
           "minimum": 0.0
         },
         "incision": {
@@ -526,6 +526,34 @@
         }
       },
       "additionalProperties": false
+    },
+    "Facing": {
+      "description": "How far the ground tilts toward a compass heading: the slope's\ntangent times the cosine of the angle between the ground's downhill\ndirection and the heading, 0 on level ground, positive on slopes\nfacing the heading and negative on slopes facing away. A ramp of\n`[-0.3, 0.3]` covers slopes of about 17 degrees facing away through to\nslopes of about 17 degrees facing toward it.",
+      "type": "object",
+      "properties": {
+        "heading": {
+          "description": "The heading, in degrees from -z toward +x, as views give yaw: 180\nfaces +z, south where north lies at -z.",
+          "type": "number",
+          "format": "float",
+          "maximum": 360.0,
+          "minimum": -360.0
+        },
+        "ramp": {
+          "description": "The tilts toward the heading its ramp runs between.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "heading",
+        "ramp"
+      ]
     },
     "FarPlacement": {
       "description": "Where a placement layer also stands far away: on the tiles of a\ncoarser level, a share of its objects, the candidates ranked first,\nwhere its own level's tiles are not resident.",
@@ -632,6 +660,84 @@
       },
       "additionalProperties": false
     },
+    "HummocksLayer": {
+      "description": "Earth hummocks (thúfur): frost heaves wet, fine soil under turf into\nmounds with troughs between them, on gentle ground. They are the\nblobs of gradient noise whose lattice spans a hummock and a trough;\nlevels whose samples lie further apart than a hummock is across, the\nshortest wavelength they resolve being two samples, hold the ground\nthey stand on.",
+      "type": "object",
+      "properties": {
+        "across": {
+          "description": "Meters across a hummock.",
+          "type": "number",
+          "format": "float",
+          "default": 1.5,
+          "maximum": 100.0,
+          "minimum": 0.1
+        },
+        "cover": {
+          "description": "The share of the ground its ramps allow that its patches cover:\n0 none, 1 all.",
+          "type": "number",
+          "format": "float",
+          "default": 0.699999988079071,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "height": {
+          "description": "Meters from the troughs to the tallest hummocks' tops.",
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "maximum": 10.0,
+          "minimum": 0.0
+        },
+        "patches": {
+          "description": "Meters across the patches it lies in.",
+          "type": "number",
+          "format": "float",
+          "default": 80.0,
+          "maximum": 100000.0,
+          "minimum": 1.0
+        },
+        "seed": {
+          "description": "Picks the pattern of its patches and hummocks.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "slope": {
+          "description": "Slopes (degrees) over which it fades in, none at the first and\nall from the second: falling, so it keeps to gentle ground, where\nfrost heaves the soil up rather than drawing it downhill into\nlobes.",
+          "type": "array",
+          "default": [
+            15.0,
+            6.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float",
+            "maximum": 89.0,
+            "minimum": 0.0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "wetness": {
+          "description": "Wetness indexes over which it fades in, none at the first and all\nfrom the second: where water gathers in the soil frost heaves.",
+          "type": "array",
+          "default": [
+            8.0,
+            11.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float",
+            "maximum": 25.0,
+            "minimum": -5.0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "additionalProperties": false
+    },
     "HydrologyLayer": {
       "description": "A layer that bakes where water runs over the layers below it and cuts\nchannels into them: the rivers the rivers layers below it give, then\nthose it finds where the water left gathers.",
       "type": "object",
@@ -680,8 +786,103 @@
         "sun"
       ]
     },
+    "MacroCauses": {
+      "description": "How strongly each cause tints a surface's macro colors\n([`crate::macro_colors`]): the share of its brightness the ground\ngains or loses where the cause is whole, in the cause's own hue; 0\nturns the cause off. Plants grow lusher as far as the causes darken\nthe ground and drier as far as they pale it. The causes the bakes and\nthe ground's shape find move it by 15 percent and more, past the\nlight's spread within a patch, so they read from afar; the noise's\npatches stay faint, as strong noise reads as camouflage.",
+      "type": "object",
+      "properties": {
+        "aspect": {
+          "description": "Slopes turned to the sun's side ([`Self::heading`]) dry out paler\nand warmer, and those turned from it stay damp, darker and\nmossier, as far as the direct sun they take differs from level\nground's.",
+          "type": "number",
+          "format": "float",
+          "default": 0.20000000298023224,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "broad": {
+          "description": "The noise's broad patches, a few hundred meters across, lighter\nand darker.",
+          "type": "number",
+          "format": "float",
+          "default": 0.05999999865889549,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "deposit": {
+          "description": "Ground erosion laid down, and lakes' shores, show paler, sandier\nsilt: fine mineral grains no humus has darkened yet.",
+          "type": "number",
+          "format": "float",
+          "default": 0.20000000298023224,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "dust": {
+          "description": "Dust settles paler and warmer within six meters of roads.",
+          "type": "number",
+          "format": "float",
+          "default": 0.20000000298023224,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "heading": {
+          "description": "The sun's side, toward the midday sun: degrees from -z toward +x,\nas views give yaw. 180, +z, keeps north at -z, as views assume:\nthe midday sun stands south of the northern mid-latitudes; 0\nturns it north for the southern ones.",
+          "type": "number",
+          "format": "float",
+          "default": 180.0,
+          "maximum": 360.0,
+          "minimum": -360.0
+        },
+        "patchy": {
+          "description": "The noise's finer patches, some 45 meters across, lighter and\ndarker.",
+          "type": "number",
+          "format": "float",
+          "default": 0.029999999329447746,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "relief": {
+          "description": "Ridges, wind-scoured and thin-soiled, weather paler and lichened;\nhollows hold shade and deep soil, darker and browner.",
+          "type": "number",
+          "format": "float",
+          "default": 0.15000000596046448,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "steep": {
+          "description": "Slopes from 30 degrees to 50 hold thin soil over rock, which\nshows through it paler and grayer.",
+          "type": "number",
+          "format": "float",
+          "default": 0.15000000596046448,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "warmth": {
+          "description": "The noise's widest patches, some 600 meters across, warmer and\ncooler: the share red gains or loses, blue moving the other way.",
+          "type": "number",
+          "format": "float",
+          "default": 0.03999999910593033,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "wet": {
+          "description": "Wet ground, where water gathers and runs as the hydrology bake\nfound it and along lakes' shores, darkens as water fills its pores\n(Lagarde 2013): porous ground soaked keeps a fifth of its albedo,\nthe damp ground of hollows and banks about seven tenths.",
+          "type": "number",
+          "format": "float",
+          "default": 0.30000001192092896,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "worn": {
+          "description": "Ground erosion wore away shows the paler, grayer subsoil and rock\nunder the humus-dark topsoil it lost.",
+          "type": "number",
+          "format": "float",
+          "default": 0.20000000298023224,
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
     "Mask": {
-      "description": "A value from 0 to 1 at every sample, from the sample's height, slope,\ncurvature and position: where a biome applies, where a material covers\nits biome's ground, or how wet a biome's ground is. Ramps run from 0 at\ntheir first value to 1 at their second, smoothly, falling when the first\nis the larger.",
+      "description": "A value from 0 to 1 at every sample, from the sample's height, slope,\nthe way it faces, curvature and position, and what the terrain's bakes\nand roads hold there: where a biome applies, where a material covers\nits biome's ground, or how wet a biome's ground is. Ramps run from 0 at\ntheir first value to 1 at their second, smoothly, falling when the first\nis the larger.",
       "oneOf": [
         {
           "description": "The same value everywhere.",
@@ -754,6 +955,57 @@
           "additionalProperties": false,
           "required": [
             "curvature"
+          ]
+        },
+        {
+          "description": "A ramp over how far the ground tilts toward a compass heading, on\nthe smooth surface through its samples ([`Facing`]).",
+          "type": "object",
+          "properties": {
+            "facing": {
+              "$ref": "#/$defs/Facing"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "facing"
+          ]
+        },
+        {
+          "description": "A ramp over the meters the terrain's erosions wore the ground down\nthere, summed over its erosion stages, smooth between their samples:\npositive, 0 where they laid ground down or left it, and without\nerosion. `[0, 4]` rises over the first four meters valleys and\ngullies cut.",
+          "type": "object",
+          "properties": {
+            "worn": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "worn"
+          ]
+        },
+        {
+          "description": "A ramp over the meters the terrain's erosions laid down there,\nsummed over its erosion stages, smooth between their samples:\npositive, 0 where they wore ground away or left it, and without\nerosion. `[0, 2]` rises over the first two meters of sediment on\nvalley floors and fans.",
+          "type": "object",
+          "properties": {
+            "deposit": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "deposit"
           ]
         },
         {
@@ -1454,6 +1706,12 @@
         },
         "density": {
           "description": "Objects per hectare where everything allows, at most one per\nfootprint square.",
+          "type": "number",
+          "format": "float",
+          "minimum": 0.0
+        },
+        "downhill": {
+          "description": "How strongly its objects turn their length, their meshes' x\naxis, down the ground's slope: each points the way of its random\nturn, a unit vector, plus the ground's downhill gradient (the\nslope's tangent, pointing downhill) times this. Level ground\nleaves them at random and steeper ground turns them further\ndownhill, as fallen trees lie: where the gradient times this\nreaches 2, every one within thirty degrees of downhill. 0 turns\nthem at random everywhere.",
           "type": "number",
           "format": "float",
           "minimum": 0.0
@@ -3239,7 +3497,7 @@
           "minimum": 0.0
         },
         "radius": {
-          "description": "Meters from the camera within which cover grows densest, its blades\nwidening as they thin. Past it the ground shows as its cover's\ncanopy, and sparser tiers of blades as wide as there reach on.",
+          "description": "Meters from the camera within which cover grows densest, its blades\nwidening as they thin as far as their shape lets them stay leaves.\nWhere they thin past that, and past the radius, the ground shows\nas its cover's canopy, and past it sparser tiers of blades as wide\nas there reach on.",
           "type": "number",
           "format": "float",
           "default": 40.0,
@@ -4716,7 +4974,7 @@
           "minimum": 0.0
         },
         "max_roughness": {
-          "description": "Surfaces rougher than this reflect only the sky: their\nreflections of the screen fade out over its last fifth.",
+          "description": "Surfaces rougher than this across the view, the way their\nmirrored lobe stays narrowest, reflect only the sky: their\nreflections of the screen fade out over its last fifth.",
           "type": "number",
           "format": "float",
           "default": 0.75,
@@ -5510,7 +5768,7 @@
       ]
     },
     "SceneTerrainLayer": {
-      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), an imported heightmap, rivers\ngiven (drawn, or written by `terrain_import` from vector data) to the\nhydrology layer after them, which runs them as given before deriving any\nof its own, an erosion\nbake of the layers before it, where rivers wear valleys\nand slopes creep, a hydrology bake of them, which\ncarves channels where water gathers, fills lakes and rivers with water\nand feeds the `flow`, `wetness` and `lake` masks, or a\npath: a road leveling the layers before it along its\nline, which feeds the `path` mask (the `terrain_route` request finds\nroutes for them). Terrains load no tiles until their bakes are done.",
+      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), an imported heightmap, rivers\ngiven (drawn, or written by `terrain_import` from vector data) to the\nhydrology layer after them, which runs them as given before deriving any\nof its own, an erosion\nbake of the layers before it, where rivers wear valleys\nand slopes creep, a hydrology bake of them, which\ncarves channels where water gathers, fills lakes and rivers with water\nand feeds the `flow`, `wetness` and `lake` masks, a\npath: a road leveling the layers before it along its\nline, which feeds the `path` mask (the `terrain_route` request finds\nroutes for them), or relief by cause where the hydrology bake's maps\nplace it, off its water: rock steps on steep ground and earth hummocks\non wet, gentle ground. Terrains load no tiles until their bakes are done.",
       "oneOf": [
         {
           "type": "object",
@@ -5594,6 +5852,30 @@
           "additionalProperties": false,
           "required": [
             "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "steps": {
+              "$ref": "#/$defs/StepsLayer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "steps"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hummocks": {
+              "$ref": "#/$defs/HummocksLayer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "hummocks"
           ]
         }
       ]
@@ -6017,6 +6299,10 @@
             "string",
             "null"
           ]
+        },
+        "macro_colors": {
+          "description": "How strongly each cause tints its macro colors (the tint and growth\nits bakes and its shape give its ground over its whole extent), and\nthe side the midday sun stands on. Omitted, the engine's defaults.",
+          "$ref": "#/$defs/MacroCauses"
         },
         "materials": {
           "type": "array",
@@ -6845,6 +7131,84 @@
         "material",
         "slope"
       ]
+    },
+    "StepsLayer": {
+      "description": "Rock steps: ground too steep to hold soil bares its rock, which\nbreaks along its bedding planes, lying level, into treads and down\nits joints into risers, the ledges broken where joints cross them. A\nstep runs down the slope its height over the slope's tangent: steps\nfade out as that run nears two samples, the shortest the samples\nresolve, and each riser spans two of them.",
+      "type": "object",
+      "properties": {
+        "cover": {
+          "description": "The share of the ground its ramps allow that its patches cover:\n0 none, 1 all.",
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "height": {
+          "description": "Meters from one tread up to the next.",
+          "type": "number",
+          "format": "float",
+          "default": 3.0,
+          "maximum": 100.0,
+          "minimum": 0.1
+        },
+        "joints": {
+          "description": "Meters between the joints breaking its ledges.",
+          "type": "number",
+          "format": "float",
+          "default": 4.0,
+          "maximum": 1000.0,
+          "minimum": 0.5
+        },
+        "patches": {
+          "description": "Meters across the patches it lies in, each with its bedding\nshifted from the next one's.",
+          "type": "number",
+          "format": "float",
+          "default": 60.0,
+          "maximum": 100000.0,
+          "minimum": 1.0
+        },
+        "seed": {
+          "description": "Picks the pattern of its patches, bedding and joints.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "slope": {
+          "description": "Slopes (degrees) over which it fades in, none at the first and\nall from the second: from the steepest soil rests at, its angle\nof repose, to where the ground bares its rock.",
+          "type": "array",
+          "default": [
+            33.02386474609375,
+            40.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float",
+            "maximum": 89.0,
+            "minimum": 0.0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "wetness": {
+          "description": "Wetness indexes over which it fades in, none at the first and all\nfrom the second: falling, so it keeps to spurs and planar slopes\nand leaves the hollows water gathers in to the soil and debris\nfilling them.",
+          "type": "array",
+          "default": [
+            8.0,
+            5.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float",
+            "maximum": 25.0,
+            "minimum": -5.0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "additionalProperties": false
     },
     "SurfaceProjection": {
       "description": "How a surface material's textures lie on the ground: from above, or\non steep ground also from the side, so cliffs don't stretch them.",

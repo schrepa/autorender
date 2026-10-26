@@ -100,9 +100,8 @@ fn block(seed: u32) -> engine::Result<Mesh> {
     // both ways, the second set about square to the first.
     let turn = random(7) * std::f32::consts::TAU;
     let steep = |set: u32| {
-        let (sin, cos) = math::sin_cos(
-            turn + set as f32 * (std::f32::consts::FRAC_PI_2 + tilt(8, CUT_TILT[2])),
-        );
+        let (sin, cos) =
+            math::sin_cos(turn + set as f32 * (std::f32::consts::FRAC_PI_2 + tilt(8, CUT_TILT[2])));
         Vec3::new(cos, tilt(9 + set, CUT_TILT[1]), sin).normalize_or(Vec3::X)
     };
     let joints = [
@@ -116,7 +115,10 @@ fn block(seed: u32) -> engine::Result<Mesh> {
     // the stretched sphere's.
     let cuts: [(Vec3, f32); 5] = std::array::from_fn(|index| {
         let share = CUT_DEPTH[0] + (CUT_DEPTH[1] - CUT_DEPTH[0]) * random(20 + index as u32);
-        (joints[index], share * 0.5 * (stretch * joints[index]).length())
+        (
+            joints[index],
+            share * 0.5 * (stretch * joints[index]).length(),
+        )
     });
     let shape = |direction: Vec3| {
         let lumps = noise(direction * 2.4 + offset);

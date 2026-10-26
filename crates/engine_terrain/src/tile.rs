@@ -833,7 +833,13 @@ pub(crate) fn control_row(
     // erosions changed is read along the whole row at once.
     inputs.clear(columns.len());
     if reads.erosion {
-        erosion_row(layers, &xs[columns.clone()], z, spacing, &mut inputs.erosion);
+        erosion_row(
+            layers,
+            &xs[columns.clone()],
+            z,
+            spacing,
+            &mut inputs.erosion,
+        );
     }
     for (index, column) in columns.clone().enumerate() {
         let held = RiverInputs::held(rivers, row * stride + column);

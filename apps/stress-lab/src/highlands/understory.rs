@@ -34,9 +34,8 @@ const JUNIPER_SWAY: f32 = 0.8;
 /// placement assets: the talus blocks, the junipers, the logs, then the
 /// stumps.
 pub(super) fn assets() -> impl Iterator<Item = String> {
-    let named = |name: &'static str, count: u32| {
-        (0..count).map(move |index| format!("{name}{index}"))
-    };
+    let named =
+        |name: &'static str, count: u32| (0..count).map(move |index| format!("{name}{index}"));
     named("block", BLOCKS)
         .chain(named("juniper", JUNIPERS))
         .chain(named("log", LOGS))
@@ -109,7 +108,13 @@ pub(super) fn placed(
 /// The understory's placement layers, `forest` the mask of where spruces
 /// stand: talus, erratics, junipers, logs and stumps.
 pub(super) fn layers(forest: &Mask) -> [PlacementLayer; 5] {
-    [talus(), erratics(), junipers(forest), logs(forest), stumps()]
+    [
+        talus(),
+        erratics(),
+        junipers(forest),
+        logs(forest),
+        stumps(),
+    ]
 }
 
 /// Talus: blocks fallen from the rock faces, most of them fresh and

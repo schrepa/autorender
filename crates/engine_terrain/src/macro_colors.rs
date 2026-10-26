@@ -323,9 +323,9 @@ fn texel(ground: &Ground, causes: &MacroCauses) -> [u8; 4] {
         (GRAY, causes.broad * lighter(ground.broad)),
         (GRAY, causes.patchy * lighter(ground.patchy)),
     ];
-    let tint = shades
-        .iter()
-        .fold([1.0_f32; 3], |tint, &(hue, amount)| shaded(tint, hue, amount));
+    let tint = shades.iter().fold([1.0_f32; 3], |tint, &(hue, amount)| {
+        shaded(tint, hue, amount)
+    });
     // Plants grow lusher as far as the causes darken the ground and drier
     // as far as they pale it; warmth turns its hue alone.
     let brightness: f32 = LUMINANCE

@@ -317,8 +317,20 @@ fn cards(builder: &mut Builder, spray: &Spray, bends: usize) {
         .collect();
     let across = Vec3::new(-spray.direction.z, 0.0, spray.direction.x).normalize_or(Vec3::X);
     let hanging = spray.direction.cross(across).normalize_or(Vec3::Y);
-    builder.card(&spine, across * (0.42 * spray.length), spray.normal, spray.color, LEAVES);
-    builder.card(&spine, hanging * (0.28 * spray.length), spray.normal, spray.color, LEAVES);
+    builder.card(
+        &spine,
+        across * (0.42 * spray.length),
+        spray.normal,
+        spray.color,
+        LEAVES,
+    );
+    builder.card(
+        &spine,
+        hanging * (0.28 * spray.length),
+        spray.normal,
+        spray.color,
+        LEAVES,
+    );
 }
 
 /// Birch `seed`'s shadow proxy, grown as `growth` says, which shadow maps
@@ -379,11 +391,13 @@ fn shadow_proxy(seed: u32, growth: &Growth) -> engine::Result<Mesh> {
             ];
             builder.indices.extend([a, c, b, b, c, d]);
         }
-        builder.indices.extend([high, at(bands, side + 1), at(bands, side)]);
+        builder
+            .indices
+            .extend([high, at(bands, side + 1), at(bands, side)]);
     }
-    builder.mesh().map_err(|error| {
-        engine::Error::from(error).context(format!("birch {seed}'s shadow proxy"))
-    })
+    builder
+        .mesh()
+        .map_err(|error| engine::Error::from(error).context(format!("birch {seed}'s shadow proxy")))
 }
 
 /// A birch's shape, which every level and its shadow proxy keep: its
@@ -533,9 +547,8 @@ impl Shape {
             let direction = Vec3::new(turn_cos * rise_cos, rise_sin, turn_sin * rise_cos);
             // As long as reaches the outline's radius at the height its tip
             // rises to, found in a few steps each halving the gap.
-            let reach = |length: f32| {
-                shape.crown.radius(y + length * rise_sin) / math::max(rise_cos, 0.25)
-            };
+            let reach =
+                |length: f32| shape.crown.radius(y + length * rise_sin) / math::max(rise_cos, 0.25);
             let mut length = reach(0.0);
             for _ in 0..3 {
                 length = 0.5 * (length + reach(length));
@@ -718,7 +731,12 @@ fn atlas() -> Vec<u8> {
         );
         let reach = 5.0 + 5.0 * draw(3);
         for side in [-1.0_f32, 1.0] {
-            bark.capsule(stub, stub + Vec2::new(side * reach, 0.45 * reach), 1.3, MARK);
+            bark.capsule(
+                stub,
+                stub + Vec2::new(side * reach, 0.45 * reach),
+                1.3,
+                MARK,
+            );
         }
     }
     let mut spray = Canvas {

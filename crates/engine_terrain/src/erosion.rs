@@ -228,7 +228,8 @@ pub(crate) fn erode_round(
         } else {
             diagonal
         };
-        let factor = area[sample].sqrt() * (layer.incision + layer.debris * slopes[sample]) / length;
+        let factor =
+            area[sample].sqrt() * (layer.incision + layer.debris * slopes[sample]) / length;
         let lowered = (ground[sample] + factor * ground[receiver]) / (1.0 + factor);
         ground[sample] = max(lowered, ground[receiver]);
     }
