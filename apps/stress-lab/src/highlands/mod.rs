@@ -1608,6 +1608,7 @@ fn rules() -> Biomes {
                     "dry_grass".into(),
                     "dirt".into(),
                     "forest_floor".into(),
+                    "wet_grass".into(),
                 ],
                 // The forest the birches leave them.
                 mask: Mask::Multiply(vec![
@@ -1634,7 +1635,7 @@ fn rules() -> Biomes {
                 assets: boulder_choices(),
                 density: 18.0,
                 footprint: 7.0,
-                materials: vec!["grass".into(), "dry_grass".into(), "dirt".into()],
+                materials: vec!["grass".into(), "dry_grass".into(), "dirt".into(), "wet_grass".into()],
                 mask: Mask::Multiply(vec![
                     remap(noise(90.0, 21, 2), 0.45, 0.75),
                     Mask::Invert(Box::new(Mask::Path([6.0, 2.0]))),
@@ -2134,6 +2135,7 @@ fn tree_layers(forest: impl Fn() -> Mask) -> [PlacementLayer; 3] {
                 "dry_grass".into(),
                 "dirt".into(),
                 "forest_floor".into(),
+                "wet_grass".into(),
             ],
             mask: young(Mask::Invert(Box::new(birch_share(PIONEERS)))),
             scale: [0.45, 1.35],
