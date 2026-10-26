@@ -174,11 +174,14 @@ impl Ocean {
     /// the wind has fully raised (the wind's sea over unlimited fetch and
     /// deep water, [`wind_waves::WindSea`]), from three quarters of its peak
     /// frequency to three and a half times it, each as high as its share of
-    /// the spectrum. They head within a spread around the wind that widens
-    /// for shorter waves, alternately to either side, with seeded phases,
-    /// and every wave's points circle by the same share of its height,
-    /// sized so the surface's crests sharpen by [`Ocean::choppiness`]
-    /// without folding over.
+    /// the spectrum. Each heads off the wind by a seeded draw from the spread
+    /// measured seas hold at its frequency over the peak's (Donelan,
+    /// Hamilton and Hui 1985; Banner 1990:
+    /// [`engine_tables::waves::spread_turn`]), narrowest at the peak and
+    /// wider above it, the spread the wind's tiles ripple it by, alternately
+    /// to either side. Their phases are seeded, and every wave's points
+    /// circle by the same share of its height, sized so the surface's crests
+    /// sharpen by [`Ocean::choppiness`] without folding over.
     pub fn spectrum(&self) -> OceanWaves {
         let settings = self.sanitized();
         let [x, z] = settings.wind;
@@ -218,13 +221,13 @@ impl Ocean {
             let density = sea.density(frequency);
             let amplitude = (2.0 * density * width).sqrt();
             let number = frequency * frequency / GRAVITY;
-            let share = if count > 1 {
-                index as f32 / (count - 1) as f32
-            } else {
-                0.0
-            };
+            // Its turn off the wind: drawn from the spread at its frequency
+            // over the peak's, alternately to either side.
             let side = if index % 2 == 0 { 1.0 } else { -1.0 };
-            let turn = side * (0.35 + 0.55 * share) * (0.3 + 0.7 * hash(index as u32, 1));
+            let turn = engine_tables::waves::spread_turn(
+                f64::from(frequency / peak),
+                side * f64::from(hash(index as u32, 1)),
+            ) as f32;
             let (sin, cos) = sin_cos(turn);
             let direction = [
                 heading[0] * cos - heading[1] * sin,

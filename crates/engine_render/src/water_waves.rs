@@ -4,7 +4,7 @@
 //! lengths, then one of the current's turbulence. Their spectra, drawn from
 //! fixed noise for the wind's heading, are one of the scene's static tables
 //! (`engine_core::table_data::waves` makes them, with each tile's period,
-//! band and height), which upload as they arrive. Each frame the wind's
+//! band, height and turn), which upload as they arrive. Each frame the wind's
 //! spectra evolve (gravity and surface tension set each wave's speed;
 //! frequencies are rounded so the waves loop every [`LOOP_SECONDS`]) and an
 //! inverse transform turns them into the slopes and heights of the surface,
@@ -12,8 +12,10 @@
 //! fill a texture array with its mip levels. The turbulence's tile stands
 //! still, its waves moving only as the current carries them, so it is
 //! transformed once its spectrum arrives. Water reads the slopes where it
-//! stands and, from what the levels' averages lose of the square, the
-//! roughness of what a pixel spans (`meshes/water_spectrum.wgsl`).
+//! stands, each wind tile at its point turned as the tile's lattice is and
+//! its slopes turned back, and, from what the levels' averages lose of the
+//! square, the roughness of what a pixel spans
+//! (`meshes/water_spectrum.wgsl`).
 
 use std::cell::Cell;
 use std::f64::consts::TAU;
@@ -150,19 +152,28 @@ impl WaterWaves {
         (&self.sampled, &self.sampler)
     }
 
-    /// Each tile as water's uniform holds it: how many times a meter it
-    /// repeats (the inverse of its period), the longest and the shortest
-    /// waves it holds (meters) and the root mean square height of its waves
-    /// at unit slope variance (meters); none before spectra arrive.
-    pub(crate) fn tiles(&self) -> [[f32; 4]; WAVE_TILES] {
-        self.tiles.map(|tile| {
+    /// Each tile as water's uniform holds it (`waves` and `turns`): how many
+    /// times a meter it repeats (the inverse of its period), the longest and
+    /// the shortest waves it holds (meters) and the root mean square height
+    /// of its waves at unit slope variance (meters); and the cosine and sine
+    /// of the angle its lattice turns by from the world's axes, from +x
+    /// toward +z (xy), by which water turns each world point it reads the
+    /// tile at. Before spectra arrive, the tiles hold no waves and turn by
+    /// none.
+    pub(crate) fn tiles(&self) -> ([[f32; 4]; WAVE_TILES], [[f32; 4]; WAVE_TILES]) {
+        let waves = self.tiles.map(|tile| {
             let repeats = if tile.period > 0.0 {
                 1.0 / tile.period
             } else {
                 0.0
             };
             [repeats, tile.longest, tile.shortest, tile.height]
-        })
+        });
+        let turns = self.tiles.map(|tile| {
+            let (sin, cos) = engine_core::math::sin_cos(tile.turn);
+            [cos, sin, 0.0, 0.0]
+        });
+        (waves, turns)
     }
 
     /// Bytes of the moments with their levels, the rows' transforms and the

@@ -340,7 +340,7 @@ impl WaterPass {
         // Terrains' water and the sea ripple with the same waves.
         let waves = self.waves.get_or_insert_with(|| WaterWaves::new(device));
         waves.prepare(device, queue, tables.waves.as_ref(), seconds);
-        let wave_tiles = waves.tiles();
+        let (wave_tiles, wave_turns) = waves.tiles();
         if let (None, Some(map)) = (&self.fall_map, &tables.fall_map) {
             self.fall_map = Some(FallMap::new(device, queue, &map.table));
         }
@@ -388,6 +388,7 @@ impl WaterPass {
                 wind: blowing(wind.velocity, wind.gusts),
                 absorption: absorption(settings.color, settings.clarity),
                 waves: wave_tiles,
+                turns: wave_turns,
                 ocean: sea,
                 sim: simulated.map_or([0.0; 4], |(square, _)| square),
                 sim_datum: simulated.map_or([0.0; 4], |(_, datum)| datum),
@@ -405,7 +406,7 @@ impl WaterPass {
             (cull, view),
             ocean,
             (eye, wind, seconds),
-            wave_tiles,
+            (wave_tiles, wave_turns),
         );
         if self.tiles.is_none() && !sea && !falling {
             return None;
@@ -560,9 +561,9 @@ impl WaterPass {
 
     /// Prepares the sea culled through `cull` and drawn through `view`
     /// (both eye-relative) from `eye`, rippled by the waves' tiles as
-    /// `wave_tiles` describes them in its own wind, gusting as `wind` does,
-    /// its own waves at simulation time `seconds`; returns whether any of it
-    /// draws.
+    /// `wave_tiles` and `wave_turns` describe them in its own wind, gusting
+    /// as `wind` does, its own waves at simulation time `seconds`; returns
+    /// whether any of it draws.
     fn prepare_ocean(
         &mut self,
         device: &wgpu::Device,
@@ -570,7 +571,7 @@ impl WaterPass {
         (cull, view): (Mat4, Mat4),
         ocean: Ocean,
         (eye, wind, seconds): (Vec3, Wind, f64),
-        wave_tiles: [[f32; 4]; WAVE_TILES],
+        (wave_tiles, wave_turns): ([[f32; 4]; WAVE_TILES], [[f32; 4]; WAVE_TILES]),
     ) -> bool {
         let (true, Some(waves), Some(map)) = (ocean.enabled, &self.waves, &self.fall_map) else {
             self.ocean = None;
@@ -654,6 +655,7 @@ impl WaterPass {
             foam: [crests, swell, 0.0, amplitude],
             absorption: absorption(ocean.color, ocean.clarity),
             waves: wave_tiles,
+            turns: wave_turns,
             ocean: [
                 ocean.level - eye.y,
                 cell,

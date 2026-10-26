@@ -120,12 +120,12 @@ fn water_contact(standing: f32, change: f32, footprint: f32, speed: f32) -> f32 
 // finer, read at the three corners of the triangle of a grid of patches
 // half the map across holding it, each read turned to run along `heading`
 // about its corner's middle and shifted at random (salted by `salt`), and
-// blended by their weights keeping their spread, as the waves' tiles are
-// (`water_tile`), so no patch shows the map repeat. Turning each read about
-// a middle nearby keeps it from shearing where the heading turns. The
-// larger bubbles' walls (x) and bubbles (y) and the finer's (zw, none
-// unless `finer`), each as its deviation from the map's means `mean`, in
-// its spreads.
+// blended by their weights over the root of their squares' sum, which keeps
+// their spread (tiling and blending, Heitz and Neyret), so no patch shows
+// the map repeat. Turning each read about a middle nearby keeps it from
+// shearing where the heading turns. The larger bubbles' walls (x) and
+// bubbles (y) and the finer's (zw, none unless `finer`), each as its
+// deviation from the map's means `mean`, in its spreads.
 fn water_bubbles(p: vec2<f32>, heading: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>,
         mean: vec2<f32>, finer: bool, salt: u32) -> vec4<f32> {
     let side = vec2<f32>(-heading.y, heading.x);

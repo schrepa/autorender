@@ -84,10 +84,12 @@
 // the compression below which its crests whiten (x), the amplitude of one
 // wave holding all its waves' variance, which runs up its shores (y), and
 // its waves' summed height (w), none of it for terrains' water (`foam`);
-// how fast the water takes each channel of light, per meter (rgb); and each
-// of the waves' tiles (`water_spectrum.wgsl`): how many times a meter it
+// how fast the water takes each channel of light, per meter (rgb); each of
+// the waves' tiles (`water_spectrum.wgsl`): how many times a meter it
 // repeats, the longest and the shortest waves it holds (meters) and the
-// root mean square height of its waves at unit slope variance (meters).
+// root mean square height of its waves at unit slope variance (meters); and
+// the cosine and sine of the angle each tile's lattice turns by from the
+// world's axes, from +x toward +z (`turns`, xy).
 // The sea's parts (`meshes/ocean.wgsl`): its wind's heading
 // (`origin`, xy: a unit vector), its still level less the eye, its grid's
 // finest cell, cells around and rings a cell apart; the rings' growth, the
@@ -115,6 +117,7 @@ struct WaterUniform {
     foam: vec4<f32>,
     absorption: vec4<f32>,
     waves: array<vec4<f32>, WATER_TILES>,
+    turns: array<vec4<f32>, WATER_TILES>,
     ocean: vec4<f32>,
     ocean_grid: vec4<f32>,
     ocean_waves: array<vec4<f32>, 16>,

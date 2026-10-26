@@ -1,14 +1,17 @@
 // Water's waves as its tiles hold them (`water_waves.rs`): WATER_WIND_TILES
 // tiles of the wind's waves of fixed periods, each holding its own band of
 // lengths, then the tile of the current's turbulence
-// (WATER_TURBULENCE_TILE), every tile at unit slope variance. A pixel reads
-// a tile at the steady size (`water_steady`): the tile's levels and
-// anisotropy whose texels span STEADY_PIXELS pixels average what they span,
-// so it draws no waves finer than temporal antialiasing holds steadily, the
-// variance of the slopes they average away roughens the water (LEAN
-// mapping), and nothing fades by distance; three reads at random offsets,
-// blended keeping their variance, keep it from repeating (tiling and
-// blending, Heitz and Neyret). Each place sizes
+// (WATER_TURBULENCE_TILE), every tile at unit slope variance. The wind's
+// tiles' periods never divide one another (each the last's over the cube
+// of the golden ratio) and each one's lattice turns by its own angle from
+// the world's axes (`water_tile_turn`), so no tile's repeat lines up with
+// another's or with the grids of the ground and the water: a pixel reads
+// each wind tile once, straight at its point turned so, with no patches. A
+// pixel reads a tile at the steady size (`water_steady`): the tile's levels
+// and anisotropy whose texels span STEADY_PIXELS pixels average what they
+// span, so it draws no waves finer than temporal antialiasing holds
+// steadily, the variance of the slopes they average away roughens the
+// water (LEAN mapping), and nothing fades by distance. Each place sizes
 // the wind's tiles by the sea its wind raises there (Horvath 2015,
 // "Empirical directional wave spectra for computer graphics",
 // `engine_core::wind_waves`): JONSWAP's spectrum for the wind's speed
@@ -22,9 +25,6 @@
 const WATER_WIND_TILES: u32 = 4u;
 const WATER_TURBULENCE_TILE: u32 = 4u;
 const WATER_TILES: u32 = 5u;
-// The share of a tile's period between the corners of the grid its random
-// offsets hang on (`water_tile`).
-const WATER_PATCH: f32 = 0.5;
 // The most anisotropy the waves' sampler filters to
 // (`gpu_layouts::constants::WAVE_ANISOTROPY`): along a pixel's longer side
 // it averages at most this many times as finely as across.
@@ -95,10 +95,24 @@ fn water_tile_height(tile: u32) -> f32 {
     return water.waves[tile].w;
 }
 
-// Where corner `corner` of the grid `water_tile` hangs tile `tile`'s
-// offset: a random point of the tile (in its periods).
-fn water_corner_offset(corner: vec2<i32>, tile: u32) -> vec2<f32> {
-    let key = (u32(corner.x) * 0x8da6b343u) ^ (u32(corner.y) * 0xd8163841u) ^ (tile * 0xcb1ab31fu);
+// The cosine and sine (x and y) of the angle tile `tile`'s lattice turns by
+// from the world's axes, from +x toward +z: water reads the tile at each
+// world point turned by it (`water_turned_by`), and turns its slopes back.
+fn water_tile_turn(tile: u32) -> vec2<f32> {
+    return water.turns[tile].xy;
+}
+
+// `v` turned by the angle whose cosine and sine `turn` holds (x and y),
+// from +x toward +z.
+fn water_turned_by(v: vec2<f32>, turn: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(v.x * turn.x - v.y * turn.y, v.x * turn.y + v.y * turn.x);
+}
+
+// A random point of a pattern (in its periods) by which reads at corner
+// `corner` of a grid of patches shift it, salted by `salt`, so neighboring
+// patches show different parts of it.
+fn water_corner_offset(corner: vec2<i32>, salt: u32) -> vec2<f32> {
+    let key = (u32(corner.x) * 0x8da6b343u) ^ (u32(corner.y) * 0xd8163841u) ^ (salt * 0xcb1ab31fu);
     return vec2<f32>(terrain_hash_of(key), terrain_hash_of(key ^ 0x68e31da4u));
 }
 
@@ -139,45 +153,20 @@ fn water_steady() -> f32 {
 // One filtered read of tile `tile` at `uv` (in its periods), which changes
 // by `dx` and `dy` across the steady size (in its periods: a pixel's
 // derivatives scaled by `water_steady`): what its levels and anisotropy
-// average of its moments over that span, without tiling. Its slopes (xy,
-// for unit slope variance), the variance of those the span averages away
-// (z, what the levels lose of the slopes' square) and its height in its own
-// root mean square heights (w, averaging toward none as the span covers
-// many waves). Where its texels span more than the steady size, its levels'
-// averages hide nothing of it: what filtering between texels loses of the
-// slopes' square (lines along the texels' edges) is no waves' variance, so
-// it fades out as texels grow past it.
+// average of its moments over that span. Its slopes (xy, for unit slope
+// variance), the variance of those the span averages away (z, what the
+// levels lose of the slopes' square) and its height in its own root mean
+// square heights (w, averaging toward none as the span covers many waves).
+// Where its texels span more than the steady size, its levels' averages
+// hide nothing of it: what filtering between texels loses of the slopes'
+// square (lines along the texels' edges) is no waves' variance, so it fades
+// out as texels grow past it.
 fn water_tile_sample(tile: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
     let moments = textureSampleGrad(water_waves, water_wave_sampler, uv, tile, dx, dy);
     let texels = sqrt(length(dx) * length(dy)) * f32(textureDimensions(water_waves).x);
     let minified = saturate(log2(max(texels, 1.0e-6)) + 1.0);
     return vec4<f32>(moments.xy, max(moments.z - dot(moments.xy, moments.xy), 0.0) * minified,
         moments.w);
-}
-
-// Tile `tile`'s waves at `uv` (in its periods), which changes by `dx` and
-// `dy` across the steady size (in its periods, scaled by the caller), in
-// `water_tile_sample`'s units: read at the random offsets of the three
-// corners of the triangle of a skewed grid holding it, blended by its
-// weights there so that their variance stays the tile's (tiling and
-// blending, Heitz and Neyret; Deliot and Heitz), slopes and heights by
-// the weights over the root of their squares' sum and the variances by
-// the squares' shares: the waves, a Gaussian field, look the same
-// everywhere and never repeat.
-fn water_tile(tile: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
-    let triangle = water_triangle(uv / WATER_PATCH);
-    var corners = triangle.corners;
-    let weights = triangle.weights;
-    var sum = vec4<f32>(0.0);
-    for (var corner = 0u; corner < 3u; corner++) {
-        let read = water_tile_sample(tile, uv + water_corner_offset(corners[corner], tile), dx,
-            dy);
-        let weight = weights[corner];
-        sum += read * vec4<f32>(weight, weight, weight * weight, weight);
-    }
-    let kept = dot(weights, weights);
-    let spread = inverseSqrt(kept);
-    return vec4<f32>(sum.xy * spread, sum.z / kept, sum.w * spread);
 }
 
 // The meters a pixel spans as the waves' sampler filters what it covers,
@@ -291,10 +280,13 @@ fn water_wind_gains(speed: f32, fetch: f32, depth: f32) -> vec4<f32> {
 }
 
 // The wind's waves at world `p` (meters along x and z), which changes by
-// `dx` and `dy` a pixel (meters): each wind tile read at `p` times its
-// repeats at the steady size (`water_tile`, its derivatives scaled by
-// `water_steady`, so it draws no waves finer than its levels' texels
-// spanning STEADY_PIXELS pixels) and scaled by its gain in `gains`
+// `dx` and `dy` a pixel (meters): each wind tile read once, straight, at `p`
+// turned by its lattice's angle (`water_tile_turn`) times its repeats, at
+// the steady size (`water_tile_sample`, its derivatives turned alike and
+// scaled by `water_steady`, so it draws no waves finer than its levels'
+// texels spanning STEADY_PIXELS pixels), its slopes turned back into the
+// world (a wave the tile holds along the wind's heading turned by that
+// angle so runs along the wind), and scaled by its gain in `gains`
 // (`water_wind_gains`). Slopes and heights add, the hidden variances as
 // each gain's square times its read's, and of the heights' variance each
 // tile's waves longer than two of those texels hold theirs (its heights'
@@ -323,10 +315,14 @@ fn water_wind_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, gains: vec4<f32>
         var moments = vec4<f32>(0.0, 0.0, 1.0, 0.0);
         if kept > 0.0 {
             let repeats = water_tile_repeats(tile);
-            let tiled = water_tile(tile, p * repeats, dx * (repeats * steady),
-                dy * (repeats * steady));
-            moments = vec4<f32>(tiled.xy * kept,
-                tiled.z + (1.0 - kept * kept) * dot(tiled.xy, tiled.xy), tiled.w * kept);
+            let turn = water_tile_turn(tile);
+            let sampled = water_tile_sample(tile, water_turned_by(p, turn) * repeats,
+                water_turned_by(dx, turn) * (repeats * steady),
+                water_turned_by(dy, turn) * (repeats * steady));
+            // Its slopes turned back into the world.
+            let slopes = water_turned_by(sampled.xy, vec2<f32>(turn.x, -turn.y));
+            moments = vec4<f32>(slopes * kept,
+                sampled.z + (1.0 - kept * kept) * dot(slopes, slopes), sampled.w * kept);
         }
         // The share of its heights' variance its waves longer than two of
         // the texels it reads hold.

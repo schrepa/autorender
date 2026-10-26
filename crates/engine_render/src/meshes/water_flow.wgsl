@@ -218,12 +218,15 @@ fn water_stretched(stretch: vec2<f32>) -> f32 {
 // (x) and across it (y): read at the three corners of the triangle of a grid
 // holding it, its corners WATER_TURN_PATCH of the rung's period apart, each
 // read turned to the heading about its corner's middle and shifted at random
-// (salted by `salt`), and blended by their weights keeping their spread, as
-// `water_tile` blends its reads (Heitz and Neyret). Turning each read about
-// a middle nearby keeps a turning flow from shearing it. Its slopes (xy,
-// meters a meter, of unit variance before the stretch draws them out), the
-// variance of those it hides at the steady size (z, `water_tile_sample`),
-// and its height in its root mean square heights (w).
+// (salted by `salt`), and blended by their weights keeping their spread:
+// slopes and heights by the weights over the root of their squares' sum and
+// the variances by the squares' shares, so the waves, a Gaussian field, look
+// the same everywhere and never repeat (tiling and blending, Heitz and
+// Neyret; Deliot and Heitz). Turning each read about a middle nearby keeps a
+// turning flow from shearing it. Its slopes (xy, meters a meter, of unit
+// variance before the stretch draws them out), the variance of those it
+// hides at the steady size (z, `water_tile_sample`), and its height in its
+// root mean square heights (w).
 fn water_turned_tile(rung: f32, p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>,
         heading: vec2<f32>, stretch: vec2<f32>, salt: u32) -> vec4<f32> {
     let tile = WATER_TURBULENCE_TILE;
