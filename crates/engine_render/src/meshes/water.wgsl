@@ -1174,7 +1174,7 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // How far it is from still to running: still water's waves stand where
     // they evolve, running water's ride its current, and between, the two
     // blend, so nothing changes at once where a river meets a lake.
-    let flowing = smoothstep(0.05, 0.3, speed);
+    let flowing = smoothstep(WATER_FLOWING.x, WATER_FLOWING.y, speed);
     // The wind's waves: each of its tiles as strong as its spectrum gives
     // that tile's band where the wind, gusting and sheltered by the terrain
     // upwind, blows over as much water as the water's body spans, as deep as
