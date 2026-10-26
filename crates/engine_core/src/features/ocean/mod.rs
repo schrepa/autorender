@@ -174,9 +174,10 @@ impl Ocean {
     /// the wind has fully raised (the wind's sea over unlimited fetch and
     /// deep water, [`wind_waves::WindSea`]), from three quarters of its peak
     /// frequency to three and a half times it, each as high as its share of
-    /// the spectrum. Each heads off the wind by a seeded draw from the spread
-    /// measured seas hold at its frequency over the peak's (Donelan,
-    /// Hamilton and Hui 1985; Banner 1990:
+    /// the spectrum: none past its viscous end, so wind too light to raise
+    /// them leaves the sea still. Each heads off the wind by a seeded draw
+    /// from the spread measured seas hold at its frequency over the peak's
+    /// (Donelan, Hamilton and Hui 1985; Banner 1990:
     /// [`engine_tables::waves::spread_turn`]), narrowest at the peak and
     /// wider above it, the spread the wind's tiles ripple it by, alternately
     /// to either side. Their phases are seeded, and every wave's points
@@ -188,7 +189,8 @@ impl Ocean {
         let speed = (x * x + z * z).sqrt();
         let heading = [x / speed, z / speed];
         let sea = wind_waves::WindSea::new(speed, f32::INFINITY, f32::INFINITY);
-        let peak = sea.peak;
+        // The angular frequency of its peak, deep water's √(g k_p).
+        let peak = (GRAVITY * sea.peak).sqrt();
         let count = settings.waves as usize;
         let (low, high) = (0.75 * peak, 3.5 * peak);
         let ratio = if count > 1 {
@@ -218,9 +220,13 @@ impl Ocean {
             } else {
                 (peak, 0.5 * peak)
             };
-            let density = sea.density(frequency);
-            let amplitude = (2.0 * density * width).sqrt();
+            // The variance of its heights, a²/2 for a wave a high: the
+            // variance of the slopes the sea holds over its band, twice as
+            // wide in the logarithm of the wave number as in the frequency's
+            // (deep water's k = ω²/g), over the square of its wave number.
             let number = frequency * frequency / GRAVITY;
+            let variance = sea.slopes(number, 2.0 * width / frequency) / (number * number);
+            let amplitude = (2.0 * variance).sqrt();
             // Its turn off the wind: drawn from the spread at its frequency
             // over the peak's, alternately to either side.
             let side = if index % 2 == 0 { 1.0 } else { -1.0 };

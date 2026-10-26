@@ -17,14 +17,13 @@
 // first to the second (`shade_water`'s `flowing`): boils rise only in
 // running water.
 const WATER_FLOWING: vec2<f32> = vec2<f32>(0.05, 0.3);
-// The radians a meter at which surface tension speeds water's waves as much
-// as gravity does (`gpu_layouts::constants::WAVE_CAPILLARY`, the waves'
-// tiles' own): water's surface tension over its density, σ/ρ, is gravity
-// over its square (WATER_TENSION, cubic meters a second squared), and its
+// Water's surface tension over its density, σ/ρ (cubic meters a second
+// squared): gravity over the square of the wave number at which surface
+// tension speeds its waves as much as gravity does (WATER_RIPPLE_NUMBER,
+// `engine_core::wind_waves::RIPPLE_NUMBER`, the waves' tiles' own). Its
 // waves run slowest there, 1.7 cm long, at
-// c_min = (4 g σ/ρ)^(1/4) = √(2 g / WATER_CAPILLARY), 0.23 m/s.
-const WATER_CAPILLARY: f32 = 370.0;
-const WATER_TENSION: f32 = WATER_GRAVITY / (WATER_CAPILLARY * WATER_CAPILLARY);
+// c_min = (4 g σ/ρ)^(1/4) = √(2 g / WATER_RIPPLE_NUMBER), 0.23 m/s.
+const WATER_TENSION: f32 = WATER_GRAVITY / (WATER_RIPPLE_NUMBER * WATER_RIPPLE_NUMBER);
 // The k h past which tanh(k h) rounds to 1 in single precision, where waves
 // feel no bottom: clamped there, no device's exponentials overflow.
 const WATER_TANH_ROUNDED: f32 = 9.0;
@@ -255,7 +254,7 @@ fn water_standing_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, flow: vec2<f
     let speed = length(flow);
     // The slowest speed waves stand at, c_min, and the fastest: that of the
     // longest waves dispersion holds apart.
-    let least = sqrt(2.0 * WATER_GRAVITY / WATER_CAPILLARY);
+    let least = sqrt(2.0 * WATER_GRAVITY / WATER_RIPPLE_NUMBER);
     let deep = max(depth, WATER_THINNEST);
     let shallowest = WATER_BED_SHALLOW / deep;
     let fastest = sqrt((WATER_GRAVITY / shallowest + WATER_TENSION * shallowest)

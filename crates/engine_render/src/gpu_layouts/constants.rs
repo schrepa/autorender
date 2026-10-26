@@ -552,11 +552,6 @@ gpu_consts! {
     pub(crate) const CLOUD_REACH: f32 = 60000.0 => ["REACH" in CLOUDS_SHADER, "CLOUD_PARALLAX_REACH"];
     /// Vertices drawn per cluster of virtual geometry: three a triangle.
     pub(crate) const CLUSTER_DRAWN_VERTICES: u32 = 3 * engine_core::CLUSTER_TRIANGLES => ["CLUSTER_VERTICES" in VIRTUAL_SHADER];
-    /// The radians a meter at which surface tension speeds water's waves as
-    /// much as gravity does, where they run slowest (capillary waves are
-    /// shorter, under about 1.7 cm): the waves' tiles evolve by it, and
-    /// running water's waves stand on its bed past their slowest speed.
-    pub(crate) const WAVE_CAPILLARY: f32 = 370.0 => ["WAVE_CAPILLARY" in WATER_WAVES_SHADER, "WATER_CAPILLARY"];
 }
 
 gpu_mirrors! {
@@ -564,14 +559,23 @@ gpu_mirrors! {
     engine_core::table_data::sky::MULTIPLE_SIDE => ["SKY_MULTIPLE_SIZE"];
     engine_core::table_data::falls::BUBBLES => ["FALL_MAP_BUBBLES"];
     engine_core::terrain_data::hydraulics::GRAVITY => ["SIM_GRAVITY" in WATER_SIM_SHADER, "WATER_GRAVITY", "WAVE_GRAVITY" in WATER_WAVES_SHADER];
-    engine_core::wind_waves::FETCH_ALPHA => ["WATER_FETCH_ALPHA"];
-    engine_core::wind_waves::FETCH_ALPHA_POWER => ["WATER_FETCH_ALPHA_POWER"];
-    engine_core::wind_waves::FETCH_PEAK => ["WATER_FETCH_PEAK"];
-    engine_core::wind_waves::RAISED_ALPHA => ["WATER_RAISED_ALPHA"];
-    engine_core::wind_waves::RAISED_PEAK => ["WATER_RAISED_PEAK"];
+    engine_core::wind_waves::RAISED_AGE => ["WATER_RAISED_AGE"];
+    engine_core::wind_waves::AGE_FETCH => ["WATER_AGE_FETCH"];
+    engine_core::wind_waves::AGE_FETCH_POWER => ["WATER_AGE_FETCH_POWER"];
+    engine_core::wind_waves::AGE_POWER => ["WATER_AGE_POWER"];
+    engine_core::wind_waves::LONG_STRENGTH => ["WATER_LONG_STRENGTH"];
     engine_core::wind_waves::PEAK_ENHANCEMENT => ["WATER_PEAK_ENHANCEMENT"];
-    engine_core::wind_waves::PEAK_BELOW => ["WATER_PEAK_BELOW"];
-    engine_core::wind_waves::PEAK_ABOVE => ["WATER_PEAK_ABOVE"];
+    engine_core::wind_waves::PEAK_ENHANCEMENT_GROWTH => ["WATER_PEAK_ENHANCEMENT_GROWTH"];
+    engine_core::wind_waves::PEAK_WIDTH => ["WATER_PEAK_WIDTH"];
+    engine_core::wind_waves::PEAK_WIDTH_GROWTH => ["WATER_PEAK_WIDTH_GROWTH"];
+    engine_core::wind_waves::RIPPLE_NUMBER => ["WATER_RIPPLE_NUMBER", "WAVE_CAPILLARY" in WATER_WAVES_SHADER];
+    engine_core::wind_waves::RIPPLE_SPEED => ["WATER_RIPPLE_SPEED"];
+    engine_core::wind_waves::SHORT_STRENGTH => ["WATER_SHORT_STRENGTH"];
+    engine_core::wind_waves::SHORT_GROWTH => ["WATER_SHORT_GROWTH"];
+    engine_core::wind_waves::DRAG => ["WATER_DRAG"];
+    engine_core::wind_waves::DRAG_GROWTH => ["WATER_DRAG_GROWTH"];
+    engine_core::wind_waves::WIND_GROWTH => ["WATER_WIND_GROWTH"];
+    engine_core::wind_waves::VISCOSITY => ["WATER_VISCOSITY"];
     engine_core::terrain_data::shallow_water::THETA => ["SIM_THETA" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::THIN => ["SIM_THIN" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::DRY => ["SIM_DRY" in WATER_SIM_SHADER];

@@ -11,12 +11,16 @@
 // span, so it draws no waves finer than temporal antialiasing holds
 // steadily, the variance of the slopes they average away roughens the
 // water (LEAN mapping), and nothing fades by distance. Each place sizes
-// the wind's tiles by the sea its wind raises there (Horvath 2015,
-// "Empirical directional wave spectra for computer graphics",
-// `engine_core::wind_waves`): JONSWAP's spectrum for the wind's speed
-// there, gusts and all, over the fetch its water's span gives, cut by its
-// depth (TMA), each tile scaled by the root of the slope variance that sea
-// holds in the tile's band.
+// the wind's tiles by the sea its wind raises there
+// (`engine_core::wind_waves`): Elfouhaily, Chapron, Katsaros and
+// Vandemark's unified spectrum (1997, "A unified directional spectrum for
+// long and short wind-driven waves") for the wind's speed there, gusts and
+// all, over the fetch its water's span gives, cut by its depth (TMA) and
+// past the waves viscosity takes faster than the wind raises them, each
+// tile scaled by the root of the slope variance that sea holds in the
+// tile's band; the slopes of its waves finer than the tiles hold roughen
+// the water, and light wind, raising no capillary ripples, leaves it
+// glassy.
 // Terrain upwind shelters the wind over water: behind a crest it slows,
 // recovering downwind (`terrain_shelter`), so valley streams lie calm while
 // open lakes keep their breeze.
@@ -30,38 +34,74 @@ const WATER_WAVE_ANISOTROPY: f32 = 8.0;
 // Meters across the patches of stronger and calmer wind sweeping over
 // water.
 const WATER_GUST_SIZE: f32 = 40.0;
-// The sea the wind raises over a fetch F (`engine_core::wind_waves`):
-// Phillips's constant α = WATER_FETCH_ALPHA (U²/(F g))^WATER_FETCH_ALPHA_POWER
-// and its peak's angular frequency WATER_FETCH_PEAK (g²/(U F))^(1/3),
-// however far it blows no less than the fully raised sea's α
-// (WATER_RAISED_ALPHA) and peak (WATER_RAISED_PEAK g/U); how much higher the
-// spectrum stands at its peak (γ), and the peak's widths below and above
-// its frequency, as shares of it (σ).
-const WATER_FETCH_ALPHA: f32 = 0.076;
-const WATER_FETCH_ALPHA_POWER: f32 = 0.22;
-const WATER_FETCH_PEAK: f32 = 22.0;
-const WATER_RAISED_ALPHA: f32 = 0.0081;
-const WATER_RAISED_PEAK: f32 = 0.877;
-const WATER_PEAK_ENHANCEMENT: f32 = 3.3;
-const WATER_PEAK_BELOW: f32 = 0.07;
-const WATER_PEAK_ABOVE: f32 = 0.09;
+// The sea the wind raises over a fetch F (`engine_core::wind_waves`,
+// Elfouhaily et al. 1997). Its inverse wave age U/c_p,
+// Ω = WATER_RAISED_AGE tanh((X/WATER_AGE_FETCH)^WATER_AGE_FETCH_POWER)
+// to the power WATER_AGE_POWER, of the fetch over the length the wind's
+// speed sets, X = g F / U²: WATER_RAISED_AGE once fully raised, more for
+// younger seas, whose peak runs slower.
+const WATER_RAISED_AGE: f32 = 0.84;
+const WATER_AGE_FETCH: f32 = 2.2e4;
+const WATER_AGE_FETCH_POWER: f32 = 0.4;
+const WATER_AGE_POWER: f32 = -0.75;
+// Its long waves' strength, α_p = WATER_LONG_STRENGTH √Ω; how much higher it
+// stands at its peak, γ = WATER_PEAK_ENHANCEMENT up to Ω = 1 and
+// WATER_PEAK_ENHANCEMENT_GROWTH log₁₀ Ω more past it; and its peak's width
+// in √(k/k_p), σ = WATER_PEAK_WIDTH (1 + WATER_PEAK_WIDTH_GROWTH Ω⁻³).
+const WATER_LONG_STRENGTH: f32 = 6.0e-3;
+const WATER_PEAK_ENHANCEMENT: f32 = 1.7;
+const WATER_PEAK_ENHANCEMENT_GROWTH: f32 = 6.0;
+const WATER_PEAK_WIDTH: f32 = 0.08;
+const WATER_PEAK_WIDTH_GROWTH: f32 = 4.0;
+// The wave number (radians a meter) at which surface tension speeds waves
+// as much as gravity does (`WAVE_CAPILLARY`), and the phase speed (meters a
+// second) of the slowest waves, there: k_m and c_m, about which its short
+// waves gather; and their strength,
+// α_m = WATER_SHORT_STRENGTH (1 + ln(u*/c_m)) for the wind's friction
+// velocity u* up to c_m and WATER_SHORT_STRENGTH (1 + WATER_SHORT_GROWTH
+// ln(u*/c_m)) past it, none where that is negative: light wind raises no
+// capillary ripples.
+const WATER_RIPPLE_NUMBER: f32 = 370.0;
+const WATER_RIPPLE_SPEED: f32 = 0.23;
+const WATER_SHORT_STRENGTH: f32 = 0.01;
+const WATER_SHORT_GROWTH: f32 = 3.0;
+// The sea's drag on the wind 10 meters up, C_D = WATER_DRAG +
+// WATER_DRAG_GROWTH U (Wu 1982), by which the wind's friction velocity is
+// u* = √C_D U.
+const WATER_DRAG: f32 = 8.0e-4;
+const WATER_DRAG_GROWTH: f32 = 6.5e-5;
+// How fast the wind feeds a wave's energy, WATER_WIND_GROWTH (u*/c)² ω
+// (Plant 1982), and water's kinematic viscosity ν (square meters a second,
+// at 20 °C), by which it takes it at 4 ν k² (Lamb): past the angular
+// frequency where the two meet, WATER_WIND_GROWTH u*² / (4 ν), the sea
+// holds no waves.
+const WATER_WIND_GROWTH: f32 = 0.04;
+const WATER_VISCOSITY: f32 = 1.0e-6;
 // The peak's widths within which its enhancement is drawn: past five, it
 // lifts the spectrum by less than a hundred-thousandth.
 const WATER_PEAK_REACH: f32 = 5.0;
-// Points an octave by which a tile's band sums the sea's slopes (the
-// midpoint rule in the logarithm of the wave number): the peak's
-// enhancement, under half an octave wide, always meets one, so a band's
-// share errs by a few hundredths at most.
+// Points an octave by which a band of wave numbers sums the sea's slopes
+// (the midpoint rule in the logarithm of the wave number): the peak's
+// enhancement, a quarter of an octave wide at its narrowest, always meets
+// one, so a band's share errs by a few hundredths at most.
 const WATER_BAND_POINTS: f32 = 2.0;
+// The finest of the wind's waves summed (`water_wind_finer`), in k_m: past
+// ten times it, the short waves' spectrum holds less than 2×10⁻⁹ of its
+// peak, and viscosity takes a ripple's energy within a few of its periods.
+const WATER_FINEST: f32 = 10.0;
 // The meters of fetch and depth the open sea's wind blows over: farther
-// than any wind needs to raise its sea fully (g F / U² past about 26,000),
-// and deeper than the tiles' longest waves feel (two thirds of their
-// length).
-const WATER_OPEN_FETCH: f32 = 1.0e7;
+// than any wind needs to raise its sea fully, its inverse wave age reaching
+// WATER_RAISED_AGE to f32's precision (g F / U² past about 5×10⁶), as the
+// sea's own waves take it over unlimited fetch
+// (`engine_core::Ocean::spectrum`), and deeper than the tiles' longest
+// waves feel (two thirds of their length).
+const WATER_OPEN_FETCH: f32 = 1.0e10;
 const WATER_OPEN_DEPTH: f32 = 1.0e4;
-// Calm water's roughness, and the most its waves' hidden slopes roughen
-// it: calm water's microfacets slope about as much as the first's square.
-const WATER_SMOOTH: f32 = 0.05;
+// The least and the most roughness water shades with: as smooth as every
+// surface may be (`meshes/shading.wgsl`), where GGX's lobe stays finite in
+// f32 though rounding takes a unit half vector's cosine with the normal an
+// ulp or two past 1; and the most its waves' hidden slopes roughen it.
+const WATER_SMOOTHEST: f32 = 0.03;
 const WATER_ROUGHEST: f32 = 0.6;
 
 // Waves as a pixel reads them: their slopes (meters a meter), the variance
@@ -191,86 +231,182 @@ fn water_wind_speed(world: vec3<f32>, time: f32) -> f32 {
     return speed * (1.0 + water.wind.z * (2.0 * gusting - 1.0)) * terrain_shelter(world, heading);
 }
 
-// For each wind tile, the root of the slope variance its band holds of the
-// waves no longer than `longest` meters where wind of `speed` meters a
-// second blows over `fetch` meters of water `depth` meters deep. That wind
-// raises a sea of Phillips's constant α and peak k_p over that fetch
-// (Horvath's JONSWAP, the fully raised sea's at most), whose slopes'
-// variance by the logarithm of the wave number k (deep water's ω²/g) is
-// α/2 e^(−5/4 (k_p/k)²) γ^r, r = e^(−(√(k/k_p) − 1)² / 2σ²): α/2 past the
-// peak, where the saturation range runs, the tiles' own spectrum. Water
-// too shallow to hold the longer waves cuts them by Kitaigorodskii's factor
-// of √(k h), ω √(h/g) in deep water's waves (TMA). Each band sums it by the
-// midpoint rule, WATER_BAND_POINTS points an octave, a point past `longest`
-// counted as far as it lies within it, so the gains change smoothly with
-// all four.
-fn water_wind_bands(speed: f32, fetch: f32, depth: f32, longest: f32) -> vec4<f32> {
-    var gains = vec4<f32>(0.0);
-    // A fetch shorter than the shortest waves the tiles hold raises none of
-    // them; before the tiles arrive, they hold none.
+// The sea the wind raises over a stretch of water (`water_wind_sea`), as
+// `water_wind_curvature` reads it: the inverse root of its peak's wave
+// number (1/√k_p), its long and its short waves' strengths times their
+// phase speeds (α_p c_p / 2 and α_m c_m / 2, meters a second), how fast its
+// long waves fall away past its peak (Ω/√10), the binary logarithm of its
+// peak's enhancement (log₂ γ) and its peak's width (σ), the natural
+// logarithm of the wave number of its viscous end (radians a meter), past
+// which it holds no waves, and the root of the water's depth. A sea of no
+// long waves holds none.
+struct WaterSea {
+    peak_root: f32,
+    long: f32,
+    short: f32,
+    fall: f32,
+    enhancement: f32,
+    width: f32,
+    viscous: f32,
+    deep: f32,
+}
+
+// The sea wind of `speed` meters a second (as it reaches the water, gusting
+// and sheltered by the terrain upwind: `water_wind_speed`) raises over
+// `fetch` meters of water `depth` meters deep (`engine_core::wind_waves`):
+// its inverse wave age Ω by the fetch over the length the wind's speed
+// sets, its peak k_p = g Ω²/U², which runs at c_p = U/Ω, its short waves'
+// strength by the wind's friction velocity u*, and its viscous end, the wave
+// number whose angular frequency ω_v = WATER_WIND_GROWTH u*² / (4 ν) solves
+// ω² = g k (1 + (k/k_m)²): k = (k_m/√3)(w − 1/w), w = ∛(z + √(z² + 1)),
+// z = (3√3/2) ω_v² / (g k_m) (Cardano's root). Past it viscosity takes a
+// wave's energy faster than the wind feeds it, and the sea holds none
+// (Donelan and Pierson 1987), so light wind leaves water still. A fetch
+// shorter than the shortest waves the tiles hold raises none of them;
+// before the tiles arrive, they hold none.
+fn water_wind_sea(speed: f32, fetch: f32, depth: f32) -> WaterSea {
+    var sea: WaterSea;
     let shortest = water_tile_band(WATER_WIND_TILES - 1u).y;
     if speed <= 0.0 || shortest <= 0.0 {
-        return gains;
+        return sea;
     }
     // The fetch over the length the wind's speed sets (g F / U²), and the
-    // sea it raises: Phillips's constant, the wave number of its peak and
-    // that number's inverse root.
+    // sea's inverse wave age, its tanh by the exponential, which no fetch
+    // overflows.
     let reach = WATER_GRAVITY * max(fetch, shortest) / (speed * speed);
-    let alpha = max(WATER_FETCH_ALPHA * pow(reach, -WATER_FETCH_ALPHA_POWER),
-        WATER_RAISED_ALPHA);
-    let peak = max(WATER_FETCH_PEAK * pow(reach, -1.0 / 3.0), WATER_RAISED_PEAK)
-        * WATER_GRAVITY / speed;
-    let peak_number = peak * peak / WATER_GRAVITY;
-    let peak_root = inverseSqrt(peak_number);
-    let deep = sqrt(max(depth, 0.0));
+    let grown = exp(-2.0 * pow(reach / WATER_AGE_FETCH, WATER_AGE_FETCH_POWER));
+    let age = WATER_RAISED_AGE * pow((1.0 - grown) / (1.0 + grown), WATER_AGE_POWER);
+    sea.peak_root = speed / (age * sqrt(WATER_GRAVITY));
+    sea.long = 0.5 * WATER_LONG_STRENGTH * sqrt(age) * speed / age;
+    sea.fall = age / sqrt(10.0);
+    sea.enhancement = log2(WATER_PEAK_ENHANCEMENT
+        + WATER_PEAK_ENHANCEMENT_GROWTH * max(log(age) / log(10.0), 0.0));
+    sea.width = WATER_PEAK_WIDTH * (1.0 + WATER_PEAK_WIDTH_GROWTH / (age * age * age));
+    // The wind's friction velocity, and the short waves' strength by its
+    // ratio to the slowest waves' speed.
+    let friction = sqrt(WATER_DRAG + WATER_DRAG_GROWTH * speed) * speed;
+    let rise = log(friction / WATER_RIPPLE_SPEED);
+    let strength = WATER_SHORT_STRENGTH
+        * (1.0 + select(1.0, WATER_SHORT_GROWTH, rise > 0.0) * rise);
+    sea.short = 0.5 * max(strength, 0.0) * WATER_RIPPLE_SPEED;
+    // The viscous end's angular frequency, and its wave number.
+    let frequency = WATER_WIND_GROWTH * friction * friction / (4.0 * WATER_VISCOSITY);
+    let cubic = 1.5 * sqrt(3.0) * frequency * frequency
+        / (WATER_GRAVITY * WATER_RIPPLE_NUMBER);
+    let turned = pow(cubic + sqrt(cubic * cubic + 1.0), 1.0 / 3.0);
+    sea.viscous = log(max(WATER_RIPPLE_NUMBER / sqrt(3.0) * (turned - 1.0 / turned),
+        1.0e-30));
+    sea.deep = sqrt(max(depth, 0.0));
+    return sea;
+}
+
+// The curvature of sea `sea` at the wave number k whose root is `root` (√k,
+// k radians a meter): the variance of its slopes by the logarithm of the
+// wave number, its waves of every heading counted, B = B_l + B_h
+// (Elfouhaily et al. 1997). Its long waves' B_l = (α_p/2)(c_p/c) L_PM J_p
+// e^(−(Ω/√10)(√(k/k_p) − 1)) and its short waves'
+// B_h = (α_m/2)(c_m/c) L_PM J_p e^(−(k/k_m − 1)²/4), where
+// c = √((g/k)(1 + (k/k_m)²)) is the waves' phase speed,
+// L_PM = e^(−5/4 (k_p/k)²) the fully raised sea's shape, and J_p = γ^Γ,
+// Γ = e^(−(√(k/k_p) − 1)² / 2σ²), its peak's enhancement, drawn within
+// WATER_PEAK_REACH widths of the peak. Water too shallow to hold the longer
+// waves cuts them by Kitaigorodskii's factor of √(k h), ω √(h/g) in deep
+// water's waves (TMA).
+fn water_wind_curvature(sea: WaterSea, root: f32) -> f32 {
+    let number = root * root;
+    // √(k/k_p), ω/ω_p in deep water, and k_p/k, by which the long and the
+    // short waves both fade below the peak.
+    let over = root * sea.peak_root;
+    let ratio = 1.0 / (over * over);
+    let fade = -1.25 * ratio * ratio;
+    var enhanced = 1.0;
+    let off = (over - 1.0) / sea.width;
+    if off * off < WATER_PEAK_REACH * WATER_PEAK_REACH {
+        enhanced = exp2(sea.enhancement * exp(-0.5 * off * off));
+    }
+    // k/k_m, and the waves' slowness 1/c (seconds a meter).
+    let scaled = number / WATER_RIPPLE_NUMBER;
+    let slowness = root * inverseSqrt(WATER_GRAVITY * (1.0 + scaled * scaled));
+    let waves = sea.long * exp(fade - sea.fall * (over - 1.0))
+        + sea.short * exp(fade - 0.25 * (scaled - 1.0) * (scaled - 1.0));
+    let shallow = min(root * sea.deep, 2.0);
+    let held = select(1.0 - 0.5 * (2.0 - shallow) * (2.0 - shallow), 0.5 * shallow * shallow,
+        shallow <= 1.0);
+    return waves * enhanced * slowness * held;
+}
+
+// The slope variance sea `sea` holds over `points` points `step` apart in
+// the logarithm of the wave number, the first at `first`, by the midpoint
+// rule: each point counted as far as its step lies past `counted` (the
+// logarithm of the wave number of the longest waves counted) and short of
+// the sea's viscous end, so the sum changes smoothly with both.
+fn water_wind_sum(sea: WaterSea, first: f32, step: f32, points: f32, counted: f32) -> f32 {
+    // The root of each point's wave number, growing by `rising` a point.
+    let rising = exp(0.5 * step);
+    var root = exp(0.5 * first);
+    var sum = 0.0;
+    for (var point = 0.0; point < points; point += 1.0) {
+        let middle = first + point * step;
+        let share = saturate((middle - counted) / step + 0.5)
+            * saturate((sea.viscous - middle) / step + 0.5);
+        if share > 0.0 {
+            sum += water_wind_curvature(sea, root) * share;
+        }
+        root *= rising;
+    }
+    return sum * step;
+}
+
+// For each wind tile, the root of the slope variance its band holds of the
+// waves no longer than `longest` meters in sea `sea` (`water_wind_sea`),
+// summed over the band from the middle of its first step, nearest its
+// longest waves, WATER_BAND_POINTS points an octave (`water_wind_sum`): what
+// the tile's slopes scale by there, 0 where it holds none.
+fn water_wind_bands(sea: WaterSea, longest: f32) -> vec4<f32> {
+    var gains = vec4<f32>(0.0);
+    if sea.long <= 0.0 {
+        return gains;
+    }
     // The logarithm of the wave number of the longest waves counted.
     let counted = log(2.0 * PI / longest);
-    let enhancement = log2(WATER_PEAK_ENHANCEMENT);
     for (var tile = 0u; tile < WATER_WIND_TILES; tile++) {
         let band = water_tile_band(tile);
         if band.y <= 0.0 || band.x <= band.y {
             continue;
         }
-        // Its points, `step` apart in the logarithm of the wave number from
-        // the middle of the first, nearest its longest waves, the root of
-        // each point's wave number growing by `rising`.
         let points = ceil(WATER_BAND_POINTS * log2(band.x / band.y));
         let step = log(band.x / band.y) / points;
-        let first = log(2.0 * PI / band.x) + 0.5 * step;
-        let rising = exp(0.5 * step);
-        var root = exp(0.5 * first);
-        var sum = 0.0;
-        for (var point = 0.0; point < points; point += 1.0) {
-            let share = saturate((first + (point + 0.5) * step - counted) / step);
-            if share > 0.0 {
-                // k_p/k, and √(k/k_p): ω/ω_p.
-                let ratio = peak_number / (root * root);
-                let over = root * peak_root;
-                var slopes = exp(-1.25 * ratio * ratio);
-                let off = (over - 1.0) / select(WATER_PEAK_ABOVE, WATER_PEAK_BELOW, over <= 1.0);
-                if off * off < WATER_PEAK_REACH * WATER_PEAK_REACH {
-                    slopes *= exp2(enhancement * exp(-0.5 * off * off));
-                }
-                let shallow = min(root * deep, 2.0);
-                let held = select(1.0 - 0.5 * (2.0 - shallow) * (2.0 - shallow),
-                    0.5 * shallow * shallow, shallow <= 1.0);
-                sum += slopes * held * share;
-            }
-            root *= rising;
-        }
-        gains[tile] = sqrt(0.5 * alpha * step * sum);
+        gains[tile] = sqrt(water_wind_sum(sea, log(2.0 * PI / band.x) + 0.5 * step, step,
+            points, counted));
     }
     return gains;
 }
 
-// For each wind tile, the root of the slope variance its band holds where
-// wind of `speed` meters a second (as it reaches the water, gusting and
-// sheltered by the terrain upwind: `water_wind_speed`) blows over `fetch`
-// meters of water `depth` meters deep, every wave the tiles hold counted
+// For each wind tile, the root of the slope variance its band holds in sea
+// `sea` (`water_wind_sea`), every wave the tiles hold counted
 // (`water_wind_bands`): what the tile's slopes scale by there, 0 where it
 // holds none.
-fn water_wind_gains(speed: f32, fetch: f32, depth: f32) -> vec4<f32> {
-    return water_wind_bands(speed, fetch, depth, water_tile_band(0u).x);
+fn water_wind_gains(sea: WaterSea) -> vec4<f32> {
+    return water_wind_bands(sea, water_tile_band(0u).x);
+}
+
+// The slope variance of the waves of sea `sea` finer than the wind's tiles
+// hold, from the last tile's shortest waves to WATER_FINEST k_m, summed
+// WATER_BAND_POINTS points an octave (`water_wind_sum`) as far as the sea's
+// viscous end: where light wind's falls short of them, it raises none, and
+// the water lies glassy.
+fn water_wind_finer(sea: WaterSea) -> f32 {
+    if sea.long <= 0.0 {
+        return 0.0;
+    }
+    let start = log(2.0 * PI / water_tile_band(WATER_WIND_TILES - 1u).y);
+    let span = log(WATER_FINEST * WATER_RIPPLE_NUMBER) - start;
+    if span <= 0.0 {
+        return 0.0;
+    }
+    let points = ceil(WATER_BAND_POINTS * span / log(2.0));
+    let step = span / points;
+    return water_wind_sum(sea, start + 0.5 * step, step, points, start);
 }
 
 // The wind's waves at world `p` (meters along x and z), which changes by
@@ -285,9 +421,9 @@ fn water_wind_gains(speed: f32, fetch: f32, depth: f32) -> vec4<f32> {
 // each gain's square times its read's, and of the heights' variance each
 // tile's waves longer than two of those texels hold theirs (its heights'
 // variance an octave falling as the square of their length). A tile of no
-// gain reads nothing. One whose slopes stay as gentle as calm water's
-// microfacets (WATER_SMOOTH's square), or whose longest waves the steady
-// size spans twice over (as the sampler picks its level,
+// gain reads nothing. One whose slopes stay as gentle as the smoothest
+// water's microfacets (WATER_SMOOTHEST's square), or whose longest waves
+// the steady size spans twice over (as the sampler picks its level,
 // `water_wave_span`), reads no texture and hides the square of its gain:
 // each hands over across an octave, from twice the gentlest to it and from
 // once the longest waves to twice, what it takes of the slopes hiding in
@@ -297,7 +433,7 @@ fn water_wind_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, gains: vec4<f32>
     // At the steady size: the meters it spans as the sampler filters.
     let steady = water_steady();
     let span = water_wave_span(dx, dy) * steady;
-    let calm = WATER_SMOOTH * WATER_SMOOTH;
+    let calm = WATER_SMOOTHEST * WATER_SMOOTHEST;
     for (var tile = 0u; tile < WATER_WIND_TILES; tile++) {
         let gain = gains[tile];
         if gain <= 0.0 {
@@ -350,9 +486,12 @@ fn water_turning(normal: vec3<f32>) -> f32 {
 
 // The roughness of water whose waves vary `variance` of their slopes'
 // square within a pixel, those it hides and those it draws turning across
-// it (`water_turning`): calm water's, widened by that variance as a
-// microfacet distribution's (LEAN mapping, Olano and Baker).
-fn water_roughness(variance: f32) -> f32 {
-    let calm = WATER_SMOOTH * WATER_SMOOTH;
-    return min(sqrt(sqrt(calm * calm + variance)), WATER_ROUGHEST);
+// it (`water_turning`), in sea `sea` (`water_wind_sea`): the variance of
+// the sea's waves finer than the tiles hold (`water_wind_finer`) adds to
+// it, as variances add in a microfacet distribution (LEAN mapping, Olano
+// and Baker), and the roughness is the sum's fourth root, from
+// WATER_SMOOTHEST to WATER_ROUGHEST.
+fn water_roughness(variance: f32, sea: WaterSea) -> f32 {
+    return clamp(sqrt(sqrt(variance + water_wind_finer(sea))), WATER_SMOOTHEST,
+        WATER_ROUGHEST);
 }

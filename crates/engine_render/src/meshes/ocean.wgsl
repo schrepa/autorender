@@ -244,7 +244,8 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     // its cliffs, that wind slows and its ripples calm (`terrain_shelter`).
     let shortest = OCEAN_TAU / max(length(water.ocean_waves[max(count, 1u) - 1u].xy), 1.0e-6);
     let wind = water_wind_speed(world, time);
-    let gains = water_wind_bands(wind, WATER_OPEN_FETCH, WATER_OPEN_DEPTH, shortest);
+    let sea = water_wind_sea(wind, WATER_OPEN_FETCH, WATER_OPEN_DEPTH);
+    let gains = water_wind_bands(sea, shortest);
     let ripples = water_wind_waves(world.xz, world_dx.xz, world_dy.xz, gains);
     let slopes = ripples.slopes - waved.xz / max(waved.y, 1.0e-3);
     let normal = normalize(vec3<f32>(-slopes.x, 1.0, -slopes.y));
@@ -292,9 +293,10 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     let foam_tilt = water_foam_tilt(froth.height, normal, world_dx, world_dy);
     // Calm water is a mirror; the slopes of waves too short to draw spread
     // its highlights, as a rougher surface would, and so do the ripples
-    // finer than the steady size and how far the normal of those drawn
-    // turns across the pixel (`water_turning`).
-    let roughness = water_roughness(hidden + ripples.hidden + water_turning(normal));
+    // finer than the steady size, how far the normal of those drawn turns
+    // across the pixel (`water_turning`) and the wind's waves finer than its
+    // tiles hold (`water_roughness`).
+    let roughness = water_roughness(hidden + ripples.hidden + water_turning(normal), sea);
     // Its crests (`ocean_heights`): how near their tops it stands, the
     // height its waves and the tiles' raise it over √2 of the root of the
     // variance of the heights the pixel draws (where a sine's crests
