@@ -22,8 +22,10 @@
 // and updates every cell; rivers bring their water to their cells after
 // each step. The water carries foam: it churns it up where it loses energy
 // fast enough to break (as it runs, where it plunges and jumps, along its
-// eddy lines and where it piles up), the current carries it off, and it
-// fades as its bubbles break.
+// eddy lines and where it piles up), the current its surface runs at
+// carries it off conserved, turned outward in bends and dragged by the
+// wind, so it gathers where that surface converges, along the banks it is
+// pushed against and on eddy lines, and it fades as its bubbles break.
 //
 // Every dispatch runs rectangles side by side, the third dimension counting
 // them, each a slot of the buffers with its own cells along x and z, cell
@@ -44,7 +46,9 @@
 //   where they fill its depth, so it flows around what stands still and is
 //   pushed ahead of what moves, its wakes, bow waves and rings coming out
 //   of the shallow-water equations themselves, and churning its foam where
-//   they pass it fast enough to tear air in;
+//   they pass it fast enough to tear air in, the foam it carries piling
+//   against what stands up through its surface; and the scene's wind drags
+//   its surface;
 // - regions settling tiles' water (`water_settle.rs`) step each cell by as
 //   long as its own and its neighbors' fastest waves allow, which reaches
 //   the steady state in far fewer steps; their water leaves freely over
@@ -57,7 +61,8 @@
 //   before's end, or where a block beside it held water along the side they
 //   share, as water crosses less than a cell a step, and every other block
 //   stands still, dry or a lake's, the faces between them and those
-//   stepping carrying nothing.
+//   stepping carrying nothing; and no wind drags their surface, as their
+//   records stand for whatever wind blows.
 
 const WATER_SIM_GROUP: u32 = 8u;
 const WATER_SIM_SOURCE_GROUP: u32 = 64u;
@@ -119,12 +124,15 @@ const SIM_LOOKING: u32 = 16u;
 const SIM_SPARSE: u32 = 32u;
 
 // The stage (0: the first, 1: the second), the slots the buffers hold, the
-// blocks a slot's pool holds and the blocks a slot's table maps; and the
-// most cells rivers bring water to a slot holds, and the faces along its
-// west and south edges a slot holds (its cells along x and z).
+// blocks a slot's pool holds and the blocks a slot's table maps; the most
+// cells rivers bring water to a slot holds, and the faces along its west
+// and south edges a slot holds (its cells along x and z); and the free wind
+// over the water (meters a second along x and z; none for settling
+// regions), then nothing.
 struct SimFrame {
     stage: vec4<u32>,
     inputs: vec4<u32>,
+    wind: vec4<f32>,
 }
 
 // A slot's rectangle: its cells along x and z, its flags and the cells
@@ -157,7 +165,10 @@ struct SimSlots {
 @group(0) @binding(2) var<storage, read_write> sim_cells: array<vec4<f32>>;
 // Each cell's water's depths at its faces as reconstructed, the mean of
 // their squares across x (its west and east faces') and across z (its
-// south and north faces'), which the pull of gravity down its ground reads.
+// south and north faces'), which the pull of gravity down its ground reads;
+// and, from a step's end until the next step's first stage, the current
+// its surface runs at (meters a second along x and z, `sim_drift`), which
+// the foam it carries rides.
 @group(0) @binding(3) var<storage, read_write> sim_depths: array<vec2<f32>>;
 // The fluxes through each slot's faces: each of its cells' east face's,
 // then each of its cells' north face's, then those through the faces on its
@@ -1393,6 +1404,21 @@ const SIM_FOAM_JUMP: f32 = 1.7;
 const SIM_FOAM_SWIRL: f32 = 1.0;
 const SIM_FOAM_PILING: f32 = 0.5;
 const SIM_FOAM_POWER: f32 = 500.0;
+// Foam rides the water's surface, which runs as the depth's mean does but
+// for two things. In a bend the helical flow carries the surface toward the
+// outer bank and the bed toward the inner one (Rozovskii 1957; de Vriend
+// 1977): the flow along the bed turns inward by an angle whose tangent is
+// 7 h/R, h the depth and R the streamlines' radius of curvature (Engelund
+// 1974), and the surface turns outward by as much, SIM_BEND depths over the
+// radius. Sharper bends saturate, as their secondary flow flattens the
+// main flow's profile that drives it (Blanckaert and de Vriend 2003): the
+// turn's tangent stops at SIM_BEND_MOST, 45 degrees, which the linear rule
+// reaches where R nears seven depths, so the surface never runs more
+// across the stream than along it. And the wind drags the surface at
+// SIM_WIND_DRIFT of its speed along its heading (Wu 1975).
+const SIM_BEND: f32 = 7.0;
+const SIM_BEND_MOST: f32 = 1.0;
+const SIM_WIND_DRIFT: f32 = 0.03;
 
 // The first state's cell at `at`: its surface, depth and velocity; or
 // `instead` where it is dry.
@@ -1444,58 +1470,233 @@ fn sim_foam_landing(upstream: vec4<f32>, here: vec4<f32>, beyond: vec4<f32>, tow
     return SIM_DENSITY * SIM_GRAVITY * brought * max(head, 0.0) / dx;
 }
 
-// The first state's foam at cell (i, j): none where the slot holds none
-// there.
-fn sim_foam(q: Square, i: u32, j: u32) -> f32 {
-    let at = sim_at(q, i32(i), i32(j));
-    if at == SIM_NO_BLOCK {
-        return 0.0;
-    }
-    return sim_cells[sim_cells_base(q) + at].w;
+// The current the surface of water standing as `here` (its surface, depth
+// and velocity) runs at, its neighbors along x and z standing as `west`,
+// `east`, `south` and `north` (`sim_moving`'s, itself standing in for one
+// dry or missing), over cells `dx` meters across: its velocity turned
+// outward in a bend by δ, tan δ = SIM_BEND·h/R, no more than SIM_BEND_MOST.
+// R is the streamlines' radius of curvature, 1/R = |u × (u·∇)u| / |u|³, the
+// velocity's derivatives taken between its neighbors as `sim_churn` takes
+// them; outward is away from the side u × (u·∇)u says the streamlines
+// curve toward.
+fn sim_surface_current(here: vec4<f32>, west: vec4<f32>, east: vec4<f32>, south: vec4<f32>,
+        north: vec4<f32>, dx: f32) -> vec2<f32> {
+    let velocity = here.zw;
+    let along_x = (east.zw - west.zw) / (2.0 * dx);
+    let along_z = (north.zw - south.zw) / (2.0 * dx);
+    let turning = velocity.x * along_x + velocity.y * along_z;
+    let speed = length(velocity);
+    let curving = (velocity.x * turning.y - velocity.y * turning.x)
+        / max(speed * speed * speed, 1.0e-12);
+    let tangent = clamp(SIM_BEND * here.y * curving, -SIM_BEND_MOST, SIM_BEND_MOST);
+    return vec2<f32>(velocity.x + tangent * velocity.y, velocity.y - tangent * velocity.x)
+        * inverseSqrt(1.0 + tangent * tangent);
 }
 
-// The first state's foam at cell `p` (fractional, along x and z),
-// bilinearly; past the rectangle's edges, the nearest ring cell's, or none
-// for an open rectangle's.
-fn sim_foam_at(q: Square, p: vec2<f32>) -> f32 {
-    let nx = q.nx;
-    let last = vec2<f32>(f32(nx - 1u), f32(q.nz - 1u));
-    let near = vec2<u32>(clamp(round(p), vec2<f32>(0.0), last));
-    let ring = sim_ring_base(q);
-    let outside = p.x < -0.5 || p.x > last.x + 0.5 || p.y < -0.5 || p.y > last.y + 0.5;
-    if outside && sim_has(q, SIM_OPEN) {
-        return 0.0;
+// Each cell that steps, once the step's stages have run and rivers have
+// brought their water: the current its surface runs at
+// (`sim_surface_current`) with the wind's drag, SIM_WIND_DRIFT of the
+// frame's wind, into its entry of `sim_depths`, which the stages are done
+// with; none where it is dry. The foam it carries rides it (`sim_churn`).
+// The wind is the free wind: the water's shelter (`terrain_shelter`) reads
+// the terrain's horizon maps, which the simulation does not bind, so
+// sheltered water drifts as open water does.
+@compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
+fn sim_drift(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
+) {
+    let q = sim_square(group.z);
+    let cell = sim_cell_of(q, group, count, local);
+    if !cell.runs || !sim_active(q, cell.at) {
+        return;
     }
-    if p.x < -0.5 {
-        return sim_inputs[ring + 2u * (2u * nx + 2u * near.y) + 1u].x;
+    let here = sim_moving_at(q, cell.at, vec4<f32>(0.0));
+    var drift = vec2<f32>(0.0);
+    if here.y > SIM_FOAM_WET {
+        let i = i32(cell.i);
+        let j = i32(cell.j);
+        drift = sim_surface_current(here, sim_moving(q, i - 1, j, here),
+            sim_moving(q, i + 1, j, here), sim_moving(q, i, j - 1, here),
+            sim_moving(q, i, j + 1, here), q.dx) + SIM_WIND_DRIFT * frame.wind.xy;
     }
-    if p.x > last.x + 0.5 {
-        return sim_inputs[ring + 2u * (2u * nx + 2u * near.y + 1u) + 1u].x;
-    }
-    if p.y < -0.5 {
-        return sim_inputs[ring + 2u * (2u * near.x) + 1u].x;
-    }
-    if p.y > last.y + 0.5 {
-        return sim_inputs[ring + 2u * (2u * near.x + 1u) + 1u].x;
-    }
-    let c = clamp(p, vec2<f32>(0.0), last);
-    let low = vec2<u32>(floor(c));
-    let high = min(low + 1u, vec2<u32>(nx - 1u, q.nz - 1u));
-    let f = c - floor(c);
-    let below = mix(sim_foam(q, low.x, low.y), sim_foam(q, high.x, low.y), f.x);
-    let above = mix(sim_foam(q, low.x, high.y), sim_foam(q, high.x, high.y), f.x);
-    return mix(below, above, f.y);
+    sim_depths[sim_depths_base(q) + cell.at] = drift;
 }
 
-// Each cell's foam after a step, into the second state's: what the current
-// carried there (traced back along it), faded, and what the water churned
-// up there. Its churn sums the power its water loses as it runs and that
-// of the water landing in it from its neighbors, each as a share of
-// SIM_FOAM_POWER; the vorticity of its eddy lines past SIM_FOAM_SWIRL, as a
-// share of it; and its convergence, as a share of SIM_FOAM_PILING; none
-// where its water loses energy slower than SIM_FOAM_LOSS. Churning at
-// `churn`, its foam nears churn / (1 + churn) of SIM_FOAM_MOST, 1 + churn
-// times as fast as foam fades, so it never passes the most.
+// Whether a solid stands up through the water's surface, standing at
+// `surface`, in cell `place` of the live square, as `sim_touch` finds the
+// solids there, reaching from below the surface to above it at the cell's
+// middle: none in the blocks no solid reaches, and none in settling
+// regions, whose solids' uniform holds none.
+fn sim_pierced(q: Square, place: vec2<u32>, surface: f32) -> bool {
+    let block = place / WATER_SIM_GROUP;
+    let first = sim_touches.blocks.xy;
+    if any(block < first) || any(block >= first + sim_touches.blocks.zw) {
+        return false;
+    }
+    let middle = (vec2<f32>(place) + 0.5) * q.dx;
+    for (var k = 0u; k < sim_touches.count.x; k++) {
+        let touch = sim_touches.touch[k];
+        if any(middle < touch.reach.xy) || any(middle > touch.reach.zw) {
+            continue;
+        }
+        let span = sim_touch_span(touch, middle);
+        if span.x < surface && span.y > surface {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether the cell at `at`, cell `place`, its water's surface standing at
+// `surface`, takes the foam carried into it: where it is wet and no solid
+// stands up through its surface, so foam carried against dry ground or a
+// solid stays along it.
+fn sim_foam_takes(q: Square, at: u32, place: vec2<u32>, surface: f32) -> bool {
+    return surface - sim_bed(q, at) > SIM_FOAM_WET && !sim_pierced(q, place, surface);
+}
+
+// Whether the cell at `at`, its water's surface standing at `surface`,
+// gives the foam it carries across a face whose middle's ground stands at
+// `ground`: where it is wet and its water stands over that ground, as no
+// water crosses a wall higher than it stands.
+fn sim_foam_gives(q: Square, at: u32, surface: f32, ground: f32) -> bool {
+    return min(surface - sim_bed(q, at), surface - ground) > SIM_FOAM_WET;
+}
+
+// The foam the surface's current carries a second through the face between
+// the cells at `low` and `high`, cell `place` and the cell past it along x
+// or, where `across_z`, along z (positive along the axis): the two cells'
+// surface currents across it (`sim_drift`) averaged, carrying the foam of
+// the cell it leaves where that cell gives it (`sim_foam_gives`) into the
+// other where it takes it (`sim_foam_takes`); none between a cell that
+// steps and one standing still, as no water reaches either. Both cells
+// beside the face find it alike, so what one gives the other takes.
+fn sim_foam_across(q: Square, low: u32, high: u32, place: vec2<u32>, across_z: bool) -> f32 {
+    if !sim_active(q, low) || !sim_active(q, high) {
+        return 0.0;
+    }
+    let base = sim_cells_base(q);
+    let near = sim_cells[base + low];
+    let far = sim_cells[base + high];
+    let currents = sim_depths_base(q);
+    let both = sim_depths[currents + low] + sim_depths[currents + high];
+    var current: f32;
+    var ground: f32;
+    var past: vec2<u32>;
+    if across_z {
+        current = 0.5 * both.y;
+        ground = sim_ground_z(q, low).y;
+        past = place + vec2<u32>(0u, 1u);
+    } else {
+        current = 0.5 * both.x;
+        ground = sim_ground_x(q, low).y;
+        past = place + vec2<u32>(1u, 0u);
+    }
+    if current > 0.0 {
+        if sim_foam_gives(q, low, near.x, ground) && sim_foam_takes(q, high, past, far.x) {
+            return current * near.w;
+        }
+    } else if sim_foam_gives(q, high, far.x, ground) && sim_foam_takes(q, low, place, near.x) {
+        return current * far.w;
+    }
+    return 0.0;
+}
+
+// The foam the surface's current carries a second through the face on side
+// `side` (-1 its west or south face, 1 its east or north one) of the cell
+// at `at`, cell `place`, across x or, where `across_z`, across z, toward a
+// cell its slot does not hold (positive along the axis): its own surface
+// current across it (`sim_drift`) carries its foam out where the cell
+// gives it (`sim_foam_gives`), and brings in that of ring entry `ghost`
+// (its first of two; SIM_NO_BLOCK where no ring stands there) where that
+// entry's water stands over the ground at the face's middle and the cell
+// takes foam (`sim_foam_takes`). Open edges, and blocks the pool does not
+// store, bring none in, as they bring no water.
+fn sim_foam_beyond(q: Square, at: u32, place: vec2<u32>, side: f32, across_z: bool, ghost: u32)
+    -> f32 {
+    let water = sim_cells[sim_cells_base(q) + at];
+    let drift = sim_depths[sim_depths_base(q) + at];
+    var current: f32;
+    var faces: vec2<f32>;
+    if across_z {
+        current = drift.y;
+        faces = sim_ground_z(q, at);
+    } else {
+        current = drift.x;
+        faces = sim_ground_x(q, at);
+    }
+    let ground = select(faces.x, faces.y, side > 0.0);
+    if current * side > 0.0 {
+        return select(0.0, current * water.w, sim_foam_gives(q, at, water.x, ground));
+    }
+    if ghost == SIM_NO_BLOCK || !sim_foam_takes(q, at, place, water.x) {
+        return 0.0;
+    }
+    let ring = sim_ring_base(q) + 2u * ghost;
+    return select(0.0, current * sim_inputs[ring + 1u].x,
+        sim_inputs[ring].x - ground > SIM_FOAM_WET);
+}
+
+// The first state's foam of cell `cell` after `seconds` of its surface's
+// current carrying it conserved, ∂c/∂t + ∇·(c·u_s) = 0: what it held less
+// what crosses its four faces out of it, by upwind fluxes
+// (`sim_foam_across`, or `sim_foam_beyond` toward cells its slot does not
+// hold), so it thins where the surface spreads, gathers where it converges
+// and stays along what it is carried against. Its steps keep it above
+// none: they let the fastest water and waves cross no more than
+// SIM_COURANT of a cell, and the surface's current, its water's velocity
+// turned and the wind's drift, runs within them, so its four faces carry
+// off less than the cell holds. Past SIM_FOAM_MOST it heaps, its cover
+// held at the most.
+fn sim_foam_carried(q: Square, cell: SimCell, seconds: f32) -> f32 {
+    let at = cell.at;
+    let place = vec2<u32>(cell.i, cell.j);
+    let ringed = !sim_has(q, SIM_OPEN);
+    var leaving = 0.0;
+    for (var k = 0; k < 4; k++) {
+        let toward = sim_toward(k);
+        let across_z = k >= 2;
+        let side = f32(toward.x + toward.y);
+        let beside = vec2<i32>(place) + toward;
+        let other = sim_at(q, beside.x, beside.y);
+        var flux: f32;
+        if other == SIM_NO_BLOCK {
+            // The ring stands past a ringed rectangle's edges: its columns'
+            // south and north cells, then its rows' west and east ones.
+            let outside = any(beside < vec2<i32>(0)) || beside.x >= i32(q.nx)
+                || beside.y >= i32(q.nz);
+            var ghost = SIM_NO_BLOCK;
+            if ringed && outside {
+                if k < 2 {
+                    ghost = 2u * q.nx + 2u * cell.j + u32(k);
+                } else {
+                    ghost = 2u * cell.i + u32(k) - 2u;
+                }
+            }
+            flux = sim_foam_beyond(q, at, place, side, across_z, ghost);
+        } else if side > 0.0 {
+            flux = sim_foam_across(q, at, other, place, across_z);
+        } else {
+            flux = sim_foam_across(q, other, at, vec2<u32>(beside), across_z);
+        }
+        leaving += side * flux;
+    }
+    let foam = sim_cells[sim_cells_base(q) + at].w;
+    return clamp(foam - seconds / q.dx * leaving, 0.0, SIM_FOAM_MOST);
+}
+
+// Each cell's foam after a step, into the second state's: what its
+// surface's current carried there conserved (`sim_foam_carried`), faded,
+// and what the water churned up there. Its churn sums the power its water
+// loses as it runs and that of the water landing in it from its neighbors,
+// each as a share of SIM_FOAM_POWER; the vorticity of its eddy lines past
+// SIM_FOAM_SWIRL, as a share of it; and its convergence, as a share of
+// SIM_FOAM_PILING; none where its water loses energy slower than
+// SIM_FOAM_LOSS. Churning at `churn`, its foam nears churn / (1 + churn) of
+// SIM_FOAM_MOST, 1 + churn times as fast as foam fades, so it never passes
+// the most.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
 fn sim_churn(
     @builtin(workgroup_id) group: vec3<u32>,
@@ -1517,7 +1718,7 @@ fn sim_churn(
     }
     let dx = q.dx;
     let dt = sim_seconds_at(q, cell.at);
-    let carried = sim_foam_at(q, vec2<f32>(f32(i), f32(j)) - here.zw * dt / dx);
+    let carried = sim_foam_carried(q, cell, dt);
     let west = sim_moving(q, i - 1, j, here);
     let east = sim_moving(q, i + 1, j, here);
     let south = sim_moving(q, i, j - 1, here);

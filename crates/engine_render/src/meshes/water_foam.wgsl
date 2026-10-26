@@ -117,26 +117,28 @@ fn water_contact(standing: f32, change: f32, footprint: f32, speed: f32) -> f32 
 // `dx` and `dy`, read at the steady size (`water_steady`): falling water's
 // map's bubbles' walls and bubbles (`water_fall_map`'s b and a),
 // WATER_FOAM_BUBBLE meters across and, if `finer`, WATER_FOAM_FINER times
-// finer, read at the three corners of the triangle of a grid of patches
-// half the map across holding it, each read turned to run along `heading`
-// about its corner's middle and shifted at random (salted by `salt`), and
-// blended by their weights over the root of their squares' sum, which keeps
-// their spread (tiling and blending, Heitz and Neyret), so no patch shows
-// the map repeat. Turning each read about a middle nearby keeps it from
-// shearing where the heading turns. The larger bubbles' walls (x) and
-// bubbles (y) and the finer's (zw, none unless `finer`), each as its
-// deviation from the map's means `mean`, in its spreads.
-fn water_bubbles(p: vec2<f32>, heading: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>,
+// finer, drawn `stretch` times as long along `heading` as across it, read
+// at the three corners of the triangle of a grid of patches half the map
+// across holding it, each read turned to run along `heading` about its
+// corner's middle and shifted at random (salted by `salt`), and blended by
+// their weights over the root of their squares' sum, which keeps their
+// spread (tiling and blending, Heitz and Neyret), so no patch shows the map
+// repeat. Turning each read about a middle nearby keeps it from shearing
+// where the heading turns. The larger bubbles' walls (x) and bubbles (y)
+// and the finer's (zw, none unless `finer`), each as its deviation from
+// the map's means `mean`, in its spreads.
+fn water_bubbles(p: vec2<f32>, heading: vec2<f32>, stretch: f32, dx: vec2<f32>, dy: vec2<f32>,
         mean: vec2<f32>, finer: bool, salt: u32) -> vec4<f32> {
     let side = vec2<f32>(-heading.y, heading.x);
-    // The meters across and along the map as foam reads it, and between the
-    // corners of the patches' grid.
+    // The meters across and along the map as foam reads it, drawn out along
+    // the heading, and between the corners of the patches' grid.
     let map = vec2<f32>(1.0, FALL_MAP_STRETCH) * (WATER_FOAM_BUBBLE * FALL_MAP_BUBBLES);
+    let drawn = map * vec2<f32>(1.0, stretch);
     let spacing = 0.5 * map.x;
     // At the steady size (`water_steady`).
     let steady = water_steady();
-    let turned_dx = vec2<f32>(dot(dx, side), dot(dx, heading)) * steady / map;
-    let turned_dy = vec2<f32>(dot(dy, side), dot(dy, heading)) * steady / map;
+    let turned_dx = vec2<f32>(dot(dx, side), dot(dx, heading)) * steady / drawn;
+    let turned_dy = vec2<f32>(dot(dy, side), dot(dy, heading)) * steady / drawn;
     let triangle = water_triangle(p / spacing);
     var corners = triangle.corners;
     let weights = triangle.weights;
@@ -145,7 +147,7 @@ fn water_bubbles(p: vec2<f32>, heading: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>,
         let skewed = vec2<f32>(corners[corner]);
         let middle = vec2<f32>(skewed.x, (skewed.y + 0.57735027 * skewed.x) * 0.8660254)
             * spacing;
-        let turned = vec2<f32>(dot(p - middle, side), dot(p - middle, heading)) / map;
+        let turned = vec2<f32>(dot(p - middle, side), dot(p - middle, heading)) / drawn;
         let larger = textureSampleGrad(water_fall_map, water_wave_sampler,
             turned + water_corner_offset(corners[corner], salt), turned_dx, turned_dy).ba;
         var smaller = mean;
@@ -186,14 +188,19 @@ struct WaterFroth {
 // whole octaves of lives, the next longer blended in over the upper half of
 // the place's own octave as detail levels hand over; where the water
 // carries it less than a bubble over a life it stands still, one set and no
-// clock. The sets blend keeping their spread. Each kind covers the share of
-// its grain past the threshold its amount sets, the grain taken as logistic
-// of its spread, so bubbles finer than the steady size show the amount
-// itself; the threshold's edge spans what the steady size averages of the
-// grain (`water_resolved_share`) and how much it changes across the steady
-// size, so foam never draws lace finer than it, nor thins out or shimmers
-// as it recedes. Past its threshold it heaps a layer of its finer bubbles
-// for each spread its grain stands over it, white water's whole and carried
+// clock. Where the water carries it and shears, the carried foam's grain is
+// drawn out along the flow by the strain the shear gives it over the
+// place's life, which WATER_STRAIN bounds: 1 + shear × life times as long
+// as across, so a line of it reads as streaks along the current; white
+// water's fresh foam stays round, read apart where both show. The sets
+// blend keeping their spread. Each kind covers the share of its grain past
+// the threshold its amount sets, the grain taken as logistic of its spread,
+// so bubbles finer than the steady size show the amount itself; the
+// threshold's edge spans what the steady size averages of the grain
+// (`water_resolved_share`) and how much it changes across the steady size,
+// so foam never draws lace finer than it, nor thins out or shimmers as it
+// recedes. Past its threshold it heaps a layer of its finer bubbles for
+// each spread its grain stands over it, white water's whole and carried
 // foam's drained, each layer hiding WATER_FOAM_FILM of what those below let
 // through. Its relief hands over to none as its bubbles, seen from the
 // detail eye, come to span the steady size. Its derivatives need it called
@@ -226,7 +233,7 @@ fn water_froth(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, amounts: vec2<f32>, f
         var weights = 0.0;
         if moving < 1.0 {
             let still = 1.0 - moving;
-            sum += water_bubbles(p, vec2<f32>(1.0, 0.0), dx, dy, mean, finer, 0x1656667bu)
+            sum += water_bubbles(p, vec2<f32>(1.0, 0.0), 1.0, dx, dy, mean, finer, 0x1656667bu)
                 * still;
             weights += still * still;
         }
@@ -237,6 +244,14 @@ fn water_froth(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, amounts: vec2<f32>, f
             let octave = log2(life / WATER_FOAM_SHORTEST);
             let below = floor(octave);
             let toward = saturate(2.0 * (octave - below) - 1.0);
+            // How many times as long along the flow as across it the carried
+            // foam's grain is drawn, by the strain the shear gives it over
+            // the place's life; white water's stays round. Each is read only
+            // where it shows, and one read serves both where the water does
+            // not shear.
+            let drawn = 1.0 + shear * life;
+            let streaked = amounts.y > WATER_FOAM_LEAST && drawn > 1.0;
+            let rounded = amounts.x > WATER_FOAM_LEAST || !streaked;
             for (var band = 0u; band < 2u; band++) {
                 let shown = select(1.0 - toward, toward, band == 1u) * moving;
                 if shown <= 0.0 {
@@ -250,8 +265,17 @@ fn water_froth(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, amounts: vec2<f32>, f
                     if weight <= 0.0 {
                         continue;
                     }
-                    sum += water_bubbles(p - flow * carried.seconds + carried.offset, heading,
-                        dx, dy, mean, finer, salt) * weight;
+                    let at = p - flow * carried.seconds + carried.offset;
+                    var read = vec4<f32>(0.0);
+                    if rounded {
+                        read = water_bubbles(at, heading, 1.0, dx, dy, mean, finer, salt);
+                    }
+                    if streaked {
+                        let streaks = water_bubbles(at, heading, drawn, dx, dy, mean, finer,
+                            salt);
+                        read = vec4<f32>(streaks.x, read.y, streaks.z, read.w);
+                    }
+                    sum += read * weight;
                     weights += weight * weight;
                 }
             }
