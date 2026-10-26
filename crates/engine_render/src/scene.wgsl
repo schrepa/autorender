@@ -666,7 +666,8 @@ fn sky_behind(direction: vec3<f32>) -> vec3<f32> {
 // within differs from the glow it stands for, as the march's is Henyey and
 // Greenstein's phase, shadowed, through the air's drifting density and
 // laid over the graded scene, where the glow is unshadowed, at the mean and
-// graded with the point.
+// graded with the point. Within the reach the march also takes back the
+// sky's light of the share of the sky the air there does not see.
 fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>)
         -> vec4<f32> {
     // Light reaching what lies under the sea dims through the water above
@@ -1264,19 +1265,34 @@ fn bounce_held(texel: vec2<f32>, first: u32, normal: vec3<f32>, above: f32) -> v
     return mix(held, bounce_layer(texel, first + 4u, normal), above);
 }
 
-// Bounce light at `world` on a surface of `normal`, from the first terrain
-// whose probes relight it: from the level of them the point's distance
-// from the detail eye picks (`detail_level` over half the finest level's
-// reach), or the finest from there whose window holds the point, the coarsest
-// holding the whole terrain; between that level's probe columns, blended
-// with the next coarser level's as the levels hand over, each coarser
-// probe the mean of the finer ones under it, so a handover changes how
-// sharp the light is, never how much; and, for a surface above the ground
-// (not `on_terrain`, whose surfaces lie on it), between the probes' two
-// layers by its height above the ground.
-fn bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> BounceLight {
-    var found: BounceLight;
-    found.sky = 1.0;
+// Where terrains' probes hold a point (`bounce_at`): the first of the
+// bounce layers of the terrain whose probes hold it; the point of those
+// layers in the level it reads (x below 0 where no terrain's probes hold
+// it) and in the next coarser level, mixed in by `blend` (0 where none
+// is); and where it stands between the probes' two layers by its height
+// above the ground: 0 at the lower (and on terrain), 1 at the upper, past 1
+// above it.
+struct BounceAt {
+    first: u32,
+    texel: vec2<f32>,
+    next: vec2<f32>,
+    blend: f32,
+    layer: f32,
+}
+
+// Where the probes of the first terrain whose probes relight `world` hold
+// it: in the level of them the point's distance from the detail eye picks
+// (`detail_level` over half the finest level's reach), or the finest from
+// there whose window holds the point, the coarsest holding the whole
+// terrain; between that level's probe columns, blended with the next
+// coarser level's as the levels hand over, each coarser probe the mean of
+// the finer ones under it, so a handover changes how sharp the light is,
+// never how much; and, for a point above the ground (not `on_terrain`,
+// whose surfaces lie on it), between the probes' two layers by its height
+// above the ground.
+fn bounce_at(world: vec3<f32>, on_terrain: bool) -> BounceAt {
+    var found: BounceAt;
+    found.texel = vec2<f32>(-1.0);
     if !BOUNCE || !TERRAIN_HORIZONS {
         return found;
     }
@@ -1305,28 +1321,61 @@ fn bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> Bounce
         if texel.x < 0.0 {
             continue;
         }
-        var above = 0.0;
         if !on_terrain {
             let shape = terrain_horizon_records[at + 1u];
             let ground = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
                 u32(shape.x) + HORIZON_LAYERS - 1u, 0.0).r;
-            above = saturate((world.y - shape.w - ground - BOUNCE_LOW)
-                / (BOUNCE_HIGH - BOUNCE_LOW));
+            found.layer = (world.y - shape.w - ground - BOUNCE_LOW)
+                / (BOUNCE_HIGH - BOUNCE_LOW);
         }
-        let first = u32(header.x);
-        var held = bounce_held(texel, first, normal, above);
+        found.first = u32(header.x);
+        found.texel = texel;
         if blend > 0.0 && level + 1u < levels {
-            let next = bounce_texel(at, level + 1u, uv);
-            if next.x >= 0.0 {
-                held = mix(held, bounce_held(next, first, normal, above), blend);
-            }
+            found.next = bounce_texel(at, level + 1u, uv);
+            found.blend = select(0.0, blend, found.next.x >= 0.0);
         }
-        found.light = max(held.rgb, vec3<f32>(0.0));
-        found.sky = saturate(held.a);
-        found.weight = 1.0;
         return found;
     }
     return found;
+}
+
+// Bounce light at `world` on a surface of `normal`, from the probes holding
+// it (`bounce_at`): their level's light, blended with the next coarser
+// level's, between their two layers by the surface's height above the
+// ground.
+fn bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> BounceLight {
+    var found: BounceLight;
+    found.sky = 1.0;
+    let at = bounce_at(world, on_terrain);
+    if at.texel.x < 0.0 {
+        return found;
+    }
+    let above = saturate(at.layer);
+    var held = bounce_held(at.texel, at.first, normal, above);
+    if at.blend > 0.0 {
+        held = mix(held, bounce_held(at.next, at.first, normal, above), at.blend);
+    }
+    found.light = max(held.rgb, vec3<f32>(0.0));
+    found.sky = saturate(held.a);
+    found.weight = 1.0;
+    return found;
+}
+
+// The share of all ways from the probes holding a point (`at`) that reach
+// the sky: their means' alpha, between their two layers and blended with
+// the next coarser level's, as `bounce_light` reads their light.
+fn bounce_seen(at: BounceAt) -> f32 {
+    var lower = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, at.texel,
+        at.first, 0.0).a;
+    var upper = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, at.texel,
+        at.first + 4u, 0.0).a;
+    if at.blend > 0.0 {
+        lower = mix(lower, textureSampleLevel(terrain_horizons, terrain_horizon_sampler,
+            at.next, at.first, 0.0).a, at.blend);
+        upper = mix(upper, textureSampleLevel(terrain_horizons, terrain_horizon_sampler,
+            at.next, at.first + 4u, 0.0).a, at.blend);
+    }
+    return mix(lower, upper, saturate(at.layer));
 }
 
 // Clouds' shadows: CLOUD_SHADOW_CELLS by CLOUD_SHADOW_CELLS

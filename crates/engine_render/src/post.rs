@@ -66,9 +66,9 @@ const SCENE_LEVEL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormS
 /// Reflected color, from the scene and its levels, and weight.
 const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// The haze's light, below zero where its drifting air is clearer than its
-/// mean, and each texel's inverse distance: its march, its result filtered
-/// over time and that result's copy the next frame reprojects, at half
-/// resolution.
+/// mean or sees less of the sky than `atmospheric` counts, and each texel's
+/// inverse distance: its march, its result filtered over time and that
+/// result's copy the next frame reprojects, at half resolution.
 const HAZE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Half-resolution bloom levels; each halves the one before.
 const BLOOM_LEVELS: u32 = 6;
@@ -147,7 +147,8 @@ pub(crate) struct PostPass {
     // The pixel of each 2x2 block this frame's reflections trace.
     trace_index: u32,
     // The haze's march, which reads the camera group of the main passes
-    // (shadow maps and lighting) and its own, and its filter over time.
+    // (shadow maps, lighting and terrains' bounce probes) and its own, and
+    // its filter over time.
     haze: wgpu::RenderPipeline,
     haze_layout: crate::pipelines::GroupLayout,
     haze_filter: wgpu::RenderPipeline,
