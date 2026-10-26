@@ -179,14 +179,14 @@ shaders! {
         "fullscreen.wgsl",
         "transparent.wgsl",
     ];
-    /// Sun shafts after the scene declarations and effects.
-    SHAFTS_SHADER = [
+    /// The haze's march after the scene declarations and effects.
+    HAZE_SHADER = [
         "scene.wgsl",
         "color.wgsl",
         "math.wgsl",
         "fullscreen.wgsl",
         "effects.wgsl",
-        "shafts.wgsl",
+        "haze.wgsl",
     ];
     /// Shadow caster selection and depth drawing.
     SHADOW_SHADER = [
@@ -202,7 +202,8 @@ shaders! {
         "math.wgsl",
         "shadow_marks.wgsl",
     ];
-    /// Ambient occlusion, bloom and their composite.
+    /// Ambient occlusion, the haze's filter, reflections, bloom and their
+    /// composite.
     POST_SHADER = [
         "color.wgsl",
         "fullscreen.wgsl",
@@ -424,9 +425,9 @@ entry_points! {
         vertex: [vs_fullscreen],
         fragment: [fs_composite],
     }
-    shafts = SHAFTS_SHADER {
+    haze = HAZE_SHADER {
         vertex: [vs_fullscreen],
-        fragment: [fs_shafts],
+        fragment: [fs_haze],
     }
     shadow = SHADOW_SHADER {
         vertex: [
@@ -443,8 +444,9 @@ entry_points! {
     post = POST_SHADER {
         vertex: [vs_fullscreen],
         fragment: [
-            fs_occlusion, fs_effects_filter, fs_reflections, fs_reflections_filter, fs_bloom_first,
-            fs_bloom_down, fs_levels_first, fs_levels_down, fs_bloom_up, fs_composite
+            fs_occlusion, fs_effects_filter, fs_haze_filter, fs_reflections, fs_reflections_filter,
+            fs_bloom_first, fs_bloom_down, fs_levels_first, fs_levels_down, fs_bloom_up,
+            fs_composite
         ],
     }
     exposure = EXPOSURE_SHADER {

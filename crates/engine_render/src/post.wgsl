@@ -1,14 +1,15 @@
 // Screen effects, prepended with effects.wgsl.
 // Ambient occlusion samples the depth buffer at half resolution, and one
-// half-resolution filter smooths it and brings the quarter-resolution sun
-// shafts (shafts.wgsl) up beside it; screen-space reflections trace
-// reflected rays through it at half resolution; bloom filters the scene's
-// glowing light down a chain of half-resolution levels and back up; the
-// composite applies them to the scene target, upscaled to the display, and
-// writes the canvas. Temporally antialiased frames apply them in their
-// resolve instead. Every pass reads within what the frame drew: its render
-// size of the screen-sized targets, from their top-left corner, and as much
-// of the others.
+// half-resolution filter smooths it; the haze's march (haze.wgsl), at half
+// resolution too, is filtered over time with the last frame's result
+// reprojected; screen-space reflections trace reflected rays through the
+// depth buffer at half resolution; bloom filters the scene's glowing light
+// down a chain of half-resolution levels and back up; the composite applies
+// them to the scene target, upscaled to the display, and writes the canvas.
+// Temporally antialiased frames apply them in their resolve instead. Every
+// pass reads within what the frame drew: its render size of the
+// screen-sized targets, from their top-left corner, and as much of the
+// others.
 
 @group(0) @binding(0) var<uniform> post: Post;
 @group(0) @binding(1) var depth_texture: texture_depth_2d;
@@ -19,16 +20,17 @@
 @group(0) @binding(3) var glow: texture_2d<f32>;
 // The level a bloom pass reads.
 @group(0) @binding(4) var source: texture_2d<f32>;
-// The filtered ambient occlusion's visibility and the sun shafts' light at
-// half resolution.
+// The filtered ambient occlusion's visibility at half resolution, and the
+// inverse distance of each texel's surface (w).
 @group(0) @binding(5) var occlusion: texture_2d<f32>;
 @group(0) @binding(6) var bloom: texture_2d<f32>;
 @group(0) @binding(7) var linear: sampler;
 // Reflected color and its weight at half resolution.
 @group(0) @binding(8) var reflections: texture_2d<f32>;
-// Sun shafts at quarter resolution: scattered light, and the
-// length of the ray that gathered it.
-@group(0) @binding(9) var shafts: texture_2d<f32>;
+// The haze's march this frame at half resolution (haze.wgsl): its exposed
+// light, and the inverse distance of the surface its ray ended at (w; 0
+// for sky).
+@group(0) @binding(9) var marched: texture_2d<f32>;
 // Reflections: the nearest depth of each 2x2 block of the
 // depth buffer, then of each block of the level below, which rays skip
 // across; and the traced reflections the filter smooths.
@@ -64,6 +66,10 @@ struct Sky {
 @group(0) @binding(16) var sky_maps: texture_depth_2d_array;
 @group(0) @binding(17) var sky_sampler: sampler_comparison;
 @group(0) @binding(18) var<uniform> sky: Sky;
+// The haze filtered over time, as marched: the last frame's, the history
+// its filter reprojects, or this frame's, which the composite lays over the
+// scene.
+@group(0) @binding(19) var haze: texture_2d<f32>;
 
 const TAU: f32 = 6.2831853;
 const SAMPLES: u32 = 8u;
@@ -312,64 +318,114 @@ fn filtered_occlusion(texel: vec2<i32>) -> f32 {
     return sum / total;
 }
 
-// How far a quarter-resolution shaft ray's length may lie from a texel's
-// own, as a share of it, before the filter stops counting it.
-const SHAFT_REACH: f32 = 0.1;
-
-// The sun shafts at half-resolution texel `texel`: the four
-// quarter-resolution rays around the pixel it stands for, weighted
-// bilinearly and by how near their lengths are to that pixel's ray, so light
-// gathered past a silhouette does not spill onto the surface in front of it.
-// Where no ray is near, the bilinear weights alone remain.
-fn upsampled_shafts(texel: vec2<i32>) -> f32 {
-    let last = vec2<i32>(post.size.xy) - 1;
-    let pixel = min(texel * 2, last);
-    let depth = textureLoad(depth_texture, pixel, 0);
-    let uv = (vec2<f32>(pixel) + 0.5) * post.size.zw;
-    let far_point = post.inverse_view_projection
-        * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
-    let reach = min(length(far_point.xyz / far_point.w - post.eye.xyz), post.shafts.z);
-    // Quarter-resolution texels in shaft_pixel's centers, a quarter of the
-    // render size of them drawn, rounded up.
-    let position = (vec2<f32>(pixel) - 1.0) * 0.25;
-    let first = vec2<i32>(floor(position));
-    let f = position - floor(position);
-    let shaft_last = max((vec2<i32>(post.size.xy) + 3) / 4, vec2<i32>(1)) - 1;
-    let tolerance = SHAFT_REACH * max(reach, 1.0e-3);
-    var sum = 0.0;
-    var total = 0.0;
-    for (var y = 0; y < 2; y++) {
-        for (var x = 0; x < 2; x++) {
-            let sample = textureLoad(shafts,
-                clamp(first + vec2<i32>(x, y), vec2<i32>(0), shaft_last), 0);
-            let bilinear = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
-            let near = saturate(1.25 - abs(sample.y - reach) / tolerance);
-            let weight = bilinear * (near + 1.0e-3);
-            sum += sample.x * weight;
-            total += weight;
-        }
-    }
-    return sum / max(total, 1.0e-8);
-}
-
-// One half-resolution pass for the screen effects that need smoothing: the
-// filtered occlusion (x; 1 without occlusion), the sun shafts brought up
-// from quarter resolution (y; 0 without shafts), and the inverse distance
-// of the surface the texel stands for (w; 0 for sky), which full
-// resolution compares.
+// The occlusion filtered at half resolution (x), and the inverse distance
+// of the surface the texel stands for (w; 0 for sky), which full resolution
+// compares.
 @fragment
 fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let texel = vec2<i32>(position.xy);
-    var visible = 1.0;
-    if post.occlusion.w != 0.0 || post.sky.w != 0.0 {
-        visible = filtered_occlusion(texel);
-    }
-    var shafts_light = 0.0;
-    if post.shafts.w != 0.0 {
-        shafts_light = upsampled_shafts(texel);
-    }
     let pixel = min(texel * 2, vec2<i32>(post.size.xy) - 1);
-    return vec4<f32>(visible, shafts_light, 0.0, inverse_distance_at(depth_texture, pixel, post));
+    return vec4<f32>(filtered_occlusion(texel), 0.0, 0.0,
+        inverse_distance_at(depth_texture, pixel, post));
+}
+
+// The weight of this frame's march against the haze's reprojected history:
+// an exponential average over about ten frames, as temporal antialiasing's,
+// over which the march's jitter turns through its steps.
+const HAZE_CURRENT: f32 = 0.1;
+
+// Last frame's filtered haze where it showed the point the depth buffer
+// holds at full-resolution `pixel`, whose inverse distance from the eye is
+// `own` (0 for sky): the four history texels around the point's place in
+// last frame's view, weighted bilinearly and by how near the distance of
+// their surface from last frame's eye lies to the point's, so history from
+// across a depth discontinuity is left out. w is the weight left: 0 where
+// none is, where the point lay off last frame's view, or where no history
+// precedes this frame.
+fn reprojected_haze(pixel: vec2<i32>, own: f32) -> vec4<f32> {
+    let drawn = post.haze.yz;
+    if drawn.x <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    let point = world_at(pixel);
+    let clip = post.previous_view_projection * vec4<f32>(point.xyz, 1.0);
+    if !(clip.w > 0.0) {
+        return vec4<f32>(0.0);
+    }
+    let ndc = clip.xy / clip.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) {
+        return vec4<f32>(0.0);
+    }
+    // What a history texel on the point's surface holds: its inverse
+    // distance from last frame's eye.
+    var expected = 0.0;
+    if own > 0.0 {
+        expected = 1.0 / max(length(point.xyz - post.previous_eye.xyz), 1.0e-4);
+    }
+    let tolerance = max(EFFECTS_PLANE * expected, 1.0e-7);
+    // Last frame's half-resolution texels, centered as `effect_at` reads
+    // them, within those it drew.
+    let at = uv * drawn - 0.5;
+    let first = vec2<i32>(floor(at));
+    let f = at - floor(at);
+    let last = vec2<i32>(drawn) - 1;
+    var sum = vec3<f32>(0.0);
+    var total = 0.0;
+    for (var y = 0; y < 2; y++) {
+        for (var x = 0; x < 2; x++) {
+            let tap = textureLoad(haze, clamp(first + vec2<i32>(x, y), vec2<i32>(0), last), 0);
+            let bilinear = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
+            let weight = bilinear * saturate(1.25 - abs(tap.w - expected) / tolerance);
+            sum += tap.rgb * weight;
+            total += weight;
+        }
+    }
+    if total < 1.0e-3 {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(sum / total, total);
+}
+
+// The haze filtered over time at half-resolution texel `position`: this
+// frame's march there blended into the history reprojected to it by the
+// camera's motion (`reprojected_haze`), the history clamped to the box of
+// this frame's march over the 3x3 texels around, HAZE_CURRENT of the new
+// each frame. Where no history reaches the texel (off last frame's view,
+// across a depth discontinuity, or in a frame no history precedes, as
+// exact frames are) it takes this frame's march alone, averaged over the
+// 3x3 texels around on its surface. w keeps the inverse distance of the
+// texel's surface.
+@fragment
+fn fs_haze_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let texel = vec2<i32>(position.xy);
+    let last = half_size(post) - 1;
+    let center = textureLoad(marched, texel, 0);
+    let own = center.w;
+    let tolerance = max(EFFECTS_PLANE * own, 1.0e-7);
+    var low = center.rgb;
+    var high = center.rgb;
+    var surface = center.rgb;
+    var count = 1.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            if x == 0 && y == 0 {
+                continue;
+            }
+            let neighbor = textureLoad(marched,
+                clamp(texel + vec2<i32>(x, y), vec2<i32>(0), last), 0);
+            low = min(low, neighbor.rgb);
+            high = max(high, neighbor.rgb);
+            let same = saturate(1.25 - abs(neighbor.w - own) / tolerance);
+            surface += neighbor.rgb * same;
+            count += same;
+        }
+    }
+    let history = reprojected_haze(min(texel * 2, vec2<i32>(post.size.xy) - 1), own);
+    if history.w <= 0.0 {
+        return vec4<f32>(surface / count, own);
+    }
+    return vec4<f32>(mix(clamp(history.rgb, low, high), center.rgb, HAZE_CURRENT), own);
 }
 
 // Reflection rays walk at most this many cells of the depth pyramid.
@@ -820,10 +876,11 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     if !whole {
         texel = upscaled_scene(rendered);
     }
-    let effects = screen_effects(occlusion, depth_texture, pixel, post);
-    let shaded = texel.rgb * effect_shade(texel.a, effects, post);
+    let visible = occlusion_at(occlusion, depth_texture, pixel, post);
+    let shaded = texel.rgb * effect_shade(texel.a, visible, post);
     let mirrored = reflected(shaded, reflections, linear, uv, post);
-    let color = effect_light(mirrored, effects, bloom, linear, uv, post);
+    let color = effect_light(mirrored, haze_at(haze, depth_texture, pixel, post), bloom, linear,
+        uv, post);
     // The UNORM canvas stores encoded color, dithered when 8-bit writes are.
     var encoded = encode_srgb(color);
     if post.sun_direction.w != 0.0 {

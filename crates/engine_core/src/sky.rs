@@ -73,12 +73,20 @@ impl Sky {
 }
 
 settings! {
-    /// Haze: distant surfaces fade into the sky behind them. Fog and the air
-    /// take the sky's own light, blurred, in each view's direction (looking
-    /// down, the sky's just above the horizon, so far ground melts into the
-    /// lit haze there), and the air begins at the eye, at least as thick as
-    /// `visibility` asks, thinning with height as the atmosphere's (or the
-    /// physically based sky's) air does, as thick as `strength` makes it.
+    /// Haze: distant surfaces fade into the sky behind them, and the near
+    /// air glows where the sun lights it. Fog and the air take the sky's own
+    /// light, blurred, in each view's direction (looking down, the sky's just
+    /// above the horizon, so far ground melts into the lit haze there), and
+    /// the air begins at the eye, at least as thick as `visibility` asks,
+    /// thinning with height as the atmosphere's (or the physically based
+    /// sky's) air does, as thick as `strength` makes it. Within `reach` of
+    /// the eye each view marches the fog and the air for the sunlight they
+    /// scatter toward the eye, concentrated around the sun by `forward`,
+    /// where shadows and the clouds' shadows let the sun through; there the
+    /// air's density drifts with the wind in patches about `size` across,
+    /// `spread` either side of its mean. Beyond the reach the glow of the
+    /// sun the sky's light holds stands in for it. Shadows are optional:
+    /// without them the sun lights all of the near air.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -87,7 +95,8 @@ settings! {
     )]
     #[serde(default, deny_unknown_fields)]
     pub struct Haze {
-        /// Whether fog and the air take the sky's light.
+        /// Whether fog and the air take the sky's light, and the near air
+        /// the sun's.
         pub enabled: bool = true => any,
         /// The distance (world units) at which the air leaves a fiftieth of
         /// what lies level with the eye; 0 takes twice the view's far
@@ -97,6 +106,22 @@ settings! {
         /// How thick the air is, as a multiple of what `visibility` (or the
         /// atmosphere's own air) makes it: 0 clear, 1 as thick as that.
         pub strength: f32 = 0.7 => range(0.0, 4.0),
+        /// How strongly the near air scatters the sun's light forward, the
+        /// asymmetry of its phase (Henyey and Greenstein's, as Mie
+        /// scattering's): 0 scatters it alike every way, higher concentrates
+        /// it around the sun.
+        pub forward: f32 = 0.6 => range(0.0, 0.95),
+        /// The distance (world units) along each view over which the near
+        /// air's sunlight is marched, shadowed; 0 leaves all of it to the
+        /// sky's glow.
+        pub reach: f32 = 300.0 => range(0.0, 100_000.0),
+        /// How far the near air's density strays from its mean in its
+        /// drifting patches, as a share of it: 0 not at all, 1 from clear to
+        /// twice as thick.
+        pub spread: f32 = 0.6 => range(0.0, 1.0),
+        /// The size (world units) of the near air's largest patches; patches
+        /// half and a quarter as large drift within them.
+        pub size: f32 = 60.0 => range(0.1, 100_000.0),
     }
 }
 

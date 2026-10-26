@@ -1,4 +1,4 @@
-// Shared scene declarations, prepended to the mesh, particle and sun shaft
+// Shared scene declarations, prepended to the mesh, particle and haze
 // shaders: the first bind group's camera, atmosphere and sun
 // shadows, and the lighting functions every path shades with.
 
@@ -109,6 +109,11 @@ struct Lighting {
     // degrees, and the share of rooms staying dark.
     windows: vec4<f32>,
     night_shape: vec4<f32>,
+    // The haze's march (haze.wgsl): how far along the view it gives the
+    // sunlight the air scatters (0 where the view marches none), the
+    // forward scattering of its phase, how far its density strays from its
+    // mean, and one over the size of its largest patches (meters).
+    haze_march: vec4<f32>,
 }
 // Sun shadows: a clipmap of levels around the detail eye, all in light
 // space (`shadows/mod.rs`), the finest level's texels `level_state.y` wide
@@ -420,12 +425,21 @@ fn stored(color: vec3<f32>, pixel: vec2<f32>) -> vec3<f32> {
 // ground seen through air does; and a wide halo toward the sun. Fog and
 // reflections take this color.
 fn haze(direction: vec3<f32>) -> vec3<f32> {
+    return haze_sky(direction) + sun_halo(direction);
+}
+
+// The sky's haze in `direction` (`haze`) without the sun's halo.
+fn haze_sky(direction: vec3<f32>) -> vec3<f32> {
     let up = direction.y;
-    var color = mix(lighting.horizon.rgb, lighting.zenith.rgb, sqrt(max(up, 0.0)));
-    color = mix(color, lighting.ground.rgb, min(max(-up, 0.0) * 1.5, 0.35));
+    let color = mix(lighting.horizon.rgb, lighting.zenith.rgb, sqrt(max(up, 0.0)));
+    return mix(color, lighting.ground.rgb, min(max(-up, 0.0) * 1.5, 0.35));
+}
+
+// The sky's halo in `direction`: a wide glow of the sun's color toward it.
+fn sun_halo(direction: vec3<f32>) -> vec3<f32> {
     let toward = max(dot(direction, lighting.sun.xyz), 0.0);
     let square = toward * toward;
-    return color + lighting.sun_color.rgb * (0.12 * square * square * square);
+    return lighting.sun_color.rgb * (0.12 * square * square * square);
 }
 
 // The sky itself: its haze and the sun's small disc.
@@ -556,15 +570,67 @@ fn fog(eye: vec3<f32>, point: vec3<f32>) -> f32 {
     return min(1.0 - exp(-depth), lighting.fog.w);
 }
 
-// The light air scatters toward the eye looking along `direction`:
-// its own color, and toward the sun a glow of the sun's
-// color, a broad lobe around a narrower one.
-fn air_light(direction: vec3<f32>) -> vec3<f32> {
+// The light fog and the air scatter toward the eye along a view, each as
+// the sky's own ambient light (`fog`, `air`) and the glow the sun's light
+// gives it (`fog_sun`, `air_sun`), which within the reach of the haze's
+// march the march gives instead.
+struct AirLight {
+    fog: vec3<f32>,
+    fog_sun: vec3<f32>,
+    air: vec3<f32>,
+    air_sun: vec3<f32>,
+}
+
+// The light fog and the air scatter toward the eye looking along
+// `direction`. With haze both take the sky's own light behind what they
+// cover (`sky_behind`), the glow of the sun it carries (`sky_glow`) apart;
+// otherwise fog takes the sky's haze, the halo toward the sun apart, and
+// the air its own color and toward the sun the glow of the sun's color
+// (`air_glow`).
+fn air_light(direction: vec3<f32>) -> AirLight {
+    var light: AirLight;
+    if hazy() {
+        let behind = sky_behind(direction);
+        let glow = min(sky_glow(direction), behind);
+        light.fog = behind - glow;
+        light.fog_sun = glow;
+        light.air = light.fog;
+        light.air_sun = glow;
+        return light;
+    }
+    light.fog = haze_sky(direction);
+    light.fog_sun = sun_halo(direction);
+    light.air = lighting.aerial_color.rgb;
+    light.air_sun = air_glow(direction);
+    return light;
+}
+
+// The glow of the sun's color the air scatters toward the eye looking
+// along `direction`, as strong as `lighting.aerial.w`: a broad lobe toward
+// the sun around a narrower one.
+fn air_glow(direction: vec3<f32>) -> vec3<f32> {
     let toward = max(dot(direction, lighting.sun.xyz), 0.0);
     let broad = toward * toward;
     let lobe = broad * broad;
-    return lighting.aerial_color.rgb
-        + lighting.sun_color.rgb * (lighting.aerial.w * lobe * (0.25 + 0.75 * lobe));
+    return lighting.sun_color.rgb * (lighting.aerial.w * lobe * (0.25 + 0.75 * lobe));
+}
+
+// The glow of the sun's light the sky's own light along `direction` holds,
+// which `sky_behind` carries: the halo of the sky's haze, or under the
+// physically based sky (`lighting.grade.z`) the air's glow, which that
+// sky's light derives from its own by the horizon.
+fn sky_glow(direction: vec3<f32>) -> vec3<f32> {
+    if lighting.grade.z > 0.5 {
+        return air_glow(direction);
+    }
+    return sun_halo(direction);
+}
+
+// How far along the view the haze's march gives the sunlight the air
+// scatters (`lighting.haze_march.x`): nowhere in reflection probes' faces
+// (`camera.options.x`), which no march follows.
+fn marched_reach() -> f32 {
+    return select(lighting.haze_march.x, 0.0, camera.options.x != 0.0);
 }
 
 // Haze: the share of the sky's environment map's levels its light behind
@@ -591,7 +657,16 @@ fn sky_behind(direction: vec3<f32>) -> vec3<f32> {
 
 // What fog and air leave of light `lit` from `point` seen
 // from `eye` looking along `direction`, and how much of it they cover
-// together (w). With haze both take the sky's light behind the point.
+// together (w). With haze both take the sky's light behind the point. Each
+// takes its sky's ambient light all the way, but the glow the sun's light
+// gives it only for what it covers beyond the reach of the haze's march
+// (`marched_reach`), which gives the sunlight the air scatters within it.
+// The split is exact in what each medium covers on either side of the
+// reach, so nothing is lit twice and nothing seams there; the light
+// within differs from the glow it stands for, as the march's is Henyey and
+// Greenstein's phase, shadowed, through the air's drifting density and
+// laid over the graded scene, where the glow is unshadowed, at the mean and
+// graded with the point.
 fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>)
         -> vec4<f32> {
     // Light reaching what lies under the sea dims through the water above
@@ -605,16 +680,16 @@ fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3
         let covered = underwater_cover(length(point - eye));
         return vec4<f32>(mix(light, underwater_light(direction), covered), covered);
     }
-    let behind = hazy();
-    var sky_light = vec3<f32>(0.0);
-    if behind {
-        sky_light = sky_behind(direction);
-    }
+    let air_lit = air_light(direction);
+    // Where the march's reach ends on the way to the point.
+    let ray = point - eye;
+    let distance = length(ray);
+    let reached = eye + ray * (min(marched_reach(), distance) / max(distance, 1.0e-6));
     let fogged = fog(eye, point);
-    // Without fog, mixing in none of its haze leaves the light.
+    // Without fog, mixing in none of its light leaves the light.
     var color = light;
     if fogged != 0.0 {
-        color = mix(light, select(haze(direction), sky_light, behind), fogged);
+        color = mix(light, air_lit.fog, fogged) + air_lit.fog_sun * (fogged - fog(eye, reached));
     }
     var covered = fogged;
     if lighting.aerial.y > 0.0 {
@@ -623,7 +698,9 @@ fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3
         // Where the air is no depth, mixing in none of it leaves the color.
         if depth != 0.0 {
             let air = 1.0 - exp(-depth);
-            color = mix(color, select(air_light(direction), sky_light, behind), air);
+            let marched = 1.0 - exp(-height_depth(eye, reached, lighting.aerial.x,
+                lighting.aerial.y, lighting.aerial.z));
+            color = mix(color, air_lit.air, air) + air_lit.air_sun * (air - marched);
             covered = fogged + (1.0 - fogged) * air;
         }
     }

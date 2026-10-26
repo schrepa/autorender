@@ -11,7 +11,7 @@ use engine::scene::{SceneError, SceneFiles};
 use crate::scene::EFFECTS;
 use crate::{
     AuthoredScene, FrameMetrics, PlayerWalk, StressConfig, StressFile, StressMetrics,
-    create_workload_with, look, set_view, stress_reflections, stress_shafts,
+    create_workload_with, look, set_view, stress_reflections,
 };
 
 /// The action simulating water around the camera, or stopping (KeyJ), and
@@ -140,7 +140,6 @@ impl StressLab {
             occlusion,
             bloom,
             lights,
-            shafts,
             reflections,
             particles,
             refraction,
@@ -161,11 +160,6 @@ impl StressLab {
             0.0
         };
         // Opt-in effects are removed entirely when off.
-        if shafts {
-            world.insert_resource(stress_shafts());
-        } else {
-            world.remove_resource::<SunShafts>();
-        }
         if reflections {
             world.insert_resource(stress_reflections(scene));
         } else {

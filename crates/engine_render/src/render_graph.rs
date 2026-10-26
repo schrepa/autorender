@@ -86,8 +86,11 @@ resources! {
     /// The depth pyramid occlusion culling tests against, which the next
     /// frame's cluster selection retests with.
     Pyramid: Kept,
-    /// Ambient occlusion, bloom, reflections and sun shafts.
+    /// Ambient occlusion, bloom, reflections and the haze.
     Effects: Frame,
+    /// The haze filtered over time, which the next frame's filter
+    /// reprojects.
+    Haze: Kept,
     /// Auto exposure's histogram and state: the exposure later frames show.
     Exposure: Kept,
     /// Environment maps and reflection probes' cubes.

@@ -177,16 +177,18 @@ try {
   assert.equal(invalidLook.error.path, "$.shadows.tile_texels");
   assert.equal(invalidLook.observation.tick, after.observation.tick);
   assert.deepEqual((await cli("inspect", { component: "Environment" })).result.value, look.result.value);
-  // Opt-in effects start off; an empty section turns one on with its defaults.
-  assert.deepEqual([capture.result.rendering.sun_shafts.active, capture.result.rendering.reflections.active], [false, false]);
-  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, sun_shafts: {}, reflections: {}, highlights: { capped: false }, windows: {}, sky_occlusion: { strength: 0.5, floor: 0.1 } });
+  // The haze marches the near air by default; opt-in effects start off, an
+  // empty section turning one on with its defaults; a haze of no reach
+  // marches none.
+  assert.deepEqual([capture.result.rendering.haze.active, capture.result.rendering.reflections.active], [true, false]);
+  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, haze: { reach: 0 }, reflections: {}, highlights: { capped: false }, windows: {}, sky_occlusion: { strength: 0.5, floor: 0.1 } });
   assert.equal(night.result.temporary, true);
-  assert.deepEqual([...night.result.environment_changed].sort(), ["atmosphere", "bloom", "highlights", "reflections", "sky_occlusion", "sun_shafts", "windows"]);
+  assert.deepEqual([...night.result.environment_changed].sort(), ["atmosphere", "bloom", "haze", "highlights", "reflections", "sky_occlusion", "windows"]);
   // Sky occlusion runs by default beside the shadows, its maps counted.
   assert.ok(night.result.rendering.shadows.sky_maps <= 26);
   assert.ok(night.result.rendering.shadows.sky_drawn <= 1);
   assert.deepEqual(effects(night.result.rendering), [true, true, false]);
-  assert.deepEqual([night.result.rendering.sun_shafts.active, night.result.rendering.reflections.active], [true, true]);
+  assert.deepEqual([night.result.rendering.haze.active, night.result.rendering.reflections.active], [false, true]);
   assert.equal(night.observation.tick, after.observation.tick);
   const nightLook = await cli("inspect", { component: "Environment" });
   assert.notDeepEqual(nightLook.result.value.atmosphere, look.result.value.atmosphere);
@@ -237,10 +239,11 @@ try {
   assert.deepEqual(savedLook.shadows, look.result.value.shadows);
   assert.notDeepEqual(savedLook.atmosphere, nightLook.result.value.atmosphere);
   // The saved environment omits the opt-in effects: they are off again,
-  // and highlights take their defaults, sized and capped.
-  assert.deepEqual([savedLook.sun_shafts.intensity, savedLook.reflections.intensity], [0, 0]);
+  // and the haze and highlights take their defaults, the haze marching
+  // again and highlights sized and capped.
+  assert.deepEqual([savedLook.haze, savedLook.reflections.intensity], [look.result.value.haze, 0]);
   assert.deepEqual([savedLook.highlights.enabled, savedLook.highlights.capped, savedLook.windows.enabled], [true, true, false]);
-  assert.deepEqual([reloaded.result.rendering.sun_shafts.active, reloaded.result.rendering.reflections.active], [false, false]);
+  assert.deepEqual([reloaded.result.rendering.haze.active, reloaded.result.rendering.reflections.active], [true, false]);
   const lamp = await cli("inspect", { entity: "agent-lamp", component: "LocalLight" });
   assert.equal(lamp.result.entity.components.LocalLight.intensity, 20);
   const { radius, length, region } = lamp.result.entity.components.LocalLight;

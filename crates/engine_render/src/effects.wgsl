@@ -1,8 +1,8 @@
 // Screen effects shared by the composite of
-// post.wgsl, the sun shafts of shafts.wgsl and the temporal resolve of
+// post.wgsl, the haze's march of haze.wgsl and the temporal resolve of
 // temporal.wgsl, which are prepended with this source: the frame's effect
 // settings and how the composite and resolve apply ambient occlusion,
-// reflections, sun shafts and bloom. Frames draw their screen-sized targets
+// reflections, the haze and bloom. Frames draw their screen-sized targets
 // at their render size, from the top-left corner, and the half-resolution
 // ones at half of it: every read keeps within what the frame drew.
 
@@ -30,11 +30,14 @@ struct Post {
     // pixel of each 2x2 block the half-resolution reflections trace (0 to 3,
     // changing every frame with temporal antialiasing).
     reflections: vec4<f32>,
-    // Strength, forward scattering, gathering distance, and 1 when sun
-    // shafts run.
-    shafts: vec4<f32>,
-    // The sun's exposed color: light the shafts scatter.
-    sun: vec4<f32>,
+    // The haze: the turn of its march's jitter this frame, the
+    // half-resolution texels across and down its history holds (0 without
+    // one), and 1 when it runs.
+    haze: vec4<f32>,
+    // Last frame's unjittered world to clip space and its eye (xyz), which
+    // the haze's history reprojects through.
+    previous_view_projection: mat4x4<f32>,
+    previous_eye: vec4<f32>,
     // The unit direction toward the sun; w: 1 when 8-bit color writes
     // dither.
     sun_direction: vec4<f32>,
@@ -45,13 +48,6 @@ struct Post {
     // The detail eye ambient occlusion hands over by its distance from
     // (xyz); w unused.
     detail: vec4<f32>,
-}
-
-// The full-resolution pixel quarter-resolution sun shaft texel `texel`
-// traces: the second of each 4x4 block's diagonal, centered
-// at 4 * texel + 1.5.
-fn shaft_pixel(texel: vec2<i32>) -> vec2<i32> {
-    return texel * 4 + vec2<i32>(1);
 }
 
 // The texels of the half-resolution targets the frame draws: half its
@@ -86,18 +82,14 @@ fn inverse_distance_at(depth: texture_depth_2d, pixel: vec2<i32>, settings: Post
     return 1.0 / max(length(point.xyz / point.w - settings.eye.xyz), 1.0e-4);
 }
 
-// The ambient occlusion's visibility (x) and the sun shafts' light (y) at
-// full-resolution `pixel`, which the half-resolution filter of post.wgsl
-// writes together with the inverse distance of each texel's surface (w):
-// the four texels around the pixel, weighted bilinearly and by how near
-// their surface lies to the pixel's own (from `depth`), so no effect
-// darkens or lights across a silhouette; where none lies near, the
-// bilinear weights alone.
-fn screen_effects(effects: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2<i32>,
-        settings: Post) -> vec2<f32> {
-    if settings.occlusion.w == 0.0 && settings.shafts.w == 0.0 && settings.sky.w == 0.0 {
-        return vec2<f32>(1.0, 0.0);
-    }
+// A half-resolution effect at full-resolution `pixel`, from `effects`, a
+// target whose texels hold the inverse distance of their surface in w (as
+// the filters of post.wgsl write it): the four texels around the pixel,
+// weighted bilinearly and by how near their surface lies to the pixel's own
+// (from `depth`), so no effect darkens or lights across a silhouette; where
+// none lies near, the bilinear weights alone.
+fn effect_at(effects: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2<i32>,
+        settings: Post) -> vec4<f32> {
     let size = half_size(settings);
     let position = (vec2<f32>(pixel) + 0.5) * vec2<f32>(size) / settings.size.xy - 0.5;
     let first = vec2<i32>(floor(position));
@@ -105,23 +97,44 @@ fn screen_effects(effects: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2
     let last = size - 1;
     let own = inverse_distance_at(depth, pixel, settings);
     let tolerance = max(EFFECTS_PLANE * own, 1.0e-7);
-    var near = vec2<f32>(0.0);
+    var near = vec4<f32>(0.0);
     var near_total = 0.0;
-    var plain = vec2<f32>(0.0);
+    var plain = vec4<f32>(0.0);
     for (var y = 0; y < 2; y++) {
         for (var x = 0; x < 2; x++) {
             let texel = textureLoad(effects, clamp(first + vec2<i32>(x, y), vec2<i32>(0), last), 0);
             let bilinear = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
             let weight = bilinear * saturate(1.25 - abs(texel.w - own) / tolerance);
-            near += texel.xy * weight;
+            near += texel * weight;
             near_total += weight;
-            plain += texel.xy * bilinear;
+            plain += texel * bilinear;
         }
     }
     if near_total < 1.0e-3 {
         return plain;
     }
     return near / near_total;
+}
+
+// The ambient occlusion's visibility at full-resolution `pixel`, with what
+// sky occlusion leaves of the sky's light, from the half-resolution filter
+// of post.wgsl in `occlusion`; 1 without either.
+fn occlusion_at(occlusion: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2<i32>,
+        settings: Post) -> f32 {
+    if settings.occlusion.w == 0.0 && settings.sky.w == 0.0 {
+        return 1.0;
+    }
+    return effect_at(occlusion, depth, pixel, settings).x;
+}
+
+// The haze's exposed light at full-resolution `pixel`, from its march
+// filtered over time in `hazed`; none without it.
+fn haze_at(hazed: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2<i32>,
+        settings: Post) -> vec3<f32> {
+    if settings.haze.w == 0.0 {
+        return vec3<f32>(0.0);
+    }
+    return effect_at(hazed, depth, pixel, settings).rgb;
 }
 
 // The scene reflected at `uv` across the view replacing the share of `color`
@@ -140,15 +153,17 @@ fn reflected(color: vec3<f32>, reflections: texture_2d<f32>, linear: sampler,
     return mix(color, reflection.rgb, saturate(reflection.a * settings.reflections.y));
 }
 
-// Sunlight scattered toward the eye, `amount` of it, added as
-// a screen blend.
-fn shafted(color: vec3<f32>, amount: f32, settings: Post) -> vec3<f32> {
-    if settings.shafts.w == 0.0 {
+// `color` with the haze's exposed light `light` laid over it: light added
+// as a screen blend, and light taken away (where the haze's drifting air is
+// clearer than the mean `atmospheric` lit) as a multiply, each share
+// compressed as x / (1 + |x|), so neither passes white or black.
+fn with_haze(color: vec3<f32>, light: vec3<f32>, settings: Post) -> vec3<f32> {
+    if settings.haze.w == 0.0 {
         return color;
     }
-    let light = settings.sun.rgb * max(amount, 0.0);
-    let added = light / (vec3<f32>(1.0) + light);
-    return vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - added);
+    let share = light / (vec3<f32>(1.0) + abs(light));
+    let added = vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - share);
+    return select(color * (vec3<f32>(1.0) + share), added, share >= vec3<f32>(0.0));
 }
 
 // Bloom light at `uv` over `color`, as a screen blend that never passes white.
@@ -165,21 +180,21 @@ fn glowing(color: vec3<f32>, bloom: texture_2d<f32>, linear: sampler, uv: vec2<f
 
 // The share of a pixel's light the ambient occlusion leaves: its ambient
 // share `ambient` (the scene target's alpha) darkened by the occlusion's
-// visible share in `effects` (`screen_effects`), which holds what sky
-// occlusion leaves of the sky's light too.
-fn effect_shade(ambient: f32, effects: vec2<f32>, settings: Post) -> f32 {
+// visible share `visible` (`occlusion_at`), which holds what sky occlusion
+// leaves of the sky's light too.
+fn effect_shade(ambient: f32, visible: f32, settings: Post) -> f32 {
     if settings.occlusion.w == 0.0 && settings.sky.w == 0.0 {
         return 1.0;
     }
-    return 1.0 - ambient * (1.0 - effects.x);
+    return 1.0 - ambient * (1.0 - visible);
 }
 
 // `color` with the effects that add light laid over it at `uv` across the
-// view: the sun shafts' light in `effects`, then bloom. Both are smooth and
-// reach the canvas only: the composite lays them over the reflected scene,
-// the resolve over its blend with the history.
-fn effect_light(color: vec3<f32>, effects: vec2<f32>, bloom: texture_2d<f32>,
+// view: the haze's light `light` (`haze_at`), then bloom. Both are smooth
+// and reach the canvas only: the composite lays them over the reflected
+// scene, the resolve over its blend with the history.
+fn effect_light(color: vec3<f32>, light: vec3<f32>, bloom: texture_2d<f32>,
         linear: sampler, uv: vec2<f32>, settings: Post) -> vec3<f32> {
-    let lit = shafted(color, effects.y, settings);
+    let lit = with_haze(color, light, settings);
     return glowing(lit, bloom, linear, half_uv(uv, textureDimensions(bloom), settings), settings);
 }

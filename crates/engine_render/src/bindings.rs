@@ -96,7 +96,7 @@ tables! {
     /// the environment maps and reflection probes.
     const CAMERA: Table = Table {
         label: "engine/camera-layout",
-        serves: [SHADER @ 0, PARTICLE_SHADER @ 0, SHAFTS_SHADER @ 0],
+        serves: [SHADER @ 0, PARTICLE_SHADER @ 0, HAZE_SHADER @ 0],
         bindings: &[
             // Fragments read the eye, sky rays and the jitter.
             uniform_of(0, "camera", size_of::<CameraUniform>(), VF),
@@ -1139,8 +1139,9 @@ tables! {
             texture(6, "bloom", Float, D2, F),
             sampler(7, "linear", Filtering, F),
             texture(8, "reflections", Float, D2, F),
-            // Shafts, nearest depths, traced reflections, raw occlusion, surface.
-            texture(9, "shafts", Unfilterable, D2, F),
+            // The haze's march, nearest depths, traced reflections, raw
+            // occlusion, surface.
+            texture(9, "marched", Unfilterable, D2, F),
             texture(10, "nearest_depth", Unfilterable, D2, F),
             texture(11, "traced", Unfilterable, D2, F),
             texture(12, "raw_occlusion", Unfilterable, D2, F),
@@ -1153,13 +1154,17 @@ tables! {
             texture(16, "sky_maps", Depth, D2Array, F),
             sampler(17, "sky_sampler", Comparison, F),
             uniform_of(18, "sky", size_of::<SkyUniform>(), F),
+            // The haze filtered over time: the history its filter
+            // reprojects, or this frame's, which the composite lays over the
+            // scene; the sixteenth sampled texture.
+            texture(19, "haze", Float, D2, F),
         ],
     };
 
-    /// Group 1 of sun shafts (`shafts.wgsl`).
-    const SHAFTS: Table = Table {
-        label: "engine/post-shafts-layout",
-        serves: [SHAFTS_SHADER @ 1],
+    /// Group 1 of the haze's march (`haze.wgsl`).
+    const HAZE: Table = Table {
+        label: "engine/post-haze-layout",
+        serves: [HAZE_SHADER @ 1],
         bindings: &[
             uniform_of(0, "post", size_of::<PostUniform>(), F),
             texture(1, "depth_texture", Depth, D2, F),
@@ -1184,6 +1189,8 @@ tables! {
             // leave visible.
             texture(9, "depth_texture", Depth, D2, F),
             texture(10, "revealed", Unfilterable, D2, F),
+            // The haze filtered over time, which the canvas alone shows.
+            texture(11, "haze", Float, D2, F),
         ],
     };
 
