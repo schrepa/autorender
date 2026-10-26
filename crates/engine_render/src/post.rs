@@ -41,9 +41,11 @@ use crate::targets::{FrameRegion, FrameSize, ScreenTarget, draw_within};
 pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Glow weight and reflectivity.
 pub(crate) const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
-/// The surface reflections follow: the shading normal,
-/// octahedral, and roughness, 10 bits each.
-pub(crate) const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgb10a2Unorm;
+/// The surface reflections follow, four 16-bit words (`surface_texel`): the
+/// shading normal, octahedral, a word each coordinate; its roughness along
+/// the view and across it, a byte each; and the share of its light its
+/// mirrored environment makes up, which reflections replace.
+pub(crate) const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
 /// The filtered occlusion's visibility and each texel's inverse distance,
 /// which the composite and resolve read.
 const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -63,7 +65,9 @@ fn bloom_format(device: &wgpu::Device) -> wgpu::TextureFormat {
 }
 /// The scene's blurred levels: averages of the 8-bit sRGB scene.
 const SCENE_LEVEL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-/// Reflected color, from the scene and its levels, and weight.
+/// The scene's mirrored light, from the scene and its levels, and the share
+/// of each pixel's light it replaces, both premultiplied by how surely the
+/// rays met the scene.
 const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// The haze's light, below zero where its drifting air is clearer than its
 /// mean, and each texel's inverse distance: its march, its result filtered
@@ -393,7 +397,7 @@ impl PostPass {
         self.nearest.release();
     }
 
-    /// Target bytes: scene (4), glow (2) and surface (4) per pixel, at half
+    /// Target bytes: scene (4), glow (2) and surface (8) per pixel, at half
     /// resolution raw and filtered occlusion (8 each), traced and filtered
     /// reflections (4 each) and the haze's march, filtered result and
     /// history (8 each), and the bloom chain and blurred scene levels (8
@@ -402,7 +406,7 @@ impl PostPass {
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
             let pixels = u64::from(size.width) * u64::from(size.height);
-            pixels * 10 + pixels / 4 * 48 + pixels / 4 * 8 * 4 / 3 * 2
+            pixels * 14 + pixels / 4 * 48 + pixels / 4 * 8 * 4 / 3 * 2
         }) + self.nearest.capacity_bytes()
     }
 

@@ -547,8 +547,9 @@ fn fs_probe_sky(input: SkyOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(behind_clouds(light, sky_cloud(ray), ray), 1.0);
 }
 
-// The sky's surface texel: facing up, fully rough (it reflects nothing).
-const SKY_SURFACE = vec4<f32>(0.5, 0.5, 1.0, 0.0);
+// The sky's surface texel (`surface_texel`): facing up, fully rough both
+// ways, mirroring nothing (it reflects nothing).
+const SKY_SURFACE = vec4<u32>(32768u, 32768u, 65535u, 0u);
 
 // Clouds in the view (`clouds.wgsl`'s `march_view`): each
 // marched block's light and the share of the scene passing, how far its

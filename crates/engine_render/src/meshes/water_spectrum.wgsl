@@ -9,9 +9,10 @@
 // pixel reads a tile at the steady size (`water_steady`): the tile's levels
 // and anisotropy whose texels span STEADY_PIXELS pixels average what they
 // span, so it draws no waves finer than temporal antialiasing holds
-// steadily, the variance of the slopes they average away roughens the
-// water (LEAN mapping), and nothing fades by distance. Each place sizes
-// the wind's tiles by the sea its wind raises there
+// steadily, the covariance of the slopes they average away roughens the
+// water along and across the view as it projects there (LEAN mapping;
+// Bruneton, Neyret and Holzschuch 2010), and nothing fades by distance.
+// Each place sizes the wind's tiles by the sea its wind raises there
 // (`engine_core::wind_waves`): Elfouhaily, Chapron, Katsaros and
 // Vandemark's unified spectrum (1997, "A unified directional spectrum for
 // long and short wind-driven waves") for the wind's speed there, gusts and
@@ -97,22 +98,42 @@ const WATER_FINEST: f32 = 10.0;
 // waves feel (two thirds of their length).
 const WATER_OPEN_FETCH: f32 = 1.0e10;
 const WATER_OPEN_DEPTH: f32 = 1.0e4;
-// The least and the most roughness water shades with: as smooth as every
-// surface may be (`meshes/shading.wgsl`), where GGX's lobe stays finite in
-// f32 though rounding takes a unit half vector's cosine with the normal an
-// ulp or two past 1; and the most its waves' hidden slopes roughen it.
+// The least and the most roughness water shades with, each way: as smooth
+// as every surface may be (`meshes/shading.wgsl`), where GGX's lobe stays
+// finite in f32 though rounding takes a unit half vector's cosine with the
+// normal an ulp or two past 1; and the most its waves' hidden slopes
+// roughen it.
 const WATER_SMOOTHEST: f32 = 0.03;
 const WATER_ROUGHEST: f32 = 0.6;
 
-// Waves as a pixel reads them: their slopes (meters a meter), the variance
-// of the slopes the pixel hides, their height (meters) and the variance of
-// the heights it resolves, summed over sources as independent fields:
-// slopes and heights add, and so do variances.
+// Waves as a pixel reads them: their slopes (meters a meter), the
+// covariance of the slopes the pixel hides (`water_spread`), their height
+// (meters) and the variance of the heights it resolves, summed over sources
+// as independent fields: slopes and heights add, and so do variances.
 struct WaterRead {
     slopes: vec2<f32>,
-    hidden: f32,
+    hidden: vec3<f32>,
     height: f32,
     heights: f32,
+}
+
+// The covariance of slopes (xx, zz and xz, along x and z) that slopes
+// `slopes` (meters a meter) hold as one sample of their spread: their outer
+// product, whose trace is their square.
+fn water_spread(slopes: vec2<f32>) -> vec3<f32> {
+    return vec3<f32>(slopes.x * slopes.x, slopes.y * slopes.y, slopes.x * slopes.y);
+}
+
+// The covariance of slopes whose variance `variance` spreads alike every
+// way: half of it along each axis.
+fn water_spread_even(variance: f32) -> vec3<f32> {
+    return vec3<f32>(0.5 * variance, 0.5 * variance, 0.0);
+}
+
+// The variance along the unit vector `way` (along x and z) of slopes of
+// covariance `spread`.
+fn water_spread_toward(spread: vec3<f32>, way: vec2<f32>) -> f32 {
+    return spread.x * way.x * way.x + spread.y * way.y * way.y + 2.0 * spread.z * way.x * way.y;
 }
 
 // How many times a meter tile `tile` repeats.
@@ -463,19 +484,23 @@ fn water_wind_finer(sea: WaterSea) -> f32 {
 // texels spanning STEADY_PIXELS pixels), its slopes turned back into the
 // world (a wave the tile holds along the wind's heading turned by that
 // angle so runs along the wind), and scaled by its gain in `gains`
-// (`water_wind_gains`). Slopes and heights add, the hidden variances as
-// each gain's square times its read's, and of the heights' variance each
-// tile's waves longer than two of those texels hold theirs (its heights'
-// variance an octave falling as the square of their length). A tile of no
-// gain reads nothing. One whose slopes stay as gentle as the smoothest
-// water's microfacets (WATER_SMOOTHEST's square), or whose longest waves
-// the steady size spans twice over (as the sampler picks its level,
-// `water_wave_span`), reads no texture and hides the square of its gain:
-// each hands over across an octave, from twice the gentlest to it and from
-// once the longest waves to twice, what it takes of the slopes hiding in
-// the variance, so nothing pops.
+// (`water_wind_gains`). Slopes and heights add, the hidden covariances as
+// each gain's square times its read's: what its levels and anisotropy
+// average away spreads alike every way, as the wind's slopes spread about
+// alike up and across the wind (Cox and Munk 1954 measured the two
+// variances within half of each other), and what it leaves undrawn of the
+// slopes it reads lies along them. Of the heights' variance each tile's
+// waves longer than two of those texels hold theirs (its heights' variance
+// an octave falling as the square of their length). A tile of no gain reads
+// nothing. One whose slopes stay as gentle as the smoothest water's
+// microfacets (WATER_SMOOTHEST's square), or whose longest waves the steady
+// size spans twice over (as the sampler picks its level,
+// `water_wave_span`), reads no texture and hides the square of its gain,
+// alike every way: each hands over across an octave, from twice the
+// gentlest to it and from once the longest waves to twice, what it takes of
+// the slopes hiding in the variance, so nothing pops.
 fn water_wind_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, gains: vec4<f32>) -> WaterRead {
-    var read = WaterRead(vec2<f32>(0.0), 0.0, 0.0, 0.0);
+    var read = WaterRead(vec2<f32>(0.0), vec3<f32>(0.0), 0.0, 0.0);
     // At the steady size: the meters it spans as the sampler filters.
     let steady = water_steady();
     let span = water_wave_span(dx, dy) * steady;
@@ -488,7 +513,10 @@ fn water_wind_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, gains: vec4<f32>
         let band = water_tile_band(tile);
         // How much of its slopes it draws, the rest hiding in its variance.
         let kept = saturate(2.0 - span / band.x) * saturate(gain / calm - 1.0);
-        var moments = vec4<f32>(0.0, 0.0, 1.0, 0.0);
+        // What it draws of its slopes (xy) and its height (z), and the
+        // covariance of the slopes it hides at unit gain.
+        var drawn = vec3<f32>(0.0);
+        var hidden = water_spread_even(1.0);
         if kept > 0.0 {
             let repeats = water_tile_repeats(tile);
             let turn = water_tile_turn(tile);
@@ -497,8 +525,8 @@ fn water_wind_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, gains: vec4<f32>
                 complex_product(dy, turn) * (repeats * steady));
             // Its slopes turned back into the world.
             let slopes = complex_product(sampled.xy, vec2<f32>(turn.x, -turn.y));
-            moments = vec4<f32>(slopes * kept,
-                sampled.z + (1.0 - kept * kept) * dot(slopes, slopes), sampled.w * kept);
+            drawn = vec3<f32>(slopes * kept, sampled.w * kept);
+            hidden = water_spread_even(sampled.z) + (1.0 - kept * kept) * water_spread(slopes);
         }
         // The share of its heights' variance its waves longer than two of
         // the texels it reads hold.
@@ -506,38 +534,48 @@ fn water_wind_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, gains: vec4<f32>
         let resolved = (band.x * band.x - cut * cut)
             / max(band.x * band.x - band.y * band.y, 1.0e-12);
         let height = water_tile_height(tile) * gain;
-        read.slopes += moments.xy * gain;
-        read.hidden += moments.z * gain * gain;
-        read.height += moments.w * height;
+        read.slopes += drawn.xy * gain;
+        read.hidden += hidden * (gain * gain);
+        read.height += drawn.z * height;
         read.heights += height * height * kept * kept * resolved;
     }
     return read;
 }
 
-// The variance water's shading normal `normal` adds to its slopes' square
-// by turning across a pixel (in `water_roughness`'s units): what the waves
-// it draws vary within the pixel, whose glints its samples would otherwise
+// The covariance (`water_spread`) water's drawn slopes `slopes` (meters a
+// meter) add to those it hides by turning across a pixel: what the waves it
+// draws vary within the pixel, whose glints its samples would otherwise
 // catch in one frame and miss in the next (geometric specular antialiasing,
 // Kaplanyan, Hill, Patney and Lefohn 2016: twice the pixel footprint's
-// variance SPECULAR_VARIANCE times the normal's squared change across and
-// down the pixel, clamped to SPECULAR_LIMIT before it joins the slopes' as
-// Tokuyoshi and Kaplanyan 2019 clamp it), every surface's kernel
-// (`widened`). Its derivatives need it called in uniform control flow.
-fn water_turning(normal: vec3<f32>) -> f32 {
-    let across = dpdx(normal);
-    let down = dpdy(normal);
-    return min(2.0 * SPECULAR_VARIANCE * (dot(across, across) + dot(down, down)),
-        SPECULAR_LIMIT);
+// variance SPECULAR_VARIANCE times the outer products of the slopes' change
+// across and down the pixel, so a pixel drawn out along the view widens the
+// lobe along the view; scaled to at most SPECULAR_LIMIT of their square
+// before it joins the slopes' as Tokuyoshi and Kaplanyan 2019 clamp it),
+// every surface's kernel (`widened`). Its derivatives need it called in
+// uniform control flow.
+fn water_turning(slopes: vec2<f32>) -> vec3<f32> {
+    let turning = 2.0 * SPECULAR_VARIANCE
+        * (water_spread(dpdx(slopes)) + water_spread(dpdy(slopes)));
+    return turning * min(SPECULAR_LIMIT / max(turning.x + turning.y, 1.0e-12), 1.0);
 }
 
-// The roughness of water whose waves vary `variance` of their slopes'
-// square within a pixel, those it hides and those it draws turning across
-// it (`water_turning`), in sea `sea` (`water_wind_sea`): the variance of
-// the sea's waves finer than the tiles hold (`water_wind_finer`) adds to
-// it, as variances add in a microfacet distribution (LEAN mapping, Olano
-// and Baker), and the roughness is the sum's fourth root, from
-// WATER_SMOOTHEST to WATER_ROUGHEST.
-fn water_roughness(variance: f32, sea: WaterSea) -> f32 {
-    return clamp(sqrt(sqrt(variance + water_wind_finer(sea))), WATER_SMOOTHEST,
-        WATER_ROUGHEST);
+// The roughness along and across the view (x and y) of water whose waves'
+// slopes vary within a pixel by the covariance `hidden` (`water_spread`:
+// those it hides and those it draws turning across it, `water_turning`),
+// seen heading along `heading` (a unit vector along x and z: the view laid
+// on the water, away from the eye), in sea `sea` (`water_wind_sea`): the
+// variance of the sea's waves finer than the tiles hold
+// (`water_wind_finer`) adds to it alike every way, as variances add in a
+// microfacet distribution (LEAN mapping, Olano and Baker); the ellipse of
+// the sum projected into the view, its variance along the heading and
+// across it (Bruneton, Neyret and Holzschuch 2010), sets each way's GGX
+// alpha as the root of twice that variance, as a round lobe's square alpha
+// is its slopes' whole variance; and each way's roughness is its alpha's
+// root, from WATER_SMOOTHEST to WATER_ROUGHEST.
+fn water_roughness(hidden: vec3<f32>, sea: WaterSea, heading: vec2<f32>) -> vec2<f32> {
+    let spread = hidden + water_spread_even(water_wind_finer(sea));
+    let variances = vec2<f32>(water_spread_toward(spread, heading),
+        water_spread_toward(spread, vec2<f32>(-heading.y, heading.x)));
+    return clamp(sqrt(sqrt(2.0 * max(variances, vec2<f32>(0.0)))), vec2<f32>(WATER_SMOOTHEST),
+        vec2<f32>(WATER_ROUGHEST));
 }

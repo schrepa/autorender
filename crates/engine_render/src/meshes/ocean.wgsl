@@ -226,16 +226,17 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     // Meters of still sea a pixel spans.
     let footprint = max(max(length(dpdx(still)), length(dpdy(still))), 1.0e-4);
     // Every wave longer than the steady size tilts and stretches the surface
-    // (`ocean_shown`); shorter waves' slopes roughen it instead.
+    // (`ocean_shown`); shorter waves' slopes roughen it instead, along the
+    // way each runs (`water_spread`).
     let waved = ocean_normal(still, footprint);
-    var hidden = 0.0;
+    var hidden = vec3<f32>(0.0);
     let count = u32(water.ocean_grid.w);
     for (var index = 0u; index < count; index++) {
         let wave = water.ocean_waves[index];
         let number = max(length(wave.xy), 1.0e-6);
         let keep = ocean_shown(number, footprint);
         let slope = number * wave.z;
-        hidden += (1.0 - keep * keep) * slope * slope * 0.5;
+        hidden += water_spread(wave.xy / number) * ((1.0 - keep * keep) * slope * slope * 0.5);
     }
     // The wind's tiles ripple it with the waves shorter than its own
     // shortest (they run longest first), sized by the spectrum its own are
@@ -282,7 +283,8 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     let foam_capping = saturate((water.foam.x - compression) / WATER_FOAM_CAPPING + 0.5);
     let foam_crest = 1.0 / (1.0 + exp(-clamp(ripples.height
         * inverseSqrt(max(ripples.heights, 1.0e-12)) / WATER_LOGISTIC, -30.0, 30.0)));
-    let foam_folding = water_folding(dot(gains, gains), ripples.hidden, foam_crest, vec2<f32>(0.0));
+    let foam_folding = water_folding(dot(gains, gains), ripples.hidden.x + ripples.hidden.y,
+        foam_crest, vec2<f32>(0.0));
     let foam_contact = water_contact(below, abs(dpdx(below)) + abs(dpdy(below)), footprint,
         water.foam.y * sqrt(WATER_GRAVITY / max(below, WATER_BREAK_THINNEST)));
     let foam_floats = eye_world(vec3<f32>(still.x, 0.0, still.y)).xz;
@@ -295,8 +297,9 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     // its highlights, as a rougher surface would, and so do the ripples
     // finer than the steady size, how far the normal of those drawn turns
     // across the pixel (`water_turning`) and the wind's waves finer than its
-    // tiles hold (`water_roughness`).
-    let roughness = water_roughness(hidden + ripples.hidden + water_turning(normal), sea);
+    // tiles hold, along the view and across it (`water_roughness`).
+    let roughness = water_roughness(hidden + ripples.hidden + water_turning(slopes), sea,
+        water_heading(view));
     // Its crests (`ocean_heights`): how near their tops it stands, the
     // height its waves and the tiles' raise it over √2 of the root of the
     // variance of the heights the pixel draws (where a sine's crests
@@ -337,7 +340,7 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
         * (1.0 - atmospheric_cover(camera.position.xyz, world)));
     result.fade = fade;
     result.wind = wind;
-    return result;
+    return water_mirroring(result);
 }
 
 fn ocean_temporal_output(input: OceanTemporalOutput) -> OceanOutput {

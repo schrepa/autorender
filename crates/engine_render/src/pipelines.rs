@@ -888,14 +888,15 @@ const FILLER_BYTES: u64 = 256;
 const UNIFORM_FILLER_BYTES: u64 = 4096;
 
 /// Resources standing in for the bindings of a shared layout a pass does not
-/// read: the smallest buffers, 2D textures (and a depth array) and samplers.
-/// Read and written storage have separate buffers, since one buffer may not
-/// be both in a dispatch or draw.
+/// read: the smallest buffers, 2D textures (of floats, unsigned integers and
+/// depths, and a depth array) and samplers. Read and written storage have
+/// separate buffers, since one buffer may not be both in a dispatch or draw.
 pub(crate) struct Fillers {
     uniform: wgpu::Buffer,
     read: wgpu::Buffer,
     write: wgpu::Buffer,
     texture: wgpu::TextureView,
+    unsigned: wgpu::TextureView,
     depth: wgpu::TextureView,
     depth_array: wgpu::TextureView,
     sampler: wgpu::Sampler,
@@ -942,6 +943,8 @@ impl Fillers {
             ),
             texture: texture("engine/filler-texture", wgpu::TextureFormat::Rgba8Unorm)
                 .create_view(&Default::default()),
+            unsigned: texture("engine/filler-unsigned", wgpu::TextureFormat::Rgba16Uint)
+                .create_view(&Default::default()),
             depth_array: depth.create_view(&wgpu::TextureViewDescriptor {
                 label: Some("engine/filler-depth-array"),
                 dimension: Some(wgpu::TextureViewDimension::D2Array),
@@ -979,6 +982,10 @@ impl Fillers {
                 sample: Sample::Depth,
                 view: View::D2Array,
             } => wgpu::BindingResource::TextureView(&self.depth_array),
+            Kind::Texture {
+                sample: Sample::Uint,
+                view: View::D2,
+            } => wgpu::BindingResource::TextureView(&self.unsigned),
             Kind::Texture {
                 sample: Sample::Float | Sample::Unfilterable,
                 view: View::D2,

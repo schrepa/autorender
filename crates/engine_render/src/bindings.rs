@@ -1140,12 +1140,12 @@ tables! {
             sampler(7, "linear", Filtering, F),
             texture(8, "reflections", Float, D2, F),
             // The haze's march, nearest depths, traced reflections, raw
-            // occlusion, surface.
+            // occlusion, and the surface's packed words.
             texture(9, "marched", Unfilterable, D2, F),
             texture(10, "nearest_depth", Unfilterable, D2, F),
             texture(11, "traced", Unfilterable, D2, F),
             texture(12, "raw_occlusion", Unfilterable, D2, F),
-            texture(13, "surface_texture", Unfilterable, D2, F),
+            texture(13, "surface_texture", Uint, D2, F),
             // Scene levels and a bloom level halved beside them.
             texture(14, "scene_levels", Float, D2, F),
             texture(15, "bloom_source", Float, D2, F),
