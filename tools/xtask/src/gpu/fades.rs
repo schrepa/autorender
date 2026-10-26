@@ -127,11 +127,6 @@ const FILTERS: &[(&str, &str)] = &[
          size, the slopes they average as variance",
     ),
     (
-        "water_turned_read",
-        "the turbulence tile's rungs the steady size resolves, the finer ones' slopes as \
-         roughness",
-    ),
-    (
         "water_turning",
         "the water's normal turning within the pixel, its spread as roughness (Kaplanyan)",
     ),

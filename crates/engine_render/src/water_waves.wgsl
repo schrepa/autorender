@@ -1,11 +1,9 @@
-// Water's waves (`water_waves.rs`): WAVE_TILES tiles of waves, each a
-// spectrum of WAVE_TEXELS by WAVE_TEXELS wave numbers, turned into the
-// slopes and heights water shades with by an inverse fast Fourier
-// transform, rows then columns, a workgroup a line (Stockham's radix-2
-// form in workgroup memory, which needs no reordering). The first
-// WAVE_WIND_TILES, the wind's, evolve in time; the last, the current's
-// turbulence, stands as drawn, its waves moving only as the current carries
-// them. The slopes along x and z are real fields, so one complex transform
+// Water's waves (`water_waves.rs`): WAVE_WIND_TILES tiles of the wind's
+// waves, each a spectrum of WAVE_TEXELS by WAVE_TEXELS wave numbers evolving
+// in time, turned into the slopes and heights water shades with by an
+// inverse fast Fourier transform, rows then columns, a workgroup a line
+// (Stockham's radix-2 form in workgroup memory, which needs no reordering).
+// The slopes along x and z are real fields, so one complex transform
 // carries both: x's as its real part, z's as its imaginary one; a second
 // beside it carries the heights, in the tile's own root mean square
 // heights. Each texel keeps its slopes' moments (the slopes along x and z,
@@ -15,7 +13,6 @@
 
 const WAVE_TEXELS: u32 = 256u;
 const WAVE_STAGES: u32 = 8u;
-const WAVE_TILES: u32 = 5u;
 const WAVE_WIND_TILES: u32 = 4u;
 const WAVE_TAU: f32 = 6.2831855;
 // Meters a second squared of gravity (`engine_terrain::hydraulics::GRAVITY`),
@@ -30,7 +27,7 @@ const WAVE_CAPILLARY: f32 = 370.0;
 // and fine (x and y: seconds into the loop over its seconds, split so high
 // frequencies keep their precision), and its seconds over two pi (z).
 struct WaveFrame {
-    tiles: array<vec4<f32>, WAVE_TILES>,
+    tiles: array<vec4<f32>, WAVE_WIND_TILES>,
     clock: vec4<f32>,
 }
 
@@ -75,7 +72,7 @@ fn wave_transform(thread: u32) -> u32 {
 // Tile `tile`'s spectrum at texel `texel` (x along the row) now: each wave
 // number's amplitude turned back by its frequency over the time since the
 // loop began, so its wave runs along it, and its opposite's the other way,
-// so the field stays real (the turbulence's as drawn, unturned); then times
+// so the field stays real; then times
 // i k along x plus i times i k along z, the slopes' spectra packed as one
 // (xy), and over the tile's root mean square height, the heights' (zw).
 fn wave_evolved(tile: u32, texel: vec2<u32>) -> vec4<f32> {
@@ -87,7 +84,7 @@ fn wave_evolved(tile: u32, texel: vec2<u32>) -> vec4<f32> {
     // seamlessly when it does.
     let cycles = round(frequency * waves.clock.z);
     let turns = fract(fract(cycles * waves.clock.x) + cycles * waves.clock.y);
-    let angle = select(turns * WAVE_TAU, 0.0, tile >= WAVE_WIND_TILES);
+    let angle = turns * WAVE_TAU;
     let turn = vec2<f32>(cos(angle), -sin(angle));
     let height = complex_product(amplitudes.xy, turn)
         + complex_product(vec2<f32>(amplitudes.z, -amplitudes.w), vec2<f32>(turn.x, -turn.y));

@@ -297,12 +297,9 @@ gpu_consts! {
     /// Texels along a side of a tile of water's waves: wave numbers of its
     /// spectrum, and points of its slopes.
     pub(crate) const WAVE_TEXELS: u32 = engine_core::table_data::waves::TEXELS => ["WAVE_TEXELS" in WATER_WAVES_SHADER];
-    /// Tiles of water's waves, each repeating at its own length: the wind's,
-    /// which evolve each frame, then the current's turbulence, which stands
-    /// still.
-    pub(crate) const WAVE_TILES: usize = engine_core::table_data::waves::TILES => ["WAVE_TILES" in WATER_WAVES_SHADER, "WATER_TILES"];
-    pub(crate) const WIND_TILES: u32 = engine_core::table_data::waves::WIND_TILES as u32 => ["WAVE_WIND_TILES" in WATER_WAVES_SHADER, "WATER_WIND_TILES"];
-    pub(crate) const TURBULENCE_TILE: u32 = engine_core::table_data::waves::TURBULENCE_TILE as u32 => ["WATER_TURBULENCE_TILE"];
+    /// Tiles of water's waves, the wind's, each repeating at its own length
+    /// and evolving each frame.
+    pub(crate) const WIND_TILES: usize = engine_core::table_data::waves::WIND_TILES => ["WAVE_WIND_TILES" in WATER_WAVES_SHADER, "WATER_WIND_TILES"];
     /// The most anisotropy the waves' sampler filters to: along a pixel's
     /// longer side it averages at most this many times as finely as across.
     pub(crate) const WAVE_ANISOTROPY: u16 = 8 => ["WATER_WAVE_ANISOTROPY"];

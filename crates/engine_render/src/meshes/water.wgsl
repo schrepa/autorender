@@ -26,9 +26,9 @@
 // Its waves come from that state alone (`water_flow.wgsl`): the
 // wind's, as its spectrum raises them over the water's span and depth
 // (`water_spectrum.wgsl`), standing where the water is still and riding
-// its current where it runs, with the waves its eddies raise, one to two
-// depths long and as high as their speed squared over gravity; short waves
-// its bed holds still where it runs near the speed of its own waves; and
+// its current where it runs, its eddies roughening it unseen; the boils its
+// eddies bring up and the waves its bed holds still where it runs faster
+// than the slowest of its own waves (`water_stream.wgsl`); and
 // waves standing about what it flows past. Each is drawn as far as it spans
 // the steady size (STEADY_PIXELS), and what the pixel averages of its
 // slopes, and how far those drawn turn across it, roughens the surface. It
@@ -85,7 +85,7 @@
 // wave holding all its waves' variance, which runs up its shores (y), and
 // its waves' summed height (w), none of it for terrains' water (`foam`);
 // how fast the water takes each channel of light, per meter (rgb); each of
-// the waves' tiles (`water_spectrum.wgsl`): how many times a meter it
+// the wind's tiles (`water_spectrum.wgsl`): how many times a meter it
 // repeats, the longest and the shortest waves it holds (meters) and the
 // root mean square height of its waves at unit slope variance (meters); and
 // the cosine and sine of the angle each tile's lattice turns by from the
@@ -116,8 +116,8 @@ struct WaterUniform {
     wind: vec4<f32>,
     foam: vec4<f32>,
     absorption: vec4<f32>,
-    waves: array<vec4<f32>, WATER_TILES>,
-    turns: array<vec4<f32>, WATER_TILES>,
+    waves: array<vec4<f32>, WATER_WIND_TILES>,
+    turns: array<vec4<f32>, WATER_WIND_TILES>,
     ocean: vec4<f32>,
     ocean_grid: vec4<f32>,
     ocean_waves: array<vec4<f32>, 16>,
@@ -1181,9 +1181,9 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // it is here.
     let wind = water_wind_speed(world, time);
     let gains = water_wind_gains(wind, at.words.span, depth);
-    // Its waves, from its state alone (`water_flow_waves`): the wind's and
-    // its eddies', the short waves its bed holds and those standing about
-    // what it flows past.
+    // Its waves, from its state alone (`water_flow_waves`): the wind's, the
+    // boils its eddies bring up, the waves its bed holds and those standing
+    // about what it flows past.
     let waves = water_flow_waves(world.xz, world_dx.xz, world_dy.xz, at, gains, eddy, froude,
         flowing, anchored, time, stagger);
     // They ride its surface, tilting as it falls; and the slopes they hide

@@ -1,22 +1,19 @@
 //! The tiles of water's waves: [`WIND_TILES`] tiles of the wind's waves,
 //! each repeating at its own period and holding its own band of wave
-//! lengths, then the tile of the current's turbulence ([`TURBULENCE_TILE`]).
-//! The wind's tiles' periods never divide one another and each one's lattice
-//! turns by its own angle from the world's axes, so no tile's repeat lines
-//! up with another's or with the grids of the ground and the water: water
-//! reads each once, straight where it stands, with no patches. Each tile
-//! holds unit slope variance spread evenly over the octaves of its band (the
-//! saturation range, its heights' spectrum falling as k⁻³), the wind's
-//! spread about its heading as measured seas spread (Donelan, Hamilton and
-//! Hui 1985; Banner 1990: [`spreading`]), narrow at the sea's peak and wider
-//! above it, and the turbulence's alike every way.
+//! lengths. The wind's tiles' periods never divide one another and each
+//! one's lattice turns by its own angle from the world's axes, so no tile's
+//! repeat lines up with another's or with the grids of the ground and the
+//! water: water reads each once, straight where it stands, with no patches.
+//! Each tile holds unit slope variance spread evenly over the octaves of its
+//! band (the saturation range, its heights' spectrum falling as k⁻³), the
+//! wind's spread about its heading as measured seas spread (Donelan,
+//! Hamilton and Hui 1985; Banner 1990: [`spreading`]), narrow at the sea's
+//! peak and wider above it.
 //! Water's shaders scale each wind tile by the share of the sea the wind
-//! raises where they read it (`meshes/water_spectrum.wgsl`), and read the
-//! turbulence's at the lengths the current sets. They are drawn from fixed
-//! noise for a [`WaveShape`]: the wind's heading. The renderer evolves the
-//! wind's tiles each frame into the surface's slopes and heights, and the
-//! turbulence's once, as it stands. The sea's own waves head by the same
-//! spread ([`spread_turn`]).
+//! raises where they read it (`meshes/water_spectrum.wgsl`). They are drawn
+//! from fixed noise for a [`WaveShape`]: the wind's heading. The renderer
+//! evolves the wind's tiles each frame into the surface's slopes and
+//! heights. The sea's own waves head by the same spread ([`spread_turn`]).
 
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
@@ -25,11 +22,8 @@ use crate::bytes::{Reader, Writer};
 /// Texels along a side of a tile: wave numbers of its spectrum, and
 /// points of its slopes.
 pub const TEXELS: u32 = 256;
-/// Tiles of the wind's waves; the tile of the current's turbulence, after
-/// them; and every tile.
+/// Tiles of the wind's waves.
 pub const WIND_TILES: usize = 4;
-pub const TURBULENCE_TILE: usize = WIND_TILES;
-pub const TILES: usize = WIND_TILES + 1;
 
 /// The wind's first tile's period (meters), and how many times shorter each
 /// next tile's is: φ³ = 2 + √5, the cube of the golden ratio, irrational,
@@ -47,12 +41,6 @@ const BAND_START: f64 = 4.0;
 /// where surface tension takes over from gravity (1.7 cm), past which the
 /// saturation range of gravity waves the tiles follow ends.
 const SHORTEST: f64 = 0.01;
-/// The turbulence tile's nominal period (meters) and the band it holds, in
-/// waves a period: one octave, its longest waves a meter long and its
-/// shortest spanning 8 texels. Water reads it at the lengths the current
-/// sets, its band scaled alike.
-const TURBULENCE_PERIOD: f64 = 16.0;
-const TURBULENCE_BAND: [f64; 2] = [16.0, 32.0];
 
 const TAG: &[u8; 4] = b"WAVE";
 
@@ -114,7 +102,7 @@ pub struct WaveTile {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaveSpectra {
     pub shape: WaveShape,
-    pub tiles: [WaveTile; TILES],
+    pub tiles: [WaveTile; WIND_TILES],
     pub texels: Vec<[f32; 4]>,
 }
 
@@ -122,7 +110,7 @@ pub struct WaveSpectra {
 pub(crate) fn record(identity: &[u8]) -> Result<Vec<u8>, String> {
     let shape = WaveShape::from_identity(identity)?;
     let (tiles, texels) = spectra(shape.heading.map(f64::from));
-    let mut writer = Writer::new(TAG, 8 + TILES * 20 + texels.len() * 16);
+    let mut writer = Writer::new(TAG, 8 + WIND_TILES * 20 + texels.len() * 16);
     writer.f32(shape.heading[0]).f32(shape.heading[1]);
     for tile in &tiles {
         writer
@@ -146,7 +134,7 @@ pub fn decode(bytes: &[u8]) -> Result<WaveSpectra, String> {
     let shape = WaveShape {
         heading: [reader.f32()?, reader.f32()?],
     };
-    let mut tiles = [WaveTile::default(); TILES];
+    let mut tiles = [WaveTile::default(); WIND_TILES];
     for tile in &mut tiles {
         *tile = WaveTile {
             period: reader.f32()?,
@@ -156,7 +144,7 @@ pub fn decode(bytes: &[u8]) -> Result<WaveSpectra, String> {
             turn: reader.f32()?,
         };
     }
-    let count = (TEXELS * TEXELS) as usize * TILES;
+    let count = (TEXELS * TEXELS) as usize * WIND_TILES;
     let mut texels = Vec::with_capacity(count);
     for _ in 0..count {
         texels.push([reader.f32()?, reader.f32()?, reader.f32()?, reader.f32()?]);
@@ -216,13 +204,8 @@ fn spread_at(beta: f64, angle: f64) -> f64 {
 /// turns by from the world's axes (radians, from +x toward +z). The wind's
 /// tiles turn by (i + ½) (π/2) / [`WIND_TILES`], spread evenly over a
 /// quarter turn, a square lattice's own symmetry, so none lies along the
-/// world's axes, where the ground's and the water's grids run; the
-/// turbulence's, drawn evenly every way, turns by none, its reads turning
-/// to the flow.
+/// world's axes, where the ground's and the water's grids run.
 fn layout(tile: usize) -> (f64, [f64; 2], f64) {
-    if tile == TURBULENCE_TILE {
-        return (TURBULENCE_PERIOD, TURBULENCE_BAND, 0.0);
-    }
     let period = (0..tile).fold(LONGEST_PERIOD, |period, _| period / TILE_RATIO);
     let first = if tile == 0 { 1.0 } else { BAND_START };
     let end = if tile + 1 == WIND_TILES {
@@ -241,23 +224,23 @@ fn layout(tile: usize) -> (f64, [f64; 2], f64) {
 /// spectrum there, where the wave number lies in the tile's band: k⁻⁴, so
 /// each octave holds as much slope variance, times the spread about the
 /// wind's heading turned as the tile's lattice is (`spread_at`), one over
-/// the circle for each wave number, and even every way for the turbulence.
+/// the circle for each wave number.
 /// A tile is drawn once while the sea's peak changes from place to place,
 /// so each wind tile spreads its waves as the sea does where its band
 /// carries the peak, where it shows most: the peak at its longest waves,
 /// each wave's angular frequency over the peak's the root of its wave
 /// number over theirs (deep water's ω² = g k), so its longest waves spread
 /// narrowest and its shortest widest. Each tile scales to unit slope
-/// variance: the wind's as their waves run, each wave number and its
-/// opposite carrying their own (the cross terms of their sum come and go as
-/// the two run apart); the turbulence's as it stands, the two summed. Wave
-/// numbers at a grid's edge, which have no opposite there, hold none.
-fn spectra(heading: [f64; 2]) -> ([WaveTile; TILES], Vec<[f32; 4]>) {
+/// variance as its waves run, each wave number and its opposite carrying
+/// their own (the cross terms of their sum come and go as the two run
+/// apart). Wave numbers at a grid's edge, which have no opposite there, hold
+/// none.
+fn spectra(heading: [f64; 2]) -> ([WaveTile; WIND_TILES], Vec<[f32; 4]>) {
     let n = TEXELS as usize;
     let middle = (n / 2) as f64;
-    let mut amplitudes = vec![[0.0_f64; 2]; n * n * TILES];
-    let mut tiles = [WaveTile::default(); TILES];
-    let mut gains = [0.0_f64; TILES];
+    let mut amplitudes = vec![[0.0_f64; 2]; n * n * WIND_TILES];
+    let mut tiles = [WaveTile::default(); WIND_TILES];
+    let mut gains = [0.0_f64; WIND_TILES];
     for (tile, described) in tiles.iter_mut().enumerate() {
         let (period, band, turn) = layout(tile);
         let step = TAU / period;
@@ -276,17 +259,13 @@ fn spectra(heading: [f64; 2]) -> ([WaveTile; TILES], Vec<[f32; 4]>) {
                 if !(band[0]..band[1]).contains(&waves) {
                     continue;
                 }
-                let spread = if tile == TURBULENCE_TILE {
-                    1.0
-                } else {
-                    // Its angle from the heading, and its angular frequency
-                    // over that of the tile's longest waves.
-                    let angle = libm::atan2(
-                        facing[0] * along_z - facing[1] * along_x,
-                        facing[0] * along_x + facing[1] * along_z,
-                    );
-                    spread_at(spreading((waves / band[0]).sqrt()), angle)
-                };
+                // Its angle from the heading, and its angular frequency over
+                // that of the tile's longest waves.
+                let angle = libm::atan2(
+                    facing[0] * along_z - facing[1] * along_x,
+                    facing[0] * along_x + facing[1] * along_z,
+                );
+                let spread = spread_at(spreading((waves / band[0]).sqrt()), angle);
                 let k = waves * step;
                 let power = spread / (k * k * k * k);
                 let [a, b] = normal_pair(tile as u32, x as u32, z as u32);
@@ -300,15 +279,10 @@ fn spectra(heading: [f64; 2]) -> ([WaveTile; TILES], Vec<[f32; 4]>) {
             for x in 1..n {
                 let own = amplitudes[(tile * n + z) * n + x];
                 let opposite = amplitudes[(tile * n + n - z) * n + n - x];
-                let power = if tile == TURBULENCE_TILE {
-                    let (real, imaginary) = (own[0] + opposite[0], own[1] - opposite[1]);
-                    real * real + imaginary * imaginary
-                } else {
-                    own[0] * own[0]
-                        + own[1] * own[1]
-                        + opposite[0] * opposite[0]
-                        + opposite[1] * opposite[1]
-                };
+                let power = own[0] * own[0]
+                    + own[1] * own[1]
+                    + opposite[0] * opposite[0]
+                    + opposite[1] * opposite[1];
                 let (kx, kz) = ((x as f64 - middle) * step, (z as f64 - middle) * step);
                 slopes += (kx * kx + kz * kz) * power;
                 heights += power;
@@ -328,7 +302,7 @@ fn spectra(heading: [f64; 2]) -> ([WaveTile; TILES], Vec<[f32; 4]>) {
             turn: turn as f32,
         };
     }
-    let texels = (0..n * n * TILES)
+    let texels = (0..n * n * WIND_TILES)
         .map(|index| {
             let (tile, x, z) = (index / (n * n), index % n, index / n % n);
             let opposite = if x == 0 || z == 0 {
