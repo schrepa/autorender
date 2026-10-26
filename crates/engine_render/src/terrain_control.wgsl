@@ -3,13 +3,14 @@
 // control array, for level-0 tiles and surroundings' tiles (a terrain's
 // coarser tiles upload theirs from their shading, level 0's averaged).
 // Each sample's inputs are read as the CPU reads them for a
-// tile's rows (height, and the slope and curvature of the smooth surface
+// tile's rows (height, and the gradient and curvature of the smooth surface
 // through the heights around it, `terrain_tile.wgsl`'s `tile_shape`;
-// the hydrology bake's flow, wetness and lakes; the meters to the nearest
-// river's edge and the bed of the river holding it the tile holds; the
-// nearest road), and the surface's rules run as a program for this
-// interpreter (`engine_terrain::gpu`), in the order the CPU evaluates them:
-// the materials and how wet the ground is. Values match the CPU's but where
+// the hydrology bake's flow, wetness and lakes; the meters the erosion
+// bakes changed the ground by; the meters to the nearest river's edge and
+// the bed of the river holding it the tile holds; the nearest road), and
+// the surface's rules run as a program for this interpreter
+// (`engine_terrain::gpu`), in the order the CPU evaluates them: the
+// materials and how wet the ground is. Values match the CPU's but where
 // rounding moves one across a rule's threshold; gameplay reads the CPU's.
 
 struct Job {
@@ -54,6 +55,7 @@ const H_HYDROLOGY: u32 = 5u;
 const H_PATHS: u32 = 6u;
 const H_FADE: u32 = 7u;
 const H_WET_BIOMES: u32 = 8u;
+const H_EROSION: u32 = 9u;
 // Words of each biome's entry in the program's table
 // (`engine_terrain::gpu::BIOME_WORDS`): its fitness mask, its layer list
 // and its wetness rule.
@@ -79,7 +81,10 @@ const OP_REMAP: u32 = 15u;
 const OP_GRAIN: u32 = 16u;
 const OP_POWER: u32 = 17u;
 const OP_FLOOD: u32 = 18u;
-const OP_END: u32 = 19u;
+const OP_WORN: u32 = 19u;
+const OP_DEPOSIT: u32 = 20u;
+const OP_FACING: u32 = 21u;
+const OP_END: u32 = 22u;
 
 fn real(at: u32) -> f32 {
     return bitcast<f32>(data[at]);
@@ -193,12 +198,16 @@ struct Inputs {
     x: f32,
     z: f32,
     height: f32,
-    gradient: f32,
+    // Rise per meter along x and z.
+    gradient: vec2<f32>,
     curvature: f32,
     spacing: f32,
     flow: f32,
     wetness: f32,
     lake: f32,
+    // Meters the erosions changed the ground by, negative where they wore
+    // it away.
+    erosion: f32,
     river: f32,
     grain: f32,
     power: f32,
@@ -271,6 +280,43 @@ fn image_table(section: u32, image: u32) -> u32 {
         table += 1u + 3u * data[table];
     }
     return table;
+}
+
+// The level of an image whose samples lie `image_spacing` meters apart,
+// with `levels` coarser levels, that samples `spacing` meters apart read:
+// the coarsest whose samples lie no further apart, as the CPU picks it
+// (`engine_terrain::hydrology::image_level`).
+fn image_level(image_spacing: f32, levels: u32, spacing: f32) -> u32 {
+    var level = 0u;
+    while level < levels && image_spacing * f32(2u << level) <= spacing * 1.0001 {
+        level += 1u;
+    }
+    return level;
+}
+
+// The meters the stack's erosions changed the ground by at `point`, as
+// samples `spacing` meters apart see it (`engine_terrain::Erosion`'s
+// `change_row`): each stage's change image through its uniform cubic
+// B-spline at the level those samples read, smooth across its grid however
+// much coarser, summed from 0 in the stack's order, as the CPU sums them.
+fn erosion_change(point: vec2<f32>, spacing: f32) -> f32 {
+    let section = data[H_EROSION];
+    var change = 0.0;
+    if section == NONE {
+        return change;
+    }
+    let stages = data[section];
+    for (var index = 0u; index < stages; index++) {
+        let stage = data[section + 1u + index];
+        // A point's place in the image: times the inverse of the meters
+        // between its samples, as the CPU scales it.
+        let scale = real(stage);
+        let table = stage + 4u;
+        let level = image_level(real(stage + 1u), data[table] - 1u, spacing);
+        let sample = image_sample(table, point.x * scale, point.y * scale, level);
+        change += decode(sample, real(stage + 2u), real(stage + 3u));
+    }
+    return change;
 }
 
 // What the tile holds of the rivers at texel (`column`, `row`) of its
@@ -399,7 +445,7 @@ fn sample_inputs(column: u32, row: u32) -> Inputs {
     inputs.x = f32(job.first.x + i32(column) - 1) * spacing;
     inputs.z = f32(job.first.y + i32(row) - 1) * spacing;
     inputs.height = tile_height(column, row);
-    inputs.gradient = sqrt(shape.x * shape.x + shape.y * shape.y);
+    inputs.gradient = shape.xy;
     inputs.curvature = shape.z;
     inputs.spacing = spacing;
     inputs.river = RIVER_FAR;
@@ -428,6 +474,9 @@ fn sample_inputs(column: u32, row: u32) -> Inputs {
         inputs.power = river.z;
         inputs.flood = river.w;
     }
+    if (reads & 4u) != 0u && show > 0.0 {
+        inputs.erosion = erosion_change(point, spacing) * show;
+    }
     if (reads & 2u) != 0u && show > 0.0 {
         let road = path_at(point);
         inputs.path_distance = road.x;
@@ -439,10 +488,15 @@ fn sample_inputs(column: u32, row: u32) -> Inputs {
 // ---------------------------------------------------------------- program
 
 fn input_ramp(code: u32, inputs: Inputs, low: f32, high: f32) -> f32 {
+    let g = inputs.gradient;
     switch code {
         case OP_HEIGHT: { return ramp(inputs.height, low, high); }
-        case OP_GRADIENT: { return ramp(inputs.gradient, low, high); }
+        case OP_GRADIENT: { return ramp(sqrt(g.x * g.x + g.y * g.y), low, high); }
         case OP_CURVATURE: { return ramp(inputs.curvature, low, high); }
+        // The meters worn down and those laid down: each 0 where erosion
+        // changed the ground the other way.
+        case OP_WORN: { return ramp(pmax(-inputs.erosion, 0.0), low, high); }
+        case OP_DEPOSIT: { return ramp(pmax(inputs.erosion, 0.0), low, high); }
         case OP_FLOW: { return ramp(inputs.flow, low, high); }
         case OP_WETNESS: { return ramp(inputs.wetness, low, high); }
         case OP_LAKE: { return ramp(inputs.lake, low, high); }
@@ -479,11 +533,19 @@ fn evaluate(start: u32, inputs: Inputs) -> f32 {
                 top += 1u;
                 pc += 2u;
             }
-            case OP_HEIGHT, OP_GRADIENT, OP_CURVATURE, OP_FLOW, OP_WETNESS, OP_LAKE, OP_RIVER, OP_PATH,
-                OP_GRAIN, OP_POWER, OP_FLOOD: {
+            case OP_HEIGHT, OP_GRADIENT, OP_CURVATURE, OP_WORN, OP_DEPOSIT, OP_FLOW, OP_WETNESS,
+                OP_LAKE, OP_RIVER, OP_PATH, OP_GRAIN, OP_POWER, OP_FLOOD: {
                 stack[top] = input_ramp(code, inputs, real(pc + 1u), real(pc + 2u));
                 top += 1u;
                 pc += 3u;
+            }
+            case OP_FACING: {
+                // How far the ground tilts toward the heading: the gradient
+                // weighed as the CPU weighs it.
+                let tilt = real(pc + 1u) * inputs.gradient.x + real(pc + 2u) * inputs.gradient.y;
+                stack[top] = ramp(tilt, real(pc + 3u), real(pc + 4u));
+                top += 1u;
+                pc += 5u;
             }
             case OP_NOISE: {
                 stack[top] = noise_mask(inputs.x, inputs.z, inputs.spacing, real(pc + 1u),

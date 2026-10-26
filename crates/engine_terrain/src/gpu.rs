@@ -2,19 +2,21 @@
 //! their control values (level-0 tiles, and every tile of surroundings; a
 //! terrain's coarser tiles take theirs from their shading, level 0's
 //! averaged, [`crate::TileShading`]): the surface's rules as one program for
-//! an interpreter shader, and what their masks read of the bakes and roads,
-//! flattened into words; the meters to rivers' edges and the rivers' beds it
-//! reads are each tile's own ([`Tile::river_texels`]). The pass evaluates
-//! what [`BiomeRules::control`] evaluates at each sample, in the same order,
-//! so its control values are the CPU's but where GPU arithmetic rounds a
-//! value across a rule's threshold. [`sample_control`] gives the CPU's at
-//! one sample, for gameplay.
+//! an interpreter shader, and what their masks read of the bakes (the
+//! hydrology bake's images, and the erosions' where masks read them) and
+//! roads, flattened into words; the meters to rivers' edges and the rivers'
+//! beds it reads are each tile's own ([`Tile::river_texels`]). The pass
+//! evaluates what [`BiomeRules::control`] evaluates at each sample, in the
+//! same order, so its control values are the CPU's but where GPU arithmetic
+//! rounds a value across a rule's threshold. [`sample_control`] gives the
+//! CPU's at one sample, for gameplay.
 
 use crate::hydrology::{FLOW_RANGE, Hydrology, LAKE_RANGE, WETNESS_RANGE};
+use crate::layers::HeightImage;
 use crate::path::PathProfile;
-use crate::surface::{BiomeRules, Control, SampleInputs, SampleShape};
+use crate::surface::{BiomeRules, Control, SampleInputs, SampleShape, erosion_row, erosions};
 use crate::tile::RiverInputs;
-use crate::{HydrologySample, Layers, PathSample, TILE_STRIDE, Tile};
+use crate::{Erosion, HydrologySample, Layers, PathSample, TILE_STRIDE, Tile};
 
 /// Opcodes of a surface program's masks, in postfix order: each leaf pushes
 /// a value, [`op::INVERT`] and [`op::REMAP`] change the top one, and lists
@@ -45,7 +47,13 @@ pub mod op {
     pub const GRAIN: u32 = 16;
     pub const POWER: u32 = 17;
     pub const FLOOD: u32 = 18;
-    pub const END: u32 = 19;
+    pub const WORN: u32 = 19;
+    pub const DEPOSIT: u32 = 20;
+    /// Followed by what the heading weighs the gradient by along x and z,
+    /// then the ramp's two ends.
+    pub const FACING: u32 = 21;
+    /// Ends a mask's code.
+    pub const END: u32 = 22;
 }
 
 /// Words of each biome's entry in a program's table
@@ -68,7 +76,8 @@ pub mod header {
     pub const BIOMES: usize = 2;
     /// The materials its control values index.
     pub const MATERIALS: usize = 3;
-    /// Bit 0: masks read water; bit 1: they read roads.
+    /// Bit 0: masks read water; bit 1: they read roads; bit 2: they read
+    /// erosion.
     pub const READS: usize = 4;
     /// The hydrology bake's images: its spacing, its three decode ranges,
     /// then flow's, wetness's and lakes' levels, each image its level
@@ -87,6 +96,13 @@ pub mod header {
     /// authored, before the steep layer the program paints over them, where
     /// any has a rule; none where none has.
     pub const WET_BIOMES: usize = 8;
+    /// The stack's erosions, where masks read them: their count, then where
+    /// each begins; each the inverse of the meters between its samples,
+    /// those meters and its change's decode range, then its change image
+    /// as the hydrology section lays out each of its images: its level
+    /// count, each level's width, height and first sample, then the samples
+    /// (`f32`).
+    pub const EROSION: usize = 9;
     pub const LEN: usize = 16;
 }
 
@@ -121,7 +137,9 @@ impl SurfaceData {
         words[header::MATERIALS] = materials;
         words[header::WET_BIOMES] = rules.wet_biomes() as u32;
         let reads = rules.reads();
-        words[header::READS] = u32::from(reads.water) | (u32::from(reads.path) << 1);
+        words[header::READS] = u32::from(reads.water)
+            | (u32::from(reads.path) << 1)
+            | (u32::from(reads.erosion) << 2);
         if let Some(hydrology) = layers.hydrology() {
             words[header::HYDROLOGY] = words.len() as u32;
             write_hydrology(hydrology, &mut words);
@@ -130,6 +148,12 @@ impl SurfaceData {
         if !paths.is_empty() {
             words[header::PATHS] = words.len() as u32;
             write_paths(&paths, &mut words);
+        }
+        // Only surfaces whose masks read erosion hold its images.
+        let stages: Vec<&Erosion> = erosions(layers).collect();
+        if reads.erosion && !stages.is_empty() {
+            words[header::EROSION] = words.len() as u32;
+            write_erosions(&stages, &mut words);
         }
         if let Some(fade) = layers.fade {
             words[header::FADE] = words.len() as u32;
@@ -250,11 +274,16 @@ fn control_with(
         Some(water) if shown > 0.0 && reads.water => rivers.with_maps(water, [x, z], spacing),
         _ => HydrologySample::default(),
     };
+    // What the erosions changed there, as a tile's row reads it.
+    let mut erosion = [0.0];
+    if reads.erosion {
+        erosion_row(layers, &[x], z, spacing, &mut erosion);
+    }
     let inputs = SampleInputs {
         x,
         z,
         height,
-        gradient: shape.slope(),
+        gradient: shape.gradient,
         curvature: shape.curvature,
         spacing,
         water: HydrologySample {
@@ -263,6 +292,7 @@ fn control_with(
             lake: water.lake * shown,
             ..water
         },
+        erosion: erosion[0] * shown,
         path: if shown > 0.0 && reads.path {
             layers.path_at(x, z)
         } else {
@@ -290,8 +320,38 @@ fn write_hydrology(hydrology: &Hydrology, words: &mut Vec<u32>) {
             LAKE_RANGE[1],
         ],
     );
-    // Each image's table first, its samples after.
-    let images = [&hydrology.flow, &hydrology.wetness, &hydrology.lakes];
+    write_images(
+        &[&hydrology.flow, &hydrology.wetness, &hydrology.lakes],
+        words,
+    );
+}
+
+/// The stack's erosions' change images, as [`header::EROSION`] lays them
+/// out: each read at a point times the inverse of the meters between its
+/// samples, as erosion reads it ([`Erosion::change_row`]).
+fn write_erosions(stages: &[&Erosion], words: &mut Vec<u32>) {
+    let table = words.len();
+    words.push(stages.len() as u32);
+    words.extend(std::iter::repeat_n(0, stages.len()));
+    for (index, erosion) in stages.iter().enumerate() {
+        words[table + 1 + index] = words.len() as u32;
+        push_f32(
+            words,
+            [
+                1.0 / erosion.spacing,
+                erosion.spacing,
+                erosion.range[0],
+                erosion.range[1],
+            ],
+        );
+        write_images(&[&erosion.change], words);
+    }
+}
+
+/// `images`, as a section of the words lays them out: each one's table
+/// first (its level count, then each level's width, height and first
+/// sample), their samples after (`f32`).
+fn write_images(images: &[&HeightImage], words: &mut Vec<u32>) {
     let mut tables = Vec::new();
     for image in images {
         tables.push(words.len());

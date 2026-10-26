@@ -105,7 +105,7 @@ pub mod terrain {
     pub use engine_core::{
         AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes,
         Blend, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion, ErosionLayer, ErosionStage,
-        FarPlacement, GivenRiver, HeightImage, HeightmapLayer, Hydrology, HydrologyLayer,
+        Facing, FarPlacement, GivenRiver, HeightImage, HeightmapLayer, Hydrology, HydrologyLayer,
         HydrologySample, HydrologyStage, Layer, LayerError, Layers, MAX_COLLIDER_EXTENT,
         MAX_PLACEMENT_LODS, MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, Mask, MotionDetail,
         NoiseLayer, NoiseMask, PathLayer, PathProfile, PathStage, Placed, PlacedCollider,

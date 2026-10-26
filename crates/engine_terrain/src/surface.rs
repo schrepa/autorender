@@ -17,8 +17,9 @@ use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
 use serde::{Deserialize, Serialize};
 
-use crate::PathSample;
+use crate::layers::{Layer, Layers};
 use crate::noise::{gradient_value, gradient_values, smooth};
+use crate::{Erosion, PathSample};
 
 /// Materials a surface can name: control values hold 8-bit indices.
 pub const MAX_SURFACE_MATERIALS: usize = 255;
@@ -32,7 +33,8 @@ const MAX_NOISE_OCTAVES: u32 = 8;
 const MAX_BIOME_LAYERS: usize = 64;
 
 /// A value from 0 to 1 at every sample, from the sample's height, slope,
-/// curvature and position: where a biome applies, where a material covers
+/// the way it faces, curvature and position, and what the terrain's bakes
+/// and roads hold there: where a biome applies, where a material covers
 /// its biome's ground, or how wet a biome's ground is. Ramps run from 0 at
 /// their first value to 1 at their second, smoothly, falling when the first
 /// is the larger.
@@ -54,6 +56,21 @@ pub enum Mask {
     /// meter, positive in hollows and valleys, negative on ridges (the
     /// smooth surface's Laplacian, [`SampleShape`]).
     Curvature([f32; 2]),
+    /// A ramp over how far the ground tilts toward a compass heading, on
+    /// the smooth surface through its samples ([`Facing`]).
+    Facing(Facing),
+    /// A ramp over the meters the terrain's erosions wore the ground down
+    /// there, summed over its erosion stages, smooth between their samples:
+    /// positive, 0 where they laid ground down or left it, and without
+    /// erosion. `[0, 4]` rises over the first four meters valleys and
+    /// gullies cut.
+    Worn([f32; 2]),
+    /// A ramp over the meters the terrain's erosions laid down there,
+    /// summed over its erosion stages, smooth between their samples:
+    /// positive, 0 where they wore ground away or left it, and without
+    /// erosion. `[0, 2]` rises over the first two meters of sediment on
+    /// valley floors and fans.
+    Deposit([f32; 2]),
     /// A ramp over the base-10 logarithm of the area draining through the
     /// ground, in square meters, as the terrain's hydrology bake found it:
     /// channels begin near its channel area. 0 without one.
@@ -118,6 +135,25 @@ pub const MAX_SLOPE_DEGREES: f32 = 90.0;
 fn tangent(degrees: f32) -> f32 {
     let (sin, cos) = sin_cos(min(degrees, 89.9).to_radians());
     sin / cos
+}
+
+settings! {
+    /// How far the ground tilts toward a compass heading: the slope's
+    /// tangent times the cosine of the angle between the ground's downhill
+    /// direction and the heading, 0 on level ground, positive on slopes
+    /// facing the heading and negative on slopes facing away. A ramp of
+    /// `[-0.3, 0.3]` covers slopes of about 17 degrees facing away through to
+    /// slopes of about 17 degrees facing toward it.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct Facing {
+        /// The heading, in degrees from -z toward +x, as views give yaw: 180
+        /// faces +z, south where north lies at -z.
+        pub heading: f32 = 180.0 => range(-360.0, 360.0),
+        /// The tilts toward the heading its ramp runs between.
+        pub ramp: [f32; 2] = [-0.3, 0.3] => finite,
+    }
 }
 
 settings! {
@@ -285,12 +321,14 @@ impl std::fmt::Display for BiomeError {
 impl std::error::Error for BiomeError {}
 
 /// Which of a sample's inputs masks read: its water (flow,
-/// wetness, lakes, rivers and their beds) and its roads. Inputs no mask
-/// reads are not sampled, which leaves every mask's value as it was.
+/// wetness, lakes, rivers and their beds), its roads and what erosion
+/// changed. Inputs no mask reads are not sampled, which leaves every mask's
+/// value as it was.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Reads {
     pub(crate) water: bool,
     pub(crate) path: bool,
+    pub(crate) erosion: bool,
 }
 
 impl Reads {
@@ -298,21 +336,24 @@ impl Reads {
         Self {
             water: self.water || other.water,
             path: self.path || other.path,
+            erosion: self.erosion || other.erosion,
         }
     }
 }
 
 /// A row of samples as masks read it: each sample's x and
-/// z, height, gradient, curvature, water and road, at a level whose samples
-/// lie `spacing` meters apart.
+/// z, height, gradient (rise per meter along x and z), curvature, water,
+/// the meters erosion changed it by and road, at a level whose samples lie
+/// `spacing` meters apart.
 pub(crate) struct RowInputs<'a> {
     pub(crate) xs: &'a [f32],
     pub(crate) zs: &'a [f32],
     pub(crate) spacing: f32,
     pub(crate) height: &'a [f32],
-    pub(crate) gradient: &'a [f32],
+    pub(crate) gradient: &'a [[f32; 2]],
     pub(crate) curvature: &'a [f32],
     pub(crate) water: &'a [crate::HydrologySample],
+    pub(crate) erosion: &'a [f32],
     pub(crate) path: &'a [PathSample],
 }
 
@@ -334,13 +375,23 @@ impl RowScratch {
     }
 }
 
-/// A mask ready to evaluate: slopes as gradients, noise as frequencies.
+/// A mask ready to evaluate: slopes as gradients, headings as what they
+/// weigh the gradient by, noise as frequencies.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Compiled {
     Constant(f32),
     Height([f32; 2]),
     Gradient([f32; 2]),
     Curvature([f32; 2]),
+    /// The ramp `ends` over the gradient weighed by `toward` along x and z:
+    /// the heading's direction turned back, `[-sin, cos]` of the heading,
+    /// since ground falling toward the heading rises away from it.
+    Facing {
+        toward: [f32; 2],
+        ends: [f32; 2],
+    },
+    Worn([f32; 2]),
+    Deposit([f32; 2]),
     Flow([f32; 2]),
     Wetness([f32; 2]),
     Lake([f32; 2]),
@@ -385,12 +436,6 @@ impl SampleShape {
             curvature: (a + b + c + d + f + g + h + i - 8.0 * e) / (3.0 * spacing * spacing),
         }
     }
-
-    /// The slope's tangent: the gradient's length.
-    pub fn slope(&self) -> f32 {
-        let [x, z] = self.gradient;
-        (x * x + z * z).sqrt()
-    }
 }
 
 /// [`SampleShape::of`]'s gradient alone: the spline's central differences,
@@ -405,22 +450,26 @@ pub(crate) fn smooth_gradient(around: [[f32; 3]; 3], spacing: f32) -> [f32; 2] {
 }
 
 /// What a sample's masks read: its terrain-local position in meters, its
-/// height above the terrain's origin, the slope's tangent and the
-/// curvature per meter of the smooth surface there ([`SampleShape`]), and
-/// the meters between samples at its level, below twice which noise fades
-/// to its mean, so coarse levels show the same patches as fine ones,
-/// filtered.
+/// height above the terrain's origin, the gradient (rise per meter along x
+/// and z) and the curvature per meter of the smooth surface there
+/// ([`SampleShape`]), and the meters between samples at its level, below
+/// twice which noise fades to its mean, so coarse levels show the same
+/// patches as fine ones, filtered.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SampleInputs {
     pub x: f32,
     pub z: f32,
     pub height: f32,
-    pub gradient: f32,
+    pub gradient: [f32; 2],
     pub curvature: f32,
     pub spacing: f32,
     /// What the terrain's hydrology bake found there; zeros
     /// without one.
     pub water: crate::HydrologySample,
+    /// The meters the terrain's erosions changed the ground by there,
+    /// summed over its erosion stages, negative where they wore it away;
+    /// 0 without erosion.
+    pub erosion: f32,
     /// The nearest road, as [`crate::Layers::path_at`]
     /// reads it.
     pub path: PathSample,
@@ -435,16 +484,63 @@ fn ramp(value: f32, ends: [f32; 2]) -> f32 {
     smooth((value - ends[0]) / (ends[1] - ends[0]))
 }
 
-/// Each sample's `input` of its hydrology sample in `waters`, ramped
-/// between `ends`, into `out`.
-fn water(
-    out: &mut [f32],
-    waters: &[crate::HydrologySample],
-    ends: [f32; 2],
-    input: impl Fn(&crate::HydrologySample) -> f32,
-) {
-    for (value, water) in out.iter_mut().zip(waters) {
-        *value = ramp(input(water), ends);
+/// Each of `values` ramped between `ends`, into `out`.
+fn ramps(out: &mut [f32], values: impl IntoIterator<Item = f32>, ends: [f32; 2]) {
+    for (value, input) in out.iter_mut().zip(values) {
+        *value = ramp(input, ends);
+    }
+}
+
+/// The slope's tangent of ground whose gradient (rise per meter along x and
+/// z) is `[x, z]`: the gradient's length.
+#[inline]
+fn slope_of([x, z]: [f32; 2]) -> f32 {
+    (x * x + z * z).sqrt()
+}
+
+/// How far ground whose gradient is `[x, z]` tilts toward a heading that
+/// weighs the gradient by `toward` ([`Compiled::Facing`]).
+#[inline]
+fn facing(toward: [f32; 2], [x, z]: [f32; 2]) -> f32 {
+    toward[0] * x + toward[1] * z
+}
+
+/// The meters worn down, and those laid down, of ground erosion changed by
+/// `change` meters: each 0 where it changed the ground the other way.
+#[inline]
+fn worn(change: f32) -> f32 {
+    max(-change, 0.0)
+}
+
+#[inline]
+fn deposit(change: f32) -> f32 {
+    max(change, 0.0)
+}
+
+/// The stack's baked erosion stages, in its order.
+pub(crate) fn erosions(layers: &Layers) -> impl Iterator<Item = &Erosion> {
+    layers.layers().iter().filter_map(|layer| match layer {
+        Layer::Erosion(stage) => stage.baked.as_deref(),
+        Layer::Noise(_)
+        | Layer::Heightmap(_)
+        | Layer::Stamp(_)
+        | Layer::Rivers(_)
+        | Layer::Hydrology(_)
+        | Layer::Path(_) => None,
+    })
+}
+
+/// The meters the stack's erosions changed the ground by at each of `xs`
+/// at `z`, in its frame, as samples `spacing` meters apart see it, into
+/// `out`: each stage's change ([`Erosion::change_row`], smooth across its
+/// grid however much coarser) summed from 0 in the stack's order, as the
+/// macro colors sum them.
+pub(crate) fn erosion_row(layers: &Layers, xs: &[f32], z: f32, spacing: f32, out: &mut [f32]) {
+    out.fill(0.0);
+    for erosion in erosions(layers) {
+        erosion.change_row(xs.iter().copied(), z, spacing, |index, change| {
+            out[index] += change;
+        });
     }
 }
 
@@ -470,10 +566,6 @@ fn fold(
 }
 
 impl Compiled {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub(crate) fn from(mask: &Mask, path: &str, depth: usize) -> Result<Self, BiomeError> {
         let fail = |rule: &str| BiomeError {
             path: path.to_owned(),
@@ -483,6 +575,14 @@ impl Compiled {
             return Err(fail("masks nest at most 8 deep"));
         }
         let finite = |values: &[f32]| values.iter().all(|value| value.is_finite());
+        // A ramp over one of the sample's inputs, its ends finite.
+        let ramped = |ends: &[f32; 2], what: &str, input: fn([f32; 2]) -> Self| {
+            if finite(ends) {
+                Ok(input(*ends))
+            } else {
+                Err(fail(&format!("{what} must be finite")))
+            }
+        };
         let list = |masks: &[Mask], name: &str| -> Result<Vec<Compiled>, BiomeError> {
             if masks.is_empty() || masks.len() > MAX_MASK_LIST {
                 return Err(fail("combines 1 to 16 masks"));
@@ -502,12 +602,7 @@ impl Compiled {
                 }
                 Self::Constant(*value)
             }
-            Mask::Height(ends) => {
-                if !finite(ends) {
-                    return Err(fail("heights must be finite"));
-                }
-                Self::Height(*ends)
-            }
+            Mask::Height(ends) => ramped(ends, "heights", Self::Height)?,
             Mask::Slope(ends) => {
                 if let Err(invalid) =
                     ends.check("slope", Rule::Range(0.0, MAX_SLOPE_DEGREES as f64))
@@ -517,60 +612,31 @@ impl Compiled {
                 // As gradients: the tangent of each slope.
                 Self::Gradient(ends.map(tangent))
             }
-            Mask::Curvature(ends) => {
-                if !finite(ends) {
-                    return Err(fail("curvatures must be finite"));
+            Mask::Curvature(ends) => ramped(ends, "curvatures", Self::Curvature)?,
+            Mask::Facing(facing) => {
+                if let Err(invalid) = facing.validate() {
+                    return Err(BiomeError {
+                        path: format!("{path}.facing.{}", invalid.field),
+                        rule: invalid.rule.into_owned(),
+                    });
                 }
-                Self::Curvature(*ends)
-            }
-            Mask::Flow(ends) => {
-                if !finite(ends) {
-                    return Err(fail("flows must be finite"));
+                // The heading's direction is (sin, -cos) along x and z.
+                let (sin, cos) = sin_cos(facing.heading.to_radians());
+                Self::Facing {
+                    toward: [-sin, cos],
+                    ends: facing.ramp,
                 }
-                Self::Flow(*ends)
             }
-            Mask::Wetness(ends) => {
-                if !finite(ends) {
-                    return Err(fail("wetness must be finite"));
-                }
-                Self::Wetness(*ends)
-            }
-            Mask::Lake(ends) => {
-                if !finite(ends) {
-                    return Err(fail("lake depths must be finite"));
-                }
-                Self::Lake(*ends)
-            }
-            Mask::River(ends) => {
-                if !finite(ends) {
-                    return Err(fail("river distances must be finite"));
-                }
-                Self::River(*ends)
-            }
-            Mask::Grain(ends) => {
-                if !finite(ends) {
-                    return Err(fail("grain sizes must be finite"));
-                }
-                Self::Grain(*ends)
-            }
-            Mask::Power(ends) => {
-                if !finite(ends) {
-                    return Err(fail("stream powers must be finite"));
-                }
-                Self::Power(*ends)
-            }
-            Mask::Flood(ends) => {
-                if !finite(ends) {
-                    return Err(fail("heights above floods must be finite"));
-                }
-                Self::Flood(*ends)
-            }
-            Mask::Path(ends) => {
-                if !finite(ends) {
-                    return Err(fail("path distances must be finite"));
-                }
-                Self::Path(*ends)
-            }
+            Mask::Worn(ends) => ramped(ends, "depths worn", Self::Worn)?,
+            Mask::Deposit(ends) => ramped(ends, "depths laid down", Self::Deposit)?,
+            Mask::Flow(ends) => ramped(ends, "flows", Self::Flow)?,
+            Mask::Wetness(ends) => ramped(ends, "wetness", Self::Wetness)?,
+            Mask::Lake(ends) => ramped(ends, "lake depths", Self::Lake)?,
+            Mask::River(ends) => ramped(ends, "river distances", Self::River)?,
+            Mask::Grain(ends) => ramped(ends, "grain sizes", Self::Grain)?,
+            Mask::Power(ends) => ramped(ends, "stream powers", Self::Power)?,
+            Mask::Flood(ends) => ramped(ends, "heights above floods", Self::Flood)?,
+            Mask::Path(ends) => ramped(ends, "path distances", Self::Path)?,
             Mask::Noise(noise) => {
                 if let Err(invalid) = noise.validate() {
                     return Err(BiomeError {
@@ -620,16 +686,21 @@ impl Compiled {
             | Self::Power(_)
             | Self::Flood(_) => Reads {
                 water: true,
-                path: false,
+                ..Reads::default()
             },
             Self::Path(_) => Reads {
-                water: false,
                 path: true,
+                ..Reads::default()
+            },
+            Self::Worn(_) | Self::Deposit(_) => Reads {
+                erosion: true,
+                ..Reads::default()
             },
             Self::Constant(_)
             | Self::Height(_)
             | Self::Gradient(_)
             | Self::Curvature(_)
+            | Self::Facing { .. }
             | Self::Noise { .. } => Reads::default(),
             Self::Multiply(masks) | Self::Add(masks) | Self::Min(masks) | Self::Max(masks) => masks
                 .iter()
@@ -645,6 +716,9 @@ impl Compiled {
             Self::Height(_)
             | Self::Gradient(_)
             | Self::Curvature(_)
+            | Self::Facing { .. }
+            | Self::Worn(_)
+            | Self::Deposit(_)
             | Self::Flow(_)
             | Self::Wetness(_)
             | Self::Lake(_)
@@ -670,23 +744,24 @@ impl Compiled {
         out: &mut [f32],
         scratch: &mut RowScratch,
     ) {
-        let each = |out: &mut [f32], values: &[f32], ends: [f32; 2]| {
-            for (value, &input) in out.iter_mut().zip(values) {
-                *value = ramp(input, ends);
-            }
-        };
+        let (gradients, waters) = (row.gradient.iter().copied(), row.water.iter());
         match self {
             Self::Constant(value) => out.fill(*value),
-            Self::Height(ends) => each(out, row.height, *ends),
-            Self::Gradient(ends) => each(out, row.gradient, *ends),
-            Self::Curvature(ends) => each(out, row.curvature, *ends),
-            Self::Flow(ends) => water(out, row.water, *ends, |water| water.flow),
-            Self::Wetness(ends) => water(out, row.water, *ends, |water| water.wetness),
-            Self::Lake(ends) => water(out, row.water, *ends, |water| water.lake),
-            Self::River(ends) => water(out, row.water, *ends, |water| water.river),
-            Self::Grain(ends) => water(out, row.water, *ends, |water| water.grain),
-            Self::Power(ends) => water(out, row.water, *ends, |water| water.power),
-            Self::Flood(ends) => water(out, row.water, *ends, |water| water.flood),
+            Self::Height(ends) => ramps(out, row.height.iter().copied(), *ends),
+            Self::Gradient(ends) => ramps(out, gradients.map(slope_of), *ends),
+            Self::Curvature(ends) => ramps(out, row.curvature.iter().copied(), *ends),
+            Self::Facing { toward, ends } => {
+                ramps(out, gradients.map(|gradient| facing(*toward, gradient)), *ends);
+            }
+            Self::Worn(ends) => ramps(out, row.erosion.iter().copied().map(worn), *ends),
+            Self::Deposit(ends) => ramps(out, row.erosion.iter().copied().map(deposit), *ends),
+            Self::Flow(ends) => ramps(out, waters.map(|water| water.flow), *ends),
+            Self::Wetness(ends) => ramps(out, waters.map(|water| water.wetness), *ends),
+            Self::Lake(ends) => ramps(out, waters.map(|water| water.lake), *ends),
+            Self::River(ends) => ramps(out, waters.map(|water| water.river), *ends),
+            Self::Grain(ends) => ramps(out, waters.map(|water| water.grain), *ends),
+            Self::Power(ends) => ramps(out, waters.map(|water| water.power), *ends),
+            Self::Flood(ends) => ramps(out, waters.map(|water| water.flood), *ends),
             Self::Path(ends) => {
                 for (value, &PathSample { distance, half }) in out.iter_mut().zip(row.path) {
                     *value = [-0.375, -0.125, 0.125, 0.375]
@@ -788,6 +863,13 @@ impl Compiled {
             Self::Height(ends) => ramp(out, op::HEIGHT, ends),
             Self::Gradient(ends) => ramp(out, op::GRADIENT, ends),
             Self::Curvature(ends) => ramp(out, op::CURVATURE, ends),
+            Self::Facing { toward, ends } => {
+                out.extend([op::FACING, toward[0].to_bits(), toward[1].to_bits()]);
+                out.extend(ends.map(f32::to_bits));
+                1
+            }
+            Self::Worn(ends) => ramp(out, op::WORN, ends),
+            Self::Deposit(ends) => ramp(out, op::DEPOSIT, ends),
             Self::Flow(ends) => ramp(out, op::FLOW, ends),
             Self::Wetness(ends) => ramp(out, op::WETNESS, ends),
             Self::Lake(ends) => ramp(out, op::LAKE, ends),
@@ -825,8 +907,11 @@ impl Compiled {
         match self {
             Self::Constant(value) => *value,
             Self::Height(ends) => ramp(inputs.height, *ends),
-            Self::Gradient(ends) => ramp(inputs.gradient, *ends),
+            Self::Gradient(ends) => ramp(slope_of(inputs.gradient), *ends),
             Self::Curvature(ends) => ramp(inputs.curvature, *ends),
+            Self::Facing { toward, ends } => ramp(facing(*toward, inputs.gradient), *ends),
+            Self::Worn(ends) => ramp(worn(inputs.erosion), *ends),
+            Self::Deposit(ends) => ramp(deposit(inputs.erosion), *ends),
             Self::Flow(ends) => ramp(inputs.water.flow, *ends),
             Self::Wetness(ends) => ramp(inputs.water.wetness, *ends),
             Self::Lake(ends) => ramp(inputs.water.lake, *ends),
@@ -1387,8 +1472,12 @@ tagged!(Mask, "invalid mask" {
     16 => Grain(ends),
     17 => Power(ends),
     18 => Flood(ends),
+    19 => Facing(facing),
+    20 => Worn(ends),
+    21 => Deposit(ends),
 });
 
+record!(Facing { heading, ramp });
 record!(NoiseMask {
     wavelength,
     seed,

@@ -28,7 +28,7 @@ use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, settings};
 use serde::{Deserialize, Serialize};
 
-use crate::surface::{Compiled, Control, Mask, Reads, RowInputs, RowScratch};
+use crate::surface::{Compiled, Control, Mask, Reads, RowInputs, RowScratch, erosion_row};
 use crate::{TILE_QUADS, TILE_STRIDE, Tile};
 
 /// The placement layer authored objects report collision
@@ -537,19 +537,110 @@ fn lowest_ground(tile: &Tile, local: [f32; 2], reach: f32, height: f32) -> f32 {
 #[derive(Default)]
 pub(crate) struct PlaceScratch {
     candidates: Vec<Candidate>,
-    xs: Vec<f32>,
-    zs: Vec<f32>,
-    height: Vec<f32>,
-    gradient: Vec<f32>,
-    curvature: Vec<f32>,
-    water: Vec<crate::HydrologySample>,
-    path: Vec<crate::PathSample>,
+    inputs: MaskInputs,
     values: Vec<f32>,
     rows: RowScratch,
     // Control values the rules gave samples of a tile holding none,
     // packed, `u32::MAX` where not asked yet: each sample's
     // once a tile, however many candidates share it.
     controls: Vec<u32>,
+}
+
+/// What a row of candidates' masks read, a candidate at a time, in order:
+/// each one's point (x and z), height, gradient (rise per meter along x and
+/// z), curvature, water, the meters erosion changed its ground by and road.
+#[derive(Default)]
+struct MaskInputs {
+    xs: Vec<f32>,
+    zs: Vec<f32>,
+    height: Vec<f32>,
+    gradient: Vec<[f32; 2]>,
+    curvature: Vec<f32>,
+    water: Vec<crate::HydrologySample>,
+    erosion: Vec<f32>,
+    path: Vec<crate::PathSample>,
+}
+
+impl MaskInputs {
+    fn clear(&mut self) {
+        for list in [
+            &mut self.xs,
+            &mut self.zs,
+            &mut self.height,
+            &mut self.curvature,
+            &mut self.erosion,
+        ] {
+            list.clear();
+        }
+        self.gradient.clear();
+        self.water.clear();
+        self.path.clear();
+    }
+
+    /// Adds what a mask reading `reads` reads of a candidate at `point` over
+    /// `stack`, on `tile` (`local` in it, `nearest` its nearest sample) at
+    /// its ground `sample`: the gradient its ground's normal stands on and
+    /// the curvature at its nearest sample; the water standing there, the
+    /// tile's, lake or river, as deep as it stands over the ground, and the
+    /// meters to rivers' edges and the rivers' beds the tile's too; what the
+    /// stack's erosions changed there; and the nearest road. Inputs the mask
+    /// never reads are left unread.
+    fn push(
+        &mut self,
+        (tile, stack, reads): (&Tile, &crate::Layers, Reads),
+        (point, local, [x, z]): ([f32; 2], [f32; 2], [i32; 2]),
+        sample: &crate::TileSample,
+    ) {
+        let spacing = tile.spacing();
+        let normal = sample.normal;
+        let lift = max(normal.y, 1.0e-3);
+        let height = |x: i32, z: i32| tile.height(x.clamp(-1, 257), z.clamp(-1, 257));
+        self.xs.push(point[0]);
+        self.zs.push(point[1]);
+        self.height.push(sample.height);
+        self.gradient.push([-normal.x / lift, -normal.z / lift]);
+        self.curvature.push(
+            (height(x - 1, z) + height(x + 1, z) + height(x, z - 1) + height(x, z + 1)
+                - 4.0 * height(x, z))
+                / (spacing * spacing),
+        );
+        self.water.push(match stack.hydrology() {
+            Some(water) if reads.water => {
+                let local = glam::Vec2::from(local);
+                crate::HydrologySample {
+                    lake: tile.water_at(local).map_or(0.0, |water| water.depth),
+                    ..tile.river_at(local).with_maps(water, point, spacing)
+                }
+            }
+            _ => crate::HydrologySample::default(),
+        });
+        let mut change = [0.0];
+        if reads.erosion {
+            erosion_row(stack, &[point[0]], point[1], spacing, &mut change);
+        }
+        self.erosion.push(change[0]);
+        self.path.push(if reads.path {
+            stack.path_at(point[0], point[1])
+        } else {
+            crate::PathSample::FAR
+        });
+    }
+
+    /// The candidates' inputs as masks read a row, at a level whose samples
+    /// lie `spacing` meters apart.
+    fn row(&self, spacing: f32) -> RowInputs<'_> {
+        RowInputs {
+            xs: &self.xs,
+            zs: &self.zs,
+            spacing,
+            height: &self.height,
+            gradient: &self.gradient,
+            curvature: &self.curvature,
+            water: &self.water,
+            erosion: &self.erosion,
+            path: &self.path,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -579,7 +670,6 @@ pub(crate) fn place_row(
         &crate::BiomeRules,
     ),
 ) -> (u64, Option<(usize, usize)>) {
-    let water = stack.hydrology();
     let spacing = tile.spacing();
     let size = TILE_QUADS as f32 * spacing;
     let key = tile.key();
@@ -618,29 +708,13 @@ pub(crate) fn place_row(
     // then, in order, those that stand.
     let PlaceScratch {
         candidates,
-        xs,
-        zs,
-        height: heights,
-        gradient: gradients,
-        curvature: curvatures,
-        water: waters,
-        path: paths,
+        inputs,
         values,
         rows,
         controls,
     } = scratch;
     candidates.clear();
-    for list in [
-        &mut *xs,
-        &mut *zs,
-        &mut *heights,
-        &mut *gradients,
-        &mut *curvatures,
-    ] {
-        list.clear();
-    }
-    waters.clear();
-    paths.clear();
+    inputs.clear();
     for square_x in first[0]..=last[0] {
         let square = hash(
             layer_seed
@@ -700,13 +774,6 @@ pub(crate) fn place_row(
         if rank >= layer.fill * share_of_materials * share {
             continue;
         }
-        let normal = sample.normal;
-        let gradient = (normal.x * normal.x + normal.z * normal.z).sqrt() / max(normal.y, 1.0e-3);
-        let height = |x: i32, z: i32| tile.height(x.clamp(-1, 257), z.clamp(-1, 257));
-        let (x, z) = (nearest[0], nearest[1]);
-        let curvature = (height(x - 1, z) + height(x + 1, z) + height(x, z - 1) + height(x, z + 1)
-            - 4.0 * height(x, z))
-            / (spacing * spacing);
         candidates.push(Candidate {
             square,
             rank,
@@ -715,46 +782,11 @@ pub(crate) fn place_row(
             sample,
             share_of_materials,
         });
-        xs.push(point[0]);
-        zs.push(point[1]);
-        heights.push(sample.height);
-        gradients.push(gradient);
-        curvatures.push(curvature);
-        // What the mask reads alone; the water standing there is the
-        // tile's, lake or river, as deep as it stands over the ground, and
-        // the meters to rivers' edges and the rivers' beds the tile's too.
-        waters.push(match water {
-            Some(water) if layer.reads.water => {
-                let local = glam::Vec2::from(local);
-                crate::HydrologySample {
-                    lake: tile.water_at(local).map_or(0.0, |water| water.depth),
-                    ..tile.river_at(local).with_maps(water, point, spacing)
-                }
-            }
-            _ => crate::HydrologySample::default(),
-        });
-        paths.push(if layer.reads.path {
-            stack.path_at(point[0], point[1])
-        } else {
-            crate::PathSample::FAR
-        });
+        inputs.push((tile, stack, layer.reads), (point, local, nearest), &sample);
     }
     values.clear();
     values.resize(candidates.len(), 0.0);
-    layer.mask.evaluate_row(
-        &RowInputs {
-            xs,
-            zs,
-            spacing,
-            height: heights,
-            gradient: gradients,
-            curvature: curvatures,
-            water: waters,
-            path: paths,
-        },
-        values,
-        rows,
-    );
+    layer.mask.evaluate_row(&inputs.row(spacing), values, rows);
     for (candidate, &mask) in candidates.iter().zip(values.iter()) {
         let Candidate {
             square,
