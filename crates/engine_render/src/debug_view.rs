@@ -24,7 +24,7 @@ use crate::gpu_layouts::constants::{
     DEBUG_VIEW_WATER_DEPTH, DEBUG_VIEW_WATER_EDDIES, DEBUG_VIEW_WATER_FOAM,
     DEBUG_VIEW_WATER_FROUDE, DEBUG_VIEW_WATER_REACH, DEBUG_VIEW_WATER_ROUGHNESS,
     DEBUG_VIEW_WATER_SPAN, DEBUG_VIEW_WATER_SPEED, DEBUG_VIEW_WATER_TURBULENCE,
-    DEBUG_VIEW_WATER_WHITE,
+    DEBUG_VIEW_WATER_WHITE, DEBUG_VIEW_WATER_WIND,
 };
 use crate::gpu_layouts::debug_view::DebugViewUniform;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -209,6 +209,7 @@ fn view_value(view: DebugViewMode) -> u32 {
         DebugViewMode::WaterSpan => DEBUG_VIEW_WATER_SPAN,
         DebugViewMode::WaterEddies => DEBUG_VIEW_WATER_EDDIES,
         DebugViewMode::WaterRoughness => DEBUG_VIEW_WATER_ROUGHNESS,
+        DebugViewMode::WaterWind => DEBUG_VIEW_WATER_WIND,
     }
 }
 
@@ -229,6 +230,7 @@ pub(crate) fn shows_water(view: DebugViewMode) -> bool {
             | DebugViewMode::WaterSpan
             | DebugViewMode::WaterEddies
             | DebugViewMode::WaterRoughness
+            | DebugViewMode::WaterWind
     )
 }
 

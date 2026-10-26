@@ -240,10 +240,11 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     // The wind's tiles ripple it with the waves shorter than its own
     // shortest (they run longest first), sized by the spectrum its own are
     // drawn from: its wind, gusting, over unlimited fetch and deep water, so
-    // the sea and its ripples are one spectrum.
+    // the sea and its ripples are one spectrum. Behind terrain upwind, under
+    // its cliffs, that wind slows and its ripples calm (`terrain_shelter`).
     let shortest = OCEAN_TAU / max(length(water.ocean_waves[max(count, 1u) - 1u].xy), 1.0e-6);
-    let gains = water_wind_bands(water_wind_speed(world.xz, time), WATER_OPEN_FETCH,
-        WATER_OPEN_DEPTH, shortest);
+    let wind = water_wind_speed(world, time);
+    let gains = water_wind_bands(wind, WATER_OPEN_FETCH, WATER_OPEN_DEPTH, shortest);
     let ripples = water_wind_waves(world.xz, world_dx.xz, world_dy.xz, gains);
     let slopes = ripples.slopes - waved.xz / max(waved.y, 1.0e-3);
     let normal = normalize(vec3<f32>(-slopes.x, 1.0, -slopes.y));
@@ -333,6 +334,7 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     result.behind = behind.color * transmit * ((1.0 - lit.reflectance) * (1.0 - foam)
         * (1.0 - atmospheric_cover(camera.position.xyz, world)));
     result.fade = fade;
+    result.wind = wind;
     return result;
 }
 

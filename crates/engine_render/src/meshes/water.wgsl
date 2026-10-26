@@ -1026,12 +1026,15 @@ fn water_light(surface: WaterSurface) -> WaterLit {
 // Water's light, and how it covers what lies below: in frames blending it,
 // the share of the ground it hides (`coverage`); in frames refracting the
 // scene, what shows through it (graded, as the scene holds it) and the
-// share of the scene it covers, all but where its shores fade.
+// share of the scene it covers, all but where its shores fade. And, where
+// its shading reckons it, the wind's speed over it (meters a second,
+// gusting and sheltered: `water_wind_speed`), which the debug views show.
 struct WaterShade {
     shaded: Shaded,
     coverage: f32,
     behind: vec3<f32>,
     fade: f32,
+    wind: f32,
 }
 
 // Water's light and what shows through it as its targets' color at `pixel`:
@@ -1170,9 +1173,11 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // blend, so nothing changes at once where a river meets a lake.
     let flowing = smoothstep(0.05, 0.3, speed);
     // The wind's waves: each of its tiles as strong as its spectrum gives
-    // that tile's band where the wind, gusting, blows over as much water as
-    // the water's body spans, as deep as it is here.
-    let gains = water_wind_gains(water_wind_speed(world.xz, time), at.words.span, depth);
+    // that tile's band where the wind, gusting and sheltered by the terrain
+    // upwind, blows over as much water as the water's body spans, as deep as
+    // it is here.
+    let wind = water_wind_speed(world, time);
+    let gains = water_wind_gains(wind, at.words.span, depth);
     // Its waves, from its state alone (`water_flow_waves`): the wind's and
     // its eddies', the short waves its bed holds and those standing about
     // what it flows past.
@@ -1294,6 +1299,7 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     result.behind = behind.color * transmit * (caustic * let_through * (1.0 - wet)
         * (1.0 - atmospheric_cover(camera.position.xyz, world)));
     result.fade = fade;
+    result.wind = wind;
     return result;
 }
 

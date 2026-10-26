@@ -4,12 +4,14 @@
 //! lakes lie still. How water moves and foams follows from its state alone,
 //! what its tiles or the live simulation hold at each place (its depth,
 //! flow, the foam it carries, how turbulent it runs and how far across its
-//! water body is), under the scene's wind ([`crate::Wind`]); each body's
-//! look is its color, its clarity and the sediment it carries with that
-//! sediment's color: light passing through water fades over the distance it
-//! travels to the ground behind it toward its scattered color, and its
-//! surface reflects the sky and, through screen-space reflections, the
-//! scene.
+//! water body is), under the scene's wind ([`crate::Wind`]) as the terrain
+//! upwind shelters it: behind a crest the wind slows, recovering downwind,
+//! so valley streams lie calm while open lakes keep their breeze; each
+//! body's look is its color, its clarity and the sediment it carries with
+//! that sediment's color: light passing through water fades over the
+//! distance it travels to the ground behind it toward its scattered color,
+//! and its surface reflects the sky and, through screen-space reflections,
+//! the scene.
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
@@ -19,7 +21,8 @@ use engine_settings::settings;
 settings! {
     /// Water settings: how terrains' water looks (its color, clarity and
     /// sediment) and how it draws and runs live; its movement and foam come
-    /// from its state, under the scene's wind.
+    /// from its state, under the scene's wind as the terrain upwind
+    /// shelters it.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

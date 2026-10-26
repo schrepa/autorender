@@ -155,7 +155,8 @@ const SHADOW_APRON: u32 = 1u;
 @group(0) @binding(6) var shadow_sampler: sampler_comparison;
 // Unfiltered reads of four shadow texels, for receiver planes.
 @group(0) @binding(7) var shadow_texels: sampler;
-// Terrain's long sun shadows: each terrain's horizon map, a
+// Terrain's long sun shadows and its shelter from the wind
+// (`terrain_shelter`): each terrain's horizon map, a
 // grid over the terrain cooked with its lighting, HORIZON_LAYERS layers per
 // terrain. In each of HORIZON_DIRECTIONS directions around a texel
 // (direction k a k-th of the directions' turn from +x toward +z), how high
@@ -924,15 +925,85 @@ const HORIZON_DIRECTIONS: u32 = 16u;
 const HORIZON_LAYERS: u32 = 9u;
 const HORIZON_RECORD_VECTORS: u32 = 6u;
 
+// Between which two of the horizon directions a heading stands: the first,
+// the next one on toward +z, and how far the heading stands from the first
+// toward it, as a share of the step between them.
+struct HorizonTurn {
+    first: u32,
+    second: u32,
+    between: f32,
+}
+
+// Where `heading` (x and z, of any length but none) stands among the
+// horizon directions.
+fn horizon_turn(heading: vec2<f32>) -> HorizonTurn {
+    let turn = fract(atan2(heading.y, heading.x) / (2.0 * PI) + 1.0) * f32(HORIZON_DIRECTIONS);
+    var found: HorizonTurn;
+    found.first = min(u32(turn), HORIZON_DIRECTIONS - 1u);
+    found.second = (found.first + 1u) % HORIZON_DIRECTIONS;
+    found.between = turn - f32(found.first);
+    return found;
+}
+
+// A terrain's horizon toward a heading as a point sees it: the slope up to
+// the crest from the map's ground there (meters a meter, at least -1: no
+// crest looks down past any sun) and the crest's distance (meters), and the
+// point's height above that ground (meters); `inside` while the terrain's
+// map holds the point.
+struct HorizonCrest {
+    slope: f32,
+    distance: f32,
+    elevation: f32,
+    inside: bool,
+}
+
+// The horizon toward `turn` of the terrain whose record starts at `at`, as
+// `world` sees it: between those of the directions either side, as the
+// slopes up to their crests and the crests' distances lie. A surface above
+// the map's ground stands at its height above it (the map's last layer),
+// and terrain's own surfaces (`on_terrain`) on it, whatever detail they
+// draw at.
+fn horizon_crest(at: u32, turn: HorizonTurn, world: vec3<f32>, on_terrain: bool)
+        -> HorizonCrest {
+    var crest: HorizonCrest;
+    let place = terrain_horizon_records[at];
+    let shape = terrain_horizon_records[at + 1u];
+    let uv = (world.xz - place.xy) * place.zw;
+    if any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
+        return crest;
+    }
+    crest.inside = true;
+    let base = u32(shape.x);
+    // An even first direction shares its layer with the second; an odd
+    // one's second starts the next layer.
+    let near = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
+        base + turn.first / 2u, 0.0);
+    var far = near;
+    if (turn.first & 1u) == 1u {
+        far = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
+            base + turn.second / 2u, 0.0);
+    }
+    let odd = (turn.first & 1u) == 1u;
+    let heights = vec2<f32>(select(near.r, near.g, odd), select(far.g, far.r, odd));
+    let distances = vec2<f32>(select(near.b, near.a, odd), select(far.a, far.b, odd));
+    let slopes = max(heights / max(distances, vec2<f32>(1.0e-3)), vec2<f32>(-1.0));
+    crest.slope = mix(slopes.x, slopes.y, turn.between);
+    crest.distance = mix(distances.x, distances.y, turn.between);
+    if !on_terrain {
+        let ground = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
+            base + HORIZON_LAYERS - 1u, 0.0).r;
+        crest.elevation = world.y - shape.w - ground;
+    }
+    return crest;
+}
+
 // The share of the sun terrains leave unblocked at `world`: where the sun's
 // ray toward it passes under a terrain's crest there, none; over it, all;
-// between, a soft edge growing with the crest's distance. The horizon toward
-// the sun lies between those of the directions either side of it, as the
-// slopes up to their crests and the crests' distances do; the ray passes
-// under it by that distance times how much the slope rises above the sun's.
-// A surface above the map's ground compares its height above it with that,
-// and terrain's own surfaces (`on_terrain`) lie on that ground whatever
-// detail they draw at.
+// between, a soft edge growing with the crest's distance. The ray passes
+// under the horizon toward the sun (`horizon_crest`) by the crest's
+// distance times how much the slope up to it rises above the sun's, and
+// the point compares its height above the map's ground with that, terrain's
+// own surfaces (`on_terrain`) lying on it.
 fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
     if !TERRAIN_HORIZONS {
         return 1.0;
@@ -946,54 +1017,88 @@ fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
     // How far its ray rises per meter toward it, and between which two of
     // the directions it stands.
     let rise = sun.y / level;
-    let turn = fract(atan2(sun.z, sun.x) / (2.0 * PI) + 1.0) * f32(HORIZON_DIRECTIONS);
-    let first = min(u32(turn), HORIZON_DIRECTIONS - 1u);
-    let second = (first + 1u) % HORIZON_DIRECTIONS;
-    let between = turn - f32(first);
+    let turn = horizon_turn(sun.xz);
     // Their count (`level_state.w`), within the records' uniform.
     let count = min(u32(shadow.level_state.w), HORIZON_RECORDS / HORIZON_RECORD_VECTORS);
     var visible = 1.0;
     for (var index = 0u; index < count; index++) {
         let at = HORIZON_RECORD_VECTORS * index;
-        let place = terrain_horizon_records[at];
-        let shape = terrain_horizon_records[at + 1u];
-        let uv = (world.xz - place.xy) * place.zw;
-        if any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
+        let crest = horizon_crest(at, turn, world, on_terrain);
+        if !crest.inside {
             continue;
         }
-        let base = u32(shape.x);
-        // An even first direction shares its layer with the second; an odd
-        // one's second starts the next layer.
-        let near = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
-            base + first / 2u, 0.0);
-        var far = near;
-        if (first & 1u) == 1u {
-            far = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
-                base + second / 2u, 0.0);
-        }
-        let odd = (first & 1u) == 1u;
-        let heights = vec2<f32>(select(near.r, near.g, odd), select(far.g, far.r, odd));
-        let distances = vec2<f32>(select(near.b, near.a, odd), select(far.a, far.b, odd));
-        // The slopes up to the crests either side of the sun (no crest
-        // looks down past any sun), and the meters above the ground the
-        // sun's ray toward the crest between passes under it.
-        let slopes = max(heights / max(distances, vec2<f32>(1.0e-3)), vec2<f32>(-1.0));
-        let distance = mix(distances.x, distances.y, between);
-        let clearance = distance * (mix(slopes.x, slopes.y, between) - rise);
-        var elevation = 0.0;
-        if !on_terrain {
-            let ground = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
-                base + HORIZON_LAYERS - 1u, 0.0).r;
-            elevation = world.y - shape.w - ground;
-        }
-        let edge = max(distance * shape.y, 0.5);
-        visible = min(visible, smoothstep(-edge, edge, elevation + shape.z - clearance));
+        // The meters above the ground the sun's ray toward the crest passes
+        // under it.
+        let clearance = crest.distance * (crest.slope - rise);
+        let shape = terrain_horizon_records[at + 1u];
+        let edge = max(crest.distance * shape.y, 0.5);
+        visible = min(visible, smoothstep(-edge, edge, crest.elevation + shape.z - clearance));
         // Below one horizon, no other lets the sun back.
         if visible <= 0.0 {
             break;
         }
     }
     return visible;
+}
+
+// Wind slows behind upwind ground and recovers downwind of it, as windbreak
+// studies measure (Heisler and DeWalle 1988, "Effects of windbreak
+// structure on wind flow"; Brandle, Hodges and Zhou 2004, "Windbreaks in
+// North American agricultural systems"): the share of the free wind blowing
+// in a crest's near lee, where dense barriers cut it by up to 80%.
+const SHELTER_LEAST: f32 = 0.2;
+// The crest heights downwind the near lee reaches, the wind blowing slowest
+// 4 to 6 heights behind dense barriers (Heisler and DeWalle 1988; Brandle,
+// Hodges and Zhou 2004).
+const SHELTER_NEAR: f32 = 5.0;
+// The crest heights over which the wind recovers past the near lee, by a
+// factor e each, so that the barriers' effect fades out 30 to 35 heights
+// downwind (Heisler and DeWalle 1988; Brandle, Hodges and Zhou 2004).
+const SHELTER_RECOVERY: f32 = 8.0;
+
+// The share of a free wind blowing along `heading` (a unit vector, x and z)
+// that reaches `world`, a surface above the map's ground such as water.
+// Behind a crest H meters above the point and x meters upwind of it, the
+// wind blows at SHELTER_LEAST of the free wind out to SHELTER_NEAR crest
+// heights, then recovers over SHELTER_RECOVERY heights,
+// 1 - (1 - SHELTER_LEAST) exp(-max(x/H - SHELTER_NEAR, 0) / SHELTER_RECOVERY):
+// about 0.57 at 10 heights, 0.88 at 20 and 0.97 at 30. The steepest crest
+// shelters most, and the horizon upwind, opposite the heading, is by
+// definition the steepest (`horizon_crest`): x/H is one over the slope up
+// to it from the point, the crest's height above the map's ground less the
+// point's own, over the crest's distance. Where no crest stands above the
+// point upwind, no map holds it, horizon maps are off or the heading is
+// none, all the wind blows; over several terrains, the least share does.
+// Each map is one grid over its whole terrain, so the share depends only on
+// where the point is.
+fn terrain_shelter(world: vec3<f32>, heading: vec2<f32>) -> f32 {
+    if !TERRAIN_HORIZONS || all(heading == vec2<f32>(0.0)) {
+        return 1.0;
+    }
+    // Upwind lies opposite the heading.
+    let turn = horizon_turn(-heading);
+    let count = min(u32(shadow.level_state.w), HORIZON_RECORDS / HORIZON_RECORD_VECTORS);
+    var share = 1.0;
+    for (var index = 0u; index < count; index++) {
+        let crest = horizon_crest(HORIZON_RECORD_VECTORS * index, turn, world, false);
+        if !crest.inside {
+            continue;
+        }
+        // The slope up from the point to the crest; none where the crest
+        // stands no higher than the point.
+        let slope = crest.slope - crest.elevation / max(crest.distance, 1.0e-3);
+        if slope <= 0.0 {
+            continue;
+        }
+        let lee = 1.0 / slope;
+        share = min(share, 1.0 - (1.0 - SHELTER_LEAST)
+            * exp(-max(lee - SHELTER_NEAR, 0.0) / SHELTER_RECOVERY));
+        // In one crest's near lee, no other shelters more.
+        if share <= SHELTER_LEAST {
+            break;
+        }
+    }
+    return share;
 }
 
 // Visibility of the sun at the surface point `world`, whose
