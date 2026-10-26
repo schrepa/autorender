@@ -308,8 +308,10 @@ settings! {
         /// (Lagarde 2013): porous ground soaked keeps a fifth of its albedo,
         /// the damp ground of hollows and banks about seven tenths.
         pub wet: f32 = 0.3 => range(0.0, 1.0),
-        /// Ground erosion laid down, and lakes' shores, show paler, sandier
-        /// silt: fine mineral grains no humus has darkened yet.
+        /// Ground erosion laid down holds deep soil, built up over the bakes'
+        /// whole span: darker and browner with humus, its plants lusher, as
+        /// floodplains and the feet of slopes are. Lakes' shores show paler,
+        /// sandier grains the waves keep washed.
         pub deposit: f32 = 0.2 => range(0.0, 1.0),
         /// Ground erosion wore away shows the paler, grayer subsoil and rock
         /// under the humus-dark topsoil it lost.

@@ -3,39 +3,27 @@
 //! leveled for a hamlet, a flat valley floor and a cave mouth cut as a
 //! hole), streamed around the camera, with the scene's renderables standing
 //! on the plateau as the tower field does. Its ground is
-//! meadow, dry grass on slopes turned to the sun, lush grass on those
-//! turned from it and where water gathers, bare dirt and gravel where
-//! erosion wore it, silt where erosion laid it down, scree, snow and,
-//! wherever it is steeper, rock, its
+//! meadow, dry grass, dirt, snow and, wherever it is steep, rock, its
 //! streams' beds sand, gravel, cobbles or boulders as coarse as their
 //! floods leave them, each textured by maps its `ground` module generates,
 //! which load as cooked texture records; its streams wet their banks up
 //! to their floods' line, and higher where they spray.
 //! Boulders lie on its meadows and in its steep streams, stones on its
 //! scree and its cobble beds, outcrops on its rock, and spruce forests
-//! cover the lower slopes, downy birch on their wet ground, along their
-//! streams, at their outer edges and in small stands beyond them, and
-//! young spruces and birches where they thin out.
-//! Talus gathers on the aprons below its rock faces and erratics on its
-//! ridges and benches; junipers grow on its dry heath and at the forests'
-//! edges, and logs and stumps lie in the forests ([`understory`]).
+//! cover the lower slopes.
 //! Gravel roads wind from the plateau down to the crater
 //! lake, west over a river on a stone bridge and east
 //! through a ridge in a tunnel. Lanterns line the road to
 //! the lake, streamed: they exist only near the camera. A
 //! hiker walks the road's first stretch and back.
 
-mod birches;
 mod bodies;
 mod caves;
-mod deadfall;
 mod ground;
 mod hiker;
 mod looks;
 mod rocks;
-mod shrubs;
 mod trees;
-mod understory;
 mod world;
 
 use engine::collections::HashMap;
@@ -380,11 +368,6 @@ pub(crate) fn populate(
         ridges: 0.5,
         warp: 0.4,
         erosion: 0.9,
-        // Detail fades on slopes as creep planes soil-mantled hillsides
-        // (Roering, Kirchner and Dietrich 1999): every octave's, so the
-        // range keeps the form its roads were routed over. Ground too steep
-        // for soil breaks into the rock steps and debris-flow gullies of
-        // later layers.
         smoothing: 0.6,
         valleys: 0.7,
         roughness: 0.3,
@@ -394,8 +377,7 @@ pub(crate) fn populate(
     let level = Layers::new(vec![mountains.clone()])?.height_at(&pyramid, Vec2::from(plateau));
     world.insert_resource(Plateau(level));
     // The hamlet's plateau, wide enough for the field's grid: leveled before
-    // erosion wears around it, and again over the relief laid after it,
-    // before the water runs over it.
+    // erosion wears around it, and before the water runs over it again.
     let plateau_stamp = Layer::Stamp(Stamp {
         center: plateau,
         radius: hamlet,
@@ -420,22 +402,8 @@ pub(crate) fn populate(
                 level: 3,
                 rounds: 20,
                 incision: 0.003,
-                debris: 0.006,
+                debris: 2.0,
                 creep: 6.0,
-            },
-            baked: None,
-        }),
-        // Debris flows gully the steep slopes again over the four-meter
-        // tiles, which hold the gullies the eight-meter ones round away: as
-        // fast as there, with no rivers, which carved the valleys already,
-        // and no creep, which would wear away the finer relief they cut.
-        Layer::Erosion(ErosionStage {
-            layer: ErosionLayer {
-                level: 2,
-                rounds: 20,
-                incision: 0.0,
-                debris: 0.006,
-                creep: 0.0,
             },
             baked: None,
         }),
@@ -445,23 +413,6 @@ pub(crate) fn populate(
             radius: 520.0,
             falloff: 700.0,
             op: StampOp::Flatten(60.0),
-        }),
-        // Rock steps where the slopes stand too steep to hold soil: treads
-        // along the rock's level bedding and risers where its joints break
-        // it, in patches, on spurs and planar slopes rather than in the
-        // hollows debris fills. The hydrology bake after them maps where,
-        // once it is done, and they keep off its water and banks; the
-        // plateau and the roads after them level them away.
-        Layer::Steps(StepsLayer {
-            seed: config.seed,
-            ..StepsLayer::default()
-        }),
-        // Earth hummocks heaved by frost into the wet meadows, as in
-        // Iceland's thúfur fields: in patches on gentle ground where water
-        // gathers, placed and kept off the water as the steps are.
-        Layer::Hummocks(HummocksLayer {
-            seed: config.seed,
-            ..HummocksLayer::default()
         }),
         plateau_stamp,
         // Streams and rivers traced where water gathers off the mountains
@@ -567,7 +518,7 @@ const LICHEN: TopLayer = TopLayer {
     roughness: 0.85,
 };
 
-/// How far up boulders' bases and trees' trunks blend into the ground
+/// How far up boulders' bases and spruces' trunks blend into the ground
 /// where the terrain places them: a few centimeters up a meter-wide
 /// boulder, a quarter meter up a trunk.
 const SOIL: Grounding = Grounding { height: 0.12 };
@@ -732,11 +683,11 @@ fn surface(
     files: &HashMap<String, StressFile>,
     authored: Vec<AuthoredPlacement>,
 ) -> engine::Result<TerrainSurface> {
-    // The shapes and the trees' atlases are records: their handles now,
-    // their content once hosts hand it back or it is built in place.
-    // Boulders come at one detail, their coarser levels their meshes' own;
-    // trees at each of their levels, and as the solid crowns shadow maps
-    // draw in their place.
+    // The shapes and the bark atlas are records: their handles now, their
+    // content once hosts hand it back or it is built in place. Boulders
+    // come at one detail, their coarser levels their meshes' own; spruces
+    // at each of their levels, and as the solid crowns shadow maps draw in
+    // their place.
     let boulders = (0..BOULDERS as u32)
         .map(|seed| rocks::boulder_record(world, seed))
         .collect::<engine::Result<Vec<_>>>()?;
@@ -750,9 +701,8 @@ fn surface(
         assets.insert_material(material)?
     };
     let spruces = (0..SPRUCES as u32)
-        .map(|seed| trees::spruce(world, seed, &trees::SPRUCE, needles))
+        .map(|seed| trees::spruce(world, seed, needles))
         .collect::<engine::Result<Vec<_>>>()?;
-    let forest = forest_trees(world, needles)?;
     let materials = world.resource_scope(|world, mut records: Mut<Records>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
         let mut loaded = HashMap::default();
@@ -816,10 +766,21 @@ fn surface(
             shadow: None,
         });
     }
-    // Trees sway in the wind and their trunks collide as each one's size
-    // asks.
-    placed.extend(spruces);
-    placed.extend(forest);
+    for spruce in spruces {
+        // Spruces bend in the wind: a third of a meter at ten
+        // meters up in full wind.
+        // Their trunks collide, up to where the lowest whorls spread.
+        placed.push(PlacementAsset {
+            sway: 0.35,
+            collider: Some(PlacedCollider::new(
+                PlacedShape::Cuboid {
+                    half_extents: [0.28, 2.0, 0.28],
+                },
+                [0.0, 1.5, 0.0],
+            )),
+            ..spruce
+        });
+    }
     // The rock the cave is hewn in, which the boulders framing its mouth
     // wear too: the scanned rock face where present, its color pulled
     // toward the terrain rock's when converted; otherwise the terrain
@@ -846,10 +807,6 @@ fn surface(
         material: wall_rock,
         wall,
     });
-    // The understory and the rock where it gathers, after the boulders and
-    // spruces, as `rules()` names them: talus in the boulders' stone, the
-    // rest over the spruces' atlas.
-    placed.extend(understory::placed(world, atlas, rock)?);
     // Bridges are built of the boulders' weathered stone.
     TerrainSurface::new(
         &Biomes {
@@ -864,34 +821,6 @@ fn surface(
         ..surface
     })
     .map_err(engine::Error::from)
-}
-
-/// The forest's trees beside its spruces, as placement assets in the order
-/// [`rules`] lists them after the spruces: downy birches of a few shapes
-/// over their own bark and leaf atlas, their leaves cut out by its alpha;
-/// then young spruces in the spruces' `needles`, and young birches; their
-/// trunks blending into the forest floor as the spruces' do. Young trees'
-/// shapes take seeds past their elders'.
-fn forest_trees(world: &mut World, needles: MaterialHandle) -> engine::Result<Vec<PlacementAsset>> {
-    let atlas = birches::atlas_record(world)?;
-    let leaves = {
-        let material = trees::material(atlas)?.with_grounding(ROOTS)?;
-        let mut assets = world.resource_mut::<AssetLibrary>();
-        assets.insert_material(material)?
-    };
-    let mut placed = Vec::with_capacity(BIRCHES + YOUNG_SPRUCES + YOUNG_BIRCHES);
-    for seed in 0..BIRCHES as u32 {
-        placed.push(birches::birch(world, seed, &birches::BIRCH, leaves)?);
-    }
-    for seed in SPRUCES..SPRUCES + YOUNG_SPRUCES {
-        let young = trees::spruce(world, seed as u32, &trees::YOUNG_SPRUCE, needles)?;
-        placed.push(young);
-    }
-    for seed in BIRCHES..BIRCHES + YOUNG_BIRCHES {
-        let young = birches::birch(world, seed as u32, &birches::YOUNG_BIRCH, leaves)?;
-        placed.push(young);
-    }
-    Ok(placed)
 }
 
 /// The cave's mouth: the world point at its center, and the
@@ -1416,11 +1345,6 @@ fn cave_interior(mesh: &Mesh, points: &[Vec3], inward: Vec3) -> (Vec3, Vec3) {
 /// Boulder and spruce shapes the placement layers choose from.
 const BOULDERS: usize = 5;
 const SPRUCES: usize = 3;
-/// Birch, young spruce and young birch shapes the forest's other layers
-/// choose from ([`tree_layers`]).
-const BIRCHES: usize = 3;
-const YOUNG_SPRUCES: usize = 3;
-const YOUNG_BIRCHES: usize = 2;
 
 /// `look`'s ground material's maps ([`ground::sources`]) as an engine
 /// material tinted by its tint: base color, normal, and occlusion (red),
@@ -1543,30 +1467,31 @@ fn in_terrain_rock(
         .map_err(engine::Error::from)
 }
 
-/// Where each material lies: meadow everywhere; from their causes, their
-/// edges ragged ([`ragged`]), dry grass on slopes turned to the sun and on
-/// convex ground, lush grass on slopes turned from it, bare dirt and gravel
-/// where erosion wore the ground, silt where it laid it down and scree as
-/// steep as talus rests; needle litter under the forests, lush grass where
-/// water gathers, beds along streams and rivers of the grains their floods
-/// leave ([`stream_beds`]), gravel on the roads and snow on the peaks; rock
-/// over all of them wherever the ground is steep; the ground damp in
-/// hollows and wet in torrents' spray ([`wetness`]); its macro colors
-/// turned to the same sun; and the boulders, stones and trees placed over
-/// them, and the understory ([`understory`]).
+/// Where each material lies: meadow everywhere, dry grass in broad patches
+/// with ragged edges, bare dirt in smaller ones, needle litter under the
+/// forests, lush grass where water gathers, beds along streams and rivers
+/// of the grains their floods leave ([`stream_beds`]), gravel on the roads
+/// and snow on the peaks; rock over all of them wherever the ground is
+/// steep; the ground wet along the streams ([`wetness`]); and the
+/// boulders, stones and spruces placed over them.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
 fn rules() -> Biomes {
-    // Where the forest grows, in broad stands below the tree line on gentle
-    // ground, thinning at their edges and kept out of stream beds: spruces
-    // and birches share it ([`birch_share`]), young trees regenerating
-    // where it fades ([`tree_layers`]); their needles and leaves litter the
-    // ground there.
+    // Where spruces stand in broad stands below the tree line on gentle
+    // ground, thinning at their edges and kept out of stream beds; their
+    // needles litter the ground there.
     let forest = || {
         Mask::Multiply(vec![
-            remap(canopy(), 0.45, 0.62),
+            remap(
+                Mask::Add(vec![
+                    scaled(noise(320.0, 31, 3), 0.75),
+                    scaled(noise(45.0, 32, 2), 0.25),
+                ]),
+                0.45,
+                0.62,
+            ),
             Mask::Invert(Box::new(Mask::Height([560.0, 640.0]))),
             Mask::Invert(Box::new(Mask::Slope([24.0, 34.0]))),
             Mask::Invert(Box::new(Mask::Flow([4.95, 5.15]))),
@@ -1580,24 +1505,23 @@ fn rules() -> Biomes {
         assets: (0..BOULDERS)
             .map(|index| format!("boulder{index}"))
             .chain((0..SPRUCES).map(|index| format!("spruce{index}")))
-            .chain((0..BIRCHES).map(|index| format!("birch{index}")))
-            .chain((0..YOUNG_SPRUCES).map(|index| format!("young_spruce{index}")))
-            .chain((0..YOUNG_BIRCHES).map(|index| format!("young_birch{index}")))
-            .chain(understory::assets())
             .collect(),
         // Boulders in clumps over the meadows, resting on the lowest ground
         // under them, stones strewn on scree, outcrops on
         // rock, and spruce forests in broad stands below the tree line on
         // gentle ground, thinning at their edges: placed on two-kilometer
-        // tiles, which stay resident farther away; boulders and stones in
-        // the streams ([`stream_rocks`]); the forest's birches and young
-        // trees ([`tree_layers`]); and the understory and the rock where it
-        // gathers ([`understory::layers`]).
+        // tiles, which stay resident farther away; and boulders and stones
+        // in the streams ([`stream_rocks`]).
         placed: Vec::new(),
         placements: [
             PlacementLayer {
                 id: "spruces".into(),
-                assets: tree_choices("spruce", SPRUCES),
+                assets: (0..SPRUCES)
+                    .map(|index| PlacementChoice {
+                        asset: format!("spruce{index}"),
+                        weight: 1.0,
+                    })
+                    .collect(),
                 density: 420.0,
                 footprint: 3.5,
                 materials: vec![
@@ -1605,13 +1529,10 @@ fn rules() -> Biomes {
                     "dry_grass".into(),
                     "dirt".into(),
                     "forest_floor".into(),
-                    "wet_grass".into(),
                 ],
-                // The forest the birches leave them.
-                mask: Mask::Multiply(vec![forest(), Mask::Invert(Box::new(birch_share(0.0)))]),
+                mask: forest(),
                 scale: [0.65, 1.15],
                 align: 0.04,
-                downhill: 0.0,
                 sink: 0.3,
                 bed: 0.0,
                 level: 3,
@@ -1629,19 +1550,13 @@ fn rules() -> Biomes {
                 assets: boulder_choices(),
                 density: 18.0,
                 footprint: 7.0,
-                materials: vec![
-                    "grass".into(),
-                    "dry_grass".into(),
-                    "dirt".into(),
-                    "wet_grass".into(),
-                ],
+                materials: vec!["grass".into(), "dry_grass".into(), "dirt".into()],
                 mask: Mask::Multiply(vec![
                     remap(noise(90.0, 21, 2), 0.45, 0.75),
                     Mask::Invert(Box::new(Mask::Path([6.0, 2.0]))),
                 ]),
                 scale: [0.6, 2.4],
                 align: 0.3,
-                downhill: 0.0,
                 sink: 0.1,
                 bed: 0.45,
                 level: 0,
@@ -1662,7 +1577,6 @@ fn rules() -> Biomes {
                 mask: Mask::one(),
                 scale: [0.12, 0.45],
                 align: 0.8,
-                downhill: 0.0,
                 sink: 0.08,
                 bed: 0.0,
                 level: 0,
@@ -1686,7 +1600,6 @@ fn rules() -> Biomes {
                 mask: Mask::one(),
                 scale: [2.0, 5.0],
                 align: 0.6,
-                downhill: 0.0,
                 sink: 0.5,
                 bed: 0.0,
                 level: 0,
@@ -1698,8 +1611,6 @@ fn rules() -> Biomes {
         ]
         .into_iter()
         .chain(stream_rocks())
-        .chain(tree_layers(forest))
-        .chain(understory::layers(&forest()))
         .collect(),
         materials: LOOKS.iter().map(|look| look.name.to_owned()).collect(),
         biomes: vec![Biome {
@@ -1707,26 +1618,44 @@ fn rules() -> Biomes {
             fitness: Mask::one(),
             layers: [
                 layer("grass", Mask::one()),
-                // Dry grass where slopes turn to the sun, and on convex
-                // ground draining faster than water reaches it.
                 layer(
                     "dry_grass",
-                    ragged(Mask::Max(vec![sunward(), Mask::Wetness(DRAINED)]), 81),
+                    remap(
+                        Mask::Add(vec![
+                            scaled(noise(160.0, 11, 3), 0.6),
+                            scaled(noise(28.0, 12, 2), 0.25),
+                            scaled(noise(5.0, 16, 1), 0.15),
+                        ]),
+                        0.48,
+                        0.72,
+                    ),
                 ),
-                // Lush grass where slopes turn from the sun and stay damp.
-                layer("wet_grass", ragged(shadeward(), 82)),
-                // Bare dirt where erosion wore the ground through its soil
-                // and regolith, and gravel in its gullies, their fines
-                // washed out; silt where it laid ground down, at the feet of
-                // slopes and on fans.
-                layer("dirt", ragged(Mask::Worn(WORN_SOIL), 83)),
-                layer("gravel", ragged(Mask::Worn(WORN_FINES), 84)),
-                layer("silt", ragged(Mask::Deposit(LAID), 85)),
-                // Scree as steep as talus rests, the rock over it steeper.
-                layer("scree", ragged(Mask::Slope(SCREE), 86)),
+                // Bare dirt in patches where the grass thins.
+                layer(
+                    "dirt",
+                    remap(
+                        Mask::Add(vec![
+                            scaled(noise(60.0, 13, 2), 0.6),
+                            scaled(noise(9.0, 14, 2), 0.4),
+                        ]),
+                        0.6,
+                        0.74,
+                    ),
+                ),
                 layer("forest_floor", remap(forest(), 0.12, 0.42)),
                 // Lush grass in wet hollows and along streams.
-                layer("wet_grass", ragged(Mask::Wetness([10.0, 13.5]), 87)),
+                layer(
+                    "wet_grass",
+                    remap(
+                        Mask::Add(vec![
+                            Mask::Wetness([10.0, 13.5]),
+                            scaled(noise(24.0, 41, 2), 0.35),
+                            Mask::Constant(-0.15),
+                        ]),
+                        0.35,
+                        0.6,
+                    ),
+                ),
             ]
             .into_iter()
             .chain(stream_beds())
@@ -1757,79 +1686,7 @@ fn rules() -> Biomes {
             material: "rock".into(),
             slope: [35.0, 40.0],
         }),
-        // Its macro colors turn their slopes to the sun its rules do.
-        macro_colors: engine::terrain::data::MacroCauses {
-            heading: SUN_SIDE,
-            ..Default::default()
-        },
     }
-}
-
-/// The side the highlands' midday sun stands on, in degrees from -z toward
-/// +x as views give yaw: south, +z, north lying at -z as the views assume.
-const SUN_SIDE: f32 = 180.0;
-/// Facings, tan(slope) cos(downhill - [`SUN_SIDE`]), over which slopes
-/// turned to the sun dry out and those turned as far from it stay lush:
-/// with the sun 30 degrees up, about its mean over a temperate year's
-/// daylight, a slope takes cot 30 degrees (1.73) times its facing more of
-/// its direct light than level ground (Lambert's cosine law), a fifth more
-/// at the first and half again at the second.
-const SUNNY: [f32; 2] = [0.115, 0.289];
-/// The wetness index, ln(a / tan b), under which ground drains faster than
-/// water reaches it (Beven and Kirkby 1979): convex spurs and crests fall
-/// below the 5 steep slopes take, drying from the first, wholly at the
-/// second.
-const DRAINED: [f32; 2] = [5.0, 3.5];
-/// Meters the erosions wore away over which ground lies bare: deeper than
-/// the soil and the weathered regolith under it, a meter or two on a
-/// mountain slope, which form again over shallower wear, from the first,
-/// wholly at the second.
-const WORN_SOIL: [f32; 2] = [2.0, 4.0];
-/// Meters worn over which the gullies' ground lies as gravel, its fines
-/// washed out.
-const WORN_FINES: [f32; 2] = [6.0, 10.0];
-/// Meters the erosions laid down over which fine silt lies: deeper than
-/// buried grass grows up through, about half a meter, from the first,
-/// wholly at the second.
-const LAID: [f32; 2] = [0.5, 2.0];
-/// Degrees of slope over which scree lies: talus rests between 30 and 37
-/// degrees, its angle of repose, and the rock paints over it from 35.
-const SCREE: [f32; 2] = [30.0, 33.0];
-/// Meters across the noise that rags the edges of the ground's patches: a
-/// few tufts' or stones' size, which level-0 samples a meter apart hold
-/// whole, noise fading below four samples across.
-const RAG: f32 = 4.0;
-
-/// `mask`'s ground with ragged edges: whole where the mask passes a half,
-/// noise [`RAG`] meters across moving its edges by up to a fifth of the
-/// mask's range either way, as detail masks rag procedural splatting's
-/// (Andersson 2007). `seed` picks the noise.
-fn ragged(mask: Mask, seed: u32) -> Mask {
-    remap(
-        Mask::Add(vec![
-            mask,
-            scaled(noise(RAG, seed, 1), 0.4),
-            Mask::Constant(-0.2),
-        ]),
-        0.45,
-        0.55,
-    )
-}
-
-/// Where slopes turn to the sun ([`SUNNY`]).
-fn sunward() -> Mask {
-    Mask::Facing(Facing {
-        heading: SUN_SIDE,
-        ramp: SUNNY,
-    })
-}
-
-/// Where slopes turn as far from the sun.
-fn shadeward() -> Mask {
-    Mask::Facing(Facing {
-        heading: SUN_SIDE,
-        ramp: SUNNY.map(|facing| -facing),
-    })
 }
 
 /// The median grains (meters) at which a bed's gravel, cobbles and
@@ -1845,14 +1702,6 @@ const BOULDER_POWER: [f32; 2] = [150.0, 400.0];
 /// The stream power over which a stream's spray wets its banks higher,
 /// from not at all to as high as its bed reaches.
 const SPRAY_POWER: [f32; 2] = [200.0, 2000.0];
-/// The bake's wetness index, ln(a / tan b), over which the soil of hollows
-/// saturates as water gathers in it, from none of them to all: past where
-/// lush grass begins, as saturated areas spread from the wettest ground
-/// (TOPMODEL, Beven and Kirkby 1979).
-const SATURATED: [f32; 2] = [11.5, 14.0];
-/// How wet saturated soil stands: damp, its pores full of water but none
-/// standing over it.
-const DAMP: f32 = 0.5;
 
 /// Streams' and rivers' beds, with a meter and a half of their banks and
 /// ragged edges, of the grains their floods leave ([`GRAINS`]): sand,
@@ -1900,25 +1749,20 @@ fn coarser_than(grain: f32) -> Mask {
     Mask::Grain([grain * (1.0 - GRAIN_BLEND), grain * (1.0 + GRAIN_BLEND)])
 }
 
-/// How wet the ground stands where its water leaves it dry, 0 to 1 (the
-/// water the tiles hold soaks the ground under it and wets it over the
-/// capillary fringe above it itself): damp in the hollows whose soil
-/// saturates ([`SATURATED`], [`DAMP`]), raggedly, and wet further up the
-/// banks of streams spending more power ([`SPRAY_POWER`]), whose spray wets
-/// them.
+/// How wet the ground stands, 0 to 1: soaked to the channel's edge and
+/// drying over two and a half meters of bank, finely ragged, and wet
+/// further up the banks of streams spending more power ([`SPRAY_POWER`]),
+/// whose spray wets them.
 fn wetness() -> Mask {
     Mask::Max(vec![
-        scaled(
-            remap(
-                Mask::Add(vec![
-                    Mask::Wetness(SATURATED),
-                    scaled(noise(6.0, 71, 2), 0.3),
-                    Mask::Constant(-0.15),
-                ]),
-                0.2,
-                0.8,
-            ),
-            DAMP,
+        remap(
+            Mask::Add(vec![
+                Mask::River([2.5, 0.0]),
+                scaled(noise(1.5, 71, 2), 0.25),
+                Mask::Constant(-0.12),
+            ]),
+            0.2,
+            0.8,
         ),
         remap(
             Mask::Add(vec![
@@ -1953,7 +1797,6 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             ]),
             scale: [0.6, 1.6],
             align: 0.7,
-            downhill: 0.0,
             sink: 0.3,
             bed: 0.3,
             level: 0,
@@ -1978,7 +1821,6 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             ]),
             scale: [0.3, 1.0],
             align: 0.7,
-            downhill: 0.0,
             sink: 0.1,
             bed: 0.3,
             level: 0,
@@ -1990,204 +1832,6 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             }),
         },
     ]
-}
-
-/// The forest's outline: broad noise from 0 to 1, ragged at its edges,
-/// which the forest's stands fill where it passes about a half ([`rules`]'
-/// `forest`) and birches take at their outer edges ([`birch_share`]).
-fn canopy() -> Mask {
-    Mask::Add(vec![
-        scaled(noise(320.0, 31, 3), 0.75),
-        scaled(noise(45.0, 32, 2), 0.25),
-    ])
-}
-
-/// The share of the forest downy birch takes, at least `least`: its wet
-/// ground, the hollows and flushes birch bears waterlogged and spruce
-/// does not; its streams' banks, from a meter beyond their water to a
-/// dozen meters out; and stretches of its outer edges, where its canopy
-/// opens and the pioneer comes in first.
-fn birch_share(least: f32) -> Mask {
-    Mask::Max(vec![
-        remap(
-            Mask::Add(vec![
-                Mask::Wetness([8.5, 12.0]),
-                scaled(noise(64.0, 81, 2), 0.4),
-                Mask::Constant(-0.2),
-            ]),
-            0.3,
-            0.6,
-        ),
-        Mask::Multiply(vec![
-            remap(
-                Mask::Add(vec![
-                    Mask::River([12.0, 2.0]),
-                    scaled(noise(48.0, 82, 2), 0.3),
-                    Mask::Constant(-0.15),
-                ]),
-                0.35,
-                0.65,
-            ),
-            Mask::River([0.0, 1.0]),
-        ]),
-        Mask::Multiply(vec![
-            remap(canopy(), 0.58, 0.5),
-            remap(noise(90.0, 83, 2), 0.4, 0.6),
-        ]),
-        Mask::Constant(least),
-    ])
-}
-
-/// Small stands of downy birch beyond the forest: patches of broad noise,
-/// more of them the wetter the ground, on gentle ground up to the birches'
-/// line, which stands above the spruces' as the mountain birch belt stands
-/// above the conifers in the Scandes, and kept out of channels, lakes and
-/// roads as the forest is.
-fn birch_stands() -> Mask {
-    Mask::Multiply(vec![
-        remap(
-            Mask::Add(vec![
-                scaled(noise(130.0, 84, 2), 0.8),
-                scaled(Mask::Wetness([7.0, 12.0]), 0.2),
-            ]),
-            0.62,
-            0.74,
-        ),
-        Mask::Invert(Box::new(Mask::Height([620.0, 700.0]))),
-        Mask::Invert(Box::new(Mask::Slope([22.0, 32.0]))),
-        Mask::Invert(Box::new(Mask::Flow([4.95, 5.15]))),
-        Mask::Invert(Box::new(Mask::Lake([0.1, 0.6]))),
-        Mask::Invert(Box::new(Mask::Path([10.0, 4.0]))),
-    ])
-}
-
-/// Young trees a hectare holds at most where they regenerate: saplings
-/// whose crowns, a little over two meters wide, close at that density,
-/// about the stocking at which Nordic silviculture leaves the sapling
-/// stands spruce and birch regenerate into naturally to grow on (Hynynen
-/// et al. 2010, "Silviculture of birch in northern Europe").
-const YOUNG_TREES: f32 = 2000.0;
-/// The meters between young trees' candidates: a square for each at that
-/// density, with room to spare.
-const YOUNG_FOOTPRINT: f32 = 2.0;
-/// The least share of the young trees downy birch takes: the pioneer,
-/// whose light, wind-borne seeds reach every opening edge.
-const PIONEERS: f32 = 0.4;
-
-/// The forest's layers beside its spruces: downy birches where the forest
-/// gives them its ground ([`birch_share`]), on the spruces' tiles and
-/// footprints and as densely, so that together they stand as densely as
-/// the forest, and in small stands beyond it ([`birch_stands`]); and young
-/// spruces and birches regenerating in the band where the forest fades,
-/// densest where it stands half closed and none where it is closed or
-/// absent, at most [`YOUNG_TREES`] a hectare, birches the share the forest
-/// gives them there and at least [`PIONEERS`], the two summing to the
-/// band. The saplings stand from breast height to about six meters, the
-/// thicket a regenerating edge holds above its ground cover, on kilometer
-/// tiles. Birches stand on wet grass too.
-fn tree_layers(forest: impl Fn() -> Mask) -> [PlacementLayer; 3] {
-    let young = |share: Mask| {
-        Mask::Multiply(vec![
-            forest(),
-            Mask::Invert(Box::new(forest())),
-            Mask::Constant(4.0),
-            share,
-        ])
-    };
-    [
-        PlacementLayer {
-            id: "birches".into(),
-            assets: tree_choices("birch", BIRCHES),
-            density: 420.0,
-            footprint: 3.5,
-            materials: vec![
-                "grass".into(),
-                "dry_grass".into(),
-                "dirt".into(),
-                "forest_floor".into(),
-                "wet_grass".into(),
-            ],
-            mask: Mask::Max(vec![
-                Mask::Multiply(vec![forest(), birch_share(0.0)]),
-                Mask::Multiply(vec![birch_stands(), Mask::Invert(Box::new(forest()))]),
-            ]),
-            scale: [0.7, 1.15],
-            align: 0.04,
-            downhill: 0.0,
-            sink: 0.25,
-            bed: 0.0,
-            level: 3,
-            // A third of them stand on the pinned four-kilometer tiles too,
-            // as the spruces do.
-            far: Some(FarPlacement {
-                level: 4,
-                share: 0.3,
-            }),
-        },
-        PlacementLayer {
-            id: "young_spruces".into(),
-            assets: tree_choices("young_spruce", YOUNG_SPRUCES),
-            density: YOUNG_TREES,
-            footprint: YOUNG_FOOTPRINT,
-            materials: vec![
-                "grass".into(),
-                "dry_grass".into(),
-                "dirt".into(),
-                "forest_floor".into(),
-                "wet_grass".into(),
-            ],
-            mask: young(Mask::Invert(Box::new(birch_share(PIONEERS)))),
-            scale: [0.45, 1.35],
-            align: 0.04,
-            downhill: 0.0,
-            sink: 0.08,
-            bed: 0.0,
-            level: 2,
-            // The larger half stand on the two-kilometer tiles too, where
-            // they still span a pixel or two at 1080p and retire by their
-            // size beyond.
-            far: Some(FarPlacement {
-                level: 3,
-                share: 0.5,
-            }),
-        },
-        PlacementLayer {
-            id: "young_birches".into(),
-            assets: tree_choices("young_birch", YOUNG_BIRCHES),
-            density: YOUNG_TREES,
-            footprint: YOUNG_FOOTPRINT,
-            materials: vec![
-                "grass".into(),
-                "dry_grass".into(),
-                "dirt".into(),
-                "forest_floor".into(),
-                "wet_grass".into(),
-            ],
-            mask: young(birch_share(PIONEERS)),
-            scale: [0.45, 1.3],
-            align: 0.04,
-            downhill: 0.0,
-            sink: 0.08,
-            bed: 0.0,
-            level: 2,
-            // As the young spruces.
-            far: Some(FarPlacement {
-                level: 3,
-                share: 0.5,
-            }),
-        },
-    ]
-}
-
-/// Each of a tree's `count` shapes, `name` and its index, as a placement
-/// layer's choice, all as likely.
-fn tree_choices(name: &str, count: usize) -> Vec<PlacementChoice> {
-    (0..count)
-        .map(|index| PlacementChoice {
-            asset: format!("{name}{index}"),
-            weight: 1.0,
-        })
-        .collect()
 }
 
 /// Each of the boulder shapes as a placement layer's choice, all as likely.

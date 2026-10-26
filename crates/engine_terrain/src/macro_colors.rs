@@ -62,15 +62,18 @@ const LUMINANCE: [f32; 3] = [0.2126, 0.7152, 0.0722];
 /// strength, a unit of luminance brighter or, negative, darker. Water
 /// darkens every channel alike, as it fills pores (Lagarde 2013).
 const WET: [f32; 3] = [-1.0, -1.0, -1.0];
-/// Silt, sand and dust: fine mineral grains, pale and warm.
+/// Sand and dust: fine mineral grains, pale and warm, on lakes' shores the
+/// waves keep washed and beside roads.
 const SANDY: [f32; 3] = [1.15, 1.0, 0.6];
 /// Subsoil and rock bared of humus: paler and grayer, losing the topsoil's
 /// browns.
 const MINERAL: [f32; 3] = [0.95, 1.0, 1.15];
 /// Weathered ridges: paler, lichens crusting them gray-green and yellow.
 const WEATHERED: [f32; 3] = [1.0, 1.02, 0.85];
-/// Hollows: darker and browner, with shade and deep soil.
-const SHADED: [f32; 3] = [-0.85, -1.0, -1.4];
+/// Deep soil, in hollows and where erosion laid ground down over the bakes'
+/// whole span: darker and browner with the humus it holds, as floodplains'
+/// and slope feet's deep alluvial and colluvial soils are.
+const DEEP_SOIL: [f32; 3] = [-0.85, -1.0, -1.4];
 /// Slopes the sun dries: paler and warmer, toward straw.
 const SUNNY: [f32; 3] = [1.2, 1.0, 0.45];
 /// Slopes it leaves damp: darker and greener, toward moss.
@@ -306,17 +309,15 @@ fn texel(ground: &Ground, causes: &MacroCauses) -> [u8; 4] {
     let aspect = clamp(ground.facing / SUN_TANGENT, -1.0, 1.0);
     let lighter = |noise: f32| 2.0 * noise - 1.0;
     // Each cause's hue and how far it moves the ground's brightness: shores
-    // lie wet and sandy.
+    // lie wet and sandy, and what erosion laid down holds deep soil.
     let shades = [
         (WET, causes.wet * max(ground.moisture, ground.shore)),
-        (
-            SANDY,
-            causes.deposit * max(ground.deposit, 0.6 * ground.shore),
-        ),
+        (DEEP_SOIL, causes.deposit * ground.deposit),
+        (SANDY, causes.deposit * 0.6 * ground.shore),
         (MINERAL, causes.worn * ground.worn),
         (MINERAL, causes.steep * ground.steep),
         (WEATHERED, causes.relief * max(ground.relief, 0.0)),
-        (SHADED, causes.relief * max(-ground.relief, 0.0)),
+        (DEEP_SOIL, causes.relief * max(-ground.relief, 0.0)),
         (SANDY, causes.dust * ground.dust),
         (SUNNY, causes.aspect * max(aspect, 0.0)),
         (MOSSY, causes.aspect * max(-aspect, 0.0)),
