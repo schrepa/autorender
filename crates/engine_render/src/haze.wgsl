@@ -7,11 +7,22 @@
 // scattering's), where the shadow clipmap and the clouds' shadows let the
 // sun through, dimmed by the air in front of it. The air's density is its
 // mean's times a noise of mean 1, anchored to the world and drifting with
-// the wind; the march adds too what the noise's departure from its mean
-// scatters of the sky's light, which `atmospheric` gives at the mean.
+// the wind, and the air scatters the sky's light only from the share of the
+// sky it sees, which terrains' bounce probes hold (`haze_seen`); the march
+// adds how far that light departs from the sky's light `atmospheric` gives
+// at the mean, which counts the whole sky.
 // Within the reach the march is the only source of the sunlight the air
-// scatters (`atmospheric` keeps its own beyond it); post.wgsl filters the
-// result over time and the composite lays it over the scene.
+// scatters (`atmospheric` keeps its own beyond it), and it takes back the
+// sky's light `atmospheric` gives the air there by the share of the sky the
+// air does not see; beyond the reach the air counts as seeing the whole
+// sky, and nothing seams there. The march runs with haze only, where fog
+// and the air take the sky's one light (`air_light`), so what `atmospheric`
+// gives of it within the reach is that light times what the air there
+// covers at the mean, which the march's mean gathers again from the same
+// media: the split is exact but for the march's sampling, each step's air
+// taken at its jittered point, which the filter over time averages over
+// the step. post.wgsl filters the result over time and the composite lays
+// it over the scene.
 
 @group(1) @binding(0) var<uniform> post: Post;
 @group(1) @binding(1) var depth_texture: texture_depth_2d;
@@ -30,6 +41,10 @@ const HAZE_PRIMES: vec3<u32> = vec3<u32>(73856093u, 19349663u, 83492791u);
 // What salts each octave's lattice apart from the one before: 2^32 over the
 // golden ratio, whose multiples spread evenly.
 const HAZE_SALT: u32 = 0x9e3779b9u;
+// The share of all ways from a point over level ground that reach the sky:
+// the half above the horizon, the open sky `atmospheric`'s light counts as
+// the whole sky.
+const HAZE_OPEN_SKY: f32 = 0.5;
 
 // Smooth value noise in [0, 1] at `p` (lattice units), the lattice salted by
 // `salt`: the hashed values at the corners of the lattice cell holding `p`,
@@ -92,6 +107,25 @@ fn haze_covered(depth: f32) -> f32 {
     return 1.0 - exp(-depth);
 }
 
+// The share of the sky the air at world point `world` sees, of the sky
+// `atmospheric`'s light counts, the open sky over level ground. The air
+// scatters the sky's light alike from every way it comes, not by their
+// cosine as a surface takes it, so the share is that of all ways from
+// terrains' bounce probes there that reach the sky (`bounce_seen`) over the
+// open sky's (HAZE_OPEN_SKY), at most all of it. Above the probes' upper
+// layer it turns toward the open sky, which stands as a third layer as far
+// above the upper as the upper stands above the lower; where no terrain's
+// probes hold the point (no terrain, or bounce light off), the air sees
+// all of it. Ghost of Tsushima's haze dims its sky's light alike, by the
+// sky its lighting's probes see (Patry, "Real-Time Samurai Cinema", 2021).
+fn haze_seen(world: vec3<f32>) -> f32 {
+    let at = bounce_at(world, false);
+    if at.texel.x < 0.0 {
+        return 1.0;
+    }
+    return mix(saturate(bounce_seen(at) / HAZE_OPEN_SKY), 1.0, saturate(at.layer - 1.0));
+}
+
 // The haze at half-resolution texel `position`: the light the near air
 // scatters toward the eye along the ray through the texel's first pixel,
 // exposed (rgb), and the inverse distance of the surface the ray ends at
@@ -124,7 +158,8 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     // Through the drifting air: what it leaves of light from the eye to
     // the step, its fog's optical depth so far, the sunlight it scatters
     // (before the sun's light and the phase) and the shares of the sky's
-    // light its fog and its air scatter; then the same at the air's mean.
+    // light its fog and its air scatter from the sky they see; then the same
+    // at the air's mean, seeing the whole sky, as `atmospheric` lights it.
     var through = 1.0;
     var fogged = 0.0;
     var sunlit = 0.0;
@@ -163,8 +198,9 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 visible *= air_visibility(point);
             }
             sunlit += scattered * step_depth * visible;
-            fog_sky += scattered * fog_step;
-            air_sky += scattered * air_step;
+            let sky_seen = scattered * haze_seen(point);
+            fog_sky += sky_seen * fog_step;
+            air_sky += sky_seen * air_step;
             through *= 1.0 - covered;
         }
         let mean_fog_step = min(fog_mean, max(fog_most - mean_fogged, 0.0));
@@ -187,9 +223,12 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     // The sun's irradiance is pi times its color, which a white surface
     // facing it shows.
     let sun = lighting.sun_color.rgb * (PI * phase * sunlit);
-    // The sky's light the noise's departure from its mean scatters: more
-    // where the air is thicker than its mean, less where it is clearer.
+    // The sky's light the air scatters from the sky it sees, less what
+    // `atmospheric` gives at the mean: the noise's departure from its mean,
+    // more where the air is thicker and less where it is clearer, as far as
+    // the air sees the sky; less the light the share of the sky it does not
+    // see would have scattered at the mean, through the air in front.
     let lights = air_light(direction);
-    let drifting = lights.fog * (fog_sky - mean_fog_sky) + lights.air * (air_sky - mean_air_sky);
-    return vec4<f32>((sun + drifting) * lighting.horizon.w, inverse);
+    let sky_light = lights.fog * (fog_sky - mean_fog_sky) + lights.air * (air_sky - mean_air_sky);
+    return vec4<f32>((sun + sky_light) * lighting.horizon.w, inverse);
 }

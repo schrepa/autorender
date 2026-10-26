@@ -155,8 +155,9 @@ fn reflected(color: vec3<f32>, reflections: texture_2d<f32>, linear: sampler,
 
 // `color` with the haze's exposed light `light` laid over it: light added
 // as a screen blend, and light taken away (where the haze's drifting air is
-// clearer than the mean `atmospheric` lit) as a multiply, each share
-// compressed as x / (1 + |x|), so neither passes white or black.
+// clearer than the mean `atmospheric` lit, or sees less of the sky than it
+// counts) as a multiply, each share compressed as x / (1 + |x|), so neither
+// passes white or black.
 fn with_haze(color: vec3<f32>, light: vec3<f32>, settings: Post) -> vec3<f32> {
     if settings.haze.w == 0.0 {
         return color;

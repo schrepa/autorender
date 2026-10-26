@@ -28,7 +28,9 @@ pub(crate) struct UniformFrame {
 /// reach, through air that scatters: the haze's own, as thick as its
 /// strength makes it, or the fog, which the physically based sky's
 /// lighting zeroes. Shadows and the clouds' shadows shade it where they
-/// are on; without them the sun lights all of its air.
+/// are on; without them the sun lights all of its air. Terrains' bounce
+/// light, where it is on, hides from its air the sky their probes do not
+/// see; without it the air sees the whole sky.
 pub(crate) fn haze_runs(environment: &Environment) -> bool {
     let haze = environment.haze.sanitized();
     let atmosphere = environment.atmosphere.sanitized();
@@ -149,7 +151,8 @@ screen_effects! {
         reads: [Depth, Scene, Glow, Surface],
     },
     /// The haze's march ([`haze_runs`]): the sunlight the near air scatters
-    /// through the shadow clipmap and the clouds' shadows, at half
+    /// through the shadow clipmap and the clouds' shadows, and the sky's
+    /// light from the share of the sky terrains' bounce probes see, at half
     /// resolution, filtered over time with the history the last frame left.
     haze {
         gate: |environment| haze_runs(environment),
@@ -157,7 +160,7 @@ screen_effects! {
             let [across, down] = frame.haze_history;
             [frame.haze_turn, across, down, on]
         },
-        reads: [Depth, ShadowMaps, CloudDome, Haze],
+        reads: [Depth, ShadowMaps, CloudDome, Bounce, Haze],
     },
     /// Sky occlusion: sky light fading where still meshes hide the sky, from
     /// the shadow pass's sky maps (`shadows::sky`), which need shadows.
