@@ -49,11 +49,6 @@ struct WaveFrame {
 // two halves the stages pass between.
 var<workgroup> wave_line: array<vec4<f32>, 512>;
 
-// The product of complex numbers `a` and `b`.
-fn wave_multiply(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
-    return vec2<f32>(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
-}
-
 // The inverse transform of the two lines in wave_line[0..WAVE_TEXELS], each
 // of the WAVE_TEXELS / 2 invocations taking one butterfly of both a stage;
 // returns where in wave_line the result starts (0 or WAVE_TEXELS).
@@ -67,7 +62,7 @@ fn wave_transform(thread: u32) -> u32 {
         let b = wave_line[source + thread + WAVE_TEXELS / 2u];
         let angle = WAVE_TAU * f32(index) / f32(2u * span);
         let twiddle = vec2<f32>(cos(angle), sin(angle));
-        let turned = vec4<f32>(wave_multiply(b.xy, twiddle), wave_multiply(b.zw, twiddle));
+        let turned = vec4<f32>(complex_product(b.xy, twiddle), complex_product(b.zw, twiddle));
         let out = (thread - index) * 2u + index;
         wave_line[to + out] = a + turned;
         wave_line[to + out + span] = a - turned;
@@ -94,10 +89,10 @@ fn wave_evolved(tile: u32, texel: vec2<u32>) -> vec4<f32> {
     let turns = fract(fract(cycles * waves.clock.x) + cycles * waves.clock.y);
     let angle = select(turns * WAVE_TAU, 0.0, tile >= WAVE_WIND_TILES);
     let turn = vec2<f32>(cos(angle), -sin(angle));
-    let height = wave_multiply(amplitudes.xy, turn)
-        + wave_multiply(vec2<f32>(amplitudes.z, -amplitudes.w), vec2<f32>(turn.x, -turn.y));
+    let height = complex_product(amplitudes.xy, turn)
+        + complex_product(vec2<f32>(amplitudes.z, -amplitudes.w), vec2<f32>(turn.x, -turn.y));
     // i kx h + i (i kz h) = h (-kz + i kx)
-    return vec4<f32>(wave_multiply(height, vec2<f32>(-number.y, number.x)),
+    return vec4<f32>(complex_product(height, vec2<f32>(-number.y, number.x)),
         height * waves.tiles[tile].y);
 }
 
