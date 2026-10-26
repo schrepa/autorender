@@ -307,8 +307,8 @@ gpu_consts! {
     /// longer side it averages at most this many times as finely as across.
     pub(crate) const WAVE_ANISOTROPY: u16 = 8 => ["WATER_WAVE_ANISOTROPY"];
     /// Invocations transforming a line of a tile: a butterfly each.
-    pub(crate) const WAVE_LINE_GROUP: u32 = 128 => ["@evolve_rows" in WATER_WAVES_SHADER, "@transform_columns" in WATER_WAVES_SHADER];
-    /// Workgroup side of the moments' levels.
+    pub(crate) const WAVE_LINE_GROUP: u32 = 128 => ["@evolve_rows" in WATER_WAVES_SHADER, "@transform_columns" in WATER_WAVES_SHADER, "@evolve_fold_rows" in WATER_WAVES_SHADER, "@transform_fold_columns" in WATER_WAVES_SHADER];
+    /// Workgroup side of the moments' and the whitecaps' levels.
     pub(crate) const WAVE_LEVEL_GROUP: u32 = 8 => ["@average_level" in WATER_WAVES_SHADER];
 
     // crate::water_sim

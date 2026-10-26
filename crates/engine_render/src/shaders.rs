@@ -89,7 +89,8 @@ shaders! {
     DEFORMATION_SHADER = [
         "deformation.wgsl",
     ];
-    /// Water's waves: their spectra evolved and transformed into slopes.
+    /// Water's waves: their spectra evolved and transformed into slopes, and
+    /// into the whitecaps their folds leave.
     WATER_WAVES_SHADER = [
         "math.wgsl",
         "water_waves.wgsl",
@@ -354,7 +355,9 @@ entry_points! {
         compute: [press, slopes, scroll, wipe, rebase],
     }
     water_waves = WATER_WAVES_SHADER {
-        compute: [evolve_rows, transform_columns, average_level],
+        compute: [
+            evolve_rows, transform_columns, average_level, evolve_fold_rows, transform_fold_columns
+        ],
     }
     water_sim = WATER_SIM_SHADER {
         compute: [

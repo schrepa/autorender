@@ -167,6 +167,52 @@ fn water_tile_sample(tile: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> 
         moments.w);
 }
 
+// One filtered read of wind tile `tile`'s whitecaps at `uv` (in its
+// periods), which changes by `dx` and `dy` across the steady size (in its
+// periods), as `water_tile_sample` reads its moments: what its levels and
+// anisotropy average over that span of the largest compression its texels
+// have had at unit gain, fading (x, `water_waves.wgsl`), and the variance of
+// it they average away (y, what the levels lose of its square). Where its
+// texels span more than the steady size, what filtering between them loses
+// of the square is no variance of it, so that fades out as they grow past
+// it.
+fn water_tile_whitecaps(tile: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec2<f32> {
+    let state = textureSampleGrad(water_whitecaps, water_wave_sampler, uv, tile, dx, dy).xy;
+    let texels = sqrt(length(dx) * length(dy)) * f32(textureDimensions(water_whitecaps).x);
+    let minified = saturate(log2(max(texels, 1.0e-6)) + 1.0); // filter: the whitecaps' levels averaging what the steady size spans, the variance between texels none where they outgrow it
+    return vec2<f32>(state.x, max(state.y - state.x * state.x, 0.0) * minified);
+}
+
+// The wind's whitecaps at world `p` (meters along x and z), which changes by
+// `dx` and `dy` a pixel: each wind tile read where `water_wind_waves` reads
+// its slopes, at `p` turned by its lattice's angle times its repeats, at the
+// steady size (`water_tile_whitecaps`, its derivatives turned alike and
+// scaled by `water_steady`), and scaled by its gain in `gains`
+// (`water_wind_gains`). The sum over the tiles of each one's gain times its
+// faded compression (x), past 1 where the surface has folded, and the
+// variance of that sum the reads average away (y), the tiles independent.
+// A tile of no gain reads nothing; every other reads at any size, even where
+// `water_wind_waves` reads none of its slopes, so far water reads the mean
+// of what near water holds.
+fn water_wind_whitecaps(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, gains: vec4<f32>)
+        -> vec2<f32> {
+    let steady = water_steady();
+    var sum = vec2<f32>(0.0);
+    for (var tile = 0u; tile < WATER_WIND_TILES; tile++) {
+        let gain = gains[tile];
+        if gain <= 0.0 {
+            continue;
+        }
+        let repeats = water_tile_repeats(tile);
+        let turn = water_tile_turn(tile);
+        let read = water_tile_whitecaps(tile, complex_product(p, turn) * repeats,
+            complex_product(dx, turn) * (repeats * steady),
+            complex_product(dy, turn) * (repeats * steady));
+        sum += read * vec2<f32>(gain, gain * gain);
+    }
+    return sum;
+}
+
 // The meters a pixel spans as the waves' sampler filters what it covers,
 // the pixel changing by `dx` and `dy` (meters): its shorter side, or its
 // longer side over WATER_WAVE_ANISOTROPY where that is more, by which the
