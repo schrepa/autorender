@@ -6,10 +6,11 @@
 //! records cooked for the family of compressed formats the device samples,
 //! every family while a session cooks, hosts handing them back from the
 //! cook's packs or their stores and, verifying, having them made again. A
-//! record is kept by the content of the terrain's recipe (its key), the
-//! level and the size, and the code making and cooking it. A recipe that
-//! changes asks anew; the colors before stay until the new ones arrive, then
-//! leave the asset library.
+//! record is kept by the content of the terrain's recipe (its key, whose
+//! surface says how strongly each cause tints the colors), the level and
+//! the size, and the code making and cooking it. A recipe that changes asks
+//! anew; the colors before stay until the new ones arrive, then leave the
+//! asset library.
 
 use super::*;
 use crate::{MakeSources, Records, TextureSet, TextureUsage};

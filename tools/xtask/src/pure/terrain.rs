@@ -183,8 +183,14 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         size: MACRO_TEXELS,
     };
     let bytes = worker.run(MacroJob::KIND.name(), &colors.identity())?;
-    let made = macro_colors::macro_colors(&baked, &pyramid, colors.level, colors.size)
-        .ok_or("the macro colors' heights are invalid")?;
+    let made = macro_colors::macro_colors(
+        &baked,
+        &pyramid,
+        colors.level,
+        colors.size,
+        &rules.authored().macro_colors,
+    )
+    .ok_or("the macro colors' heights are invalid")?;
     observed.check(made == bytes, || {
         "the macro colors job differs from the colors made in place".into()
     });

@@ -398,6 +398,7 @@ impl TerrainSurface {
                 material: "rock".into(),
                 slope: [28.0, 35.0],
             }),
+            macro_colors: engine_terrain::MacroCauses::default(),
         }
     }
 

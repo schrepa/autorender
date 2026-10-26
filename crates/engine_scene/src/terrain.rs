@@ -128,6 +128,15 @@ pub struct SceneTerrainSurface {
     /// Objects authors stand on it, each at its own point.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub placed: Vec<engine_core::terrain_data::AuthoredPlacement>,
+    /// How strongly each cause tints its macro colors (the tint and growth
+    /// its bakes and its shape give its ground over its whole extent), and
+    /// the side the midday sun stands on. Omitted, the engine's defaults.
+    #[serde(default, skip_serializing_if = "is_default_causes")]
+    pub macro_colors: engine_core::terrain_data::MacroCauses,
+}
+
+fn is_default_causes(causes: &engine_core::terrain_data::MacroCauses) -> bool {
+    *causes == engine_core::terrain_data::MacroCauses::default()
 }
 
 /// An object placement layers stand on a terrain: a `mesh`
@@ -660,6 +669,7 @@ impl SceneTerrain {
                 .collect(),
             placements: surface.placements.clone(),
             placed: surface.placed.clone(),
+            macro_colors: surface.macro_colors,
         };
         let surface =
             TerrainSurface::new(&biomes, looks).map_err(|error| invalid(error.path, error.rule))?;
@@ -866,6 +876,7 @@ impl SceneTerrain {
                     .collect(),
                 placements: authored.placements.clone(),
                 placed: authored.placed.clone(),
+                macro_colors: authored.macro_colors,
             }
         });
         let layers = terrain

@@ -38,8 +38,9 @@ use crate::macro_colors::{MACRO_BLOCK, MAX_MACRO_TEXELS, macro_colors};
 use crate::shading::ShadingMaking;
 use crate::steady_water::{PartMaking, SettledReads, Steadying};
 use crate::{
-    BiomeRules, Biomes, Gait, Generator, Layers, Placing, Pyramid, Stamp, SteadySummary,
-    SteadyWater, TILE_QUADS, Tile, TileKey, TilePortals, TileShading, TileWater, WaterPart,
+    BiomeRules, Biomes, Gait, Generator, Layers, MacroCauses, Placing, Pyramid, Stamp,
+    SteadySummary, SteadyWater, TILE_QUADS, Tile, TileKey, TilePortals, TileShading, TileWater,
+    WaterPart,
 };
 
 /// The kinds of terrain jobs, which hosts carry by name: a tile of a
@@ -535,8 +536,9 @@ pub fn bounce_output(bytes: &[u8]) -> Result<TerrainBounce, CodecError> {
 }
 
 /// A [`JobKind::Macro`]: the macro colors ([`crate::macro_colors`]) of the
-/// terrain the recipe shared as `recipe` generates, `size` texels a side,
-/// its shape read from the heights of its `level`'s tiles (its finest
+/// terrain the recipe shared as `recipe` generates, each cause as strong as
+/// the recipe's surface says ([`Biomes::macro_colors`]), `size` texels a
+/// side, its shape read from the heights of its `level`'s tiles (its finest
 /// pinned level, which its lighting reads too). Like a tile's job it is its
 /// own identity and its own input. Its output is the map's RGBA8 texels,
 /// rows along z.
@@ -879,7 +881,7 @@ enum Running {
     Lighting(Box<(GroundMaking, LightingJob)>),
     Water(Box<PartMaking>),
     Bounce(Box<(GroundMaking, BounceJob, Arc<Layers>, Arc<BiomeRules>)>),
-    Macro(Box<(Arc<Layers>, Pyramid, MacroJob)>),
+    Macro(Box<(Arc<Layers>, Pyramid, MacroCauses, MacroJob)>),
     Steadied(Box<Steadying>),
     Shading(Box<ShadingMaking>),
     FarTexels(Vec<u8>),
@@ -1069,7 +1071,8 @@ impl TerrainWorker {
                 if !job.valid() || job.level >= recipe.pyramid.levels() {
                     return Err("macro colors of an invalid size or level".into());
                 }
-                Running::Macro(Box::new((recipe.layers.clone(), recipe.pyramid, job)))
+                let causes = recipe.rules.authored().macro_colors;
+                Running::Macro(Box::new((recipe.layers.clone(), recipe.pyramid, causes, job)))
             }
             JobKind::Steadied => {
                 let job: SteadiedJob = reader.get().map_err(invalid)?;
@@ -1144,8 +1147,8 @@ impl TerrainWorker {
                 }
             }
             Running::Macro(colors) => {
-                let (layers, pyramid, job) = &**colors;
-                macro_colors(layers, pyramid, job.level, job.size)
+                let (layers, pyramid, causes, job) = &**colors;
+                macro_colors(layers, pyramid, job.level, job.size, causes)
                     .ok_or_else(|| "the macro colors' heights are invalid".to_owned())
             }
             Running::Steadied(steadying) => match steadying.advance(&mut budget) {

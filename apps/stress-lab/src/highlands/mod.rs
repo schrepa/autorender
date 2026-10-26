@@ -3,7 +3,10 @@
 //! leveled for a hamlet, a flat valley floor and a cave mouth cut as a
 //! hole), streamed around the camera, with the scene's renderables standing
 //! on the plateau as the tower field does. Its ground is
-//! meadow, dry grass, dirt, snow and, wherever it is steep, rock, its
+//! meadow, dry grass on slopes turned to the sun, lush grass on those
+//! turned from it and where water gathers, bare dirt and gravel where
+//! erosion wore it, silt where erosion laid it down, scree, snow and,
+//! wherever it is steeper, rock, its
 //! streams' beds sand, gravel, cobbles or boulders as coarse as their
 //! floods leave them, each textured by maps its `ground` module generates,
 //! which load as cooked texture records; its streams wet their banks up
@@ -1467,12 +1470,15 @@ fn in_terrain_rock(
         .map_err(engine::Error::from)
 }
 
-/// Where each material lies: meadow everywhere, dry grass in broad patches
-/// with ragged edges, bare dirt in smaller ones, needle litter under the
-/// forests, lush grass where water gathers, beds along streams and rivers
-/// of the grains their floods leave ([`stream_beds`]), gravel on the roads
-/// and snow on the peaks; rock over all of them wherever the ground is
-/// steep; the ground wet along the streams ([`wetness`]); and the
+/// Where each material lies: meadow everywhere; from their causes, their
+/// edges ragged ([`ragged`]), dry grass on slopes turned to the sun and on
+/// convex ground, lush grass on slopes turned from it, bare dirt and gravel
+/// where erosion wore the ground, silt where it laid it down and scree as
+/// steep as talus rests; needle litter under the forests, lush grass where
+/// water gathers, beds along streams and rivers of the grains their floods
+/// leave ([`stream_beds`]), gravel on the roads and snow on the peaks; rock
+/// over all of them wherever the ground is steep; the ground wet along the
+/// streams ([`wetness`]); its macro colors turned to the same sun; and the
 /// boulders, stones and spruces placed over them.
 #[expect(
     clippy::too_many_lines,
@@ -1618,44 +1624,26 @@ fn rules() -> Biomes {
             fitness: Mask::one(),
             layers: [
                 layer("grass", Mask::one()),
+                // Dry grass where slopes turn to the sun, and on convex
+                // ground draining faster than water reaches it.
                 layer(
                     "dry_grass",
-                    remap(
-                        Mask::Add(vec![
-                            scaled(noise(160.0, 11, 3), 0.6),
-                            scaled(noise(28.0, 12, 2), 0.25),
-                            scaled(noise(5.0, 16, 1), 0.15),
-                        ]),
-                        0.48,
-                        0.72,
-                    ),
+                    ragged(Mask::Max(vec![sunward(), Mask::Wetness(DRAINED)]), 81),
                 ),
-                // Bare dirt in patches where the grass thins.
-                layer(
-                    "dirt",
-                    remap(
-                        Mask::Add(vec![
-                            scaled(noise(60.0, 13, 2), 0.6),
-                            scaled(noise(9.0, 14, 2), 0.4),
-                        ]),
-                        0.6,
-                        0.74,
-                    ),
-                ),
+                // Lush grass where slopes turn from the sun and stay damp.
+                layer("wet_grass", ragged(shadeward(), 82)),
+                // Bare dirt where erosion wore the ground through its soil
+                // and regolith, and gravel in its gullies, their fines
+                // washed out; silt where it laid ground down, at the feet of
+                // slopes and on fans.
+                layer("dirt", ragged(Mask::Worn(WORN_SOIL), 83)),
+                layer("gravel", ragged(Mask::Worn(WORN_FINES), 84)),
+                layer("silt", ragged(Mask::Deposit(LAID), 85)),
+                // Scree as steep as talus rests, the rock over it steeper.
+                layer("scree", ragged(Mask::Slope(SCREE), 86)),
                 layer("forest_floor", remap(forest(), 0.12, 0.42)),
                 // Lush grass in wet hollows and along streams.
-                layer(
-                    "wet_grass",
-                    remap(
-                        Mask::Add(vec![
-                            Mask::Wetness([10.0, 13.5]),
-                            scaled(noise(24.0, 41, 2), 0.35),
-                            Mask::Constant(-0.15),
-                        ]),
-                        0.35,
-                        0.6,
-                    ),
-                ),
+                layer("wet_grass", ragged(Mask::Wetness([10.0, 13.5]), 87)),
             ]
             .into_iter()
             .chain(stream_beds())
@@ -1686,7 +1674,79 @@ fn rules() -> Biomes {
             material: "rock".into(),
             slope: [35.0, 40.0],
         }),
+        // Its macro colors turn their slopes to the sun its rules do.
+        macro_colors: engine::terrain::data::MacroCauses {
+            heading: SUN_SIDE,
+            ..Default::default()
+        },
     }
+}
+
+/// The side the highlands' midday sun stands on, in degrees from -z toward
+/// +x as views give yaw: south, +z, north lying at -z as the views assume.
+const SUN_SIDE: f32 = 180.0;
+/// Facings, tan(slope) cos(downhill - [`SUN_SIDE`]), over which slopes
+/// turned to the sun dry out and those turned as far from it stay lush:
+/// with the sun 30 degrees up, about its mean over a temperate year's
+/// daylight, a slope takes cot 30 degrees (1.73) times its facing more of
+/// its direct light than level ground (Lambert's cosine law), a fifth more
+/// at the first and half again at the second.
+const SUNNY: [f32; 2] = [0.115, 0.289];
+/// The wetness index, ln(a / tan b), under which ground drains faster than
+/// water reaches it (Beven and Kirkby 1979): convex spurs and crests fall
+/// below the 5 steep slopes take, drying from the first, wholly at the
+/// second.
+const DRAINED: [f32; 2] = [5.0, 3.5];
+/// Meters the erosions wore away over which ground lies bare: deeper than
+/// the soil and the weathered regolith under it, a meter or two on a
+/// mountain slope, which form again over shallower wear, from the first,
+/// wholly at the second.
+const WORN_SOIL: [f32; 2] = [2.0, 4.0];
+/// Meters worn over which the gullies' ground lies as gravel, its fines
+/// washed out.
+const WORN_FINES: [f32; 2] = [6.0, 10.0];
+/// Meters the erosions laid down over which fine silt lies: deeper than
+/// buried grass grows up through, about half a meter, from the first,
+/// wholly at the second.
+const LAID: [f32; 2] = [0.5, 2.0];
+/// Degrees of slope over which scree lies: talus rests between 30 and 37
+/// degrees, its angle of repose, and the rock paints over it from 35.
+const SCREE: [f32; 2] = [30.0, 33.0];
+/// Meters across the noise that rags the edges of the ground's patches: a
+/// few tufts' or stones' size, which level-0 samples a meter apart hold
+/// whole, noise fading below four samples across.
+const RAG: f32 = 4.0;
+
+/// `mask`'s ground with ragged edges: whole where the mask passes a half,
+/// noise [`RAG`] meters across moving its edges by up to a fifth of the
+/// mask's range either way, as detail masks rag procedural splatting's
+/// (Andersson 2007). `seed` picks the noise.
+fn ragged(mask: Mask, seed: u32) -> Mask {
+    remap(
+        Mask::Add(vec![
+            mask,
+            scaled(noise(RAG, seed, 1), 0.4),
+            Mask::Constant(-0.2),
+        ]),
+        0.45,
+        0.55,
+    )
+}
+
+/// Where slopes turn to the sun ([`SUNNY`]).
+fn sunward() -> Mask {
+    Mask::Facing(Facing {
+        heading: SUN_SIDE,
+        ramp: SUNNY,
+    })
+}
+
+/// Where slopes turn as far from the sun.
+fn shadeward() -> Mask {
+    Mask::Facing(Facing {
+        heading: SUN_SIDE,
+        ramp: SUNNY.map(|facing| -facing),
+    })
 }
 
 /// The median grains (meters) at which a bed's gravel, cobbles and
