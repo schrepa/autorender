@@ -18,6 +18,7 @@ mod gpu;
 mod heavy;
 mod importing;
 mod iteration_build;
+mod ladder;
 mod lint;
 mod locality;
 mod measure;
@@ -119,6 +120,9 @@ fn execute() -> Result<(), Failure> {
     if task == "measure" {
         return Ok(measure::measure(&root, &options)?);
     }
+    if task == "ladder" {
+        return Ok(ladder::ladder(&root, &options)?);
+    }
     if task == "cook" {
         return Ok(cook::cook(&root, &options)?);
     }
@@ -214,6 +218,7 @@ fn commands() -> Vec<(String, &'static str)> {
         ("cook [--check] [PRESET...]".into(), "Cook the Stress Lab's presets (highlands when none is named) into packs in web/public/cooked/, every record each one's content needs made or read from the packs there, and list them in its index.json for the page; with --check, run each preset offscreen on its pack with every record made again and compared (--jobcache verify): it must read records and find none differing, else exit 1; each preset holds the heavy-run lock"),
         ("bench assets".into(), "Build the files workloads read that git does not hold into target/bench-assets/<inputs hash>/ (reused while the generators are unchanged) and write them into web/public/stress for the page; prints the folder and its generated_hash"),
         ("measure --task TASK.json --profile PROFILE.json --out REPORT.json [--extend REPORT.json] [--formats FORMATS.json]".into(), "Run an engine-factory measure task on the native host from this checkout (the task's tools commit): build each commit it names, run each workload's two arms (each its commit's program from that commit's tree, with its own switches, scene, settings and generated files) in alternating rounds until its clean pairs, profile each arm and report the shaders where the task wants them, run the task's checks, and write the factory's measure report, checked against FORMATS (the factory's /api/formats) when given"),
+        ("ladder FILE --out DIR [--program PATH] [-- ARGUMENTS...]".into(), "Capture the places a ladder file names (bench/ladders/) from a standing eye at each of its distances under each of its looks, one offscreen run of the native Stress Lab at a time (the working tree's stress-lab-native built as measure builds an arm, unless --program names one; every run takes ARGUMENTS too), holding the machine's heavy-run lock; measure each capture's contrast per octave of size, the RMS of each band of its luminance's Laplacian pyramid in stops around the image's center, with each band's sizes in pixels and in meters at the target and its ratio to the capture's median band; write DIR/report.json and a contact sheet per place and look, and print each one's table of distance by world size. A check of our own, never a gate: exit 0 whenever the runs complete, whatever the numbers"),
         ("equivalence [--base REV] [--candidate REV] [--tier smoke|full] [--cells NAME,...] [--aa] [--repeat N] [--keep N] [--gpu discrete|integrated] [--browser | --both [--hosts]]".into(), "Whether a change leaves what the engine draws and does as it was: the base (the merge-base with origin/main, or --base) and the candidate (the working tree, or --candidate) each build the Stress Lab, then every cell of bench/equivalence.json's tier runs on both, settled and captured, natively (default), in headless Chrome against each side's development server (--browser) or both (--both; --hosts measures how the candidate's native and Chrome images differ); captures compare by hash then pixel, judged work counters by their rule, digests by part; an unstable capture (its reason in the matrix) passes when it matches one of the base's --repeat runs or lies no farther from them than they lie from each other; --aa runs the base against itself; each cell holds the heavy-run lock; exit 0 equal, 3 different, 1 could not check"),
         ("checks --task TASK.json --profile PROFILE.json --out REPORT.json [--formats FORMATS.json]".into(), "Run an engine-factory check task from this checkout: each check's script against a development server of its commit, every attempt kept (a failing check runs again, up to 3 attempts), as the factory's check report, checked against FORMATS when given"),
         ("selfcheck [measure] [checks]".into(), "Check the factory's tools against themselves on the working tree as a commit (made without moving any ref): an A/A measure task (both arms that commit, Field, 2 clean pairs) must complete with every run settled, the same work counted every run and the arms' median frame times within 25%; one check run with its commit's own scripts and with the same commit's scripts checked out again must hold at its first attempt both ways, and expected to fail must fail every attempt; files in target/selfcheck/; exit 3 when the sides differed"),

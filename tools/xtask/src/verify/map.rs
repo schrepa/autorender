@@ -106,6 +106,12 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &["bench/budgets.json"],
         checks: &[],
     },
+    // The ladders `cargo xtask ladder` captures, a check of our own that no
+    // build or check runs.
+    Rule {
+        paths: &["bench/ladders/**"],
+        checks: &[],
+    },
     // The math everything computes with.
     Rule {
         paths: &["crates/engine_math/**"],
