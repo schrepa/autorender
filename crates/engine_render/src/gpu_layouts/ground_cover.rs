@@ -17,6 +17,7 @@ gpu_structs! {
         pub deform: [f32; 4],
         pub foliage: [f32; 4],
         pub view: [f32; 4],
+        pub widening: [f32; 4],
     }
 
     /// WGSL `CoverFrame` of `meshes/cover.wgsl`.

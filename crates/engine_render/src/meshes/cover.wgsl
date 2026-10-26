@@ -199,7 +199,7 @@ fn vs_cover_temporal(@builtin(instance_index) instance: u32,
 // lights as the side facing the sun does, the far side seen
 // through the blade a little dimmer, and their normal leans most of the way
 // up, so they light much as the ground they stand on. The ground's canopy
-// shows their average where they retire (`terrain_variety.wgsl`'s
+// shows their average where they thin and retire (`terrain_variety.wgsl`'s
 // `cover_seen`).
 fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     var face = normalize(input.normal);

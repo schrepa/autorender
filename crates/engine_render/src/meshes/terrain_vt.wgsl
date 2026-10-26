@@ -300,7 +300,7 @@ fn terrain_vt_shading(footprint: f32, first: u32) -> TerrainShadingLevel {
 // normal `geometric`, seen from straight above: its sides on the ground's
 // slope, its footprint the longer and the footprint its filtering resolves
 // the shorter, or the longer over TERRAIN_ANISOTROPY where filtering runs
-// out, as for a pixel spanning it.
+// out, as for a pixel spanning it; and the leaves its cover grows there.
 fn terrain_vt_site(world: vec3<f32>, size: f32, geometric: vec3<f32>) -> TerrainSite {
     let slope = -geometric.xz / max(geometric.y, 0.05);
     var site: TerrainSite;
@@ -313,6 +313,7 @@ fn terrain_vt_site(world: vec3<f32>, size: f32, geometric: vec3<f32>) -> Terrain
     site.geometric = geometric;
     site.toward = vec3<f32>(0.0, 1.0, 0.0);
     site.thinned = 0.0;
+    site.grown = terrain_grown(world, site.footprint);
     return site;
 }
 

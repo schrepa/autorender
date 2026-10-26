@@ -65,9 +65,9 @@ pub(crate) struct TerrainTables {
     pub(super) covers: wgpu::Buffer,
     covers_written: Vec<CoverEntry>,
     covers_spare: Vec<CoverEntry>,
-    // Each terrain's densest cover and its blades' root width.
-    pub(super) cover_densities: Vec<[f32; 2]>,
-    // The tallest blade any material's cover grows.
+    // Each terrain's covers as ground cover's law takes them.
+    pub(super) cover_terms: Vec<crate::ground_cover::CoverTerms>,
+    // The tallest blade any material's cover names.
     pub(super) cover_tallest: f32,
 }
 
@@ -120,7 +120,7 @@ impl TerrainTables {
             ),
             covers_written: Vec::new(),
             covers_spare: Vec::new(),
-            cover_densities: Vec::new(),
+            cover_terms: Vec::new(),
             cover_tallest: 0.0,
         }
     }
@@ -261,29 +261,22 @@ impl TerrainTables {
     }
 
     /// Writes every terrain's materials' covers at their
-    /// palette indices when they change, and notes each terrain's densest.
+    /// palette indices when they change, and notes each terrain's terms.
     fn write_covers(&mut self, queue: &wgpu::Queue, terrains: &RenderTerrains) {
         let mut entries = std::mem::take(&mut self.covers_spare);
         entries.clear();
-        self.cover_densities.clear();
+        self.cover_terms.clear();
         for terrain in &terrains.terrains {
             let room = PALETTE_ENTRIES - entries.len();
             let kept = &terrain.surface[..terrain.surface.len().min(room)];
-            self.cover_densities
-                .push(if kept.len() == terrain.surface.len() {
-                    kept.iter()
-                        .filter_map(|look| look.cover)
-                        .map(|cover| [cover.density, cover.width])
-                        .fold([0.0; 2], |densest, cover| {
-                            if cover[0] > densest[0] {
-                                cover
-                            } else {
-                                densest
-                            }
-                        })
-                } else {
-                    [0.0; 2]
-                });
+            let terms = if kept.len() == terrain.surface.len() {
+                crate::ground_cover::CoverTerms::of(
+                    kept.iter().filter_map(|look| look.cover.as_ref()),
+                )
+            } else {
+                crate::ground_cover::CoverTerms::default()
+            };
+            self.cover_terms.push(terms);
             entries.extend(kept.iter().map(|look| {
                 look.cover.map_or(CoverEntry::zeroed(), |cover| CoverEntry {
                     shape: [cover.density, cover.height[0], cover.height[1], cover.width],

@@ -347,9 +347,21 @@ gpu_consts! {
     pub(crate) const BLADE_BYTES: u64 = 32 => ["size_of CoverBlade"];
     /// The share of ground cover's radius within which it grows densest:
     /// past it blades thin as this share of the radius over the distance,
-    /// widening as much to cover as much ground, up to its inverse at the
-    /// radius (`terrain_variety.wgsl`'s `cover_share`).
+    /// widening as much to cover as much ground as far as their shape lets
+    /// them, up to its inverse at the radius (`terrain_variety.wgsl`'s
+    /// `cover_share`).
     pub(crate) const COVER_CORE: f32 = 0.2 => ["COVER_CORE"];
+    /// How many times as tall, and as dense, ground cover grows on a
+    /// terrain's lushest ground as on its driest, the macro colors'
+    /// lushness moving it between them geometrically about the cover its
+    /// material names, which grows halfway (`terrain_variety.wgsl`'s
+    /// `cover_growth`). Grassland grows in proportion to the water it gets
+    /// (Sala et al. 1988, "Primary production of the central grassland
+    /// region of the United States"), and drought shortens its leaves and
+    /// thins its tillers alike: the lushest ground taken to hold four times
+    /// the driest's water grows four times its leaves, its blades from 0.71
+    /// to 1.41 times the material's own height and density each.
+    pub(crate) const COVER_LUSH_RATIO: f32 = 2.0 => ["COVER_LUSH_RATIO"];
     /// Joints along a blade too short on screen to show its curve, which
     /// the blades' second indirect draw draws straight.
     pub(crate) const STRAIGHT_JOINTS: u32 = 3 => ["STRAIGHT_JOINTS"];
