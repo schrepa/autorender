@@ -48,7 +48,8 @@ struct TerrainPaletteEntry {
     // (`terrain_displacement`).
     relief: vec4<f32>,
     // Its cover's canopy: its blades' tip color (linear), and their
-    // leaves' area per square meter of ground (0 without cover).
+    // leaves' area per square meter of ground halfway lush (0 without
+    // cover), which lusher ground grows more of (`terrain_grown`).
     canopy: vec4<f32>,
     // Its placement layers' objects, which the ground takes on where they
     // retire: their mean linear color and the share of the ground they
@@ -976,11 +977,12 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 // never under a sixteenth of the long one), against which a whole repeat of
 // a material's maps shows them or their means (`terrain_mapped`); the
 // terrain's normal and the way toward the eye; the share of its cover's
-// leaves blades no longer show there, and the meters a pixel spans across
-// the view there as level of detail measures objects (`terrain_across`),
-// by which placed objects retire. The virtual texture's bakes, whose pages
-// pixels of any size across the view read, hold neither: no canopy and no
-// retired objects.
+// leaves blades no longer show there, and how many times its materials'
+// leaves its cover grows there (`terrain_grown`); and the meters a pixel
+// spans across the view there as level of detail measures objects
+// (`terrain_across`), by which placed objects retire. The virtual texture's
+// bakes, whose pages pixels of any size across the view read, hold no canopy
+// and no retired objects, only the leaves their cover grows.
 struct TerrainSite {
     world: vec3<f32>,
     world_dx: vec3<f32>,
@@ -990,6 +992,7 @@ struct TerrainSite {
     geometric: vec3<f32>,
     toward: vec3<f32>,
     thinned: f32,
+    grown: f32,
     across: f32,
 }
 
@@ -1005,8 +1008,19 @@ fn terrain_thinned(world: vec3<f32>) -> f32 {
     if cover.x <= 0.0 {
         return 1.0;
     }
+    let law = CoverLaw(cover.x, cover.y, cover.w);
     let away = detail_distance(world);
-    return 1.0 - cover_shown(away, cover_share(away, cover.x, cover.y), cover.x);
+    return 1.0 - cover_shown(away, cover_share(away, law), law);
+}
+
+// How many times its material's leaves ground cover grows at `world`, as
+// lush as the macro colors hold it there, filtered over `footprint` meters
+// as the tint reads them: its blades' height times their density
+// (`terrain_variety.wgsl`'s `cover_growth`), which the canopy's depth
+// follows, so the far field holds the leaves the near field's blades do.
+fn terrain_grown(world: vec3<f32>, footprint: f32) -> f32 {
+    let growth = cover_growth(terrain_macro_texel(world.xz - terrain.origin.xz, footprint).a);
+    return growth.height * growth.density;
 }
 
 // The meters a pixel spans across the view at `world` as level of detail
@@ -1238,14 +1252,15 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         (*ground).mapped += weight;
     }
     if entry.canopy.w > 0.0 {
-        // Ground under cover shows as its canopy where blades retire: the
-        // colors a view meets among them on average, rough and shaded
-        // among them as they are, and lit as blades are, their sides
-        // toward the sun and the sun passing through them (their leaf
-        // share, `terrain_point_seen`).
-        let canopy = terrain_canopy(entry.canopy.w, site);
+        // Ground under cover shows as its canopy where blades thin and
+        // retire, as many leaves as its blades grow there: the colors a view
+        // meets among them on average, rough and shaded among them as they
+        // are, and lit as blades are, their sides toward the sun and the sun
+        // passing through them (their leaf share, `terrain_point_seen`).
+        let leaves = entry.canopy.w * site.grown;
+        let canopy = terrain_canopy(leaves, site);
         if canopy > 0.0 {
-            let look = terrain_canopy_look(color, entry.canopy.rgb, entry.canopy.w, site);
+            let look = terrain_canopy_look(color, entry.canopy.rgb, leaves, site);
             color = mix(color, look.color, canopy);
             roughness = mix(roughness, COVER_ROUGHNESS, canopy);
             // The sky they reflect too: a flat ground seen along it would
@@ -1256,7 +1271,7 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         (*ground).vegetated += weight;
         (*ground).canopy += weight * canopy;
         (*ground).canopy_color += weight * entry.canopy.rgb;
-        (*ground).leaves += weight * entry.canopy.w;
+        (*ground).leaves += weight * leaves;
     }
     // Where its placement layers' objects retire, the ground takes on their
     // mean color over what they covered, standing over its canopy as they
@@ -1811,6 +1826,7 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     site.geometric = geometric;
     site.toward = -ray;
     site.thinned = terrain_thinned(world);
+    site.grown = terrain_grown(world, site.footprint);
     site.across = terrain_across(world);
     // Moved where the ground's relief and tracks show.
     let relief = terrain_parallax(site, shading, look.dither);

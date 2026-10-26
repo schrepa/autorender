@@ -1,10 +1,10 @@
 // Ground variety: the tint a terrain's macro colors give its
-// ground and the blades growing on it, the same in both and at every
-// distance (`meshes/terrain.wgsl`, `cover_grow.wgsl`). Ground cover's
-// density, which both read too, follows, with how things retire by their
-// size on screen (ground cover's blades and placed objects alike), how
-// placement layers thin with distance, and what a view sees of blades,
-// which their canopy shows where they retire.
+// ground and the blades growing on it, and how lush ground grows them, the
+// same in both and at every distance (`meshes/terrain.wgsl`,
+// `cover_grow.wgsl`). Ground cover's law, which both read too, follows, with
+// how things retire by their size on screen (ground cover's blades and
+// placed objects alike), how placement layers thin with distance, and what a
+// view sees of blades, which their canopy shows where they retire.
 
 fn variety_hash(cell: vec2<i32>) -> f32 {
     var h = (u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u);
@@ -25,15 +25,50 @@ fn variety_noise(p: vec2<f32>) -> f32 {
     return mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
 }
 
+// How many times as tall, and as dense, ground cover grows on a terrain's
+// lushest ground as on its driest (`gpu_layouts::constants::COVER_LUSH_RATIO`).
+const COVER_LUSH_RATIO: f32 = 2.0;
+
+// The light ground cover's blades reflect on a terrain's lushest ground over
+// what the same material's reflect on its driest, red, green and blue.
+// Leaves short of water lose chlorophyll and reflect more of the light, most
+// from green to red and least in the blue (Carter 1993, "Responses of leaf
+// spectral reflectance to plant stress"): the lushest reflect two thirds of
+// the driest's red, four fifths of their green and nine tenths of their blue,
+// so dry grass shows paler and yellower, lush grass darker and greener, the
+// driest reflecting about 30% more light than the lushest.
+const COVER_LUSH_REFLECTANCE: vec3<f32> = vec3<f32>(0.67, 0.8, 0.89);
+
+// How ground cover grows where the macro colors hold plants `lush` (0 dry,
+// 1 lush), as shares of the cover its material names: as tall and as dense,
+// and each channel of the light its blades reflect (`tint`). Lushness moves
+// them between the driest ground's and the lushest's geometrically about the
+// material's own, which grows halfway (and before the colors arrive).
+struct CoverGrowth {
+    height: f32,
+    density: f32,
+    tint: vec3<f32>,
+}
+
+fn cover_growth(lush: f32) -> CoverGrowth {
+    let toward = saturate(lush) - 0.5;
+    var growth: CoverGrowth;
+    growth.height = pow(COVER_LUSH_RATIO, toward);
+    growth.density = growth.height;
+    growth.tint = pow(COVER_LUSH_REFLECTANCE, vec3<f32>(toward));
+    return growth;
+}
+
 // The tint of ground whose macro colors' texel holds `colors` (the tint, 128
 // of 255 leaving it as it is, and how lush plants grow there:
 // `engine_terrain::macro_colors`), `vegetated` the share of it growing
 // plants: every ground takes the tint as the macro colors hold it, near and
-// far alike, and plants grow lusher and darker where it holds them lush,
-// drier and paler where dry.
+// far alike, and plants the light they reflect as lush as it holds them
+// (`cover_growth`): darker and greener where lush, paler and yellower where
+// dry.
 fn macro_tint(colors: vec4<f32>, vegetated: f32) -> vec3<f32> {
-    let growth = mix(vec3<f32>(1.05, 1.02, 0.88), vec3<f32>(0.85, 0.97, 0.82), colors.a);
-    return colors.rgb * (255.0 / 128.0) * mix(vec3<f32>(1.0), growth, vegetated);
+    let growth = cover_growth(colors.a);
+    return colors.rgb * (255.0 / 128.0) * mix(vec3<f32>(1.0), growth.tint, vegetated);
 }
 
 // The mean square slope, both axes summed, of unit normals whose mean is
@@ -93,48 +128,60 @@ fn placed_thinned(thin: vec4<f32>, away: f32) -> f32 {
     return keep;
 }
 
+// Ground cover's law on a terrain, which its blades and their canopy follow
+// alike (`ground_cover::CoverLaw`): the radius it grows densest within, the
+// meters from the detail eye at which its blades past the radius span the
+// settings' pixels (0: cover within the radius alone), and the most times
+// their roots' width its blades widen, from 1 to 1 / COVER_CORE: as far as
+// every one of its covers' blades still reads as a grass leaf.
+struct CoverLaw {
+    radius: f32,
+    span: f32,
+    widest: f32,
+}
+
 // How many times wider than their roots ground cover's blades grow `away`
-// meters from the detail eye, for cover growing densest within `radius`:
-// as many times as they thin within it, so they cover as much ground as the
-// densest cover's; past it no wider than there.
-fn cover_widening(away: f32, radius: f32) -> f32 {
-    return clamp(away / (COVER_CORE * radius), 1.0, 1.0 / COVER_CORE);
+// meters from the detail eye under `law`: as many times as they thin within
+// the radius, so they cover as much ground as the densest cover's, until
+// their shape caps them (`law.widest`); past that they thin without
+// widening, and past the radius they stay as wide as there.
+fn cover_widening(away: f32, law: CoverLaw) -> f32 {
+    return clamp(away / (COVER_CORE * law.radius), 1.0, law.widest);
 }
 
 // Ground cover's density as a share of its densest, `away` meters from the
-// detail eye, for cover growing densest within `radius` whose blades span
-// the settings' pixels `span` meters away at the width the radius gives
-// them (0: cover within the radius alone), the same for its blades and the
-// canopy shown where they thin. All of it within a fifth of the radius,
-// then the fifth over the distance; past the radius, where blades widen no
-// more, a fifth of the radius's square over the distance's, which meets it
-// there, so each pixel of the view holds about as many blades as at the
-// radius. Of those, the share still wide enough on screen stands
-// (`seen_share`): within the radius blades span as many pixels as at its
-// fifth, and past it fewer as they recede, until none stands from twice
-// `span`. Without tiers cover thins to none over the radius's outer half.
-fn cover_share(away: f32, radius: f32, span: f32) -> f32 {
+// detail eye under `law`, the same for its blades and the canopy shown where
+// they thin. All of it within a fifth of the radius, then the fifth over the
+// distance; past the radius a fifth of the radius's square over the
+// distance's, which meets it there, so each pixel of the view holds about as
+// many blades as at the radius. Of those, the share still wide enough on
+// screen stands (`seen_share`): while blades widen they span as many pixels
+// as at the radius's fifth, and once their shape caps them, and past the
+// radius, fewer as they recede, until none stands from twice `law.span`.
+// Without tiers cover thins to none over the radius's outer half.
+fn cover_share(away: f32, law: CoverLaw) -> f32 {
     let distance = max(away, 1.0e-3);
-    var share = min(1.0, COVER_CORE * radius / distance);
-    if span <= 0.0 {
-        return share * (1.0 - smoothstep(0.5 * radius, radius, away));
+    var share = min(1.0, COVER_CORE * law.radius / distance);
+    if law.span <= 0.0 {
+        return share * (1.0 - smoothstep(0.5 * law.radius, law.radius, away));
     }
-    if distance > radius {
-        let ratio = radius / distance;
+    if distance > law.radius {
+        let ratio = law.radius / distance;
         share = COVER_CORE * ratio * ratio;
     }
     // How many times the settings' pixels a blade spans, as wide as it
-    // grows there.
-    let spanned = span * COVER_CORE * cover_widening(distance, radius) / distance;
+    // grows there: `law.span` over the distance where it is widest.
+    let spanned = law.span * cover_widening(distance, law) / (law.widest * distance);
     return share * seen_share(spanned);
 }
 
 // How much of the leaves the densest cover would show blades growing at
-// `share` of it, `away` meters from the detail eye, show: blades widen as
-// they thin within the radius, so there all those the share keeps, and past
-// it they thin without widening. The ground shows the rest as its canopy.
-fn cover_shown(away: f32, share: f32, radius: f32) -> f32 {
-    return min(share * cover_widening(away, radius), 1.0);
+// `share` of it, `away` meters from the detail eye under `law`, show: all
+// those the share keeps while they widen as they thin, fewer once their
+// shape caps them and past the radius, where they thin without widening.
+// The ground shows the rest as its canopy.
+fn cover_shown(away: f32, share: f32, law: CoverLaw) -> f32 {
+    return min(share * cover_widening(away, law), 1.0);
 }
 
 // What a view sees of ground cover's blades on average: the share of their

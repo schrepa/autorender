@@ -498,26 +498,24 @@ impl TerrainPass {
         })
     }
 
-    /// The tallest blade any terrain material's cover grows, as the last
+    /// The tallest blade any terrain material's cover names, as the last
     /// preparation wrote the covers (meters).
     pub(crate) fn cover_tallest(&self) -> f32 {
         self.tables.cover_tallest
     }
 
-    /// Terrain `index`'s place in the directory and palette, its densest
-    /// cover (blades per square meter) and that cover's blades' root width
-    /// (meters), as the last preparation wrote them, and its macro colors'
-    /// layer plus one (0 until they arrive).
-    pub(crate) fn cover_terrain(&self, index: usize) -> (u32, u32, [f32; 2], u32) {
+    /// Terrain `index`'s place in the directory and palette, its covers as
+    /// ground cover's law takes them, as the last preparation wrote them,
+    /// and its macro colors' layer plus one (0 until they arrive).
+    pub(crate) fn cover_terrain(
+        &self,
+        index: usize,
+    ) -> (u32, u32, crate::ground_cover::CoverTerms, u32) {
         let tables = &self.tables;
         (
             tables.directory_bases.get(index).copied().unwrap_or(0),
             tables.palette_bases.get(index).copied().unwrap_or(0),
-            tables
-                .cover_densities
-                .get(index)
-                .copied()
-                .unwrap_or([0.0; 2]),
+            tables.cover_terms.get(index).copied().unwrap_or_default(),
             self.macro_maps.layer(index),
         )
     }

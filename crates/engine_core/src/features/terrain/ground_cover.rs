@@ -19,13 +19,21 @@ settings! {
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct Cover {
-        /// Blades per square meter where the material lies alone.
+        /// Blades per square meter where the material lies alone, on ground
+        /// halfway between dry and lush: lusher ground grows more, drier
+        /// ground fewer.
         pub density: f32 = 90.0 => range(0.0, 400.0),
-        /// The shortest and tallest blades, meters, shortest first.
+        /// The shortest and tallest blades, meters, shortest first, on
+        /// ground halfway between dry and lush: lusher ground grows them
+        /// taller, drier ground shorter.
         pub height: [f32; 2] = [0.12, 0.4] => range(0.01, 4.0),
-        /// Blade width at the root, meters.
+        /// Blade width at the root, meters. A terrain's blades widen as they
+        /// thin with distance only while every cover's shortest stays at
+        /// most a tenth as wide as it is tall, as grass leaves are: narrower
+        /// roots widen further.
         pub width: f32 = 0.025 => range(0.001, 0.25),
         /// The linear color of the blades' tips; roots take the ground's.
+        /// Lusher ground darkens and greens them, drier ground pales them.
         pub color: [f32; 3] = [0.13, 0.2, 0.05] => range(0.0, 1.0),
         /// How far they lean in the wind: 0 stiff, 1 the most.
         pub sway: f32 = 0.6 => range(0.0, 1.0),
@@ -67,8 +75,10 @@ settings! {
         /// Whether terrains grow their cover.
         pub enabled: bool = true => any,
         /// Meters from the camera within which cover grows densest, its blades
-        /// widening as they thin. Past it the ground shows as its cover's
-        /// canopy, and sparser tiers of blades as wide as there reach on.
+        /// widening as they thin as far as their shape lets them stay leaves.
+        /// Where they thin past that, and past the radius, the ground shows
+        /// as its cover's canopy, and past it sparser tiers of blades as wide
+        /// as there reach on.
         pub radius: f32 = 40.0 => range(2.0, 200.0),
         /// How wide on screen (pixels) blades stand as they retire: each
         /// retires, in a fixed order, once it spans fewer than this times a
