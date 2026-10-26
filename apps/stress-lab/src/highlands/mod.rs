@@ -371,6 +371,11 @@ pub(crate) fn populate(
         ridges: 0.5,
         warp: 0.4,
         erosion: 0.9,
+        // Detail fades on slopes as creep planes soil-mantled hillsides
+        // (Roering, Kirchner and Dietrich 1999): every octave's, so the
+        // range keeps the form its roads were routed over. Ground too steep
+        // for soil breaks into the rock steps and debris-flow gullies of
+        // later layers.
         smoothing: 0.6,
         valleys: 0.7,
         roughness: 0.3,
@@ -380,7 +385,8 @@ pub(crate) fn populate(
     let level = Layers::new(vec![mountains.clone()])?.height_at(&pyramid, Vec2::from(plateau));
     world.insert_resource(Plateau(level));
     // The hamlet's plateau, wide enough for the field's grid: leveled before
-    // erosion wears around it, and before the water runs over it again.
+    // erosion wears around it, and again over the relief laid after it,
+    // before the water runs over it.
     let plateau_stamp = Layer::Stamp(Stamp {
         center: plateau,
         radius: hamlet,
@@ -405,8 +411,22 @@ pub(crate) fn populate(
                 level: 3,
                 rounds: 20,
                 incision: 0.003,
-                debris: 2.0,
+                debris: 0.006,
                 creep: 6.0,
+            },
+            baked: None,
+        }),
+        // Debris flows gully the steep slopes again over the four-meter
+        // tiles, which hold the gullies the eight-meter ones round away: as
+        // fast as there, with no rivers, which carved the valleys already,
+        // and no creep, which would wear away the finer relief they cut.
+        Layer::Erosion(ErosionStage {
+            layer: ErosionLayer {
+                level: 2,
+                rounds: 20,
+                incision: 0.0,
+                debris: 0.006,
+                creep: 0.0,
             },
             baked: None,
         }),
@@ -416,6 +436,23 @@ pub(crate) fn populate(
             radius: 520.0,
             falloff: 700.0,
             op: StampOp::Flatten(60.0),
+        }),
+        // Rock steps where the slopes stand too steep to hold soil: treads
+        // along the rock's level bedding and risers where its joints break
+        // it, in patches, on spurs and planar slopes rather than in the
+        // hollows debris fills. The hydrology bake after them maps where,
+        // once it is done, and they keep off its water and banks; the
+        // plateau and the roads after them level them away.
+        Layer::Steps(StepsLayer {
+            seed: config.seed,
+            ..StepsLayer::default()
+        }),
+        // Earth hummocks heaved by frost into the wet meadows, as in
+        // Iceland's thúfur fields: in patches on gentle ground where water
+        // gathers, placed and kept off the water as the steps are.
+        Layer::Hummocks(HummocksLayer {
+            seed: config.seed,
+            ..HummocksLayer::default()
         }),
         plateau_stamp,
         // Streams and rivers traced where water gathers off the mountains

@@ -375,7 +375,9 @@ pub fn macro_colors(
             | Layer::Stamp(_)
             | Layer::Rivers(_)
             | Layer::Hydrology(_)
-            | Layer::Path(_) => None,
+            | Layer::Path(_)
+            | Layer::Steps(_)
+            | Layer::Hummocks(_) => None,
         })
         .collect();
     let count = size as usize;

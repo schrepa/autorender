@@ -49,6 +49,7 @@ mod noise;
 mod path;
 mod placement;
 mod pyramid;
+mod relief;
 mod rivers;
 mod select;
 mod shading;
@@ -89,6 +90,7 @@ pub use placement::{
     Placing,
 };
 pub use pyramid::{Pyramid, PyramidError, TileKey};
+pub use relief::{HummocksLayer, StepsLayer};
 pub use rivers::{RIVER_STEP, Rivers};
 pub use select::{LodRanges, WantedTile, WantedView, wanted_tiles};
 pub use shading::TileShading;

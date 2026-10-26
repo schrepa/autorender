@@ -6,16 +6,18 @@
 //! with odds in proportion to the slope down to each, sums upstream area,
 //! and lowers each sample toward its receiver by the stream power law
 //! solved implicitly downstream first (Braun and Willett 2013, with
-//! incision growing as the square root of the area), cutting faster the
-//! steeper the ground falls there, as debris flows do. What it changed from
-//! the layers below is a signed 16-bit image with coarser levels, read
-//! through its uniform cubic B-spline and added at every terrain level, so
-//! the finer layers' detail rides the eroded shape without the bake's grid
-//! printed into it. Where it laid sediment down, the sediment fills the
-//! hollows of that finer detail as deep as it lies, as sediment buries the
-//! relief it settles on: valley floors lie smooth instead of holding the
-//! finer detail's pits. Only exact arithmetic, square roots and integer
-//! hashes enter it: every target bakes the same bits.
+//! incision growing as the square root of the area), debris flows scouring
+//! on top of it as the square of the slope: steep ground gullies fastest,
+//! and debris flows alone gully steep ground while hardly touching gentle
+//! ground. What it changed from the layers below is a signed 16-bit image
+//! with coarser levels, read through its uniform cubic B-spline and added
+//! at every terrain level, so the finer layers' detail rides the eroded
+//! shape without the bake's grid printed into it. Where it laid sediment
+//! down, the sediment fills the hollows of that finer detail as deep as it
+//! lies, as sediment buries the relief it settles on: valley floors lie
+//! smooth instead of holding the finer detail's pits. Only exact
+//! arithmetic, square roots and integer hashes enter it: every target
+//! bakes the same bits.
 
 use crate::MAX_LEVEL;
 use engine_math::{max, min};
@@ -39,11 +41,12 @@ settings! {
         /// How fast rivers cut each round: the stream power law's erodibility
         /// times its time step.
         pub incision: f32 = 0.002 => range(0.0, 1.0),
-        /// How much faster water cuts steep ground, as the debris flows of
-        /// steep headwaters scour it: `1 + debris * slope` times as fast as
-        /// stream power alone, so steep slopes carve gullies rather than
-        /// stand smooth.
-        pub debris: f32 = 2.0 => range(0.0, 100.0),
+        /// How fast the debris flows of steep headwaters scour each round,
+        /// on top of the rivers: their erodibility times the time step for
+        /// each unit of slope, so they cut as the square of the slope where
+        /// stream power cuts as the slope, and steep slopes carve gullies
+        /// rather than stand smooth.
+        pub debris: f32 = 0.004 => range(0.0, 1.0),
         /// Square meters of hillslope creep each round, at most about a
         /// quarter of the square of the level's spacing: the most an
         /// explicit step keeps stable.
@@ -208,8 +211,9 @@ pub(crate) fn erode_round(
         area,
     } = drainage;
     // Pits fill as sediment; then, downstream first, each sample sinks
-    // toward its receiver's new height, never below it, faster the steeper
-    // it falls there.
+    // toward its receiver's new height, never below it: as fast as the
+    // rivers cut there, and faster the steeper it falls, as debris flows
+    // scour.
     let diagonal = std::f32::consts::SQRT_2 * spacing;
     for &sample in order.iter() {
         let sample = sample as usize;
@@ -224,8 +228,7 @@ pub(crate) fn erode_round(
         } else {
             diagonal
         };
-        let factor =
-            layer.incision * area[sample].sqrt() * (1.0 + layer.debris * slopes[sample]) / length;
+        let factor = area[sample].sqrt() * (layer.incision + layer.debris * slopes[sample]) / length;
         let lowered = (ground[sample] + factor * ground[receiver]) / (1.0 + factor);
         ground[sample] = max(lowered, ground[receiver]);
     }

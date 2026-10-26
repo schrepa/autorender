@@ -1,6 +1,6 @@
 //! The layer stack: procedural noise with erosion, imported heightmaps,
 //! stamps, what an erosion bake wears away, the channels a
-//! hydrology bake carves and roads, applied
+//! hydrology bake carves, relief by cause (`relief.rs`) and roads, applied
 //! in order to every sample; later layers win. Rivers layers give the
 //! hydrology bake after them its first courses and change no height
 //! themselves.
@@ -20,6 +20,7 @@ use crate::noise::{
     min4, smooth, smooth4, sqrt4,
 };
 use crate::path::PathSample;
+use crate::relief::{HummocksLayer, StepsLayer};
 
 /// How a layer's heights combine with the heights of the layers before it,
 /// weighted by the layer's coverage: added, the higher or lower of the two,
@@ -520,6 +521,12 @@ pub enum Layer {
     /// A road leveling the layers before it to its profile:
     /// nothing until baked.
     Path(PathStage),
+    /// Rock steps on the steep ground the stack's hydrology bake maps:
+    /// nothing until it is baked.
+    Steps(StepsLayer),
+    /// Earth hummocks on the wet, gentle ground the stack's hydrology bake
+    /// maps: nothing until it is baked.
+    Hummocks(HummocksLayer),
 }
 
 /// A path layer, and its profile once baked.
@@ -1177,9 +1184,14 @@ impl Layers {
     /// places.
     pub const MAX_COORDINATE: f32 = 1.0e7;
 
-    /// `layers` validated: each layer's fields keep their rules, and every
-    /// rivers layer has a hydrology layer after it, which runs its rivers.
+    /// `layers` validated: each layer's fields keep their rules, every
+    /// rivers layer has a hydrology layer after it, which runs its rivers,
+    /// and every relief layer a hydrology layer in the stack, whose maps
+    /// place it.
     pub fn new(layers: Vec<Layer>) -> Result<Self, LayerError> {
+        let last_hydrology = layers
+            .iter()
+            .rposition(|layer| matches!(layer, Layer::Hydrology(_)));
         for (index, layer) in layers.iter().enumerate() {
             let (kind, checked) = match layer {
                 Layer::Noise(noise) => ("noise", noise.validate()),
@@ -1189,12 +1201,21 @@ impl Layers {
                 Layer::Erosion(stage) => ("erosion", stage.layer.validate()),
                 Layer::Path(stage) => ("path", stage.layer.validate()),
                 Layer::Hydrology(stage) => ("hydrology", stage.layer.validate()),
+                Layer::Steps(steps) => ("steps", steps.validate()),
+                Layer::Hummocks(hummocks) => ("hummocks", hummocks.validate()),
             };
             checked.map_err(|invalid| LayerError::new(index, kind, invalid))?;
+            if matches!(layer, Layer::Steps(_) | Layer::Hummocks(_)) && last_hydrology.is_none() {
+                return Err(LayerError::new(
+                    index,
+                    kind,
+                    InvalidSetting::new(
+                        "wetness",
+                        "needs a hydrology layer in the stack, whose maps place it",
+                    ),
+                ));
+            }
         }
-        let last_hydrology = layers
-            .iter()
-            .rposition(|layer| matches!(layer, Layer::Hydrology(_)));
         if let Some(index) = layers.iter().enumerate().position(|(index, layer)| {
             matches!(layer, Layer::Rivers(_)) && last_hydrology.is_none_or(|last| last < index)
         }) {
@@ -1216,7 +1237,9 @@ impl Layers {
                 | Layer::Rivers(_)
                 | Layer::Hydrology(_)
                 | Layer::Erosion(_)
-                | Layer::Path(_) => None,
+                | Layer::Path(_)
+                | Layer::Steps(_)
+                | Layer::Hummocks(_) => None,
             })
             .collect();
         Ok(Self {
@@ -1242,7 +1265,9 @@ impl Layers {
             | Layer::Heightmap(_)
             | Layer::Rivers(_)
             | Layer::Hydrology(_)
-            | Layer::Erosion(_) => false,
+            | Layer::Erosion(_)
+            | Layer::Steps(_)
+            | Layer::Hummocks(_) => false,
         })
     }
 
@@ -1255,8 +1280,8 @@ impl Layers {
 
     /// These layers as a terrain's surroundings draw them:
     /// a point reads what this stack holds `offset` meters further along x
-    /// and z, and every layer but noise (stamps, heightmaps, bakes and
-    /// roads, and the masks they feed) shows from `low` to `high` of this
+    /// and z, and every layer but noise (stamps, heightmaps, bakes, relief
+    /// and roads, and the masks they feed) shows from `low` to `high` of this
     /// stack's ground, fading out over `blend` meters beyond, so the ground
     /// meets this stack's at that region's edges and turns into its noise
     /// away from them. Offsets keep the noise only as whole multiples of
@@ -1452,7 +1477,9 @@ impl Layers {
                 | Layer::Rivers(_)
                 | Layer::Hydrology(_)
                 | Layer::Erosion(_)
-                | Layer::Path(_) => None,
+                | Layer::Path(_)
+                | Layer::Steps(_)
+                | Layer::Hummocks(_) => None,
             })
     }
 
@@ -1482,7 +1509,9 @@ impl Layers {
             | Layer::Rivers(_)
             | Layer::Hydrology(_)
             | Layer::Erosion(_)
-            | Layer::Path(_) => None,
+            | Layer::Path(_)
+            | Layer::Steps(_)
+            | Layer::Hummocks(_) => None,
         })
     }
 
@@ -1508,7 +1537,9 @@ impl Layers {
                 | Layer::Rivers(_)
                 | Layer::Hydrology(_)
                 | Layer::Erosion(_)
-                | Layer::Path(_) => nearest,
+                | Layer::Path(_)
+                | Layer::Steps(_)
+                | Layer::Hummocks(_) => nearest,
             })
     }
 
@@ -1537,7 +1568,9 @@ impl Layers {
             | Layer::Rivers(_)
             | Layer::Hydrology(_)
             | Layer::Erosion(_)
-            | Layer::Path(_) => false,
+            | Layer::Path(_)
+            | Layer::Steps(_)
+            | Layer::Hummocks(_) => false,
         })
     }
 
@@ -1563,7 +1596,9 @@ impl Layers {
             | Layer::Rivers(_)
             | Layer::Hydrology(_)
             | Layer::Erosion(_)
-            | Layer::Path(_) => false,
+            | Layer::Path(_)
+            | Layer::Steps(_)
+            | Layer::Hummocks(_) => false,
         })
     }
 
@@ -1571,7 +1606,8 @@ impl Layers {
     /// terrain-local x positions `xs` and z position `z`, samples `spacing`
     /// meters apart; layers that reach no point between `min` and `max` are
     /// skipped. Hydrology layers' rivers cut each sample as a tile's raster
-    /// cuts it ([`Self::cut_rivers`]).
+    /// cuts it ([`Self::cut_rivers`]); relief layers read this stack's
+    /// hydrology bake.
     pub(crate) fn apply_local(
         &self,
         index: usize,
@@ -1649,6 +1685,8 @@ impl Layers {
                     *height = map.blend.apply(*height, value, weight * self.shown(x, z));
                 }
             }
+            Layer::Steps(steps) => steps.apply_row(self, (row, xs, z), spacing),
+            Layer::Hummocks(hummocks) => hummocks.apply_row(self, (row, xs, z), spacing),
         }
     }
 
@@ -1706,7 +1744,12 @@ fn unbaked(layer: &Layer) -> Layer {
             layer: stage.layer.clone(),
             baked: None,
         }),
-        Layer::Noise(_) | Layer::Heightmap(_) | Layer::Stamp(_) | Layer::Rivers(_) => layer.clone(),
+        Layer::Noise(_)
+        | Layer::Heightmap(_)
+        | Layer::Stamp(_)
+        | Layer::Rivers(_)
+        | Layer::Steps(_)
+        | Layer::Hummocks(_) => layer.clone(),
     }
 }
 
@@ -1790,6 +1833,8 @@ tagged!(Layer, "invalid layer" {
     4 => Erosion(stage),
     5 => Path(stage),
     6 => Rivers(layer),
+    7 => Steps(layer),
+    8 => Hummocks(layer),
 });
 
 /// The stack's layers with their bakes, its offset and its fade; reading
