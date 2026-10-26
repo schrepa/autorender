@@ -1180,7 +1180,8 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // upwind, blows over as much water as the water's body spans, as deep as
     // it is here.
     let wind = water_wind_speed(world, time);
-    let gains = water_wind_gains(wind, at.words.span, depth);
+    let sea = water_wind_sea(wind, at.words.span, depth);
+    let gains = water_wind_gains(sea);
     // Its waves, from its state alone (`water_flow_waves`): the wind's and
     // its eddies', the short waves its bed holds and those standing about
     // what it flows past.
@@ -1190,10 +1191,12 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // within a pixel roughen it, so where they run rough, it glints rather
     // than mirroring the sky (Bruneton, Neyret and Holzschuch), as does how
     // far the normal of those it draws turns across the pixel
-    // (`water_turning`), so their glints widen instead of sparkling.
+    // (`water_turning`), so their glints widen instead of sparkling, and as
+    // do the wind's waves finer than its tiles hold, which light wind raises
+    // none of (`water_roughness`).
     let slopes = waves.slopes - at.slope;
     let normal = normalize(vec3<f32>(-slopes.x, 1.0, -slopes.y));
-    let roughness = water_roughness(waves.hidden + water_turning(normal));
+    let roughness = water_roughness(waves.hidden + water_turning(normal), sea);
     let view = stable_normalize(-point);
     // Under the sea, the sea's water stands instead: its level
     // (`water.ocean.x`) is held relative to the eye.

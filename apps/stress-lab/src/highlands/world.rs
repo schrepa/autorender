@@ -45,15 +45,21 @@ impl StressWorld for HighlandsWorld {
     }
 
     fn environment(&self, world: &mut World) {
-        // A brisk wind sways the highlands' grass and spruces,
-        // and drives clouds over them twice as fast aloft; their blades and far
-        // trees, thinner than pixels, resolve over frames.
+        // A light breeze, 2.5 meters a second along the highlands' heading,
+        // gusting as it did: the wind's friction raises capillary ripples
+        // only past about 2.7 meters a second, and viscosity stills a
+        // lighter wind's short waves, so the lakes lie calm and mirror their
+        // shores, as WoW Forever's still lakes do and as the calm water
+        // planned for the highlands asks, while gusts sweep cat's paws over
+        // them. The grass and spruces sway less than in a brisk wind; their
+        // blades and far trees, thinner than pixels, resolve over frames.
+        // Clouds drive over in the faster wind aloft.
         world.insert_resource(TemporalAntialiasing {
             enabled: true,
             ..TemporalAntialiasing::default()
         });
         world.insert_resource(Wind {
-            velocity: [5.5, 2.0],
+            velocity: (Vec2::new(5.5, 2.0).normalize() * 2.5).to_array(),
             gusts: 0.55,
         });
         world.insert_resource(Clouds {
