@@ -557,12 +557,13 @@ tables! {
     /// the height array, each view's eye-relative projection and each
     /// terrain's anchor and material, the uniforms at dynamic offsets.
     /// Fragments read the heights too, where the shadow clipmap's levels
-    /// hold the ground at a level of their own. Vertices read the frame's
-    /// leaves of the terrains' subdivisions and the true surface under them,
-    /// and where deep materials displace it their blend, normals and heights,
-    /// which the subdivision's compute passes measure leaves by alike, with
-    /// the error pyramids of every tile's ground and water, which they alone
-    /// read.
+    /// hold the ground at a level of their own, and the tiles' water's
+    /// surfaces, where the ground wets at its waterline. Vertices read the
+    /// frame's leaves of the terrains' subdivisions and the true surface
+    /// under them, and where deep materials displace it their blend, normals
+    /// and heights, which the subdivision's compute passes measure leaves by
+    /// alike, with the error pyramids of every tile's ground and water, which
+    /// they alone read.
     const TERRAIN: Table = Table {
         label: "engine/terrain-layout",
         serves: [SHADER @ 1, TERRAIN_SHADOW_SHADER @ 1],
@@ -602,6 +603,12 @@ tables! {
             texture(35, "terrain_macro", Float, D2Array, F),
             // The frame's leaves of every terrain's subdivision.
             read(36, "terrain_surface_leaves", V),
+            // Tiles' water's surfaces beside their ground, as water's pass
+            // binds them, read through water's directory in the terrain
+            // directory: the sixteenth sampled texture of the ground's
+            // fragment stages, whose lit ones bind the eight storage buffers
+            // a stage may.
+            texture(50, "water_surface", Unfilterable, D2Array, F),
             // Each tile's error pyramids, its ground's and its water's
             // surface's, a layer each beside its heights' (`atlas.rs`).
             texture(62, "terrain_errors", Unfilterable, D2Array, C),
@@ -902,15 +909,15 @@ tables! {
 
     /// Group 1 of water's pipelines (`meshes/water.wgsl`): terrain's height
     /// array and the views' and terrains' uniforms at dynamic offsets, its
-    /// directory and this frame's leaves of its subdivisions, as the terrain
-    /// group binds them; tiles' water blocks, their surfaces beside their
-    /// ground and their words (packed flow, whitewater and kind, state,
-    /// nearest obstacle and how fast their surface and depth fall), which
-    /// pixels read; water's uniform; the waves' moments with their levels
-    /// (`water_waves.rs`) and the sampler repeating them; the simulated
-    /// water's cells, ground and what the beds hold under them; water's
-    /// directory; at a dynamic offset, the subdivision of each terrain's
-    /// water, whose leaves its vertices take; and the wind's tiles'
+    /// directory, with water's after it, and this frame's leaves of its
+    /// subdivisions, as the terrain group binds them; tiles' water blocks,
+    /// their surfaces beside their ground and their words (packed flow,
+    /// whitewater and kind, state, nearest obstacle and how fast their
+    /// surface and depth fall), which pixels read; water's uniform; the
+    /// waves' moments with their levels (`water_waves.rs`) and the sampler
+    /// repeating them; the simulated water's cells, ground and what the beds
+    /// hold under them; at a dynamic offset, the subdivision of each
+    /// terrain's water, whose leaves its vertices take; and the wind's tiles'
     /// whitecaps with their levels, read with the waves' sampler. Within a
     /// fragment stage's 16 sampled textures and 8 storage buffers with the
     /// camera's group and what lies behind the water. The sea's group has
@@ -933,7 +940,6 @@ tables! {
             read(56, "water_sim_cells", VF),
             read(57, "water_sim_ground", VF),
             read(58, "water_sim_beds", V),
-            read(59, "water_directory", VF),
             dynamic_uniform(
                 60,
                 "water_tree",

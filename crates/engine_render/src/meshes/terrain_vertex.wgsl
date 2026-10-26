@@ -83,6 +83,10 @@ struct TerrainUniform {
     // `terrain_shading_level` hands each level over as they shrink to half
     // that (x).
     pixel_error: vec4<f32>,
+    // Its tiles' water (`meshes/water.wgsl`): where water's directory
+    // starts in `terrain_directory`, after the virtual texture's windows
+    // and tables (x).
+    water: vec4<u32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;
 

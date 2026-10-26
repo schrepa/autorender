@@ -3,24 +3,25 @@
 //! reflection probe faces and the shadow maps drawn every frame, the kept
 //! levels' patches, and the group binding the arrays (the tiles' error
 //! pyramids among them, which the subdivisions' passes read), tables, views,
-//! leaves, material, sky and macro color maps and deformation's map they
-//! read.
+//! leaves, material, sky and macro color maps, deformation's map and the
+//! tiles' water's surfaces they read.
 
 use super::atlas::TileAtlas;
 use super::patches::{PatchDraws, patch_layout};
 use super::tables::TerrainTables;
+use super::water_blocks::WaterBlocks;
 use super::*;
 use crate::scene_shading::SceneShading;
 use crate::shaders::entry::meshes;
 
 /// The generations of what the terrain group binds: the atlas, uniforms,
 /// hole bits, directory, material maps, sky maps, macro color maps,
-/// deformation map and the subdivisions' leaves.
-type GroupKey = (u64, u64, u64, u64, u64, u64, u64, u64, u64);
+/// deformation map, the subdivisions' leaves and the water blocks' arrays.
+type GroupKey = (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64);
 
 /// What the terrain group binds besides the pipelines' own: the arrays,
 /// tables, views, the subdivisions' leaves, material, sky and macro color
-/// maps and deformation's map.
+/// maps, deformation's map and the tiles' water's surfaces.
 pub(super) struct GroupSources<'a> {
     pub(super) atlas: &'a TileAtlas,
     pub(super) tables: &'a TerrainTables,
@@ -30,6 +31,7 @@ pub(super) struct GroupSources<'a> {
     pub(super) sky: &'a SkyMaps,
     pub(super) macro_maps: &'a MacroMaps,
     pub(super) deformation: &'a crate::deformation::DeformationPass,
+    pub(super) water: &'a WaterBlocks,
 }
 
 pub(crate) struct TerrainPipelines {
@@ -123,6 +125,7 @@ impl TerrainPipelines {
             sources.macro_maps.generation(),
             deformation.map().1,
             leaves.generation(),
+            sources.water.generation,
         );
         let build =
             |label: &str, material_maps: &[wgpu::TextureView; 3], surface_leaves: &wgpu::Buffer| {
@@ -189,6 +192,10 @@ impl TerrainPipelines {
                             crate::pipelines::sampler(&sources.atlas.control_sampler),
                         ),
                         crate::buffers::entry("terrain_surface_leaves", surface_leaves),
+                        (
+                            "water_surface",
+                            crate::pipelines::view(sources.water.surface_view()),
+                        ),
                         ("terrain_errors", crate::pipelines::view(ground_errors)),
                         ("water_errors", crate::pipelines::view(water_errors)),
                     ],

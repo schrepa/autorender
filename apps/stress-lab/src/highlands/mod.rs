@@ -1472,8 +1472,8 @@ fn in_terrain_rock(
 /// forests, lush grass where water gathers, beds along streams and rivers
 /// of the grains their floods leave ([`stream_beds`]), gravel on the roads
 /// and snow on the peaks; rock over all of them wherever the ground is
-/// steep; the ground wet along the streams ([`wetness`]); and the
-/// boulders, stones and spruces placed over them.
+/// steep; the ground damp in hollows and wet in torrents' spray
+/// ([`wetness`]); and the boulders, stones and spruces placed over them.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -1702,6 +1702,14 @@ const BOULDER_POWER: [f32; 2] = [150.0, 400.0];
 /// The stream power over which a stream's spray wets its banks higher,
 /// from not at all to as high as its bed reaches.
 const SPRAY_POWER: [f32; 2] = [200.0, 2000.0];
+/// The bake's wetness index, ln(a / tan b), over which the soil of hollows
+/// saturates as water gathers in it, from none of them to all: past where
+/// lush grass begins, as saturated areas spread from the wettest ground
+/// (TOPMODEL, Beven and Kirkby 1979).
+const SATURATED: [f32; 2] = [11.5, 14.0];
+/// How wet saturated soil stands: damp, its pores full of water but none
+/// standing over it.
+const DAMP: f32 = 0.5;
 
 /// Streams' and rivers' beds, with a meter and a half of their banks and
 /// ragged edges, of the grains their floods leave ([`GRAINS`]): sand,
@@ -1749,20 +1757,25 @@ fn coarser_than(grain: f32) -> Mask {
     Mask::Grain([grain * (1.0 - GRAIN_BLEND), grain * (1.0 + GRAIN_BLEND)])
 }
 
-/// How wet the ground stands, 0 to 1: soaked to the channel's edge and
-/// drying over two and a half meters of bank, finely ragged, and wet
-/// further up the banks of streams spending more power ([`SPRAY_POWER`]),
-/// whose spray wets them.
+/// How wet the ground stands where its water leaves it dry, 0 to 1 (the
+/// water the tiles hold soaks the ground under it and wets it over the
+/// capillary fringe above it itself): damp in the hollows whose soil
+/// saturates ([`SATURATED`], [`DAMP`]), raggedly, and wet further up the
+/// banks of streams spending more power ([`SPRAY_POWER`]), whose spray wets
+/// them.
 fn wetness() -> Mask {
     Mask::Max(vec![
-        remap(
-            Mask::Add(vec![
-                Mask::River([2.5, 0.0]),
-                scaled(noise(1.5, 71, 2), 0.25),
-                Mask::Constant(-0.12),
-            ]),
-            0.2,
-            0.8,
+        scaled(
+            remap(
+                Mask::Add(vec![
+                    Mask::Wetness(SATURATED),
+                    scaled(noise(6.0, 71, 2), 0.3),
+                    Mask::Constant(-0.15),
+                ]),
+                0.2,
+                0.8,
+            ),
+            DAMP,
         ),
         remap(
             Mask::Add(vec![

@@ -368,6 +368,18 @@ impl TerrainPass {
         self.tables.write_fades(queue, fades);
         self.tables
             .write_directory(device, queue, terrains, &self.atlas);
+        // Water's directory, in the directory buffer after the virtual
+        // texture's windows and tables.
+        let tables = &self.tables;
+        self.water.write_directory(
+            queue,
+            &self.atlas,
+            (
+                &tables.directory,
+                tables.water_base,
+                tables.directory_generation,
+            ),
+        );
         let vt_pages = self.vt.wanted(&views.settings);
         self.maps.prepare(device, queue, mips, terrains, vt_pages);
         self.tables
@@ -443,6 +455,7 @@ impl TerrainPass {
                 sky: &self.sky,
                 macro_maps: &self.macro_maps,
                 deformation: &self.deformation,
+                water: &self.water,
             },
         );
         #[cfg(debug_assertions)]

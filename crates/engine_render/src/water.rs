@@ -507,10 +507,10 @@ impl WaterPass {
     }
 
     /// The group of the water layout tiles' water binds: the terrain pass's
-    /// height array, views' and terrains' uniforms, directory, leaves of its
-    /// subdivisions and their trees' uniforms, and the water blocks and
-    /// water's directory (`tiles`); water's uniform, `waves` and falling
-    /// water's `map`; and the simulated water.
+    /// height array, views' and terrains' uniforms, directory (with water's
+    /// in it), leaves of its subdivisions and their trees' uniforms, and the
+    /// water blocks (`tiles`); water's uniform, `waves` and falling water's
+    /// `map`; and the simulated water.
     fn tile_group(
         &self,
         device: &wgpu::Device,
@@ -550,7 +550,6 @@ impl WaterPass {
                 crate::buffers::entry("water_sim_cells", sim_cells),
                 crate::buffers::entry("water_sim_ground", sim_ground),
                 crate::buffers::entry("water_sim_beds", sim_beds),
-                crate::buffers::entry("water_directory", tiles.water_directory),
                 (
                     "water_tree",
                     sized(tiles.trees, size_of::<SubdivisionUniform>()),
@@ -991,9 +990,9 @@ impl RenderFeature for WaterPass {
 }
 
 /// The generations of what tiles' water's group binds: the terrain pass's
-/// arrays, uniforms, directory, leaves and trees' uniforms, the water
-/// blocks and water's directory; and the simulation's water.
-type GroupGenerations = ([u64; 7], u64);
+/// arrays, uniforms, directory (with water's in it), leaves and trees'
+/// uniforms and the water blocks; and the simulation's water.
+type GroupGenerations = ([u64; 6], u64);
 
 /// What a water pipeline draws: tiles' water, the sea, falls' sheets or
 /// simulated water.
@@ -1172,7 +1171,6 @@ fn ocean_draw(
             crate::buffers::entry("water_sim_cells", &placeholders.sim),
             crate::buffers::entry("water_sim_ground", &placeholders.sim),
             crate::buffers::entry("water_sim_beds", &placeholders.sim),
-            crate::buffers::entry("water_directory", &placeholders.storage),
             (
                 "water_tree",
                 sized(&placeholders.tree, size_of::<SubdivisionUniform>()),
