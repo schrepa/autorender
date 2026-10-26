@@ -150,7 +150,8 @@
         "water_foam",
         "water_span",
         "water_eddies",
-        "water_roughness"
+        "water_roughness",
+        "water_wind"
       ],
       "what": "the debug view frames show in place of the shaded image, over the scene's"
     },

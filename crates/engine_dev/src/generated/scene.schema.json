@@ -433,6 +433,11 @@
           "description": "The roughness its shading gives its surface, from black (0, a\nmirror) through copper to white (1): calm water's, widened by the\nslopes of the waves a pixel hides.",
           "type": "string",
           "const": "water_roughness"
+        },
+        {
+          "description": "The wind's speed over it, gusting and sheltered by the terrain\nupwind, as a share of the free wind's: from dark (still air) through\nazure (the free wind) to white (twice the free wind, a gust's most).",
+          "type": "string",
+          "const": "water_wind"
         }
       ]
     },
@@ -6501,7 +6506,7 @@
       "additionalProperties": false
     },
     "SceneWater": {
-      "description": "Water settings: how terrains' water looks (its color, clarity and\nsediment) and how it draws and runs live; its movement and foam come\nfrom its state, under the scene's wind.",
+      "description": "Water settings: how terrains' water looks (its color, clarity and\nsediment) and how it draws and runs live; its movement and foam come\nfrom its state, under the scene's wind as the terrain upwind\nshelters it.",
       "type": "object",
       "properties": {
         "clarity": {
