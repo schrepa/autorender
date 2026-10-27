@@ -183,11 +183,6 @@ impl Renderer {
                 }
             })
             .collect();
-        let thins = scatter_thinning(snapshot);
-        self.features
-            .scatter
-            .get_mut()
-            .set_thinning(&self.device, &self.queue, &thins);
         let draws = &mut self.scatter_draws;
         let (dirty, counts_changed) = draws.pool.take_changes();
         // The shadow clipmap's tiles and the occupancy maps redraw where
@@ -914,42 +909,6 @@ impl Renderer {
         }
         draws
     }
-}
-
-/// How each of `snapshot`'s terrains' placement layers thin with distance
-/// this frame, `THIN_LAYERS` entries a terrain: their tiles' reaches follow
-/// the view's levels of detail, and pinned levels stay resident
-/// everywhere (`scatter::thins_on`), as the ground taking on what they thin
-/// reads them (`terrain::tables`).
-fn scatter_thinning(snapshot: &RenderSnapshot) -> Vec<[f32; 4]> {
-    let terrains = &snapshot.terrain.terrains;
-    let pinned = snapshot.environment.terrain.sanitized().pinned_levels;
-    let mut thins = vec![[0.0_f32; 4]; terrains.len() * crate::scatter::THIN_LAYERS];
-    for (index, terrain) in terrains.iter().enumerate() {
-        let levels = terrain.pyramid.levels();
-        let reach = |level: u8| {
-            if crate::scatter::thins_on(level, levels, pinned) {
-                terrain
-                    .reach
-                    .get(usize::from(level))
-                    .copied()
-                    .unwrap_or(0.0)
-            } else {
-                0.0
-            }
-        };
-        for (layer, placement) in terrain
-            .layers
-            .iter()
-            .enumerate()
-            .take(crate::scatter::THIN_LAYERS)
-        {
-            let (far, share) = placement.far;
-            thins[index * crate::scatter::THIN_LAYERS + layer] =
-                [share, reach(placement.level), reach(far), 1.0];
-        }
-    }
-    thins
 }
 
 /// The parts `asset`, the asset of `groups`' draw group `index`, draws with

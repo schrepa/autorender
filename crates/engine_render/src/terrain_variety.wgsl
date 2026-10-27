@@ -2,10 +2,9 @@
 // ground and the blades growing on it, how lush ground grows them, and the
 // clumps they grow in, the same in both and at every distance
 // (`meshes/terrain.wgsl`, `cover_grow.wgsl`). Ground cover's law, which both
-// read too, follows, with how things retire by their size on screen (ground
-// cover's tufts and placed objects alike), how placement layers thin with
-// distance, and what a view sees of blades, which their canopy shows where
-// they retire.
+// read too, follows, with how things retire as they shrink under a pixel on
+// screen (ground cover's tufts and placed objects alike), and what a view
+// sees of blades, which their canopy shows where they retire.
 
 fn variety_hash(cell: vec2<i32>) -> f32 {
     var h = (u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u);
@@ -172,15 +171,11 @@ fn spread_slopes(shortened: f32) -> f32 {
     return 2.0 * (1.0 - kept) / kept;
 }
 
-// The share of the radius within which ground cover grows densest
-// (`gpu_layouts::constants::COVER_CORE`).
-const COVER_CORE: f32 = 0.2;
-
-// The most leaves a tuft of ground cover holds (`cover_tuft`): as many as
-// its widest, 1 / COVER_CORE times its blades' roots wide in all, holds in
-// leaves no narrower than their roots; and the steps of a leaf a blade's
-// byte of leaves counts them in, as many as a byte holds for them all.
-const COVER_LEAVES: u32 = u32(ceil(1.0 / COVER_CORE));
+// The most leaves a tuft of ground cover holds, and so the most blades it
+// stands for (`cover_tuft`, `gpu_layouts::constants::COVER_LEAVES`); and the
+// steps of a leaf a blade's byte of leaves counts them in, as many as a byte
+// holds for them all.
+const COVER_LEAVES: u32 = 5u;
 const COVER_LEAF_STEPS: u32 = 255u / COVER_LEAVES;
 
 // The widest a leaf grows for its height and still reads as a grass leaf:
@@ -199,102 +194,64 @@ const COVER_ROUGHNESS: f32 = 0.7;
 
 // The share of things retiring by their size on screen that still show
 // where each spans `pixels` pixels: each shows while it spans more than a
-// pixel times a factor of its own, from a half to two by its rank
-// (2^(2 rank - 1)), so those ranked under (1 + log2 pixels) / 2 do: none
-// under half a pixel, all from two. Ground cover's tufts and the objects
-// of thinning placement layers retire so, in their ranks' order, and the
-// ground takes on what they leave.
+// pixel times a factor of its own, from a half to one by its rank
+// (2^(rank - 1)), so those ranked under 1 + log2 pixels do: all from a
+// pixel, none under half of one. Ground cover's tufts and the objects of
+// placement layers retire so, in their ranks' order, and the ground takes
+// on what they leave.
 fn seen_share(pixels: f32) -> f32 {
-    return saturate(0.5 + 0.5 * log2(max(pixels, 1.0e-6)));
-}
-
-// The share of a placement layer's objects still standing `away` meters from
-// the detail eye as the layer thins with distance, `thin` holding the share
-// standing far away, the meters its own tiles and its far tiles reach (0
-// where they stay resident everywhere) and 1 where it thins at all: all of
-// them within seven tenths of its tiles' reach, falling to its far share
-// across most of the rest, then to none across the same part of its far
-// tiles' reach. Objects ranked past it hide before their tiles leave, so
-// density never steps where tiles end (`scatter_cull.wgsl`), and the ground
-// takes on those it hides as it does those retiring by their size
-// (`meshes/terrain.wgsl`'s `terrain_placed_share`).
-fn placed_thinned(thin: vec4<f32>, away: f32) -> f32 {
-    if thin.w == 0.0 {
-        return 1.0;
-    }
-    var keep = 1.0;
-    if thin.y > 0.0 {
-        keep = mix(1.0, thin.x, smoothstep(0.7 * thin.y, 0.95 * thin.y, away));
-    }
-    if thin.z > 0.0 {
-        keep *= 1.0 - smoothstep(0.7 * thin.z, 0.95 * thin.z, away);
-    }
-    return keep;
+    return saturate(1.0 + log2(max(pixels, 1.0e-6)));
 }
 
 // Ground cover's law on a terrain, which its blades and their canopy follow
-// alike (`ground_cover::CoverLaw`): the radius it grows densest within, and
-// the meters from the detail eye at which its tufts past the radius span the
-// settings' pixels (0: cover within the radius alone).
+// alike (`ground_cover::CoverLaw`): the meters from the detail eye within
+// which a blade of its densest cover spans a pixel or more across the view,
+// its roots' width over the angle a pixel spans.
 struct CoverLaw {
-    radius: f32,
     span: f32,
 }
 
-// How many times wider than their roots in all ground cover's blades stand
-// `away` meters from the detail eye under `law`: as many times as they thin
-// within the radius, each one left a tuft holding the leaves of those it
-// stands for (`cover_tuft`), so they cover as much ground as the densest
-// cover's, up to 1 / COVER_CORE at the radius; past it as wide as there.
+// How many blades each tuft of ground cover stands for `away` meters from
+// the detail eye under `law`, holding their leaves (`cover_tuft`): one while
+// a blade spans a pixel or more across the view, then as many as a pixel
+// holds of them as they shrink under one, so each tuft spans a pixel and
+// every pixel keeps the leaves the field gives it, up to COVER_LEAVES.
 fn cover_widening(away: f32, law: CoverLaw) -> f32 {
-    return clamp(away / (COVER_CORE * law.radius), 1.0, 1.0 / COVER_CORE);
+    return clamp(away / max(law.span, 1.0e-6), 1.0, f32(COVER_LEAVES));
 }
 
 // A blade of ground cover `height` meters tall whose roots are `root`
 // meters wide, `away` meters from the detail eye under `law`, as the tuft it
-// stands as there: as wide at its roots in all as it widens
-// (`cover_widening`), so it holds the leaves of the blades it stands for, in
-// leaves as wide as their roots or as a leaf of its height grows
-// (COVER_LEAF_ASPECT), whichever is wider, and no wider than the tuft. Each
-// leaf's width (x, meters) and how many leaves it holds (y, 1 to
-// COVER_LEAVES), the last of them, past the whole ones, standing that share
-// of its height, so leaves rise one by one as their tuft widens.
+// stands as there: as wide at its roots in all as the blades it stands for
+// (`cover_widening`), so it holds their leaves, in leaves as wide as their
+// roots or as a leaf of its height grows (COVER_LEAF_ASPECT), whichever is
+// wider, and no wider than the tuft. Each leaf's width (x, meters) and how
+// many leaves it holds (y, 1 to COVER_LEAVES), the last of them, past the
+// whole ones, standing that share of its height, so leaves rise one by one
+// as their tuft widens.
 fn cover_tuft(away: f32, height: f32, root: f32, law: CoverLaw) -> vec2<f32> {
     let tuft = root * cover_widening(away, law);
     let leaf = min(tuft, max(root, COVER_LEAF_ASPECT * height));
     return vec2<f32>(leaf, clamp(tuft / leaf, 1.0, f32(COVER_LEAVES)));
 }
 
-// Ground cover's density as a share of its densest, `away` meters from the
-// detail eye under `law`, the same for its tufts and the canopy shown where
-// they thin. All of it within a fifth of the radius, then the fifth over the
-// distance; past the radius a fifth of the radius's square over the
-// distance's, which meets it there, so each pixel of the view holds about as
-// many tufts as at the radius. Of those, the share still wide enough on
-// screen stands (`seen_share`): within the radius, where tufts widen as they
-// thin, they span as many pixels as at the radius's fifth, and past it fewer
-// as they recede, until none stands from twice `law.span`. Without tiers
-// cover thins to none over the radius's outer half.
+// Ground cover's density as a share of the density its cover names, `away`
+// meters from the detail eye under `law`, the same for its tufts and the
+// canopy shown where they retire. All of it while a blade spans a pixel or
+// more across the view; then one blade in as many as each tuft stands for
+// (`cover_widening`), so tufts a pixel wide hold the field's leaves; past
+// COVER_LEAVES times `law.span`, where tufts hold all the leaves they can,
+// they narrow under a pixel and retire by their size on screen
+// (`seen_share`), none standing from twice that.
 fn cover_share(away: f32, law: CoverLaw) -> f32 {
-    let distance = max(away, 1.0e-3);
-    var share = min(1.0, COVER_CORE * law.radius / distance);
-    if law.span <= 0.0 {
-        return share * (1.0 - smoothstep(0.5 * law.radius, law.radius, away));
-    }
-    if distance > law.radius {
-        let ratio = law.radius / distance;
-        share = COVER_CORE * ratio * ratio;
-    }
-    // How many times the settings' pixels a tuft spans, as wide as it
-    // grows there: `law.span` over the distance where it is widest.
-    let spanned = law.span * COVER_CORE * cover_widening(distance, law) / distance;
-    return share * seen_share(spanned);
+    let widening = cover_widening(away, law);
+    // The pixels a tuft spans across the view, as wide as it grows there.
+    return seen_share(law.span * widening / max(away, 1.0e-3)) / widening;
 }
 
-// How much of the leaves the densest cover would show tufts growing at
-// `share` of it, `away` meters from the detail eye under `law`, show: all
-// those the share keeps within the radius, where they widen as they thin,
-// fewer past it, where they thin without widening, and where they retire by
+// How much of the leaves the field would show tufts growing at `share` of
+// it, `away` meters from the detail eye under `law`, show: all those the
+// share keeps while tufts widen as blades thin, fewer where tufts retire by
 // their size on screen. The ground shows the rest as its canopy.
 fn cover_shown(away: f32, share: f32, law: CoverLaw) -> f32 {
     return min(share * cover_widening(away, law), 1.0);

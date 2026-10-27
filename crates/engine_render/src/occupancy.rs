@@ -331,7 +331,7 @@ pub(crate) struct OccupancyPass {
     layers: [Vec<wgpu::TextureView>; 2],
     unfiner: [wgpu::TextureView; 2],
     // Each map's groups of its draws and of its selection.
-    groups: Vec<GroupCache<8>>,
+    groups: Vec<GroupCache<7>>,
     select_groups: Vec<GroupCache<6>>,
     // Each map's window, none before its first draw or once its texels no
     // longer hold it; the height every map's heights are above; the cells
@@ -651,13 +651,12 @@ impl OccupancyPass {
     }
 
     /// Readies the maps this frame redraws cells of or takes means into,
-    /// from the placed objects' `records` and `poses`, and how their layers
-    /// thin (`thins`), whose buffers `generation` counts; `None` when none
-    /// changes.
+    /// from the placed objects' `records` and `poses`, whose buffers
+    /// `generation` counts; `None` when none changes.
     pub(crate) fn prepare_draws(
         &mut self,
         device: &wgpu::Device,
-        (records, poses, thins, generation): (&wgpu::Buffer, &wgpu::Buffer, &wgpu::Buffer, u64),
+        (records, poses, generation): (&wgpu::Buffer, &wgpu::Buffer, u64),
     ) -> Option<OccupancyFrame> {
         if !self.pending.contains(&true) && !self.averaging.contains(&true) {
             return None;
@@ -667,7 +666,6 @@ impl OccupancyPass {
         // scatter pass.
         let records = Bound::counted(generation, records.as_entire_binding());
         let poses = Bound::counted(generation, poses.as_entire_binding());
-        let thins = Bound::counted(generation, thins.as_entire_binding());
         for map in 0..self.pending.len() {
             let (redraw, average) = (self.pending[map], self.averaging[map]);
             if !redraw && !average {
@@ -691,7 +689,6 @@ impl OccupancyPass {
                     ("records", records.clone()),
                     ("poses", poses.clone()),
                     ("covers", self.covers.bound()),
-                    ("thins", thins.clone()),
                     ("listed", self.listed.bound()),
                     ("finer_coverage", finer(0)),
                     ("finer_heights", finer(1)),

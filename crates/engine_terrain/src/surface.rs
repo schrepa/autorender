@@ -1282,7 +1282,7 @@ impl BiomeRules {
         let far = self
             .placements
             .iter()
-            .any(|layer| layer.far.is_some_and(|(far, _)| far == level));
+            .any(|layer| layer.far == Some(level));
         match placing {
             crate::Placing::All => near || far,
             crate::Placing::Near => near,

@@ -53,10 +53,10 @@ struct TerrainUniform {
     deform_grid: vec4<i32>,
     deform: vec4<f32>,
     // Ground cover's law on this terrain (`ground_cover::CoverLaw`), which
-    // the canopy follows as tufts thin and retire: its radius (0 shows the
-    // canopy from the eye on), the meters from the eye at which its tufts
-    // past the radius span the settings' pixels, and its density scale; all
-    // 0 without cover (w unused).
+    // the canopy follows as tufts thin and retire: the meters from the eye
+    // within which a blade of its densest cover spans a pixel or more (x, 0
+    // showing the canopy from the eye on), and its density scale (z); all 0
+    // without cover (y and w unused).
     cover: vec4<f32>,
     // Its macro colors' layer of `terrain_macro` plus one (0 until they
     // arrive).

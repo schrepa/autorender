@@ -980,7 +980,6 @@ tables! {
             read(5, "views", C),
             write(6, "cards", C),
             write(7, "card_args", C),
-            read(8, "thins", C),
         ],
     };
 
@@ -1010,10 +1009,10 @@ tables! {
     /// Occupancy (`occupancy.wgsl`), one table for its selection and its
     /// draws, whose groups fill what each leaves alone: the map's window,
     /// cells redrawn and counts, the placed objects' records, poses and
-    /// draw groups' covers, and how their layers thin, which the maps weigh
-    /// far objects by; the footprints listed, which the selection writes
-    /// with their draw's arguments and the draws read; and the finer map's
-    /// coverage and heights, whose means the map takes where they overlap.
+    /// draw groups' covers; the footprints listed, which the selection
+    /// writes with their draw's arguments and the draws read; and the finer
+    /// map's coverage and heights, whose means the map takes where they
+    /// overlap.
     const OCCUPANCY: Table = Table {
         label: "engine/occupancy-layout",
         serves: [OCCUPANCY_SHADER @ 0],
@@ -1022,12 +1021,11 @@ tables! {
             read(1, "records", VC),
             read(2, "poses", VC),
             read(3, "covers", VC),
-            read(4, "thins", V),
-            read(5, "listed", V),
-            write(6, "listing", C),
-            write(7, "listed_draw", C),
-            texture(8, "finer_coverage", Unfilterable, D2, F),
-            texture(9, "finer_heights", Unfilterable, D2, F),
+            read(4, "listed", V),
+            write(5, "listing", C),
+            write(6, "listed_draw", C),
+            texture(7, "finer_coverage", Unfilterable, D2, F),
+            texture(8, "finer_heights", Unfilterable, D2, F),
         ],
     };
 

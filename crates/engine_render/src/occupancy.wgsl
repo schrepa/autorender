@@ -93,25 +93,15 @@ const ACROSS_Z: u32 = 0x80000000u;
 @group(0) @binding(1) var<storage, read> records: array<Record>;
 @group(0) @binding(2) var<storage, read> poses: array<Pose>;
 @group(0) @binding(3) var<storage, read> covers: array<Cover>;
-// How each terrain's placement layers thin (`scatter_cull.wgsl`):
-// the maps weigh an object standing far away by the share standing
-// there, as it stands for the rest of its layer's objects.
-@group(0) @binding(4) var<storage, read> thins: array<vec4<f32>>;
 // The listed footprints as the draw reads them, as the selection writes
 // them, and the draw's arguments.
-@group(0) @binding(5) var<storage, read> listed: array<u32>;
-@group(0) @binding(6) var<storage, read_write> listing: array<u32>;
-@group(0) @binding(7) var<storage, read_write> listed_draw: ListedDraw;
+@group(0) @binding(4) var<storage, read> listed: array<u32>;
+@group(0) @binding(5) var<storage, read_write> listing: array<u32>;
+@group(0) @binding(6) var<storage, read_write> listed_draw: ListedDraw;
 // The finer map's coverage and heights, whose means this map takes where
 // it lies over them.
-@group(0) @binding(8) var finer_coverage: texture_2d<f32>;
-@group(0) @binding(9) var finer_heights: texture_2d<f32>;
-
-const THIN_LAYERS: u32 = 64u;
-const TERRAIN_INDEX: u32 = 0x1ffu;
-const LAYER_SHIFT: u32 = 9u;
-const NO_LAYER: u32 = 0x7fu;
-const NEAR_LEVEL_SHIFT: u32 = 16u;
+@group(0) @binding(7) var finer_coverage: texture_2d<f32>;
+@group(0) @binding(8) var finer_heights: texture_2d<f32>;
 
 const CORNERS = array<vec2<f32>, QUAD>(
     vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
@@ -155,18 +145,6 @@ fn footprint_of(slot: u32) -> Footprint {
         root.y + cover.bottom * record.scale - splat.area.w,
         root.y + cover.top * record.scale - splat.area.w);
     return found;
-}
-
-// The objects `record`'s object stands for: one standing far away, those
-// of its layer that do not; itself elsewhere.
-fn thinned(record: Record) -> f32 {
-    let layer = (record.terrain >> LAYER_SHIFT) & NO_LAYER;
-    let thin = (record.terrain & TERRAIN_INDEX) * THIN_LAYERS + layer;
-    if ((record.terrain >> NEAR_LEVEL_SHIFT) & 0x1fu) != 0u && layer != NO_LAYER
-        && thin < arrayLength(&thins) && thins[thin].w > 0.0 {
-        return 1.0 / max(thins[thin].x, 0.25);
-    }
-    return 1.0;
 }
 
 // The bits of the cells redrawn in row `row` of the map, a bit a column.
@@ -239,10 +217,10 @@ fn select_covers(@builtin(global_invocation_id) id: vec3<u32>) {
 struct SplatOutput {
     @builtin(position) clip: vec4<f32>,
     // The corner around the footprint's center (-1 to 1), the cover's
-    // density, bottom and top above the reference height and the objects
-    // it stands for, and the texels from the window's first corner.
+    // density, bottom and top above the reference height, and the texels
+    // from the window's first corner.
     @location(0) corner: vec2<f32>,
-    @location(1) @interpolate(flat) cover: vec4<f32>,
+    @location(1) @interpolate(flat) cover: vec3<f32>,
     @location(2) window: vec2<f32>,
 }
 
@@ -278,7 +256,7 @@ fn vs_splat(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
         select(0.0, 1.0, (entry & ACROSS_Z) != 0u));
     output.clip = map_clip(window + vec2<f32>(splat.place.xy) - across * texels);
     output.corner = corner;
-    output.cover = vec4<f32>(found.cover, thinned(records[slot]));
+    output.cover = found.cover;
     output.window = window;
     return output;
 }
@@ -303,11 +281,10 @@ fn fs_splat(input: SplatOutput) -> SplatTargets {
     if away > 1.0 {
         discard;
     }
-    // As many objects as it stands for, each letting through what it does
-    // not cover.
+    // What its object covers, letting through the rest.
     let one = min(input.cover.x * (1.0 - smoothstep(0.55, 1.0, away)), 1.0);
     var targets: SplatTargets;
-    targets.coverage = vec4<f32>(1.0 - pow(1.0 - one, input.cover.w), 0.0, 0.0, 0.0);
+    targets.coverage = vec4<f32>(one, 0.0, 0.0, 0.0);
     targets.heights = vec4<f32>(input.cover.z, -input.cover.y, 0.0, 0.0);
     return targets;
 }

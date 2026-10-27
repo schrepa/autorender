@@ -1538,14 +1538,9 @@ fn rules() -> Biomes {
                 sink: 0.3,
                 bed: 0.0,
                 level: 3,
-                // A third of them stand on the pinned four-kilometer tiles
-                // too, so forests reach the horizon, the rest
-                // thinning out before the two-kilometer tiles end,
-                // where the far occupancy map darkens their floors.
-                far: Some(FarPlacement {
-                    level: 4,
-                    share: 0.3,
-                }),
+                // Every one stands on the pinned four-kilometer tiles too, so
+                // forests reach the horizon.
+                far: Some(FarPlacement { level: 4 }),
             },
             PlacementLayer {
                 id: "boulders".into(),
@@ -1563,13 +1558,10 @@ fn rules() -> Biomes {
                 sink: 0.1,
                 bed: 0.45,
                 level: 0,
-                // Two in five stand on the kilometer tiles too, so boulders
-                // thin out toward the horizon instead of ending where the
-                // finest tiles do.
-                far: Some(FarPlacement {
-                    level: 2,
-                    share: 0.4,
-                }),
+                // They stand on the kilometer tiles too, so boulders reach
+                // on toward the horizon instead of ending where the finest
+                // tiles do.
+                far: Some(FarPlacement { level: 2 }),
             },
             PlacementLayer {
                 id: "stones".into(),
@@ -1584,16 +1576,11 @@ fn rules() -> Biomes {
                 sink: 0.08,
                 bed: 0.0,
                 level: 0,
-                // Stones retire as they shrink under a pixel or so on
-                // screen, the largest only some one and a half kilometers
-                // away at 1080p: where the finest tiles end (346 meters
-                // there), about three in four of them, over their sizes,
-                // still span enough to show, and those stand on the
-                // kilometer tiles too.
-                far: Some(FarPlacement {
-                    level: 2,
-                    share: 0.75,
-                }),
+                // Stones retire as they shrink under a pixel on screen, the
+                // largest only some one and a half kilometers away at
+                // 1080p, past where the finest tiles end (346 meters
+                // there), so they stand on the kilometer tiles too.
+                far: Some(FarPlacement { level: 2 }),
             },
             PlacementLayer {
                 id: "outcrops".into(),
@@ -1608,10 +1595,7 @@ fn rules() -> Biomes {
                 sink: 0.5,
                 bed: 0.0,
                 level: 0,
-                far: Some(FarPlacement {
-                    level: 2,
-                    share: 0.5,
-                }),
+                far: Some(FarPlacement { level: 2 }),
             },
         ]
         .into_iter()
@@ -1848,10 +1832,7 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             // Every one still spans pixels enough to show where the finest
             // tiles end, so all stand on the kilometer tiles too and retire
             // by their size beyond.
-            far: Some(FarPlacement {
-                level: 2,
-                share: 1.0,
-            }),
+            far: Some(FarPlacement { level: 2 }),
         },
         PlacementLayer {
             id: "channel_stones".into(),
@@ -1872,10 +1853,7 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             level: 0,
             // As the channel's boulders, nearly every one still shows where
             // the finest tiles end.
-            far: Some(FarPlacement {
-                level: 2,
-                share: 1.0,
-            }),
+            far: Some(FarPlacement { level: 2 }),
         },
     ]
 }

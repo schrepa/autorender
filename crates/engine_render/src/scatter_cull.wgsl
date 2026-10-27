@@ -15,10 +15,10 @@
 // proxy where it has one, drawn in place of every level, else the
 // coarsest level half their texel hides; parts cast nothing.
 // The camera switches how it shows an object (a level, its card or
-// nothing, past the density its layer keeps or once it spans too few
-// pixels for its rank) a margin past each switch's distance from the
-// detail eye, and fades every switch over frames: while one fades, the
-// object shows both ways, each on its share of the pixels.
+// nothing once it spans too few pixels for its rank) a margin past each
+// switch's distance from the detail eye, and fades every switch over
+// frames: while one fades, the object shows both ways, each on its share
+// of the pixels.
 
 struct Frame {
     // The detail eye (world), which every switch measures from, and pixels
@@ -37,7 +37,7 @@ struct Frame {
     // distance per world unit of radius past which an object's bounding
     // sphere shows smaller than impostors' size on screen, and (w) the
     // pixels a world unit spans at unit distance, by which objects of
-    // thinning layers retire. The camera's fading objects draw from the
+    // placement layers retire. The camera's fading objects draw from the
     // lists of the view after the last.
     fade: vec4<f32>,
 }
@@ -110,24 +110,17 @@ struct DrawArgs {
     first_instance: u32,
 }
 
-// How each terrain's placement layers thin with distance,
-// `THIN_LAYERS` entries a terrain: the share standing far away, the meters
-// the layer's own tiles and its far tiles reach (0 where they stay resident
-// everywhere), and 1 where the layer thins at all (`terrain_variety.wgsl`'s
-// `placed_thinned`). Layers rank their objects by size, the largest first,
-// so those standing far away are the largest.
-const THIN_LAYERS: u32 = 64u;
 // Where an object's layer and its rank under the density lie in its
-// terrain word (`scatter.rs`).
-const TERRAIN_INDEX: u32 = 0x1ffu;
+// terrain word (`scatter.rs`). Layers rank their objects by size, the
+// largest first, so those retiring last are the largest.
 const LAYER_SHIFT: u32 = 9u;
 const NO_LAYER: u32 = 0x7fu;
 const RANK_SHIFT: u32 = 21u;
 
-// Whether an object of a thinning layer whose bounding sphere's radius is
+// Whether an object of a placement layer whose bounding sphere's radius is
 // `radius`, ranked `rank` under its layer's density, is big enough on
 // screen to show `away` meters from the eye: while its sphere spans more
-// than about a pixel times its own factor (`terrain_variety.wgsl`'s
+// than a pixel times its own factor (`terrain_variety.wgsl`'s
 // `seen_share`), each at its own size, the ground taking on its look where
 // it retires (`meshes/terrain.wgsl`'s `terrain_placed_share`).
 fn placed_seen(radius: f32, rank: f32, away: f32) -> bool {
@@ -163,7 +156,6 @@ const HIDDEN: u32 = 0x80000000u;
 // their draws.
 @group(0) @binding(6) var<storage, read_write> cards: array<vec2<u32>>;
 @group(0) @binding(7) var<storage, read_write> card_args: array<CardArgs>;
-@group(0) @binding(8) var<storage, read> thins: array<vec4<f32>>;
 
 // Whether a sphere at `center` with `radius` reaches inside every plane of
 // view `view`.
@@ -178,14 +170,13 @@ fn inside(view: u32, center: vec3<f32>, radius: f32) -> bool {
 }
 
 // How the camera shows `record` (of draw group `group`) from `away` meters:
-// nothing past the density its layer keeps there or once too small on
-// screen for its rank (`thin` and `rank`, where `thinning`), its card where
-// its bounding sphere shows smaller than impostors' size on screen on
-// frames drawing impostors, else the coarsest level it draws whose error
-// shows within the pixel error; exact frames show the finest level.
-fn shown_at(record: Record, group: Group, thinning: bool, thin: vec4<f32>, rank: f32,
-        away: f32) -> u32 {
-    if thinning && (rank >= placed_thinned(thin, away) || !placed_seen(record.radius, rank, away)) {
+// nothing once too small on screen for its rank (`rank`, where it
+// `retires`, an object of a placement layer), its card where its bounding
+// sphere shows smaller than impostors' size on screen on frames drawing
+// impostors, else the coarsest level it draws whose error shows within the
+// pixel error; exact frames show the finest level.
+fn shown_at(record: Record, group: Group, retires: bool, rank: f32, away: f32) -> u32 {
+    if retires && !placed_seen(record.radius, rank, away) {
         return SHOWN_NONE;
     }
     if frame.eye.w <= 0.0 {
@@ -319,16 +310,11 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let group = groups[record.group];
     let away = distance(record.center, frame.eye.xyz);
-    // Objects ranked past the density their distance allows show nothing,
-    // nor do those standing far away where tiles holding
-    // them instead are resident.
+    // Objects of placement layers retire by their size on screen, and those
+    // standing far away show nothing where tiles holding them instead are
+    // resident.
     let layer = (record.terrain >> LAYER_SHIFT) & NO_LAYER;
-    let thin_index = (record.terrain & TERRAIN_INDEX) * THIN_LAYERS + layer;
-    let thinning = layer != NO_LAYER && thin_index < arrayLength(&thins);
-    var thin = vec4<f32>(0.0);
-    if thinning {
-        thin = thins[thin_index];
-    }
+    let retires = layer != NO_LAYER;
     let rank = f32((record.terrain >> RANK_SHIFT) & 0x3ffu) / 1023.0;
     let hidden = (record.terrain & HIDDEN) != 0u;
     // How the camera shows it. Exact frames show it as it
@@ -340,7 +326,7 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     var progress = FADED;
     if frame.eye.w <= 0.0 || frame.fade.x < 0.0 {
         if !hidden {
-            shown = shown_at(record, group, thinning, thin, rank, away);
+            shown = shown_at(record, group, retires, rank, away);
         }
         previous = shown;
     } else {
@@ -348,12 +334,12 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         var farther = SHOWN_NONE;
         if !hidden {
             let margin = frame.fade.y;
-            nearer = shown_at(record, group, thinning, thin, rank, away * (1.0 - margin));
-            farther = shown_at(record, group, thinning, thin, rank, away * (1.0 + margin));
+            nearer = shown_at(record, group, retires, rank, away * (1.0 - margin));
+            farther = shown_at(record, group, retires, rank, away * (1.0 + margin));
         }
         if record.state == STATE_ADOPT {
             if !hidden {
-                shown = shown_at(record, group, thinning, thin, rank, away);
+                shown = shown_at(record, group, retires, rank, away);
             }
             previous = shown;
         } else {

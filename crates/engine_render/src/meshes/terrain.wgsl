@@ -53,22 +53,18 @@ struct TerrainPaletteEntry {
     canopy: vec4<f32>,
     // Its placement layers' objects, which the ground takes on where they
     // retire: their mean linear color and the share of the ground they
-    // cover where it lies alone (w, 0 without any); the base-2 logarithm
-    // of the bounding spheres' diameters (meters) of those ranked first
-    // (`placed_size.x`) and last (y), the largest and smallest, as layers
-    // rank them by size; and how they thin with distance: the share
-    // standing far away (`placed_thinning.x`), and the levels whose tiles
-    // hold them near and far (y and z), each plus one, 0 where those stay
-    // resident everywhere.
+    // cover where it lies alone (w, 0 without any); and the base-2
+    // logarithm of the bounding spheres' diameters (meters) of those ranked
+    // first (`placed_size.x`) and last (y), the largest and smallest, as
+    // layers rank them by size.
     placed: vec4<f32>,
     placed_size: vec4<f32>,
-    placed_thinning: vec4<f32>,
     // Its height map's mean (x), which height blending takes where its maps'
     // means stand in.
     heights: vec4<f32>,
 }
 // As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
-const TERRAIN_PALETTE_ENTRIES: u32 = 102u;
+const TERRAIN_PALETTE_ENTRIES: u32 = 113u;
 // Every terrain's surface materials, each terrain's from
 // `terrain.directory.z`.
 @group(1) @binding(25) var<uniform> terrain_palette: array<TerrainPaletteEntry, TERRAIN_PALETTE_ENTRIES>;
@@ -1103,7 +1099,7 @@ fn terrain_thinned(world: vec3<f32>) -> f32 {
     if cover.x <= 0.0 {
         return 1.0;
     }
-    let law = CoverLaw(cover.x, cover.y);
+    let law = CoverLaw(cover.x);
     let away = detail_distance(world);
     return 1.0 - cover_shown(away, cover_share(away, law), law);
 }
@@ -1207,24 +1203,11 @@ fn terrain_canopy_look(root: vec3<f32>, tip: vec3<f32>, leaves: f32, site: Terra
     return look;
 }
 
-// The meters from the detail eye placed objects on the tiles of the level
-// coded `code` (`placed_thinning`: the level plus one, 0 where its tiles
-// stay resident everywhere) stand within, as culling thins them: the
-// level's reach in the directory, or 0.
-fn terrain_placed_reach(code: f32) -> f32 {
-    if code < 0.5 {
-        return 0.0;
-    }
-    let header = terrain.directory.x + (u32(code + 0.5) - 1u) * 4u;
-    return bitcast<f32>(terrain_directory[header + 3u]);
-}
-
 // The share of the ground of material `entry` at `site` that shows its
 // placement layers' objects' mean color: of the ground they cover, the
 // share their objects leave as `scatter_cull.wgsl` culls them, seen from the
-// detail eye, whether thinning hides them with distance
-// (`terrain_variety.wgsl`'s `placed_thinned`) or they span too few pixels
-// across `site.across` for their ranks (`seen_share`). Both keep the objects
+// detail eye, as they span too few pixels across `site.across` for their
+// ranks (`terrain_variety.wgsl`'s `seen_share`). Culling keeps the objects
 // ranked first, the largest, whose diameters' logarithms fall evenly from
 // the first's to the last's, each covering the ground as its diameter's
 // square; none where the site measures nothing.
@@ -1237,11 +1220,7 @@ fn terrain_placed_share(entry: TerrainPaletteEntry, site: TerrainSite) -> f32 {
     let octaves = max(first - entry.placed_size.y, 0.0);
     // Objects ranked under this still span enough pixels to show: where a
     // rank meets the share its diameter's pixels keep.
-    let seen = saturate((1.0 + first - log2(site.across)) / (2.0 + octaves));
-    let thinning = entry.placed_thinning;
-    let thin = vec4<f32>(thinning.x, terrain_placed_reach(thinning.y),
-        terrain_placed_reach(thinning.z), 1.0);
-    let kept = min(placed_thinned(thin, detail_distance(site.world)), seen);
+    let kept = saturate((1.0 + first - log2(site.across)) / (1.0 + octaves));
     // The share of their ground the objects ranked under `kept` cover.
     var shown = kept;
     if octaves > 1.0e-3 {
