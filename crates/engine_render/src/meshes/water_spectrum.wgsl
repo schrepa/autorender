@@ -27,7 +27,8 @@
 // tile scaled by the root of the slope variance that sea holds in the
 // tile's band; the slopes of its waves finer than the tiles hold roughen
 // the water, and light wind, raising no capillary ripples, leaves it
-// glassy.
+// glassy. Terrains' water shows the share of that sea its settings ask for
+// (`water_wind_shown`); the sea, all of its own.
 // Terrain upwind shelters the wind over water: behind a crest it slows,
 // recovering downwind (`terrain_shelter`), so valley streams lie calm while
 // open lakes keep their breeze.
@@ -440,6 +441,22 @@ fn water_wind_sea(speed: f32, fetch: f32, depth: f32) -> WaterSea {
         1.0e-30));
     sea.deep = sqrt(max(depth, 0.0));
     return sea;
+}
+
+// Sea `sea` (`water_wind_sea`) as terrains' water shows it: the share of its
+// waves the water's settings ask for (`water.wind.w`, `Water::wind_waves`),
+// its curvature scaled by that share's square, so each of the wind's tiles'
+// gains scales by the share (`water_wind_gains`), and with them the slopes
+// and heights the tiles give the water and how far they fold it
+// (`water_wind_whitecaps`), and the variance of the slopes they hide and of
+// its waves finer than the tiles hold (`water_wind_finer`) by its square. A
+// share of none leaves no waves in it, and the water reads no tile.
+fn water_wind_shown(sea: WaterSea) -> WaterSea {
+    let kept = water.wind.w * water.wind.w;
+    var shown = sea;
+    shown.long *= kept;
+    shown.short *= kept;
+    return shown;
 }
 
 // The curvature of sea `sea` at the wave number k whose root is `root` (√k,

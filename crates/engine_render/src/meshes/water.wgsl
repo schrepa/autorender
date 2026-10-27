@@ -27,7 +27,8 @@
 // it; the water's debug views paint each of its fields (`meshes/debug.wgsl`).
 // Its waves come from that state alone (`water_flow.wgsl`): the
 // wind's, as its spectrum raises them over the water's span and depth
-// (`water_spectrum.wgsl`), standing where the water is still and riding
+// (`water_spectrum.wgsl`) and as much of them as its settings show
+// (`Water::wind_waves`), standing where the water is still and riding
 // its current where it runs, its eddies roughening it unseen; the boils its
 // eddies bring up and the waves its bed holds still where it runs faster
 // than the slowest of its own waves (`water_stream.wgsl`); and
@@ -92,7 +93,9 @@
 // translation (the sea's; terrains' water draws through the terrain's
 // view); the color deep water scatters back (rgb) and the meters through
 // which half the light passes (w); the wind's velocity along x and z (xy,
-// the sea's own for the sea) and how strongly it gusts (z); for the sea,
+// the sea's own for the sea), how strongly it gusts (z) and the share of
+// its waves terrains' water shows (w, `Water::wind_waves`; 1 for the sea,
+// which keeps all of its own: `water_wind_shown`); for the sea,
 // the compression below which its crests whiten (x), the amplitude of one
 // wave holding all its waves' variance, which runs up its shores (y), and
 // its waves' summed height (w), none of it for terrains' water (`foam`);
@@ -1256,9 +1259,10 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // The wind's waves: each of its tiles as strong as its spectrum gives
     // that tile's band where the wind, gusting and sheltered by the terrain
     // upwind, blows over as much water as the water's body spans, as deep as
-    // it is here.
+    // it is here, of which the water shows the share its settings ask for
+    // (`water_wind_shown`).
     let wind = water_wind_speed(world, time);
-    let sea = water_wind_sea(wind, at.words.span, depth);
+    let sea = water_wind_shown(water_wind_sea(wind, at.words.span, depth));
     let gains = water_wind_gains(sea);
     // Its waves, from its state alone (`water_flow_waves`): the wind's, the
     // boils its eddies bring up, the waves its bed holds and those standing

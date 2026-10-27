@@ -4,9 +4,11 @@
 //! drawn from fixed noise for the wind's heading, are one of the scene's
 //! static tables (`engine_core::table_data::waves` makes them, with each
 //! tile's period, band, height and turn), which upload as they arrive. Each
-//! frame the spectra evolve (gravity and surface tension set each wave's
-//! speed; frequencies are rounded so the waves loop every [`LOOP_SECONDS`])
-//! and an inverse transform turns them into the slopes and heights of the
+//! frame whose terrains' water shows the wind's waves
+//! (`engine_core::Water::wind_waves`) or whose sea draws, the spectra
+//! evolve (gravity and surface tension set each wave's speed; frequencies
+//! are rounded so the waves loop every [`LOOP_SECONDS`]) and an inverse
+//! transform turns them into the slopes and heights of the
 //! surface, whose moments fill a texture array with its mip levels (LEAN
 //! mapping, Olano and Baker 2010): each tile's slopes and their squares in
 //! one layer, and their product, its height and the height's square in
@@ -19,17 +21,19 @@
 //! whole repeat, which the last of its levels holds, rides water's uniform
 //! for the tiles a pixel reads none of.
 //!
-//! Each frame the wind's tiles also transform how much their waves, choppy
-//! (Tessendorf 2001), compress the surface at unit gain, into their
-//! whitecaps: each texel keeps the largest compression it has had, fading
-//! by e every [`WATER_WHITECAP_FADE`] seconds of the waves' own clock, so a
-//! paused or repeated frame repeats, in a texture array of its own whose
-//! levels average as the moments' do. The rows' transforms serve both, and
-//! each frame fades a copy of the whitecaps the last one left, as no pass
-//! reads and writes one texture. Water reads them where it reads the slopes
-//! (`meshes/water_spectrum.wgsl`'s `water_wind_whitecaps`) and whitens
-//! where the sum of its gains times them passes 1, where its waves have
-//! folded (`meshes/water_foam.wgsl`'s `water_folding`).
+//! Each frame whose terrains' water shows the wind's waves, the wind's tiles
+//! also transform how much their waves, choppy (Tessendorf 2001), compress
+//! the surface at unit gain, into their whitecaps: each texel keeps the
+//! largest compression it has had, fading by e every
+//! [`WATER_WHITECAP_FADE`] seconds of the waves' own clock, so a paused or
+//! repeated frame repeats, in a texture array of its own whose levels
+//! average as the moments' do. The rows' transforms serve both, and each
+//! such frame fades a copy of the whitecaps they last left, as no pass
+//! reads and writes one texture. Terrains' water reads them where it reads
+//! the slopes (`meshes/water_spectrum.wgsl`'s `water_wind_whitecaps`) and
+//! whitens where the sum of its gains times them passes 1, where its waves
+//! have folded (`meshes/water_foam.wgsl`'s `water_folding`); the sea reads
+//! none of them.
 
 use std::cell::Cell;
 use std::f64::consts::TAU;
@@ -331,40 +335,52 @@ impl WaterWaves {
     }
 
     /// Evolves the wind's spectra prepared into the moments and their
-    /// levels; then the wind's tiles' compression into their whitecaps,
-    /// fading those the last frame left, and their levels; timed by
-    /// `profiler` (`water_waves`).
+    /// levels, where `moments`; then, where `whitecaps`, the wind's tiles'
+    /// compression into their whitecaps, fading those they last left, and
+    /// their levels; timed by `profiler` (`water_waves`). Neither runs where
+    /// nothing reads it, and the whitecaps fade from where they last did
+    /// when they run again.
     pub(crate) fn encode(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         profiler: &crate::profiling::GpuProfiler,
+        [moments, whitecaps]: [bool; 2],
     ) {
         let Some([rows, columns, levels, fold_rows, fold_columns]) = &self.pipelines else {
             return;
         };
-        encoder.copy_texture_to_texture(
-            self.whitecaps.as_image_copy(),
-            self.before.as_image_copy(),
-            self.before.size(),
-        );
-        self.faded.set(Some(self.seconds));
+        if !moments && !whitecaps {
+            return;
+        }
+        if whitecaps {
+            encoder.copy_texture_to_texture(
+                self.whitecaps.as_image_copy(),
+                self.before.as_image_copy(),
+                self.before.size(),
+            );
+            self.faded.set(Some(self.seconds));
+        }
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/water-waves"),
             timestamp_writes: profiler.span("water_waves").map(|span| span.compute()),
         });
         let tiles = WIND_TILES as u32;
-        transform(
-            &mut pass,
-            [rows, columns, levels],
-            &self.groups,
-            (tiles, MOMENT_LAYERS * tiles),
-        );
-        transform(
-            &mut pass,
-            [fold_rows, fold_columns, levels],
-            &self.folds,
-            (tiles, tiles),
-        );
+        if moments {
+            transform(
+                &mut pass,
+                [rows, columns, levels],
+                &self.groups,
+                (tiles, MOMENT_LAYERS * tiles),
+            );
+        }
+        if whitecaps {
+            transform(
+                &mut pass,
+                [fold_rows, fold_columns, levels],
+                &self.folds,
+                (tiles, tiles),
+            );
+        }
     }
 }
 
