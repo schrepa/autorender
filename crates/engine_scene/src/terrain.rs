@@ -297,21 +297,17 @@ pub struct SceneTerrainMaterial {
     pub projection: SurfaceProjection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<Cover>,
-    /// Meters its maps' heights span where the ground's relief shows:
-    /// 0, flat, to 1.
+    /// Meters its maps' heights span on the ground, its mesh moved by their
+    /// coarser part and its pixels' relief showing the rest: 0, flat, to 2.
     #[serde(default, skip_serializing_if = "is_flat")]
-    pub relief: f32,
-    /// Meters its maps' heights move the ground itself where that depth
-    /// spans a few pixels: 0, none, to 2.
-    #[serde(default, skip_serializing_if = "is_flat")]
-    pub displacement: f32,
+    pub depth: f32,
     /// Meters tracks sink it at most: 0, rigid, to 2.
     #[serde(default, skip_serializing_if = "is_flat")]
     pub deform: f32,
 }
 
-fn is_flat(relief: &f32) -> bool {
-    *relief == 0.0
+fn is_flat(meters: &f32) -> bool {
+    *meters == 0.0
 }
 
 fn gray() -> [f32; 3] {
@@ -580,8 +576,7 @@ impl SceneTerrain {
                 height_contrast: material.height_contrast,
                 projection: material.projection,
                 cover: material.cover,
-                relief: material.relief,
-                displacement: material.displacement,
+                depth: material.depth,
                 deform: material.deform,
             };
             if let Err(error) = look.validate() {
@@ -841,8 +836,7 @@ impl SceneTerrain {
                         height_contrast: look.height_contrast,
                         projection: look.projection,
                         cover: look.cover,
-                        relief: look.relief,
-                        displacement: look.displacement,
+                        depth: look.depth,
                         deform: look.deform,
                     })
                     .collect(),

@@ -137,11 +137,10 @@ settings! {
         /// rounded up to a multiple of four: a byte each with a third more for
         /// their mips on devices sampling compressed textures, four elsewhere.
         pub macro_resolution: u32 = 2048 => range(64, 4096),
-        /// The most steps a ray takes through the ground's relief. Relief
-        /// shows by its size on screen, its view rays marching through its
-        /// materials' heights: whole while its depth moves the ground two
-        /// pixels or more, fading out by half a pixel, with about a step per
-        /// pixel it moves.
+        /// The most steps a ray takes through the ground's relief, the part
+        /// of its materials' heights finer than its mesh carries. Its view
+        /// rays march through their heights where their depth could move the
+        /// ground a pixel on screen, with about a step per pixel it moves.
         pub relief_steps: u32 = 8 => range(2, 64),
         /// Ground generated around terrains with surroundings
         /// streams and draws; off, every terrain ends at its edges.

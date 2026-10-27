@@ -11,7 +11,7 @@
 //! bisection wherever a leaf's meshlet may stray more than the settings'
 //! pixels from the ground's true surface, seen from the detail eye, as the
 //! tiles' error pyramids bound it (`atlas`), and its
-//! leaves draw that surface, deep materials displacing it, with one indexed
+//! leaves draw that surface, its materials' mesh band moving it, with one indexed
 //! indirect draw per terrain and view. The shadow clipmap's tiles, which
 //! must not depend on where the eye stood, hold the ground at a level of
 //! detail each level's texels choose, unmorphed, over the regions a frame

@@ -148,9 +148,9 @@ impl PatchDraws {
             if !terrain.drawn {
                 continue;
             }
-            // Where deep materials displace it, its ground reaches their
-            // depth past its tiles' bounds.
-            let screen = ground_rect(views.camera, terrain, eye, uniform.relief[2]);
+            // Where its materials' mesh band moves it, its ground reaches as
+            // far as their depth past its tiles' bounds.
+            let screen = ground_rect(views.camera, terrain, eye, uniform.relief[0]);
             self.frame.terrains.push(FrameTerrain {
                 terrain: index,
                 uniform: (index as u64 * SLOT) as u32,
@@ -694,16 +694,13 @@ fn terrain_uniform(
             [law.span, 0.0, cover.density, 0.0]
         }
     };
-    // The deepest any of its materials with maps sinks and displaces the
-    // ground, as the palette holds them.
-    let palette = tables.palette_of(index, terrain.surface.len());
-    let deepest = |part: usize| {
-        palette
-            .iter()
-            .filter(|entry| entry.params[3] > 0.0)
-            .map(|entry| entry.relief[part])
-            .fold(0.0, engine_core::math::max)
-    };
+    // The deepest of its materials with maps, as the palette holds them.
+    let deepest = tables
+        .palette_of(index, terrain.surface.len())
+        .iter()
+        .filter(|entry| entry.params[3] > 0.0)
+        .map(|entry| entry.relief[0])
+        .fold(0.0, engine_core::math::max);
     let (first, finest) = parts.surface.of(index);
     TerrainUniform {
         anchor: [relative.x, relative.y, relative.z, pyramid.spacing(0)],
@@ -723,13 +720,8 @@ fn terrain_uniform(
             tables.palette_bases.get(index).copied().unwrap_or(0),
             parts.sky.layer(index),
         ],
-        // The ground's relief and displacement.
-        relief: [
-            deepest(0),
-            views.settings.relief_steps as f32,
-            deepest(3),
-            finest,
-        ],
+        // The ground's two bands.
+        relief: [deepest, views.settings.relief_steps as f32, finest, 0.0],
         deform_grid: parts.shading.grid,
         deform: parts.shading.scale,
         cover,

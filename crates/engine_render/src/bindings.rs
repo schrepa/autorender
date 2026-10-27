@@ -579,10 +579,10 @@ tables! {
     /// hold the ground at a level of their own, and the tiles' water's
     /// surfaces, where the ground wets at its waterline. Vertices read the
     /// frame's leaves of the terrains' subdivisions and the true surface
-    /// under them, and where deep materials displace it their blend, normals
-    /// and heights, which the subdivision's compute passes measure leaves by
-    /// alike, with the error pyramids of every tile's ground and water, which
-    /// they alone read.
+    /// under them, and where their materials' mesh band moves it their
+    /// blend, normals and heights, which the subdivision's compute passes
+    /// measure leaves by alike, with the error pyramids of every tile's
+    /// ground and water, which they alone read.
     const TERRAIN: Table = Table {
         label: "engine/terrain-layout",
         serves: [SHADER @ 1, TERRAIN_SHADOW_SHADER @ 1],

@@ -8,10 +8,9 @@ use engine::terrain::SurfaceProjection;
 /// another's); its linear color and roughness without maps, and the color
 /// its maps' colors are multiplied by; the meters its maps repeat over; how
 /// sharply its heights win where it blends; how it lies on steep ground;
-/// the cover growing where it lies; the meters its
-/// heights sink between its stones, tufts and ledges (relief, a few
-/// centimeters at most); the meters they move the ground itself, deep
-/// blocks and stones; and the meters tracks sink it at most.
+/// the cover growing where it lies; its depth, the meters its heights span
+/// between its stones, tufts, blocks and ledges; and the meters tracks sink
+/// it at most.
 pub(super) struct Look {
     pub(super) name: &'static str,
     pub(super) maps: &'static str,
@@ -22,8 +21,7 @@ pub(super) struct Look {
     pub(super) height_contrast: f32,
     pub(super) projection: SurfaceProjection,
     pub(super) cover: Option<Cover>,
-    pub(super) relief: f32,
-    pub(super) displacement: f32,
+    pub(super) depth: f32,
     pub(super) deform: f32,
 }
 
@@ -44,8 +42,7 @@ pub(super) const LOOKS: [Look; 12] = [
             color: [0.16, 0.23, 0.06],
             sway: 0.6,
         }),
-        relief: 0.03,
-        displacement: 0.0,
+        depth: 0.03,
         deform: 0.04,
     },
     Look {
@@ -64,8 +61,7 @@ pub(super) const LOOKS: [Look; 12] = [
             color: [0.34, 0.27, 0.12],
             sway: 0.7,
         }),
-        relief: 0.03,
-        displacement: 0.0,
+        depth: 0.03,
         deform: 0.03,
     },
     Look {
@@ -78,8 +74,7 @@ pub(super) const LOOKS: [Look; 12] = [
         height_contrast: 0.5,
         projection: SurfaceProjection::Top,
         cover: None,
-        relief: 0.05,
-        displacement: 0.0,
+        depth: 0.05,
         deform: 0.06,
     },
     // Needle litter under the spruces: the dirt's maps, darkened toward
@@ -94,12 +89,11 @@ pub(super) const LOOKS: [Look; 12] = [
         height_contrast: 0.5,
         projection: SurfaceProjection::Top,
         cover: None,
-        relief: 0.06,
-        displacement: 0.0,
+        depth: 0.06,
         deform: 0.05,
     },
     // The rock of every steep slope, laid across the slope's faces, its
-    // blocks and ledges displacing the ground, so steep ground reads as rock
+    // blocks and ledges a quarter meter deep, so steep ground reads as rock
     // whatever stands on it.
     Look {
         name: "rock",
@@ -111,8 +105,7 @@ pub(super) const LOOKS: [Look; 12] = [
         height_contrast: 0.7,
         projection: SurfaceProjection::Biplanar,
         cover: None,
-        relief: 0.0,
-        displacement: 0.25,
+        depth: 0.25,
         deform: 0.0,
     },
     Look {
@@ -125,8 +118,7 @@ pub(super) const LOOKS: [Look; 12] = [
         height_contrast: 0.4,
         projection: SurfaceProjection::Top,
         cover: None,
-        relief: 0.04,
-        displacement: 0.0,
+        depth: 0.04,
         deform: 0.3,
     },
     // Grass where water gathers: deeper green, taller and
@@ -147,8 +139,7 @@ pub(super) const LOOKS: [Look; 12] = [
             color: [0.1, 0.2, 0.05],
             sway: 0.6,
         }),
-        relief: 0.03,
-        displacement: 0.0,
+        depth: 0.03,
         deform: 0.07,
     },
     // Stream and river beds of the grains their floods leave, dry as their
@@ -164,8 +155,7 @@ pub(super) const LOOKS: [Look; 12] = [
         height_contrast: 0.3,
         projection: SurfaceProjection::Top,
         cover: None,
-        relief: 0.012,
-        displacement: 0.0,
+        depth: 0.012,
         deform: 0.05,
     },
     // Gravel: small water-worn stones of every rock the water brings down.
@@ -179,8 +169,7 @@ pub(super) const LOOKS: [Look; 12] = [
         height_contrast: 0.75,
         projection: SurfaceProjection::Top,
         cover: None,
-        relief: 0.035,
-        displacement: 0.0,
+        depth: 0.035,
         deform: 0.02,
     },
     // Cobbles on steep beds: rounded stones packed with dark gaps between.
@@ -194,8 +183,7 @@ pub(super) const LOOKS: [Look; 12] = [
         height_contrast: 0.9,
         projection: SurfaceProjection::Top,
         cover: None,
-        relief: 0.0,
-        displacement: 0.12,
+        depth: 0.12,
         deform: 0.0,
     },
     // Roads: packed gravel, the scree's stones finer and
@@ -210,8 +198,7 @@ pub(super) const LOOKS: [Look; 12] = [
         height_contrast: 0.6,
         projection: SurfaceProjection::Top,
         cover: None,
-        relief: 0.03,
-        displacement: 0.0,
+        depth: 0.03,
         deform: 0.04,
     },
     // Silt floods lay bare on bars and banks: the streams' sand's maps a
@@ -227,8 +214,7 @@ pub(super) const LOOKS: [Look; 12] = [
         height_contrast: 0.3,
         projection: SurfaceProjection::Top,
         cover: None,
-        relief: 0.008,
-        displacement: 0.0,
+        depth: 0.008,
         deform: 0.06,
     },
 ];

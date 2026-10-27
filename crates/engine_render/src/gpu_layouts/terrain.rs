@@ -11,10 +11,10 @@ gpu_structs! {
     /// (its base color factor with maps) and roughness; its tiling, height
     /// contrast, projection and maps' layer plus one (0 without maps); its
     /// normal scale, occlusion strength, metalness and mean occlusion; its
-    /// maps' mean color and roughness, its factors applied; the meters its
-    /// relief spans (none where it displaces the ground), tracks sink it at
-    /// most, the mean square slope its normal maps' mean averages away and
-    /// the meters it displaces the ground; its cover's canopy: its blades'
+    /// maps' mean color and roughness, its factors applied; its depth, the
+    /// meters its heights span, which its mesh and pixel bands share, the
+    /// meters tracks sink it at most and the mean square slope its normal
+    /// maps' mean averages away; its cover's canopy: its blades'
     /// linear tip color and their leaves' area per square meter of ground;
     /// its placement layers'
     /// objects, which the ground takes on where they retire: their mean
@@ -75,12 +75,12 @@ gpu_structs! {
         pub surface: [u32; 4],
         pub origin: [f32; 4],
         pub directory: [u32; 4],
-        /// The ground's relief: the meters the deepest of the terrain's
-        /// materials with maps sinks it, so pixels where no relief could
-        /// move half a pixel look up no materials for it, and the most steps
-        /// its rays take; the meters the deepest of them displaces it, so
-        /// vertices where none could move a pixel read none, and the meters
-        /// between its subdivision's finest leaves' meshlet vertices.
+        /// The ground's two bands: the depth of the deepest of the
+        /// terrain's materials with maps, so vertices and pixels where it
+        /// could not move the ground a pixel read no materials for them;
+        /// the most steps the pixel band's rays take; and the meters between
+        /// its subdivision's finest leaves' meshlet vertices, the finest the
+        /// mesh band follows; w unused.
         pub relief: [f32; 4],
         pub deform_grid: [i32; 4],
         pub deform: [f32; 4],
