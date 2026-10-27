@@ -1,7 +1,7 @@
 //! Impostors' records: a layer of an atlas, as hosts keep it and the cook
 //! ships it. A record holds its header (its magic, then its format's tag,
 //! frames a side, texels a frame, whether over the hemisphere and levels,
-//! little-endian u32 each) and the four arrays' levels, first level first,
+//! little-endian u32 each) and its four kinds' levels, first level first,
 //! in its format's rows (of BC7 or ASTC blocks, or of RGBA8 texels).
 //! Loading one writes it into a new layer. A bake's layer is read back as
 //! RGBA8 texels and made a record: compressed atlases' encoded in their
@@ -54,7 +54,7 @@ fn record_header(shape: AtlasShape, format: AtlasFormat) -> Vec<u8> {
 }
 
 /// Bytes of a record of a layer held at `shape` as `format`: its header
-/// and four arrays' levels.
+/// and its four kinds' levels.
 fn record_bytes(shape: AtlasShape, format: AtlasFormat) -> usize {
     RECORD_HEADER
         + 4 * (0..shape.levels())
@@ -153,19 +153,19 @@ impl ImpostorAtlas {
         };
         let arrays = self.arrays.as_ref().expect("grown above");
         let mut at = RECORD_HEADER;
-        for texture in &arrays.textures {
+        for kind in 0..KINDS {
             for level in 0..self.shape.levels() {
                 let size = self.shape.size() >> level;
                 let (row, rows) = self.format.rows(size);
                 let length = row as usize * rows as usize;
                 gpu.queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
-                        texture,
+                        texture: &arrays.texture,
                         mip_level: level,
                         origin: wgpu::Origin3d {
                             x: 0,
                             y: 0,
-                            z: layer,
+                            z: kind * arrays.layers + layer,
                         },
                         aspect: wgpu::TextureAspect::All,
                     },

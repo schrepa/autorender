@@ -2,8 +2,11 @@
 //! triangles draws, where its instances are too small for its texels to
 //! show, as cards blending the three frames around the view
 //! (`meshes/impostors.wgsl`) of its mesh and material, and of its parts
-//! with theirs, seen from a grid of
-//! directions, one layer of four texture arrays. Plan batches' frames cover
+//! with theirs, seen from a grid of directions, a layer of each of the four
+//! kinds of texels its atlas's one texture array holds, each kind's layers
+//! together, which draws read through a view of each kind decoding as the
+//! kind does and reflections' world trace reads whole, undecoded
+//! (`reflections.wgsl`). Plan batches' frames cover
 //! the sphere, eight a side at 16 texels; placed objects', which stand on
 //! the ground, the upper hemisphere, twelve a side, each at least as many
 //! texels across as the pixels their cards span where they take over
@@ -49,6 +52,7 @@ use crate::gpu_data::Variant;
 use crate::gpu_layouts::constants::IMPOSTOR_FOLIAGE as FOLIAGE;
 use crate::gpu_layouts::constants::IMPOSTOR_FRAMES_SHIFT as FRAMES_SHIFT;
 pub(crate) use crate::gpu_layouts::constants::IMPOSTOR_HEMISPHERE as HEMISPHERE;
+use crate::gpu_layouts::constants::IMPOSTOR_KINDS as KINDS;
 use crate::gpu_layouts::constants::IMPOSTOR_MASKED as MASKED;
 use crate::gpu_layouts::constants::IMPOSTOR_ROOMS as ROOMS;
 use crate::gpu_layouts::constants::VARIANT_FOLIAGE;
@@ -256,7 +260,9 @@ impl AtlasFormat {
         row as usize * rows as usize
     }
 
-    /// The arrays' texture formats.
+    /// The formats each kind of texels decodes as, which its views take;
+    /// the array holds every kind undecoded, in the first one's format
+    /// without sRGB.
     fn textures(self) -> [wgpu::TextureFormat; 4] {
         match self {
             Self::Bc7 => BC7_FORMATS,
@@ -304,6 +310,12 @@ impl ImpostorRecord {
             return 0.0;
         }
         2.0 * self.sphere[3] / texels as f32
+    }
+
+    /// Whether it holds views: not the zeroed record of a draw group
+    /// without an impostor.
+    pub(crate) fn framed(&self) -> bool {
+        self.flags & (HEMISPHERE - 1) != 0 && self.sphere[3] > 0.0
     }
 }
 
@@ -362,12 +374,15 @@ fn shades_as_foliage(variant: Variant) -> bool {
     variant.alpha_mask() || variant.bits() & VARIANT_FOLIAGE != 0
 }
 
+/// The most impostors an atlas holds on `device`: its array's layers hold
+/// each one's every kind of texels.
+fn most_layers(device: &wgpu::Device) -> u32 {
+    device.limits().max_texture_array_layers / KINDS
+}
+
 /// The most impostors an atlas holds on `device` within `budget`.
 fn layer_limit(device: &wgpu::Device, budget: Option<u32>) -> u32 {
-    device
-        .limits()
-        .max_texture_array_layers
-        .min(budget.unwrap_or(u32::MAX))
+    most_layers(device).min(budget.unwrap_or(u32::MAX))
 }
 
 /// The prelude's encoder, created with the first work recorded into it.
@@ -385,9 +400,14 @@ fn prelude<'e>(
 /// What an impostor depicts: a mesh drawn with a material.
 pub(crate) type ImpostorKey = (MeshHandle, Option<MaterialHandle>);
 
+/// An atlas's texture array: `layers` layers of each kind of texels, each
+/// kind's together in [`FORMATS`]' order, undecoded; a view of each kind's
+/// layers decoding as it does, which draws read; and a view of every layer
+/// undecoded, which reflections read.
 struct Arrays {
-    textures: [wgpu::Texture; 4],
+    texture: wgpu::Texture,
     views: [wgpu::TextureView; 4],
+    whole: wgpu::TextureView,
     layers: u32,
 }
 
@@ -665,7 +685,8 @@ impl ImpostorAtlas {
         u64::from(layers) * self.layer_bytes() + self.records.size()
     }
 
-    /// GPU bytes of a layer: four arrays, a third more for the levels.
+    /// GPU bytes of a layer: one of each of the four kinds, a third more
+    /// for the levels.
     fn layer_bytes(&self) -> u64 {
         self.format.level_bytes(self.shape.size()) as u64 * 4 * 4 / 3
     }
@@ -860,9 +881,7 @@ impl ImpostorAtlas {
         if self.layers.live() >= layer_limit(device, budget) {
             return None;
         }
-        let layer = self
-            .layers
-            .allocate(device.limits().max_texture_array_layers)?;
+        let layer = self.layers.allocate(most_layers(device))?;
         self.ensure_layers(device, encoder, self.layers.extent());
         Some(layer)
     }
@@ -906,8 +925,8 @@ impl ImpostorAtlas {
         self.targets = None;
     }
 
-    /// Grows the arrays to hold `layers`, copying the resident ones in the
-    /// prelude's `encoder`.
+    /// Grows the array to hold `layers` of each kind, copying the resident
+    /// ones in the prelude's `encoder`.
     fn ensure_layers(
         &mut self,
         device: &wgpu::Device,
@@ -921,41 +940,50 @@ impl ImpostorAtlas {
         {
             return;
         }
-        let capacity = grown_layers(
-            layers,
-            self.layer_bytes(),
-            device.limits().max_texture_array_layers,
-        );
+        let capacity = grown_layers(layers, self.layer_bytes(), most_layers(device));
         let (size, levels) = (self.shape.size(), self.shape.levels());
-        let textures = self.format.textures().map(|format| {
-            crate::targets::texture_2d(
-                device,
-                "engine/impostor-array",
-                (size, size),
-                capacity,
-                levels,
-                format,
-                wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC
-                    | wgpu::TextureUsages::COPY_DST,
-            )
+        let formats = self.format.textures();
+        // Every kind undecoded, which its views decode as it does.
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("engine/impostor-array"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: KINDS * capacity,
+            },
+            mip_level_count: levels,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: formats[0].remove_srgb_suffix(),
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[formats[0]],
         });
         if let Some(old) = &self.arrays {
             let encoder = prelude(device, encoder);
-            for (from, to) in old.textures.iter().zip(&textures) {
+            for kind in 0..KINDS {
                 for level in 0..levels {
                     let size = size >> level;
                     encoder.copy_texture_to_texture(
                         wgpu::TexelCopyTextureInfo {
-                            texture: from,
+                            texture: &old.texture,
                             mip_level: level,
-                            origin: wgpu::Origin3d::ZERO,
+                            origin: wgpu::Origin3d {
+                                x: 0,
+                                y: 0,
+                                z: kind * old.layers,
+                            },
                             aspect: wgpu::TextureAspect::All,
                         },
                         wgpu::TexelCopyTextureInfo {
-                            texture: to,
+                            texture: &texture,
                             mip_level: level,
-                            origin: wgpu::Origin3d::ZERO,
+                            origin: wgpu::Origin3d {
+                                x: 0,
+                                y: 0,
+                                z: kind * capacity,
+                            },
                             aspect: wgpu::TextureAspect::All,
                         },
                         wgpu::Extent3d {
@@ -967,19 +995,38 @@ impl ImpostorAtlas {
                 }
             }
         }
-        let views = textures.each_ref().map(|texture| {
+        let views = std::array::from_fn(|kind| {
             texture.create_view(&wgpu::TextureViewDescriptor {
                 label: Some("engine/impostor-array-view"),
+                format: Some(formats[kind]),
                 dimension: Some(wgpu::TextureViewDimension::D2Array),
+                base_array_layer: kind as u32 * capacity,
+                array_layer_count: Some(capacity),
                 ..Default::default()
             })
         });
+        let whole = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("engine/impostor-array-whole"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
         self.arrays = Some(Arrays {
-            textures,
+            texture,
             views,
+            whole,
             layers: capacity,
         });
         self.arrays_generation += 1;
+    }
+
+    /// Every layer of every kind of texels its array holds, undecoded, as
+    /// reflections' world trace reads them (`reflections.wgsl`'s
+    /// `placed_frames`), with the generation counting its arrays; `None`
+    /// before an impostor is resident.
+    pub(crate) fn frames(&self) -> Option<(&wgpu::TextureView, u64)> {
+        self.arrays
+            .as_ref()
+            .map(|arrays| (&arrays.whole, self.arrays_generation))
     }
 
     /// Uploads `records` (zeroed for draw groups without an impostor)

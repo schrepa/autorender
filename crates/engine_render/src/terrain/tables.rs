@@ -680,9 +680,8 @@ fn placed_asset(asset: &engine_core::RenderPlacementAsset) -> (f32, f32, [f32; 3
 
 /// A placed asset's objects' linear color: its material's base color
 /// factor, its base color texture's mean applied where that is summarized,
-/// which the ground takes on where they retire and reflections' world trace
-/// shows their canopies in.
-pub(crate) fn placed_color(asset: &engine_core::RenderPlacementAsset) -> [f32; 3] {
+/// which the ground takes on where they retire.
+fn placed_color(asset: &engine_core::RenderPlacementAsset) -> [f32; 3] {
     let material = &asset.material.material;
     let factor = material.color();
     let mean = material

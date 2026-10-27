@@ -43,8 +43,9 @@ pub(super) struct ScatterDraws {
     // the groups' layouts changed since they last uploaded.
     impostors: Vec<ImpostorRecord>,
     changed: bool,
-    // Each group's cover.
+    // Each group's cover, and its objects' packed color.
     covers: Vec<Cover>,
+    colors: Vec<[u32; 2]>,
 }
 
 impl ScatterDraws {
@@ -66,13 +67,14 @@ impl ScatterDraws {
 
     /// What reflections' world trace reads of placed objects: the pool's
     /// tiles, slots' records and poses and its revision, and each draw
-    /// group's cover.
+    /// group's impostor and its objects' packed color.
     pub(super) fn placements(&self) -> crate::world_trace::Placements<'_> {
         crate::world_trace::Placements {
             tiles: self.pool.tiles(),
             records: &self.pool.records,
             poses: &self.pool.poses,
-            covers: &self.covers,
+            impostors: &self.impostors,
+            colors: &self.colors,
             revision: self.pool.revision(),
         }
     }
@@ -469,6 +471,7 @@ impl Renderer {
         let mut groups = Vec::new();
         let mut layouts = Vec::new();
         let mut covers = Vec::new();
+        let mut colors = Vec::new();
         let mut indices = HashMap::default();
         for terrain in terrains {
             for (asset_index, asset) in terrain.assets.iter().enumerate() {
@@ -529,11 +532,7 @@ impl Renderer {
                     flags: asset.sway.to_bits(),
                 };
                 let sphere = ((low + high) * 0.5, (high - low).length() * 0.5);
-                let cover = Cover::of(
-                    bounds.min(),
-                    bounds.max(),
-                    crate::terrain::placed_color(asset),
-                );
+                let cover = Cover::of(bounds.min(), bounds.max());
                 groups.push(ScatterDraw {
                     meshes,
                     material: asset.material.handle,
@@ -556,6 +555,7 @@ impl Renderer {
                     part: false,
                 });
                 covers.push(cover);
+                colors.push(color.color);
                 for (part, (part_levels, part_meshes)) in parts {
                     let rendered = &asset.parts[part];
                     layouts.push(GroupLayout {
@@ -580,6 +580,7 @@ impl Renderer {
                         casters: Vec::new(),
                     });
                     covers.push(cover);
+                    colors.push(color.color);
                 }
             }
         }
@@ -589,6 +590,7 @@ impl Renderer {
         draws.groups = groups;
         draws.layouts = layouts;
         draws.covers = covers;
+        draws.colors = colors;
         draws.indices = indices;
         draws.terrains = terrains
             .iter()

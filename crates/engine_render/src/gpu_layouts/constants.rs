@@ -169,6 +169,17 @@ gpu_consts! {
     /// The flag of impostor records whose meshes shade as foliage: masked,
     /// or of foliage materials (`Material::is_foliage`); above the frames.
     pub(crate) const IMPOSTOR_FOLIAGE: u32 = 1 << 24 => ["IMPOSTOR_FOLIAGE"];
+    /// The kinds of texels an impostor atlas holds, each kind's layers
+    /// together in its one array, in turn: albedo and coverage, emissive
+    /// color and mask, normal and depth, and the surface's factors
+    /// (`impostors::FORMATS`).
+    pub(crate) const IMPOSTOR_KINDS: u32 = 4 => ["IMPOSTOR_KINDS" in REFLECTIONS_SHADER];
+    /// Masked coverage's mip scale (Golus): alpha averaged down a mip chain
+    /// falls under the cutoff, so thin cutouts such as needles and leaves
+    /// thin out with distance; masked tests, and reflections reading placed
+    /// objects' impostors, scale it up by this much per level below the
+    /// first, keeping their coverage.
+    pub(crate) const MASK_MIP_SCALE: f32 = 0.25 => ["MASK_MIP_SCALE"];
 
     // crate::decals
     /// `DecalRecord::pose` of decals drawn from their own matrix.

@@ -22,17 +22,13 @@ gpu_structs! {
     }
 
     /// WGSL `Cover`: a draw group's footprint radius, the bottom and top of
-    /// what it covers above its origin (mesh units), and its density; and
-    /// its objects' linear color (w unused), which reflections' world trace
-    /// shows its canopies in (`reflections.wgsl`'s `canopy_of`, from these
-    /// eight words).
+    /// what it covers above its origin (mesh units), and its density.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
     pub(crate) struct Cover as ["Cover" in OCCUPANCY_SHADER] {
         pub footprint: f32,
         pub bottom: f32,
         pub top: f32,
         pub density: f32,
-        pub color: [f32; 4],
     }
 
     /// WGSL `ListedDraw`: the arguments of the draw of the footprints a

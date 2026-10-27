@@ -56,14 +56,12 @@ struct Pose {
 }
 
 // A draw group's cover in mesh units: its footprint's radius, the bottom
-// and top of what it covers above its origin, and its density; and its
-// objects' color, which the maps leave to reflections.
+// and top of what it covers above its origin, and its density.
 struct Cover {
     footprint: f32,
     bottom: f32,
     top: f32,
     density: f32,
-    color: vec4<f32>,
 }
 
 // The arguments of the draw of the listed footprints, whose instances the
