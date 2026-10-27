@@ -5,8 +5,8 @@
 // evenly further, indexed over the lattice of its pieces' corners; the
 // ground's true height, which the leaves draw within about a pixel and
 // everything standing on the ground reads; and how far a leaf's meshlet
-// strays from the ground or the water's surface, read from the error
-// pyramids of the resident tiles under it.
+// strays from the ground or the water's mesh, read from the error pyramids
+// of the resident tiles under it.
 
 // Each terrain's levels, finest first, from `terrain.directory.x`: four
 // words each (where its tiles' entries start, its tiles along x and z, and
@@ -187,21 +187,27 @@ fn surface_relative(local: vec2<f32>, height: f32) -> vec3<f32> {
 // 256), the most a triangle of longest edge bisection lying in the cell, its
 // corners on the surface, strays from the surface the tile's samples stand
 // at (meters, rounded up): its ground's (`terrain_errors`) and its water's
-// surface's (`water_errors`), which holds -1 over cells where no sample is
-// wet and 65504 over those where one is and another holds no surface (a
-// shore wider than the surface continues under its banks). Only the
+// mesh's, each sample at the level the water's mesh stands at over it
+// (`water_errors`, `engine_terrain::WaterMesh`), which holds -1 over cells no
+// sample holding the surface water's pass draws lies in. Only the
 // subdivision's passes read them.
 @group(1) @binding(62) var terrain_errors: texture_2d_array<f32>;
 @group(1) @binding(63) var water_errors: texture_2d_array<f32>;
 // The pyramids' mips (`gpu_layouts::constants::ERROR_MIPS`).
 const SURFACE_ERROR_MIPS: u32 = 8u;
+// The samples along each axis the smooth surface water's pass draws through
+// its samples reaches from each (`meshes/water.wgsl`'s `water_spline`, the
+// uniform cubic B-spline): a sample's weight comes to nothing two steps from
+// it.
+const SURFACE_SPLINE_REACH: f32 = 2.0;
 
 // How a leaf's meshlet stands over a surface, as the error pyramids of the
-// tiles under it bound it: whether a wet sample lies under the leaf or
-// within one of its pieces of it (`holds`, over the water's surface), and
-// the most its pieces stray from the surface's samples (meters).
+// tiles under it bound it: whether a sample holding the water's surface
+// lies under the leaf or within the smooth surface's reach of it
+// (`reached`, over the water's mesh), and the most its pieces stray from
+// the surface's samples (meters).
 struct SurfaceWater {
-    holds: bool,
+    reached: bool,
     error: f32,
 }
 
@@ -234,19 +240,17 @@ fn surface_inside(tail: vec2<f32>, head: vec2<f32>, turn: f32, middle: vec2<f32>
     return dot(normal, middle - tail) + half * (abs(normal.x) + abs(normal.y)) > 0.0;
 }
 
-// Whether the square of a piece whose least corner is `corner`, widened by
-// `widen` pieces each way, overlaps the triangle from `a` to `b` to `c` over
-// an area (all in pieces, so exactly): neither a side of the triangle's
-// bounds nor one of its edges leaves the square wholly outside it.
-fn surface_overlaps(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, corner: vec2<f32>,
-        widen: f32) -> bool {
-    let low = corner - vec2<f32>(widen);
-    let high = corner + vec2<f32>(1.0 + widen);
+// Whether the square from `low` to `high` overlaps the triangle from `a` to
+// `b` to `c` over an area (all in pieces, so exactly): neither a side of the
+// triangle's bounds nor one of its edges leaves the square wholly outside
+// it.
+fn surface_overlaps(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, low: vec2<f32>,
+        high: vec2<f32>) -> bool {
     if any(high <= min(min(a, b), c)) || any(low >= max(max(a, b), c)) {
         return false;
     }
     let middle = (low + high) * 0.5;
-    let half = 0.5 + widen;
+    let half = (high.x - low.x) * 0.5;
     let turn = sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
     return surface_inside(a, b, turn, middle, half) && surface_inside(b, c, turn, middle, half)
         && surface_inside(c, a, turn, middle, half);
@@ -258,11 +262,16 @@ fn surface_overlaps(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, corner: vec2<f32>,
 // diagonals at even ones), so the most of the pyramids' cells of that size
 // the leaf covers bounds them: each read from the finest resident tile
 // holding it, at the mip of its size there, adding nothing where it is no
-// wider than that tile's samples, which splitting further draws no better.
-// Cells within a piece of the leaf count toward `holds` too where `around`
-// says. The directory is walked once for each tile of the first level whose
-// tiles hold a cell whole that the cells fall in.
-fn surface_cells(triangle: SurfaceTriangle, errors: texture_2d_array<f32>, around: bool)
+// wider than that tile's samples, which splitting further draws no better,
+// and read once for all the cells one of that tile's texels holds. Where
+// `reaching` says, the texels within the smooth surface's reach of the
+// leaf, SURFACE_SPLINE_REACH of their tile's samples, count toward
+// `reached` too: those holding the cells within that many of the samples of
+// the finest level whose tiles may hold them, and where a tile's texels are
+// wider than the cells, the texels beside those. The directory is walked
+// once for each tile of the first level whose tiles hold a cell whole that
+// the cells fall in.
+fn surface_cells(triangle: SurfaceTriangle, errors: texture_2d_array<f32>, reaching: bool)
         -> SurfaceWater {
     var found = SurfaceWater(false, 0.0);
     let low = min(min(triangle.a, triangle.b), triangle.c);
@@ -286,7 +295,13 @@ fn surface_cells(triangle: SurfaceTriangle, errors: texture_2d_array<f32>, aroun
     let octaves = i32(round(log2(piece / (256.0 * terrain.anchor.w))));
     let level = u32(max(octaves, 0));
     let block = u32(i32(level) - octaves);
-    let reach = select(0, 1, around);
+    // The cells past the leaf's own the smooth surface reaches from the
+    // samples of the finest level whose tiles may hold them, where
+    // `reaching` says: a tile's 256 samples a side hold 2^block cells.
+    var reach = 0;
+    if reaching {
+        reach = i32(ceil(SURFACE_SPLINE_REACH * exp2(f32(block)) / 256.0));
+    }
     let cells_low = first - vec2<i32>(reach);
     let cells_high = first + vec2<i32>(parts - 1 + reach);
     let blocks_low = cells_low >> vec2<u32>(block);
@@ -302,26 +317,41 @@ fn surface_cells(triangle: SurfaceTriangle, errors: texture_2d_array<f32>, aroun
             }
             // Cells along a side of the tile holding them, as a power of
             // two: the mip holding them, and past its finest the octaves by
-            // which they are narrower than its cells, and than the tile's
-            // samples.
+            // which they are narrower than its cells, each of its texels
+            // then holding 2^narrow of them a side, and than the tile's
+            // samples; and the cells the smooth surface through its samples
+            // reaches across, where `reaching` says.
             let fit = u32(i32(held.x) - octaves);
             let mip = SURFACE_ERROR_MIPS - 1u - min(fit, SURFACE_ERROR_MIPS - 1u);
             let narrow = min(fit - min(fit, SURFACE_ERROR_MIPS - 1u), 31u);
             let span = min(fit, 31u);
+            let spread = select(0.0, SURFACE_SPLINE_REACH * exp2(f32(fit)) / 256.0, reaching);
+            // The texels of the tile holding the block's cells, counted from
+            // the terrain's origin, and where its texels are wider than the
+            // cells those beside them, which the smooth surface reaches a
+            // texel across.
             let start = max(cells_low, vec2<i32>(bx, bz) << vec2<u32>(block));
             let end = min(cells_high, ((vec2<i32>(bx, bz) + 1) << vec2<u32>(block)) - 1);
-            for (var z = start.y; z <= end.y; z++) {
-                for (var x = start.x; x <= end.x; x++) {
-                    let corner = vec2<f32>(vec2<i32>(x, z) - first);
-                    let over = surface_overlaps(a, b, c, corner, 0.0);
-                    if !over && !(around && surface_overlaps(a, b, c, corner, 1.0)) {
+            let tile_first = (start >> vec2<u32>(span)) << vec2<u32>(span - narrow);
+            let tile_last = tile_first + vec2<i32>((1i << (span - narrow)) - 1i);
+            let beside = vec2<i32>(select(0, 1, reaching && narrow > 0u));
+            let texels_low = max((start >> vec2<u32>(narrow)) - beside, tile_first);
+            let texels_high = min((end >> vec2<u32>(narrow)) + beside, tile_last);
+            let width = f32(1u << narrow);
+            for (var z = texels_low.y; z <= texels_high.y; z++) {
+                for (var x = texels_low.x; x <= texels_high.x; x++) {
+                    // The texel's square, in pieces from the leaf's square's
+                    // least corner.
+                    let corner = vec2<f32>((vec2<i32>(x, z) << vec2<u32>(narrow)) - first);
+                    let far = corner + vec2<f32>(width);
+                    let over = surface_overlaps(a, b, c, corner, far);
+                    if !over && !(reaching && surface_overlaps(a, b, c,
+                            corner - vec2<f32>(spread), far + vec2<f32>(spread))) {
                         continue;
                     }
-                    let cell = vec2<u32>(vec2<i32>(x, z));
-                    let within = cell - ((cell >> vec2<u32>(span)) << vec2<u32>(span));
-                    let texel = vec2<i32>(within >> vec2<u32>(narrow));
+                    let texel = vec2<i32>(x, z) - tile_first;
                     let bound = textureLoad(errors, texel, i32(held.y), i32(mip)).x;
-                    found.holds = found.holds || bound >= 0.0;
+                    found.reached = found.reached || bound >= 0.0;
                     if over && fit < SURFACE_ERROR_MIPS {
                         found.error = max(found.error, bound);
                     }
@@ -338,11 +368,10 @@ fn surface_ground_error(triangle: SurfaceTriangle) -> f32 {
     return surface_cells(triangle, terrain_errors, false).error;
 }
 
-// Whether a wet sample lies under a leaf or within one of its pieces of it,
-// and the most the pieces of its meshlet stray from the water's surface:
-// 65504 or more where a cell it covers is a shore wider than the surface
-// continues under its banks, which splits it until its pieces lie where
-// the surface reaches (`surface_cells`).
+// Whether a sample holding the surface water's pass draws lies under a
+// leaf or within the smooth surface's reach of it, where the water may show,
+// and the most the pieces of its meshlet stray from the water's mesh where
+// such samples lie under them (`surface_cells`).
 fn surface_water(triangle: SurfaceTriangle) -> SurfaceWater {
     return surface_cells(triangle, water_errors, true);
 }

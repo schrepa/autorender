@@ -1,10 +1,10 @@
 // Water: terrains' water as their tiles hold it, drawn on the leaves of a
 // subdivision of its own over each terrain's square (`terrain/surface.rs`),
-// which splits its leaves by how far they stray from the water's surface and
-// collapses those over no water (`terrain_subdivision.wgsl`). Each vertex
-// stands at the water's surface field where it lies (`water_field`: wet
-// samples' surfaces and the surface continued under the banks, from the
-// finest resident level holding it around the point), lifted by the pixels
+// which splits its leaves by how far they stray from the water's mesh and
+// collapses those its surface cannot reach (`terrain_subdivision.wgsl`).
+// Each vertex stands at the water's mesh where it lies (`water_field`: wet
+// samples' surfaces and the surface continued under the banks, carried on
+// at the nearest one's level past where they end), lifted by the pixels
 // the drawn ground and the water's mesh may each stray from their surfaces
 // seen from the detail eye (`water_lift`), so the ground drawn under its
 // surface never hides it. Each pixel then reads the water's state where it
@@ -76,7 +76,8 @@
 // their nearest obstacle's middle along x and z in signed steps of
 // WATER_OBSTACLE_STEP, its radius in steps of WATER_RADIUS_STEP (0 for none)
 // and how strongly a drop or a jump lies just upstream, in 255ths (z, four
-// bytes); w holds nothing.
+// bytes); and the height above the terrain's origin the water's mesh stands
+// at over them, a float's bits (w, `water_field`).
 @group(1) @binding(50) var water_surface: texture_2d_array<f32>;
 @group(1) @binding(51) var water_info: texture_2d_array<u32>;
 // Water's directory (`terrain/water_blocks.rs`) lies in `terrain_directory`
@@ -428,50 +429,28 @@ fn water_weights(within: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(within.x + within.y - 1.0, 1.0 - within.x, 1.0 - within.y);
 }
 
-// The water's surface field at terrain-local `local`: its height above the
-// terrain's origin where wet samples' surfaces and the surface continued
-// under the banks at the water's level hold it (`terrain/water_blocks.rs`),
-// from the finest resident level any of whose samples of the triangle
-// holding the point holds one, blended by the triangle's weights, a corner
-// holding none standing at the mean of those that do, so the mesh stands at
-// the water's level across the cells where the samples holding it end;
-// `found` false where no level's do. It depends on the point alone, so
-// leaves sharing a vertex meet on it.
-struct WaterField {
-    surface: f32,
-    found: bool,
-}
-
-fn water_field(local: vec2<f32>) -> WaterField {
-    let levels = terrain.directory.y;
-    var field: WaterField;
-    var level = 0u;
-    while level < levels {
-        let cell = water_cell(local, level);
-        level = cell.level + 1u;
-        if cell.block == NO_WATER_BLOCK {
-            continue;
-        }
-        let upper = cell.within.x + cell.within.y > 1.0;
-        var surfaces = vec3<f32>(0.0);
-        var holding = vec3<f32>(0.0);
-        for (var corner = 0u; corner < 3u; corner++) {
-            let texel = water_texel(cell.block, cell.first + water_corner(corner, upper));
-            let sample = textureLoad(water_surface, texel.xy, texel.z, 0).x;
-            let holds = sample > NO_WATER_SURFACE * 0.5;
-            surfaces[corner] = select(0.0, sample, holds);
-            holding[corner] = select(0.0, 1.0, holds);
-        }
-        let count = holding.x + holding.y + holding.z;
-        if count > 0.0 {
-            let mean = (surfaces.x + surfaces.y + surfaces.z) / count;
-            field.surface = dot(mix(vec3<f32>(mean), surfaces, holding),
-                water_weights(cell.within));
-            field.found = true;
-            return field;
-        }
+// The height above the terrain's origin the water's mesh stands at at
+// terrain-local `local`: on the triangle holding the point among the finest
+// resident level's samples, each at the level the mesh stands at over it
+// (`engine_terrain::WaterMesh`: its surface drawn where it holds one, else
+// the surface of the sample holding one nearest it), as the error pyramid
+// water's subdivision splits by bounds it (`water_errors`); on the ground
+// where the patch holding the point takes no block, as the mesh does over
+// it. So the mesh stands at the water's level wherever its surface reaches,
+// and each pixel decides where water shows. It depends on the point alone,
+// so leaves sharing a vertex meet on it.
+fn water_field(local: vec2<f32>) -> f32 {
+    let cell = water_cell(local, 0u);
+    if cell.block == NO_WATER_BLOCK {
+        return terrain_level_height(local, cell.level).height;
     }
-    return field;
+    let upper = cell.within.x + cell.within.y > 1.0;
+    var levels = vec3<f32>(0.0);
+    for (var corner = 0u; corner < 3u; corner++) {
+        let texel = water_texel(cell.block, cell.first + water_corner(corner, upper));
+        levels[corner] = bitcast<f32>(textureLoad(water_info, texel.xy, texel.z, 0).w);
+    }
+    return dot(levels, water_weights(cell.within));
 }
 
 // The weights the uniform cubic B-spline gives four samples a step apart
@@ -707,20 +686,12 @@ fn water_lift(world: vec3<f32>) -> f32 {
 
 // Lattice vertex `vertex` of the leaf at `instance` of the subdivision of
 // the terrain's water (`water_tree`): the point of the leaf's meshlet
-// (`surface_vertex`) at the water's surface field there (`water_field`),
-// lifted over it (`water_lift`); a meter under the ground where no level
-// holds the field there, so the ground hides it.
+// (`surface_vertex`) at the height the water's mesh stands at there
+// (`water_field`), lifted over it (`water_lift`).
 fn water_output(vertex: u32, instance: u32) -> WaterOutput {
     let local = surface_vertex(terrain_surface_leaves[water_tree.tree.z + instance], vertex);
-    let field = water_field(local);
-    var height = field.surface;
-    if !field.found {
-        height = terrain_true_height(local) - 1.0;
-    }
-    var relative = water_relative(local, height);
-    if field.found {
-        relative.y += water_lift(eye_world(relative));
-    }
+    var relative = water_relative(local, water_field(local));
+    relative.y += water_lift(eye_world(relative));
     var output: WaterOutput;
     output.clip_position = terrain_view.relative_view_projection * vec4<f32>(relative, 1.0);
     output.relative = relative;
