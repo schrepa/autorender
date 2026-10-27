@@ -107,6 +107,21 @@ gpu_consts! {
     pub(crate) const SKY_DIRECTIONS: usize = 13 => ["SKY_DIRECTIONS" in POST_SHADER];
     pub(crate) const SKY_LAYERS: usize = 2 * SKY_DIRECTIONS => ["SKY_LAYERS" in POST_SHADER];
 
+    // crate::post
+    /// The surface target's last word (`meshes/shading.wgsl`'s
+    /// `surface_texel`): the share of a pixel's light its mirrored
+    /// environment makes up in its low fourteen bits, finer steps than the
+    /// reflections' eight-bit target keeps of it, and in its last two what
+    /// lies behind the pixel's surface, which screen-space reflections'
+    /// rays passing behind it meet (`post.wgsl`'s walk): an object's body,
+    /// as deep as it is wide across where they pass behind it; a sheet a
+    /// few centimeters thick (masked surfaces, foliage and blades); or the
+    /// ground or water, solid below their surface.
+    pub(crate) const MIRRORED_BITS: u32 = 14 => ["MIRRORED_BITS"];
+    pub(crate) const BODY_SOLID: u32 = 0 => ["BODY_SOLID"];
+    pub(crate) const BODY_THIN: u32 = 1 => ["BODY_THIN"];
+    pub(crate) const BODY_GROUND: u32 = 2 => ["BODY_GROUND"];
+
     // crate::shadow_fit
     /// Texels of a level a sample of the ground it holds spans at least:
     /// finer samples draw detail its texels cannot hold. The ground's own

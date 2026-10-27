@@ -287,8 +287,9 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     let albedo = input.color * select(1.0, COVER_FAR_SIDE, through);
     var point: SurfacePoint;
     point.albedo = albedo;
-    // Blades are leaf throughout.
+    // Blades are leaf throughout, and sheets.
     point.leaf = 1.0;
+    point.body = BODY_THIN;
     point.opacity = 1.0;
     point.occlusion = mix(COVER_ROOT_OCCLUSION, 1.0, input.along);
     point.roughness = COVER_ROUGHNESS;

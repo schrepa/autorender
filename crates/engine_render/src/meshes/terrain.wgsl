@@ -2013,6 +2013,8 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     point.world_dy = select(site.world_dy / detail, look.world_dy, look.raw.y);
     point.shadow_offset = vec3<f32>(0.0);
     point.on_terrain = true;
+    // The ground is solid below its surface.
+    point.body = BODY_GROUND;
     // Its cover's canopy is leaf, as the blades it stands for are.
     point.leaf = ground.canopy;
     return point;

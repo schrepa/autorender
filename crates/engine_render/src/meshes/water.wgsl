@@ -1165,6 +1165,8 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     point.shadow_offset = vec3<f32>(0.0);
     point.on_terrain = false;
     point.sun_shade = 1.0;
+    // Below its surface lie its water and the ground under it.
+    point.body = BODY_GROUND;
     var lit: WaterLit;
     lit.shaded = finish(point, mix(body + glint, foam, surface.foam));
     lit.reflectance = reflectance;

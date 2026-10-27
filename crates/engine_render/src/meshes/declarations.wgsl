@@ -305,8 +305,8 @@ struct TemporalOutput {
 // Frames with screen effects: graded linear color with the
 // ambient share of its light in alpha, the pixel's glow weight and
 // reflectivity, and the surface reflections follow (`surface_texel`): its
-// shading normal, its roughness along the view and across it, and the share
-// of its light its mirrored environment makes up.
+// shading normal, its roughness along the view and across it, the share of
+// its light its mirrored environment makes up, and what lies behind it.
 struct SceneTargets {
     @location(0) color: vec4<f32>,
     @location(1) glow: vec2<f32>,

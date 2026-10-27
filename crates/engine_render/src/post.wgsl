@@ -4,7 +4,8 @@
 // filter smooths it on each surface; the haze's march (haze.wgsl) is
 // filtered over time with the last frame's result reprojected; screen-space
 // reflections trace each pixel's reflected ray through the depth buffer,
-// reading the scene through its own levels, each half the one before;
+// on past the sheets and objects it passes behind, reading the scene
+// through its own levels, each half the one before;
 // bloom filters the scene's glowing light down a chain of levels from half
 // the render size and back up; the composite applies them to the scene
 // target, upscaled to the display, and writes the canvas. Temporally
@@ -38,10 +39,11 @@
 // the eye (0 where only sky is).
 @group(0) @binding(12) var raw_occlusion: texture_2d<f32>;
 // Reflections: the surface the opaque pass shaded (`surface_texel`: its
-// shading normal, its roughness along the view and across it, and the
-// share of its light its mirrored environment makes up), and the scene
-// with its levels, the first the scene itself at the render size and each
-// next one half the one before, blurred for rough surfaces.
+// shading normal, its roughness along the view and across it, the share
+// of its light its mirrored environment makes up, and what lies behind
+// it), and the scene with its levels, the first the scene itself at the
+// render size and each next one half the one before, blurred for rough
+// surfaces.
 @group(0) @binding(13) var surface_texture: texture_2d<u32>;
 @group(0) @binding(14) var scene_levels: texture_2d<f32>;
 // The bloom level a pass halving both chains reads beside the scene level
@@ -425,16 +427,22 @@ fn fs_haze_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     return vec4<f32>(mix(clamp(history.rgb, low, high), center.rgb, HAZE_CURRENT), own);
 }
 
-// Reflection rays walk at most this many cells of the depth pyramid.
-const REFLECTION_STEPS: u32 = 96u;
-// A reflected surface counts where the ray passes within this distance of
-// it, in world units, plus this share of the ray's length.
-const REFLECTION_THICKNESS: f32 = 0.3;
-const REFLECTION_THICKNESS_SHARE: f32 = 0.05;
-// Rays heading toward the camera reach surfaces from their hidden side: the
-// visible surface stands in for it through this much more depth (a solid
-// object's), fading over it.
-const REFLECTION_SOLID: f32 = 1.0;
+// The most steps a reflection ray's walk of the depth pyramid takes: a
+// hard ceiling over its own budget, twice the pixels it crosses on screen.
+const REFLECTION_STEPS: u32 = 256u;
+// How thick the sheets reflection rays pass behind are (`BODY_THIN`), in
+// world units: cutouts, foliage and blades stand for leaves, needles and
+// grass a few centimeters thick.
+const REFLECTION_THIN: f32 = 0.05;
+// What lies behind a pixel's surface, which the surface target's last word
+// holds above its mirrored share's MIRRORED_BITS (`meshes/shading.wgsl`'s
+// `surface_texel`): an object's body, as deep as it is wide across where a
+// ray passes behind it; a sheet; or the ground or water, solid below their
+// surface.
+const MIRRORED_BITS: u32 = 14u;
+const BODY_SOLID: u32 = 0u;
+const BODY_THIN: u32 = 1u;
+const BODY_GROUND: u32 = 2u;
 // A roughness lobe's half-width in radians per GGX alpha within the plane of
 // incidence, the Phong lobe matching it narrowing to REFLECTION_LOBE_EDGE of
 // its peak there (as in cone-traced reflections); across that plane, that
@@ -451,9 +459,10 @@ const REFLECTION_TAPS: u32 = 8u;
 // keeps where the surface itself faces the eye at least as squarely: bumps
 // turned past the view bend back to it, so their rays leave the surface.
 const REFLECTION_FACING: f32 = 0.05;
-// The share of the screen at its edges, and of a ray's reach at its end,
-// over which reflections fade out, so neither edge shows; hits nearer keep
-// all their weight.
+// The share of a ray's reach at its end over which its reflection fades
+// out, and of the screen past its edges over which a ray leaving it unmet
+// fades from what the edge shows to its fallback, so neither end shows an
+// edge.
 const REFLECTION_EDGE: f32 = 0.1;
 const FLOAT_MAX: f32 = 0x1.fffffep+127f;
 
@@ -516,11 +525,18 @@ struct Mirroring {
 
 fn mirroring_at(pixel: vec2<i32>) -> Mirroring {
     let words = textureLoad(surface_texture, pixel, 0);
+    let most = (1u << MIRRORED_BITS) - 1u;
     var mirroring: Mirroring;
     mirroring.normal = unfolded_normal(vec2<f32>(words.xy) / 65535.0 * 2.0 - 1.0);
     mirroring.roughness = unpack4x8unorm(words.z).xy;
-    mirroring.mirrored = f32(words.w) / 65535.0;
+    mirroring.mirrored = f32(words.w & most) / f32(most);
     return mirroring;
+}
+
+// What lies behind the surface the opaque pass shaded at `pixel`
+// (`BODY_SOLID`, `BODY_THIN` or `BODY_GROUND`).
+fn body_at(pixel: vec2<i32>) -> u32 {
+    return textureLoad(surface_texture, pixel, 0).w >> MIRRORED_BITS;
 }
 
 // The scene at `at` (render pixels, continuous) as a lobe whose blur spans
@@ -578,6 +594,46 @@ fn lobe_light(hit: vec2<f32>, way: vec2<f32>, lengths: vec2<f32>, p: vec3<f32>,
     return sum / total;
 }
 
+// The depths the surface pixel `pixel` shows spans across it, in world
+// units along the sight line through `at` from its point there `shown`, at
+// its depth `depth`: where its neighbors along `axis` (a pixel) lie one
+// nearer and one farther, a slope runs through it, spanning its smaller
+// step to them, which a silhouette takes on its own side. Where both lie
+// beyond it on one side (a crest: a thin feature, a silhouette's tip or a
+// corner), beside sky or past the screen's edges, it spans none past its
+// own depth.
+fn surface_span(pixel: vec2<i32>, axis: vec2<i32>, depth: f32, at: vec2<f32>, shown: vec3<f32>)
+        -> f32 {
+    let before = nearest_depth_at(pixel - axis, 0);
+    let after = nearest_depth_at(pixel + axis, 0);
+    if before <= 0.0 || after <= 0.0 || (before - depth) * (after - depth) >= 0.0 {
+        return 0.0;
+    }
+    let smaller = select(after, before, abs(before - depth) < abs(after - depth));
+    return distance(world_point(at, smaller), shown);
+}
+
+// How surely a reflection ray leaving the screen unmet at `point` (on its
+// edge, in pixels and depth), `ray` its whole step, meets the scene the
+// edge shows there: fully where its depth is the edge's as it leaves, less
+// the farther past the edge it must go on to reach that depth, and none
+// from REFLECTION_EDGE of the screen on, where it heads away from that
+// depth or where the edge shows sky.
+fn leaving_weight(point: vec3<f32>, ray: vec3<f32>) -> f32 {
+    let last = vec2<i32>(post.size.xy) - 1;
+    let shown = textureLoad(depth_texture, clamp(vec2<i32>(floor(point.xy)), vec2<i32>(0), last),
+        0);
+    if shown <= 0.0 || ray.z == 0.0 {
+        return 0.0;
+    }
+    // The pixels on along the ray until its depth is the edge's.
+    let pixels = (shown - point.z) / ray.z * length(ray.xy);
+    if pixels < 0.0 {
+        return 0.0;
+    }
+    return saturate(1.0 - pixels / (REFLECTION_EDGE * max(post.size.x, post.size.y)));
+}
+
 // Screen-space reflections at every pixel, every frame: from each
 // reflective pixel (the glow target's second channel), its own ray, along
 // the mirror direction of its own shading normal, crosses the screen as a
@@ -586,11 +642,19 @@ fn lobe_light(hit: vec2<f32>, way: vec2<f32>, lengths: vec2<f32>, p: vec3<f32>,
 // next one is coarser; a cell it may meet is refined, down to single
 // pixels (FidelityFX SSSR's hierarchical march), so every pixel along the
 // ray near a surface is visited and thin objects are found alike from pixel
-// to pixel. The first pixel the ray passes behind is its hit, reflected
-// where the ray passes close to that surface (or, heading toward the
-// camera, within a solid object's depth of it), fading toward the screen
-// edges, the ray's end and the surface's thickness; misses weigh nothing,
-// leaving the sky the surface's own shading mirrors (`finish`).
+// to pixel. The surface a pixel shows is the ray's hit where the ray meets
+// it there, or where the ray lies behind it by no more than its own length
+// across the pixel, the depths the surface spans across it
+// (`surface_span`) and what lies behind it (`body_at`): the ground and
+// water all the way down, a sheet REFLECTION_THIN deep, an object's body
+// as deep as it is wide across where the ray passes behind it. A ray
+// passing farther behind it goes on beyond it, within a budget of twice
+// the pixels it crosses on screen, up to REFLECTION_STEPS. A hit keeps its
+// whole weight wherever it lands, fading only toward the end of the ray's
+// reach; a ray leaving the screen unmet takes the scene where it leaves as
+// surely as it heads to meet what the edge shows (`leaving_weight`); every
+// other miss weighs nothing, leaving the sky the surface's own shading
+// mirrors (`finish`'s `mirrored_sky`, exact where it is smooth).
 // What it reflects is the scene over the lobe its own roughness spreads the
 // ray into (`lobe_light`): long along the ray's way on screen, short across
 // it, so grazing views draw it out into streaks. It writes, both
@@ -600,7 +664,6 @@ fn lobe_light(hit: vec2<f32>, way: vec2<f32>, lengths: vec2<f32>, p: vec3<f32>,
 // (`reflected`).
 @fragment
 fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let last = vec2<i32>(post.size.xy) - 1;
     let pixel = vec2<i32>(position.xy);
     let reflectivity = textureLoad(glow, pixel, 0).g;
     if reflectivity < 0.01 {
@@ -641,97 +704,134 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let ray = end.xyz - start.xyz;
     let moving = abs(ray.xy) > vec2<f32>(1.0e-9);
     let forward = ray.xy >= vec2<f32>(0.0);
+    let rate = select(vec2<f32>(1.0), ray.xy, moving);
     // Cell edges ahead of the ray, and a little past them so the next cell
     // starts inside.
     let ahead = select(vec2<f32>(0.0), vec2<f32>(1.0), forward);
     let past = select(vec2<f32>(-0.005), vec2<f32>(0.005), forward);
     let top = i32(textureNumLevels(nearest_depth));
+    // Where the ray leaves the screen, and the walk's budget: each step
+    // crosses a cell or comes down a level, and the walk climbs only as it
+    // crosses one, so twice the pixels the ray crosses on screen take it to
+    // the far side even where it crosses every one of them singly.
+    let sides = select(vec2<f32>(FLOAT_MAX),
+        (select(vec2<f32>(0.0), post.size.xy, forward) - origin.xy) / rate, moving);
+    let leaves = min(sides.x, sides.y);
+    let crossed = dot(ceil(abs(ray.xy) * min(leaves, 1.0)), vec2<f32>(1.0)) + 1.0;
+    let budget = u32(min(2.0 * crossed, f32(REFLECTION_STEPS)));
+    // The pixels the ray crosses along its longer axis, by which its step
+    // across one of them is measured.
+    let along = max(max(abs(ray.x), abs(ray.y)), 1.0e-6);
     // Leave the starting pixel first: a surface does not reflect itself.
-    var t = FLOAT_MAX;
-    let exits = select(vec2<f32>(FLOAT_MAX),
-        (floor(origin.xy) + ahead + past - origin.xy) / select(vec2<f32>(1.0), ray.xy, moving),
+    let exits = select(vec2<f32>(FLOAT_MAX), (floor(origin.xy) + ahead + past - origin.xy) / rate,
         moving);
-    t = min(exits.x, exits.y);
+    var t = min(exits.x, exits.y);
     var point = origin + ray * t;
     var mip = 0;
-    for (var step = 0u; step < REFLECTION_STEPS; step++) {
-        if mip < 0 || t > 1.0 || any(point.xy < vec2<f32>(0.0))
-                || any(point.xy >= post.size.xy) {
+    var met = false;
+    // Where on screen the ray began passing behind objects' bodies since it
+    // last lay in front of all a cell holds; negative before it does.
+    var entered = vec2<f32>(-1.0);
+    for (var step = 0u; step < budget; step++) {
+        if t > 1.0 || any(point.xy < vec2<f32>(0.0)) || any(point.xy >= post.size.xy) {
             break;
         }
         let size = exp2(f32(mip));
         let cell = floor(point.xy / size);
         let surface = nearest_depth_at(vec2<i32>(cell), mip);
-        let edges = select(vec2<f32>(FLOAT_MAX),
-            ((cell + ahead) * size + past - origin.xy) / select(vec2<f32>(1.0), ray.xy, moving),
+        let edges = select(vec2<f32>(FLOAT_MAX), ((cell + ahead) * size + past - origin.xy) / rate,
             moving);
         let leave = min(edges.x, edges.y);
-        // Reversed depth: the ray meets the cell's nearest depth only while
-        // it heads away from the eye.
-        var meet = FLOAT_MAX;
-        if ray.z < 0.0 {
-            meet = (surface - origin.z) / ray.z;
-        }
-        // In front of everything in the cell: advance to where it leaves the
-        // cell (coarser next) or meets its nearest depth (finer next).
-        let above = surface < point.z;
-        let skipped = above && leave < meet;
-        if above {
+        if surface < point.z {
+            // In front of everything in the cell (reversed depth): advance to
+            // where it leaves the cell (coarser next) or, heading away from
+            // the eye, meets its nearest depth (finer next; in a single
+            // pixel, the surface the ray meets).
+            var meet = FLOAT_MAX;
+            if ray.z < 0.0 {
+                meet = (surface - origin.z) / ray.z;
+            }
+            entered = vec2<f32>(-1.0);
             t = min(leave, meet);
             point = origin + ray * t;
+            if leave < meet {
+                mip = min(mip + 1, top);
+            } else if mip > 0 {
+                mip -= 1;
+            } else {
+                met = t <= 1.0 && surface > 0.0;
+                break;
+            }
+            continue;
         }
-        if skipped {
-            mip = min(mip + 1, top);
-        } else {
+        if mip > 0 {
+            // Behind the cell's nearest depth: finer, down to single pixels.
             mip -= 1;
+            continue;
         }
+        // Behind the surface a pixel shows. Past the far plane over the sky
+        // nothing is left to meet; elsewhere the ray meets what lies behind
+        // that surface where it lies within it, or passes behind it and goes
+        // on at single pixels.
+        if surface <= 0.0 {
+            break;
+        }
+        let here = vec2<i32>(cell);
+        let body = body_at(here);
+        if body == BODY_GROUND {
+            met = true;
+            break;
+        }
+        let ray_point = world_point(point.xy, point.z);
+        let shown = world_point(point.xy, surface);
+        // The ray's own length across the pixel, and the depths the surface
+        // spans across it the way the ray came in (the edge it lies
+        // nearest), which a ray crossing a sloping surface lies behind it by.
+        let stride = distance(world_point(point.xy + ray.xy / along, point.z + ray.z / along),
+            ray_point);
+        let inside = select(1.0 - fract(point.xy), fract(point.xy), forward);
+        let axis = select(vec2<i32>(0, 1), vec2<i32>(1, 0), inside.x < inside.y);
+        let spans = stride + surface_span(here, axis, surface, point.xy, shown);
+        var thickness = REFLECTION_THIN;
+        if body == BODY_SOLID {
+            if entered.x < 0.0 {
+                entered = point.xy;
+            }
+            thickness = distance(point.xy, entered) * distance(shown, post.eye.xyz) / post.eye.w;
+        }
+        if distance(ray_point, shown) <= thickness + spans {
+            met = true;
+            break;
+        }
+        t = leave;
+        point = origin + ray * t;
     }
-    if mip >= 0 || t > 1.0 {
+    // A ray leaving the screen unmet takes the scene where it leaves as
+    // surely as it heads to meet what the edge shows; every other miss
+    // weighs nothing.
+    var weight = select(0.0, 1.0, met);
+    if !met && leaves <= 1.0 && t >= leaves {
+        point = origin + ray * leaves;
+        weight = leaving_weight(point, ray);
+    }
+    if weight <= 0.0 || all(abs(point.xy - origin.xy) < vec2<f32>(2.0)) {
         return vec4<f32>(0.0);
     }
-    let hit = vec2<i32>(floor(point.xy));
-    if any(hit < vec2<i32>(0)) || any(hit > last) || all(abs(point.xy - origin.xy) < vec2<f32>(2.0)) {
-        return vec4<f32>(0.0);
-    }
-    let surface = world_at(hit);
-    if surface.w == 0.0 {
-        return vec4<f32>(0.0);
-    }
-    // How far behind that surface the ray passes, against a thickness that
-    // grows with the ray's length.
-    let ray_point = world_point(point.xy, point.z);
-    let travelled = distance(ray_point, p);
-    let behind = distance(ray_point, surface.xyz);
-    let thickness = REFLECTION_THICKNESS + REFLECTION_THICKNESS_SHARE * travelled;
-    var confidence = 1.0 - smoothstep(0.0, thickness, behind);
-    confidence *= confidence;
-    if ray.z > 0.0 {
-        // Heading toward the camera (reversed depth grows), the ray reaches
-        // what it meets from the side the camera cannot see, and crosses
-        // much of the world per pixel: the surface in front counts fully
-        // through the thickness and the ray's length across a pixel there,
-        // then fades over a solid object's depth.
-        let pixels = max(abs(ray.x), abs(ray.y));
-        let stride = distance(
-            world_point(point.xy + ray.xy / pixels, point.z + ray.z / pixels), ray_point);
-        let near = thickness + stride;
-        confidence = 1.0 - smoothstep(near, near + REFLECTION_SOLID, behind);
-    }
-    let uv = point.xy * post.size.zw;
-    let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-    let fraction = min(travelled / max(post.reflections.x, 1.0e-6), 1.0);
-    let fade = saturate(edge / REFLECTION_EDGE) * saturate((1.0 - fraction) / REFLECTION_EDGE)
-        * confidence;
+    // Wherever it lands, a reflection fades only toward the end of the ray's
+    // reach.
+    let reached = world_point(point.xy, point.z);
+    let travelled = distance(reached, p);
+    weight *= saturate((1.0 - min(travelled / max(reach, 1.0e-6), 1.0)) / REFLECTION_EDGE);
     // The light reflected over the roughness lobe: its half-lengths where it
     // lands, in pixels, along the plane of incidence and across it
     // (REFLECTION_CONE), the cosine of the view with the normal narrowing it
     // across, so grazing views draw it out along the ray's way.
-    let pixels = travelled * post.eye.w / max(distance(ray_point, post.eye.xyz), 1.0e-4);
+    let pixels = travelled * post.eye.w / max(distance(reached, post.eye.xyz), 1.0e-4);
     let alphas = mirroring.roughness * mirroring.roughness;
     let lengths = REFLECTION_CONE * pixels
         * vec2<f32>(alphas.x, alphas.y * max(dot(normal, to_eye), 0.0));
     let color = lobe_light(point.xy, ray.xy, lengths, p, plane);
-    return vec4<f32>(color * (reflectivity * fade), mirroring.mirrored * fade);
+    return vec4<f32>(color * (reflectivity * weight), mirroring.mirrored * weight);
 }
 
 // A pixel's glowing light: its color times its decoded glow.
