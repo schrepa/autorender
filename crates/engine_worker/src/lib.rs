@@ -4,9 +4,8 @@
 //! records of settled water tiles' water reads) and runs the jobs it hands
 //! out, each kind once: terrain tiles, tiles' walk graph portals, bakes,
 //! lighting, bounce transfers, macro colors, tiles' parts of settling water
-//! and their water as it settled, and terrains' far pages read for
-//! uploading (`engine_terrain::jobs`), the renderer's static tables
-//! (`engine_tables`) and textures cooked for a device family
+//! and their water as it settled (`engine_terrain::jobs`), the renderer's
+//! static tables (`engine_tables`) and textures cooked for a device family
 //! ([`engine_textures::COOK_JOB`]), with the code hosts without workers run
 //! in place, so outputs are the same bits. Jobs
 //! run a slice at a time ([`Worker::slice`]): the most urgent held job

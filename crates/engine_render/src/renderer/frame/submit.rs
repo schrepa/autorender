@@ -11,9 +11,9 @@ use crate::profiling::Span;
 /// The batch of the frame's passes `pass` records into, in render graph
 /// order: the work before the opaque passes (GPU presentation, placed
 /// objects and their occupancy, shadow casters and maps, lights, the
-/// clouds' dome, tracks, the virtual texture's bakes, bounce light and
-/// ground cover), then the opaque passes with the visibility buffer's,
-/// deferred terrain's and occlusion culling's between them, then the rest.
+/// clouds' dome, tracks, bounce light and ground cover), then the opaque
+/// passes with the visibility buffer's, deferred terrain's and occlusion
+/// culling's between them, then the rest.
 /// Each batch is handed over once recorded, and the GPU works on it while
 /// the next records.
 pub(super) fn batch(pass: Pass) -> u8 {
@@ -133,7 +133,6 @@ impl Renderer {
             self.gpu_presentation.after_submit();
         }
         self.shadows.after_submit();
-        self.terrain.vt.after_submit();
         self.terrain.surface.after_submit();
         // Impostors' records read back from bakes the frame submitted, and
         // settled water from its slots.

@@ -35,12 +35,6 @@ impl Renderer {
                     .deformation
                     .encode(&self.device, &self.queue, encoder, &self.profiler)
             }
-            Pass::VtBakes => self.terrain.encode_vt_bakes(
-                &self.device,
-                encoder,
-                &self.mesh_shader,
-                (&self.camera.terrain_layout, self.camera.terrain_group()),
-            ),
             Pass::Bounce => self.terrain.encode_bounce(
                 &self.device,
                 encoder,
@@ -64,7 +58,6 @@ impl Renderer {
                 report.draws += self.encode_terrain_resolve(state, encoder, view, node);
             }
             Pass::OpaqueLate => report.draws += self.encode_opaque_late(state, encoder, view, node),
-            Pass::VtFeedback => self.encode_vt_feedback(encoder),
             Pass::VisibilityIds { phase } => {
                 self.encode_visibility_ids(state, encoder, view, node, phase.index());
             }
@@ -162,11 +155,9 @@ impl Renderer {
             | Resource::CloudView
             | Resource::CloudDome
             | Resource::Tracks
-            | Resource::Pages
             | Resource::Bounce
             | Resource::Leaves
-            | Resource::Cover
-            | Resource::Feedback => {
+            | Resource::Cover => {
                 unreachable!("{resource:?} is no attachment of the renderer's passes")
             }
         }
@@ -340,22 +331,6 @@ impl Renderer {
                 },
             },
             &self.profiler,
-        );
-    }
-
-    /// The pages the first phase's terrain resolves wanted of the runtime
-    /// virtual texture, read from the pixels of terrain's visibility target
-    /// the frame drew.
-    fn encode_vt_feedback(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        let Some(ids) = self.terrain_ids.get() else {
-            return;
-        };
-        self.terrain.encode_vt_feedback(
-            &self.device,
-            encoder,
-            &self.mesh_shader,
-            &self.camera.buffer,
-            (&ids.view, self.display.region.render.pixels()),
         );
     }
 

@@ -33,18 +33,17 @@
 //! and kept patches (`patches`) and the pipelines and terrain group
 //! (`pipelines`), beside tiles' water
 //! (`water_blocks`), the material maps, the sky and horizon maps its
-//! lighting uploads, its bounce light, its macro colors, the runtime
-//! virtual texture with its far pages (what they are baked from: `far`)
-//! and deformation map. Debug builds check what holds between them after
-//! every preparation (`invariants`).
+//! lighting uploads, its bounce light, its macro colors and deformation
+//! map. Debug builds check what holds between them after every preparation
+//! (`invariants`).
 //!
 //! A preparation does what changed: the atlas looks at the tiles each
 //! terrain's list gained, lost or replaced since it was last synced, and
 //! works fades out again for the tiles fading in or changed; the
 //! directory rewrites the entries of the tiles that took or left layers,
-//! water the blocks of the tiles held anew, and far pages hash each tile
-//! once; the frame's records and uniforms are written where they differ
-//! from the last frame's, from vectors kept from frame to frame.
+//! and water the blocks of the tiles held anew; the frame's records and
+//! uniforms are written where they differ from the last frame's, from
+//! vectors kept from frame to frame.
 
 use engine_core::collections::HashMap;
 use std::ops::Range;
@@ -75,7 +74,6 @@ use crate::terrain_maps::TerrainMaps;
 use crate::terrain_sky::SkyMaps;
 
 mod atlas;
-mod far;
 #[cfg(debug_assertions)]
 mod invariants;
 mod patches;
@@ -122,9 +120,6 @@ const ARRIVAL_SECONDS: f32 = 0.4;
 const NO_HOLES: u32 = u32::MAX;
 /// 32-bit words of a tile's hole bits.
 const HOLE_WORDS: usize = ((LAYER_SIZE - 2) * (LAYER_SIZE - 2)).div_ceil(32) as usize;
-
-/// Bytes of a terrain's uniform.
-pub(crate) const TERRAIN_UNIFORM_BYTES: usize = size_of::<TerrainUniform>();
 
 /// `range` widened to hold `index`.
 fn widen(range: Range<usize>, index: usize) -> Range<usize> {
@@ -226,7 +221,7 @@ pub(crate) struct TerrainViews<'a> {
     pub eye: Vec3,
     /// The detail eye
     /// ([`RenderSnapshot::detail_eye`](engine_core::RenderSnapshot::detail_eye)),
-    /// which the virtual texture's pages lie around: the camera's eye unless
+    /// which bounce light's levels lie around: the camera's eye unless
     /// frozen.
     pub detail_eye: Vec3,
     /// The regions of shadow tiles this frame redraws, which the ground
@@ -280,9 +275,6 @@ pub(crate) struct TerrainPass {
     pub(crate) macro_maps: MacroMaps,
     /// Runtime deformation's map.
     pub(crate) deformation: crate::deformation::DeformationPass,
-    /// The runtime virtual texture, and what its far pages are baked from.
-    pub(crate) vt: crate::terrain_vt::VirtualTexture,
-    far: far::FarInputs,
     /// Tiles' water.
     pub(crate) water: water_blocks::WaterBlocks,
 }
@@ -302,8 +294,6 @@ impl TerrainPass {
             cooking: false,
             macro_maps: MacroMaps::new(device, queue),
             deformation: crate::deformation::DeformationPass::new(device),
-            vt: crate::terrain_vt::VirtualTexture::new(device),
-            far: far::FarInputs::default(),
             water: water_blocks::WaterBlocks::new(device),
         }
     }
@@ -330,7 +320,6 @@ impl TerrainPass {
             + self.macro_maps.capacity_bytes()
             + self.maps.capacity_bytes()
             + self.deformation.capacity_bytes()
-            + self.vt.capacity_bytes()
             + self.water.capacity_bytes()
     }
 
@@ -368,8 +357,8 @@ impl TerrainPass {
         self.tables.write_fades(queue, fades);
         self.tables
             .write_directory(device, queue, terrains, &self.atlas);
-        // Water's directory, in the directory buffer after the virtual
-        // texture's windows and tables.
+        // Water's directory, in the directory buffer after the directory's
+        // own words.
         let tables = &self.tables;
         self.water.write_directory(
             queue,
@@ -380,8 +369,7 @@ impl TerrainPass {
                 tables.directory_generation,
             ),
         );
-        let vt_pages = self.vt.wanted(&views.settings);
-        self.maps.prepare(device, queue, mips, terrains, vt_pages);
+        self.maps.prepare(device, queue, mips, terrains);
         self.tables
             .write_palette(queue, terrains, (&self.maps, views.settings.pinned_levels));
         // Bounce light's levels around the detail eye, which the horizon
@@ -402,28 +390,6 @@ impl TerrainPass {
         );
         self.bounce
             .prepare(device, queue, terrains, lighting, self.cooking);
-        // The runtime virtual texture, its far pages baked from what each
-        // terrain's pinned level holds.
-        let sources = self.far.sources(
-            terrains,
-            &views.settings,
-            (&self.atlas, &self.tables, &self.macro_maps),
-        );
-        let tables = &self.tables;
-        let textures = self.vt.prepare(
-            device,
-            queue,
-            terrains,
-            (views.detail_eye, &views.settings),
-            (views.now, views.fades),
-            (&self.maps, &self.macro_maps),
-            (&self.atlas.changed, &sources),
-            (
-                &tables.directory,
-                tables.vt_base,
-                tables.directory_generation,
-            ),
-        );
         if !terrains.terrains.iter().any(|terrain| terrain.drawn) {
             self.surface.rest();
             return false;
@@ -439,7 +405,6 @@ impl TerrainPass {
             sky: &self.sky,
             macro_maps: &self.macro_maps,
             shading: self.deformation.shading(),
-            textures: &textures,
         };
         self.patches.lay_out(device, terrains, views, &parts);
         let uniforms = (&self.tables.uniforms, self.tables.uniform_generation);
@@ -609,33 +574,6 @@ impl TerrainPass {
             .encode(device, encoder, shader, camera, terrain, profiler);
     }
 
-    /// Records the runtime virtual texture's bakes through
-    /// the camera's terrain group `camera`.
-    pub(crate) fn encode_vt_bakes(
-        &mut self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        shader: &wgpu::ShaderModule,
-        camera: (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
-    ) {
-        if !self.vt.baking() {
-            return;
-        }
-        let Some(group) = self.pipelines.bake_group() else {
-            return;
-        };
-        let tables = &self.tables;
-        self.vt.encode_bakes(
-            device,
-            encoder,
-            shader,
-            camera,
-            (&self.pipelines.layout, group),
-            &self.maps,
-            |id| tables.uniform_of(id),
-        );
-    }
-
     /// Records bounce light's relighting, reading `scene`'s lighting, shadow
     /// lookups and clouds' shadows, timed by `profiler`.
     pub(crate) fn encode_bounce(
@@ -653,29 +591,6 @@ impl TerrainPass {
         };
         self.bounce
             .encode(device, encoder, profiler, (terrain, scene));
-    }
-
-    /// Records the runtime virtual texture's feedback over
-    /// terrain's visibility target `ids`, `size` pixels, with the camera's
-    /// uniform buffer `camera`.
-    pub(crate) fn encode_vt_feedback(
-        &mut self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        shader: &wgpu::ShaderModule,
-        camera: &wgpu::Buffer,
-        (ids, size): (&wgpu::TextureView, (u32, u32)),
-    ) {
-        let tables = &self.tables;
-        self.vt.encode_feedback(
-            device,
-            encoder,
-            shader,
-            camera,
-            (&self.patches.views, &tables.uniforms, &tables.directory),
-            (ids, size),
-            |id| tables.uniform_of(id),
-        );
     }
 
     /// Binds the terrain group for the view at `view` and the terrain whose

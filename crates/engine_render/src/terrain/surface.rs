@@ -34,7 +34,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use super::*;
-use crate::bindings::{TERRAIN_SUBDIVISION, TERRAIN_VT_CAMERA};
+use crate::bindings::{TERRAIN_SUBDIVISION, TERRAIN_SUBDIVISION_CAMERA};
 use crate::buffers::{Growable, ReadbackRing};
 use crate::cached::{Bound, GroupCache, Versioned};
 use crate::gpu_layouts::constants::{
@@ -227,7 +227,7 @@ impl SurfaceTrees {
                 LEAF_BYTES,
                 wgpu::BufferUsages::empty(),
             ),
-            camera_layout: crate::pipelines::layout(device, &TERRAIN_VT_CAMERA),
+            camera_layout: crate::pipelines::layout(device, &TERRAIN_SUBDIVISION_CAMERA),
             tree_layout: crate::pipelines::layout(device, &TERRAIN_SUBDIVISION),
             camera_group: None,
             pipelines: None,
@@ -611,7 +611,7 @@ impl SurfaceTrees {
             crate::pipelines::group(
                 device,
                 "engine/terrain-subdivision-camera",
-                &TERRAIN_VT_CAMERA,
+                &TERRAIN_SUBDIVISION_CAMERA,
                 camera_layout,
                 &[crate::buffers::entry("camera", camera)],
             )

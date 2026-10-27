@@ -584,8 +584,7 @@ pub struct SkinView {
 /// What every distance switch follows, the detail eye: the `terrain`
 /// control's state. Terrain streaming, its patches and shading levels, the
 /// ground's relief, ground cover and its canopy, placed objects' thinning,
-/// kept shadow windows, river water and virtual texture pages measure from
-/// it.
+/// kept shadow windows and river water measure from it.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainDebugView {

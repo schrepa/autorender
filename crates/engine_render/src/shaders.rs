@@ -41,7 +41,6 @@ shaders! {
         "terrain_variety.wgsl",
         "meshes/terrain.wgsl",
         "meshes/terrain_subdivision.wgsl",
-        "meshes/terrain_vt.wgsl",
         "meshes/terrain_sky.wgsl",
         "fullscreen.wgsl",
         "meshes/cover.wgsl",
@@ -64,12 +63,6 @@ shaders! {
     TERRAIN_CONTROL_SHADER = [
         "terrain_tile.wgsl",
         "terrain_control.wgsl",
-    ];
-    /// The runtime virtual texture's coarser far pages, each the mean of the
-    /// finer far mip's.
-    TERRAIN_VT_FAR_SHADER = [
-        "color.wgsl",
-        "terrain_vt_far.wgsl",
     ];
     /// Terrain bounce light after the shared scene declarations: the
     /// ground lit, its levels and the probes' gathers.
@@ -302,7 +295,7 @@ entry_points! {
             vs_affine_extended, vs_affine_temporal_extended, vs_affine_skinned,
             vs_affine_temporal_skinned, vs_resolve, vs_sky, vs_decal, vs_impostor_bake,
             vs_impostor_bake_extended, vs_impostor, vs_impostor_temporal, vs_terrain,
-            vs_terrain_temporal, vs_terrain_vt_bake, vs_fullscreen, vs_cover,
+            vs_terrain_temporal, vs_fullscreen, vs_cover,
             vs_cover_temporal, vs_water, vs_water_temporal, vs_ocean,
             vs_ocean_temporal, vs_fall, vs_fall_temporal, vs_sim_water, vs_sim_water_temporal,
             vs_debug_affine, vs_debug_affine_extended, vs_debug_affine_skinned, vs_debug_virtual,
@@ -320,7 +313,7 @@ entry_points! {
             fs_decal, fs_decal_lit, fs_impostor_shade, fs_impostor_shade_extended, fs_impostor_bake,
             fs_impostor_bake_extended, fs_impostor, fs_impostor_lit, fs_impostor_post,
             fs_impostor_post_lit, fs_impostor_temporal, fs_impostor_temporal_lit,
-            fs_terrain_vt_bake, fs_terrain_ids, fs_terrain_resolve_post,
+            fs_terrain_ids, fs_terrain_resolve_post,
             fs_terrain_resolve_post_lit, fs_terrain_resolve_temporal,
             fs_terrain_resolve_temporal_lit, fs_terrain, fs_terrain_lit, fs_terrain_post,
             fs_terrain_post_lit, fs_terrain_temporal, fs_terrain_temporal_lit, fs_terrain_probe,
@@ -332,7 +325,6 @@ entry_points! {
             fs_debug_sim_water, fs_debug_ocean, fs_debug_fall, fs_debug_sky
         ],
         compute: [
-            cs_terrain_vt_feedback,
             subdivide_begin,
             subdivide_decide,
             subdivide_apply,
@@ -343,9 +335,6 @@ entry_points! {
     }
     terrain_control = TERRAIN_CONTROL_SHADER {
         compute: [tile_control],
-    }
-    terrain_vt_far = TERRAIN_VT_FAR_SHADER {
-        compute: [far_mean],
     }
     terrain_bounce = BOUNCE_SHADER {
         compute: [bounce_ground, bounce_down, bounce_gather],

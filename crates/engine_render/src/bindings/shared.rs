@@ -66,8 +66,8 @@ shared_groups! {
         terrain: 17..33 [
             terrain_heights, terrain_view, terrain, terrain_holes, terrain_normals,
             terrain_sky_sampler, terrain_directory, terrain_control, terrain_palette,
-            terrain_albedo, terrain_material_data, terrain_vt_sheets, terrain_material_sampler,
-            terrain_sky, terrain_deformation, terrain_control_sampler
+            terrain_albedo, terrain_material_data, terrain_material_sampler, terrain_sky,
+            terrain_deformation, terrain_control_sampler
         ],
         cover: 33..35 [cover_blades, cover_frame],
         macro_colors: 35..36 [terrain_macro],
@@ -90,7 +90,6 @@ shared_groups! {
         decals: 13..15 [decal_records, decal_depth],
         impostor_bakes: 15..17 [impostor_bake, impostor_shade],
         terrain: 18..19 [terrain_ids_texture],
-        virtual_texture: 19..21 [terrain_vt_wanted, terrain_vt_bakes],
         water: 22..24 [water_depth, water_scene],
         subdivision: 27..32 [
             subdivision, subdivision_tree, subdivision_nodes, subdivision_leaves, subdivision_args

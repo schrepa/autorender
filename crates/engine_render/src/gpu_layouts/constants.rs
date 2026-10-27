@@ -209,32 +209,13 @@ gpu_consts! {
     /// Words of a probe in the probes' buffer.
     pub(crate) const BOUNCE_RECORD_WORDS: usize = engine_core::terrain_data::bounce::PROBE_BYTES / 4 => ["BOUNCE_RECORD_WORDS" in BOUNCE_SHADER];
 
-    // crate::terrain_vt
-    /// Texels along a page's side, the border around it, and a slot's side.
-    pub(crate) const VT_PAGE_TEXELS: u32 = 128 => ["VT_PAGE"];
-    pub(crate) const VT_BORDER_TEXELS: u32 = 8 => ["VT_BORDER"];
-    pub(crate) const VT_SLOT_TEXELS: u32 = VT_PAGE_TEXELS + 2 * VT_BORDER_TEXELS => ["VT_SLOT"];
-    /// Pages along a side of each mip's window around the eye: as many as
-    /// cover the distances where pixels read the mip, whatever it is.
-    pub(crate) const VT_WINDOW: i32 = 64 => ["VT_WINDOW"];
-    /// Mips, and the meters mip 0's texels span: about the material maps'
-    /// own texels where they repeat every few meters.
-    pub(crate) const VT_MIPS: usize = 18 => ["VT_MIPS"];
-    /// Layers of the sheets' array a sheet takes: its base color, its
-    /// cover's canopy and its normals' turn (sRGB, linear data stored as is).
-    pub(crate) const VT_SHEET_LAYERS: u32 = 3 => ["VT_SHEET_LAYERS" in TERRAIN_VT_FAR_SHADER];
-    /// Bytes of a row of a slot's layer as copies between the sheets and
-    /// buffers take it: whole multiples of what copies align rows to.
-    pub(crate) const VT_ROW_BYTES: u32 = (VT_SLOT_TEXELS * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) => ["VT_ROW_BYTES" in TERRAIN_VT_FAR_SHADER];
-
     // crate::terrain_maps
     /// The most anisotropy surface materials' maps filter to, their
-    /// sampler's clamp: past it their filtering under-samples a pixel's
-    /// footprint along its long side, so shaders sampling them widen their
-    /// derivatives' short side to at least the long side over it. Every read
-    /// filtering a footprint resolves it so (`scene.wgsl`'s
-    /// `detail_resolved`): the virtual texture's pages, the macro colors and
-    /// the ground's noise by up to this many taps along the long side.
+    /// sampler's clamp, which every read of the ground goes through: past
+    /// it the hardware's filtering resolves a pixel's footprint no finer than
+    /// its long side over it. Every read filtering a footprint resolves it so
+    /// (`scene.wgsl`'s `detail_resolved`), and patterns computed where they
+    /// show are clamped by that size.
     pub(crate) const MATERIAL_ANISOTROPY: u16 = 16 => ["DETAIL_ANISOTROPY"];
 
     // crate::deformation
@@ -513,11 +494,6 @@ gpu_consts! {
     pub(crate) const BOUNCE_GROUP: u32 = 8 => ["@bounce_ground" in BOUNCE_SHADER, "@bounce_down" in BOUNCE_SHADER, "@bounce_gather" in BOUNCE_SHADER];
     pub(crate) const NORMALS_GROUP: u32 = 16 => ["@tile_normals" in TERRAIN_NORMALS_SHADER];
     pub(crate) const RESOLVE_ARGS_GROUP: u32 = 64 => ["@resolve_args" in VISIBILITY_SHADER];
-    pub(crate) const VT_FEEDBACK_GROUP: u32 = 8 => ["@cs_terrain_vt_feedback" in SHADER];
-    pub(crate) const VT_FAR_GROUP: u32 = 8 => ["@far_mean" in TERRAIN_VT_FAR_SHADER];
-    /// Pixels a side of the blocks the virtual texture's feedback tests one
-    /// pixel of, a different one each frame.
-    pub(crate) const VT_FEEDBACK_BLOCK: u32 = 8 => ["VT_FEEDBACK_BLOCK" in SHADER];
 
     // The wind's layers (`wind.wgsl`), which meshes, depth passes and shadow
     // casters sway placed objects by alike: each a share of the object's

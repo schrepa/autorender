@@ -63,8 +63,7 @@ pub(crate) struct GroundChange {
 
 /// What laying out the frame reads besides the terrains: the tiles' layers
 /// and holes, the tables' bases, holes and covers, the subdivisions' leaves,
-/// the sky maps' and macro colors' layers, deformation's shading and each
-/// terrain's virtual texture uniform fields.
+/// the sky maps' and macro colors' layers and deformation's shading.
 pub(super) struct Layout<'a> {
     pub(super) atlas: &'a TileAtlas,
     pub(super) tables: &'a TerrainTables,
@@ -72,7 +71,6 @@ pub(super) struct Layout<'a> {
     pub(super) sky: &'a SkyMaps,
     pub(super) macro_maps: &'a MacroMaps,
     pub(super) shading: crate::deformation::DeformationShading,
-    pub(super) textures: &'a [([u32; 4], [f32; 4], [u32; 4])],
 }
 
 impl PatchDraws {
@@ -696,11 +694,6 @@ fn terrain_uniform(
             [law.radius, law.span, cover.density, 0.0]
         }
     };
-    let (vt, vt_scale, vt_layout) = parts
-        .textures
-        .get(index)
-        .copied()
-        .unwrap_or(([0; 4], [0.0; 4], [0; 4]));
     // The deepest any of its materials with maps sinks and displaces the
     // ground, as the palette holds them.
     let palette = tables.palette_of(index, terrain.surface.len());
@@ -740,9 +733,6 @@ fn terrain_uniform(
         deform_grid: parts.shading.grid,
         deform: parts.shading.scale,
         cover,
-        vt,
-        vt_scale,
-        vt_layout,
         // The ground's shading levels hand over as its tiles stream.
         pixel_error: [views.settings.pixel_error, 0.0, 0.0, 0.0],
         macro_map: [parts.macro_maps.layer(index), 0, 0, 0],

@@ -1,9 +1,8 @@
 //! The terrain tables shaders look up: each layer's fades and the hole bits
 //! of tiles with holes; the directory of every terrain's levels and
-//! resident tiles' layers, with the runtime virtual texture's windows and
-//! tables after it and water's directory after those (the ground's
-//! fragments bind as many storage buffers as they may, so neither takes one
-//! of its own); every terrain's surface materials, their covers and
+//! resident tiles' layers, with water's directory after it (the ground's
+//! fragments bind as many storage buffers as they may, so it takes none of
+//! its own); every terrain's surface materials, their covers and
 //! what their placement layers' objects leave the ground where they
 //! retire; and each terrain's uniform. Each is written where it changed: the
 //! directory is laid out again only as the terrains or their pyramids
@@ -43,9 +42,8 @@ pub(crate) struct TerrainTables {
     pub(super) directory_revision: u64,
     // Where each terrain's start.
     pub(super) directory_bases: Vec<u32>,
-    // Where the virtual texture's windows and tables start in the directory
-    // buffer, and where water's directory starts after them.
-    pub(super) vt_base: u32,
+    // Where water's directory starts in the directory buffer, after the
+    // directory's own words.
     pub(super) water_base: u32,
     // Every terrain's surface materials, where each
     // terrain's start, what the buffer holds and the entries it held
@@ -100,7 +98,6 @@ impl TerrainTables {
             directory_generation: 0,
             directory_revision: 0,
             directory_bases: Vec::new(),
-            vt_base: 0,
             water_base: 0,
             palette: crate::buffers::uniform(
                 device,
@@ -352,7 +349,7 @@ impl TerrainTables {
             let layer = atlas.slots.get(&(id, key)).copied().unwrap_or(NOT_RESIDENT);
             set_word(&mut self.directory_written, at, layer, &mut dirty);
         }
-        let bytes = self.directory_bytes(terrains.terrains.len(), atlas);
+        let bytes = self.directory_bytes(atlas);
         let grown = self.directory.grow(device, bytes);
         if grown {
             self.directory_generation += 1;
@@ -417,10 +414,9 @@ impl TerrainTables {
                 .iter()
                 .map(|terrain| (terrain.id, terrain.pyramid)),
         );
-        // The runtime virtual texture's windows and tables follow,
-        // at a multiple of 64 words.
-        self.vt_base = words.len().next_multiple_of(64) as u32;
-        let bytes = self.directory_bytes(terrains.terrains.len(), atlas);
+        // Water's directory follows.
+        self.water_base = words.len() as u32;
+        let bytes = self.directory_bytes(atlas);
         let grown = self.directory.grow(device, bytes);
         if grown {
             self.directory_generation += 1;
@@ -434,14 +430,11 @@ impl TerrainTables {
         self.directory_revision += 1;
     }
 
-    /// The bytes the directory buffer holds for `terrains` terrains over
-    /// `atlas`' layers: the directory's words, the virtual texture's windows
-    /// and tables from `vt_base`, and water's directory after them, from
-    /// `water_base`, which it places: a word for each patch of each layer's
-    /// tile (`water_blocks`).
-    fn directory_bytes(&mut self, terrains: usize, atlas: &TileAtlas) -> u64 {
-        let texture_words = crate::terrain_vt::VirtualTexture::words(terrains);
-        self.water_base = self.vt_base + texture_words as u32;
+    /// The bytes the directory buffer holds over `atlas`' layers: the
+    /// directory's words, and water's directory after them, from
+    /// `water_base`: a word for each patch of each layer's tile
+    /// (`water_blocks`).
+    fn directory_bytes(&self, atlas: &TileAtlas) -> u64 {
         let water_words = atlas.layers() as usize * WATER_TILE_WORDS as usize;
         ((self.water_base as usize + water_words) * 4) as u64
     }
@@ -641,7 +634,7 @@ impl PlacedSums {
 }
 
 /// The base-2 logarithm of `meters`, the same on every host, as palette
-/// entries far pages are keyed by must be.
+/// entries are.
 fn octaves(meters: f32) -> f32 {
     engine_core::math::ln(engine_core::math::max(meters, 1.0e-6)) * std::f32::consts::LOG2_E
 }

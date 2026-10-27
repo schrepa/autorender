@@ -85,8 +85,9 @@ const FILTERS: &[(&str, &str)] = &[
          ones' surface",
     ),
     (
-        "terrain_filtered",
-        "a map's derivatives, the shorter widened to the anisotropy its filtering resolves",
+        "terrain_octave",
+        "noise computed where it shows, whole while its features' wavelength spans four of the \
+         pixels the footprint resolves, its mean by two, the Nyquist limit mipmaps keep",
     ),
     (
         "terrain_placed_share",
@@ -143,10 +144,6 @@ const FILTERS: &[(&str, &str)] = &[
         "sway moving an object less than a pixel stilled, its mean bend kept",
     ),
     (
-        "cs_terrain_vt_feedback",
-        "the virtual texture's pages a pixel's footprint asks for: the level whose texels match it",
-    ),
-    (
         "terrain_displacement",
         "the ground's relief displaced only where it moves the surface a pixel or more, a flat surface standing in below",
     ),
@@ -156,27 +153,11 @@ const FILTERS: &[(&str, &str)] = &[
     ),
     (
         "terrain_resolved",
-        "the depth edges of what hides what, and the virtual texture's pages blended in as the pixel's dither picks them",
+        "the depth edges of what hides what, the smooth surface's derivatives standing in across them",
     ),
     (
         "terrain_seen",
         "where the view ray meets the ground: relief moved as far as it moves a pixel, and the shading levels the pixel's footprint picks",
-    ),
-    (
-        "terrain_vt_entry",
-        "a virtual texture page of the mip whose texels match the pixel",
-    ),
-    (
-        "terrain_vt_page",
-        "a virtual texture page of the mip whose texels match the pixel",
-    ),
-    (
-        "terrain_vt_shown",
-        "the virtual texture's pages handing over to the ground computed there, baked from the same ground at their texels",
-    ),
-    (
-        "terrain_vt_texels",
-        "the virtual texture's pages whose texels match the pixel, handing over to the ground computed there, baked from it",
     ),
 ];
 

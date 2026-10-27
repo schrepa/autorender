@@ -322,8 +322,8 @@ fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Resul
 
 /// The frame a view settles with before `capture`: the kind of frame the
 /// capture draws (GPU-presented frames cull, choose levels of detail and
-/// request virtual texture and geometry pages on the GPU, read back a few
-/// frames late); none for display frames, which run as they are.
+/// request geometry pages on the GPU, read back a few frames late); none
+/// for display frames, which run as they are.
 fn settling_frame(capture: Capture) -> Option<Value> {
     match capture {
         Capture::Exact => Some(json!({"op": "render"})),

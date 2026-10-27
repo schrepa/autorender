@@ -505,23 +505,6 @@ pub struct TerrainRenderStats {
     /// shared arrays cannot hold (block compressed, or sized unlike the first
     /// material's), which show a plain color instead.
     pub dropped_materials: u32,
-    /// Pages the runtime virtual texture's sheets hold.
-    pub vt_slots: u32,
-    /// Virtual texture pages resident.
-    pub vt_pages: u32,
-    /// Virtual texture pages baked this frame (absent or stale).
-    pub vt_bakes: u32,
-    /// Virtual texture pages asked for but absent, in the last feedback read
-    /// back.
-    pub vt_missing: u32,
-    /// Virtual texture pages asked for with no slot left under its budget or
-    /// the device's texture array layers.
-    pub dropped_vt_pages: u32,
-    /// Virtual texture pages evicted for others this frame.
-    pub vt_evictions: u32,
-    /// Of the resident pages, far pages: terrains' coarse mips, the same
-    /// whatever the eye, cooked once and pinned in their slots.
-    pub vt_far_pages: u32,
     /// Objects placement layers stand on resident level-0 tiles, each culled
     /// on the GPU every frame.
     pub placed_objects: u32,

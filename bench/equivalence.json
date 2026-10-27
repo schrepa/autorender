@@ -597,7 +597,7 @@
     {
       "name": "terrain-frames",
       "tier": "full",
-      "note": "The terrain fixture streaming on the frame clock (--terrain-clock frames), its water and clouds off: a native A/A of six runs (2026-10-12) differed by at most 1 level on at most 17 pixels, so its streaming, virtual texture, ground cover and placements are judged within a level. With water and clouds on the fixture still varies run to run (with ground cover off, up to 5 levels over 61% of the pixels), so those stay with the wall-clock terrain cell.",
+      "note": "The terrain fixture streaming on the frame clock (--terrain-clock frames), its water and clouds off: a native A/A of six runs (2026-10-12) differed by at most 1 level on at most 17 pixels, so its streaming, ground cover and placements are judged within a level. With water and clouds on the fixture still varies run to run (with ground cover off, up to 5 levels over 61% of the pixels), so those stay with the wall-clock terrain cell.",
       "source": "web/scripts/fixtures/terrain.scene.json",
       "options": { "terrain-clock": "frames" },
       "environment": { "water": { "enabled": false }, "clouds": { "enabled": false } },

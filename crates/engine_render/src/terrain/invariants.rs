@@ -17,8 +17,7 @@
 //!   listed tile holds a layer or waits for one and only listed tiles do,
 //!   and the tiles noted with holes are the resident tiles with holes;
 //! - T7 fades: each layer's fades are what its tile's arrival and surface
-//!   materials give now (none where no tile holds it), and the tiles noted
-//!   fading in are those a coarser level still shows over;
+//!   materials give now (none where no tile holds it);
 //! - T8 water: tiles' water holds blocks for every resident tile, of that
 //!   tile, and for no other.
 
@@ -208,10 +207,6 @@ impl TerrainPass {
             let mut words = vec![0_u32; atlas.fades.len()];
             for (key, &layer) in &atlas.slots {
                 let (normals, materials) = atlas.fades_of(key, fades);
-                debug_assert!(
-                    (normals > 0.0 || materials > 0.0) == atlas.fading.contains(key),
-                    "T7: {key:?} shows {normals}, {materials} of its parent, noted otherwise"
-                );
                 if let Some(word) = words.get_mut(layer as usize / 2) {
                     *word |= atlas::fade_half(normals, materials) << ((layer % 2) * 16);
                 }
@@ -219,10 +214,6 @@ impl TerrainPass {
             debug_assert!(
                 words == atlas.fades,
                 "T7: the layers' fades differ from what their tiles give"
-            );
-            debug_assert!(
-                atlas.fading.iter().all(|key| atlas.slots.contains_key(key)),
-                "T7: a tile noted fading in holds no layer"
             );
         }
         // T8 water.

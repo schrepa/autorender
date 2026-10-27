@@ -166,12 +166,10 @@ pub(crate) struct TileAtlas {
     // values and normal maps gather through.
     pub(super) sky_sampler: wgpu::Sampler,
     pub(super) control_sampler: wgpu::Sampler,
-    /// The tiles that arrived, left, were replaced or finished fading in
-    /// this frame, whose pages the runtime virtual texture drops; those
-    /// that began fading in; and those whose held tile changed (it arrived,
-    /// left or was replaced), each once, which their water follows.
+    /// The tiles that arrived, left or were replaced this frame, whose
+    /// directory entries are written again; and those whose held tile
+    /// changed, each once, which their water follows.
     pub(super) changed: Vec<(u64, TileKey)>,
-    pub(super) entered: Vec<(u64, TileKey)>,
     pub(super) held_changes: Vec<(u64, TileKey)>,
     /// Each layer's fades as shaders read them, the words this frame
     /// changed, and whether frames faded and the time when they were last
@@ -179,9 +177,8 @@ pub(crate) struct TileAtlas {
     pub(super) fades: Vec<u32>,
     pub(super) fades_dirty: Range<usize>,
     pub(super) faded_with: Option<(bool, f32)>,
-    /// The resident tiles a coarser level still shows over, and those of
-    /// them whose fades move as time passes.
-    pub(super) fading: HashSet<(u64, TileKey)>,
+    // The resident tiles a coarser level still shows over whose fades move
+    // as time passes.
     moving: HashSet<(u64, TileKey)>,
     // The tiles whose layer, arrival or surface materials' time changed
     // since fades were last worked out, and the layers tiles left.
@@ -226,12 +223,10 @@ impl TileAtlas {
                 ..Default::default()
             }),
             changed: Vec::new(),
-            entered: Vec::new(),
             held_changes: Vec::new(),
             fades: Vec::new(),
             fades_dirty: 0..0,
             faded_with: None,
-            fading: HashSet::default(),
             moving: HashSet::default(),
             touched: Vec::new(),
             vacated: Vec::new(),
@@ -280,7 +275,6 @@ impl TileAtlas {
     pub(super) fn begin(&mut self, now: f32) {
         (self.uploads, self.controls, self.now) = (0, 0, now);
         self.changed.clear();
-        self.entered.clear();
         self.held_changes.clear();
     }
 
@@ -743,35 +737,21 @@ impl TileAtlas {
     /// layers a word ([`fade_half`]). Only the tiles whose fades can have
     /// changed are worked out again: those fading in as time passes and
     /// those whose layer, arrival or surface materials changed; every tile
-    /// when the words or `fades` changed or time ran back. Tiles that
-    /// finished fading in count as changed, and those that began are noted.
+    /// when the words or `fades` changed or time ran back.
     pub(super) fn fade(&mut self, fades: bool, count: u32) {
         let whole = self.fades.len() != count as usize
             || (self.faded_with).is_none_or(|(faded, then)| faded != fades || self.now < then);
         self.faded_with = Some((fades, self.now));
         self.fades_dirty = 0..0;
         let mut touched = std::mem::take(&mut self.touched);
-        let mut faded = Vec::new();
         if whole {
             self.vacated.clear();
             self.fades.clear();
             self.fades.resize(count as usize, 0);
             self.fades_dirty = 0..self.fades.len();
-            let before = std::mem::take(&mut self.fading);
             self.moving.clear();
             touched.clear();
             touched.extend(self.slots.keys().copied());
-            for &key in &touched {
-                self.refade(key, fades);
-            }
-            faded.extend(
-                before
-                    .iter()
-                    .filter(|key| !self.fading.contains(*key))
-                    .copied(),
-            );
-            let began = self.fading.iter().filter(|key| !before.contains(*key));
-            self.entered.extend(began.copied());
         } else {
             while let Some(layer) = self.vacated.pop() {
                 self.set_fade(layer, 0);
@@ -779,39 +759,23 @@ impl TileAtlas {
             touched.extend(self.moving.iter().copied());
             touched.sort_unstable();
             touched.dedup();
-            for &key in &touched {
-                let was = self.fading.contains(&key);
-                self.refade(key, fades);
-                match (was, self.fading.contains(&key)) {
-                    (true, false) => faded.push(key),
-                    (false, true) => self.entered.push(key),
-                    (true, true) | (false, false) => {}
-                }
-            }
+        }
+        for &key in &touched {
+            self.refade(key, fades);
         }
         touched.clear();
         self.touched = touched;
-        // Sorted: the order pages drop in follows no hash.
-        faded.sort_unstable();
-        self.entered.sort_unstable();
-        self.changed.extend(faded);
     }
 
     /// Works tile `key`'s fades out again: its half of the word of the layer
-    /// it holds, whether a coarser level shows over it, and whether that
-    /// changes as time passes; a tile holding no layer fades in no more.
+    /// it holds, and whether it changes as time passes; a tile holding no
+    /// layer fades in no more.
     fn refade(&mut self, key: (u64, TileKey), fades: bool) {
         let Some(&layer) = self.slots.get(&key) else {
-            self.fading.remove(&key);
             self.moving.remove(&key);
             return;
         };
         let (normals, materials) = self.fades_of(&key, fades);
-        if normals > 0.0 || materials > 0.0 {
-            self.fading.insert(key);
-        } else {
-            self.fading.remove(&key);
-        }
         // Materials fading in from their own time move; a tile without its
         // own shows the coarser level's whole until they arrive, its normals
         // too where they come with them.
@@ -838,13 +802,6 @@ impl TileAtlas {
             *word = value;
             self.fades_dirty = widen(self.fades_dirty.clone(), at);
         }
-    }
-
-    /// Whether terrain `id`'s tile `key` is resident and stands as it is:
-    /// no coarser level's normals or surface materials show over it this
-    /// frame.
-    pub(super) fn settled(&self, key: (u64, TileKey)) -> bool {
-        self.slots.contains_key(&key) && !self.fading.contains(&key)
     }
 
     /// Creates the compute pipelines tiles' normal maps and control values

@@ -76,7 +76,7 @@
 @group(1) @binding(50) var water_surface: texture_2d_array<f32>;
 @group(1) @binding(51) var water_info: texture_2d_array<u32>;
 // Water's directory (`terrain/water_blocks.rs`) lies in `terrain_directory`
-// from `terrain.water.x`, after the virtual texture's windows and tables:
+// from `terrain.water.x`, after the directory's own words:
 // WATER_TILE_WORDS words for each layer of the terrain's height array, the
 // block of each patch of the tile in it, row by row (NO_WATER_BLOCK where
 // none of its samples holds a surface). The ground's fragments read the

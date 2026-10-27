@@ -108,10 +108,6 @@ const OPTICS: &[(&str, &str)] = &[
     ("terrain_canopy", "the ground a canopy hides along the view"),
     ("terrain_canopy_look", "a canopy seen along the view"),
     ("terrain_canopy_through", "a canopy seen along the view"),
-    (
-        "terrain_filtered",
-        "the maps' filtering by the view's derivatives",
-    ),
     ("terrain_parallax", "the relief's ray march"),
     ("terrain_resolved", "the depth edges of what hides what"),
     ("terrain_visibility", "the terrain's horizon lookup"),
