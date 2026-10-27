@@ -315,6 +315,14 @@ fn eye_world(relative: vec3<f32>) -> vec3<f32> {
 // along the view as across it.
 const DETAIL_EDGE_ON: f32 = 0.0625;
 
+// How many times longer than across a footprint reads resolve it across at
+// most (`detail_resolved`): anisotropic filtering's limit, the surface
+// materials' maps' samplers' clamp
+// (`gpu_layouts::constants::MATERIAL_ANISOTROPY`). Past it filtering
+// under-samples a footprint's long side, and crests seen almost edge on
+// ripple.
+const DETAIL_ANISOTROPY: f32 = 16.0;
+
 // The pixels a pattern's features must span to draw steadily under temporal
 // antialiasing, its jitter moving the phase they are sampled at by no more
 // than an eighth of their period (`engine_core::STEADY_PIXELS`): finer ones
@@ -339,13 +347,28 @@ fn detail_across(world: vec3<f32>) -> f32 {
 // The meters a pixel spans on a surface at `world` facing `normal`, seen
 // from the detail eye: across the view (x, `detail_across`), and along it
 // (y), as far again as the eye meets the surface obliquely, views more
-// grazing than DETAIL_EDGE_ON counting as that. A feature wanting one size
-// takes the mean of the two sides, `sqrt(x * y)`.
-fn detail_span(world: vec3<f32>, normal: vec3<f32>) -> vec2<f32> {
+// grazing than DETAIL_EDGE_ON counting as that; and the way its long side
+// runs across the ground (zw: x and z of the unit vector on the surface
+// along the view). A feature wanting one size takes the mean of the two
+// sides, `sqrt(x * y)`.
+fn detail_span(world: vec3<f32>, normal: vec3<f32>) -> vec4<f32> {
     let across = detail_across(world);
     let toward = world - camera.detail.xyz;
-    let facing = max(abs(dot(normal, toward)) / max(length(toward), 1.0e-6), DETAIL_EDGE_ON);
-    return vec2<f32>(across, across / facing);
+    let ray = toward / max(length(toward), 1.0e-6);
+    let cosine = dot(normal, ray);
+    let facing = max(abs(cosine), DETAIL_EDGE_ON);
+    let laid = ray - normal * cosine;
+    let way = laid.xz * inverseSqrt(max(dot(laid, laid), 1.0e-12));
+    return vec4<f32>(across, across / facing, way);
+}
+
+// The meters a read filtering a footprint of sides `span` (either way
+// round: a pixel's, `detail_span`, or a texel's) resolves, as anisotropic
+// filtering does: its short side, or its long side over DETAIL_ANISOTROPY
+// where it is more stretched than that, taps along the long side averaging
+// the rest. Every read filtering a footprint resolves it by this.
+fn detail_resolved(span: vec2<f32>) -> f32 {
+    return max(min(span.x, span.y), max(span.x, span.y) / DETAIL_ANISOTROPY);
 }
 
 // The level of a pyramid a pixel reads, and the share of the next coarser
