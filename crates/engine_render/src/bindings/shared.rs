@@ -91,10 +91,11 @@ shared_groups! {
         decals: 13..15 [decal_records, decal_depth],
         impostor_bakes: 15..17 [impostor_bake, impostor_shade],
         terrain: 18..19 [terrain_ids_texture],
-        water: 22..24 [water_depth, water_scene],
+        water: 22..26 [water_depth, water_scene, water_foam_field, water_foam_sampler],
         subdivision: 27..32 [
             subdivision, subdivision_tree, subdivision_nodes, subdivision_leaves, subdivision_args
         ],
+        foam: 32..37 [foam_frame, foam_lattice, foam_state, foam_source, foam_target],
     }
     SHADER @ 3 {
         lights: 0..4 [clusters, lights, cluster_ranges, cluster_lights],

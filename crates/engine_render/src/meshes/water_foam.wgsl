@@ -1,19 +1,30 @@
 // Foam on terrains' water and the sea: smooth coverage, the share of the
 // surface foam hides, from the water's state and what it meets. Terrains'
-// water's comes from its simulation alone (`shade_water`), read through the
-// smooth surface's weights at the simulation's own resolution: the white
-// water born in it where it breaks (`engine_terrain`'s `breaking`, and the
-// simulated water's by the same rule, `sim_water_output`) and the foam its
-// flow churns up and carries, settling or simulated (`water_sim.wgsl`'s
-// `sim_churn`: where it loses energy, plunges or jumps, along its eddy lines
-// and where it converges, fading as it ages); and white water where it runs
-// against what stands in it behind the pixel fast enough to tear air in
-// (`water_contact`), by how far it climbs what it meets
-// (`water_climbing`). The sea's whitens where its crests fold and where its
-// waves run up its shores (`meshes/ocean.wgsl`). Fresh white water and
-// carried foam add into one coverage (`water_foam`), lit as foam is lit
-// (`water_light`); age changes only how it scatters light. No grain and no
-// texture draws any of it.
+// water's is the foam field the water carries (`water_foam_field.rs`,
+// `water_foam_held`): the white water born where the water breaks
+// (`engine_terrain`'s `breaking`), carried on as its bubbles drain, and the
+// foam its flow churns up (`water_sim.wgsl`'s `sim_churn`: where it loses
+// energy, plunges or jumps, along its eddy lines and where it converges),
+// carried by the current its surface runs at, gathering where that
+// converges and against what stands in it, and fading as it ages; out past
+// where the field's cells span a few pixels, the water's own state's, which
+// the field's mean is. And white water where it runs against what stands in
+// it behind the pixel fast enough to tear air in (`water_contact`), by how
+// far it climbs what it meets (`water_climbing`). The sea's whitens where
+// its crests fold and where its waves run up its shores
+// (`meshes/ocean.wgsl`). Fresh white water and carried foam add into one
+// coverage (`water_foam`), lit as foam is lit (`water_light`); age changes
+// only how it scatters light. No grain and no texture draws any of it: what
+// shape it takes, its streaks, rafts, lines along eddies and piles behind
+// what stands in the water, comes from how the water carries it.
+
+// The foam field terrains' water carries (`water_foam_field.rs`), its
+// texels its cells, each the white water covering it and the foam the water
+// carries there as a share of WATER_FOAM_MOST, with its coarser levels; and
+// the sampler reading it, which repeats it, as its texels hold their world
+// cells' remainders over its side.
+@group(2) @binding(24) var water_foam_field: texture_2d<f32>;
+@group(2) @binding(25) var water_foam_sampler: sampler;
 
 // The meters a second over which water running against what stands in it
 // tears air in, from the first to the second (Ervine, McKeogh and Elsawy
@@ -84,4 +95,31 @@ fn water_foam(fresh: f32, carried: f32) -> WaterFoam {
     foam.thin = carried / max(fresh + carried, 1.0e-6);
     foam.shade = WATER_FOAM_HOLLOW * (1.0 - foam.thin);
     return foam;
+}
+
+// The white water covering terrains' water at `world` and the foam it
+// carries there (x and y, shares of the surface, 0 to 1 each) under a pixel
+// whose footprint is `footprint` (`water_footprint`), as the foam field
+// holds them (`water.foam`: the meters across its cells, none where none
+// runs; the meters its texture spans, which repeats; and the pixels its
+// cells span where it hands over): filtered over the footprint by its
+// levels, out to where its cells span water.foam.z pixels seen from the
+// detail eye, handing over to `settled`, the same as the water's own state
+// holds them (the white water born there and the foam its flow churned up),
+// the field's mean, as a pyramid's level hands over to the next coarser
+// (`detail_level`); `settled` past it.
+fn water_foam_held(world: vec3<f32>, footprint: WaterFootprint, settled: vec2<f32>)
+        -> vec2<f32> {
+    let cell = water.foam.x;
+    if cell <= 0.0 {
+        return settled;
+    }
+    let picked = detail_level(2.0 * water.foam.z * detail_across(world), cell, 2u);
+    if picked.level > 0u {
+        return settled;
+    }
+    let side = water.foam.y;
+    let field = textureSampleGrad(water_foam_field, water_foam_sampler, world.xz / side,
+        footprint.dx / side, footprint.dy / side).xy;
+    return mix(field, settled, picked.blend);
 }

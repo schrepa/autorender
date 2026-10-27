@@ -1928,6 +1928,17 @@
       "direction": "lower"
     },
     {
+      "name": "water.foam_cells",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "water.leaves",
       "kind": "work",
       "rule": "shown",

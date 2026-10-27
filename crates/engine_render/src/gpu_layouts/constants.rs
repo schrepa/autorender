@@ -336,6 +336,11 @@ gpu_consts! {
     /// pass takes.
     pub(crate) const WATER_SIM_SOURCE_GROUP: u32 = 64 => ["WATER_SIM_SOURCE_GROUP" in WATER_SIM_SHADER, "@sim_source" in WATER_SIM_SHADER];
 
+    // crate::water_foam_field
+    /// Cells along a side of the workgroups of foam's field's passes, and of
+    /// its lattice's points.
+    pub(crate) const FOAM_GROUP: u32 = 8 => ["FOAM_GROUP", "@foam_gather", "@foam_currents", "@foam_step", "@foam_down"];
+
     // crate::ground_cover
     /// Bytes of a blade or tuft (`CoverBlade`).
     pub(crate) const BLADE_BYTES: u64 = 32 => ["size_of CoverBlade"];
@@ -557,6 +562,16 @@ gpu_consts! {
     pub(crate) const CLOUD_REACH: f32 = 60000.0 => ["REACH" in CLOUDS_SHADER, "CLOUD_PARALLAX_REACH"];
     /// Vertices drawn per cluster of virtual geometry: three a triangle.
     pub(crate) const CLUSTER_DRAWN_VERTICES: u32 = 3 * engine_core::CLUSTER_TRIANGLES => ["CLUSTER_VERTICES" in VIRTUAL_SHADER];
+    /// How the current foam rides on water's surface turns from the water's
+    /// velocity in a bend, where the helical flow carries the surface toward
+    /// the outer bank (Rozovskii 1957; Engelund 1974): the tangent of its
+    /// turn this many depths over the streamlines' radius of curvature, and
+    /// the most it reaches, 45 degrees, as sharper bends saturate (Blanckaert
+    /// and de Vriend 2003); and the share of the wind's speed the wind drags
+    /// it at (Wu 1975).
+    pub(crate) const SURFACE_BEND: f32 = 7.0 => ["SIM_BEND" in WATER_SIM_SHADER, "FOAM_BEND"];
+    pub(crate) const SURFACE_BEND_MOST: f32 = 1.0 => ["SIM_BEND_MOST" in WATER_SIM_SHADER, "FOAM_BEND_MOST"];
+    pub(crate) const SURFACE_WIND_DRIFT: f32 = 0.03 => ["SIM_WIND_DRIFT" in WATER_SIM_SHADER, "FOAM_WIND_DRIFT"];
 }
 
 gpu_mirrors! {
@@ -568,7 +583,7 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::FASTEST => ["SIM_FASTEST" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SOURCE_SPEED => ["SIM_SOURCE_SPEED" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::UNHELD => ["SIM_UNHELD" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::DENSITY => ["SIM_DENSITY" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::DENSITY => ["SIM_DENSITY" in WATER_SIM_SHADER, "WATER_DENSITY"];
     engine_core::terrain_data::shallow_water::FERGUSON_A1 => ["SIM_FERGUSON_A1" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FERGUSON_A2 => ["SIM_FERGUSON_A2" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SHALLOWEST => ["SIM_SHALLOWEST" in WATER_SIM_SHADER];
@@ -578,15 +593,15 @@ gpu_mirrors! {
     engine_core::terrain_data::NO_BLOCK => ["SIM_NO_BLOCK" in WATER_SIM_SHADER];
     engine_core::terrain_data::BLOCK_GROUND => ["SIM_BLOCK_GROUND" in WATER_SIM_SHADER, "SIM_BLOCK_GROUND" in SHADER];
     engine_core::terrain_data::shallow_water::WET_MOST => ["SIM_WET_MOST" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::FOAM_LIFE => ["SIM_FOAM_LIFE" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::FOAM_LIFE => ["SIM_FOAM_LIFE" in WATER_SIM_SHADER, "WATER_FOAM_LIFE"];
     engine_core::terrain_data::shallow_water::FOAM_MOST => ["SIM_FOAM_MOST" in WATER_SIM_SHADER, "WATER_FOAM_MOST"];
-    engine_core::terrain_data::shallow_water::FOAM_WET => ["SIM_FOAM_WET" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::FOAM_LOSS => ["SIM_FOAM_LOSS" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::FOAM_WET => ["SIM_FOAM_WET" in WATER_SIM_SHADER, "WATER_FOAM_WET"];
+    engine_core::terrain_data::shallow_water::FOAM_LOSS => ["SIM_FOAM_LOSS" in WATER_SIM_SHADER, "WATER_FOAM_LOSS"];
     engine_core::terrain_data::shallow_water::FOAM_DROP => ["SIM_FOAM_DROP" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_JUMP => ["SIM_FOAM_JUMP" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::FOAM_SWIRL => ["SIM_FOAM_SWIRL" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::FOAM_PILING => ["SIM_FOAM_PILING" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::FOAM_POWER => ["SIM_FOAM_POWER" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::FOAM_SWIRL => ["SIM_FOAM_SWIRL" in WATER_SIM_SHADER, "WATER_FOAM_SWIRL"];
+    engine_core::terrain_data::shallow_water::FOAM_PILING => ["SIM_FOAM_PILING" in WATER_SIM_SHADER, "WATER_FOAM_PILING"];
+    engine_core::terrain_data::shallow_water::FOAM_POWER => ["SIM_FOAM_POWER" in WATER_SIM_SHADER, "WATER_FOAM_POWER"];
     engine_core::terrain_data::shallow_water::COURANT => ["SIM_COURANT" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::LOCAL_SHARE => ["SIM_LOCAL_SHARE" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SLOWEST => ["SIM_SLOWEST" in WATER_SIM_SHADER];
