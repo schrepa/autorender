@@ -900,14 +900,15 @@ tables! {
     /// their surfaces beside their ground and their words (packed flow,
     /// whitewater and kind, their state, and the level the water's mesh
     /// stands at, which its vertices read), which pixels read as the water's
-    /// smooth surface and where it lies; water's uniform; the simulated
-    /// water's cells, ground and what the beds hold under them; and at a
-    /// dynamic offset, the subdivision of each terrain's water, whose leaves
-    /// its vertices take. With water's first group (`CAMERA_WATER`) and what
-    /// lies behind the water, within a fragment stage's 16 sampled textures
-    /// and 8 storage buffers. The sea's group has placeholders for what only
-    /// tiles' water reads. Foam's field's passes (`WATER_FOAM`) read the
-    /// water through it as shading reads it (`water_pixel`).
+    /// smooth surface and where it lies; water's uniform; the live water's
+    /// cells' looks, its water as water's pass draws it in the layout of
+    /// tiles' samples, which vertices and pixels read where it runs; and at
+    /// a dynamic offset, the subdivision of each terrain's water, whose
+    /// leaves its vertices take. With water's first group (`CAMERA_WATER`)
+    /// and what lies behind the water, within a fragment stage's 16 sampled
+    /// textures and 8 storage buffers. The sea's group has placeholders for
+    /// what only tiles' water reads. Foam's field's passes (`WATER_FOAM`)
+    /// read the water through it as shading reads it (`water_pixel`).
     const WATER: Table = Table {
         label: "engine/water-layout",
         serves: [SHADER @ 1],
@@ -920,9 +921,7 @@ tables! {
             texture(50, "water_surface", Unfilterable, D2Array, VFC),
             texture(51, "water_info", Uint, D2Array, VFC),
             uniform_of(52, "water", size_of::<water::WaterUniform>(), VFC),
-            read(56, "water_sim_cells", VFC),
-            read(57, "water_sim_ground", VFC),
-            read(58, "water_sim_beds", VC),
+            read(56, "water_live", VFC),
             dynamic_uniform(
                 60,
                 "water_tree",
@@ -972,7 +971,8 @@ tables! {
     /// two states, their faces, the fluxes through them, the cells rivers
     /// bring water to and those just past the squares' edges as their water
     /// settled, the slots' tables of blocks, each cell's waves and seconds,
-    /// the slots' squares, the sums settling squares keep, and the solids
+    /// the slots' squares, the sums settling squares keep (the live square's
+    /// cells' looks in their place), and the solids
     /// standing in the live square's water: its eight storage buffers, the
     /// most a compute stage binds, and three uniforms.
     const WATER_SIM: Table = Table {

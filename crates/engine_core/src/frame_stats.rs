@@ -552,7 +552,8 @@ pub struct OccupancyStats {
     pub averages: u32,
 }
 
-/// Terrains' water, as their tiles hold it.
+/// Terrains' water, as their tiles hold it and as it runs live around the
+/// detail eye.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WaterStats {
@@ -568,10 +569,19 @@ pub struct WaterStats {
     /// Blocks this frame dropped for want of the device's texture array
     /// layers, whose water does not draw.
     pub dropped_blocks: u32,
-    /// Cells along a side of the square around the camera over which
-    /// rivers run live: 0 while none do, fewer than the water settings ask
-    /// where the device's storage bindings cannot hold its buffers.
-    pub simulated_cells: u32,
+    /// Cells along a side of the square around the detail eye over which
+    /// water runs live this frame: 0 while none does (before its first
+    /// square is gathered).
+    pub live_cells: u32,
+    /// Cells along a side of the square the live reach asks for
+    /// (`engine_core::LIVE_PIXELS`) that the device's storage bindings cut
+    /// from it, the middle square they hold running instead: the live
+    /// water then hands back to the settled water nearer the eye.
+    pub live_cut: u32,
+    /// Steps the live water took this frame, each of the same seconds: as
+    /// many as the simulation time passed holds, at most those of a frame
+    /// a thirtieth of a second long.
+    pub live_steps: u32,
     /// Solids standing in that square whose push its water takes this
     /// frame, nearest the eye first: bodies and colliders, at most
     /// `SIM_TOUCHES`.

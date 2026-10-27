@@ -21,6 +21,7 @@ const INTERNAL: &[&str] = &[
     "DevStepError",
     "GHOST_DRY",
     "GroundedAt",
+    "LIVE_PIXELS",
     "LOD_RECORD",
     "LodInput",
     "MAX_DEV_TICKS",

@@ -145,59 +145,18 @@ fn fall_white(path: f32, white: f32) -> vec3<f32> {
     return vec3<f32>(unscattered, 1.0 - passed, passed - unscattered);
 }
 
-// The simulated water under `point` (x and z, world meters), as its mesh
-// between its cells' middles holds it (`sim_water_output`'s, each square
-// of four middles split from its first corner to its last): its surface
-// (world meters), and how much of it its shading shows there, none where
-// it is dry or its mesh stands sheer, down a cliff (SIM_SHEER).
-fn fall_sim_water(point: vec2<f32>) -> vec2<f32> {
-    let cells = (point - water.sim.xy) / water.sim.z - 0.5;
-    let corner = vec2<i32>(floor(cells));
-    let within = cells - floor(cells);
-    let first = sim_water_level(corner.x, corner.y);
-    let last = sim_water_level(corner.x + 1, corner.y + 1);
-    // The triangle's third corner, its weights of its first, third and last
-    // corners, and how far its surface rises along x and z across a cell.
-    var third: vec3<f32>;
-    var weights: vec3<f32>;
-    var rise: vec2<f32>;
-    if within.x >= within.y {
-        third = sim_water_level(corner.x + 1, corner.y);
-        weights = vec3<f32>(1.0 - within.x, within.x - within.y, within.y);
-        rise = vec2<f32>(third.x - first.x, last.x - third.x);
-    } else {
-        third = sim_water_level(corner.x, corner.y + 1);
-        weights = vec3<f32>(1.0 - within.y, within.y - within.x, within.x);
-        rise = vec2<f32>(last.x - third.x, third.x - first.x);
-    }
-    let level = first * weights.x + third * weights.y + last * weights.z;
-    let slope = rise / water.sim.z;
-    let upright = inverseSqrt(1.0 + dot(slope, slope));
-    let shown = smoothstep(SIM_SHEER.x, SIM_SHEER.y, upright) * select(0.0, 1.0, level.y > 0.0);
-    return vec2<f32>(level.x + water.sim_datum.x, shown);
-}
-
 // How much of a jet `thickness` meters thick shows at `world` (world
 // meters) over the water the pass shows under it: none within its
 // thickness of that water's surface, all of it from twice its thickness
 // over it, and all of it where no water lies under it. That water is the
-// simulated water within a live window (`water_simulated`,
-// `fall_sim_water`), and elsewhere tiles' water, as a pixel there resolves
-// level water seen from the detail eye (`water_pixel`), none lying past
-// where the samples holding its surface end (WATER_HELD).
+// water as a pixel there resolves level water seen from the detail eye
+// (`water_pixel`), live or settled, none lying past where the samples
+// holding its surface end (WATER_HELD).
 fn fall_clear(world: vec3<f32>, thickness: f32) -> f32 {
-    var surface = 0.0;
-    var under = 0.0;
-    if water_simulated(world.xz) {
-        let simulated = fall_sim_water(world.xz);
-        surface = simulated.x;
-        under = simulated.y;
-    } else {
-        let at = water_pixel(world.xz - terrain.origin.xz,
-            detail_resolved(detail_span(world, vec3<f32>(0.0, 1.0, 0.0)).xy));
-        surface = terrain.origin.y + at.surface;
-        under = select(0.0, 1.0, at.depth > 0.0 && at.held >= WATER_HELD);
-    }
+    let at = water_pixel(world.xz - terrain.origin.xz,
+        detail_resolved(detail_span(world, vec3<f32>(0.0, 1.0, 0.0)).xy));
+    let surface = terrain.origin.y + at.surface;
+    let under = select(0.0, 1.0, at.depth > 0.0 && at.held >= WATER_HELD);
     return mix(1.0, smoothstep(thickness, 2.0 * thickness, world.y - surface), under);
 }
 

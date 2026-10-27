@@ -14,11 +14,6 @@ use crate::{
     create_workload_with, look, set_view, stress_reflections,
 };
 
-/// The action simulating water around the camera, or stopping (KeyJ), and
-/// the meters across the window it simulates (`Water::simulated`).
-const SIMULATE_WATER: ActionId = ActionId::new(1).expect("an action's index");
-const SIMULATED_WATER: f32 = 256.0;
-
 /// The action pinning every distance switch where the eye stands, or
 /// letting them follow it again (KeyL): each press freezes the detail eye
 /// at the camera's eye ([`TerrainDebug::freeze`]) or thaws it, so a ring
@@ -43,8 +38,6 @@ pub struct StressLab {
     visibility_buffer: bool,
     // An authored scene in place of a workload, when the page loads one.
     authored: Option<AuthoredScene>,
-    // Whether the key simulating water was held last frame.
-    simulate_held: bool,
     // Whether the key freezing the detail eye was held last frame.
     freeze_held: bool,
 }
@@ -79,7 +72,6 @@ impl StressLab {
             impostors: true,
             visibility_buffer: false,
             authored,
-            simulate_held: false,
             freeze_held: false,
         }
     }
@@ -250,24 +242,11 @@ impl StressLab {
 }
 
 impl Game for StressLab {
-    const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0), ("KeyJ", 1), ("KeyL", 2)];
+    const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0), ("KeyL", 2)];
 
     fn before_frame(&mut self, engine: &mut Engine) {
         let world = engine.app.world_mut();
         world.resource_mut::<FrameMetrics>().begin_frame();
-        // Water simulated around the camera, or as it settled, each press.
-        let held = world.resource::<ActionInput>().pressed(SIMULATE_WATER);
-        if held
-            && !self.simulate_held
-            && let Some(mut water) = world.get_resource_mut::<Water>()
-        {
-            water.simulated = if water.simulated > 0.0 {
-                0.0
-            } else {
-                SIMULATED_WATER
-            };
-        }
-        self.simulate_held = held;
         // The detail eye frozen where the camera's eye stands, or following
         // it again, each press.
         let held = world.resource::<ActionInput>().pressed(FREEZE_DETAIL);

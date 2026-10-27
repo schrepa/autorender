@@ -239,7 +239,7 @@ impl FoamField {
         grid.window = window;
         grid.terrain = terrain;
         let elapsed = self.last.map_or(0.0, |last| {
-            clamp((seconds - last) as f32, 0.0, LONGEST_FRAME)
+            clamp((seconds - last) as f32, 0.0, LONGEST_FRAME as f32)
         });
         self.last = Some(seconds);
         let held = grid.held.unwrap_or(window);

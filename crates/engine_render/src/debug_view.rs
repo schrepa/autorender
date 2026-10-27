@@ -212,8 +212,8 @@ fn view_value(view: DebugViewMode) -> u32 {
     }
 }
 
-/// Whether `view` shows the water's state: frames showing it draw tiles'
-/// and simulated water wherever it lies, however little of each pixel it
+/// Whether `view` shows the water's state: frames showing it draw terrains'
+/// water, live or settled, wherever it lies, however little of each pixel it
 /// covers, where the other views draw it as the shaded image mostly shows
 /// it, covering at least half the pixel.
 pub(crate) fn shows_water(view: DebugViewMode) -> bool {
@@ -232,7 +232,7 @@ pub(crate) fn shows_water(view: DebugViewMode) -> bool {
     )
 }
 
-/// The pipeline constants of tiles' and simulated water drawn into the
+/// The pipeline constants of terrains' water drawn into the
 /// debug targets: whether frames show the water's state
 /// (`meshes/debug.wgsl`'s `DEBUG_WATER_VIEWS`, [`shows_water`]).
 pub(crate) fn water_constants(water_views: bool) -> [(&'static str, f64); 1] {

@@ -463,7 +463,7 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
             DEBUG_VIEW_WATER_TURBULENCE, DEBUG_VIEW_WATER_WHITE, DEBUG_VIEW_WATER_REACH,
             DEBUG_VIEW_WATER_FOAM, DEBUG_VIEW_WATER_SPAN, DEBUG_VIEW_WATER_EDDIES,
             DEBUG_VIEW_WATER_ROUGHNESS: {
-            // The water's views: tiles' and simulated water against
+            // The water's views: terrains' water, live or settled, against
             // everything else, unlit.
             color = select(DEBUG_OTHER, DEBUG_SKY, kind == DEBUG_KIND_SKY);
             if kind == DEBUG_KIND_WATER {

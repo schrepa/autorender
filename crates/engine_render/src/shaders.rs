@@ -84,8 +84,8 @@ shaders! {
     DEFORMATION_SHADER = [
         "deformation.wgsl",
     ];
-    /// Water simulated by the shallow-water equations around the camera and
-    /// settling for tiles' records.
+    /// Water running by the shallow-water equations live around the detail
+    /// eye and settling for tiles' records.
     WATER_SIM_SHADER = [
         "water_sim.wgsl",
     ];
@@ -310,7 +310,7 @@ entry_points! {
             vs_impostor_bake_extended, vs_impostor, vs_impostor_temporal, vs_terrain,
             vs_terrain_temporal, vs_fullscreen, vs_cover,
             vs_cover_temporal, vs_water, vs_water_temporal, vs_ocean,
-            vs_ocean_temporal, vs_fall, vs_fall_temporal, vs_sim_water, vs_sim_water_temporal,
+            vs_ocean_temporal, vs_fall, vs_fall_temporal,
             vs_debug_affine, vs_debug_affine_extended, vs_debug_affine_skinned, vs_debug_virtual,
             vs_debug_impostor
         ],
@@ -333,9 +333,8 @@ entry_points! {
             fs_terrain_probe_lit, fs_cover, fs_cover_lit, fs_cover_post, fs_cover_post_lit,
             fs_cover_temporal, fs_cover_temporal_lit, fs_water, fs_water_post, fs_water_temporal,
             fs_ocean, fs_ocean_post, fs_ocean_temporal, fs_fall, fs_fall_post, fs_fall_temporal,
-            fs_sim_water, fs_sim_water_post, fs_sim_water_temporal, fs_debug_mesh,
-            fs_debug_impostor, fs_debug_terrain, fs_debug_cover, fs_debug_water,
-            fs_debug_sim_water, fs_debug_ocean, fs_debug_fall, fs_debug_sky
+            fs_debug_mesh, fs_debug_impostor, fs_debug_terrain, fs_debug_cover, fs_debug_water,
+            fs_debug_ocean, fs_debug_fall, fs_debug_sky
         ],
         compute: [
             subdivide_begin,
@@ -365,7 +364,7 @@ entry_points! {
     water_sim = WATER_SIM_SHADER {
         compute: [
             sim_exchange, sim_waves, sim_seconds, sim_drain, sim_update, sim_source, sim_touch,
-            sim_drift, sim_churn, sim_churned, sim_tally, sim_activity, sim_look
+            sim_drift, sim_churn, sim_churned, sim_tally, sim_activity, sim_look, sim_drawn
         ],
     }
     clouds = CLOUDS_SHADER {
