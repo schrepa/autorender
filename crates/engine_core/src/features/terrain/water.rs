@@ -19,10 +19,10 @@ use serde::{Deserialize, Serialize};
 use engine_settings::settings;
 
 settings! {
-    /// Water settings: how terrains' water looks (its color, clarity and
-    /// sediment) and how it draws and runs live; its movement and foam come
-    /// from its state, under the scene's wind as the terrain upwind
-    /// shelters it.
+    /// Water settings: how terrains' water looks (its color, clarity,
+    /// sediment and the share of the wind's waves it shows) and how it draws
+    /// and runs live; its movement and foam come from its state, under the
+    /// scene's wind as the terrain upwind shelters it.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -44,6 +44,14 @@ settings! {
         pub sediment: f32 = 0.15 => range(0.0, 50.0),
         /// The color the water's sediment scatters back, linear.
         pub sediment_color: [f32; 3] = [0.05, 0.065, 0.03] => range(0.0, 1.0),
+        /// The share of the wind's waves terrains' water shows, from 0 to 1:
+        /// their slopes, their heights and how far they fold, whitening
+        /// their crests, scale by it, and the variance of their slopes,
+        /// which roughens the water, by its square; the sea keeps all of its
+        /// own. At 0 still water is a calm mirror, and running water shows
+        /// only what its current and its bed raise (the waves the bed holds,
+        /// boils, waves standing about what it flows past).
+        pub wind_waves: f32 = 1.0 => range(0.0, 1.0),
         /// The meters across the square around the camera over which
         /// rivers run live as the shallow-water equations say, in cells
         /// `live_cell` across, starting from their water as it settled

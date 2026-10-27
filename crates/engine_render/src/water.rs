@@ -20,9 +20,11 @@
 //! channel by channel over the light's path; other frames blend water over
 //! the ground.
 //!
-//! Water's waves (`crate::water_waves`) evolve before it draws: the same
-//! tiles of the wind's waves for terrains' water and the sea, each place
-//! sizing them by the sea its wind raises there.
+//! Water's waves (`crate::water_waves`) evolve before it draws, in frames
+//! whose water reads them: the same tiles of the wind's waves for terrains'
+//! water and the sea, each place sizing them by the sea its wind raises
+//! there, of which terrains' water shows the share its settings ask for
+//! (`Water::wind_waves`).
 //!
 //! Where terrains' rivers leave their beds, their jets draw last, as
 //! sheets (`crate::water_falls`) over the water they land in, writing their
@@ -131,12 +133,15 @@ struct BehindCopies {
 
 /// What water draws this frame: tiles' water blocks resident and dropped,
 /// the leaves the water's subdivisions drew and the splits their room
-/// refused as last read back, and the sea's sectors and their triangles.
+/// refused as last read back, and the sea's sectors and their triangles;
+/// and whether the wind's tiles' moments and their whitecaps evolve, as
+/// what draws reads them (`WaterWaves::encode`).
 pub(crate) struct WaterFrame {
     blocks: [u32; 2],
     subdivided: [u32; 2],
     sectors: u32,
     triangles: u32,
+    waves: [bool; 2],
 }
 
 pub(crate) struct WaterPass {
@@ -384,7 +389,7 @@ impl WaterPass {
             let sediment = settings.sediment_color;
             let uniform = WaterUniform {
                 color: [red, green, blue, settings.clarity],
-                wind: blowing(wind.velocity, wind.gusts),
+                wind: blowing(wind.velocity, wind.gusts, settings.wind_waves),
                 absorption: absorption(settings.color, settings.clarity),
                 waves: wave_tiles,
                 turns: wave_turns,
@@ -427,11 +432,16 @@ impl WaterPass {
             self.behind.set(size, copies);
         }
         let (sectors, triangles) = self.ocean_drawn();
+        // The wind's tiles' moments evolve while the terrains' water drawn
+        // shows any of the wind's waves or the sea draws; their whitecaps,
+        // which the sea reads none of, while that water shows them.
+        let rippled = settings.wind_waves > 0.0 && (self.tiles.is_some() || simulated.is_some());
         Some(WaterFrame {
             blocks,
             subdivided,
             sectors,
             triangles,
+            waves: [rippled || sea, rippled],
         })
     }
 
@@ -648,7 +658,8 @@ impl WaterPass {
             relative_view_projection: view.to_cols_array_2d(),
             origin: [heading[0], heading[1], speed, 0.0],
             color: [red, green, blue, ocean.clarity],
-            wind: blowing(ocean.wind, wind.gusts),
+            // Its own wind, all of whose waves it shows.
+            wind: blowing(ocean.wind, wind.gusts, 1.0),
             // Its crests' whitecaps, the wave its shores' foam reads, and how
             // high its waves rise together.
             foam: [crests, swell, 0.0, amplitude],
@@ -908,15 +919,15 @@ impl RenderFeature for WaterPass {
 
     fn encode(
         &self,
-        _frame: &WaterFrame,
+        frame: &WaterFrame,
         node: &Node,
         encode: &Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        // The waves, the simulated water's steps and what lies behind the
-        // water, before it draws.
+        // The waves, as far as what draws reads them, the simulated water's
+        // steps and what lies behind the water, before it draws.
         if let Some(waves) = &self.waves {
-            waves.encode(encoder, encode.profiler);
+            waves.encode(encoder, encode.profiler, frame.waves);
         }
         self.sim.encode(encoder, encode.profiler);
         self.copy_behind(encoder, encode.depth, encode.scene);
@@ -1042,9 +1053,10 @@ pub(crate) fn underwater(environment: &Environment, eye: Vec3, seconds: f64) -> 
 }
 
 /// The water uniform's wind: its velocity `velocity` (meters a second along
-/// x and z) and how strongly it gusts, `gusts`.
-fn blowing(velocity: [f32; 2], gusts: f32) -> [f32; 4] {
-    [velocity[0], velocity[1], gusts, 0.0]
+/// x and z), how strongly it gusts, `gusts`, and the share of its waves the
+/// water shows, `shown` (`Water::wind_waves`).
+fn blowing(velocity: [f32; 2], gusts: f32, shown: f32) -> [f32; 4] {
+    [velocity[0], velocity[1], gusts, shown]
 }
 
 /// Per meter, how fast water whose light halves over `clarity` meters and
