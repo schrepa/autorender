@@ -67,14 +67,30 @@ struct SurfacePoint {
     // reaches into (scene.wgsl's `crown_light`): masked foliage's leaf
     // share and its cards'; zero elsewhere, blades too.
     crown: f32,
+    // What lies behind the point's surface, which screen-space
+    // reflections' rays passing behind it meet (`post.wgsl`'s walk): an
+    // object's body (`BODY_SOLID`, zero, as every point but these takes);
+    // a sheet a few centimeters thick (`BODY_THIN`: masked surfaces,
+    // foliage and blades); or the ground or water, solid below their
+    // surface (`BODY_GROUND`).
+    body: u32,
 }
+
+// What lies behind a surface (`SurfacePoint`'s `body`), which the surface
+// target's last word holds above its mirrored share's MIRRORED_BITS
+// (`surface_texel`).
+const BODY_SOLID: u32 = 0u;
+const BODY_THIN: u32 = 1u;
+const BODY_GROUND: u32 = 2u;
+const MIRRORED_BITS: u32 = 14u;
 
 // Shaded light of a surface: graded color (and its linear light before the
 // grade, which reflection probes capture), the ambient share of its light
 // (for ambient occlusion), its glow weight; for screen-space reflections its
 // reflectivity, the share of its light its mirrored environment makes up,
-// which they replace, its shading normal and its roughness along the view
-// and across it; and its coverage.
+// which they replace, its shading normal, its roughness along the view and
+// across it and what lies behind it (`SurfacePoint`'s `body`); and its
+// coverage.
 struct Shaded {
     color: vec3<f32>,
     linear: vec3<f32>,
@@ -85,6 +101,7 @@ struct Shaded {
     normal: vec3<f32>,
     roughness: f32,
     across: f32,
+    body: u32,
     opacity: f32,
 }
 
@@ -552,6 +569,8 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
         point.leaf = leafiness(point.albedo);
         point.crown = point.leaf;
         point.albedo *= plant_tint(fragment_plant, point.leaf);
+        // Cutouts and leaves are sheets.
+        point.body = BODY_THIN;
     }
     point.f0 = mix(vec3<f32>(0.04), point.albedo, metalness);
     point.diffuse_color = point.albedo * (1.0 - metalness);
@@ -1027,6 +1046,7 @@ fn finish_reflecting(point: SurfacePoint, local: vec3<f32>, lobe: EnvironmentLob
     shaded.normal = normal;
     shaded.roughness = point.roughness;
     shaded.across = point.roughness - point.smoother_across;
+    shaded.body = point.body;
     shaded.linear = fogged;
     shaded.color = grade(fogged);
     shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered)
@@ -1382,12 +1402,15 @@ fn octahedral_coordinates(normal: vec3<f32>) -> vec2<f32> {
 // the shading normal, octahedral in [0, 1], a word each coordinate; its
 // roughness along the view and across it, a byte each; and the share of
 // its light its mirrored environment makes up, which screen-space
-// reflections replace.
+// reflections replace, in the last word's low MIRRORED_BITS bits, with
+// what lies behind it above them.
 fn surface_texel(shaded: Shaded) -> vec4<u32> {
     let normal = pack2x16unorm(octahedral_coordinates(shaded.normal) * 0.5 + 0.5);
     let roughness = pack4x8unorm(vec4<f32>(shaded.roughness, shaded.across, 0.0, 0.0));
+    let most = f32((1u << MIRRORED_BITS) - 1u);
+    let mirrored = u32(floor(saturate(shaded.mirrored) * most + 0.5));
     return vec4<u32>(normal & 0xffffu, normal >> 16u, roughness,
-        pack2x16unorm(vec2<f32>(shaded.mirrored, 0.0)));
+        mirrored | (shaded.body << MIRRORED_BITS));
 }
 
 // `pixel` is the fragment's.

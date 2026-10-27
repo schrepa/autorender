@@ -616,6 +616,8 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     point.albedo = albedo_color;
     point.leaf = leaf;
     point.crown = leaf;
+    // Cards of what shades as foliage are sheets, as its meshes are.
+    point.body = select(BODY_SOLID, BODY_THIN, (record.flags & IMPOSTOR_FOLIAGE) != 0u);
     point.opacity = color.a;
     point.emission = slot_surface.z * 16.0 * emissive.a * unpremultiply;
     point.emissive = record.emissive * emissive.rgb * unpremultiply;

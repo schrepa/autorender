@@ -135,7 +135,9 @@ screen_effects! {
     },
     /// Screen-space reflections: every pixel's ray, by its own shading
     /// normal and roughness from the surface target, walked over a pyramid
-    /// of the depth buffer's nearest depths every frame.
+    /// of the depth buffer's nearest depths every frame, on past the sheets
+    /// and objects it passes behind by what the surface target says lies
+    /// behind each pixel.
     reflections {
         gate: |environment| environment.reflections.sanitized().enabled(),
         uniform: |settings, on, _| {

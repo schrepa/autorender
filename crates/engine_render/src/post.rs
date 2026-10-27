@@ -9,12 +9,14 @@
 //! filter smooths it on each surface. The haze marches the near air through
 //! the shadow clipmap, and its filter blends that over the last displayed
 //! frame's result, reprojected, which a copy keeps for the next. Reflections
-//! walk a pyramid of the depth buffer's nearest depths, rough ones reading
-//! the scene through its levels, each half the one before, which the scene
-//! target holds below it; bloom filters the glowing light down a chain of
-//! levels from half the render size and back up. Temporally antialiased
-//! frames apply them in their resolve, other frames in a composite that
-//! writes the canvas, upscaling the scene to the display.
+//! walk a pyramid of the depth buffer's nearest depths, on past the sheets
+//! and objects their rays pass behind (the surface target's last word),
+//! rough ones reading the scene through its levels, each half the one
+//! before, which the scene target holds below it; bloom filters the glowing
+//! light down a chain of levels from half the render size and back up.
+//! Temporally antialiased frames apply them in their resolve, other frames
+//! in a composite that writes the canvas, upscaling the scene to the
+//! display.
 //!
 //! Targets are made at the display's size, or a fraction of it; frames draw
 //! their render size of them from the top-left corner, every pass within
@@ -48,7 +50,10 @@ pub(crate) const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unor
 /// The surface reflections follow, four 16-bit words (`surface_texel`): the
 /// shading normal, octahedral, a word each coordinate; its roughness along
 /// the view and across it, a byte each; and the share of its light its
-/// mirrored environment makes up, which reflections replace.
+/// mirrored environment makes up, which reflections replace, in the last
+/// word's low [`MIRRORED_BITS`](crate::gpu_layouts::constants::MIRRORED_BITS)
+/// bits, with what lies behind the surface, which their rays passing
+/// behind it meet, above them.
 pub(crate) const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
 /// The filtered occlusion's visibility, which the composite and resolve
 /// read.
