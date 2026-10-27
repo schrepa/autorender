@@ -269,8 +269,8 @@ impl TerrainPipelines {
 
     /// Creates the visibility pipeline of patches with `holes` or without
     /// and the resolve into `targets` (`lit` or not) of deferred shading
-    /// unless they exist, over terrain's first group `camera`; canvas and
-    /// debug targets shade forward.
+    /// unless they exist, over terrain's first group `camera`, both writing
+    /// depth of format `depth`; canvas and debug targets shade forward.
     fn ensure_deferred(
         &mut self,
         device: &wgpu::Device,
@@ -340,7 +340,17 @@ impl TerrainPipelines {
                 fragment,
                 constants: &self.shading.constants(),
                 targets: &color_targets,
-                depth: None,
+                // The depth of the point each pixel's view ray meets the
+                // ground's relief at replaces the mesh's the visibility
+                // pass left, nearer or farther: that pass already picked
+                // the pixels the terrain shows, so it tests none.
+                depth: Some(wgpu::DepthStencilState {
+                    format: depth,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
             },
         );
         self.resolves.insert((targets, lit), pipeline);
