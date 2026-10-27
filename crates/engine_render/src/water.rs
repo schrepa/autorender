@@ -47,8 +47,8 @@ use engine_core::glam::{Mat4, Vec3};
 use engine_core::math::max;
 use engine_core::terrain_data::Fall;
 use engine_core::{
-    Environment, MAX_OCEAN_WAVES, Ocean, OceanStats, RenderSnapshot, RenderTables, RenderTerrain,
-    Water, WaterStats, Wind,
+    Environment, MAX_OCEAN_WAVES, Ocean, OceanStats, RenderSnapshot, RenderTerrain, Water,
+    WaterStats, Wind,
 };
 
 use crate::bindings::{WATER, WATER_BEHIND};
@@ -59,7 +59,6 @@ use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource,
 use crate::scene_shading::SceneShading;
 use crate::targets::{FrameSize, ScreenTarget};
 use crate::terrain::{SurfaceDraw, TerrainWaterDraws};
-use crate::water_fall_map::FallMap;
 use crate::water_falls::{fall_layout, sheets};
 use crate::water_sim::WaterSim;
 
@@ -81,10 +80,11 @@ pub(crate) const WATER_UNIFORM_BYTES: usize = size_of::<WaterUniform>();
 
 /// One-texel stand-ins for what the water group binds that the sea reads
 /// none of: the terrain's height array, uniforms and directory, its
-/// subdivisions' leaves, its ground's palette and materials' data and the
-/// nearest sampler its control values are gathered through, tiles' water
-/// blocks, water's directory and the tree of a terrain's water; and for the
-/// scene's color, which frames blending water read none of.
+/// subdivisions' leaves, its ground's palette and materials' data and a
+/// nearest sampler for those its materials and control values are read
+/// through, tiles' water blocks, water's directory and the tree of a
+/// terrain's water; and for the scene's color, which frames blending water
+/// read none of.
 struct Placeholders {
     surfaces: wgpu::Texture,
     info: wgpu::Texture,
@@ -146,8 +146,6 @@ pub(crate) struct WaterPass {
     behind_layout: crate::pipelines::GroupLayout,
     behind: ScreenTarget<BehindCopies>,
     placeholders: Placeholders,
-    // Falling water's map, once the scene's tables hold it.
-    fall_map: Option<FallMap>,
     // Water simulated around the camera, where water asks for it.
     sim: WaterSim,
     // Tiles' water's uniform, and the group binding it with the terrain
@@ -181,7 +179,6 @@ impl WaterPass {
             behind_layout: crate::pipelines::layout(device, &WATER_BEHIND),
             behind: ScreenTarget::default(),
             placeholders: placeholders(device),
-            fall_map: None,
             sim: WaterSim::new(device),
             uniform: crate::buffers::uniform(device, "engine/water", WATER_UNIFORM_BYTES as u64),
             group: None,
@@ -309,18 +306,18 @@ impl WaterPass {
 
     /// Prepares this frame's water: tiles' water on the leaves of its
     /// subdivisions as the terrain pass holds them (`tiles`) and the falls
-    /// of `terrains`, shaded as `settings` say with the fall map the scene's
-    /// `tables` hold, and the sea `ocean`, culled through `cull` and drawn
-    /// through `view` (both eye-relative) over the opaque `depth` and, when
-    /// `refracts`, the color it copies; seen from `eye`, the wind `wind`
-    /// dragging the water simulated live, its waves at the simulation time
-    /// `seconds` the frame presents; `None` when none of it draws.
+    /// of `terrains`, shaded as `settings` say, and the sea `ocean`, culled
+    /// through `cull` and drawn through `view` (both eye-relative) over the
+    /// opaque `depth` and, when `refracts`, the color it copies; seen from
+    /// `eye`, the wind `wind` dragging the water simulated live, its waves
+    /// at the simulation time `seconds` the frame presents; `None` when none
+    /// of it draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (tiles, terrains): (Option<TerrainWaterDraws<'_>>, &[RenderTerrain]),
-        (settings, ocean, tables): (Water, Ocean, &RenderTables),
+        (settings, ocean): (Water, Ocean),
         (eye, wind, seconds): (Vec3, Wind, f64),
         (cull, view, depth, refracts): (Mat4, Mat4, &wgpu::Texture, bool),
     ) -> Option<WaterFrame> {
@@ -334,9 +331,6 @@ impl WaterPass {
         if tiles.is_none() && !ocean.enabled {
             self.ocean = None;
             return None;
-        }
-        if let (None, Some(map)) = (&self.fall_map, &tables.fall_map) {
-            self.fall_map = Some(FallMap::new(device, queue, &map.table));
         }
         // Rivers simulated where a terrain's window stands, pushed by the
         // solids standing in it, the wind dragging their surface.
@@ -431,13 +425,12 @@ impl WaterPass {
         sim_generation: u64,
     ) {
         let generations = (tiles.generation, sim_generation);
-        if let Some(map) = &self.fall_map
-            && self
-                .group
-                .as_ref()
-                .is_none_or(|(bound, _)| *bound != generations)
+        if self
+            .group
+            .as_ref()
+            .is_none_or(|(bound, _)| *bound != generations)
         {
-            let group = self.tile_group(device, tiles, map);
+            let group = self.tile_group(device, tiles);
             self.group = Some((generations, group));
         }
         self.tiles = Some(TileDraws {
@@ -495,14 +488,9 @@ impl WaterPass {
     /// height array, views' and terrains' uniforms, directory (with water's
     /// in it), leaves of its subdivisions and their trees' uniforms, its
     /// ground's fades, control values, palette and materials' data with their
-    /// samplers, and the water blocks (`tiles`); water's uniform and falling
-    /// water's `map`; and the simulated water.
-    fn tile_group(
-        &self,
-        device: &wgpu::Device,
-        tiles: &TerrainWaterDraws<'_>,
-        map: &FallMap,
-    ) -> wgpu::BindGroup {
+    /// samplers, and the water blocks (`tiles`); water's uniform; and the
+    /// simulated water.
+    fn tile_group(&self, device: &wgpu::Device, tiles: &TerrainWaterDraws<'_>) -> wgpu::BindGroup {
         let (sim_cells, sim_ground, sim_beds) = self.sim.drawn().0.map_or(
             (
                 &self.placeholders.sim,
@@ -543,11 +531,6 @@ impl WaterPass {
                 ("water_surface", crate::pipelines::view(tiles.surfaces)),
                 ("water_info", crate::pipelines::view(tiles.info)),
                 ("water", self.uniform.as_entire_binding()),
-                (
-                    "water_fall_sampler",
-                    crate::pipelines::sampler(map.sampler()),
-                ),
-                ("water_fall_map", crate::pipelines::view(map.view())),
                 crate::buffers::entry("water_sim_cells", sim_cells),
                 crate::buffers::entry("water_sim_ground", sim_ground),
                 crate::buffers::entry("water_sim_beds", sim_beds),
@@ -570,13 +553,13 @@ impl WaterPass {
         ocean: Ocean,
         (eye, seconds): (Vec3, f64),
     ) -> bool {
-        let (true, Some(map)) = (ocean.enabled, &self.fall_map) else {
+        if !ocean.enabled {
             self.ocean = None;
             return false;
-        };
+        }
         let draw = self
             .ocean
-            .get_or_insert_with(|| ocean_draw(device, &self.layout, &self.placeholders, map));
+            .get_or_insert_with(|| ocean_draw(device, &self.layout, &self.placeholders));
         let waves = ocean.spectrum();
         let amplitude = waves.amplitude();
         // Cells widen as the eye rises over the sea.
@@ -935,9 +918,8 @@ impl RenderFeature for WaterPass {
         self.draw(&mut pass, encode.water_camera, encode.targets)
     }
 
-    /// Bytes of the copies, the falls' sheets, the simulated water and
-    /// falling water's map: tiles' water blocks and its subdivisions count
-    /// with the terrain's.
+    /// Bytes of the copies, the falls' sheets and the simulated water:
+    /// tiles' water blocks and its subdivisions count with the terrain's.
     fn capacity_bytes(&self) -> u64 {
         let copies = self.behind.size().map_or(0, |size| {
             let texels = u64::from(size.width) * u64::from(size.height);
@@ -951,13 +933,7 @@ impl RenderFeature for WaterPass {
             .falls
             .as_ref()
             .map_or(0, |falls| falls.vertices.size() + falls.indices.size());
-        copies
-            + falls
-            + self.sim.capacity_bytes()
-            + self
-                .fall_map
-                .as_ref()
-                .map_or(0, |_| FallMap::capacity_bytes())
+        copies + falls + self.sim.capacity_bytes()
     }
 
     /// The leaves the water's subdivisions drew and the splits their room
@@ -1139,13 +1115,12 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
     }
 }
 
-/// The sea's GPU state: its uniform, and its group binding falling water's
-/// `map` and `placeholders` for what only tiles' water reads.
+/// The sea's GPU state: its uniform, and its group binding `placeholders`
+/// for what only tiles' water reads.
 fn ocean_draw(
     device: &wgpu::Device,
     layout: &crate::pipelines::GroupLayout,
     placeholders: &Placeholders,
-    map: &FallMap,
 ) -> OceanDraw {
     let array = |texture: &wgpu::Texture| {
         texture.create_view(&wgpu::TextureViewDescriptor {
@@ -1177,7 +1152,7 @@ fn ocean_draw(
             ("terrain_material_data", crate::pipelines::view(&materials)),
             (
                 "terrain_material_sampler",
-                crate::pipelines::sampler(map.sampler()),
+                crate::pipelines::sampler(&placeholders.nearest),
             ),
             (
                 "terrain_control_sampler",
@@ -1188,11 +1163,6 @@ fn ocean_draw(
             ("water_surface", crate::pipelines::view(&surfaces)),
             ("water_info", crate::pipelines::view(&info)),
             ("water", uniform.as_entire_binding()),
-            (
-                "water_fall_sampler",
-                crate::pipelines::sampler(map.sampler()),
-            ),
-            ("water_fall_map", crate::pipelines::view(map.view())),
             crate::buffers::entry("water_sim_cells", &placeholders.sim),
             crate::buffers::entry("water_sim_ground", &placeholders.sim),
             crate::buffers::entry("water_sim_beds", &placeholders.sim),

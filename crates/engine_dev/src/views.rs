@@ -385,13 +385,12 @@ pub struct JobsView {
     pub in_place: u64,
 }
 
-/// The renderer's static tables (`cloud_noise`, `sky_tables`,
-/// `water_fall_map`): records of jobs, which the host's packs and store
-/// hand back or its workers make. For each, the parts the
-/// scene's settings want and those that arrived, and whether one arrived
-/// whole, which frames draw with (the latest, while a table wanted anew
-/// arrives); and the jobs of theirs that failed, each asked for again a
-/// while later, with why the latest did.
+/// The renderer's static tables (`cloud_noise`, `sky_tables`): records of
+/// jobs, which the host's packs and store hand back or its workers make.
+/// For each, the parts the scene's settings want and those that arrived,
+/// and whether one arrived whole, which frames draw with (the latest, while
+/// a table wanted anew arrives); and the jobs of theirs that failed, each
+/// asked for again a while later, with why the latest did.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct StaticTablesView {

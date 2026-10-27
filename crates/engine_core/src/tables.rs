@@ -1,14 +1,14 @@
 //! The renderer's static tables as records ([`engine_tables`]): the noise
-//! clouds are shaped from while the scene has clouds, the physically
-//! based sky's tables for its air, and falling water's map while water can
-//! draw. Each frame [`StaticTables`] asks for those the scene's settings
-//! want, as jobs whose records the host's packs and store hand back, and a
-//! worker (or the host, in place) makes where they lack them; frames carry
-//! the latest of each table that arrived whole to the renderer, which
-//! uploads it ([`RenderTables`]). A table wanted for something new (another
-//! air) leaves the last one showing until the new one arrives. A session
-//! that cooks makes every table its scene wants, which then cooks with it.
-//! An engine no host serves draws no frames, so asks for none.
+//! clouds are shaped from while the scene has clouds, and the physically
+//! based sky's tables for its air. Each frame [`StaticTables`] asks for
+//! those the scene's settings want, as jobs whose records the host's packs
+//! and store hand back, and a worker (or the host, in place) makes where
+//! they lack them; frames carry the latest of each table that arrived whole
+//! to the renderer, which uploads it ([`RenderTables`]). A table wanted for
+//! something new (another air) leaves the last one showing until the new
+//! one arrives. A session that cooks makes every table its scene wants,
+//! which then cooks with it. An engine no host serves draws no frames, so
+//! asks for none.
 
 use std::sync::Arc;
 
@@ -16,7 +16,6 @@ use bevy_ecs::prelude::*;
 
 use engine_tables::TableKind;
 use engine_tables::clouds::CloudNoise;
-use engine_tables::falls::FallMap;
 use engine_tables::sky::{Air, SkyTables};
 
 use crate::{
@@ -40,7 +39,6 @@ pub struct StaticTable<T> {
 pub struct RenderTables {
     pub cloud_noise: Option<StaticTable<CloudNoise>>,
     pub sky: Option<StaticTable<SkyTables>>,
-    pub fall_map: Option<StaticTable<FallMap>>,
 }
 
 /// What a table is assembled from: its parts' records, taken as they
@@ -61,13 +59,6 @@ impl Assembly for CloudNoise {
 impl Assembly for SkyTables {
     fn take(assembling: &mut Option<Self>, record: &[u8]) -> Result<(), String> {
         *assembling = Some(engine_tables::sky::decode(record)?);
-        Ok(())
-    }
-}
-
-impl Assembly for FallMap {
-    fn take(assembling: &mut Option<Self>, record: &[u8]) -> Result<(), String> {
-        *assembling = Some(engine_tables::falls::decode(record)?);
         Ok(())
     }
 }
@@ -209,7 +200,6 @@ impl<T: Assembly> TableState<T> {
 pub struct StaticTables {
     cloud_noise: TableState<CloudNoise>,
     sky: TableState<SkyTables>,
-    fall_map: TableState<FallMap>,
     // What the scene's settings wanted the tables for at the last frame.
     wants: Option<Wants>,
     frame: u64,
@@ -223,7 +213,6 @@ impl Default for StaticTables {
         Self {
             cloud_noise: TableState::new(TableKind::CloudNoise),
             sky: TableState::new(TableKind::SkyTables),
-            fall_map: TableState::new(TableKind::FallMap),
             wants: None,
             frame: 0,
             made: 0,
@@ -241,14 +230,14 @@ impl StaticTables {
 
     /// Parts of the tables wanted that have yet to arrive.
     fn left(&self) -> u64 {
-        self.cloud_noise.left() + self.sky.left() + self.fall_map.left()
+        self.cloud_noise.left() + self.sky.left()
     }
 
     /// Each table: its kind's name, the parts the scene's settings want of
     /// it and those that arrived, and whether one arrived whole (the
     /// latest, which frames carry).
-    pub fn tables(&self) -> [(&'static str, u64, u64, bool); 3] {
-        [self.cloud_noise.row(), self.sky.row(), self.fall_map.row()]
+    pub fn tables(&self) -> [(&'static str, u64, u64, bool); 2] {
+        [self.cloud_noise.row(), self.sky.row()]
     }
 
     /// Jobs of its tables that failed, each asked for again a while later,
@@ -263,26 +252,22 @@ impl StaticTables {
         RenderTables {
             cloud_noise: self.cloud_noise.ready.clone(),
             sky: self.sky.ready.clone(),
-            fall_map: self.fall_map.ready.clone(),
         }
     }
 }
 
 /// What the scene's settings want the tables for: the cloud noise while
-/// clouds cover any sky; the sky's tables for the physically based sky's
-/// air; and the fall map while the sea draws or a terrain's bakes give it
-/// water.
+/// clouds cover any sky, and the sky's tables for the physically based
+/// sky's air.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Wants {
     clouds: bool,
     sky: Option<Air>,
-    water: bool,
 }
 
 impl Wants {
-    /// What `environment` wants, `water` saying whether a terrain's bakes
-    /// give it water.
-    fn of(environment: &Environment, water: bool) -> Self {
+    /// What `environment` wants.
+    fn of(environment: &Environment) -> Self {
         let (clouds, sky) = (environment.clouds, environment.sky);
         Self {
             clouds: clouds.enabled && clouds.coverage > 0.0,
@@ -297,13 +282,12 @@ impl Wants {
                 bottom: sky.planet_radius,
                 top: sky.planet_radius + sky.atmosphere_height,
             }),
-            water: environment.ocean.enabled || (environment.water.enabled && water),
         }
     }
 
-    /// Each table's parts' identities: the cloud noise's, the sky's
-    /// tables' and the fall map's.
-    fn identities(&self) -> [Option<Vec<Vec<u8>>>; 3] {
+    /// Each table's parts' identities: the cloud noise's and the sky's
+    /// tables'.
+    fn identities(&self) -> [Option<Vec<Vec<u8>>>; 2] {
         [
             self.clouds.then(|| {
                 engine_tables::clouds::parts()
@@ -312,30 +296,27 @@ impl Wants {
                     .collect()
             }),
             self.sky.map(|air| vec![air.identity()]),
-            self.water.then(|| vec![Vec::new()]),
         ]
     }
 }
 
 /// Asks for the tables the scene's settings want and takes those that
-/// arrived, `water` saying whether a terrain's bakes give it water; while
-/// the session cooks, says how many parts are left.
-pub(crate) fn update_tables(world: &mut World, water: bool) {
+/// arrived; while the session cooks, says how many parts are left.
+pub(crate) fn update_tables(world: &mut World) {
     if !world.get_resource::<Jobs>().is_some_and(Jobs::hosted) {
         return;
     }
     let environment = Environment::current(world).sanitized();
-    let wants = Wants::of(&environment, water);
+    let wants = Wants::of(&environment);
     world.resource_scope(|world, mut tables: Mut<StaticTables>| {
         let tables = tables.as_mut();
         if let Some(mut jobs) = world.get_resource_mut::<Jobs>() {
             tables.frame += 1;
             if tables.wants != Some(wants) {
                 tables.wants = Some(wants);
-                let [cloud_noise, sky, fall_map] = wants.identities();
+                let [cloud_noise, sky] = wants.identities();
                 tables.cloud_noise.want(cloud_noise, &mut jobs);
                 tables.sky.want(sky, &mut jobs);
-                tables.fall_map.want(fall_map, &mut jobs);
             }
             let mut slots = JobBudget::of(&mut jobs);
             let frame = tables.frame;
@@ -345,9 +326,6 @@ pub(crate) fn update_tables(world: &mut World, water: bool) {
                 .update(&mut slots, (frame, &mut *made), &mut *failures);
             tables
                 .sky
-                .update(&mut slots, (frame, &mut *made), &mut *failures);
-            tables
-                .fall_map
                 .update(&mut slots, (frame, &mut *made), &mut *failures);
         }
         if let Some(mut cooking) = world.get_resource_mut::<Cooking>() {

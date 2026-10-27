@@ -1,16 +1,16 @@
 //! The tables corpus: the renderer's static tables (`engine_tables`) for
-//! the default settings. Falling water's map, the physically based sky's
-//! tables for its default (Earth's) air, and a slab of each of the cloud
-//! noise's volumes. Each job runs as hosts run it in place and as workers
-//! run it, a slice at a time, which must be the same bits, and each record
-//! must read back. Every job and its output's hash go into a file `cargo
-//! xtask pure --wasm` replays in the browser worker's Wasm module.
+//! the default settings. The physically based sky's tables for its default
+//! (Earth's) air, and a slab of each of the cloud noise's volumes. Each job
+//! runs as hosts run it in place and as workers run it, a slice at a time,
+//! which must be the same bits, and each record must read back. Every job
+//! and its output's hash go into a file `cargo xtask pure --wasm` replays
+//! in the browser worker's Wasm module.
 
 use std::path::Path;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::Environment;
-use engine_core::table_data::{TableKind, TableWorker, clouds, f16_value, falls, sky};
+use engine_core::table_data::{TableKind, TableWorker, clouds, f16_value, sky};
 use serde_json::json;
 
 use super::{Observations, hash};
@@ -25,13 +25,6 @@ const SLICE: u64 = 4096;
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let environment = Environment::default();
     let mut worker = Worker::default();
-
-    let map = worker.both(TableKind::FallMap, &[], observed)?;
-    observed.hash("fall map", &map);
-    let levels = falls::decode(&map)?.levels.len();
-    observed.check(levels == falls::LEVELS as usize, || {
-        format!("the fall map holds {levels} levels")
-    });
 
     let settings = environment.sky;
     let air = sky::Air {

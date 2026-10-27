@@ -139,12 +139,6 @@ struct WaterUniform {
     lift: vec4<f32>,
 }
 @group(1) @binding(52) var<uniform> water: WaterUniform;
-// Falling water's map (`water_fall_map.rs`): its strands (r) and their
-// fibers (g) spread about a half, its foam's bubbles' walls (b) and
-// bubbles (a), FALL_MAP meters across and along the water as it leaves its
-// lip; and the sampler repeating it.
-@group(1) @binding(55) var water_fall_map: texture_2d<f32>;
-@group(1) @binding(54) var water_fall_sampler: sampler;
 // The simulated water as its blocks hold it (`water_sim.wgsl`'s, every
 // block of the window's square in its slot, SIM_WATER_BLOCK cells along each
 // side): each cell's surface (world meters), its flow along x and z (square

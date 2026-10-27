@@ -75,7 +75,6 @@ mod transparent;
 mod virtual_geometry;
 mod visibility;
 mod water;
-mod water_fall_map;
 mod water_falls;
 mod water_kernels;
 mod water_settle;

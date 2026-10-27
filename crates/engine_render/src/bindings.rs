@@ -907,14 +907,13 @@ tables! {
     /// whitewater and kind, state and nearest obstacle, and the level the
     /// water's mesh stands at, which its vertices read), which pixels read
     /// as the water's smooth surface and where it lies; water's uniform; the
-    /// sampler repeating falling water's map (`water_fall_map.rs`) and the
-    /// map; the simulated water's cells, ground and what the beds hold under
-    /// them; and at a dynamic offset, the subdivision of each terrain's
-    /// water, whose leaves its vertices take. With water's first group
+    /// simulated water's cells, ground and what the beds hold under them;
+    /// and at a dynamic offset, the subdivision of each terrain's water,
+    /// whose leaves its vertices take. With water's first group
     /// (`CAMERA_WATER`) and what lies behind the water, its fragment stages
-    /// bind all 16 sampled textures a stage may and six of its 8 storage
-    /// buffers. The sea's group has placeholders for what only tiles' water
-    /// reads.
+    /// bind 15 of the 16 sampled textures a stage may and six of its 8
+    /// storage buffers. The sea's group has placeholders for what only
+    /// tiles' water reads.
     const WATER: Table = Table {
         label: "engine/water-layout",
         serves: [SHADER @ 1],
@@ -933,8 +932,6 @@ tables! {
             texture(50, "water_surface", Unfilterable, D2Array, VF),
             texture(51, "water_info", Uint, D2Array, VF),
             uniform_of(52, "water", size_of::<water::WaterUniform>(), VF),
-            sampler(54, "water_fall_sampler", Filtering, F),
-            texture(55, "water_fall_map", Float, D2, F),
             read(56, "water_sim_cells", VF),
             read(57, "water_sim_ground", VF),
             read(58, "water_sim_beds", V),
