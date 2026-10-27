@@ -834,8 +834,10 @@ fn terrain_fringe_wetted(above: f32) -> f32 {
 
 // How wet the water the tiles hold leaves the ground at terrain-local
 // `local`, from 0, dry, to 1, soaked, as a pixel at `site` sees it: read at
-// the level of the tiles' pyramid the pixel's span along the view picks,
-// the next coarser one blended in over the upper half of each octave
+// the level of the tiles' pyramid the size the pixel resolves picks
+// (`detail_resolved`), as water's pass picks it, so the band meets the
+// water's own edge, the next coarser one blended in over the upper half of
+// each octave
 // (`detail_level`), each from the finest resident level at or coarser than
 // its own (`water_cell`), as water's pass reads it (`water_pixel`). Under
 // the water's surface the ground is soaked; above it, it dries over the
@@ -846,7 +848,7 @@ fn terrain_fringe_wetted(above: f32) -> f32 {
 // dry as its rules say. Pages of the runtime virtual texture hold none of
 // it: the pixels reading them wet them as the water stands now.
 fn terrain_waterline(local: vec2<f32>, site: TerrainSite) -> f32 {
-    let picked = detail_level(site.footprint.along, terrain.anchor.w, terrain.directory.y);
+    let picked = detail_level(site.footprint.resolved, terrain.anchor.w, terrain.directory.y);
     let cell = water_cell(local, picked.level);
     var waterline = terrain_waterline_at(cell);
     if picked.blend > 0.0 && cell.level == picked.level {
