@@ -12,9 +12,10 @@
 // tiles, each at its level, skipped over by their peaks, and the canopies
 // of the placed objects their tiles hold, gridded by tile
 // (`world_trace.rs`). A world hit is lit as the scene's own shading lights
-// it, at the level its footprint matches, with the haze between the
-// reflecting point and it, and graded; a ray the world never meets leaves
-// the sky the surface's own shading mirrors (`mirrored_sky`).
+// it, at the level its footprint matches, then hazed from the eye and
+// graded as that shading shows it, as the screen's hits beside it are; a
+// ray the world never meets leaves the sky the surface's own shading
+// mirrors (`mirrored_sky`).
 
 @group(1) @binding(0) var<uniform> post: Post;
 @group(1) @binding(1) var depth_texture: texture_depth_2d;
@@ -316,6 +317,31 @@ fn surface_span(pixel: vec2<i32>, axis: vec2<i32>, depth: f32, at: vec2<f32>, sh
     }
     let smaller = select(after, before, abs(before - depth) < abs(after - depth));
     return distance(world_point(at, smaller), shown);
+}
+
+// Whether the screen's hit at `at` (render pixels, continuous) is the
+// surface at `pixel` reflecting itself, its point there `p` lying in the
+// plane `plane` (its normal; none tells no hit apart from it): where the
+// pixel the hit lands in shows `pixel`'s own body (`body_at`) and its point
+// lies on that plane, measured off it as `lobe_light` measures its taps:
+// the plane crosses the sight line through the point within the depths the
+// surface there spans across its pixel (`surface_span`, the wider of its
+// two axes'). Water reflecting water lies on its own plane. Every other
+// hit, however near it lands, is what the ray meets, so a shore meets its
+// mirror image at the waterline.
+fn reflects_itself(pixel: vec2<i32>, p: vec3<f32>, plane: vec3<f32>, at: vec2<f32>) -> bool {
+    let last = vec2<i32>(post.size.xy) - 1;
+    let cell = clamp(vec2<i32>(floor(at)), vec2<i32>(0), last);
+    if all(plane == vec3<f32>(0.0)) || body_at(cell) != body_at(pixel) {
+        return false;
+    }
+    let depth = nearest_depth_at(cell, 0);
+    let center = vec2<f32>(cell) + 0.5;
+    let seen = world_point(center, depth);
+    let spans = max(surface_span(cell, vec2<i32>(1, 0), depth, center, seen),
+        surface_span(cell, vec2<i32>(0, 1), depth, center, seen));
+    let sight = normalize(seen - post.eye.xyz);
+    return abs(dot(seen - p, plane)) <= spans * abs(dot(sight, plane));
 }
 
 // Where a ray's walk of the depth pyramid ended: whether it met the scene
@@ -1027,8 +1053,9 @@ fn ground_albedo(terrain: TraceTerrain, local: vec2<f32>, normal: vec3<f32>, tow
 // hides the sky (terrains' bounce probes); and the sun through its slope,
 // wrapped as the ground's own light is, past the terrains' horizons, the
 // cheapest of the sun's shadows, where shadows run, and the clouds'
-// shadows. The haze between `p` and it covers it (`atmospheric`), and the
-// grade the scene holds its light in follows.
+// shadows. The haze covers it and the grade follows exactly as the scene's
+// own shading shows that point to the eye (`finish`'s `atmospheric` from
+// the camera, then `grade`), as the screen's hits beside it show theirs.
 fn world_light(hit: WorldHit, p: vec3<f32>, direction: vec3<f32>, footprint: f32) -> vec3<f32> {
     let terrain = world_terrains[hit.terrain];
     let world = p + direction * hit.s;
@@ -1058,7 +1085,8 @@ fn world_light(hit: WorldHit, p: vec3<f32>, direction: vec3<f32>, footprint: f32
         }
         sun_light = albedo * lighting.sun_color.rgb * (wrapped * visible);
     }
-    return grade(atmospheric(sky_light + sun_light, p, world, direction).rgb);
+    let eye = camera.position.xyz;
+    return grade(atmospheric(sky_light + sun_light, eye, world, stable_normalize(world - eye)).rgb);
 }
 
 // How much of a reflection whose ray went `travelled` of its reach `reach`
@@ -1078,14 +1106,16 @@ fn reach_fade(travelled: f32, reach: f32) -> f32 {
 // goes on through the world from where the walk last knew the way clear to
 // its whole reach (`world_trace`), behind the camera too, and takes the
 // light the world sends back from what it meets (`world_light`). A hit
-// keeps its whole weight wherever it lands, fading only toward the end of
-// the ray's reach; one landing within two pixels of where it left is the
-// surface reflecting itself and weighs nothing, as does a ray meeting
-// nothing, leaving the sky the surface's own shading mirrors (`finish`'s
-// `mirrored_sky`, exact where it is smooth). It writes, both premultiplied
-// by how surely the ray met the scene, the light the surface's reflectivity
-// mirrors, and the share of the surface's own light its mirrored
-// environment made up, which that light replaces (`reflected`).
+// keeps its whole weight wherever it lands, however near, fading only
+// toward the end of the ray's reach; a screen hit on the surface reflecting
+// itself (`reflects_itself`) weighs nothing, as does a ray meeting nothing,
+// leaving the sky the surface's own shading mirrors (`finish`'s
+// `mirrored_sky`, exact where it is smooth). The world trace holds no
+// water, so a world hit is never the surface itself. It writes, both
+// premultiplied by how surely the ray met the scene, the light the
+// surface's reflectivity mirrors, and the share of the surface's own light
+// its mirrored environment made up, which that light replaces
+// (`reflected`).
 @fragment
 fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(position.xy);
@@ -1128,7 +1158,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let alphas = mirroring.roughness * mirroring.roughness;
     let walk = screen_walk(origin, ray);
     if walk.met {
-        if all(abs(walk.point.xy - origin.xy) < vec2<f32>(2.0)) {
+        if reflects_itself(pixel, p, plane, walk.point.xy) {
             return vec4<f32>(0.0);
         }
         let reached = world_point(walk.point.xy, walk.point.z);
@@ -1152,10 +1182,6 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     }
     let hit = world_trace(p, direction, nearest, reach);
     if !hit.met {
-        return vec4<f32>(0.0);
-    }
-    let landed = screen_point(p + direction * hit.s);
-    if landed.w > 0.0 && all(abs(landed.xy - origin.xy) < vec2<f32>(2.0)) {
         return vec4<f32>(0.0);
     }
     let weight = reach_fade(hit.s, reach);
