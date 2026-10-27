@@ -7,8 +7,9 @@
 // scene's static tables (`engine_tables::clouds` makes them), shape the
 // clouds: Perlin-Worley shapes, and the finer wisps of Worley's cells at
 // five frequencies eroding their edges, read through their mipmaps as wide
-// as the cone of the ray a dome texel or a view block marches spans there,
-// so the wisps finer than it average to their mean at every distance.
+// as the cone of the ray a dome texel or a pixel of the view marches spans
+// there, so the wisps finer than it average to their mean at every
+// distance.
 
 struct CloudUniform {
     // The camera (world); w: 1 with the physically based sky, whose sun
@@ -52,24 +53,21 @@ struct CloudUniform {
 // its base, two cells (along x) a word in half floats.
 @group(0) @binding(5) var<storage, read_write> shadow_cells: array<u32>;
 
-// Clouds in the view: its unjittered inverse
-// view-projection; the marched blocks along x and y, the pixels along a
-// block's side, and whether rays seeing the sky march (1) or leave it to
-// the dome (0); and the pixels the frame draws, its render size, from the
-// depth buffer's top-left corner (xy).
+// Clouds in the view: its unjittered inverse view-projection; and the
+// pixels the frame draws, its render size, from the depth buffer's top-left
+// corner (xy), a ray each, and whether rays seeing the sky march (1) or
+// leave it to the dome (0) (z).
 struct CloudView {
     inverse_view_projection: mat4x4<f32>,
-    blocks: vec4<u32>,
     pixels: vec4<u32>,
 }
 @group(0) @binding(6) var<uniform> cloud_view: CloudView;
-// The view's depth buffer (reversed: 0 at the far plane), and each block's
-// light and passing share, and how far the clouds it met lie (meters).
+// The view's depth buffer (reversed: 0 at the far plane), and each pixel's
+// clouds: their light and the share of what lies behind that passes.
 @group(0) @binding(7) var view_depth: texture_depth_2d;
 @group(0) @binding(8) var view_out: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(9) var front_out: texture_storage_2d<r32float, write>;
 // The composite's indirect draw: its vertices, set to its triangle's once
-// any block meets a cloud, so views without any draw nothing.
+// any pixel's ray meets a cloud, so views without any draw nothing.
 @group(0) @binding(10) var<storage, read_write> composite_draw: array<atomic<u32>, 4>;
 // The physically based sky (`sky_common.wgsl`): its uniform, transmittance
 // table and their sampler, through which its sun lights the clouds.
@@ -258,25 +256,16 @@ fn henyey_greenstein(cosine: f32, g: f32) -> f32 {
     return (1.0 - g2) / (2.0 * TAU * pow(1.0 + g2 - 2.0 * g * cosine, 1.5));
 }
 
-// What a ray met of the clouds: the light they scatter toward the eye and
-// the share of what lies behind that passes, and how far they lie: the
-// distance of the light they scattered, on average.
-struct Marched {
-    cloud: vec4<f32>,
-    front: f32,
-}
-
 // The clouds seen from the eye along `direction` up to `limit` meters, by
-// a ray whose cone spans `cone` radians: the detail it meets averaged over
-// the cone's width where it meets it (`cloud_density`).
-fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32, cone: f32) -> Marched {
+// a ray whose cone spans `cone` radians: the light they scatter toward the
+// eye and the share of what lies behind that passes, the detail the ray
+// meets averaged over the cone's width where it meets it (`cloud_density`).
+fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32, cone: f32) -> vec4<f32> {
     let eye = clouds.eye.xyz;
     let base = clouds.layer.x;
     let top = clouds.layer.y;
     let reach = min(REACH, limit);
-    var marched: Marched;
-    marched.cloud = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    marched.front = reach;
+    let clear = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     // Where the ray runs within the layer.
     var near = 0.0;
     var far = reach;
@@ -286,17 +275,18 @@ fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32, cone: f32) -> March
         near = max(min(to_base, to_top), 0.0);
         far = min(max(to_base, to_top), reach);
     } else if eye.y < base || eye.y > top {
-        return marched;
+        return clear;
     }
     if far <= near {
-        return marched;
+        return clear;
     }
     // A step every few hundred meters, longer on the longest rays, and
     // near the eye a few tens of meters, growing with the distance as the
     // clouds' detail on screen shrinks; each ray starts its steps at its
     // own offset, which hides their banding: interleaved gradient noise
-    // (Jimenez 2014) over the texels, whose offsets every 3x3 texels
-    // spread evenly, so the sky's filtered lookups average them out.
+    // (Jimenez 2014) over the dome's texels or the view's pixels, whose
+    // offsets every 3x3 of them spread evenly, so the sky's filtered
+    // lookups of the dome average them out.
     let even = (far - near) / clamp((far - near) / STEP_LENGTH, FEWEST_STEPS, MOST_STEPS);
     let jitter = fract(52.9829189 * fract(dot(vec2<f32>(texel), vec2<f32>(0.06711056, 0.00583715))));
     let cosine = dot(direction, clouds.sun.xyz);
@@ -304,7 +294,6 @@ fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32, cone: f32) -> March
     let extinction = EXTINCTION * clouds.layer.w;
     var light = vec3<f32>(0.0);
     var passing = 1.0;
-    var weighted = 0.0;
     var along = near + jitter * min(even, max(NEAREST_STEP, near * STEP_SHARE));
     for (var index = 0u; index < MOST_STEPS_IN_ALL && along < far; index++) {
         let step = min(even, max(NEAREST_STEP, along * STEP_SHARE));
@@ -334,7 +323,6 @@ fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32, cone: f32) -> March
         let source = sunlight * (direct * powder * phase * 4.0 * 3.14159) + ambient + diffuse;
         let through = exp(-sigma * step);
         light += passing * source * (1.0 - through);
-        weighted += passing * (1.0 - through) * here;
         passing *= through;
         if passing < 0.01 {
             break;
@@ -343,11 +331,7 @@ fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32, cone: f32) -> March
     // Far clouds fade into the haze toward the horizon.
     let fade = exp(-near / 30000.0);
     light = mix(clouds.horizon.rgb * (1.0 - passing), light, fade);
-    marched.cloud = vec4<f32>(light, passing);
-    if passing < 1.0 {
-        marched.front = weighted / (1.0 - passing);
-    }
-    return marched;
+    return vec4<f32>(light, passing);
 }
 
 // The share of sunlight passing the layer up from `start` on its base.
@@ -427,7 +411,7 @@ fn march_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     let uv = (vec2<f32>(f32(id.x), f32(row)) + 0.5) / vec2<f32>(clouds.dome.xy);
     let cone = max(TAU / f32(clouds.dome.x), (0.25 * TAU + asin(HORIZON)) / f32(clouds.dome.y));
     textureStore(dome, vec2<u32>(id.x, row),
-        march(dome_direction(uv), vec2<u32>(id.x, row), REACH, cone).cloud);
+        march(dome_direction(uv), vec2<u32>(id.x, row), REACH, cone));
 }
 
 // The direction from the eye through the view's normalized device point
@@ -437,48 +421,48 @@ fn view_direction(ndc: vec2<f32>) -> vec3<f32> {
     return normalize(far.xyz / far.w - clouds.eye.xyz);
 }
 
-// The view's clouds: each block's ray, through its center, as wide as the
-// block (the wider of its turns to the blocks beside and below it),
-// marched up to the farthest of its pixels the scene shows; blocks seeing
-// the sky march to the clouds' reach, or leave them to the dome while the
-// camera is under the layer.
+// Whether any pixel of a workgroup met a cloud, which one of its
+// invocations then passes on to the composite's draw.
+var<workgroup> view_clouded: atomic<u32>;
+
+// The view's clouds: each pixel's ray, through its center, as wide as the
+// pixel (the wider of its turns to the pixels beside and below it),
+// marched up to what the pixel shows; pixels seeing the sky march to the
+// clouds' reach, or leave them to the dome while the camera is under the
+// layer.
 @compute @workgroup_size(8, 8)
-fn march_view(@builtin(global_invocation_id) id: vec3<u32>) {
-    let blocks = cloud_view.blocks.xy;
-    if any(id.xy >= blocks) {
-        return;
+fn march_view(@builtin(global_invocation_id) id: vec3<u32>,
+        @builtin(local_invocation_index) lane: u32) {
+    if lane == 0u {
+        atomicStore(&view_clouded, 0u);
     }
-    let side = cloud_view.blocks.z;
+    workgroupBarrier();
     let pixels = max(cloud_view.pixels.xy, vec2<u32>(1u));
-    let first = id.xy * side;
-    var farthest = 1.0;
-    for (var y = 0u; y < side; y++) {
-        for (var x = 0u; x < side; x++) {
-            let pixel = min(first + vec2<u32>(x, y), pixels - 1u);
-            farthest = min(farthest, textureLoad(view_depth, pixel, 0));
+    if all(id.xy < pixels) {
+        let depth = textureLoad(view_depth, id.xy, 0);
+        var cloud = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        let sky = depth <= 0.0;
+        if !sky || cloud_view.pixels.z != 0u {
+            let center = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(pixels);
+            let ndc = vec2<f32>(center.x * 2.0 - 1.0, 1.0 - center.y * 2.0);
+            let direction = view_direction(ndc);
+            let apart = 2.0 / vec2<f32>(pixels);
+            let cone = max(length(view_direction(ndc + vec2<f32>(apart.x, 0.0)) - direction),
+                length(view_direction(ndc - vec2<f32>(0.0, apart.y)) - direction));
+            var limit = REACH;
+            if !sky {
+                let point = cloud_view.inverse_view_projection * vec4<f32>(ndc, depth, 1.0);
+                limit = length(point.xyz / point.w - clouds.eye.xyz);
+            }
+            cloud = march(direction, id.xy, limit, cone);
+        }
+        textureStore(view_out, id.xy, cloud);
+        if cloud.a < 0.999 {
+            atomicStore(&view_clouded, 1u);
         }
     }
-    var marched: Marched;
-    marched.cloud = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    marched.front = REACH;
-    let sky = farthest <= 0.0;
-    if !sky || cloud_view.blocks.w != 0u {
-        let center = (vec2<f32>(first) + 0.5 * f32(side)) / vec2<f32>(pixels);
-        let ndc = vec2<f32>(center.x * 2.0 - 1.0, 1.0 - center.y * 2.0);
-        let direction = view_direction(ndc);
-        let apart = 2.0 * f32(side) / vec2<f32>(pixels);
-        let cone = max(length(view_direction(ndc + vec2<f32>(apart.x, 0.0)) - direction),
-            length(view_direction(ndc - vec2<f32>(0.0, apart.y)) - direction));
-        var limit = REACH;
-        if !sky {
-            let point = cloud_view.inverse_view_projection * vec4<f32>(ndc, farthest, 1.0);
-            limit = length(point.xyz / point.w - clouds.eye.xyz);
-        }
-        marched = march(direction, id.xy, limit, cone);
-    }
-    textureStore(view_out, id.xy, marched.cloud);
-    textureStore(front_out, id.xy, vec4<f32>(marched.front, 0.0, 0.0, 0.0));
-    if marched.cloud.a < 0.999 {
+    workgroupBarrier();
+    if lane == 0u && atomicLoad(&view_clouded) != 0u {
         atomicStore(&composite_draw[0], 3u);
     }
 }

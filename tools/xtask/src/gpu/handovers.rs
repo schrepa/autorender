@@ -120,10 +120,6 @@ const OPTICS: &[(&str, &str)] = &[
         "the sea's water between a point and the eye",
     ),
     ("underwater_light", "the sea's water along a view"),
-    (
-        "view_clouds_at",
-        "the clouds in front of what the view meets",
-    ),
     ("visibility", "the BRDF's shadowing and masking"),
     ("vs_particle", "particles facing the eye"),
     ("water_behind", "refraction through water"),

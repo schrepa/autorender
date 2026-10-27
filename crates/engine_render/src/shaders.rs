@@ -433,9 +433,8 @@ entry_points! {
     post = POST_SHADER {
         vertex: [vs_fullscreen],
         fragment: [
-            fs_occlusion, fs_effects_filter, fs_haze_filter, fs_reflections, fs_reflections_filter,
-            fs_bloom_first, fs_bloom_down, fs_levels_first, fs_levels_down, fs_bloom_up,
-            fs_composite
+            fs_occlusion, fs_effects_filter, fs_haze_filter, fs_reflections, fs_bloom_first,
+            fs_bloom_down, fs_levels_first, fs_levels_down, fs_bloom_up, fs_composite
         ],
     }
     exposure = EXPOSURE_SHADER {

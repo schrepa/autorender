@@ -179,22 +179,20 @@ try {
     // which the dome cannot show; off, only the dome shows them.
     await command("camera", { position: [0, 1900, 1], target: [400, 0, 300], vertical_fov_radians: 1.0, near: 0.5, far: 8000 });
     const over = (await command("environment", { clouds: layer })).result.rendering;
-    assert.ok(over.clouds.view_blocks > 0, `the view marches its clouds: ${over.clouds.view_blocks}`);
+    assert.ok(over.clouds.view_pixels > 0, `the view marches its clouds: ${over.clouds.view_pixels}`);
     const below = await capture("clouds-below");
     const domed = (await command("environment", { clouds: { ...layer, in_view: false } })).result.rendering;
-    assert.equal(domed.clouds.view_blocks, 0, "off, the view marches none");
+    assert.equal(domed.clouds.view_pixels, 0, "off, the view marches none");
     const domeOnly = await capture("clouds-dome-only");
     const viewPixels = await differentPixels(page, [below, domeOnly]);
     assert.ok(viewPixels.changed > 20000, `clouds lie below the camera: ${viewPixels.changed} pixels`);
-    const blockless = await command("environment", { clouds: { ...layer, view_block: 0 } }, false);
-    assert.equal(blockless.error.path, "$.clouds.view_block");
     const none = (await command("environment", { clouds: { ...layer, coverage: 0 } })).result.rendering;
     assert.equal(none.clouds.rows, 0, "no coverage marches nothing");
     const odd = await command("environment", { clouds: { ...layer, resolution: 1000 } }, false);
     assert.equal(odd.error.path, "$.clouds.resolution");
     await command("environment", { clouds: { ...layer, enabled: false } });
     await command("camera", overview);
-    checks.push({ check: "clouds", rows: clouded.clouds.rows, pixels: cloudPixels.changed, shadows: shadowPixels.changed, view_blocks: over.clouds.view_blocks, below: viewPixels.changed });
+    checks.push({ check: "clouds", rows: clouded.clouds.rows, pixels: cloudPixels.changed, shadows: shadowPixels.changed, view_pixels: over.clouds.view_pixels, below: viewPixels.changed });
   }
   // The physically based sky is opt-in: its tables of the
   // air build once, the sky-view again for each step of the sun, which the

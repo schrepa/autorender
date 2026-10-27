@@ -12,14 +12,10 @@ use engine_core::Environment;
 
 use crate::render_graph::{NodeBuilder, Resource};
 
-/// What the effects' uniform fields read beyond the settings: the size of
-/// a half-resolution texel in texture coordinates, which pixel of each
-/// 2x2 block reflections trace this frame, the turn of the haze's jitter
-/// this frame, and the half-resolution texels across and down the haze's
+/// What the effects' uniform fields read beyond the settings: the turn of
+/// the haze's jitter this frame, and the pixels across and down the haze's
 /// history holds (none without one).
 pub(crate) struct UniformFrame {
-    pub(crate) half_texel: [f32; 2],
-    pub(crate) trace_index: u32,
     pub(crate) haze_turn: f32,
     pub(crate) haze_history: [f32; 2],
 }
@@ -118,9 +114,9 @@ macro_rules! screen_effects {
 }
 
 screen_effects! {
-    /// Ambient occlusion: the depth buffer sampled at half resolution,
-    /// handing over by its radius's span on screen as the occupancy maps'
-    /// texels do.
+    /// Ambient occlusion: the depth buffer sampled at every pixel, handing
+    /// over by its radius's span on screen as the occupancy maps' texels
+    /// do.
     occlusion {
         gate: |environment| environment.ambient_occlusion.sanitized().enabled(),
         uniform: |settings, on, _| {
@@ -130,30 +126,28 @@ screen_effects! {
         },
         reads: [Depth],
     },
-    /// Bloom: the glowing light filtered down a chain of half-resolution
-    /// levels and back up.
+    /// Bloom: the glowing light filtered down a chain of levels from half
+    /// the render size, each half the one before, and back up.
     bloom {
         gate: |environment| environment.bloom.sanitized().enabled(),
-        uniform: |settings, on, frame| {
-            let [x, y] = frame.half_texel;
-            [settings.bloom.sanitized().intensity, on, x, y]
-        },
+        uniform: |settings, on, _| [settings.bloom.sanitized().intensity, on, 0.0, 0.0],
         reads: [Scene, Glow],
     },
-    /// Screen-space reflections: the surface target's rays walked over a
-    /// pyramid of the depth buffer's nearest depths.
+    /// Screen-space reflections: every pixel's ray, by its own shading
+    /// normal and roughness from the surface target, walked over a pyramid
+    /// of the depth buffer's nearest depths every frame.
     reflections {
         gate: |environment| environment.reflections.sanitized().enabled(),
-        uniform: |settings, on, frame| {
+        uniform: |settings, on, _| {
             let reflections = settings.reflections.sanitized();
-            [reflections.distance, reflections.intensity, on, frame.trace_index as f32]
+            [reflections.distance, reflections.intensity, on, 0.0]
         },
         reads: [Depth, Scene, Glow, Surface],
     },
     /// The haze's march ([`haze_runs`]): the sunlight the near air scatters
     /// through the shadow clipmap and the clouds' shadows, and the sky's
-    /// light from the share of the sky terrains' bounce probes see, at half
-    /// resolution, filtered over time with the history the last frame left.
+    /// light from the share of the sky terrains' bounce probes see, at every
+    /// pixel, filtered over time with the history the last frame left.
     haze {
         gate: |environment| haze_runs(environment),
         uniform: |_settings, on, frame| {

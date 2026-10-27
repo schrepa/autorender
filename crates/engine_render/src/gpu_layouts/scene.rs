@@ -335,14 +335,13 @@ gpu_structs! {
         /// away is where the occlusion fades out, over the octave above) and
         /// 1 when it runs.
         pub occlusion: [f32; 4],
-        /// Strength and 1 when bloom runs; half-resolution texel size.
+        /// Strength and 1 when bloom runs (zw unused).
         pub bloom: [f32; 4],
-        /// Ray distance, strength, 1 when reflections run, and which pixel of
-        /// each 2x2 block the half-resolution reflections trace this frame.
+        /// Ray distance, strength and 1 when reflections run (w unused).
         pub reflections: [f32; 4],
-        /// The haze: the turn of its march's jitter this frame, the
-        /// half-resolution texels across and down its history holds (0
-        /// without one), and 1 when it runs.
+        /// The haze: the turn of its march's jitter this frame, the pixels
+        /// across and down its history holds (0 without one), and 1 when it
+        /// runs.
         pub haze: [f32; 4],
         /// Last frame's unjittered world to clip space and its eye (w
         /// unused), which the haze's history reprojects through.
