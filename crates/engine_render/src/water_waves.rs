@@ -33,7 +33,7 @@ use engine_core::table_data::waves::WaveTile;
 
 use crate::bindings::WATER_WAVES;
 use crate::gpu_layouts::constants::{
-    WAVE_ANISOTROPY, WAVE_LEVEL_GROUP, WAVE_LINE_GROUP, WAVE_TEXELS, WIND_TILES,
+    MATERIAL_ANISOTROPY, WAVE_LEVEL_GROUP, WAVE_LINE_GROUP, WAVE_TEXELS, WIND_TILES,
 };
 use crate::gpu_layouts::water::WaveFrame;
 use crate::shaders::entry::water_waves;
@@ -121,7 +121,10 @@ impl WaterWaves {
             })
         };
         // The waves repeat across their tiles; their levels and anisotropy
-        // keep grazing water from shimmering.
+        // keep grazing water from shimmering, filtering as much anisotropy as
+        // every read filtering a footprint resolves it by
+        // (`MATERIAL_ANISOTROPY`, `scene.wgsl`'s `detail_resolved`), so far
+        // water keeps across the view what the size it resolves spans.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/water-wave-sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -129,7 +132,7 @@ impl WaterWaves {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: WAVE_ANISOTROPY,
+            anisotropy_clamp: MATERIAL_ANISOTROPY,
             ..Default::default()
         });
         // The folds' columns' pass reads the whitecaps the last frame left;
