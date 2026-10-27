@@ -8,15 +8,17 @@
 // the drawn ground and the water's mesh may each stray from their surfaces
 // seen from the detail eye (`water_lift`), so the ground drawn under the
 // water never hides it. Each pixel then reads the water's state where it
-// lies (`water_pixel`), at the level of the tiles' pyramid a pixel's span
-// along the view seen from the detail eye picks, handing over to the next
-// coarser one as detail levels do (`detail_level`): its depth over that
-// level's own ground, whose zero crossing is the shore, and what its
-// samples' words say of the water (`WaterWords`: its flow, the foam it
-// carries, how turbulent it runs, where white water is born in it, its
-// shear, how far across its water body is and whether a lake holds it, the
-// reach of its stream and what stands in it), blended on the level's
-// triangles, so none of it moves as the eye does and no leaf shapes it.
+// lies (`water_pixel`), at the level of the tiles' pyramid the size a pixel
+// resolves on it seen from the detail eye picks (`detail_resolved`: its span
+// across the view, or a sixteenth of its span along it where it is more
+// stretched), handing over to the next coarser one as detail levels do
+// (`detail_level`): its depth over that level's own ground, whose zero
+// crossing is the shore, and what its samples' words say of the water
+// (`WaterWords`: its flow, the foam it carries, how turbulent it runs, where
+// white water is born in it, its shear, how far across its water body is
+// and whether a lake holds it, the reach of its stream and what stands in
+// it), blended on the level's triangles, so none of it moves as the eye
+// does and no leaf shapes it.
 // Where water is simulated around the camera, its cells hold the same state
 // (`sim_water_output`), the span of its body and what its bed holds taken
 // from the settled water's sample nearest each. Everything drawn of the
@@ -29,11 +31,16 @@
 // its current where it runs, its eddies roughening it unseen; the boils its
 // eddies bring up and the waves its bed holds still where it runs faster
 // than the slowest of its own waves (`water_stream.wgsl`); and
-// waves standing about what it flows past. Each is drawn as far as it spans
-// the steady size (STEADY_PIXELS), and what the pixel averages of its
-// slopes, and how far those drawn turn across it, roughens the surface
-// along the view and across it, as the ellipse of those slopes projects
-// into the view. It mirrors the sky, the sun's disc and,
+// waves standing about what it flows past. Each is drawn through the
+// pixel's footprint at the steady size (STEADY_PIXELS, `water_footprint`),
+// as far as the footprint spans less than its features along each way they
+// vary, no finer than the size it resolves across the view: waves running
+// across the view stay drawn far along it, while those running along it,
+// and features varying every way, average out where its long side spans
+// them. What the pixel averages of its slopes, and how far those drawn turn
+// across it, roughens the surface along the view and across it, as the
+// ellipse of those slopes projects into the view, so far water streaks and
+// glints along the view. It mirrors the sky, the sun's disc and,
 // through screen-space reflections, the scene, drawn out along the view
 // where it grazes the water; its body, tinted by the
 // sediment it carries, scatters the light entering it back toward the
@@ -541,9 +548,9 @@ fn water_blend(first: WaterAt, second: WaterAt, toward: f32) -> WaterAt {
     return at;
 }
 
-// Tiles' water at terrain-local `local` as a pixel spanning `seen` meters
-// along the view there, seen from the detail eye, reads it: at the level of
-// the tiles' pyramid that span picks over level 0's spacing
+// Tiles' water at terrain-local `local` as a pixel resolving `seen` meters
+// there (`detail_resolved`), seen from the detail eye, reads it: at the
+// level of the tiles' pyramid that size picks over level 0's spacing
 // (`detail_level`), the next coarser one blended in over the upper half of
 // each octave, each from the finest resident level at or coarser than its
 // own (`water_cell`), and read once where both fall in the same tile.
@@ -559,8 +566,9 @@ fn water_pixel(local: vec2<f32>, seen: f32) -> WaterAt {
 
 // Tiles' water at the pixel drawing the point `drawn` of its mesh (less the
 // eye): read where the point lies as the pixel, seen from the detail eye,
-// spans the plane of the mesh's triangle along the view (`water_pixel`,
-// `detail_span`). Its derivatives need it called in uniform control flow.
+// resolves the plane of the mesh's triangle (`water_pixel`, `detail_span`,
+// `detail_resolved`). Its derivatives need it called in uniform control
+// flow.
 fn water_drawn(drawn: vec3<f32>) -> WaterAt {
     let world = eye_world(drawn);
     // The triangle's plane, facing up.
@@ -569,7 +577,8 @@ fn water_drawn(drawn: vec3<f32>) -> WaterAt {
     let squared = dot(up, up);
     let plane = select(vec3<f32>(0.0, 1.0, 0.0), up * inverseSqrt(max(squared, 1.0e-30)),
         squared > 1.0e-24);
-    return water_pixel(world.xz - terrain.origin.xz, detail_span(world, plane).y);
+    return water_pixel(world.xz - terrain.origin.xz,
+        detail_resolved(detail_span(world, plane).xy));
 }
 
 // The point of the water's surface under the point `drawn` of its mesh
@@ -1127,9 +1136,9 @@ const WATER_CAUSTIC_CONTRAST: f32 = 0.3;
 const WATER_CAUSTIC_MOST: f32 = 1.5;
 // The meters of water over which caustics fade, as the light the waves
 // gather blurs and scatters on its way down; and the shares of the bed's
-// depth a pixel spans, from the first to the second, over which they fade
-// out: the waves gathering light at a depth are about a quarter of it
-// long.
+// depth the size a pixel resolves spans (`detail_resolved`), from the first
+// to the second, over which they fade out: the waves gathering light at a
+// depth are about a quarter of it long.
 const WATER_CAUSTIC_DEPTH: f32 = 1.5;
 const WATER_CAUSTIC_PIXELS: vec2<f32> = vec2<f32>(0.03, 0.08);
 
@@ -1217,12 +1226,14 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // behind the pixel stands under it, so water running down toward the eye
     // from above its height shows as water below it does.
     let plane = normalize(vec3<f32>(at.slope.x, 1.0, at.slope.y));
-    // How far the pixel spans on the water, which filters the patterns it
-    // shows of it; and how far it spans along the view on that plane seen
-    // from the detail eye (`detail_span`), which any handover by size on
-    // screen measures.
-    let footprint = max(length(world_dx.xz), length(world_dy.xz));
-    let seen = detail_span(world, plane).y;
+    // The pixel's footprint on the water across the steady size, which
+    // filters the patterns it shows of it (`water_footprint`); the meters
+    // the pixel resolves there, by which caustics average out; and the meters
+    // it resolves on that plane seen from the detail eye (`detail_span`,
+    // `detail_resolved`), which any handover by size on screen measures.
+    let footprint = water_footprint(world_dx.xz, world_dy.xz);
+    let pixel_resolved = detail_resolved(vec2<f32>(length(world_dx.xz), length(world_dy.xz)));
+    let seen = detail_resolved(detail_span(world, plane).xy);
     // Each place's patterns start over at their own times, so the flow
     // never pulses all at once (Vlachos's phase noise): the cycles its
     // clock runs ahead by.
@@ -1248,8 +1259,8 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // Its waves, from its state alone (`water_flow_waves`): the wind's, the
     // boils its eddies bring up, the waves its bed holds and those standing
     // about what it flows past.
-    let waves = water_flow_waves(world.xz, world_dx.xz, world_dy.xz, at, gains, eddy, froude,
-        flowing, anchored, time, stagger);
+    let waves = water_flow_waves(world.xz, footprint, at, gains, eddy, froude, flowing,
+        anchored, time, stagger);
     // They ride its surface, tilting as it falls; and the slopes they hide
     // within a pixel roughen it, along the view and across it as their
     // ellipse projects into the view, so where they run rough, it glints
@@ -1328,12 +1339,12 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // (their gains' squares), break by their statistics.
     let foam_folding = water_folding(max(waves.spread - dot(gains, gains), 0.0),
         waves.hidden.x + waves.hidden.y, waves.crest,
-        water_wind_whitecaps(world.xz, world_dx.xz, world_dy.xz, gains));
+        water_wind_whitecaps(world.xz, footprint, gains));
     let foam_contact = water_contact(mesh_standing, mesh_change, footprint, max(speed, eddy));
     let foam_fresh = 1.0 - (1.0 - born) * (1.0 - foam_folding) * (1.0 - foam_contact);
     let foam_carried = saturate(at.words.foam / WATER_FOAM_MOST);
     let foam_ridden = world.xz - waves.slopes * WATER_FOAM_RIDE;
-    let froth = water_froth(foam_ridden, world_dx.xz, world_dy.xz,
+    let froth = water_froth(foam_ridden, footprint,
         vec2<f32>(foam_fresh, foam_carried) * (1.0 - film), flow, shear, time, stagger, seen);
     let foam = froth.cover;
     let foam_tilt = water_foam_tilt(froth.height, normal, world_dx, world_dy);
@@ -1360,12 +1371,12 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let lit = water_light(surface);
     // The waves' caustics brighten the sun's share of the light on the bed,
     // fading as it lies deeper, as the bubbles churning water holds scatter
-    // that light on its way down, and as the pixel spans more of the waves
-    // gathering it.
+    // that light on its way down, and as the size the pixel resolves spans
+    // more of the waves gathering it.
     let caustic = 1.0 + (gathered - 1.0) * lit.sunny
         * exp(-bed * (1.0 / WATER_CAUSTIC_DEPTH + WATER_BUBBLES * aerated))
         * (1.0 - smoothstep(WATER_CAUSTIC_PIXELS.x, WATER_CAUSTIC_PIXELS.y, // filter: caustics averaging to their mean of 1
-            footprint / max(bed, 1.0e-3)));
+            pixel_resolved / max(bed, 1.0e-3)));
     // Of what the surface lets through, the ground shows darker for being
     // wet however thin the water; foam covers it.
     let wet = smoothstep(0.0, 0.03, depth) * WATER_WET;

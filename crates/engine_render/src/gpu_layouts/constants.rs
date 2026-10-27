@@ -303,9 +303,6 @@ gpu_consts! {
     /// Tiles of water's waves, the wind's, each repeating at its own length
     /// and evolving each frame.
     pub(crate) const WIND_TILES: usize = engine_core::table_data::waves::WIND_TILES => ["WAVE_WIND_TILES" in WATER_WAVES_SHADER, "WATER_WIND_TILES"];
-    /// The most anisotropy the waves' sampler filters to: along a pixel's
-    /// longer side it averages at most this many times as finely as across.
-    pub(crate) const WAVE_ANISOTROPY: u16 = 8 => ["WATER_WAVE_ANISOTROPY"];
     /// Invocations transforming a line of a tile: a butterfly each.
     pub(crate) const WAVE_LINE_GROUP: u32 = 128 => ["@evolve_rows" in WATER_WAVES_SHADER, "@transform_columns" in WATER_WAVES_SHADER, "@evolve_fold_rows" in WATER_WAVES_SHADER, "@transform_fold_columns" in WATER_WAVES_SHADER];
     /// Workgroup side of the moments' and the whitecaps' levels.
