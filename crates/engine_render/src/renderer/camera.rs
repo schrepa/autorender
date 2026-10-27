@@ -1,9 +1,11 @@
 //! The main passes' first group: the camera and lighting uniforms, shadow
 //! lookups, what glass refracts,
-//! what surfaces reflect, terrain's horizon maps
-//! and what placed objects cover, keyed by the generations of what it
-//! binds, so it rebuilds when the shadow maps, environment maps, reflection
-//! probe grid, horizon maps or occupancy maps are replaced.
+//! what surfaces reflect, terrain's horizon maps,
+//! what placed objects cover and the sky's tables and the clouds' shown
+//! domes, keyed by the generations of what it binds, so it rebuilds when the
+//! shadow maps, environment maps, reflection probe grid, horizon maps,
+//! occupancy maps or shown domes are replaced; and terrain's, without what
+//! glass refracts and without the sky's tables and domes.
 
 #![expect(
     clippy::expect_used,
@@ -22,11 +24,15 @@ pub(super) struct GroupSources<'a> {
     pub(super) probes: &'a ProbePass,
     pub(super) horizons: &'a Horizons,
     pub(super) occupancy: &'a crate::occupancy::OccupancyPass,
+    /// The physically based sky's uniform, tables and their sampler.
+    pub(super) sky: crate::sky::AirBindings<'a>,
+    /// The clouds' shown domes, their sampler and their uniform.
+    pub(super) clouds: crate::clouds::DomeBinding<'a>,
 }
 
 /// Bindings of the first group: [`CAMERA`]'s.
-const CAMERA_BINDINGS: usize = 18;
-/// Bindings of terrain's resolves' first group: `CAMERA_TERRAIN`'s.
+const CAMERA_BINDINGS: usize = 25;
+/// Bindings of terrain's first group: `CAMERA_TERRAIN`'s.
 const TERRAIN_BINDINGS: usize = 16;
 
 pub(super) struct CameraBindings {
@@ -46,10 +52,12 @@ pub(super) struct CameraBindings {
     refraction_group: GroupCache<CAMERA_BINDINGS>,
     // Each reflection probe face's group, over the face's camera.
     probe_groups: [GroupCache<CAMERA_BINDINGS>; FACES],
-    // Terrain's resolves' first group, the main one without
-    // what glass refracts, and its layout.
+    // Terrain's first group, the main one without what glass refracts and
+    // without the sky's tables and domes, its layout, and each reflection
+    // probe face's.
     pub(super) terrain_layout: crate::pipelines::GroupLayout,
     terrain_group: GroupCache<TERRAIN_BINDINGS>,
+    terrain_probe_groups: [GroupCache<TERRAIN_BINDINGS>; FACES],
 }
 
 impl CameraBindings {
@@ -86,6 +94,7 @@ impl CameraBindings {
         let mut bindings = Self {
             terrain_layout,
             terrain_group: GroupCache::default(),
+            terrain_probe_groups: Default::default(),
             layout,
             buffer,
             lighting_buffer,
@@ -150,7 +159,7 @@ impl CameraBindings {
         self.group.get().expect("built with the bindings")
     }
 
-    /// Terrain's resolves' first group.
+    /// Terrain's first group.
     pub(super) fn terrain_group(&self) -> &wgpu::BindGroup {
         self.terrain_group.get().expect("built with the bindings")
     }
@@ -184,31 +193,35 @@ impl CameraBindings {
         self.refraction_group.get()
     }
 
-    /// Each reflection probe face's group: the main group
+    /// Each reflection probe face's groups: the main group and terrain's
     /// over the face's camera uniform in `probes`.
     pub(super) fn prepare_probe_groups(
         &mut self,
         device: &wgpu::Device,
         sources: &GroupSources<'_>,
     ) {
-        for (face, group) in self.probe_groups.iter_mut().enumerate() {
+        let groups = self.probe_groups.iter_mut().zip(&mut self.terrain_probe_groups);
+        for (face, (group, terrain)) in groups.enumerate() {
             let refraction = (
                 Bound::fixed(crate::pipelines::view(&self.refraction_fallback)),
                 Bound::fixed(crate::pipelines::sampler(&self.refraction_sampler)),
+            );
+            let uniforms = (
+                sources.probes.camera(face),
+                &self.lighting_buffer,
+                &self.cloud_shadows,
             );
             group.bind(
                 device,
                 "engine/camera-bind-group",
                 (&CAMERA, &self.layout),
-                camera_entries(
-                    (
-                        sources.probes.camera(face),
-                        &self.lighting_buffer,
-                        &self.cloud_shadows,
-                    ),
-                    refraction,
-                    sources,
-                ),
+                camera_entries(uniforms, refraction, sources),
+            );
+            terrain.bind(
+                device,
+                "engine/camera-terrain-bind-group",
+                (&crate::bindings::CAMERA_TERRAIN, &self.terrain_layout),
+                terrain_entries(uniforms, sources),
             );
         }
     }
@@ -219,10 +232,17 @@ impl CameraBindings {
             .get()
             .expect("prepared before captures")
     }
+
+    /// Terrain's group of reflection probe face `face`, once prepared.
+    pub(super) fn terrain_probe_group(&self, face: usize) -> &wgpu::BindGroup {
+        self.terrain_probe_groups[face]
+            .get()
+            .expect("prepared before captures")
+    }
 }
 
-/// [`camera_entries`] without what glass refracts, for terrain's resolves
-/// (`bindings::CAMERA_TERRAIN`).
+/// [`camera_entries`] without what glass refracts and without the sky's
+/// tables and domes, for terrain's passes (`bindings::CAMERA_TERRAIN`).
 fn terrain_entries<'a>(
     (camera, lighting, cloud_shadows): (&'a wgpu::Buffer, &'a wgpu::Buffer, &'a wgpu::Buffer),
     sources: &GroupSources<'a>,
@@ -254,10 +274,21 @@ fn terrain_entries<'a>(
     ]
 }
 
+/// What the first group keys the shown dome of role `role` (0 the older,
+/// 1 the newer) by, from the clouds' binding's `key`
+/// (`clouds::DomeBinding`): the domes' generation, the dome in that role and
+/// whether the domes show, which tell its texture apart whenever the domes
+/// turn over or are replaced.
+fn shown_dome((generation, roles, shown): (u64, [u8; 2], bool), role: usize) -> u64 {
+    (generation * 4 + u64::from(roles[role])) * 2 + u64::from(shown)
+}
+
 /// The main passes' first group's entries over the `camera` and
 /// `lighting` uniforms: shadow lookups, what glass refracts with its
 /// sampler, what surfaces reflect: the environment maps with their
-/// sampler and the reflection probes' grid, and terrain's horizon maps.
+/// sampler and the reflection probes' grid, terrain's horizon maps, and the
+/// sky's tables and the clouds' shown domes, which the sky draws and smooth
+/// surfaces mirror.
 fn camera_entries<'a>(
     (camera, lighting, cloud_shadows): (&'a wgpu::Buffer, &'a wgpu::Buffer, &'a wgpu::Buffer),
     (refraction, refraction_sampler): (Bound<'a>, Bound<'a>),
@@ -267,6 +298,8 @@ fn camera_entries<'a>(
     let [horizons, horizon_records, horizon_sampler] = sources.horizons.entries();
     let (environment, environment_sampler) = sources.environment.binding();
     let (coverage, heights) = sources.occupancy.views();
+    let (air, view_table, _, table_sampler) = sources.sky;
+    let clouds = &sources.clouds;
     [
         ("camera", Bound::fixed(camera.as_entire_binding())),
         ("lighting", Bound::fixed(lighting.as_entire_binding())),
@@ -288,6 +321,37 @@ fn camera_entries<'a>(
         (
             "cloud_shadows",
             Bound::fixed(cloud_shadows.as_entire_binding()),
+        ),
+        ("sky_air", Bound::fixed(air.as_entire_binding())),
+        (
+            "sky_view_table",
+            Bound::fixed(crate::pipelines::view(view_table)),
+        ),
+        (
+            "sky_table_sampler",
+            Bound::fixed(crate::pipelines::sampler(table_sampler)),
+        ),
+        (
+            "sky_clouds",
+            Bound::counted(
+                shown_dome(clouds.key, 1),
+                crate::pipelines::view(clouds.new),
+            ),
+        ),
+        (
+            "sky_clouds_old",
+            Bound::counted(
+                shown_dome(clouds.key, 0),
+                crate::pipelines::view(clouds.old),
+            ),
+        ),
+        (
+            "sky_cloud_sampler",
+            Bound::fixed(crate::pipelines::sampler(clouds.sampler)),
+        ),
+        (
+            "sky_domes",
+            Bound::fixed(clouds.uniform.as_entire_binding()),
         ),
     ]
 }

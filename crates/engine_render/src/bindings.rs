@@ -93,7 +93,9 @@ tables! {
 
     /// Group 0 of mesh, sky and effect pipelines: the camera, lighting and
     /// shadow lookups, what glass refracts,
-    /// the environment maps and reflection probes.
+    /// the environment maps and reflection probes, and the sky's tables and
+    /// the clouds' shown domes, which the sky draws and smooth surfaces
+    /// mirror (`sky_light.wgsl`).
     const CAMERA: Table = Table {
         label: "engine/camera-layout",
         serves: [SHADER @ 0, PARTICLE_SHADER @ 0, HAZE_SHADER @ 0],
@@ -131,12 +133,24 @@ tables! {
             // terrain's lit fragments read (a uniform array read at each
             // fragment's own index is many times slower).
             read_of(19, "cloud_shadows", clouds::CLOUD_SHADOW_BYTES, F),
+            // The physically based sky's uniform, its sky-view table and
+            // their sampler, and the clouds' newer and older shown domes,
+            // their sampler and their uniform: the sky's light along a view.
+            uniform_of(23, "sky_air", size_of::<sky::SkyUniform>(), F),
+            texture(24, "sky_view_table", Float, D2, F),
+            sampler(25, "sky_table_sampler", Filtering, F),
+            texture(26, "sky_clouds", Float, D2, F),
+            texture(27, "sky_clouds_old", Float, D2, F),
+            sampler(28, "sky_cloud_sampler", Filtering, F),
+            uniform_of(29, "sky_domes", size_of::<clouds::DomeUniform>(), F),
         ],
     };
 
-    /// Group 0 of terrain's resolves: the main passes' without
-    /// what glass refracts, which keeps them within the 16 sampled textures a
-    /// fragment stage may bind.
+    /// Group 0 of terrain's pipelines: the main passes' without what glass
+    /// refracts and without the sky's tables and the clouds' domes, which
+    /// keeps their fragment stages within the 16 sampled textures one may
+    /// bind; terrain mirrors the sky's environment map alone
+    /// (`meshes/shading.wgsl`'s `finish_ground`).
     const CAMERA_TERRAIN: Table = Table {
         label: "engine/camera-terrain-layout",
         serves: [SHADER @ 0],
@@ -706,23 +720,14 @@ tables! {
         bindings: &[texture(46, "view_clouds", Float, D2, F)],
     };
 
-    /// Group 1 of the sky's pipelines (`meshes/sky.wgsl`): the
-    /// clouds' dome and its sampler; the physically based sky's uniform, its
-    /// sky-view and transmittance tables and their sampler.
-    const CLOUD_SKY: Table = Table {
-        label: "engine/cloud-sky-layout",
+    /// Group 1 of the sky's pipelines (`meshes/sky.wgsl`): the physically
+    /// based sky's transmittance table, through which the sun's disc and
+    /// the night sky shine; the sky's other tables and the clouds' domes are
+    /// the camera group's.
+    const SKY_TRANSMITTANCE: Table = Table {
+        label: "engine/sky-transmittance-layout",
         serves: [SHADER @ 1],
-        bindings: &[
-            texture(38, "sky_clouds", Float, D2, F),
-            sampler(39, "sky_cloud_sampler", Filtering, F),
-            uniform_of(40, "sky_air", size_of::<sky::SkyUniform>(), F),
-            texture(41, "sky_view_table", Float, D2, F),
-            texture(42, "sky_transmittance_table", Float, D2, F),
-            sampler(43, "sky_table_sampler", Filtering, F),
-            // The older shown dome and the domes' uniform.
-            texture(44, "sky_clouds_old", Float, D2, F),
-            uniform_of(45, "sky_domes", size_of::<clouds::DomeUniform>(), F),
-        ],
+        bindings: &[texture(42, "sky_transmittance_table", Float, D2, F)],
     };
 
     /// The physically based sky's tables and light (
@@ -1172,28 +1177,21 @@ tables! {
         ],
     };
 
-    /// The environment maps' sky (`environment.wgsl`).
+    /// The environment maps' sky (`environment.wgsl`): the lighting, and
+    /// what the sky's light along a view reads (`sky_light.wgsl`), at the
+    /// camera group's numbers.
     const ENVIRONMENT_SKY: Table = Table {
         label: "engine/environment-sky-layout",
         serves: [ENVIRONMENT_SHADER @ 0],
         bindings: &[
             uniform(1, "lighting", F),
-            // The clouds' dome.
-            texture(38, "environment_clouds", Float, D2, F),
-            sampler(39, "environment_cloud_sampler", Filtering, F),
-            // The physically based sky.
-            uniform_of(40, "environment_air", size_of::<sky::SkyUniform>(), F),
-            texture(41, "environment_view_table", Float, D2, F),
-            texture(42, "environment_transmittance_table", Float, D2, F),
-            sampler(43, "environment_table_sampler", Filtering, F),
-            // The older shown dome and the domes' uniform.
-            texture(44, "environment_clouds_old", Float, D2, F),
-            uniform_of(
-                45,
-                "environment_domes",
-                size_of::<clouds::DomeUniform>(),
-                F,
-            ),
+            uniform_of(23, "sky_air", size_of::<sky::SkyUniform>(), F),
+            texture(24, "sky_view_table", Float, D2, F),
+            sampler(25, "sky_table_sampler", Filtering, F),
+            texture(26, "sky_clouds", Float, D2, F),
+            texture(27, "sky_clouds_old", Float, D2, F),
+            sampler(28, "sky_cloud_sampler", Filtering, F),
+            uniform_of(29, "sky_domes", size_of::<clouds::DomeUniform>(), F),
         ],
     };
 

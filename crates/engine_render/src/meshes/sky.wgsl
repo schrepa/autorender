@@ -15,73 +15,32 @@ fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOutput {
     return output;
 }
 
-// The clouds' newer and older shown domes, their
-// sampler and their uniform: clear ones without clouds.
-@group(1) @binding(38) var sky_clouds: texture_2d<f32>;
-@group(1) @binding(39) var sky_cloud_sampler: sampler;
-@group(1) @binding(44) var sky_clouds_old: texture_2d<f32>;
-@group(1) @binding(45) var<uniform> sky_domes: CloudDomes;
-// The physically based sky: its uniform, sky-view and
-// transmittance tables and their sampler.
-@group(1) @binding(40) var<uniform> sky_air: SkyUniform;
-@group(1) @binding(41) var sky_view_table: texture_2d<f32>;
+// The physically based sky's transmittance table, through which the sun's
+// disc and the night sky shine; the sky's other tables and the clouds'
+// domes are the first group's (`sky_light.wgsl`).
 @group(1) @binding(42) var sky_transmittance_table: texture_2d<f32>;
-@group(1) @binding(43) var sky_table_sampler: sampler;
 
-// Whether the sky is the physically based one.
-fn physical_sky() -> bool {
-    return lighting.grade.z > 0.5;
-}
-
-// The sky's light along `ray` from its tables, with the sun's disc when
-// `disc`.
-fn air_light_along(ray: vec3<f32>, disc: bool) -> vec3<f32> {
-    return air_sky(sky_view_table, sky_transmittance_table, sky_table_sampler, sky_air, ray, disc);
-}
-
-// A dome at `uv` through four filtered taps half a texel apart: a tent
-// over the texels around, which softens the noise of the march's per-ray
-// offsets where thin, brightly lit edges change from texel to texel.
-fn dome_at(dome: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
-    let half_texel = 0.5 / vec2<f32>(textureDimensions(dome));
-    return 0.25 * (textureSampleLevel(dome, sky_cloud_sampler, uv - half_texel, 0.0)
-        + textureSampleLevel(dome, sky_cloud_sampler, uv + half_texel, 0.0)
-        + textureSampleLevel(dome, sky_cloud_sampler, uv + vec2<f32>(half_texel.x, -half_texel.y), 0.0)
-        + textureSampleLevel(dome, sky_cloud_sampler, uv + vec2<f32>(-half_texel.x, half_texel.y), 0.0));
-}
-
-// The clouds along `ray`: their light and the share of the sky passing,
-// the newer dome blending in over the older, each looked up where it sees
-// what the ray does.
-fn sky_cloud(ray: vec3<f32>) -> vec4<f32> {
-    if sky_domes.older.w < 0.5 {
-        return dome_at(sky_clouds, cloud_dome_uv(ray));
+// The sun's disc along `ray`: the physically based sky's through its air,
+// or the analytic sky's.
+fn sky_disc(ray: vec3<f32>) -> vec3<f32> {
+    if physical_sky() {
+        return air_disc(sky_transmittance_table, sky_table_sampler, sky_air, ray);
     }
-    let newer = dome_at(sky_clouds,
-        cloud_dome_uv(cloud_dome_direction(sky_domes, sky_domes.newer.xyz, ray)));
-    let older = dome_at(sky_clouds_old,
-        cloud_dome_uv(cloud_dome_direction(sky_domes, sky_domes.older.xyz, ray)));
-    return mix(older, newer, sky_domes.newer.w);
+    return sun_disc(ray);
 }
 
-// The sky along `ray` behind its clouds, with the night sky's; under the
-// sea, the water's light. While the view marches its own clouds, they
-// cover it after it draws.
+// The sky along `ray` with the sun's disc and the night sky's, behind its
+// clouds (`clouded`); under the sea, the water's light. While the view
+// marches its own clouds, they cover it after it draws.
 fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
     if lighting.underwater.w > 0.0 {
         return sky(ray);
     }
-    var light: vec3<f32>;
-    if physical_sky() {
-        light = air_light_along(ray, true);
-    } else {
-        light = sky(ray);
-    }
-    light = with_night_sky(light, ray);
+    let light = with_night_sky(sky_air_light(ray) + sky_disc(ray), ray);
     if sky_domes.view.x > 0.5 {
         return light;
     }
-    return behind_clouds(light, sky_cloud(ray), ray);
+    return clouded(light, sky_domes.eye.xyz, ray);
 }
 
 // The night sky's stars: cells along each side of each face of the cube
@@ -532,19 +491,12 @@ fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
         1.0);
 }
 
-// Reflection probe captures: the sky's haze without the sun's
-// disc, as the sky's environment map holds it (surfaces shade the sun's
-// highlights themselves).
+// Reflection probe captures: the sky's light without the sun's disc
+// (`sky_along`), as the sky's environment map holds it (surfaces shade the
+// sun's highlights themselves).
 @fragment
 fn fs_probe_sky(input: SkyOutput) -> @location(0) vec4<f32> {
-    let ray = sky_ray(input.ndc);
-    var light: vec3<f32>;
-    if physical_sky() {
-        light = air_light_along(ray, false);
-    } else {
-        light = haze(ray);
-    }
-    return vec4<f32>(behind_clouds(light, sky_cloud(ray), ray), 1.0);
+    return vec4<f32>(sky_along(sky_domes.eye.xyz, sky_ray(input.ndc)), 1.0);
 }
 
 // The sky's surface texel (`surface_texel`): facing up, fully rough both

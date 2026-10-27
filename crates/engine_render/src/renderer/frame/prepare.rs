@@ -663,7 +663,8 @@ impl Renderer {
         } = self.prepare_presentation(frame, gpu, kind, temporal_frame, &mut prelude.inputs);
         let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
         // Clouds: this frame's march of their dome, which the
-        // sky and its environment map show; exact frames march all of it.
+        // sky, its environment map and what smooth surfaces mirror show;
+        // exact frames march all of it.
         self.features.clouds.get_mut().prepare(
             &self.device,
             &self.queue,
@@ -691,10 +692,6 @@ impl Renderer {
             (lighting, self.features.sky.get().bindings()),
             &self.depth.view,
         );
-        self.features
-            .clouds
-            .get_mut()
-            .prepare_sky_group(&self.device, self.features.sky.get().bindings());
         self.features
             .environment
             .get_mut()
@@ -1112,6 +1109,8 @@ impl Renderer {
                 probes: self.features.probes.get(),
                 horizons: &self.terrain.horizons,
                 occupancy: self.features.occupancy.get(),
+                sky: self.features.sky.get().bindings(),
+                clouds: self.features.clouds.get().dome(),
             },
         );
     }
@@ -1498,6 +1497,8 @@ impl Renderer {
                     probes: self.features.probes.get(),
                     horizons: &self.terrain.horizons,
                     occupancy: self.features.occupancy.get(),
+                    sky: self.features.sky.get().bindings(),
+                    clouds: self.features.clouds.get().dome(),
                 },
             );
         }

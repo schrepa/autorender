@@ -177,6 +177,8 @@ impl Renderer {
                 probes: &probes,
                 horizons: &terrain.horizons,
                 occupancy: &occupancy,
+                sky: sky.bindings(),
+                clouds: clouds.dome(),
             },
         );
         let virtual_draws = VirtualDraws::new(&device);

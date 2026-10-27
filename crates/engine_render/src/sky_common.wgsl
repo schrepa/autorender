@@ -168,9 +168,9 @@ fn air_radius(air: SkyUniform) -> f32 {
 }
 
 /// The sky's light looking along `direction` (unit) from `view_table`,
-/// with the sun's disc in `transmittance` when `disc`.
-fn air_sky(view_table: texture_2d<f32>, transmittance: texture_2d<f32>, table_sampler: sampler,
-        air: SkyUniform, direction: vec3<f32>, disc: bool) -> vec3<f32> {
+/// without the sun's disc (`air_disc`).
+fn air_sky(view_table: texture_2d<f32>, table_sampler: sampler, air: SkyUniform,
+        direction: vec3<f32>) -> vec3<f32> {
     let r = air_radius(air);
     let origin = vec3<f32>(0.0, r, 0.0);
     let ground = sphere_hit(origin, direction, air.radii.x) >= 0.0;
@@ -182,17 +182,23 @@ fn air_sky(view_table: texture_2d<f32>, transmittance: texture_2d<f32>, table_sa
         light_cos = dot(normalize(across), normalize(sun_across));
     }
     let uv = sky_view_uv(air, ground, direction.y, light_cos, r);
-    var light = textureSampleLevel(view_table, table_sampler, uv, 0.0).rgb;
-    if disc && !ground {
-        let angle = acos(clamp(dot(direction, sun), -1.0, 1.0));
-        let radius = air.ground.w;
-        if angle < radius {
-            // Limb darkening toward the disc's edge.
-            let edge = angle / radius;
-            let limb = 1.0 - 0.6 * (1.0 - sqrt(max(1.0 - edge * edge, 0.0)));
-            light += air.ozone.w * air_transmittance(transmittance, table_sampler, air, r, direction.y)
-                * (6.0 * limb);
-        }
+    return textureSampleLevel(view_table, table_sampler, uv, 0.0).rgb;
+}
+
+/// The sun's disc's light looking along `direction` (unit), through the air
+/// `transmittance` holds: none off the disc or where the view meets the
+/// planet.
+fn air_disc(transmittance: texture_2d<f32>, table_sampler: sampler, air: SkyUniform,
+        direction: vec3<f32>) -> vec3<f32> {
+    let r = air_radius(air);
+    let angle = acos(clamp(dot(direction, normalize(air.sun.xyz)), -1.0, 1.0));
+    let radius = air.ground.w;
+    if angle >= radius || sphere_hit(vec3<f32>(0.0, r, 0.0), direction, air.radii.x) >= 0.0 {
+        return vec3<f32>(0.0);
     }
-    return light;
+    // Limb darkening toward the disc's edge.
+    let edge = angle / radius;
+    let limb = 1.0 - 0.6 * (1.0 - sqrt(max(1.0 - edge * edge, 0.0)));
+    return air.ozone.w * air_transmittance(transmittance, table_sampler, air, r, direction.y)
+        * (6.0 * limb);
 }

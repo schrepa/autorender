@@ -69,6 +69,10 @@ const OPTICS: &[(&str, &str)] = &[
         "finish",
         "lighting a surface: its BRDF, highlights and shadows",
     ),
+    (
+        "finish_reflecting",
+        "lighting a surface: its BRDF, highlights and shadows",
+    ),
     ("fog", "fog between a point and the eye"),
     ("fresnel", "Fresnel's reflectance"),
     ("fs_particle", "soft particles against what lies behind"),

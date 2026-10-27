@@ -2095,40 +2095,40 @@ fn terrain_resolved(position: vec4<f32>, dither: f32) -> TerrainResolved {
 
 @fragment
 fn fs_terrain_resolve_post(@builtin(position) position: vec4<f32>) -> SceneTargets {
-    return scene_targets(finish(terrain_resolved(position, 0.5).point, vec3<f32>(0.0)),
+    return scene_targets(finish_ground(terrain_resolved(position, 0.5).point, vec3<f32>(0.0)),
         position.xy);
 }
 
 @fragment
 fn fs_terrain_resolve_post_lit(@builtin(position) position: vec4<f32>) -> SceneTargets {
     let point = terrain_resolved(position, 0.5).point;
-    return scene_targets(finish(point, local_light(point, position.xy)), position.xy);
+    return scene_targets(finish_ground(point, local_light(point, position.xy)), position.xy);
 }
 
 @fragment
 fn fs_terrain_resolve_temporal(@builtin(position) position: vec4<f32>) -> TemporalTargets {
     let resolved = terrain_resolved(position, fade_noise(position.xy));
-    return temporal_targets(finish(resolved.point, vec3<f32>(0.0)), position,
+    return temporal_targets(finish_ground(resolved.point, vec3<f32>(0.0)), position,
         resolved.previous);
 }
 
 @fragment
 fn fs_terrain_resolve_temporal_lit(@builtin(position) position: vec4<f32>) -> TemporalTargets {
     let resolved = terrain_resolved(position, fade_noise(position.xy));
-    return temporal_targets(finish(resolved.point, local_light(resolved.point, position.xy)),
+    return temporal_targets(finish_ground(resolved.point, local_light(resolved.point, position.xy)),
         position, resolved.previous);
 }
 
 fn shade_terrain(input: TerrainOutput) -> Shaded {
     let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell);
-    return finish(point, vec3<f32>(0.0));
+    return finish_ground(point, vec3<f32>(0.0));
 }
 
 fn shade_terrain_lit(input: TerrainOutput) -> Shaded {
     let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell);
-    return finish(point, local_light(point, input.clip_position.xy));
+    return finish_ground(point, local_light(point, input.clip_position.xy));
 }
 
 fn terrain_temporal_output(input: TerrainTemporalOutput) -> TerrainOutput {

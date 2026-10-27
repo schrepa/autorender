@@ -365,7 +365,7 @@ impl Renderer {
         self.mesh_pipelines.sky[index] = Some(sky_pipeline(
             &self.device,
             &self.mesh_shader,
-            (&self.camera.layout, self.features.clouds.get().sky_layout()),
+            (&self.camera.layout, self.features.sky.get().pass_layout()),
             fragment,
             &color_targets,
         ));
@@ -548,11 +548,11 @@ fn flat_batch(
 
 /// The sky pass of `fragment` into `targets`: one triangle at the far plane,
 /// tested but not written against depth, over the camera bindings and the
-/// clouds' dome.
+/// sky's transmittance table.
 fn sky_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
-    (camera_layout, clouds_layout): (
+    (camera_layout, transmittance_layout): (
         &crate::pipelines::GroupLayout,
         &crate::pipelines::GroupLayout,
     ),
@@ -562,7 +562,7 @@ fn sky_pipeline(
     let layout = crate::pipelines::pipeline_layout(
         device,
         &crate::pipeline_layouts::SKY_PIPELINES,
-        &[camera_layout, clouds_layout],
+        &[camera_layout, transmittance_layout],
     );
     crate::pipelines::fullscreen(
         device,

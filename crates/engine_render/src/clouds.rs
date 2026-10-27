@@ -9,8 +9,9 @@
 //! whole. Lookups correct each dome's parallax through the cloud
 //! layer's middle (`scene.wgsl`'s `cloud_dome_direction`). Exact frames, new
 //! domes and changed clouds march a dome whole from the camera, shown alone.
-//! The sky and the sky's environment map show the domes; frames without
-//! clouds bind a clear one.
+//! The sky, the sky's environment map and the reflections of smooth
+//! surfaces show the domes (`sky_light.wgsl`), which the camera's group and
+//! the environment map's bind; frames without clouds bind a clear one.
 //!
 //! The view marches the clouds again, a ray through each
 //! pixel of its render size after the opaque scene and water, up to what
@@ -19,11 +20,6 @@
 //! while the camera is in or above the layer, and the view's sky shows no
 //! dome then; under it, the dome shows the sky's clouds as before.
 
-#![expect(
-    clippy::expect_used,
-    reason = "the sky's group is built each frame before it is read"
-)]
-
 use crate::shaders::entry::{clouds, meshes};
 use engine_core::collections::HashMap;
 
@@ -31,7 +27,7 @@ use engine_core::Clouds;
 use engine_core::StaticTable;
 use engine_core::table_data::clouds::CloudNoise;
 
-use crate::bindings::{CLOUD_COMPOSITE, CLOUD_MARCH, CLOUD_SKY, CLOUD_VIEW};
+use crate::bindings::{CLOUD_COMPOSITE, CLOUD_MARCH, CLOUD_VIEW};
 use crate::cached::{Bound, Cached, GroupCache, Versioned};
 use crate::gpu_data::LightingUniform;
 use crate::gpu_layouts::constants::CLOUD_GROUP;
@@ -228,7 +224,6 @@ impl NoiseVolumes {
 
 pub(crate) struct CloudPass {
     march_layout: crate::pipelines::GroupLayout,
-    sky_layout: crate::pipelines::GroupLayout,
     // The march's pipelines, made with the first frame that has clouds.
     pipelines: Option<[wgpu::ComputePipeline; 3]>,
     light: LightMap,
@@ -254,7 +249,6 @@ pub(crate) struct CloudPass {
     shadow_cells: wgpu::Buffer,
     // The march's groups, one writing each dome.
     march_groups: Cached<u64, [wgpu::BindGroup; 3]>,
-    sky_group: Cached<(u64, [u8; 2], bool), wgpu::BindGroup>,
     // Advances whenever the domes are other textures.
     generation: u64,
     // The settings the domes march, the back dome's march, and whether
@@ -362,7 +356,6 @@ impl CloudPass {
         });
         Self {
             march_layout: crate::pipelines::layout(device, &CLOUD_MARCH),
-            sky_layout: crate::pipelines::layout(device, &CLOUD_SKY),
             pipelines: None,
             light: LightMap::default(),
             noise: None,
@@ -391,7 +384,6 @@ impl CloudPass {
                 wgpu::BufferUsages::COPY_SRC,
             ),
             march_groups: Cached::default(),
-            sky_group: Cached::default(),
             generation: 0,
             marched: None,
             cycle: None,
@@ -505,13 +497,9 @@ impl CloudPass {
         [(self.frame % u64::from(stride)) as u32, stride, 0, 0]
     }
 
-    /// The sky pipelines' second group layout.
-    pub(crate) fn sky_layout(&self) -> &crate::pipelines::GroupLayout {
-        &self.sky_layout
-    }
-
     /// The domes the sky shows (clear ones without clouds), their sampler
-    /// and uniform, and a key advancing whenever other textures show.
+    /// and uniform, and a key advancing whenever other textures show, which
+    /// the camera's group binds.
     pub(crate) fn dome(&self) -> DomeBinding<'_> {
         match (&self.domes, self.active && self.ready) {
             (Some(domes), true) => DomeBinding {
@@ -573,12 +561,6 @@ impl CloudPass {
         self.active && self.ready && self.recorded_generation == Some(self.generation)
     }
 
-    /// The sky pipelines' second group, as [`Self::prepare_sky_group`] last
-    /// built it.
-    pub(crate) fn sky_group(&self) -> &wgpu::BindGroup {
-        self.sky_group.get().expect("built each frame")
-    }
-
     /// Where the physically based sky's light goes in the
     /// marches' uniforms, the dome's and the view's: the
     /// sun's, the zenith's and the horizon's colors.
@@ -609,42 +591,6 @@ impl CloudPass {
         let [a, b, c] = copies(&self.uniform);
         let [d, e, f] = copies(&self.view_clouds);
         [a, b, c, d, e, f]
-    }
-
-    /// Builds the sky pipelines' second group unless built: the domes (or
-    /// clear ones), their sampler and uniform, and the physically based
-    /// sky's `air` (its uniform, sky-view and transmittance tables and
-    /// sampler).
-    pub(crate) fn prepare_sky_group(
-        &mut self,
-        device: &wgpu::Device,
-        air: crate::sky::AirBindings<'_>,
-    ) {
-        let key = self.dome().key;
-        if !self.sky_group.stale(&key) {
-            return;
-        }
-        let dome = self.dome();
-        let (old, new, sampler, uniform) = (dome.old, dome.new, dome.sampler, dome.uniform);
-        let group = {
-            crate::pipelines::group(
-                device,
-                "engine/cloud-sky",
-                &CLOUD_SKY,
-                &self.sky_layout,
-                &[
-                    ("sky_clouds", crate::pipelines::view(new)),
-                    ("sky_cloud_sampler", crate::pipelines::sampler(sampler)),
-                    crate::buffers::entry("sky_air", air.0),
-                    ("sky_view_table", crate::pipelines::view(air.1)),
-                    ("sky_transmittance_table", crate::pipelines::view(air.2)),
-                    ("sky_table_sampler", crate::pipelines::sampler(air.3)),
-                    ("sky_clouds_old", crate::pipelines::view(old)),
-                    crate::buffers::entry("sky_domes", uniform),
-                ],
-            )
-        };
-        self.sky_group.set(key, group);
     }
 
     /// Plans this frame's march of `settings`' clouds, shaped by `noise`

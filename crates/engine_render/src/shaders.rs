@@ -32,6 +32,7 @@ shaders! {
         "meshes/forward.wgsl",
         "meshes/resolve.wgsl",
         "sky_common.wgsl",
+        "sky_light.wgsl",
         "meshes/sky.wgsl",
         "meshes/decals.wgsl",
         "impostor_frames.wgsl",
@@ -207,12 +208,13 @@ shaders! {
         "fullscreen.wgsl",
         "debug_view.wgsl",
     ];
-    /// Environment maps after the scene declarations.
+    /// Environment maps after the scene declarations and the sky's light.
     ENVIRONMENT_SHADER = [
         "scene.wgsl",
         "color.wgsl",
         "math.wgsl",
         "sky_common.wgsl",
+        "sky_light.wgsl",
         "environment.wgsl",
     ];
 }

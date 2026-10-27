@@ -224,9 +224,9 @@ impl TerrainPipelines {
     }
 
     /// Creates the opaque pipeline into `targets` (`lit` or not) unless it
-    /// exists: `camera` and `lights` are the main passes' first and lights
-    /// groups, `empty` the group standing in for the poses.
-    #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
+    /// exists: `camera` is terrain's first group (`bindings::CAMERA_TERRAIN`),
+    /// `lights` the lights' group, `empty` the group standing in for the
+    /// poses.
     pub(crate) fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -239,7 +239,6 @@ impl TerrainPipelines {
         (targets, lit, holes): (Targets, bool, bool),
         canvas: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
-        camera_terrain: &crate::pipelines::GroupLayout,
     ) {
         if self.pipelines.contains_key(&(targets, lit, holes)) {
             return;
@@ -259,19 +258,13 @@ impl TerrainPipelines {
             wgpu::FrontFace::Ccw,
         );
         self.pipelines.insert((targets, lit, holes), pipeline);
-        self.ensure_deferred(
-            device,
-            shader,
-            (camera, lights),
-            (targets, lit, holes),
-            depth,
-            camera_terrain,
-        );
+        self.ensure_deferred(device, shader, (camera, lights), (targets, lit, holes), depth);
     }
 
     /// Creates the visibility pipeline of patches with `holes` or without
     /// and the resolve into `targets` (`lit` or not) of deferred shading
-    /// unless they exist; canvas and debug targets shade forward.
+    /// unless they exist, over terrain's first group `camera`; canvas and
+    /// debug targets shade forward.
     fn ensure_deferred(
         &mut self,
         device: &wgpu::Device,
@@ -282,7 +275,6 @@ impl TerrainPipelines {
         ),
         (targets, lit, holes): (Targets, bool, bool),
         depth: wgpu::TextureFormat,
-        camera_terrain: &crate::pipelines::GroupLayout,
     ) {
         if !self.deferred_ids.contains_key(&holes) {
             let layout = crate::pipelines::pipeline_layout(
@@ -314,7 +306,7 @@ impl TerrainPipelines {
         if self.resolves.contains_key(&(targets, lit)) {
             return;
         }
-        let groups = (camera_terrain, &self.layout, &self.resolve_layout);
+        let groups = (camera, &self.layout, &self.resolve_layout);
         let layout = if lit {
             let Some(lights) = lights else {
                 return;
@@ -429,8 +421,9 @@ impl TerrainPipelines {
     }
 }
 
-/// The pipeline layout of terrain's mesh passes: the camera, terrain, and
-/// for `lit` pipelines an empty group and the lights.
+/// The pipeline layout of terrain's mesh passes: terrain's first group
+/// (`bindings::CAMERA_TERRAIN`), terrain's, and for `lit` pipelines an empty
+/// group and the lights.
 fn pipeline_layout(
     device: &wgpu::Device,
     camera: &crate::pipelines::GroupLayout,

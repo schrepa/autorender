@@ -102,8 +102,9 @@ fn haze_at(hazed: texture_2d<f32>, pixel: vec2<i32>, settings: Post) -> vec3<f32
 // share of `color` its mirrored environment made up (a) and add the
 // scene's light the surface mirrors in its place (rgb), both by the
 // reflections' strength, within the graded range the scene holds; misses
-// keep the environment's reflection already in `color`. The composite and
-// the resolve apply it to the shaded scene before the effects that add
+// keep the sky the surface mirrors, already in `color` (`finish`: exact
+// where it is smooth, its environment map's as it roughens). The composite
+// and the resolve apply it to the shaded scene before the effects that add
 // light (`effect_light`); the resolve reflects each render pixel's color
 // before blending it with the history.
 fn reflected(color: vec3<f32>, reflections: texture_2d<f32>, linear: sampler,

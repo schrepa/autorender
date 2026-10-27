@@ -39,6 +39,8 @@ impl Renderer {
                 probes: self.features.probes.get(),
                 horizons: &self.terrain.horizons,
                 occupancy: self.features.occupancy.get(),
+                sky: self.features.sky.get().bindings(),
+                clouds: self.features.clouds.get().dome(),
             },
         );
         if odd {
@@ -160,10 +162,12 @@ impl Renderer {
                     binds.bindings.ids(&mut pass, 1, ids);
                     pass.draw_indexed_indirect(draws, offset);
                 }
-                // Terrain stands still: probes capture it.
+                // Terrain stands still: probes capture it, over its own
+                // first group; the sky binds the face's again.
                 self.draw_terrain_face(&mut pass, face, probe.center, lights.is_some());
                 pass.set_pipeline(self.mesh_pipelines.sky(SkyTargets::Probe));
-                pass.set_bind_group(1, self.features.clouds.get().sky_group(), &[]);
+                pass.set_bind_group(0, self.camera.probe_group(face), &[]);
+                pass.set_bind_group(1, self.features.sky.get().pass_group(), &[]);
                 pass.draw(0..3, 0..1);
             }
             drawn += 1;

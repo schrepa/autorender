@@ -6,8 +6,10 @@
 //! scene's light the sky gives (the sun's color, the zenith's, the
 //! horizon's, the ground's, the air's away from the sun and the sun's glow
 //! in it), copied into the uniforms that hold the authored atmosphere's
-//! colors before any pass reads them. The sky's passes and the environment
-//! maps sample the sky-view and transmittance tables. Until the air's
+//! colors before any pass reads them. The sky pass, the environment maps
+//! and the reflections of smooth surfaces sample the sky-view table
+//! (`sky_light.wgsl`), and the sky pass the transmittance table, through
+//! which its sun's disc and night sky shine. Until the air's
 //! tables first arrive the sky stays off, and the authored atmosphere's
 //! shows.
 
@@ -19,7 +21,7 @@ use engine_core::table_data::sky::{MULTIPLE_SIZE, TRANSMITTANCE_SIZE};
 use engine_core::{Sky, StaticTable};
 use glam::Vec3;
 
-use crate::bindings::SKY_TABLES;
+use crate::bindings::{SKY_TABLES, SKY_TRANSMITTANCE};
 use crate::gpu_layouts::constants::SKY_TABLE_GROUP;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -38,7 +40,8 @@ use crate::gpu_layouts::sky::SkyUniform;
 pub(crate) const SKY_UNIFORM_BYTES: usize = size_of::<SkyUniform>();
 
 /// The sky's uniform, its sky-view and transmittance tables and their
-/// sampler, which the sky's passes and the environment maps bind.
+/// sampler, which the camera's group, the environment maps' sky and the
+/// clouds' marches bind.
 pub(crate) type AirBindings<'a> = (
     &'a wgpu::Buffer,
     &'a wgpu::TextureView,
@@ -100,6 +103,10 @@ struct Passes {
 pub(crate) struct SkyPass {
     layout: crate::pipelines::GroupLayout,
     passes: Option<Passes>,
+    // The sky pass's second group, binding the transmittance table, and its
+    // layout.
+    pass_layout: crate::pipelines::GroupLayout,
+    pass_group: wgpu::BindGroup,
     transmittance: Table,
     multiple: Table,
     view: Table,
@@ -128,15 +135,29 @@ pub(crate) struct SkyPass {
 impl SkyPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let uploaded = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING;
+        let transmittance = table(
+            device,
+            "engine/sky-transmittance",
+            TRANSMITTANCE_SIZE,
+            uploaded,
+        );
+        let pass_layout = crate::pipelines::layout(device, &SKY_TRANSMITTANCE);
+        let pass_group = crate::pipelines::group(
+            device,
+            "engine/sky-transmittance",
+            &SKY_TRANSMITTANCE,
+            &pass_layout,
+            &[(
+                "sky_transmittance_table",
+                crate::pipelines::view(&transmittance.view),
+            )],
+        );
         Self {
             layout: crate::pipelines::layout(device, &SKY_TABLES),
             passes: None,
-            transmittance: table(
-                device,
-                "engine/sky-transmittance",
-                TRANSMITTANCE_SIZE,
-                uploaded,
-            ),
+            pass_layout,
+            pass_group,
+            transmittance,
             multiple: table(device, "engine/sky-multiple", MULTIPLE_SIZE, uploaded),
             view: table(
                 device,
@@ -185,8 +206,21 @@ impl SkyPass {
         }
     }
 
+    /// The sky pass's second group's layout
+    /// (`bindings::SKY_TRANSMITTANCE`).
+    pub(crate) fn pass_layout(&self) -> &crate::pipelines::GroupLayout {
+        &self.pass_layout
+    }
+
+    /// The sky pass's second group: the transmittance table, through which
+    /// its sun's disc and night sky shine.
+    pub(crate) fn pass_group(&self) -> &wgpu::BindGroup {
+        &self.pass_group
+    }
+
     /// The sky's uniform, its sky-view and transmittance tables and their
-    /// sampler, which the sky's passes and the environment maps bind.
+    /// sampler, which the camera's group, the environment maps' sky and the
+    /// clouds' marches bind.
     pub(crate) fn bindings(&self) -> AirBindings<'_> {
         (
             &self.uniform,

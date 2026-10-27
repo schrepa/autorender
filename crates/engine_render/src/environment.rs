@@ -4,7 +4,9 @@
 //! cube holds the sky, drawn into the radiance cube whenever the atmosphere
 //! changes; the others hold reflection probes, whose captures draw into the
 //! same radiance cube face by face. Screen-space reflections
-//! fall back to them.
+//! fall back to them; a surface smoother than the sky's first level
+//! resolves mirrors the sky's own light instead (`meshes/shading.wgsl`'s
+//! `mirrored_sky`).
 
 use crate::bindings::{ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY};
 use crate::cached::{Bound, Versioned};
@@ -506,8 +508,9 @@ fn sky(lighting: &LightingUniform, clouds: [f32; 4], air: [f32; 4]) -> [[f32; 4]
     ]
 }
 
-/// The sky's group: the lighting uniform, the clouds' dome and the
-/// physically based sky's `air`.
+/// The sky's group: the lighting uniform, the physically based sky's `air`
+/// (its uniform, sky-view table and their sampler) and the clouds' domes,
+/// what the sky's light along a view reads (`sky_light.wgsl`).
 fn sky_group(
     device: &wgpu::Device,
     layout: &crate::pipelines::GroupLayout,
@@ -522,23 +525,13 @@ fn sky_group(
         layout,
         &[
             ("lighting", lighting.as_entire_binding()),
-            ("environment_clouds", crate::pipelines::view(clouds.new)),
-            (
-                "environment_cloud_sampler",
-                crate::pipelines::sampler(clouds.sampler),
-            ),
-            ("environment_clouds_old", crate::pipelines::view(clouds.old)),
-            crate::buffers::entry("environment_domes", clouds.uniform),
-            crate::buffers::entry("environment_air", air.0),
-            ("environment_view_table", crate::pipelines::view(air.1)),
-            (
-                "environment_transmittance_table",
-                crate::pipelines::view(air.2),
-            ),
-            (
-                "environment_table_sampler",
-                crate::pipelines::sampler(air.3),
-            ),
+            crate::buffers::entry("sky_air", air.0),
+            ("sky_view_table", crate::pipelines::view(air.1)),
+            ("sky_table_sampler", crate::pipelines::sampler(air.3)),
+            ("sky_clouds", crate::pipelines::view(clouds.new)),
+            ("sky_clouds_old", crate::pipelines::view(clouds.old)),
+            ("sky_cloud_sampler", crate::pipelines::sampler(clouds.sampler)),
+            crate::buffers::entry("sky_domes", clouds.uniform),
         ],
     )
 }

@@ -724,21 +724,29 @@ struct EnvironmentLight {
     interior: vec2<f32>,
 }
 
-// The environment around `world`, from one walk of the reflection probes
-// whose boxes hold it, smallest first, each fading in over its blend
-// distance inside its faces. Reflected toward `reflected` off a surface of
-// `normal` and `roughness`: those probes' maps, each weighted by what the
-// smaller ones leave, and the sky's map for what they all leave; each map at
-// the level blurred by that roughness, read along the lobe's dominant
-// direction, which leans toward the normal as the surface roughens (Lagarde
-// and de Rousiers). Inside interiors' boxes only their shares of the sky and
-// sun reach; all of both elsewhere.
-fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
-        world: vec3<f32>) -> EnvironmentLight {
-    let smoothness = 1.0 - roughness;
-    let lean = smoothness * (sqrt(smoothness) + roughness);
-    let direction = normalize(mix(normal, reflected, lean));
-    let level = roughness * f32(textureNumLevels(environment_maps) - 1u);
+// The lobe a surface reflects its environment over: its dominant direction
+// (`dominant_direction`), which the maps are read along, and the level of
+// the environment maps its roughness blurs them to.
+struct EnvironmentLobe {
+    direction: vec3<f32>,
+    level: f32,
+}
+
+// The lobe `point` reflects its environment over.
+fn environment_lobe(point: SurfacePoint) -> EnvironmentLobe {
+    let levels = textureNumLevels(environment_maps);
+    return EnvironmentLobe(dominant_direction(point), point.roughness * f32(levels - 1u));
+}
+
+// The environment around `world` reflected over `lobe`, from one walk of the
+// reflection probes whose boxes hold it, smallest first, each fading in over
+// its blend distance inside its faces: those probes' maps at the lobe's
+// level, each weighted by what the smaller ones leave, and `reflected_sky`,
+// the sky's light the lobe reflects, for what they all leave. Inside
+// interiors' boxes only their shares of the sky and sun reach; all of both
+// elsewhere.
+fn environment_light(lobe: EnvironmentLobe, world: vec3<f32>, reflected_sky: vec3<f32>)
+        -> EnvironmentLight {
     var light = vec3<f32>(0.0);
     var covered = 0.0;
     var shares = vec2<f32>(1.0);
@@ -774,9 +782,9 @@ fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
                 let fade = select(1.0, saturate(depth / blend), blend > 0.0);
                 if reflects {
                     let weight = fade * (1.0 - covered);
-                    let along = box_projected(world, direction, center, extent);
+                    let along = box_projected(world, lobe.direction, center, extent);
                     light += weight * textureSampleLevel(environment_maps, environment_sampler,
-                        along, second.w, level).rgb;
+                        along, second.w, lobe.level).rgb;
                     covered += weight;
                 }
                 if shades {
@@ -787,10 +795,30 @@ fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
         }
     }
     if covered < 0.999 {
-        light += (1.0 - covered)
-            * textureSampleLevel(environment_maps, environment_sampler, direction, 0, level).rgb;
+        light += (1.0 - covered) * reflected_sky;
     }
     return EnvironmentLight(light, shares);
+}
+
+// The sky's light `lobe` reflects as the sky's environment map holds it, at
+// the lobe's level.
+fn sky_map_light(lobe: EnvironmentLobe) -> vec3<f32> {
+    return textureSampleLevel(environment_maps, environment_sampler, lobe.direction, 0,
+        lobe.level).rgb;
+}
+
+// The sky's light `lobe` reflects from `world`, exact where the map's
+// texels are coarser than the lobe: the sky's own light along it
+// (`sky_along`) stands in for the map's first level, the sky unblurred, and
+// hands over to its second as trilinear filtering blends levels, so a
+// mirror takes the exact sky, a lobe blurred to the second level or past it
+// the map, and every roughness keeps the sky's mean.
+fn mirrored_sky(lobe: EnvironmentLobe, world: vec3<f32>) -> vec3<f32> {
+    let blurred = sky_map_light(EnvironmentLobe(lobe.direction, max(lobe.level, 1.0)));
+    if lobe.level >= 1.0 {
+        return blurred;
+    }
+    return mix(sky_along(world, lobe.direction), blurred, lobe.level);
 }
 
 // Whether `world` lies inside an interior probe's box. Lights keep to
@@ -829,8 +857,9 @@ fn sized_highlights() -> bool {
     return lighting.highlights.y != 0.0;
 }
 
-// The direction a surface's highlight lobe leans to: the view mirrored,
-// toward the normal as the surface roughens (Lagarde and de Rousiers).
+// The direction a surface's lobe of reflection leans to, along which its
+// highlights and its environment are read: the view mirrored, toward the
+// normal as the surface roughens (Lagarde and de Rousiers).
 fn dominant_direction(point: SurfacePoint) -> vec3<f32> {
     let smoothness = 1.0 - point.roughness;
     let lean = smoothness * (sqrt(smoothness) + point.roughness);
@@ -889,8 +918,27 @@ fn sun_highlight(point: SurfacePoint, sun: vec3<f32>, n_l: f32) -> vec3<f32> {
 // view crosses it.
 const REFLECTION_FADE: f32 = 0.2;
 
-// Lit, fogged and graded color of `point` with `local` light added.
+// Lit, fogged and graded color of `point` with `local` light added, the sky
+// it mirrors exact where it is smooth (`mirrored_sky`).
 fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
+    let lobe = environment_lobe(point);
+    return finish_reflecting(point, local, lobe, mirrored_sky(lobe, point.world));
+}
+
+// `finish` in terrain's passes, whose stages hold no more sampled textures
+// and so none of the sky's tables or the clouds' domes
+// (`bindings::CAMERA_TERRAIN`): they mirror the sky's environment map at
+// every roughness.
+fn finish_ground(point: SurfacePoint, local: vec3<f32>) -> Shaded {
+    let lobe = environment_lobe(point);
+    return finish_reflecting(point, local, lobe, sky_map_light(lobe));
+}
+
+// Lit, fogged and graded color of `point` with `local` light added, its
+// environment reflected over `lobe`, `reflected_sky` the sky's light it
+// reflects there.
+fn finish_reflecting(point: SurfacePoint, local: vec3<f32>, lobe: EnvironmentLobe,
+        reflected_sky: vec3<f32>) -> Shaded {
     let normal = point.normal;
     let view = point.view;
     let sun = lighting.sun.xyz;
@@ -925,8 +973,7 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     }
     // The environment mirrored in the surface, blurred by its roughness,
     // weighted by the environment BRDF.
-    let environment = environment_light(reflect(-view, normal), normal, point.roughness,
-        point.world);
+    let environment = environment_light(lobe, point.world, reflected_sky);
     let brdf = environment_brdf(point.f0, point.roughness, point.n_v);
     let reflection = environment.reflected * brdf * specular;
     // Rim light outlines walls against the sky; level surfaces seen at
