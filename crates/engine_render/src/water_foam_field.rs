@@ -159,8 +159,13 @@ pub(crate) struct FoamView {
 impl FoamField {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let empty_layout = crate::pipelines::layout(device, &EMPTY);
-        let empty =
-            crate::pipelines::group(device, "engine/water-foam-empty", &EMPTY, &empty_layout, &[]);
+        let empty = crate::pipelines::group(
+            device,
+            "engine/water-foam-empty",
+            &EMPTY,
+            &empty_layout,
+            &[],
+        );
         Self {
             layout: crate::pipelines::layout(device, &WATER_FOAM),
             empty_layout,
@@ -213,9 +218,10 @@ impl FoamField {
         };
         let cell = settings.simulation_cell / FOAM_SPLIT;
         let cells = wanted(device, seen);
-        let keeps = self.grid.as_ref().is_some_and(|grid| {
-            grid.cell == cell && grid.cells >= cells && grid.cells < 2 * cells
-        });
+        let keeps = self
+            .grid
+            .as_ref()
+            .is_some_and(|grid| grid.cell == cell && grid.cells >= cells && grid.cells < 2 * cells);
         if !keeps {
             self.grid = Some(FoamGrid::new(device, &self.layout, (cells, cell)));
             self.generation += 1;

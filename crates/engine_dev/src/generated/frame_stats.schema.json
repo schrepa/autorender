@@ -1150,6 +1150,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "foam_cells": {
+          "description": "Cells along a side of the foam field terrains' water carries around\nthe detail eye: 0 while none runs; as many as reach out to where its\ncells span two pixels, or fewer where the display's pixels or the\ndevice's storage bindings cut them, and its cells span more there.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "leaves": {
           "description": "Leaves of terrains' water's subdivisions the last read-back frame\ndrew, a few frames late.",
           "format": "uint32",
@@ -1182,7 +1188,8 @@
         "dropped_blocks",
         "simulated_cells",
         "touches",
-        "dropped_touches"
+        "dropped_touches",
+        "foam_cells"
       ],
       "type": "object"
     }

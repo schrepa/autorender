@@ -787,6 +787,13 @@ export interface WaterStats {
    */
   dropped_touches: number;
   /**
+   * Cells along a side of the foam field terrains' water carries around
+   * the detail eye: 0 while none runs; as many as reach out to where its
+   * cells span two pixels, or fewer where the display's pixels or the
+   * device's storage bindings cut them, and its cells span more there.
+   */
+  foam_cells: number;
+  /**
    * Leaves of terrains' water's subdivisions the last read-back frame
    * drew, a few frames late.
    */

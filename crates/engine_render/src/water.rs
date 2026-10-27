@@ -414,9 +414,10 @@ impl WaterPass {
         // Copies of another frame's kind, or whose group binds the foam
         // field's texture before it changed, are made again.
         let foam = self.foam.generation();
-        let stale = self.behind.get().is_some_and(|copies| {
-            copies.scene.is_some() != refracts || copies.foam != foam
-        });
+        let stale = self
+            .behind
+            .get()
+            .is_some_and(|copies| copies.scene.is_some() != refracts || copies.foam != foam);
         if stale {
             self.behind.release();
         }
@@ -500,7 +501,10 @@ impl WaterPass {
                     "water_foam_field",
                     crate::pipelines::view(self.foam.view().unwrap_or(&self.placeholders.scene)),
                 ),
-                ("water_foam_sampler", crate::pipelines::sampler(self.foam.sampler())),
+                (
+                    "water_foam_sampler",
+                    crate::pipelines::sampler(self.foam.sampler()),
+                ),
             ],
         );
         BehindCopies {
