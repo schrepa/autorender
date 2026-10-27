@@ -288,8 +288,6 @@ pub struct Engine {
     render_query: RenderQuery,
     retained: retained_render::RetainedRender,
     extractions: extraction::Extractions,
-    // The terrains, whose bakes say whether water can draw.
-    terrains: QueryState<&'static Terrain>,
     plugins_finalized: bool,
     tick_ahead: TickAhead,
 }
@@ -434,7 +432,6 @@ impl Engine {
             Option<Ref<Tint>>,
         ), Or<(With<Cube>, With<Mesh3d>)>>();
         let extractions = extraction::Extractions::new(app.world_mut());
-        let terrains = app.world_mut().query::<&Terrain>();
         let mut retained = retained_render::RetainedRender::new(
             cube_mesh,
             config.frustum_culling,
@@ -447,7 +444,6 @@ impl Engine {
             render_query,
             retained,
             extractions,
-            terrains,
             plugins_finalized: false,
             tick_ahead: TickAhead::None,
         }
@@ -907,12 +903,7 @@ impl Engine {
         let _profile = engine_profile::span("ecs", "ViewSync");
         let world = self.app.world_mut();
         world.run_schedule(ViewSync);
-        // Water draws where a terrain's bakes give it water.
-        let water = self
-            .terrains
-            .iter(world)
-            .any(|terrain| terrain.layers.has_hydrology());
-        tables::update_tables(world, water);
+        tables::update_tables(world);
     }
 
     /// Records the simulation time this frame presents ([`PresentedTime`]): the

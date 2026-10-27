@@ -79,8 +79,8 @@ shared_groups! {
         sky: 42..43 [sky_transmittance_table],
         view_clouds: 46..47 [view_clouds],
         water: 50..62 [
-            water_surface, water_info, water, water_fall_sampler, water_fall_map,
-            water_sim_cells, water_sim_ground, water_sim_beds, water_tree
+            water_surface, water_info, water, water_sim_cells, water_sim_ground, water_sim_beds,
+            water_tree
         ],
         errors: 62..64 [terrain_errors, water_errors],
     }

@@ -336,11 +336,6 @@ gpu_consts! {
     /// pass takes.
     pub(crate) const WATER_SIM_SOURCE_GROUP: u32 = 64 => ["WATER_SIM_SOURCE_GROUP" in WATER_SIM_SHADER, "@sim_source" in WATER_SIM_SHADER];
 
-    // crate::water_fall_map
-    /// How many times longer along falling water than across it water
-    /// reads falling water's map.
-    pub(crate) const FALL_MAP_STRETCH: f32 = engine_core::table_data::falls::STRETCH => ["FALL_MAP_STRETCH"];
-
     // crate::ground_cover
     /// Bytes of a blade or tuft (`CoverBlade`).
     pub(crate) const BLADE_BYTES: u64 = 32 => ["size_of CoverBlade"];
@@ -566,12 +561,6 @@ gpu_consts! {
 
 gpu_mirrors! {
     engine_core::table_data::sky::MULTIPLE_SIDE => ["SKY_MULTIPLE_SIZE"];
-    engine_core::table_data::falls::BUBBLES => ["FALL_MAP_BUBBLES"];
-    engine_core::table_data::falls::SPREAD => ["FALL_MAP_SPREAD"];
-    engine_core::table_data::falls::STRAND_ACROSS => ["FALL_MAP_STRAND_ACROSS"];
-    engine_core::table_data::falls::STRAND_ALONG => ["FALL_MAP_STRAND_ALONG"];
-    engine_core::table_data::falls::FIBER_ACROSS => ["FALL_MAP_FIBER_ACROSS"];
-    engine_core::table_data::falls::FIBER_ALONG => ["FALL_MAP_FIBER_ALONG"];
     engine_core::terrain_data::hydraulics::GRAVITY => ["SIM_GRAVITY" in WATER_SIM_SHADER, "WATER_GRAVITY"];
     engine_core::terrain_data::shallow_water::THETA => ["SIM_THETA" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::THIN => ["SIM_THIN" in WATER_SIM_SHADER];

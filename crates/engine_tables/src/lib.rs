@@ -1,8 +1,7 @@
 //! The static tables the renderer reads, as records: the noise clouds are
-//! shaped from ([`clouds`]), the physically based sky's transmittance and
-//! multiple scattering for an air ([`sky`]) and falling water's map
-//! ([`falls`]); and the spread of the wind's waves the sea's waves head by
-//! ([`waves`]).
+//! shaped from ([`clouds`]) and the physically based sky's transmittance
+//! and multiple scattering for an air ([`sky`]); and the spread of the
+//! wind's waves the sea's waves head by ([`waves`]).
 //! CPU code makes each the same bits on every host (IEEE arithmetic without
 //! fused operations, `libm`'s transcendental functions), wherever it runs:
 //! on a host's workers, in place, or in the cook, which ships them. A
@@ -21,7 +20,6 @@ include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
 mod bytes;
 pub mod clouds;
-pub mod falls;
 pub mod sky;
 pub mod waves;
 
@@ -30,25 +28,23 @@ pub use bytes::{f16_bits, f16_value};
 use engine_math::collections::HashMap;
 
 /// The kinds of table jobs, which hosts carry by name: a slab of the
-/// cloud noise, the sky's tables for an air, and falling water's map. Each
-/// one's input is its identity.
+/// cloud noise, and the sky's tables for an air. Each one's input is its
+/// identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TableKind {
     CloudNoise,
     SkyTables,
-    FallMap,
 }
 
 impl TableKind {
     /// Every kind.
-    pub const ALL: [Self; 3] = [Self::CloudNoise, Self::SkyTables, Self::FallMap];
+    pub const ALL: [Self; 2] = [Self::CloudNoise, Self::SkyTables];
 
     /// Its name, as hosts carry it and key the records they keep by.
     pub const fn name(self) -> &'static str {
         match self {
             Self::CloudNoise => "cloud_noise",
             Self::SkyTables => "sky_tables",
-            Self::FallMap => "water_fall_map",
         }
     }
 
@@ -69,13 +65,11 @@ fn make(kind: TableKind, input: &[u8]) -> Result<Vec<u8>, String> {
     match kind {
         TableKind::CloudNoise => clouds::record(input),
         TableKind::SkyTables => sky::record(input),
-        TableKind::FallMap if input.is_empty() => Ok(falls::record()),
-        TableKind::FallMap => Err("the fall map's job takes no input".into()),
     }
 }
 
 /// A table job a worker started: a slab of the cloud noise, made a texel a
-/// work unit, or another table, made whole at its first step.
+/// work unit, or the sky's tables, made whole at their first step.
 enum Running {
     Noise(Box<clouds::NoisePart>),
     Whole(TableKind, Vec<u8>),
@@ -108,7 +102,7 @@ impl TableWorker {
         let kind = TableKind::from_name(kind).ok_or_else(|| format!("unknown job kind {kind}"))?;
         let running = match kind {
             TableKind::CloudNoise => Running::Noise(Box::new(clouds::NoisePart::new(input)?)),
-            TableKind::SkyTables | TableKind::FallMap => Running::Whole(kind, input.to_vec()),
+            TableKind::SkyTables => Running::Whole(kind, input.to_vec()),
         };
         self.running.insert(id, running);
         Ok(())

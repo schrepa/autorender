@@ -5,16 +5,15 @@
 //! its edges curling back toward the rock as thick as it stands. Water lying
 //! on the ground, up the river from a lip, down the rock between a cascade's
 //! jets and in the pool a jet lands in, the cooked water draws with its own
-//! flow and foam. Each vertex holds where across the sheet it lies, the
-//! seconds since the water passing it left the fall's lip and since it took
-//! off, and how fast it runs there, so the shader
-//! (`meshes/water_falls.wgsl`) draws what the water carries where it has
-//! carried it: streaks falling and stretching as the water speeds up, white
-//! water breaking up as it flies. How white the water has turned and how far
-//! the air has broken it up follow the falling water's physics: a jet leaves
-//! its lip as thick as the water each meter of it carries over its speed,
-//! its edges spread a share of how far it has fallen, and its core lasts a
-//! fall that grows with what it carries (Horeni, after USBR 2015); clinging
+//! flow and foam. Each vertex holds how far across the sheet it stands from
+//! the jet's middle, half the width of its water there and how far that
+//! water's edges have spread, the sheet's thickness, how white its water has
+//! turned and how far the air has broken it up, which the shader
+//! (`meshes/water_falls.wgsl`) shows and nothing else, smoothly across the
+//! sheet. All of it follows the falling water's physics: a jet leaves its
+//! lip as thick as the water each meter of it carries over its speed, its
+//! edges spread a share of how far it has fallen, and its core lasts a fall
+//! that grows with what it carries (Horeni, after USBR 2015); clinging
 //! to rock between a cascade's jets, its water turns white once its
 //! turbulence reaches its surface (Chanson's inception point) as far as the
 //! rock is steep enough to keep air in it, turns white where it lands and
@@ -57,8 +56,9 @@ const LINGERING: f32 = 0.3;
 /// The thinnest and thickest a jet stands (meters): the water each meter
 /// of its width carries over its speed.
 const THICKNESS: [f32; 2] = [0.05, 1.2];
-/// The share wider than its river a jet stands, so its edges fade over the
-/// banks rather than short of the water.
+/// The share wider than its river a jet's sheet stands besides its edges'
+/// spread, so its water's edges thin out on the sheet rather than at its
+/// border.
 const OVERHANG: f32 = 1.15;
 /// How much faster a jet's middle leaves its lip than its edges (a share
 /// of its speed): its curtain bows out in the middle as it falls.
@@ -76,14 +76,12 @@ pub(crate) fn sheets<'a>(
 ) -> Vec<Range<u32>> {
     vertices.clear();
     indices.clear();
-    let mut number = 0_u32;
     falls
         .into_iter()
         .map(|(origin, set)| {
             let first = indices.len() as u32;
             for fall in set {
-                fall_jets(fall, origin, number, vertices, indices);
-                number += 1;
+                fall_jets(fall, origin, vertices, indices);
             }
             first..indices.len() as u32
         })
@@ -133,15 +131,14 @@ fn passings(fall: &Fall) -> Option<(Vec<Passing>, f32)> {
     Some((path, lip_speed))
 }
 
-/// A row of a jet: its middle (terrain-local), the seconds after leaving
-/// the lip its water passes it, the way it runs and how fast, the seconds
-/// since it took off, how white its water has turned and how far the air
-/// has broken it up (0 to 1 each), the meters each of its edges has spread,
-/// half the meters across its water and how much of the sky it sees.
+/// A row of a jet: its middle (terrain-local), the way it runs and how
+/// fast, the seconds since it took off, how white its water has turned and
+/// how far the air has broken it up (0 to 1 each), the meters each of its
+/// edges has spread, half the meters across its water and how much of the
+/// sky it sees.
 #[derive(Clone, Copy)]
 struct Row {
     center: Vec3,
-    time: f32,
     tangent: Vec3,
     speed: f32,
     flying: f32,
@@ -237,7 +234,6 @@ fn rows(path: &[Passing], carried: f32) -> Vec<Vec<Row>> {
                 if let Some(jet) = jets.last_mut() {
                     jet.push(Row {
                         center,
-                        time,
                         tangent,
                         speed,
                         flying,
@@ -263,12 +259,11 @@ fn rows(path: &[Passing], carried: f32) -> Vec<Vec<Row>> {
     jets
 }
 
-/// Fall `fall`'s jets, its terrain at `origin` and its number `number`:
-/// each a strip of its rows, COLUMNS across.
+/// Fall `fall`'s jets, its terrain at `origin`: each a strip of its rows,
+/// COLUMNS across.
 fn fall_jets(
     fall: &Fall,
     origin: Vec3,
-    number: u32,
     vertices: &mut Vec<FallVertex>,
     indices: &mut Vec<u32>,
 ) {
@@ -295,8 +290,7 @@ fn fall_jets(
             };
             // Out from the rock it falls from.
             let normal = across.cross(tangent).normalize_or(Vec3::Y);
-            let half = row.half * OVERHANG;
-            let width = half + row.spread;
+            let width = row.half * OVERHANG + row.spread;
             let thickness = clamp(carried / row.speed, THICKNESS[0], THICKNESS[1]);
             let base = vertices.len() as u32;
             for column in 0..=COLUMNS {
@@ -310,9 +304,7 @@ fn fall_jets(
                 vertices.push(FallVertex {
                     position: position.to_array(),
                     normal: normal.to_array(),
-                    tangent: [tangent.x, tangent.y, tangent.z, row.speed],
-                    jet: [side, row.time, lip_speed, half],
-                    fall: [row.flying, thickness, number as f32],
+                    sheet: [side * width, row.half, row.spread, thickness],
                     state: [row.white, row.broken],
                     sky: row.sky,
                 });
@@ -330,14 +322,12 @@ fn fall_jets(
 
 /// The vertex buffer layout of [`FallVertex`]es.
 pub(crate) fn fall_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 7] = crate::pipelines::vertex_attributes!(FallVertex {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 5] = crate::pipelines::vertex_attributes!(FallVertex {
         0 => position as Float32x3,
         1 => normal as Float32x3,
-        2 => tangent as Float32x4,
-        3 => jet as Float32x4,
-        4 => fall as Float32x3,
-        5 => state as Float32x2,
-        6 => sky as Float32,
+        2 => sheet as Float32x4,
+        3 => state as Float32x2,
+        4 => sky as Float32,
     });
     wgpu::VertexBufferLayout {
         array_stride: size_of::<FallVertex>() as u64,
