@@ -26,8 +26,8 @@ struct Post {
     occlusion: vec4<f32>,
     // Strength and 1 when bloom runs (zw unused).
     bloom: vec4<f32>,
-    // Ray distance, strength and 1 when screen-space reflections run (w
-    // unused).
+    // Ray distance, strength and 1 when reflections run, and the terrains
+    // their world trace walks (reflections.wgsl).
     reflections: vec4<f32>,
     // The haze: the turn of its march's jitter this frame, the pixels
     // across and down its history holds (0 without one), and 1 when it

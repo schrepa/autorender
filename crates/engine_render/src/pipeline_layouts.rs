@@ -14,7 +14,8 @@ use crate::bindings::{
     ENVIRONMENT_SKY, EXPOSURE, HAZE, IMPOSTOR_BAKE, IMPOSTOR_DRAW, LIGHT_BINNING, LIGHT_SHADING,
     MATERIAL, MIPMAPS, OCCUPANCY, PARTICLES, POST, PRESENTATION_COMPACT, PRESENTATION_COMPOSE,
     PRESENTATION_CULL, PRESENTATION_FADES, PRESENTATION_LEVEL, PRESENTATION_SKIN_BOUNDS,
-    PRESENTATION_TESTS, PYRAMID_DOWN, PYRAMID_FIRST, RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP,
+    PRESENTATION_TESTS, PYRAMID_DOWN, PYRAMID_FIRST, REFLECTIONS, RETAINED_POSES, SCATTER_CULL,
+    SCATTER_SNAP,
     SHADOW_MARKS, SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW, SKY_TABLES,
     SKY_TRANSMITTANCE, TAA_RESOLVE, TEMPORAL_POSES, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS,
     TERRAIN_RESOLVE, TERRAIN_SUBDIVISION, TERRAIN_SUBDIVISION_CAMERA, TRANSPARENT_COMPOSITE, Table,
@@ -148,8 +149,11 @@ pipeline_layouts! {
     SHADOW_SKINNED_PIPELINES = [SHADOW_SKINNED];
     SHADOW_MARKS_PIPELINES = [SHADOW_MARKS];
     /// The screen effects, temporal antialiasing's resolve and
-    /// transparency's composite.
+    /// transparency's composite; reflections over the main passes' first
+    /// group as terrain binds it and their own, sixteen sampled textures and
+    /// seven storage buffers in fragments.
     POST_PIPELINES = [POST];
+    REFLECTION_PIPELINES = [CAMERA_TERRAIN, REFLECTIONS];
     TAA_RESOLVE_PIPELINES = [TAA_RESOLVE];
     TRANSPARENT_COMPOSITE_PIPELINES = [TRANSPARENT_COMPOSITE];
     /// The debug views' pass, built only while a debug view shows.
@@ -204,5 +208,9 @@ pipeline_layouts! {
 /// start builds them unless they are on. Terrain's subdivision, which
 /// replaced the camera's patches selected on the CPU, takes one, and the
 /// shadow clipmap's marks one of their own: the one pass reading the depth
-/// buffer with the camera, which tells which tiles get memory.
-pub const LAYOUT_BUDGET: usize = 71;
+/// buffer with the camera, which tells which tiles get memory. Reflections
+/// take one: their world trace lights what it meets as the main passes
+/// light it, through their first group, and walks the terrain's and placed
+/// objects' data beside the screen's, more sampled textures than the screen
+/// effects' shared layout leaves.
+pub const LAYOUT_BUDGET: usize = 72;

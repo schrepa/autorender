@@ -13,7 +13,9 @@ use crate::gpu_layouts::scene::{
     CameraUniform, ColorData, GroundData, LightingUniform, MaterialUniform, PoseData, PostUniform,
     ResolveUniform, RouteData, ShadowCullUniform, ShadowUniform, SkyUniform,
 };
+use crate::gpu_layouts::scatter::Record as ScatterRecord;
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
+use crate::gpu_layouts::world_trace::TraceTerrain;
 use crate::gpu_layouts::{
     bounce, clouds, debug_view, deformation, ground_cover, occupancy, scatter, sky, terrain, water,
 };
@@ -150,10 +152,11 @@ tables! {
     /// refracts and without the sky's tables and the clouds' domes, which
     /// keeps their fragment stages within the 16 sampled textures one may
     /// bind; terrain mirrors the sky's environment map alone
-    /// (`meshes/shading.wgsl`'s `finish_ground`).
+    /// (`meshes/shading.wgsl`'s `finish_ground`). Reflections light what
+    /// their world trace meets through it too (`reflections.wgsl`).
     const CAMERA_TERRAIN: Table = Table {
         label: "engine/camera-terrain-layout",
-        serves: [SHADER @ 0],
+        serves: [SHADER @ 0, REFLECTIONS_SHADER @ 0],
         bindings: &[
             uniform_of(0, "camera", size_of::<CameraUniform>(), VF),
             uniform_of(1, "lighting", size_of::<LightingUniform>(), F),
@@ -1071,15 +1074,10 @@ tables! {
             texture(6, "bloom", Float, D2, F),
             sampler(7, "linear", Filtering, F),
             texture(8, "reflections", Float, D2, F),
-            // The haze's march, nearest depths, raw occlusion, and the
-            // surface's packed words.
+            // The haze's march and raw occlusion.
             texture(9, "marched", Unfilterable, D2, F),
-            texture(10, "nearest_depth", Unfilterable, D2, F),
             texture(12, "raw_occlusion", Unfilterable, D2, F),
-            texture(13, "surface_texture", Uint, D2, F),
-            // The scene with its levels, and a bloom level halved beside a
-            // level of the scene.
-            texture(14, "scene_levels", Float, D2, F),
+            // A bloom level halved beside a level of the scene.
             texture(15, "bloom_source", Float, D2, F),
             // Sky occlusion's maps, their comparison sampler and where each
             // looks, which the occlusion pass reads.
@@ -1088,8 +1086,42 @@ tables! {
             uniform_of(18, "sky", size_of::<SkyUniform>(), F),
             // The haze filtered over time: the history its filter
             // reprojects, or this frame's, which the composite lays over the
-            // scene; the fifteenth sampled texture.
+            // scene; the twelfth sampled texture.
             texture(19, "haze", Float, D2, F),
+        ],
+    };
+
+    /// Group 1 of reflections (`reflections.wgsl`), after the main passes'
+    /// first group as terrain binds it (`CAMERA_TERRAIN`): the screen's
+    /// part, the effects' uniform, the depth buffer, the glow target, the
+    /// linear sampler, the pyramid of nearest depths, the surface's packed
+    /// words and the scene with its levels; and what the world trace walks,
+    /// the terrain pass's heights, directory, peaks, control values,
+    /// palette, macro colors and sky maps, the trace's terrains and
+    /// placements, and the placed objects' records and poses. With the
+    /// first group, sixteen sampled textures and seven storage buffers.
+    const REFLECTIONS: Table = Table {
+        label: "engine/post-reflections-layout",
+        serves: [REFLECTIONS_SHADER @ 1],
+        bindings: &[
+            uniform_of(0, "post", size_of::<PostUniform>(), F),
+            texture(1, "depth_texture", Depth, D2, F),
+            texture(3, "glow", Float, D2, F),
+            sampler(7, "linear", Filtering, F),
+            texture(10, "nearest_depth", Unfilterable, D2, F),
+            texture(13, "surface_texture", Uint, D2, F),
+            texture(14, "scene_levels", Float, D2, F),
+            texture(20, "heights", Unfilterable, D2Array, F),
+            read(21, "directory", F),
+            texture(22, "peaks", Unfilterable, D2Array, F),
+            texture(23, "control", Uint, D2Array, F),
+            uniform_of(24, "palette", terrain::PALETTE_BYTES, F),
+            texture(25, "macro_maps", Float, D2Array, F),
+            texture(26, "terrain_sky", Float, D2Array, F),
+            read_of(27, "world_terrains", size_of::<TraceTerrain>(), F),
+            read(28, "world_placed", F),
+            read_of(29, "placed_records", size_of::<ScatterRecord>(), F),
+            read_of(30, "placed_poses", POSE, F),
         ],
     };
 

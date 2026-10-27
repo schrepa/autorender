@@ -63,6 +63,19 @@ impl ScatterDraws {
     pub(super) fn covers(&self) -> &[Cover] {
         &self.covers
     }
+
+    /// What reflections' world trace reads of placed objects: the pool's
+    /// tiles, slots' records and poses and its revision, and each draw
+    /// group's cover.
+    pub(super) fn placements(&self) -> crate::world_trace::Placements<'_> {
+        crate::world_trace::Placements {
+            tiles: self.pool.tiles(),
+            records: &self.pool.records,
+            poses: &self.pool.poses,
+            covers: &self.covers,
+            revision: self.pool.revision(),
+        }
+    }
 }
 
 /// One draw group of placed objects: each level's mesh, its material, its
@@ -175,13 +188,7 @@ impl Renderer {
         let infos: Vec<TerrainInfo> = terrains
             .iter()
             .enumerate()
-            .map(|(index, terrain)| {
-                let (directory, palette, _, colors) = self.terrain.cover_terrain(index);
-                TerrainInfo {
-                    origin: terrain.origin.extend(terrain.pyramid.spacing(0)).to_array(),
-                    levels: [directory, terrain.pyramid.levels(), palette, colors],
-                }
-            })
+            .map(|(index, terrain)| crate::world_trace::terrain_info(&self.terrain, index, terrain))
             .collect();
         let draws = &mut self.scatter_draws;
         let (dirty, counts_changed) = draws.pool.take_changes();
@@ -522,7 +529,11 @@ impl Renderer {
                     flags: asset.sway.to_bits(),
                 };
                 let sphere = ((low + high) * 0.5, (high - low).length() * 0.5);
-                let cover = Cover::of(bounds.min(), bounds.max());
+                let cover = Cover::of(
+                    bounds.min(),
+                    bounds.max(),
+                    crate::terrain::placed_color(asset),
+                );
                 groups.push(ScatterDraw {
                     meshes,
                     material: asset.material.handle,

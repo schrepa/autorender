@@ -195,4 +195,5 @@ layout_modules! {
     terrain,
     virtual_geometry,
     water,
+    world_trace,
 }

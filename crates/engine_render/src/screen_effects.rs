@@ -13,11 +13,13 @@ use engine_core::Environment;
 use crate::render_graph::{NodeBuilder, Resource};
 
 /// What the effects' uniform fields read beyond the settings: the turn of
-/// the haze's jitter this frame, and the pixels across and down the haze's
-/// history holds (none without one).
+/// the haze's jitter this frame, the pixels across and down the haze's
+/// history holds (none without one), and the terrains reflections' world
+/// trace walks (`world_trace::WorldTrace::walked`).
 pub(crate) struct UniformFrame {
     pub(crate) haze_turn: f32,
     pub(crate) haze_history: [f32; 2],
+    pub(crate) world_terrains: u32,
 }
 
 /// Whether the haze's march runs under `environment`: haze on, with a
@@ -133,16 +135,23 @@ screen_effects! {
         uniform: |settings, on, _| [settings.bloom.sanitized().intensity, on, 0.0, 0.0],
         reads: [Scene, Glow],
     },
-    /// Screen-space reflections: every pixel's ray, by its own shading
-    /// normal and roughness from the surface target, walked over a pyramid
-    /// of the depth buffer's nearest depths every frame, on past the sheets
-    /// and objects it passes behind by what the surface target says lies
-    /// behind each pixel.
+    /// Reflections: every pixel's ray, by its own shading normal and
+    /// roughness from the surface target, walked over a pyramid of the
+    /// depth buffer's nearest depths every frame, meeting what the screen
+    /// shows by what the surface target says lies behind each pixel, and
+    /// going on through the terrains' resident tiles and the canopies of
+    /// their placed objects where the screen cannot see (`world_trace`), as
+    /// many terrains as the uniform's last field counts.
     reflections {
         gate: |environment| environment.reflections.sanitized().enabled(),
-        uniform: |settings, on, _| {
+        uniform: |settings, on, frame| {
             let reflections = settings.reflections.sanitized();
-            [reflections.distance, reflections.intensity, on, 0.0]
+            [
+                reflections.distance,
+                reflections.intensity,
+                on,
+                frame.world_terrains as f32,
+            ]
         },
         reads: [Depth, Scene, Glow, Surface],
     },

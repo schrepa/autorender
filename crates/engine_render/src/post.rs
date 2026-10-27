@@ -1,5 +1,5 @@
 //! Screen effects: ambient occlusion and bloom, the haze
-//! and screen-space reflections.
+//! and reflections.
 //!
 //! Frames with an effect draw the scene into a color target whose alpha is the
 //! ambient share of each pixel's light, and a glow target of each pixel's
@@ -9,10 +9,13 @@
 //! filter smooths it on each surface. The haze marches the near air through
 //! the shadow clipmap, and its filter blends that over the last displayed
 //! frame's result, reprojected, which a copy keeps for the next. Reflections
-//! walk a pyramid of the depth buffer's nearest depths, on past the sheets
-//! and objects their rays pass behind (the surface target's last word),
-//! rough ones reading the scene through its levels, each half the one
-//! before, which the scene target holds below it; bloom filters the glowing
+//! walk a pyramid of the depth buffer's nearest depths, meeting what the
+//! screen shows by what lies behind each pixel (the surface target's last
+//! word), rough ones reading the scene through its levels, each half the one
+//! before, which the scene target holds below it; their rays go on through
+//! the world where the screen cannot see (`world_trace`), lit as the main
+//! passes light it, over the main passes' first group as terrain binds it
+//! and a group of their own (`reflections.wgsl`). Bloom filters the glowing
 //! light down a chain of levels from half the render size and back up.
 //! Temporally antialiased frames apply them in their resolve, other frames
 //! in a composite that writes the canvas, upscaling the scene to the
@@ -27,13 +30,13 @@
     reason = "encoding reads the targets the frame's preparation sized"
 )]
 
-use crate::shaders::entry::{haze, post};
+use crate::shaders::entry::{haze, post, reflections};
 use engine_core::{Applied, RenderSnapshot, glam::Mat4};
 
-use crate::bindings::{HAZE, POST};
+use crate::bindings::{HAZE, POST, REFLECTIONS};
 use crate::cached::{Bound, GroupCache, Versioned};
 use crate::depth_pyramid::{DepthPyramid, Reduction};
-use crate::gpu_data::{HAZE_SHADER, POST_SHADER, PostUniform};
+use crate::gpu_data::{HAZE_SHADER, POST_SHADER, PostUniform, REFLECTIONS_SHADER};
 use crate::pipelines::{self, Fillers, Fullscreen, filled_group, fullscreen};
 use crate::profiling::{GpuProfiler, Span};
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -151,10 +154,15 @@ pub(crate) struct PostPass {
     occlusion: wgpu::RenderPipeline,
     // Filters occlusion on each surface.
     effects_filter: wgpu::RenderPipeline,
+    // Reflections, over the main passes' first group as terrain binds it and
+    // their own, whose layout this is.
     reflections: wgpu::RenderPipeline,
+    reflections_layout: crate::pipelines::GroupLayout,
     // Nearest depths the reflection rays walk, created with the first frame
-    // that reflects.
+    // that reflects, and what their world trace walks beside the terrain's
+    // and placed objects' own data.
     nearest: DepthPyramid,
+    world_trace: crate::world_trace::WorldTrace,
     // The haze's march, which reads the camera group of the main passes
     // (shadow maps, lighting and terrains' bounce probes) and its own, and
     // its filter over time.
@@ -185,10 +193,11 @@ pub(crate) struct PostPass {
     // it draws.
     region: FrameRegion,
     // Occlusion, filter, reflection and haze bindings over the depth buffer
-    // and targets (and reflections', the pyramid).
+    // and targets (and reflections', the pyramid and what their world trace
+    // walks).
     occlusion_group: GroupCache<5>,
     effects_filter_group: GroupCache<2>,
-    reflections_group: GroupCache<7>,
+    reflections_group: GroupCache<18>,
     haze_group: GroupCache<2>,
     haze_filter_group: GroupCache<4>,
 }
@@ -205,7 +214,8 @@ struct HazeHistory {
 
 impl PostPass {
     /// `camera_layout` is the first group of the main passes, which the
-    /// haze's march reads.
+    /// haze's march reads, and `terrain_camera_layout` that group as
+    /// terrain binds it, which reflections read.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -213,7 +223,10 @@ impl PostPass {
     pub(crate) fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
-        camera_layout: &crate::pipelines::GroupLayout,
+        (camera_layout, terrain_camera_layout): (
+            &crate::pipelines::GroupLayout,
+            &crate::pipelines::GroupLayout,
+        ),
     ) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/post.wgsl"),
@@ -307,6 +320,7 @@ impl PostPass {
                 depth: None,
             },
         );
+        let (reflections, reflections_layout) = reflections_pipeline(device, terrain_camera_layout);
         Self {
             layout,
             fillers: Fillers::new(device),
@@ -322,13 +336,10 @@ impl PostPass {
                 OCCLUSION_FORMAT,
                 None,
             ),
-            reflections: pipeline(
-                "engine/post-reflections",
-                post::fs_reflections,
-                REFLECTION_FORMAT,
-                None,
-            ),
+            reflections,
+            reflections_layout,
             nearest: DepthPyramid::new(device, Reduction::Nearest),
+            world_trace: crate::world_trace::WorldTrace::new(device),
             haze: march,
             haze_layout,
             haze_filter: pipeline(
@@ -381,8 +392,9 @@ impl PostPass {
         }
     }
 
-    /// Releases the targets while no frame uses an effect, and the haze's
-    /// history with them; the next such frame recreates them.
+    /// Releases the targets while no frame uses an effect, the haze's
+    /// history and the world trace's data with them; the next such frame
+    /// recreates them.
     pub(crate) fn release_targets(&mut self) {
         self.targets.release();
         self.occlusion_group.clear();
@@ -391,6 +403,7 @@ impl PostPass {
         self.haze_filter_group.clear();
         self.haze_history = None;
         self.nearest.release();
+        self.world_trace.release();
     }
 
     /// Target bytes: per pixel, the scene (4), glow (2), surface (8), raw
@@ -398,12 +411,13 @@ impl PostPass {
     /// march, filtered result and history (8 each); the scene's blurred
     /// levels below it (a third of the scene's 4); the bloom chain (8 bytes
     /// per texel of its first level, half the display each way); and the
-    /// reflections' depth pyramid.
+    /// reflections' depth pyramid and world trace.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
             let pixels = u64::from(size.width) * u64::from(size.height);
             pixels * 48 + pixels * 4 / 3 + pixels / 4 * 8 * 4 / 3
         }) + self.nearest.capacity_bytes()
+            + self.world_trace.capacity_bytes()
     }
 
     /// Sizes the targets to `region`'s display and writes this frame's
@@ -430,31 +444,8 @@ impl PostPass {
         let frame = Effects::of(&snapshot.environment);
         self.bind_occlusion(device, frame, depth, sky);
         let (history, turn) = self.begin_haze(device, (frame, depth), snapshot, display);
-        let targets = self.targets.get().expect("sized above");
-        let post = || Bound::fixed(self.uniform.as_entire_binding());
-        let target = |view| Bound::of(targets, pipelines::view(view));
-        let shared = (&POST, &self.layout);
         if frame.reflections {
             self.nearest.prepare(device, queue, depth, region);
-        }
-        if frame.reflections
-            && let Some(nearest) = self.nearest.view()
-        {
-            self.reflections_group.bind_filled(
-                device,
-                "engine/post-reflections-group",
-                shared,
-                [
-                    ("post", post()),
-                    ("depth_texture", depth.bound()),
-                    ("glow", target(&targets.glow)),
-                    ("linear", Bound::fixed(pipelines::sampler(&self.sampler))),
-                    ("nearest_depth", nearest.bound()),
-                    ("surface_texture", target(&targets.surface)),
-                    ("scene_levels", target(&targets.scene_levels)),
-                ],
-                &self.fillers,
-            );
         }
         let (width, height) = (region.render.width as f32, region.render.height as f32);
         let (wide, tall) = (size.width as f32, size.height as f32);
@@ -471,6 +462,7 @@ impl PostPass {
                 haze_turn: turn,
                 haze_history: history
                     .map_or([0.0; 2], |last| [last.drawn.0 as f32, last.drawn.1 as f32]),
+                world_terrains: crate::world_trace::WorldTrace::walked(&snapshot.terrain),
             },
         );
         let uniform = PostUniform {
@@ -504,6 +496,72 @@ impl PostPass {
             self.written = Some(uniform);
         }
         frame
+    }
+
+    /// Readies reflections once a frame's terrain and placed objects are
+    /// prepared: their world trace brought up to `trace` in frames `frame`
+    /// reflects, and let go in others; and their group over the uniform, the
+    /// depth buffer `depth`, the glow and surface targets, the pyramid, the
+    /// scene's levels and what the world trace walks: the terrain pass's
+    /// `sources`, its own data, and the placed objects' records and poses
+    /// with the generation counting their buffers (`placed`).
+    pub(crate) fn prepare_reflections(
+        &mut self,
+        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        (frame, depth): (Effects, &Versioned<wgpu::TextureView>),
+        trace: Option<&crate::world_trace::TraceFrame<'_>>,
+        (sources, placed): (
+            crate::terrain::TraceSources<'_>,
+            (&wgpu::Buffer, &wgpu::Buffer, u64),
+        ),
+    ) {
+        self.world_trace
+            .prepare(device, queue, trace.filter(|_| frame.reflections));
+        let (true, Some(targets), Some(nearest)) =
+            (frame.reflections, self.targets.get(), self.nearest.view())
+        else {
+            return;
+        };
+        let world = self.world_trace.bindings(sources, placed);
+        let target = |view| Bound::of(targets, pipelines::view(view));
+        let [
+            heights,
+            directory,
+            peaks,
+            control,
+            palette,
+            macro_maps,
+            terrain_sky,
+            terrains,
+            placements,
+            records,
+            poses,
+        ] = world;
+        self.reflections_group.bind(
+            device,
+            "engine/post-reflections-group",
+            (&REFLECTIONS, &self.reflections_layout),
+            [
+                ("post", Bound::fixed(self.uniform.as_entire_binding())),
+                ("depth_texture", depth.bound()),
+                ("glow", target(&targets.glow)),
+                ("linear", Bound::fixed(pipelines::sampler(&self.sampler))),
+                ("nearest_depth", nearest.bound()),
+                ("surface_texture", target(&targets.surface)),
+                ("scene_levels", target(&targets.scene_levels)),
+                heights,
+                directory,
+                peaks,
+                control,
+                palette,
+                macro_maps,
+                terrain_sky,
+                terrains,
+                placements,
+                records,
+                poses,
+            ],
+        );
     }
 
     /// The groups of the occlusion pass (with sky occlusion's maps `sky`)
@@ -644,12 +702,13 @@ impl PostPass {
         )
     }
 
-    /// Records ambient occlusion, bloom, reflections, the haze (its march
-    /// over the camera group `camera` of the main passes, then its filter)
-    /// and the filter of occlusion after the opaque and transparent passes,
-    /// every one but bloom over the render size. Frames with bloom and
-    /// reflections blur the scene's levels reflections read in the bloom's
-    /// passes down. `profiler` times occlusion's samples
+    /// Records ambient occlusion, bloom, reflections (over the main passes'
+    /// first group as terrain binds it, `terrain_camera`), the haze (its
+    /// march over the camera group `camera` of the main passes, then its
+    /// filter) and the filter of occlusion after the opaque and transparent
+    /// passes, every one but bloom over the render size. Frames with bloom
+    /// and reflections blur the scene's levels reflections read in the
+    /// bloom's passes down. `profiler` times occlusion's samples
     /// (`ambient_occlusion`), bloom with those scene levels (`bloom`),
     /// reflections from their depth pyramid to their trace (`reflections`),
     /// the haze's march and filter (`haze`) and occlusion's filter
@@ -658,7 +717,7 @@ impl PostPass {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         frame: Effects,
-        camera: &wgpu::BindGroup,
+        (camera, terrain_camera): (&wgpu::BindGroup, &wgpu::BindGroup),
         profiler: &GpuProfiler,
     ) {
         let targets = self.targets.get().expect("sized in begin");
@@ -717,7 +776,8 @@ impl PostPass {
                     .map(|span| span.render_part(false, true)),
             );
             pass.set_pipeline(&self.reflections);
-            pass.set_bind_group(0, group, &[]);
+            pass.set_bind_group(0, terrain_camera, &[]);
+            pass.set_bind_group(1, group, &[]);
             pass.draw(0..3, 0..1);
         }
         if frame.haze {
@@ -1094,6 +1154,39 @@ impl PostPass {
     }
 }
 
+/// The reflections' pipeline (`reflections.wgsl`) over the main passes'
+/// first group as terrain binds it, whose layout is
+/// `terrain_camera_layout`, and their own group, and that group's layout.
+fn reflections_pipeline(
+    device: &wgpu::Device,
+    terrain_camera_layout: &crate::pipelines::GroupLayout,
+) -> (wgpu::RenderPipeline, crate::pipelines::GroupLayout) {
+    let layout = pipelines::layout(device, &REFLECTIONS);
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("engine/post-reflections.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(REFLECTIONS_SHADER.into()),
+    });
+    let pipeline_layout = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::REFLECTION_PIPELINES,
+        &[terrain_camera_layout, &layout],
+    );
+    let pipeline = fullscreen(
+        device,
+        &Fullscreen {
+            label: "engine/post-reflections",
+            layout: &pipeline_layout,
+            module: &module,
+            vertex: reflections::vs_fullscreen,
+            fragment: reflections::fs_reflections,
+            constants: &[],
+            targets: &[Some(REFLECTION_FORMAT.into())],
+            depth: None,
+        },
+    );
+    (pipeline, layout)
+}
+
 /// An attachment of `view` that a full-screen pass writes whole: loaded,
 /// as nothing needs clearing, and stored.
 fn overwritten(view: &wgpu::TextureView) -> wgpu::RenderPassColorAttachment<'_> {
@@ -1207,7 +1300,12 @@ impl RenderFeature for PostPass {
         } else {
             // Ambient occlusion, bloom, reflections and the haze, after the
             // opaque and transparent passes.
-            self.encode_effects(encoder, *effects, encode.camera, encode.profiler);
+            self.encode_effects(
+                encoder,
+                *effects,
+                (encode.camera, encode.terrain_camera),
+                encode.profiler,
+            );
         }
         0
     }

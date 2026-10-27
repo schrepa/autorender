@@ -337,7 +337,8 @@ gpu_structs! {
         pub occlusion: [f32; 4],
         /// Strength and 1 when bloom runs (zw unused).
         pub bloom: [f32; 4],
-        /// Ray distance, strength and 1 when reflections run (w unused).
+        /// Ray distance, strength and 1 when reflections run, and the
+        /// terrains their world trace walks.
         pub reflections: [f32; 4],
         /// The haze: the turn of its march's jitter this frame, the pixels
         /// across and down its history holds (0 without one), and 1 when it

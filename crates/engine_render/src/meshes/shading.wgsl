@@ -68,11 +68,12 @@ struct SurfacePoint {
     // share and its cards'; zero elsewhere, blades too.
     crown: f32,
     // What lies behind the point's surface, which screen-space
-    // reflections' rays passing behind it meet (`post.wgsl`'s walk): an
-    // object's body (`BODY_SOLID`, zero, as every point but these takes);
-    // a sheet a few centimeters thick (`BODY_THIN`: masked surfaces,
-    // foliage and blades); or the ground or water, solid below their
-    // surface (`BODY_GROUND`).
+    // reflections' rays passing behind it meet (`reflections.wgsl`'s
+    // walk): an object's body (`BODY_SOLID`, zero, as every point but these
+    // takes); a sheet a few centimeters thick (`BODY_THIN`: masked
+    // surfaces, foliage and blades); the ground, solid below its surface,
+    // which their world trace holds (`BODY_GROUND`); or water, solid below
+    // its surface as far as they tell, which it does not (`BODY_WATER`).
     body: u32,
 }
 
@@ -82,6 +83,7 @@ struct SurfacePoint {
 const BODY_SOLID: u32 = 0u;
 const BODY_THIN: u32 = 1u;
 const BODY_GROUND: u32 = 2u;
+const BODY_WATER: u32 = 3u;
 const MIRRORED_BITS: u32 = 14u;
 
 // Shaded light of a surface: graded color (and its linear light before the

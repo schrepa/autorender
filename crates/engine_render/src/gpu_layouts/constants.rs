@@ -113,14 +113,22 @@ gpu_consts! {
     /// environment makes up in its low fourteen bits, finer steps than the
     /// reflections' eight-bit target keeps of it, and in its last two what
     /// lies behind the pixel's surface, which screen-space reflections'
-    /// rays passing behind it meet (`post.wgsl`'s walk): an object's body,
-    /// as deep as it is wide across where they pass behind it; a sheet a
-    /// few centimeters thick (masked surfaces, foliage and blades); or the
-    /// ground or water, solid below their surface.
+    /// rays passing behind it meet (`reflections.wgsl`'s walk): an object's
+    /// body, as deep as it is wide across where they pass behind it; a
+    /// sheet a few centimeters thick (masked surfaces, foliage and blades);
+    /// the ground, solid below its surface, which their world trace holds;
+    /// or water, solid below its surface as far as they tell, which the
+    /// world trace does not hold.
     pub(crate) const MIRRORED_BITS: u32 = 14 => ["MIRRORED_BITS"];
     pub(crate) const BODY_SOLID: u32 = 0 => ["BODY_SOLID"];
     pub(crate) const BODY_THIN: u32 = 1 => ["BODY_THIN"];
     pub(crate) const BODY_GROUND: u32 = 2 => ["BODY_GROUND"];
+    pub(crate) const BODY_WATER: u32 = 3 => ["BODY_WATER"];
+
+    // crate::world_trace
+    /// A layer's word in the world trace's placements whose tile holds no
+    /// placed objects.
+    pub(crate) const NO_PLACED: u32 = u32::MAX => ["NO_PLACED" in REFLECTIONS_SHADER];
 
     // crate::shadow_fit
     /// Texels of a level a sample of the ground it holds spans at least:
@@ -169,10 +177,10 @@ gpu_consts! {
     // crate::terrain
     /// A directory entry of a tile not resident.
     pub(crate) const NOT_RESIDENT: u32 = u32::MAX => ["NOT_RESIDENT"];
-    /// Mips of each tile's error pyramids, a cell of 2 samples a side a
-    /// texel at the finest, up to one of the tile's 256
-    /// (`engine_terrain::ErrorPyramid`).
-    pub(crate) const ERROR_MIPS: u32 = engine_core::terrain_data::ERROR_MIPS => ["SURFACE_ERROR_MIPS"];
+    /// Mips of each tile's error pyramids and peaks, a cell of 2 samples a
+    /// side a texel at the finest, up to one of the tile's 256
+    /// (`engine_terrain::ErrorPyramid`, `world_trace::peaks`).
+    pub(crate) const ERROR_MIPS: u32 = engine_core::terrain_data::ERROR_MIPS => ["SURFACE_ERROR_MIPS", "PEAK_MIPS" in REFLECTIONS_SHADER];
     /// Vertices along a patch side, and the grid's before the skirts'.
     pub(crate) const TERRAIN_GRID: u32 = engine_core::terrain_data::PATCH_QUADS + 1 => ["TERRAIN_GRID"];
     pub(crate) const TERRAIN_GRID_VERTICES: u32 = TERRAIN_GRID * TERRAIN_GRID => ["TERRAIN_GRID_VERTICES"];
@@ -364,7 +372,7 @@ gpu_consts! {
     // crate::gpu_layouts::terrain
     /// Surface materials every terrain together can show: as many as fit the
     /// 16 KiB uniform binding every device allows.
-    pub(crate) const PALETTE_ENTRIES: usize = 16_384 / size_of::<PaletteEntry>() => ["TERRAIN_PALETTE_ENTRIES" in SHADER, "PALETTE_ENTRIES" in COVER_GROW_SHADER, "PALETTE_ENTRIES" in BOUNCE_SHADER, "PALETTE_ENTRIES" in SCATTER_SNAP_SHADER];
+    pub(crate) const PALETTE_ENTRIES: usize = 16_384 / size_of::<PaletteEntry>() => ["TERRAIN_PALETTE_ENTRIES" in SHADER, "PALETTE_ENTRIES" in COVER_GROW_SHADER, "PALETTE_ENTRIES" in BOUNCE_SHADER, "PALETTE_ENTRIES" in SCATTER_SNAP_SHADER, "PALETTE_ENTRIES" in REFLECTIONS_SHADER];
 
     /// Cells along a side of the cloud shadows' grid.
     pub(crate) const SHADOW_CELLS: u32 = 128 => ["CLOUD_SHADOW_CELLS"];
@@ -619,6 +627,8 @@ gpu_mirrors! {
     engine_core::terrain_data::bounce::NEAREST => ["BOUNCE_NEAREST" in BOUNCE_SHADER];
     engine_core::terrain_data::bounce::DISTANCE_STEPS => ["BOUNCE_STEPS" in BOUNCE_SHADER];
     engine_core::terrain_data::TILE_STRIDE => ["TILE_STRIDE" in TERRAIN_CONTROL_SHADER, "TILE_STRIDE" in TERRAIN_NORMALS_SHADER];
+    engine_core::terrain_data::TILE_QUADS => ["TILE_QUADS" in REFLECTIONS_SHADER];
+    engine_core::terrain_data::ERROR_CELLS => ["PEAK_CELLS" in REFLECTIONS_SHADER];
     engine_core::terrain_data::RIVER_FAR => ["RIVER_FAR" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::RIVER_EDGE_STEP => ["RIVER_EDGE_STEP" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::RIVER_EDGE_ZERO => ["RIVER_EDGE_ZERO" in TERRAIN_CONTROL_SHADER];

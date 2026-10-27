@@ -672,8 +672,7 @@ fn placed_sums(terrain: &RenderTerrain, layer: &engine_core::RenderPlacementLaye
 /// object covers, the ellipse within its mesh's bounds across the ground;
 /// its bounding sphere's diameter, around its mesh, its parts' finest and
 /// its shadow proxy as culling bounds it (`renderer::scatter_draws`); and
-/// its material's linear color, its base color texture's mean applied
-/// where that is summarized.
+/// its objects' color ([`placed_color`]).
 fn placed_asset(asset: &engine_core::RenderPlacementAsset) -> (f32, f32, [f32; 3]) {
     let bounds = asset.mesh.mesh.bounds();
     let extent = bounds.max() - bounds.min();
@@ -687,6 +686,14 @@ fn placed_asset(asset: &engine_core::RenderPlacementAsset) -> (f32, f32, [f32; 3
         .fold((bounds.min(), bounds.max()), |(low, high), held| {
             (low.min(held.min()), high.max(held.max()))
         });
+    (area, (high - low).length(), placed_color(asset))
+}
+
+/// A placed asset's objects' linear color: its material's base color
+/// factor, its base color texture's mean applied where that is summarized,
+/// which the ground takes on where they retire and reflections' world trace
+/// shows their canopies in.
+pub(crate) fn placed_color(asset: &engine_core::RenderPlacementAsset) -> [f32; 3] {
     let material = &asset.material.material;
     let factor = material.color();
     let mean = material
@@ -699,15 +706,11 @@ fn placed_asset(asset: &engine_core::RenderPlacementAsset) -> (f32, f32, [f32; 3
         })
         .and_then(|texture| texture.texture.summary())
         .map_or([1.0; 3], |summary| summary.color);
-    (
-        area,
-        (high - low).length(),
-        [
-            factor[0] * mean[0],
-            factor[1] * mean[1],
-            factor[2] * mean[2],
-        ],
-    )
+    [
+        factor[0] * mean[0],
+        factor[1] * mean[1],
+        factor[2] * mean[2],
+    ]
 }
 
 /// What surface material `material` of `terrain` shows where its placement

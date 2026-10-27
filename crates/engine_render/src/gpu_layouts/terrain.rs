@@ -23,7 +23,7 @@ gpu_structs! {
     /// of those ranked first and last, the largest and smallest; and its
     /// height map's mean.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct PaletteEntry as ["TerrainPaletteEntry", "PaletteEntry" in COVER_GROW_SHADER, "PaletteEntry" in BOUNCE_SHADER, "PaletteEntry" in SCATTER_SNAP_SHADER] {
+    pub(crate) struct PaletteEntry as ["TerrainPaletteEntry", "PaletteEntry" in COVER_GROW_SHADER, "PaletteEntry" in BOUNCE_SHADER, "PaletteEntry" in SCATTER_SNAP_SHADER, "PaletteEntry" in REFLECTIONS_SHADER] {
         pub color: [f32; 4],
         pub params: [f32; 4],
         pub maps: [f32; 4],
