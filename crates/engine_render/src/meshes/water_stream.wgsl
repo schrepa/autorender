@@ -9,14 +9,13 @@
 // keeping their spread, so the pattern never stretches where the water
 // changes; each kernel's parameters taken at the shading point (Lagae's
 // rule for slowly varying ones) and its shape known in closed form, so a
-// pixel turns what its footprint at the steady size (STEADY_PIXELS,
-// `water_footprint`) cannot draw into its exact variance instead of reading
-// it: each kernel's waves as far as the footprint spans them along their
-// way, no finer than the size it resolves, so those running across the view
-// stay drawn far along it; and the kernels and boils themselves, which vary
-// every way, as far as its long side spans them, since averaging them
-// along it would take every cell that side crosses. It is all arithmetic:
-// no texture and no binding.
+// pixel turns what its footprint (`water_footprint`) cannot draw into its
+// exact variance instead of reading it: each kernel's waves while they span
+// two pixels along their way (`water_shown`), so those running across the
+// view stay drawn far along it, its envelope's flicker temporal
+// antialiasing's to steady; and boils, which vary every way, while they
+// span two pixels across the view, as a read of their texture would
+// resolve them. It is all arithmetic: no texture and no binding.
 
 // The meters a second over which water goes from still to running, from the
 // first to the second (`shade_water`'s `flowing`): boils rise only in
@@ -113,17 +112,6 @@ struct WaterStream {
     calm: f32,
 }
 
-// How much of waves `meters` long running along `way` (a unit vector) a
-// pixel whose footprint at the steady size is `footprint` draws
-// (`water_footprint`): none where they span no more than that footprint
-// does along their way, no finer than the size it resolves, so finer waves
-// never alias, all where they span twice it, handing over across that
-// octave as the wind's tiles do; what it leaves hides in the variance.
-fn water_stream_shown(meters: f32, way: vec2<f32>, footprint: WaterFootprint) -> f32 {
-    let span = water_footprint_toward(footprint, way);
-    return saturate(meters / max(span, 1.0e-9) - 1.0); // filter: waves no longer than the footprint along their way, their slopes' variance as roughness
-}
-
 // The wave number (radians a meter) of the waves running at `speed` meters
 // a second on water `depth` meters deep, gravity and surface tension both
 // restoring them: the longer root of their phase speed squared,
@@ -151,15 +139,14 @@ fn water_wave_number(speed: f32, depth: f32) -> f32 {
 // (meters a second), its waves standing at phase speeds from `top` down by
 // `reach` meters a second; each kernel `amplitude` meters high at its middle
 // times its heading's share of the velocity head; for a pixel whose
-// footprint at the steady size is `footprint` (`water_footprint`). Each
-// kernel heads at θ from straight upstream, its phase speed U cos θ drawn
-// below `top` by `reach` times a hashed share's square, its side and its
-// phase hashed too; its wave number is the point's own for that speed
-// (`water_wave_number`); its envelope is Gaussian, a cell spanning
-// WATER_BED_ENVELOPE of its standard deviations, cut there; and it draws as
-// far as its waves span the footprint along its way (`water_stream_shown`).
-// Their slopes (xy, meters a meter: the kernels' gradients) and height (z,
-// meters), summed.
+// footprint is `footprint` (`water_footprint`). Each kernel heads at θ from
+// straight upstream, its phase speed U cos θ drawn below `top` by `reach`
+// times a hashed share's square, its side and its phase hashed too; its
+// wave number is the point's own for that speed (`water_wave_number`); its
+// envelope is Gaussian, a cell spanning WATER_BED_ENVELOPE of its standard
+// deviations, cut there; and it draws while its waves span two pixels along
+// its way (`water_shown`). Their slopes (xy, meters a meter: the kernels'
+// gradients) and height (z, meters), summed.
 fn water_bed_kernels(p: vec2<f32>, size: f32, salt: u32, flow: vec2<f32>, top: f32,
         reach: f32, depth: f32, amplitude: f32, footprint: WaterFootprint) -> vec3<f32> {
     let speed = length(flow);
@@ -193,7 +180,7 @@ fn water_bed_kernels(p: vec2<f32>, size: f32, salt: u32, flow: vec2<f32>, top: f
                 let way = side * (sign(lean) * sqrt(max(1.0 - along * along, 0.0)))
                     - heading * along;
                 let number = water_wave_number(standing, depth);
-                let shown = water_stream_shown(2.0 * PI / number, way, footprint);
+                let shown = water_shown(2.0 * PI / number, water_footprint_toward(footprint, way));
                 if shown <= 0.0 {
                     continue;
                 }
@@ -210,41 +197,41 @@ fn water_bed_kernels(p: vec2<f32>, size: f32, salt: u32, flow: vec2<f32>, top: f
 }
 
 // The waves the bed holds standing at `p` (meters along x and z) for a
-// pixel whose footprint at the steady size is `footprint`
-// (`water_footprint`), in water `depth` meters deep (at least
-// WATER_THINNEST, as Froude numbers read it) flowing along `flow` (meters a
-// second), as `WaterStream` holds them: fixed to the bed, so they never
-// change with time, their slopes and height the kernels' own gradients and
-// values. A wave heading at θ from straight upstream stands still over the
-// bed where its phase speed is U cos θ: the longer, gravity root
-// (`water_wave_number`); the shorter, capillary one is millimetric and
-// counts for nothing, as viscosity damps waves that short within a few of
-// their lengths (2νk² a second). They stand from straight upstream, or in
-// water running faster than the longest waves dispersion holds apart
-// (WATER_BED_SHALLOW), from the heading whose U cos θ is their speed, out to
-// θ_max, where U cos θ_max = c_min: each kernel's U cos θ is drawn from the
-// fastest standing down to c_min, nearer the fastest by a hashed share's
-// square, so in slower water their headings thin away from straight
-// upstream as cos(θ/2) and their crests lie mostly across the flow. Each
-// kernel is as high as its heading's share of the velocity head (cos²θ), so
-// in deep water each is as steep as the next, and their sum's root mean
-// square is WATER_BED_HEAD of the velocity head, risen from none at c_min to
-// whole at twice it and no steeper than breaking waves (WATER_STEEPEST, a
-// sine's root mean square of it), by their density and energy (Campbell's
+// pixel whose footprint is `footprint` (`water_footprint`), in water
+// `depth` meters deep (at least WATER_THINNEST, as Froude numbers read it)
+// flowing along `flow` (meters a second), as `WaterStream` holds them:
+// fixed to the bed, so they never change with time, their slopes and
+// height the kernels' own gradients and values. A wave heading at θ from
+// straight upstream stands still over the bed where its phase speed is
+// U cos θ: the longer, gravity root (`water_wave_number`); the shorter,
+// capillary one is millimetric and counts for nothing, as viscosity damps
+// waves that short within a few of their lengths (2νk² a second). They
+// stand from straight upstream, or in water running faster than the
+// longest waves dispersion holds apart (WATER_BED_SHALLOW), from the
+// heading whose U cos θ is their speed, out to θ_max, where
+// U cos θ_max = c_min: each kernel's U cos θ is drawn from the fastest
+// standing down to c_min, nearer the fastest by a hashed share's square, so
+// in slower water their headings thin away from straight upstream as
+// cos(θ/2) and their crests lie mostly across the flow. Each kernel is as
+// high as its heading's share of the velocity head (cos²θ), so in deep
+// water each is as steep as the next, and their sum's root mean square is
+// WATER_BED_HEAD of the velocity head, risen from none at c_min to whole at
+// twice it and no steeper than breaking waves (WATER_STEEPEST, a sine's
+// root mean square of it), by their density and energy (Campbell's
 // theorem: the heights' variance is the kernels' density, WATER_BED_KERNELS
 // over a cell's area, times each one's energy, A² πσ² / 2). The cells are
 // as wide as the longest waves standing, on the ladder of 2^rung meters,
 // each place blending the two rungs nearest (WATER_BAND_BLEND) keeping their
-// spread (`water_waves_mixed`). A kernel draws as far as its waves span the
-// footprint along its way (`water_stream_shown`), so kernels running across
-// the view stay drawn by the size it resolves, and as far as its cell spans
-// the footprint's long side, its envelope varying every way as boils do;
-// what it leaves hides in the variance, which a Gabor field holds exactly:
-// its heights' variance times k², along each heading's way, plus its
-// envelope's 1/σ², alike every way, summed over the headings by the
-// midpoint rule (WATER_BED_POINTS). A rung whose longest waves span no more
-// than the size the footprint resolves, or whose cells its long side spans,
-// reads no kernel, all its slopes' variance hidden.
+// spread (`water_waves_mixed`). A kernel draws by its waves' own frequency
+// alone, while they span two pixels along its way (`water_shown`), so
+// kernels running across the view stay drawn far along it, and its
+// envelope's flicker is temporal antialiasing's to steady; what it leaves
+// hides in the variance, which a Gabor field holds exactly: its heights'
+// variance times k², along each heading's way, plus its envelope's 1/σ²,
+// alike every way, summed over the headings by the midpoint rule
+// (WATER_BED_POINTS). A rung whose longest waves span no more than the
+// footprint's short side, of whose kernels none then draws any way, reads
+// none, all its slopes' variance hidden.
 fn water_standing_waves(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>,
         depth: f32) -> WaterStream {
     var stream: WaterStream;
@@ -273,8 +260,8 @@ fn water_standing_waves(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>
     }
     // The kernels' moments over their headings, either side of straight
     // upstream alike: their heights' squares and their slopes' (but their
-    // envelopes'), and their heights' squares as far as the pixel's
-    // footprint draws their waves along their ways; and the covariance
+    // envelopes'), and their heights' squares as far as the pixel draws
+    // their waves along their ways (`water_shown`); and the covariance
     // (`water_spread`) of all their slopes and of those it draws, each
     // heading's along its way.
     var moments = vec3<f32>(0.0);
@@ -289,8 +276,8 @@ fn water_standing_waves(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>
         let meters = 2.0 * PI / number;
         let first_way = across - heading * along;
         let second_way = -across - heading * along;
-        let first = water_stream_shown(meters, first_way, footprint);
-        let second = water_stream_shown(meters, second_way, footprint);
+        let first = water_shown(meters, water_footprint_toward(footprint, first_way));
+        let second = water_shown(meters, water_footprint_toward(footprint, second_way));
         let share = along * along * along * along;
         let steep = share * number * number;
         moments += vec3<f32>(share, steep, share * 0.5 * (first * first + second * second));
@@ -320,17 +307,14 @@ fn water_standing_waves(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>
         let tall = min(tallest, WATER_STEEPEST * sqrt(0.5 / lift));
         spreads[rung] = tall * tall * lift;
         heights[rung] = tall * tall;
-        // How much of its kernels the footprint draws, their envelopes
-        // varying every way: all where its cells span twice the footprint's
-        // long side, none where that side spans a cell, as boils hand over.
-        let kernels = saturate(size / max(footprint.along, 1.0e-9) - 1.0); // filter: kernels whose cells the footprint's long side spans, their slopes' variance as roughness
-        let shown = kernels * kernels;
+        // What the pixel leaves of its kernels' slopes: their waves' it does
+        // not draw, and their envelopes' with them.
         var read: WaterRead;
-        read.hidden = (spreads[rung] / slopes) * (all_slopes - shown * drawn_slopes
-            + water_spread_even(narrowing * (moments.x - shown * moments.z)));
-        read.heights = heights[rung] * shown * moments.z / moments.x;
-        if kernels > 0.0 && 2.0 * PI / longest > footprint.resolved { // filter: a rung no wave of which spans the size the footprint resolves, its slopes' variance as roughness
-            let amplitude = kernels * tall * WATER_BED_ENVELOPE
+        read.hidden = (spreads[rung] / slopes) * (all_slopes - drawn_slopes
+            + water_spread_even(narrowing * (moments.x - moments.z)));
+        read.heights = heights[rung] * moments.z / moments.x;
+        if 2.0 * PI / longest > footprint.across { // filter: a rung none of whose waves spans a pixel any way, all its slopes' variance as roughness
+            let amplitude = tall * WATER_BED_ENVELOPE
                 * sqrt(2.0 * f32(WATER_BED_POINTS) / (PI * f32(WATER_BED_KERNELS) * moments.x));
             let salt = (bitcast<u32>(i32(ladder)) * 0x85ebca6bu) ^ 0x5bd1e995u;
             let drawn = water_bed_kernels(p, size, salt, flow, top, reach, deep, amplitude,
@@ -431,24 +415,27 @@ fn water_boils_read(p: vec2<f32>, flow: vec2<f32>, size: f32, life: f32, height:
     return boiled;
 }
 
-// The boils over `p` (meters along x and z) for a pixel whose footprint at
-// the steady size is `footprint` (`water_footprint`), in water `depth`
-// meters deep flowing along `flow` (meters a second), running (faster than
-// WATER_FLOWING's first) and turning eddies at `eddy` meters a second
-// (`water_eddies`), at `time` (seconds), as `WaterStream` holds them: each
-// boil as high as the head of water upwelling at the eddies' speed, w²/2g
-// (Bernoulli), and as wide as WATER_BOIL_ACROSS depths, on the ladder of
-// cells 2^rung meters across, each place blending the two rungs nearest its
-// boils' width (WATER_BAND_BLEND) keeping their spread. A rung's slots live
+// The boils over `p` (meters along x and z) for a pixel whose footprint is
+// `footprint` (`water_footprint`), in water `depth` meters deep flowing
+// along `flow` (meters a second), running (faster than WATER_FLOWING's
+// first) and turning eddies at `eddy` meters a second (`water_eddies`), at
+// `time` (seconds), as `WaterStream` holds them: each boil as high as the
+// head of water upwelling at the eddies' speed, w²/2g (Bernoulli), and as
+// wide as WATER_BOIL_ACROSS depths, on the ladder of cells 2^rung meters
+// across, each place blending the two rungs nearest its boils' width
+// (WATER_BAND_BLEND) keeping their spread. A rung's slots live
 // WATER_BOIL_LIFE depths of travel of water as deep as its boils are wide,
 // in whole octaves of WATER_SHORTEST_LIFE (`water_bands`), the two nearest
 // blended keeping their spread, so every pixel a boil covers counts its
-// lives alike (`water_boils_read`). A rung whose boils span no more than
-// the footprint's long side, which averages along the view every way a
-// round boil varies, or live no longer than WATER_SHORTEST_LIFE, over which
-// their coming and going reads as flicker, reads none, handing over across
-// an octave: what it leaves hides its slopes' variance, alike every way
-// about its round boils, and its calm averages over its cover,
+// lives alike (`water_boils_read`). Its boils, which vary every way, draw
+// while they span two pixels across the view, as a read of their texture
+// would resolve them (`water_shown` by the size the footprint resolves),
+// their flicker along the view temporal antialiasing's to steady as
+// kernels' envelopes' is. A rung whose boils span no more than the size the
+// footprint resolves, or live no longer than WATER_SHORTEST_LIFE, over
+// which their coming and going reads as flicker, reads none, handing over
+// across an octave: what it leaves hides its slopes' variance, alike every
+// way about its round boils, and its calm averages over its cover,
 // 1 − cover × WATER_BOIL_CALM × the dome's mean share (a third) × its
 // rise's mean over the area it covers (WATER_BOIL_RISE). Their variances
 // over space and their lives are in closed form: their slopes', (2/3) cover
@@ -482,10 +469,11 @@ fn water_boils(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>, depth: 
             / (3.0 * WATER_BOIL_AREA * size * size);
         heights[rung] = 0.2 * WATER_BOIL_COVER * WATER_BOIL_RISE_SQUARED * height * height;
         calms[rung] = calmed;
-        // How long its slots live, and how much of its boils the pixel draws.
+        // How long its slots live, and how much of its boils, a cell
+        // across, the pixel draws.
         let life = WATER_BOIL_LIFE * size / (WATER_BOIL_ACROSS * speed);
-        let resolved = saturate(size / max(footprint.along, 1.0e-9) - 1.0); // filter: boils no wider than the footprint's long side, their slopes' variance as roughness and their calm as its mean
-        let shown = resolved * saturate(life / WATER_SHORTEST_LIFE - 1.0);
+        let shown = water_shown(size, footprint.resolved)
+            * saturate(life / WATER_SHORTEST_LIFE - 1.0);
         var read: WaterRead;
         read.hidden = water_spread_even((1.0 - shown * shown) * spreads[rung]);
         read.heights = shown * shown * heights[rung];

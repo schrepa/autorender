@@ -323,12 +323,6 @@ const DETAIL_EDGE_ON: f32 = 0.0625;
 // ripple.
 const DETAIL_ANISOTROPY: f32 = 16.0;
 
-// The pixels a pattern's features must span to draw steadily under temporal
-// antialiasing, its jitter moving the phase they are sampled at by no more
-// than an eighth of their period (`engine_core::STEADY_PIXELS`): finer ones
-// draw as their average.
-const STEADY_PIXELS: f32 = 4.0;
-
 // The meters from the detail eye (`camera.detail`) to `world`, which every
 // handover by distance measures.
 fn detail_distance(world: vec3<f32>) -> f32 {

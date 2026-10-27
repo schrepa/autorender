@@ -11,10 +11,10 @@
 // walls between them, carried only as the water moves them, which a pixel
 // covers where they pass the threshold its share sets, so a little foam
 // shows as sparse lace, more fills the cells as froth and the most heaps
-// solid. A pixel reads them through its footprint at the steady size
-// (STEADY_PIXELS, `water_footprint`), whose levels resolve them across the
-// view and whose anisotropy averages them along it, so far foam streaks
-// along the view, and bubbles finer than it resolves show the share itself.
+// solid. A pixel reads them through its own footprint (`water_footprint`),
+// whose levels resolve them across the view and whose anisotropy averages
+// them along it, so far foam streaks along the view, and bubbles finer than
+// it resolves show the share itself.
 
 // Falling water's map's foam (`water_fall_map`'s b and a): the cells of its
 // bubbles across it (`engine_tables::falls::BUBBLES`), FALL_MAP_STRETCH
@@ -84,9 +84,9 @@ fn water_resolved_share(footprint: WaterFootprint, size: f32) -> f32 {
 // average away, `water_wind_whitecaps`; none for water reading no tiles'
 // whitecaps), their foam lingering where a crest broke as the crest runs
 // on: a is the sum's share past 1, taken as logistic of its spread, which
-// spans what the reads average and how much the sum changes across the
-// steady size (`water_steady`), so its edge draws no finer than the steady
-// size and far water whitens as near water does on average. The other
+// spans what the reads average and how much the sum changes across a pixel
+// of the display (`material_detail`), so its edge draws no finer than a
+// pixel and far water whitens as near water does on average. The other
 // waves' slopes, resolved and hidden, spread `spread` (their variance, σ²),
 // of which the pixel hides `hidden`: a Gaussian surface's slopes, their
 // sizes Rayleigh-distributed, pass the breaking slope s_b (WATER_STEEPEST)
@@ -97,7 +97,7 @@ fn water_resolved_share(footprint: WaterFootprint, size: f32) -> f32 {
 // nothing, however near its crest's top a point stands. Its derivatives
 // need it called in uniform control flow.
 fn water_folding(spread: f32, hidden: f32, crest: f32, whitecaps: vec2<f32>) -> f32 {
-    let change = fwidth(whitecaps.x) * water_steady();
+    let change = fwidth(whitecaps.x) * material_detail();
     let edge = sqrt(whitecaps.y + change * change / 12.0) * WATER_LOGISTIC;
     let folded = 1.0 / (1.0 + exp(-clamp((whitecaps.x - 1.0) / max(edge, 1.0e-6), -30.0, 30.0)));
     let variance = max(spread, 1.0e-6);
@@ -110,36 +110,37 @@ fn water_folding(spread: f32, hidden: f32, crest: f32, whitecaps: vec2<f32>) -> 
 
 // How strongly water foams against what stands in it behind the pixel
 // (Sea of Thieves' depth test), its surface `standing` meters over it,
-// changing by `change` across a pixel whose footprint at the steady size is
-// `footprint` (`water_footprint`), where it runs at `speed` meters a second
-// (its current or its eddies, whichever is faster): water climbs what it
-// runs against by its velocity head U²/2g (Bernoulli), whitest where it
-// meets it, and tears air in there as it passes WATER_FOAM_TEARING, so calm
-// water foams at nothing it touches. A band rising less than what stands
-// behind the pixel rises across the steady size (`water_steady`) spreads
+// changing by `change` across a pixel whose footprint is `footprint`
+// (`water_footprint`), where it runs at `speed` meters a second (its
+// current or its eddies, whichever is faster): water climbs what it runs
+// against by its velocity head U²/2g (Bernoulli), whitest where it meets
+// it, and tears air in there as it passes WATER_FOAM_TEARING, so calm water
+// foams at nothing it touches. A band rising less than what stands behind
+// the pixel rises across a pixel of the display (`material_detail`) spreads
 // its foam over that rise, keeping its share, so no line of foam draws
-// finer than the steady size. Only solid ground counts: behind blades and
-// twigs what the pixel sees jumps from pixel to pixel faster than any bank
-// rises along the footprint's long side (WATER_GRADIENT_RANGE a meter).
+// finer than a pixel. Only solid ground counts: behind blades and twigs
+// what the pixel sees jumps from pixel to pixel faster than any bank rises
+// along the footprint's long side (WATER_GRADIENT_RANGE a meter).
 fn water_contact(standing: f32, change: f32, footprint: WaterFootprint, speed: f32) -> f32 {
     let tearing = smoothstep(WATER_FOAM_TEARING.x, WATER_FOAM_TEARING.y, speed);
     if tearing <= 0.0 {
         return 0.0;
     }
     let head = speed * speed / (2.0 * WATER_GRAVITY);
-    let band = max(head, change * water_steady());
-    let rise = change * water_steady() / max(footprint.along, 1.0e-6);
+    let climb = change * material_detail();
+    let band = max(head, climb);
+    let rise = climb / max(footprint.along, 1.0e-6);
     let solid = 1.0 - smoothstep(WATER_GRADIENT_RANGE, 2.0 * WATER_GRADIENT_RANGE, rise);
     return tearing * solid * saturate(1.0 - standing / band) * (head / band);
 }
 
-// Foam's grain at `p` (meters along x and z) for a pixel whose footprint at
-// the steady size is `footprint`, read through it (`water_footprint`):
-// falling water's map's bubbles' walls and bubbles (`water_fall_map`'s b
-// and a), WATER_FOAM_BUBBLE meters across and, if `finer`, WATER_FOAM_FINER
-// times finer, drawn `stretch` times as long along `heading` as across it,
-// read at the three corners of the triangle of a grid of patches half the
-// map across holding it, each read turned to run along `heading` about its
+// Foam's grain at `p` (meters along x and z) for a pixel whose footprint is
+// `footprint`, read through it (`water_footprint`): falling water's map's
+// bubbles' walls and bubbles (`water_fall_map`'s b and a),
+// WATER_FOAM_BUBBLE meters across and, if `finer`, WATER_FOAM_FINER times
+// finer, drawn `stretch` times as long along `heading` as across it, read
+// at the three corners of the triangle of a grid of patches half the map
+// across holding it, each read turned to run along `heading` about its
 // corner's middle and shifted at random (salted by `salt`), and blended by
 // their weights over the root of their squares' sum, which keeps their
 // spread (tiling and blending, Heitz and Neyret), so no patch shows the map
@@ -155,7 +156,7 @@ fn water_bubbles(p: vec2<f32>, heading: vec2<f32>, stretch: f32, footprint: Wate
     let map = vec2<f32>(1.0, FALL_MAP_STRETCH) * (WATER_FOAM_BUBBLE * FALL_MAP_BUBBLES);
     let drawn = map * vec2<f32>(1.0, stretch);
     let spacing = 0.5 * map.x;
-    // Across the steady size, turned along the heading.
+    // Across a pixel, turned along the heading.
     let turned_dx = vec2<f32>(dot(footprint.dx, side), dot(footprint.dx, heading)) / drawn;
     let turned_dy = vec2<f32>(dot(footprint.dy, side), dot(footprint.dy, heading)) / drawn;
     let triangle = water_triangle(p / spacing);
@@ -194,37 +195,37 @@ struct WaterFroth {
 }
 
 // Foam at `p` (meters along x and z, where what floats on the water lies)
-// for a pixel whose footprint at the steady size is `footprint`
-// (`water_footprint`), its fresh white water and the foam the water carries
-// each covering `amounts` of the surface (x and y, 0 to 1), where the water
-// flows along `flow` (meters a second) shearing `shear` a second, at
-// `time`, the place's clock running `stagger` cycles ahead, for a pixel
-// resolving `seen` meters seen from the detail eye (`detail_resolved`): one
-// grain (`water_bubbles`) read through that footprint, white water's round
-// bubbles and the walls the foam the water carries drains into, two
-// octaves of each alike. It moves only as the water moves it: carried along
-// the flow in two sets half a life apart (`water_set`), each living as long
-// as the flow's shear lets it before it shows drawn out (WATER_STRAIN), in
-// whole octaves of lives, the next longer blended in over the upper half of
-// the place's own octave as detail levels hand over; where the water
-// carries it less than a bubble over a life it stands still, one set and no
-// clock. Where the water carries it and shears, the carried foam's grain is
-// drawn out along the flow by the strain the shear gives it over the
-// place's life, which WATER_STRAIN bounds: 1 + shear × life times as long
-// as across, so a line of it reads as streaks along the current; white
-// water's fresh foam stays round, read apart where both show. The sets
-// blend keeping their spread. Each kind covers the share of its grain past
-// the threshold its amount sets, the grain taken as logistic of its spread,
-// so bubbles finer than the footprint resolves show the amount itself; the
-// threshold's edge spans what the footprint averages of the grain, across
-// the view and along it (`water_resolved_share`), and how much it changes
-// across the steady size, so foam never draws lace finer than it, nor thins
-// out or shimmers as it recedes, and far foam keeps the streaks its grain
-// shows across the view. Past its threshold it heaps a layer of its finer
-// bubbles for each spread its grain stands over it, white water's whole and
-// carried foam's drained, each layer hiding WATER_FOAM_FILM of what those
-// below let through. Its relief hands over to none as its bubbles, seen
-// from the detail eye, come to span the steady size across the view. Its
+// for a pixel whose footprint is `footprint` (`water_footprint`), its fresh
+// white water and the foam the water carries each covering `amounts` of the
+// surface (x and y, 0 to 1), where the water flows along `flow` (meters a
+// second) shearing `shear` a second, at `time`, the place's clock running
+// `stagger` cycles ahead, for a pixel resolving `seen` meters seen from the
+// detail eye (`detail_resolved`): one grain (`water_bubbles`) read through
+// that footprint, white water's round bubbles and the walls the foam the
+// water carries drains into, two octaves of each alike. It moves only as
+// the water moves it: carried along the flow in two sets half a life apart
+// (`water_set`), each living as long as the flow's shear lets it before it
+// shows drawn out (WATER_STRAIN), in whole octaves of lives, the next
+// longer blended in over the upper half of the place's own octave as detail
+// levels hand over; where the water carries it less than a bubble over a
+// life it stands still, one set and no clock. Where the water carries it
+// and shears, the carried foam's grain is drawn out along the flow by the
+// strain the shear gives it over the place's life, which WATER_STRAIN
+// bounds: 1 + shear × life times as long as across, so a line of it reads
+// as streaks along the current; white water's fresh foam stays round, read
+// apart where both show. The sets blend keeping their spread. Each kind
+// covers the share of its grain past the threshold its amount sets, the
+// grain taken as logistic of its spread, so bubbles finer than the
+// footprint resolves show the amount itself; the threshold's edge spans
+// what the footprint averages of the grain, across the view and along it
+// (`water_resolved_share`), and how much it changes across a pixel of the
+// display (`material_detail`), so foam never draws lace finer than a pixel,
+// nor thins out or shimmers as it recedes, and far foam keeps the streaks
+// its grain shows across the view. Past its threshold it heaps a layer of
+// its finer bubbles for each spread its grain stands over it, white water's
+// whole and carried foam's drained, each layer hiding WATER_FOAM_FILM of
+// what those below let through. Its relief draws while its bubbles, seen
+// from the detail eye, span two pixels across the view (`water_shown`). Its
 // derivatives need it called in uniform control flow.
 fn water_froth(p: vec2<f32>, footprint: WaterFootprint, amounts: vec2<f32>, flow: vec2<f32>,
         shear: f32, time: f32, stagger: f32, seen: f32) -> WaterFroth {
@@ -306,9 +307,9 @@ fn water_froth(p: vec2<f32>, footprint: WaterFootprint, amounts: vec2<f32>, flow
         resolved = 0.5 * (kept.x + select(0.0, kept.y, finer));
     }
     // What the footprint averages of each grain and how much the grain
-    // changes across the steady size, in its spreads squared and no more
-    // than all of it: the threshold's edge spans both.
-    let change = fwidth(grains) * water_steady();
+    // changes across a pixel of the display, in its spreads squared and no
+    // more than all of it: the threshold's edge spans both.
+    let change = fwidth(grains) * material_detail();
     let spread = sqrt(clamp(vec2<f32>(1.0 - resolved) + change * change / 12.0,
         vec2<f32>(1.0e-6), vec2<f32>(1.0)));
     // Each kind's share past the threshold its amount sets, and how many
@@ -332,11 +333,10 @@ fn water_froth(p: vec2<f32>, footprint: WaterFootprint, amounts: vec2<f32>, flow
     froth.cover = 1.0 - (1.0 - hiding.x) * (1.0 - hiding.y);
     froth.thin = dot(hiding, left) / max(hiding.x + hiding.y, 1.0e-6);
     froth.shade = WATER_FOAM_HOLLOW * (1.0 - froth.thin);
-    // Its relief, a finer bubble's radius a layer, which hands over to none
-    // as its bubbles, seen from the detail eye, come to span the steady size
-    // across the view.
+    // Its relief, a finer bubble's radius a layer, which draws while its
+    // bubbles, seen from the detail eye, span two pixels across the view.
     froth.height = max(over.x, over.y * WATER_FOAM_DRAINED) * WATER_FOAM_BUBBLE
-        / (2.0 * WATER_FOAM_FINER) * (1.0 - saturate(STEADY_PIXELS * seen / WATER_FOAM_BUBBLE));
+        / (2.0 * WATER_FOAM_FINER) * water_shown(WATER_FOAM_BUBBLE, seen);
     return froth;
 }
 

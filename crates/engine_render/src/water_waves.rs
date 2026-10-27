@@ -7,12 +7,17 @@
 //! frame the spectra evolve (gravity and surface tension set each wave's
 //! speed; frequencies are rounded so the waves loop every [`LOOP_SECONDS`])
 //! and an inverse transform turns them into the slopes and heights of the
-//! surface, whose moments (the slopes, the square of their length and the
-//! height) fill a texture array with its mip levels. Water reads the slopes
-//! where it stands, each tile at its point turned as the tile's lattice is
-//! and its slopes turned back, and, from what the levels' averages lose of
-//! the square, the roughness of what a pixel spans
-//! (`meshes/water_spectrum.wgsl`).
+//! surface, whose moments fill a texture array with its mip levels (LEAN
+//! mapping, Olano and Baker 2010): each tile's slopes and their squares in
+//! one layer, and their product, its height and the height's square in
+//! another. Water reads them where it stands through the pixel's own
+//! footprint, each tile at its point turned as the tile's lattice is and
+//! its slopes turned back: the levels' averages give the mean of the slopes
+//! the pixel spans, and what they lose of the second moments the covariance
+//! of those it averages away, the roughness of what a pixel spans
+//! (`meshes/water_spectrum.wgsl`). Each tile's slopes' covariance over its
+//! whole repeat, which the last of its levels holds, rides water's uniform
+//! for the tiles a pixel reads none of.
 //!
 //! Each frame the wind's tiles also transform how much their waves, choppy
 //! (Tessendorf 2001), compress the surface at unit gain, into their
@@ -44,6 +49,10 @@ const LOOP_SECONDS: f64 = 256.0;
 const LOOP_STEPS: f64 = 4096.0;
 /// Mip levels of the moments and the whitecaps, down to one texel.
 const LEVELS: u32 = WAVE_TEXELS.trailing_zeros() + 1;
+/// Layers of the moments a tile takes: its slopes and their squares, and
+/// their product, its height and the height's square, a layer each, the
+/// second kind after every tile's first (`water_waves.wgsl`).
+const MOMENT_LAYERS: u32 = 2;
 /// Seconds over which whitecaps' foam fades by e: the middle of the
 /// area-weighted mean decay times, 1.4 to 4.8 s, Callaghan, Deane, Stokes
 /// and Ward (2012, "Observed variation in the decay time of oceanic
@@ -68,9 +77,11 @@ pub(crate) struct WaterWaves {
     // The folds' rows' pass's group, their columns' and each of the
     // whitecaps' levels'.
     folds: Vec<wgpu::BindGroup>,
-    // The spectra uploaded and their tiles.
+    // The spectra uploaded, their tiles, and each tile's slopes' covariance
+    // over its whole repeat (`slope_spreads`): none before they arrive.
     uploaded: Option<u64>,
     tiles: [WaveTile; WIND_TILES],
+    spreads: [[f32; 2]; WIND_TILES],
     // The waves' clock as this frame prepares it, and as the whitecaps
     // last faded to it: none before they first do, and once new spectra
     // arrive.
@@ -89,7 +100,7 @@ impl WaterWaves {
             crate::targets::texture_2d(device, label, side, layers, levels, format, usage)
         };
         let rows = texture("engine/water-wave-rows", tiles, 1, usage);
-        let moments = texture("engine/water-waves", tiles, LEVELS, usage);
+        let moments = texture("engine/water-waves", MOMENT_LAYERS * tiles, LEVELS, usage);
         // The wind's tiles' whitecaps, the first level of which each frame
         // copies for the next to fade.
         let whitecaps = texture(
@@ -193,6 +204,7 @@ impl WaterWaves {
             folds,
             uploaded: None,
             tiles: [WaveTile::default(); WIND_TILES],
+            spreads: [[0.0; 2]; WIND_TILES],
             seconds: 0.0,
             faded: Cell::new(None),
         }
@@ -216,8 +228,10 @@ impl WaterWaves {
     /// of its waves at unit slope variance (meters); and the cosine and sine
     /// of the angle its lattice turns by from the world's axes, from +x
     /// toward +z (xy), by which water turns each world point it reads the
-    /// tile at. Before spectra arrive, the tiles hold no waves and turn by
-    /// none.
+    /// tile at, and the anisotropic part of its slopes' covariance at unit
+    /// slope variance over its whole repeat, in its own axes, as the last of
+    /// its levels holds it (zw, `slope_spreads`). Before spectra arrive, the
+    /// tiles hold no waves, turn by none and spread alike every way.
     pub(crate) fn tiles(&self) -> ([[f32; 4]; WIND_TILES], [[f32; 4]; WIND_TILES]) {
         let waves = self.tiles.map(|tile| {
             let repeats = if tile.period > 0.0 {
@@ -227,9 +241,10 @@ impl WaterWaves {
             };
             [repeats, tile.longest, tile.shortest, tile.height]
         });
-        let turns = self.tiles.map(|tile| {
-            let (sin, cos) = engine_core::math::sin_cos(tile.turn);
-            [cos, sin, 0.0, 0.0]
+        let turns = std::array::from_fn(|index| {
+            let (sin, cos) = engine_core::math::sin_cos(self.tiles[index].turn);
+            let [drawn_out, skewed] = self.spreads[index];
+            [cos, sin, drawn_out, skewed]
         });
         (waves, turns)
     }
@@ -239,9 +254,12 @@ impl WaterWaves {
     /// frame fades.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         let texels = u64::from(WAVE_TEXELS * WAVE_TEXELS) * WIND_TILES as u64;
-        // Eight bytes a texel; the levels add a third; the whitecaps and
-        // their copy hold as many again.
-        2 * (texels * 8 * 4 / 3 + texels * 8) + self.spectrum.size()
+        // Eight bytes a texel, a layer a tile; the levels add a third. The
+        // moments take MOMENT_LAYERS layers a tile with their levels, the
+        // whitecaps one with theirs, and the rows and the whitecaps' copy one
+        // each.
+        let levels = texels * 8 * 4 / 3;
+        (u64::from(MOMENT_LAYERS) + 1) * levels + 2 * texels * 8 + self.spectrum.size()
     }
 
     /// Prepares the waves at simulation time `seconds` for this frame's
@@ -265,6 +283,7 @@ impl WaterWaves {
         {
             self.uploaded = Some(spectra.id);
             self.tiles = spectra.table.tiles;
+            self.spreads = slope_spreads(&spectra.table.texels);
             self.faded.set(None);
             queue.write_buffer(
                 &self.spectrum,
@@ -334,31 +353,36 @@ impl WaterWaves {
             timestamp_writes: profiler.span("water_waves").map(|span| span.compute()),
         });
         let tiles = WIND_TILES as u32;
-        transform(&mut pass, [rows, columns, levels], &self.groups, tiles);
+        transform(
+            &mut pass,
+            [rows, columns, levels],
+            &self.groups,
+            (tiles, MOMENT_LAYERS * tiles),
+        );
         transform(
             &mut pass,
             [fold_rows, fold_columns, levels],
             &self.folds,
-            tiles,
+            (tiles, tiles),
         );
     }
 }
 
-/// Dispatches into `pass` one transform of `layers` tiles: its rows' pass
-/// (`rows`), its columns' (`columns`) and each level's (`levels`), with
-/// `groups` in that order.
+/// Dispatches into `pass` one transform of `tiles` tiles into `layers`
+/// layers: its rows' pass (`rows`), its columns' (`columns`) and each of
+/// its levels' (`levels`), with `groups` in that order.
 fn transform(
     pass: &mut wgpu::ComputePass<'_>,
     [rows, columns, levels]: [&wgpu::ComputePipeline; 3],
     groups: &[wgpu::BindGroup],
-    layers: u32,
+    (tiles, layers): (u32, u32),
 ) {
     pass.set_pipeline(rows);
     pass.set_bind_group(0, &groups[0], &[]);
-    pass.dispatch_workgroups(WAVE_TEXELS, layers, 1);
+    pass.dispatch_workgroups(WAVE_TEXELS, tiles, 1);
     pass.set_pipeline(columns);
     pass.set_bind_group(0, &groups[1], &[]);
-    pass.dispatch_workgroups(WAVE_TEXELS, layers, 1);
+    pass.dispatch_workgroups(WAVE_TEXELS, tiles, 1);
     pass.set_pipeline(levels);
     for (index, group) in groups[2..].iter().enumerate() {
         let side = (WAVE_TEXELS >> (index + 1))
@@ -367,6 +391,45 @@ fn transform(
         pass.set_bind_group(0, group, &[]);
         pass.dispatch_workgroups(side, side, layers);
     }
+}
+
+/// Each tile's slopes' covariance at unit slope variance over its whole
+/// repeat, in its own axes, from the spectra `texels` (at each texel of each
+/// tile, row by row, its wave number's amplitude and its opposite's, as the
+/// storage buffer holds them): half the difference of their variances along
+/// x and z, and their covariance, each over their whole variance. Each wave
+/// number's slopes vary by its power, its amplitude's and its opposite's
+/// squares, times its outer product; the cross terms of a wave and its
+/// opposite come and go as the two run apart, and average away. A tile
+/// holding no waves spreads alike every way.
+fn slope_spreads(texels: &[[f32; 4]]) -> [[f32; 2]; WIND_TILES] {
+    let side = WAVE_TEXELS as usize;
+    let middle = (side / 2) as f64;
+    std::array::from_fn(|tile| {
+        // The sums of the power times kx², kz² and kx kz, in waves a period.
+        let mut sums = [0.0_f64; 3];
+        let first = tile * side * side;
+        for (index, texel) in texels.iter().skip(first).take(side * side).enumerate() {
+            let power: f64 = texel
+                .iter()
+                .map(|&value| f64::from(value) * f64::from(value))
+                .sum();
+            let along_x = (index % side) as f64 - middle;
+            let along_z = (index / side) as f64 - middle;
+            sums[0] += along_x * along_x * power;
+            sums[1] += along_z * along_z * power;
+            sums[2] += along_x * along_z * power;
+        }
+        let whole = sums[0] + sums[1];
+        if whole > 0.0 {
+            [
+                (0.5 * (sums[0] - sums[1]) / whole) as f32,
+                (sums[2] / whole) as f32,
+            ]
+        } else {
+            [0.0; 2]
+        }
+    })
 }
 
 fn pipelines(

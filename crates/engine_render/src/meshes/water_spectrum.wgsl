@@ -6,18 +6,18 @@
 // the world's axes (`water_tile_turn`), so no tile's repeat lines up with
 // another's or with the grids of the ground and the water: a pixel reads
 // each wind tile once, straight at its point turned so, with no patches. A
-// pixel reads a tile through its footprint at the steady size
-// (`water_footprint`): the tile's levels resolve it across the view, by its
-// short side or a sixteenth of its long side (`detail_resolved`), and their
-// anisotropy averages it along its long side, so it draws no waves finer
-// than temporal antialiasing holds steadily, keeps the waves running across
-// the view that span the size it resolves however far along the view they
-// lie, and averages out those running along it that its long side spans.
-// The covariance of the slopes they average away roughens the water along
-// and across the view as it projects there (LEAN mapping; Bruneton, Neyret
-// and Holzschuch 2010), the more along the view the more the footprint
-// stretches, so far water streaks and glints along the view; nothing fades
-// by distance.
+// pixel reads a tile through its own footprint (`water_footprint`), as every
+// texture reads: the tile's levels and their sixteenfold anisotropy filter
+// it by the pixel's derivatives, resolving it across the view by its short
+// side or a sixteenth of its long side (`detail_resolved`) and averaging it
+// along its long side, so it draws every wave the screen shows however far
+// along the view it lies. The tiles hold the moments of their slopes and
+// heights (LEAN mapping, Olano and Baker 2010), so what filtering averages
+// of them gives the mean of the slopes over the footprint and the whole
+// covariance of those it averages away, which roughens the water along and
+// across the view as it projects there (Bruneton, Neyret and Holzschuch
+// 2010), the more along the view the more the footprint stretches, so far
+// water streaks and glints along the view; nothing fades by distance.
 // Each place sizes the wind's tiles by the sea its wind raises there
 // (`engine_core::wind_waves`): Elfouhaily, Chapron, Katsaros and
 // Vandemark's unified spectrum (1997, "A unified directional spectrum for
@@ -138,6 +138,17 @@ fn water_spread_toward(spread: vec3<f32>, way: vec2<f32>) -> f32 {
     return spread.x * way.x * way.x + spread.y * way.y * way.y + 2.0 * spread.z * way.x * way.y;
 }
 
+// The covariance of slopes of covariance `spread` turned by the unit complex
+// number `turn`, as `complex_product` turns the slopes themselves: its mean
+// variance stays, and its anisotropic part, half the difference of its
+// variances along x and z beside its covariance, turns by twice the angle.
+fn water_spread_turned(spread: vec3<f32>, turn: vec2<f32>) -> vec3<f32> {
+    let mean = 0.5 * (spread.x + spread.y);
+    let anisotropic = complex_product(vec2<f32>(0.5 * (spread.x - spread.y), spread.z),
+        complex_product(turn, turn));
+    return vec3<f32>(mean + anisotropic.x, mean - anisotropic.x, anisotropic.y);
+}
+
 // How many times a meter tile `tile` repeats.
 fn water_tile_repeats(tile: u32) -> f32 {
     return water.waves[tile].x;
@@ -161,6 +172,17 @@ fn water_tile_height(tile: u32) -> f32 {
 // (`complex_product`), and turns its slopes back by its conjugate.
 fn water_tile_turn(tile: u32) -> vec2<f32> {
     return water.turns[tile].xy;
+}
+
+// The covariance (`water_spread`) of tile `tile`'s slopes at unit slope
+// variance over its whole repeat, in its own axes, as the last of its
+// levels holds it: half of that variance along each axis, drawn out and
+// turned by the anisotropic part the wind's spread gives its spectrum
+// (`water.turns`' zw: half the difference of its variances along its x and
+// z, and its covariance, `water_waves.rs`).
+fn water_tile_spread(tile: u32) -> vec3<f32> {
+    let anisotropic = water.turns[tile].zw;
+    return vec3<f32>(0.5 + anisotropic.x, 0.5 - anisotropic.x, anisotropic.y);
 }
 
 // A random point of a pattern (in its periods) by which reads at corner
@@ -196,134 +218,101 @@ fn water_triangle(grid: vec2<f32>) -> WaterTriangle {
     return triangle;
 }
 
-// How many times a pixel's derivatives scale for water's patterns to be
-// filtered at the steady size: STEADY_PIXELS times the render size's share
-// of the display (`material_detail`, the mip bias), so the levels and
-// anisotropy they read average all they hold finer than that many pixels of
-// the display.
-fn water_steady() -> f32 {
-    return STEADY_PIXELS * material_detail();
-}
-
-// A pixel's footprint across the steady size, as water's patterns filter
-// it: how its point changes across the steady size (`dx` and `dy`, the
-// pixel's derivatives scaled by `water_steady`: meters along x and z, or a
-// pattern's own units), by which its texture reads filter; the meters it
-// resolves (`detail_resolved` of its sides: its short side, or its long
-// side over DETAIL_ANISOTROPY where it is more stretched, as the waves'
-// sampler's levels and anisotropy resolve it); the meters its long side
-// spans, along which filtering averages; and the way that side runs (a
-// unit vector). A pattern shows as far as the footprint spans less than
-// its features along each way they vary (`water_footprint_toward`): waves
-// running across the view by the size it resolves, however far along the
-// view they lie, and those running along it, and features varying every
-// way, by its long side; what it averages of their slopes lies along the
-// ways they vary, so far water's hidden slopes lie along the view.
+// A pixel's footprint as water's patterns filter it: how its point changes
+// across a pixel of the display (`dx` and `dy`, its derivatives scaled by
+// the render size's share of the display, `material_detail`, as material
+// textures' mip bias samples them: meters along x and z, or a pattern's own
+// units), by which its texture reads filter and its computed patterns draw
+// (`water_footprint_toward`, `water_shown`); the meters its short side and
+// its long side span (`across` and `along`, the singular values of those
+// derivatives); and the meters it resolves (`detail_resolved` of its sides:
+// its short side, or its long side over DETAIL_ANISOTROPY where it is more
+// stretched, as the waves' sampler's levels and anisotropy resolve it), by
+// which features varying every way draw, as a read of their texture would
+// resolve them.
 struct WaterFootprint {
     dx: vec2<f32>,
     dy: vec2<f32>,
-    resolved: f32,
+    across: f32,
     along: f32,
-    way: vec2<f32>,
+    resolved: f32,
 }
 
-// The footprint of a pixel whose point changes by `dx` and `dy` a pixel:
-// its sides, the singular values of those derivatives across the steady
-// size, and the way of the longer, the major axis of the ellipse they span,
-// half the angle of their spread's anisotropic part.
+// The footprint of a pixel whose point changes by `dx` and `dy` a pixel.
 fn water_footprint(dx: vec2<f32>, dy: vec2<f32>) -> WaterFootprint {
-    let steady = water_steady();
+    let detail = material_detail();
     var footprint: WaterFootprint;
-    footprint.dx = dx * steady;
-    footprint.dy = dy * steady;
+    footprint.dx = dx * detail;
+    footprint.dy = dy * detail;
     let squares = dot(footprint.dx, footprint.dx) + dot(footprint.dy, footprint.dy);
     let area = abs(footprint.dx.x * footprint.dy.y - footprint.dx.y * footprint.dy.x);
     let sum = sqrt(squares + 2.0 * area);
     let difference = sqrt(max(squares - 2.0 * area, 0.0));
-    let sides = 0.5 * vec2<f32>(sum - difference, sum + difference);
-    footprint.resolved = detail_resolved(sides);
-    footprint.along = sides.y;
-    let spread = water_spread(footprint.dx) + water_spread(footprint.dy);
-    let turn = 0.5 * atan2(2.0 * spread.z, spread.x - spread.y + 1.0e-30);
-    footprint.way = vec2<f32>(cos(turn), sin(turn));
+    footprint.across = 0.5 * (sum - difference);
+    footprint.along = 0.5 * (sum + difference);
+    footprint.resolved = detail_resolved(vec2<f32>(footprint.across, footprint.along));
     return footprint;
 }
 
 // The meters footprint `footprint` (`water_footprint`) spans along the unit
-// vector `way` (along x and z, or a pattern's own axes): the width of the
-// ellipse its derivatives span that way, no less than the size it resolves.
+// vector `way` (along x and z, or a pattern's own axes): how far a pattern
+// varying that way moves across the pixel, the length of the pixel's
+// derivatives projected on it, from the footprint's short side, where `way`
+// runs across the view, to its long side.
 fn water_footprint_toward(footprint: WaterFootprint, way: vec2<f32>) -> f32 {
-    return max(length(vec2<f32>(dot(footprint.dx, way), dot(footprint.dy, way))),
-        footprint.resolved);
+    return length(vec2<f32>(dot(footprint.dx, way), dot(footprint.dy, way)));
 }
 
-// The shares of a band of waves from `band.y` to `band.x` meters long that
-// a read through `footprint` (`water_footprint`) draws, their slopes'
-// variance spread evenly over the band's octaves and every way, and their
-// heights' variance an octave growing as the square of their length, as
-// the tiles hold them: of their slopes along the footprint's long side (x)
-// and across it (y), each of that way's half, and of their heights (z). The
-// read draws none of the waves shorter than twice the size the footprint
-// resolves, which its levels average, and all those longer than twice its
-// long side; between, its anisotropy averages each wave its long side spans
-// half of along the wave's heading, so it draws only those heading so
-// nearly across that side that it does not: a share of their headings
-// about as large as they are long over twice the long side, their slopes
-// all but across it.
-fn water_band_drawn(band: vec2<f32>, footprint: WaterFootprint) -> vec3<f32> {
-    let octaves = log(max(band.x / max(band.y, 1.0e-9), 1.0 + 1.0e-6));
-    let along = max(footprint.along, 1.0e-9);
-    // Where the read starts drawing waves heading across the long side, and
-    // where it draws them every way.
-    let first = clamp(2.0 * footprint.resolved, band.y, band.x);
-    let last = clamp(2.0 * along, band.y, band.x);
-    let whole = log(band.x / last) / octaves;
-    let across = whole + (last - first) / (2.0 * along * octaves);
-    let heights = ((last * last * last - first * first * first) / (3.0 * along)
-        + band.x * band.x - last * last) / max(band.x * band.x - band.y * band.y, 1.0e-12);
-    return vec3<f32>(whole, across, heights);
-}
-
-// The covariance (`water_spread`) of slopes of variance `variance` that a
-// read through a footprint whose long side runs along `way` (a unit vector
-// along x and z) averages away, of a band of which it draws the shares
-// `drawn` of the slopes along that side and across it (`water_band_drawn`):
-// split between the two ways as the read leaves each undrawn, alike every
-// way where it leaves as much of each.
-fn water_spread_averaged(variance: f32, drawn: vec2<f32>, way: vec2<f32>) -> vec3<f32> {
-    let undrawn = vec2<f32>(1.0) - min(drawn, vec2<f32>(1.0));
-    let along = (undrawn.x + 1.0e-6) / (undrawn.x + undrawn.y + 2.0e-6);
-    return variance * ((1.0 - along) * vec3<f32>(1.0, 1.0, 0.0)
-        + (2.0 * along - 1.0) * water_spread(way));
+// How much of a computed pattern's part `meters` long along the way it
+// varies a pixel draws, its footprint spanning `span` meters that way
+// (`water_footprint_toward`; the size it resolves for parts varying every
+// way): all of it while it spans two pixels or more, none where it spans
+// one, so nothing finer than the Nyquist limit draws, as mipmaps keep a
+// texture's; what it leaves of the part's slopes hides in their variance.
+fn water_shown(meters: f32, span: f32) -> f32 {
+    return saturate(meters / max(span, 1.0e-9) - 1.0);
 }
 
 // One filtered read of tile `tile` at `uv` (in its periods), which changes
-// by `dx` and `dy` across the steady size (in its periods: a footprint's
-// derivatives, `water_footprint`): what its levels and anisotropy average
-// of its moments over that footprint. Its slopes (xy, for unit slope
-// variance), the variance of those the footprint averages away (z, what
-// the levels and the anisotropy's taps lose of the slopes' square) and its
-// height in its own root mean square heights (w, averaging toward none as
-// the footprint covers many waves). Where its texels span more than the
-// size the footprint resolves (`detail_resolved`, by which the sampler
-// picks its level), its levels' averages hide nothing of it: what filtering
-// between texels loses of the slopes' square (lines along the texels'
-// edges) is no waves' variance, so it fades out as texels grow past it.
-fn water_tile_sample(tile: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
-    let moments = textureSampleGrad(water_waves, water_wave_sampler, uv, tile, dx, dy);
+// by `dx` and `dy` across a pixel (in its periods: a footprint's
+// derivatives, `water_footprint`), at unit slope variance and in its own
+// axes: what its levels and anisotropy average of its moments over that
+// footprint (LEAN mapping). The mean of its slopes; the covariance of those
+// the footprint averages away (`water_spread`), what the filtering loses of
+// their second moments; its height in its own root mean square heights,
+// averaging toward none as the footprint covers many waves; and the
+// variance of the heights it draws, the tile's whole, one, less what the
+// filtering loses of the height's square. Rounding leaves no variance
+// negative, nor the slopes' covariance past what their variances allow.
+// Where its texels span more than the size the footprint resolves
+// (`detail_resolved`, by which the sampler picks its level), its levels'
+// averages hide nothing of it: what filtering between texels loses of the
+// squares (lines along the texels' edges) is no waves' variance, so it
+// fades out as texels grow past it.
+fn water_tile_sample(tile: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> WaterRead {
+    let slopes = textureSampleGrad(water_waves, water_wave_sampler, uv, tile, dx, dy);
+    let heights = textureSampleGrad(water_waves, water_wave_sampler, uv,
+        tile + WATER_WIND_TILES, dx, dy);
     let texels = detail_resolved(vec2<f32>(length(dx), length(dy)))
         * f32(textureDimensions(water_waves).x);
     let minified = saturate(log2(max(texels, 1.0e-6)) + 1.0);
-    return vec4<f32>(moments.xy, max(moments.z - dot(moments.xy, moments.xy), 0.0) * minified,
-        moments.w);
+    let lost = (vec3<f32>(slopes.zw, heights.x) - water_spread(slopes.xy)) * minified;
+    let variances = max(lost.xy, vec2<f32>(0.0));
+    let bound = sqrt(variances.x * variances.y);
+    var read: WaterRead;
+    read.slopes = slopes.xy;
+    read.hidden = vec3<f32>(variances, clamp(lost.z, -bound, bound));
+    read.height = heights.y;
+    read.heights = max(1.0 - max(heights.z - heights.y * heights.y, 0.0) * minified, 0.0);
+    return read;
 }
 
 // One filtered read of wind tile `tile`'s whitecaps at `uv` (in its
-// periods), which changes by `dx` and `dy` across the steady size (in its
-// periods), as `water_tile_sample` reads its moments: what its levels and
-// anisotropy average over that footprint of the largest compression its
-// texels have had at unit gain, fading (x, `water_waves.wgsl`), and the
-// variance of it they average away (y, what they lose of its square).
+// periods), which changes by `dx` and `dy` across a pixel (in its periods),
+// as `water_tile_sample` reads its moments: what its levels and anisotropy
+// average over that footprint of the largest compression its texels have
+// had at unit gain, fading (x, `water_waves.wgsl`), and the variance of it
+// they average away (y, what they lose of its square).
 // Where its texels span more than the size the footprint resolves
 // (`detail_resolved`), what filtering between them loses of the square is
 // no variance of it, so that fades out as they grow past it.
@@ -336,16 +325,16 @@ fn water_tile_whitecaps(tile: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) 
 }
 
 // The wind's whitecaps at world `p` (meters along x and z) for a pixel whose
-// footprint at the steady size is `footprint` (`water_footprint`): each
-// wind tile read where `water_wind_waves` reads its slopes, at `p` turned by
-// its lattice's angle times its repeats, through that footprint
-// (`water_tile_whitecaps`, its derivatives turned alike), and scaled by its
-// gain in `gains` (`water_wind_gains`). The sum over the tiles of each one's
-// gain times its faded compression (x), past 1 where the surface has
-// folded, and the variance of that sum the reads average away (y), the
-// tiles independent. A tile of no gain reads nothing; every other reads at
-// any size, even where `water_wind_waves` reads none of its slopes, so far
-// water reads the mean of what near water holds.
+// footprint is `footprint` (`water_footprint`): each wind tile read where
+// `water_wind_waves` reads its slopes, at `p` turned by its lattice's angle
+// times its repeats, through that footprint (`water_tile_whitecaps`, its
+// derivatives turned alike), and scaled by its gain in `gains`
+// (`water_wind_gains`). The sum over the tiles of each one's gain times its
+// faded compression (x), past 1 where the surface has folded, and the
+// variance of that sum the reads average away (y), the tiles independent. A
+// tile of no gain reads nothing; every other reads at any size, even where
+// `water_wind_waves` reads none of its slopes, so far water reads the mean
+// of what near water holds.
 fn water_wind_whitecaps(p: vec2<f32>, footprint: WaterFootprint, gains: vec4<f32>)
         -> vec2<f32> {
     var sum = vec2<f32>(0.0);
@@ -563,30 +552,25 @@ fn water_wind_finer(sea: WaterSea) -> f32 {
 }
 
 // The wind's waves at world `p` (meters along x and z) for a pixel whose
-// footprint at the steady size is `footprint` (`water_footprint`): each
-// wind tile read once, straight, at `p` turned by its lattice's angle
-// (`water_tile_turn`) times its repeats, through that footprint
-// (`water_tile_sample`, its derivatives turned alike), so its levels draw no
-// waves finer than the size the footprint resolves and its anisotropy
-// averages along the footprint's long side the waves that side spans; its
-// slopes turned back into the world (a wave the tile holds along the wind's
-// heading turned by that angle so runs along the wind), and scaled by its
-// gain in `gains` (`water_wind_gains`). Slopes and heights add, the hidden
-// covariances as each gain's square times its read's: what its levels and
-// anisotropy average away splits between the footprint's long side and
-// across it as the read leaves the slopes of the tile's band undrawn each
-// way (`water_band_drawn`, `water_spread_averaged`), the wind's slopes
-// spreading about alike up and across the wind (Cox and Munk 1954 measured
-// the two variances within half of each other), and what it leaves undrawn
-// of the slopes it reads lies along them. Of the heights' variance it holds
-// the share of its band's the read draws. A tile of no gain reads nothing.
-// One whose slopes stay as gentle as the smoothest water's microfacets
-// (WATER_SMOOTHEST's square), or whose longest waves the size the footprint
-// resolves spans twice over (as the sampler picks its level), reads no
-// texture and hides the square of its gain, alike every way: each hands
-// over across an octave, from twice the gentlest to it and from once the
-// longest waves to twice, what it takes of the slopes hiding in the
-// variance, so nothing pops.
+// footprint is `footprint` (`water_footprint`): each wind tile read once,
+// straight, at `p` turned by its lattice's angle (`water_tile_turn`) times
+// its repeats, through that footprint (`water_tile_sample`, its derivatives
+// turned alike), so its levels and anisotropy average all it holds that
+// the footprint spans and give the covariance of the slopes they average
+// away; its slopes and that covariance turned back into the world (a wave
+// the tile holds along the wind's heading turned by that angle so runs
+// along the wind, `water_spread_turned`), and scaled by its gain in `gains`
+// (`water_wind_gains`). Slopes and heights add, the hidden covariances as
+// each gain's square times its read's, what it leaves undrawn of the slopes
+// it reads lying along them; and so do the variances of the heights each
+// read draws. A tile of no gain reads nothing. One whose slopes stay as
+// gentle as the smoothest water's microfacets (WATER_SMOOTHEST's square),
+// or whose longest waves the size the footprint resolves spans twice over,
+// every wave it holds shorter than half a pixel, reads no texture and hides
+// the square of its gain as its whole covariance, which the last of its
+// levels holds (`water_tile_spread`): each hands over across an octave,
+// from twice the gentlest to it and from once the longest waves to twice,
+// what it takes of the slopes hiding in the variance, so nothing pops.
 fn water_wind_waves(p: vec2<f32>, footprint: WaterFootprint, gains: vec4<f32>) -> WaterRead {
     var read = WaterRead(vec2<f32>(0.0), vec3<f32>(0.0), 0.0, 0.0);
     let calm = WATER_SMOOTHEST * WATER_SMOOTHEST;
@@ -596,33 +580,30 @@ fn water_wind_waves(p: vec2<f32>, footprint: WaterFootprint, gains: vec4<f32>) -
             continue;
         }
         let band = water_tile_band(tile);
+        let turn = water_tile_turn(tile);
         // How much of its slopes it draws, the rest hiding in its variance.
         let kept = saturate(2.0 - footprint.resolved / band.x) * saturate(gain / calm - 1.0);
-        // What it draws of its slopes (xy) and its height (z), the
-        // covariance of the slopes it hides at unit gain, and the share of
-        // its heights' variance it draws.
-        var drawn = vec3<f32>(0.0);
-        var hidden = water_spread_even(1.0);
-        var heights = 0.0;
+        // What it draws at unit gain, in its own axes: none of its slopes
+        // or its height where it reads no texture, all its covariance
+        // hidden.
+        var drawn = WaterRead(vec2<f32>(0.0), water_tile_spread(tile), 0.0, 0.0);
         if kept > 0.0 {
             let repeats = water_tile_repeats(tile);
-            let turn = water_tile_turn(tile);
             let sampled = water_tile_sample(tile, complex_product(p, turn) * repeats,
                 complex_product(footprint.dx, turn) * repeats,
                 complex_product(footprint.dy, turn) * repeats);
-            // Its slopes turned back into the world.
-            let slopes = complex_product(sampled.xy, vec2<f32>(turn.x, -turn.y));
-            let shares = water_band_drawn(band, footprint);
-            drawn = vec3<f32>(slopes * kept, sampled.w * kept);
-            hidden = water_spread_averaged(sampled.z, shares.xy, footprint.way)
-                + (1.0 - kept * kept) * water_spread(slopes);
-            heights = kept * kept * shares.z;
+            drawn.slopes = sampled.slopes * kept;
+            drawn.hidden = sampled.hidden + (1.0 - kept * kept) * water_spread(sampled.slopes);
+            drawn.height = sampled.height * kept;
+            drawn.heights = sampled.heights * kept * kept;
         }
+        // Turned back into the world by its turn's conjugate.
+        let back = vec2<f32>(turn.x, -turn.y);
         let height = water_tile_height(tile) * gain;
-        read.slopes += drawn.xy * gain;
-        read.hidden += hidden * (gain * gain);
-        read.height += drawn.z * height;
-        read.heights += height * height * heights;
+        read.slopes += complex_product(drawn.slopes, back) * gain;
+        read.hidden += water_spread_turned(drawn.hidden, back) * (gain * gain);
+        read.height += drawn.height * height;
+        read.heights += drawn.heights * (height * height);
     }
     return read;
 }

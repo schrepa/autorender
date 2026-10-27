@@ -8,15 +8,6 @@ use serde::{Deserialize, Serialize};
 
 use engine_settings::settings;
 
-/// The pixels a pattern's features must span to draw steadily under
-/// temporal antialiasing. Its frames sample each pixel up to half a pixel
-/// off its middle, which moves the phase at which a pixel samples a pattern
-/// `p` pixels long by up to `1 / (2 p)` of its period from frame to frame:
-/// no more than an eighth of it where `p` is 4. Finer patterns draw as
-/// their average: waves' slopes as roughness through their variance, foam's
-/// bubbles as their expected cover. Shaders mirror it (`STEADY_PIXELS`).
-pub const STEADY_PIXELS: f32 = 4.0;
-
 settings! {
     /// Temporal antialiasing settings: whether ordinary GPU-presented frames
     /// jitter and resolve against their history, and how the resolve keeps

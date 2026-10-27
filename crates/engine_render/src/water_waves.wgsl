@@ -6,10 +6,15 @@
 // The slopes along x and z are real fields, so one complex transform
 // carries both: x's as its real part, z's as its imaginary one; a second
 // beside it carries the heights, in the tile's own root mean square
-// heights. Each texel keeps its slopes' moments (the slopes along x and z,
-// and the square of their length) and its height, which the mip levels
-// average: what averaging loses of the square is how rough the water looks
-// from afar (LEAN mapping), and the height averages away as the waves do.
+// heights. Each texel keeps the moments of its slopes and of its height
+// (LEAN mapping, Olano and Baker 2010), which the mip levels average: the
+// slopes along x and z and their squares in a layer a tile, and the slopes'
+// product, the height and its square in a layer a tile after all those.
+// What averaging loses of the slopes' second moments is the covariance of
+// the slopes a pixel averages away, how rough and how drawn out the water
+// looks from afar; what it loses of the height's square is the variance of
+// the heights it averages away; and the height averages away as the waves
+// do.
 //
 // The wind's tiles' waves also move the water toward their crests, as
 // Gerstner's do: choppy waves carry it by g D where their gain is g, D = i
@@ -182,8 +187,10 @@ fn evolve_rows(@builtin(local_invocation_id) local: vec3<u32>,
     wave_rows(row, tile, thread);
 }
 
-// Each column (x) of each tile's (y) rows: transformed along z, then its
-// slopes' moments and its height into the first level.
+// Each column (x) of each tile's (y) rows: transformed along z, then the
+// moments of its slopes and its height into the first level: the slopes
+// and their squares in the tile's layer, and the slopes' product, the
+// height and its square in the layer WAVE_WIND_TILES on.
 @compute @workgroup_size(128)
 fn transform_columns(@builtin(local_invocation_id) local: vec3<u32>,
         @builtin(workgroup_id) group: vec3<u32>) {
@@ -193,8 +200,10 @@ fn transform_columns(@builtin(local_invocation_id) local: vec3<u32>,
     for (var half = 0u; half < 2u; half++) {
         let row = local.x + half * (WAVE_TEXELS / 2u);
         let line = wave_point(at, column, row);
-        textureStore(wave_target, vec2<u32>(column, row), tile,
-            vec4<f32>(line.xy, dot(line.xy, line.xy), line.z));
+        let texel = vec2<u32>(column, row);
+        textureStore(wave_target, texel, tile, vec4<f32>(line.xy, line.xy * line.xy));
+        textureStore(wave_target, texel, tile + WAVE_WIND_TILES,
+            vec4<f32>(line.x * line.y, line.z, line.z * line.z, 0.0));
     }
 }
 
@@ -240,7 +249,7 @@ fn transform_fold_columns(@builtin(local_invocation_id) local: vec3<u32>,
     }
 }
 
-// Each texel of each tile (z) of a level: the mean of the four of the
+// Each texel of each layer (z) of a level: the mean of the four of the
 // level above.
 @compute @workgroup_size(8, 8)
 fn average_level(@builtin(global_invocation_id) id: vec3<u32>) {
