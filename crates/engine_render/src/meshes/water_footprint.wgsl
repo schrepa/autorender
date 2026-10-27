@@ -1,5 +1,5 @@
 // How a pixel reads water's patterns, terrains' water's (`water_flow.wgsl`,
-// `water_stream.wgsl`, `water_foam.wgsl`) and the sea's (`ocean.wgsl`):
+// `water_foam.wgsl`) and the sea's (`ocean.wgsl`):
 // through its own footprint (`water_footprint`), as every texture reads,
 // each computed part drawn while it spans two pixels along the way it
 // varies (`water_shown`), so waves running across the view stay drawn far
@@ -38,12 +38,6 @@ fn water_spread(slopes: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(slopes.x * slopes.x, slopes.y * slopes.y, slopes.x * slopes.y);
 }
 
-// The covariance of slopes whose variance `variance` spreads alike every
-// way: half of it along each axis.
-fn water_spread_even(variance: f32) -> vec3<f32> {
-    return vec3<f32>(0.5 * variance, 0.5 * variance, 0.0);
-}
-
 // The variance along the unit vector `way` (along x and z) of slopes of
 // covariance `spread`.
 fn water_spread_toward(spread: vec3<f32>, way: vec2<f32>) -> f32 {
@@ -55,17 +49,15 @@ fn water_spread_toward(spread: vec3<f32>, way: vec2<f32>) -> f32 {
 // the render size's share of the display, `material_detail`, as material
 // textures' mip bias samples them: meters along x and z, or a pattern's own
 // units), by which its texture reads filter and its computed patterns draw
-// (`water_footprint_toward`, `water_shown`); the meters its short side and
-// its long side span (`across` and `along`, the singular values of those
-// derivatives); and the meters it resolves (`detail_resolved` of its sides:
-// its short side, or its long side over DETAIL_ANISOTROPY where it is more
-// stretched, as a texture's levels and anisotropy resolve it), by which
-// features varying every way draw, as a read of their texture would
-// resolve them.
+// (`water_footprint_toward`, `water_shown`); the meters its long side spans
+// (`along`, the larger singular value of those derivatives); and the meters
+// it resolves (`detail_resolved` of its sides: its short side, or its long
+// side over DETAIL_ANISOTROPY where it is more stretched, as a texture's
+// levels and anisotropy resolve it), by which a read of features varying
+// every way keeps their variance (`water_resolved_share`).
 struct WaterFootprint {
     dx: vec2<f32>,
     dy: vec2<f32>,
-    across: f32,
     along: f32,
     resolved: f32,
 }
@@ -80,9 +72,9 @@ fn water_footprint(dx: vec2<f32>, dy: vec2<f32>) -> WaterFootprint {
     let area = abs(footprint.dx.x * footprint.dy.y - footprint.dx.y * footprint.dy.x);
     let sum = sqrt(squares + 2.0 * area);
     let difference = sqrt(max(squares - 2.0 * area, 0.0));
-    footprint.across = 0.5 * (sum - difference);
+    let across = 0.5 * (sum - difference);
     footprint.along = 0.5 * (sum + difference);
-    footprint.resolved = detail_resolved(vec2<f32>(footprint.across, footprint.along));
+    footprint.resolved = detail_resolved(vec2<f32>(across, footprint.along));
     return footprint;
 }
 

@@ -25,11 +25,9 @@
 // water reads that state and what follows from it: its Froude number and
 // its eddies' speed (`water_eddies`); the water's debug views paint each of
 // its fields (`meshes/debug.wgsl`).
-// Its waves come from that state alone (`water_flow.wgsl`): the boils its
-// eddies bring up and the waves its bed holds still where it runs faster
-// than the slowest of its own waves (`water_stream.wgsl`), its eddies
-// roughening it unseen; and waves standing about what it flows past. Where
-// none rise, it lies a calm mirror. Each is drawn through the pixel's own
+// Its waves come from that state alone (`water_flow.wgsl`): waves standing
+// about what it flows past, its eddies roughening it unseen. Where none
+// rise, it lies a calm mirror. They are drawn through the pixel's own
 // footprint (`water_footprint.wgsl`), every computed part while it spans two
 // pixels along the way it varies (`water_shown`), so waves running across
 // the view stay drawn far along it, while those running along it average
@@ -225,6 +223,10 @@ const WATER_SHORE: f32 = 0.1;
 // changes across a pixel: running water, however thin, is water.
 const WATER_EDGE_PIXELS: f32 = 1.5;
 const WATER_EDGE: f32 = 0.05;
+// The meters a second over which water goes from still to running, from the
+// first to the second (`shade_water`'s `flowing`): its eddies roughen only
+// running water.
+const WATER_FLOWING: vec2<f32> = vec2<f32>(0.05, 0.3);
 // The meters a second over which thin water comes to show whole however
 // thin, from the first to the second: calm shallows (a river's water
 // spread over its banks, a pool's edge) fade in over WATER_SHORE of depth
@@ -1224,10 +1226,10 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // How far it is from still to running: what its current raises shows as
     // far as it runs, so nothing changes at once where a river meets a lake.
     let flowing = smoothstep(WATER_FLOWING.x, WATER_FLOWING.y, speed);
-    // Its waves, from its state alone (`water_flow_waves`): the boils its
-    // eddies bring up, the waves its bed holds and those standing about what
-    // it flows past; none where none rise.
-    let waves = water_flow_waves(world.xz, footprint, at, eddy, froude, flowing, anchored, time);
+    // Its waves, from its state alone (`water_flow_waves`): those standing
+    // about what it flows past, and its eddies' roughness; none where none
+    // rise.
+    let waves = water_flow_waves(footprint, at, eddy, froude, flowing, anchored);
     // They ride its surface, tilting as it falls; and the slopes they hide
     // within a pixel roughen it, along the view and across it as their
     // ellipse projects into the view, so where they run rough, it glints
