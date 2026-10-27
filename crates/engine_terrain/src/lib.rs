@@ -110,9 +110,8 @@ pub use tile::{Generator, RIVER_EDGE_FAR, RIVER_EDGE_STEP, RIVER_EDGE_ZERO, Tile
 pub use tile_errors::{DRY_CELL, ERROR_CELLS, ERROR_MIPS, ERROR_TEXELS, ErrorPyramid};
 pub use tile_water::{
     BREAK_FULL, BREAK_ONSET, BREAK_THINNEST, TURBULENT_SPEED, TURBULENT_SWIRL, TileWater,
-    WATER_FLOW_RANGE, WATER_OBSTACLE_STEP, WATER_RADIUS_STEP, WATER_REACH, WATER_SHEAR_RANGE,
-    WATER_SPAN_LEAST, WATER_SPAN_MOST, WaterMesh, WaterPoint, WaterState, pack as pack_water,
-    unpack as unpack_water,
+    WATER_FLOW_RANGE, WATER_REACH, WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST, WaterMesh,
+    WaterPoint, WaterState, pack as pack_water, unpack as unpack_water,
 };
 
 /// The finest-to-coarsest pyramid level any layer, bake, walk graph, route

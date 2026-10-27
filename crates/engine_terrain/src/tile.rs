@@ -315,7 +315,7 @@ impl Tile {
     pub(crate) fn with_water(
         mut self,
         surface: Box<[f32]>,
-        info: Box<[[u32; 3]]>,
+        info: Box<[[u32; 2]]>,
         solids: &[crate::Footprint],
     ) -> Self {
         let tile = (&self.heights[..], self.spacing, self.origin());
@@ -657,16 +657,13 @@ impl Tile {
 
     /// What the bed holds under the water at `local`, meters from the
     /// tile's first corner, as the water's sample nearest it holds it: its
-    /// reach's code beside its span's, and its nearest obstacle, offset from
-    /// `local` (`TileWater::bed_words`); none outside the tile or where it
-    /// holds no water.
-    pub fn bed_words(&self, local: Vec2) -> [u32; 2] {
+    /// reach's code beside its span's (`TileWater::bed_word`); none outside
+    /// the tile or where it holds no water.
+    pub fn bed_word(&self, local: Vec2) -> u32 {
         let (Some(water), Some((i, j, fu, fv))) = (self.water.as_ref(), self.cell(local)) else {
-            return [0; 2];
+            return 0;
         };
-        let (x, z) = (i + i32::from(fu >= 0.5), j + i32::from(fv >= 0.5));
-        let sample = Vec2::new(x as f32, z as f32) * self.spacing;
-        water.bed_words(x, z, local - sample)
+        water.bed_word(i + i32::from(fu >= 0.5), j + i32::from(fv >= 0.5))
     }
 }
 
@@ -1259,13 +1256,13 @@ impl Generator {
     /// ([`crate::tile_water::water_rows`]), its rivers' from their raster,
     /// which it then lets go: their samples' surfaces and words, row by
     /// row; `None` without the bake.
-    fn water_rows(&mut self, budget: &mut u64) -> Option<(Vec<f32>, Vec<[u32; 3]>)> {
+    fn water_rows(&mut self, budget: &mut u64) -> Option<(Vec<f32>, Vec<[u32; 2]>)> {
         let stride = TILE_STRIDE as usize;
         let rasters = std::mem::take(&mut self.rasters);
         let (index, hydrology) = self.layers.hydrology_layer()?;
         let raster = rasters.get(index).and_then(Option::as_ref);
         let count = stride * stride;
-        let (mut surface, mut info) = (vec![f32::NAN; count], vec![[0_u32; 3]; count]);
+        let (mut surface, mut info) = (vec![f32::NAN; count], vec![[0_u32; 2]; count]);
         crate::tile_water::water_rows(
             &hydrology.water,
             &|row, column| raster?.water(&hydrology.rivers, row, column),

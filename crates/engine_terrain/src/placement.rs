@@ -474,30 +474,6 @@ impl Footprint {
         (span[0] <= span[1]).then_some(span)
     }
 
-    /// The radius of the disk as large as its shadow from above (meters):
-    /// a ball's, the ellipse of its axes' parts along x and z; a box's, the
-    /// hexagon those parts span, four times the sum of the areas of each
-    /// pair's parallelogram.
-    pub fn radius(&self) -> f32 {
-        let axes = self.axes();
-        let parts =
-            [axes.x_axis, axes.y_axis, axes.z_axis].map(|axis| glam::Vec2::new(axis.x, axis.z));
-        let area = if self.round {
-            let (mut xx, mut zz, mut xz) = (0.0, 0.0, 0.0);
-            for part in parts {
-                xx += part.x * part.x;
-                zz += part.y * part.y;
-                xz += part.x * part.y;
-            }
-            std::f32::consts::PI * max(xx * zz - xz * xz, 0.0).sqrt()
-        } else {
-            4.0 * (parts[0].perp_dot(parts[1]).abs()
-                + parts[0].perp_dot(parts[2]).abs()
-                + parts[1].perp_dot(parts[2]).abs())
-        };
-        (area / std::f32::consts::PI).sqrt()
-    }
-
     /// Whether its center is finite and its axes finite and invertible.
     pub(crate) fn valid(&self) -> bool {
         self.center

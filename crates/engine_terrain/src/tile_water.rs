@@ -1,16 +1,15 @@
 //! Water as a terrain tile holds it, the one place the world's water is:
 //! per sample, in the layout of the tile's heights, the surface water stands
-//! at wherever any reaches (NaN where none does), and beside it three words
+//! at wherever any reaches (NaN where none does), and beside it two words
 //! ([`TileWater::info`]): its flow, its whitewater, how far across its
 //! water body is (its span: a river's width, a lake's equal-area diameter,
-//! the fetch the wind has over it) and whether a lake holds it; its state,
-//! how turbulent it runs, how white it breaks, its shear and the reach of
-//! the stream it runs in; and its nearest obstacle, a solid standing in it
-//! (an object placed in its water, [`TileWater::solids`]), rock breaking
-//! its surface or a boulder under it, with whether a drop or a jump lies
-//! just upstream. Depth is never held: it is the surface less the
-//! tile's ground at the same point, on the triangles every consumer splits
-//! cells into ([`crate::Tile::water_at`]), so drawing, physics, queries,
+//! the fetch the wind has over it) and whether a lake holds it; and its
+//! state, how turbulent it runs, how white it breaks, its shear and the
+//! reach of the stream it runs in. Beside them it holds the solids standing
+//! in it (objects placed in its water, [`TileWater::solids`]). Depth is
+//! never held: it is the surface less the tile's ground at the same point,
+//! on the triangles every consumer splits cells into
+//! ([`crate::Tile::water_at`]), so drawing, physics, queries,
 //! placement and navigation read one water. Tile generation writes it from
 //! its hydrology bake's lakes and rivers ([`water_rows`]), each river's from
 //! the raster that cut its channel; a resident tile's water is written
@@ -23,8 +22,7 @@
 //! dry samples within [`WATER_REACH`] rings of water hold its surface
 //! continued under the banks, and no others any ([`extend`]), so shores fall
 //! where the ground rises through the water, between samples, never at a
-//! sample, and a mesh standing on the surface reaches past them; and every
-//! sample knows its nearest obstacle ([`obstacles`]).
+//! sample, and a mesh standing on the surface reaches past them.
 
 use std::ops::Range;
 
@@ -56,11 +54,6 @@ const SPAN_STEPS: f32 = 126.0;
 /// Per second of shear the packed shear spans: water's velocity changing by
 /// eight meters a second over a meter, past what torrents shear.
 pub const WATER_SHEAR_RANGE: f32 = 8.0;
-/// Meters a step of the packed offset to a sample's nearest obstacle spans,
-/// a signed byte reaching nearly 16 meters, and a step of the obstacle's
-/// packed radius, a byte holding as much.
-pub const WATER_OBSTACLE_STEP: f32 = 0.125;
-pub const WATER_RADIUS_STEP: f32 = 0.0625;
 /// The least speed (meters a second) turbulence measures water's swings of
 /// speed against: slow water's small swings stay calm.
 pub const TURBULENT_SPEED: f32 = 0.5;
@@ -82,26 +75,7 @@ pub const BREAK_FULL: f32 = 0.85;
 /// about where surface tension, not gravity, holds a surface flat against
 /// eddies (waves shorter than 1.7 cm are capillary).
 pub const BREAK_THINNEST: f32 = 0.02;
-/// The share of the time the water leaves the bed (its lip) at which a cell
-/// counts wholly as a lip water plunges from: most of the time.
-const LIP_HIGH: f32 = 0.5;
-/// Meters the surface falls into a sample along the flow, beyond what it
-/// falls on past it, where water lands below a drop or jumps: falling that
-/// far, water lands at about a meter a second (√(2·g·0.05)), the speed past
-/// which a plunging jet starts to draw air in.
-const DROP: f32 = 0.05;
-/// Meters a submerged bump's ground stands over the median of its eight
-/// neighbors' at least to stand in the water as an obstacle: the least of
-/// the boulders a steep stream's bed raises, which throw pillows and wakes
-/// up at the surface over them.
-const BUMP: f32 = 0.3;
-/// The widest rock breaking the water's surface stands (meters of radius):
-/// half what the packed offsets reach, so the water out to as far again
-/// from its rim finds its middle. Wider dry ground the water stands around
-/// is land.
-const MOST_RADIUS: f32 = 0.5 * 127.0 * WATER_OBSTACLE_STEP;
-/// What a sample outside every part ([`parts`]) holds as its part, and one
-/// nearest no seed ([`nearest`]) as its seed.
+/// What a sample nearest no seed ([`nearest`]) holds as its seed.
 pub(crate) const NONE: u32 = u32::MAX;
 /// Rings of dry samples beside water, each the dry samples among the eight
 /// neighbors of the ring inside it, that hold the water's surface continued
@@ -150,7 +124,7 @@ pub struct WaterState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TileWater {
     surface: Box<[f32]>,
-    info: Box<[[u32; 3]]>,
+    info: Box<[[u32; 2]]>,
     held: [u64; 4],
     solids: Box<[Footprint]>,
 }
@@ -192,15 +166,13 @@ impl WaterMesh {
 impl TileWater {
     /// The water of a tile whose samples, `spacing` meters apart from its
     /// first at terrain-local `origin`, stand at `heights`, from its
-    /// samples' `surface` and words `info` (the jump of each one's obstacle
-    /// word as what made the water marks it): its surface continued under
-    /// the banks ([`extend`]) and each sample's nearest obstacle found among
-    /// its ground's and those of `solids` standing in it ([`obstacles`]);
-    /// `None` when the sizes do not match or no sample's surface stands
-    /// over its ground.
+    /// samples' `surface` and words `info`: its surface continued under the
+    /// banks ([`extend`]), and those of `solids` standing in it
+    /// ([`standing`]); `None` when the sizes do not match or no sample's
+    /// surface stands over its ground.
     pub(crate) fn new(
         mut surface: Box<[f32]>,
-        mut info: Box<[[u32; 3]]>,
+        mut info: Box<[[u32; 2]]>,
         (heights, spacing, origin): (&[f32], f32, Vec2),
         solids: &[Footprint],
     ) -> Option<Self> {
@@ -229,7 +201,12 @@ impl TileWater {
                 }
             }
         }
-        let solids = obstacles(&surface, &mut info, heights, (spacing, origin, solids));
+        let wet: Vec<bool> = surface
+            .iter()
+            .zip(heights)
+            .map(|(&surface, &height)| surface > height)
+            .collect();
+        let solids = standing(&wet, (spacing, origin, solids));
         Some(Self {
             surface,
             info,
@@ -248,20 +225,16 @@ impl TileWater {
 
     /// Every sample's words, in the layout of [`Self::surfaces`], as GPU
     /// tiles upload them, each four bytes, low first: its flow, whitewater,
-    /// span and kind ([`pack`]); its state ([`WaterState`]: its turbulence, how
-    /// strongly it breaks white and its shear as a share of
+    /// span and kind ([`pack`]); and its state ([`WaterState`]: its
+    /// turbulence, how strongly it breaks white and its shear as a share of
     /// [`WATER_SHEAR_RANGE`], in 255ths, and 0 for no reach, else its reach
-    /// plus one); and its nearest obstacle (the offset to the obstacle's
-    /// middle along x and z in signed steps of [`WATER_OBSTACLE_STEP`], its
-    /// radius in steps of [`WATER_RADIUS_STEP`], 0 for none, and how
-    /// strongly a drop or a jump lies just upstream, in 255ths).
-    pub fn info(&self) -> &[[u32; 3]] {
+    /// plus one).
+    pub fn info(&self) -> &[[u32; 2]] {
         &self.info
     }
 
     /// The solids standing in it, terrain-local: objects placed in its
-    /// water ([`crate::Placed::footprint`]), each the obstacle of the
-    /// samples nearest it.
+    /// water ([`crate::Placed::footprint`], [`standing`]).
     pub fn solids(&self) -> &[Footprint] {
         &self.solids
     }
@@ -346,23 +319,14 @@ impl TileWater {
         unpack_state(self.info[((z + 1) * stride + x + 1) as usize][1])
     }
 
-    /// What the bed holds under a point `offset` meters from sample `(x,
-    /// z)`, -1 to 257 along each axis, as that sample's words hold it: its
-    /// reach's code ([`reach_code`]) in the first word's low byte, beside
-    /// its span's code as [`pack`] packs it (negative where a lake holds
-    /// it) in the byte above; and its nearest obstacle packed as
-    /// [`pack_obstacle`] packs it, offset from the point instead of the
-    /// sample.
-    pub(crate) fn bed_words(&self, x: i32, z: i32, offset: Vec2) -> [u32; 2] {
+    /// What the bed holds under sample `(x, z)`, -1 to 257 along each axis,
+    /// as its words hold it: its reach's code ([`reach_code`]) in the low
+    /// byte, beside its span's code as [`pack`] packs it (negative where a
+    /// lake holds it) in the byte above.
+    pub(crate) fn bed_word(&self, x: i32, z: i32) -> u32 {
         let stride = TILE_STRIDE as i32;
-        let [packed, state, obstacle] = self.info[((z + 1) * stride + x + 1) as usize];
-        let step = |shift: u32| f32::from((obstacle >> shift) as u8 as i8) * WATER_OBSTACLE_STEP;
-        let radius = f32::from((obstacle >> 16) as u8) * WATER_RADIUS_STEP;
-        let toward = Vec2::new(step(0), step(8)) - offset;
-        [
-            state >> 24 | (packed >> 24) << 8,
-            pack_obstacle(toward, radius, jump_of(obstacle)),
-        ]
+        let [packed, state] = self.info[((z + 1) * stride + x + 1) as usize];
+        state >> 24 | (packed >> 24) << 8
     }
 }
 
@@ -370,7 +334,7 @@ impl TileWater {
 /// surfaces at their nearest steps of the height grid
 /// ([`crate::codec::HEIGHT_STEP`]), their words, which patches hold a
 /// surface and the solids standing in it, read back as they were written,
-/// the surface under the banks, states and obstacles and all.
+/// the surface under the banks, states and all.
 impl crate::codec::Codec for TileWater {
     fn write(&self, out: &mut crate::codec::Writer) {
         crate::codec::put_grid(out, &self.surface, TILE_STRIDE as usize);
@@ -380,7 +344,7 @@ impl crate::codec::Codec for TileWater {
     fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
         let stride = TILE_STRIDE as usize;
         let surface = crate::codec::get_grid(input, stride)?;
-        let info: Box<[[u32; 3]]> = input.get()?;
+        let info: Box<[[u32; 2]]> = input.get()?;
         let held: [u64; 4] = input.get()?;
         let solids: Box<[Footprint]> = input.get()?;
         if surface.len() != stride * stride
@@ -408,7 +372,7 @@ impl crate::codec::Codec for TileWater {
 /// ring just inside ([`continued`]), so the order samples are visited in
 /// changes nothing; the rings stop at a sample whose ground lies below the
 /// surface it would take, so no surface crosses it.
-fn extend(surface: &mut [f32], info: &mut [[u32; 3]], heights: &[f32]) {
+fn extend(surface: &mut [f32], info: &mut [[u32; 2]], heights: &[f32]) {
     let stride = TILE_STRIDE as usize;
     let mut rings: Vec<u8> = surface
         .iter()
@@ -418,7 +382,7 @@ fn extend(surface: &mut [f32], info: &mut [[u32; 3]], heights: &[f32]) {
     for (at, &ring) in rings.iter().enumerate() {
         if ring == NO_RING {
             surface[at] = f32::NAN;
-            info[at] = [0; 3];
+            info[at] = [0; 2];
         }
     }
     let mut inside: Vec<usize> = (0..rings.len()).filter(|&at| rings[at] == 0).collect();
@@ -437,7 +401,7 @@ fn extend(surface: &mut [f32], info: &mut [[u32; 3]], heights: &[f32]) {
                 }
             }
         }
-        let made: Vec<(f32, [u32; 3], bool)> = queued
+        let made: Vec<(f32, [u32; 2], bool)> = queued
             .iter()
             .map(|&at| continued(at, ring - 1, (&*surface, &*info, heights), &rings))
             .collect();
@@ -458,8 +422,8 @@ fn extend(surface: &mut [f32], info: &mut [[u32; 3]], heights: &[f32]) {
 /// as [`extend`] counts them (`rings`): their surface, averaged, where its
 /// ground stands at or above it, so the shore falls on the triangles
 /// between them where the ground rises through the water, with their flow,
-/// whitewater, kind, span, state and jump, averaged, and the reach most of
-/// them run in (a reach is never averaged); and whether the rings stop at
+/// whitewater, kind, span and state, averaged, and the reach most of them
+/// run in (a reach is never averaged); and whether the rings stop at
 /// it. A sample whose ground lies below that surface lies past where the
 /// water ends (beside a channel whose ground lies lower than its banks'
 /// top, a road's ditch, the land behind a levee): it stands dry, as far
@@ -468,21 +432,21 @@ fn extend(surface: &mut [f32], info: &mut [[u32; 3]], heights: &[f32]) {
 fn continued(
     at: usize,
     inner: u8,
-    (surface, info, heights): (&[f32], &[[u32; 3]], &[f32]),
+    (surface, info, heights): (&[f32], &[[u32; 2]], &[f32]),
     rings: &[u8],
-) -> (f32, [u32; 3], bool) {
+) -> (f32, [u32; 2], bool) {
     let stride = TILE_STRIDE as usize;
     let (x, z) = (at % stride, at / stride);
     let (mut level, mut apart, mut flow, mut white, mut lakes, mut span, mut count) =
         (0.0, 0.0, Vec2::ZERO, 0.0, 0, 0.0, 0);
-    let (mut state, mut reaches, mut jump) = (WaterState::default(), [0_u32; 6], 0.0);
+    let (mut state, mut reaches) = (WaterState::default(), [0_u32; 6]);
     for nz in z.saturating_sub(1)..(z + 2).min(stride) {
         for nx in x.saturating_sub(1)..(x + 2).min(stride) {
             let near = nz * stride + nx;
             if rings[near] != inner {
                 continue;
             }
-            let [packed, stirred, obstacle] = info[near];
+            let [packed, stirred] = info[near];
             let (near_flow, near_white, lake, near_span) = unpack(packed);
             let near_state = unpack_state(stirred);
             level += surface[near];
@@ -495,7 +459,6 @@ fn continued(
             state.breaking += near_state.breaking;
             state.shear += near_state.shear;
             reaches[reach_code(near_state.reach) as usize] += 1;
-            jump += jump_of(obstacle);
             count += 1;
         }
     }
@@ -529,7 +492,6 @@ fn continued(
             shear: state.shear * share,
             reach: reach_of(most as u32),
         }),
-        pack_obstacle(Vec2::ZERO, 0.0, jump * share),
     ];
     (standing, words, stops)
 }
@@ -728,31 +690,6 @@ fn reach_of(code: u32) -> Option<Reach> {
     }
 }
 
-/// One sample's nearest obstacle packed as the four bytes of a word, low
-/// first: the offset from the sample to the obstacle's middle along x and z
-/// (meters) in signed steps of [`WATER_OBSTACLE_STEP`], the obstacle's
-/// radius (meters) in steps of [`WATER_RADIUS_STEP`], 0 for none and a step
-/// at least for one, and how strongly a drop or a jump lies just upstream
-/// of the sample (0 to 1) in 255ths.
-pub(crate) fn pack_obstacle(offset: Vec2, radius: f32, jump: f32) -> u32 {
-    let step = |value: f32| {
-        let steps = engine_math::clamp((value / WATER_OBSTACLE_STEP).round(), -127.0, 127.0);
-        u32::from(steps as i8 as u8)
-    };
-    let radius = if radius > 0.0 {
-        engine_math::clamp((radius / WATER_RADIUS_STEP).round(), 1.0, 255.0) as u32
-    } else {
-        0
-    };
-    step(offset.x) | step(offset.y) << 8 | radius << 16 | unit(jump) << 24
-}
-
-/// How strongly a drop or a jump lies just upstream of a sample whose
-/// obstacle word is `word` ([`pack_obstacle`]).
-fn jump_of(word: u32) -> f32 {
-    f32::from((word >> 24) as u8) / 255.0
-}
-
 /// `value` from 0 to 1 in 255ths.
 fn unit(value: f32) -> u32 {
     (engine_math::clamp(value, 0.0, 1.0) * 255.0).round() as u32
@@ -784,12 +721,6 @@ pub(crate) fn breaking(energy: f32, depth: f32, lip: f32) -> f32 {
     let breaks = eddies / (GRAVITY * depth).sqrt();
     let born = smooth((breaks - BREAK_ONSET) / (BREAK_FULL - BREAK_ONSET));
     engine_math::clamp(born + lip, 0.0, 1.0)
-}
-
-/// How strongly a drop lies where water leaves the bed `lip` of the time (0
-/// to 1): its lip as a share of [`LIP_HIGH`].
-pub(crate) fn lipped(lip: f32) -> f32 {
-    engine_math::clamp(lip / LIP_HIGH, 0.0, 1.0)
 }
 
 /// The shear of a tile's water at each of its samples `spacing` meters
@@ -830,290 +761,32 @@ pub(crate) fn shears(flows: &[Vec2], wet: &dyn Fn(usize) -> bool, spacing: f32) 
     shears
 }
 
-/// Where water lands below a drop or jumps, at each sample of a tile's
-/// water standing at `surface` over `heights` and running along `flows`
-/// (meters a second): where it, its neighbor upstream along the flow and
-/// its neighbor downstream ([`toward`]) all hold water, and its surface
-/// falls into it from upstream at least [`DROP`] more than it falls on
-/// past it. Water running evenly down a slope falls as much on as in.
-pub(crate) fn plunges(surface: &[f32], heights: &[f32], flows: &[Vec2]) -> Vec<bool> {
-    let stride = TILE_STRIDE as i32;
-    let wet = |x: i32, z: i32| {
-        x >= 0 && z >= 0 && x < stride && z < stride && {
-            let at = (z * stride + x) as usize;
-            surface[at] > heights[at]
-        }
-    };
-    let level = |x: i32, z: i32| surface[(z * stride + x) as usize];
-    let mut plunges = vec![false; surface.len()];
-    for z in 0..stride {
-        for x in 0..stride {
-            let at = (z * stride + x) as usize;
-            let Some((dx, dz)) = toward(flows[at]) else {
-                continue;
-            };
-            if !(wet(x, z) && wet(x - dx, z - dz) && wet(x + dx, z + dz)) {
-                continue;
-            }
-            let here = level(x, z);
-            let falling_in = level(x - dx, z - dz) - here;
-            let falling_on = here - level(x + dx, z + dz);
-            plunges[at] = falling_in - falling_on >= DROP;
-        }
-    }
-    plunges
-}
-
-/// The step to the one of the eight samples around a sample lying nearest
-/// the way `way` (along x and z) runs: along an axis where the way runs
-/// within 22.5° of it, else along a diagonal; none for no way.
-fn toward(way: Vec2) -> Option<(i32, i32)> {
-    // The tangent of 22.5°.
-    const ASIDE: f32 = std::f32::consts::SQRT_2 - 1.0;
-    let (along, across) = (way.x.abs(), way.y.abs());
-    let sign = |value: f32| if value < 0.0 { -1 } else { 1 };
-    let x = if along > across * ASIDE {
-        sign(way.x)
-    } else {
-        0
-    };
-    let z = if across > along * ASIDE {
-        sign(way.y)
-    } else {
-        0
-    };
-    (x != 0 || z != 0).then_some((x, z))
-}
-
-/// Finds each sample's nearest obstacle and writes it into its obstacle
-/// word ([`pack_obstacle`]), the word's jump kept: of a tile's water
-/// standing at `surface` over `heights`, its samples `spacing` meters apart
-/// from its first at terrain-local `origin`, among its ground's and those
-/// of `solids`. An obstacle is a solid standing in the water, one any
-/// sample within a sample of its shadow from above holds water at; rock
-/// breaking the water's surface, a part of dry ground the water stands all
-/// around ([`parts`]: clear of the tile's border, its footprint no wider
-/// than [`MOST_RADIUS`]); or a boulder under it, a wet sample whose ground
-/// stands [`BUMP`] or more over the median of its eight neighbors'. A solid
-/// holds the samples under it and the sample nearest its middle
-/// ([`owners`]), so one thinner than a sample is an obstacle too, and
-/// stands as round as its shadow ([`Footprint::radius`]) about its own
-/// middle; samples marked the ground's ways touching one another make one,
-/// as round as its footprint about the middle of its samples. Each sample
-/// takes the obstacle holding the marked sample nearest it ([`nearest`])
-/// where the packed offset reaches that obstacle's middle, and none
-/// elsewhere. Every host finds the same: the solids, the parts and the
-/// transform run in a fixed order, on whole samples. Returns the solids
-/// that hold a sample, in their order.
-fn obstacles(
-    surface: &[f32],
-    info: &mut [[u32; 3]],
-    heights: &[f32],
+/// The solids of `solids` (terrain-local) standing in a tile's water,
+/// whose samples hold water where `wet` says, `spacing` meters apart from
+/// its first at terrain-local `origin`: those any sample within a sample of
+/// their shadow from above holds water at, in their order.
+fn standing(
+    wet: &[bool],
     (spacing, origin, solids): (f32, Vec2, &[Footprint]),
 ) -> Box<[Footprint]> {
-    let stride = TILE_STRIDE as usize;
-    let wet: Vec<bool> = surface
-        .iter()
-        .zip(heights)
-        .map(|(&surface, &height)| surface > height)
-        .collect();
-    let dry: Vec<bool> = wet.iter().map(|&wet| !wet).collect();
-    let (grounds, found) = parts(&dry);
-    let most = MOST_RADIUS / spacing;
-    let widest = (std::f32::consts::PI * most * most) as u32;
-    let mut marked: Vec<bool> = grounds
-        .iter()
-        .map(|&part| {
-            part != NONE && {
-                let ground = &found[part as usize];
-                !ground.border && ground.count <= widest
-            }
-        })
-        .collect();
-    for z in 1..stride - 1 {
-        for x in 1..stride - 1 {
-            let at = z * stride + x;
-            if !wet[at] {
-                continue;
-            }
-            let mut around = [0.0_f32; 8];
-            let mut next = 0;
-            for nz in z - 1..=z + 1 {
-                for nx in x - 1..=x + 1 {
-                    if nx != x || nz != z {
-                        around[next] = heights[nz * stride + nx];
-                        next += 1;
-                    }
-                }
-            }
-            around.sort_unstable_by(f32::total_cmp);
-            if heights[at] - 0.5 * (around[3] + around[4]) >= BUMP {
-                marked[at] = true;
-            }
-        }
-    }
-    let (labels, standing) = parts(&marked);
-    let owners = owners(&wet, heights, (spacing, origin, solids));
-    let seeds: Vec<bool> = marked
-        .iter()
-        .zip(&owners)
-        .map(|(&mark, &owner)| mark || owner != NONE)
-        .collect();
-    let nearest = if seeds.iter().any(|&seed| seed) {
-        nearest(&seeds)
-    } else {
-        vec![NONE; seeds.len()]
-    };
-    let place = |at: usize| Vec2::new((at % stride) as f32, (at / stride) as f32);
-    for (at, words) in info.iter_mut().enumerate() {
-        let jump = jump_of(words[2]);
-        let mut word = pack_obstacle(Vec2::ZERO, 0.0, jump);
-        let seed = nearest[at];
-        if seed != NONE {
-            let (offset, radius) = match owners[seed as usize] {
-                NONE => {
-                    let obstacle = &standing[labels[seed as usize] as usize];
-                    let count = f64::from(obstacle.count);
-                    let middle = Vec2::new(
-                        (obstacle.columns as f64 / count) as f32,
-                        (obstacle.rows as f64 / count) as f32,
-                    );
-                    let radius = spacing * (obstacle.count as f32 / std::f32::consts::PI).sqrt();
-                    ((middle - place(at)) * spacing, radius)
-                }
-                owner => {
-                    let solid = &solids[owner as usize];
-                    let point = origin + (place(at) - 1.0) * spacing;
-                    (solid.middle() - point, solid.radius())
-                }
-            };
-            if (offset / WATER_OBSTACLE_STEP).round().abs().max_element() <= 127.0 {
-                word = pack_obstacle(offset, radius, jump);
-            }
-        }
-        words[2] = word;
-    }
-    let mut held = vec![false; solids.len()];
-    for &owner in &owners {
-        if owner != NONE {
-            held[owner as usize] = true;
-        }
-    }
-    solids
-        .iter()
-        .zip(&held)
-        .filter(|&(_, &held)| held)
-        .map(|(&solid, _)| solid)
-        .collect()
-}
-
-/// The solid of `solids` (terrain-local) each sample of a tile's layout is
-/// the obstacle of ([`obstacles`]), its samples `spacing` meters apart from
-/// its first at terrain-local `origin`, standing at `heights` and holding
-/// water where `wet` says: of the solids standing in its water, those any
-/// sample within a sample of their shadow from above holds water at, the
-/// one standing over its ground there or whose middle it lies nearest, the
-/// widest of them where several do (the first of those as wide); [`NONE`]
-/// where none does.
-fn owners(
-    wet: &[bool],
-    heights: &[f32],
-    (spacing, origin, solids): (f32, Vec2, &[Footprint]),
-) -> Vec<u32> {
     let stride = i64::from(TILE_STRIDE);
-    let mut owners = vec![NONE; wet.len()];
-    let mut widths = vec![0.0_f32; wet.len()];
     // The layout's samples from `low` to `high` (terrain-local) along an
-    // axis, `grown` more either way, within the layout.
-    let samples = |low: f32, high: f32, grown: i64, axis: usize| {
-        let first = ((low - origin[axis]) / spacing).floor() as i64 + 1 - grown;
-        let last = ((high - origin[axis]) / spacing).ceil() as i64 + 1 + grown;
+    // axis, a sample more either way, within the layout.
+    let samples = |low: f32, high: f32, axis: usize| {
+        let first = ((low - origin[axis]) / spacing).floor() as i64;
+        let last = ((high - origin[axis]) / spacing).ceil() as i64 + 2;
         first.max(0)..=last.min(stride - 1)
     };
-    for (index, solid) in solids.iter().enumerate() {
-        let (middle, reach) = (solid.middle(), solid.reach());
-        let (low, high) = (middle - reach, middle + reach);
-        let standing = samples(low.y, high.y, 1, 1)
-            .any(|z| samples(low.x, high.x, 1, 0).any(|x| wet[(z * stride + x) as usize]));
-        if !standing {
-            continue;
-        }
-        let width = solid.radius();
-        let mut hold = |at: usize| {
-            if owners[at] == NONE || width > widths[at] {
-                owners[at] = index as u32;
-                widths[at] = width;
-            }
-        };
-        for z in samples(low.y, high.y, 0, 1) {
-            for x in samples(low.x, high.x, 0, 0) {
-                let at = (z * stride + x) as usize;
-                let point = origin + Vec2::new((x - 1) as f32, (z - 1) as f32) * spacing;
-                if solid.span(point).is_some_and(|[_, top]| top > heights[at]) {
-                    hold(at);
-                }
-            }
-        }
-        let nearest = ((middle - origin) / spacing).round() + 1.0;
-        let (x, z) = (nearest.x as i64, nearest.y as i64);
-        if (0..stride).contains(&x) && (0..stride).contains(&z) {
-            hold((z * stride + x) as usize);
-        }
-    }
-    owners
-}
-
-/// A part of a tile's samples ([`parts`]): how many samples it holds, the
-/// sums of their columns and of their rows in the tile's layout, and
-/// whether it reaches the layout's border.
-struct Part {
-    count: u32,
-    columns: u64,
-    rows: u64,
-    border: bool,
-}
-
-/// The parts the samples `inside` marks in a tile's layout make, samples
-/// touching along a side or at a corner in one part: each sample's part
-/// ([`NONE`] outside them), and the parts in the order of their first
-/// samples.
-fn parts(inside: &[bool]) -> (Vec<u32>, Vec<Part>) {
-    let stride = TILE_STRIDE as usize;
-    let mut labels = vec![NONE; inside.len()];
-    let mut found = Vec::new();
-    let mut open = Vec::new();
-    for first in 0..inside.len() {
-        if !inside[first] || labels[first] != NONE {
-            continue;
-        }
-        let label = found.len() as u32;
-        let mut part = Part {
-            count: 0,
-            columns: 0,
-            rows: 0,
-            border: false,
-        };
-        labels[first] = label;
-        open.push(first);
-        while let Some(at) = open.pop() {
-            let (x, z) = (at % stride, at / stride);
-            part.count += 1;
-            part.columns += x as u64;
-            part.rows += z as u64;
-            part.border |= x == 0 || z == 0 || x + 1 == stride || z + 1 == stride;
-            for nz in z.saturating_sub(1)..(z + 2).min(stride) {
-                for nx in x.saturating_sub(1)..(x + 2).min(stride) {
-                    let near = nz * stride + nx;
-                    if inside[near] && labels[near] == NONE {
-                        labels[near] = label;
-                        open.push(near);
-                    }
-                }
-            }
-        }
-        found.push(part);
-    }
-    (labels, found)
+    solids
+        .iter()
+        .filter(|solid| {
+            let (middle, reach) = (solid.middle(), solid.reach());
+            let (low, high) = (middle - reach, middle + reach);
+            samples(low.y, high.y, 1)
+                .any(|z| samples(low.x, high.x, 0).any(|x| wet[(z * stride + x) as usize]))
+        })
+        .copied()
+        .collect()
 }
 
 /// Each sample's nearest of the samples `seeds` marks in a tile's layout,
@@ -1193,7 +866,7 @@ pub(crate) fn water_rows(
     (rows, columns): (Range<usize>, &dyn Fn(usize) -> Range<usize>),
     (xs, zs): (&[f32], &[f32]),
     shown: &dyn Fn(f32, f32) -> f32,
-    (surface, info): (&mut [f32], &mut [[u32; 3]]),
+    (surface, info): (&mut [f32], &mut [[u32; 2]]),
 ) {
     let stride = TILE_STRIDE as usize;
     let first = rows.start;
@@ -1211,16 +884,12 @@ pub(crate) fn water_rows(
                 // beside it.
                 Some((level, span)) if !water.is_some_and(|water| water.surface > level) => {
                     surface[at] = level;
-                    info[at] = [pack(Vec2::ZERO, 0.0, false, true, span), 0, 0];
+                    info[at] = [pack(Vec2::ZERO, 0.0, false, true, span), 0];
                 }
                 _ => {
                     if let Some(water) = water {
                         surface[at] = water.surface;
-                        info[at] = [
-                            pack(water.flow, 0.0, water.sheeted, false, water.span),
-                            0,
-                            0,
-                        ];
+                        info[at] = [pack(water.flow, 0.0, water.sheeted, false, water.span), 0];
                     }
                 }
             }
@@ -1288,7 +957,7 @@ impl Tile {
             || {
                 (
                     vec![f32::NAN; stride * stride],
-                    vec![[0; 3]; stride * stride],
+                    vec![[0; 2]; stride * stride],
                 )
             },
             |water| (water.surfaces().to_vec(), water.info().to_vec()),
@@ -1296,7 +965,7 @@ impl Tile {
         for (row, reached) in columns.iter().enumerate() {
             let at = row * stride + reached.start..row * stride + reached.end;
             surface[at.clone()].fill(f32::NAN);
-            info[at].fill([0; 3]);
+            info[at].fill([0; 2]);
         }
         // The rivers over the rows the regions reach.
         let raster = RiverRaster::whole(rivers, &xs, &zs[first..=last], spacing);

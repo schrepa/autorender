@@ -86,12 +86,6 @@ const FILTERS: &[(&str, &str)] = &[
          trilinear filtering turns between mipmaps",
     ),
     (
-        "water_bed_waves",
-        "the waves the bed's stones raise, each part drawn while it spans two pixels, its slopes \
-         the pixel's own change of its height, the stones finer than the pixel resolves as \
-         roughness",
-    ),
-    (
         "water_caustics",
         "the caustics a pixel's beam of sunlight gathers",
     ),
@@ -108,16 +102,6 @@ const FILTERS: &[(&str, &str)] = &[
     (
         "water_ends",
         "where the samples holding the water's surface end, as sharp as a pixel resolves it",
-    ),
-    (
-        "water_froth",
-        "foam's grain as far as the pixel's footprint resolves it, the rest averaged into its \
-         cover, and its relief while its bubbles span two pixels",
-    ),
-    (
-        "water_past",
-        "a pattern's share past its threshold as far as the pixel's footprint resolves its \
-         grain, the rest averaged into the share itself, its edge a pixel wide",
     ),
     (
         "water_ramp",
