@@ -80,9 +80,9 @@ try {
   assert.ok(view.level_errors.slice(0, -1).every(error => error > 0), `measured ${view.level_errors}`);
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
   assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow", "gravel"]);
-  // Relief: what a material sinks between its stones reads
-  // back as authored, and its steps take a range.
-  assert.ok(Math.abs(view.terrain.surface.materials[3].relief - 0.1) < 1e-6, `relief reads back: ${view.terrain.surface.materials[3].relief}`);
+  // Depth: the meters a material's heights span between its stones reads
+  // back as authored, and its relief's steps take a range.
+  assert.ok(Math.abs(view.terrain.surface.materials[3].depth - 0.1) < 1e-6, `depth reads back: ${view.terrain.surface.materials[3].depth}`);
   const stepless = await command("environment", { terrain: { relief_steps: 1 } }, false);
   assert.equal(stepless.error.path, "$.terrain.relief_steps");
   assert.deepEqual(view.terrain.surface.biomes.map(biome => biome.id), ["lowland", "summit"]);

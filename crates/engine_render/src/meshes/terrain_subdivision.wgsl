@@ -13,8 +13,9 @@
 // samples' grid holding the most a triangle of the bisection lying in it
 // strays from the samples' surface, and a leaf's meshlet strays by at most
 // the most of the cells of its pieces' size it covers, read where the finest
-// resident tile holds each (`surface_ground_error`, `surface_water`). Deep
-// materials add how far their displacement bends over the meshlet.
+// resident tile holds each (`surface_ground_error`, `surface_water`). The
+// ground's materials add what the meshlet's pieces cannot carry of their
+// mesh band and how far the rest bends over them.
 //
 // The tree is the paper's bitfield, a bit for each node of its deepest
 // level, set at the first of each leaf's, under the counts of its levels
@@ -188,23 +189,28 @@ fn subdivision_neighbor(node: u32) -> u32 {
     return across;
 }
 
-// A point of a leaf: on the ground's true surface (world), moved by `lift`
-// where deep materials displace it as a ground's tree draws it (`displaced`;
-// a water's tree reads the ground alone), and whether any level holds
-// ground there.
+// A point of a leaf whose meshlet's vertices stand `pieces` meters apart:
+// on the ground's true surface (world), moved by `lift` where its
+// materials' mesh band moves it as a ground's tree draws it (`displaced`; a
+// water's tree reads the ground alone), `kept` the part of that the
+// meshlet's pieces carry (`terrain_displacement`); and whether any level
+// holds ground there.
 struct SubdivisionPoint {
     world: vec3<f32>,
     lift: vec3<f32>,
+    kept: vec3<f32>,
     found: bool,
 }
 
-fn subdivision_point(local: vec2<f32>, displaced: bool) -> SubdivisionPoint {
+fn subdivision_point(local: vec2<f32>, displaced: bool, pieces: f32) -> SubdivisionPoint {
     let held = terrain_level_height(local, 0u);
     var point: SubdivisionPoint;
     point.found = held.found;
     point.world = terrain.origin.xyz + vec3<f32>(local.x, held.height, local.y);
     if displaced {
-        point.lift = terrain_displacement(point.world, local);
+        let lift = terrain_displacement(point.world, local, pieces);
+        point.lift = lift.moved;
+        point.kept = lift.kept;
         point.world += point.lift;
     }
     return point;
@@ -253,10 +259,13 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
             return measure;
         }
     }
-    let a = subdivision_point(triangle.a, !water);
-    let b = subdivision_point(triangle.b, !water);
-    let c = subdivision_point(triangle.c, !water);
-    let center = subdivision_point((triangle.a + triangle.b + triangle.c) / 3.0, !water);
+    // The meters between its meshlet's vertices, as they stand
+    // (`terrain_surface_vertex`).
+    let pieces = length(triangle.c - triangle.a) / f32(1u << SURFACE_MESHLET_LEVEL);
+    let a = subdivision_point(triangle.a, !water, pieces);
+    let b = subdivision_point(triangle.b, !water, pieces);
+    let c = subdivision_point(triangle.c, !water, pieces);
+    let center = subdivision_point((triangle.a + triangle.b + triangle.c) / 3.0, !water, pieces);
     measure.drawn = water || a.found || b.found || c.found || center.found;
     if !measure.drawn {
         return measure;
@@ -266,9 +275,9 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
         measure.splits = true;
         return measure;
     }
-    let ab = subdivision_point((triangle.a + triangle.b) * 0.5, !water);
-    let bc = subdivision_point((triangle.b + triangle.c) * 0.5, !water);
-    let ca = subdivision_point((triangle.c + triangle.a) * 0.5, !water);
+    let ab = subdivision_point((triangle.a + triangle.b) * 0.5, !water, pieces);
+    let bc = subdivision_point((triangle.b + triangle.c) * 0.5, !water, pieces);
+    let ca = subdivision_point((triangle.c + triangle.a) * 0.5, !water, pieces);
     // How far its meshlet may stray from its surface (meters), and how far
     // its surface may stand above its points and that bound: the ground's
     // not at all; the water's by its depth over its ground, which the
@@ -277,19 +286,25 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
     var bound = over.error;
     var rise = max(high.x - low.x, high.y - low.y);
     if !water {
-        // Deep materials' displacement: how far it moves its sides' middles
-        // and its center off the plane through its corners beyond what it
-        // moves its corners, over its meshlet's pieces, a
+        // Its materials' mesh band, which its meshlet must carry: its part
+        // finer than the meshlet's pieces carry strays as far as it moves
+        // the leaf's points off the rest; the rest as far as it moves its
+        // sides' middles and its center off the plane through its corners
+        // beyond what it moves its corners, over its meshlet's pieces, a
         // 2^SURFACE_MESHLET_LEVEL-th of its sides, over which a smoothly
         // curving displacement strays as the square of that less.
         let normal = cross(b.world - a.world, c.world - a.world);
         let unit = normal / max(length(normal), 1.0e-12);
-        let bent = abs(vec4<f32>(dot(ab.lift - (a.lift + b.lift) * 0.5, unit),
-            dot(bc.lift - (b.lift + c.lift) * 0.5, unit),
-            dot(ca.lift - (c.lift + a.lift) * 0.5, unit),
-            dot(center.lift - (a.lift + b.lift + c.lift) / 3.0, unit)));
+        let bent = abs(vec4<f32>(dot(ab.kept - (a.kept + b.kept) * 0.5, unit),
+            dot(bc.kept - (b.kept + c.kept) * 0.5, unit),
+            dot(ca.kept - (c.kept + a.kept) * 0.5, unit),
+            dot(center.kept - (a.kept + b.kept + c.kept) / 3.0, unit)));
+        let finer = max(max(max(length(a.lift - a.kept), length(b.lift - b.kept)),
+            max(length(c.lift - c.kept), length(center.lift - center.kept))),
+            max(max(length(ab.lift - ab.kept), length(bc.lift - bc.kept)),
+            length(ca.lift - ca.kept)));
         let parts = f32(1u << SURFACE_MESHLET_LEVEL);
-        let displacement = max(max(bent.x, bent.y), max(bent.z, bent.w)) / (parts * parts);
+        let displacement = finer + max(max(bent.x, bent.y), max(bent.z, bent.w)) / (parts * parts);
         bound = surface_ground_error(triangle) + displacement;
         rise = 0.0;
     }

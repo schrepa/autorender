@@ -128,11 +128,11 @@ const FILTERS: &[(&str, &str)] = &[
     ),
     (
         "terrain_displacement",
-        "the ground's relief displaced only where it moves the surface a pixel or more, a flat surface standing in below",
+        "the ground's mesh band: its materials' heights at the mip level whose features the mesh carries there, the pixel band holding the rest; none where their whole depth moves the surface less than a pixel, the smooth surface standing in",
     ),
     (
         "terrain_parallax",
-        "the ground's relief and tracks moved along the view as far as they move it a pixel or more, the surface standing in below",
+        "the ground's pixel band and tracks: the view ray meets its materials' whole heights from the drawn ground where their whole depth moves it a pixel or more, the drawn ground standing in below",
     ),
     (
         "terrain_resolved",
@@ -140,7 +140,7 @@ const FILTERS: &[(&str, &str)] = &[
     ),
     (
         "terrain_seen",
-        "where the view ray meets the ground: relief moved as far as it moves a pixel, and the shading levels the pixel's footprint picks",
+        "where the view ray meets the ground: the mesh band stepped back, the pixel band moved where it moves a pixel, and the shading levels the pixel's footprint picks",
     ),
 ];
 

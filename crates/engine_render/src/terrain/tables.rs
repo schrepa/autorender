@@ -562,13 +562,6 @@ fn palette_entry(
             cover.density * height * cover.width * COVER_FILLED,
         ]
     });
-    // Materials displacing the ground show no relief, which parallax
-    // fakes; the rest's as deep as parallax holds.
-    let relief = if look.displacement > 0.0 {
-        0.0
-    } else {
-        engine_core::math::min(look.relief, RELIEF_MOST)
-    };
     PaletteEntry {
         color: [color[0], color[1], color[2], roughness],
         params: [
@@ -579,18 +572,14 @@ fn palette_entry(
         ],
         maps: [scale, occlusion, metalness, far_occlusion],
         far,
-        relief: [relief, look.deform, slopes, look.displacement],
+        // Its depth, which its mesh and pixel bands share.
+        relief: [look.depth, look.deform, slopes, 0.0],
         canopy,
         placed,
         placed_size,
         heights,
     }
 }
-
-/// The most meters a material's relief sinks the ground, a few
-/// centimeters: deeper heights break parallax at grazing views and on
-/// silhouettes, where materials displace the ground instead.
-const RELIEF_MOST: f32 = 0.06;
 
 /// The share of their full height ground cover's blades stand on average:
 /// candidates ranked within the last quarter under their threshold grow

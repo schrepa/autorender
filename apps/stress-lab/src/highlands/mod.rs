@@ -717,8 +717,7 @@ fn surface(
                     height_contrast: look.height_contrast,
                     projection: look.projection,
                     cover: look.cover,
-                    relief: look.relief,
-                    displacement: look.displacement,
+                    depth: look.depth,
                     deform: look.deform,
                 })
             })

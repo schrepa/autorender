@@ -208,18 +208,15 @@ settings! {
         pub projection: SurfaceProjection = SurfaceProjection::Top => any,
         /// The cover growing where it lies.
         pub cover: Option<crate::Cover> = None => any,
-        /// The meters its maps' heights span where relief sinks the ground
-        /// between its stones, tufts and ledges: 0 flat. Biplanar ones sink
-        /// it across their planes, as on rock faces. Relief is parallax, which
-        /// holds for a few centimeters and shows no deeper: deeper materials
-        /// displace the ground instead.
-        pub relief: f32 = 0.0 => range(0.0, 1.0),
-        /// The meters its maps' heights move the ground itself, its vertices
-        /// raised and sunk about their mean along the ground's smooth normal
-        /// while that depth spans a few pixels, none from a pixel down, so far
-        /// ground is its plain surface: 0 none. A material displacing the
-        /// ground shows no relief.
-        pub displacement: f32 = 0.0 => range(0.0, 2.0),
+        /// Its depth: the meters its maps' heights span, its stones', tufts'
+        /// and ledges' rise and fall about their mean along the ground's
+        /// smooth normal: 0 flat. Biplanar ones span it across their planes,
+        /// as on rock faces. The part of its heights coarser than the
+        /// ground's mesh carries where it is drawn moves the mesh, and the
+        /// rest, down to the pixel, is relief its pixels' view rays meet, so
+        /// the two always sum to its heights, detail passing from the
+        /// pixels to the mesh as the mesh refines toward the eye.
+        pub depth: f32 = 0.0 => range(0.0, 2.0),
         /// The meters tracks sink it at most: 0 rigid.
         pub deform: f32 = 0.0 => range(0.0, 2.0),
     }

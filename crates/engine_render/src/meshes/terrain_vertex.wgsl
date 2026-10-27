@@ -40,11 +40,11 @@ struct TerrainUniform {
     surface: vec4<u32>,
     origin: vec4<f32>,
     directory: vec4<u32>,
-    // The ground's relief: the deepest any of its materials with maps
-    // sinks it (meters) and the most steps its rays take; the deepest any of
-    // them displaces it (meters), and the meters apart the vertices of its
-    // subdivision's finest leaves stand, which displacement reads its height
-    // maps no finer than.
+    // The ground's two bands (`meshes/terrain.wgsl`): the depth of the
+    // deepest of its materials with maps (meters), the most steps the pixel
+    // band's rays take, and the meters apart the vertices of its
+    // subdivision's finest leaves stand, which the finest features the mesh
+    // band carries span two of (`terrain_carried`; w unused).
     relief: vec4<f32>,
     // Runtime deformation's map: its first texel (world
     // texel indices along x and z), and its texels and blocks along a side

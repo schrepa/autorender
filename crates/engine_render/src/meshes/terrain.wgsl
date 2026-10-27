@@ -1,7 +1,7 @@
 // Terrain in the mesh passes, after `terrain_vertex.wgsl` and
 // `terrain_surface.wgsl`: vertex stages drawing its subdivision's leaves
-// into the frame's targets, deep materials displacing them, the ground's
-// surface and the forward fragment stages.
+// into the frame's targets, its materials' heights moving them as far as
+// they carry them, the ground's surface and the forward fragment stages.
 
 // Each layer's fades (`terrain_layer_fades`); from `terrain.surface.y`, each
 // layer's word naming where its tile's hole bits start (all ones without
@@ -40,12 +40,11 @@ struct TerrainPaletteEntry {
     params: vec4<f32>,
     maps: vec4<f32>,
     far: vec4<f32>,
-    // The meters its heights span where the ground's relief shows (none
-    // where it displaces the ground), the meters tracks sink it at most, the
-    // mean square slope its normal maps' mean holds, all their slopes
-    // averaged (`spread_slopes`), which roughens it where their means stand
-    // in, and the meters its heights displace the ground
-    // (`terrain_displacement`).
+    // Its depth, the meters its heights span, which its mesh and pixel
+    // bands share (`terrain_displacement`, `terrain_parallax`); the meters
+    // tracks sink it at most; and the mean square slope its normal maps'
+    // mean holds, all their slopes averaged (`spread_slopes`), which
+    // roughens it where their means stand in (w unused).
     relief: vec4<f32>,
     // Its cover's canopy: its blades' tip color (linear), and their
     // leaves' area per square meter of ground halfway lush (0 without
@@ -190,7 +189,7 @@ struct TerrainSurfaceVertex {
 
 // Lattice vertex `vertex` of leaf `leaf` of this frame's subdivision
 // (`surface_vertex`): on the ground's true surface, moved along its smooth
-// normal where deep materials displace it (`terrain_displacement`). Every
+// normal by its materials' mesh band (`terrain_displacement`). Every
 // quantity it reads is a function of where it stands, so leaves sharing a
 // side meet without cracks and each of the meshlet's pieces meeting at the
 // point draws it alike.
@@ -199,7 +198,8 @@ fn terrain_surface_vertex(leaf: u32, vertex: u32) -> TerrainSurfaceVertex {
     var point: TerrainSurfaceVertex;
     point.local = surface_vertex(triangle, vertex);
     point.relative = surface_relative(point.local, terrain_true_height(point.local));
-    point.relative += terrain_displacement(point.relative + terrain.eye.xyz, point.local);
+    point.relative += terrain_displacement(point.relative + terrain.eye.xyz, point.local,
+        0.0).moved;
     point.spacing = length(triangle.c - triangle.a) / f32(1u << SURFACE_MESHLET_LEVEL);
     return point;
 }
@@ -926,6 +926,15 @@ fn terrain_lattice(uv: vec2<f32>, axis: u32, lattice: u32) -> vec2<f32> {
     return vec2<f32>(uv.x * TERRAIN_STRETCH, uv.y);
 }
 
+// Where `world` lies in a material's maps on axis `axis`'s plane in
+// lattice `lattice`, as `mapping` lays them: the second lattice also
+// shifted off the first.
+fn terrain_lattice_at(world: vec3<f32>, mapping: TerrainMapping, axis: u32, lattice: u32)
+        -> vec2<f32> {
+    return terrain_lattice(world_plane(world, axis) * mapping.scale, axis, lattice)
+        + vec2<f32>(0.37, 0.71) * f32(lattice);
+}
+
 // Layer `layer` of `map` at `world` (with its screen derivatives) on axis
 // `axis`'s plane in lattice `lattice`, as `mapping` lays it, filtered over
 // the pixel by those derivatives through the maps' mipmaps and anisotropic
@@ -933,9 +942,8 @@ fn terrain_lattice(uv: vec2<f32>, axis: u32, lattice: u32) -> vec2<f32> {
 fn terrain_plane_texel(map: texture_2d_array<f32>, layer: u32, mapping: TerrainMapping,
         world: vec3<f32>, world_dx: vec3<f32>, world_dy: vec3<f32>, axis: u32, lattice: u32)
         -> vec4<f32> {
-    let shift = vec2<f32>(0.37, 0.71) * f32(lattice);
     return textureSampleGrad(map, terrain_material_sampler,
-        terrain_lattice(world_plane(world, axis) * mapping.scale, axis, lattice) + shift, layer,
+        terrain_lattice_at(world, mapping, axis, lattice), layer,
         terrain_lattice(world_plane(world_dx, axis) * mapping.scale, axis, lattice),
         terrain_lattice(world_plane(world_dy, axis) * mapping.scale, axis, lattice));
 }
@@ -1057,6 +1065,17 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
     let top = max(a, b) - TERRAIN_HEIGHT_BAND;
     let lifted = max(vec2<f32>(a, b) - top, vec2<f32>(0.0));
     return mix(second, lifted.y / max(lifted.x + lifted.y, 1.0e-6), saturate(contrast));
+}
+
+// The share of a material's second lattice where its pattern shows
+// `pattern` of it (`terrain_second_lattice`) and its two lattices' heights
+// are `first` and `other`: within the pattern's borders, theirs met as
+// sharply as `contrast` asks (`terrain_lattice_share`).
+fn terrain_lattice_mix(pattern: f32, first: f32, other: f32, contrast: f32) -> f32 {
+    if pattern > 0.0 && pattern < 1.0 {
+        return terrain_lattice_share(pattern, first, other, contrast);
+    }
+    return pattern;
 }
 
 // Where a fragment is and how it is seen, as the ground's passes read it:
@@ -1270,10 +1289,7 @@ fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
             other = terrain_map(terrain_material_data, 2u * mapping.layer + 1u, mapping,
                 site.world, site.world_dx, site.world_dy, 1u);
         }
-        slot.second = pattern;
-        if pattern > 0.0 && pattern < 1.0 {
-            slot.second = terrain_lattice_share(pattern, first.a, other.a, sharpness);
-        }
+        slot.second = terrain_lattice_mix(pattern, first.a, other.a, sharpness);
         slot.texel = mix(first, other, slot.second);
         height = slot.texel.a;
     }
@@ -1430,16 +1446,125 @@ fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGro
     return ground;
 }
 
-// One material's part in the ground's relief: the meters it
-// sinks the ground at most, already weighted (none for materials
-// displacing it, whose palette entries hold no relief), and where its
-// maps' heights lie: as its maps lie there (from above, or across their
-// planes on steep ground), read with the point's change per pixel.
+// The ground's two bands. Each of its materials has one depth, the meters
+// its heights span (its palette entry's `relief.x`). The part of its
+// heights coarser than the ground's mesh carries where it is drawn moves
+// the mesh: its mesh band (`terrain_displacement`), the heights' levels
+// whose features span TERRAIN_MESH_CARRIES of the mesh's vertex spacings
+// there (`terrain_carried`). The rest, down to the pixel, is the pixels'
+// relief through the same heights (`terrain_parallax`): their view rays
+// meet the material's whole heights from the drawn ground, so they move
+// the point by what the mesh left, and the two bands always sum to the
+// material's own heights. As the mesh refines toward the detail eye,
+// detail moves from the pixel band to the mesh band with the same total,
+// so nothing pops; and every bump is a stone the material's textures draw,
+// both bands reading its heights in both its lattices as its maps meet
+// (`terrain_material_heights`). Both weigh each material by the blend's
+// own smooth weights, before its heights raise them, so each band tapers
+// across a border between materials. Both lie along the ground's smooth
+// normal, which the materials' normal maps turn by their heights' slopes
+// at every scale, the slopes of both bands, while the drawn triangles' own
+// tilt turns no normal. Ground whose materials' whole depth moves it less
+// than TERRAIN_BAND_PIXELS draws its smooth surface, reading them for
+// neither.
+
+// The vertex spacings a feature of the ground's heights spans at least for
+// its mesh to carry it: two, the Nyquist limit of the vertices' samples.
+const TERRAIN_MESH_CARRIES: f32 = 2.0;
+
+// The pixels a band's whole depth moves the ground on screen at least for
+// the band to be computed: moving it less than a pixel, it shows in none.
+const TERRAIN_BAND_PIXELS: f32 = 1.0;
+
+// Where a material's heights lie at a point: as its maps lie there
+// (`terrain_mapping`), with the share of its second lattice there
+// (`terrain_second_lattice`) and its height contrast, by which its two
+// lattices' heights meet as its maps meet where it shades (`terrain_slot`).
+struct TerrainHeights {
+    mapping: TerrainMapping,
+    pattern: f32,
+    contrast: f32,
+}
+
+// Where material `entry`'s heights lie at `world`, on ground of smooth
+// normal `normal`.
+fn terrain_material_heights(entry: TerrainPaletteEntry, world: vec3<f32>,
+        normal: vec3<f32>) -> TerrainHeights {
+    return TerrainHeights(terrain_mapping(entry, normal),
+        terrain_second_lattice(world, entry.params.x), entry.params.y);
+}
+
+// A material's heights at `world` in lattice `lattice` as `mapping` lays
+// them, at mip level `level`, mixed over its planes.
+fn terrain_lattice_height(mapping: TerrainMapping, world: vec3<f32>, lattice: u32, level: f32)
+        -> f32 {
+    var height = 0.0;
+    for (var axis = 0u; axis < 3u; axis++) {
+        let share = mapping.planes[axis];
+        if share > 0.0 {
+            height += share * textureSampleLevel(terrain_material_data, terrain_material_sampler,
+                terrain_lattice_at(world, mapping, axis, lattice), 2u * mapping.layer + 1u,
+                level).a;
+        }
+    }
+    return height;
+}
+
+// A material's heights at `world` where `heights` lies them, at mip level
+// `level`, so that none of their features is finer than its texels.
+fn terrain_band_height(heights: TerrainHeights, world: vec3<f32>, level: f32) -> f32 {
+    var first = 0.0;
+    var other = 0.0;
+    if heights.pattern < 1.0 {
+        first = terrain_lattice_height(heights.mapping, world, 0u, level);
+    }
+    if heights.pattern > 0.0 {
+        other = terrain_lattice_height(heights.mapping, world, 1u, level);
+    }
+    return mix(first, other, terrain_lattice_mix(heights.pattern, first, other, heights.contrast));
+}
+
+// A material's heights at `world` where `heights` lies them, down to the
+// pixel: filtered over it by the point's changes per pixel `dx` and `dy`,
+// as its maps filter.
+fn terrain_pixel_height(heights: TerrainHeights, world: vec3<f32>, dx: vec3<f32>,
+        dy: vec3<f32>) -> f32 {
+    let layer = 2u * heights.mapping.layer + 1u;
+    var first = 0.0;
+    var other = 0.0;
+    if heights.pattern < 1.0 {
+        first = terrain_map(terrain_material_data, layer, heights.mapping, world, dx, dy, 0u).a;
+    }
+    if heights.pattern > 0.0 {
+        other = terrain_map(terrain_material_data, layer, heights.mapping, world, dx, dy, 1u).a;
+    }
+    return mix(first, other, terrain_lattice_mix(heights.pattern, first, other, heights.contrast));
+}
+
+// The mip level whose texels span `meters` of heights lying as `mapping`
+// lays them, their first where its texels span more.
+fn terrain_band_level(mapping: TerrainMapping, meters: f32) -> f32 {
+    let texels = f32(textureDimensions(terrain_material_data).x) * mapping.scale;
+    return max(log2(meters * texels), 0.0);
+}
+
+// The size of the finest features of the ground's heights its mesh carries
+// where a pixel seen from the detail eye spans `across` meters:
+// TERRAIN_MESH_CARRIES of its vertex spacings there, those of its
+// subdivision's finest leaves' meshlets (`terrain.relief.z`), or a pixel
+// where that spans more, as no triangle finer than a pixel shows more.
+fn terrain_carried(across: f32) -> f32 {
+    return TERRAIN_MESH_CARRIES * max(terrain.relief.z, across);
+}
+
+// One material's part in the ground's pixel band: its depth, already
+// weighted (none for materials not showing their maps, whose heights stand
+// at their mean there), where its heights lie
+// (`terrain_material_heights`) and their mean.
 struct TerrainReliefLayer {
     depth: f32,
-    mapping: TerrainMapping,
-    dx: vec3<f32>,
-    dy: vec3<f32>,
+    heights: TerrainHeights,
+    mean: f32,
 }
 
 fn terrain_relief_layer(material: u32, weight: f32, site: TerrainSite) -> TerrainReliefLayer {
@@ -1449,96 +1574,85 @@ fn terrain_relief_layer(material: u32, weight: f32, site: TerrainSite) -> Terrai
         return layer;
     }
     let entry = terrain_material(material);
-    // Materials showing their maps; their means stand level.
-    if !terrain_mapped(entry, site) {
+    // Materials of some depth showing their maps; their means stand level.
+    if entry.relief.x <= 0.0 || !terrain_mapped(entry, site) {
         return layer;
     }
-    layer.mapping = terrain_mapping(entry, site.geometric);
-    layer.dx = site.world_dx;
-    layer.dy = site.world_dy;
+    layer.heights = terrain_material_heights(entry, site.world, site.geometric);
+    layer.mean = entry.heights.x;
     layer.depth = entry.relief.x * weight;
     return layer;
 }
 
-// How far below the ground's top `layer` sinks it at `point`: its heights
-// there mixed over its planes.
-fn terrain_relief_sink(layer: TerrainReliefLayer, point: vec3<f32>) -> f32 {
+// How far `layer` raises the ground above its smooth surface at `point`
+// (below it where negative): its heights there down to the pixel, by the
+// point's changes per pixel `dx` and `dy`, less their mean.
+fn terrain_relief_rise(layer: TerrainReliefLayer, point: vec3<f32>, dx: vec3<f32>,
+        dy: vec3<f32>) -> f32 {
     if layer.depth <= 0.0 {
         return 0.0;
     }
-    let scale = layer.mapping.scale;
-    var height = 0.0;
-    for (var axis = 0u; axis < 3u; axis++) {
-        let share = layer.mapping.planes[axis];
-        if share > 0.0 {
-            height += share * textureSampleGrad(terrain_material_data, terrain_material_sampler,
-                world_plane(point, axis) * scale, 2u * layer.mapping.layer + 1u,
-                world_plane(layer.dx, axis) * scale, world_plane(layer.dy, axis) * scale).a;
-        }
-    }
-    return layer.depth * (1.0 - height);
+    return layer.depth * (terrain_pixel_height(layer.heights, point, dx, dy) - layer.mean);
 }
 
-// The meters a material displacing the ground `depth` deep moves it along
-// its smooth normal at `world`, where a pixel seen from the detail eye spans
-// `across` meters, its maps lying as `mapping` lays them: its heights less
-// their mean (their coarsest mip), so the plain surface far ground draws is
-// the displaced one's average. Its heights are read no finer than a pixel,
-// nor than the subdivision's finest meshlets can carry
-// (`terrain.relief.w`); it shows whole while its depth spans
-// TERRAIN_RELIEF_WHOLE pixels or more and none by TERRAIN_RELIEF_GONE, as
-// relief does, so far ground is the plain surface its normal maps shade.
-fn terrain_material_displacement(depth: f32, mapping: TerrainMapping, world: vec3<f32>,
-        across: f32) -> f32 {
-    let shown = smoothstep(TERRAIN_RELIEF_GONE, TERRAIN_RELIEF_WHOLE, depth / across);
-    if shown <= 0.0 {
-        return 0.0;
-    }
-    let layer = 2u * mapping.layer + 1u;
-    let texels = f32(textureDimensions(terrain_material_data).x) * mapping.scale;
-    let lod = max(log2(max(across, terrain.relief.w) * texels), 0.0);
-    var height = 0.0;
-    for (var axis = 0u; axis < 3u; axis++) {
-        let share = mapping.planes[axis];
-        if share > 0.0 {
-            height += share * textureSampleLevel(terrain_material_data, terrain_material_sampler,
-                world_plane(world, axis) * mapping.scale, layer, lod).a;
-        }
-    }
-    let mean = textureSampleLevel(terrain_material_data, terrain_material_sampler,
-        vec2<f32>(0.5), layer, f32(textureNumLevels(terrain_material_data) - 1u)).a;
-    return depth * (height - mean) * shown;
+// The ground's mesh band at a point: how far it moves the ground's true
+// surface there along its smooth normal (`moved`), and the part of that
+// whose features span TERRAIN_MESH_CARRIES or more of a leaf's meshlet
+// pieces (`kept`), which those carry, all of it where no pieces are asked.
+struct TerrainLift {
+    moved: vec3<f32>,
+    kept: vec3<f32>,
 }
 
-// How far deep materials displace the ground's true surface at `world`,
-// terrain-local `local`: along its smooth normal at the levels a pixel seen
-// from the detail eye shades it at, each material of its blend by its share
-// (`terrain_material_displacement`). None where the deepest of the
-// terrain's materials could not move it a pixel (`terrain.relief.z`), which
-// then reads no materials. A function of where the point stands alone, so
-// every pass drawing the ground, and the subdivision measuring it, moves it
-// alike.
-fn terrain_displacement(world: vec3<f32>, local: vec2<f32>) -> vec3<f32> {
+// The mesh band at `world`, terrain-local `local`: along the ground's
+// smooth normal at the levels a pixel seen from the detail eye shades it
+// at, each material of its blend by its share, its heights at the level
+// whose texels are the finest features the mesh carries there
+// (`terrain_carried`) less their mean, so ground whose mesh carries none
+// of them, far off, draws its smooth surface; and with `pieces` the meters
+// between a leaf's meshlet vertices (0 for none), the part those pieces
+// carry, which the subdivision measures leaves by. None where the deepest
+// of the terrain's materials (`terrain.relief.x`) would move the ground
+// less than TERRAIN_BAND_PIXELS, which then reads no materials. A function
+// of where the point stands alone, so every pass drawing the ground, and
+// the subdivision measuring it, moves it alike.
+fn terrain_displacement(world: vec3<f32>, local: vec2<f32>, pieces: f32) -> TerrainLift {
+    var lift = TerrainLift(vec3<f32>(0.0), vec3<f32>(0.0));
     let across = max(detail_across(world), 1.0e-6);
-    if terrain.relief.z < TERRAIN_RELIEF_GONE * across {
-        return vec3<f32>(0.0);
+    if terrain.relief.x < TERRAIN_BAND_PIXELS * across {
+        return lift;
     }
+    let carried = terrain_carried(across);
+    let spaced = max(carried, TERRAIN_MESH_CARRIES * pieces);
     let shading = terrain_pixel_shading(world);
     let normal = terrain_surface_normal(local, shading);
     let blend = terrain_blend(local, normal, shading);
     var moved = 0.0;
+    var kept = 0.0;
     for (var slot = 0u; slot < 4u; slot++) {
         let weight = blend.weights[slot];
         if weight <= 0.0 {
             continue;
         }
         let entry = terrain_material(blend.ids[slot]);
-        if entry.relief.w > 0.0 && entry.params.w > 0.0 {
-            moved += weight * terrain_material_displacement(entry.relief.w,
-                terrain_mapping(entry, normal), world, across);
+        if entry.relief.x <= 0.0 || entry.params.w <= 0.0 {
+            continue;
         }
+        let heights = terrain_material_heights(entry, world, normal);
+        let depth = weight * entry.relief.x;
+        let band = terrain_band_height(heights, world,
+            terrain_band_level(heights.mapping, carried));
+        var coarse = band;
+        if spaced > carried {
+            coarse = terrain_band_height(heights, world,
+                terrain_band_level(heights.mapping, spaced));
+        }
+        moved += depth * (band - entry.heights.x);
+        kept += depth * (coarse - entry.heights.x);
     }
-    return normal * moved;
+    lift.moved = normal * moved;
+    lift.kept = normal * kept;
+    return lift;
 }
 
 // World texel `texel`'s slot in the deformation map, whose texels wrap.
@@ -1640,15 +1754,47 @@ struct TerrainRelief {
     deform: f32,
 }
 
-// How far below the ground's top the relief layers `a` and `b` and the
-// tracks of the ground's `deform` (faded by `fade`) sink it at `point`.
-fn terrain_sink(a: TerrainReliefLayer, b: TerrainReliefLayer, point: vec3<f32>, deform: f32,
-        fade: f32) -> f32 {
-    var sink = terrain_relief_sink(a, point) + terrain_relief_sink(b, point);
+// The ground's pixel band at a fragment: every material of its blend
+// (`terrain_relief_layer`), the meters the mesh band lifted the drawn
+// ground off its true surface there along its normal
+// (`terrain_displacement`), and how the point moves per pixel, by which
+// the materials' heights filter.
+struct TerrainReliefLayers {
+    a: TerrainReliefLayer,
+    b: TerrainReliefLayer,
+    c: TerrainReliefLayer,
+    d: TerrainReliefLayer,
+    lifted: f32,
+    dx: vec3<f32>,
+    dy: vec3<f32>,
+}
+
+// How far below the drawn ground the ground lies at `point` (above it
+// where negative): the mesh band's lift less the heights of `layers` there
+// and the tracks of the ground's `deform`, all as `fade` flattens them
+// toward the drawn ground.
+fn terrain_sink(layers: TerrainReliefLayers, point: vec3<f32>, deform: f32, fade: f32) -> f32 {
+    var ground = terrain_relief_rise(layers.a, point, layers.dx, layers.dy)
+        + terrain_relief_rise(layers.b, point, layers.dx, layers.dy)
+        + terrain_relief_rise(layers.c, point, layers.dx, layers.dy)
+        + terrain_relief_rise(layers.d, point, layers.dx, layers.dy);
     if deform > 0.0 {
-        sink -= terrain_track_height(terrain_deform_track(point.xz), deform) * fade;
+        ground += terrain_track_height(terrain_deform_track(point.xz), deform);
     }
-    return sink;
+    return (layers.lifted - ground) * fade;
+}
+
+// How far a relief layer's heights reach above (x) and below (y) the
+// ground's smooth surface: from their mean up to their top and down to
+// their bottom, by its depth.
+fn terrain_relief_reach(layer: TerrainReliefLayer) -> vec2<f32> {
+    return layer.depth * vec2<f32>(1.0 - layer.mean, layer.mean);
+}
+
+// Whether a relief layer of some depth lies across planes of steep ground,
+// which read the surface's own height.
+fn terrain_relief_sideways(layer: TerrainReliefLayer) -> bool {
+    return layer.depth > 0.0 && layer.heights.mapping.planes.y < 1.0;
 }
 
 // The share of its maps' repeat a relief ray crosses at most between two
@@ -1661,15 +1807,9 @@ fn terrain_relief_repeat(layer: TerrainReliefLayer) -> f32 {
     if layer.depth <= 0.0 {
         return 1.0e6;
     }
-    return 1.0 / layer.mapping.scale;
+    return 1.0 / layer.heights.mapping.scale;
 }
 
-// The pixels on screen the relief's deepest point moves where the relief
-// shows whole, and where it has flattened away: as other detail, it hands
-// over once it moves the ground less than a pixel. Displacement hands over
-// by its depth on screen alike.
-const TERRAIN_RELIEF_WHOLE: f32 = 2.0;
-const TERRAIN_RELIEF_GONE: f32 = 1.0;
 // The secant steps that narrow where the ray meets the relief between its
 // last two steps, so no step's layer shows where the ray skims it.
 const TERRAIN_RELIEF_REFINE: u32 = 2u;
@@ -1683,30 +1823,32 @@ fn terrain_relief_across(way: vec3<f32>, normal: vec3<f32>) -> f32 {
     return min(length(travel.xz), 3.0);
 }
 
-// Where a fragment's view ray meets the ground's relief: the ray marches
-// down through the heights of its two heaviest materials, each as deep as
-// its relief reaches (a few centimeters at most: deeper materials displace
-// the ground instead), and through the tracks deformers pressed, from the
-// top of their rims to the bottom of the deepest; the heights lie on the
-// ground's surface, from above or across their planes on steep ground as
-// their maps lie (`terrain_level_height`), so the ray only moves where on
-// that surface the ground shades from. The relief shows by its size on
-// screen, seen from the detail eye, not by its distance or the angle it is
-// seen at: whole while its deepest point moves TERRAIN_RELIEF_WHOLE pixels
-// or more, flattening to none by TERRAIN_RELIEF_GONE, with about a step per
-// pixel it moves, so far relief costs little and no ring or band follows
-// the eye; seen at a slant, it stands as deep as head on, as real ground's
-// bumps do.
-fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32)
-        -> TerrainRelief {
+// Where a fragment's view ray meets the ground's pixel band, the part of
+// its materials' heights the mesh does not carry (`terrain_displacement`):
+// the ray passes the drawn ground, which the mesh band lifted `lifted`
+// meters off its true surface there, and marches down through the whole
+// heights of every material of the blend, each by its share and as far
+// above and below their mean as its depth reaches, and through the tracks
+// deformers pressed, from the top of their rims to the bottom of the
+// deepest, so it moves the point by what the mesh left. The heights lie on
+// the ground's surface, from above or across their planes on steep ground
+// as their maps lie (`terrain_level_height`), so the ray only moves where
+// on that surface the ground shades from. It marches wherever their whole
+// depth could move the point TERRAIN_BAND_PIXELS on screen, seen from the
+// detail eye, not by its distance or the angle it is seen at, with about a
+// step per pixel it moves, so far relief costs little and no ring or band
+// follows the eye; seen at a slant, it stands as deep as head on, as real
+// ground's bumps do.
+fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32,
+        lifted: f32) -> TerrainRelief {
     var relief: TerrainRelief;
     relief.world = site.world;
     relief.deform = 0.0;
     let to_point = site.world - camera.position.xyz;
     let ray = to_point / max(length(to_point), 1.0e-6);
     // Depth runs into the ground along its normal; rays meeting it edge on
-    // (DETAIL_EDGE_ON) see it flatten, where the drawn surface's own
-    // silhouette cuts through it.
+    // (DETAIL_EDGE_ON) see it flatten to the drawn ground, where the drawn
+    // surface's own silhouette cuts through it.
     let into = -dot(ray, site.geometric);
     let grazing = smoothstep(0.0, DETAIL_EDGE_ON, into);
     // The pixels a meter of depth moves the point on screen at most, seen
@@ -1715,9 +1857,9 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     let pixels = terrain_relief_across(site.world - camera.detail.xyz, site.geometric)
         / site.footprint.along;
     let tracked = terrain_deform_reach(site.world.xz);
-    // Without tracks, ground whose deepest relief could not move a pixel
+    // Without tracks, ground whose deepest material could not move a pixel
     // looks up no materials.
-    let shows = grazing > 0.0 && terrain.relief.x * pixels > TERRAIN_RELIEF_GONE;
+    let shows = grazing > 0.0 && terrain.relief.x * pixels >= TERRAIN_BAND_PIXELS;
     if !shows && tracked < 5.0e-4 {
         return relief;
     }
@@ -1735,41 +1877,36 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     if grazing <= 0.0 {
         return relief;
     }
-    // The two heaviest materials.
-    var heaviest = 0u;
-    for (var index = 1u; index < 4u; index++) {
-        if weights[index] > weights[heaviest] {
-            heaviest = index;
-        }
-    }
-    var next = select(0u, 1u, heaviest == 0u);
-    for (var index = 0u; index < 4u; index++) {
-        if index != heaviest && weights[index] > weights[next] {
-            next = index;
-        }
-    }
-    var a = terrain_relief_layer(blend.ids[heaviest], weights[heaviest], site);
-    var b = terrain_relief_layer(blend.ids[next], weights[next], site);
+    // Every material of the blend by its share, so the band tapers across
+    // borders between materials as the mesh band does.
+    var layers: TerrainReliefLayers;
+    layers.a = terrain_relief_layer(blend.ids.x, weights.x, site);
+    layers.b = terrain_relief_layer(blend.ids.y, weights.y, site);
+    layers.c = terrain_relief_layer(blend.ids.z, weights.z, site);
+    layers.d = terrain_relief_layer(blend.ids.w, weights.w, site);
+    layers.lifted = lifted;
+    layers.dx = site.world_dx;
+    layers.dy = site.world_dy;
     // Tracks as deep and rims as high as the map's nearby tracks reach and
     // the ground's materials let them.
     let deform = relief.deform;
-    let sunk_whole = min(tracked, deform);
-    let raised_whole = min(tracked, 0.5 * deform);
-    // Its depth shows by how far its deepest point would move on screen.
-    let moved = (a.depth + b.depth + sunk_whole + raised_whole) * pixels;
-    let fade = smoothstep(TERRAIN_RELIEF_GONE, TERRAIN_RELIEF_WHOLE, moved) * grazing;
-    if fade <= 0.0 {
+    let sunk = min(tracked, deform);
+    let raised = min(tracked, 0.5 * deform);
+    // Its whole depth, which moves the point on screen at most this far.
+    let deep = layers.a.depth + layers.b.depth + layers.c.depth + layers.d.depth;
+    if (deep + sunk + raised) * pixels < TERRAIN_BAND_PIXELS {
         return relief;
     }
-    a.depth *= fade;
-    b.depth *= fade;
-    let sunk = sunk_whole * fade;
-    let raised = raised_whole * fade;
-    let top = -raised;
-    let depth = a.depth + b.depth + sunk;
+    // From the highest the materials' heights and the tracks' rims raise the
+    // ground over the drawn ground to the lowest they sink it under, the
+    // drawn ground between, flattening toward it edge on.
+    let reach = terrain_relief_reach(layers.a) + terrain_relief_reach(layers.b)
+        + terrain_relief_reach(layers.c) + terrain_relief_reach(layers.d);
+    let top = min(lifted - reach.x - raised, 0.0) * grazing;
+    let depth = max(lifted + reach.y + sunk, 0.0) * grazing;
     // Down the ray a step of the relief's depth at a time, the ray's
-    // travel across per meter of depth bounded; from above the rims, the
-    // ray starting before the ground it meets.
+    // travel across per meter of depth bounded; from above the highest
+    // ground, the ray starting before the ground it meets.
     let travel = ray / max(into, DETAIL_EDGE_ON);
     let across = length(travel.xz);
     let along = travel.xz * min(1.0, 3.0 / max(across, 1.0e-6));
@@ -1779,7 +1916,8 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     let rise = -site.geometric.xz / max(site.geometric.y, 0.05);
     let march = vec3<f32>(along.x, dot(rise, along), along.y);
     var start = site.world;
-    if (a.depth > 0.0 && a.mapping.planes.y < 1.0) || (b.depth > 0.0 && b.mapping.planes.y < 1.0) {
+    if terrain_relief_sideways(layers.a) || terrain_relief_sideways(layers.b)
+            || terrain_relief_sideways(layers.c) || terrain_relief_sideways(layers.d) {
         let held = terrain_level_height(site.world.xz - terrain.origin.xz, 0u);
         if held.found {
             start.y = held.height + terrain.origin.y;
@@ -1793,20 +1931,22 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     // antialiased frames vary by pixel and frame, so no seam shows where
     // the count changes.
     let crossed = (depth - top) * length(along);
-    let stride = TERRAIN_RELIEF_STRIDE * min(terrain_relief_repeat(a), terrain_relief_repeat(b));
+    let stride = TERRAIN_RELIEF_STRIDE * min(
+        min(terrain_relief_repeat(layers.a), terrain_relief_repeat(layers.b)),
+        min(terrain_relief_repeat(layers.c), terrain_relief_repeat(layers.d)));
     let wanted = max((depth - top) * pixels, crossed / max(stride, 1.0e-4));
     let count = max(clamp(wanted, 2.0, terrain.relief.y),
-        min((sunk + raised) / 0.02, 2.0 * terrain.relief.y));
+        min((sunk + raised) * grazing / 0.02, 2.0 * terrain.relief.y));
     let steps = max(u32(floor(count + dither)), 2u);
     var previous = top;
-    var gap = top - terrain_sink(a, b, start + march * top, deform, fade);
+    var gap = top - terrain_sink(layers, start + march * top, deform, grazing);
     var hit = top;
     if gap < 0.0 {
         hit = depth;
         for (var step = 1u; step <= steps; step++) {
             let at = top + (depth - top) * f32(step) / f32(steps);
             let point = start + march * at;
-            let next_gap = at - terrain_sink(a, b, point, deform, fade);
+            let next_gap = at - terrain_sink(layers, point, deform, grazing);
             if next_gap >= 0.0 {
                 // Between the last step and this one, where the ray reaches
                 // the ground, narrowed by secant steps (TERRAIN_RELIEF_REFINE).
@@ -1815,7 +1955,7 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
                 for (var refine = 0u; refine < TERRAIN_RELIEF_REFINE; refine++) {
                     let middle = mix(low.x, high.x, low.y / min(low.y - high.y, -1.0e-6));
                     let middle_gap = middle
-                        - terrain_sink(a, b, start + march * middle, deform, fade);
+                        - terrain_sink(layers, start + march * middle, deform, grazing);
                     if middle_gap >= 0.0 {
                         high = vec2<f32>(middle, middle_gap);
                     } else {
@@ -1874,10 +2014,10 @@ fn terrain_forward_look(relative: vec3<f32>) -> TerrainLook {
 }
 
 // Where the view ray of a fragment `relative` to the eye, seen as `look`
-// says, meets the ground: its site, on the true surface where deep
-// materials displaced the ground drawn there and moved across the ground
-// where its relief and tracks show, the shading levels its pixel's
-// footprint gives and the meters tracks may sink it (`TerrainRelief`).
+// says, meets the ground: its site, on the true surface under where the
+// mesh band moved the ground drawn there and moved across the ground where
+// its pixel band and tracks show, the shading levels its pixel's footprint
+// gives and the meters tracks may sink it (`TerrainRelief`).
 struct TerrainSeen {
     site: TerrainSite,
     shading: TerrainShadingLevel,
@@ -1886,10 +2026,11 @@ struct TerrainSeen {
 
 fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     // The true surface's point the drawn one stands for: a step back along
-    // the displacement there, so materials lie where their heights moved the
+    // the mesh band there, so materials lie where their heights moved the
     // ground.
     let drawn = eye_world(relative);
-    let world = drawn - terrain_displacement(drawn, drawn.xz - terrain.origin.xz);
+    let lift = terrain_displacement(drawn, drawn.xz - terrain.origin.xz, 0.0).moved;
+    let world = drawn - lift;
     let away = length(relative);
     let ray = relative / max(away, 1.0e-6);
     let ray_dx = look.ray_dx;
@@ -1921,8 +2062,9 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     site.thinned = terrain_thinned(world);
     site.grown = terrain_grown(site.colors);
     site.across = terrain_across(world);
-    // Moved where the ground's relief and tracks show.
-    let relief = terrain_parallax(site, shading, look.dither);
+    // Moved where the ground's pixel band and tracks show, from the drawn
+    // ground the mesh band lifted.
+    let relief = terrain_parallax(site, shading, look.dither, dot(lift, geometric));
     site.world = relief.world;
     return TerrainSeen(site, shading, relief.deform);
 }

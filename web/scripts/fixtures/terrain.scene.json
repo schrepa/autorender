@@ -1024,7 +1024,7 @@
                 0.28
               ],
               "roughness": 0.9,
-              "relief": 0.1,
+              "depth": 0.1,
               "deform": 0.04
             }
           ],
