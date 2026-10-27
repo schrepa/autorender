@@ -10,22 +10,25 @@
 // taller, drier ground sparser and shorter (`terrain_variety.wgsl`'s
 // `cover_growth`). Density falls with distance as the radius's fifth over
 // the distance, so every ring of the radius's disc holds about as many
-// blades, which widen to cover as much ground as far as their shape lets
-// them stay grass leaves, then thin without widening; past the radius,
+// blades, each one left a tuft standing for those it replaces: leaves from
+// its root as wide in all as theirs, so holding their leaves, each keeping
+// a leaf's shape (`cover_tuft`); past the radius,
 // sparser as the square of the distance at the width they reached, so they
-// narrow on screen as they recede; and blades narrower on screen than the
+// narrow on screen as they recede; and tufts narrower on screen than the
 // settings' pixels retire in their ranks' order, none standing past the
 // tiers' reach (`terrain_variety.wgsl`'s `cover_share`); without tiers cover
 // thins out over the radius's outer half. The ground shows the leaves
-// thinned and retired blades leave as its canopy, their average
-// (`meshes/terrain.wgsl`). A workgroup takes one cell of a tier's grid: the
-// radius's cells are the finest level's, and each tier beyond has cells twice
-// as wide as the last, trying only the first indices of the finest cells
-// within them that its density can reach, so wherever a blade grows it is
-// the same blade. Candidates near their threshold grow short, so blades
-// rise as the eye nears instead of popping in. Blades stand on the ground's
-// true surface, which the terrain draws within about a pixel
-// (`terrain_ground.wgsl`).
+// retired tufts leave as its canopy, their average (`meshes/terrain.wgsl`).
+// Blades and tufts grow taller or shorter, lean, and take their hue and
+// dryness by the clump they stand in (`cover_clump`), which their canopy
+// shows too, and by the macro colors' lushness and their material's cover.
+// A workgroup takes one cell of a tier's grid: the radius's cells are the
+// finest level's, and each tier beyond has cells twice as wide as the last,
+// trying only the first indices of the finest cells within them that its
+// density can reach, so wherever a blade grows it is the same blade.
+// Candidates near their threshold grow short, so blades rise as the eye
+// nears instead of popping in. Blades stand on the ground's true surface,
+// which the terrain draws within about a pixel (`terrain_ground.wgsl`).
 // Survivors in the view append to the frame's blades; past capacity they
 // are only counted. Blades take the tint of the ground's macro colors, as
 // the ground does (`terrain_variety.wgsl`).
@@ -45,10 +48,10 @@ struct Grow {
     // The density scale, how many of each finest cell's candidates this
     // tier tries, the terrain's macro colors' layer plus one
     // (0 until they arrive), and the tallest blade any material grows on the
-    // lushest ground.
+    // lushest ground, before its clump grows it taller.
     scale: vec4<f32>,
     // This tier: the meters from the eye it starts at, the
-    // radius, the meters away blades past the radius span the settings'
+    // radius, the meters away tufts past the radius span the settings'
     // pixels (0: cover within the radius alone), and how many level-0
     // samples wide its cells are.
     tier: vec4<f32>,
@@ -63,9 +66,6 @@ struct Grow {
     foliage: vec4<f32>,
     // The view: pixels a meter spans a meter from the eye (x).
     view: vec4<f32>,
-    // The most times their roots' width blades widen (x: `CoverLaw`'s
-    // `widest`).
-    widening: vec4<f32>,
 }
 
 // A surface material's cover: blades per square meter, the shortest and
@@ -90,12 +90,12 @@ struct PaletteEntry {
     heights: vec4<f32>,
 }
 
-// A blade, as `meshes/cover.wgsl` reads it.
+// A blade or tuft, as `meshes/cover.wgsl` reads it.
 struct CoverBlade {
     root: vec3<f32>,
-    height: f32,
+    size: u32,
     facing: u32,
-    width: f32,
+    leaves: u32,
     root_color: u32,
     tip_color: u32,
 }
@@ -124,8 +124,6 @@ const PALETTE_ENTRIES: u32 = 102u;
 // Every resident tile's normal maps (`terrain_normals.wgsl`): the smooth
 // surface's gradient at each sample, two halves of a float.
 @group(0) @binding(11) var normals: texture_2d_array<u32>;
-
-const TAU: f32 = 6.2831853;
 
 fn hash(value: u32) -> u32 {
     var h = value * 0x9e3779b1u;
@@ -316,14 +314,13 @@ fn ground_normal(local: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(0.0, 1.0, 0.0);
 }
 
-// A blade's facing word while blades keep their ground's normal
-// (`meshes/cover.wgsl`'s `blade_facing`): `facing` (radians) in the low 16
-// bits, `normal`'s x and z as 8-bit fractions above.
-fn grounded_facing(facing: f32, normal: vec3<f32>) -> u32 {
-    let turn = u32(round(fract(facing / TAU) * 65535.0));
+// The high half of a blade's facing word while blades keep their ground's
+// normal (`meshes/cover.wgsl`'s `blade_facing`): `normal`'s x and z as
+// 8-bit fractions, above the turn in the low 16 bits.
+fn grounded_tilt(normal: vec3<f32>) -> u32 {
     let tilt = vec2<u32>(round((clamp(normal.xz, vec2<f32>(-1.0), vec2<f32>(1.0)) * 0.5
         + 0.5) * 255.0));
-    return turn | (tilt.x << 16u) | (tilt.y << 24u);
+    return (tilt.x << 16u) | (tilt.y << 24u);
 }
 
 // Packs a linear color as 8-bit square roots, the blades' encoding.
@@ -415,7 +412,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     // The finest cells' candidates whose indices the cell's nearest point's
     // share could reach, of those the tier tries: each index stands for a
     // blade more of a finest cell's expected blades on the lushest ground.
-    let law = CoverLaw(grow.tier.y, grow.tier.z, grow.widening.x);
+    let law = CoverLaw(grow.tier.y, grow.tier.z);
     let held = f32(grow.grid.w);
     let tried = min(u32(grow.scale.y), u32(ceil(held * cover_share(nearest, law))));
     let finest = side * side;
@@ -471,8 +468,9 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         workgroupBarrier();
         if lane == 0u {
             // Roots stand 2 cm under the ground; blade spheres center
-            // half their height above them.
-            let tallest = grow.scale.w;
+            // half their height above them, the tallest in their tallest
+            // clumps.
+            let tallest = grow.scale.w * (1.0 + COVER_CLUMP_HEIGHT);
             let low = ordered_to_height(~atomicLoad(&cell_low));
             let high = ordered_to_height(atomicLoad(&cell_high));
             let origin = grow.origin.xyz + vec3<f32>(corner.x, -0.02, corner.y);
@@ -544,8 +542,10 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         // material lets them sink it.
         let pressed = min(pressed_at(world_xz), palette[entry].relief.y);
         let standing = 1.0 - 0.85 * smoothstep(0.01, 0.06, pressed);
+        // Its clump grows it taller or shorter and tints its leaves.
+        let clumped = cover_clumped(cover_clump(world_xz));
         let height = mix(spec.shape.y, spec.shape.z, unit(hash(seed ^ 0xc2b2ae35u)))
-            * growth.height * rise * standing * edge;
+            * growth.height * clumped.height * rise * standing * edge;
         if height < 0.02 {
             continue;
         }
@@ -555,19 +555,23 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         let variation = (0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u))) * macro_tint(colors, 1.0);
         var blade: CoverBlade;
         blade.root = root;
-        blade.height = height;
-        let facing = unit(hash(seed ^ 0x85ebca6bu)) * TAU;
-        if grow.foliage.x > 0.0 {
-            blade.facing = grounded_facing(facing, ground_normal(local));
-        } else {
-            blade.facing = bitcast<u32>(facing);
-        }
-        // Wider where fewer stand within the radius, covering as much
-        // ground, as far as their shape lets them stay leaves; past that as
+        // A tuft where fewer stand within the radius, as wide in all as the
+        // blades it stands for at their roots and so holding their leaves,
+        // each as wide as a leaf's shape lets it grow; past the radius as
         // wide as there, narrowing on screen.
-        blade.width = spec.shape.w * cover_widening(away, law);
+        let tuft = cover_tuft(away, height, spec.shape.w, law);
+        blade.size = pack2x16float(vec2<f32>(height, tuft.x));
+        blade.facing = u32(round(unit(hash(seed ^ 0x85ebca6bu)) * 65535.0));
+        if grow.foliage.x > 0.0 {
+            blade.facing |= grounded_tilt(ground_normal(local));
+        }
+        // Its leaves in steps of COVER_LEAF_STEPS a leaf, and the way its
+        // clump leans them.
+        let lean = cover_clump_lean(world_xz);
+        blade.leaves = u32(round(tuft.y * f32(COVER_LEAF_STEPS)))
+            | (pack4x8unorm(vec4<f32>(0.0, lean * 0.5 + 0.5, 0.0)) & 0xffff00u);
         blade.root_color = pack_color(palette[entry].far.rgb * variation, 0.0);
-        blade.tip_color = pack_color(spec.color.rgb * variation, spec.color.w);
+        blade.tip_color = pack_color(spec.color.rgb * variation * clumped.tint, spec.color.w);
         // Kept blades fill the list from both ends: those whose height
         // spans fewer than STRAIGHT_PIXELS pixels, where no pixel shows
         // their curve, from the back, drawn straight with fewer joints.
@@ -581,9 +585,11 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     }
 }
 
-// The indirect draws of the frame's blades, strips of two vertices per
-// joint each: the whole ones, then the straight ones, whose vertices count
-// from STRAIGHT_FIRST_VERTEX so the vertex stage tells them apart.
+// The indirect draws of the frame's blades and tufts, one strip of
+// COVER_LEAVES leaves each, two vertices per joint of each leaf and two
+// more joining it to the next (`meshes/cover.wgsl`'s `blade_vertex`): the
+// whole ones, then the straight ones, whose vertices count from
+// STRAIGHT_FIRST_VERTEX so the vertex stage tells them apart.
 struct DrawArgs {
     vertex_count: u32,
     instance_count: u32,
@@ -593,17 +599,18 @@ struct DrawArgs {
 
 @group(0) @binding(8) var<storage, read_write> args: array<DrawArgs, 2>;
 
-// Joints along a blade (`meshes/cover.wgsl`'s segments and one), and
+// Joints along a leaf (`meshes/cover.wgsl`'s segments and one), and
 // along a straight one.
 const JOINTS: u32 = 5u;
 const STRAIGHT_JOINTS: u32 = 3u;
 const STRAIGHT_FIRST_VERTEX: u32 = 1024u;
-// Pixels a blade's height spans below which it draws straight.
+// Pixels a blade's or tuft's height spans below which its leaves draw
+// straight.
 const STRAIGHT_PIXELS: f32 = 12.0;
 
 @compute @workgroup_size(1)
 fn finish_cover() {
-    args[0] = DrawArgs(2u * JOINTS, atomicLoad(&counts.whole), 0u, 0u);
-    args[1] = DrawArgs(2u * STRAIGHT_JOINTS, atomicLoad(&counts.straight),
+    args[0] = DrawArgs(COVER_LEAVES * 2u * (JOINTS + 1u), atomicLoad(&counts.whole), 0u, 0u);
+    args[1] = DrawArgs(COVER_LEAVES * 2u * (STRAIGHT_JOINTS + 1u), atomicLoad(&counts.straight),
         STRAIGHT_FIRST_VERTEX, 0u);
 }

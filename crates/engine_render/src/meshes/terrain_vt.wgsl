@@ -6,10 +6,11 @@
 // pages of VT_PAGE² texels, VT_BORDER more around them so filtering never
 // reaches a neighbor. Pages lie in sheets, the layers of `terrain_vt_sheets`,
 // three a sheet: albedo (its detail and macro colors applied) and roughness,
-// then the cover's tip color and the ground's vegetated share, then the
-// normal maps' turn of the terrain's normal (in `terrain_vt_frame`), occlusion
-// and the cover's leaves, linear data the sRGB layer decodes before it
-// filters. Mip m's texels span `terrain.vt_scale.x` · 2^m meters, and shade
+// then the cover's tip color (its clumps' tints applied) and the ground's
+// vegetated share, then the normal maps' turn of the terrain's normal (in
+// `terrain_vt_frame`), occlusion and the cover's leaves (its clumps'
+// heights applied), linear data the sRGB layer decodes before it filters.
+// Mip m's texels span `terrain.vt_scale.x` · 2^m meters, and shade
 // at the levels their own size gives, wherever the eye stands; pixels read
 // them as anisotropic filtering reads a texture, at the mips whose texels
 // match the size their footprint resolves across the view, by taps along
@@ -344,7 +345,8 @@ fn terrain_vt_shading(resolved: f32, first: u32) -> TerrainShadingLevel {
 // Where a texel `size` meters across lies at `world` on ground of smooth
 // normal `geometric`, seen from straight above: its sides on the ground's
 // slope, its footprint theirs (`terrain_footprint`), its long side the
-// longer, as for a pixel spanning it; and the leaves its cover grows there.
+// longer, as for a pixel spanning it; and the leaves its cover grows there
+// and the look of its clumps, as that footprint averages them.
 fn terrain_vt_site(world: vec3<f32>, size: f32, geometric: vec3<f32>) -> TerrainSite {
     let slope = -geometric.xz / max(geometric.y, 0.05);
     var site: TerrainSite;
@@ -359,6 +361,7 @@ fn terrain_vt_site(world: vec3<f32>, size: f32, geometric: vec3<f32>) -> Terrain
     site.toward = vec3<f32>(0.0, 1.0, 0.0);
     site.thinned = 0.0;
     site.grown = terrain_grown(world, site.footprint);
+    site.clump = terrain_canopy_clump(world, site.footprint);
     return site;
 }
 
@@ -370,7 +373,9 @@ fn terrain_vt_site(world: vec3<f32>, size: f32, geometric: vec3<f32>) -> Terrain
 // filtered over the texel as a pixel's are over its footprint and the
 // slopes that averages away roughening it, so pages of every mip, near and
 // far, hold the ground by the one rule pixels show it by; no eye enters it.
-// Without the cover's canopy, which pixels lay over it as seen from them. A
+// Without the cover's canopy, which pixels lay over it as seen from them,
+// but with its tips' colors and leaves as its clumps grow them over the
+// texel (`terrain_canopy_clump`), which that canopy shows. A
 // far page's texel shades no finer than the level it reads
 // (`terrain_vt_shading`). A bake draws one sheet's pages.
 @fragment

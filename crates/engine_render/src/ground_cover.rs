@@ -3,11 +3,12 @@
 //! pass (`cover_grow.wgsl`) into one buffer and drawn with one indirect draw
 //! of strips in the opaque pass (`meshes/cover.wgsl`). Within the radius
 //! cells are level-0 samples; past it tiers of cells twice as wide each
-//! reach on while any blade still stands: blades widen as they thin only as
-//! far as their shape lets them stay grass leaves, retire in their ranks'
-//! order as they span fewer pixels on screen than the settings ask, those no
-//! longer widening narrowing as they recede, and the ground shows the leaves
-//! they leave as its canopy, by one law ([`CoverLaw`]). Blades past the
+//! reach on while any tuft still stands: as blades thin each one left
+//! stands as a tuft of the leaves of those it replaces, as wide in all, its
+//! leaves keeping a leaf's shape; tufts retire in their ranks' order as they
+//! span fewer pixels on screen than the settings ask, narrowing as they
+//! recede past the radius, and the ground shows the leaves they leave as
+//! its canopy, by one law ([`CoverLaw`]). Blades and tufts past the
 //! buffer's capacity (the most the tiers and densities can grow on the
 //! lushest ground, or the settings' budget) drop and count; cells grow in
 //! order outward from the eye's corner of each grid, so the farthest tend to
@@ -259,7 +260,6 @@ impl GroundCoverPass {
                     deform: shading.scale,
                     foliage: [f32::from(u8::from(grounded)), 0.0, 0.0, 0.0],
                     view: [pixels_per_meter, 0.0, 0.0, 0.0],
-                    widening: [law.widest, 0.0, 0.0, 0.0],
                 };
                 self.growths.push(Growth {
                     offset: (uniforms.len() as u64 * SLOT) as u32,
@@ -521,51 +521,25 @@ fn lushest() -> f32 {
     COVER_LUSH_RATIO.sqrt()
 }
 
-/// The widest a widened blade grows for its height and still reads as a
-/// grass leaf: the leaf blades of common meadow grasses are 3 to 10 mm wide
-/// and 10 to 50 cm long (Hubbard 1984, "Grasses"), the widest of them a
-/// tenth as wide as they are long.
-const LEAF_ASPECT: f32 = 0.1;
-
-/// How many times their roots' width `cover`'s blades widen at most and all
-/// still read as grass leaves: until the shortest, as the driest ground
-/// grows it, is LEAF_ASPECT as wide as it is tall; never narrower than
-/// their roots.
-fn leaf_widening(cover: &Cover) -> f32 {
-    let shortest = engine_core::math::min(cover.height[0], cover.height[1]) / lushest();
-    engine_core::math::max(LEAF_ASPECT * shortest / cover.width, 1.0)
-}
-
 /// A terrain's covers as ground cover's law takes them: its densest one's
-/// blades per square meter and their root width (meters), and the most
-/// times their roots' width every one's blades widen and still read as
-/// grass leaves.
+/// blades per square meter and their root width (meters).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct CoverTerms {
     pub(crate) densest: f32,
     pub(crate) width: f32,
-    pub(crate) widest: f32,
 }
 
 impl CoverTerms {
-    /// The terms of a terrain's `covers`: the first densest's, and the
-    /// widening the most narrowly shaped allows, so no blade on the terrain
-    /// widens past a leaf's shape.
+    /// The terms of a terrain's `covers`: the first densest's.
     pub(crate) fn of<'a>(covers: impl IntoIterator<Item = &'a Cover>) -> Self {
-        let start = Self {
-            widest: 1.0 / COVER_CORE,
-            ..Self::default()
-        };
-        covers.into_iter().fold(start, |terms, cover| {
-            let widest = engine_core::math::min(terms.widest, leaf_widening(cover));
+        covers.into_iter().fold(Self::default(), |terms, cover| {
             if cover.density > terms.densest {
                 Self {
                     densest: cover.density,
                     width: cover.width,
-                    widest,
                 }
             } else {
-                Self { widest, ..terms }
+                terms
             }
         })
     }
@@ -573,39 +547,36 @@ impl CoverTerms {
 
 /// Ground cover's law on a terrain, which its blades and their canopy
 /// follow alike (`terrain_variety.wgsl`'s `CoverLaw`): the radius it grows
-/// densest within, the meters from the eye at which its blades past the
-/// radius span the settings' pixels (0: cover within the radius alone), and
-/// the most times their roots' width its blades widen.
+/// densest within, and the meters from the eye at which its tufts past the
+/// radius span the settings' pixels (0: cover within the radius alone).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CoverLaw {
     pub(crate) radius: f32,
     pub(crate) span: f32,
-    pub(crate) widest: f32,
 }
 
 impl CoverLaw {
     /// The law of `settings` on a terrain whose covers' terms are `terms`,
-    /// seen at `pixels_per_meter`: blades widen as they thin within the
-    /// radius as far as its covers' shapes let them all stay leaves, from 1
-    /// to 1 / COVER_CORE times their roots', and past the radius keep that
-    /// width. Every cover on the terrain retires by its densest's span, so
-    /// the canopy, which knows no blade's width, thins by one law with them.
+    /// seen at `pixels_per_meter`: blades thin within the radius, each one
+    /// left a tuft of the leaves of those it stands for, as wide in all, up
+    /// to 1 / COVER_CORE times their roots at the radius, and past it tufts
+    /// keep that width (`terrain_variety.wgsl`'s `cover_tuft`). Every cover
+    /// on the terrain retires by its densest's span, so the canopy, which
+    /// knows no tuft's width, thins by one law with them.
     pub(crate) fn of(settings: &GroundCover, terms: CoverTerms, pixels_per_meter: f32) -> Self {
-        let widest = engine_core::math::clamp(terms.widest, 1.0, 1.0 / COVER_CORE);
         let span = if settings.pixels > 0.0 {
-            terms.width * widest * pixels_per_meter / settings.pixels
+            terms.width / COVER_CORE * pixels_per_meter / settings.pixels
         } else {
             0.0
         };
         Self {
             radius: settings.radius,
             span,
-            widest,
         }
     }
 
     /// Meters from the eye its tiers reach: twice its span, where the last
-    /// of its blades, by its rank, retires spanning half the settings'
+    /// of its tufts, by its rank, retires spanning half the settings'
     /// pixels (`terrain_variety.wgsl`'s `seen_share`); 0, no tiers, where
     /// that falls within the radius.
     fn reach(self) -> f32 {
@@ -636,9 +607,9 @@ impl CoverLaw {
     }
 
     /// `terrain_variety.wgsl`'s `cover_widening`: how many times wider than
-    /// their roots blades grow `away` meters from the eye.
+    /// their roots in all blades stand `away` meters from the eye, as tufts.
     fn widening(self, away: f32) -> f32 {
-        engine_core::math::clamp(away / (COVER_CORE * self.radius), 1.0, self.widest)
+        engine_core::math::clamp(away / (COVER_CORE * self.radius), 1.0, 1.0 / COVER_CORE)
     }
 
     /// `terrain_variety.wgsl`'s `cover_share`: the most of the densest cover
@@ -653,7 +624,7 @@ impl CoverLaw {
             let ratio = self.radius / distance;
             share = COVER_CORE * ratio * ratio;
         }
-        share * seen_share(self.span * self.widening(distance) / (self.widest * distance))
+        share * seen_share(self.span * COVER_CORE * self.widening(distance) / distance)
     }
 
     /// The square meters of densest cover its radius and tiers grow: their

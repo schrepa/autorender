@@ -689,11 +689,11 @@ fn terrain_uniform(
         // Surroundings grow no blades: their grassy
         // ground shows as canopy from the eye on.
         Some((cover, _)) if terrain.surroundings => [0.0, 0.0, cover.density, 0.0],
-        // Elsewhere as blades thin and retire, by their law.
+        // Elsewhere as tufts thin and retire, by their law.
         Some((cover, pixels)) => {
             let terms = tables.cover_terms.get(index).copied().unwrap_or_default();
             let law = crate::ground_cover::CoverLaw::of(&cover, terms, pixels);
-            [law.radius, law.span, cover.density, law.widest]
+            [law.radius, law.span, cover.density, 0.0]
         }
     };
     let (vt, vt_scale, vt_layout) = parts

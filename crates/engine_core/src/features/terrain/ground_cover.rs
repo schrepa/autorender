@@ -2,9 +2,12 @@
 //! terrain's surface materials, which renderers generate every frame around
 //! the camera and never store. A surface material names the cover growing
 //! where it lies ([`Cover`]); the [`GroundCover`] settings place, budget and
-//! sway it. Past its radius cover grows on in tiers as long as blades stay
-//! wide enough on screen, retiring in a fixed order as they narrow, and the
-//! ground shows the leaves they leave as its canopy, their average.
+//! sway it. As blades thin with distance each one left stands as a tuft of
+//! the leaves of those it replaces, and blades and tufts grow taller or
+//! shorter, lean, and take their hue and dryness by the clump they stand in.
+//! Past its radius cover grows on in tiers as long as tufts stay wide enough
+//! on screen, retiring in a fixed order as they narrow, and the ground shows
+//! the leaves they leave as its canopy, their average, clump by clump.
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
@@ -27,10 +30,10 @@ settings! {
         /// ground halfway between dry and lush: lusher ground grows them
         /// taller, drier ground shorter.
         pub height: [f32; 2] = [0.12, 0.4] => range(0.01, 4.0),
-        /// Blade width at the root, meters. A terrain's blades widen as they
-        /// thin with distance only while every cover's shortest stays at
-        /// most a tenth as wide as it is tall, as grass leaves are: narrower
-        /// roots widen further.
+        /// Blade width at the root, meters. As blades thin with distance each
+        /// one left stands as a tuft as wide at its roots in all as the
+        /// blades it replaces, in leaves as wide as their roots, or up to a
+        /// tenth as wide as they are tall, as grass leaves are.
         pub width: f32 = 0.025 => range(0.001, 0.25),
         /// The linear color of the blades' tips; roots take the ground's.
         /// Lusher ground darkens and greens them, drier ground pales them.
@@ -75,12 +78,12 @@ settings! {
         /// Whether terrains grow their cover.
         pub enabled: bool = true => any,
         /// Meters from the camera within which cover grows densest, its blades
-        /// widening as they thin as far as their shape lets them stay leaves.
-        /// Where they thin past that, and past the radius, the ground shows
-        /// as its cover's canopy, and past it sparser tiers of blades as wide
-        /// as there reach on.
+        /// thinning past a fifth of it, each one left a tuft holding the
+        /// leaves of those it stands for. Past the radius sparser tiers of
+        /// tufts as wide as there reach on, and the ground shows the leaves
+        /// they leave as its cover's canopy.
         pub radius: f32 = 40.0 => range(2.0, 200.0),
-        /// How wide on screen (pixels) blades stand as they retire: each
+        /// How wide on screen (pixels) tufts stand as they retire: each
         /// retires, in a fixed order, once it spans fewer than this times a
         /// factor of its own from a half to two, and tiers, each reaching
         /// twice as far as the last, end where the last has. 0 grows cover
@@ -88,7 +91,8 @@ settings! {
         pub pixels: f32 = 1.0 => range(0.0, 16.0),
         /// Scales every cover's density. Blades sway in the world's `Wind`.
         pub density: f32 = 1.0 => range(0.0, 4.0),
-        /// An optional budget of blades a frame; beyond it the farthest drop.
+        /// An optional budget of blades and tufts a frame; beyond it the
+        /// farthest drop.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_blades: Option<u32> = None => budget,
     }
