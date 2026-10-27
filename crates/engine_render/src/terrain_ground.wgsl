@@ -1,8 +1,9 @@
 // The ground's true surface (`meshes/terrain_surface.wgsl`'s
 // `terrain_true_height`), which the terrain's subdivision draws within about
 // a pixel, for what stands on it: ground cover's blades (`cover_grow.wgsl`)
-// and placed objects (`scatter_snap.wgsl`). Prepended to each, which
-// declares the terrains' `directory` and `heights`.
+// and placed objects (`scatter_snap.wgsl`); and for what reflections' world
+// trace meets (`reflections.wgsl`). Prepended to each, which declares the
+// terrains' `directory` and `heights`.
 
 const NOT_RESIDENT: u32 = 0xffffffffu;
 

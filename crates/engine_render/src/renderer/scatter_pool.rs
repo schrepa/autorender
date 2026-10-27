@@ -2,7 +2,8 @@
 //! a range of slots of their own, written when the tile arrives and marked
 //! dead when it leaves, so streaming tiles uploads only theirs. Freed ranges
 //! are reused first fit; the pool starts over when its assets change or
-//! freed slots outnumber live ones.
+//! freed slots outnumber live ones. Reflections' world trace grids each
+//! tile's objects from its slots (`world_trace`).
 
 use engine_core::collections::HashMap;
 use std::ops::Range;
@@ -44,6 +45,8 @@ pub(super) struct ScatterPool {
     // Whether the pool was emptied since its last upload: the objects it
     // takes again show at once instead of fading in.
     refilling: bool,
+    // Advances whenever tiles take or leave slots, or the pool empties.
+    revision: u64,
 }
 
 impl ScatterPool {
@@ -53,8 +56,27 @@ impl ScatterPool {
             counts: vec![0; groups],
             counts_changed: true,
             refilling: true,
+            revision: self.revision + 1,
             ..Self::default()
         };
+    }
+
+    /// Every resident tile holding slots, by terrain and key in key order,
+    /// with its slots and its objects' identity (their list's address),
+    /// which a tile replaced under its key with other objects changes.
+    pub(super) fn tiles(&self) -> Vec<((u64, TileKey), Range<u32>, usize)> {
+        let mut tiles: Vec<_> = self
+            .tiles
+            .iter()
+            .map(|(&key, (tile, slots))| (key, slots.clone(), tile.placed().as_ptr() as usize))
+            .collect();
+        tiles.sort_unstable_by_key(|(key, _, _)| *key);
+        tiles
+    }
+
+    /// Advances whenever tiles take or leave slots, or the pool empties.
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Whether terrain `id`'s tiles changed since revision `revision` was
@@ -78,6 +100,7 @@ impl ScatterPool {
             let bounds = bounds(&self.records[slots.start as usize..slots.end as usize]);
             self.moved.extend(bounds);
             self.free_slots(slots);
+            self.revision += 1;
         }
     }
 
@@ -122,6 +145,7 @@ impl ScatterPool {
         self.counts_changed = true;
         self.mark(slots.clone());
         self.tiles.insert((id, key), (tile, slots));
+        self.revision += 1;
     }
 
     /// Slots written since the last call, and whether group counts changed.

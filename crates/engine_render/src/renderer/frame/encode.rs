@@ -221,7 +221,11 @@ impl Renderer {
         let encode = Encode::new(
             (&views, &meshes),
             (&self.device, &self.profiler),
-            (self.camera.group(), &self.materials, lights),
+            (
+                (self.camera.group(), self.camera.terrain_group()),
+                &self.materials,
+                lights,
+            ),
             (state.shape.targets, &self.depth.texture, scene),
         );
         self.features

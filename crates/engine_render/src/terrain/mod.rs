@@ -56,7 +56,7 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::bindings::{SHADOW_VIEW, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS};
-use crate::cached::Cached;
+use crate::cached::{Bound, Cached};
 use crate::gpu_calls::Queue;
 use crate::gpu_layouts::constants::NOT_RESIDENT;
 use crate::gpu_layouts::constants::TERRAIN_GRID as GRID;
@@ -86,6 +86,7 @@ use atlas::TileAtlas;
 pub(crate) use patches::{PatchDraws, planes, visible};
 use pipelines::{GroupSources, TerrainPipelines};
 pub(crate) use surface::{SurfaceDraw, SurfaceTrees};
+pub(crate) use tables::placed_color;
 use tables::TerrainTables;
 pub(crate) use water_blocks::TerrainWaterDraws;
 
@@ -167,6 +168,18 @@ pub(crate) struct CoverSources<'a> {
     pub generation: (u64, u64, u64, u64),
     /// Advances whenever the directory's resident tiles change.
     pub revision: u64,
+}
+
+/// What reflections' world trace reads of the terrain pass
+/// (`reflections.wgsl`), each as a group binds it, counted by what it came
+/// from: the height, peaks and control arrays once tiles arrived; the
+/// directory, the palette, and the macro colors and sky maps.
+pub(crate) struct TraceSources<'a> {
+    pub arrays: Option<[Bound<'a>; 3]>,
+    pub directory: Bound<'a>,
+    pub palette: Bound<'a>,
+    pub macro_maps: Bound<'a>,
+    pub sky: Bound<'a>,
 }
 
 /// One terrain drawing this frame: its index among the frame's terrains,
@@ -473,6 +486,54 @@ impl TerrainPass {
             ),
             revision: tables.directory_revision,
         })
+    }
+
+    /// What reflections' world trace reads ([`TraceSources`]).
+    pub(crate) fn trace_sources(&self) -> TraceSources<'_> {
+        let generation = self.atlas.generation;
+        let arrays = match (self.atlas.views(), self.atlas.peaks()) {
+            (Some((heights, _, control)), Some(peaks)) => Some(
+                [heights, peaks, control]
+                    .map(|view| Bound::counted(generation, crate::pipelines::view(view))),
+            ),
+            _ => None,
+        };
+        TraceSources {
+            arrays,
+            directory: self.tables.directory.bound(),
+            palette: Bound::fixed(self.tables.palette.as_entire_binding()),
+            macro_maps: Bound::counted(
+                self.macro_maps.generation(),
+                crate::pipelines::view(self.macro_maps.view()),
+            ),
+            sky: Bound::counted(
+                self.sky.generation(),
+                crate::pipelines::view(self.sky.view()),
+            ),
+        }
+    }
+
+    /// The layer resident tile `key` of terrain `id` holds, where it holds
+    /// one.
+    pub(crate) fn layer_of(&self, id: u64, key: TileKey) -> Option<u32> {
+        self.atlas.slots.get(&(id, key)).copied()
+    }
+
+    /// The highest of terrain `id`'s resident tiles' heights
+    /// (terrain-local); none before one arrives.
+    pub(crate) fn highest(&self, id: u64) -> Option<f32> {
+        self.atlas
+            .tops
+            .iter()
+            .filter(|((terrain, _), _)| *terrain == id)
+            .map(|(_, &top)| top)
+            .reduce(engine_core::math::max)
+    }
+
+    /// Layers the arrays hold, and a revision advancing whenever the
+    /// directory's words change, as tiles take or leave layers.
+    pub(crate) fn layers(&self) -> (u32, u64) {
+        (self.atlas.layers(), self.tables.directory_revision)
     }
 
     /// The tallest blade any terrain material's cover names, as the last

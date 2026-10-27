@@ -1178,11 +1178,12 @@ impl Renderer {
         let region = self.display.region;
         let needs = temporal_frame.is_some() || effects || refraction || region.upscales();
         let (device, queue) = (&self.device, &self.queue);
-        let (format, camera_layout) = (self.display.format(), &self.camera.layout);
+        let format = self.display.format();
+        let layouts = (&self.camera.layout, &self.camera.terrain_layout);
         let depth = &self.depth.view;
         let post = self.features.post.prepare(
             (device, needs),
-            || PostPass::new(device, format, camera_layout),
+            || PostPass::new(device, format, layouts),
             |post| {
                 Some(post.begin(
                     device,
@@ -1471,8 +1472,9 @@ impl Renderer {
         })
     }
 
-    /// Temporal antialiasing's pose groups and the camera
-    /// group of glass refracting the opaque color.
+    /// Temporal antialiasing's pose groups, the camera
+    /// group of glass refracting the opaque color, and reflections' world
+    /// trace and group over the terrain and placed objects prepared.
     pub(super) fn prepare_frame_groups(&mut self, state: &FrameState<'_>) {
         let (temporal_frame, refraction) =
             (&state.packing.temporal_frame, state.features.refraction);
@@ -1503,6 +1505,45 @@ impl Renderer {
                 },
             );
         }
+        self.prepare_reflections(state);
+    }
+
+    /// Reflections' world trace over the frame's terrains, as the terrain
+    /// pass streams them, and their placed objects, with ground cover's
+    /// density where it grows, and their group, in frames whose screen
+    /// effects reflect; others let the trace go.
+    fn prepare_reflections(&mut self, state: &FrameState<'_>) {
+        let Some(frame) = state.features.frames.post.as_ref().map(|post| *post.frame()) else {
+            return;
+        };
+        let Some(post) = self.features.post.get_mut() else {
+            return;
+        };
+        let terrains = &state.snapshot.terrain;
+        let infos: Vec<crate::scatter::TerrainInfo> = terrains
+            .terrains
+            .iter()
+            .enumerate()
+            .filter(|_| frame.reflections)
+            .map(|(index, terrain)| crate::world_trace::terrain_info(&self.terrain, index, terrain))
+            .collect();
+        let cover = state.snapshot.environment.ground_cover.sanitized();
+        let trace = frame.reflections.then(|| crate::world_trace::TraceFrame {
+            terrains,
+            infos: &infos,
+            terrain: &self.terrain,
+            placed: self.scatter_draws.placements(),
+            cover: if cover.enabled { cover.density } else { 0.0 },
+        });
+        post.prepare_reflections(
+            (&self.device, &self.queue),
+            (frame, &self.depth.view),
+            trace.as_ref(),
+            (
+                self.terrain.trace_sources(),
+                self.features.scatter.get().slot_buffers(),
+            ),
+        );
     }
 }
 

@@ -189,13 +189,28 @@ shaders! {
         "math.wgsl",
         "shadow_marks.wgsl",
     ];
-    /// Ambient occlusion, the haze's filter, reflections, bloom and their
-    /// composite.
+    /// Ambient occlusion, the haze's filter, bloom and the scene's levels,
+    /// and their composite.
     POST_SHADER = [
         "color.wgsl",
         "fullscreen.wgsl",
         "effects.wgsl",
+        "screen_points.wgsl",
         "post.wgsl",
+    ];
+    /// Reflections after the scene declarations and effects: the walk of
+    /// the screen, and the world trace through the terrains' tiles and
+    /// placed objects, lit as the main passes light.
+    REFLECTIONS_SHADER = [
+        "scene.wgsl",
+        "color.wgsl",
+        "math.wgsl",
+        "fullscreen.wgsl",
+        "effects.wgsl",
+        "terrain_variety.wgsl",
+        "terrain_ground.wgsl",
+        "screen_points.wgsl",
+        "reflections.wgsl",
     ];
     /// Auto exposure's meter and adaptation.
     EXPOSURE_SHADER = [
@@ -423,9 +438,13 @@ entry_points! {
     post = POST_SHADER {
         vertex: [vs_fullscreen],
         fragment: [
-            fs_occlusion, fs_effects_filter, fs_haze_filter, fs_reflections, fs_bloom_first,
-            fs_bloom_down, fs_levels_first, fs_levels_down, fs_bloom_up, fs_composite
+            fs_occlusion, fs_effects_filter, fs_haze_filter, fs_bloom_first, fs_bloom_down,
+            fs_levels_first, fs_levels_down, fs_bloom_up, fs_composite
         ],
+    }
+    reflections = REFLECTIONS_SHADER {
+        vertex: [vs_fullscreen],
+        fragment: [fs_reflections],
     }
     exposure = EXPOSURE_SHADER {
         compute: [meter_exposure, adapt_exposure],
