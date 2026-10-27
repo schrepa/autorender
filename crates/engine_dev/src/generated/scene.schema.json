@@ -311,7 +311,7 @@
           "minimum": 0.0
         },
         "width": {
-          "description": "Blade width at the root, meters. A terrain's blades widen as they\nthin with distance only while every cover's shortest stays at\nmost a tenth as wide as it is tall, as grass leaves are: narrower\nroots widen further.",
+          "description": "Blade width at the root, meters. As blades thin with distance each\none left stands as a tuft as wide at its roots in all as the\nblades it replaces, in leaves as wide as their roots, or up to a\ntenth as wide as they are tall, as grass leaves are.",
           "type": "number",
           "format": "float",
           "default": 0.02500000037252903,
@@ -3480,7 +3480,7 @@
           "default": true
         },
         "max_blades": {
-          "description": "An optional budget of blades a frame; beyond it the farthest drop.",
+          "description": "An optional budget of blades and tufts a frame; beyond it the\nfarthest drop.",
           "type": [
             "integer",
             "null"
@@ -3489,7 +3489,7 @@
           "minimum": 1
         },
         "pixels": {
-          "description": "How wide on screen (pixels) blades stand as they retire: each\nretires, in a fixed order, once it spans fewer than this times a\nfactor of its own from a half to two, and tiers, each reaching\ntwice as far as the last, end where the last has. 0 grows cover\nwithin the radius alone.",
+          "description": "How wide on screen (pixels) tufts stand as they retire: each\nretires, in a fixed order, once it spans fewer than this times a\nfactor of its own from a half to two, and tiers, each reaching\ntwice as far as the last, end where the last has. 0 grows cover\nwithin the radius alone.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -3497,7 +3497,7 @@
           "minimum": 0.0
         },
         "radius": {
-          "description": "Meters from the camera within which cover grows densest, its blades\nwidening as they thin as far as their shape lets them stay leaves.\nWhere they thin past that, and past the radius, the ground shows\nas its cover's canopy, and past it sparser tiers of blades as wide\nas there reach on.",
+          "description": "Meters from the camera within which cover grows densest, its blades\nthinning past a fifth of it, each one left a tuft holding the\nleaves of those it stands for. Past the radius sparser tiers of\ntufts as wide as there reach on, and the ground shows the leaves\nthey leave as its cover's canopy.",
           "type": "number",
           "format": "float",
           "default": 40.0,
