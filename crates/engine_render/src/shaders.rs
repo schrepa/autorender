@@ -46,7 +46,6 @@ shaders! {
         "meshes/cover.wgsl",
         "meshes/water.wgsl",
         "meshes/water_footprint.wgsl",
-        "meshes/water_stream.wgsl",
         "meshes/water_flow.wgsl",
         "meshes/water_falls.wgsl",
         "meshes/ocean.wgsl",

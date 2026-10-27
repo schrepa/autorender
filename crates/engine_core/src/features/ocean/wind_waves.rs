@@ -35,8 +35,7 @@ pub const PEAK_WIDTH_GROWTH: f32 = 4.0;
 /// as much as gravity does, ω² = g k (1 + (k/k_m)²), and the phase speed
 /// (meters a second) of the slowest waves, there: k_m and c_m, about which
 /// the short waves gather (capillary waves, shorter than about 1.7 cm, lie
-/// past it). Running water's bed holds its waves standing by the same
-/// dispersion (`meshes/water_stream.wgsl`, which mirrors k_m).
+/// past it).
 pub const RIPPLE_NUMBER: f32 = 370.0;
 pub const RIPPLE_SPEED: f32 = 0.23;
 /// The short waves' strength, α_m = 0.01 (1 + ln(u*/c_m)) for the wind's

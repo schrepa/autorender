@@ -530,7 +530,6 @@ gpu_mirrors! {
     engine_core::table_data::sky::MULTIPLE_SIDE => ["SKY_MULTIPLE_SIZE"];
     engine_core::table_data::falls::BUBBLES => ["FALL_MAP_BUBBLES"];
     engine_core::terrain_data::hydraulics::GRAVITY => ["SIM_GRAVITY" in WATER_SIM_SHADER, "WATER_GRAVITY"];
-    engine_core::wind_waves::RIPPLE_NUMBER => ["WATER_RIPPLE_NUMBER"];
     engine_core::terrain_data::shallow_water::THETA => ["SIM_THETA" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::THIN => ["SIM_THIN" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::DRY => ["SIM_DRY" in WATER_SIM_SHADER];
