@@ -328,7 +328,9 @@ impl Tile {
     /// mesh's error pyramid.
     fn hold(&mut self, water: Option<TileWater>) {
         let mesh = water.as_ref().map(|water| water.mesh(&self.heights));
-        self.water_errors = mesh.as_ref().map(|mesh| Arc::new(ErrorPyramid::water(mesh)));
+        self.water_errors = mesh
+            .as_ref()
+            .map(|mesh| Arc::new(ErrorPyramid::water(mesh)));
         self.water_mesh = mesh.map(Arc::new);
         self.water = water;
     }

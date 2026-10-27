@@ -347,13 +347,16 @@ impl WaterBlocks {
         for pz in 0..patches {
             for px in 0..patches {
                 let index = pz * patches + px;
-                let holds = tile.water().zip(tile.water_mesh()).is_some_and(|(water, mesh)| {
-                    let holds = water.patch_holds_water(px as u32, pz as u32);
-                    if holds {
-                        block_texels(&tile, water, mesh, (px, pz), &mut texels);
-                    }
-                    holds
-                });
+                let holds = tile
+                    .water()
+                    .zip(tile.water_mesh())
+                    .is_some_and(|(water, mesh)| {
+                        let holds = water.patch_holds_water(px as u32, pz as u32);
+                        if holds {
+                            block_texels(&tile, water, mesh, (px, pz), &mut texels);
+                        }
+                        holds
+                    });
                 if !holds {
                     if blocks[index] != NO_WATER_BLOCK {
                         self.free.push(blocks[index]);
@@ -363,10 +366,12 @@ impl WaterBlocks {
                 }
                 let same = blocks[index] != NO_WATER_BLOCK
                     && held.as_ref().is_some_and(|held| {
-                        held.water().zip(held.water_mesh()).is_some_and(|(before, mesh)| {
-                            block_texels(held, before, mesh, (px, pz), &mut kept);
-                            kept.same(&texels)
-                        })
+                        held.water()
+                            .zip(held.water_mesh())
+                            .is_some_and(|(before, mesh)| {
+                                block_texels(held, before, mesh, (px, pz), &mut kept);
+                                kept.same(&texels)
+                            })
                     });
                 if same {
                     continue;
