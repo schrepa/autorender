@@ -14,7 +14,7 @@ use crate::rivers::RiverRaster;
 use crate::surface::{
     BiomeRules, Control, RowInputs, RowScratch, SampleShape, erosion_row, smooth_gradient,
 };
-use crate::tile_water::{TileWater, WaterPoint, WaterState};
+use crate::tile_water::{TileWater, WaterMesh, WaterPoint, WaterState};
 use crate::{
     ErrorPyramid, HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placing, Pyramid,
     TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey, TileShading,
@@ -66,10 +66,10 @@ pub(crate) fn river_meters(step: u16) -> f32 {
 /// with a surface each sample's control value; each sample's meters to the
 /// nearest river's edge where rivers reach it, and the bed of the river
 /// holding it where it lies in one; what culling knows of each of its
-/// patches, made with it; the error pyramids of its ground and of its
-/// water's surface ([`ErrorPyramid`]), made with them; and for a terrain's
-/// tiles of level 1 and coarser, once it arrived, the shading they take from
-/// a record of their own, level 0's averaged.
+/// patches, made with it; its water's mesh ([`WaterMesh`]) and the error
+/// pyramids of its ground and of that mesh ([`ErrorPyramid`]), made with
+/// them; and for a terrain's tiles of level 1 and coarser, once it arrived,
+/// the shading they take from a record of their own, level 0's averaged.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tile {
     key: TileKey,
@@ -83,8 +83,10 @@ pub struct Tile {
     placing: Option<Placing>,
     // The water standing on it, the world's one water there.
     water: Option<TileWater>,
-    // The error pyramids of its ground and of its water, never encoded:
-    // they are made again wherever its heights or water are.
+    // Its water's mesh and the error pyramids of its ground and of that
+    // mesh, never encoded: they are made again wherever its heights or
+    // water are.
+    water_mesh: Option<Arc<WaterMesh>>,
     ground_errors: Arc<ErrorPyramid>,
     water_errors: Option<Arc<ErrorPyramid>>,
     shading: Option<Arc<TileShading>>,
@@ -174,6 +176,7 @@ impl Tile {
             placed: None,
             placing: None,
             water: None,
+            water_mesh: None,
             ground_errors,
             water_errors: None,
             shading: None,
@@ -321,11 +324,12 @@ impl Tile {
         self
     }
 
-    /// Holds `water` as the water standing on it, with its error pyramid.
+    /// Holds `water` as the water standing on it, with its mesh and that
+    /// mesh's error pyramid.
     fn hold(&mut self, water: Option<TileWater>) {
-        self.water_errors = water
-            .as_ref()
-            .map(|water| Arc::new(ErrorPyramid::water(water.surfaces(), &self.heights)));
+        let mesh = water.as_ref().map(|water| water.mesh(&self.heights));
+        self.water_errors = mesh.as_ref().map(|mesh| Arc::new(ErrorPyramid::water(mesh)));
+        self.water_mesh = mesh.map(Arc::new);
         self.water = water;
     }
 
@@ -340,9 +344,15 @@ impl Tile {
         &self.ground_errors
     }
 
-    /// The error pyramid of its water's surface, wet or continued under the
-    /// banks ([`TileWater::surfaces`]); [`ErrorPyramid::dry`] where no water
-    /// stands on it.
+    /// Its water as its mesh draws it ([`WaterMesh`]), if any water stands
+    /// on it.
+    pub fn water_mesh(&self) -> Option<&WaterMesh> {
+        self.water_mesh.as_deref()
+    }
+
+    /// The error pyramid of its water's mesh, over the levels it stands at
+    /// ([`WaterMesh::level`]); [`ErrorPyramid::dry`] where no water stands
+    /// on it.
     pub fn water_errors(&self) -> &ErrorPyramid {
         match &self.water_errors {
             Some(errors) => errors,
@@ -367,6 +377,7 @@ impl Tile {
             placed: self.placed.clone(),
             placing: self.placing,
             water: None,
+            water_mesh: None,
             ground_errors: Arc::clone(&self.ground_errors),
             water_errors: None,
             shading: self.shading.clone(),

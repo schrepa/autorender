@@ -1,8 +1,8 @@
 //! Each terrain's subdivisions: the concurrent binary tree over its square
 //! whose leaves the camera's ground draws (`meshes/terrain_subdivision.wgsl`,
 //! `meshes/terrain_surface.wgsl`), and, where its tiles hold water, a second
-//! tree over the same square, measured by the water's surface, whose leaves
-//! its water draws (`crate::water`); kept on the GPU from frame to frame,
+//! tree over the same square, measured by the water's mesh, whose leaves its
+//! water draws (`crate::water`); kept on the GPU from frame to frame,
 //! and what a frame binds and dispatches for them: each tree's uniform, the
 //! leaves the frame lists for every tree and their nodes, and every tree's
 //! counters, read back for the frame's stats, with the indirect arguments

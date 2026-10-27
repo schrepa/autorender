@@ -6,10 +6,11 @@
 // eye, and lists the leaves the frame draws (`terrain_surface.wgsl`). A
 // terrain holding water has a second tree for its water, run by the same
 // code over its own buffers: a ground's tree measures the ground, a water's
-// the water's surface, and draws only the leaves over water.
+// the mesh its water stands on, and draws only the leaves its surface can
+// reach, where each pixel decides whether water shows.
 //
 // A leaf's error is exact, not sampled: every resident tile carries error
-// pyramids of its ground and of its water's surface, each cell of its
+// pyramids of its ground and of its water's mesh, each cell of its
 // samples' grid holding the most a triangle of the bisection lying in it
 // strays from the samples' surface, and a leaf's meshlet strays by at most
 // the most of the cells of its pieces' size it covers, read where the finest
@@ -231,11 +232,12 @@ fn subdivision_seen(low: vec3<f32>, high: vec3<f32>) -> bool {
 
 // How a leaf stands: whether its tree draws it (within the terrain's edges,
 // not wholly within its cutout, and over ground some level holds, or on a
-// water's tree over water: `surface_water`), and whether it wants
-// splitting: across those edges, which its leaves split to follow, or where
-// the meshlet it draws may stray from its surface by more pixels than the
-// target, at the size of its nearest pixel seen from the detail eye, where
-// the camera sees it, SUBDIVISION_UNSEEN times as many where it does not.
+// water's tree within its surface's reach: `surface_water`), and whether
+// it wants splitting: across those edges, which its leaves split to follow,
+// or where the meshlet it draws may stray from its surface by more pixels
+// than the target, at the size of its nearest pixel seen from the detail
+// eye, where the camera sees it, SUBDIVISION_UNSEEN times as many where it
+// does not.
 struct SubdivisionMeasure {
     drawn: bool,
     splits: bool,
@@ -255,7 +257,7 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
     var over = SurfaceWater(false, 0.0);
     if water {
         over = surface_water(triangle);
-        if !over.holds {
+        if !over.reached {
             return measure;
         }
     }

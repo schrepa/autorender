@@ -2,15 +2,18 @@
 //! the ground or continues under its banks at its level, a patch at a time,
 //! in two texture arrays of blocks as many samples wide as a patch's grid
 //! and a sample more past each of its edges: their surfaces as water's pass
-//! draws them ([`drawn_surfaces`]) beside their tile's ground, and their
-//! words, their packed flow, whitewater and kind, their state and their
-//! nearest obstacle (`engine_core::terrain_data::TileWater::info`), the
-//! fourth holding nothing, each sample past the patch's edges the tile's
-//! beside them (its border past its own), so the smooth surface water's pass
-//! reads through them (`meshes/water.wgsl`'s `water_level`) meets itself
-//! across tiles and patches. A tile's blocks upload as it arrives and free
-//! as it leaves or changes, following the tiles the atlas held anew; a patch
-//! whose samples hold no surface drawn takes none. Water's directory
+//! draws them beside their tile's ground, and their words, their packed
+//! flow, whitewater and kind, their state and their nearest obstacle
+//! (`engine_core::terrain_data::TileWater::info`), the fourth the level the
+//! water's mesh stands at over the sample
+//! (`engine_core::terrain_data::WaterMesh`), each sample past the patch's
+//! edges the tile's beside them (its border past its own), so the smooth
+//! surface water's pass reads through them (`meshes/water.wgsl`'s
+//! `water_level`) meets itself across tiles and patches. A tile's blocks
+//! upload as it arrives and free as it leaves or changes, following the
+//! tiles the atlas held anew; a patch whose samples hold no surface
+//! (`TileWater::patch_holds_water`) takes none, the water's mesh standing on
+//! its ground there. Water's directory
 //! lists, for each layer of the height array, the blocks of its tile's
 //! patches, laid out again as tiles or their water change, in the terrain's
 //! directory buffer after the directory's own words: shaders
@@ -31,15 +34,7 @@ use crate::gpu_layouts::constants::{
     NO_WATER_BLOCK, NO_WATER_SURFACE, WATER_BLOCK as BLOCK, WATER_BLOCKS_SIDE as SIDE,
     WATER_TILE_WORDS as TILE_WORDS,
 };
-use engine_core::terrain_data::codec::HEIGHT_STEP;
-use engine_core::terrain_data::{PATCH_QUADS, PATCHES_PER_TILE, Tile, TileWater, WATER_REACH};
-
-/// A sample's ring as [`drawn_surfaces`] finds the rings continuing the
-/// water's surface under its banks again: none yet, waiting in the ring
-/// being found, and one the rings stopped at.
-const NO_RING: u8 = u8::MAX;
-const QUEUED: u8 = u8::MAX - 1;
-const STOPPED: u8 = u8::MAX - 2;
+use engine_core::terrain_data::{PATCH_QUADS, PATCHES_PER_TILE, Tile, TileWater, WaterMesh};
 
 /// Blocks a layer holds, and its texels along a side.
 const PER_LAYER: u32 = SIDE * SIDE;
@@ -63,13 +58,15 @@ struct Arrays {
 }
 
 /// A tile's blocks: the tile whose water they hold, and each patch's block
-/// (`NO_WATER_BLOCK` where none of its samples holds a surface).
+/// (`NO_WATER_BLOCK` where none of its samples holds a surface, or no layer
+/// held it).
 struct TileBlocks {
     tile: Arc<Tile>,
     blocks: Box<[u32]>,
 }
 
-/// A block's texels: each sample's surface beside its ground, and its words.
+/// A block's texels: each sample's surface beside its ground, and its words
+/// with the level the water's mesh stands at over it.
 struct Texels {
     surfaces: Vec<[f32; 2]>,
     info: Vec<[u32; 4]>,
@@ -325,10 +322,10 @@ impl WaterBlocks {
             })
     }
 
-    /// `tile`'s blocks, its patches holding a surface drawn uploaded: in
-    /// place of `before`'s, the tile it replaces under its key, whose blocks
-    /// it keeps where their texels stay the same and frees where its patches
-    /// hold none.
+    /// `tile`'s blocks, its patches holding a surface uploaded: in place of
+    /// `before`'s, the tile it replaces under its key, whose blocks it keeps
+    /// where their texels stay the same and frees where its patches hold
+    /// none.
     fn upload(
         &mut self,
         device: &wgpu::Device,
@@ -345,24 +342,18 @@ impl WaterBlocks {
                 None,
             ),
         };
-        // The surfaces drawn of the tile, and of the tile it replaces once a
-        // block compares with it.
-        let drawn = tile
-            .water()
-            .map(|water| drawn_surfaces(water, tile.heights()));
-        let mut drawn_before: Option<Vec<f32>> = None;
         let mut texels = Texels::new();
         let mut kept = Texels::new();
         for pz in 0..patches {
             for px in 0..patches {
                 let index = pz * patches + px;
-                let holds = tile
-                    .water()
-                    .zip(drawn.as_deref())
-                    .is_some_and(|(water, surfaces)| {
-                        water.patch_holds_water(px as u32, pz as u32)
-                            && block_texels(&tile, water, surfaces, (px, pz), &mut texels)
-                    });
+                let holds = tile.water().zip(tile.water_mesh()).is_some_and(|(water, mesh)| {
+                    let holds = water.patch_holds_water(px as u32, pz as u32);
+                    if holds {
+                        block_texels(&tile, water, mesh, (px, pz), &mut texels);
+                    }
+                    holds
+                });
                 if !holds {
                     if blocks[index] != NO_WATER_BLOCK {
                         self.free.push(blocks[index]);
@@ -372,10 +363,8 @@ impl WaterBlocks {
                 }
                 let same = blocks[index] != NO_WATER_BLOCK
                     && held.as_ref().is_some_and(|held| {
-                        held.water().is_some_and(|before| {
-                            let surfaces = drawn_before
-                                .get_or_insert_with(|| drawn_surfaces(before, held.heights()));
-                            block_texels(held, before, surfaces, (px, pz), &mut kept);
+                        held.water().zip(held.water_mesh()).is_some_and(|(before, mesh)| {
+                            block_texels(held, before, mesh, (px, pz), &mut kept);
                             kept.same(&texels)
                         })
                     });
@@ -581,34 +570,31 @@ impl WaterBlocks {
 }
 
 /// Writes into `texels` the block of patch `(px, pz)` of `tile`, whose
-/// water is `water` and whose surfaces water's pass draws are `drawn`
-/// ([`drawn_surfaces`]): of each of its samples and those a sample past its
-/// edges, the tile's beside it (its border past its own), the surface drawn
-/// (`NO_WATER_SURFACE` where none is) beside the tile's ground, and its
-/// words, the fourth none. Returns whether any of them holds a surface
-/// drawn.
+/// water is `water` and its mesh `mesh`: of each of its samples and those a
+/// sample past its edges, the tile's beside it (its border past its own),
+/// the surface water's pass draws (`NO_WATER_SURFACE` where none is) beside
+/// the tile's ground, and its words, the fourth the bits of the level the
+/// water's mesh stands at over it.
 fn block_texels(
     tile: &Tile,
     water: &TileWater,
-    drawn: &[f32],
+    mesh: &WaterMesh,
     (px, pz): (usize, usize),
     texels: &mut Texels,
-) -> bool {
+) {
     let stride = LAYER_SIZE as usize;
     let side = BLOCK as usize;
     let quads = PATCH_QUADS as usize;
     let (heights, words) = (tile.heights(), water.info());
-    let mut holds = false;
     for z in 0..side {
         for x in 0..side {
             // The sample in the tile's layout, which holds a border of one,
             // the block's first a sample before the patch's.
             let at = (pz * quads + z) * stride + px * quads + x;
             let texel = z * side + x;
-            let level = drawn[at];
-            holds |= level.is_finite();
+            let level = mesh.level(at);
             texels.surfaces[texel] = [
-                if level.is_finite() {
+                if mesh.holds(at) {
                     level
                 } else {
                     NO_WATER_SURFACE
@@ -616,94 +602,7 @@ fn block_texels(
                 heights[at],
             ];
             let [packed, state, obstacle] = words[at];
-            texels.info[texel] = [packed, state, obstacle, 0];
+            texels.info[texel] = [packed, state, obstacle, level.to_bits()];
         }
     }
-    holds
-}
-
-/// The surface water's pass draws a tile's water `water` through at each
-/// of its samples, whose ground stands at `heights` (both the tile's
-/// layout, its border included): where the water stands over the ground,
-/// and where its surface continues under the banks at the water's level
-/// ([`TileWater::surfaces`]), so the smooth surface through them stays
-/// level; and none (NaN) where the rings continuing it stop
-/// (`engine_terrain`'s `extend`: the ground of a ditch, of the land behind
-/// a levee or of a bank falling away below the water, its surface pushed
-/// under that ground), nor where a ring past the first would have continued
-/// it into one, the bank's crest the water stands against there. Water's
-/// pass ends the water halfway from the samples holding a surface to those
-/// holding none (`meshes/water.wgsl`'s `WATER_HELD`), so it ends halfway to
-/// where the rings stop beside the water, and short of a crest it stands
-/// against. The rings are found again from the surfaces as their making
-/// left them, each from the ring inside it alone: a sample of a ring whose
-/// surface stands under the mean of its neighbors' in the ring inside, the
-/// level it would have taken, by more than the height grid's step is one
-/// they stop at.
-fn drawn_surfaces(water: &TileWater, heights: &[f32]) -> Vec<f32> {
-    let stride = LAYER_SIZE as usize;
-    let surfaces = water.surfaces();
-    let mut drawn = surfaces.to_vec();
-    let mut rings: Vec<u8> = surfaces
-        .iter()
-        .zip(heights)
-        .map(|(level, ground)| if level > ground { 0 } else { NO_RING })
-        .collect();
-    let mut inside: Vec<usize> = (0..rings.len()).filter(|&at| rings[at] == 0).collect();
-    // The samples around sample `at` in the layout, itself among them, row
-    // by row.
-    let around = move |at: usize| {
-        let (x, z) = (at % stride, at / stride);
-        (z.saturating_sub(1)..(z + 2).min(stride)).flat_map(move |nz| {
-            (x.saturating_sub(1)..(x + 2).min(stride)).map(move |nx| nz * stride + nx)
-        })
-    };
-    for ring in 1..=WATER_REACH as u8 {
-        let inner = ring - 1;
-        // The samples beside the ring inside no ring holds yet, each once.
-        let mut queued = Vec::new();
-        for &from in &inside {
-            for near in around(from) {
-                if rings[near] == NO_RING {
-                    rings[near] = QUEUED;
-                    queued.push(near);
-                }
-            }
-        }
-        // Whether the rings stop at each, from the ring inside alone, its
-        // neighbors' surfaces summed as the rings were made.
-        let stops: Vec<bool> = queued
-            .iter()
-            .map(|&at| {
-                let (mut level, mut count) = (0.0_f32, 0_u32);
-                for near in around(at) {
-                    if rings[near] == inner {
-                        level += surfaces[near];
-                        count += 1;
-                    }
-                }
-                let level = level * (1.0 / count as f32);
-                surfaces[at].is_nan() || surfaces[at] < level - HEIGHT_STEP
-            })
-            .collect();
-        inside.clear();
-        for (&at, &stopped) in queued.iter().zip(&stops) {
-            if !stopped {
-                rings[at] = ring;
-                inside.push(at);
-                continue;
-            }
-            rings[at] = STOPPED;
-            drawn[at] = f32::NAN;
-            // Past the first ring, the crest it would have continued from.
-            if inner > 0 && surfaces[at].is_finite() {
-                for near in around(at) {
-                    if rings[near] == inner {
-                        drawn[near] = f32::NAN;
-                    }
-                }
-            }
-        }
-    }
-    drawn
 }
