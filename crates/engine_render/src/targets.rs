@@ -180,16 +180,6 @@ impl FrameRegion {
         let [x, y] = self.share();
         [self.render.width as f32, self.render.height as f32, x, y]
     }
-
-    /// The texels the frame draws of the half-resolution targets: half its
-    /// render size rounded down, a texel at least, as `half_size` of
-    /// `effects.wgsl` gives it.
-    pub(crate) fn half(self) -> (u32, u32) {
-        (
-            (self.render.width / 2).max(1),
-            (self.render.height / 2).max(1),
-        )
-    }
 }
 
 /// Sets `pass`'s viewport and scissor to its attachments' `width` ×

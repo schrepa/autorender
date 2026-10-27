@@ -4,8 +4,8 @@
 //! frame (all of them on exact frames), which the sky, its reflections and
 //! the environment maps show; and from above the world toward the sun into
 //! a map of the light it lets through, which shades the ground under it.
-//! The view marches them again a ray per block of pixels after the opaque
-//! scene, so they stand in front of mountains, around a
+//! The view marches them again a ray per pixel after the opaque scene, each
+//! up to what its pixel shows, so they stand in front of mountains, around a
 //! camera inside the layer and below one above it.
 
 use bevy_ecs::prelude::*;
@@ -51,8 +51,6 @@ settings! {
         /// inside the layer and below one above it, and the dome shows them
         /// behind every surface only while the camera is under the layer.
         pub in_view: bool = true => any,
-        /// The pixels along a side of the blocks the view marches a ray each.
-        pub view_block: u32 = 4 => range(1, 16),
     }
 }
 

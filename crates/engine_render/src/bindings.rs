@@ -676,8 +676,8 @@ tables! {
 
     /// The view's march of the clouds (`clouds.wgsl`'s
     /// `march_view`): the march from the camera, the noise's volumes and
-    /// their sampler, the view, its depth buffer, the marched blocks' clouds
-    /// and their distances, the physically based sky's uniform,
+    /// their sampler, the view, its depth buffer, the marched pixels'
+    /// clouds, the composite's draw, the physically based sky's uniform,
     /// transmittance table and sampler, and the light map.
     const CLOUD_VIEW: Table = Table {
         label: "engine/cloud-view-layout",
@@ -690,7 +690,6 @@ tables! {
             uniform_of(6, "cloud_view", size_of::<clouds::ViewUniform>(), C),
             texture(7, "view_depth", Depth, D2, C),
             bind(8, "view_out", Kind::Storage(Rgba16Float), C),
-            bind(9, "front_out", Kind::Storage(R32Float), C),
             write(10, "composite_draw", C),
             uniform_of(11, "cloud_air", size_of::<sky::SkyUniform>(), C),
             texture(12, "cloud_transmittance", Float, D2, C),
@@ -700,17 +699,11 @@ tables! {
     };
 
     /// Group 1 of the view's clouds' composite (
-    /// `meshes/sky.wgsl`): the marched blocks' clouds and distances, the depth
-    /// buffer and the blocks' sampler.
+    /// `meshes/sky.wgsl`): the marched pixels' clouds.
     const CLOUD_COMPOSITE: Table = Table {
         label: "engine/cloud-composite-layout",
         serves: [SHADER @ 1],
-        bindings: &[
-            texture(46, "view_clouds", Float, D2, F),
-            texture(47, "view_cloud_front", Unfilterable, D2, F),
-            texture(48, "view_cloud_depth", Depth, D2, F),
-            sampler(49, "view_cloud_sampler", Filtering, F),
-        ],
+        bindings: &[texture(46, "view_clouds", Float, D2, F)],
     };
 
     /// Group 1 of the sky's pipelines (`meshes/sky.wgsl`): the
@@ -1092,14 +1085,14 @@ tables! {
             texture(6, "bloom", Float, D2, F),
             sampler(7, "linear", Filtering, F),
             texture(8, "reflections", Float, D2, F),
-            // The haze's march, nearest depths, traced reflections, raw
-            // occlusion, and the surface's packed words.
+            // The haze's march, nearest depths, raw occlusion, and the
+            // surface's packed words.
             texture(9, "marched", Unfilterable, D2, F),
             texture(10, "nearest_depth", Unfilterable, D2, F),
-            texture(11, "traced", Unfilterable, D2, F),
             texture(12, "raw_occlusion", Unfilterable, D2, F),
             texture(13, "surface_texture", Uint, D2, F),
-            // Scene levels and a bloom level halved beside them.
+            // The scene with its levels, and a bloom level halved beside a
+            // level of the scene.
             texture(14, "scene_levels", Float, D2, F),
             texture(15, "bloom_source", Float, D2, F),
             // Sky occlusion's maps, their comparison sampler and where each
@@ -1109,7 +1102,7 @@ tables! {
             uniform_of(18, "sky", size_of::<SkyUniform>(), F),
             // The haze filtered over time: the history its filter
             // reprojects, or this frame's, which the composite lays over the
-            // scene; the sixteenth sampled texture.
+            // scene; the fifteenth sampled texture.
             texture(19, "haze", Float, D2, F),
         ],
     };

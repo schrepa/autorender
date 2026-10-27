@@ -13,10 +13,9 @@
 //! clouds bind a clear one.
 //!
 //! The view marches the clouds again, a ray through each
-//! block of its pixels after the opaque scene and water, up to the farthest
-//! of the block's pixels: the clouds' light, the share of the scene passing
-//! and how far they lie, which a composite lays over the scene where they
-//! lie nearer than what each pixel shows. Blocks seeing the sky march too
+//! pixel of its render size after the opaque scene and water, up to what
+//! the pixel shows: the clouds' light and the share of the scene passing,
+//! which a composite lays over each pixel. Pixels seeing the sky march too
 //! while the camera is in or above the layer, and the view's sky shows no
 //! dome then; under it, the dome shows the sky's clouds as before.
 
@@ -71,11 +70,10 @@ use crate::gpu_layouts::clouds::ViewUniform;
 /// Bytes of the view march's uniform.
 pub(crate) const CLOUD_VIEW_BYTES: usize = size_of::<ViewUniform>();
 
-/// The view's marched blocks: their clouds' light and
-/// passing share, how far those lie, and the blocks along x and y.
+/// The view's marched clouds: each pixel's light and passing
+/// share, made at the display's size, which they are along x and y.
 struct ViewTargets {
     clouds: (wgpu::Texture, wgpu::TextureView),
-    front: (wgpu::Texture, wgpu::TextureView),
     size: [u32; 2],
 }
 
@@ -282,28 +280,26 @@ pub(crate) struct CloudPass {
     pub(crate) rows: u32,
     // Clouds in the view: the march's and the composite's
     // layouts, the march's uniform from the camera and the view's, the
-    // marched blocks, the groups binding them (by the depth buffer and the
-    // blocks), the march's pipeline and the composite's by target, and the
-    // blocks' sampler; this frame's blocks to march, and whether they march
-    // the sky.
+    // marched pixels, the groups binding them (by the depth buffer and the
+    // marched pixels), and the march's pipeline and the composite's by
+    // target; this frame's pixels to march, and whether they march the sky.
     view_layout: crate::pipelines::GroupLayout,
     composite_layout: crate::pipelines::GroupLayout,
     view_clouds: wgpu::Buffer,
     view_uniform: wgpu::Buffer,
     // The composite's indirect draw, which the march gives a triangle once
-    // any block meets a cloud.
+    // any pixel's ray meets a cloud.
     composite_args: wgpu::Buffer,
     view_targets: Option<Versioned<ViewTargets>>,
-    view_group: GroupCache<13>,
-    composite_group: GroupCache<4>,
+    view_group: GroupCache<12>,
+    composite_group: GroupCache<1>,
     view_pipeline: Option<wgpu::ComputePipeline>,
     composite_pipeline_layout: Option<wgpu::PipelineLayout>,
     composite_pipelines: HashMap<(wgpu::TextureFormat, bool), wgpu::RenderPipeline>,
-    view_sampler: wgpu::Sampler,
     view_job: Option<[u32; 2]>,
     view_sky: bool,
-    /// Blocks of the view whose clouds this frame marched.
-    pub(crate) view_blocks: u32,
+    /// Pixels of the view whose clouds this frame marched.
+    pub(crate) view_pixels: u32,
 }
 
 impl CloudPass {
@@ -362,12 +358,6 @@ impl CloudPass {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
-        let view_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("engine/cloud-view-sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
         Self {
@@ -439,10 +429,9 @@ impl CloudPass {
             view_pipeline: None,
             composite_pipeline_layout: None,
             composite_pipelines: HashMap::default(),
-            view_sampler,
             view_job: None,
             view_sky: false,
-            view_blocks: 0,
+            view_pixels: 0,
         }
     }
 
@@ -811,9 +800,10 @@ impl CloudPass {
     /// Plans this frame's clouds in the view of `settings`
     /// from an eye at `eye` at simulation time `seconds`, through
     /// `view_projection` (unjittered) onto the frame's `region` in
-    /// `lighting`'s sun and sky: blocks made for its display, marched over
-    /// its render size; call after [`Self::prepare`]. Nothing marches
-    /// without clouds or with the view's march off.
+    /// `lighting`'s sun and sky: a ray for each pixel of its render size,
+    /// into targets made at its display's size; call after
+    /// [`Self::prepare`]. Nothing marches without clouds or with the view's
+    /// march off.
     #[expect(clippy::too_many_arguments, reason = "the view's inputs, typed")]
     pub(crate) fn prepare_view(
         &mut self,
@@ -827,7 +817,7 @@ impl CloudPass {
     ) {
         let settings = settings.sanitized();
         self.view_job = None;
-        self.view_blocks = 0;
+        self.view_pixels = 0;
         let (display, render) = (region.display, region.render);
         let marches = self.active && settings.in_view && display.width > 0 && display.height > 0;
         let view_sky = marches && eye.y > settings.base;
@@ -838,20 +828,15 @@ impl CloudPass {
         if !marches {
             return;
         }
-        let side = settings.view_block;
-        // Blocks over the display's pixels, those over the frame's render
-        // size marched.
-        let room = [display.width.div_ceil(side), display.height.div_ceil(side)];
-        let blocks = [render.width.div_ceil(side), render.height.div_ceil(side)];
+        let size = [display.width, display.height];
         if self
             .view_targets
             .as_ref()
-            .is_none_or(|targets| targets.size != room)
+            .is_none_or(|targets| targets.size != size)
         {
             self.view_targets = Some(Versioned::new(ViewTargets {
-                clouds: view_texture(device, room, wgpu::TextureFormat::Rgba16Float),
-                front: view_texture(device, room, wgpu::TextureFormat::R32Float),
-                size: room,
+                clouds: view_texture(device, size),
+                size,
             }));
         }
         let mut uniform = march_uniform(&settings, (eye, seconds), lighting);
@@ -859,8 +844,7 @@ impl CloudPass {
         queue.write_buffer(&self.view_clouds, 0, bytemuck::bytes_of(&uniform));
         let view = ViewUniform {
             inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
-            blocks: [blocks[0], blocks[1], side, u32::from(view_sky)],
-            pixels: [render.width, render.height, 0, 0],
+            pixels: [render.width, render.height, u32::from(view_sky), 0],
         };
         queue.write_buffer(&self.view_uniform, 0, bytemuck::bytes_of(&view));
         // No vertices until the march meets a cloud; one instance.
@@ -869,8 +853,8 @@ impl CloudPass {
             0,
             bytemuck::cast_slice(&[0_u32, 1, 0, 0]),
         );
-        self.view_job = Some(blocks);
-        self.view_blocks = blocks[0] * blocks[1];
+        self.view_job = Some([render.width, render.height]);
+        self.view_pixels = render.width * render.height;
         self.prepare_view_draws(device, depth, air);
     }
 
@@ -923,10 +907,6 @@ impl CloudPass {
                     Bound::of(targets, crate::pipelines::view(&targets.clouds.1)),
                 ),
                 (
-                    "front_out",
-                    Bound::of(targets, crate::pipelines::view(&targets.front.1)),
-                ),
-                (
                     "composite_draw",
                     Bound::fixed(self.composite_args.as_entire_binding()),
                 ),
@@ -951,7 +931,7 @@ impl CloudPass {
         encoder: &mut wgpu::CommandEncoder,
         profiler: &crate::profiling::GpuProfiler,
     ) {
-        let (Some(blocks), Some(pipeline), Some(group)) =
+        let (Some(pixels), Some(pipeline), Some(group)) =
             (self.view_job, &self.view_pipeline, self.view_group.get())
         else {
             return;
@@ -963,8 +943,8 @@ impl CloudPass {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, group, &[]);
         pass.dispatch_workgroups(
-            blocks[0].div_ceil(CLOUD_GROUP),
-            blocks[1].div_ceil(CLOUD_GROUP),
+            pixels[0].div_ceil(CLOUD_GROUP),
+            pixels[1].div_ceil(CLOUD_GROUP),
             1,
         );
     }
@@ -972,14 +952,13 @@ impl CloudPass {
     /// Builds the composite's pipeline into `format` (`canvas`: the
     /// canvas, encoded; otherwise the screen effects' scene target) from
     /// `shader` with the camera group's `camera_layout`, and its group over
-    /// the depth buffer `depth`.
+    /// the marched pixels.
     pub(crate) fn prepare_composite(
         &mut self,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         camera_layout: &crate::pipelines::GroupLayout,
         (format, canvas): (wgpu::TextureFormat, bool),
-        depth: &Versioned<wgpu::TextureView>,
     ) {
         let Some(targets) = self
             .view_targets
@@ -1003,21 +982,10 @@ impl CloudPass {
             device,
             "engine/cloud-composite",
             (&CLOUD_COMPOSITE, &self.composite_layout),
-            [
-                (
-                    "view_clouds",
-                    Bound::of(targets, crate::pipelines::view(&targets.clouds.1)),
-                ),
-                (
-                    "view_cloud_front",
-                    Bound::of(targets, crate::pipelines::view(&targets.front.1)),
-                ),
-                ("view_cloud_depth", depth.bound()),
-                (
-                    "view_cloud_sampler",
-                    Bound::fixed(crate::pipelines::sampler(&self.view_sampler)),
-                ),
-            ],
+            [(
+                "view_clouds",
+                Bound::of(targets, crate::pipelines::view(&targets.clouds.1)),
+            )],
         );
     }
 
@@ -1151,8 +1119,8 @@ impl CloudPass {
         &self.shadows
     }
 
-    /// Bytes of the noise's volumes, the domes, the view's blocks and the
-    /// light map.
+    /// Bytes of the noise's volumes, the domes, the view's marched pixels
+    /// and the light map.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         let noise = self.noise.as_ref().map_or(0, |noise| noise.bytes);
         let domes = self.domes.as_ref().map_or(0, |domes| {
@@ -1162,7 +1130,7 @@ impl CloudPass {
                 .sum()
         });
         let view = self.view_targets.as_ref().map_or(0, |targets| {
-            u64::from(targets.size[0]) * u64::from(targets.size[1]) * 12
+            u64::from(targets.size[0]) * u64::from(targets.size[1]) * 8
         });
         let light = self.light.cells.as_ref().map_or(0, wgpu::Buffer::size);
         noise + domes + view + light
@@ -1209,15 +1177,11 @@ fn march_uniform(
     }
 }
 
-/// A texture of the view's blocks, `size` of them, in
-/// `format`, which the view's march writes and its composite reads.
-fn view_texture(
-    device: &wgpu::Device,
-    size: [u32; 2],
-    format: wgpu::TextureFormat,
-) -> (wgpu::Texture, wgpu::TextureView) {
+/// The view's marched clouds, `size` pixels, which the view's march
+/// writes and its composite reads.
+fn view_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("engine/cloud-view-blocks"),
+        label: Some("engine/cloud-view"),
         size: wgpu::Extent3d {
             width: size[0],
             height: size[1],
@@ -1226,7 +1190,7 @@ fn view_texture(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format,
+        format: wgpu::TextureFormat::Rgba16Float,
         usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
@@ -1398,8 +1362,9 @@ impl RenderFeature for CloudPass {
     type Stats = engine_core::CloudStats;
 
     /// The dome's slice, which the sky and its environment map show; then
-    /// the view's march up to what the opaque scene and water show, and its
-    /// composite over the scene before transparent surfaces draw.
+    /// the view's march up to what the opaque scene and water show at each
+    /// pixel, and its composite over the scene before transparent surfaces
+    /// draw.
     fn declare(frame: &CloudFrame, shape: &FrameShape, graph: &mut RenderGraph) {
         if frame.dome {
             graph
@@ -1414,7 +1379,6 @@ impl RenderFeature for CloudPass {
             graph
                 .add(Pass::Feature(FeaturePass::CloudComposite))
                 .read(Resource::CloudView)
-                .read(Resource::Depth)
                 .color(shape.scene(), Access::Load);
         }
     }
@@ -1458,7 +1422,7 @@ impl RenderFeature for CloudPass {
         CloudPass::capacity_bytes(self)
     }
 
-    /// The dome's rows marched and the view's blocks.
+    /// The dome's rows marched and the view's pixels.
     fn stats(
         this: Option<&Self>,
         _frame: Option<&CloudFrame>,
@@ -1466,7 +1430,7 @@ impl RenderFeature for CloudPass {
     ) -> engine_core::CloudStats {
         engine_core::CloudStats {
             rows: this.map_or(0, |clouds| clouds.rows),
-            view_blocks: this.map_or(0, |clouds| clouds.view_blocks),
+            view_pixels: this.map_or(0, |clouds| clouds.view_pixels),
         }
     }
 }

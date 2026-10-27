@@ -135,7 +135,7 @@
       "direction": null
     },
     {
-      "name": "clouds.view_blocks",
+      "name": "clouds.view_pixels",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",

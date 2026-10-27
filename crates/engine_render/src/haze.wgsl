@@ -1,16 +1,16 @@
-// The haze's march, prepended with scene.wgsl and effects.wgsl: at half
-// resolution, each view ray marches the air `atmospheric` integrates, the
-// fog and the haze's height air, to the depth buffer's surface or the
-// haze's reach, in HAZE_STEPS steps from a start jittered per pixel and per
-// frame. Each step adds the sunlight its air scatters toward the eye, by
-// Henyey and Greenstein's phase of the haze's forward scattering (Mie
-// scattering's), where the shadow clipmap and the clouds' shadows let the
-// sun through, dimmed by the air in front of it. The air's density is its
-// mean's times a noise of mean 1, anchored to the world and drifting with
-// the wind, and the air scatters the sky's light only from the share of the
-// sky it sees, which terrains' bounce probes hold (`haze_seen`); the march
-// adds how far that light departs from the sky's light `atmospheric` gives
-// at the mean, which counts the whole sky.
+// The haze's march, prepended with scene.wgsl and effects.wgsl: at every
+// pixel of the render size, its own view ray marches the air `atmospheric`
+// integrates, the fog and the haze's height air, to the depth buffer's
+// surface or the haze's reach, in HAZE_STEPS steps from a start jittered per
+// pixel and per frame. Each step adds the sunlight its air scatters toward
+// the eye, by Henyey and Greenstein's phase of the haze's forward
+// scattering (Mie scattering's), where the shadow clipmap and the clouds'
+// shadows let the sun through, dimmed by the air in front of it. The air's
+// density is its mean's times a noise of mean 1, anchored to the world and
+// drifting with the wind, and the air scatters the sky's light only from
+// the share of the sky it sees, which terrains' bounce probes hold
+// (`haze_seen`); the march adds how far that light departs from the sky's
+// light `atmospheric` gives at the mean, which counts the whole sky.
 // Within the reach the march is the only source of the sunlight the air
 // scatters (`atmospheric` keeps its own beyond it), and it takes back the
 // sky's light `atmospheric` gives the air there by the share of the sky the
@@ -126,17 +126,16 @@ fn haze_seen(world: vec3<f32>) -> f32 {
     return mix(saturate(bounce_seen(at) / HAZE_OPEN_SKY), 1.0, saturate(at.layer - 1.0));
 }
 
-// The haze at half-resolution texel `position`: the light the near air
-// scatters toward the eye along the ray through the texel's first pixel,
-// exposed (rgb), and the inverse distance of the surface the ray ends at
-// (w; 0 for sky), which the filter and the composite compare. Each step's
-// light is its air's share of what it scatters (Hillaire, "Physically
-// Based and Unified Volumetric Rendering in Frostbite", 2015): what the air
-// in front leaves of it times what the step covers, its density and light
-// those at its jittered point.
+// The haze at pixel `position`: the light the near air scatters toward the
+// eye along the pixel's ray, exposed (rgb), and the inverse distance of the
+// surface the ray ends at (w; 0 for sky), which the filter compares. Each
+// step's light is its air's share of what it scatters (Hillaire,
+// "Physically Based and Unified Volumetric Rendering in Frostbite", 2015):
+// what the air in front leaves of it times what the step covers, its
+// density and light those at its jittered point.
 @fragment
 fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let pixel = min(vec2<i32>(position.xy) * 2, vec2<i32>(post.size.xy) - 1);
+    let pixel = vec2<i32>(position.xy);
     let inverse = inverse_distance_at(depth_texture, pixel, post);
     let depth = textureLoad(depth_texture, pixel, 0);
     let uv = (vec2<f32>(pixel) + 0.5) * post.size.zw;

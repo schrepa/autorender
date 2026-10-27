@@ -76,7 +76,7 @@ shared_groups! {
             sky_clouds, sky_cloud_sampler, sky_air, sky_view_table, sky_transmittance_table,
             sky_table_sampler, sky_clouds_old, sky_domes
         ],
-        view_clouds: 46..50 [view_clouds, view_cloud_front, view_cloud_depth, view_cloud_sampler],
+        view_clouds: 46..47 [view_clouds],
         water: 50..62 [
             water_surface, water_info, water, water_waves, water_wave_sampler, water_fall_map,
             water_sim_cells, water_sim_ground, water_sim_beds, water_tree, water_whitecaps

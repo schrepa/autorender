@@ -609,9 +609,10 @@ pub struct CloudStats {
     /// Rows of the clouds' dome this frame marched: all of them on exact
     /// frames, a slice on ordinary ones, none without clouds.
     pub rows: u32,
-    /// Blocks of the view whose clouds this frame marched: none without
-    /// clouds or with their march in the view off.
-    pub view_blocks: u32,
+    /// Pixels of the view whose clouds this frame marched, a ray each: its
+    /// render size's, none without clouds or with their march in the view
+    /// off.
+    pub view_pixels: u32,
 }
 
 /// The physically based sky, and the exposure frames show.

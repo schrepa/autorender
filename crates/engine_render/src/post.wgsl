@@ -1,15 +1,16 @@
-// Screen effects, prepended with effects.wgsl.
-// Ambient occlusion samples the depth buffer at half resolution, and one
-// half-resolution filter smooths it; the haze's march (haze.wgsl), at half
-// resolution too, is filtered over time with the last frame's result
-// reprojected; screen-space reflections trace reflected rays through the
-// depth buffer at half resolution; bloom filters the scene's glowing light
-// down a chain of half-resolution levels and back up; the composite applies
-// them to the scene target, upscaled to the display, and writes the canvas.
-// Temporally antialiased frames apply them in their resolve instead. Every
-// pass reads within what the frame drew: its render size of the
-// screen-sized targets, from their top-left corner, and as much of the
-// others.
+// Screen effects, prepended with effects.wgsl. Every one but bloom runs at
+// the render size, each pixel by its own depth, normal and ray.
+// Ambient occlusion samples the depth buffer at every pixel, and one
+// filter smooths it on each surface; the haze's march (haze.wgsl) is
+// filtered over time with the last frame's result reprojected; screen-space
+// reflections trace each pixel's reflected ray through the depth buffer,
+// reading the scene through its own levels, each half the one before;
+// bloom filters the scene's glowing light down a chain of levels from half
+// the render size and back up; the composite applies them to the scene
+// target, upscaled to the display, and writes the canvas. Temporally
+// antialiased frames apply them in their resolve instead. Every pass reads
+// within what the frame drew: its render size of the screen-sized targets,
+// from their top-left corner, and as much of the others.
 
 @group(0) @binding(0) var<uniform> post: Post;
 @group(0) @binding(1) var depth_texture: texture_depth_2d;
@@ -20,29 +21,27 @@
 @group(0) @binding(3) var glow: texture_2d<f32>;
 // The level a bloom pass reads.
 @group(0) @binding(4) var source: texture_2d<f32>;
-// The filtered ambient occlusion's visibility at half resolution, and the
-// inverse distance of each texel's surface (w).
+// The filtered ambient occlusion's visibility.
 @group(0) @binding(5) var occlusion: texture_2d<f32>;
 @group(0) @binding(6) var bloom: texture_2d<f32>;
 @group(0) @binding(7) var linear: sampler;
-// Reflected color and its weight at half resolution.
+// Reflected color and its weight.
 @group(0) @binding(8) var reflections: texture_2d<f32>;
-// The haze's march this frame at half resolution (haze.wgsl): its exposed
-// light, and the inverse distance of the surface its ray ended at (w; 0
-// for sky).
+// The haze's march this frame (haze.wgsl): its exposed light, and the
+// inverse distance of the surface its ray ended at (w; 0 for sky).
 @group(0) @binding(9) var marched: texture_2d<f32>;
 // Reflections: the nearest depth of each 2x2 block of the
 // depth buffer, then of each block of the level below, which rays skip
-// across; and the traced reflections the filter smooths.
+// across.
 @group(0) @binding(10) var nearest_depth: texture_2d<f32>;
-@group(0) @binding(11) var traced: texture_2d<f32>;
 // Ambient occlusion before its filter: visibility, and the distance from
 // the eye (0 where only sky is).
 @group(0) @binding(12) var raw_occlusion: texture_2d<f32>;
 // Reflections: the surface the opaque pass shaded (`surface_texel`: its
 // shading normal, its roughness along the view and across it, and the
 // share of its light its mirrored environment makes up), and the scene
-// blurred down half-resolution levels for rough surfaces.
+// with its levels, the first the scene itself at the render size and each
+// next one half the one before, blurred for rough surfaces.
 @group(0) @binding(13) var surface_texture: texture_2d<u32>;
 @group(0) @binding(14) var scene_levels: texture_2d<f32>;
 // The bloom level a pass halving both chains reads beside the scene level
@@ -82,8 +81,8 @@ const SPIRAL: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
     vec2<f32>(0.9238795, -0.38268343), vec2<f32>(0.38268343, -0.9238795),
     vec2<f32>(-0.38268343, -0.9238795), vec2<f32>(-0.9238795, -0.38268343),
 );
-// The largest sampling radius, in full-resolution pixels: close surfaces
-// keep their samples in cache.
+// The largest sampling radius, in pixels: close surfaces keep their
+// samples in cache.
 const MAX_PIXELS: f32 = 96.0;
 
 // The world radius surfaces occlude within: the same at every distance, so
@@ -227,22 +226,21 @@ fn sky_visibility(p: vec3<f32>, normal: vec3<f32>) -> f32 {
     return 1.0 - post.sky.x * (1.0 - visible);
 }
 
-// Ambient occlusion at half resolution: writes the occlusion's visibility
-// (with what sky occlusion leaves of the sky's light) and the distance from
-// the eye, which the filter compares.
+// Ambient occlusion at every pixel: writes the occlusion's visibility (with
+// what sky occlusion leaves of the sky's light) and the distance from the
+// eye, which the filter compares.
 @fragment
-fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let last = vec2<i32>(post.size.xy) - 1;
-    let pixel = min(vec2<i32>(position.xy) * 2, last);
+fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec2<f32> {
+    let pixel = vec2<i32>(position.xy);
     let center = world_at(pixel);
     if center.w == 0.0 {
-        return vec4<f32>(1.0, 0.0, 0.0, 0.0);
+        return vec2<f32>(1.0, 0.0);
     }
     let p = center.xyz;
     let distance = length(post.eye.xyz - p);
     let normal = depth_normal(pixel, p);
     if all(normal == vec3<f32>(0.0)) {
-        return vec4<f32>(1.0, distance, 0.0, 0.0);
+        return vec2<f32>(1.0, distance);
     }
     // Interleaved gradient noise turns the spiral per pixel. It stays the
     // same every frame: changing it would let the temporal resolve's clamp
@@ -252,7 +250,7 @@ fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     if post.occlusion.w != 0.0 {
         visible *= ambient_visibility(pixel, p, normal, distance, noise);
     }
-    return vec4<f32>(visible, distance, 0.0, 0.0);
+    return vec2<f32>(visible, distance);
 }
 
 // How far, relative to its own, a neighbor's inverse distance may lie from
@@ -265,16 +263,15 @@ fn inverse_distance(sample: vec4<f32>) -> f32 {
     return select(0.0, 1.0 / sample.y, sample.y > 0.0);
 }
 
-// The occlusion over each half-resolution texel's 5x5 neighbors on its
-// surface, weighted by a Gaussian: the eight samples' per-pixel turns
-// average out instead of mottling what they shade. Inverse distance
-// changes linearly across a plane on screen, so a neighbor counts while its
-// inverse distance lies near the center's extrapolated by the center's
-// slope toward its nearer neighbor on each axis. Each neighbor is read
-// once, the slope's too.
-fn filtered_occlusion(texel: vec2<i32>) -> f32 {
-    let last = half_size(post) - 1;
-    let center = textureLoad(raw_occlusion, texel, 0);
+// The occlusion over each pixel's 5x5 neighbors on its surface, weighted
+// by a Gaussian: the eight samples' per-pixel turns average out instead of
+// mottling what they shade. Inverse distance changes linearly across a
+// plane on screen, so a neighbor counts while its inverse distance lies
+// near the center's extrapolated by the center's slope toward its nearer
+// neighbor on each axis. Each neighbor is read once, the slope's too.
+fn filtered_occlusion(pixel: vec2<i32>) -> f32 {
+    let last = vec2<i32>(post.size.xy) - 1;
+    let center = textureLoad(raw_occlusion, pixel, 0);
     if !(center.y > 0.0) {
         return center.x;
     }
@@ -286,7 +283,7 @@ fn filtered_occlusion(texel: vec2<i32>) -> f32 {
             let index = (y + 2) * 5 + x + 2;
             var sample = center;
             if x != 0 || y != 0 {
-                sample = textureLoad(raw_occlusion, clamp(texel + vec2<i32>(x, y), vec2<i32>(0),
+                sample = textureLoad(raw_occlusion, clamp(pixel + vec2<i32>(x, y), vec2<i32>(0),
                     last), 0);
             }
             samples[index] = sample;
@@ -319,15 +316,11 @@ fn filtered_occlusion(texel: vec2<i32>) -> f32 {
     return sum / total;
 }
 
-// The occlusion filtered at half resolution (x), and the inverse distance
-// of the surface the texel stands for (w; 0 for sky), which full resolution
-// compares.
+// The occlusion filtered at each pixel, which the composite and the
+// resolve read at the same pixel.
 @fragment
-fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let texel = vec2<i32>(position.xy);
-    let pixel = min(texel * 2, vec2<i32>(post.size.xy) - 1);
-    return vec4<f32>(filtered_occlusion(texel), 0.0, 0.0,
-        inverse_distance_at(depth_texture, pixel, post));
+fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) f32 {
+    return filtered_occlusion(vec2<i32>(position.xy));
 }
 
 // The weight of this frame's march against the haze's reprojected history:
@@ -335,14 +328,19 @@ fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec
 // over which the march's jitter turns through its steps.
 const HAZE_CURRENT: f32 = 0.1;
 
+// How near a neighbor's surface, or the history's, must lie to a pixel's,
+// as a share of the pixel's inverse distance from the eye, for the haze's
+// filter to count it.
+const HAZE_PLANE: f32 = 0.1;
+
 // Last frame's filtered haze where it showed the point the depth buffer
-// holds at full-resolution `pixel`, whose inverse distance from the eye is
-// `own` (0 for sky): the four history texels around the point's place in
-// last frame's view, weighted bilinearly and by how near the distance of
-// their surface from last frame's eye lies to the point's, so history from
-// across a depth discontinuity is left out. w is the weight left: 0 where
-// none is, where the point lay off last frame's view, or where no history
-// precedes this frame.
+// holds at `pixel`, whose inverse distance from the eye is `own` (0 for
+// sky): the four history pixels around the point's place in last frame's
+// view, weighted bilinearly and by how near the distance of their surface
+// from last frame's eye lies to the point's, so history from across a
+// depth discontinuity is left out. w is the weight left: 0 where none is,
+// where the point lay off last frame's view, or where no history precedes
+// this frame.
 fn reprojected_haze(pixel: vec2<i32>, own: f32) -> vec4<f32> {
     let drawn = post.haze.yz;
     if drawn.x <= 0.0 {
@@ -364,9 +362,8 @@ fn reprojected_haze(pixel: vec2<i32>, own: f32) -> vec4<f32> {
     if own > 0.0 {
         expected = 1.0 / max(length(point.xyz - post.previous_eye.xyz), 1.0e-4);
     }
-    let tolerance = max(EFFECTS_PLANE * expected, 1.0e-7);
-    // Last frame's half-resolution texels, centered as `effect_at` reads
-    // them, within those it drew.
+    let tolerance = max(HAZE_PLANE * expected, 1.0e-7);
+    // Last frame's pixels, at their centers, within those it drew.
     let at = uv * drawn - 0.5;
     let first = vec2<i32>(floor(at));
     let f = at - floor(at);
@@ -388,22 +385,21 @@ fn reprojected_haze(pixel: vec2<i32>, own: f32) -> vec4<f32> {
     return vec4<f32>(sum / total, total);
 }
 
-// The haze filtered over time at half-resolution texel `position`: this
-// frame's march there blended into the history reprojected to it by the
-// camera's motion (`reprojected_haze`), the history clamped to the box of
-// this frame's march over the 3x3 texels around, HAZE_CURRENT of the new
-// each frame. Where no history reaches the texel (off last frame's view,
-// across a depth discontinuity, or in a frame no history precedes, as
-// exact frames are) it takes this frame's march alone, averaged over the
-// 3x3 texels around on its surface. w keeps the inverse distance of the
-// texel's surface.
+// The haze filtered over time at pixel `position`: this frame's march there
+// blended into the history reprojected to it by the camera's motion
+// (`reprojected_haze`), the history clamped to the box of this frame's
+// march over the 3x3 pixels around, HAZE_CURRENT of the new each frame.
+// Where no history reaches the pixel (off last frame's view, across a depth
+// discontinuity, or in a frame no history precedes, as exact frames are)
+// it takes this frame's march alone, averaged over the 3x3 pixels around on
+// its surface. w keeps the inverse distance of the pixel's surface.
 @fragment
 fn fs_haze_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let texel = vec2<i32>(position.xy);
-    let last = half_size(post) - 1;
-    let center = textureLoad(marched, texel, 0);
+    let pixel = vec2<i32>(position.xy);
+    let last = vec2<i32>(post.size.xy) - 1;
+    let center = textureLoad(marched, pixel, 0);
     let own = center.w;
-    let tolerance = max(EFFECTS_PLANE * own, 1.0e-7);
+    let tolerance = max(HAZE_PLANE * own, 1.0e-7);
     var low = center.rgb;
     var high = center.rgb;
     var surface = center.rgb;
@@ -414,7 +410,7 @@ fn fs_haze_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
                 continue;
             }
             let neighbor = textureLoad(marched,
-                clamp(texel + vec2<i32>(x, y), vec2<i32>(0), last), 0);
+                clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), last), 0);
             low = min(low, neighbor.rgb);
             high = max(high, neighbor.rgb);
             let same = saturate(1.25 - abs(neighbor.w - own) / tolerance);
@@ -422,7 +418,7 @@ fn fs_haze_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
             count += same;
         }
     }
-    let history = reprojected_haze(min(texel * 2, vec2<i32>(post.size.xy) - 1), own);
+    let history = reprojected_haze(pixel, own);
     if history.w <= 0.0 {
         return vec4<f32>(surface / count, own);
     }
@@ -460,19 +456,6 @@ const REFLECTION_FACING: f32 = 0.05;
 // all their weight.
 const REFLECTION_EDGE: f32 = 0.1;
 const FLOAT_MAX: f32 = 0x1.fffffep+127f;
-// The pixel of each 2x2 block the half-resolution reflection passes trace:
-// the first without temporal antialiasing; with it, another each frame
-// (`post.reflections.w`), and the resolve reflects each render pixel before
-// its blend, so its history gathers each block's four pixels.
-const BLOCK_PIXELS = array<vec2<i32>, 4>(
-    vec2<i32>(0, 0), vec2<i32>(1, 1), vec2<i32>(1, 0), vec2<i32>(0, 1),
-);
-
-// The full-resolution pixel half-resolution texel `texel` traces.
-fn traced_pixel(texel: vec2<i32>) -> vec2<i32> {
-    let last = vec2<i32>(post.size.xy) - 1;
-    return min(texel * 2 + BLOCK_PIXELS[u32(post.reflections.w) & 3u], last);
-}
 
 // The nearest depth (the largest, reversed) of cell `cell` of mip `mip`:
 // mip 0 is the depth buffer, mip m > 0 the pyramid's level m - 1, whose
@@ -486,21 +469,6 @@ fn nearest_depth_at(cell: vec2<i32>, mip: i32) -> f32 {
     let span = 1 << u32(mip);
     let last = max((vec2<i32>(post.size.xy) + span - 1) / span, vec2<i32>(1)) - 1;
     return textureLoad(nearest_depth, clamp(cell, vec2<i32>(0), last), mip - 1).r;
-}
-
-// Texture coordinates of the screen-sized targets at `pixel` (render
-// pixels, continuous), kept half a pixel within the pixels the frame drew.
-fn drawn_uv(pixel: vec2<f32>) -> vec2<f32> {
-    return clamp(pixel, vec2<f32>(0.5), post.size.xy - 0.5) * post.extent.zw;
-}
-
-// The texels the frame drew of a target `size` texels large made at a
-// fraction of the display's size (a level of a chain): all of them where it
-// draws the whole display, else as many as the render size's share of the
-// display, rounded down, which its passes draw at least.
-fn drawn_texels(size: vec2<f32>) -> vec2<f32> {
-    let share = max(floor(size * post.size.xy * post.extent.zw), vec2<f32>(1.0));
-    return select(share, size, post.size.xy == post.extent.xy);
 }
 
 // `level`'s color at `at` (its texels, continuous; `size` of them, `drawn`
@@ -556,19 +524,12 @@ fn mirroring_at(pixel: vec2<i32>) -> Mirroring {
 }
 
 // The scene at `at` (render pixels, continuous) as a lobe whose blur spans
-// 2^`level` pixels reads it: mirrors the scene itself, wider lobes the
-// scene's blurred half-resolution levels, blending over the first octave.
+// 2^`level` pixels reads it: the scene's level `level`, whose texels span
+// as many pixels, mirrors reading the first, the scene itself at the render
+// size, and wider lobes blending the two levels around theirs as trilinear
+// filtering blends mipmaps.
 fn blurred_scene(at: vec2<f32>, level: f32) -> vec3<f32> {
-    if level <= 0.0 {
-        return textureSampleLevel(scene, linear, drawn_uv(at), 0.0).rgb;
-    }
-    let blurred = textureSampleLevel(scene_levels, linear,
-        half_uv(at * post.size.zw, textureDimensions(scene_levels), post),
-        max(level - 1.0, 0.0)).rgb;
-    if level >= 1.0 {
-        return blurred;
-    }
-    return mix(textureSampleLevel(scene, linear, drawn_uv(at), 0.0).rgb, blurred, level);
+    return textureSampleLevel(scene_levels, linear, drawn_uv(at, post), level).rgb;
 }
 
 // The scene's light over a reflection's lobe where it lands about `hit`
@@ -617,28 +578,29 @@ fn lobe_light(hit: vec2<f32>, way: vec2<f32>, lengths: vec2<f32>, p: vec3<f32>,
     return sum / total;
 }
 
-// Screen-space reflections at half resolution: from each
-// reflective pixel (the glow target's second channel), a ray along the
-// mirror direction of its depth normal crosses the screen as a straight
-// line in pixels and depth. It walks the pyramid of nearest depths: a cell
-// the ray crosses in front of everything is skipped and the next one is
-// coarser; a cell it may meet is refined, down to single pixels (FidelityFX
-// SSSR's hierarchical march), so every pixel along the ray near a surface is
-// visited and thin objects are found alike from pixel to pixel. The first
-// pixel the ray passes behind is its hit, reflected where the ray passes
-// close to that surface (or, heading toward the camera, within a solid
-// object's depth of it), fading toward the screen edges, the ray's end and
-// the surface's thickness; misses weigh nothing. What it reflects is the
-// scene over the lobe the surface's roughness spreads the ray into
-// (`lobe_light`): long along the ray's way on screen, short across it, so
-// grazing views draw it out into streaks. It writes, both premultiplied by
-// how surely the ray met the scene, the scene's light as the surface's
-// reflectivity mirrors it, and the share of the surface's own light its
-// mirrored environment made up, which that light replaces (`reflected`).
+// Screen-space reflections at every pixel, every frame: from each
+// reflective pixel (the glow target's second channel), its own ray, along
+// the mirror direction of its own shading normal, crosses the screen as a
+// straight line in pixels and depth. It walks the pyramid of nearest
+// depths: a cell the ray crosses in front of everything is skipped and the
+// next one is coarser; a cell it may meet is refined, down to single
+// pixels (FidelityFX SSSR's hierarchical march), so every pixel along the
+// ray near a surface is visited and thin objects are found alike from pixel
+// to pixel. The first pixel the ray passes behind is its hit, reflected
+// where the ray passes close to that surface (or, heading toward the
+// camera, within a solid object's depth of it), fading toward the screen
+// edges, the ray's end and the surface's thickness; misses weigh nothing.
+// What it reflects is the scene over the lobe its own roughness spreads the
+// ray into (`lobe_light`): long along the ray's way on screen, short across
+// it, so grazing views draw it out into streaks. It writes, both
+// premultiplied by how surely the ray met the scene, the scene's light as
+// the surface's reflectivity mirrors it, and the share of the surface's own
+// light its mirrored environment made up, which that light replaces
+// (`reflected`).
 @fragment
 fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let last = vec2<i32>(post.size.xy) - 1;
-    let pixel = traced_pixel(vec2<i32>(position.xy));
+    let pixel = vec2<i32>(position.xy);
     let reflectivity = textureLoad(glow, pixel, 0).g;
     if reflectivity < 0.01 {
         return vec4<f32>(0.0);
@@ -771,38 +733,6 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     return vec4<f32>(color * (reflectivity * fade), mirroring.mirrored * fade);
 }
 
-// The traced reflections over each half-resolution texel's 3x3 neighbors
-// on the same surface (depth within 2% of its own), weighted by a tent:
-// premultiplied by how surely each ray met the scene, neighboring rays'
-// hits and misses blend instead of speckling. With temporal antialiasing
-// the resolve reflects each render pixel before blending it with the
-// history, which then also gathers each block's four pixels over frames.
-@fragment
-fn fs_reflections_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let texel = vec2<i32>(position.xy);
-    let last = half_size(post) - 1;
-    let depth = textureLoad(depth_texture, traced_pixel(texel), 0);
-    var sum = vec4<f32>(0.0);
-    var total = 0.0;
-    for (var y = -1; y <= 1; y++) {
-        for (var x = -1; x <= 1; x++) {
-            let neighbor = clamp(texel + vec2<i32>(x, y), vec2<i32>(0), last);
-            // The center's depth is already read.
-            var neighbor_depth = depth;
-            if x != 0 || y != 0 {
-                neighbor_depth = textureLoad(depth_texture, traced_pixel(neighbor), 0);
-            }
-            // Reversed depth is about inversely proportional to distance:
-            // relative differences of the two agree.
-            let same = abs(neighbor_depth - depth) <= 0.02 * max(depth, neighbor_depth);
-            let weight = f32((2 - abs(x)) * (2 - abs(y))) * select(0.0, 1.0, same);
-            sum += textureLoad(traced, neighbor, 0) * weight;
-            total += weight;
-        }
-    }
-    return sum / total;
-}
-
 // A pixel's glowing light: its color times its decoded glow.
 fn glow_light(uv: vec2<f32>) -> vec3<f32> {
     let color = textureSampleLevel(scene, linear, uv, 0.0).rgb;
@@ -810,9 +740,10 @@ fn glow_light(uv: vec2<f32>) -> vec3<f32> {
     return color * (weight / (1.0 - weight));
 }
 
-// The first bloom level, at half resolution: the scene's glowing light over
-// each 2x2 block and its diagonal neighbors, each tap weighted by
-// 1 / (1 + luminance) so single bright pixels cannot flicker as fireflies.
+// The first bloom level, half the render size, as a blur needs no more:
+// the scene's glowing light over each 2x2 block and its diagonal
+// neighbors, each tap weighted by 1 / (1 + luminance) so single bright
+// pixels cannot flicker as fireflies.
 @fragment
 fn fs_bloom_first(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let center = position.xy * 2.0;
@@ -823,7 +754,7 @@ fn fs_bloom_first(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         if i > 0u {
             offset = vec2<f32>(f32(i & 1u) * 2.0 - 1.0, f32((i >> 1u) & 1u) * 2.0 - 1.0);
         }
-        let light = glow_light(drawn_uv(center + offset));
+        let light = glow_light(drawn_uv(center + offset, post));
         let weight = select(1.0, 4.0, i == 0u) / (1.0 + luminance(light));
         sum += light * weight;
         weights += weight;
@@ -836,7 +767,7 @@ fn fs_bloom_first(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
 // texels the frame drew of it.
 fn halved(level: texture_2d<f32>, position: vec2<f32>) -> vec4<f32> {
     let size = vec2<f32>(textureDimensions(level));
-    let drawn = drawn_texels(size);
+    let drawn = drawn_texels(size, post);
     let at = position * 2.0;
     let sum = level_tap(level, at, drawn, size) * 4.0
         + level_tap(level, at - 1.0, drawn, size)
@@ -851,15 +782,17 @@ fn fs_bloom_down(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
     return halved(source, position.xy);
 }
 
-// Frames that both reflect and bloom halve the scene for rough reflections
-// and the bloom's glowing light in the same passes.
+// Frames that both reflect and bloom halve the scene into its blurred
+// levels for rough reflections and the bloom's glowing light in the same
+// passes, the two chains' levels sharing their sizes.
 struct Levels {
     @location(0) scene: vec4<f32>,
     @location(1) bloom: vec4<f32>,
 }
 
-// The first level of both chains from the same five taps of the scene:
-// fs_bloom_down's of its color and fs_bloom_first's of its glowing light.
+// The scene's first blurred level and bloom's first from the same five taps
+// of the scene: fs_bloom_down's of its color and fs_bloom_first's of its
+// glowing light.
 @fragment
 fn fs_levels_first(@builtin(position) position: vec4<f32>) -> Levels {
     let center = position.xy * 2.0;
@@ -871,7 +804,7 @@ fn fs_levels_first(@builtin(position) position: vec4<f32>) -> Levels {
         if i > 0u {
             offset = vec2<f32>(f32(i & 1u) * 2.0 - 1.0, f32((i >> 1u) & 1u) * 2.0 - 1.0);
         }
-        let at = drawn_uv(center + offset);
+        let at = drawn_uv(center + offset, post);
         let color = textureSampleLevel(scene, linear, at, 0.0).rgb;
         let decoded = min(textureSampleLevel(glow, linear, at, 0.0).r, 0.98);
         let light = color * (decoded / (1.0 - decoded));
@@ -903,7 +836,7 @@ fn fs_levels_down(@builtin(position) position: vec4<f32>) -> Levels {
 @fragment
 fn fs_bloom_up(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let size = vec2<f32>(textureDimensions(source));
-    let drawn = drawn_texels(size);
+    let drawn = drawn_texels(size, post);
     let at = position.xy * 0.5;
     let sum = (level_tap(source, at + vec2<f32>(-2.0, 0.0), drawn, size)
         + level_tap(source, at + vec2<f32>(2.0, 0.0), drawn, size)
@@ -946,7 +879,7 @@ fn upscaled_scene(pixel: vec2<f32>) -> vec4<f32> {
 // The scene at `pixel` (render pixels, continuous), bilinearly, within the
 // pixels the frame drew.
 fn scene_tap(pixel: vec2<f32>) -> vec4<f32> {
-    return textureSampleLevel(scene, linear, drawn_uv(pixel), 0.0);
+    return textureSampleLevel(scene, linear, drawn_uv(pixel, post), 0.0);
 }
 
 // Frames without temporal antialiasing: the scene upscaled to the canvas,
@@ -964,11 +897,10 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     if !whole {
         texel = upscaled_scene(rendered);
     }
-    let visible = occlusion_at(occlusion, depth_texture, pixel, post);
+    let visible = occlusion_at(occlusion, pixel, post);
     let shaded = texel.rgb * effect_shade(texel.a, visible, post);
     let mirrored = reflected(shaded, reflections, linear, uv, post);
-    let color = effect_light(mirrored, haze_at(haze, depth_texture, pixel, post), bloom, linear,
-        uv, post);
+    let color = effect_light(mirrored, haze_at(haze, pixel, post), bloom, linear, uv, post);
     // The UNORM canvas stores encoded color, dithered when 8-bit writes are.
     var encoded = encode_srgb(color);
     if post.sun_direction.w != 0.0 {

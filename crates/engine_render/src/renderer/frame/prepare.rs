@@ -1189,7 +1189,7 @@ impl Renderer {
                     queue,
                     snapshot,
                     (region, depth),
-                    (temporal_frame.is_some(), display),
+                    display,
                     self.shadows.sky_bindings(),
                 ))
             },
@@ -1462,10 +1462,10 @@ impl Renderer {
         }
         let target = self.cloud_target(targets);
         let (device, shader) = (&self.device, &self.mesh_shader);
-        let (camera, depth) = (&self.camera.layout, &self.depth.view);
+        let camera = &self.camera.layout;
         self.features.clouds.prepare(|clouds| {
             if clouds.marches_view() {
-                clouds.prepare_composite(device, shader, camera, target, depth);
+                clouds.prepare_composite(device, shader, camera, target);
             }
             clouds.frame(target)
         })
