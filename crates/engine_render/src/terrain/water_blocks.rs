@@ -347,17 +347,22 @@ impl WaterBlocks {
         };
         // The surfaces drawn of the tile, and of the tile it replaces once a
         // block compares with it.
-        let drawn = tile.water().map(|water| drawn_surfaces(water, tile.heights()));
+        let drawn = tile
+            .water()
+            .map(|water| drawn_surfaces(water, tile.heights()));
         let mut drawn_before: Option<Vec<f32>> = None;
         let mut texels = Texels::new();
         let mut kept = Texels::new();
         for pz in 0..patches {
             for px in 0..patches {
                 let index = pz * patches + px;
-                let holds = tile.water().zip(drawn.as_deref()).is_some_and(|(water, surfaces)| {
-                    water.patch_holds_water(px as u32, pz as u32)
-                        && block_texels(&tile, water, surfaces, (px, pz), &mut texels)
-                });
+                let holds = tile
+                    .water()
+                    .zip(drawn.as_deref())
+                    .is_some_and(|(water, surfaces)| {
+                        water.patch_holds_water(px as u32, pz as u32)
+                            && block_texels(&tile, water, surfaces, (px, pz), &mut texels)
+                    });
                 if !holds {
                     if blocks[index] != NO_WATER_BLOCK {
                         self.free.push(blocks[index]);

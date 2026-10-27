@@ -113,7 +113,10 @@ const FILTERS: &[(&str, &str)] = &[
         "a pattern's share past its threshold as far as the pixel's footprint resolves its \
          grain, the rest averaged into the share itself, its edge a pixel wide",
     ),
-    ("water_ramp", "a fade over the water's depth averaged over the depths the pixel spans"),
+    (
+        "water_ramp",
+        "a fade over the water's depth averaged over the depths the pixel spans",
+    ),
     (
         "water_shown",
         "a computed pattern's part drawn while it spans two pixels along the way it varies, as \
