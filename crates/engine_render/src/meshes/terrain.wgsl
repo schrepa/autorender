@@ -1456,7 +1456,9 @@ fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGro
 // relief through the same heights (`terrain_parallax`): their view rays
 // meet the material's whole heights from the drawn ground, so they move
 // the point by what the mesh left, and the two bands always sum to the
-// material's own heights. As the mesh refines toward the detail eye,
+// material's own heights. The terrain's resolve writes the depth of the
+// point they meet, so what reads depth after it sees both bands
+// (`terrain_resolved`). As the mesh refines toward the detail eye,
 // detail moves from the pixel band to the mesh band with the same total,
 // so nothing pops; and every bump is a stone the material's textures draw,
 // both bands reading its heights in both its lattices as its maps meet
@@ -1747,12 +1749,14 @@ fn terrain_track_slope_share(track: vec2<f32>, deform: f32) -> f32 {
 }
 
 // Where a fragment's view ray meets the ground: `world` moved across the
-// ground to where it shades, and `deform` the meters its materials let
-// tracks sink it at most where the deformation map holds tracks nearby
-// (otherwise 0).
+// ground to where it shades, `deform` the meters its materials let tracks
+// sink it at most where the deformation map holds tracks nearby (otherwise
+// 0), and `beyond` the meters along the view ray from the drawn ground to
+// the point it meets (nearer where negative; 0 where the ray moves nothing).
 struct TerrainRelief {
     world: vec3<f32>,
     deform: f32,
+    beyond: f32,
 }
 
 // The ground's pixel band at a fragment: every material of its blend
@@ -1839,12 +1843,15 @@ fn terrain_relief_across(way: vec3<f32>, normal: vec3<f32>) -> f32 {
 // detail eye, not by its distance or the angle it is seen at, with about a
 // step per pixel it moves, so far relief costs little and no ring or band
 // follows the eye; seen at a slant, it stands as deep as head on, as real
-// ground's bumps do.
+// ground's bumps do. The point the ray meets lies on the ray as far past
+// the drawn ground as it went to reach its depth there, which the terrain's
+// resolve writes the depth of (`terrain_resolved`).
 fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32,
         lifted: f32) -> TerrainRelief {
     var relief: TerrainRelief;
     relief.world = site.world;
     relief.deform = 0.0;
+    relief.beyond = 0.0;
     let to_point = site.world - camera.position.xyz;
     let ray = to_point / max(length(to_point), 1.0e-6);
     // Depth runs into the ground along its normal; rays meeting it edge on
@@ -1971,6 +1978,8 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
         }
     }
     relief.world = site.world + march * hit;
+    // The ray travels `travel`'s length per meter of depth.
+    relief.beyond = hit * length(travel);
     return relief;
 }
 
@@ -1979,7 +1988,9 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
 // their maps do not repeat evenly, lit by the sky it sees, from where it
 // sees it, and by the ground around where that hides the sky.
 fn terrain_point(relative: vec3<f32>) -> SurfacePoint {
-    let point = terrain_point_seen(relative, terrain_forward_look(relative));
+    let look = terrain_forward_look(relative);
+    // Its depth is its triangle's.
+    let point = terrain_point_seen(relative, look, terrain_seen(relative, look), relative);
     return widened(point, dpdx(point.normal), dpdy(point.normal));
 }
 
@@ -2018,11 +2029,13 @@ fn terrain_forward_look(relative: vec3<f32>) -> TerrainLook {
 // says, meets the ground: its site, on the true surface under where the
 // mesh band moved the ground drawn there and moved across the ground where
 // its pixel band and tracks show, the shading levels its pixel's footprint
-// gives and the meters tracks may sink it (`TerrainRelief`).
+// gives, the meters tracks may sink it and the meters along the view ray
+// from the drawn ground to the point it meets (`TerrainRelief`).
 struct TerrainSeen {
     site: TerrainSite,
     shading: TerrainShadingLevel,
     deform: f32,
+    beyond: f32,
 }
 
 fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
@@ -2067,12 +2080,15 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     // ground the mesh band lifted.
     let relief = terrain_parallax(site, shading, look.dither, dot(lift, geometric));
     site.world = relief.world;
-    return TerrainSeen(site, shading, relief.deform);
+    return TerrainSeen(site, shading, relief.deform, relief.beyond);
 }
 
-// `terrain_point` before its highlights widen with its normal's turn.
-fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
-    let seen = terrain_seen(relative, look);
+// `terrain_point` before its highlights widen with its normal's turn: the
+// fragment `relative` to the eye, seen as `look` says, where its view ray
+// meets the ground as `seen` says, its pixel's depth holding the point
+// `held` (less the eye).
+fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
+        held: vec3<f32>) -> SurfacePoint {
     let site = seen.site;
     let world = eye_world(relative);
     let local = world.xz - terrain.origin.xz;
@@ -2115,12 +2131,13 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
         occlusion *= 1.0 - 0.25 * pressed;
     }
     // Wet where the surface's rules or the water beside it wet the ground
-    // (`terrain_waterline`), as wet as the wetter of the two, darker and
-    // glossier between its cover's blades, its canopy as dry as the blades
-    // it stands for.
+    // (`terrain_waterline`, at the point its depth holds, as water's pass
+    // reads it), as wet as the wetter of the two, darker and glossier
+    // between its cover's blades, its canopy as dry as the blades it stands
+    // for.
     var roughness = ground.roughness;
-    let wet = max(terrain_wetness(local, seen.shading), terrain_waterline(world, site))
-        * (1.0 - ground.canopy);
+    let wet = max(terrain_wetness(local, seen.shading),
+        terrain_waterline(eye_world(held), site)) * (1.0 - ground.canopy);
     if wet > 0.0 {
         let soaked = terrain_wet_ground(roughness, wet);
         albedo *= soaked.x;
@@ -2165,9 +2182,10 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
 
 // Deferred shading: terrain's visibility pass writes the
 // terrain and depth of each pixel it covers, then one pass per terrain
-// shades the pixels holding it, once each: forward, the 2x2 quads its small
-// triangles cut shaded half again as many fragments.
-// Each pixel's terrain id and its depth's bits.
+// shades the pixels holding it, once each, and writes their depth where its
+// relief meets the view: forward, the 2x2 quads its small triangles cut
+// shaded half again as many fragments.
+// Each pixel's terrain id and its mesh's depth's bits.
 @group(2) @binding(18) var terrain_ids_texture: texture_2d<u32>;
 
 // The id of this fragment's terrain in the visibility pass.
@@ -2191,15 +2209,25 @@ fn terrain_ray_at(pixel: vec2<f32>, size: vec2<f32>) -> vec3<f32> {
     return relative / max(length(relative), 1.0e-30);
 }
 
+// The point a resolve pass shades at a pixel, and the point its view ray
+// meets the ground at: where that stood in the previous frame (clip x, y
+// and w) and its depth.
 struct TerrainResolved {
     point: SurfacePoint,
     previous: vec3<f32>,
+    depth: f32,
 }
 
 // The terrain point a resolve pass shades at `position`: discarded where
 // another surface or terrain shows. Its point and normal move per pixel as
 // its neighbors on the same surface show; the view ray as the quad's.
 // `dither` picks between the relief's whole step counts (`TerrainLook`).
+// Its depth and motion are those of the point its view ray meets the
+// ground at (`TerrainSeen`'s `beyond`), nearer or farther than the mesh
+// drawn there, so everything reading depth after it meets the relief's
+// stones; the mesh's own where the relief moves nothing. Only the pixels
+// the visibility pass left the terrain write it, so what stands in front
+// keeps its own.
 fn terrain_resolved(position: vec4<f32>, dither: f32) -> TerrainResolved {
     let pixel = vec2<i32>(position.xy);
     // A pixel of the frame's render size, which it draws at.
@@ -2229,39 +2257,84 @@ fn terrain_resolved(position: vec4<f32>, dither: f32) -> TerrainResolved {
     look.ray_dy = dpdyCoarse(ray);
     look.raw = same;
     look.dither = dither;
-    let seen = terrain_point_seen(relative, look);
+    let seen = terrain_seen(relative, look);
+    // The point the view ray meets the ground at, along it from the drawn
+    // ground.
+    let met = relative + relative * (seen.beyond / max(away, 1.0e-6));
+    let shown = terrain_point_seen(relative, look, seen, met);
     var resolved: TerrainResolved;
-    resolved.point = widened(seen, select(vec3<f32>(0.0), dpdxFine(seen.normal), same.x),
-        select(vec3<f32>(0.0), dpdyFine(seen.normal), same.y));
-    resolved.previous = (camera.previous_view_projection
-        * vec4<f32>(eye_world(relative), 1.0)).xyw;
+    resolved.point = widened(shown, select(vec3<f32>(0.0), dpdxFine(shown.normal), same.x),
+        select(vec3<f32>(0.0), dpdyFine(shown.normal), same.y));
+    resolved.previous = (camera.previous_view_projection * vec4<f32>(eye_world(met), 1.0)).xyw;
+    // Its depth, the nearest there is where it stands at or behind the eye.
+    resolved.depth = depth;
+    if seen.beyond != 0.0 {
+        let clip = terrain_view.relative_view_projection * vec4<f32>(met, 1.0);
+        resolved.depth = select(1.0, saturate(clip.z / clip.w), clip.w > 0.0);
+    }
     return resolved;
 }
 
-@fragment
-fn fs_terrain_resolve_post(@builtin(position) position: vec4<f32>) -> SceneTargets {
-    return scene_targets(finish_ground(terrain_resolved(position, 0.5).point, vec3<f32>(0.0)),
-        position.xy);
+// The scene targets of a terrain resolve, and the depth of the point its
+// view ray meets the ground at (`TerrainResolved`).
+struct TerrainSceneTargets {
+    @location(0) color: vec4<f32>,
+    @location(1) glow: vec2<f32>,
+    @location(2) surface: vec4<u32>,
+    @builtin(frag_depth) depth: f32,
+}
+
+struct TerrainTemporalTargets {
+    @location(0) color: vec4<f32>,
+    @location(1) motion: vec2<f32>,
+    @location(2) glow: vec2<f32>,
+    @location(3) surface: vec4<u32>,
+    @builtin(frag_depth) depth: f32,
+}
+
+fn terrain_scene_targets(shaded: Shaded, resolved: TerrainResolved, position: vec4<f32>)
+        -> TerrainSceneTargets {
+    let targets = scene_targets(shaded, position.xy);
+    return TerrainSceneTargets(targets.color, targets.glow, targets.surface, resolved.depth);
+}
+
+fn terrain_temporal_targets(shaded: Shaded, resolved: TerrainResolved, position: vec4<f32>)
+        -> TerrainTemporalTargets {
+    let targets = temporal_targets(shaded, position, resolved.previous);
+    return TerrainTemporalTargets(targets.color, targets.motion, targets.glow, targets.surface,
+        resolved.depth);
 }
 
 @fragment
-fn fs_terrain_resolve_post_lit(@builtin(position) position: vec4<f32>) -> SceneTargets {
-    let point = terrain_resolved(position, 0.5).point;
-    return scene_targets(finish_ground(point, local_light(point, position.xy)), position.xy);
+fn fs_terrain_resolve_post(@builtin(position) position: vec4<f32>) -> TerrainSceneTargets {
+    let resolved = terrain_resolved(position, 0.5);
+    return terrain_scene_targets(finish_ground(resolved.point, vec3<f32>(0.0)), resolved,
+        position);
 }
 
 @fragment
-fn fs_terrain_resolve_temporal(@builtin(position) position: vec4<f32>) -> TemporalTargets {
+fn fs_terrain_resolve_post_lit(@builtin(position) position: vec4<f32>) -> TerrainSceneTargets {
+    let resolved = terrain_resolved(position, 0.5);
+    let point = resolved.point;
+    return terrain_scene_targets(finish_ground(point, local_light(point, position.xy)), resolved,
+        position);
+}
+
+@fragment
+fn fs_terrain_resolve_temporal(@builtin(position) position: vec4<f32>)
+        -> TerrainTemporalTargets {
     let resolved = terrain_resolved(position, fade_noise(position.xy));
-    return temporal_targets(finish_ground(resolved.point, vec3<f32>(0.0)), position,
-        resolved.previous);
+    return terrain_temporal_targets(finish_ground(resolved.point, vec3<f32>(0.0)), resolved,
+        position);
 }
 
 @fragment
-fn fs_terrain_resolve_temporal_lit(@builtin(position) position: vec4<f32>) -> TemporalTargets {
+fn fs_terrain_resolve_temporal_lit(@builtin(position) position: vec4<f32>)
+        -> TerrainTemporalTargets {
     let resolved = terrain_resolved(position, fade_noise(position.xy));
-    return temporal_targets(finish_ground(resolved.point, local_light(resolved.point, position.xy)),
-        position, resolved.previous);
+    let point = resolved.point;
+    return terrain_temporal_targets(finish_ground(point, local_light(point, position.xy)),
+        resolved, position);
 }
 
 fn shade_terrain(input: TerrainOutput) -> Shaded {

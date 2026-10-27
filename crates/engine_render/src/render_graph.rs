@@ -254,8 +254,9 @@ pub(crate) enum Pass {
     },
     /// Terrain shaded deferred in the first phase, after the meshes: its
     /// visibility, writing each pixel's terrain and depth; each terrain's
-    /// resolve, shading its pixels once; then its cover, placed objects and
-    /// the sky.
+    /// resolve, shading its pixels once and writing the depth of the point
+    /// its relief meets the view at there; then its cover, placed objects
+    /// and the sky.
     TerrainIds,
     TerrainResolve,
     OpaqueLate,
@@ -920,7 +921,9 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
 /// Declares terrain shaded deferred after the first phase's meshes, drawing
 /// into the frame's `targets`: its visibility over their depths and those
 /// masked placed objects' pre-pass left, each terrain's resolve of the
-/// pixels it holds, and its cover, placed objects and the sky over them.
+/// pixels it holds, which writes their depth where its relief meets the view
+/// for every later pass, and its cover, placed objects and the sky over
+/// them.
 fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Resource, Clear)]) {
     use Resource::*;
     graph
@@ -942,6 +945,7 @@ fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Res
     for &(target, _) in targets {
         resolve = resolve.color(target, Access::Load);
     }
+    resolve.depth(Depth, Access::Load);
     let mut late = graph
         .add(Pass::OpaqueLate)
         .read_if(shape.scatter, Placed)

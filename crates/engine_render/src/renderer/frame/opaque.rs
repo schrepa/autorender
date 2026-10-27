@@ -183,8 +183,9 @@ impl Renderer {
         self.draw_terrain_ids(&mut pass)
     }
 
-    /// Each terrain's resolve, shading the pixels it holds once each;
-    /// returns the draws.
+    /// Each terrain's resolve, shading the pixels it holds once each and
+    /// writing their depth where its relief meets the view; returns the
+    /// draws.
     pub(super) fn encode_terrain_resolve(
         &self,
         state: &FrameState<'_>,
