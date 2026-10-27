@@ -248,11 +248,7 @@ impl StaticTables {
     /// it and those that arrived, and whether one arrived whole (the
     /// latest, which frames carry).
     pub fn tables(&self) -> [(&'static str, u64, u64, bool); 3] {
-        [
-            self.cloud_noise.row(),
-            self.sky.row(),
-            self.fall_map.row(),
-        ]
+        [self.cloud_noise.row(), self.sky.row(), self.fall_map.row()]
     }
 
     /// Jobs of its tables that failed, each asked for again a while later,

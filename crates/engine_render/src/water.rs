@@ -518,7 +518,10 @@ impl WaterPass {
                 ("water_surface", crate::pipelines::view(tiles.surfaces)),
                 ("water_info", crate::pipelines::view(tiles.info)),
                 ("water", self.uniform.as_entire_binding()),
-                ("water_fall_sampler", crate::pipelines::sampler(map.sampler())),
+                (
+                    "water_fall_sampler",
+                    crate::pipelines::sampler(map.sampler()),
+                ),
                 ("water_fall_map", crate::pipelines::view(map.view())),
                 crate::buffers::entry("water_sim_cells", sim_cells),
                 crate::buffers::entry("water_sim_ground", sim_ground),
@@ -1119,7 +1122,10 @@ fn ocean_draw(
             ("water_surface", crate::pipelines::view(&surfaces)),
             ("water_info", crate::pipelines::view(&info)),
             ("water", uniform.as_entire_binding()),
-            ("water_fall_sampler", crate::pipelines::sampler(map.sampler())),
+            (
+                "water_fall_sampler",
+                crate::pipelines::sampler(map.sampler()),
+            ),
             ("water_fall_map", crate::pipelines::view(map.view())),
             crate::buffers::entry("water_sim_cells", &placeholders.sim),
             crate::buffers::entry("water_sim_ground", &placeholders.sim),

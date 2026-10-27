@@ -924,8 +924,7 @@
       "section": "wind",
       "smokes": [
         "terrain-surface",
-        "terrain-water-sky",
-        "torrent"
+        "terrain-water-sky"
       ],
       "stats": false
     },

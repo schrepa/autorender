@@ -1326,7 +1326,7 @@ export type WaterKind = "river" | "lake" | "fall" | "sea";
  * What a terrain's water is doing at a pixel, tiles' or simulated, as the
  * water's debug views show it: its depth, speed and Froude numbers to a
  * half float's precision, its span to a step of its logarithmic scale
- * (about 4%), its roughness and shares to 1/255 and its wind to 2/255.
+ * (about 4%), and its roughness and shares to 1/255.
  */
 export interface WaterProbe {
   /** Meters of water over the ground. */
@@ -1361,12 +1361,6 @@ export interface WaterProbe {
   turbulence: number;
   /** How much white water is born there, 0 to 1. */
   white: number;
-  /**
-   * The wind's speed over it, gusting and sheltered by the terrain
-   * upwind, as a share of the free wind's: 0 (still air) to 2 (a gust's
-   * most).
-   */
-  wind: number;
 }
 
 /** What `water_query` answers: the sea and ground under each point. */
