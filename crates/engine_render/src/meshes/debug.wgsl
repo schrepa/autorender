@@ -331,7 +331,7 @@ fn fs_debug_ocean(input: OceanOutput) -> DebugTargets {
 @fragment
 fn fs_debug_fall(input: FallOutput) -> DebugTargets {
     let shade = shade_fall(input);
-    if shade.coverage < 0.5 { // optics: falls cover as their shading sees them
+    if shade.shown < 0.5 { // optics: falls show as their shading sees them
         discard;
     }
     let point = debug_point(eye_world(input.relative), shade.shaded.normal);

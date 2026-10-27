@@ -13,7 +13,8 @@
 // solid. A pixel reads them through its own footprint (`water_footprint`),
 // whose levels resolve them across the view and whose anisotropy averages
 // them along it, so far foam streaks along the view, and bubbles finer than
-// it resolves show the share itself.
+// it resolves show the share itself (`water_past`, by which falls' jets
+// take their thresholds too).
 
 // Falling water's map's foam (`water_fall_map`'s b and a): the cells of its
 // bubbles across it (`engine_tables::falls::BUBBLES`), FALL_MAP_STRETCH
@@ -35,12 +36,12 @@ const WATER_FOAM_FINER: f32 = 3.0;
 // (`engine_terrain::shallow_water::FOAM_LIFE`).
 const WATER_FOAM_SHORTEST: f32 = 1.0;
 const WATER_FOAM_LIFE: f32 = 20.0;
-// The share of the surface below which foam shows nothing: less than an
-// 8-bit target's step.
+// The share of the surface below which foam, or any pattern past a
+// threshold (`water_past`), shows nothing: less than an 8-bit target's step.
 const WATER_FOAM_LEAST: f32 = 1.0 / 255.0;
-// The scale of the logistic distribution of spread 1, √3/π: foam takes its
-// grain as logistic, whose share past a threshold and mean over it have
-// closed forms.
+// The scale of the logistic distribution of spread 1, √3/π: a pattern past a
+// threshold (`water_past`) takes its grain as logistic, whose share past a
+// threshold and mean over it have closed forms.
 const WATER_LOGISTIC: f32 = 0.5513289;
 // The share of the light under it a single layer of wet bubbles hides,
 // each layer over it hiding as much of what those below let through; the
@@ -73,6 +74,42 @@ const WATER_FOAM_CAPPING: f32 = 0.12;
 fn water_resolved_share(footprint: WaterFootprint, size: f32) -> f32 {
     let ratios = vec2<f32>(footprint.resolved, footprint.along) / size;
     return inverseSqrt((1.0 + ratios.x * ratios.x) * (1.0 + ratios.y * ratios.y));
+}
+
+// Two patterns' grains past their thresholds over a pixel: the share of the
+// pixel each covers (`covers`), and how many of its spreads each stands
+// over its threshold on average there (`over`).
+struct WaterPast {
+    covers: vec2<f32>,
+    over: vec2<f32>,
+}
+
+// Two patterns' grains `grains` (each its deviation from its mean, in its
+// spreads, as a pixel reads it) past the thresholds leaving `amounts` of
+// each past them (0 to 1), for a pixel resolving `resolved` of each grain's
+// variance (`water_resolved_share`): each grain taken as logistic of its
+// spread, whose share past a threshold and mean over it have closed forms,
+// its threshold's edge spanning what the footprint averages of it and how
+// much it changes across a pixel of the display (`material_detail`), in its
+// spreads squared and no more than all of it. A grain the pixel resolves
+// covers where it passes its threshold, as sharply as a pixel shows, and
+// one it averages away covers its amount itself, so no share changes as
+// the pattern recedes; an amount too small to show (WATER_FOAM_LEAST)
+// covers nothing. Its derivatives need it called in uniform control flow.
+fn water_past(grains: vec2<f32>, resolved: vec2<f32>, amounts: vec2<f32>) -> WaterPast {
+    let change = fwidth(grains) * material_detail();
+    let spread = sqrt(clamp(vec2<f32>(1.0) - resolved + change * change / 12.0,
+        vec2<f32>(1.0e-6), vec2<f32>(1.0)));
+    let shows = amounts > vec2<f32>(WATER_FOAM_LEAST);
+    let amount = clamp(amounts, vec2<f32>(WATER_FOAM_LEAST), vec2<f32>(1.0 - WATER_FOAM_LEAST));
+    let past = clamp((grains / WATER_LOGISTIC + log(amount / (1.0 - amount))) / spread,
+        vec2<f32>(-30.0), vec2<f32>(30.0));
+    var result: WaterPast;
+    result.covers = select(vec2<f32>(0.0), 1.0 / (1.0 + exp(-past)), shows);
+    result.over = select(vec2<f32>(0.0),
+        spread * WATER_LOGISTIC * (max(past, vec2<f32>(0.0)) + log(1.0 + exp(-abs(past)))),
+        shows);
+    return result;
 }
 
 // The share of water's surface its folding crests whiten: where its waves
@@ -232,19 +269,19 @@ struct WaterFroth {
 // bounds: 1 + shear × life times as long as across, so a line of it reads
 // as streaks along the current; white water's fresh foam stays round, read
 // apart where both show. The sets blend keeping their spread. Each kind
-// covers the share of its grain past the threshold its amount sets, the
-// grain taken as logistic of its spread, so bubbles finer than the
-// footprint resolves show the amount itself; the threshold's edge spans
-// what the footprint averages of the grain, across the view and along it
-// (`water_resolved_share`), and how much it changes across a pixel of the
-// display (`material_detail`), so foam never draws lace finer than a pixel,
-// nor thins out or shimmers as it recedes, and far foam keeps the streaks
-// its grain shows across the view. Past its threshold it heaps a layer of
-// its finer bubbles for each spread its grain stands over it, white water's
-// whole and carried foam's drained, each layer hiding WATER_FOAM_FILM of
-// what those below let through. Its relief draws while its bubbles, seen
-// from the detail eye, span two pixels across the view (`water_shown`). Its
-// derivatives need it called in uniform control flow.
+// covers the share of its grain past the threshold its amount sets
+// (`water_past`), the grain taken as logistic of its spread, so bubbles
+// finer than the footprint resolves show the amount itself; the threshold's
+// edge spans what the footprint averages of the grain, across the view and
+// along it (`water_resolved_share`), and how much it changes across a pixel
+// of the display (`material_detail`), so foam never draws lace finer than a
+// pixel, nor thins out or shimmers as it recedes, and far foam keeps the
+// streaks its grain shows across the view. Past its threshold it heaps a
+// layer of its finer bubbles for each spread its grain stands over it,
+// white water's whole and carried foam's drained, each layer hiding
+// WATER_FOAM_FILM of what those below let through. Its relief draws while
+// its bubbles, seen from the detail eye, span two pixels across the view
+// (`water_shown`). Its derivatives need it called in uniform control flow.
 fn water_froth(p: vec2<f32>, footprint: WaterFootprint, amounts: vec2<f32>, flow: vec2<f32>,
         shear: f32, time: f32, stagger: f32, seen: f32) -> WaterFroth {
     // The share of each octave's variance the footprint keeps
@@ -324,23 +361,12 @@ fn water_froth(p: vec2<f32>, footprint: WaterFootprint, amounts: vec2<f32>, flow
         grains = vec2<f32>(grain.y + grain.w, grain.x + grain.z) * inverseSqrt(2.0);
         resolved = 0.5 * (kept.x + select(0.0, kept.y, finer));
     }
-    // What the footprint averages of each grain and how much the grain
-    // changes across a pixel of the display, in its spreads squared and no
-    // more than all of it: the threshold's edge spans both.
-    let change = fwidth(grains) * material_detail();
-    let spread = sqrt(clamp(vec2<f32>(1.0 - resolved) + change * change / 12.0,
-        vec2<f32>(1.0e-6), vec2<f32>(1.0)));
     // Each kind's share past the threshold its amount sets, and how many
-    // spreads its grain stands over it on average over the pixel, as the
-    // logistic of the grain's spread gives them.
-    let shows = amounts > vec2<f32>(WATER_FOAM_LEAST);
-    let amount = clamp(amounts, vec2<f32>(WATER_FOAM_LEAST), vec2<f32>(1.0 - WATER_FOAM_LEAST));
-    let past = clamp((grains / WATER_LOGISTIC + log(amount / (1.0 - amount))) / spread,
-        vec2<f32>(-30.0), vec2<f32>(30.0));
-    let covers = select(vec2<f32>(0.0), 1.0 / (1.0 + exp(-past)), shows);
-    let over = select(vec2<f32>(0.0),
-        spread * WATER_LOGISTIC * (max(past, vec2<f32>(0.0)) + log(1.0 + exp(-abs(past)))),
-        shows);
+    // spreads its grain stands over it on average over the pixel
+    // (`water_past`).
+    let past = water_past(grains, vec2<f32>(resolved), amounts);
+    let covers = past.covers;
+    let over = past.over;
     // The layers past its first each kind heaps where it covers, one a
     // spread, carried foam's drained; what they let through of what the
     // first does, and the share of the surface each kind hides.

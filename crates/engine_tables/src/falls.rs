@@ -41,6 +41,15 @@ pub const BUBBLES: usize = TEXELS / BUBBLE_CELLS;
 /// How far the strands and fibers spread about their middle (their
 /// standard deviation).
 pub const SPREAD: f32 = 0.17;
+/// The texels across and along the map the strands' grain spans: the cells
+/// of their coarser octave. Water resolves the strands by it.
+pub const STRAND_ACROSS: usize = STRAND_CELLS[0][0];
+pub const STRAND_ALONG: usize = STRAND_CELLS[0][1];
+/// The texels across and along the map a fiber spans: the three its noise
+/// is smoothed across, and those its line integrates it over. Water
+/// resolves the fibers by them.
+pub const FIBER_ACROSS: usize = 3;
+pub const FIBER_ALONG: usize = 2 * FIBER_REACH as usize + 1;
 /// The patterns' seeds: the strands' octaves, the fibers' noise, their
 /// meander and the bubbles'.
 const SEEDS: [u32; 5] = [
