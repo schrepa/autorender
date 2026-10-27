@@ -4,9 +4,9 @@
 //! cube holds the sky, drawn into the radiance cube whenever the atmosphere
 //! changes; the others hold reflection probes, whose captures draw into the
 //! same radiance cube face by face. Screen-space reflections
-//! fall back to them; a surface smoother than the sky's first level
-//! resolves mirrors the sky's own light instead (`meshes/shading.wgsl`'s
-//! `mirrored_sky`).
+//! fall back to them; a surface whose lobe is narrower than the sky map's
+//! texels mirrors the sky's own light instead, the map taking over as the
+//! lobe widens past them (`meshes/shading.wgsl`'s `mirrored_sky`).
 
 use crate::bindings::{ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY};
 use crate::cached::{Bound, Versioned};

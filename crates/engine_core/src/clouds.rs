@@ -1,9 +1,10 @@
 //! Clouds: a layer of cumulus over the world, drifting with
-//! the wind and lit by the sun and the sky. Renderers march it from the
-//! camera into a dome of the sky above it, a slice of the dome's rows each
-//! frame (all of them on exact frames), which the sky, its reflections and
-//! the environment maps show; and from above the world toward the sun into
-//! a map of the light it lets through, which shades the ground under it.
+//! the wind and lit by the sun and the sky. Renderers march it into a dome
+//! of the sky, a slice of the dome's rows each frame (all of them on exact
+//! frames), from the camera, which the sky and the environment maps show,
+//! and from the camera mirrored under what lies below it, which the sky's
+//! reflections show; and from above the world toward the sun into a map of
+//! the light it lets through, which shades the ground under it.
 //! The view marches them again a ray per pixel after the opaque scene, each
 //! up to what its pixel shows, so they stand in front of mountains, around a
 //! camera inside the layer and below one above it.

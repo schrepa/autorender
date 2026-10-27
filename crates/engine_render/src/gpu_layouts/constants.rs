@@ -372,6 +372,11 @@ gpu_consts! {
     /// through the layer each holds.
     pub(crate) const LIGHT_TEXELS: u32 = 384 => ["LIGHT_TEXELS" in CLOUDS_SHADER];
     pub(crate) const LIGHT_HEIGHTS: u32 = 16 => ["LIGHT_HEIGHTS" in CLOUDS_SHADER];
+    /// The layers of each of the clouds' domes: the clouds marched from the
+    /// eye, which the sky, its environment map and reflection probes' sky
+    /// show, and from the eye's mirror point, which reflections show.
+    pub(crate) const EYE_LAYER: u32 = 0 => ["EYE_LAYER"];
+    pub(crate) const MIRROR_LAYER: u32 = 1 => ["MIRROR_LAYER"];
 
     // crate::sky
     /// The light falling at noon the physically based sky's exposure adapts

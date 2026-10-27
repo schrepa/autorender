@@ -744,17 +744,34 @@ struct EnvironmentLight {
 }
 
 // The lobe a surface reflects its environment over: its dominant direction
-// (`dominant_direction`), which the maps are read along, and the level of
-// the environment maps its roughness blurs them to.
+// (`dominant_direction`), which the maps are read along; the level of the
+// environment maps its roughness blurs them to; and how wide it is against
+// the texels of the maps' first level, in levels (`lobe_texels`).
 struct EnvironmentLobe {
     direction: vec3<f32>,
     level: f32,
+    texels: f32,
 }
 
 // The lobe `point` reflects its environment over.
 fn environment_lobe(point: SurfacePoint) -> EnvironmentLobe {
     let levels = textureNumLevels(environment_maps);
-    return EnvironmentLobe(dominant_direction(point), point.roughness * f32(levels - 1u));
+    return EnvironmentLobe(dominant_direction(point), point.roughness * f32(levels - 1u),
+        lobe_texels(point.alpha));
+}
+
+// How wide a lobe of reflection of GGX's `alpha` is against the texels of
+// the environment maps' first level, in levels, as their blur measures its
+// samples against the texels (`environment.wgsl`'s `prefiltered`): half the
+// base-2 logarithm of its solid angle over a texel's, negative while it is
+// narrower than one. Its solid angle is the reciprocal of its peak density
+// with the view along the normal, as the maps assume (GGX's D over 4 there,
+// 1 / (4 pi alpha^2)); a texel's is the sphere's over the cube's texels.
+fn lobe_texels(alpha: f32) -> f32 {
+    let size = f32(textureDimensions(environment_maps).x);
+    let lobe = 4.0 * PI * alpha * alpha;
+    let texel = 4.0 * PI / (6.0 * size * size);
+    return 0.5 * log2(max(lobe / texel, 1.0e-12));
 }
 
 // The environment around `world` reflected over `lobe`, from one walk of the
@@ -826,18 +843,22 @@ fn sky_map_light(lobe: EnvironmentLobe) -> vec3<f32> {
         lobe.level).rgb;
 }
 
-// The sky's light `lobe` reflects from `world`, exact where the map's
-// texels are coarser than the lobe: the sky's own light along it
-// (`sky_along`) stands in for the map's first level, the sky unblurred, and
-// hands over to its second as trilinear filtering blends levels, so a
-// mirror takes the exact sky, a lobe blurred to the second level or past it
-// the map, and every roughness keeps the sky's mean.
+// The sky's light `lobe` reflects from `world`: exact, as a mirror there
+// shows it (`mirrored_along`), while the lobe is no wider than a texel of
+// the sky's environment map, which could only coarsen it; the map, at the
+// level its roughness blurs it to, takes over as the lobe widens past its
+// texels, all of it once the lobe spans two, a level up. So calm water takes
+// the exact sky alone, and every roughness keeps the sky's mean.
 fn mirrored_sky(lobe: EnvironmentLobe, world: vec3<f32>) -> vec3<f32> {
-    let blurred = sky_map_light(EnvironmentLobe(lobe.direction, max(lobe.level, 1.0)));
-    if lobe.level >= 1.0 {
-        return blurred;
+    let share = saturate(lobe.texels);
+    if share >= 1.0 {
+        return sky_map_light(lobe);
     }
-    return mix(sky_along(world, lobe.direction), blurred, lobe.level);
+    let exact = mirrored_along(world, lobe.direction);
+    if share <= 0.0 {
+        return exact;
+    }
+    return mix(exact, sky_map_light(lobe), share);
 }
 
 // Whether `world` lies inside an interior probe's box. Lights keep to

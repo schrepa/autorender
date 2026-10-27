@@ -439,6 +439,12 @@ pub struct RenderSnapshot {
     /// what a pixel spans measure that from it too, so they stay where it
     /// stands however the view turns or moves.
     pub detail_eye: Vec3,
+    /// The height of what lies straight under the camera's eye: the
+    /// surface of the world's water standing there
+    /// ([`crate::WaterSources`]), or else its ground ([`crate::Ground`]);
+    /// `None` over neither. Renderers mirror the eye across it for the
+    /// clouds smooth surfaces reflect.
+    pub surface_under_eye: Option<f32>,
     /// Presentation time ([`crate::FrameTime::elapsed_seconds`]) for animated
     /// surfaces such as ripples.
     pub elapsed_seconds: f32,

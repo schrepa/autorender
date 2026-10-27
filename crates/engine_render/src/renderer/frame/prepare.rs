@@ -662,16 +662,17 @@ impl Renderer {
             gpu_prepared,
         } = self.prepare_presentation(frame, gpu, kind, temporal_frame, &mut prelude.inputs);
         let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
-        // Clouds: this frame's march of their dome, which the
-        // sky, its environment map and what smooth surfaces mirror show;
-        // exact frames march all of it.
+        // Clouds: this frame's march of their dome from the eye, which the
+        // sky and its environment map show, and from its mirror point across
+        // what lies under it, which what smooth surfaces mirror shows; exact
+        // frames march all of it.
         self.features.clouds.get_mut().prepare(
             &self.device,
             &self.queue,
             (
                 &snapshot.environment.clouds,
                 snapshot.tables.cloud_noise.as_ref(),
-                snapshot.camera_position,
+                (snapshot.camera_position, snapshot.surface_under_eye),
                 snapshot.presented_seconds,
             ),
             (lighting, self.features.sky.get().bindings()),

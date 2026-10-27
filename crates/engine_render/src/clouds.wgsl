@@ -1,9 +1,11 @@
-// Clouds: a layer of cumulus marched from the camera into a
-// dome of the sky above it. The dome's texel (u, v) looks toward azimuth
-// 2 pi u and up by the elevation mix(-asin(HORIZON), pi / 2, v), every row
-// as many degrees (`scene.wgsl`'s `cloud_dome_uv`); each holds the light
-// the clouds scatter toward the eye (linear, as the sky's) and the share of
-// the sky behind them that passes. Two tiling volumes of noise, the
+// Clouds: a layer of cumulus marched into a dome of the sky in two layers:
+// from the camera, and from its mirror point under the surface below it,
+// which reflections see the clouds from (`clouds.rs`'s `Origins`). The
+// dome's texel (u, v) looks toward azimuth 2 pi u and up by the elevation
+// mix(-asin(HORIZON), pi / 2, v), every row as many degrees (`scene.wgsl`'s
+// `cloud_dome_uv`); each holds the light the clouds scatter toward the point
+// its layer marched from (linear, as the sky's) and the share of the sky
+// behind them that passes. Two tiling volumes of noise, the
 // scene's static tables (`engine_tables::clouds` makes them), shape the
 // clouds: Perlin-Worley shapes, and the finer wisps of Worley's cells at
 // five frequencies eroding their edges, read through their mipmaps as wide
@@ -15,6 +17,9 @@ struct CloudUniform {
     // The camera (world); w: 1 with the physically based sky, whose sun
     // lights each cloud where it stands.
     eye: vec4<f32>,
+    // The mirror point the dome's MIRROR_LAYER marches from (world); w
+    // unused.
+    mirror: vec4<f32>,
     // The layer's base and top (world meters), its coverage and density.
     layer: vec4<f32>,
     // The wind's drift so far (meters, x and z), the meters across the
@@ -48,7 +53,7 @@ struct CloudUniform {
 @group(0) @binding(1) var noise_shape: texture_3d<f32>;
 @group(0) @binding(2) var noise_sampler: sampler;
 @group(0) @binding(4) var noise_detail: texture_3d<f32>;
-@group(0) @binding(3) var dome: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3) var dome: texture_storage_2d_array<rgba16float, write>;
 // The shadows' grid: the sunlight passing the layer up from each cell of
 // its base, two cells (along x) a word in half floats.
 @group(0) @binding(5) var<storage, read_write> shadow_cells: array<u32>;
@@ -84,6 +89,9 @@ struct CloudView {
 // Rays below the horizon by this much (sine of their elevation) see no
 // clouds (`scene.wgsl`'s `CLOUD_HORIZON`).
 const HORIZON: f32 = 0.05;
+// The dome's layer marched from the mirror point, which reflections read;
+// the other is marched from the eye (`sky_light.wgsl`).
+const MIRROR_LAYER: u32 = 1u;
 const TAU: f32 = 6.2831853;
 // Steps along each ray through the layer (one per STEP_LENGTH meters,
 // between the fewest and the most), toward the sun from each step, and the
@@ -91,7 +99,7 @@ const TAU: f32 = 6.2831853;
 const FEWEST_STEPS: f32 = 24.0;
 const MOST_STEPS: f32 = 64.0;
 const STEP_LENGTH: f32 = 150.0;
-// Near the eye (inside the layer) steps start this many
+// Near a ray's origin (an eye inside the layer) steps start this many
 // meters long and grow with the distance, by this share of it, up to the
 // ray's even step; no ray takes more than this many.
 const NEAREST_STEP: f32 = 25.0;
@@ -256,12 +264,13 @@ fn henyey_greenstein(cosine: f32, g: f32) -> f32 {
     return (1.0 - g2) / (2.0 * TAU * pow(1.0 + g2 - 2.0 * g * cosine, 1.5));
 }
 
-// The clouds seen from the eye along `direction` up to `limit` meters, by
-// a ray whose cone spans `cone` radians: the light they scatter toward the
-// eye and the share of what lies behind that passes, the detail the ray
-// meets averaged over the cone's width where it meets it (`cloud_density`).
-fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32, cone: f32) -> vec4<f32> {
-    let eye = clouds.eye.xyz;
+// The clouds seen from `origin` along `direction` up to `limit` meters, by
+// a ray whose cone spans `cone` radians: the light they scatter toward
+// `origin` and the share of what lies behind that passes, the detail the
+// ray meets averaged over the cone's width where it meets it
+// (`cloud_density`).
+fn march(origin: vec3<f32>, direction: vec3<f32>, texel: vec2<u32>, limit: f32,
+        cone: f32) -> vec4<f32> {
     let base = clouds.layer.x;
     let top = clouds.layer.y;
     let reach = min(REACH, limit);
@@ -270,18 +279,18 @@ fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32, cone: f32) -> vec4<
     var near = 0.0;
     var far = reach;
     if abs(direction.y) > 1.0e-5 {
-        let to_base = (base - eye.y) / direction.y;
-        let to_top = (top - eye.y) / direction.y;
+        let to_base = (base - origin.y) / direction.y;
+        let to_top = (top - origin.y) / direction.y;
         near = max(min(to_base, to_top), 0.0);
         far = min(max(to_base, to_top), reach);
-    } else if eye.y < base || eye.y > top {
+    } else if origin.y < base || origin.y > top {
         return clear;
     }
     if far <= near {
         return clear;
     }
     // A step every few hundred meters, longer on the longest rays, and
-    // near the eye a few tens of meters, growing with the distance as the
+    // near the origin a few tens of meters, growing with the distance as the
     // clouds' detail on screen shrinks; each ray starts its steps at its
     // own offset, which hides their banding: interleaved gradient noise
     // (Jimenez 2014) over the dome's texels or the view's pixels, whose
@@ -299,7 +308,7 @@ fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32, cone: f32) -> vec4<
         let step = min(even, max(NEAREST_STEP, along * STEP_SHARE));
         let here = along;
         along += step;
-        let p = eye + direction * here;
+        let p = origin + direction * here;
         let density = cloud_density(p, true, here * cone);
         if density <= 0.0 {
             continue;
@@ -399,9 +408,10 @@ fn light_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// A band of the dome's rows: `clouds.dome.w` from `clouds.dome.z`, each
-// texel's ray as wide as the dome's texels: the wider of a column's turn
-// around the horizon and a row's rise.
+// A band of the dome's rows in its layer `id.z`: `clouds.dome.w` from
+// `clouds.dome.z`, marched from the mirror point in MIRROR_LAYER and from the
+// eye in the other, each texel's ray as wide as the dome's texels: the wider
+// of a column's turn around the horizon and a row's rise.
 @compute @workgroup_size(8, 8)
 fn march_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     let row = clouds.dome.z + id.y;
@@ -410,8 +420,9 @@ fn march_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let uv = (vec2<f32>(f32(id.x), f32(row)) + 0.5) / vec2<f32>(clouds.dome.xy);
     let cone = max(TAU / f32(clouds.dome.x), (0.25 * TAU + asin(HORIZON)) / f32(clouds.dome.y));
-    textureStore(dome, vec2<u32>(id.x, row),
-        march(dome_direction(uv), vec2<u32>(id.x, row), REACH, cone));
+    let origin = select(clouds.eye.xyz, clouds.mirror.xyz, id.z == MIRROR_LAYER);
+    textureStore(dome, vec2<u32>(id.x, row), id.z,
+        march(origin, dome_direction(uv), vec2<u32>(id.x, row), REACH, cone));
 }
 
 // The direction from the eye through the view's normalized device point
@@ -454,7 +465,7 @@ fn march_view(@builtin(global_invocation_id) id: vec3<u32>,
                 let point = cloud_view.inverse_view_projection * vec4<f32>(ndc, depth, 1.0);
                 limit = length(point.xyz / point.w - clouds.eye.xyz);
             }
-            cloud = march(direction, id.xy, limit, cone);
+            cloud = march(clouds.eye.xyz, direction, id.xy, limit, cone);
         }
         textureStore(view_out, id.xy, cloud);
         if cloud.a < 0.999 {

@@ -242,6 +242,7 @@ impl<'a> RenderFrame<'a> {
             view_projection,
             camera_position,
             detail_eye,
+            surface_under_eye,
             elapsed_seconds,
             presented_seconds,
             environment,
@@ -268,6 +269,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.view_projection = *view_projection;
         snapshot.camera_position = *camera_position;
         snapshot.detail_eye = *detail_eye;
+        snapshot.surface_under_eye = *surface_under_eye;
         snapshot.elapsed_seconds = *elapsed_seconds;
         snapshot.presented_seconds = *presented_seconds;
         snapshot.environment = *environment;

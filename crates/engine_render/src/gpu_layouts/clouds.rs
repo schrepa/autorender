@@ -2,7 +2,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-pub(crate) use super::constants::{LIGHT_HEIGHTS, LIGHT_TEXELS, SHADOW_CELLS};
+pub(crate) use super::constants::{LIGHT_HEIGHTS, LIGHT_TEXELS, MIRROR_LAYER, SHADOW_CELLS};
 /// Bytes of the shadows' grid: a half float a cell.
 pub(crate) const CLOUD_SHADOW_BYTES: usize = (SHADOW_CELLS * SHADOW_CELLS * 2) as usize;
 /// Bytes of the light map: a word for each pair of neighbouring heights of
@@ -15,6 +15,7 @@ gpu_structs! {
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
     pub(crate) struct CloudUniform as ["CloudUniform"] {
         pub eye: [f32; 4],
+        pub mirror: [f32; 4],
         pub layer: [f32; 4],
         pub drift: [f32; 4],
         pub dome: [u32; 4],
@@ -28,13 +29,16 @@ gpu_structs! {
         pub light_rows: [u32; 4],
     }
 
-    /// WGSL `CloudDomes` (`scene.wgsl`): the shown domes' origins, whether they
-    /// show and the newer's share, and the eye the sky's own views start
-    /// from with the cloud layer's middle.
+    /// WGSL `CloudDomes` (`scene.wgsl`): the shown domes' origins, their
+    /// eye layers' with whether they show and the newer's share, and their
+    /// mirror layers'; and the eye the sky's own views start from with the
+    /// cloud layer's middle.
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
     pub(crate) struct DomeUniform as ["CloudDomes"] {
         pub older: [f32; 4],
         pub newer: [f32; 4],
+        pub older_mirror: [f32; 4],
+        pub newer_mirror: [f32; 4],
         pub eye: [f32; 4],
         pub view: [f32; 4],
     }
