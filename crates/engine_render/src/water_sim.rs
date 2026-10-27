@@ -363,9 +363,10 @@ impl SimWindow {
 
     /// Takes into its slots the blocks of its square they do not hold: each
     /// one's ground (at its cells' corners, the levels lakes hold its cells
-    /// at, UNHELD where none does, and its cells' roughness), its cells'
-    /// water to start from, into the step's first state, and what the beds
-    /// hold under them. Where every slot takes one, they are written in
+    /// at, UNHELD where none does, its cells' roughness, and the share of
+    /// each covered by solids and the height their tops stand at), its
+    /// cells' water to start from, into the step's first state, and what the
+    /// beds hold under them. Where every slot takes one, they are written in
     /// place; else staged in one write, in their slots' order, for the
     /// frame's encoding to copy into their slots a run of consecutive slots
     /// at a time.
@@ -390,6 +391,8 @@ impl SimWindow {
         let mut beds: Vec<[u32; 2]> = Vec::with_capacity(blocks * BLOCK_CELLS);
         let mut held: Vec<f32> = Vec::with_capacity(BLOCK_CELLS);
         let mut rough: Vec<f32> = Vec::with_capacity(BLOCK_CELLS);
+        let mut shares: Vec<f32> = Vec::with_capacity(BLOCK_CELLS);
+        let mut tops: Vec<f32> = Vec::with_capacity(BLOCK_CELLS);
         for &(slot, x, z) in &fresh {
             let block = self.fitted.block(x, z);
             for k in 0..=BLOCK_SIDE {
@@ -399,17 +402,24 @@ impl SimWindow {
             }
             held.clear();
             rough.clear();
+            shares.clear();
+            tops.clear();
             for k in 0..BLOCK_SIDE {
                 for l in 0..BLOCK_SIDE {
                     let level = block.held(l, k);
                     held.push(if level.is_nan() { UNHELD } else { level });
                     rough.push(block.roughness(l, k));
+                    let [share, top] = block.cover(l, k);
+                    shares.push(share);
+                    tops.push(top);
                     cells.push(block.start(l, k));
                     beds.push(block.bed_words(l, k));
                 }
             }
             ground.extend_from_slice(&held);
             ground.extend_from_slice(&rough);
+            ground.extend_from_slice(&shares);
+            ground.extend_from_slice(&tops);
             self.stamps[slot as usize] = block.stamp();
         }
         let buffers = &self.buffers;

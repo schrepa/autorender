@@ -37,7 +37,7 @@ use crate::macro_colors::{MACRO_BLOCK, MAX_MACRO_TEXELS, macro_colors};
 use crate::shading::ShadingMaking;
 use crate::steady_water::{PartMaking, SettledReads, Steadying};
 use crate::{
-    BiomeRules, Biomes, Gait, Generator, Layers, MacroCauses, Placing, Pyramid, Stamp,
+    BiomeRules, Biomes, Gait, Generator, Layers, MacroCauses, Placing, Pyramid, Solid, Stamp,
     SteadySummary, SteadyWater, TILE_QUADS, Tile, TileKey, TilePortals, TileShading, TileWater,
     WaterPart,
 };
@@ -362,26 +362,28 @@ pub fn lighting_output(bytes: &[u8]) -> Result<TerrainLighting, CodecError> {
 }
 
 /// A [`JobKind::Water`]: level-0 tile `key`'s part of the water settling
-/// over the regions reaching it ([`WaterPart`]), its ground generated from
-/// the stack shared as `stack` (with its bakes) over `pyramid` under
-/// `stamps`, the terrain's edits reaching its ground, in order, on the
-/// terrain's lattice of cells `cell` meters across. Its input is the job;
-/// its output is no record: the regions it is part of settle on the GPU,
-/// and their tiles' water is.
+/// over the regions reaching it ([`WaterPart`]), its ground generated and
+/// its objects placed from the recipe shared as `recipe` (its stack with
+/// its bakes) under `stamps`, the terrain's edits reaching its ground, in
+/// order, its objects standing as `solids` (by its surface's asset; none
+/// for an asset whose objects stand as none), on the terrain's lattice of
+/// cells `cell` meters across. Its input is the job; its output is no
+/// record: the regions it is part of settle on the GPU, and their tiles'
+/// water is.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterJob {
-    pub stack: String,
-    pub pyramid: Pyramid,
+    pub recipe: String,
     pub key: TileKey,
     pub stamps: Vec<Stamp>,
+    pub solids: Vec<Option<Solid>>,
     pub cell: f32,
 }
 
 record!(WaterJob {
-    stack,
-    pyramid,
+    recipe,
     key,
     stamps,
+    solids,
     cell,
 });
 
@@ -917,25 +919,28 @@ impl TerrainWorker {
             }
             JobKind::Water => {
                 let WaterJob {
-                    stack,
-                    pyramid,
+                    recipe,
                     key,
                     stamps,
+                    solids,
                     cell,
                 } = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
-                if key.level != 0 || !pyramid.contains(key) || !(cell.is_finite() && cell > 0.0) {
+                let recipe = self.recipe(&recipe)?;
+                if key.level != 0
+                    || !recipe.pyramid.contains(key)
+                    || !(cell.is_finite() && cell > 0.0)
+                {
                     return Err("settled water of a tile outside its pyramid's finest level".into());
                 }
-                let layers = self
-                    .stacks
-                    .get(&stack)
-                    .ok_or_else(|| format!("unknown stack {stack}"))?;
+                if !solids.iter().flatten().all(Solid::valid) {
+                    return Err("settled water of objects standing as invalid solids".into());
+                }
                 Running::Water(Box::new(PartMaking::new(
-                    stamped(layers, &stamps)?,
-                    pyramid,
+                    (recipe.stamped(&stamps)?, recipe.rules.clone()),
+                    recipe.pyramid,
                     key,
-                    cell,
+                    (cell, solids),
                 )))
             }
             JobKind::Bounce => {

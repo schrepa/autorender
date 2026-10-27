@@ -44,6 +44,31 @@ impl PlacementAsset {
     /// The rule of [`Self::sway`], which terrains check and authored
     /// placement assets' schemas state.
     pub const SWAY: Rule = Rule::range(0.0, 10.0);
+
+    /// The solid its objects stand as, which water flows around: its
+    /// collider's primitive about its center, or else the bounds of its
+    /// mesh once `assets` holds it; none for bounds thinner along an axis
+    /// than colliders admit ([`MIN_COLLIDER_EXTENT`]).
+    pub fn solid(&self, assets: Option<&AssetLibrary>) -> Option<Solid> {
+        if let Some(collider) = self.collider {
+            let (half, round) = match collider.shape {
+                PlacedShape::Cuboid { half_extents } => (half_extents, false),
+                PlacedShape::Sphere { radius } => ([radius; 3], true),
+            };
+            return Some(Solid {
+                center: collider.center,
+                half,
+                round,
+            });
+        }
+        let bounds = assets?.mesh(self.mesh)?.bounds();
+        let half = 0.5 * (bounds.max() - bounds.min());
+        (half.min_element() >= MIN_COLLIDER_EXTENT).then(|| Solid {
+            center: (0.5 * (bounds.max() + bounds.min())).to_array(),
+            half: half.to_array(),
+            round: false,
+        })
+    }
 }
 
 /// A part of a placement asset its objects draw with a material of its

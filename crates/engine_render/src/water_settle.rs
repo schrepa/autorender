@@ -875,12 +875,14 @@ fn say(square: &Square, steps: u32, done: bool) {
 const REACH_NAMES: [&str; 5] = ["pools", "plane beds", "steps", "cascades", "falls"];
 
 /// Prints what `square`'s records `made` came to, their stats summed over
-/// its tiles: its cells whose water ran at the fastest water runs, and of
-/// its flowing cells in channels, by reach, their mean effective Manning's
-/// n, the share of them running faster than their waves and how many there
+/// its tiles: its cells whose water ran at the fastest water runs, the
+/// solids standing in its water of those over its stored blocks, and of its
+/// flowing cells in channels, by reach, their mean effective Manning's n,
+/// the share of them running faster than their waves and how many there
 /// are.
 fn say_made(square: &Square, made: &[SteadyWater]) {
     let [x, z] = square.start.stored.cells;
+    let standing: usize = made.iter().map(|water| water.solids.len()).sum();
     let mut clamped = 0_u64;
     let mut reaches = REACH_NAMES.map(|_| (0.0_f64, 0.0_f64, 0_u64));
     for water in made {
@@ -910,8 +912,9 @@ fn say_made(square: &Square, made: &[SteadyWater]) {
         .collect();
     eprintln!(
         "Water settled over {x} by {z} cells for {} tiles: {clamped} cells at the fastest water \
-         runs; in channels, {}",
+         runs; {standing} of {} solids standing in its water; in channels, {}",
         made.len(),
+        square.start.solids.len(),
         channels.join("; ")
     );
 }

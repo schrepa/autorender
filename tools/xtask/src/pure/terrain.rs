@@ -362,10 +362,10 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let mut parts = Vec::new();
     for tile in region.reached(&pyramid) {
         let input = WaterJob {
-            stack: "stack".into(),
-            pyramid,
+            recipe: "recipe".into(),
             key: tile,
             stamps: Vec::new(),
+            solids: Vec::new(),
             cell: WATER_CELL,
         }
         .input();

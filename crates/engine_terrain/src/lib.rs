@@ -86,8 +86,8 @@ pub use path::{
     PathLayer, PathProfile, PathSample, PathStats, Route, RouteOptions, route,
 };
 pub use placement::{
-    AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Placed, PlacementChoice, PlacementLayer,
-    Placing,
+    AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Footprint, Placed, PlacementChoice,
+    PlacementLayer, Placing, Solid,
 };
 pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use relief::{HummocksLayer, StepsLayer};
@@ -96,9 +96,10 @@ pub use select::{LodRanges, WantedTile, WantedView, wanted_tiles};
 pub use shading::TileShading;
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverListing, RiverSight};
 pub use steady_water::{
-    BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, MARGIN, NO_BLOCK, REGION_CELLS, SUMMARY_SIDE,
-    SettleRegion, SettleStart, SettledKey, SteadyCell, SteadySource, SteadySquare, SteadyStats,
-    SteadySummary, SteadyWater, StoredBlocks, WaterPart, settle_regions, watered_tiles,
+    BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, COVER_POINTS, MARGIN, NO_BLOCK, REGION_CELLS,
+    SUMMARY_SIDE, SettleRegion, SettleStart, SettledKey, SteadyCell, SteadySource, SteadySquare,
+    SteadyStats, SteadySummary, SteadyWater, StoredBlocks, WaterPart, cover_cells, settle_regions,
+    watered_tiles,
 };
 pub use surface::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, Facing, MAX_BIOMES,

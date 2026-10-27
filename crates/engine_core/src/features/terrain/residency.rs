@@ -63,6 +63,9 @@ pub(super) struct TerrainState {
     /// assets, the bridge material, and the bridges and falls its bakes
     /// found ([`Self::revision`] adds the tiles' own).
     pub(super) standing: u64,
+    /// The solids its surface's assets' objects stand as, by asset
+    /// ([`PlacementAsset::solid`]), which its settled water flows around.
+    pub(super) solids: Arc<[Option<Solid>]>,
     /// The ranges its levels' tiles streamed by at the last update.
     pub(super) ranges: Vec<f32>,
     /// The layers tiles generate from once its bakes are done, the rivers
@@ -149,6 +152,7 @@ impl TerrainState {
             drawn: false,
             collision: Vec::new(),
             standing: 0,
+            solids: Arc::from(Vec::new()),
             ranges: Vec::new(),
             baked: None,
             baked_rivers: Arc::from(Vec::new()),
