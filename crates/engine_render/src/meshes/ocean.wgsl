@@ -13,8 +13,8 @@
 // bent where the frame copies the scene's color and dimmed channel by
 // channel over the view's path to it (the light reaching it already dims
 // through the water above, `atmospheric`). Its foam is white water where
-// its crests fold and its waves run up its shores (`meshes/water_foam.wgsl`),
-// floating on the still sea's points, and sunlight glows through crests seen
+// its crests fold and its waves run up its shores, smooth coverage
+// (`meshes/water_foam.wgsl`), and sunlight glows through crests seen
 // against it.
 
 const OCEAN_TAU: f32 = 6.283185307179586;
@@ -221,7 +221,6 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     }
     let world = eye_world(input.relative);
     let still = input.still.xy;
-    let time = camera.position.w;
     let view = stable_normalize(-input.relative);
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
@@ -263,27 +262,20 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
         through = max(length(behind.ground - input.relative), 0.0); // optics: the view's way through the water
     }
     let transmit = water_transmitted(through, 0.0);
-    // Foam (`meshes/water_foam.wgsl`): white water where the sea's crests
-    // fold, where its waves compress the surface past the whitecap threshold
-    // its wind sets (`water.foam.x`); and where its waves run up its shores
-    // fast enough to tear air in, a wave as high as all of them
-    // (`water.foam.y`) running √(g/h) times its height in water h deep. It
-    // floats on the still sea's points, so it rides the waves, and its relief
-    // tilts the normal it is lit by. Its whitecaps thin over
-    // WATER_FOAM_CAPPING of compression, or over as much as the compression
-    // changes across a pixel of the display where that is more, so their edge
-    // draws no finer than a pixel.
+    // Foam (`meshes/water_foam.wgsl`), fresh white water covering its share
+    // of the surface: where the sea's crests fold, where its waves compress
+    // the surface past the whitecap threshold its wind sets (`water.foam.x`);
+    // and where its waves run up its shores fast enough to tear air in, a
+    // wave as high as all of them (`water.foam.y`) running √(g/h) times its
+    // height in water h deep. Its whitecaps thin over WATER_FOAM_CAPPING of
+    // compression, or over as much as the compression changes across a pixel
+    // of the display where that is more, so their edge draws no finer than a
+    // pixel.
     let capping = max(WATER_FOAM_CAPPING, fwidth(compression) * material_detail());
     let foam_capping = saturate((water.foam.x - compression) / capping + 0.5); // filter: the whitecaps' edge spread over the pixel, keeping their share
     let foam_contact = water_contact(below, abs(dpdx(below)) + abs(dpdy(below)), footprint,
         water.foam.y * sqrt(WATER_GRAVITY / max(below, WATER_BREAK_THINNEST)));
-    let foam_floats = eye_world(vec3<f32>(still.x, 0.0, still.y)).xz;
-    let froth = water_froth(foam_floats, footprint,
-        vec2<f32>(1.0 - (1.0 - foam_capping) * (1.0 - foam_contact), 0.0),
-        vec2<f32>(0.0), 0.0, time, 0.0,
-        detail_resolved(detail_span(world, vec3<f32>(0.0, 1.0, 0.0)).xy));
-    let foam = froth.cover;
-    let foam_tilt = water_foam_tilt(froth.height, normal, world_dx, world_dy);
+    let foam = water_foam(1.0 - (1.0 - foam_capping) * (1.0 - foam_contact), 0.0);
     // Calm water is a mirror; the slopes of waves the pixel's footprint does
     // not draw spread its highlights, as a rougher surface would, and so does
     // how far the normal of those drawn turns across the pixel
@@ -307,10 +299,9 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     surface.normal = normal;
     surface.roughness = roughness;
     surface.plane = vec3<f32>(0.0, 1.0, 0.0);
-    surface.foam = foam;
-    surface.foam_tilt = foam_tilt;
-    surface.foam_shade = froth.shade;
-    surface.foam_thin = froth.thin;
+    surface.foam = foam.cover;
+    surface.foam_shade = foam.shade;
+    surface.foam_thin = foam.thin;
     surface.scatter = water.color.rgb;
     surface.transmit = transmit;
     surface.crest = peak;
@@ -322,8 +313,9 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     let fade = smoothstep(0.0, WATER_SHORE, below);
     var result: WaterShade;
     result.shaded = lit.shaded;
-    result.coverage = max(1.0 - (1.0 - lit.reflectance) * luminance(transmit), foam) * fade;
-    result.behind = behind.color * transmit * ((1.0 - lit.reflectance) * (1.0 - foam)
+    result.coverage = max(1.0 - (1.0 - lit.reflectance) * luminance(transmit), foam.cover)
+        * fade;
+    result.behind = behind.color * transmit * ((1.0 - lit.reflectance) * (1.0 - foam.cover)
         * (1.0 - atmospheric_cover(camera.position.xyz, world)));
     result.fade = fade;
     return water_mirroring(result);

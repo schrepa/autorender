@@ -39,10 +39,10 @@
 //! under them do, each sample averaging their squares over its own spacing
 //! ([`Tile::flowing`]), so every level holds the finer water's average;
 //! each tile's water is a job's record of its own, made on a worker from
-//! the records it reads ([`Steadying`]), each solid standing in it an
-//! obstacle of the samples nearest it; and the window simulated around the
-//! camera starts from it, takes its water at its edges, its rivers' water
-//! where they bring it and its solids.
+//! the records it reads ([`Steadying`]), with the solids standing in it;
+//! and the window simulated around the camera starts from it, takes its
+//! water at its edges, its rivers' water where they bring it and its
+//! solids.
 
 use std::sync::Arc;
 
@@ -56,8 +56,8 @@ use crate::hydraulics::GRAVITY;
 use crate::shallow_water::{self, CELL_MEANS, DRY, UNHELD, WET_MOST, resistance, velocity};
 use crate::tile::on_triangle;
 use crate::tile_water::{
-    NONE, TileWater, WATER_SPAN_LEAST, WaterState, breaking, lipped, nearest, pack, pack_obstacle,
-    pack_state, plunges, shears, turbulence, unpack,
+    NONE, TileWater, WATER_SPAN_LEAST, WaterState, breaking, nearest, pack, pack_state, shears,
+    turbulence, unpack,
 };
 use crate::{
     Bed, BiomeRules, Footprint, Generator, Layers, Pyramid, Reach, Solid, Stamp, TILE_STRIDE, Tile,
@@ -100,8 +100,8 @@ const SOURCE_LEAST: f32 = 0.01;
 /// Points along each side of a cell its cover is measured at
 /// ([`cover_cells`]), a quarter of its spacing apart: a solid covers a cell
 /// by the share of them it stands on, so one thinner than a quarter of a
-/// cell covers none and turns no flow, standing in the water as an obstacle
-/// alone ([`TileWater::solids`]).
+/// cell covers none and turns no flow, standing in the water alone
+/// ([`TileWater::solids`]).
 pub const COVER_POINTS: u32 = 4;
 
 /// The kinds of reach channels run in ([`Reach`]): pools and riffles, plane
@@ -2044,7 +2044,6 @@ struct Blend {
     flow: Vec2,
     turbulence: f32,
     white: f32,
-    lip: f32,
 }
 
 impl Blend {
@@ -2058,7 +2057,6 @@ impl Blend {
         flow: Vec2::ZERO,
         turbulence: 0.0,
         white: 0.0,
-        lip: 0.0,
     };
 
     /// The flow it blends to, still where lakes hold most of it.
@@ -2133,8 +2131,8 @@ fn minmod(a: f32, b: f32, c: f32) -> f32 {
 /// of them holds water, and flat where neither does); and its water's
 /// velocity, foam, turbulence and white water ([`turbulence`], and
 /// [`breaking`] at its depth over its bed, the mean of the ground at its
-/// corners as its region's cells stand on it), and the share of the time it
-/// leaves the bed (its lip).
+/// corners as its region's cells stand on it, and as often as it leaves the
+/// bed).
 #[derive(Clone, Copy, Default)]
 struct Plane {
     known: bool,
@@ -2146,7 +2144,6 @@ struct Plane {
     foam: f32,
     turbulence: f32,
     white: f32,
-    lip: f32,
 }
 
 /// The planes of the settled cells a tile's samples blend ([`Plane`]), and
@@ -2259,7 +2256,6 @@ impl Planes {
                             foam,
                             turbulence: turbulence(rush, velocity.length(), swirl),
                             white: breaking(energy, surface - bed, lip),
-                            lip,
                         }
                     }
                 };
@@ -2297,14 +2293,13 @@ impl Tile {
     /// nearness. Dry cells add nothing, and a sample whose blended surface
     /// stands under its ground is dry. Its velocity, foam, turbulence,
     /// white water (each cell's breaking as deep as it stands over the
-    /// tile's ground at its corners) and lips blend alike, held still where
-    /// most are lakes', and it takes its shear, where it plunges and the
-    /// reach of its bed ([`Tile::bed`]); dry where none holds any, and as its
-    /// own water stood where no record holds the cells around it. Whether a
-    /// fall's sheet runs over it stays its own, and so does its span, the
-    /// span of the water body its own water held nearest it where it held
-    /// none there; and its samples' obstacles are those of its ground and
-    /// of `solids` (terrain-local) standing in it. Surfaces stand at their
+    /// tile's ground at its corners) blend alike, held still where most are
+    /// lakes', and it takes its shear and the reach of its bed
+    /// ([`Tile::bed`]); dry where none holds any, and as its own water stood
+    /// where no record holds the cells around it. Whether a fall's sheet
+    /// runs over it stays its own, and so does its span, the span of the
+    /// water body its own water held nearest it where it held none there;
+    /// and `solids` (terrain-local) stand in it. Surfaces stand at their
     /// steps of the height grid, as records hold them; `None` where no
     /// water stands on it.
     #[must_use]
@@ -2330,14 +2325,14 @@ impl Tile {
         );
         let count = stride * stride;
         let mut surface = vec![f32::NAN; count];
-        let mut info = vec![[0_u32; 3]; count];
+        let mut info = vec![[0_u32; 2]; count];
         let mut flows = vec![Vec2::ZERO; count];
         let mut stirred = vec![None; count];
         let spans = spans(own);
         for z in 0..stride {
             for x in 0..stride {
                 let at = z * stride + x;
-                let (own_surface, own_info) = own.map_or((f32::NAN, [0; 3]), |water| {
+                let (own_surface, own_info) = own.map_or((f32::NAN, [0; 2]), |water| {
                     (water.surfaces()[at], water.info()[at])
                 });
                 let point = place(x, z);
@@ -2362,7 +2357,6 @@ impl Tile {
                         blend.flow += plane.velocity * share;
                         blend.turbulence += plane.turbulence * share;
                         blend.white += plane.white * share;
-                        blend.lip += plane.lip * share;
                     }
                 }
                 if !blend.known {
@@ -2385,11 +2379,7 @@ impl Tile {
                     spans[at],
                 );
                 flows[at] = flow;
-                stirred[at] = Some([
-                    blend.turbulence / blend.weight,
-                    blend.white / blend.weight,
-                    lipped(blend.lip / blend.weight),
-                ]);
+                stirred[at] = Some([blend.turbulence / blend.weight, blend.white / blend.weight]);
             }
         }
         self.stir(&surface, &mut info, &flows, &stirred);
@@ -2410,9 +2400,9 @@ impl Tile {
     /// weighted by a tent reaching its spacing either way (a square, the
     /// four squares around it blended bilinearly, where its spacing is
     /// finer), so each level holds the finer water averaged over its own
-    /// spacing; and its shear, where it plunges and the reach of its bed
-    /// ([`Tile::bed`]); still and clear where none of them holds water, and
-    /// as its own water ran where no summary holds any square under it. Its
+    /// spacing; and its shear and the reach of its bed ([`Tile::bed`]);
+    /// still and clear where none of them holds water, and as its own water
+    /// ran where no summary holds any square under it. Its
     /// water's surface, lakes, spans, falls' sheets and solids stay its own,
     /// and its dry samples take theirs from it anew
     /// ([`TileWater::surfaces`]); `None` where it holds none.
@@ -2429,7 +2419,7 @@ impl Tile {
         let square = pyramid.tile_size(0) / SUMMARY_SIDE as f32;
         let surface: Box<[f32]> = own.surfaces().into();
         let heights = self.heights();
-        let mut info: Box<[[u32; 3]]> = own.info().into();
+        let mut info: Box<[[u32; 2]]> = own.info().into();
         let mut flows: Vec<Vec2> = info.iter().map(|words| unpack(words[0]).0).collect();
         let mut stirred = vec![None; info.len()];
         for z in 0..stride {
@@ -2479,13 +2469,9 @@ impl Tile {
                 info[at][0] = pack(flow, foam / shallow_water::FOAM_MOST, sheeted, lake, span);
                 flows[at] = flow;
                 stirred[at] = Some(if blend.weight > 0.0 {
-                    [
-                        blend.turbulence / blend.weight,
-                        blend.white / blend.weight,
-                        0.0,
-                    ]
+                    [blend.turbulence / blend.weight, blend.white / blend.weight]
                 } else {
-                    [0.0; 3]
+                    [0.0; 2]
                 });
             }
         }
@@ -2494,27 +2480,25 @@ impl Tile {
         TileWater::new(surface, info, tile, own.solids())
     }
 
-    /// Writes the state and the jump of the samples of this tile's water
-    /// `stirred` holds (each one's turbulence, white water and the jump its
-    /// lips give it) into their words `info` ([`pack_state`],
-    /// [`pack_obstacle`]): with their shear and where they plunge, from the
-    /// velocities `flows` holds at the samples around them, standing at
-    /// `surface` ([`shears`], [`plunges`]), and the reach of the stream the
-    /// tile's bed holds there ([`Tile::bed`]), never blended.
+    /// Writes the state of the samples of this tile's water `stirred` holds
+    /// (each one's turbulence and white water) into their words `info`
+    /// ([`pack_state`]): with their shear, from the velocities `flows` holds
+    /// at the samples around them, standing at `surface` ([`shears`]), and
+    /// the reach of the stream the tile's bed holds there ([`Tile::bed`]),
+    /// never blended.
     fn stir(
         &self,
         surface: &[f32],
-        info: &mut [[u32; 3]],
+        info: &mut [[u32; 2]],
         flows: &[Vec2],
-        stirred: &[Option<[f32; 3]>],
+        stirred: &[Option<[f32; 2]>],
     ) {
         let stride = TILE_STRIDE as usize;
         let spacing = self.spacing();
         let heights = self.heights();
         let shears = shears(flows, &|at| surface[at] > heights[at], spacing);
-        let plunges = plunges(surface, heights, flows);
         for (at, stirred) in stirred.iter().enumerate() {
-            let Some([churning, white, lip]) = *stirred else {
+            let Some([churning, white]) = *stirred else {
                 continue;
             };
             let local = Vec2::new((at % stride) as f32 - 1.0, (at / stride) as f32 - 1.0) * spacing;
@@ -2524,7 +2508,6 @@ impl Tile {
                 shear: shears[at],
                 reach: self.bed(local).map(|bed| bed.reach),
             });
-            info[at][2] = pack_obstacle(Vec2::ZERO, 0.0, if plunges[at] { 1.0 } else { lip });
         }
     }
 

@@ -301,10 +301,6 @@ gpu_consts! {
     pub(crate) const WATER_SPAN_MOST: f32 = engine_core::terrain_data::WATER_SPAN_MOST => ["WATER_SPAN_MOST"];
     /// Per second of shear a block's packed shear spans.
     pub(crate) const WATER_SHEAR_RANGE: f32 = engine_core::terrain_data::WATER_SHEAR_RANGE => ["WATER_SHEAR_RANGE"];
-    /// Meters a step of a block's packed offsets to obstacles spans, and of
-    /// their packed radius.
-    pub(crate) const WATER_OBSTACLE_STEP: f32 = engine_core::terrain_data::WATER_OBSTACLE_STEP => ["WATER_OBSTACLE_STEP"];
-    pub(crate) const WATER_RADIUS_STEP: f32 = engine_core::terrain_data::WATER_RADIUS_STEP => ["WATER_RADIUS_STEP"];
     /// The steepest water's surface falls and a bank under it rises, meters
     /// a meter: a surface falling more than four meters a meter (76 degrees)
     /// runs off as a fall's sheet, and a bank rising faster stands as a
@@ -593,7 +589,7 @@ gpu_mirrors! {
     engine_core::terrain_data::NO_BLOCK => ["SIM_NO_BLOCK" in WATER_SIM_SHADER];
     engine_core::terrain_data::BLOCK_GROUND => ["SIM_BLOCK_GROUND" in WATER_SIM_SHADER, "SIM_BLOCK_GROUND" in SHADER];
     engine_core::terrain_data::shallow_water::WET_MOST => ["SIM_WET_MOST" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::FOAM_LIFE => ["SIM_FOAM_LIFE" in WATER_SIM_SHADER, "WATER_FOAM_LIFE"];
+    engine_core::terrain_data::shallow_water::FOAM_LIFE => ["SIM_FOAM_LIFE" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_MOST => ["SIM_FOAM_MOST" in WATER_SIM_SHADER, "WATER_FOAM_MOST"];
     engine_core::terrain_data::shallow_water::FOAM_WET => ["SIM_FOAM_WET" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_LOSS => ["SIM_FOAM_LOSS" in WATER_SIM_SHADER];

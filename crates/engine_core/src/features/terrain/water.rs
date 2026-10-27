@@ -5,8 +5,10 @@
 //! what its tiles or the live simulation hold at each place (its depth,
 //! flow, the foam it carries, how turbulent it runs and how far across its
 //! water body is), the scene's wind ([`crate::Wind`]) dragging the water
-//! that runs live and the foam riding it; where nothing raises waves on it,
-//! it lies a calm mirror. Each body's look is its color, its clarity and the
+//! that runs live and the foam riding it. It shows that state and nothing
+//! else: its surface is the state's own, roughened where its turbulence and
+//! eddies stir it, a calm mirror where nothing does, and its foam smooth
+//! coverage. Each body's look is its color, its clarity and the
 //! sediment it carries with that sediment's color: light passing through
 //! water fades over the distance it travels to the ground behind it toward
 //! its scattered color, and its surface reflects the sky and, through

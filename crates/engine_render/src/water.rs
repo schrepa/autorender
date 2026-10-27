@@ -9,19 +9,16 @@
 //! (`crate::terrain::TerrainPass::water_draws`), at the level its size
 //! picks, so the depth each pixel shades by is the tiles' water over that
 //! level's ground, the shore falls where the ground rises through the
-//! water, and none of it moves as the eye does; and each reads the bed it
-//! flows over as the ground draws its stones, through the ground's control
-//! values and materials' maps, which its stones' waves and foam follow
-//! (`meshes/water_flow.wgsl`'s `water_bed`). Water draws after the
-//! opaque scene and its decals and blends over the ground by how little
-//! light comes back through it, writing the depth and surface targets, so
-//! later passes and screen-space reflections see its surface. Before it
-//! draws, the opaque depth copies into a texture of its own: what stands in
-//! the water behind a pixel shortens the light's path to it. In frames
-//! drawing the effects' targets the opaque color copies too, and water
-//! covers it whole with what shows through it, bent by its waves and dimmed
-//! channel by channel over the light's path; other frames blend water over
-//! the ground.
+//! water, and none of it moves as the eye does: each shows the water's
+//! state there and nothing else. Water draws after the opaque scene and its
+//! decals and blends over the ground by how little light comes back through
+//! it, writing the depth and surface targets, so later passes and
+//! screen-space reflections see its surface. Before it draws, the opaque
+//! depth copies into a texture of its own: what stands in the water behind
+//! a pixel shortens the light's path to it. In frames drawing the effects'
+//! targets the opaque color copies too, and water covers it whole with what
+//! shows through it, bent by its surface and dimmed channel by channel over
+//! the light's path; other frames blend water over the ground.
 //!
 //! Where terrains' rivers leave their beds, their jets draw last, as
 //! sheets through the air (`crate::water_falls`), each terrain's through
@@ -52,7 +49,7 @@ use engine_core::{
 };
 
 use crate::bindings::{WATER, WATER_BEHIND};
-use crate::gpu_layouts::terrain::{PALETTE_BYTES, SubdivisionUniform, TerrainUniform, ViewUniform};
+use crate::gpu_layouts::terrain::{SubdivisionUniform, TerrainUniform, ViewUniform};
 use crate::profiling::Span;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource, Targets};
@@ -81,18 +78,14 @@ pub(crate) const WATER_UNIFORM_BYTES: usize = size_of::<WaterUniform>();
 
 /// One-texel stand-ins for what the water group binds that the sea reads
 /// none of: the terrain's height array, uniforms and directory, its
-/// subdivisions' leaves, its ground's palette and materials' data and the
-/// nearest sampler its control values are gathered through, tiles' water
-/// blocks, water's directory and the tree of a terrain's water; and for the
-/// scene's color, which frames blending water read none of.
+/// subdivisions' leaves, tiles' water blocks, water's directory and the
+/// tree of a terrain's water; and for the scene's color, which frames
+/// blending water read none of.
 struct Placeholders {
     surfaces: wgpu::Texture,
     info: wgpu::Texture,
-    materials: wgpu::Texture,
     views: wgpu::Buffer,
     terrains: wgpu::Buffer,
-    palette: wgpu::Buffer,
-    nearest: wgpu::Sampler,
     scene: wgpu::TextureView,
     sim: wgpu::Buffer,
     storage: wgpu::Buffer,
@@ -151,9 +144,8 @@ pub(crate) struct WaterPass {
     // Water simulated around the camera, where water asks for it.
     sim: WaterSim,
     // Tiles' water's uniform, and the group binding it with the terrain
-    // pass's arrays, uniforms, directory, leaves and trees' uniforms, its
-    // ground's tables and materials' maps and the simulation's water, as of
-    // their generations.
+    // pass's arrays, uniforms, directory, leaves and trees' uniforms and the
+    // simulation's water, as of their generations.
     uniform: wgpu::Buffer,
     group: Option<(GroupGenerations, wgpu::BindGroup)>,
     tiles: Option<TileDraws>,
@@ -493,10 +485,9 @@ impl WaterPass {
 
     /// The group of the water layout tiles' water binds: the terrain pass's
     /// height array, views' and terrains' uniforms, directory (with water's
-    /// in it), leaves of its subdivisions and their trees' uniforms, its
-    /// ground's fades, control values, palette and materials' data with their
-    /// samplers, and the water blocks (`tiles`); water's uniform and falling
-    /// water's `map`; and the simulated water.
+    /// in it), leaves of its subdivisions and their trees' uniforms, and the
+    /// water blocks (`tiles`); water's uniform and falling water's `map`; and
+    /// the simulated water.
     fn tile_group(
         &self,
         device: &wgpu::Device,
@@ -522,21 +513,6 @@ impl WaterPass {
                 (
                     "terrain",
                     sized(tiles.uniforms, size_of::<TerrainUniform>()),
-                ),
-                crate::buffers::entry("terrain_holes", tiles.holes),
-                ("terrain_control", crate::pipelines::view(tiles.control)),
-                ("terrain_palette", tiles.palette.as_entire_binding()),
-                (
-                    "terrain_material_data",
-                    crate::pipelines::view(tiles.materials),
-                ),
-                (
-                    "terrain_material_sampler",
-                    crate::pipelines::sampler(tiles.material_sampler),
-                ),
-                (
-                    "terrain_control_sampler",
-                    crate::pipelines::sampler(tiles.control_sampler),
                 ),
                 crate::buffers::entry("terrain_directory", tiles.directory),
                 crate::buffers::entry("terrain_surface_leaves", tiles.leaves),
@@ -996,9 +972,8 @@ impl RenderFeature for WaterPass {
 
 /// The generations of what tiles' water's group binds: the terrain pass's
 /// arrays, uniforms, directory (with water's in it), leaves and trees'
-/// uniforms, the water blocks, the ground's fades and its materials' maps;
-/// and the simulation's water.
-type GroupGenerations = ([u64; 8], u64);
+/// uniforms and the water blocks; and the simulation's water.
+type GroupGenerations = ([u64; 6], u64);
 
 /// What a water pipeline draws: tiles' water, the sea, falls' sheets or
 /// simulated water.
@@ -1096,10 +1071,6 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
             "engine/water-placeholder-info",
             wgpu::TextureFormat::Rgba32Uint,
         ),
-        materials: array(
-            "engine/water-placeholder-materials",
-            wgpu::TextureFormat::Rgba8Unorm,
-        ),
         views: crate::buffers::uniform(
             device,
             "engine/water-placeholder-view",
@@ -1110,15 +1081,6 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
             "engine/water-placeholder-terrain",
             size_of::<TerrainUniform>() as u64,
         ),
-        palette: crate::buffers::uniform(
-            device,
-            "engine/water-placeholder-palette",
-            PALETTE_BYTES as u64,
-        ),
-        nearest: device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("engine/water-placeholder-nearest"),
-            ..Default::default()
-        }),
         sim: crate::buffers::storage(
             device,
             "engine/water-placeholder-sim",
@@ -1154,7 +1116,6 @@ fn ocean_draw(
         })
     };
     let (surfaces, info) = (array(&placeholders.surfaces), array(&placeholders.info));
-    let materials = array(&placeholders.materials);
     let uniform = crate::buffers::uniform(device, "engine/ocean", WATER_UNIFORM_BYTES as u64);
     let group = crate::pipelines::group(
         device,
@@ -1170,18 +1131,6 @@ fn ocean_draw(
             (
                 "terrain",
                 sized(&placeholders.terrains, size_of::<TerrainUniform>()),
-            ),
-            crate::buffers::entry("terrain_holes", &placeholders.storage),
-            ("terrain_control", crate::pipelines::view(&info)),
-            ("terrain_palette", placeholders.palette.as_entire_binding()),
-            ("terrain_material_data", crate::pipelines::view(&materials)),
-            (
-                "terrain_material_sampler",
-                crate::pipelines::sampler(map.sampler()),
-            ),
-            (
-                "terrain_control_sampler",
-                crate::pipelines::sampler(&placeholders.nearest),
             ),
             crate::buffers::entry("terrain_directory", &placeholders.storage),
             crate::buffers::entry("terrain_surface_leaves", &placeholders.storage),

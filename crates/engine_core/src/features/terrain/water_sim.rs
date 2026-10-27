@@ -5,9 +5,9 @@
 //! them along each side: its ground and the roughness of its rivers' beds,
 //! the solids standing in its water, the water to start from, where its
 //! rivers bring theirs, the water standing just past its edges, and what
-//! the beds hold under its water (their reach and nearest obstacle), which
-//! it draws with as the settled water does. All of it but the ground and
-//! the beds' roughness comes from the terrain's settled water
+//! the beds hold under its water (their reach and span), which it draws
+//! with as the settled water does. All of it but the ground and the beds'
+//! roughness comes from the terrain's settled water
 //! ([`super::settled`]): its solids are those standing in the water of the
 //! records held whole, covering its cells as they cover the settled cells
 //! ([`cover_cells`]); and the settled water's cells may be coarser or finer
@@ -119,17 +119,17 @@ pub struct WaterWindow {
 /// bed, whose friction then counts its grains alone, and a hillside's
 /// stones and turf outside rivers' channels), what the bed holds under its
 /// middle as the settled water's sample nearest it holds it (its reach's
-/// code and its nearest obstacle, offset from the cell's middle,
-/// [`crate::terrain_data::Tile::bed_words`]) and the share of it covered
-/// by the solids standing in the settled water, with the height their tops
-/// stand at over the datum ([`cover_cells`]; 0 each where none covers it).
+/// code beside its span's, [`crate::terrain_data::Tile::bed_word`]) and the
+/// share of it covered by the solids standing in the settled water, with the
+/// height their tops stand at over the datum ([`cover_cells`]; 0 each where
+/// none covers it).
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterBlock {
     stamp: u64,
     corners: [f32; CORNERS],
     water: [WaterCell; BLOCK_CELLS],
     roughness: [f32; BLOCK_CELLS],
-    bed_words: [[u32; 2]; BLOCK_CELLS],
+    bed_words: [u32; BLOCK_CELLS],
     cover: [[f32; 2]; BLOCK_CELLS],
 }
 
@@ -229,7 +229,7 @@ impl WaterBlock {
     }
 
     /// What the bed holds under its cell (x, z)'s middle.
-    pub fn bed_words(&self, x: u32, z: u32) -> [u32; 2] {
+    pub fn bed_word(&self, x: u32, z: u32) -> u32 {
         self.bed_words[z as usize * SIDE + x as usize]
     }
 
@@ -860,9 +860,9 @@ fn gather_run(
                 );
                 middle(i, j)
             };
-            let beds: [(f32, [u32; 2]); BLOCK_CELLS] = std::array::from_fn(|k| {
-                tile(at(k)).map_or((roughness(None), [0; 2]), |(tile, local)| {
-                    (roughness(tile.bed(local).as_ref()), tile.bed_words(local))
+            let beds: [(f32, u32); BLOCK_CELLS] = std::array::from_fn(|k| {
+                tile(at(k)).map_or((roughness(None), 0), |(tile, local)| {
+                    (roughness(tile.bed(local).as_ref()), tile.bed_word(local))
                 })
             });
             WaterBlock {
@@ -872,7 +872,7 @@ fn gather_run(
                 }),
                 water: std::array::from_fn(|k| steady.at(at(k))),
                 roughness: beds.map(|(rough, _)| rough),
-                bed_words: beds.map(|(_, words)| words),
+                bed_words: beds.map(|(_, word)| word),
                 cover: std::array::from_fn(|k| covers[k / SIDE * across + corner + k % SIDE]),
             }
         })

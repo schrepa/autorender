@@ -181,9 +181,7 @@ tables! {
 
     /// Group 0 of water's pipelines: the main passes' without what glass
     /// refracts, which water reads from its own copy of what lies behind it
-    /// (`WATER_BEHIND`), keeping the sampler it reads that copy through, so
-    /// its fragment stages bind the ground's materials within the 16 sampled
-    /// textures one may.
+    /// (`WATER_BEHIND`), keeping the sampler it reads that copy through.
     const CAMERA_WATER: Table = Table {
         label: "engine/camera-water-layout",
         serves: [SHADER @ 0],
@@ -898,23 +896,18 @@ tables! {
     /// Group 1 of water's pipelines (`meshes/water.wgsl`): terrain's height
     /// array and the views' and terrains' uniforms at dynamic offsets, its
     /// directory, with water's after it, and this frame's leaves of its
-    /// subdivisions, as the terrain group binds them; the ground's fades,
-    /// control values, palette and materials' data with their samplers, as
-    /// the terrain group binds them too, through which fragments read the
-    /// bed the water flows over as the ground draws its stones
-    /// (`meshes/water_flow.wgsl`'s `water_bed`); tiles' water blocks, their
-    /// surfaces beside their ground and their words (packed flow,
-    /// whitewater and kind, state and nearest obstacle, and the level the
-    /// water's mesh stands at, which its vertices read), which pixels read
-    /// as the water's smooth surface and where it lies; water's uniform; the
+    /// subdivisions, as the terrain group binds them; tiles' water blocks,
+    /// their surfaces beside their ground and their words (packed flow,
+    /// whitewater and kind, their state, and the level the water's mesh
+    /// stands at, which its vertices read), which pixels read as the water's
+    /// smooth surface and where it lies; water's uniform; the
     /// sampler repeating falling water's map (`water_fall_map.rs`) and the
     /// map; the simulated water's cells, ground and what the beds hold under
     /// them; and at a dynamic offset, the subdivision of each terrain's
     /// water, whose leaves its vertices take. With water's first group
-    /// (`CAMERA_WATER`) and what lies behind the water, its fragment stages
-    /// bind all 16 sampled textures a stage may and six of its 8 storage
-    /// buffers. The sea's group has placeholders for what only tiles' water
-    /// reads.
+    /// (`CAMERA_WATER`) and what lies behind the water, within a fragment
+    /// stage's 16 sampled textures and 8 storage buffers. The sea's group has
+    /// placeholders for what only tiles' water reads.
     const WATER: Table = Table {
         label: "engine/water-layout",
         serves: [SHADER @ 1],
@@ -922,13 +915,7 @@ tables! {
             texture(17, "terrain_heights", Unfilterable, D2Array, V),
             dynamic_uniform(18, "terrain_view", size_of::<terrain::ViewUniform>(), VF),
             dynamic_uniform(19, "terrain", size_of::<terrain::TerrainUniform>(), VF),
-            read(20, "terrain_holes", F),
             read(23, "terrain_directory", VF),
-            texture(24, "terrain_control", Uint, D2Array, F),
-            uniform_of(25, "terrain_palette", terrain::PALETTE_BYTES, F),
-            texture(27, "terrain_material_data", Float, D2Array, F),
-            sampler(29, "terrain_material_sampler", Filtering, F),
-            sampler(32, "terrain_control_sampler", NonFiltering, F),
             read(36, "terrain_surface_leaves", V),
             texture(50, "water_surface", Unfilterable, D2Array, VF),
             texture(51, "water_info", Uint, D2Array, VF),

@@ -41,7 +41,7 @@ const LONGEST_FRAME: f32 = 1.0 / 30.0;
 /// the beds hold under them.
 const BLOCK_GROUND_BYTES: u64 = (BLOCK_GROUND * 4) as u64;
 const BLOCK_CELL_BYTES: u64 = (BLOCK_CELLS * 16) as u64;
-const BLOCK_BED_BYTES: u64 = (BLOCK_CELLS * 8) as u64;
+const BLOCK_BED_BYTES: u64 = (BLOCK_CELLS * 4) as u64;
 
 /// A terrain's water simulated over its window: the scheme's passes, the
 /// window's buffers, the steps this frame runs, when the last frame was, a
@@ -388,7 +388,7 @@ impl SimWindow {
         let blocks = fresh.len();
         let mut ground: Vec<f32> = Vec::with_capacity(blocks * BLOCK_GROUND);
         let mut cells: Vec<[f32; 4]> = Vec::with_capacity(blocks * BLOCK_CELLS);
-        let mut beds: Vec<[u32; 2]> = Vec::with_capacity(blocks * BLOCK_CELLS);
+        let mut beds: Vec<u32> = Vec::with_capacity(blocks * BLOCK_CELLS);
         let mut held: Vec<f32> = Vec::with_capacity(BLOCK_CELLS);
         let mut rough: Vec<f32> = Vec::with_capacity(BLOCK_CELLS);
         let mut shares: Vec<f32> = Vec::with_capacity(BLOCK_CELLS);
@@ -413,7 +413,7 @@ impl SimWindow {
                     shares.push(share);
                     tops.push(top);
                     cells.push(block.start(l, k));
-                    beds.push(block.bed_words(l, k));
+                    beds.push(block.bed_word(l, k));
                 }
             }
             ground.extend_from_slice(&held);

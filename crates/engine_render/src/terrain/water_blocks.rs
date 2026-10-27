@@ -3,11 +3,12 @@
 //! in two texture arrays of blocks as many samples wide as a patch's grid
 //! and a sample more past each of its edges: their surfaces as water's pass
 //! draws them beside their tile's ground, and their words, their packed
-//! flow, whitewater and kind, their state and their nearest obstacle
-//! (`engine_core::terrain_data::TileWater::info`), the fourth the level the
+//! flow, whitewater and kind and their state
+//! (`engine_core::terrain_data::TileWater::info`), the third the level the
 //! water's mesh stands at over the sample
-//! (`engine_core::terrain_data::WaterMesh`), each sample past the patch's
-//! edges the tile's beside them (its border past its own), so the smooth
+//! (`engine_core::terrain_data::WaterMesh`) and the fourth none, WebGPU
+//! having no texel of three words; each sample past the patch's edges the
+//! tile's beside them (its border past its own), so the smooth
 //! surface water's pass reads through them (`meshes/water.wgsl`'s
 //! `water_level`) meets itself across tiles and patches. A tile's blocks
 //! upload as it arrives and free as it leaves or changes, following the
@@ -66,7 +67,7 @@ struct TileBlocks {
 }
 
 /// A block's texels: each sample's surface beside its ground, and its words
-/// with the level the water's mesh stands at over it.
+/// with the level the water's mesh stands at over it, and none.
 struct Texels {
     surfaces: Vec<[f32; 2]>,
     info: Vec<[u32; 4]>,
@@ -90,10 +91,7 @@ impl Texels {
 
 /// What water's pass draws tiles' water with: the height array, the views'
 /// and terrains' uniforms, the terrain's directory with water's in it, this
-/// frame's leaves of the subdivisions and their trees' uniforms, the
-/// ground's fades and holes, control values, palette and materials' data
-/// with the materials' sampler and the control values' (through which
-/// water's pixels read the bed it flows over as the ground draws it) and the
+/// frame's leaves of the subdivisions and their trees' uniforms and the
 /// water blocks' arrays, with generations advancing when any of them is
 /// another texture or buffer; each frame terrain whose water subdivides,
 /// its id, its uniform's offset, its water's tree's and that tree's draw of
@@ -109,15 +107,9 @@ pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) directory: &'a wgpu::Buffer,
     pub(crate) leaves: &'a wgpu::Buffer,
     pub(crate) trees: &'a wgpu::Buffer,
-    pub(crate) holes: &'a wgpu::Buffer,
-    pub(crate) control: &'a wgpu::TextureView,
-    pub(crate) palette: &'a wgpu::Buffer,
-    pub(crate) materials: &'a wgpu::TextureView,
-    pub(crate) material_sampler: &'a wgpu::Sampler,
-    pub(crate) control_sampler: &'a wgpu::Sampler,
     pub(crate) surfaces: &'a wgpu::TextureView,
     pub(crate) info: &'a wgpu::TextureView,
-    pub(crate) generation: [u64; 8],
+    pub(crate) generation: [u64; 6],
     pub(crate) terrains: Vec<(u64, u32, u32, SurfaceDraw)>,
     pub(crate) targets: [f32; 2],
     pub(crate) blocks: [u32; 2],
@@ -231,7 +223,7 @@ impl WaterBlocks {
         pass: &'a TerrainPass,
         terrains: &RenderTerrains,
     ) -> Option<TerrainWaterDraws<'a>> {
-        let (heights, _, control) = pass.atlas.views()?;
+        let (heights, _, _) = pass.atlas.views()?;
         let (surfaces, info) = self.views()?;
         let (leaves, leaves_generation) = pass.surface_leaves()?;
         let trees = pass.surface.uniforms();
@@ -249,12 +241,6 @@ impl WaterBlocks {
             directory: &pass.tables.directory,
             leaves,
             trees,
-            holes: &pass.tables.holes,
-            control,
-            palette: &pass.tables.palette,
-            materials: &pass.maps.views[1],
-            material_sampler: &pass.maps.sampler,
-            control_sampler: &pass.atlas.control_sampler,
             surfaces,
             info,
             generation: [
@@ -264,8 +250,6 @@ impl WaterBlocks {
                 pass.tables.directory_generation,
                 leaves_generation,
                 trees.generation(),
-                pass.tables.holes_generation,
-                pass.maps.views_generation,
             ],
             terrains,
             targets: pass.surface.targets(),
@@ -595,8 +579,8 @@ impl WaterBlocks {
 /// water is `water` and its mesh `mesh`: of each of its samples and those a
 /// sample past its edges, the tile's beside it (its border past its own),
 /// the surface water's pass draws (`NO_WATER_SURFACE` where none is) beside
-/// the tile's ground, and its words, the fourth the bits of the level the
-/// water's mesh stands at over it.
+/// the tile's ground, and its words, the third the bits of the level the
+/// water's mesh stands at over it and the fourth none.
 fn block_texels(
     tile: &Tile,
     water: &TileWater,
@@ -623,8 +607,8 @@ fn block_texels(
                 },
                 heights[at],
             ];
-            let [packed, state, obstacle] = words[at];
-            texels.info[texel] = [packed, state, obstacle, level.to_bits()];
+            let [packed, state] = words[at];
+            texels.info[texel] = [packed, state, level.to_bits(), 0];
         }
     }
 }
