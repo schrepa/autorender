@@ -218,9 +218,11 @@ impl WaterPass {
         let falling = || terrains.iter().filter(|terrain| !terrain.falls.is_empty());
         let same = self.falls.as_ref().is_some_and(|built| {
             built.built.len() == falling().count()
-                && built.built.iter().zip(falling()).all(|(a, b)| {
-                    a.0 == b.id && a.1 == b.origin && Arc::ptr_eq(&a.2, &b.falls)
-                })
+                && built
+                    .built
+                    .iter()
+                    .zip(falling())
+                    .all(|(a, b)| a.0 == b.id && a.1 == b.origin && Arc::ptr_eq(&a.2, &b.falls))
         });
         if same || (self.falls.is_none() && falling().next().is_none()) {
             return;
