@@ -901,8 +901,9 @@ struct TerrainGround {
     canopy: f32,
     detailed: f32,
     averaged: f32,
-    // The cover's tip colors and leaves, each weighted by its material's
-    // share, which the runtime virtual texture keeps.
+    // The cover's tip colors and leaves, its clumps' look applied, each
+    // weighted by its material's share, which the runtime virtual texture
+    // keeps.
     canopy_color: vec3<f32>,
     leaves: f32,
 }
@@ -1115,12 +1116,15 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 // view and average along it, and against whose resolved size a whole repeat
 // of a material's maps shows them or their means (`terrain_mapped`); the
 // terrain's normal and the way toward the eye; the share of its cover's
-// leaves blades no longer show there, and how many times its materials'
-// leaves its cover grows there (`terrain_grown`); and the meters a pixel
-// spans across the view there as level of detail measures objects
-// (`terrain_across`), by which placed objects retire. The virtual texture's
-// bakes, whose pages pixels of any size across the view read, hold no canopy
-// and no retired objects, only the leaves their cover grows.
+// leaves tufts no longer show there, how many times its materials' leaves
+// its cover grows there (`terrain_grown`), and the look of its cover's
+// clumps as the footprint averages it (`terrain_canopy_clump`), read where
+// the ground is computed under its canopy and where pages bake, their mean
+// elsewhere; and the meters a pixel spans across the view there as level
+// of detail measures objects (`terrain_across`), by which placed objects
+// retire. The virtual texture's bakes, whose pages pixels of any size across
+// the view read, hold no canopy and no retired objects, only the leaves
+// their cover grows and its clumps' look.
 struct TerrainSite {
     world: vec3<f32>,
     world_dx: vec3<f32>,
@@ -1130,12 +1134,13 @@ struct TerrainSite {
     toward: vec3<f32>,
     thinned: f32,
     grown: f32,
+    clump: vec4<f32>,
     across: f32,
 }
 
-// The share of the cover's leaves blades no longer show at `world` by their
+// The share of the cover's leaves tufts no longer show at `world` by their
 // law (`terrain.cover`, `terrain_variety.wgsl`'s `cover_share`), from the
-// detail eye as the blades are: all of them where a terrain's surroundings
+// detail eye as the tufts are: all of them where a terrain's surroundings
 // show its cover as canopy from the eye on; none without cover.
 fn terrain_thinned(world: vec3<f32>) -> f32 {
     let cover = terrain.cover;
@@ -1145,7 +1150,7 @@ fn terrain_thinned(world: vec3<f32>) -> f32 {
     if cover.x <= 0.0 {
         return 1.0;
     }
-    let law = CoverLaw(cover.x, cover.y, cover.w);
+    let law = CoverLaw(cover.x, cover.y);
     let away = detail_distance(world);
     return 1.0 - cover_shown(away, cover_share(away, law), law);
 }
@@ -1158,6 +1163,33 @@ fn terrain_thinned(world: vec3<f32>) -> f32 {
 fn terrain_grown(world: vec3<f32>, footprint: TerrainFootprint) -> f32 {
     let growth = cover_growth(terrain_macro_texel(world.xz - terrain.origin.xz, footprint).a);
     return growth.height * growth.density;
+}
+
+// The look of ground cover's clumps at `world` (`terrain_variety.wgsl`'s
+// `cover_clump`, whose blades take it at their roots) as `footprint` (a
+// pixel's, or a page's texel's) averages it: each of its lattices' layers
+// whole while the size the footprint resolves (`detail_resolved`) spans
+// half its spacing or less and its mean, 0, once it spans a whole one, and
+// along the footprint the mean of taps half its spacing apart
+// (`terrain_taps`), as the ground's noise is filtered (`terrain_detail`).
+// Where tufts retire, their canopy so shows their clumps at every size a
+// pixel still resolves, and their mean below that.
+fn terrain_canopy_clump(world: vec3<f32>, footprint: TerrainFootprint) -> vec4<f32> {
+    var look = vec4<f32>(0.0);
+    for (var layer = 0u; layer < 2u; layer++) {
+        let spacing = cover_clump_spacing(layer);
+        let kept = saturate(2.0 - 2.0 * footprint.resolved / spacing);
+        if kept == 0.0 {
+            continue;
+        }
+        let taps = terrain_taps(footprint, 0.5 * spacing);
+        var sum = vec4<f32>(0.0);
+        for (var tap = 0u; tap < taps.count; tap++) {
+            sum += cover_clump_layer(world.xz + taps.first + taps.step * f32(tap), layer);
+        }
+        look += sum * (0.5 * kept / f32(taps.count));
+    }
+    return look;
 }
 
 // The meters a pixel spans across the view at `world` as level of detail
@@ -1389,15 +1421,19 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         (*ground).mapped += weight;
     }
     if entry.canopy.w > 0.0 {
-        // Ground under cover shows as its canopy where blades thin and
-        // retire, as many leaves as its blades grow there: the colors a view
-        // meets among them on average, rough and shaded among them as they
-        // are, and lit as blades are, their sides toward the sun and the sun
-        // passing through them (their leaf share, `terrain_point_seen`).
-        let leaves = entry.canopy.w * site.grown;
+        // Ground under cover shows as its canopy where tufts retire, as many
+        // leaves as its blades grow there, their clumps taller or shorter
+        // and their tips tinted as the blades' are (`cover_clumped`): the
+        // colors a view meets among them on average, rough and shaded among
+        // them as they are, and lit as blades are, their sides toward the sun
+        // and the sun passing through them (their leaf share,
+        // `terrain_point_seen`).
+        let clumped = cover_clumped(site.clump);
+        let tip = entry.canopy.rgb * clumped.tint;
+        let leaves = entry.canopy.w * site.grown * clumped.height;
         let canopy = terrain_canopy(leaves, site);
         if canopy > 0.0 {
-            let look = terrain_canopy_look(color, entry.canopy.rgb, leaves, site);
+            let look = terrain_canopy_look(color, tip, leaves, site);
             color = mix(color, look.color, canopy);
             roughness = mix(roughness, COVER_ROUGHNESS, canopy);
             // The sky they reflect too: a flat ground seen along it would
@@ -1407,7 +1443,7 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         }
         (*ground).vegetated += weight;
         (*ground).canopy += weight * canopy;
-        (*ground).canopy_color += weight * entry.canopy.rgb;
+        (*ground).canopy_color += weight * tip;
         (*ground).leaves += weight * leaves;
     }
     // Where its placement layers' objects retire, the ground takes on their
@@ -1995,11 +2031,16 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     var ground = page;
     if shown < 1.0 {
         // As the pages bake it: the materials, their blend and the tint on
-        // the ground's surface where the view meets its relief.
+        // the ground's surface where the view meets its relief, and its
+        // cover's clumps as the pixel's footprint averages them where its
+        // canopy shows.
         var surface = site;
         let held = terrain_level_height(site.world.xz - terrain.origin.xz, 0u);
         if held.found {
             surface.world.y = held.height + terrain.origin.y;
+        }
+        if surface.thinned > 0.0 {
+            surface.clump = terrain_canopy_clump(surface.world, site.footprint);
         }
         ground = terrain_ground(surface, seen.shading);
         ground.albedo *= terrain_tint(surface.world, ground, site.footprint);
