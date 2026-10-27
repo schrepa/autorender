@@ -1548,6 +1548,7 @@ impl Renderer {
             (
                 self.terrain.trace_sources(),
                 self.features.scatter.get().slot_buffers(),
+                self.impostors.placed.frames(),
             ),
         );
     }

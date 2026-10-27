@@ -15,7 +15,7 @@ use crate::gpu_layouts::scene::{
     ResolveUniform, RouteData, ShadowCullUniform, ShadowUniform, SkyUniform,
 };
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
-use crate::gpu_layouts::world_trace::TraceTerrain;
+use crate::gpu_layouts::world_trace::{PlacedGroup, TraceTerrain};
 use crate::gpu_layouts::{
     bounce, clouds, debug_view, deformation, ground_cover, occupancy, scatter, sky, terrain, water,
 };
@@ -1098,10 +1098,13 @@ tables! {
     /// part, the effects' uniform, the depth buffer, the glow target, the
     /// linear sampler, the pyramid of nearest depths, the surface's packed
     /// words and the scene with its levels; and what the world trace walks,
-    /// the terrain pass's heights, directory, peaks, control values,
-    /// palette, macro colors and sky maps, the trace's terrains and
-    /// placements, and the placed objects' records and poses. With the
-    /// first group, sixteen sampled textures and seven storage buffers.
+    /// the terrain pass's heights with their peaks in their mips,
+    /// directory, control values, palette, macro colors and sky maps, the
+    /// trace's terrains and placements, the placed objects' records, poses
+    /// and draw groups, and the placed objects' impostor atlas, every layer
+    /// undecoded. With the first group, sixteen sampled textures and eight
+    /// storage buffers: the atlas takes the texture the peaks took before
+    /// they moved into the heights' mips.
     const REFLECTIONS: Table = Table {
         label: "engine/post-reflections-layout",
         serves: [REFLECTIONS_SHADER @ 1],
@@ -1115,7 +1118,6 @@ tables! {
             texture(14, "scene_levels", Float, D2, F),
             texture(20, "heights", Unfilterable, D2Array, F),
             read(21, "directory", F),
-            texture(22, "peaks", Unfilterable, D2Array, F),
             texture(23, "control", Uint, D2Array, F),
             uniform_of(24, "palette", terrain::PALETTE_BYTES, F),
             texture(25, "macro_maps", Float, D2Array, F),
@@ -1124,6 +1126,8 @@ tables! {
             read(28, "world_placed", F),
             read_of(29, "placed_records", size_of::<ScatterRecord>(), F),
             read_of(30, "placed_poses", POSE, F),
+            read_of(31, "placed_groups", size_of::<PlacedGroup>(), F),
+            texture(32, "placed_frames", Float, D2Array, F),
         ],
     };
 

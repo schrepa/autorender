@@ -1,21 +1,22 @@
 // Screen-space reflections, gone on through the world where the screen
 // cannot see, prepended with scene.wgsl (the main passes' first group as
 // terrain binds it, `bindings::CAMERA_TERRAIN`), effects.wgsl,
-// terrain_variety.wgsl, terrain_ground.wgsl and screen_points.wgsl. Each
-// reflective pixel's own ray walks the depth buffer's pyramid of nearest
-// depths and meets what the screen shows where it passes within that
-// surface's own span and thickness, keeping the screen's color there.
-// Everything else goes on in the world from the last point the walk knew
-// was clear: rays leaving the screen, rays passing behind a surface by more
-// than it spans, which the eye cannot see, and rays that run out of steps.
-// The world trace walks the world's own data: every terrain's resident
-// tiles, each at its level, skipped over by their peaks, and the canopies
-// of the placed objects their tiles hold, gridded by tile
-// (`world_trace.rs`). A world hit is lit as the scene's own shading lights
-// it, at the level its footprint matches, then hazed from the eye and
-// graded as that shading shows it, as the screen's hits beside it are; a
-// ray the world never meets leaves the sky the surface's own shading
-// mirrors (`mirrored_sky`).
+// terrain_variety.wgsl, terrain_ground.wgsl, screen_points.wgsl and
+// impostor_frames.wgsl. Each reflective pixel's own ray walks the depth
+// buffer's pyramid of nearest depths and meets what the screen shows where
+// it passes within that surface's own span and thickness, foliage as deep
+// as the crown of the placed object holding it, keeping the screen's color
+// there. Everything else goes on in the world from the last point the walk
+// knew was clear: rays leaving the screen, rays passing behind a surface by
+// more than it spans, which the eye cannot see, and rays that run out of
+// steps. The world trace walks the world's own data: every terrain's
+// resident tiles, each at its level, skipped over by their peaks, and the
+// placed objects their tiles hold, gridded by tile (`world_trace.rs`), each
+// met as its own impostor's views show it. A world hit is lit as the
+// scene's own shading lights it, at the level its footprint matches, then
+// hazed from the eye and graded as that shading shows it, as the screen's
+// hits beside it are; a ray the world never meets leaves the sky the
+// surface's own shading mirrors (`mirrored_sky`).
 
 @group(1) @binding(0) var<uniform> post: Post;
 @group(1) @binding(1) var depth_texture: texture_depth_2d;
@@ -35,29 +36,35 @@
 // The world the trace walks, as the terrain pass streams it: every resident
 // tile's heights, a layer each, and the directory of every terrain's levels
 // and their tiles' layers (`terrain_ground.wgsl` reads both by these
-// names); each layer's peaks, the highest of its heights over each cell of
-// 2^(m + 1) samples a side at mip m (`world_trace::peaks`); each layer's
-// control values; every terrain's surface materials, as many as fit 16 KiB
-// (`terrain::PALETTE_ENTRIES`); and each terrain's macro colors with their
-// mips and its sky map, a layer each.
+// names), the heights' mip m + 1 holding mip m of their layer's peaks, the
+// highest of its heights over each cell of 2^(m + 1) samples a side
+// (`world_trace::peaks`); each layer's control values; every terrain's
+// surface materials, as many as fit 16 KiB (`terrain::PALETTE_ENTRIES`);
+// and each terrain's macro colors with their mips and its sky map, a layer
+// each.
 @group(1) @binding(20) var heights: texture_2d_array<f32>;
 @group(1) @binding(21) var<storage, read> directory: array<u32>;
-@group(1) @binding(22) var peaks: texture_2d_array<f32>;
 @group(1) @binding(23) var control: texture_2d_array<u32>;
 const PALETTE_ENTRIES: u32 = 113u;
 @group(1) @binding(24) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
 @group(1) @binding(25) var macro_maps: texture_2d_array<f32>;
 @group(1) @binding(26) var terrain_sky: texture_2d_array<f32>;
 // The terrains the trace walks, as many as `post.reflections.w` counts;
-// their placements (`world_trace.rs`): where draw groups' covers start,
-// each atlas layer's word naming where its tile's grid of placed objects
-// starts (NO_PLACED where it holds none), every draw group's cover, then
-// the grids; and every placed object's record and pose, as the scatter pass
-// set them on the ground this frame.
+// their placements (`world_trace.rs`): each atlas layer's word naming where
+// its tile's grid of placed objects starts (NO_PLACED where it holds none),
+// then the grids; every placed object's record and pose, as the scatter
+// pass set them on the ground this frame; every draw group's impostor and
+// color; and the placed objects' impostor atlas, every layer of its
+// IMPOSTOR_KINDS kinds of texels undecoded, each kind's layers together in
+// turn (`impostors.rs`): albedo, sRGB-encoded, and coverage; emissive color
+// and mask; normal and depth; and the surface's factors, occlusion and the
+// sky it sees past its own mesh, all premultiplied by coverage.
 @group(1) @binding(27) var<storage, read> world_terrains: array<TraceTerrain>;
 @group(1) @binding(28) var<storage, read> world_placed: array<u32>;
 @group(1) @binding(29) var<storage, read> placed_records: array<Record>;
 @group(1) @binding(30) var<storage, read> placed_poses: array<Pose>;
+@group(1) @binding(31) var<storage, read> placed_groups: array<PlacedGroup>;
+@group(1) @binding(32) var placed_frames: texture_2d_array<f32>;
 
 // A surface material as the terrain palette holds it (`terrain.wgsl`):
 // its maps' mean color and roughness, its factors applied, in `far`, and
@@ -90,7 +97,7 @@ struct TerrainInfo {
 // its sky map's layer plus one (0 until it arrives) and the levels whose
 // tiles hold placed objects, a bit each; and the widest apron of those
 // tiles' grids (meters), ground cover's density, and the highest its
-// resident ground or a canopy stands (world).
+// resident ground or a placed object stands (world).
 struct TraceTerrain {
     info: TerrainInfo,
     cutout: vec4<f32>,
@@ -118,6 +125,17 @@ struct Pose {
     r2: vec4<f32>,
 }
 
+// A draw group of placed objects as the world trace meets its objects
+// (`world_trace.rs`): its impostor in the placed objects' atlas, zeroed
+// without one, whose views it reads and whose box bounds them; and its
+// objects' linear color and opacity as four 16-bit fractions, packed as
+// slots' colors are, which the impostor's albedo leaves out.
+struct PlacedGroup {
+    impostor: ImpostorRecord,
+    color: vec2<u32>,
+    pad: vec2<u32>,
+}
+
 const DEAD: u32 = 0xffffffffu;
 // Objects standing far away while tiles holding them instead are resident
 // (`scatter.rs`).
@@ -125,11 +143,18 @@ const HIDDEN: u32 = 0x80000000u;
 // A layer's word in the placements whose tile holds no placed objects.
 const NO_PLACED: u32 = 0xffffffffu;
 // Quads along a tile's side; mips of each layer's peaks, cells of 2 samples
-// a side at the finest up to one of the whole tile, and their cells along a
-// side at the finest.
+// a side at the finest up to one of the whole tile, each in the heights'
+// mip below its own, and their cells along a side at the finest.
 const TILE_QUADS: u32 = 256u;
 const PEAK_MIPS: u32 = 8u;
 const PEAK_CELLS: u32 = 128u;
+// The kinds of texels the placed objects' impostor atlas holds, each
+// kind's layers together in turn (`impostors.rs`).
+const IMPOSTOR_KINDS: u32 = 4u;
+// Masked coverage's mip scale (Golus): a view's coverage scaled up by this
+// much per level below the first, as masked tests and cards keep thin
+// cutouts' coverage over their mipmaps' levels.
+const MASK_MIP_SCALE: f32 = 0.25;
 
 // The most steps a reflection ray's walk of the depth pyramid takes: the
 // ceiling it walked within before rays went on behind sheets and the
@@ -144,16 +169,17 @@ const WORLD_STEPS: u32 = 2u * PEAK_CELLS;
 // How far past a cell's edge, as a share of the cell, a walk of the world
 // trace starts its next step, so it lies inside the next cell.
 const WORLD_PAST: f32 = 1.0e-3;
-// How thick the sheets reflection rays pass behind are (`BODY_THIN`), in
-// world units: cutouts, foliage and blades stand for leaves, needles and
-// grass a few centimeters thick.
+// How thick the sheets reflection rays pass behind are (`BODY_THIN`) where
+// no placed object's crown holds them, in world units: cutouts, foliage and
+// blades stand for leaves, needles and grass a few centimeters thick.
 const REFLECTION_THIN: f32 = 0.05;
 // What lies behind a pixel's surface, which the surface target's last word
 // holds above its mirrored share's MIRRORED_BITS (`meshes/shading.wgsl`'s
 // `surface_texel`): an object's body, as deep as it is wide across where a
-// ray passes behind it; a sheet; the ground, solid below its surface, which
-// the world trace holds; or water, solid below its surface as far as
-// reflections tell, which it does not.
+// ray passes behind it; a sheet, as deep as the crown of a placed object
+// holding it; the ground, solid below its surface, which the world trace
+// holds; or water, solid below its surface as far as reflections tell,
+// which it does not.
 const MIRRORED_BITS: u32 = 14u;
 const BODY_SOLID: u32 = 0u;
 const BODY_THIN: u32 = 1u;
@@ -344,6 +370,125 @@ fn reflects_itself(pixel: vec2<i32>, p: vec3<f32>, plane: vec3<f32>, at: vec2<f3
     return abs(dot(seen - p, plane)) <= spans * abs(dot(sight, plane));
 }
 
+// A placed object's pose turned around: the rows of its linear part's
+// inverse, its cofactors over its determinant, which take offsets from its
+// origin into mesh space and, as columns, mesh-space normals into the
+// world; and its origin (world). A pose without volume turns everything to
+// its origin.
+struct Unposed {
+    x: vec3<f32>,
+    y: vec3<f32>,
+    z: vec3<f32>,
+    origin: vec3<f32>,
+}
+
+fn unposed_pose(pose: Pose) -> Unposed {
+    let x = vec3<f32>(pose.r0.x, pose.r1.x, pose.r2.x);
+    let y = vec3<f32>(pose.r0.y, pose.r1.y, pose.r2.y);
+    let z = vec3<f32>(pose.r0.z, pose.r1.z, pose.r2.z);
+    let yz = cross(y, z);
+    let zx = cross(z, x);
+    let xy = cross(x, y);
+    let determinant = dot(x, yz);
+    let inverse = select(0.0, 1.0 / determinant, abs(determinant) > 1.0e-30);
+    return Unposed(yz * inverse, zx * inverse, xy * inverse,
+        vec3<f32>(pose.r0.w, pose.r1.w, pose.r2.w));
+}
+
+// The mesh-space offset of world offset `offset` under `unposed`.
+fn unposed_offset(unposed: Unposed, offset: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(dot(unposed.x, offset), dot(unposed.y, offset), dot(unposed.z, offset));
+}
+
+// Whether world points `front` and `back` both lie within the bounds of the
+// placed object in slot `slot`, the box its draw group's views frame
+// (`PlacedGroup`), at its pose as the scatter pass set it on the ground this
+// frame, within its bounding sphere first; never for dead slots, objects
+// hidden while tiles holding them instead are resident, or objects without
+// views.
+fn object_holds(slot: u32, front: vec3<f32>, back: vec3<f32>) -> bool {
+    let record = placed_records[slot];
+    if record.group == DEAD || (record.terrain & HIDDEN) != 0u
+        || distance(front, record.center) > record.radius
+        || distance(back, record.center) > record.radius {
+        return false;
+    }
+    let impostor = placed_groups[record.group].impostor;
+    let unposed = unposed_pose(placed_poses[slot]);
+    let near = unposed_offset(unposed, front - unposed.origin) - impostor.sphere.xyz;
+    let far = unposed_offset(unposed, back - unposed.origin) - impostor.sphere.xyz;
+    return impostor.sphere.w > 0.0 && all(abs(near) <= impostor.extent)
+        && all(abs(far) <= impostor.extent);
+}
+
+// Whether world points `front` and `back` both lie within the bounds of one
+// placed object the grid at word `block` of the placements lists in its
+// cell holding terrain-local `local` (`front`'s), a tile's from `first`
+// (terrain-local) `size` meters a side: the objects whose footprints reach
+// into that cell.
+fn block_holds(block: u32, first: vec2<f32>, size: f32, local: vec2<f32>, front: vec3<f32>,
+        back: vec3<f32>) -> bool {
+    let cells = world_placed[block];
+    let apron = bitcast<f32>(world_placed[block + 1u]);
+    let entries = block + world_placed[block + 2u];
+    let width = (size + 2.0 * apron) / f32(cells);
+    let at = floor((local - (first - vec2<f32>(apron))) / width);
+    if any(at < vec2<f32>(0.0)) || any(at >= vec2<f32>(f32(cells))) {
+        return false;
+    }
+    let cell = vec2<u32>(at);
+    let ends = block + 4u + (4u * cells * cells - 1u) / 3u;
+    let index = cell.y * cells + cell.x;
+    let listed = select(world_placed[ends + index - 1u], 0u, index == 0u);
+    let listed_end = world_placed[ends + index];
+    for (var entry = listed; entry < listed_end; entry++) {
+        if object_holds(world_placed[entries + entry], front, back) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether a ray's point `back`, behind the foliage a pixel shows at `front`
+// along the sight line through it, lies within the crown of the placed
+// object holding that foliage: both within its bounds, which holds the
+// sight line between them, as deep as that object's crown is there. The
+// objects are those the placements' grids list in their cells holding
+// `front`, at every level whose tiles hold placed objects, of every tile
+// whose square, widened by the widest apron of its terrain's grids, holds
+// it.
+fn crown_holds(front: vec3<f32>, back: vec3<f32>) -> bool {
+    let count = u32(post.reflections.w);
+    for (var index = 0u; index < count; index++) {
+        let terrain = world_terrains[index];
+        let held = terrain.maps.y;
+        let info = terrain.info;
+        let local = front.xz - info.origin.xz;
+        let apron = terrain.reach.x;
+        for (var level = 0u; level < info.levels.y; level++) {
+            if ((held >> level) & 1u) == 0u {
+                continue;
+            }
+            let size = f32(TILE_QUADS) * info.origin.w * f32(1u << level);
+            let header = info.levels.x + 4u * level;
+            let tiles = vec2<i32>(i32(directory[header + 1u]), i32(directory[header + 2u]));
+            let low = max(vec2<i32>(floor((local - apron) / size)), vec2<i32>(0));
+            let high = min(vec2<i32>(floor((local + apron) / size)), tiles - 1);
+            for (var z = low.y; z <= high.y; z++) {
+                for (var x = low.x; x <= high.x; x++) {
+                    let layer = directory[directory[header] + u32(z) * u32(tiles.x) + u32(x)];
+                    if layer != NOT_RESIDENT && world_placed[layer] != NO_PLACED
+                        && block_holds(world_placed[layer], vec2<f32>(f32(x), f32(z)) * size,
+                            size, local, front, back) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
 // Where a ray's walk of the depth pyramid ended: whether it met the scene
 // on screen, and where (pixels and depth); otherwise the share of its
 // segment on screen up to which it knew the way clear, from where the world
@@ -363,16 +508,18 @@ struct ScreenWalk {
 // surface a pixel shows is the ray's hit where the ray meets it there, or
 // where the ray lies behind it by no more than its own length across the
 // pixel, the depths the surface spans across it (`surface_span`) and what
-// lies behind it (`body_at`): water all the way down, a sheet
-// REFLECTION_THIN deep, an object's body as deep as it is wide across where
-// the ray passes behind it, the ground no deeper than its span, the world
-// trace holding what lies below. A ray behind an object by more than its
-// body so far goes on at single pixels behind it. The walk knows the way
-// clear up to where the ray last lay in front of everything; it hands over
-// to the world trace there where the ray leaves the screen, passes behind a
-// sheet or the ground by more than it spans, comes back in front of
-// everything having passed behind objects by more than their bodies, or
-// takes REFLECTION_STEPS steps.
+// lies behind it (`body_at`): water all the way down; a sheet
+// REFLECTION_THIN deep, or, where the sheet and the ray's point behind it
+// both lie within one placed object's bounds, foliage as deep as that
+// object's crown holds there (`crown_holds`); an object's body as deep as
+// it is wide across where the ray passes behind it; the ground no deeper
+// than its span, the world trace holding what lies below. A ray behind an
+// object by more than its body so far goes on at single pixels behind it.
+// The walk knows the way clear up to where the ray last lay in front of
+// everything; it hands over to the world trace there where the ray leaves
+// the screen, passes behind a sheet or the ground by more than it spans,
+// comes back in front of everything having passed behind objects by more
+// than their bodies, or takes REFLECTION_STEPS steps.
 fn screen_walk(origin: vec3<f32>, ray: vec3<f32>) -> ScreenWalk {
     var walk: ScreenWalk;
     let moving = abs(ray.xy) > vec2<f32>(1.0e-9);
@@ -471,7 +618,10 @@ fn screen_walk(origin: vec3<f32>, ray: vec3<f32>) -> ScreenWalk {
             }
             thickness = distance(point.xy, entered) * distance(shown, post.eye.xyz) / post.eye.w;
         }
-        if distance(ray_point, shown) <= thickness + spans {
+        // Behind foliage within its object's crown, the ray meets the
+        // tree there.
+        if distance(ray_point, shown) <= thickness + spans
+            || (body == BODY_THIN && crown_holds(shown, ray_point)) {
             walk.met = true;
             walk.point = point;
             return walk;
@@ -556,10 +706,11 @@ fn finest_tile(terrain: GroundTerrain, local: vec2<f32>, first: u32) -> FinestTi
 }
 
 // What the world trace met: whether it met anything, the meters from the
-// reflecting point it met it at (the ray's reach until it does), the
-// surface's normal there; whether it is the ground, of which terrain (the
-// trace's index) and the level of the tile holding it; and for a canopy,
-// its objects' color.
+// reflecting point it met it at (the ray's reach until it does); whether
+// it is the ground, of which terrain (the trace's index), and for the
+// ground the surface's normal there and the level of the tile holding it;
+// and for a placed object its slot and where the view nearest the ray
+// holds the hit: the atlas layer's coordinates, and the level read there.
 struct WorldHit {
     met: bool,
     s: f32,
@@ -567,7 +718,17 @@ struct WorldHit {
     ground: bool,
     terrain: u32,
     level: u32,
-    color: vec3<f32>,
+    slot: u32,
+    held: vec3<f32>,
+}
+
+// How wide the footprint of a reflection ray is `s` meters on from its
+// reflecting point, whose spread is `spread`: as wide as a pixel spans
+// over the way the ray went, the reflecting point lying `spread.x` meters
+// from the eye, or as the roughness's lobe spreads there, `spread.y` a
+// meter, whichever is wider.
+fn ray_footprint(spread: vec2<f32>, s: f32) -> f32 {
+    return max((spread.x + s) / post.eye.w, spread.y * s);
 }
 
 // Where a ray from `o` (terrain-local) along `direction` meets the ground
@@ -693,7 +854,8 @@ fn trace_ground(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32
             let cell = min(vec2<u32>(max(floor((start + rate * s) / width), vec2<f32>(0.0))),
                 vec2<u32>(cells - 1u));
             let first = vec2<f32>(cell) * width;
-            let peak = textureLoad(peaks, offset / (2u << mip) + cell, found.tile.layer, mip).r;
+            let peak = textureLoad(heights, offset / (2u << mip) + cell, found.tile.layer,
+                mip + 1u).r;
             let exit = min(square_exit(start, rate, first, width), leaves);
             if min(o.y + direction.y * s, o.y + direction.y * exit) > peak {
                 s = exit;
@@ -721,94 +883,146 @@ fn trace_ground(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32
     }
 }
 
-// A draw group's canopy, from its cover's eight words in the placements
-// (`occupancy::Cover`): its footprint's radius, the bottom and top of what
-// it covers above its objects' origin (mesh units), and its objects' linear
-// color.
-struct Canopy {
-    footprint: f32,
-    bottom: f32,
-    top: f32,
-    color: vec3<f32>,
+// The meters along a ray from `start`, moving `rate` a meter, over which it
+// lies within the box of half extents `half` about the origin, within
+// `nearest` to `farthest`; empty (x not below y) where it misses it.
+fn cube_span(start: vec3<f32>, rate: vec3<f32>, half: vec3<f32>, nearest: f32, farthest: f32)
+        -> vec2<f32> {
+    let moving = abs(rate) > vec3<f32>(1.0e-12);
+    let inverse = 1.0 / select(vec3<f32>(1.0), rate, moving);
+    let a = (-half - start) * inverse;
+    let b = (half - start) * inverse;
+    // Still along an axis, inside the box's span of it at every meter or at
+    // none.
+    let inside = abs(start) <= half;
+    let enters = select(select(vec3<f32>(FLOAT_MAX), vec3<f32>(-FLOAT_MAX), inside), min(a, b),
+        moving);
+    let leaves = select(select(vec3<f32>(-FLOAT_MAX), vec3<f32>(FLOAT_MAX), inside), max(a, b),
+        moving);
+    return vec2<f32>(max(nearest, max(max(enters.x, enters.y), enters.z)),
+        min(farthest, min(min(leaves.x, leaves.y), leaves.z)));
 }
 
-fn canopy_of(group: u32) -> Canopy {
-    let at = world_placed[0] + 8u * group;
-    var canopy: Canopy;
-    canopy.footprint = bitcast<f32>(world_placed[at]);
-    canopy.bottom = bitcast<f32>(world_placed[at + 1u]);
-    canopy.top = bitcast<f32>(world_placed[at + 2u]);
-    canopy.color = vec3<f32>(bitcast<f32>(world_placed[at + 4u]),
-        bitcast<f32>(world_placed[at + 5u]), bitcast<f32>(world_placed[at + 6u]));
-    return canopy;
-}
-
-// Where the ray from `p` along `direction` (world) meets the canopy of the
-// placed object in slot `slot`, from `nearest` meters on, nearer than `hit`
-// holds, which it then holds as terrain `index`'s: the spheroid its cover's
-// footprint and heights bound about its origin at its scale, standing on
-// the ground as the scatter pass set it this frame; a tree's crown, other
-// objects' bounds. Dead slots and objects hidden while tiles holding them
-// instead are resident meet nothing. A ray starting inside one meets it
-// where it starts.
-fn test_canopy(slot: u32, p: vec3<f32>, direction: vec3<f32>, nearest: f32,
+// Where the ray from `p` along `direction` (world) meets the placed object
+// in slot `slot`, from `nearest` meters on, nearer than `hit` holds, which
+// it then holds as terrain `index`'s: within the box its draw group's views
+// frame, at its pose as the scatter pass set it on the ground this frame,
+// where its own views show it. Of them the ray reads the one nearest its
+// direction, the grid point nearest the direction back along it, as cards
+// pick theirs among the frames around the view (`meshes/impostors.wgsl`),
+// at the level whose texels match its footprint there (`spread`,
+// `ray_footprint`): where it crosses the plane through the center facing
+// back along it, then, from the depth the view holds there, where it meets
+// that surface, which it meets where the view covers at least
+// IMPOSTOR_CUTOFF, coverage scaled up on coarser levels as masked tests
+// scale theirs; the gaps and the silhouette are the object's own. Dead
+// slots, objects hidden while tiles holding them instead are resident, and
+// objects without views meet nothing. A ray starting within what the view
+// holds meets it where it starts.
+fn test_placed(slot: u32, p: vec3<f32>, direction: vec3<f32>, nearest: f32, spread: vec2<f32>,
         hit: ptr<function, WorldHit>, index: u32) {
     let record = placed_records[slot];
     if record.group == DEAD || (record.terrain & HIDDEN) != 0u {
         return;
     }
-    let canopy = canopy_of(record.group);
-    let radius = canopy.footprint * record.scale;
-    let half = 0.5 * (canopy.top - canopy.bottom) * record.scale;
-    if radius <= 0.0 || half <= 0.0 {
+    let impostor = placed_groups[record.group].impostor;
+    let texels = impostor.flags & (IMPOSTOR_HEMISPHERE - 1u);
+    let radius = impostor.sphere.w;
+    if texels == 0u || radius <= 0.0 {
         return;
     }
-    let pose = placed_poses[slot];
-    let center = vec3<f32>(pose.r0.w,
-        pose.r1.w + 0.5 * (canopy.bottom + canopy.top) * record.scale, pose.r2.w);
-    // The spheroid as a sphere of `radius` once its heights scale by
-    // `radius` over `half`.
-    let squash = vec3<f32>(1.0, radius / half, 1.0);
-    let from_center = (p - center) * squash;
-    let way = direction * squash;
-    let a = dot(way, way);
-    let b = dot(from_center, way);
-    let c = dot(from_center, from_center) - radius * radius;
-    let discriminant = b * b - a * c;
-    if discriminant < 0.0 {
+    let unposed = unposed_pose(placed_poses[slot]);
+    // The ray in mesh space from the views' center, moving `way` a meter,
+    // and the mesh units it moves a meter.
+    let o = unposed_offset(unposed, p - unposed.origin) - impostor.sphere.xyz;
+    let way = unposed_offset(unposed, direction);
+    let rate = length(way);
+    let span = cube_span(o, way, impostor.extent, nearest, (*hit).s);
+    if rate <= 0.0 || span.x >= span.y {
         return;
     }
-    let root = sqrt(discriminant);
-    if (root - b) / a < nearest {
+    // The view nearest the ray's direction, toward the ray's viewer.
+    let toward = -way / rate;
+    let hemisphere = (impostor.flags & IMPOSTOR_HEMISPHERE) != 0u;
+    let frames = impostor_frames(impostor.flags);
+    let grid = (impostor_grid(toward, hemisphere) * 0.5 + 0.5) * f32(frames - 1u);
+    let cell = min(vec2<u32>(round(grid)), vec2<u32>(frames - 1u));
+    let seen_from = impostor_frame_direction(cell.y * frames + cell.x, frames, hemisphere);
+    let basis = impostor_basis(seen_from);
+    // Where the ray crosses the plane through the center facing its viewer
+    // (meters, then radii from the center); the view's image of it there,
+    // how that image moves per radius toward the viewer, and the view's
+    // depth there.
+    let s0 = dot(o, toward) / rate;
+    let crossing = (o + way * s0) / radius;
+    let image = vec2<f32>(dot(crossing, basis.right), -dot(crossing, basis.up));
+    let slope = vec2<f32>(dot(toward, basis.right), -dot(toward, basis.up));
+    let depth = dot(crossing, seen_from);
+    let facing = impostor_facing(slope);
+    // The level whose texels match the ray's footprint there, a first
+    // level's texel spanning the sphere's diameter over the texels across a
+    // frame, down to two texels a frame (`AtlasShape`); and half a texel of
+    // the coarser level sampled, which keeps the samples in the view's cell.
+    let size = f32(frames * texels);
+    let coarsest = f32(countTrailingZeros(texels) - 1u);
+    let footprint = ray_footprint(spread, max(s0, nearest)) * rate;
+    let level = clamp(log2(max(footprint * f32(texels) / (2.0 * radius), 1.0e-6)), 0.0,
+        coarsest);
+    let inset = 0.5 * exp2(ceil(level)) / size;
+    let span_uv = 1.0 / f32(frames);
+    let first = vec2<f32>(cell) * span_uv;
+    let crossed = first + (0.5 + 0.5 * image) * span_uv;
+    let depths = 2u * (textureNumLayers(placed_frames) / IMPOSTOR_KINDS) + impostor.layer;
+    let scale = 1.0 + MASK_MIP_SCALE * level;
+    var at = clamp(crossed, first + inset, first + span_uv - inset);
+    // Most of the box around its object is empty there: those rays stop
+    // before reading the rest.
+    let probed = textureSampleLevel(placed_frames, linear, at, impostor.layer, level).a;
+    if probed * scale < 1.0 / 255.0 {
         return;
     }
-    let s = max((-b - root) / a, nearest);
+    // Where the ray meets the surface the view's depths hold there, in
+    // radii toward its viewer from the plane, at which the view is read
+    // again; then where it meets the surface held there.
+    var along = clamp(impostor_met(textureSampleLevel(placed_frames, linear, at, depths,
+        level).w, probed, depth, facing) / probed, -1.0, 1.0);
+    at = clamp(crossed + slope * (0.5 * span_uv * along), first + inset,
+        first + span_uv - inset);
+    let covered = textureSampleLevel(placed_frames, linear, at, impostor.layer, level).a;
+    if covered * scale < IMPOSTOR_CUTOFF {
+        return;
+    }
+    along = clamp(impostor_met(textureSampleLevel(placed_frames, linear, at, depths, level).w,
+        covered, depth, facing) / covered, -1.0, 1.0);
+    // A radius toward the viewer is `radius / rate` meters back along the
+    // ray.
+    let s = clamp(s0 - along * radius / rate, span.x, span.y);
     if s >= (*hit).s {
         return;
     }
     (*hit).met = true;
     (*hit).s = s;
-    (*hit).normal = normalize((p + direction * s - center) * squash * squash);
     (*hit).ground = false;
     (*hit).terrain = index;
-    (*hit).color = canopy.color;
+    (*hit).slot = slot;
+    (*hit).held = vec3<f32>(at, level);
 }
 
 // Where the ray from `p` along `direction` (world; `o` terrain-local) meets
-// a canopy of the grid of placed objects at word `block` of the placements,
-// a tile's from `first` (terrain-local) `size` meters a side, within the
-// meters `bounds`, nearer than `hit` holds (as terrain `index`'s): its
-// square widened by its apron each way, in `cells` cells a side, each
-// listing the objects whose canopies reach into it, below the highest of
-// their tops (world heights), which a pyramid of cells, each the highest of
-// the four below it, gathers. The walk skips each cell the ray passes
-// above, coarser next, refines each it may meet, down to single cells,
-// whose objects it tests, and ends once the nearest canopy met lies within
-// the cell tested, or once the walks of the grids of its level took
-// WORLD_STEPS steps (`steps`).
+// a placed object of the grid at word `block` of the placements, a tile's
+// from `first` (terrain-local) `size` meters a side, within the meters
+// `bounds`, nearer than `hit` holds (as terrain `index`'s), its spread
+// `spread`: its square widened by its apron each way, in `cells` cells a
+// side, each listing the objects whose footprints reach into it, below the
+// highest of their tops (world heights), which a pyramid of cells, each the
+// highest of the four below it, gathers. The walk skips each cell the ray
+// passes above, coarser next, refines each it may meet, down to single
+// cells, whose objects it tests (`test_placed`), and ends once the nearest
+// object met lies within the cell tested, or once the walks of the grids
+// of its level took WORLD_STEPS steps (`steps`).
 fn walk_block(block: u32, first: vec2<f32>, size: f32, o: vec3<f32>, p: vec3<f32>,
-        direction: vec3<f32>, bounds: vec2<f32>, hit: ptr<function, WorldHit>, index: u32,
-        steps: ptr<function, u32>) {
+        direction: vec3<f32>, bounds: vec2<f32>, spread: vec2<f32>,
+        hit: ptr<function, WorldHit>, index: u32, steps: ptr<function, u32>) {
     let cells = world_placed[block];
     let apron = bitcast<f32>(world_placed[block + 1u]);
     let entries = block + world_placed[block + 2u];
@@ -847,7 +1061,8 @@ fn walk_block(block: u32, first: vec2<f32>, size: f32, o: vec3<f32>, p: vec3<f32
         let listed = select(world_placed[ends + at - 1u], 0u, at == 0u);
         let listed_end = world_placed[ends + at];
         for (var entry = listed; entry < listed_end; entry++) {
-            test_canopy(world_placed[entries + entry], p, direction, bounds.x, hit, index);
+            test_placed(world_placed[entries + entry], p, direction, bounds.x, spread, hit,
+                index);
         }
         if (*hit).s <= leave {
             return;
@@ -863,17 +1078,17 @@ fn line_shift(line: u32) -> f32 {
     return select(select(1.0, -1.0, line == 1u), 0.0, line == 0u);
 }
 
-// Where the ray from `p` along `direction` (world) meets the canopy of a
-// placed object of the trace's terrain `index` within the meters `bounds`,
-// nearer than `hit` holds: at each level whose tiles hold placed objects,
-// finest first, the grids of the tiles whose squares widened by the widest
-// apron the ray passes through (`walk_block`), each once, in WORLD_STEPS
-// steps a level. Those are the tiles one of three lines across the ground
-// enters, the ray's own and the ray moved the apron either way across it:
-// a tile, far wider than the apron, that the band between them reaches
-// into, one of them crosses.
-fn trace_canopies(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32>,
-        hit: ptr<function, WorldHit>) {
+// Where the ray from `p` along `direction` (world), its spread `spread`,
+// meets a placed object of the trace's terrain `index` within the meters
+// `bounds`, nearer than `hit` holds: at each level whose tiles hold placed
+// objects, finest first, the grids of the tiles whose squares widened by
+// the widest apron the ray passes through (`walk_block`), each once, in
+// WORLD_STEPS steps a level. Those are the tiles one of three lines across
+// the ground enters, the ray's own and the ray moved the apron either way
+// across it: a tile, far wider than the apron, that the band between them
+// reaches into, one of them crosses.
+fn trace_placed(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32>,
+        spread: vec2<f32>, hit: ptr<function, WorldHit>) {
     let terrain = world_terrains[index];
     let held = terrain.maps.y;
     if held == 0u {
@@ -919,9 +1134,9 @@ fn trace_canopies(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f
                 if fresh {
                     let layer = directory[directory[header] + u32(tile.y) * tiles.x
                         + u32(tile.x)];
-                    if layer != NOT_RESIDENT && world_placed[1u + layer] != NO_PLACED {
-                        walk_block(world_placed[1u + layer], tile * size, size, o, p,
-                            direction, span, hit, index, &steps);
+                    if layer != NOT_RESIDENT && world_placed[layer] != NO_PLACED {
+                        walk_block(world_placed[layer], tile * size, size, o, p, direction,
+                            span, spread, hit, index, &steps);
                     }
                 }
                 s = leave;
@@ -930,11 +1145,12 @@ fn trace_canopies(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f
     }
 }
 
-// What the ray from `p` along `direction` (world) meets from `nearest` to
-// `farthest` meters on: the nearest ground or canopy of the terrains the
-// trace walks, each walked only while a ray rising lies below the highest
-// its ground or a canopy stands.
-fn world_trace(p: vec3<f32>, direction: vec3<f32>, nearest: f32, farthest: f32) -> WorldHit {
+// What the ray from `p` along `direction` (world), its spread `spread`,
+// meets from `nearest` to `farthest` meters on: the nearest ground or
+// placed object of the terrains the trace walks, each walked only while a
+// ray rising lies below the highest its ground or a placed object stands.
+fn world_trace(p: vec3<f32>, direction: vec3<f32>, nearest: f32, farthest: f32,
+        spread: vec2<f32>) -> WorldHit {
     var hit: WorldHit;
     hit.s = farthest;
     let count = u32(post.reflections.w);
@@ -945,7 +1161,7 @@ fn world_trace(p: vec3<f32>, direction: vec3<f32>, nearest: f32, farthest: f32) 
         }
         if below > nearest {
             trace_ground(index, p, direction, vec2<f32>(nearest, below), &hit);
-            trace_canopies(index, p, direction, vec2<f32>(nearest, below), &hit);
+            trace_placed(index, p, direction, vec2<f32>(nearest, below), spread, &hit);
         }
     }
     return hit;
@@ -1044,25 +1260,65 @@ fn ground_albedo(terrain: TraceTerrain, local: vec2<f32>, normal: vec3<f32>, tow
     return albedo * macro_tint(colors, vegetated);
 }
 
+// What a placed object's views hold where the world hit `hit` met it, read
+// where and at the level it met it (`test_placed`), as cards read theirs:
+// its albedo (linear, unpremultiplied, its objects' color applied as cards
+// apply their slots'), its normal turned from mesh space into the world by
+// its pose, the occlusion its surface holds, and the share of the sky it
+// sees past its own mesh, which shades the sun as the mesh's own shadows
+// would.
+struct PlacedSurface {
+    albedo: vec3<f32>,
+    normal: vec3<f32>,
+    occlusion: f32,
+    sky: f32,
+}
+
+fn placed_surface(hit: WorldHit) -> PlacedSurface {
+    let group = placed_groups[placed_records[hit.slot].group];
+    let layers = textureNumLayers(placed_frames) / IMPOSTOR_KINDS;
+    let layer = group.impostor.layer;
+    let albedo = textureSampleLevel(placed_frames, linear, hit.held.xy, layer, hit.held.z);
+    let geometry = textureSampleLevel(placed_frames, linear, hit.held.xy, 2u * layers + layer,
+        hit.held.z);
+    let surface = textureSampleLevel(placed_frames, linear, hit.held.xy, 3u * layers + layer,
+        hit.held.z);
+    let unpremultiply = 1.0 / max(albedo.a, 1.0e-4);
+    let color = vec3<f32>(unpack2x16unorm(group.color.x), unpack2x16unorm(group.color.y).x);
+    let mesh_normal = geometry.xyz * unpremultiply * 2.0 - 1.0;
+    let unposed = unposed_pose(placed_poses[hit.slot]);
+    var placed: PlacedSurface;
+    placed.albedo = decode_srgb(albedo.rgb) * unpremultiply * color;
+    placed.normal = stable_normalize(unposed.x * mesh_normal.x + unposed.y * mesh_normal.y
+        + unposed.z * mesh_normal.z);
+    placed.occlusion = surface.z * unpremultiply;
+    placed.sky = saturate(surface.w * unpremultiply);
+    return placed;
+}
+
 // The light the world hit `hit` of a ray from `p` along `direction` sends
 // back along it, a footprint `footprint` meters wide, as the scene's own
 // shading lights it (`meshes/shading.wgsl`'s `finish_reflecting`): its
-// color (the ground's, or a canopy's objects'); the sky's light about its
-// normal, the ground's turned toward the sky it sees and by the share of it
-// it sees (its sky map), with the light the ground around sends where it
-// hides the sky (terrains' bounce probes); and the sun through its slope,
-// wrapped as the ground's own light is, past the terrains' horizons, the
-// cheapest of the sun's shadows, where shadows run, and the clouds'
-// shadows. The haze covers it and the grade follows exactly as the scene's
-// own shading shows that point to the eye (`finish`'s `atmospheric` from
-// the camera, then `grade`), as the screen's hits beside it show theirs.
+// color and normal (the ground's, or a placed object's own views',
+// `placed_surface`); the sky's light about its normal, the ground's turned
+// toward the sky it sees and by the share of it it sees (its sky map), with
+// the light the ground around sends where it hides the sky (terrains'
+// bounce probes), a placed object's darkened by the occlusion its views
+// hold; and the sun through its slope, wrapped as the ground's own light
+// is, past the terrains' horizons, the cheapest of the sun's shadows, where
+// shadows run, the clouds' shadows, and a placed object's own mesh's, the
+// sky its views see past it. The haze covers it and the grade follows
+// exactly as the scene's own shading shows that point to the eye
+// (`finish`'s `atmospheric` from the camera, then `grade`), as the screen's
+// hits beside it show theirs.
 fn world_light(hit: WorldHit, p: vec3<f32>, direction: vec3<f32>, footprint: f32) -> vec3<f32> {
     let terrain = world_terrains[hit.terrain];
     let world = p + direction * hit.s;
-    let normal = hit.normal;
-    var albedo = hit.color;
+    var normal = hit.normal;
+    var albedo: vec3<f32>;
     var ambient: vec3<f32>;
     var bounce: vec3<f32>;
+    var unshaded = 1.0;
     if hit.ground {
         let local = world.xz - terrain.info.origin.xz;
         albedo = ground_albedo(terrain, local, normal, direction, footprint, hit.level);
@@ -1070,16 +1326,21 @@ fn world_light(hit: WorldHit, p: vec3<f32>, direction: vec3<f32>, footprint: f32
         ambient = sky_average(normalize(normal + (sky.gba * 2.0 - 1.0))) * sky.r;
         bounce = bounce_light(world, normal, true).light;
     } else {
+        let placed = placed_surface(hit);
+        albedo = placed.albedo;
+        normal = placed.normal;
+        unshaded = placed.sky;
         let around = bounce_light(world, normal, false);
-        ambient = mix(sky_average(normal), sky_above(normal) * around.sky, around.weight);
-        bounce = around.light * around.weight;
+        ambient = mix(sky_average(normal), sky_above(normal) * around.sky, around.weight)
+            * placed.occlusion;
+        bounce = around.light * (around.weight * placed.occlusion);
     }
     let sky_light = albedo * (ambient * lighting.zenith.w + bounce);
     let sun = lighting.sun.xyz;
     let wrapped = max((dot(normal, sun) + 0.25) / 1.25, 0.0);
     var sun_light = vec3<f32>(0.0);
     if wrapped > 0.0 {
-        var visible = cloud_passing(world);
+        var visible = cloud_passing(world) * unshaded;
         if SHADOW_MAPS && shadow.state.x != 0.0 {
             visible *= terrain_visibility(world, hit.ground);
         }
@@ -1180,16 +1441,15 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     if !(nearest < reach) {
         return vec4<f32>(0.0);
     }
-    let hit = world_trace(p, direction, nearest, reach);
+    // The ray's spread (`ray_footprint`): the meters from the eye a pixel's
+    // span grows over, and the width the roughness's lobe spreads to a
+    // meter.
+    let spread = vec2<f32>(distance(p, post.eye.xyz), 2.0 * REFLECTION_CONE * alphas.x);
+    let hit = world_trace(p, direction, nearest, reach, spread);
     if !hit.met {
         return vec4<f32>(0.0);
     }
     let weight = reach_fade(hit.s, reach);
-    // The footprint where it lands: as wide as a pixel spans over the way
-    // the ray went, or as the roughness's lobe spreads there, whichever is
-    // wider.
-    let footprint = max((distance(p, post.eye.xyz) + hit.s) / post.eye.w,
-        2.0 * REFLECTION_CONE * alphas.x * hit.s);
-    let color = world_light(hit, p, direction, footprint);
+    let color = world_light(hit, p, direction, ray_footprint(spread, hit.s));
     return vec4<f32>(color * (reflectivity * weight), mirroring.mirrored * weight);
 }

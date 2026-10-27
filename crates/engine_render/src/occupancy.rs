@@ -55,12 +55,11 @@ const REACH_SHARE: f32 = 3.0 / 8.0;
 pub(crate) use crate::gpu_layouts::occupancy::Cover;
 
 impl Cover {
-    /// The cover of a mesh with bounds `min` to `max` whose objects show
-    /// `color` (linear): its footprint a little inside its bounds' mean
-    /// horizontal half extent. Tall meshes, such as trees, cover from a
-    /// fifth of their height up, their crowns; the rest from their bottom,
-    /// their bounds.
-    pub(crate) fn of(min: Vec3, max: Vec3, color: [f32; 3]) -> Self {
+    /// The cover of a mesh with bounds `min` to `max`: its footprint a
+    /// little inside its bounds' mean horizontal half extent. Tall meshes,
+    /// such as trees, cover from a fifth of their height up, their crowns;
+    /// the rest from their bottom, their bounds.
+    pub(crate) fn of(min: Vec3, max: Vec3) -> Self {
         let half = (max - min) * 0.5;
         let footprint = (half.x + half.z) * 0.5 * 0.85;
         let height = max.y - min.y;
@@ -74,7 +73,6 @@ impl Cover {
             bottom,
             top: max.y,
             density: 0.9,
-            color: [color[0], color[1], color[2], 0.0],
         }
     }
 }

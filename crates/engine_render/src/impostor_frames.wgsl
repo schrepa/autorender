@@ -1,7 +1,7 @@
-// Impostors' frames, which the meshes' and the
-// shadow maps' shaders share: each record's grid of frames, each one's
-// direction over the sphere or the upper hemisphere, and the records of
-// baked impostors.
+// Impostors' frames, which the meshes', the shadow maps' and reflections'
+// shaders share: each record's grid of frames, each one's direction over
+// the sphere or the upper hemisphere, the records of baked impostors, and
+// how a line of sight meets the surface a frame's depths hold.
 // The flag of records whose frames cover only the upper hemisphere, above
 // their texels across a frame.
 const IMPOSTOR_HEMISPHERE: u32 = 0x10000u;
@@ -123,4 +123,26 @@ fn impostor_basis(d: vec3<f32>) -> ImpostorBasis {
     }
     let right = normalize(cross(hint, d));
     return ImpostorBasis(right, cross(d, right));
+}
+
+// The coverage frames hold at least where they show their object: half,
+// as cards keep the fragments their blend leaves at least half covered.
+const IMPOSTOR_CUTOFF: f32 = 0.5;
+
+// How squarely a frame faces the line of sight whose image in it moves by
+// `slope` per radius toward the viewer: the cosine between the two, kept
+// from vanishing where views from below see placed objects' frames from
+// the horizon.
+fn impostor_facing(slope: vec2<f32>) -> f32 {
+    return sqrt(max(1.0 - dot(slope, slope), 0.01));
+}
+
+// How far toward the viewer, in radii from the center, the line of sight
+// meets the surface a frame's texel holds, times the texel's coverage:
+// `sampled` its premultiplied depth (half of one more than the depth, times
+// coverage), `covered` its coverage, `crossing` the frame's depth where the
+// line of sight crosses the plane through the center, and `facing` how
+// squarely the frame faces it.
+fn impostor_met(sampled: f32, covered: f32, crossing: f32, facing: f32) -> f32 {
+    return (2.0 * sampled - covered * (1.0 + crossing)) / facing;
 }

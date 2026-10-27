@@ -87,7 +87,6 @@ pub(crate) use patches::{PatchDraws, planes, visible};
 use pipelines::{GroupSources, TerrainPipelines};
 pub(crate) use surface::{SurfaceDraw, SurfaceTrees};
 use tables::TerrainTables;
-pub(crate) use tables::placed_color;
 pub(crate) use water_blocks::TerrainWaterDraws;
 
 pub(crate) use crate::gpu_layouts::terrain::PatchRecord;
@@ -172,10 +171,11 @@ pub(crate) struct CoverSources<'a> {
 
 /// What reflections' world trace reads of the terrain pass
 /// (`reflections.wgsl`), each as a group binds it, counted by what it came
-/// from: the height, peaks and control arrays once tiles arrived; the
-/// directory, the palette, and the macro colors and sky maps.
+/// from: the height array, its mips holding the heights' peaks, and the
+/// control array once tiles arrived; the directory, the palette, and the
+/// macro colors and sky maps.
 pub(crate) struct TraceSources<'a> {
-    pub arrays: Option<[Bound<'a>; 3]>,
+    pub arrays: Option<[Bound<'a>; 2]>,
     pub directory: Bound<'a>,
     pub palette: Bound<'a>,
     pub macro_maps: Bound<'a>,
@@ -491,13 +491,9 @@ impl TerrainPass {
     /// What reflections' world trace reads ([`TraceSources`]).
     pub(crate) fn trace_sources(&self) -> TraceSources<'_> {
         let generation = self.atlas.generation;
-        let arrays = match (self.atlas.views(), self.atlas.peaks()) {
-            (Some((heights, _, control)), Some(peaks)) => Some(
-                [heights, peaks, control]
-                    .map(|view| Bound::counted(generation, crate::pipelines::view(view))),
-            ),
-            _ => None,
-        };
+        let arrays = self.atlas.views().map(|(heights, _, control)| {
+            [heights, control].map(|view| Bound::counted(generation, crate::pipelines::view(view)))
+        });
         TraceSources {
             arrays,
             directory: self.tables.directory.bound(),

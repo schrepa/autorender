@@ -197,7 +197,7 @@ pub(crate) struct PostPass {
     // walks).
     occlusion_group: GroupCache<5>,
     effects_filter_group: GroupCache<2>,
-    reflections_group: GroupCache<18>,
+    reflections_group: GroupCache<19>,
     haze_group: GroupCache<2>,
     haze_filter_group: GroupCache<4>,
 }
@@ -503,16 +503,19 @@ impl PostPass {
     /// reflects, and let go in others; and their group over the uniform, the
     /// depth buffer `depth`, the glow and surface targets, the pyramid, the
     /// scene's levels and what the world trace walks: the terrain pass's
-    /// `sources`, its own data, and the placed objects' records and poses
-    /// with the generation counting their buffers (`placed`).
+    /// `sources`, its own data, the placed objects' records and poses with
+    /// the generation counting their buffers (`placed`), and every layer of
+    /// the placed objects' impostor atlas with the generation counting its
+    /// arrays (`frames`).
     pub(crate) fn prepare_reflections(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
         (frame, depth): (Effects, &Versioned<wgpu::TextureView>),
         trace: Option<&crate::world_trace::TraceFrame<'_>>,
-        (sources, placed): (
+        (sources, placed, frames): (
             crate::terrain::TraceSources<'_>,
             (&wgpu::Buffer, &wgpu::Buffer, u64),
+            Option<(&wgpu::TextureView, u64)>,
         ),
     ) {
         self.world_trace
@@ -522,12 +525,11 @@ impl PostPass {
         else {
             return;
         };
-        let world = self.world_trace.bindings(sources, placed);
+        let world = self.world_trace.bindings(sources, placed, frames);
         let target = |view| Bound::of(targets, pipelines::view(view));
         let [
             heights,
             directory,
-            peaks,
             control,
             palette,
             macro_maps,
@@ -536,6 +538,8 @@ impl PostPass {
             placements,
             records,
             poses,
+            groups,
+            placed_frames,
         ] = world;
         self.reflections_group.bind(
             device,
@@ -551,7 +555,6 @@ impl PostPass {
                 ("scene_levels", target(&targets.scene_levels)),
                 heights,
                 directory,
-                peaks,
                 control,
                 palette,
                 macro_maps,
@@ -560,6 +563,8 @@ impl PostPass {
                 placements,
                 records,
                 poses,
+                groups,
+                placed_frames,
             ],
         );
     }

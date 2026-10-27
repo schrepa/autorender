@@ -200,7 +200,8 @@ shaders! {
     ];
     /// Reflections after the scene declarations and effects: the walk of
     /// the screen, and the world trace through the terrains' tiles and
-    /// placed objects, lit as the main passes light.
+    /// placed objects, met as their impostors' frames show them, lit as the
+    /// main passes light.
     REFLECTIONS_SHADER = [
         "scene.wgsl",
         "color.wgsl",
@@ -210,6 +211,7 @@ shaders! {
         "terrain_variety.wgsl",
         "terrain_ground.wgsl",
         "screen_points.wgsl",
+        "impostor_frames.wgsl",
         "reflections.wgsl",
     ];
     /// Auto exposure's meter and adaptation.

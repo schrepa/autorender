@@ -1,9 +1,10 @@
-//! The tile atlas: every resident tile's heights, normals (the smooth
+//! The tile atlas: every resident tile's heights, with their peaks
+//! (`world_trace::peaks`) in the mips below them, normals (the smooth
 //! surface's gradient at each sample), control values and rivers (meters to
 //! their edges and their beds) in four texture arrays, and the error
-//! pyramids of its ground and of its water's surface and its heights' peaks
-//! (`world_trace::peaks`), every mip, in three more, a layer each, written
-//! as the layer takes the tile and as its water changes; which tile each
+//! pyramids of its ground and of its water's surface, every mip, in two
+//! more, a layer each, written as the layer takes the tile and as its water
+//! changes; which tile each
 //! layer holds, when it arrived, and the layers
 //! free; the GPU's normal maps and control values of the tiles shading with
 //! their own samples uploaded each frame (level-0 tiles, and surroundings'
@@ -34,10 +35,10 @@ use std::collections::{BTreeMap, BTreeSet};
 /// part in a thousand, rounded up, and the water's marks exactly.
 const ERROR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 
-/// The arrays: heights, control values, normals and rivers' edges and
-/// beds, the error pyramids of the ground and of the water's surface, and
-/// the heights' peaks, which reflections' world trace skips over, a layer
-/// per tile.
+/// The arrays: heights, whose mip `m + 1` holds mip `m` of their peaks,
+/// which reflections' world trace skips over, control values, normals and
+/// rivers' edges and beds, and the error pyramids of the ground and of the
+/// water's surface, a layer per tile.
 struct Arrays {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -51,10 +52,17 @@ struct Arrays {
     ground_errors_view: wgpu::TextureView,
     water_errors: wgpu::Texture,
     water_errors_view: wgpu::TextureView,
-    peaks: wgpu::Texture,
-    peaks_view: wgpu::TextureView,
     layers: u32,
 }
+
+/// Mips of the heights: the heights, then their peaks' every mip, each
+/// below the heights' mip whose texels a side hold its cells.
+const HEIGHT_MIPS: u32 = 1 + ERROR_MIPS;
+
+const _: () = assert!(
+    LAYER_SIZE >= 2 * ERROR_CELLS && LAYER_SIZE >> ERROR_MIPS >= 1,
+    "each mip of the heights below the first holds a mip of their peaks"
+);
 
 /// A terrain's tiles as last synced: their revision and list, in key
 /// order, and whether the GPU gave them control values.
@@ -263,18 +271,18 @@ impl TileAtlas {
             .map(|arrays| (&arrays.ground_errors_view, &arrays.water_errors_view))
     }
 
-    /// The view of the heights' peaks, once tiles arrived.
-    pub(super) fn peaks(&self) -> Option<&wgpu::TextureView> {
-        self.arrays.as_ref().map(|arrays| &arrays.peaks_view)
-    }
-
     /// Bytes of the height, normal, control and river arrays, four, four,
-    /// four and eight a texel, and of the error pyramids and the peaks, two
-    /// a cell of every mip each.
+    /// four and eight a texel, of the heights' mips below them holding their
+    /// peaks, four a texel, and of the error pyramids, two a cell of every
+    /// mip each.
     pub(super) fn capacity_bytes(&self) -> u64 {
         self.arrays.as_ref().map_or(0, |arrays| {
-            let pyramids = 3 * 2 * ERROR_TEXELS as u64;
-            u64::from(arrays.layers) * (u64::from(LAYER_SIZE * LAYER_SIZE) * 20 + pyramids)
+            let pyramids = 2 * 2 * ERROR_TEXELS as u64;
+            let peaks: u64 = (1..HEIGHT_MIPS)
+                .map(|mip| u64::from(LAYER_SIZE >> mip).pow(2) * 4)
+                .sum();
+            u64::from(arrays.layers)
+                * (u64::from(LAYER_SIZE * LAYER_SIZE) * 20 + peaks + pyramids)
         })
     }
 
@@ -576,9 +584,7 @@ impl TileAtlas {
             write_layer(queue, &arrays.texture, layer, (texels, 4));
             write_errors(queue, &arrays.ground_errors, layer, tile.ground_errors());
             let peaks = crate::world_trace::peaks(tile.heights());
-            write_mips(queue, &arrays.peaks, layer, |mip| {
-                crate::world_trace::peaks_mip(&peaks, mip)
-            });
+            write_peaks(queue, &arrays.texture, layer, &peaks);
             self.tops.insert(key, crate::world_trace::peaks_top(&peaks));
             // Tiles shading with their shading take its normal maps.
             if !shades {
@@ -1074,7 +1080,7 @@ impl TileAtlas {
             return;
         }
         let layers = needed.next_power_of_two().max(16).min(max_layers.max(1));
-        let array = |label: &'static str, format, usage| {
+        let array = |label: &'static str, format, usage, mips| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
@@ -1082,7 +1088,7 @@ impl TileAtlas {
                     height: LAYER_SIZE,
                     depth_or_array_layers: layers,
                 },
-                mip_level_count: 1,
+                mip_level_count: mips,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
@@ -1093,28 +1099,33 @@ impl TileAtlas {
                 view_formats: &[],
             })
         };
+        // The heights, their peaks in the mips below them.
         let texture = array(
             "engine/terrain-heights",
             HEIGHT_FORMAT,
             wgpu::TextureUsages::empty(),
+            HEIGHT_MIPS,
         );
         let normals = array(
             "engine/terrain-normals",
             NORMAL_FORMAT,
             wgpu::TextureUsages::STORAGE_BINDING,
+            1,
         );
         // The GPU writes control values.
         let control = array(
             "engine/terrain-control",
             CONTROL_FORMAT,
             wgpu::TextureUsages::STORAGE_BINDING,
+            1,
         );
         let rivers = array(
             "engine/terrain-rivers",
             RIVER_FORMAT,
             wgpu::TextureUsages::empty(),
+            1,
         );
-        // The error pyramids and the peaks: a texel a cell, every mip.
+        // The error pyramids: a texel a cell, every mip.
         let pyramid = |label: &'static str| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -1135,7 +1146,6 @@ impl TileAtlas {
         };
         let ground_errors = pyramid("engine/terrain-ground-errors");
         let water_errors = pyramid("engine/terrain-water-errors");
-        let peaks = pyramid("engine/terrain-peaks");
         if let Some(old) = &self.arrays
             && self.next_layer > 0
         {
@@ -1152,21 +1162,28 @@ impl TileAtlas {
                 for (from, to) in [
                     (&old.ground_errors, &ground_errors),
                     (&old.water_errors, &water_errors),
-                    (&old.peaks, &peaks),
                 ] {
                     encoder.copy_texture_to_texture(mip_copy(from, mip), mip_copy(to, mip), extent);
                 }
+            }
+            for mip in 0..HEIGHT_MIPS {
+                let side = LAYER_SIZE >> mip;
+                let extent = wgpu::Extent3d {
+                    width: side,
+                    height: side,
+                    depth_or_array_layers: self.next_layer,
+                };
+                encoder.copy_texture_to_texture(
+                    mip_copy(&old.texture, mip),
+                    mip_copy(&texture, mip),
+                    extent,
+                );
             }
             let extent = wgpu::Extent3d {
                 width: LAYER_SIZE,
                 height: LAYER_SIZE,
                 depth_or_array_layers: self.next_layer,
             };
-            encoder.copy_texture_to_texture(
-                old.texture.as_image_copy(),
-                texture.as_image_copy(),
-                extent,
-            );
             encoder.copy_texture_to_texture(
                 old.normals.as_image_copy(),
                 normals.as_image_copy(),
@@ -1198,14 +1215,12 @@ impl TileAtlas {
             rivers_view: array_view(&rivers),
             ground_errors_view: array_view(&ground_errors),
             water_errors_view: array_view(&water_errors),
-            peaks_view: array_view(&peaks),
             texture,
             control,
             normals,
             rivers,
             ground_errors,
             water_errors,
-            peaks,
             layers,
         });
         self.generation += 1;
@@ -1279,6 +1294,38 @@ fn write_mips<'a>(
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(side * 2),
+                rows_per_image: Some(side),
+            },
+            wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+}
+
+/// Writes `peaks`, a tile's peaks (`world_trace::peaks`), below its heights
+/// in `layer` of the heights `texture`: mip `m` of the peaks into the
+/// heights' mip `m + 1` from its first texel, which holds its cells.
+fn write_peaks(queue: &Queue, texture: &wgpu::Texture, layer: u32, peaks: &[f32]) {
+    for mip in 0..ERROR_MIPS {
+        let side = ERROR_CELLS >> mip;
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: mip + 1,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: layer,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(crate::world_trace::peaks_mip(peaks, mip)),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(side * 4),
                 rows_per_image: Some(side),
             },
             wgpu::Extent3d {
