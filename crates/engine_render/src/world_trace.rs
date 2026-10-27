@@ -207,11 +207,7 @@ impl WorldTrace {
                 crate::terrain::HEIGHT_FORMAT,
                 1,
             ),
-            placeholder(
-                "engine/post-world-control",
-                wgpu::TextureFormat::R32Uint,
-                1,
-            ),
+            placeholder("engine/post-world-control", wgpu::TextureFormat::R32Uint, 1),
             placeholder(
                 "engine/post-world-frames",
                 wgpu::TextureFormat::Rgba8Unorm,
@@ -517,14 +513,13 @@ impl WorldTrace {
         placed: &Placements<'_>,
     ) {
         let held = placed.impostors.iter().zip(placed.colors);
-        let same = self.written_groups.len() == placed.impostors.len()
-            && self
-                .written_groups
-                .iter()
-                .zip(held.clone())
-                .all(|(group, (impostor, color))| {
-                    group.impostor == *impostor && group.color == *color
-                });
+        let same =
+            self.written_groups.len() == placed.impostors.len()
+                && self.written_groups.iter().zip(held.clone()).all(
+                    |(group, (impostor, color))| {
+                        group.impostor == *impostor && group.color == *color
+                    },
+                );
         if same {
             return;
         }
@@ -699,9 +694,8 @@ fn reaches(
         let [x, y, z, _] = views.sphere;
         let [half_x, half_y, half_z] = views.extent;
         let middle = |row: [f32; 4]| row[0] * x + row[1] * y + row[2] * z + row[3];
-        let spread = |row: [f32; 4]| {
-            row[0].abs() * half_x + row[1].abs() * half_y + row[2].abs() * half_z
-        };
+        let spread =
+            |row: [f32; 4]| row[0].abs() * half_x + row[1].abs() * half_y + row[2].abs() * half_z;
         let (across, along) = (spread(pose[0]), spread(pose[2]));
         let radius = (across * across + along * along).sqrt();
         if radius <= 0.0 || radius.is_nan() {

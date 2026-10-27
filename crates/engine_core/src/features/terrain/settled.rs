@@ -763,7 +763,11 @@ fn refresh(
         let settled = &mut state.settled;
         // Every part stands its tile's objects as the solids it was made
         // with: under others, none is kept.
-        if settled.checked.as_ref().is_some_and(|(_, solids)| *solids != checked.1) {
+        if settled
+            .checked
+            .as_ref()
+            .is_some_and(|(_, solids)| *solids != checked.1)
+        {
             for (_, part) in settled.parts.iter() {
                 if let Part::Asked(id) = part {
                     slots.jobs.cancel(*id);

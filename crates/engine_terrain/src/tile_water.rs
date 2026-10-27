@@ -1144,11 +1144,10 @@ impl Tile {
             (&mut surface[at.clone()], &mut info[at]),
         );
         let solids = self.water().map_or(&[][..], TileWater::solids);
-        Some(self.clone().with_water(
-            surface.into_boxed_slice(),
-            info.into_boxed_slice(),
-            solids,
-        ))
+        Some(
+            self.clone()
+                .with_water(surface.into_boxed_slice(), info.into_boxed_slice(), solids),
+        )
     }
 
     /// Its first sample's terrain-local point.

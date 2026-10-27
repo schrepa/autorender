@@ -404,10 +404,7 @@ impl Solid {
     /// Whether its center is finite and its extents positive and finite.
     pub fn valid(&self) -> bool {
         self.center.iter().all(|value| value.is_finite())
-            && self
-                .half
-                .iter()
-                .all(|&half| half.is_finite() && half > 0.0)
+            && self.half.iter().all(|&half| half.is_finite() && half > 0.0)
     }
 }
 
@@ -503,7 +500,10 @@ impl Footprint {
 
     /// Whether its center is finite and its axes finite and invertible.
     pub(crate) fn valid(&self) -> bool {
-        self.center.iter().chain(&self.axes).all(|value| value.is_finite())
+        self.center
+            .iter()
+            .chain(&self.axes)
+            .all(|value| value.is_finite())
             && self.axes().determinant() != 0.0
     }
 }
@@ -1048,8 +1048,16 @@ crate::codec::record!(AuthoredPlacement {
     align,
     level,
 });
-crate::codec::record!(Solid { center, half, round });
-crate::codec::record!(Footprint { center, axes, round });
+crate::codec::record!(Solid {
+    center,
+    half,
+    round
+});
+crate::codec::record!(Footprint {
+    center,
+    axes,
+    round
+});
 crate::codec::record!(Placed {
     position,
     yaw,

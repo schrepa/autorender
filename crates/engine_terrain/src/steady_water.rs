@@ -827,7 +827,11 @@ impl PartMaking {
             }
             return Ok(None);
         };
-        Ok(Some(WaterPart::of(&self.pyramid, &tile, (self.cell, &self.solids))))
+        Ok(Some(WaterPart::of(
+            &self.pyramid,
+            &tile,
+            (self.cell, &self.solids),
+        )))
     }
 }
 
@@ -1455,7 +1459,10 @@ impl SettleStart {
             .iter()
             .flat_map(|part| part.solids.iter().copied())
             .filter(|solid| {
-                let (low, high) = (solid.middle() - solid.reach(), solid.middle() + solid.reach());
+                let (low, high) = (
+                    solid.middle() - solid.reach(),
+                    solid.middle() + solid.reach(),
+                );
                 (block(low.y, 1)..=block(high.y, 1)).any(|z| {
                     (block(low.x, 0)..=block(high.x, 0)).any(|x| stored.slot(x, z).is_some())
                 })
@@ -1582,7 +1589,10 @@ impl SettleStart {
         self.solids
             .iter()
             .map(|solid| {
-                let (low, high) = (solid.middle() - solid.reach(), solid.middle() + solid.reach());
+                let (low, high) = (
+                    solid.middle() - solid.reach(),
+                    solid.middle() + solid.reach(),
+                );
                 cells(low.y, high.y, 1, nz).any(|j| {
                     cells(low.x, high.x, 0, nx).any(|i| self.wet(means, i as u32, j as u32))
                 })

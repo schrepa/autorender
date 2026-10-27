@@ -281,8 +281,7 @@ impl TileAtlas {
             let peaks: u64 = (1..HEIGHT_MIPS)
                 .map(|mip| u64::from(LAYER_SIZE >> mip).pow(2) * 4)
                 .sum();
-            u64::from(arrays.layers)
-                * (u64::from(LAYER_SIZE * LAYER_SIZE) * 20 + peaks + pyramids)
+            u64::from(arrays.layers) * (u64::from(LAYER_SIZE * LAYER_SIZE) * 20 + peaks + pyramids)
         })
     }
 
