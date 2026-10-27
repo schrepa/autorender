@@ -267,7 +267,7 @@ gpu_consts! {
     /// included, as its grid's vertices, and a sample more past each edge,
     /// which the smooth surface through them reaches from any point of the
     /// patch (the uniform cubic B-spline's four samples along each axis,
-    /// `meshes/water.wgsl`'s `water_read`).
+    /// `meshes/water.wgsl`'s `water_level`).
     pub(crate) const WATER_BLOCK: u32 = TERRAIN_GRID + 2 => ["WATER_BLOCK"];
     /// Blocks along a side of a layer of the water arrays.
     pub(crate) const WATER_BLOCKS_SIDE: u32 = 16 => ["WATER_BLOCKS_SIDE"];
