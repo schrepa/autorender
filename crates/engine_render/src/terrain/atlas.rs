@@ -249,11 +249,6 @@ impl TileAtlas {
         }
     }
 
-    /// The height array's view, once tiles arrived.
-    pub(super) fn heights(&self) -> Option<&wgpu::TextureView> {
-        self.arrays.as_ref().map(|arrays| &arrays.view)
-    }
-
     /// The height, normal and control arrays' views, once tiles arrived.
     pub(super) fn views(
         &self,

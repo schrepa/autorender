@@ -1397,9 +1397,10 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool,
     if refracts {
         behind = water_behind(point, normal, view, pixel, own, plane);
     }
-    // The bed under the pixel, where the waves gather the sun's light.
-    let bed = min(depth, standing);
-    let gathered = water_caustics(world, normal, bed);
+    // How deep the bed under the pixel lies, where the waves gather the
+    // sun's light.
+    let bed_depth = min(depth, standing);
+    let gathered = water_caustics(world, normal, bed_depth);
     // The water ends at its waterline and where the samples holding its
     // surface end; thin water shows by how fast it runs: calm shallows fade
     // in over WATER_SHORE of it, while racing water, however thin, is all
@@ -1466,8 +1467,8 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool,
     // that light on its way down, and drawn while the waves gathering it
     // span two pixels as the pixel resolves them (`water_shown`).
     let caustic = 1.0 + (gathered - 1.0) * lit.sunny
-        * exp(-bed * (1.0 / WATER_CAUSTIC_DEPTH + WATER_BUBBLES * aerated))
-        * water_shown(WATER_CAUSTIC_LENGTH * bed, pixel_resolved);
+        * exp(-bed_depth * (1.0 / WATER_CAUSTIC_DEPTH + WATER_BUBBLES * aerated))
+        * water_shown(WATER_CAUSTIC_LENGTH * bed_depth, pixel_resolved);
     // Of what the surface lets through, the ground shows darker for being
     // wet however thin the water over it, over WATER_SOAKED of it as smoothly
     // as the pixel spans it; foam covers it.

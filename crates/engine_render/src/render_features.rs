@@ -436,7 +436,11 @@ impl<'f> Encode<'f> {
         (views, meshes): (&'f dyn AttachmentViews, &'f dyn MeshDraws),
         (device, profiler): (&'f wgpu::Device, &'f GpuProfiler),
         ((camera, terrain_camera, water_camera), materials, lights): (
-            (&'f wgpu::BindGroup, &'f wgpu::BindGroup, &'f wgpu::BindGroup),
+            (
+                &'f wgpu::BindGroup,
+                &'f wgpu::BindGroup,
+                &'f wgpu::BindGroup,
+            ),
             &'f MaterialStore,
             Option<&'f wgpu::BindGroup>,
         ),
