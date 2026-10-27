@@ -2,16 +2,15 @@
 // Gerstner waves raise, drawn from rings of cells around the eye, a cell
 // apart near it and then each ring wider by a cell's share of its
 // circumference, out to the sea's reach. Vertices move by the waves longer
-// than a few of their cells; pixels shade with every wave longer than their
-// footprint at the steady size (STEADY_PIXELS, `water_footprint`) spans
-// along its heading, no finer than the size it resolves, so waves running
-// across the view stay drawn far along it, and the slopes of the others
-// roughen the surface instead, along their headings, as does how far the
-// normal of those drawn turns across a pixel, so distant water streaks and
-// glitters rather than aliasing. The CPU's queries
-// (`engine_core::OceanWaves`) sum the same waves. The wind's tiles ripple
-// it with the waves shorter than its own, sized by the same spectrum
-// (`water_wind_bands`), and it is lit as terrains' water is
+// than a few of their cells; pixels shade with every wave spanning two
+// pixels along its heading through their own footprint (`ocean_shown`,
+// `water_footprint`), so waves running across the view stay drawn far along
+// it, and the slopes of the others roughen the surface instead, along their
+// headings, as does how far the normal of those drawn turns across a pixel,
+// so distant water streaks and glitters rather than aliasing. The CPU's
+// queries (`engine_core::OceanWaves`) sum the same waves. The wind's tiles
+// ripple it with the waves shorter than its own, sized by the same
+// spectrum (`water_wind_bands`), and it is lit as terrains' water is
 // (`water_light`): what lies under it shows through, bent where the frame
 // copies the scene's color and dimmed channel by channel over the view's
 // path to it (the light reaching it already dims through the water above,
@@ -62,14 +61,12 @@ fn ocean_keep(number: f32, spacing: f32) -> f32 {
 }
 
 // How much of a wave `number` radians per meter heading along `way` (a unit
-// vector along x and z) a pixel draws whose footprint at the steady size on
-// the still sea is `footprint` (`water_footprint`): as samples a quarter of
-// the meters that footprint spans along the wave's heading apart keep it
-// (`ocean_keep`, `water_footprint_toward`: no finer than the size it
-// resolves), so waves shorter than twice that span fade and those shorter
-// than it are gone, their slopes roughening the surface instead.
+// vector along x and z) a pixel whose footprint on the still sea is
+// `footprint` (`water_footprint`) draws: all of it while it spans two
+// pixels along its heading, none where it spans one (`water_shown`,
+// `water_footprint_toward`), its slopes roughening the surface instead.
 fn ocean_shown(number: f32, way: vec2<f32>, footprint: WaterFootprint) -> f32 {
-    return ocean_keep(number, 0.25 * max(water_footprint_toward(footprint, way), 1.0e-6));
+    return water_shown(OCEAN_TAU / number, water_footprint_toward(footprint, way));
 }
 
 // Where the waves move the still sea's point `still` (less the eye),
@@ -176,11 +173,10 @@ fn shade_ocean_below(input: OceanOutput) -> WaterShade {
 }
 
 // The sea's waves over the still sea's point `still` (less the eye) as a
-// pixel whose footprint at the steady size on it is `footprint`
-// (`water_footprint`) draws them, as `ocean_normal` keeps them
-// (`ocean_shown`): the meters they raise it over the still sea (x), the
-// variance of the heights the pixel draws (y) and that of all their
-// heights (z), a wave `a` high adding a²/2.
+// pixel whose footprint on it is `footprint` (`water_footprint`) draws
+// them, as `ocean_normal` keeps them (`ocean_shown`): the meters they raise
+// it over the still sea (x), the variance of the heights the pixel draws
+// (y) and that of all their heights (z), a wave `a` high adding a²/2.
 fn ocean_heights(still: vec2<f32>, footprint: WaterFootprint) -> vec3<f32> {
     var heights = vec3<f32>(0.0);
     let count = u32(water.ocean_grid.w);
@@ -195,9 +191,9 @@ fn ocean_heights(still: vec2<f32>, footprint: WaterFootprint) -> vec3<f32> {
 }
 
 // The surface's normal at the still sea's point `still` (less the eye)
-// from every wave a pixel whose footprint at the steady size on it is
-// `footprint` (`water_footprint`) draws (`ocean_shown`, xyz), and how much
-// the waves compress it there (w).
+// from every wave a pixel whose footprint on it is `footprint`
+// (`water_footprint`) draws (`ocean_shown`, xyz), and how much the waves
+// compress it there (w).
 fn ocean_normal(still: vec2<f32>, footprint: WaterFootprint) -> vec4<f32> {
     var rise = vec2<f32>(0.0);
     var stretch = vec3<f32>(1.0, 0.0, 1.0);
@@ -230,12 +226,11 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     let view = stable_normalize(-input.relative);
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
-    // The pixel's footprint at the steady size on the still sea
-    // (`water_footprint`).
+    // The pixel's footprint on the still sea (`water_footprint`).
     let footprint = water_footprint(dpdx(still), dpdy(still));
-    // Every wave longer than that footprint spans along its heading tilts
-    // and stretches the surface (`ocean_shown`); the others' slopes roughen
-    // it instead, along the way each runs (`water_spread`).
+    // Every wave spanning two pixels along its heading tilts and stretches
+    // the surface (`ocean_shown`); the others' slopes roughen it instead,
+    // along the way each runs (`water_spread`).
     let waved = ocean_normal(still, footprint);
     var hidden = vec3<f32>(0.0);
     let count = u32(water.ocean_grid.w);
@@ -287,8 +282,11 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     // tear air in, a wave as high as all of them (`water.foam.y`) running
     // √(g/h) times its height in water h deep. It floats on the still sea's
     // points, so it rides the waves, and its relief tilts the normal it is
-    // lit by.
-    let foam_capping = saturate((water.foam.x - compression) / WATER_FOAM_CAPPING + 0.5);
+    // lit by. Its whitecaps thin over WATER_FOAM_CAPPING of compression, or
+    // over as much as the compression changes across a pixel of the display
+    // where that is more, so their edge draws no finer than a pixel.
+    let capping = max(WATER_FOAM_CAPPING, fwidth(compression) * material_detail());
+    let foam_capping = saturate((water.foam.x - compression) / capping + 0.5); // filter: the whitecaps' edge spread over the pixel, keeping their share
     let foam_crest = 1.0 / (1.0 + exp(-clamp(ripples.height
         * inverseSqrt(max(ripples.heights, 1.0e-12)) / WATER_LOGISTIC, -30.0, 30.0)));
     let foam_folding = water_folding(dot(gains, gains), ripples.hidden.x + ripples.hidden.y,

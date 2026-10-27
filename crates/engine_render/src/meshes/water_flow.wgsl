@@ -6,15 +6,15 @@
 // waves on them (`water_stream.wgsl`); and waves standing about what it
 // flows past. Its eddies draw no waves of their own: the slopes they raise
 // roughen the surface unseen (`water_stirred`). Every source is drawn
-// through the pixel's footprint at the steady size (STEADY_PIXELS,
-// `water_footprint`), as far as the footprint spans less than its features
-// along each way they vary, no finer than the size it resolves: waves
-// running across the view stay drawn far along it, while those running
-// along it, and features varying every way, average out where its long
-// side spans them. What a pixel averages of their slopes roughens the
-// surface instead (LEAN mapping), along the ways they vary, never faded; a
-// source with no share, or whose waves the footprint hides whole, reads
-// nothing, its slopes' variance known from what raised them.
+// through the pixel's own footprint (`water_footprint`): the wind's tiles
+// through their levels' filtering, and each computed part while it spans
+// two pixels along the way it varies (`water_shown`), so waves running
+// across the view stay drawn far along it, while those running along it
+// average out where the footprint spans them. What a pixel averages of
+// their slopes roughens the surface instead (LEAN mapping), along the ways
+// they vary, never faded; a source with no share, or whose waves the
+// footprint hides whole, reads nothing, its slopes' variance known from
+// what raised them.
 
 // Patterns the flow carries (Vlachos's flow maps), each drawn in two sets
 // half a life apart, each set carried from half a life before its middle to
@@ -208,18 +208,17 @@ fn water_stirred(eddy: f32, depth: f32) -> vec2<f32> {
 }
 
 // The wind's waves running water carries at `p` (meters along x and z) for
-// a pixel whose footprint at the steady size is `footprint`
-// (`water_footprint`), where it flows along `flow` (meters a second)
-// shearing `shear` a second, its waves living `life` seconds
-// (`water_wave_life`), at `time`, the place's clock running `stagger` cycles
-// ahead, each of the wind's tiles as strong as `gains` says
-// (`water_wind_waves`): they ride the current (Gonzalez-Ochoa, Uncharted 4's
-// rapids), read where the flow carried them from in both sets of both
-// octaves of its lives (`water_bands`, `water_set`), faded as the flow
-// strains them and blended keeping their spread, Σwᵢxᵢ/√Σwᵢ² of waves whose
-// mean is none (Yu, Neyret, Bruneton and Holzschuch). What strain fades of
-// their slopes hides in the covariance along them, roughening the water
-// instead.
+// a pixel whose footprint is `footprint` (`water_footprint`), where it
+// flows along `flow` (meters a second) shearing `shear` a second, its waves
+// living `life` seconds (`water_wave_life`), at `time`, the place's clock
+// running `stagger` cycles ahead, each of the wind's tiles as strong as
+// `gains` says (`water_wind_waves`): they ride the current (Gonzalez-Ochoa,
+// Uncharted 4's rapids), read where the flow carried them from in both sets
+// of both octaves of its lives (`water_bands`, `water_set`), faded as the
+// flow strains them and blended keeping their spread, Σwᵢxᵢ/√Σwᵢ² of waves
+// whose mean is none (Yu, Neyret, Bruneton and Holzschuch). What strain
+// fades of their slopes hides in the covariance along them, roughening the
+// water instead.
 fn water_carried_waves(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>,
         shear: f32, life: f32, time: f32, stagger: f32, gains: vec4<f32>) -> WaterRead {
     let bands = water_bands(life);
@@ -258,24 +257,19 @@ fn water_carried_waves(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>,
 }
 
 // Standing waves `sum` with a part added whose slopes are `gradient`
-// (meters a meter) and height `height` (meters), `amplitude` meters high at
-// its tallest there, its features `width` meters across along the way they
-// vary, along which the pixel's footprint at the steady size spans `span`
-// meters (`water_footprint_toward`, no finer than the size it resolves; its
-// long side for features varying every way): whole where they span that,
-// averaging out as they narrow below it, what the pixel averages of their
-// slopes hiding in their covariance, along them; its heights' variance a
-// sine's as tall.
-fn water_resolved(sum: WaterStanding, gradient: vec2<f32>, height: f32, amplitude: f32,
-        width: f32, span: f32) -> WaterStanding {
-    let kept = saturate(width / max(span, 1.0e-6));
-    let steep = dot(gradient, gradient);
+// (meters a meter), of which a pixel draws the share `drawn`
+// (`water_shown`), what it averages of them hiding in their covariance,
+// along them; and whose height is `height` (meters), `amplitude` meters high
+// at its tallest there, of which it draws the share `raised`, its heights'
+// variance a sine's as tall.
+fn water_resolved(sum: WaterStanding, gradient: vec2<f32>, drawn: f32, height: f32,
+        amplitude: f32, raised: f32) -> WaterStanding {
     var added = sum;
-    added.drawn.slopes += gradient * kept;
-    added.drawn.hidden += water_spread(gradient) * (1.0 - kept * kept);
-    added.drawn.height += height * kept;
-    added.drawn.heights += 0.5 * amplitude * amplitude * kept * kept;
-    added.spread += steep;
+    added.drawn.slopes += gradient * drawn;
+    added.drawn.hidden += water_spread(gradient) * (1.0 - drawn * drawn);
+    added.drawn.height += height * raised;
+    added.drawn.heights += 0.5 * amplitude * amplitude * raised * raised;
+    added.spread += dot(gradient, gradient);
     added.heights += 0.5 * amplitude * amplitude;
     return added;
 }
@@ -285,18 +279,20 @@ fn water_resolved(sum: WaterStanding, gradient: vec2<f32>, height: f32, amplitud
 // it, `obstacle` (its offset from the point along x and z and its radius,
 // meters, and how strongly a drop or jump lies just upstream), the share
 // `anchored` of them where a pixel's samples agree on that obstacle, for a
-// pixel whose footprint at the steady size is `footprint`
-// (`water_footprint`), each part as far as that footprint spans it along
-// the way it varies (`water_resolved`): fixed where the bed is, which the
+// pixel whose footprint is `footprint` (`water_footprint`), each part drawn
+// while it spans two pixels along the way it varies (`water_shown`,
+// `water_resolved`), a Gaussian w meters in half width as a wave πw long,
+// where its spectrum has fallen by e: fixed where the bed is, which the
 // flow never smears. A pillow heaps up just upstream of the obstacle, as
 // wide as it and as high as the water's velocity head U²/2g, or
-// WATER_PILLOW.z of its radius, varying every way; in supercritical water,
-// a front trails each side at the half angle asin(1/Fr) (30° at Froude 2), a
-// narrow crest falling off downstream, varying out from its crest; in
-// slower water, waves stand in its wake 2πU²/g apart, the length of the
-// waves its current holds still; and below a drop or jump, where the water
-// runs slower than Froude 1.7 as below an undular jump, a train stands of
-// waves about five depths long, both trains varying along the flow.
+// WATER_PILLOW.z of its radius, varying along the flow and across it, its
+// height drawn as far as both are; in supercritical water, a front trails
+// each side at the half angle asin(1/Fr) (30° at Froude 2), a narrow crest
+// falling off downstream, varying out from its crest; in slower water,
+// waves stand in its wake 2πU²/g apart, the length of the waves its
+// current holds still; and below a drop or jump, where the water runs
+// slower than Froude 1.7 as below an undular jump, a train stands of waves
+// about five depths long, both trains varying along the flow.
 fn water_standing(obstacle: vec4<f32>, flow: vec2<f32>, depth: f32, froude: f32,
         footprint: WaterFootprint, anchored: f32) -> WaterStanding {
     var standing: WaterStanding;
@@ -317,9 +313,14 @@ fn water_standing(obstacle: vec4<f32>, flow: vec2<f32>, depth: f32, froude: f32,
     let wide = across / radius;
     let peak = min(head, WATER_PILLOW.z * radius) * anchored;
     let pillow = peak * exp(-ahead * ahead - wide * wide);
-    standing = water_resolved(standing,
-        (heading * (ahead / run) + side * (wide / radius)) * (-2.0 * pillow), pillow, peak, run,
-        footprint.along);
+    // Its slopes along the flow and across it, each drawn as far as it
+    // spans two pixels that way, and its height as far as both do.
+    let lengthwise = water_shown(PI * run, water_footprint_toward(footprint, heading));
+    let crosswise = water_shown(PI * radius, water_footprint_toward(footprint, side));
+    standing = water_resolved(standing, heading * (ahead / run) * (-2.0 * pillow), lengthwise,
+        pillow, peak, lengthwise * crosswise);
+    standing = water_resolved(standing, side * (wide / radius) * (-2.0 * pillow), crosswise,
+        0.0, 0.0, 0.0);
     let supercritical = smoothstep(1.0, 1.3, froude);
     if supercritical > 0.0 {
         let sine = 1.0 / max(froude, 1.0);
@@ -332,8 +333,9 @@ fn water_standing(obstacle: vec4<f32>, flow: vec2<f32>, depth: f32, froude: f32,
             * exp(-max(along, 0.0) / (WATER_FRONT_REACH * radius));
         let tallest = min(head, depth) * supercritical * trailing * anchored;
         let front = tallest * exp(-(beside / crest) * (beside / crest));
+        let shown = water_shown(PI * crest, water_footprint_toward(footprint, outward));
         standing = water_resolved(standing, outward * (-2.0 * front * beside / (crest * crest)),
-            front, tallest, crest, water_footprint_toward(footprint, outward));
+            shown, front, tallest, shown);
     }
     // Both trains vary along the flow: the meters the footprint spans along
     // it.
@@ -347,8 +349,9 @@ fn water_standing(obstacle: vec4<f32>, flow: vec2<f32>, depth: f32, froude: f32,
             * exp(-past / (WATER_TRAIN_REACH * wavelength) - (across / wake) * (across / wake))
             * anchored;
         let rate = 2.0 * PI / wavelength;
+        let shown = water_shown(wavelength, along_flow);
         standing = water_resolved(standing, heading * (-height * rate * sin(rate * along)),
-            height * cos(rate * along), height, 0.25 * wavelength, along_flow);
+            shown, height * cos(rate * along), height, shown);
     }
     let undular = obstacle.w * (1.0 - smoothstep(1.4, 1.7, froude));
     if undular > 0.0 {
@@ -356,17 +359,18 @@ fn water_standing(obstacle: vec4<f32>, flow: vec2<f32>, depth: f32, froude: f32,
         let height = WATER_UNDULAR.y * depth * undular
             * exp(-length(apart) / (WATER_TRAIN_REACH * wavelength)) * anchored;
         let rate = 2.0 * PI / wavelength;
+        let shown = water_shown(wavelength, along_flow);
         standing = water_resolved(standing, heading * (-height * rate * sin(rate * along)),
-            height * cos(rate * along), height, 0.25 * wavelength, along_flow);
+            shown, height * cos(rate * along), height, shown);
     }
     return standing;
 }
 
-// The waves at `p` (meters along x and z), for a pixel whose footprint at
-// the steady size is `footprint` (`water_footprint`), of water as `at`
-// holds it, at Froude number `froude`, its eddies turning at `eddy` meters
-// a second (`water_eddies`), `flowing` of the way from still to running (0
-// to 1), the share `anchored` of its nearest obstacle's waves a pixel's
+// The waves at `p` (meters along x and z), for a pixel whose footprint is
+// `footprint` (`water_footprint`), of water as `at` holds it, at Froude
+// number `froude`, its eddies turning at `eddy` meters a second
+// (`water_eddies`), `flowing` of the way from still to running (0 to 1),
+// the share `anchored` of its nearest obstacle's waves a pixel's
 // samples agree on, at `time`, the place's clock running `stagger` cycles
 // ahead, each of the wind's tiles as strong as `gains` says
 // (`water_wind_gains`), as `WaterWaves` holds them. The boils
@@ -427,8 +431,8 @@ fn water_flow_waves(p: vec2<f32>, footprint: WaterFootprint, at: WaterAt,
     read = water_waves_added(read, bed.drawn);
     spread += bed.spread;
     heights += bed.heights;
-    // The waves standing about what it flows past, as far as the footprint
-    // spans each part along the way it varies (`water_resolved`).
+    // The waves standing about what it flows past, each part drawn while it
+    // spans two pixels along the way it varies (`water_standing`).
     let standing = water_standing(at.obstacle, flow, depth, froude, footprint, anchored);
     read = water_waves_added(read, standing.drawn);
     spread += standing.spread;

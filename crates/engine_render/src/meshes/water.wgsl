@@ -32,15 +32,16 @@
 // eddies bring up and the waves its bed holds still where it runs faster
 // than the slowest of its own waves (`water_stream.wgsl`); and
 // waves standing about what it flows past. Each is drawn through the
-// pixel's footprint at the steady size (STEADY_PIXELS, `water_footprint`),
-// as far as the footprint spans less than its features along each way they
-// vary, no finer than the size it resolves across the view: waves running
-// across the view stay drawn far along it, while those running along it,
-// and features varying every way, average out where its long side spans
-// them. What the pixel averages of its slopes, and how far those drawn turn
-// across it, roughens the surface along the view and across it, as the
-// ellipse of those slopes projects into the view, so far water streaks and
-// glints along the view. It mirrors the sky, the sun's disc and,
+// pixel's own footprint (`water_footprint`): the wind's tiles through their
+// levels' sixteenfold anisotropic filtering, which average their slopes'
+// moments (LEAN mapping), and every computed part while it spans two
+// pixels along the way it varies (`water_shown`), so waves running across
+// the view stay drawn far along it, while those running along it average
+// out where the footprint spans them. What the pixel averages of its
+// slopes, and how far those drawn turn across it, roughens the surface
+// along the view and across it, as the ellipse of those slopes projects
+// into the view, so far water streaks and glints along the view. It
+// mirrors the sky, the sun's disc and,
 // through screen-space reflections, the scene, drawn out along the view
 // where it grazes the water; its body, tinted by the
 // sediment it carries, scatters the light entering it back toward the
@@ -100,7 +101,10 @@
 // repeats, the longest and the shortest waves it holds (meters) and the
 // root mean square height of its waves at unit slope variance (meters); and
 // the cosine and sine of the angle each tile's lattice turns by from the
-// world's axes, from +x toward +z (`turns`, xy).
+// world's axes, from +x toward +z (`turns`, xy), and the anisotropic part
+// of its slopes' covariance at unit slope variance over its whole repeat,
+// in its own axes: half the difference of their variances along its x and
+// z, and their covariance (zw, `water_tile_spread`).
 // The sea's parts (`meshes/ocean.wgsl`): its wind's heading
 // (`origin`, xy: a unit vector), its still level less the eye, its grid's
 // finest cell, cells around and rings a cell apart; the rings' growth, the
@@ -1135,12 +1139,12 @@ const WATER_FILM: vec2<f32> = vec2<f32>(0.5, 0.9);
 const WATER_CAUSTIC_CONTRAST: f32 = 0.3;
 const WATER_CAUSTIC_MOST: f32 = 1.5;
 // The meters of water over which caustics fade, as the light the waves
-// gather blurs and scatters on its way down; and the shares of the bed's
-// depth the size a pixel resolves spans (`detail_resolved`), from the first
-// to the second, over which they fade out: the waves gathering light at a
-// depth are about a quarter of it long.
+// gather blurs and scatters on its way down; and how long the waves
+// gathering light at a depth are, about a quarter of it, by which caustics
+// draw while they span two pixels (`water_shown`) and average to their
+// mean of 1 below.
 const WATER_CAUSTIC_DEPTH: f32 = 1.5;
-const WATER_CAUSTIC_PIXELS: vec2<f32> = vec2<f32>(0.03, 0.08);
+const WATER_CAUSTIC_LENGTH: f32 = 0.25;
 
 fn water_caustics(world: vec3<f32>, normal: vec3<f32>, bed: f32) -> f32 {
     let sun = lighting.sun.xyz;
@@ -1226,11 +1230,11 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // behind the pixel stands under it, so water running down toward the eye
     // from above its height shows as water below it does.
     let plane = normalize(vec3<f32>(at.slope.x, 1.0, at.slope.y));
-    // The pixel's footprint on the water across the steady size, which
-    // filters the patterns it shows of it (`water_footprint`); the meters
-    // the pixel resolves there, by which caustics average out; and the meters
-    // it resolves on that plane seen from the detail eye (`detail_span`,
-    // `detail_resolved`), which any handover by size on screen measures.
+    // The pixel's footprint on the water, which filters the patterns it
+    // shows of it (`water_footprint`); the meters the pixel resolves there,
+    // by which caustics draw; and the meters it resolves on that plane seen
+    // from the detail eye (`detail_span`, `detail_resolved`), which any
+    // handover by size on screen measures.
     let footprint = water_footprint(world_dx.xz, world_dy.xz);
     let pixel_resolved = detail_resolved(vec2<f32>(length(world_dx.xz), length(world_dy.xz)));
     let seen = detail_resolved(detail_span(world, plane).xy);
@@ -1371,12 +1375,11 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let lit = water_light(surface);
     // The waves' caustics brighten the sun's share of the light on the bed,
     // fading as it lies deeper, as the bubbles churning water holds scatter
-    // that light on its way down, and as the size the pixel resolves spans
-    // more of the waves gathering it.
+    // that light on its way down, and drawn while the waves gathering it
+    // span two pixels as the pixel resolves them (`water_shown`).
     let caustic = 1.0 + (gathered - 1.0) * lit.sunny
         * exp(-bed * (1.0 / WATER_CAUSTIC_DEPTH + WATER_BUBBLES * aerated))
-        * (1.0 - smoothstep(WATER_CAUSTIC_PIXELS.x, WATER_CAUSTIC_PIXELS.y, // filter: caustics averaging to their mean of 1
-            pixel_resolved / max(bed, 1.0e-3)));
+        * water_shown(WATER_CAUSTIC_LENGTH * bed, pixel_resolved);
     // Of what the surface lets through, the ground shows darker for being
     // wet however thin the water; foam covers it.
     let wet = smoothstep(0.0, 0.03, depth) * WATER_WET;
