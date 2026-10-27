@@ -98,11 +98,11 @@ impl StressWorld for HighlandsWorld {
             sediment: 0.01,
             sediment_color: [0.04, 0.16, 0.15],
             simulation_cell: 1.0,
-            // Over the 256 meters around the camera, as far as its finest
-            // tiles stand about an eye near the ground, the rivers run live
-            // in the settled water's meter cells, and what stands in them
-            // pushes them.
-            simulated: 256.0,
+            // No live window around the camera: the settled water stands
+            // everywhere, so water looks alike at every distance (the
+            // simulation action runs 256 meters of it live, in the settled
+            // water's meter cells, to compare).
+            simulated: 0.0,
             live_cell: 1.0,
             ..Water::default()
         });
