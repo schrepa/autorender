@@ -477,8 +477,14 @@ fn underwater_light(direction: vec3<f32>) -> vec3<f32> {
 
 // The sky over the open air: its haze and the sun's disc.
 fn open_sky(direction: vec3<f32>) -> vec3<f32> {
+    return haze(direction) + sun_disc(direction);
+}
+
+// The analytic sky's sun's disc in `direction`: a small bright spot of the
+// sun's color.
+fn sun_disc(direction: vec3<f32>) -> vec3<f32> {
     let toward = max(dot(direction, lighting.sun.xyz), 0.0);
-    return haze(direction) + lighting.sun_color.rgb * (6.0 * pow(toward, 900.0));
+    return lighting.sun_color.rgb * (6.0 * pow(toward, 900.0));
 }
 
 // Rays below the horizon by this much (the sine of their elevation) see no
@@ -497,8 +503,9 @@ fn cloud_dome_uv(direction: vec3<f32>) -> vec2<f32> {
 
 // The clouds' shown domes: the older's origin (world) and
 // whether domes show (1); the newer's origin and its share of the blend;
-// the eye lookups correct for, and the cloud layer's middle (world y);
-// and whether the view's own march shows the sky's clouds (1), so the view's sky shows no dome.
+// the eye the sky's own views start from, and the cloud layer's middle
+// (world y); and whether the view's own march shows the sky's clouds (1),
+// so the view's sky shows no dome.
 struct CloudDomes {
     older: vec4<f32>,
     newer: vec4<f32>,
@@ -510,17 +517,17 @@ struct CloudDomes {
 const CLOUD_PARALLAX_REACH: f32 = 60000.0;
 
 // The direction in which the dome marched from `origin` holds what the view
-// along `direction` from the domes' eye sees of the clouds:
+// along `direction` from `start` sees of the clouds:
 // toward where the view meets the cloud layer's middle. Views never
 // reaching it look along themselves.
-fn cloud_dome_direction(domes: CloudDomes, origin: vec3<f32>, direction: vec3<f32>)
-        -> vec3<f32> {
-    let rise = domes.eye.w - domes.eye.y;
+fn cloud_dome_direction(domes: CloudDomes, origin: vec3<f32>, start: vec3<f32>,
+        direction: vec3<f32>) -> vec3<f32> {
+    let rise = domes.eye.w - start.y;
     if direction.y * rise <= 0.0 || abs(direction.y) < 1.0e-5 {
         return direction;
     }
     let along = min(rise / direction.y, CLOUD_PARALLAX_REACH);
-    let toward = domes.eye.xyz + direction * along - origin;
+    let toward = start + direction * along - origin;
     let reach = length(toward);
     if reach < 1.0e-3 {
         return direction;

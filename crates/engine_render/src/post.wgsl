@@ -589,7 +589,8 @@ fn lobe_light(hit: vec2<f32>, way: vec2<f32>, lengths: vec2<f32>, p: vec3<f32>,
 // to pixel. The first pixel the ray passes behind is its hit, reflected
 // where the ray passes close to that surface (or, heading toward the
 // camera, within a solid object's depth of it), fading toward the screen
-// edges, the ray's end and the surface's thickness; misses weigh nothing.
+// edges, the ray's end and the surface's thickness; misses weigh nothing,
+// leaving the sky the surface's own shading mirrors (`finish`).
 // What it reflects is the scene over the lobe its own roughness spreads the
 // ray into (`lobe_light`): long along the ray's way on screen, short across
 // it, so grazing views draw it out into streaks. It writes, both

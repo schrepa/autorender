@@ -173,7 +173,7 @@ fn build_sky_view(@builtin(global_invocation_id) id: vec3<u32>) {
 /// The sky's light looking along `direction` from the camera, without the
 /// sun's disc.
 fn view_light(direction: vec3<f32>) -> vec3<f32> {
-    return air_sky(view_table, transmittance_table, table_sampler, air, direction, false);
+    return air_sky(view_table, table_sampler, air, direction);
 }
 
 /// A direction `elevation` radians above the horizon, `azimuth` around it.

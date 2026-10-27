@@ -109,6 +109,13 @@ impl Renderer {
             &self.mesh_pipelines.empty_layout,
             lights,
         );
+        // Terrain's pipelines over its own first group, its cover's over the
+        // main one.
+        let terrain_layouts = (
+            &self.camera.terrain_layout,
+            &self.mesh_pipelines.empty_layout,
+            lights,
+        );
         // Terrains with holes draw with their own pipelines, created with the
         // first frame that has them.
         let variants: &[bool] = if self.terrain.has_holes() {
@@ -131,18 +138,17 @@ impl Renderer {
                 self.terrain.pipelines.ensure_pipeline(
                     &self.device,
                     &self.mesh_shader,
-                    layouts,
+                    terrain_layouts,
                     (targets, lit, holes),
                     self.display.format(),
                     DEPTH_FORMAT,
-                    &self.camera.terrain_layout,
                 );
             }
             if probes {
                 self.terrain.pipelines.ensure_probe_pipeline(
                     &self.device,
                     &self.mesh_shader,
-                    layouts,
+                    terrain_layouts,
                     (lit, holes),
                     ENVIRONMENT_FORMAT,
                     DEPTH_FORMAT,
@@ -203,6 +209,13 @@ impl Renderer {
             &self.mesh_pipelines.empty_layout,
             lights,
         );
+        // Terrain's pipelines over its own first group, its cover's over the
+        // main one.
+        let terrain_layouts = (
+            &self.camera.terrain_layout,
+            &self.mesh_pipelines.empty_layout,
+            lights,
+        );
         let holes = terrains.iter().any(|terrain| terrain.may_hole) || self.terrain.has_holes();
         let variants: &[bool] = if holes { &[false, true] } else { &[false] };
         for &holes in variants {
@@ -210,18 +223,17 @@ impl Renderer {
                 self.terrain.pipelines.ensure_pipeline(
                     &self.device,
                     &self.mesh_shader,
-                    layouts,
+                    terrain_layouts,
                     (targets, lit, holes),
                     self.display.format(),
                     DEPTH_FORMAT,
-                    &self.camera.terrain_layout,
                 );
             }
             if probes {
                 self.terrain.pipelines.ensure_probe_pipeline(
                     &self.device,
                     &self.mesh_shader,
-                    layouts,
+                    terrain_layouts,
                     (lit, holes),
                     ENVIRONMENT_FORMAT,
                     DEPTH_FORMAT,
@@ -328,7 +340,7 @@ impl Renderer {
     /// The leaves of the terrains' subdivisions into terrain's visibility
     /// target; returns the draws.
     pub(super) fn draw_terrain_ids(&self, pass: &mut wgpu::RenderPass<'_>) -> u32 {
-        pass.set_bind_group(0, self.camera.group(), &[]);
+        pass.set_bind_group(0, self.camera.terrain_group(), &[]);
         let mut draws = 0;
         for holes in [false, true] {
             let Some(pipeline) = self.terrain.pipelines.deferred_ids.get(&holes) else {
@@ -424,7 +436,7 @@ impl Renderer {
         let Some(targets) = kind.targets().filter(|_| state.terrain) else {
             return 0;
         };
-        pass.set_bind_group(0, self.camera.group(), &[]);
+        pass.set_bind_group(0, self.camera.terrain_group(), &[]);
         if kind.lit {
             let Some(lights) = self.features.lights.get() else {
                 return 0;
@@ -450,7 +462,8 @@ impl Renderer {
     }
 
     /// Draws every terrain's leaves into reflection probe face `face` of the
-    /// probe at `center`, after its meshes (`lit` when lights shade it).
+    /// probe at `center`, after its meshes (`lit` when lights shade it), over
+    /// terrain's first group of that face: what draws after it binds its own.
     pub(super) fn draw_terrain_face(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -468,6 +481,7 @@ impl Renderer {
             self.terrain.eye(),
             center,
         );
+        pass.set_bind_group(0, self.camera.terrain_probe_group(face), &[]);
         if lit {
             pass.set_bind_group(2, &self.mesh_pipelines.empty_group, &[]);
         }

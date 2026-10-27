@@ -1,4 +1,5 @@
-// Environment maps, prepended with scene.wgsl: the sky drawn
+// Environment maps, prepended with scene.wgsl and the sky's light
+// (sky_light.wgsl): the sky drawn
 // into the faces of a radiance cube, its levels averaged down, and each
 // level of an environment map blurred from them by the GGX lobe of its
 // roughness, which surfaces read their reflections from.
@@ -57,40 +58,11 @@ fn face_direction(face: u32, ndc: vec2<f32>) -> vec3<f32> {
     return normalize(direction);
 }
 
-// The clouds' newer and older shown domes, their
-// sampler and their uniform: clear ones without clouds.
-@group(0) @binding(38) var environment_clouds: texture_2d<f32>;
-@group(0) @binding(39) var environment_cloud_sampler: sampler;
-@group(0) @binding(44) var environment_clouds_old: texture_2d<f32>;
-@group(0) @binding(45) var<uniform> environment_domes: CloudDomes;
-// The physically based sky: its uniform, sky-view and
-// transmittance tables and their sampler.
-@group(0) @binding(40) var<uniform> environment_air: SkyUniform;
-@group(0) @binding(41) var environment_view_table: texture_2d<f32>;
-@group(0) @binding(42) var environment_transmittance_table: texture_2d<f32>;
-@group(0) @binding(43) var environment_table_sampler: sampler;
-
-// The sky's light (without the sun's disc, whose highlights surfaces
-// shade themselves) behind its clouds in each direction of the radiance
-// cube's first level.
+// The sky's light seen from the eye (`sky_along`: without the sun's disc,
+// whose highlights surfaces shade themselves) in each direction of the
+// radiance cube's first level.
 fn face_sky(face: u32, ndc: vec2<f32>) -> vec4<f32> {
-    let direction = face_direction(face, ndc);
-    var cloud = textureSampleLevel(environment_clouds, environment_cloud_sampler,
-        cloud_dome_uv(direction), 0.0);
-    if environment_domes.older.w > 0.5 {
-        let domes = environment_domes;
-        let newer = textureSampleLevel(environment_clouds, environment_cloud_sampler,
-            cloud_dome_uv(cloud_dome_direction(domes, domes.newer.xyz, direction)), 0.0);
-        let older = textureSampleLevel(environment_clouds_old, environment_cloud_sampler,
-            cloud_dome_uv(cloud_dome_direction(domes, domes.older.xyz, direction)), 0.0);
-        cloud = mix(older, newer, domes.newer.w);
-    }
-    var light = haze(direction);
-    if lighting.grade.z > 0.5 {
-        light = air_sky(environment_view_table, environment_transmittance_table,
-            environment_table_sampler, environment_air, direction, false);
-    }
-    return vec4<f32>(behind_clouds(light, cloud, direction), 1.0);
+    return vec4<f32>(sky_along(sky_domes.eye.xyz, face_direction(face, ndc)), 1.0);
 }
 
 @fragment

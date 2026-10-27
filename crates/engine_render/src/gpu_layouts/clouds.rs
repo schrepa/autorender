@@ -29,8 +29,8 @@ gpu_structs! {
     }
 
     /// WGSL `CloudDomes` (`scene.wgsl`): the shown domes' origins, whether they
-    /// show and the newer's share, and the eye lookups correct for with the
-    /// cloud layer's middle.
+    /// show and the newer's share, and the eye the sky's own views start
+    /// from with the cloud layer's middle.
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
     pub(crate) struct DomeUniform as ["CloudDomes"] {
         pub older: [f32; 4],
