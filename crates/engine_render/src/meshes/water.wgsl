@@ -146,7 +146,8 @@ struct WaterUniform {
 // meters a second) and the foam it carries, a block's row by row; and each
 // block's ground, SIM_BLOCK_GROUND entries of it: at its cells' corners (a
 // row of its cells and one more at a time), then the levels lakes hold its
-// cells at and its cells' beds' roughness; and what the bed holds under
+// cells at, its cells' beds' roughness and what solids cover of them; and
+// what the bed holds under
 // each cell, in the cells' order, as the settled water's sample nearest it
 // holds it (`engine_terrain`'s `Tile::bed_words`): its reach's code (bits 0
 // to 7) beside its span's code as its words' fourth byte packs it (bits 8
@@ -156,7 +157,7 @@ struct WaterUniform {
 @group(1) @binding(57) var<storage, read> water_sim_ground: array<f32>;
 @group(1) @binding(58) var<storage, read> water_sim_beds: array<vec2<u32>>;
 const SIM_WATER_BLOCK: u32 = 8u;
-const SIM_BLOCK_GROUND: u32 = 209u;
+const SIM_BLOCK_GROUND: u32 = 337u;
 // The most foam water carries, as its flow churns it up
 // (`engine_terrain::shallow_water::FOAM_MOST`).
 const WATER_FOAM_MOST: f32 = 1.5;

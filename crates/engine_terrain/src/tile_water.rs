@@ -5,9 +5,10 @@
 //! water body is (its span: a river's width, a lake's equal-area diameter,
 //! the fetch the wind has over it) and whether a lake holds it; its state,
 //! how turbulent it runs, how white it breaks, its shear and the reach of
-//! the stream it runs in; and its nearest obstacle, rock breaking its
-//! surface or a boulder under it, with whether a drop or a jump lies just
-//! upstream. Depth is never held: it is the surface less the
+//! the stream it runs in; and its nearest obstacle, a solid standing in it
+//! (an object placed in its water, [`TileWater::solids`]), rock breaking
+//! its surface or a boulder under it, with whether a drop or a jump lies
+//! just upstream. Depth is never held: it is the surface less the
 //! tile's ground at the same point, on the triangles every consumer splits
 //! cells into ([`crate::Tile::water_at`]), so drawing, physics, queries,
 //! placement and navigation read one water. Tile generation writes it from
@@ -35,7 +36,8 @@ use crate::noise::smooth;
 use crate::rivers::{RiverRaster, RiverWater, Rivers};
 use crate::shallow_water::DENSITY;
 use crate::{
-    Layers, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, Reach, TILE_SAMPLES, TILE_STRIDE, Tile,
+    Footprint, Layers, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES,
+    TILE_STRIDE, Tile,
 };
 
 /// Meters a second either way the packed flow spans.
@@ -143,27 +145,31 @@ pub struct WaterState {
 }
 
 /// A tile's water: each sample's surface (NaN where no water reaches) and
-/// words ([`Self::info`]), in the layout of its heights, and which of its
-/// patches hold a surface, wet or continued under the banks.
+/// words ([`Self::info`]), in the layout of its heights, which of its
+/// patches hold a surface, wet or continued under the banks, and the solids
+/// standing in it ([`Self::solids`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct TileWater {
     surface: Box<[f32]>,
     info: Box<[[u32; 3]]>,
     held: [u64; 4],
+    solids: Box<[Footprint]>,
 }
 
 impl TileWater {
-    /// The water of a tile whose samples, `spacing` meters apart, stand at
-    /// `heights`, from its samples' `surface` and words `info` (the jump of
-    /// each one's obstacle word as what made the water marks it): its
-    /// surface continued under the banks ([`extend`]) and each sample's
-    /// nearest obstacle found ([`obstacles`]); `None` when the sizes do not
-    /// match or no sample's surface stands over its ground.
+    /// The water of a tile whose samples, `spacing` meters apart from its
+    /// first at terrain-local `origin`, stand at `heights`, from its
+    /// samples' `surface` and words `info` (the jump of each one's obstacle
+    /// word as what made the water marks it): its surface continued under
+    /// the banks ([`extend`]) and each sample's nearest obstacle found among
+    /// its ground's and those of `solids` standing in it ([`obstacles`]);
+    /// `None` when the sizes do not match or no sample's surface stands
+    /// over its ground.
     pub(crate) fn new(
         mut surface: Box<[f32]>,
         mut info: Box<[[u32; 3]]>,
-        heights: &[f32],
-        spacing: f32,
+        (heights, spacing, origin): (&[f32], f32, Vec2),
+        solids: &[Footprint],
     ) -> Option<Self> {
         let stride = TILE_STRIDE as usize;
         if surface.len() != stride * stride
@@ -190,11 +196,12 @@ impl TileWater {
                 }
             }
         }
-        obstacles(&surface, &mut info, heights, spacing);
+        let solids = obstacles(&surface, &mut info, heights, (spacing, origin, solids));
         Some(Self {
             surface,
             info,
             held,
+            solids,
         })
     }
 
@@ -217,6 +224,13 @@ impl TileWater {
     /// strongly a drop or a jump lies just upstream, in 255ths).
     pub fn info(&self) -> &[[u32; 3]] {
         &self.info
+    }
+
+    /// The solids standing in it, terrain-local: objects placed in its
+    /// water ([`crate::Placed::footprint`]), each the obstacle of the
+    /// samples nearest it.
+    pub fn solids(&self) -> &[Footprint] {
+        &self.solids
     }
 
     /// Whether any sample of patch `(x, z)`, its edges included, holds a
@@ -273,13 +287,13 @@ impl TileWater {
 
 /// A tile's water as its record holds it, apart from its tile: its samples'
 /// surfaces at their nearest steps of the height grid
-/// ([`crate::codec::HEIGHT_STEP`]), their words and which patches hold a
-/// surface, read back as they were written, the surface under the banks,
-/// states and obstacles and all.
+/// ([`crate::codec::HEIGHT_STEP`]), their words, which patches hold a
+/// surface and the solids standing in it, read back as they were written,
+/// the surface under the banks, states and obstacles and all.
 impl crate::codec::Codec for TileWater {
     fn write(&self, out: &mut crate::codec::Writer) {
         crate::codec::put_grid(out, &self.surface, TILE_STRIDE as usize);
-        out.put(&self.info).put(&self.held);
+        out.put(&self.info).put(&self.held).put(&self.solids);
     }
 
     fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
@@ -287,13 +301,18 @@ impl crate::codec::Codec for TileWater {
         let surface = crate::codec::get_grid(input, stride)?;
         let info: Box<[[u32; 3]]> = input.get()?;
         let held: [u64; 4] = input.get()?;
-        if surface.len() != stride * stride || info.len() != stride * stride {
+        let solids: Box<[Footprint]> = input.get()?;
+        if surface.len() != stride * stride
+            || info.len() != stride * stride
+            || !solids.iter().all(Footprint::valid)
+        {
             return Err(crate::codec::CodecError("invalid tile water"));
         }
         Ok(Self {
             surface,
             info,
             held,
+            solids,
         })
     }
 }
@@ -702,18 +721,30 @@ fn toward(way: Vec2) -> Option<(i32, i32)> {
 
 /// Finds each sample's nearest obstacle and writes it into its obstacle
 /// word ([`pack_obstacle`]), the word's jump kept: of a tile's water
-/// standing at `surface` over `heights`, its samples `spacing` meters
-/// apart. An obstacle is rock breaking the water's surface, a part of dry
-/// ground the water stands all around ([`parts`]: clear of the tile's
-/// border, its footprint no wider than [`MOST_RADIUS`]), or a boulder under
-/// it, a wet sample whose ground stands [`BUMP`] or more over the median of
-/// its eight neighbors'; samples marked either way touching one another
-/// make one, as round as its footprint about the middle of its samples.
-/// Each sample takes the obstacle holding the marked sample nearest it
-/// ([`nearest`]) where the packed offset reaches that obstacle's middle, and
-/// none elsewhere. Every host finds the same: the parts and the transform
-/// run in a fixed order, on whole samples.
-fn obstacles(surface: &[f32], info: &mut [[u32; 3]], heights: &[f32], spacing: f32) {
+/// standing at `surface` over `heights`, its samples `spacing` meters apart
+/// from its first at terrain-local `origin`, among its ground's and those
+/// of `solids`. An obstacle is a solid standing in the water, one any
+/// sample within a sample of its shadow from above holds water at; rock
+/// breaking the water's surface, a part of dry ground the water stands all
+/// around ([`parts`]: clear of the tile's border, its footprint no wider
+/// than [`MOST_RADIUS`]); or a boulder under it, a wet sample whose ground
+/// stands [`BUMP`] or more over the median of its eight neighbors'. A solid
+/// holds the samples under it and the sample nearest its middle
+/// ([`owners`]), so one thinner than a sample is an obstacle too, and
+/// stands as round as its shadow ([`Footprint::radius`]) about its own
+/// middle; samples marked the ground's ways touching one another make one,
+/// as round as its footprint about the middle of its samples. Each sample
+/// takes the obstacle holding the marked sample nearest it ([`nearest`])
+/// where the packed offset reaches that obstacle's middle, and none
+/// elsewhere. Every host finds the same: the solids, the parts and the
+/// transform run in a fixed order, on whole samples. Returns the solids
+/// that hold a sample, in their order.
+fn obstacles(
+    surface: &[f32],
+    info: &mut [[u32; 3]],
+    heights: &[f32],
+    (spacing, origin, solids): (f32, Vec2, &[Footprint]),
+) -> Box<[Footprint]> {
     let stride = TILE_STRIDE as usize;
     let wet: Vec<bool> = surface
         .iter()
@@ -756,30 +787,114 @@ fn obstacles(surface: &[f32], info: &mut [[u32; 3]], heights: &[f32], spacing: f
         }
     }
     let (labels, standing) = parts(&marked);
-    let nearest = if standing.is_empty() {
-        vec![NONE; marked.len()]
+    let owners = owners(&wet, heights, (spacing, origin, solids));
+    let seeds: Vec<bool> = marked
+        .iter()
+        .zip(&owners)
+        .map(|(&mark, &owner)| mark || owner != NONE)
+        .collect();
+    let nearest = if seeds.iter().any(|&seed| seed) {
+        nearest(&seeds)
     } else {
-        nearest(&marked)
+        vec![NONE; seeds.len()]
     };
+    let place = |at: usize| Vec2::new((at % stride) as f32, (at / stride) as f32);
     for (at, words) in info.iter_mut().enumerate() {
         let jump = jump_of(words[2]);
         let mut word = pack_obstacle(Vec2::ZERO, 0.0, jump);
         let seed = nearest[at];
         if seed != NONE {
-            let obstacle = &standing[labels[seed as usize] as usize];
-            let count = f64::from(obstacle.count);
-            let middle = Vec2::new(
-                (obstacle.columns as f64 / count) as f32,
-                (obstacle.rows as f64 / count) as f32,
-            );
-            let offset = (middle - Vec2::new((at % stride) as f32, (at / stride) as f32)) * spacing;
+            let (offset, radius) = match owners[seed as usize] {
+                NONE => {
+                    let obstacle = &standing[labels[seed as usize] as usize];
+                    let count = f64::from(obstacle.count);
+                    let middle = Vec2::new(
+                        (obstacle.columns as f64 / count) as f32,
+                        (obstacle.rows as f64 / count) as f32,
+                    );
+                    let radius = spacing * (obstacle.count as f32 / std::f32::consts::PI).sqrt();
+                    ((middle - place(at)) * spacing, radius)
+                }
+                owner => {
+                    let solid = &solids[owner as usize];
+                    let point = origin + (place(at) - 1.0) * spacing;
+                    (solid.middle() - point, solid.radius())
+                }
+            };
             if (offset / WATER_OBSTACLE_STEP).round().abs().max_element() <= 127.0 {
-                let radius = spacing * (obstacle.count as f32 / std::f32::consts::PI).sqrt();
                 word = pack_obstacle(offset, radius, jump);
             }
         }
         words[2] = word;
     }
+    let mut held = vec![false; solids.len()];
+    for &owner in &owners {
+        if owner != NONE {
+            held[owner as usize] = true;
+        }
+    }
+    solids
+        .iter()
+        .zip(&held)
+        .filter(|&(_, &held)| held)
+        .map(|(&solid, _)| solid)
+        .collect()
+}
+
+/// The solid of `solids` (terrain-local) each sample of a tile's layout is
+/// the obstacle of ([`obstacles`]), its samples `spacing` meters apart from
+/// its first at terrain-local `origin`, standing at `heights` and holding
+/// water where `wet` says: of the solids standing in its water, those any
+/// sample within a sample of their shadow from above holds water at, the
+/// one standing over its ground there or whose middle it lies nearest, the
+/// widest of them where several do (the first of those as wide); [`NONE`]
+/// where none does.
+fn owners(
+    wet: &[bool],
+    heights: &[f32],
+    (spacing, origin, solids): (f32, Vec2, &[Footprint]),
+) -> Vec<u32> {
+    let stride = i64::from(TILE_STRIDE);
+    let mut owners = vec![NONE; wet.len()];
+    let mut widths = vec![0.0_f32; wet.len()];
+    // The layout's samples from `low` to `high` (terrain-local) along an
+    // axis, `grown` more either way, within the layout.
+    let samples = |low: f32, high: f32, grown: i64, axis: usize| {
+        let first = ((low - origin[axis]) / spacing).floor() as i64 + 1 - grown;
+        let last = ((high - origin[axis]) / spacing).ceil() as i64 + 1 + grown;
+        first.max(0)..=last.min(stride - 1)
+    };
+    for (index, solid) in solids.iter().enumerate() {
+        let (middle, reach) = (solid.middle(), solid.reach());
+        let (low, high) = (middle - reach, middle + reach);
+        let standing = samples(low.y, high.y, 1, 1)
+            .any(|z| samples(low.x, high.x, 1, 0).any(|x| wet[(z * stride + x) as usize]));
+        if !standing {
+            continue;
+        }
+        let width = solid.radius();
+        let mut hold = |at: usize| {
+            if owners[at] == NONE || width > widths[at] {
+                owners[at] = index as u32;
+                widths[at] = width;
+            }
+        };
+        for z in samples(low.y, high.y, 0, 1) {
+            for x in samples(low.x, high.x, 0, 0) {
+                let at = (z * stride + x) as usize;
+                let point = origin + Vec2::new((x - 1) as f32, (z - 1) as f32) * spacing;
+                if solid.span(point).is_some_and(|[_, top]| top > heights[at]) {
+                    hold(at);
+                }
+            }
+        }
+        let nearest = ((middle - origin) / spacing).round() + 1.0;
+        let (x, z) = (nearest.x as i64, nearest.y as i64);
+        if (0..stride).contains(&x) && (0..stride).contains(&z) {
+            hold((z * stride + x) as usize);
+        }
+    }
+    owners
 }
 
 /// A part of a tile's samples ([`parts`]): how many samples it holds, the
@@ -1028,9 +1143,17 @@ impl Tile {
             &|x, z| layers.shown(x, z),
             (&mut surface[at.clone()], &mut info[at]),
         );
-        Some(
-            self.clone()
-                .with_water(surface.into_boxed_slice(), info.into_boxed_slice()),
-        )
+        let solids = self.water().map_or(&[][..], TileWater::solids);
+        Some(self.clone().with_water(
+            surface.into_boxed_slice(),
+            info.into_boxed_slice(),
+            solids,
+        ))
+    }
+
+    /// Its first sample's terrain-local point.
+    pub(crate) fn origin(&self) -> Vec2 {
+        let key = self.key();
+        Vec2::new(f32::from(key.x), f32::from(key.z)) * (TILE_QUADS as f32 * self.spacing())
     }
 }

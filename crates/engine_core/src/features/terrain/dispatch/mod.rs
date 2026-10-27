@@ -228,12 +228,11 @@ fn prefetch(
 }
 
 /// A terrain's recipe as jobs hold it: its key, the stack it shares (the
-/// layers its tiles generate from, which surroundings see from afar) and
-/// that stack's key, and whether its tiles hold control values.
+/// layers its tiles generate from, which surroundings see from afar), and
+/// whether its tiles hold control values.
 pub(crate) struct SharedRecipe {
     pub(crate) key: String,
     pub(crate) stack: Arc<Layers>,
-    pub(crate) stack_key: String,
     materials: bool,
 }
 
@@ -307,7 +306,6 @@ pub(crate) fn share_recipe(
     let shared = SharedRecipe {
         key,
         stack,
-        stack_key: recipe.stack,
         materials: state.materials,
     };
     if let Some(old) = state.recipe.replace(shared) {

@@ -604,6 +604,15 @@ impl TerrainStreaming {
             .iter(world)
             .map(|(entity, terrain)| (entity, terrain.clone()))
             .collect();
+        // The solids each terrain's placement assets' objects stand as.
+        let assets = world.get_resource::<AssetLibrary>();
+        let solids: Vec<(Entity, Vec<Option<Solid>>)> = present
+            .iter()
+            .map(|(entity, terrain)| {
+                let solids = terrain.surface.assets.iter();
+                (*entity, solids.map(|asset| asset.solid(assets)).collect())
+            })
+            .collect();
         // Jobs stream with the terrains, and cook with them in a session
         // that cooks.
         let water = world.get_resource::<Water>().copied();
@@ -612,6 +621,7 @@ impl TerrainStreaming {
         if let Some(mut terrains) = world.get_resource_mut::<Terrains>() {
             let terrains = terrains.as_mut();
             terrains.follow(present);
+            terrains.stand(&solids);
             match settings {
                 Some(settings) => {
                     // Where the eye is headed, from its motion since the
@@ -692,6 +702,18 @@ impl Terrains {
                     self.entries.push(TerrainState::new(entity, terrain));
                     self.loaded = false;
                 }
+            }
+        }
+    }
+
+    /// Gives each terrain the solids `solids` lists for its entity, where
+    /// they differ from those it holds: what its settled water flows around.
+    fn stand(&mut self, solids: &[(Entity, Vec<Option<Solid>>)]) {
+        for state in &mut self.entries {
+            if let Some((_, found)) = solids.iter().find(|(entity, _)| *entity == state.entity)
+                && state.solids[..] != found[..]
+            {
+                state.solids = Arc::from(found.as_slice());
             }
         }
     }

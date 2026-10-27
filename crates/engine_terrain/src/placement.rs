@@ -25,6 +25,10 @@
 //! point, on the tiles of its level (the finest for small things, coarser
 //! for large ones, which then show as far as those tiles stay resident),
 //! drawn, shadowed and collided with as the layers' objects are.
+//!
+//! Objects stand as their assets' solids ([`Solid`]) where they stand in
+//! water ([`Placed::footprint`]), which the water settled over the finest
+//! tiles flows around.
 
 use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, settings};
@@ -368,6 +372,139 @@ impl Placed {
             (across * self.scale).extend(0.0),
             (origin + Vec3::new(x, base, z)).extend(1.0),
         )
+    }
+
+    /// The solid it stands as, `solid` being its asset's: terrain-local, its
+    /// base where it was placed, as colliders stand it.
+    pub fn footprint(&self, solid: &Solid) -> Footprint {
+        use glam::{Mat3, Mat4, Vec3};
+        let model = self.model(Vec3::ZERO, self.position[1])
+            * Mat4::from_translation(Vec3::from_array(solid.center));
+        let axes = Mat3::from_mat4(model) * Mat3::from_diagonal(Vec3::from_array(solid.half));
+        Footprint {
+            center: model.w_axis.truncate().to_array(),
+            axes: axes.to_cols_array(),
+            round: solid.round,
+        }
+    }
+}
+
+/// The solid a placement asset's objects stand as, in the asset's mesh
+/// space at scale 1: a box of half extents `half` about `center`, or where
+/// `round` the ball (an ellipsoid) of those radii: its collider, or else
+/// its mesh's bounds. Water flows around what stands in it as its solid.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Solid {
+    pub center: [f32; 3],
+    pub half: [f32; 3],
+    pub round: bool,
+}
+
+impl Solid {
+    /// Whether its center is finite and its extents positive and finite.
+    pub fn valid(&self) -> bool {
+        self.center.iter().all(|value| value.is_finite())
+            && self
+                .half
+                .iter()
+                .all(|&half| half.is_finite() && half > 0.0)
+    }
+}
+
+/// A solid standing on a terrain ([`Placed::footprint`]): its terrain-local
+/// center, the axes mapping the unit cube (or ball, where `round`) to it, a
+/// column each (x, y and z of each, column by column).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Footprint {
+    pub center: [f32; 3],
+    pub axes: [f32; 9],
+    pub round: bool,
+}
+
+impl Footprint {
+    fn axes(&self) -> glam::Mat3 {
+        glam::Mat3::from_cols_array(&self.axes)
+    }
+
+    /// Its middle along x and z.
+    pub fn middle(&self) -> glam::Vec2 {
+        glam::Vec2::new(self.center[0], self.center[2])
+    }
+
+    /// How far it reaches from its middle along x and z: a box the sum of
+    /// its axes' parts along each, a ball their length.
+    pub fn reach(&self) -> glam::Vec2 {
+        let rows = self.axes().transpose();
+        let along = |row: glam::Vec3| {
+            if self.round {
+                row.length()
+            } else {
+                row.abs().element_sum()
+            }
+        };
+        glam::Vec2::new(along(rows.x_axis), along(rows.z_axis))
+    }
+
+    /// The lowest and the highest terrain-local heights it spans on the
+    /// upright line through `point` (terrain-local x and z), if it stands
+    /// on it: in its unit cube or ball the line runs from `at`, at height
+    /// 0, by `up` a meter; a ball holds it where |at + y·up| ≤ 1, a box
+    /// where each of its parts lies within 1.
+    pub fn span(&self, point: glam::Vec2) -> Option<[f32; 2]> {
+        let inverse = self.axes().inverse();
+        let at = inverse
+            * (glam::Vec3::new(point.x, 0.0, point.y) - glam::Vec3::from_array(self.center));
+        let up = inverse.y_axis;
+        if self.round {
+            let rise = up.dot(up);
+            let along = at.dot(up);
+            let reach = along * along - rise * (at.dot(at) - 1.0);
+            if !(rise > 0.0 && reach >= 0.0) {
+                return None;
+            }
+            let root = reach.sqrt();
+            return Some([(-along - root) / rise, (-along + root) / rise]);
+        }
+        let mut span = [f32::NEG_INFINITY, f32::INFINITY];
+        for k in 0..3 {
+            if up[k] != 0.0 {
+                let (a, b) = ((-1.0 - at[k]) / up[k], (1.0 - at[k]) / up[k]);
+                span = [max(span[0], min(a, b)), min(span[1], max(a, b))];
+            } else if at[k].abs() > 1.0 {
+                return None;
+            }
+        }
+        (span[0] <= span[1]).then_some(span)
+    }
+
+    /// The radius of the disk as large as its shadow from above (meters):
+    /// a ball's, the ellipse of its axes' parts along x and z; a box's, the
+    /// hexagon those parts span, four times the sum of the areas of each
+    /// pair's parallelogram.
+    pub fn radius(&self) -> f32 {
+        let axes = self.axes();
+        let parts =
+            [axes.x_axis, axes.y_axis, axes.z_axis].map(|axis| glam::Vec2::new(axis.x, axis.z));
+        let area = if self.round {
+            let (mut xx, mut zz, mut xz) = (0.0, 0.0, 0.0);
+            for part in parts {
+                xx += part.x * part.x;
+                zz += part.y * part.y;
+                xz += part.x * part.y;
+            }
+            std::f32::consts::PI * max(xx * zz - xz * xz, 0.0).sqrt()
+        } else {
+            4.0 * (parts[0].perp_dot(parts[1]).abs()
+                + parts[0].perp_dot(parts[2]).abs()
+                + parts[1].perp_dot(parts[2]).abs())
+        };
+        (area / std::f32::consts::PI).sqrt()
+    }
+
+    /// Whether its center is finite and its axes finite and invertible.
+    pub(crate) fn valid(&self) -> bool {
+        self.center.iter().chain(&self.axes).all(|value| value.is_finite())
+            && self.axes().determinant() != 0.0
     }
 }
 
@@ -911,6 +1048,8 @@ crate::codec::record!(AuthoredPlacement {
     align,
     level,
 });
+crate::codec::record!(Solid { center, half, round });
+crate::codec::record!(Footprint { center, axes, round });
 crate::codec::record!(Placed {
     position,
     yaw,

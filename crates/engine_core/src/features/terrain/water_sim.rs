@@ -3,15 +3,18 @@
 //! `water_sim`), placed where [`Water::simulated`] asks for one, in cells
 //! [`Water::live_cell`] across, a whole number of the scheme's blocks of
 //! them along each side: its ground and the roughness of its rivers' beds,
-//! the water to start from, where its rivers bring theirs, the water
-//! standing just past its edges, and what the beds hold under its water
-//! (their reach and nearest obstacle), which it draws with as the settled
-//! water does. All of it but the ground and the beds' roughness comes from
-//! the terrain's settled water ([`super::settled`]), whose cells may be
-//! coarser or finer than the window's: a window's cell stands on the planes
-//! of the surfaces of the settled cells around it, blended by their
-//! nearness, and runs at their velocity, its depth its own over its own
-//! ground; a lake holds it where it holds the settled cell under its
+//! the solids standing in its water, the water to start from, where its
+//! rivers bring theirs, the water standing just past its edges, and what
+//! the beds hold under its water (their reach and nearest obstacle), which
+//! it draws with as the settled water does. All of it but the ground and
+//! the beds' roughness comes from the terrain's settled water
+//! ([`super::settled`]): its solids are those standing in the water of the
+//! records held whole, covering its cells as they cover the settled cells
+//! ([`cover_cells`]); and the settled water's cells may be coarser or finer
+//! than the window's: a window's cell stands on the planes of the surfaces
+//! of the settled cells around it, blended by their nearness, and runs at
+//! their velocity, its depth its own over its own ground; a lake holds it
+//! where it holds the settled cell under its
 //! middle; it starts off that steady state as unsteadily as the water
 //! settled there; and its rivers bring what the settled cells it covers
 //! bring, shared by the area of each it covers. The window starts with
@@ -46,7 +49,7 @@ use super::residency::TerrainState;
 use super::{Terrains, Water};
 use crate::math::{clamp, max, min};
 use crate::terrain_data::shallow_water::{DRY, roughness};
-use crate::terrain_data::{BLOCK_CELLS, BLOCK_SIDE, SteadyCell, TileKey};
+use crate::terrain_data::{BLOCK_CELLS, BLOCK_SIDE, Footprint, SteadyCell, TileKey, cover_cells};
 use crate::{Camera, WaterObstacle};
 
 /// Meters a window's first corner snaps to, as the whole number of the
@@ -114,10 +117,12 @@ pub struct WaterWindow {
 /// roughness of its ground as the scheme counts it (the D84 of the river bed
 /// under it in meters, negated where steps or boulders are carved into the
 /// bed, whose friction then counts its grains alone, and a hillside's
-/// stones and turf outside rivers' channels) and what the bed holds under
-/// its middle as the settled water's sample nearest it holds it: its
-/// reach's code and its nearest obstacle, offset from the cell's middle
-/// ([`crate::terrain_data::Tile::bed_words`]).
+/// stones and turf outside rivers' channels), what the bed holds under its
+/// middle as the settled water's sample nearest it holds it (its reach's
+/// code and its nearest obstacle, offset from the cell's middle,
+/// [`crate::terrain_data::Tile::bed_words`]) and the share of it covered
+/// by the solids standing in the settled water, with the height their tops
+/// stand at over the datum ([`cover_cells`]; 0 each where none covers it).
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterBlock {
     stamp: u64,
@@ -125,6 +130,7 @@ pub struct WaterBlock {
     water: [WaterCell; BLOCK_CELLS],
     roughness: [f32; BLOCK_CELLS],
     bed_words: [[u32; 2]; BLOCK_CELLS],
+    cover: [[f32; 2]; BLOCK_CELLS],
 }
 
 /// A cell of a window, or one just past its edges, as the settled water
@@ -225,6 +231,12 @@ impl WaterBlock {
     /// What the bed holds under its cell (x, z)'s middle.
     pub fn bed_words(&self, x: u32, z: u32) -> [u32; 2] {
         self.bed_words[z as usize * SIDE + x as usize]
+    }
+
+    /// The share of its cell (x, z) covered by solids, and the height their
+    /// tops stand at over the datum.
+    pub fn cover(&self, x: u32, z: u32) -> [f32; 2] {
+        self.cover[z as usize * SIDE + x as usize]
     }
 }
 
@@ -780,9 +792,10 @@ fn settled(state: &TerrainState, first: [i64; 2], (cells, cell): (u32, f32)) -> 
 /// `columns`, in cells `cell` meters across, as `state`'s resident tiles
 /// and settled water stand there, their heights over `datum` (world
 /// meters): the ground at their corners from the finest tiles holding them,
-/// their cells' water from the settled water around them, and their
-/// ground's roughness and what their beds hold from the beds of the finest
-/// tiles under their middles and those tiles' settled water there.
+/// their cells' water from the settled water around them, their ground's
+/// roughness and what their beds hold from the beds of the finest tiles
+/// under their middles and those tiles' settled water there, and what the
+/// solids standing in the settled water held whole cover of their cells.
 fn gather_run(
     state: &TerrainState,
     (cell, datum): (f32, f32),
@@ -810,6 +823,28 @@ fn gather_run(
     }
     let ends = (middle(low[0], low[1]), middle(high[0] - 1, high[1] - 1));
     let steady = SteadyCells::read(state, ends, datum);
+    // What the solids standing in the settled water cover of its cells,
+    // their tops over the datum, `stride - 1` cells a row.
+    let reach = (
+        Vec2::new(low[0] as f32, low[1] as f32) * cell,
+        Vec2::new(high[0] as f32, high[1] as f32) * cell,
+    );
+    let solids: Vec<Footprint> = state
+        .settled
+        .held
+        .iter()
+        .flat_map(|(_, (water, _))| water.solids.iter().copied())
+        .filter(|solid| {
+            let (at, half) = (solid.middle(), solid.reach());
+            (at + half).cmpge(reach.0).all() && (at - half).cmple(reach.1).all()
+        })
+        .collect();
+    let across = stride - 1;
+    let mut covers = vec![[0.0_f32; 2]; across * SIDE];
+    let cells = [across as u32, BLOCK_SIDE];
+    for ([i, j], [share, top]) in cover_cells(&solids, (low, cells), cell) {
+        covers[j as usize * across + i as usize] = [share, anchor + top - datum];
+    }
     let tile = |point: Vec2| {
         let key = pyramid.tile_at(0, point)?;
         Some((state.store.get(&key)?, point - pyramid.tile_origin(key)))
@@ -838,6 +873,7 @@ fn gather_run(
                 water: std::array::from_fn(|k| steady.at(at(k))),
                 roughness: beds.map(|(rough, _)| rough),
                 bed_words: beds.map(|(_, words)| words),
+                cover: std::array::from_fn(|k| covers[k / SIDE * across + corner + k % SIDE]),
             }
         })
         .collect()

@@ -14,18 +14,22 @@
 // constants these mirror). Each cell holds its water's surface, its flow
 // along x and z (square meters a second) and its foam. The ground stands at
 // the cells' corners, with the level a lake holds each cell at, if one
-// does, and each cell's bed's roughness: lakes stand still, taking the
-// water that runs into them and giving none. A stage finds the flux through
-// every face, each cell reconstructing its water at its own faces and at
-// its neighbors' beside them (computing them twice costs less than carrying
-// them through memory), then the share of its outflow each cell can give,
-// and updates every cell; rivers bring their water to their cells after
-// each step. The water carries foam: it churns it up where it loses energy
-// fast enough to break (as it runs, where it plunges and jumps, along its
-// eddy lines and where it piles up), the current its surface runs at
-// carries it off conserved, turned outward in bends and dragged by the
-// wind, so it gathers where that surface converges, along the banks it is
-// pushed against and on eddy lines, and it fades as its bubbles break.
+// does, each cell's bed's roughness, and the share of each covered by the
+// solids standing in it with the height their tops stand at: lakes stand
+// still, taking the water that runs into them and giving none, and solids
+// block the flow through a cell's faces by the share of the cell they
+// cover, as deep as they stand in its water (`sim_opening`), so it turns
+// around them. A stage finds the flux through every face, each cell
+// reconstructing its water at its own faces and at its neighbors' beside
+// them (computing them twice costs less than carrying them through memory),
+// then the share of its outflow each cell can give, and updates every cell;
+// rivers bring their water to their cells after each step. The water
+// carries foam: it churns it up where it loses energy fast enough to break
+// (as it runs, where it plunges and jumps, along its eddy lines and where
+// it piles up), the current its surface runs at carries it off conserved,
+// turned outward in bends and dragged by the wind, so it gathers where that
+// surface converges, along the banks it is pushed against and on eddy
+// lines, and it fades as its bubbles break.
 //
 // Every dispatch runs rectangles side by side, the third dimension counting
 // them, each a slot of the buffers with its own cells along x and z, cell
@@ -70,12 +74,13 @@ const WATER_SIM_SOURCE_GROUP: u32 = 64u;
 const SIM_SLOTS: u32 = 64u;
 // What a slot's table holds for a block its pool does not store; a block's
 // cells and corners; and the entries of a block's ground: the ground at its
-// cells' corners, then the level a lake holds each of its cells at, then
-// each of its cells' bed's roughness.
+// cells' corners, then the level a lake holds each of its cells at, each of
+// its cells' bed's roughness, and the share of each of its cells covered by
+// solids and the height their tops stand at.
 const SIM_NO_BLOCK: u32 = 0xffffffffu;
 const SIM_BLOCK_CELLS: u32 = WATER_SIM_GROUP * WATER_SIM_GROUP;
 const SIM_BLOCK_CORNERS: u32 = (WATER_SIM_GROUP + 1u) * (WATER_SIM_GROUP + 1u);
-const SIM_BLOCK_GROUND: u32 = 209u;
+const SIM_BLOCK_GROUND: u32 = 337u;
 // Gravity (meters a second squared) and water's density (kilograms a cubic
 // meter).
 const SIM_GRAVITY: f32 = 9.81;
@@ -156,7 +161,9 @@ struct SimSlots {
 // where none does), then each of its cells' bed's roughness (its D84 in
 // meters where friction follows Ferguson's law, the same negated where
 // steps or knobs are carved into it and friction counts its grains alone),
-// cells row by row.
+// then the share of each of its cells covered by the solids standing in it
+// (0 to 1), then the height their tops stand at over it (meters), cells
+// row by row.
 @group(0) @binding(1) var<storage, read> sim_ground: array<f32>;
 // Each slot's step's start and then its first stage, each its pool's
 // blocks' cells, a block's row by row: the water's surface, its flow along
@@ -468,6 +475,67 @@ fn sim_held_at(q: Square, at: u32) -> bool {
 fn sim_rough(q: Square, at: u32) -> f32 {
     return sim_ground[sim_ground_base(q) + (at / SIM_BLOCK_CELLS) * SIM_BLOCK_GROUND
         + SIM_BLOCK_CORNERS + SIM_BLOCK_CELLS + at % SIM_BLOCK_CELLS];
+}
+
+// The share of the cell at `at` covered by the solids standing in it, and
+// the height their tops stand at over it; none where the slot holds no
+// cell there (SIM_NO_BLOCK).
+fn sim_cover(q: Square, at: u32) -> vec2<f32> {
+    if at == SIM_NO_BLOCK {
+        return vec2<f32>(0.0);
+    }
+    let share = sim_ground_base(q) + (at / SIM_BLOCK_CELLS) * SIM_BLOCK_GROUND
+        + SIM_BLOCK_CORNERS + 2u * SIM_BLOCK_CELLS + at % SIM_BLOCK_CELLS;
+    return vec2<f32>(sim_ground[share], sim_ground[share + SIM_BLOCK_CELLS]);
+}
+
+// The share of a face's water the solids covering the cell at `at` (its
+// cover `cover`) block, the water at the face standing at `level`: the
+// share of the cell they cover, times the share of the water's depth over
+// the cell's ground they fill; all of their share where no water stands
+// over that ground.
+fn sim_blocked(q: Square, at: u32, cover: vec2<f32>, level: f32) -> f32 {
+    if cover.x <= 0.0 {
+        return 0.0;
+    }
+    let bed = sim_bed(q, at);
+    let depth = level - bed;
+    if depth <= SIM_DRY {
+        return cover.x;
+    }
+    return cover.x * clamp((cover.y - bed) / depth, 0.0, 1.0);
+}
+
+// The share of the face between the cells at `low` and `high` (either
+// SIM_NO_BLOCK where the slot holds none there) its water passes through
+// in the state `state`: what neither side's solids block of the water
+// standing at the higher of their surfaces (`sim_blocked`). The fluxes
+// through a face carry this share of what open water would, and the pull
+// of gravity down a cell's ground counts its faces' pressure by theirs, so
+// water at rest beside a solid stays at rest; every stage and the cells on
+// both sides of a face find it alike.
+fn sim_opening(q: Square, state: u32, low: u32, high: u32) -> f32 {
+    let near = sim_cover(q, low);
+    let far = sim_cover(q, high);
+    if near.x <= 0.0 && far.x <= 0.0 {
+        return 1.0;
+    }
+    var level: f32;
+    if low == SIM_NO_BLOCK {
+        level = sim_cell(q, state, high).x;
+    } else if high == SIM_NO_BLOCK {
+        level = sim_cell(q, state, low).x;
+    } else {
+        level = max(sim_cell(q, state, low).x, sim_cell(q, state, high).x);
+    }
+    return 1.0 - max(sim_blocked(q, low, near, level), sim_blocked(q, high, far, level));
+}
+
+// What a face passing `open` of its water carries of the flux `flux`
+// through open water: that share of its mass and momentum, its fastest wave
+// or the head its water loses as they were.
+fn sim_through(flux: vec4<f32>, open: f32) -> vec4<f32> {
+    return vec4<f32>(flux.xyz * open, flux.w);
 }
 
 // How the ground of the cell at `at` leans: φ² = 1 + |∇b|², its slope
@@ -826,13 +894,14 @@ fn sim_open(face: vec4<f32>, inward: f32, g: f32) -> vec4<f32> {
 
 // Each cell that steps, and each beside one that does, finds the fluxes
 // through its east and north faces (and its west and south ones on the
-// rectangle's edges), each by the gravity along the bed through it:
-// between two cells that step, as their faces say; on the edges, open or
-// between the inside and the ring cell past it, or as much as the ring
-// brings in; toward a cell the slot does not hold, open (`sim_open_west`
-// finds the west and south ones there); and between a cell that steps and
-// one standing still, nothing, as no water reaches either this step. A
-// cell that steps keeps its faces' depths.
+// rectangle's edges), each by the gravity along the bed through it and as
+// much as the solids beside it let through (`sim_opening`): between two
+// cells that step, as their faces say; on the edges, open or between the
+// inside and the ring cell past it, or as much as the ring brings in;
+// toward a cell the slot does not hold, open (`sim_open_west` finds the
+// west and south ones there); and between a cell that steps and one
+// standing still, nothing, as no water reaches either this step. A cell
+// that steps keeps its faces' depths.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
 fn sim_exchange(
     @builtin(workgroup_id) group: vec3<u32>,
@@ -887,7 +956,7 @@ fn sim_exchange(
             let gravity = sim_gravity_x(q, at, SIM_NO_BLOCK);
             flux = sim_kept(sim_open(x.high, -1.0, gravity), x.high, x.high);
         }
-        sim_fluxes[fluxes + at] = flux;
+        sim_fluxes[fluxes + at] = sim_through(flux, sim_opening(q, state, at, east));
     }
     // The west edge.
     if i == 0u && steps {
@@ -899,7 +968,7 @@ fn sim_exchange(
             flux = sim_ring_flux(q, 2u * nx + 2u * j, x.low, sim_ground_x(q, at).x, false, 1.0,
                 sim_held_at(q, at), gravity);
         }
-        sim_fluxes[edges + j] = flux;
+        sim_fluxes[edges + j] = sim_through(flux, sim_opening(q, state, SIM_NO_BLOCK, at));
     }
     // Its north face: between rows j and j + 1, or the north edge.
     if steps || north_steps {
@@ -921,7 +990,8 @@ fn sim_exchange(
             let gravity = sim_gravity_z(q, at, SIM_NO_BLOCK);
             flux = sim_kept(sim_open(z.high, -1.0, gravity), z.high, z.high);
         }
-        sim_fluxes[fluxes + sim_held() + at] = flux;
+        sim_fluxes[fluxes + sim_held() + at] = sim_through(flux,
+            sim_opening(q, state, at, north));
     }
     // The south edge.
     if j == 0u && steps {
@@ -933,21 +1003,24 @@ fn sim_exchange(
             flux = sim_ring_flux(q, 2u * i, z.low, sim_ground_z(q, at).x, true, 1.0,
                 sim_held_at(q, at), gravity);
         }
-        sim_fluxes[edges + nz + i] = flux;
+        sim_fluxes[edges + nz + i] = sim_through(flux, sim_opening(q, state, SIM_NO_BLOCK, at));
     }
 }
 
 // The flux out through the west face (`across_z` false) or the south one
 // (true) of the cell at `at`, cell (i, j), toward a cell the slot does not
-// hold: open, as the rectangle's edges are. The cells beside it keep no
-// face toward it, so it finds that face again.
+// hold: open, as the rectangle's edges are, as much as its solids let
+// through. The cells beside it keep no face toward it, so it finds that
+// face again.
 fn sim_open_west(q: Square, at: u32, i: u32, j: u32, across_z: bool) -> vec4<f32> {
+    let state = frame.stage.x;
+    let open = sim_opening(q, state, SIM_NO_BLOCK, at);
     if across_z {
-        return sim_open(sim_across_z(q, frame.stage.x, at, i, j).low, 1.0,
-            sim_gravity_z(q, SIM_NO_BLOCK, at));
+        return sim_through(sim_open(sim_across_z(q, state, at, i, j).low, 1.0,
+            sim_gravity_z(q, SIM_NO_BLOCK, at)), open);
     }
-    return sim_open(sim_across_x(q, frame.stage.x, at, i, j).low, 1.0,
-        sim_gravity_x(q, SIM_NO_BLOCK, at));
+    return sim_through(sim_open(sim_across_x(q, state, at, i, j).low, 1.0,
+        sim_gravity_x(q, SIM_NO_BLOCK, at)), open);
 }
 
 // The fluxes into and out of the cell at `at`, cell (i, j): through its
@@ -1139,11 +1212,13 @@ fn sim_settle(q: Square, at: u32, water: vec3<f32>, ground: f32, held: f32, rubb
 
 // The pull of gravity down a cell's ground across an axis, times its
 // width: its faces' gravity along the bed `gravity` (its low face's and its
-// high one's) pulling its water `depth` deep down ground rising by `rise`
-// across it, and the push of the pressure its faces' depths bear (the mean
-// of their squares, `squares`) under their different gravity; water at
-// rest feels none, as its faces' pressure balances it exactly, at a
-// waterline too.
+// high one's, each times the share of the face its water passes through,
+// `sim_opening`) pulling its water `depth` deep down ground rising by
+// `rise` across it, and the push of the pressure its faces' depths bear
+// (the mean of their squares, `squares`) under their different gravity, a
+// face blocked by solids pushing back as a wall would; water at rest feels
+// none, as its faces' pressure balances it exactly, at a waterline and
+// beside a solid too.
 fn sim_pull(gravity: vec2<f32>, depth: f32, rise: f32, squares: f32) -> f32 {
     return -0.5 * (gravity.x + gravity.y) * depth * rise + 0.5 * (gravity.y - gravity.x) * squares;
 }
@@ -1201,8 +1276,10 @@ fn sim_update(
     let depth = max(vec2<f32>(staged.x) - 0.5 * vec2<f32>(ground_x.x + ground_x.y,
         ground_z.x + ground_z.y), vec2<f32>(0.0));
     let squares = sim_depths[sim_depths_base(q) + at];
-    let gravity_x = vec2<f32>(sim_gravity_x(q, west_at, at), sim_gravity_x(q, at, east_at));
-    let gravity_z = vec2<f32>(sim_gravity_z(q, south_at, at), sim_gravity_z(q, at, north_at));
+    let gravity_x = vec2<f32>(sim_gravity_x(q, west_at, at), sim_gravity_x(q, at, east_at))
+        * vec2<f32>(sim_opening(q, stage, west_at, at), sim_opening(q, stage, at, east_at));
+    let gravity_z = vec2<f32>(sim_gravity_z(q, south_at, at), sim_gravity_z(q, at, north_at))
+        * vec2<f32>(sim_opening(q, stage, south_at, at), sim_opening(q, stage, at, north_at));
     let pull = vec2<f32>(sim_pull(gravity_x, depth.x, ground_x.y - ground_x.x, squares.x),
         sim_pull(gravity_z, depth.y, ground_z.y - ground_z.x, squares.y)) / dx;
     // The flux through faces between rows carries the flow along z across
@@ -1546,12 +1623,20 @@ fn sim_pierced(q: Square, place: vec2<u32>, surface: f32) -> bool {
     return false;
 }
 
+// The share of a cell solids standing up through its surface cover from
+// which they wall it off from the foam carried into it: half of it, where
+// they stand over more of it than its water does.
+const SIM_WALLED: f32 = 0.5;
+
 // Whether the cell at `at`, cell `place`, its water's surface standing at
 // `surface`, takes the foam carried into it: where it is wet and no solid
-// stands up through its surface, so foam carried against dry ground or a
-// solid stays along it.
+// stands up through its surface, neither one pushing its water
+// (`sim_pierced`) nor those covering SIM_WALLED of it or more, so foam
+// carried against dry ground or a solid stays along it.
 fn sim_foam_takes(q: Square, at: u32, place: vec2<u32>, surface: f32) -> bool {
-    return surface - sim_bed(q, at) > SIM_FOAM_WET && !sim_pierced(q, place, surface);
+    let cover = sim_cover(q, at);
+    let walled = cover.x >= SIM_WALLED && cover.y > surface;
+    return surface - sim_bed(q, at) > SIM_FOAM_WET && !walled && !sim_pierced(q, place, surface);
 }
 
 // Whether the cell at `at`, its water's surface standing at `surface`,

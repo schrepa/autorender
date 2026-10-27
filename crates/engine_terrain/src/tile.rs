@@ -305,11 +305,18 @@ impl Tile {
     }
 
     /// The tile with the water its samples' `surface` and words `info`
-    /// ([`TileWater::info`]) stand at: none where no sample's surface
-    /// stands over its ground or the sizes do not match.
+    /// ([`TileWater::info`]) stand at, `solids` standing in it: none where
+    /// no sample's surface stands over its ground or the sizes do not
+    /// match.
     #[must_use]
-    pub(crate) fn with_water(mut self, surface: Box<[f32]>, info: Box<[[u32; 3]]>) -> Self {
-        let water = TileWater::new(surface, info, &self.heights, self.spacing);
+    pub(crate) fn with_water(
+        mut self,
+        surface: Box<[f32]>,
+        info: Box<[[u32; 3]]>,
+        solids: &[crate::Footprint],
+    ) -> Self {
+        let tile = (&self.heights[..], self.spacing, self.origin());
+        let water = TileWater::new(surface, info, tile, solids);
         self.hold(water);
         self
     }
@@ -1152,7 +1159,7 @@ impl Generator {
                     };
                     let tile = tile.with_rivers(self.river_edges.take(), self.river_beds.take())?;
                     let tile = match water {
-                        Some((surface, info)) => tile.with_water(surface.into(), info.into()),
+                        Some((surface, info)) => tile.with_water(surface.into(), info.into(), &[]),
                         None => tile,
                     };
                     self.stage = Stage::Done;
