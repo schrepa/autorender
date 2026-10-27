@@ -43,11 +43,6 @@ const FILTERS: &[(&str, &str)] = &[
          filtering blends mipmaps",
     ),
     (
-        "fall_cover",
-        "a sheet's cover past its threshold, its edge as soft as its pattern changes across \
-         the pixel",
-    ),
-    (
         "map_lookup",
         "the shadow clipmap's level whose texels match the pixel, compared with the receiver's \
          plane across the pixel",
@@ -108,6 +103,11 @@ const FILTERS: &[(&str, &str)] = &[
         "water_froth",
         "foam's grain as far as the pixel's footprint resolves it, the rest averaged into its \
          cover, and its relief while its bubbles span two pixels",
+    ),
+    (
+        "water_past",
+        "a pattern's share past its threshold as far as the pixel's footprint resolves its \
+         grain, the rest averaged into the share itself, its edge a pixel wide",
     ),
     (
         "water_shown",

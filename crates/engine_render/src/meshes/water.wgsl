@@ -1096,10 +1096,6 @@ fn water_covering(shade: WaterShade, pixel: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(stored(shade.shaded.color + shade.behind, pixel) * shade.fade, shade.fade);
 }
 
-// The slopes of a river's surface (meters a meter, from the first to the
-// second) over which, under a fall's sheet, it comes to run as a film.
-const WATER_FILM: vec2<f32> = vec2<f32>(0.5, 0.9);
-
 // Caustics (Guardado and Sánchez-Crespo): how much brighter the sun's
 // light falls on the bed `bed` meters under the water's point `world` of
 // normal `normal`, where the waves gather it as they
@@ -1280,26 +1276,20 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // Light comes back through the water along the view to what it shows,
     // as far as the depth lets it run, after reaching it down from the
     // surface, taken by the water and scattered by its sediment and bubbles.
-    // Water a fall's sheet runs over (`shade_fall`) is a film over steep
-    // rock: the sheet draws its white and its body.
-    let steep = length(at.slope);
-    let sheet = select(0.0, 1.0, at.words.sheet);
-    let film = smoothstep(WATER_FILM.x, WATER_FILM.y, steep) * sheet;
     let through = min(max(length(behind.ground - point), 0.0), // optics: the view's way through the water
         depth * plane.y / max(dot(view, plane), 0.1)); // optics: the view's way through the water
     let down = clamp(dot(point - behind.ground, plane) / plane.y, 0.0, through); // optics: the light's way down to what the view meets
     // The water holds bubbles where white water is born in it and where it
     // carries the foam its flow churned up.
     let aerated = max(born, saturate(at.words.foam / WATER_FOAM_MOST));
-    let transmit = water_transmitted((through + down) * (1.0 - film), aerated);
+    let transmit = water_transmitted(through + down, aerated);
     // Foam (`meshes/water_foam.wgsl`), the water's own: the foam it carries
     // as its flow churned it up, drained as it ages; and white water, fresh,
     // where it breaks, where its crests fold and where it runs against what
     // stands in it behind the pixel fast enough to tear air in, its current
-    // or its eddies, whichever is faster. Under a fall's sheet, where the
-    // water runs as a film, the sheet draws its white. It floats where the
-    // waves carry it, toward their crests by their slopes, and its relief
-    // tilts the normal it is lit by.
+    // or its eddies, whichever is faster. It floats where the waves carry
+    // it, toward their crests by their slopes, and its relief tilts the
+    // normal it is lit by.
     // Its crests fold where its waves pass the breaking slope, by their
     // statistics (`water_folding`).
     let foam_folding = water_folding(waves.spread, waves.hidden.x + waves.hidden.y, waves.crest);
@@ -1307,8 +1297,8 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let foam_fresh = 1.0 - (1.0 - born) * (1.0 - foam_folding) * (1.0 - foam_contact);
     let foam_carried = saturate(at.words.foam / WATER_FOAM_MOST);
     let foam_ridden = world.xz - waves.slopes * WATER_FOAM_RIDE;
-    let froth = water_froth(foam_ridden, footprint,
-        vec2<f32>(foam_fresh, foam_carried) * (1.0 - film), flow, shear, time, stagger, seen);
+    let froth = water_froth(foam_ridden, footprint, vec2<f32>(foam_fresh, foam_carried), flow,
+        shear, time, stagger, seen);
     let foam = froth.cover;
     let foam_tilt = water_foam_tilt(froth.height, normal, world_dx, world_dy);
     let foam_shade = froth.shade;
@@ -1429,11 +1419,8 @@ const WATER_BREAK_FULL: f32 = 0.85;
 const WATER_BREAK_THINNEST: f32 = 0.02;
 // How upright (the up part of its triangles' normal) the simulated water's
 // surface stands where it gives way, from the first to the second: down a
-// cliff, between cells far apart in height, the falls' sheets show it; and
-// the meters over the simulated water below past which those sheets show,
-// from the first to the second.
+// cliff, between cells far apart in height, the falls' jets show it.
 const SIM_SHEER: vec2<f32> = vec2<f32>(0.45, 0.5);
-const SIM_SHEETS_ABOVE: vec2<f32> = vec2<f32>(3.0, 6.0);
 
 // The speed (meters a second) at which the eddies of water `depth` meters
 // deep turn, running `speed` meters a second down a surface falling
@@ -1568,22 +1555,6 @@ fn sim_water_level(i: i32, j: i32) -> vec2<f32> {
         return vec2<f32>(level, level - ground);
     }
     return vec2<f32>(ground, -shallowest);
-}
-
-// The lowest the simulated water stands about `point` (x and z), in world
-// meters: over the cells around the one holding it, each wet one's surface
-// or each dry one's ground.
-fn sim_water_lowest_at(point: vec2<f32>) -> f32 {
-    let at = vec2<i32>(floor((point - water.sim.xy) / water.sim.z));
-    var lowest = 1.0e9;
-    for (var dj = -1; dj <= 1; dj++) {
-        for (var di = -1; di <= 1; di++) {
-            let ground = sim_water_ground(at.x + di, at.y + dj);
-            let surface = sim_water_cell(at.x + di, at.y + dj).x;
-            lowest = min(lowest, select(ground, surface, surface - ground > SIM_WET));
-        }
-    }
-    return lowest + water.sim_datum.x;
 }
 
 // Cell (i, j)'s water's velocity (xy), its flow over its depth,

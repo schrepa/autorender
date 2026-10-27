@@ -1,25 +1,27 @@
-//! Waterfalls' sheets: where terrains' rivers leave their beds
-//! (`engine_core::terrain_data::Fall`), the water pass draws the water's
-//! path as a sheet the river's width, from a little up the river over its
-//! lip, through the air on each jet and down the chutes between, on into
-//! the water it lands in at last: widening as it flies, its edges curling
-//! back toward the rock as thick as it stands, lying on the chutes' water.
-//! Each vertex holds where across the sheet it lies, the seconds since the
-//! water passing it left the lip, since it last took off or landed, and how
-//! fast it runs there, so the shader (`meshes/water_falls.wgsl`) draws what the
-//! water carries where it has carried it: streaks falling and stretching as
-//! the water speeds up, white water breaking up as it flies and boiling
-//! where it lands. How white the water has turned and how far the air has
-//! broken it up follow the falling water's physics: its sheet leaves a lip
-//! as thick as the water each meter of it carries over its speed, its edges
-//! spread a share of how far it has fallen, and its core lasts a fall that
-//! grows with what it carries (Horeni, after USBR 2015); clinging to rock,
-//! it turns white once its turbulence reaches its surface (Chanson's
-//! inception point) as far as the rock is steep enough to keep air in it,
-//! and lets its air go down gentler rock, its foam lingering in patches.
-//! Where a jet lands, the water boils: a disc of white
-//! water on the pool, flowing out from where it lands and thinning to
-//! nothing at its rim.
+//! Waterfalls' jets: where terrains' rivers leave their beds
+//! (`engine_core::terrain_data::Fall`), the water pass draws each jet's
+//! water through the air as a sheet the river's width, from where it leaves
+//! its lip to where it meets the water or rock below: widening as it flies,
+//! its edges curling back toward the rock as thick as it stands. Water lying
+//! on the ground, up the river from a lip, down the rock between a cascade's
+//! jets and in the pool a jet lands in, the cooked water draws with its own
+//! flow and foam. Each vertex holds where across the sheet it lies, the
+//! seconds since the water passing it left the fall's lip and since it took
+//! off, and how fast it runs there, so the shader
+//! (`meshes/water_falls.wgsl`) draws what the water carries where it has
+//! carried it: streaks falling and stretching as the water speeds up, white
+//! water breaking up as it flies. How white the water has turned and how far
+//! the air has broken it up follow the falling water's physics: a jet leaves
+//! its lip as thick as the water each meter of it carries over its speed,
+//! its edges spread a share of how far it has fallen, and its core lasts a
+//! fall that grows with what it carries (Horeni, after USBR 2015); clinging
+//! to rock between a cascade's jets, its water turns white once its
+//! turbulence reaches its surface (Chanson's inception point) as far as the
+//! rock is steep enough to keep air in it, turns white where it lands and
+//! lets its air go down gentler rock, its foam lingering in patches, so each
+//! jet takes off as white as its water has turned.
+
+use std::ops::Range;
 
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::math::{clamp, max, min};
@@ -27,14 +29,10 @@ use engine_core::terrain_data::Fall;
 
 use crate::gpu_layouts::water::FallVertex;
 
-/// Meters between the sheet's rows along its path, and its columns across.
+/// Meters between a jet's rows along its path, and its columns across.
 const ROW: f32 = 0.75;
 const COLUMNS: u32 = 8;
-/// Meters the sheet reaches up the river over its lip, and on down into
-/// the water it lands in.
-const UPSTREAM: f32 = 1.5;
-const PLUNGE: f32 = 1.5;
-/// The meters each edge of a sheet spreads a meter it falls (2 to 5%).
+/// The meters each edge of a jet spreads a meter it falls (2 to 5%).
 const EDGE_SPREAD: f32 = 0.035;
 /// The meters a jet's coherent core lasts as it falls, carrying `q` cubic
 /// meters a second each meter of its width: BREAKUP q^0.32 (Horeni); the
@@ -48,7 +46,7 @@ const AIRING: f32 = 0.4;
 /// AIR_SHARE of the sine of the rock's angle (Chanson), rises through
 /// AIRED, the angle read across SKIM_REACH meters of its path either way:
 /// skimming over a stepped bed it rides its steps' edges, taking in air as
-/// the rock falls overall rather than step by step; landing, it boils
+/// the rock falls overall rather than step by step; landing, it turns
 /// white, and it lets its air go down gentler rock over AIR_RELEASE
 /// seconds, down to LINGERING white: its foam's patches.
 const AIR_SHARE: f32 = 0.9;
@@ -56,57 +54,40 @@ const AIRED: [f32; 2] = [0.15, 0.55];
 const SKIM_REACH: f32 = 6.0;
 const AIR_RELEASE: f32 = 1.2;
 const LINGERING: f32 = 0.3;
-/// The thinnest and thickest the sheet stands (meters): the water each
-/// meter of its width carries over its speed.
+/// The thinnest and thickest a jet stands (meters): the water each meter
+/// of its width carries over its speed.
 const THICKNESS: [f32; 2] = [0.05, 1.2];
-/// Meters the sheet stands off the river's water where it lies on it, and
-/// the share of its thickness more it stands where it has turned white
-/// (aerated water bulks out over the clear water's surface, nearly three
-/// times as deep on 45-degree rock), at most LIFTED meters.
-const LIFT: f32 = 0.05;
-const BULKING: f32 = 0.8;
-const LIFTED: f32 = 0.4;
-/// Seconds over which a jet leaving a chute settles from the chute's lift
-/// to its own path, and the share wider than its river a sheet stands, so
-/// its edges fade over the banks rather than short of the water.
-const SETTLING: f32 = 0.4;
+/// The share wider than its river a jet stands, so its edges fade over the
+/// banks rather than short of the water.
 const OVERHANG: f32 = 1.15;
 /// How much faster a jet's middle leaves its lip than its edges (a share
 /// of its speed): its curtain bows out in the middle as it falls.
 const BOW: f32 = 0.12;
-/// The slowest the sheet's water runs (meters a second).
+/// The slowest the falling water runs (meters a second).
 const SLOWEST: f32 = 0.3;
-/// What the seconds since landing read before the water has landed.
-const UNLANDED: f32 = 1.0e3;
-/// A boil's radius, a share of the fall's width between the least and the
-/// most meters; its rings and segments; the share of the landing speed its
-/// water flows out at, between the slowest and fastest meters a second; how
-/// far over the pool it stands (meters); and the share of its radius from
-/// which it thins out to nothing at its rim.
-const BOIL_SIZE: [f32; 3] = [0.6, 2.0, 15.0];
-const BOIL_RINGS: u32 = 6;
-const BOIL_SEGMENTS: u32 = 16;
-const BOIL_OUTFLOW: [f32; 3] = [0.35, 1.0, 4.0];
-const BOIL_LIFT: f32 = 0.08;
-const BOIL_RIM: f32 = 0.55;
 
-/// Every fall's sheet of `falls` (each terrain's origin and falls), into
-/// `vertices` and the triangles' `indices`.
+/// Every fall's jets of `falls` (each terrain's origin and falls), into
+/// `vertices` and the triangles' `indices`; returns the indices of each
+/// terrain's jets, in its order.
 pub(crate) fn sheets<'a>(
     falls: impl IntoIterator<Item = (Vec3, &'a [Fall])>,
     vertices: &mut Vec<FallVertex>,
     indices: &mut Vec<u32>,
-) {
+) -> Vec<Range<u32>> {
     vertices.clear();
     indices.clear();
     let mut number = 0_u32;
-    for (origin, set) in falls {
-        for fall in set {
-            sheet(fall, origin, number, vertices, indices);
-            boils(fall, origin, number, vertices, indices);
-            number += 1;
-        }
-    }
+    falls
+        .into_iter()
+        .map(|(origin, set)| {
+            let first = indices.len() as u32;
+            for fall in set {
+                fall_jets(fall, origin, number, vertices, indices);
+                number += 1;
+            }
+            first..indices.len() as u32
+        })
+        .collect()
 }
 
 /// A point of a fall's path: where it stands (terrain-local), the seconds
@@ -122,9 +103,8 @@ struct Passing {
     sky: f32,
 }
 
-/// Fall `fall`'s path, reaching UPSTREAM up the river over its lip at the
-/// speed it leaves at and PLUNGE on into the water it lands in as it lands,
-/// with that speed (meters a second); `None` for a path too short to draw.
+/// Fall `fall`'s path, and the speed its water leaves its lip at (meters a
+/// second); `None` for a path too short to draw.
 fn passings(fall: &Fall) -> Option<(Vec<Passing>, f32)> {
     let count = fall.path.len();
     if count < 2
@@ -135,7 +115,7 @@ fn passings(fall: &Fall) -> Option<(Vec<Passing>, f32)> {
     {
         return None;
     }
-    let mut path: Vec<Passing> = (0..count)
+    let path: Vec<Passing> = (0..count)
         .map(|index| Passing {
             at: Vec3::from_array(fall.path[index]),
             time: fall.times[index],
@@ -150,39 +130,14 @@ fn passings(fall: &Fall) -> Option<(Vec<Passing>, f32)> {
         Vec2::new(leaving.x, leaving.z).length() / max(second.time - first.time, 1.0e-3),
         SLOWEST,
     );
-    let upstream = Vec3::new(leaving.x, 0.0, leaving.z).normalize_or(Vec3::X);
-    path.insert(
-        0,
-        Passing {
-            at: first.at - upstream * UPSTREAM,
-            time: -UPSTREAM / lip_speed,
-            aloft: false,
-            half: first.half,
-            sky: first.sky,
-        },
-    );
-    let (before, last) = (path[path.len() - 2], path[path.len() - 1]);
-    let landing = last.at - before.at;
-    let landing_speed = max(
-        landing.length() / max(last.time - before.time, 1.0e-3),
-        SLOWEST,
-    );
-    path.push(Passing {
-        at: last.at + landing.normalize_or(Vec3::NEG_Y) * PLUNGE,
-        time: last.time + PLUNGE / landing_speed,
-        aloft: false,
-        half: last.half,
-        sky: last.sky,
-    });
     Some((path, lip_speed))
 }
 
-/// A row of a sheet: its middle (terrain-local), the seconds after leaving
+/// A row of a jet: its middle (terrain-local), the seconds after leaving
 /// the lip its water passes it, the way it runs and how fast, the seconds
-/// since it took off where it flies, less those since it landed where it
-/// runs down a chute, whether it flies, how white its water has turned and
-/// how far the air has broken it up (0 to 1 each), and the meters each of
-/// its edges has spread.
+/// since it took off, how white its water has turned and how far the air
+/// has broken it up (0 to 1 each), the meters each of its edges has spread,
+/// half the meters across its water and how much of the sky it sees.
 #[derive(Clone, Copy)]
 struct Row {
     center: Vec3,
@@ -190,11 +145,9 @@ struct Row {
     tangent: Vec3,
     speed: f32,
     flying: f32,
-    aloft: bool,
     white: f32,
     broken: f32,
     spread: f32,
-    lift: f32,
     half: f32,
     sky: f32,
 }
@@ -240,19 +193,23 @@ fn smooth(low: f32, high: f32, value: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// A sheet's rows along `path`, carrying `carried` cubic meters a second
-/// each meter of its width: every ROW meters, and at each of its points.
-fn rows(path: &[Passing], carried: f32) -> Vec<Row> {
+/// Each jet's rows along `path`, its water carrying `carried` cubic meters
+/// a second each meter of its width: every ROW meters of its flight from
+/// where it takes off, and where it lands. Between its jets the water
+/// clings to the rock, turning white once its turbulence reaches its
+/// surface, as far as the rock is steep enough to keep air in it, and
+/// letting its air go down gentler rock, its foam lingering in patches;
+/// each jet takes off as white as its water has turned.
+fn rows(path: &[Passing], carried: f32) -> Vec<Vec<Row>> {
     let falling = skimmed(path);
     let breakup = BREAKUP * libm::powf(max(carried, 1.0e-3), 0.32);
     let inception = min(INCEPTION[0] + INCEPTION[1] * carried.sqrt(), INCEPTION[2]);
-    let mut rows = Vec::new();
-    let (mut took_off, mut landed) = (0.0, -UNLANDED);
-    // Where it last took off, how white it was then, and the meters it
-    // has clung to rock.
-    let (mut height, mut airborne_white, mut clung) = (0.0, 0.0, 0.0);
-    let (mut white, mut lift, mut lifted) = (0.0, LIFT, LIFT);
-    let mut before = path[0].time;
+    let mut jets: Vec<Vec<Row>> = Vec::new();
+    // Where and when its water last took off and how white it was then;
+    // how white it is, the meters it has clung to rock and when it last
+    // passed a row.
+    let (mut height, mut took_off, mut airborne_white) = (0.0, 0.0, 0.0);
+    let (mut white, mut clung, mut before) = (0.0, 0.0, path[0].time);
     for index in 0..path.len() - 1 {
         let (a, b) = (path[index], path[index + 1]);
         let flew = index > 0 && path[index - 1].aloft;
@@ -260,88 +217,55 @@ fn rows(path: &[Passing], carried: f32) -> Vec<Row> {
             took_off = a.time;
             height = a.at.y;
             airborne_white = white;
-            lifted = lift;
+            jets.push(Vec::new());
         }
         if !a.aloft && flew {
-            landed = a.time;
             white = 1.0;
         }
         let length = (b.at - a.at).length();
         let steps = max((length / ROW).ceil(), 1.0) as u32;
-        for step in 0..steps {
+        // A jet's last stretch ends in the row where it lands.
+        let lands = a.aloft && (!b.aloft || index + 2 == path.len());
+        for step in 0..steps + u32::from(lands) {
             let share = step as f32 / steps as f32;
             let time = a.time + (b.time - a.time) * share;
-            let (center, tangent, speed) = on_segment(&a, &b, share);
-            let (broken, spread);
             if a.aloft {
+                let (center, tangent, speed) = on_segment(&a, &b, share);
                 let fallen = max(height - center.y, 0.0);
                 let flying = time - took_off;
                 white = max(airborne_white, 1.0 - libm::expf(-flying / AIRING));
-                broken = smooth(0.3 * breakup, breakup, fallen);
-                spread = EDGE_SPREAD * fallen;
-                lift = lifted * (1.0 - smooth(0.0, SETTLING, flying));
-            } else {
-                // Clinging to rock it turns white once its turbulence
-                // reaches its surface, as far as the rock is steep enough
-                // to keep air in it; white water lets its air go down
-                // gentler rock, its foam lingering in patches.
-                if time >= 0.0 {
-                    clung += length / steps as f32;
+                if let Some(jet) = jets.last_mut() {
+                    jet.push(Row {
+                        center,
+                        time,
+                        tangent,
+                        speed,
+                        flying,
+                        white,
+                        broken: smooth(0.3 * breakup, breakup, fallen),
+                        spread: EDGE_SPREAD * fallen,
+                        half: a.half + (b.half - a.half) * share,
+                        sky: a.sky + (b.sky - a.sky) * share,
+                    });
                 }
-                let surfaced = if time >= 0.0 {
-                    smooth(0.0, inception, clung)
-                } else {
-                    0.0
-                };
+            } else {
+                clung += length / steps as f32;
                 let sine = falling[index] + (falling[index + 1] - falling[index]) * share;
-                let churning = surfaced * smooth(AIRED[0], AIRED[1], AIR_SHARE * sine);
+                let churning = smooth(0.0, inception, clung)
+                    * smooth(AIRED[0], AIRED[1], AIR_SHARE * sine);
                 let released = LINGERING
                     + (white - LINGERING) * libm::expf(-max(time - before, 0.0) / AIR_RELEASE);
                 white = max(churning, if white > LINGERING { released } else { white });
-                broken = 0.0;
-                spread = 0.0;
-                let thickness = clamp(carried / speed, THICKNESS[0], THICKNESS[1]);
-                lift = LIFT + min(BULKING * white * thickness, LIFTED);
             }
             before = time;
-            rows.push(Row {
-                center,
-                time,
-                tangent,
-                speed,
-                flying: if a.aloft {
-                    time - took_off
-                } else {
-                    landed - time
-                },
-                aloft: a.aloft,
-                white,
-                broken,
-                spread,
-                lift,
-                half: a.half + (b.half - a.half) * share,
-                sky: a.sky + (b.sky - a.sky) * share,
-            });
         }
     }
-    if let (Some(&end), Some(&last)) = (path.last(), rows.last()) {
-        rows.push(Row {
-            center: end.at,
-            time: end.time,
-            half: end.half,
-            sky: end.sky,
-            flying: landed - end.time,
-            aloft: false,
-            broken: 0.0,
-            spread: 0.0,
-            ..last
-        });
-    }
-    rows
+    jets
 }
 
-/// Fall `fall`'s sheet, its terrain at `origin` and its number `number`.
-fn sheet(
+/// Fall `fall`'s jets, its terrain at `origin` and its number `number`:
+/// each a strip of its rows, COLUMNS across.
+fn fall_jets(
     fall: &Fall,
     origin: Vec3,
     number: u32,
@@ -358,125 +282,47 @@ fn sheet(
         fall.bottom[2] - fall.top[2],
     )
     .normalize_or(Vec3::X);
-    let rows = rows(&path, carried);
-    for (index, row) in rows.iter().enumerate() {
-        // Rows' tangents turn smoothly between their segments.
-        let previous = rows[index.saturating_sub(1)].tangent;
-        let tangent = (row.tangent + previous).normalize_or(row.tangent);
-        let level = Vec3::new(tangent.x, 0.0, tangent.z);
-        let across = if level.length() > 0.05 {
-            Vec3::new(-level.z, 0.0, level.x).normalize()
-        } else {
-            Vec3::new(-heading.z, 0.0, heading.x)
-        };
-        // Up where it lies on the water, out from the rock as it turns down.
-        let normal = across.cross(tangent).normalize_or(Vec3::Y);
-        let half = row.half * OVERHANG;
-        let width = half + row.spread;
-        let thickness = clamp(carried / row.speed, THICKNESS[0], THICKNESS[1]);
-        let lift = row.lift;
-        let base = vertices.len() as u32;
-        for column in 0..=COLUMNS {
-            let side = column as f32 / COLUMNS as f32 * 2.0 - 1.0;
-            let curl = if row.aloft {
-                0.5 * thickness * side * side
+    for jet in rows(&path, carried) {
+        for (index, row) in jet.iter().enumerate() {
+            // Rows' tangents turn smoothly between their segments.
+            let previous = jet[index.saturating_sub(1)].tangent;
+            let tangent = (row.tangent + previous).normalize_or(row.tangent);
+            let level = Vec3::new(tangent.x, 0.0, tangent.z);
+            let across = if level.length() > 0.05 {
+                Vec3::new(-level.z, 0.0, level.x).normalize()
             } else {
-                0.0
+                Vec3::new(-heading.z, 0.0, heading.x)
             };
-            let bow = if row.aloft {
-                BOW * (1.0 - side * side) * lip_speed * row.flying
-            } else {
-                0.0
-            };
-            let position = origin
-                + row.center
-                + across * (side * width)
-                + normal * (lift - curl)
-                + level.normalize_or(Vec3::ZERO) * bow;
-            vertices.push(FallVertex {
-                position: position.to_array(),
-                normal: normal.to_array(),
-                tangent: [tangent.x, tangent.y, tangent.z, row.speed],
-                jet: [side, row.time, lip_speed, half],
-                fall: [
-                    row.flying,
-                    thickness,
-                    number as f32,
-                    if row.aloft { 1.0 } else { 0.0 },
-                ],
-                state: [row.white, row.broken, 1.0, 0.0],
-                sky: row.sky,
-            });
-        }
-        if index > 0 {
-            let previous = base - (COLUMNS + 1);
-            for column in 0..COLUMNS {
-                let (a, b) = (previous + column, base + column);
-                indices.extend_from_slice(&[a, a + 1, b + 1, a, b + 1, b]);
-            }
-        }
-    }
-}
-
-/// The boils where fall `fall`'s jets land (its terrain at `origin`, its
-/// number `number`): a disc on the pool each, its water flowing out from
-/// where the jet lands, as white as the boil it churns, thinning out at its
-/// rim; its seam toward the rock the jet fell from, behind the jet.
-fn boils(
-    fall: &Fall,
-    origin: Vec3,
-    number: u32,
-    vertices: &mut Vec<FallVertex>,
-    indices: &mut Vec<u32>,
-) {
-    let radius = clamp(BOIL_SIZE[0] * fall.width, BOIL_SIZE[1], BOIL_SIZE[2]);
-    for index in 1..fall.path.len() {
-        if !(fall.aloft[index - 1] && !fall.aloft[index]) {
-            continue;
-        }
-        let (before, at) = (
-            Vec3::from_array(fall.path[index - 1]),
-            Vec3::from_array(fall.path[index]),
-        );
-        let seconds = max(fall.times[index] - fall.times[index - 1], 1.0e-3);
-        let landing = before.distance(at) / seconds;
-        let outflow = clamp(BOIL_OUTFLOW[0] * landing, BOIL_OUTFLOW[1], BOIL_OUTFLOW[2]);
-        // The pool's water: the river's where it runs on from the landing.
-        let level = fall
-            .path
-            .get(index + 1)
-            .filter(|_| !fall.aloft[index])
-            .map_or(at.y, |point| point[1]);
-        let forward = Vec3::new(at.x - before.x, 0.0, at.z - before.z).normalize_or(Vec3::X);
-        let right = Vec3::new(-forward.z, 0.0, forward.x);
-        let center = origin + Vec3::new(at.x, level + BOIL_LIFT, at.z);
-        let base = vertices.len() as u32;
-        for ring in 0..=BOIL_RINGS {
-            let out = ring as f32 / BOIL_RINGS as f32;
-            let from = radius * out;
-            let flown = from / outflow;
-            let fade = 1.0 - smooth(BOIL_RIM, 1.0, out);
-            for segment in 0..=BOIL_SEGMENTS {
-                let side = segment as f32 / BOIL_SEGMENTS as f32 * 2.0 - 1.0;
-                let (sin, cos) = engine_core::math::sin_cos(side * std::f32::consts::PI);
-                let way = forward * cos + right * sin;
+            // Out from the rock it falls from.
+            let normal = across.cross(tangent).normalize_or(Vec3::Y);
+            let half = row.half * OVERHANG;
+            let width = half + row.spread;
+            let thickness = clamp(carried / row.speed, THICKNESS[0], THICKNESS[1]);
+            let base = vertices.len() as u32;
+            for column in 0..=COLUMNS {
+                let side = column as f32 / COLUMNS as f32 * 2.0 - 1.0;
+                // Its edges curl back toward the rock as thick as it
+                // stands, and its middle bows out ahead of them.
+                let curl = 0.5 * thickness * side * side;
+                let bow = BOW * (1.0 - side * side) * lip_speed * row.flying;
+                let position = origin + row.center + across * (side * width) - normal * curl
+                    + level.normalize_or(Vec3::ZERO) * bow;
                 vertices.push(FallVertex {
-                    position: (center + way * from).to_array(),
-                    normal: [0.0, 1.0, 0.0],
-                    tangent: [way.x, way.y, way.z, outflow],
-                    jet: [side, flown, outflow, radius],
-                    fall: [-flown, THICKNESS[0] * 4.0, number as f32, 0.0],
-                    state: [1.0, 0.0, fade, 1.0],
-                    sky: fall.sky[index],
+                    position: position.to_array(),
+                    normal: normal.to_array(),
+                    tangent: [tangent.x, tangent.y, tangent.z, row.speed],
+                    jet: [side, row.time, lip_speed, half],
+                    fall: [row.flying, thickness, number as f32],
+                    state: [row.white, row.broken],
+                    sky: row.sky,
                 });
             }
-        }
-        let across = BOIL_SEGMENTS + 1;
-        for ring in 1..=BOIL_RINGS {
-            for segment in 0..BOIL_SEGMENTS {
-                let a = base + (ring - 1) * across + segment;
-                let b = base + ring * across + segment;
-                indices.extend_from_slice(&[a, a + 1, b + 1, a, b + 1, b]);
+            if index > 0 {
+                let previous = base - (COLUMNS + 1);
+                for column in 0..COLUMNS {
+                    let (a, b) = (previous + column, base + column);
+                    indices.extend_from_slice(&[a, a + 1, b + 1, a, b + 1, b]);
+                }
             }
         }
     }
@@ -489,8 +335,8 @@ pub(crate) fn fall_layout() -> wgpu::VertexBufferLayout<'static> {
         1 => normal as Float32x3,
         2 => tangent as Float32x4,
         3 => jet as Float32x4,
-        4 => fall as Float32x4,
-        5 => state as Float32x4,
+        4 => fall as Float32x3,
+        5 => state as Float32x2,
         6 => sky as Float32,
     });
     wgpu::VertexBufferLayout {

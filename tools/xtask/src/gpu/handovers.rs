@@ -64,7 +64,6 @@ const OPTICS: &[(&str, &str)] = &[
         "environment_light",
         "reflections of environment maps and probes",
     ),
-    ("fall_cover", "what the eye sees through falling water"),
     (
         "finish",
         "lighting a surface: its BRDF, highlights and shadows",

@@ -21,8 +21,9 @@
 //! the ground.
 //!
 //! Where terrains' rivers leave their beds, their jets draw last, as
-//! sheets (`crate::water_falls`) over the water they land in, writing their
-//! depth where they cover the scene.
+//! sheets through the air (`crate::water_falls`), each terrain's through
+//! its own uniform, by which they read the water under them: they show only
+//! where they stand clear of it, and write their depth where they show.
 //!
 //! Water is a feature of the renderer (`crate::render_features`).
 //!
@@ -100,19 +101,19 @@ struct OceanDraw {
     runs: Vec<Range<u32>>,
 }
 
-/// Tiles' water this frame: each terrain drawing it, its uniform's offset,
-/// its water's tree's and that tree's draw of its leaves.
+/// Tiles' water this frame: each terrain drawing it, its id, its uniform's
+/// offset, its water's tree's and that tree's draw of its leaves.
 struct TileDraws {
-    terrains: Vec<(u32, u32, SurfaceDraw)>,
+    terrains: Vec<(u64, u32, u32, SurfaceDraw)>,
 }
 
-/// Terrains' falls' sheets: their vertices and triangles' indices, and the
-/// falls they were built from (each terrain's origin and falls).
+/// Terrains' falls' jets: their vertices and triangles' indices, and the
+/// falls they were built from (each terrain's id, origin and falls, and the
+/// indices of its jets).
 struct FallDraws {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
-    count: u32,
-    built: Vec<(Vec3, Arc<[Fall]>)>,
+    built: Vec<(u64, Vec3, Arc<[Fall]>, Range<u32>)>,
 }
 
 /// The copies of the opaque scene water reads, the depth and, in frames
@@ -211,22 +212,20 @@ impl WaterPass {
         }
     }
 
-    /// Builds the sheets of `terrains`' falls unless they were built from
-    /// the same falls; drops them where none fall.
+    /// Builds the jets of `terrains`' falls unless they were built from the
+    /// same falls; drops them where none fall.
     fn prepare_falls(&mut self, device: &wgpu::Device, terrains: &[RenderTerrain]) {
         let falling = || terrains.iter().filter(|terrain| !terrain.falls.is_empty());
         let same = self.falls.as_ref().is_some_and(|built| {
             built.built.len() == falling().count()
-                && built
-                    .built
-                    .iter()
-                    .zip(falling())
-                    .all(|(a, b)| a.0 == b.origin && Arc::ptr_eq(&a.1, &b.falls))
+                && built.built.iter().zip(falling()).all(|(a, b)| {
+                    a.0 == b.id && a.1 == b.origin && Arc::ptr_eq(&a.2, &b.falls)
+                })
         });
         if same || (self.falls.is_none() && falling().next().is_none()) {
             return;
         }
-        sheets(
+        let runs = sheets(
             falling().map(|terrain| (terrain.origin, &*terrain.falls)),
             &mut self.fall_vertices,
             &mut self.fall_indices,
@@ -256,9 +255,9 @@ impl WaterPass {
                 bytemuck::cast_slice(&self.fall_indices),
                 wgpu::BufferUsages::INDEX,
             ),
-            count: self.fall_indices.len() as u32,
             built: falling()
-                .map(|terrain| (terrain.origin, terrain.falls.clone()))
+                .zip(runs)
+                .map(|(terrain, run)| (terrain.id, terrain.origin, terrain.falls.clone(), run))
                 .collect(),
         });
     }
@@ -320,9 +319,9 @@ impl WaterPass {
         let subdivided = tiles.as_ref().map_or([0; 2], |tiles| tiles.subdivided);
         let tiles = tiles.filter(|tiles| settings.enabled && !tiles.terrains.is_empty());
         self.prepare_falls(device, if settings.enabled { terrains } else { &[] });
-        // Falls draw with tiles' water's group, once any tiles' water has.
-        let falling = self.falls.is_some() && (tiles.is_some() || self.group.is_some());
-        if tiles.is_none() && !ocean.enabled && !falling {
+        // Falls draw with tiles' water's group, each terrain's through the
+        // uniform its tiles' water draws with: alongside tiles' water alone.
+        if tiles.is_none() && !ocean.enabled {
             self.ocean = None;
             return None;
         }
@@ -383,7 +382,7 @@ impl WaterPass {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         }
         let sea = self.prepare_ocean(device, queue, (cull, view), ocean, (eye, seconds));
-        if self.tiles.is_none() && !sea && !falling {
+        if self.tiles.is_none() && !sea {
             return None;
         }
         // The copies, at the depth buffer's size: the frame's.
@@ -821,7 +820,7 @@ impl WaterPass {
             pass.set_bind_group(2, &behind.group, &[]);
             // Each terrain's water's leaves, through its uniform and its
             // water's tree's, seen by the camera's view, the first.
-            for (uniform, tree, leaves) in &tiles.terrains {
+            for (_, uniform, tree, leaves) in &tiles.terrains {
                 pass.set_bind_group(1, group, &[0, *uniform, *tree]);
                 leaves.record(pass);
                 draws += 1;
@@ -841,17 +840,30 @@ impl WaterPass {
             pass.draw_indexed(0..quads * quads * 6, 0, 0..1);
             draws += 1;
         }
-        // Falls last, over the water they land in: of its group they read
-        // only water's uniform and falling water's map.
-        if let (Some(falls), Some(pipeline)) = (&self.falls, self.fall_pipelines.get(&targets)) {
+        // Falls last, over the water they land in: each terrain's jets
+        // through its uniform, by which they read the water under them, of
+        // terrains drawing tiles' water this frame.
+        if let (Some(falls), Some(tiles), Some(pipeline)) =
+            (&self.falls, &self.tiles, self.fall_pipelines.get(&targets))
+        {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, group, &[0, 0, 0]);
             pass.set_bind_group(2, &behind.group, &[]);
             pass.set_vertex_buffer(0, falls.vertices.slice(..));
             pass.set_index_buffer(falls.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..falls.count, 0, 0..1);
-            draws += 1;
+            for (id, _, _, run) in &falls.built {
+                let Some(&(_, uniform, _, _)) =
+                    tiles.terrains.iter().find(|terrain| terrain.0 == *id)
+                else {
+                    continue;
+                };
+                if run.is_empty() {
+                    continue;
+                }
+                pass.set_bind_group(1, group, &[0, uniform, 0]);
+                pass.draw_indexed(run.clone(), 0, 0..1);
+                draws += 1;
+            }
         }
         draws
     }
