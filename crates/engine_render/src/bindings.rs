@@ -135,12 +135,14 @@ tables! {
             read_of(19, "cloud_shadows", clouds::CLOUD_SHADOW_BYTES, F),
             // The physically based sky's uniform, its sky-view table and
             // their sampler, and the clouds' newer and older shown domes,
-            // their sampler and their uniform: the sky's light along a view.
+            // each a layer marched from the eye and one from its mirror
+            // point, their sampler and their uniform: the sky's light along
+            // a view and what smooth surfaces mirror of it.
             uniform_of(23, "sky_air", size_of::<sky::SkyUniform>(), F),
             texture(24, "sky_view_table", Float, D2, F),
             sampler(25, "sky_table_sampler", Filtering, F),
-            texture(26, "sky_clouds", Float, D2, F),
-            texture(27, "sky_clouds_old", Float, D2, F),
+            texture(26, "sky_clouds", Float, D2Array, F),
+            texture(27, "sky_clouds_old", Float, D2Array, F),
             sampler(28, "sky_cloud_sampler", Filtering, F),
             uniform_of(29, "sky_domes", size_of::<clouds::DomeUniform>(), F),
         ],
@@ -668,9 +670,9 @@ tables! {
     };
 
     /// The clouds' march into their dome (`clouds.wgsl`): the
-    /// layer, sun and sky, the noise's volumes and their sampler, the dome,
-    /// the physically based sky's uniform, transmittance table and sampler,
-    /// and the light map.
+    /// layer, sun and sky, the noise's volumes and their sampler, the dome
+    /// in both its layers, the physically based sky's uniform,
+    /// transmittance table and sampler, and the light map.
     const CLOUD_MARCH: Table = Table {
         label: "engine/cloud-march-layout",
         serves: [CLOUDS_SHADER @ 0],
@@ -678,7 +680,7 @@ tables! {
             uniform_of(0, "clouds", size_of::<clouds::CloudUniform>(), C),
             texture(1, "noise_shape", Float, D3, C),
             sampler(2, "noise_sampler", Filtering, C),
-            bind(3, "dome", Kind::Storage(Rgba16Float), C),
+            bind(3, "dome", Kind::StorageArray(Rgba16Float), C),
             texture(4, "noise_detail", Float, D3, C),
             write(5, "shadow_cells", C),
             uniform_of(11, "cloud_air", size_of::<sky::SkyUniform>(), C),
@@ -1188,8 +1190,8 @@ tables! {
             uniform_of(23, "sky_air", size_of::<sky::SkyUniform>(), F),
             texture(24, "sky_view_table", Float, D2, F),
             sampler(25, "sky_table_sampler", Filtering, F),
-            texture(26, "sky_clouds", Float, D2, F),
-            texture(27, "sky_clouds_old", Float, D2, F),
+            texture(26, "sky_clouds", Float, D2Array, F),
+            texture(27, "sky_clouds_old", Float, D2Array, F),
             sampler(28, "sky_cloud_sampler", Filtering, F),
             uniform_of(29, "sky_domes", size_of::<clouds::DomeUniform>(), F),
         ],

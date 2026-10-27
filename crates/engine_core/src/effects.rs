@@ -46,13 +46,15 @@ use serde::{Deserialize, Serialize};
 use crate::{Camera, Environment, FrameTime, RenderSnapshot};
 use engine_settings::settings;
 
-/// Copies the camera eye, the detail eye, presentation time and environment
-/// of `world` into `snapshot`, sanitized ([`Environment::current`]): a
-/// missing atmosphere reads as the default one, a missing effect resource
-/// turns that effect off.
+/// Copies the camera eye, the detail eye, the height of what lies under the
+/// eye, presentation time and environment of `world` into `snapshot`,
+/// sanitized ([`Environment::current`]): a missing atmosphere reads as the
+/// default one, a missing effect resource turns that effect off.
 pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
-    snapshot.camera_position = world.resource::<Camera>().eye();
+    let eye = world.resource::<Camera>().eye();
+    snapshot.camera_position = eye;
     snapshot.detail_eye = crate::TerrainDebug::detail_eye(world);
+    snapshot.surface_under_eye = surface_under(world, eye);
     snapshot.elapsed_seconds = world
         .get_resource::<FrameTime>()
         .map_or(0.0, |time| time.elapsed_seconds as f32);
@@ -60,6 +62,17 @@ pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
         .get_resource::<crate::PresentedTime>()
         .map_or(0.0, |time| time.seconds);
     snapshot.environment = Environment::current(world).sanitized();
+}
+
+/// The height of what lies straight under `eye` in `world`: the surface of
+/// the water standing there, over the ground under it; or else that ground.
+fn surface_under(world: &World, eye: glam::Vec3) -> Option<f32> {
+    let water = crate::WaterSources::sample_in(world, eye);
+    if let Some(water) = water.filter(|water| water.depth > 0.0) {
+        return Some(water.surface);
+    }
+    let ground = crate::Ground::sample_in(world, eye.x, eye.z);
+    ground.map(|ground| ground.height)
 }
 
 /// Most levels of the sun's shadow clipmap ([`Shadows::levels`]).

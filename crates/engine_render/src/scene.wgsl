@@ -501,14 +501,17 @@ fn cloud_dome_uv(direction: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(fract(around), saturate((elevation - low) / (1.5707963 - low)));
 }
 
-// The clouds' shown domes: the older's origin (world) and
-// whether domes show (1); the newer's origin and its share of the blend;
-// the eye the sky's own views start from, and the cloud layer's middle
-// (world y); and whether the view's own march shows the sky's clouds (1),
-// so the view's sky shows no dome.
+// The clouds' shown domes: where the older's eye layer marched from (world)
+// and whether domes show (1); where the newer's did and its share of the
+// blend; where each one's mirror layer marched from (w unused); the eye the
+// sky's own views start from, and the cloud layer's middle (world y); and
+// whether the view's own march shows the sky's clouds (1), so the view's sky
+// shows no dome.
 struct CloudDomes {
     older: vec4<f32>,
     newer: vec4<f32>,
+    older_mirror: vec4<f32>,
+    newer_mirror: vec4<f32>,
     eye: vec4<f32>,
     view: vec4<f32>,
 }
