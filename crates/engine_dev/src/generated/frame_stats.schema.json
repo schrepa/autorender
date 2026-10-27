@@ -308,7 +308,7 @@
           "type": "integer"
         },
         "tiers": {
-          "description": "The most tiers it grew in: the radius's and doublings past it.",
+          "description": "The most tiers it grew in: the first's, out to where blades span a\npixel, and doublings past it.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -911,12 +911,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "dropped_vt_pages": {
-          "description": "Virtual texture pages asked for with no slot left under its budget or\nthe device's texture array layers.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "fallback_tiles": {
           "description": "Tiles the camera's view draws and shows that are not resident yet,\nwhose ground coarser tiles stand in for.",
           "format": "uint32",
@@ -1013,42 +1007,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "vt_bakes": {
-          "description": "Virtual texture pages baked this frame (absent or stale).",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vt_evictions": {
-          "description": "Virtual texture pages evicted for others this frame.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vt_far_pages": {
-          "description": "Of the resident pages, far pages: terrains' coarse mips, the same\nwhatever the eye, cooked once and pinned in their slots.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vt_missing": {
-          "description": "Virtual texture pages asked for but absent, in the last feedback read\nback.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vt_pages": {
-          "description": "Virtual texture pages resident.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vt_slots": {
-          "description": "Pages the runtime virtual texture's sheets hold.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "white_water": {
           "description": "Emitters of spray and mist white water spawned at terrains' rapids,\nwhere their settled water loses energy fastest.",
           "format": "uint32",
@@ -1073,13 +1031,6 @@
         "bounce",
         "macro_maps",
         "dropped_materials",
-        "vt_slots",
-        "vt_pages",
-        "vt_bakes",
-        "vt_missing",
-        "dropped_vt_pages",
-        "vt_evictions",
-        "vt_far_pages",
         "placed_objects",
         "placed_far_objects",
         "placed_impostors",

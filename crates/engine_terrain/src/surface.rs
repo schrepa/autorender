@@ -1279,10 +1279,7 @@ impl BiomeRules {
     pub fn places(&self, level: u8, placing: crate::Placing) -> bool {
         let near = self.placements.iter().any(|layer| layer.level == level)
             || self.placed.iter().any(|object| object.level == level);
-        let far = self
-            .placements
-            .iter()
-            .any(|layer| layer.far == Some(level));
+        let far = self.placements.iter().any(|layer| layer.far == Some(level));
         match placing {
             crate::Placing::All => near || far,
             crate::Placing::Near => near,

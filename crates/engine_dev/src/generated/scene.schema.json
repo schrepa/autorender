@@ -311,7 +311,7 @@
           "minimum": 0.0
         },
         "width": {
-          "description": "Blade width at the root, meters. As blades thin with distance each\none left stands as a tuft as wide at its roots in all as the\nblades it replaces, in leaves as wide as their roots, or up to a\ntenth as wide as they are tall, as grass leaves are.",
+          "description": "Blade width at the root, meters: blades grow at their density\nwhile this spans a pixel or more on screen. As they shrink under\na pixel each one left stands as a tuft as wide at its roots in\nall as the blades it replaces, in leaves as wide as their roots,\nor up to a tenth as wide as they are tall, as grass leaves are.",
           "type": "number",
           "format": "float",
           "default": 0.02500000037252903,
@@ -556,7 +556,7 @@
       ]
     },
     "FarPlacement": {
-      "description": "Where a placement layer also stands far away: on the tiles of a\ncoarser level, a share of its objects, the candidates ranked first,\nwhere its own level's tiles are not resident.",
+      "description": "Where a placement layer also stands far away: on the tiles of a\ncoarser level, every one of its objects, where its own level's tiles\nare not resident.",
       "type": "object",
       "properties": {
         "level": {
@@ -565,19 +565,11 @@
           "format": "uint8",
           "maximum": 15,
           "minimum": 1
-        },
-        "share": {
-          "description": "The share of the layer's objects standing there.",
-          "type": "number",
-          "format": "float",
-          "exclusiveMinimum": 0.0,
-          "maximum": 1.0
         }
       },
       "additionalProperties": false,
       "required": [
-        "level",
-        "share"
+        "level"
       ]
     },
     "GivenRiver": {
@@ -3487,22 +3479,6 @@
           ],
           "format": "uint32",
           "minimum": 1
-        },
-        "pixels": {
-          "description": "How wide on screen (pixels) tufts stand as they retire: each\nretires, in a fixed order, once it spans fewer than this times a\nfactor of its own from a half to two, and tiers, each reaching\ntwice as far as the last, end where the last has. 0 grows cover\nwithin the radius alone.",
-          "type": "number",
-          "format": "float",
-          "default": 1.0,
-          "maximum": 16.0,
-          "minimum": 0.0
-        },
-        "radius": {
-          "description": "Meters from the camera within which cover grows densest, its blades\nthinning past a fifth of it, each one left a tuft holding the\nleaves of those it stands for. Past the radius sparser tiers of\ntufts as wide as there reach on, and the ground shows the leaves\nthey leave as its cover's canopy.",
-          "type": "number",
-          "format": "float",
-          "default": 40.0,
-          "maximum": 200.0,
-          "minimum": 2.0
         }
       },
       "additionalProperties": false
@@ -6242,27 +6218,6 @@
           "type": "integer",
           "format": "uint32",
           "default": 8388608,
-          "minimum": 1
-        },
-        "virtual_texture": {
-          "description": "The runtime virtual texture: the ground's materials\nbaked into pages the views ask for, which pixels read in place of\ncomputing them; ground finer than its texels, steep ground and pages\nnot baked yet compute theirs.",
-          "type": "boolean",
-          "default": true
-        },
-        "virtual_texture_bakes": {
-          "description": "Pages it bakes in a frame at most, about 0.1 ms each on an\nintegrated GPU.",
-          "type": "integer",
-          "format": "uint32",
-          "default": 16,
-          "minimum": 1
-        },
-        "virtual_texture_pages": {
-          "description": "An optional budget of pages it keeps (about 340 KB each). Omitted,\nit keeps as many as the views ask for, up to the device's texture\narray layers; beyond either, pages unasked for a while make room,\nand those asked for with none left drop (the ground computes\nitself).",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
           "minimum": 1
         },
         "work_ms": {

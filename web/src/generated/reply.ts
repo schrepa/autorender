@@ -1103,10 +1103,7 @@ export interface TerrainHeightResult {
  */
 export type TerrainKey = string | number;
 
-/**
- * What a terrain pixel's ground is made of, as shading computes it where
- * no virtual texture page stands in.
- */
+/** What a terrain pixel's ground is made of, as shading computes it. */
 export interface TerrainProbe {
   /** How the ground shows its materials' maps. */
   detail: DetailShares;

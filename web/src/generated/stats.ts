@@ -353,7 +353,10 @@ export interface GroundCoverStats {
   dropped: number;
   /** Meters from the eye ground cover reached this frame, rounded. */
   reach: number;
-  /** The most tiers it grew in: the radius's and doublings past it. */
+  /**
+   * The most tiers it grew in: the first's, out to where blades span a
+   * pixel, and doublings past it.
+   */
   tiers: number;
 }
 
@@ -659,11 +662,6 @@ export interface TerrainRenderStats {
   /** Tiles the tile budget or the device's texture array layers dropped. */
   dropped_tiles: number;
   /**
-   * Virtual texture pages asked for with no slot left under its budget or
-   * the device's texture array layers.
-   */
-  dropped_vt_pages: number;
-  /**
    * Tiles the camera's view draws and shows that are not resident yet,
    * whose ground coarser tiles stand in for.
    */
@@ -725,24 +723,6 @@ export interface TerrainRenderStats {
   tiles: number;
   /** Triangles of those leaves' meshlets. */
   triangles: number;
-  /** Virtual texture pages baked this frame (absent or stale). */
-  vt_bakes: number;
-  /** Virtual texture pages evicted for others this frame. */
-  vt_evictions: number;
-  /**
-   * Of the resident pages, far pages: terrains' coarse mips, the same
-   * whatever the eye, cooked once and pinned in their slots.
-   */
-  vt_far_pages: number;
-  /**
-   * Virtual texture pages asked for but absent, in the last feedback read
-   * back.
-   */
-  vt_missing: number;
-  /** Virtual texture pages resident. */
-  vt_pages: number;
-  /** Pages the runtime virtual texture's sheets hold. */
-  vt_slots: number;
   /**
    * Emitters of spray and mist white water spawned at terrains' rapids,
    * where their settled water loses energy fastest.
