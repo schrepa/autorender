@@ -241,7 +241,7 @@ fn fall_sim_water(point: vec2<f32>) -> vec2<f32> {
     let last = sim_water_level(corner.x + 1, corner.y + 1);
     // The triangle's third corner, its weights of its first, third and last
     // corners, and how far its surface rises along x and z across a cell.
-    var third: vec2<f32>;
+    var third: vec3<f32>;
     var weights: vec3<f32>;
     var rise: vec2<f32>;
     if within.x >= within.y {
@@ -266,7 +266,8 @@ fn fall_sim_water(point: vec2<f32>) -> vec2<f32> {
 // over it, and all of it where no water lies under it. That water is the
 // simulated water within a live window (`water_simulated`,
 // `fall_sim_water`), and elsewhere tiles' water, as a pixel there resolves
-// level water seen from the detail eye (`water_pixel`).
+// level water seen from the detail eye (`water_pixel`), none lying past
+// where the samples holding its surface end (WATER_HELD).
 fn fall_clear(world: vec3<f32>, thickness: f32) -> f32 {
     var surface = 0.0;
     var under = 0.0;
@@ -278,7 +279,7 @@ fn fall_clear(world: vec3<f32>, thickness: f32) -> f32 {
         let at = water_pixel(world.xz - terrain.origin.xz,
             detail_resolved(detail_span(world, vec3<f32>(0.0, 1.0, 0.0)).xy));
         surface = terrain.origin.y + at.surface;
-        under = select(0.0, 1.0, at.depth > 0.0);
+        under = select(0.0, 1.0, at.depth > 0.0 && at.held >= WATER_HELD);
     }
     return mix(1.0, smoothstep(thickness, 2.0 * thickness, world.y - surface), under);
 }

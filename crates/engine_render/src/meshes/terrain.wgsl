@@ -764,40 +764,38 @@ fn terrain_wetness(local: vec2<f32>, shading: TerrainShadingLevel) -> f32 {
 // 1.06 in silt).
 const TERRAIN_FRINGE: f32 = 0.5;
 
-// How far the ground stands above the water the tiles hold beside it
-// (meters, negative under it) at a point of `cell` (`water_cell`'s), as
-// water's pass reads where it lies (`WaterAt`'s `edge`): from the cell's
-// triangle holding the point, each sample's ground less its surface, wet or
-// continued under the banks, blended by the triangle's weights, so shores
-// fall between samples as the water's do. A sample no water reaches, and
-// the ground of a cell holding no block, stands at the capillary fringe's
-// top, as dry as its rules leave it, so the waterline's wetness thins out
-// across the cells where the water's reach ends and blends with a coarser
-// level's without seams. And how fast that height rises along x and z on
-// the triangle (meters a meter).
+// How far the ground drawn at a point of `cell` (`water_cell`'s) stands
+// above the water the tiles hold there (meters, negative under it), the
+// point standing `height` meters above the terrain's origin, the ground
+// rising `rise` meters a meter along x and z there: over the water's
+// smooth surface as water's pass reads it (`water_level`), so the band
+// meets the water's edge where the ground drawn rises through its surface,
+// pixel by pixel. Where the samples holding that surface end, so does the
+// water (WATER_HELD), and the ground past it stands no lower than the
+// capillary fringe times how far the held share has fallen from there
+// toward none; where the cell holds no block, at the fringe's top, as dry
+// as its rules leave it. So the waterline's wetness thins out across the
+// cells where the water ends and blends with a coarser level's without
+// seams. And how fast that height rises along x and z (meters a meter).
 struct TerrainWaterline {
     above: f32,
     rise: vec2<f32>,
 }
 
-fn terrain_waterline_at(cell: WaterCell) -> TerrainWaterline {
+fn terrain_waterline_at(cell: WaterCell, height: f32, rise: vec2<f32>) -> TerrainWaterline {
     var waterline = TerrainWaterline(TERRAIN_FRINGE, vec2<f32>(0.0));
-    if cell.block == NO_WATER_BLOCK {
+    let level = water_level(cell);
+    if level.held <= 0.0 {
         return waterline;
     }
-    let upper = cell.within.x + cell.within.y > 1.0;
-    var heights = vec3<f32>(TERRAIN_FRINGE);
-    for (var corner = 0u; corner < 3u; corner++) {
-        let texel = water_texel(cell.block, cell.first + water_corner(corner, upper));
-        let held = textureLoad(water_surface, texel.xy, texel.z, 0).xy;
-        heights[corner] = select(TERRAIN_FRINGE, held.y - held.x,
-            held.x > NO_WATER_SURFACE * 0.5);
+    // The ground over the surface, which falls along x and z by its slope.
+    waterline.above = height - level.surface;
+    waterline.rise = rise + level.slope;
+    let ending = (1.0 - level.held / WATER_HELD) * TERRAIN_FRINGE;
+    if ending > waterline.above {
+        waterline.above = ending;
+        waterline.rise = level.held_rate * (-TERRAIN_FRINGE / WATER_HELD);
     }
-    waterline.above = dot(heights, water_weights(cell.within));
-    // The triangle's second and third corners stand a sample along x and z
-    // from its first, the upper triangle's back from it (`water_corner`).
-    let spacing = terrain.anchor.w * f32(1u << cell.level);
-    waterline.rise = (heights.yz - heights.x) * (select(1.0, -1.0, upper) / spacing);
     return waterline;
 }
 
@@ -810,26 +808,30 @@ fn terrain_fringe_wetted(above: f32) -> f32 {
     return within - drying * drying * (0.5 / TERRAIN_FRINGE);
 }
 
-// How wet the water the tiles hold leaves the ground at terrain-local
-// `local`, from 0, dry, to 1, soaked, as a pixel at `site` sees it: read at
-// the level of the tiles' pyramid the size the pixel resolves picks
-// (`detail_resolved`), as water's pass picks it, so the band meets the
-// water's own edge, the next coarser one blended in over the upper half of
-// each octave
+// How wet the water the tiles hold leaves the ground drawn at `drawn` (its
+// point, world meters, as the depth the water's pass reads holds it), from
+// 0, dry, to 1, soaked, as a pixel at `site` sees it: read at the level of
+// the tiles' pyramid the size the pixel resolves picks (`detail_resolved`),
+// as water's pass picks it, so the band meets the water's own edge, the
+// next coarser one blended in over the upper half of each octave
 // (`detail_level`), each from the finest resident level at or coarser than
 // its own (`water_cell`), as water's pass reads it (`water_pixel`). Under
 // the water's surface the ground is soaked; above it, it dries over the
 // capillary fringe (TERRAIN_FRINGE), the band averaged over the heights the
-// pixel spans there, its whole footprint the mean of its two sides
-// (`detail_span`), so a band narrower than the pixel covers its share of it
-// and far banks show its average. Where no water reaches, the ground is as
-// dry as its rules say.
-fn terrain_waterline(local: vec2<f32>, site: TerrainSite) -> f32 {
+// pixel spans there, rising as the ground's smooth normal and the water's
+// slope say, its whole footprint the mean of its two sides (`detail_span`),
+// so a band narrower than the pixel covers its share of it and far banks
+// show its average. Where no water reaches, the ground is as dry as its
+// rules say.
+fn terrain_waterline(drawn: vec3<f32>, site: TerrainSite) -> f32 {
+    let local = drawn.xz - terrain.origin.xz;
+    let height = drawn.y - terrain.origin.y;
+    let rise = -site.geometric.xz / max(site.geometric.y, 1.0e-3);
     let picked = detail_level(site.footprint.resolved, terrain.anchor.w, terrain.directory.y);
     let cell = water_cell(local, picked.level);
-    var waterline = terrain_waterline_at(cell);
+    var waterline = terrain_waterline_at(cell, height, rise);
     if picked.blend > 0.0 && cell.level == picked.level {
-        let coarser = terrain_waterline_at(water_cell(local, picked.level + 1u));
+        let coarser = terrain_waterline_at(water_cell(local, picked.level + 1u), height, rise);
         waterline.above = mix(waterline.above, coarser.above, picked.blend);
         waterline.rise = mix(waterline.rise, coarser.rise, picked.blend);
     }
@@ -1976,7 +1978,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     // glossier between its cover's blades, its canopy as dry as the blades
     // it stands for.
     var roughness = ground.roughness;
-    let wet = max(terrain_wetness(local, seen.shading), terrain_waterline(local, site))
+    let wet = max(terrain_wetness(local, seen.shading), terrain_waterline(world, site))
         * (1.0 - ground.canopy);
     if wet > 0.0 {
         let soaked = terrain_wet_ground(roughness, wet);

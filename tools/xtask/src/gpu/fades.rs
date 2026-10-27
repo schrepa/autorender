@@ -100,6 +100,10 @@ const FILTERS: &[(&str, &str)] = &[
     ),
     ("water_edge", "a waterline as sharp as a pixel resolves it"),
     (
+        "water_ends",
+        "where the samples holding the water's surface end, as sharp as a pixel resolves it",
+    ),
+    (
         "water_froth",
         "foam's grain as far as the pixel's footprint resolves it, the rest averaged into its \
          cover, and its relief while its bubbles span two pixels",
@@ -109,6 +113,7 @@ const FILTERS: &[(&str, &str)] = &[
         "a pattern's share past its threshold as far as the pixel's footprint resolves its \
          grain, the rest averaged into the share itself, its edge a pixel wide",
     ),
+    ("water_ramp", "a fade over the water's depth averaged over the depths the pixel spans"),
     (
         "water_shown",
         "a computed pattern's part drawn while it spans two pixels along the way it varies, as \
