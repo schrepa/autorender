@@ -1521,17 +1521,6 @@
       "direction": "lower"
     },
     {
-      "name": "terrain.dropped_vt_pages",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
       "name": "terrain.fallback_tiles",
       "kind": "work",
       "rule": "not-above",
@@ -1698,72 +1687,6 @@
     },
     {
       "name": "terrain.triangles",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.vt_bakes",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.vt_evictions",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.vt_far_pages",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.vt_missing",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "terrain.vt_pages",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.vt_slots",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",

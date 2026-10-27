@@ -167,21 +167,6 @@ settings! {
         /// coarser tiles take theirs from their shading, level 0's averaged,
         /// made in the cook.
         pub gpu_materials: bool = true => any,
-        /// The runtime virtual texture: the ground's materials
-        /// baked into pages the views ask for, which pixels read in place of
-        /// computing them; ground finer than its texels, steep ground and pages
-        /// not baked yet compute theirs.
-        pub virtual_texture: bool = true => any,
-        /// An optional budget of pages it keeps (about 340 KB each). Omitted,
-        /// it keeps as many as the views ask for, up to the device's texture
-        /// array layers; beyond either, pages unasked for a while make room,
-        /// and those asked for with none left drop (the ground computes
-        /// itself).
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub virtual_texture_pages: Option<u32> = None => budget,
-        /// Pages it bakes in a frame at most, about 0.1 ms each on an
-        /// integrated GPU.
-        pub virtual_texture_bakes: u32 = 16 => at_least(1),
     }
 }
 

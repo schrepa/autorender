@@ -410,7 +410,7 @@ fn river_flow(found: &engine_core::terrain_data::Hydrology) -> crate::views::Riv
 /// so every distance switch stays where it stood: terrain streaming, its
 /// subdivision and shading levels, the ground's relief and displacement,
 /// ground cover and its canopy, placed objects' thinning, kept shadow
-/// windows, river water and virtual texture pages. Omitted fields stay as
+/// windows and river water. Omitted fields stay as
 /// they are. Terrain's leaves, normals, tiles and patches, materials, sky
 /// visibility and detail show in the debug views (the environment's
 /// `debug_view` section).

@@ -37,11 +37,8 @@ pub(super) struct GroupSources<'a> {
 pub(crate) struct TerrainPipelines {
     pub(super) layout: crate::pipelines::GroupLayout,
     group: Cached<GroupKey, wgpu::BindGroup>,
-    // The group the runtime virtual texture's bakes bind,
-    // its material maps' views leaving out the sheets they draw into; and
-    // the group the subdivisions' passes bind, leaving out the leaves they
+    // The group the subdivisions' passes bind, leaving out the leaves they
     // write.
-    bake_group: Cached<GroupKey, wgpu::BindGroup>,
     surface_group: Cached<GroupKey, wgpu::BindGroup>,
     pipelines: HashMap<(Targets, bool, bool), wgpu::RenderPipeline>,
     // Deferred shading: the visibility pipelines (by
@@ -62,7 +59,6 @@ impl TerrainPipelines {
         Self {
             layout: crate::pipelines::layout(device, &TERRAIN),
             group: Cached::default(),
-            bake_group: Cached::default(),
             surface_group: Cached::default(),
             pipelines: HashMap::default(),
             deferred_ids: HashMap::default(),
@@ -90,18 +86,13 @@ impl TerrainPipelines {
         self.group.get()
     }
 
-    /// The group the virtual texture's bakes bind, once tiles arrived.
-    pub(super) fn bake_group(&self) -> Option<&wgpu::BindGroup> {
-        self.bake_group.get()
-    }
-
     /// The group the subdivisions' passes bind, once tiles arrived.
     pub(super) fn surface_group(&self) -> Option<&wgpu::BindGroup> {
         self.surface_group.get()
     }
 
-    /// Rebuilds the terrain group, the bakes' and the subdivisions', when
-    /// what `sources` binds was replaced.
+    /// Rebuilds the terrain group and the subdivisions', when what
+    /// `sources` binds was replaced.
     pub(super) fn ensure_group(&mut self, device: &wgpu::Device, sources: &GroupSources<'_>) {
         let (Some((heights, normals, control)), Some((ground_errors, water_errors))) =
             (sources.atlas.views(), sources.atlas.errors())
@@ -128,7 +119,7 @@ impl TerrainPipelines {
             sources.water.generation,
         );
         let build =
-            |label: &str, material_maps: &[wgpu::TextureView; 3], surface_leaves: &wgpu::Buffer| {
+            |label: &str, material_maps: &[wgpu::TextureView; 2], surface_leaves: &wgpu::Buffer| {
                 crate::pipelines::group(
                     device,
                     label,
@@ -174,10 +165,6 @@ impl TerrainPipelines {
                             crate::pipelines::view(&material_maps[1]),
                         ),
                         (
-                            "terrain_vt_sheets",
-                            crate::pipelines::view(&material_maps[2]),
-                        ),
-                        (
                             "terrain_material_sampler",
                             crate::pipelines::sampler(&maps.sampler),
                         ),
@@ -203,17 +190,14 @@ impl TerrainPipelines {
             };
         if self.group.stale(&key) {
             let group = build("engine/terrain-group", &maps.views, leaves);
-            // The runtime virtual texture's bakes bind a stand-in for the
-            // sheets they draw into, and the subdivisions' passes one for
-            // the leaves they write.
-            let bake = build("engine/terrain-bake-group", &maps.bake_views, leaves);
+            // The subdivisions' passes bind a stand-in for the leaves they
+            // write.
             let surface = build(
                 "engine/terrain-surface-group",
                 &maps.views,
                 &sources.surface.stand_in,
             );
             self.group.set(key, group);
-            self.bake_group.set(key, bake);
             self.surface_group.set(key, surface);
         }
     }

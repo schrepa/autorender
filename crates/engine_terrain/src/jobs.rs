@@ -3,16 +3,15 @@
 //! graph, a stack baked, a terrain's lighting, bounce transfer and macro
 //! colors, a tile's part of the water settling over the regions reaching it
 //! (which the renderer settles on the GPU), a tile's water as settled water
-//! stands it, a coarser tile's shading (level 0's averaged), and a
-//! terrain's far pages read into what uploads take. Workers hold once what
-//! many jobs read, shared by key: layer stacks with their bakes, the
-//! recipes generating a terrain's tiles from one, the records of settled
-//! water tiles' water reads, whole or their heads, and the records of
-//! shading coarser tiles' shading reads. Jobs run the same code wherever
+//! stands it, and a coarser tile's shading (level 0's averaged). Workers
+//! hold once what many jobs read, shared by key: layer stacks with their
+//! bakes, the recipes generating a terrain's tiles from one, the records of
+//! settled water tiles' water reads, whole or their heads, and the records
+//! of shading coarser tiles' shading reads. Jobs run the same code wherever
 //! they run (a worker, a host without workers, the cook), so their results
-//! are the same bits, and every job's output but a water's part and far
-//! pages read is a record hosts keep and the cook ships: every field of a
-//! job is something its output depends on.
+//! are the same bits, and every job's output but a water's part is a
+//! record hosts keep and the cook ships: every field of a job is something
+//! its output depends on.
 //!
 //! A tile's job, and its portals', carries the edits reaching its ground
 //! alone, its recipe's stack none: an edit leaves every other tile's jobs,
@@ -47,9 +46,8 @@ use crate::{
 /// shared recipe, a tile's portals over a shared stack, a stack's bakes, a
 /// terrain's lighting, its bounce transfer and its macro colors, a tile's
 /// part of the water settling over the regions reaching it, a tile's water
-/// as settled water stands it, a coarser tile's shading, and a terrain's far
-/// pages read into what uploads take. Workers match every kind, so a kind
-/// added without its work fails to build.
+/// as settled water stands it, and a coarser tile's shading. Workers match
+/// every kind, so a kind added without its work fails to build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
     Tile,
@@ -61,12 +59,11 @@ pub enum JobKind {
     Macro,
     Steadied,
     Shading,
-    FarTexels,
 }
 
 impl JobKind {
     /// Every kind.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::Tile,
         Self::Portals,
         Self::Bake,
@@ -76,7 +73,6 @@ impl JobKind {
         Self::Macro,
         Self::Steadied,
         Self::Shading,
-        Self::FarTexels,
     ];
 
     /// Its name, as hosts carry it and key the records they keep by.
@@ -91,7 +87,6 @@ impl JobKind {
             Self::Macro => "terrain_macro",
             Self::Steadied => "terrain_steadied",
             Self::Shading => "terrain_shading",
-            Self::FarTexels => "terrain_far_texels",
         }
     }
 
@@ -571,115 +566,6 @@ impl MacroJob {
     }
 }
 
-/// The record of a terrain's far pages, its runtime virtual texture's
-/// coarse pages, which renderers bake on the GPU, read back and keep: of
-/// `pages` (each one's mip and page along x and z) whose layers' RGBA8
-/// texels `texels` holds, `side` a side, rows first, page after page and
-/// layer after layer. It holds their count, the pages and `side`, then every
-/// layer's channels as planes written as differences from what their
-/// neighbours predict ([`codec::put_planes`]), for the cook's compression.
-pub fn far_record(pages: &[(u8, u16, u16)], side: u32, texels: &[u8]) -> Vec<u8> {
-    let mut out = Writer::new();
-    out.put(&(pages.len() as u32));
-    for &(mip, x, z) in pages {
-        out.put(&mip).put(&x).put(&z);
-    }
-    out.put(&side);
-    // Each layer's channels apart, as planes.
-    let area = side as usize * side as usize;
-    let mut planes = vec![0_u8; texels.len()];
-    if area > 0 {
-        for (layer, texels) in texels.chunks_exact(area * 4).enumerate() {
-            for (at, texel) in texels.as_chunks::<4>().0.iter().enumerate() {
-                for (channel, &value) in texel.iter().enumerate() {
-                    planes[(layer * 4 + channel) * area + at] = value;
-                }
-            }
-        }
-    }
-    codec::put_planes(&mut out, &planes, side as usize);
-    out.into_bytes()
-}
-
-/// A [`JobKind::FarTexels`]: what uploads take of the far pages record
-/// `record` ([`far_record`]), its input, which hosts fetched: every page's
-/// layers' RGBA8 texels, rows first, page after page and layer after layer;
-/// then, for [`far_pages`] to take off, each page's mip and page along x
-/// and z, the texels a side and the pages' count, little-endian. Its output
-/// is no record.
-pub fn far_texels(record: &[u8]) -> Result<Vec<u8>, CodecError> {
-    let invalid = CodecError("invalid far pages");
-    let mut input = Reader::new(record);
-    let count: u32 = input.get()?;
-    let mut pages = Vec::with_capacity((count as usize).min(record.len()));
-    for _ in 0..count {
-        let mip: u8 = input.get()?;
-        let x: u16 = input.get()?;
-        let z: u16 = input.get()?;
-        pages.push((mip, x, z));
-    }
-    let side: u32 = input.get()?;
-    let area = side as usize * side as usize;
-    if area == 0 {
-        return Err(invalid);
-    }
-    let planes = codec::get_planes(&mut input, side as usize)?;
-    input.finish()?;
-    if planes.len() % (area * 4) != 0 {
-        return Err(invalid);
-    }
-    let mut texels = vec![0_u8; planes.len()];
-    for (layer, layer_texels) in texels.chunks_exact_mut(area * 4).enumerate() {
-        for (at, texel) in layer_texels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-            for (channel, value) in texel.iter_mut().enumerate() {
-                *value = planes[(layer * 4 + channel) * area + at];
-            }
-        }
-    }
-    texels.reserve(pages.len() * 5 + 8);
-    for (mip, x, z) in pages {
-        texels.push(mip);
-        texels.extend_from_slice(&x.to_le_bytes());
-        texels.extend_from_slice(&z.to_le_bytes());
-    }
-    texels.extend_from_slice(&side.to_le_bytes());
-    texels.extend_from_slice(&count.to_le_bytes());
-    Ok(texels)
-}
-
-/// A far page: its mip and page along x and z.
-pub type FarPage = (u8, u16, u16);
-
-/// Takes the pages, their side and their count off the end of what
-/// reading far pages made ([`far_texels`]), leaving `texels` their texels
-/// alone: the pages (each one's mip and page along x and z) and the texels
-/// a side.
-pub fn far_pages(texels: &mut Vec<u8>) -> Result<(Vec<FarPage>, u32), CodecError> {
-    let invalid = CodecError("invalid far pages");
-    let word = |bytes: &[u8]| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-    let trailer = texels.len().checked_sub(8).ok_or(invalid)?;
-    let side = word(&texels[trailer..]);
-    let count = word(&texels[trailer + 4..]) as usize;
-    let first = count
-        .checked_mul(5)
-        .and_then(|bytes| trailer.checked_sub(bytes))
-        .ok_or(invalid)?;
-    let pages = texels[first..trailer]
-        .as_chunks::<5>()
-        .0
-        .iter()
-        .map(|page| {
-            (
-                page[0],
-                u16::from_le_bytes([page[1], page[2]]),
-                u16::from_le_bytes([page[3], page[4]]),
-            )
-        })
-        .collect();
-    texels.truncate(first);
-    Ok((pages, side))
-}
-
 /// A shared recipe as a worker holds it: its layers seen as its terrain
 /// sees them, its pyramid, its compiled surface, whether its tiles shading
 /// with their own samples hold control values, and whether its terrain is
@@ -884,7 +770,6 @@ enum Running {
     Macro(Box<(Arc<Layers>, Pyramid, MacroCauses, MacroJob)>),
     Steadied(Box<Steadying>),
     Shading(Box<ShadingMaking>),
-    FarTexels(Vec<u8>),
 }
 
 /// What a worker holds of terrains, and runs their jobs over: stacks,
@@ -1089,7 +974,6 @@ impl TerrainWorker {
                 reader.finish().map_err(invalid)?;
                 Running::Shading(Box::new(self.shading(job)?))
             }
-            JobKind::FarTexels => Running::FarTexels(input.to_vec()),
         };
         self.running.insert(id, running);
         Ok(())
@@ -1098,9 +982,8 @@ impl TerrainWorker {
     /// Works on job `id` for about `budget` work units (about one per
     /// sample; portals, bakes and macro colors run whole, as do lighting and
     /// bounce transfers and level-1 tiles' shading once their tiles are
-    /// generated, coarser tiles' shading, and far pages read): its output
-    /// once done, `None` while work is left. A job that failed or finished
-    /// is gone.
+    /// generated, and coarser tiles' shading): its output once done, `None`
+    /// while work is left. A job that failed or finished is gone.
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
         let Some(running) = self.running.get_mut(&id) else {
             return Err("no such job".into());
@@ -1166,9 +1049,6 @@ impl TerrainWorker {
                 Ok(None) => return Ok(None),
                 Err(error) => Err(error),
             },
-            Running::FarTexels(record) => {
-                far_texels(record.as_slice()).map_err(|error| error.to_string())
-            }
         };
         self.running.remove(&id);
         output.map(Some)

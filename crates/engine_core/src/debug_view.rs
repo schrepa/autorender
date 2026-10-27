@@ -258,8 +258,7 @@ pub struct DetailShares {
     pub canopy: f32,
 }
 
-/// What a terrain pixel's ground is made of, as shading computes it where
-/// no virtual texture page stands in.
+/// What a terrain pixel's ground is made of, as shading computes it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TerrainProbe {

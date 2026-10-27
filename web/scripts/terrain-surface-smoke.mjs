@@ -1,8 +1,7 @@
 /**
  * The terrain fixture's surface draws its materials, cover and tracks.
  *
- * The GPU's surface materials match the CPU's; the runtime virtual texture
- * bakes the pages the view asks for, within its budget; ground cover grows
+ * The GPU's surface materials match the CPU's; ground cover grows
  * near the eye; the wind and occupancy sections read back, refuse values
  * out of range and change what draws; tracks press into the ground as deep
  * as its materials let them and refill; the shadow clipmap draws every tile
@@ -14,7 +13,7 @@ import assert from "node:assert/strict";
 import { differentPixels } from "./harness.mjs";
 import { COMPILE_MS, fast, openTerrain, overview } from "./terrain-fixture.mjs";
 
-const { page, errors, command, settled, output, close, settle, capture, rendersUntil, heights } = await openTerrain("terrain-surface");
+const { page, errors, command, settled, output, close, settle, capture, heights } = await openTerrain("terrain-surface");
 const checks = [];
 
 try {
@@ -42,29 +41,6 @@ try {
   await command("camera", overview);
   await settle();
   checks.push({ check: "gpu materials", differing: materials.changed, controls });
-
-  // The runtime virtual texture bakes the ground into the
-  // pages the view asks for, its sheets growing to hold them, and the
-  // pixels reading them show the ground as computing it does; turned off,
-  // it keeps no sheets. Under a budget too small, the pages asked for
-  // beyond it drop and the ground computes itself.
-  const vt = rendering => ({ slots: rendering.terrain.vt_slots, pages: rendering.terrain.vt_pages, bakes: rendering.terrain.vt_bakes, missing: rendering.terrain.vt_missing, dropped: rendering.terrain.dropped_vt_pages });
-  const textured = await rendersUntil(rendering => rendering.terrain.vt_pages > 0 && rendering.terrain.vt_missing === 0 && rendering.terrain.vt_bakes === 0, "the view's pages bake");
-  assert.ok(textured.terrain.vt_slots >= textured.terrain.vt_pages && textured.terrain.dropped_vt_pages === 0, `pages bake into the sheets: ${JSON.stringify(vt(textured))}`);
-  const bakedView = await capture("virtual-texture");
-  await command("environment", { terrain: { ...fast, virtual_texture: false } });
-  const computed = await settle();
-  assert.ok(computed.terrain.vt_slots === 0 && computed.terrain.vt_pages === 0, `turned off, it keeps nothing: ${JSON.stringify(vt(computed))}`);
-  const computedView = await capture("virtual-texture-off");
-  const reading = await differentPixels(page, [bakedView, computedView]);
-  const seen = await differentPixels(page, [bakedView, computedView], { tolerance: 8 });
-  assert.ok(reading.changed > 0 && seen.changed < seen.total * 0.03, `pixels read the pages (${reading.changed} differ) and show the computed ground (${seen.changed} of ${seen.total} by more than 8)`);
-  await command("environment", { terrain: { ...fast, virtual_texture_pages: 4 } });
-  const scarce = await rendersUntil(rendering => rendering.terrain.dropped_vt_pages > 0, "pages beyond the budget drop");
-  assert.ok(scarce.terrain.vt_slots === 4 && scarce.terrain.vt_pages <= 4, `the budget bounds the pages: ${JSON.stringify(vt(scarce))}`);
-  await command("environment", { terrain: fast });
-  await settle();
-  checks.push({ check: "virtual texture", pages: textured.terrain.vt_pages, slots: textured.terrain.vt_slots, read: reading.changed, differing: seen.changed, dropped: scarce.terrain.dropped_vt_pages });
 
   // Ground cover: the meadow's grass grows near the eye,
   // counted a few frames late; turned off, none grows.

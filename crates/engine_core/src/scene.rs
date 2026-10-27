@@ -432,8 +432,8 @@ pub struct RenderSnapshot {
     /// wherever detail hands over to a cheaper form (terrain streaming, its
     /// patches and shading levels, the ground's relief, ground cover and its
     /// canopy, placed objects' thinning, meshes' levels of detail and
-    /// virtual geometry's, the wind's shaking, kept shadow windows, river
-    /// water and virtual texture pages). The camera's eye, or the point
+    /// virtual geometry's, the wind's shaking, kept shadow windows and river
+    /// water). The camera's eye, or the point
     /// [`crate::TerrainDebug::freeze`] holds while frozen; transforms,
     /// culling and lighting keep [`Self::camera_position`]. Handovers by
     /// what a pixel spans measure that from it too, so they stay where it

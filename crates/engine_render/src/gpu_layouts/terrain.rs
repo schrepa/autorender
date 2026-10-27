@@ -88,9 +88,6 @@ gpu_structs! {
         pub deform_grid: [i32; 4],
         pub deform: [f32; 4],
         pub cover: [f32; 4],
-        pub vt: [u32; 4],
-        pub vt_scale: [f32; 4],
-        pub vt_layout: [u32; 4],
         pub macro_map: [u32; 4],
         pub steep: [f32; 4],
         /// The pixels a level's samples span at least where it shades the
@@ -98,8 +95,7 @@ gpu_structs! {
         /// ranges count them; yzw unused.
         pub pixel_error: [f32; 4],
         /// Its tiles' water: where water's directory starts in the
-        /// directory buffer, after the virtual texture's windows and tables;
-        /// yzw unused.
+        /// directory buffer, after the directory's own words; yzw unused.
         pub water: [u32; 4],
     }
 

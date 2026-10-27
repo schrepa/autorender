@@ -12,11 +12,7 @@
 //! ([`engine_core::Texture::summary`]) stand in for its maps where a whole
 //! repeat spans less than a pixel, as their mipmaps' last level would: the
 //! slopes its normal map's mean normal averages away roughen it there, and
-//! its height map's mean raises it as height blending does. The runtime
-//! virtual texture (`terrain_vt.rs`) keeps its sheets in a renderable array
-//! of their own, three layers a sheet, as many as it asks for (up to the
-//! device's layers), which grows by copying itself; it has sheets only
-//! while the arrays hold materials.
+//! its height map's mean raises it as height blending does.
 
 use engine_core::{RenderSurfaceMaps, RenderTerrains, Texture, TextureFormat, TextureHandle};
 
@@ -28,10 +24,6 @@ use crate::mipmaps::MipGenerator;
 /// The textures one material's layers hold, by handle: its base color,
 /// normal and metallic-roughness maps.
 type LayerKey = [Option<TextureHandle>; 3];
-
-/// Texels along a side of the virtual texture's sheets.
-pub(crate) const SHEET_TEXELS: u32 = 1024;
-pub(crate) use crate::gpu_layouts::constants::VT_SHEET_LAYERS as SHEET_LAYERS;
 
 /// What a layer holds where its material lacks a map: white, a flat
 /// normal, and full occlusion, roughness and metalness factors at middle
@@ -46,26 +38,13 @@ pub(crate) struct TerrainMaps {
     listed: Vec<LayerKey>,
     listing: Vec<LayerKey>,
     arrays: [wgpu::Texture; 2],
-    sheet_array: wgpu::Texture,
-    // What the bakes bind for the sheets they draw into.
-    stand_in: wgpu::Texture,
-    /// The views the terrain group binds: base color, data, and the
-    /// virtual texture's sheets.
-    pub(crate) views: [wgpu::TextureView; 3],
-    /// The views its bakes bind: the materials' arrays, and a stand-in for
-    /// the sheets they draw into.
-    pub(crate) bake_views: [wgpu::TextureView; 3],
-    /// Layers of materials, the virtual texture's sheets and the pages it
-    /// asked them for, and the material arrays' size.
+    /// The views the terrain group binds: base color and data.
+    pub(crate) views: [wgpu::TextureView; 2],
+    /// Layers of materials, and the arrays' size.
     pub(crate) materials: u32,
-    pub(crate) sheets: u32,
-    pages: u32,
     pub(crate) size: (u32, u32),
     pub(crate) sampler: wgpu::Sampler,
-    /// Advances whenever the arrays' materials change, which empties the
-    /// sheets.
-    pub(crate) generation: u64,
-    /// Advances whenever an array is replaced, also as the sheets grow.
+    /// Advances whenever an array is replaced.
     pub(crate) views_generation: u64,
     /// Materials whose maps the arrays cannot hold.
     pub(crate) dropped: u32,
@@ -99,22 +78,14 @@ impl TerrainMaps {
     /// One layer of defaults, until materials with maps arrive.
     pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let arrays = defaults(device, queue);
-        let sheet_array = sheets(device, 0);
-        let stand_in = sheets(device, 0);
-        let views = [view(&arrays[0]), view(&arrays[1]), view(&sheet_array)];
-        let bake_views = [view(&arrays[0]), view(&arrays[1]), view(&stand_in)];
+        let views = [view(&arrays[0]), view(&arrays[1])];
         Self {
             layers: Vec::new(),
             listed: Vec::new(),
             listing: Vec::new(),
             arrays,
-            sheet_array,
-            stand_in,
             views,
-            bake_views,
             materials: 1,
-            sheets: 0,
-            pages: 0,
             size: (1, 1),
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/terrain-material-sampler"),
@@ -128,53 +99,11 @@ impl TerrainMaps {
                 anisotropy_clamp: crate::gpu_layouts::constants::MATERIAL_ANISOTROPY,
                 ..Default::default()
             }),
-            generation: 0,
             views_generation: 0,
             dropped: 0,
             bytes: 0,
             means: Vec::new(),
         }
-    }
-
-    /// Pages a sheet holds: its slots along a side squared, or none while
-    /// the arrays hold no materials.
-    pub(crate) fn per_sheet(&self) -> u32 {
-        if self.layers.is_empty() {
-            0
-        } else {
-            (SHEET_TEXELS / crate::terrain_vt::SLOT_TEXELS).pow(2)
-        }
-    }
-
-    /// The most sheets the device's texture array layers leave room for.
-    pub(crate) fn sheet_room(&self, device: &wgpu::Device) -> u32 {
-        device.limits().max_texture_array_layers / SHEET_LAYERS
-    }
-
-    /// Grows the sheets to `sheets`, copying every layer the array holds;
-    /// the pages baked into them stay.
-    fn grow(&mut self, device: &wgpu::Device, queue: &Queue, sheets_now: u32) {
-        let grown = sheets(device, sheets_now);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("engine/terrain-vt-grow"),
-        });
-        if self.sheets > 0 {
-            encoder.copy_texture_to_texture(
-                self.sheet_array.as_image_copy(),
-                grown.as_image_copy(),
-                wgpu::Extent3d {
-                    width: SHEET_TEXELS,
-                    height: SHEET_TEXELS,
-                    depth_or_array_layers: self.sheets * SHEET_LAYERS,
-                },
-            );
-        }
-        queue.submit_now([encoder.finish()]);
-        self.views[2] = view(&grown);
-        self.sheet_array = grown;
-        self.bytes += u64::from(sheets_now - self.sheets) * sheet_bytes();
-        self.sheets = sheets_now;
-        self.views_generation += 1;
     }
 
     /// The layer holding `maps`' textures, if the arrays hold them.
@@ -191,45 +120,20 @@ impl TerrainMaps {
         self.means[layer as usize]
     }
 
-    /// Bytes of the arrays with their levels, and of the sheets.
+    /// Bytes of the arrays with their levels.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.bytes
     }
 
-    /// The virtual texture's sheets, three layers a sheet, which its far
-    /// pages upload into and are read back from.
-    pub(crate) fn sheet_texture(&self) -> &wgpu::Texture {
-        &self.sheet_array
-    }
-
-    /// The views a bake of the virtual texture's sheet `sheet` draws into:
-    /// its base color, canopy and normal turn layers.
-    pub(crate) fn sheet_views(&self, sheet: u32) -> [wgpu::TextureView; 3] {
-        std::array::from_fn(|index| {
-            self.sheet_array.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("engine/terrain-vt-sheet"),
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                base_array_layer: sheet * SHEET_LAYERS + index as u32,
-                array_layer_count: Some(1),
-                ..Default::default()
-            })
-        })
-    }
-
     /// Rebuilds the arrays when the materials with maps `terrains` list
-    /// change, or the virtual texture's `pages` do (0 without it), with the
-    /// sheets holding them: each layer's levels upload, and maps holding
-    /// their base level alone have their levels rendered in a submission of
-    /// their own.
+    /// change: each layer's levels upload, and maps holding their base level
+    /// alone have their levels rendered in a submission of their own.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &Queue,
         mips: &MipGenerator,
         terrains: &RenderTerrains,
-        pages: u32,
     ) {
         // The engine materials of every terrain's surface materials.
         let every = move || {
@@ -245,17 +149,7 @@ impl TerrainMaps {
                 self.listing.push(key);
             }
         }
-        // The same materials: the sheets grow to the pages asked for, and
-        // drop only with them all.
-        if self.listing == self.listed && (pages > 0 || self.sheets == 0) {
-            let per_sheet = self.per_sheet();
-            if pages > self.pages && per_sheet > 0 {
-                let sheets = pages.div_ceil(per_sheet).min(self.sheet_room(device));
-                if sheets > self.sheets {
-                    self.grow(device, queue, sheets);
-                }
-            }
-            self.pages = pages;
+        if self.listing == self.listed {
             return;
         }
         // Each material listed, with the maps it was first listed with.
@@ -282,24 +176,11 @@ impl TerrainMaps {
             None => (defaults(device, queue), 0),
         };
         let count = kept.len().max(1) as u32;
-        // Sheets drop beyond the device's layers.
-        self.sheets = 0;
-        let per_sheet = self.per_sheet();
-        let sheets_now = if per_sheet == 0 {
-            0
-        } else {
-            pages.div_ceil(per_sheet).min(self.sheet_room(device))
-        };
-        self.sheet_array = sheets(device, sheets_now);
-        self.views = [view(&arrays[0]), view(&arrays[1]), view(&self.sheet_array)];
-        self.bake_views = [view(&arrays[0]), view(&arrays[1]), view(&self.stand_in)];
+        self.views = [view(&arrays[0]), view(&arrays[1])];
         self.arrays = arrays;
         self.materials = count;
-        self.sheets = sheets_now;
-        self.pages = pages;
         self.size = shape.map_or((1, 1), |shape| shape.size);
-        self.bytes = bytes + u64::from(sheets_now) * sheet_bytes();
-        self.generation += 1;
+        self.bytes = bytes;
         self.views_generation += 1;
     }
 }
@@ -422,11 +303,6 @@ fn array_bytes(shape: Shape, materials: u32) -> u64 {
     u64::from(materials) * (layer(shape.formats[0]) + 2 * layer(shape.formats[1]))
 }
 
-/// Bytes of a sheet's layers.
-fn sheet_bytes() -> u64 {
-    u64::from(SHEET_LAYERS) * u64::from(SHEET_TEXELS) * u64::from(SHEET_TEXELS) * 4
-}
-
 /// The means of `maps`' base color, decoded from sRGB, and of its
 /// metallic-roughness map's roughness and occlusion, 1 without them; the
 /// slopes its normal map's mean normal averages away (`averaged_slopes`),
@@ -516,25 +392,6 @@ fn array_texture(
         levels,
         format,
         usage,
-    )
-}
-
-/// The virtual texture's sheets: `count` of them, rendered into and
-/// copied as they grow; without any, a texel of each layer, which the
-/// terrain group binds while no sheet is drawn.
-fn sheets(device: &wgpu::Device, count: u32) -> wgpu::Texture {
-    let side = if count == 0 { 1 } else { SHEET_TEXELS };
-    crate::targets::texture_2d(
-        device,
-        "engine/terrain-vt-sheets",
-        (side, side),
-        count.max(1) * SHEET_LAYERS,
-        1,
-        wgpu::TextureFormat::Rgba8UnormSrgb,
-        wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::COPY_DST,
     )
 }
 

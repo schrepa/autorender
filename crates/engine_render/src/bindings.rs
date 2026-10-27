@@ -585,11 +585,9 @@ tables! {
             texture(24, "terrain_control", Uint, D2Array, VFC),
             uniform_of(25, "terrain_palette", terrain::PALETTE_BYTES, VFC),
             // Surface materials' maps, base color and data (each
-            // material's normal and packed maps), the runtime virtual
-            // texture's sheets, and their sampler.
+            // material's normal and packed maps), and their sampler.
             texture(26, "terrain_albedo", Float, D2Array, F),
             texture(27, "terrain_material_data", Float, D2Array, VFC),
-            texture(28, "terrain_vt_sheets", Float, D2Array, F),
             sampler(29, "terrain_material_sampler", Filtering, VFC),
             // Each terrain's sky visibility map.
             texture(30, "terrain_sky", Float, D2Array, F),
@@ -605,9 +603,9 @@ tables! {
             read(36, "terrain_surface_leaves", V),
             // Tiles' water's surfaces beside their ground, as water's pass
             // binds them, read through water's directory in the terrain
-            // directory: the sixteenth sampled texture of the ground's
-            // fragment stages, whose lit ones bind the eight storage buffers
-            // a stage may.
+            // directory: the ground's fragment stages bind fifteen of the
+            // sixteen sampled textures a stage may with it, and their lit
+            // ones the eight storage buffers.
             texture(50, "water_surface", Unfilterable, D2Array, F),
             // Each tile's error pyramids, its ground's and its water's
             // surface's, a layer each beside its heights' (`atlas.rs`).
@@ -624,65 +622,16 @@ tables! {
         bindings: &[texture(18, "terrain_ids_texture", Uint, D2, F)],
     };
 
-    /// Group 2 of the runtime virtual texture's bakes: the
-    /// pages to bake; they read tiles' heights through the terrain group.
-    const TERRAIN_VT_BAKE: Table = Table {
-        label: "engine/terrain-vt-bake-layout",
-        serves: [SHADER @ 2],
-        bindings: &[read(20, "terrain_vt_bakes", VF)],
-    };
-
-    /// The runtime virtual texture's feedback, a compute pass
-    /// over terrain's visibility target: the camera (group 0); the view, the
-    /// terrain and the directory with the texture's windows and tables (group
-    /// 1, as the terrain group binds them); the visibility target and the
-    /// pages wanted (group 2).
-    const TERRAIN_VT_CAMERA: Table = Table {
-        label: "engine/terrain-vt-camera-layout",
+    /// Group 0 of terrain's subdivision, compute passes over each terrain's
+    /// tree (`meshes/terrain_subdivision.wgsl`): the camera.
+    const TERRAIN_SUBDIVISION_CAMERA: Table = Table {
+        label: "engine/terrain-subdivision-camera-layout",
         serves: [SHADER @ 0],
         bindings: &[uniform_of(0, "camera", size_of::<CameraUniform>(), C)],
     };
 
-    const TERRAIN_VT_TERRAIN: Table = Table {
-        label: "engine/terrain-vt-terrain-layout",
-        serves: [SHADER @ 1],
-        bindings: &[
-            dynamic_uniform(18, "terrain_view", size_of::<terrain::ViewUniform>(), C),
-            dynamic_uniform(
-                19,
-                "terrain",
-                size_of::<terrain::TerrainUniform>(),
-                C,
-            ),
-            read(23, "terrain_directory", C),
-        ],
-    };
-
-    const TERRAIN_VT_FEEDBACK: Table = Table {
-        label: "engine/terrain-vt-feedback-layout",
-        serves: [SHADER @ 2],
-        bindings: &[
-            texture(18, "terrain_ids_texture", Uint, D2, C),
-            write(19, "terrain_vt_wanted", C),
-        ],
-    };
-
-    /// The runtime virtual texture's coarser far pages made as the means of
-    /// the finer ones (`terrain_vt_far.wgsl`): the sheets holding the finer
-    /// pages, the pages to make, and the texels they write, which copies
-    /// take into the sheets.
-    const TERRAIN_VT_FAR: Table = Table {
-        label: "engine/terrain-vt-far-layout",
-        serves: [TERRAIN_VT_FAR_SHADER @ 0],
-        bindings: &[
-            texture(0, "far_sheets", Float, D2Array, C),
-            read(1, "far_means", C),
-            write(2, "far_texels", C),
-        ],
-    };
-
     /// Group 2 of terrain's subdivision, compute passes after the camera
-    /// (group 0, as the virtual texture's feedback binds it) and the terrain
+    /// (group 0, `TERRAIN_SUBDIVISION_CAMERA`) and the terrain
     /// group (`meshes/terrain_subdivision.wgsl`): each terrain's subdivision
     /// at a dynamic offset, its tree, the frame's leaves' nodes and the
     /// leaves the frame draws, and every terrain's counters, which its

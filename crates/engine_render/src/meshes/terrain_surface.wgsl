@@ -121,8 +121,7 @@ fn surface_vertex(triangle: SurfaceTriangle, vertex: u32) -> vec2<f32> {
 // coarser level's where its tile is not resident, as that level's patches
 // draw it whole; `found` false where no level holds it. Level 0's is the
 // surface the ground's materials lie on, wherever the geometry drawn
-// stands: the virtual texture's pages bake them there, and pixels
-// computing their ground read them there too.
+// stands: pixels computing their ground read them there.
 struct TerrainLevelHeight {
     height: f32,
     found: bool,

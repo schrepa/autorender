@@ -58,16 +58,6 @@ struct TerrainUniform {
     // past the radius span the settings' pixels, and its density scale; all
     // 0 without cover (w unused).
     cover: vec4<f32>,
-    // Its runtime virtual texture (`terrain.wgsl`): its index
-    // among the textured terrains, its mips (0 without one), slots along a
-    // sheet's side, and this frame's feedback pixel (0 to 63) of each 8x8
-    // block; the meters a texel of mip 0 spans, the inverse of a sheet's
-    // texels along a side and the frame's time in seconds, which pages fade
-    // in by from their arrivals; and where its windows and tables start in
-    // `terrain_directory`.
-    vt: vec4<u32>,
-    vt_scale: vec4<f32>,
-    vt_layout: vec4<u32>,
     // Its macro colors' layer of `terrain_macro` plus one (0 until they
     // arrive).
     macro_map: vec4<u32>,
@@ -84,8 +74,7 @@ struct TerrainUniform {
     // that (x).
     pixel_error: vec4<f32>,
     // Its tiles' water (`meshes/water.wgsl`): where water's directory
-    // starts in `terrain_directory`, after the virtual texture's windows
-    // and tables (x).
+    // starts in `terrain_directory`, after the directory's own words (x).
     water: vec4<u32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;

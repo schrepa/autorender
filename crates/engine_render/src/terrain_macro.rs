@@ -4,8 +4,8 @@
 //! family of formats the device samples, a layer each of one array the
 //! terrain group binds. Ground takes the tint over its materials' own
 //! colors as the map holds it, the same however near or far it is seen
-//! (`terrain_variety.wgsl`), the runtime virtual texture's pages carry it,
-//! and ground cover's blades take it as their ground does. A terrain's
+//! (`terrain_variety.wgsl`), and ground cover's blades take it as their
+//! ground does. A terrain's
 //! layer uploads as its map arrives and again when it changes; until then
 //! its ground shows its materials' colors.
 //! Terrains past the device's array layers, and maps of another size, level
@@ -46,10 +46,8 @@ pub(crate) struct MacroMaps {
     // A texel leaving every ground as it is, bound while no terrain has a
     // map.
     empty: wgpu::TextureView,
-    // The map each terrain's layer holds, and the uploads each has taken,
-    // which pages of the runtime virtual texture baked from it follow.
+    // The map each terrain's layer holds.
     held: Vec<Option<Arc<Texture>>>,
-    uploads: Vec<u64>,
     // Advances when the bound view is replaced.
     generation: u64,
 }
@@ -83,7 +81,6 @@ impl MacroMaps {
             maps: None,
             empty: array_view(&empty),
             held: Vec::new(),
-            uploads: Vec::new(),
             generation: 0,
         }
     }
@@ -105,12 +102,6 @@ impl MacroMaps {
             Some(Some(_)) => index as u32 + 1,
             _ => 0,
         }
-    }
-
-    /// The uploads terrain `index`'s map took, which pages baked from it
-    /// follow; 0 before its first.
-    pub(crate) fn uploads(&self, index: usize) -> u64 {
-        self.uploads.get(index).copied().unwrap_or(0)
     }
 
     /// Terrains whose maps are here.
@@ -147,10 +138,6 @@ impl MacroMaps {
         let Some(shape) = first.map(|map| Shape::of(&map.texture)) else {
             if self.maps.take().is_some() {
                 self.generation += 1;
-                // Pages baked from the maps follow them away.
-                for uploads in &mut self.uploads {
-                    *uploads += 1;
-                }
             }
             self.held.clear();
             return;
@@ -166,7 +153,6 @@ impl MacroMaps {
         {
             self.maps = Some(maps(device, shape, count));
             self.held = vec![None; count];
-            self.uploads.resize(count, 0);
             self.generation += 1;
         }
         let Some(maps) = &self.maps else {
@@ -193,11 +179,9 @@ impl MacroMaps {
                         );
                     }
                     *held = Some(map.clone());
-                    self.uploads[index] += 1;
                 }
                 (None, Some(_)) => {
                     *held = None;
-                    self.uploads[index] += 1;
                 }
                 (None, None) => {}
             }

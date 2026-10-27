@@ -1,6 +1,6 @@
 // Terrain in the debug views (`meshes/debug.wgsl`, `debug_view.wgsl`): what
-// its ground is made of, as shading computes it where no virtual texture
-// page stands in (`meshes/terrain.wgsl`). Its record holds its leaf's
+// its ground is made of, as shading computes it at every pixel
+// (`meshes/terrain.wgsl`). Its record holds its leaf's
 // level (the pyramid level whose spacing its leaf's meshlet vertices stand
 // apart), whether it lies on a level-0 tile's edge or a patch's (sixteen
 // samples) and, above DEBUG_PATCH_SHIFT, the patch it lies in within that

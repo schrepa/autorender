@@ -1433,7 +1433,6 @@ impl Renderer {
             phases,
             shadows: features.shadow_frame.is_some(),
             deformation: self.terrain.deformation.pending(),
-            vt_bakes: self.terrain.vt.baking(),
             bounce: self.terrain.bounce.relights(),
             subdivision: terrain && self.terrain.subdivides(),
             deferred: self.terrain_deferred(terrain, passes.opaque_kind),

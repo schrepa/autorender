@@ -10,7 +10,7 @@
 //! changes, following the tiles the atlas held anew. Water's directory
 //! lists, for each layer of the height array, the blocks of its tile's
 //! patches, laid out again as tiles or their water change, in the terrain's
-//! directory buffer after the virtual texture's windows and tables: shaders
+//! directory buffer after the directory's own words: shaders
 //! read a tile's water at any point through it, water's pass
 //! (`crate::water`) and the ground's fragments, which wet the ground at its
 //! waterline and bind no more storage buffers than they did.

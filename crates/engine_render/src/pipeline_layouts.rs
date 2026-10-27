@@ -17,11 +17,10 @@ use crate::bindings::{
     PRESENTATION_LEVEL, PRESENTATION_SKIN_BOUNDS, PRESENTATION_TESTS, PYRAMID_DOWN, PYRAMID_FIRST,
     RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_MARKS, SHADOW_POSES, SHADOW_SELECT,
     SHADOW_SKINNED, SHADOW_VIEW, SKY_TABLES, TAA_RESOLVE, TEMPORAL_POSES, TERRAIN, TERRAIN_CONTROL,
-    TERRAIN_NORMALS, TERRAIN_RESOLVE, TERRAIN_SUBDIVISION, TERRAIN_VT_BAKE, TERRAIN_VT_CAMERA,
-    TERRAIN_VT_FAR, TERRAIN_VT_FEEDBACK, TERRAIN_VT_TERRAIN, TRANSPARENT_COMPOSITE, Table,
-    VIRTUAL_BIN, VIRTUAL_POSES, VIRTUAL_SEED, VIRTUAL_SELECT, VIRTUAL_SHADOW, VIRTUAL_TRAVERSE,
-    VISIBILITY_CLASSIFY, VISIBILITY_PASS, VISIBILITY_RESOLVE, WATER, WATER_BEHIND, WATER_SIM,
-    WATER_WAVES,
+    TERRAIN_NORMALS, TERRAIN_RESOLVE, TERRAIN_SUBDIVISION, TERRAIN_SUBDIVISION_CAMERA,
+    TRANSPARENT_COMPOSITE, Table, VIRTUAL_BIN, VIRTUAL_POSES, VIRTUAL_SEED, VIRTUAL_SELECT,
+    VIRTUAL_SHADOW, VIRTUAL_TRAVERSE, VISIBILITY_CLASSIFY, VISIBILITY_PASS, VISIBILITY_RESOLVE,
+    WATER, WATER_BEHIND, WATER_SIM, WATER_WAVES,
 };
 
 /// The bytes one uniform buffer binding holds on every device (wgpu's
@@ -124,20 +123,14 @@ pipeline_layouts! {
     /// The sky and the view's clouds over the scene.
     SKY_PIPELINES = [CAMERA, CLOUD_SKY];
     CLOUD_COMPOSITE_PIPELINES = [CAMERA, CLOUD_COMPOSITE];
-    /// Terrain's forward passes and visibility, its resolves, and the
-    /// runtime virtual texture's bakes and feedback.
+    /// Terrain's forward passes and visibility, and its resolves.
     TERRAIN_PIPELINES = [CAMERA, TERRAIN];
     LIT_TERRAIN_PIPELINES = [CAMERA, TERRAIN, EMPTY, LIGHT_SHADING];
     TERRAIN_RESOLVE_PIPELINES = [CAMERA_TERRAIN, TERRAIN, TERRAIN_RESOLVE];
     LIT_TERRAIN_RESOLVE_PIPELINES = [CAMERA_TERRAIN, TERRAIN, TERRAIN_RESOLVE, LIGHT_SHADING];
-    TERRAIN_VT_BAKE_PIPELINES = [CAMERA_TERRAIN, TERRAIN, TERRAIN_VT_BAKE];
-    TERRAIN_VT_FEEDBACK_PIPELINES = [TERRAIN_VT_CAMERA, TERRAIN_VT_TERRAIN, TERRAIN_VT_FEEDBACK];
-    /// The virtual texture's coarser far pages made as means of finer ones,
-    /// built only while far pages are made (cooking, or a record missing).
-    TERRAIN_VT_FAR_PIPELINES = [TERRAIN_VT_FAR];
     /// Terrain's subdivision: the camera, the terrain group and each
     /// terrain's tree, leaves and arguments.
-    TERRAIN_SUBDIVISION_PIPELINES = [TERRAIN_VT_CAMERA, TERRAIN, TERRAIN_SUBDIVISION];
+    TERRAIN_SUBDIVISION_PIPELINES = [TERRAIN_SUBDIVISION_CAMERA, TERRAIN, TERRAIN_SUBDIVISION];
     /// Ground cover's blades.
     COVER_PIPELINES = [CAMERA, COVER_DRAW];
     LIT_COVER_PIPELINES = [CAMERA, COVER_DRAW, EMPTY, LIGHT_SHADING];
@@ -209,12 +202,10 @@ pipeline_layouts! {
 /// Distinct pipeline layouts the renderer may build: one more costs every
 /// Firefox start about 150 ms, so raising it is a decision, not a side
 /// effect. Water's simulation builds its layout only once water is
-/// simulated, terrain bounce light its own once a terrain's transfer
-/// arrives, and the far pages' means theirs only while far pages are made,
-/// which hosts holding their records never do; the debug views' and auto
-/// exposure's layouts count though no start builds them unless they are on.
-/// Terrain's subdivision, which replaced the camera's patches selected on the
-/// CPU, takes one, and the shadow clipmap's marks one of their own: the one
-/// pass reading the depth buffer with the camera, which tells which tiles
-/// get memory.
-pub const LAYOUT_BUDGET: usize = 75;
+/// simulated, and terrain bounce light its own once a terrain's transfer
+/// arrives; the debug views' and auto exposure's layouts count though no
+/// start builds them unless they are on. Terrain's subdivision, which
+/// replaced the camera's patches selected on the CPU, takes one, and the
+/// shadow clipmap's marks one of their own: the one pass reading the depth
+/// buffer with the camera, which tells which tiles get memory.
+pub const LAYOUT_BUDGET: usize = 72;

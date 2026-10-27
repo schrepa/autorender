@@ -18,10 +18,8 @@
 //! the host keeps what a worker makes. Owners name what they share by its
 //! content ([`content_hash`]) or by the keys of the records it holds, so
 //! keys reading shares are the same in every session. A record no job makes
-//! is fetched alone ([`Jobs::fetch`]), or fetched into a job a worker runs
-//! on its bytes, which its owner takes instead ([`Jobs::fetch_into`]); and
-//! an owner that made one itself hands it to the host to keep
-//! ([`Jobs::keep`]).
+//! is fetched alone ([`Jobs::fetch`]), and an owner that made one itself
+//! hands it to the host to keep ([`Jobs::keep`]).
 
 use crate::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -254,9 +252,6 @@ pub struct Jobs {
     running: HashSet<JobId>,
     cancels: Vec<JobId>,
     done: HashMap<JobId, Result<Vec<u8>, String>>,
-    // Records fetched into jobs: the job each goes on to, with its
-    // priority, once the host hands its bytes back.
-    reading: HashMap<JobId, (&'static str, u32)>,
     // The host's cache counters: hits, misses, bytes and
     // mismatches.
     cache: [u64; 4],
@@ -287,7 +282,6 @@ impl Default for Jobs {
             running: HashSet::default(),
             cancels: Vec::new(),
             done: HashMap::default(),
-            reading: HashMap::default(),
             cache: [0; 4],
             held: 0,
             shared: Vec::new(),
@@ -398,19 +392,6 @@ impl Jobs {
         id
     }
 
-    /// Fetches the record `record`, which no job makes, at `priority`, and
-    /// hands its bytes to a worker as the input of job `kind`, which reads
-    /// them into what its owner takes: [`Self::take`] that job's output
-    /// once done, or [`MISSING_RECORD`] where no store or pack holds the
-    /// record. The bytes only pass through here, on to the worker.
-    pub fn fetch_into(&mut self, record: RecordKey, kind: &'static str, priority: u32) -> JobId {
-        let id = self.fetch(record, priority);
-        if self.running.contains(&id) {
-            self.reading.insert(id, (kind, priority));
-        }
-        id
-    }
-
     /// Hands hosts `bytes`, the record `record` its owner made itself, to
     /// keep: a later fetch of it, in this session or another, takes them. A
     /// verifying host compares a record it handed back with the bytes its
@@ -434,7 +415,6 @@ impl Jobs {
     /// Drops job `id`: a worker running it stops, and its output, if any,
     /// is thrown away.
     pub fn cancel(&mut self, id: JobId) {
-        self.reading.remove(&id);
         if self.done.remove(&id).is_some() || !self.running.remove(&id) {
             return;
         }
@@ -544,24 +524,10 @@ impl Jobs {
     }
 
     /// Hosts: job `id`'s output, or why it failed; ignored for jobs
-    /// cancelled since. A record fetched into a job ([`Self::fetch_into`])
-    /// goes on to it, as its input, for workers to run next.
+    /// cancelled since.
     pub fn complete(&mut self, id: JobId, output: Result<Vec<u8>, String>) {
-        if !self.running.contains(&id) {
-            return;
-        }
-        match (self.reading.remove(&id), output) {
-            (Some((kind, priority)), Ok(input)) => self.requests.push(JobRequest {
-                id,
-                kind,
-                input,
-                priority,
-                record: None,
-            }),
-            (_, output) => {
-                self.running.remove(&id);
-                self.finish(id, output);
-            }
+        if self.running.remove(&id) {
+            self.finish(id, output);
         }
     }
 
