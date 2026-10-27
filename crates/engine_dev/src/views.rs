@@ -386,8 +386,8 @@ pub struct JobsView {
 }
 
 /// The renderer's static tables (`cloud_noise`, `sky_tables`,
-/// `water_fall_map`, `wave_spectra`): records of jobs, which the host's
-/// packs and store hand back or its workers make. For each, the parts the
+/// `water_fall_map`): records of jobs, which the host's packs and store
+/// hand back or its workers make. For each, the parts the
 /// scene's settings want and those that arrived, and whether one arrived
 /// whole, which frames draw with (the latest, while a table wanted anew
 /// arrives); and the jobs of theirs that failed, each asked for again a

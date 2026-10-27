@@ -14,7 +14,7 @@ use crate::gpu_layouts::constants::{
     DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SEA, DEBUG_KIND_SKY,
     DEBUG_KIND_TERRAIN, DEBUG_KIND_VIRTUAL, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL,
     DEBUG_PATCH_SHIFT, DEBUG_SHADOWED, DEBUG_SOURCE_SHIFT, DEBUG_SPAN_STEPS, DEBUG_SUN_BEYOND,
-    DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL, DEBUG_WIND_MOST, WATER_SPAN_LEAST, WATER_SPAN_MOST,
+    DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL, WATER_SPAN_LEAST, WATER_SPAN_MOST,
 };
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::max;
@@ -433,8 +433,7 @@ fn water_span(code: u8) -> f32 {
 
 /// A water pixel's numbers (`meshes/debug.wgsl`'s `debug_water`): its
 /// draw's `object` word (its depth and speed, half floats) and `detail`
-/// word (its span's code, its roughness and its wind's share of
-/// `DEBUG_WIND_MOST` times the free wind's, a byte each), then the terrain
+/// word (its span's code and its roughness, a byte each), then the terrain
 /// target's texel in `bytes` (its Froude number and its eddies', half
 /// floats; its turbulence, white water, carried foam and reach).
 fn water_probe((object, detail): (u32, u32), bytes: &[u8]) -> WaterProbe {
@@ -454,7 +453,6 @@ fn water_probe((object, detail): (u32, u32), bytes: &[u8]) -> WaterProbe {
         span: water_span((detail & 0xff) as u8),
         eddies,
         roughness: share(detail, 1),
-        wind: share(detail, 2) * DEBUG_WIND_MOST,
     }
 }
 

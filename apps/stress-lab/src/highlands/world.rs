@@ -97,10 +97,6 @@ impl StressWorld for HighlandsWorld {
             clarity: 4.5,
             sediment: 0.01,
             sediment_color: [0.04, 0.16, 0.15],
-            // None of the wind's waves: its breeze's fine ripples, alike
-            // over every stream and pool however narrow, read as a carpet
-            // over all the water; currents and beds raise its waves.
-            wind_waves: 0.0,
             simulation_cell: 1.0,
             // No live window around the camera: the settled water stands
             // everywhere, so water looks alike at every distance (the

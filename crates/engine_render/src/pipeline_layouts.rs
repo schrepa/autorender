@@ -168,9 +168,6 @@ pipeline_layouts! {
     CLOUD_VIEW_PIPELINES = [CLOUD_VIEW];
     SKY_TABLE_PIPELINES = [SKY_TABLES];
     DEFORMATION_PIPELINES = [DEFORMATION];
-    /// Water's waves: their spectra evolved, transformed and averaged, and
-    /// the whitecaps their folds leave faded.
-    WATER_WAVE_PIPELINES = [WATER_WAVES];
     /// Water's simulation: faces, fluxes, cells, the water rivers bring and
     /// the cells past its edges.
     WATER_SIM_PIPELINES = [WATER_SIM];

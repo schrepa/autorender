@@ -22,20 +22,15 @@
 // Where water is simulated around the camera, its cells hold the same state
 // (`sim_water_output`), the span of its body and what its bed holds taken
 // from the settled water's sample nearest each. Everything drawn of the
-// water reads that state and what follows from it: its Froude number, its
-// eddies' speed (`water_eddies`) and its span, the fetch the wind has over
-// it; the water's debug views paint each of its fields (`meshes/debug.wgsl`).
-// Its waves come from that state alone (`water_flow.wgsl`): the
-// wind's, as its spectrum raises them over the water's span and depth
-// (`water_spectrum.wgsl`) and as much of them as its settings show
-// (`Water::wind_waves`), standing where the water is still and riding
-// its current where it runs, its eddies roughening it unseen; the boils its
+// water reads that state and what follows from it: its Froude number and
+// its eddies' speed (`water_eddies`); the water's debug views paint each of
+// its fields (`meshes/debug.wgsl`).
+// Its waves come from that state alone (`water_flow.wgsl`): the boils its
 // eddies bring up and the waves its bed holds still where it runs faster
-// than the slowest of its own waves (`water_stream.wgsl`); and
-// waves standing about what it flows past. Each is drawn through the
-// pixel's own footprint (`water_footprint`): the wind's tiles through their
-// levels' sixteenfold anisotropic filtering, which average their slopes'
-// moments (LEAN mapping), and every computed part while it spans two
+// than the slowest of its own waves (`water_stream.wgsl`), its eddies
+// roughening it unseen; and waves standing about what it flows past. Where
+// none rise, it lies a calm mirror. Each is drawn through the pixel's own
+// footprint (`water_footprint.wgsl`), every computed part while it spans two
 // pixels along the way it varies (`water_shown`), so waves running across
 // the view stay drawn far along it, while those running along it average
 // out where the footprint spans them. What the pixel averages of its
@@ -92,22 +87,11 @@
 // Water, or the sea: the camera's view and projection without its
 // translation (the sea's; terrains' water draws through the terrain's
 // view); the color deep water scatters back (rgb) and the meters through
-// which half the light passes (w); the wind's velocity along x and z (xy,
-// the sea's own for the sea), how strongly it gusts (z) and the share of
-// its waves terrains' water shows (w, `Water::wind_waves`; 1 for the sea,
-// which keeps all of its own: `water_wind_shown`); for the sea,
-// the compression below which its crests whiten (x), the amplitude of one
-// wave holding all its waves' variance, which runs up its shores (y), and
-// its waves' summed height (w), none of it for terrains' water (`foam`);
-// how fast the water takes each channel of light, per meter (rgb); each of
-// the wind's tiles (`water_spectrum.wgsl`): how many times a meter it
-// repeats, the longest and the shortest waves it holds (meters) and the
-// root mean square height of its waves at unit slope variance (meters); and
-// the cosine and sine of the angle each tile's lattice turns by from the
-// world's axes, from +x toward +z (`turns`, xy), and the anisotropic part
-// of its slopes' covariance at unit slope variance over its whole repeat,
-// in its own axes: half the difference of their variances along its x and
-// z, and their covariance (zw, `water_tile_spread`).
+// which half the light passes (w); for the sea, the compression below which
+// its crests whiten (x), the amplitude of one wave holding all its waves'
+// variance, which runs up its shores (y), and its waves' summed height (w),
+// none of it for terrains' water (`foam`); and how fast the water takes
+// each channel of light, per meter (rgb).
 // The sea's parts (`meshes/ocean.wgsl`): its wind's heading
 // (`origin`, xy: a unit vector), its still level less the eye, its grid's
 // finest cell, cells around and rings a cell apart; the rings' growth, the
@@ -131,11 +115,8 @@ struct WaterUniform {
     relative_view_projection: mat4x4<f32>,
     origin: vec4<f32>,
     color: vec4<f32>,
-    wind: vec4<f32>,
     foam: vec4<f32>,
     absorption: vec4<f32>,
-    waves: array<vec4<f32>, WATER_WIND_TILES>,
-    turns: array<vec4<f32>, WATER_WIND_TILES>,
     ocean: vec4<f32>,
     ocean_grid: vec4<f32>,
     ocean_waves: array<vec4<f32>, 16>,
@@ -146,20 +127,12 @@ struct WaterUniform {
     lift: vec4<f32>,
 }
 @group(1) @binding(52) var<uniform> water: WaterUniform;
-// The waves' moments, a layer a tile, with their levels
-// (`water_waves.wgsl`), and the sampler repeating them.
-@group(1) @binding(53) var water_waves: texture_2d_array<f32>;
-@group(1) @binding(54) var water_wave_sampler: sampler;
-// The wind's tiles' whitecaps, a layer a tile, with their levels averaged as
-// the moments' are (`water_waves.wgsl`): the largest compression each texel
-// has had at unit gain, fading by e every `water_waves.rs`'s
-// WATER_WHITECAP_FADE seconds (x), and its square (y).
-@group(1) @binding(61) var water_whitecaps: texture_2d_array<f32>;
 // Falling water's map (`water_fall_map.rs`): its strands (r) and their
 // fibers (g) spread about a half, its foam's bubbles' walls (b) and
 // bubbles (a), FALL_MAP meters across and along the water as it leaves its
-// lip; read with the waves' sampler, repeating.
+// lip; and the sampler repeating it.
 @group(1) @binding(55) var water_fall_map: texture_2d<f32>;
+@group(1) @binding(54) var water_fall_sampler: sampler;
 // The simulated water as its blocks hold it (`water_sim.wgsl`'s, every
 // block of the window's square in its slot, SIM_WATER_BLOCK cells along each
 // side): each cell's surface (world meters), its flow along x and z (square
@@ -295,12 +268,11 @@ const WATER_DRY: f32 = 16.0;
 // What a sample's words say of its water: its flow along x and z (meters a
 // second), the foam it carries (0 none, WATER_FOAM_MOST the most), how far
 // across its water body is (its span, meters: a river's width, a lake's
-// equal-area diameter, the fetch the wind has over it; none where none is
-// known), whether a lake holds it and whether a fall's sheet runs over it;
-// how turbulent it runs, how strongly it breaks white and its shear (a
-// second); its reach's code (0 for none, else 1 plus
-// `engine_terrain::Reach`); and its nearest obstacle's word
-// (`water_obstacle`).
+// equal-area diameter; none where none is known), whether a lake holds it
+// and whether a fall's sheet runs over it; how turbulent it runs, how
+// strongly it breaks white and its shear (a second); its reach's code (0
+// for none, else 1 plus `engine_terrain::Reach`); and its nearest
+// obstacle's word (`water_obstacle`).
 struct WaterWords {
     flow: vec2<f32>,
     foam: f32,
@@ -653,7 +625,7 @@ fn vs_water(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
     return water_output(vertex, instance);
 }
 
-// Water's motion is the camera's: its ripples move within its surface.
+// Water's motion is the camera's: its waves and foam move within its surface.
 @vertex
 fn vs_water_temporal(@builtin(vertex_index) vertex: u32,
         @builtin(instance_index) instance: u32) -> WaterTemporalOutput {
@@ -1108,15 +1080,12 @@ fn water_light(surface: WaterSurface) -> WaterLit {
 // Water's light, and how it covers what lies below: in frames blending it,
 // the share of the ground it hides (`coverage`); in frames refracting the
 // scene, what shows through it (graded, as the scene holds it) and the
-// share of the scene it covers, all but where its shores fade. And, where
-// its shading reckons it, the wind's speed over it (meters a second,
-// gusting and sheltered: `water_wind_speed`), which the debug views show.
+// share of the scene it covers, all but where its shores fade.
 struct WaterShade {
     shaded: Shaded,
     coverage: f32,
     behind: vec3<f32>,
     fade: f32,
-    wind: f32,
 }
 
 // Water's light and what shows through it as its targets' color at `pixel`:
@@ -1252,37 +1221,25 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let anchoring = (length(dpdx(anchor)) + length(dpdy(anchor)))
         / max(length(world_dx.xz) + length(world_dy.xz), 1.0e-6);
     let anchored = 1.0 - smoothstep(0.1, 0.4, anchoring); // filter: where a pixel's samples disagree on the obstacle, its waves average out
-    // How far it is from still to running: still water's waves stand where
-    // they evolve, running water's ride its current, and between, the two
-    // blend, so nothing changes at once where a river meets a lake.
+    // How far it is from still to running: what its current raises shows as
+    // far as it runs, so nothing changes at once where a river meets a lake.
     let flowing = smoothstep(WATER_FLOWING.x, WATER_FLOWING.y, speed);
-    // The wind's waves: each of its tiles as strong as its spectrum gives
-    // that tile's band where the wind, gusting and sheltered by the terrain
-    // upwind, blows over as much water as the water's body spans, as deep as
-    // it is here, of which the water shows the share its settings ask for
-    // (`water_wind_shown`).
-    let wind = water_wind_speed(world, time);
-    let sea = water_wind_shown(water_wind_sea(wind, at.words.span, depth));
-    let gains = water_wind_gains(sea);
-    // Its waves, from its state alone (`water_flow_waves`): the wind's, the
-    // boils its eddies bring up, the waves its bed holds and those standing
-    // about what it flows past.
-    let waves = water_flow_waves(world.xz, footprint, at, gains, eddy, froude, flowing,
-        anchored, time, stagger);
+    // Its waves, from its state alone (`water_flow_waves`): the boils its
+    // eddies bring up, the waves its bed holds and those standing about what
+    // it flows past; none where none rise.
+    let waves = water_flow_waves(world.xz, footprint, at, eddy, froude, flowing, anchored, time);
     // They ride its surface, tilting as it falls; and the slopes they hide
     // within a pixel roughen it, along the view and across it as their
     // ellipse projects into the view, so where they run rough, it glints
     // rather than mirroring the sky, its glints and what it mirrors drawn out
     // along the view (Bruneton, Neyret and Holzschuch), as does how far the
     // normal of those it draws turns across the pixel (`water_turning`), so
-    // their glints widen instead of sparkling, and as do the wind's waves
-    // finer than its tiles hold, which light wind raises none of
-    // (`water_roughness`).
+    // their glints widen instead of sparkling (`water_roughness`); where
+    // nothing roughens it, it is a calm mirror.
     let slopes = waves.slopes - at.slope;
     let normal = normalize(vec3<f32>(-slopes.x, 1.0, -slopes.y));
     let view = stable_normalize(-point);
-    let roughness = water_roughness(waves.hidden + water_turning(slopes), sea,
-        water_heading(view));
+    let roughness = water_roughness(waves.hidden + water_turning(slopes), water_heading(view));
     // Under the sea, the sea's water stands instead: its level
     // (`water.ocean.x`) is held relative to the eye.
     if water.ocean.y > 0.5 && world.y < eye_world(vec3<f32>(0.0, water.ocean.x, 0.0)).y {
@@ -1341,13 +1298,9 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     // water runs as a film, the sheet draws its white. It floats where the
     // waves carry it, toward their crests by their slopes, and its relief
     // tilts the normal it is lit by.
-    // Its crests fold where the wind's tiles' waves have, their foam
-    // lingering where they broke (`water_wind_whitecaps`), and where the
-    // waves the tiles do not hold, their slopes' variance less the tiles'
-    // (their gains' squares), break by their statistics.
-    let foam_folding = water_folding(max(waves.spread - dot(gains, gains), 0.0),
-        waves.hidden.x + waves.hidden.y, waves.crest,
-        water_wind_whitecaps(world.xz, footprint, gains));
+    // Its crests fold where its waves pass the breaking slope, by their
+    // statistics (`water_folding`).
+    let foam_folding = water_folding(waves.spread, waves.hidden.x + waves.hidden.y, waves.crest);
     let foam_contact = water_contact(mesh_standing, mesh_change, footprint, max(speed, eddy));
     let foam_fresh = 1.0 - (1.0 - born) * (1.0 - foam_folding) * (1.0 - foam_contact);
     let foam_carried = saturate(at.words.foam / WATER_FOAM_MOST);
@@ -1395,7 +1348,6 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     result.behind = behind.color * transmit * (caustic * let_through * (1.0 - wet)
         * (1.0 - atmospheric_cover(camera.position.xyz, world)));
     result.fade = fade;
-    result.wind = wind;
     return water_mirroring(result);
 }
 

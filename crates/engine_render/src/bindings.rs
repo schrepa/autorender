@@ -856,14 +856,13 @@ tables! {
     /// their surfaces beside their ground and their words (packed flow,
     /// whitewater and kind, state, nearest obstacle and how fast their
     /// surface and depth fall), which pixels read; water's uniform; the
-    /// waves' moments with their levels (`water_waves.rs`) and the sampler
-    /// repeating them; the simulated water's cells, ground and what the beds
-    /// hold under them; at a dynamic offset, the subdivision of each
-    /// terrain's water, whose leaves its vertices take; and the wind's tiles'
-    /// whitecaps with their levels, read with the waves' sampler. Within a
-    /// fragment stage's 16 sampled textures and 8 storage buffers with the
-    /// camera's group and what lies behind the water. The sea's group has
-    /// placeholders for what only tiles' water reads.
+    /// sampler repeating falling water's map (`water_fall_map.rs`) and the
+    /// map; the simulated water's cells, ground and what the beds hold under
+    /// them; and at a dynamic offset, the subdivision of each terrain's
+    /// water, whose leaves its vertices take. Within a fragment stage's 16
+    /// sampled textures and 8 storage buffers with the camera's group and
+    /// what lies behind the water. The sea's group has placeholders for what
+    /// only tiles' water reads.
     const WATER: Table = Table {
         label: "engine/water-layout",
         serves: [SHADER @ 1],
@@ -876,8 +875,7 @@ tables! {
             texture(50, "water_surface", Unfilterable, D2Array, VF),
             texture(51, "water_info", Uint, D2Array, F),
             uniform_of(52, "water", size_of::<water::WaterUniform>(), VF),
-            texture(53, "water_waves", Float, D2Array, F),
-            sampler(54, "water_wave_sampler", Filtering, F),
+            sampler(54, "water_fall_sampler", Filtering, F),
             texture(55, "water_fall_map", Float, D2, F),
             read(56, "water_sim_cells", VF),
             read(57, "water_sim_ground", VF),
@@ -888,7 +886,6 @@ tables! {
                 size_of::<terrain::SubdivisionUniform>(),
                 V,
             ),
-            texture(61, "water_whitecaps", Float, D2Array, F),
         ],
     };
 
@@ -927,22 +924,6 @@ tables! {
             uniform_of(8, "sim_slots", size_of::<water::SimSlots>(), C),
             write(9, "sim_averages", C),
             uniform_of(10, "sim_touches", size_of::<water::SimTouches>(), C),
-        ],
-    };
-
-    /// Water's waves (`water_waves.wgsl`): the frame's tiles and loop,
-    /// their spectra, what a pass reads (the rows transformed, or a level of
-    /// the moments or the whitecaps) and what it writes, and the whitecaps
-    /// the last frame left.
-    const WATER_WAVES: Table = Table {
-        label: "engine/water-waves-layout",
-        serves: [WATER_WAVES_SHADER @ 0],
-        bindings: &[
-            uniform_of(0, "waves", size_of::<water::WaveFrame>(), C),
-            read(1, "wave_spectrum", C),
-            texture(2, "wave_source", Float, D2Array, C),
-            bind(3, "wave_target", Kind::StorageArray(Rgba16Float), C),
-            texture(4, "wave_before", Float, D2Array, C),
         ],
     };
 

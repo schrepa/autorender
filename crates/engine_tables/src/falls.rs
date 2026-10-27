@@ -14,7 +14,6 @@
 use engine_math::{clamp, max, min};
 
 use crate::bytes::{Reader, Writer};
-use crate::waves::hash;
 
 /// How many times longer along falling water than across it water reads
 /// the map.
@@ -136,6 +135,16 @@ fn map() -> Vec<[f32; 4]> {
             ]
         })
         .collect()
+}
+
+/// A 32-bit integer hash (Wellons's lowbias32).
+fn hash(mut value: u32) -> u32 {
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7feb_352d);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846c_a68b);
+    value ^= value >> 16;
+    value
 }
 
 /// A number in [0, 1) hashed from `bits`.

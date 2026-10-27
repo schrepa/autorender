@@ -1,17 +1,16 @@
 //! The tables corpus: the renderer's static tables (`engine_tables`) for
-//! the default settings. Falling water's map, the wave spectra for the
-//! default wind, the physically based sky's tables for its default
-//! (Earth's) air, and a slab of each of the cloud noise's volumes. Each
-//! job runs as hosts run it in place and as workers run it, a slice at a
-//! time, which must be the same bits, and each record must read back.
-//! Every job and its output's hash go into a file `cargo xtask pure
-//! --wasm` replays in the browser worker's Wasm module.
+//! the default settings. Falling water's map, the physically based sky's
+//! tables for its default (Earth's) air, and a slab of each of the cloud
+//! noise's volumes. Each job runs as hosts run it in place and as workers
+//! run it, a slice at a time, which must be the same bits, and each record
+//! must read back. Every job and its output's hash go into a file `cargo
+//! xtask pure --wasm` replays in the browser worker's Wasm module.
 
 use std::path::Path;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::Environment;
-use engine_core::table_data::{TableKind, TableWorker, clouds, f16_value, falls, sky, waves};
+use engine_core::table_data::{TableKind, TableWorker, clouds, f16_value, falls, sky};
 use serde_json::json;
 
 use super::{Observations, hash};
@@ -33,18 +32,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.check(levels == falls::LEVELS as usize, || {
         format!("the fall map holds {levels} levels")
     });
-
-    let shape = waves::WaveShape::blown(environment.wind.velocity);
-    let spectra = worker.both(TableKind::WaveSpectra, &shape.identity(), observed)?;
-    observed.hash("wave spectra", &spectra);
-    let decoded = waves::decode(&spectra)?;
-    observed.check(decoded.shape == shape, || {
-        "the wave spectra hold another shape".into()
-    });
-    observed.check(
-        decoded.texels.iter().flatten().any(|value| *value != 0.0),
-        || "the wave spectra hold no waves".into(),
-    );
 
     let settings = environment.sky;
     let air = sky::Air {

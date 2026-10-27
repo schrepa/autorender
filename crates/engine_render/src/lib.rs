@@ -80,7 +80,6 @@ mod water_falls;
 mod water_kernels;
 mod water_settle;
 mod water_sim;
-mod water_waves;
 pub use platform::{AdapterInfo, RenderError, RenderTarget, read_range};
 #[cfg(not(target_arch = "wasm32"))]
 pub use platform::{GpuPreference, NativeWindow, start_native_instances_with};

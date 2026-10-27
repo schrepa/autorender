@@ -45,7 +45,7 @@ shaders! {
         "fullscreen.wgsl",
         "meshes/cover.wgsl",
         "meshes/water.wgsl",
-        "meshes/water_spectrum.wgsl",
+        "meshes/water_footprint.wgsl",
         "meshes/water_stream.wgsl",
         "meshes/water_flow.wgsl",
         "meshes/water_falls.wgsl",
@@ -82,12 +82,6 @@ shaders! {
     ];
     DEFORMATION_SHADER = [
         "deformation.wgsl",
-    ];
-    /// Water's waves: their spectra evolved and transformed into slopes, and
-    /// into the whitecaps their folds leave.
-    WATER_WAVES_SHADER = [
-        "math.wgsl",
-        "water_waves.wgsl",
     ];
     /// Water simulated by the shallow-water equations around the camera and
     /// settling for tiles' records.
@@ -344,11 +338,6 @@ entry_points! {
     }
     deformation = DEFORMATION_SHADER {
         compute: [press, slopes, scroll, wipe, rebase],
-    }
-    water_waves = WATER_WAVES_SHADER {
-        compute: [
-            evolve_rows, transform_columns, average_level, evolve_fold_rows, transform_fold_columns
-        ],
     }
     water_sim = WATER_SIM_SHADER {
         compute: [
