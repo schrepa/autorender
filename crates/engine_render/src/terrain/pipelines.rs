@@ -258,7 +258,13 @@ impl TerrainPipelines {
             wgpu::FrontFace::Ccw,
         );
         self.pipelines.insert((targets, lit, holes), pipeline);
-        self.ensure_deferred(device, shader, (camera, lights), (targets, lit, holes), depth);
+        self.ensure_deferred(
+            device,
+            shader,
+            (camera, lights),
+            (targets, lit, holes),
+            depth,
+        );
     }
 
     /// Creates the visibility pipeline of patches with `holes` or without

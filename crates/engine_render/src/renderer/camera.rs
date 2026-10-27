@@ -200,7 +200,10 @@ impl CameraBindings {
         device: &wgpu::Device,
         sources: &GroupSources<'_>,
     ) {
-        let groups = self.probe_groups.iter_mut().zip(&mut self.terrain_probe_groups);
+        let groups = self
+            .probe_groups
+            .iter_mut()
+            .zip(&mut self.terrain_probe_groups);
         for (face, (group, terrain)) in groups.enumerate() {
             let refraction = (
                 Bound::fixed(crate::pipelines::view(&self.refraction_fallback)),

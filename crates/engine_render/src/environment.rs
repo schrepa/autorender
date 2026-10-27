@@ -530,7 +530,10 @@ fn sky_group(
             ("sky_table_sampler", crate::pipelines::sampler(air.3)),
             ("sky_clouds", crate::pipelines::view(clouds.new)),
             ("sky_clouds_old", crate::pipelines::view(clouds.old)),
-            ("sky_cloud_sampler", crate::pipelines::sampler(clouds.sampler)),
+            (
+                "sky_cloud_sampler",
+                crate::pipelines::sampler(clouds.sampler),
+            ),
             crate::buffers::entry("sky_domes", clouds.uniform),
         ],
     )
