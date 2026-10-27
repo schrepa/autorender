@@ -10,7 +10,12 @@
 //! picks, so the depth each pixel shades by is the tiles' water over that
 //! level's ground, the shore falls where the ground rises through the
 //! water, and none of it moves as the eye does: each shows the water's
-//! state there and nothing else. Water draws after the opaque scene and its
+//! state there and nothing else. Around the detail eye the same pixels read
+//! the water running live (`crate::water_sim`) as a level of its own, its
+//! cells' looks, the vertices standing on its surface where it stands
+//! higher, and hand it back to the tiles' water across its rim and as far
+//! as its cells stay a few pixels across: one water, drawn and shaded
+//! through one path. Water draws after the opaque scene and its
 //! decals and blends over the ground by how little light comes back through
 //! it, writing the depth and surface targets, so later passes and
 //! screen-space reflections see its surface. Before it draws, the opaque
@@ -57,7 +62,7 @@ use crate::scene_shading::SceneShading;
 use crate::targets::{FrameSize, ScreenTarget};
 use crate::terrain::{SurfaceDraw, TerrainWaterDraws};
 use crate::water_falls::{fall_layout, sheets};
-use crate::water_sim::WaterSim;
+use crate::water_sim::{Live, WaterSim};
 
 /// Cells around the sea's grid, the sectors it splits into for culling,
 /// and the rings a cell apart at its middle: about the cells around over
@@ -77,16 +82,17 @@ pub(crate) const WATER_UNIFORM_BYTES: usize = size_of::<WaterUniform>();
 
 /// One-texel stand-ins for what the water group binds that the sea reads
 /// none of: the terrain's height array, uniforms and directory, its
-/// subdivisions' leaves, tiles' water blocks, water's directory and the
-/// tree of a terrain's water; and for the scene's color, which frames
-/// blending water read none of.
+/// subdivisions' leaves, tiles' water blocks, water's directory, the live
+/// water's looks (which tiles' water too reads none of while none runs)
+/// and the tree of a terrain's water; and for the scene's color, which
+/// frames blending water read none of.
 struct Placeholders {
     surfaces: wgpu::Texture,
     info: wgpu::Texture,
     views: wgpu::Buffer,
     terrains: wgpu::Buffer,
     scene: wgpu::TextureView,
-    sim: wgpu::Buffer,
+    live: wgpu::Buffer,
     storage: wgpu::Buffer,
     tree: wgpu::Buffer,
 }
@@ -138,11 +144,11 @@ pub(crate) struct WaterPass {
     behind_layout: crate::pipelines::GroupLayout,
     behind: ScreenTarget<BehindCopies>,
     placeholders: Placeholders,
-    // Water simulated around the camera, where water asks for it.
+    // Water running live around the detail eye.
     sim: WaterSim,
     // Tiles' water's uniform, and the group binding it with the terrain
     // pass's arrays, uniforms, directory, leaves and trees' uniforms and the
-    // simulation's water, as of their generations.
+    // live water's looks, as of their generations.
     uniform: wgpu::Buffer,
     group: Option<(GroupGenerations, wgpu::BindGroup)>,
     tiles: Option<TileDraws>,
@@ -156,7 +162,6 @@ pub(crate) struct WaterPass {
     fall_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
     fall_vertices: Vec<FallVertex>,
     fall_indices: Vec<u32>,
-    sim_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
     // The scene features the pipelines are specialized for, and whether
     // those drawing into the debug targets draw for the water's views.
     shading: SceneShading,
@@ -182,15 +187,14 @@ impl WaterPass {
             fall_pipelines: HashMap::default(),
             fall_vertices: Vec::new(),
             fall_indices: Vec::new(),
-            sim_pipelines: HashMap::default(),
             shading: SceneShading::ALL,
             water_views: false,
         }
     }
 
-    /// Specializes the pipelines for `shading`'s scene features, and those
-    /// drawing tiles' and simulated water into the debug targets for
-    /// whether frames show the water's views (`water_views`,
+    /// Specializes the pipelines for `shading`'s scene features, and the one
+    /// drawing terrains' water into the debug targets for whether frames
+    /// show the water's views (`water_views`,
     /// `crate::debug_view::shows_water`): those made for others are
     /// dropped, to be created anew.
     pub(crate) fn specialize(&mut self, shading: SceneShading, water_views: bool) {
@@ -199,12 +203,10 @@ impl WaterPass {
             self.pipelines.clear();
             self.ocean_pipelines.clear();
             self.fall_pipelines.clear();
-            self.sim_pipelines.clear();
         }
         if self.water_views != water_views {
             self.water_views = water_views;
             self.pipelines.remove(&Targets::Debug);
-            self.sim_pipelines.remove(&Targets::Debug);
         }
     }
 
@@ -300,9 +302,9 @@ impl WaterPass {
     /// of `terrains`, shaded as `settings` say, and the sea `ocean`, culled
     /// through `cull` and drawn through `view` (both eye-relative) over the
     /// opaque `depth` and, when `refracts`, the color it copies; seen from
-    /// `eye`, the wind `wind` dragging the water simulated live, its waves
-    /// at the simulation time `seconds` the frame presents; `None` when none
-    /// of it draws.
+    /// `eye`, the wind `wind` dragging the water running live, its waves
+    /// and the live water's steps at the simulation time `seconds` the frame
+    /// presents; `None` when none of it draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -323,25 +325,25 @@ impl WaterPass {
             self.ocean = None;
             return None;
         }
-        // Rivers simulated where a terrain's window stands, pushed by the
+        // Rivers running live where a terrain's window stands, pushed by the
         // solids standing in it, the wind dragging their surface.
         let live = terrains
             .iter()
             .find_map(|terrain| {
-                let window = terrain.water_window.as_ref()?;
-                Some((
-                    window,
-                    &terrain.water_touches[..],
-                    terrain.water_touches_beyond,
-                ))
+                Some(Live {
+                    window: terrain.water_window.as_ref()?,
+                    ahead: terrain.water_ahead.as_ref(),
+                    touches: &terrain.water_touches[..],
+                    beyond: terrain.water_touches_beyond,
+                })
             })
             .filter(|_| settings.enabled);
         self.sim.prepare(device, queue, live, (wind, seconds));
-        let (simulated, sim_generation) = self.sim.drawn();
+        let (running, sim_generation) = self.sim.drawn();
         // The square of the window that runs: its first corner, the meters
-        // across a cell and its cells along a side; its datum and the
-        // blocks its slots turn by along x and z.
-        let simulated = simulated.map(|drawn| {
+        // across a cell and its cells along a side; its datum, the slots its
+        // blocks turn by along x and z and its pool's slots along each side.
+        let running = running.map(|drawn| {
             let window = drawn.window;
             let square = [
                 window.origin[0],
@@ -350,7 +352,10 @@ impl WaterPass {
                 window.cells as f32,
             ];
             let [wrap_x, wrap_z] = drawn.wrap;
-            (square, [window.datum, wrap_x as f32, wrap_z as f32, 0.0])
+            (
+                square,
+                [window.datum, wrap_x as f32, wrap_z as f32, drawn.pool as f32],
+            )
         });
         if let Some(tiles) = tiles {
             self.prepare_tiles(device, &tiles, sim_generation);
@@ -366,8 +371,8 @@ impl WaterPass {
                 color: [red, green, blue, settings.clarity],
                 absorption: absorption(settings.color, settings.clarity),
                 ocean: sea,
-                sim: simulated.map_or([0.0; 4], |(square, _)| square),
-                sim_datum: simulated.map_or([0.0; 4], |(_, datum)| datum),
+                sim: running.map_or([0.0; 4], |(square, _)| square),
+                sim_datum: running.map_or([0.0; 4], |(_, datum)| datum),
                 sediment: [sediment[0], sediment[1], sediment[2], settings.sediment],
                 // Its vertices stand over its surface by the pixels the
                 // drawn ground and its mesh may stray from theirs.
@@ -406,8 +411,8 @@ impl WaterPass {
     }
 
     /// Prepares tiles' water over `tiles`: the group of the water layout
-    /// its draws bind, made again as what it binds changes (the
-    /// simulation's water as of `sim_generation` among it), and the draws of
+    /// its draws bind, made again as what it binds changes (the live
+    /// water's looks as of `sim_generation` among it), and the draws of
     /// each terrain's water's tree.
     fn prepare_tiles(
         &mut self,
@@ -478,16 +483,13 @@ impl WaterPass {
     /// The group of the water layout tiles' water binds: the terrain pass's
     /// height array, views' and terrains' uniforms, directory (with water's
     /// in it), leaves of its subdivisions and their trees' uniforms, and the
-    /// water blocks (`tiles`); water's uniform; and the simulated water.
+    /// water blocks (`tiles`); water's uniform; and the live water's looks.
     fn tile_group(&self, device: &wgpu::Device, tiles: &TerrainWaterDraws<'_>) -> wgpu::BindGroup {
-        let (sim_cells, sim_ground, sim_beds) = self.sim.drawn().0.map_or(
-            (
-                &self.placeholders.sim,
-                &self.placeholders.sim,
-                &self.placeholders.sim,
-            ),
-            |drawn| (drawn.cells, drawn.ground, drawn.beds),
-        );
+        let looks = self
+            .sim
+            .drawn()
+            .0
+            .map_or(&self.placeholders.live, |drawn| drawn.looks);
         crate::pipelines::group(
             device,
             "engine/water-group",
@@ -505,9 +507,7 @@ impl WaterPass {
                 ("water_surface", crate::pipelines::view(tiles.surfaces)),
                 ("water_info", crate::pipelines::view(tiles.info)),
                 ("water", self.uniform.as_entire_binding()),
-                crate::buffers::entry("water_sim_cells", sim_cells),
-                crate::buffers::entry("water_sim_ground", sim_ground),
-                crate::buffers::entry("water_sim_beds", sim_beds),
+                crate::buffers::entry("water_live", looks),
                 (
                     "water_tree",
                     sized(tiles.trees, size_of::<SubdivisionUniform>()),
@@ -655,10 +655,6 @@ impl WaterPass {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Falls);
             self.fall_pipelines.insert(targets, pipeline);
         }
-        if self.sim.drawn().0.is_some() && !self.sim_pipelines.contains_key(&targets) {
-            let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Sim);
-            self.sim_pipelines.insert(targets, pipeline);
-        }
     }
 
     /// The layout water's pipelines share, its first group `camera`'s, made
@@ -695,7 +691,6 @@ impl WaterPass {
             Surface::Tiles => crate::entries::water(targets),
             Surface::Sea => crate::entries::ocean(targets),
             Surface::Falls => crate::entries::falls(targets),
-            Surface::Sim => crate::entries::sim_water(targets),
         };
         // The scene color blends premultiplied over the ground, keeping the
         // ground's ambient share in its alpha (water refracting the scene
@@ -721,10 +716,10 @@ impl WaterPass {
             scene.blend = Some(blended);
         }
         let sheets = [Some(fall_layout())];
-        // Tiles' and simulated water draw into the debug targets as the
-        // view shown asks.
+        // Terrains' water draws into the debug targets as the view shown
+        // asks.
         let constants = match (targets, surface) {
-            (Targets::Debug, Surface::Tiles | Surface::Sim) => self
+            (Targets::Debug, Surface::Tiles) => self
                 .shading
                 .with(&crate::debug_view::water_constants(self.water_views)),
             _ => self.shading.constants().to_vec(),
@@ -736,7 +731,6 @@ impl WaterPass {
                     Surface::Tiles => "engine/water",
                     Surface::Sea => "engine/ocean",
                     Surface::Falls => "engine/water-falls",
-                    Surface::Sim => "engine/water-sim-draw",
                 },
                 layout: &layout,
                 module: shader,
@@ -745,7 +739,7 @@ impl WaterPass {
                 // Tiles' water's vertices come from its trees' leaves, the
                 // sea's from their indices alone.
                 buffers: match surface {
-                    Surface::Tiles | Surface::Sea | Surface::Sim => &[],
+                    Surface::Tiles | Surface::Sea => &[],
                     Surface::Falls => &sheets,
                 },
                 primitive: wgpu::PrimitiveState {
@@ -810,20 +804,6 @@ impl WaterPass {
                 draws += 1;
             }
         }
-        // The simulated water, its cells' middles drawn from its buffers
-        // through the camera's view.
-        if let (Some(drawn), Some(pipeline)) =
-            (self.sim.drawn().0, self.sim_pipelines.get(&targets))
-        {
-            let quads = drawn.window.cells.saturating_sub(1);
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, group, &[0, 0, 0]);
-            pass.set_bind_group(2, &behind.group, &[]);
-            pass.set_index_buffer(drawn.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..quads * quads * 6, 0, 0..1);
-            draws += 1;
-        }
         // Falls last, over the water they land in: each terrain's jets
         // through its uniform, by which they read the water under them, of
         // terrains drawing tiles' water this frame.
@@ -879,8 +859,8 @@ impl RenderFeature for WaterPass {
         encode: &Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        // The simulated water's steps and what lies behind the water, before
-        // it draws.
+        // The live water's steps and looks and what lies behind the water,
+        // before it draws.
         self.sim.encode(encoder, encode.profiler);
         self.copy_behind(encoder, encode.depth, encode.scene);
         let mut pass = encode.render_pass(
@@ -892,8 +872,8 @@ impl RenderFeature for WaterPass {
         self.draw(&mut pass, encode.water_camera, encode.targets)
     }
 
-    /// Bytes of the copies, the falls' sheets and the simulated water:
-    /// tiles' water blocks and its subdivisions count with the terrain's.
+    /// Bytes of the copies, the falls' sheets and the live water: tiles'
+    /// water blocks and its subdivisions count with the terrain's.
     fn capacity_bytes(&self) -> u64 {
         let copies = self.behind.size().map_or(0, |size| {
             let texels = u64::from(size.width) * u64::from(size.height);
@@ -912,18 +892,17 @@ impl RenderFeature for WaterPass {
 
     /// The leaves the water's subdivisions drew and the splits their room
     /// refused, as last read back; tiles' water blocks resident and
-    /// dropped; the cells along a side of the simulated square, and the
-    /// solids pushing its water with those standing in it past the most that
-    /// do; and the sea's sectors drawn and their triangles.
+    /// dropped; the cells along a side of the live square, those the
+    /// device's bindings cut from it and the steps it ran, and the solids
+    /// pushing its water with those standing in it past the most that do;
+    /// and the sea's sectors drawn and their triangles.
     fn stats(
         this: Option<&Self>,
         frame: Option<&WaterFrame>,
         _snapshot: &RenderSnapshot,
     ) -> (WaterStats, OceanStats) {
-        let simulated = frame
-            .and(this)
-            .and_then(|this| this.sim.drawn().0)
-            .map_or(0, |drawn| drawn.window.cells);
+        let [live_cells, live_cut, live_steps] =
+            frame.and(this).map_or([0; 3], |this| this.sim.cells());
         let [touches, dropped_touches] = frame.and(this).map_or([0; 2], |this| this.sim.touches());
         let [leaves, refused] = frame.map_or([0; 2], |frame| frame.subdivided);
         (
@@ -932,7 +911,9 @@ impl RenderFeature for WaterPass {
                 refused,
                 blocks: frame.map_or(0, |frame| frame.blocks[0]),
                 dropped_blocks: frame.map_or(0, |frame| frame.blocks[1]),
-                simulated_cells: simulated,
+                live_cells,
+                live_cut,
+                live_steps,
                 touches,
                 dropped_touches,
             },
@@ -946,17 +927,16 @@ impl RenderFeature for WaterPass {
 
 /// The generations of what tiles' water's group binds: the terrain pass's
 /// arrays, uniforms, directory (with water's in it), leaves and trees'
-/// uniforms and the water blocks; and the simulation's water.
+/// uniforms and the water blocks; and the live water's looks.
 type GroupGenerations = ([u64; 6], u64);
 
-/// What a water pipeline draws: tiles' water, the sea, falls' sheets or
-/// simulated water.
+/// What a water pipeline draws: terrains' water, live or settled, the sea
+/// or falls' sheets.
 #[derive(Clone, Copy)]
 enum Surface {
     Tiles,
     Sea,
     Falls,
-    Sim,
 }
 
 /// The first `bytes` of `buffer`, bound at a dynamic offset.
@@ -1055,9 +1035,9 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
             "engine/water-placeholder-terrain",
             size_of::<TerrainUniform>() as u64,
         ),
-        sim: crate::buffers::storage(
+        live: crate::buffers::storage(
             device,
-            "engine/water-placeholder-sim",
+            "engine/water-placeholder-live",
             16,
             wgpu::BufferUsages::empty(),
         ),
@@ -1110,9 +1090,7 @@ fn ocean_draw(
             ("water_surface", crate::pipelines::view(&surfaces)),
             ("water_info", crate::pipelines::view(&info)),
             ("water", uniform.as_entire_binding()),
-            crate::buffers::entry("water_sim_cells", &placeholders.sim),
-            crate::buffers::entry("water_sim_ground", &placeholders.sim),
-            crate::buffers::entry("water_sim_beds", &placeholders.sim),
+            crate::buffers::entry("water_live", &placeholders.live),
             (
                 "water_tree",
                 sized(&placeholders.tree, size_of::<SubdivisionUniform>()),

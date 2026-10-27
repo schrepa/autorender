@@ -46,8 +46,8 @@ const DEBUG_DRY: f32 = 1.0e-4;
 // (`gpu_layouts::constants::DEBUG_SPAN_STEPS`).
 const DEBUG_SPAN_STEPS: f32 = 254.0;
 // Whether the frame shows one of the water's views of its state
-// (DEBUG_VIEW_WATER_* of `debug_view.wgsl`), which draw tiles' and
-// simulated water wherever it lies; the other views draw it where it covers
+// (DEBUG_VIEW_WATER_* of `debug_view.wgsl`), which draw terrains' water,
+// live or settled, wherever it lies; the other views draw it where it covers
 // at least half the pixel.
 override DEBUG_WATER_VIEWS: bool = false;
 
@@ -275,8 +275,7 @@ fn debug_span_code(span: f32) -> f32 {
 
 // Water where its shading covers at least half the pixel, or in the
 // water's views wherever it lies, at the pixel `pixel` as `at` holds it,
-// drawn at the point `point` of its surface: the tiles', which gives way
-// where water is simulated, or the simulated water's (`simulated`). Its
+// drawn at the point `point` of its surface, live or settled. Its
 // object word holds its depth (meters) and its speed (meters a second),
 // half floats; its detail word four bytes: how far across its water body is
 // (`debug_span_code`), the roughness its shading gives it, and none; the
@@ -285,9 +284,8 @@ fn debug_span_code(span: f32) -> f32 {
 // then its turbulence, white water and the foam it carries (a byte each, 0
 // to 1, the foam a share of WATER_FOAM_MOST) with its reach in the top byte
 // (0 for none, else one more than `engine_terrain::Reach`).
-fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, simulated: bool)
-        -> DebugTargets {
-    let shade = shade_water(point, pixel, at, false, simulated);
+fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets {
+    let shade = shade_water(point, pixel, at, false);
     if shade.coverage < 0.5 && !DEBUG_WATER_VIEWS { // optics: water covers as its shading sees it
         discard;
     }
@@ -308,13 +306,7 @@ fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, simulated: bool)
 @fragment
 fn fs_debug_water(input: WaterOutput) -> DebugTargets {
     let at = water_drawn(input.relative);
-    return debug_water(water_on_surface(input.relative, at), input.clip_position.xy, at,
-        false);
-}
-
-@fragment
-fn fs_debug_sim_water(input: SimWaterOutput) -> DebugTargets {
-    return debug_water(input.relative, input.clip_position.xy, sim_water_values(input), true);
+    return debug_water(water_on_surface(input.relative, at), input.clip_position.xy, at);
 }
 
 @fragment

@@ -78,10 +78,7 @@ shared_groups! {
         surface: 36..37 [terrain_surface_leaves],
         sky: 42..43 [sky_transmittance_table],
         view_clouds: 46..47 [view_clouds],
-        water: 50..62 [
-            water_surface, water_info, water, water_sim_cells, water_sim_ground, water_sim_beds,
-            water_tree
-        ],
+        water: 50..62 [water_surface, water_info, water, water_live, water_tree],
         errors: 62..64 [terrain_errors, water_errors],
     }
     SHADER @ 2 {

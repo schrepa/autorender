@@ -221,9 +221,14 @@ pub struct RenderTerrain {
     /// Where its rivers leave their beds (terrain-local): renderers draw
     /// their jets where water draws.
     pub falls: Arc<[Fall]>,
-    /// The square around the camera its water is simulated over: renderers
-    /// run the simulation there and draw its water instead of the tiles'.
+    /// The square around the detail eye its water runs live over: renderers
+    /// run it there and draw its water as one with the tiles' water around
+    /// it, which its rim hands back to.
     pub water_window: Option<Arc<WaterWindow>>,
+    /// The square the detail eye nears next, gathered whole and waiting to
+    /// take that one's place: renderers take its blocks ahead into the slots
+    /// the running square leaves free.
+    pub water_ahead: Option<Arc<WaterWindow>>,
     /// The solids standing in that square this frame, nearest the eye
     /// first, as many as push its water ([`SIM_TOUCHES`]), and how many more
     /// stand there, pushing none: renderers push its water with them.
@@ -301,6 +306,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 gpu_surface: None,
                 falls: Arc::from(Vec::new()),
                 water_window: None,
+                water_ahead: None,
                 water_touches: Vec::new(),
                 water_touches_beyond: 0,
                 lighting: None,
@@ -355,6 +361,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         render.errors.extend_from_slice(state.store.errors());
         render.falls = state.falls.clone();
         render.water_window = state.hydrology.window.clone();
+        render.water_ahead = state.hydrology.ahead.clone();
         render.water_touches.clear();
         render.water_touches_beyond = 0;
         if let (Some(window), Some(obstacles)) = (

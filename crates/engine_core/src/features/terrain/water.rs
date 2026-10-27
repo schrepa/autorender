@@ -1,8 +1,11 @@
 //! Water: the lakes and rivers terrains' hydrology bakes find, drawn where
 //! they stand. Rivers run along their channels as their water settles there
-//! by the shallow-water equations, near the camera and far from it, and
-//! lakes lie still. How water moves and foams follows from its state alone,
-//! what its tiles or the live simulation hold at each place (its depth,
+//! by the shallow-water equations, and lakes lie still; around the detail
+//! eye, out to where its cells' unsteady features stay a few pixels across
+//! ([`crate::LIVE_PIXELS`]), the same water runs live from that settled
+//! state by the same equations, in the settled water's own cells, and hands
+//! back to it at its rim. How water moves and foams follows from its state
+//! alone, what its tiles or the live solve hold at each place (its depth,
 //! flow, the foam it carries, how turbulent it runs and how far across its
 //! water body is), the scene's wind ([`crate::Wind`]) dragging the water
 //! that runs live and the foam riding it. It shows that state and nothing
@@ -21,8 +24,9 @@ use engine_settings::settings;
 
 settings! {
     /// Water settings: how terrains' water looks (its color, clarity and
-    /// sediment) and how it draws and runs live; its movement and foam come
-    /// from its state, the scene's wind dragging the water that runs live.
+    /// sediment), the cells it settles and runs live in, and how it draws;
+    /// its movement and foam come from its state, the scene's wind dragging
+    /// the water that runs live.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -44,19 +48,10 @@ settings! {
         pub sediment: f32 = 0.15 => range(0.0, 50.0),
         /// The color the water's sediment scatters back, linear.
         pub sediment_color: [f32; 3] = [0.05, 0.065, 0.03] => range(0.0, 1.0),
-        /// The meters across the square around the camera over which
-        /// rivers run live as the shallow-water equations say, in cells
-        /// `live_cell` across, starting from their water as it settled
-        /// there and taking the settled water's past its edges; 0 none, the
-        /// settled water standing everywhere.
-        pub simulated: f32 = 0.0 => range(0.0, 1024.0),
         /// The meters across the cells water settles in: the cook makes the
-        /// settled water's records at this size.
+        /// settled water's records at this size, and the water running live
+        /// around the detail eye runs in these same cells.
         pub simulation_cell: f32 = 1.0 => range(0.25, 8.0),
-        /// The meters across the live window's cells: the square
-        /// `simulated` asks for runs in cells this size, each starting from
-        /// the settled water's cells around it.
-        pub live_cell: f32 = 0.5 => range(0.25, 8.0),
         /// Pixels the water's drawn triangles may stray from its surface,
         /// seen from the detail eye: each terrain's water subdivides a tree
         /// of its own, splitting its leaves straying more and merging those

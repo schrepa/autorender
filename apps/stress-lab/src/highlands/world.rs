@@ -74,7 +74,9 @@ impl StressWorld for HighlandsWorld {
         world.insert_resource(AutoExposure::default());
         // Rivers settle in meter cells, the ground's own samples, which its
         // rivers are traced along: the cook settles every watered tile at
-        // that size, and the settled water stands everywhere.
+        // that size, and around the eye the same water runs live in those
+        // cells, handing back to the settled water where its cells blur
+        // under a few pixels.
         //
         // The water runs clear, as streams fed by springs and snowmelt do:
         // deep, it sends back only the little light the water itself
@@ -98,12 +100,6 @@ impl StressWorld for HighlandsWorld {
             sediment: 0.01,
             sediment_color: [0.04, 0.16, 0.15],
             simulation_cell: 1.0,
-            // No live window around the camera: the settled water stands
-            // everywhere, so water looks alike at every distance (the
-            // simulation action runs 256 meters of it live, in the settled
-            // water's meter cells, to compare).
-            simulated: 0.0,
-            live_cell: 1.0,
             ..Water::default()
         });
     }

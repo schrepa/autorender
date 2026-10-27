@@ -106,7 +106,9 @@ pub(crate) use streaming::*;
 pub use surroundings::*;
 use tile_map::TileMap;
 pub use water::*;
-pub use water_sim::{GHOST_DRY, SIM_TOUCHES, WaterGhost, WaterSourceCell, WaterWindow};
+pub use water_sim::{
+    GHOST_DRY, LIVE_PIXELS, SIM_TOUCHES, WaterGhost, WaterSourceCell, WaterWindow,
+};
 pub use wind::*;
 
 use crate::collections::{HashMap, HashSet};

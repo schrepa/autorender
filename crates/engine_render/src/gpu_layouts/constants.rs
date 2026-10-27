@@ -286,21 +286,21 @@ gpu_consts! {
     pub(crate) const NO_WATER_BLOCK: u32 = u32::MAX => ["NO_WATER_BLOCK"];
     /// The surface a block's sample no water reaches holds: below any
     /// ground, so water never shows there.
-    pub(crate) const NO_WATER_SURFACE: f32 = -1.0e30 => ["NO_WATER_SURFACE"];
+    pub(crate) const NO_WATER_SURFACE: f32 = -1.0e30 => ["NO_WATER_SURFACE", "SIM_NO_SURFACE" in WATER_SIM_SHADER];
     /// Patches along a side of a tile, and the words each layer of the
     /// height array takes in water's directory: the block of each of its
     /// tile's patches.
     pub(crate) const WATER_TILE_PATCHES: u32 = engine_core::terrain_data::PATCHES_PER_TILE => ["WATER_TILE_PATCHES"];
     pub(crate) const WATER_TILE_WORDS: u32 = WATER_TILE_PATCHES * WATER_TILE_PATCHES => ["WATER_TILE_WORDS"];
     /// Meters a second either way a block's packed flow spans.
-    pub(crate) const WATER_FLOW_RANGE: f32 = engine_core::terrain_data::WATER_FLOW_RANGE => ["WATER_FLOW_RANGE"];
+    pub(crate) const WATER_FLOW_RANGE: f32 = engine_core::terrain_data::WATER_FLOW_RANGE => ["WATER_FLOW_RANGE", "SIM_FLOW_RANGE" in WATER_SIM_SHADER];
     /// The narrowest and the widest span (meters across a water body) a
     /// block's packed span tells apart, between which the span's code
     /// steps and its debug view ramps.
     pub(crate) const WATER_SPAN_LEAST: f32 = engine_core::terrain_data::WATER_SPAN_LEAST => ["WATER_SPAN_LEAST"];
     pub(crate) const WATER_SPAN_MOST: f32 = engine_core::terrain_data::WATER_SPAN_MOST => ["WATER_SPAN_MOST"];
     /// Per second of shear a block's packed shear spans.
-    pub(crate) const WATER_SHEAR_RANGE: f32 = engine_core::terrain_data::WATER_SHEAR_RANGE => ["WATER_SHEAR_RANGE"];
+    pub(crate) const WATER_SHEAR_RANGE: f32 = engine_core::terrain_data::WATER_SHEAR_RANGE => ["WATER_SHEAR_RANGE", "SIM_SHEAR_RANGE" in WATER_SIM_SHADER];
     /// The steepest water's surface falls and a bank under it rises, meters
     /// a meter: a surface falling more than four meters a meter (76 degrees)
     /// runs off as a fall's sheet, and a bank rising faster stands as a
@@ -310,7 +310,7 @@ gpu_consts! {
     // crate::water_sim
     /// Workgroup side of the simulation's passes over cells and faces: a
     /// block of cells, as its slots store them and water draws them.
-    pub(crate) const WATER_SIM_GROUP: u32 = engine_core::terrain_data::BLOCK_SIDE => ["WATER_SIM_GROUP" in WATER_SIM_SHADER, "SIM_WATER_BLOCK" in SHADER, "@sim_exchange" in WATER_SIM_SHADER, "@sim_waves" in WATER_SIM_SHADER, "@sim_seconds" in WATER_SIM_SHADER, "@sim_drain" in WATER_SIM_SHADER, "@sim_update" in WATER_SIM_SHADER, "@sim_touch" in WATER_SIM_SHADER, "@sim_drift" in WATER_SIM_SHADER, "@sim_churn" in WATER_SIM_SHADER, "@sim_churned" in WATER_SIM_SHADER, "@sim_tally" in WATER_SIM_SHADER, "@sim_activity" in WATER_SIM_SHADER, "@sim_look" in WATER_SIM_SHADER];
+    pub(crate) const WATER_SIM_GROUP: u32 = engine_core::terrain_data::BLOCK_SIDE => ["WATER_SIM_GROUP" in WATER_SIM_SHADER, "WATER_LIVE_BLOCK" in SHADER, "@sim_exchange" in WATER_SIM_SHADER, "@sim_waves" in WATER_SIM_SHADER, "@sim_seconds" in WATER_SIM_SHADER, "@sim_drain" in WATER_SIM_SHADER, "@sim_update" in WATER_SIM_SHADER, "@sim_touch" in WATER_SIM_SHADER, "@sim_drift" in WATER_SIM_SHADER, "@sim_churn" in WATER_SIM_SHADER, "@sim_churned" in WATER_SIM_SHADER, "@sim_tally" in WATER_SIM_SHADER, "@sim_activity" in WATER_SIM_SHADER, "@sim_look" in WATER_SIM_SHADER, "@sim_drawn" in WATER_SIM_SHADER];
     /// The most rectangles a dispatch of the simulation runs, each a slot
     /// of its buffers.
     pub(crate) const SIM_SLOTS: usize = 64 => ["SIM_SLOTS" in WATER_SIM_SHADER];
@@ -322,16 +322,28 @@ gpu_consts! {
     /// standing against the blocks the slot does not store).
     pub(crate) const SIM_CELL_SUMS: u64 = 4 => ["SIM_CELL_SUMS" in WATER_SIM_SHADER];
     pub(crate) const SIM_BLOCK_LOOKS: u64 = 3 => ["SIM_BLOCK_LOOKS" in WATER_SIM_SHADER];
+    /// Entries of four floats a live cell's looks take in place of sums:
+    /// the water it settled to, and its water as water's pass draws it (its
+    /// surface and ground beside its words, as a tile's water sample holds
+    /// them), which water's pass reads.
+    pub(crate) const SIM_LIVE_LOOKS: u64 = 2 => ["SIM_LIVE_LOOKS" in WATER_SIM_SHADER, "WATER_LIVE_LOOKS"];
     /// A rectangle's flags: it steps; each cell by its own seconds; water
     /// leaves over its edges freely and none comes in; it sums each cell's
-    /// water over its steps; the dispatch looks at its sums; and only its
-    /// blocks water can reach step.
+    /// water over its steps; the dispatch looks at its sums; only its
+    /// blocks water can reach step; and it runs live, its rim pulled back to
+    /// the water as it settled and its looks kept.
     pub(crate) const SIM_STEPPING: u32 = 1 => ["SIM_STEPPING" in WATER_SIM_SHADER];
     pub(crate) const SIM_LOCAL: u32 = 2 => ["SIM_LOCAL" in WATER_SIM_SHADER];
     pub(crate) const SIM_OPEN: u32 = 4 => ["SIM_OPEN" in WATER_SIM_SHADER];
     pub(crate) const SIM_SUMMING: u32 = 8 => ["SIM_SUMMING" in WATER_SIM_SHADER];
     pub(crate) const SIM_LOOKING: u32 = 16 => ["SIM_LOOKING" in WATER_SIM_SHADER];
     pub(crate) const SIM_SPARSE: u32 = 32 => ["SIM_SPARSE" in WATER_SIM_SHADER];
+    pub(crate) const SIM_LIVE: u32 = 64 => ["SIM_LIVE" in WATER_SIM_SHADER];
+    /// Cells along each edge of the live square over which its water is
+    /// pulled back to the water as it settled, and over which water's pass
+    /// hands it back to the tiles' water: a block of them, the scheme's own
+    /// unit, wider than the four cells its smooth surface reads across.
+    pub(crate) const SIM_RIM: u32 = engine_core::terrain_data::BLOCK_SIDE => ["SIM_RIM" in WATER_SIM_SHADER, "WATER_LIVE_RIM"];
     /// Cells rivers bring water to a workgroup of the simulation's source
     /// pass takes.
     pub(crate) const WATER_SIM_SOURCE_GROUP: u32 = 64 => ["WATER_SIM_SOURCE_GROUP" in WATER_SIM_SHADER, "@sim_source" in WATER_SIM_SHADER];
@@ -576,7 +588,7 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::STRICKLER => ["SIM_STRICKLER" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::CELL_MEANS => ["SIM_CELL_MEANS" in WATER_SIM_SHADER];
     engine_core::terrain_data::NO_BLOCK => ["SIM_NO_BLOCK" in WATER_SIM_SHADER];
-    engine_core::terrain_data::BLOCK_GROUND => ["SIM_BLOCK_GROUND" in WATER_SIM_SHADER, "SIM_BLOCK_GROUND" in SHADER];
+    engine_core::terrain_data::BLOCK_GROUND => ["SIM_BLOCK_GROUND" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::WET_MOST => ["SIM_WET_MOST" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_LIFE => ["SIM_FOAM_LIFE" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_MOST => ["SIM_FOAM_MOST" in WATER_SIM_SHADER, "WATER_FOAM_MOST"];
@@ -591,11 +603,12 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::LOCAL_SHARE => ["SIM_LOCAL_SHARE" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SLOWEST => ["SIM_SLOWEST" in WATER_SIM_SHADER];
     engine_core::SIM_TOUCHES => ["SIM_TOUCHES" in WATER_SIM_SHADER];
-    engine_core::terrain_data::TURBULENT_SPEED => ["WATER_TURBULENT_SPEED"];
-    engine_core::terrain_data::TURBULENT_SWIRL => ["WATER_TURBULENT_SWIRL"];
-    engine_core::terrain_data::BREAK_ONSET => ["WATER_BREAK_ONSET", "DEBUG_BREAK_ONSET" in DEBUG_VIEW_SHADER];
-    engine_core::terrain_data::BREAK_FULL => ["WATER_BREAK_FULL", "DEBUG_BREAK_FULL" in DEBUG_VIEW_SHADER];
-    engine_core::terrain_data::BREAK_THINNEST => ["WATER_BREAK_THINNEST"];
+    engine_core::terrain_data::TURBULENT_SPEED => ["WATER_TURBULENT_SPEED", "SIM_TURBULENT_SPEED" in WATER_SIM_SHADER];
+    engine_core::terrain_data::TURBULENT_SWIRL => ["SIM_TURBULENT_SWIRL" in WATER_SIM_SHADER];
+    engine_core::terrain_data::BREAK_ONSET => ["DEBUG_BREAK_ONSET" in DEBUG_VIEW_SHADER, "SIM_BREAK_ONSET" in WATER_SIM_SHADER];
+    engine_core::terrain_data::BREAK_FULL => ["DEBUG_BREAK_FULL" in DEBUG_VIEW_SHADER, "SIM_BREAK_FULL" in WATER_SIM_SHADER];
+    engine_core::terrain_data::BREAK_THINNEST => ["WATER_BREAK_THINNEST", "SIM_BREAK_THINNEST" in WATER_SIM_SHADER];
+    engine_core::LIVE_PIXELS => ["WATER_LIVE_PIXELS"];
     engine_core::PAGE_WORDS => ["PAGE_WORDS" in VIRTUAL_SHADER, "VIRTUAL_PAGE_WORDS" in SHADER];
     engine_core::NO_PARENT => ["NO_PARENT" in PRESENTATION_SHADER];
     engine_core::NODE_VALID => ["NODE_VALID" in PRESENTATION_SHADER];
