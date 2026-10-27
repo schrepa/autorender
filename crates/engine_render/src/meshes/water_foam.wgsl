@@ -3,8 +3,7 @@
 // simulated (`water_sim.wgsl`'s `sim_churn`: where it loses energy, plunges
 // or jumps, along its eddy lines and where it converges, fading to 1/e in
 // WATER_FOAM_LIFE), drained as it ages; and it turns white, its foam fresh,
-// where it breaks, where its crests fold (`water_folding`: where the wind's
-// waves have folded, the foam lingering for seconds, and where other waves
+// where it breaks, where its crests fold (`water_folding`: where its waves
 // pass the breaking slope) and where it runs fast against what stands in it
 // (`water_contact`). Each is a share of the surface, and one bubble texture
 // shows them all (`water_froth`): falling water's map's bubbles and the
@@ -29,10 +28,10 @@ const FALL_MAP_FOAM_SPREAD: vec2<f32> = vec2<f32>(0.34, 0.18);
 const WATER_FOAM_BUBBLE: f32 = 0.0625;
 const WATER_FOAM_FINER: f32 = 3.0;
 // How long a set of foam's carried bubbles lives (`water_froth`): as long as
-// the flow's shear takes to strain it by WATER_STRAIN as the waves', its bubbles
-// drawn out by two fifths at either end of its life before it starts over
-// (Neyret's latency); from WATER_FOAM_SHORTEST seconds, below which it would
-// churn faster than white water does, to the life of the foam it shows
+// the flow's shear takes to strain it by WATER_STRAIN, its bubbles drawn out
+// by two fifths at either end of its life before it starts over (Neyret's
+// latency); from WATER_FOAM_SHORTEST seconds, below which it would churn
+// faster than white water does, to the life of the foam it shows
 // (`engine_terrain::shallow_water::FOAM_LIFE`).
 const WATER_FOAM_SHORTEST: f32 = 1.0;
 const WATER_FOAM_LIFE: f32 = 20.0;
@@ -76,36 +75,22 @@ fn water_resolved_share(footprint: WaterFootprint, size: f32) -> f32 {
     return inverseSqrt((1.0 + ratios.x * ratios.x) * (1.0 + ratios.y * ratios.y));
 }
 
-// The share of water's surface its folding crests whiten: where the wind's
-// tiles' waves have folded (a) and where the waves no tile follows break
-// (b), two independent shares, 1 − (1 − a)(1 − b). The tiles' waves have
-// folded where the sum of each one's gain times its faded compression
-// passes 1 (`whitecaps`: its mean over the pixel and the variance its reads
-// average away, `water_wind_whitecaps`; none for water reading no tiles'
-// whitecaps), their foam lingering where a crest broke as the crest runs
-// on: a is the sum's share past 1, taken as logistic of its spread, which
-// spans what the reads average and how much the sum changes across a pixel
-// of the display (`material_detail`), so its edge draws no finer than a
-// pixel and far water whitens as near water does on average. The other
-// waves' slopes, resolved and hidden, spread `spread` (their variance, σ²),
-// of which the pixel hides `hidden`: a Gaussian surface's slopes, their
-// sizes Rayleigh-distributed, pass the breaking slope s_b (WATER_STEEPEST)
-// over b = exp(−s_b²/σ²) of it. Where the pixel resolves those waves, that
-// share lies on their crests, the points standing nearest their tops
-// (`crest`, taken as the share of the surface standing lower); where it
-// hides them, it is the share itself. A share too small to show whitens
-// nothing, however near its crest's top a point stands. Its derivatives
-// need it called in uniform control flow.
-fn water_folding(spread: f32, hidden: f32, crest: f32, whitecaps: vec2<f32>) -> f32 {
-    let change = fwidth(whitecaps.x) * material_detail();
-    let edge = sqrt(whitecaps.y + change * change / 12.0) * WATER_LOGISTIC;
-    let folded = 1.0 / (1.0 + exp(-clamp((whitecaps.x - 1.0) / max(edge, 1.0e-6), -30.0, 30.0)));
+// The share of water's surface its folding crests whiten: where its waves
+// pass the breaking slope. Their slopes, resolved and hidden, spread
+// `spread` (their variance, σ²), of which the pixel hides `hidden`: a
+// Gaussian surface's slopes, their sizes Rayleigh-distributed, pass the
+// breaking slope s_b (WATER_STEEPEST) over exp(−s_b²/σ²) of it. Where the
+// pixel resolves those waves, that share lies on their crests, the points
+// standing nearest their tops (`crest`, taken as the share of the surface
+// standing lower); where it hides them, it is the share itself. A share too
+// small to show whitens nothing, however near its crest's top a point
+// stands.
+fn water_folding(spread: f32, hidden: f32, crest: f32) -> f32 {
     let variance = max(spread, 1.0e-6);
     let share = exp(-WATER_STEEPEST * WATER_STEEPEST / variance);
     let on_crests = saturate((crest - 1.0) / max(share, 1.0e-6) + 1.5)
         * saturate(share / WATER_FOAM_LEAST);
-    let breaking = mix(share, on_crests, saturate(1.0 - hidden / variance));
-    return 1.0 - (1.0 - folded) * (1.0 - breaking);
+    return mix(share, on_crests, saturate(1.0 - hidden / variance));
 }
 
 // How strongly water foams against what stands in it behind the pixel
@@ -132,6 +117,39 @@ fn water_contact(standing: f32, change: f32, footprint: WaterFootprint, speed: f
     let rise = climb / max(footprint.along, 1.0e-6);
     let solid = 1.0 - smoothstep(WATER_GRADIENT_RANGE, 2.0 * WATER_GRADIENT_RANGE, rise);
     return tearing * solid * saturate(1.0 - standing / band) * (head / band);
+}
+
+// A random point of a pattern (in its periods) by which reads at corner
+// `corner` of a grid of patches shift it, salted by `salt`, so neighboring
+// patches show different parts of it.
+fn water_corner_offset(corner: vec2<i32>, salt: u32) -> vec2<f32> {
+    let key = (u32(corner.x) * 0x8da6b343u) ^ (u32(corner.y) * 0xd8163841u) ^ (salt * 0xcb1ab31fu);
+    return vec2<f32>(terrain_hash_of(key), terrain_hash_of(key ^ 0x68e31da4u));
+}
+
+// The triangle of a grid of equilateral triangles, skewed into squares,
+// holding `grid` (in its cells' sides): its three corners (in the skewed
+// grid) and the weights `grid` takes of each.
+struct WaterTriangle {
+    corners: array<vec2<i32>, 3>,
+    weights: vec3<f32>,
+}
+
+fn water_triangle(grid: vec2<f32>) -> WaterTriangle {
+    let skewed = vec2<f32>(grid.x, 1.15470054 * grid.y - 0.57735027 * grid.x);
+    let cell = floor(skewed);
+    let local = skewed - cell;
+    let base = vec2<i32>(cell);
+    let third = 1.0 - local.x - local.y;
+    var triangle: WaterTriangle;
+    triangle.weights = vec3<f32>(third, local.y, local.x);
+    triangle.corners = array<vec2<i32>, 3>(base, base + vec2<i32>(0, 1), base + vec2<i32>(1, 0));
+    if third <= 0.0 {
+        triangle.weights = vec3<f32>(-third, 1.0 - local.y, 1.0 - local.x);
+        triangle.corners = array<vec2<i32>, 3>(base + vec2<i32>(1, 1), base + vec2<i32>(1, 0),
+            base + vec2<i32>(0, 1));
+    }
+    return triangle;
 }
 
 // Foam's grain at `p` (meters along x and z) for a pixel whose footprint is
@@ -168,11 +186,11 @@ fn water_bubbles(p: vec2<f32>, heading: vec2<f32>, stretch: f32, footprint: Wate
         let middle = vec2<f32>(skewed.x, (skewed.y + 0.57735027 * skewed.x) * 0.8660254)
             * spacing;
         let turned = vec2<f32>(dot(p - middle, side), dot(p - middle, heading)) / drawn;
-        let larger = textureSampleGrad(water_fall_map, water_wave_sampler,
+        let larger = textureSampleGrad(water_fall_map, water_fall_sampler,
             turned + water_corner_offset(corners[corner], salt), turned_dx, turned_dy).ba;
         var smaller = mean;
         if finer {
-            smaller = textureSampleGrad(water_fall_map, water_wave_sampler,
+            smaller = textureSampleGrad(water_fall_map, water_fall_sampler,
                 turned * WATER_FOAM_FINER
                     + water_corner_offset(corners[corner], salt ^ 0x5bd1e995u),
                 turned_dx * WATER_FOAM_FINER, turned_dy * WATER_FOAM_FINER).ba;
@@ -243,7 +261,7 @@ fn water_froth(p: vec2<f32>, footprint: WaterFootprint, amounts: vec2<f32>, flow
     var resolved = 0.0;
     if max(amounts.x, amounts.y) > WATER_FOAM_LEAST && kept.x > WATER_FOAM_LEAST {
         // The map's channels' means, as its last level holds them.
-        let mean = textureSampleLevel(water_fall_map, water_wave_sampler, vec2<f32>(0.5),
+        let mean = textureSampleLevel(water_fall_map, water_fall_sampler, vec2<f32>(0.5),
             f32(textureNumLevels(water_fall_map) - 1u)).ba;
         // The place's own life, and how many bubbles the water carries the
         // grain over it: less than one, and the grain stands still.

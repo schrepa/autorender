@@ -160,8 +160,7 @@ const SHADOW_APRON: u32 = 1u;
 @group(0) @binding(6) var shadow_sampler: sampler_comparison;
 // Unfiltered reads of four shadow texels, for receiver planes.
 @group(0) @binding(7) var shadow_texels: sampler;
-// Terrain's long sun shadows and its shelter from the wind
-// (`terrain_shelter`): each terrain's horizon map, a
+// Terrain's long sun shadows: each terrain's horizon map, a
 // grid over the terrain cooked with its lighting, HORIZON_LAYERS layers per
 // terrain. In each of HORIZON_DIRECTIONS directions around a texel
 // (direction k a k-th of the directions' turn from +x toward +z), how high
@@ -1134,66 +1133,6 @@ fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
         }
     }
     return visible;
-}
-
-// Wind slows behind upwind ground and recovers downwind of it, as windbreak
-// studies measure (Heisler and DeWalle 1988, "Effects of windbreak
-// structure on wind flow"; Brandle, Hodges and Zhou 2004, "Windbreaks in
-// North American agricultural systems"): the share of the free wind blowing
-// in a crest's near lee, where dense barriers cut it by up to 80%.
-const SHELTER_LEAST: f32 = 0.2;
-// The crest heights downwind the near lee reaches, the wind blowing slowest
-// 4 to 6 heights behind dense barriers (Heisler and DeWalle 1988; Brandle,
-// Hodges and Zhou 2004).
-const SHELTER_NEAR: f32 = 5.0;
-// The crest heights over which the wind recovers past the near lee, by a
-// factor e each, so that the barriers' effect fades out 30 to 35 heights
-// downwind (Heisler and DeWalle 1988; Brandle, Hodges and Zhou 2004).
-const SHELTER_RECOVERY: f32 = 8.0;
-
-// The share of a free wind blowing along `heading` (a unit vector, x and z)
-// that reaches `world`, a surface above the map's ground such as water.
-// Behind a crest H meters above the point and x meters upwind of it, the
-// wind blows at SHELTER_LEAST of the free wind out to SHELTER_NEAR crest
-// heights, then recovers over SHELTER_RECOVERY heights,
-// 1 - (1 - SHELTER_LEAST) exp(-max(x/H - SHELTER_NEAR, 0) / SHELTER_RECOVERY):
-// about 0.57 at 10 heights, 0.88 at 20 and 0.97 at 30. The steepest crest
-// shelters most, and the horizon upwind, opposite the heading, is by
-// definition the steepest (`horizon_crest`): x/H is one over the slope up
-// to it from the point, the crest's height above the map's ground less the
-// point's own, over the crest's distance. Where no crest stands above the
-// point upwind, no map holds it, horizon maps are off or the heading is
-// none, all the wind blows; over several terrains, the least share does.
-// Each map is one grid over its whole terrain, so the share depends only on
-// where the point is.
-fn terrain_shelter(world: vec3<f32>, heading: vec2<f32>) -> f32 {
-    if !TERRAIN_HORIZONS || all(heading == vec2<f32>(0.0)) {
-        return 1.0;
-    }
-    // Upwind lies opposite the heading.
-    let turn = horizon_turn(-heading);
-    let count = min(u32(shadow.level_state.w), HORIZON_RECORDS / HORIZON_RECORD_VECTORS);
-    var share = 1.0;
-    for (var index = 0u; index < count; index++) {
-        let crest = horizon_crest(HORIZON_RECORD_VECTORS * index, turn, world, false);
-        if !crest.inside {
-            continue;
-        }
-        // The slope up from the point to the crest; none where the crest
-        // stands no higher than the point.
-        let slope = crest.slope - crest.elevation / max(crest.distance, 1.0e-3);
-        if slope <= 0.0 {
-            continue;
-        }
-        let lee = 1.0 / slope;
-        share = min(share, 1.0 - (1.0 - SHELTER_LEAST)
-            * exp(-max(lee - SHELTER_NEAR, 0.0) / SHELTER_RECOVERY));
-        // In one crest's near lee, no other shelters more.
-        if share <= SHELTER_LEAST {
-            break;
-        }
-    }
-    return share;
 }
 
 // Visibility of the sun at the surface point `world`, whose

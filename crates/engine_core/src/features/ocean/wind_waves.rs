@@ -9,9 +9,7 @@
 //! al. 1985), and it holds no waves past the viscous end, where viscosity
 //! takes a wave's energy faster than the wind feeds it (Donelan and Pierson
 //! 1987). The sea draws its waves from it over unlimited fetch
-//! ([`crate::Ocean::spectrum`]), and water's shaders size the wind's tiles
-//! and roughen the water by it where they read them
-//! (`meshes/water_spectrum.wgsl`, which mirrors its constants).
+//! ([`crate::Ocean::spectrum`]).
 
 use crate::math::{clamp, exp, ln, max, pow};
 use crate::terrain_data::hydraulics::GRAVITY;
@@ -37,8 +35,8 @@ pub const PEAK_WIDTH_GROWTH: f32 = 4.0;
 /// as much as gravity does, ω² = g k (1 + (k/k_m)²), and the phase speed
 /// (meters a second) of the slowest waves, there: k_m and c_m, about which
 /// the short waves gather (capillary waves, shorter than about 1.7 cm, lie
-/// past it). Water's wave tiles evolve by the same dispersion
-/// (`water_waves.wgsl`).
+/// past it). Running water's bed holds its waves standing by the same
+/// dispersion (`meshes/water_stream.wgsl`, which mirrors k_m).
 pub const RIPPLE_NUMBER: f32 = 370.0;
 pub const RIPPLE_SPEED: f32 = 0.23;
 /// The short waves' strength, α_m = 0.01 (1 + ln(u*/c_m)) for the wind's

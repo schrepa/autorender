@@ -1498,9 +1498,6 @@ fn sim_surface_current(here: vec4<f32>, west: vec4<f32>, east: vec4<f32>, south:
 // (`sim_surface_current`) with the wind's drag, SIM_WIND_DRIFT of the
 // frame's wind, into its entry of `sim_depths`, which the stages are done
 // with; none where it is dry. The foam it carries rides it (`sim_churn`).
-// The wind is the free wind: the water's shelter (`terrain_shelter`) reads
-// the terrain's horizon maps, which the simulation does not bind, so
-// sheltered water drifts as open water does.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
 fn sim_drift(
     @builtin(workgroup_id) group: vec3<u32>,

@@ -115,18 +115,8 @@ const FILTERS: &[(&str, &str)] = &[
          mipmaps keep a texture's, the finer ones' slopes as roughness",
     ),
     (
-        "water_tile_sample",
-        "the waves' tiles through their levels and anisotropy by the pixel's derivatives, what \
-         they average of the slopes' and heights' moments as variance",
-    ),
-    (
         "water_turning",
         "the water's normal turning within the pixel, its spread as roughness (Kaplanyan)",
-    ),
-    (
-        "water_wind_waves",
-        "the wind's tiles whose longest waves span a pixel, the others' whole covariance, \
-         their levels' last, as roughness",
     ),
     (
         "widened",

@@ -6,11 +6,11 @@
 //! the sky it sees and how it shows its materials' maps; or what terrains'
 //! water is doing, each field of its state: its depth, speed, Froude number,
 //! turbulence, white water, the reach it runs in, the foam it carries, how
-//! far across its water body is, its eddies' turbulent Froude number, the
-//! roughness its shading gives it and the wind over it. Renderers draw them
-//! with pipelines of their own, created the first time a view shows, into
-//! targets of their own; the shaded frame's pipelines, targets and passes
-//! stay as they are, and a world without the settings draws no view.
+//! far across its water body is, its eddies' turbulent Froude number and the
+//! roughness its shading gives it. Renderers draw them with pipelines of
+//! their own, created the first time a view shows, into targets of their
+//! own; the shaded frame's pipelines, targets and passes stay as they are,
+//! and a world without the settings draws no view.
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
@@ -126,10 +126,9 @@ modes! {
     /// it (`engine_terrain::shallow_water`), from dark brown (none) through
     /// sand to white (the most water carries).
     WaterFoam = "water_foam",
-    /// How far across its water body is, the fetch the wind has over it: a
-    /// river's width, a lake's equal-area diameter, on a logarithmic scale
-    /// from violet (a quarter meter) through teal (32 meters) to pale
-    /// yellow (4096 meters or more).
+    /// How far across its water body is: a river's width, a lake's
+    /// equal-area diameter, on a logarithmic scale from violet (a quarter
+    /// meter) through teal (32 meters) to pale yellow (4096 meters or more).
     WaterSpan = "water_span",
     /// Its eddies' turbulent Froude number: the speed they turn at,
     /// (g·U·S·depth)^(1/3) for its speed U and its surface's slope S, over
@@ -141,10 +140,6 @@ modes! {
     /// mirror) through copper to white (1): calm water's, widened by the
     /// slopes of the waves a pixel hides.
     WaterRoughness = "water_roughness",
-    /// The wind's speed over it, gusting and sheltered by the terrain
-    /// upwind, as a share of the free wind's: from dark (still air) through
-    /// azure (the free wind) to white (twice the free wind, a gust's most).
-    WaterWind = "water_wind",
 }
 
 impl Setting for DebugViewMode {}
@@ -311,7 +306,7 @@ impl From<engine_terrain::Reach> for WaterReach {
 /// What a terrain's water is doing at a pixel, tiles' or simulated, as the
 /// water's debug views show it: its depth, speed and Froude numbers to a
 /// half float's precision, its span to a step of its logarithmic scale
-/// (about 4%), its roughness and shares to 1/255 and its wind to 2/255.
+/// (about 4%), and its roughness and shares to 1/255.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WaterProbe {
@@ -339,10 +334,6 @@ pub struct WaterProbe {
     pub eddies: f32,
     /// The roughness its shading gives its surface, 0 to 1.
     pub roughness: f32,
-    /// The wind's speed over it, gusting and sheltered by the terrain
-    /// upwind, as a share of the free wind's: 0 (still air) to 2 (a gust's
-    /// most).
-    pub wind: f32,
 }
 
 /// What drew one pixel and how it looks: the pixel probe's answer.

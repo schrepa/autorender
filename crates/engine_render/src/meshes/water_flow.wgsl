@@ -1,41 +1,31 @@
-// Terrains' water's waves (`shade_water`), from its state alone: the
-// wind's (`water_spectrum.wgsl`), standing where they evolve on still water
-// and carried by the current on running water, in sets living as long as
-// its eddies take to turn them over; the waves its bed holds still, and the
-// boils its eddies bring up, carried by the current and calming the wind's
-// waves on them (`water_stream.wgsl`); and waves standing about what it
-// flows past. Its eddies draw no waves of their own: the slopes they raise
-// roughen the surface unseen (`water_stirred`). Every source is drawn
-// through the pixel's own footprint (`water_footprint`): the wind's tiles
-// through their levels' filtering, and each computed part while it spans
-// two pixels along the way it varies (`water_shown`), so waves running
-// across the view stay drawn far along it, while those running along it
-// average out where the footprint spans them. What a pixel averages of
-// their slopes roughens the surface instead (LEAN mapping), along the ways
-// they vary, never faded; a source with no share, or whose waves the
-// footprint hides whole, reads nothing, its slopes' variance known from
-// what raised them.
+// Terrains' water's waves (`shade_water`), from its state alone: the waves
+// its bed holds still, and the boils its eddies bring up, carried by the
+// current (`water_stream.wgsl`); and waves standing about what it flows
+// past. Its eddies draw no waves of their own: the slopes they raise
+// roughen the surface unseen (`water_stirred`). Where none rise, the water
+// lies a calm mirror. Every source is drawn through the pixel's own
+// footprint (`water_footprint`), each computed part while it spans two
+// pixels along the way it varies (`water_shown`), so waves running across
+// the view stay drawn far along it, while those running along it average
+// out where the footprint spans them. What a pixel averages of their slopes
+// roughens the surface instead (LEAN mapping), along the ways they vary,
+// never faded; a source with no share, or whose waves the footprint hides
+// whole, reads nothing, its slopes' variance known from what raised them.
 
 // Patterns the flow carries (Vlachos's flow maps), each drawn in two sets
-// half a life apart, each set carried from half a life before its middle to
-// half a life after, where it starts over unseen and anew in its tiles, so
+// half a life apart (`water_set`), each set carried from half a life before
+// its middle to half a life after, where it starts over unseen and anew, so
 // it shows clearest where the flow has not yet stretched it (Neyret's
-// latency). A life lasts as long as the place's eddies take to turn its
-// waves over, no longer than the flow's shear takes to strain a pattern by
-// WATER_STRAIN, in whole octaves of WATER_SHORTEST_LIFE: each place takes
-// the two octaves nearest its own, crossfading over the middle share
-// WATER_BAND_BLEND of each, so lives change smoothly across the water.
-// Strain fades what the flow has drawn out as it runs (Chentanez and
-// Müller: e^(−Ω τ |∇u|), Ω being WATER_STRAIN_FADE).
+// latency), a life lasting no longer than the flow's shear takes to strain
+// a pattern by WATER_STRAIN. Lives come in whole octaves of
+// WATER_SHORTEST_LIFE: each place takes the two octaves nearest its own,
+// crossfading over the middle share WATER_BAND_BLEND of each, so lives
+// change smoothly across the water (`water_bands`).
 const WATER_STRAIN: f32 = 0.8;
 const WATER_BAND_BLEND: vec2<f32> = vec2<f32>(0.25, 0.75);
-const WATER_STRAIN_FADE: f32 = 1.0;
 // The shortest life (seconds) a carried pattern lives: fifteen frames at
 // 60 Hz, over fewer of which its sets' coming and going reads as flicker.
 const WATER_SHORTEST_LIFE: f32 = 0.25;
-// The least shear (a second) a place strains its patterns by: half a step
-// of the shear the words pack, the least they tell apart from none.
-const WATER_LEAST_SHEAR: f32 = WATER_SHEAR_RANGE / 510.0;
 // The meters across the patches of water whose patterns start over
 // together.
 const WATER_FLOW_PHASE: f32 = 40.0;
@@ -104,19 +94,6 @@ struct WaterStanding {
     drawn: WaterRead,
     spread: f32,
     heights: f32,
-}
-
-// How long the waves running water carries live (seconds) where it runs
-// `depth` meters deep, its eddies turning at `eddy` meters a second, and
-// shears `shear` a second: as long as its eddies, as large as it is deep
-// (at least WATER_BREAK_THINNEST, as `water_eddies` takes them), take to
-// turn over, their size over their speed, turning over the waves riding
-// them; no longer than the shear takes to strain those waves by
-// WATER_STRAIN; and at least WATER_SHORTEST_LIFE.
-fn water_wave_life(depth: f32, eddy: f32, shear: f32) -> f32 {
-    let turning = max(depth, WATER_BREAK_THINNEST) / max(eddy, 1.0e-6);
-    let straining = WATER_STRAIN / max(shear, WATER_LEAST_SHEAR);
-    return max(min(turning, straining), WATER_SHORTEST_LIFE);
 }
 
 // The lives a carried pattern living `life` seconds takes: the octave of
@@ -205,55 +182,6 @@ fn water_stirred(eddy: f32, depth: f32) -> vec2<f32> {
     let steepening = WATER_EDDY_SLOPES / (deep * deep);
     let slopes = min(lifted * lifted * steepening, 0.5 * WATER_STEEPEST * WATER_STEEPEST);
     return vec2<f32>(slopes, slopes / steepening);
-}
-
-// The wind's waves running water carries at `p` (meters along x and z) for
-// a pixel whose footprint is `footprint` (`water_footprint`), where it
-// flows along `flow` (meters a second) shearing `shear` a second, its waves
-// living `life` seconds (`water_wave_life`), at `time`, the place's clock
-// running `stagger` cycles ahead, each of the wind's tiles as strong as
-// `gains` says (`water_wind_waves`): they ride the current (Gonzalez-Ochoa,
-// Uncharted 4's rapids), read where the flow carried them from in both sets
-// of both octaves of its lives (`water_bands`, `water_set`), faded as the
-// flow strains them and blended keeping their spread, Σwᵢxᵢ/√Σwᵢ² of waves
-// whose mean is none (Yu, Neyret, Bruneton and Holzschuch). What strain
-// fades of their slopes hides in the covariance along them, roughening the
-// water instead.
-fn water_carried_waves(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>,
-        shear: f32, life: f32, time: f32, stagger: f32, gains: vec4<f32>) -> WaterRead {
-    let bands = water_bands(life);
-    var sum: WaterRead;
-    var weights = 0.0;
-    for (var band = 0u; band < 2u; band++) {
-        let shown = select(1.0 - bands.toward, bands.toward, band == 1u);
-        if shown <= 0.0 {
-            continue;
-        }
-        let cycle = bands.first * f32(1u + band);
-        let salt = ((bands.index + band) * 0x632be5abu) ^ 0x3c6ef372u;
-        for (var which = 0u; which < 2u; which++) {
-            let carried = water_set(time, stagger, cycle, which, salt);
-            let weight = shown * carried.weight;
-            if weight <= 0.0 {
-                continue;
-            }
-            let at = p - flow * carried.seconds + carried.offset;
-            let read = water_wind_waves(at, footprint, gains);
-            let faded = weight * exp(-WATER_STRAIN_FADE * abs(carried.seconds) * shear);
-            sum.slopes += read.slopes * faded;
-            sum.hidden += read.hidden * (weight * weight)
-                + (weight * weight - faded * faded) * water_spread(read.slopes);
-            sum.height += read.height * faded;
-            sum.heights += read.heights * faded * faded;
-            weights += weight * weight;
-        }
-    }
-    let kept = max(weights, 1.0e-6);
-    sum.slopes *= inverseSqrt(kept);
-    sum.hidden /= kept;
-    sum.height *= inverseSqrt(kept);
-    sum.heights /= kept;
-    return sum;
 }
 
 // Standing waves `sum` with a part added whose slopes are `gradient`
@@ -371,60 +299,39 @@ fn water_standing(obstacle: vec4<f32>, flow: vec2<f32>, depth: f32, froude: f32,
 // number `froude`, its eddies turning at `eddy` meters a second
 // (`water_eddies`), `flowing` of the way from still to running (0 to 1),
 // the share `anchored` of its nearest obstacle's waves a pixel's
-// samples agree on, at `time`, the place's clock running `stagger` cycles
-// ahead, each of the wind's tiles as strong as `gains` says
-// (`water_wind_gains`), as `WaterWaves` holds them. The boils
-// its eddies bring up (`water_boils`) calm the wind's waves first, wherever
-// those are read. Still water's are the wind's as they evolve where they
-// stand. Running water's ride its current: the wind's
-// (`water_carried_waves`) and the boils, as much as the blend shows running
-// water; and its eddies roughen it unseen (`water_stirred`). Between, the
-// two blend keeping their spread, so nothing changes at once where a river
-// meets a lake. Waves its bed holds stand still where it runs faster than
-// the slowest of its own waves, by that threshold alone however the blend
-// stands (`water_standing_waves`); and waves stand about what it flows past
-// (`water_standing`).
-fn water_flow_waves(p: vec2<f32>, footprint: WaterFootprint, at: WaterAt,
-        gains: vec4<f32>, eddy: f32, froude: f32, flowing: f32, anchored: f32, time: f32,
-        stagger: f32) -> WaterWaves {
+// samples agree on, at `time`, as `WaterWaves` holds them. Running water's
+// boils ride its current (`water_boils`) and its eddies roughen it unseen
+// (`water_stirred`), both as far as the blend from still to running shows
+// running water, keeping their spread, so nothing changes at once where a
+// river meets a lake. Waves its bed holds stand still where it runs faster
+// than the slowest of its own waves, by that threshold alone however the
+// blend stands (`water_standing_waves`); and waves stand about what it flows
+// past (`water_standing`). Where none rise, it reads none: a calm mirror.
+fn water_flow_waves(p: vec2<f32>, footprint: WaterFootprint, at: WaterAt, eddy: f32,
+        froude: f32, flowing: f32, anchored: f32, time: f32) -> WaterWaves {
     let flow = at.words.flow;
     let depth = at.depth;
-    let shear = at.words.state.z;
-    // The boils first: within them the surface spreads, calming the wind's
-    // waves on it, whether they stand or ride the current, as far as the
-    // blend shows running water, where they rise.
-    let boils = water_boils(p, footprint, flow, depth, eddy, time);
-    let calmed = gains * (1.0 - flowing * (1.0 - boils.calm));
-    var still: WaterRead;
-    if flowing < 1.0 {
-        still = water_wind_waves(p, footprint, calmed);
-    }
-    var running: WaterRead;
-    if flowing > 0.0 {
-        running = water_waves_added(water_carried_waves(p, footprint, flow, shear,
-            water_wave_life(depth, eddy, shear), time, stagger, calmed), boils.drawn);
-    }
-    var read = water_waves_mixed(still, running, flowing);
-    // The wind's slopes' variance is its calmed gains' squares however the
-    // water moves; the boils' and the eddies' show as far as the blend shows
-    // running water, the eddies' all hidden, WATER_EDDY_ALONG of theirs
-    // along the flow and the rest across it.
+    // The share of running water the blend shows, as `water_waves_mixed`
+    // weighs fields keeping their spread: the boils' slopes and height show
+    // by its root, and their variances and the eddies' by it, the eddies'
+    // all hidden, WATER_EDDY_ALONG of theirs along the flow and the rest
+    // across it.
     let running_share = flowing * flowing
         / ((1.0 - flowing) * (1.0 - flowing) + flowing * flowing);
+    let boils = water_boils(p, footprint, flow, depth, eddy, time);
+    var read = boils.drawn;
+    read.slopes *= sqrt(running_share);
+    read.height *= sqrt(running_share);
+    read.hidden *= running_share;
+    read.heights *= running_share;
     let stirred = water_stirred(eddy, depth) * running_share;
     let speed = length(flow);
     let heading = select(vec2<f32>(1.0, 0.0), flow / speed, speed > 0.0);
     read.hidden += stirred.x * (WATER_EDDY_ALONG * water_spread(heading)
         + (1.0 - WATER_EDDY_ALONG) * water_spread(vec2<f32>(-heading.y, heading.x)));
-    var spread = dot(calmed, calmed) + boils.spread * running_share + stirred.x;
-    // Their heights' alike: each wind tile's root mean square height at its
-    // calmed gain, and the boils' and the eddies' as far as running water
-    // shows.
+    // The whole variance of their slopes, and of their heights, alike.
+    var spread = boils.spread * running_share + stirred.x;
     var heights = boils.heights * running_share + stirred.y;
-    for (var tile = 0u; tile < WATER_WIND_TILES; tile++) {
-        let lifted = calmed[tile] * water_tile_height(tile);
-        heights += lifted * lifted;
-    }
     // The waves its bed holds still, whole: the slowest standing wave's speed
     // is their own threshold.
     let bed = water_standing_waves(p, footprint, flow, depth);

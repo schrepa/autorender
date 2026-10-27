@@ -20,12 +20,6 @@
 //! channel by channel over the light's path; other frames blend water over
 //! the ground.
 //!
-//! Water's waves (`crate::water_waves`) evolve before it draws, in frames
-//! whose water reads them: the same tiles of the wind's waves for terrains'
-//! water and the sea, each place sizing them by the sea its wind raises
-//! there, of which terrains' water shows the share its settings ask for
-//! (`Water::wind_waves`).
-//!
 //! Where terrains' rivers leave their beds, their jets draw last, as
 //! sheets (`crate::water_falls`) over the water they land in, writing their
 //! depth where they cover the scene.
@@ -54,7 +48,6 @@ use engine_core::{
 };
 
 use crate::bindings::{WATER, WATER_BEHIND};
-use crate::gpu_layouts::constants::WIND_TILES;
 use crate::gpu_layouts::terrain::{SubdivisionUniform, TerrainUniform, ViewUniform};
 use crate::profiling::Span;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -65,7 +58,6 @@ use crate::terrain::{SurfaceDraw, TerrainWaterDraws};
 use crate::water_fall_map::FallMap;
 use crate::water_falls::{fall_layout, sheets};
 use crate::water_sim::WaterSim;
-use crate::water_waves::WaterWaves;
 
 /// Cells around the sea's grid, the sectors it splits into for culling,
 /// and the rings a cell apart at its middle: about the cells around over
@@ -133,15 +125,12 @@ struct BehindCopies {
 
 /// What water draws this frame: tiles' water blocks resident and dropped,
 /// the leaves the water's subdivisions drew and the splits their room
-/// refused as last read back, and the sea's sectors and their triangles;
-/// and whether the wind's tiles' moments and their whitecaps evolve, as
-/// what draws reads them (`WaterWaves::encode`).
+/// refused as last read back, and the sea's sectors and their triangles.
 pub(crate) struct WaterFrame {
     blocks: [u32; 2],
     subdivided: [u32; 2],
     sectors: u32,
     triangles: u32,
-    waves: [bool; 2],
 }
 
 pub(crate) struct WaterPass {
@@ -149,9 +138,7 @@ pub(crate) struct WaterPass {
     behind_layout: crate::pipelines::GroupLayout,
     behind: ScreenTarget<BehindCopies>,
     placeholders: Placeholders,
-    // Created with the first frame drawing water, the fall map once the
-    // scene's tables hold it.
-    waves: Option<WaterWaves>,
+    // Falling water's map, once the scene's tables hold it.
     fall_map: Option<FallMap>,
     // Water simulated around the camera, where water asks for it.
     sim: WaterSim,
@@ -185,7 +172,6 @@ impl WaterPass {
             behind_layout: crate::pipelines::layout(device, &WATER_BEHIND),
             behind: ScreenTarget::default(),
             placeholders: placeholders(device),
-            waves: None,
             fall_map: None,
             sim: WaterSim::new(device),
             uniform: crate::buffers::uniform(device, "engine/water", WATER_UNIFORM_BYTES as u64),
@@ -313,14 +299,13 @@ impl WaterPass {
     }
 
     /// Prepares this frame's water: tiles' water on the leaves of its
-    /// subdivisions as the terrain pass holds them (`tiles`) and
-    /// the falls of `terrains`, shaded as `settings` say with the waves'
-    /// spectra and the fall map the scene's `tables` hold, and
-    /// the sea `ocean`, culled through `cull` and drawn through `view`
-    /// (both eye-relative) over the opaque `depth` and, when `refracts`,
-    /// the color it copies; seen from `eye` in the wind `wind`, its waves
-    /// at the simulation time `seconds` the frame presents; `None` when
-    /// none of it draws.
+    /// subdivisions as the terrain pass holds them (`tiles`) and the falls
+    /// of `terrains`, shaded as `settings` say with the fall map the scene's
+    /// `tables` hold, and the sea `ocean`, culled through `cull` and drawn
+    /// through `view` (both eye-relative) over the opaque `depth` and, when
+    /// `refracts`, the color it copies; seen from `eye`, the wind `wind`
+    /// dragging the water simulated live, its waves at the simulation time
+    /// `seconds` the frame presents; `None` when none of it draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -341,10 +326,6 @@ impl WaterPass {
             self.ocean = None;
             return None;
         }
-        // Terrains' water and the sea ripple with the same waves.
-        let waves = self.waves.get_or_insert_with(|| WaterWaves::new(device));
-        waves.prepare(device, queue, tables.waves.as_ref(), seconds);
-        let (wave_tiles, wave_turns) = waves.tiles();
         if let (None, Some(map)) = (&self.fall_map, &tables.fall_map) {
             self.fall_map = Some(FallMap::new(device, queue, &map.table));
         }
@@ -389,10 +370,7 @@ impl WaterPass {
             let sediment = settings.sediment_color;
             let uniform = WaterUniform {
                 color: [red, green, blue, settings.clarity],
-                wind: blowing(wind.velocity, wind.gusts, settings.wind_waves),
                 absorption: absorption(settings.color, settings.clarity),
-                waves: wave_tiles,
-                turns: wave_turns,
                 ocean: sea,
                 sim: simulated.map_or([0.0; 4], |(square, _)| square),
                 sim_datum: simulated.map_or([0.0; 4], |(_, datum)| datum),
@@ -404,14 +382,7 @@ impl WaterPass {
             };
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         }
-        let sea = self.prepare_ocean(
-            device,
-            queue,
-            (cull, view),
-            ocean,
-            (eye, wind, seconds),
-            (wave_tiles, wave_turns),
-        );
+        let sea = self.prepare_ocean(device, queue, (cull, view), ocean, (eye, seconds));
         if self.tiles.is_none() && !sea && !falling {
             return None;
         }
@@ -432,16 +403,11 @@ impl WaterPass {
             self.behind.set(size, copies);
         }
         let (sectors, triangles) = self.ocean_drawn();
-        // The wind's tiles' moments evolve while the terrains' water drawn
-        // shows any of the wind's waves or the sea draws; their whitecaps,
-        // which the sea reads none of, while that water shows them.
-        let rippled = settings.wind_waves > 0.0 && (self.tiles.is_some() || simulated.is_some());
         Some(WaterFrame {
             blocks,
             subdivided,
             sectors,
             triangles,
-            waves: [rippled || sea, rippled],
         })
     }
 
@@ -456,13 +422,13 @@ impl WaterPass {
         sim_generation: u64,
     ) {
         let generations = (tiles.generation, sim_generation);
-        if let (Some(waves), Some(map)) = (&self.waves, &self.fall_map)
+        if let Some(map) = &self.fall_map
             && self
                 .group
                 .as_ref()
                 .is_none_or(|(bound, _)| *bound != generations)
         {
-            let group = self.tile_group(device, tiles, (waves, map));
+            let group = self.tile_group(device, tiles, map);
             self.group = Some((generations, group));
         }
         self.tiles = Some(TileDraws {
@@ -519,15 +485,14 @@ impl WaterPass {
     /// The group of the water layout tiles' water binds: the terrain pass's
     /// height array, views' and terrains' uniforms, directory (with water's
     /// in it), leaves of its subdivisions and their trees' uniforms, and the
-    /// water blocks (`tiles`); water's uniform, `waves` and falling water's
-    /// `map`; and the simulated water.
+    /// water blocks (`tiles`); water's uniform and falling water's `map`; and
+    /// the simulated water.
     fn tile_group(
         &self,
         device: &wgpu::Device,
         tiles: &TerrainWaterDraws<'_>,
-        (waves, map): (&WaterWaves, &FallMap),
+        map: &FallMap,
     ) -> wgpu::BindGroup {
-        let (moments, sampler) = waves.sampled();
         let (sim_cells, sim_ground, sim_beds) = self.sim.drawn().0.map_or(
             (
                 &self.placeholders.sim,
@@ -553,9 +518,7 @@ impl WaterPass {
                 ("water_surface", crate::pipelines::view(tiles.surfaces)),
                 ("water_info", crate::pipelines::view(tiles.info)),
                 ("water", self.uniform.as_entire_binding()),
-                ("water_waves", crate::pipelines::view(moments)),
-                ("water_wave_sampler", crate::pipelines::sampler(sampler)),
-                ("water_whitecaps", crate::pipelines::view(waves.whitecaps())),
+                ("water_fall_sampler", crate::pipelines::sampler(map.sampler())),
                 ("water_fall_map", crate::pipelines::view(map.view())),
                 crate::buffers::entry("water_sim_cells", sim_cells),
                 crate::buffers::entry("water_sim_ground", sim_ground),
@@ -569,26 +532,23 @@ impl WaterPass {
     }
 
     /// Prepares the sea culled through `cull` and drawn through `view`
-    /// (both eye-relative) from `eye`, rippled by the waves' tiles as
-    /// `wave_tiles` and `wave_turns` describe them in its own wind, gusting
-    /// as `wind` does, its own waves at simulation time `seconds`; returns
-    /// whether any of it draws.
+    /// (both eye-relative) from `eye`, its waves at simulation time
+    /// `seconds`; returns whether any of it draws.
     fn prepare_ocean(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (cull, view): (Mat4, Mat4),
         ocean: Ocean,
-        (eye, wind, seconds): (Vec3, Wind, f64),
-        (wave_tiles, wave_turns): ([[f32; 4]; WIND_TILES], [[f32; 4]; WIND_TILES]),
+        (eye, seconds): (Vec3, f64),
     ) -> bool {
-        let (true, Some(waves), Some(map)) = (ocean.enabled, &self.waves, &self.fall_map) else {
+        let (true, Some(map)) = (ocean.enabled, &self.fall_map) else {
             self.ocean = None;
             return false;
         };
-        let draw = self.ocean.get_or_insert_with(|| {
-            ocean_draw(device, &self.layout, &self.placeholders, (waves, map))
-        });
+        let draw = self
+            .ocean
+            .get_or_insert_with(|| ocean_draw(device, &self.layout, &self.placeholders, map));
         let waves = ocean.spectrum();
         let amplitude = waves.amplitude();
         // Cells widen as the eye rises over the sea.
@@ -658,14 +618,10 @@ impl WaterPass {
             relative_view_projection: view.to_cols_array_2d(),
             origin: [heading[0], heading[1], speed, 0.0],
             color: [red, green, blue, ocean.clarity],
-            // Its own wind, all of whose waves it shows.
-            wind: blowing(ocean.wind, wind.gusts, 1.0),
             // Its crests' whitecaps, the wave its shores' foam reads, and how
             // high its waves rise together.
             foam: [crests, swell, 0.0, amplitude],
             absorption: absorption(ocean.color, ocean.clarity),
-            waves: wave_tiles,
-            turns: wave_turns,
             ocean: [
                 ocean.level - eye.y,
                 cell,
@@ -883,7 +839,7 @@ impl WaterPass {
             draws += 1;
         }
         // Falls last, over the water they land in: of its group they read
-        // only water's uniform and waves.
+        // only water's uniform and falling water's map.
         if let (Some(falls), Some(pipeline)) = (&self.falls, self.fall_pipelines.get(&targets)) {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, camera, &[]);
@@ -919,16 +875,13 @@ impl RenderFeature for WaterPass {
 
     fn encode(
         &self,
-        frame: &WaterFrame,
+        _frame: &WaterFrame,
         node: &Node,
         encode: &Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        // The waves, as far as what draws reads them, the simulated water's
-        // steps and what lies behind the water, before it draws.
-        if let Some(waves) = &self.waves {
-            waves.encode(encoder, encode.profiler, frame.waves);
-        }
+        // The simulated water's steps and what lies behind the water, before
+        // it draws.
         self.sim.encode(encoder, encode.profiler);
         self.copy_behind(encoder, encode.depth, encode.scene);
         let mut pass = encode.render_pass(
@@ -940,9 +893,9 @@ impl RenderFeature for WaterPass {
         self.draw(&mut pass, encode.camera, encode.targets)
     }
 
-    /// Bytes of the copies, the falls' sheets, the simulated water, the
-    /// waves and falling water's map: tiles' water blocks and its
-    /// subdivisions count with the terrain's.
+    /// Bytes of the copies, the falls' sheets, the simulated water and
+    /// falling water's map: tiles' water blocks and its subdivisions count
+    /// with the terrain's.
     fn capacity_bytes(&self) -> u64 {
         let copies = self.behind.size().map_or(0, |size| {
             let texels = u64::from(size.width) * u64::from(size.height);
@@ -959,7 +912,6 @@ impl RenderFeature for WaterPass {
         copies
             + falls
             + self.sim.capacity_bytes()
-            + self.waves.as_ref().map_or(0, WaterWaves::capacity_bytes)
             + self
                 .fall_map
                 .as_ref()
@@ -1052,13 +1004,6 @@ pub(crate) fn underwater(environment: &Environment, eye: Vec3, seconds: f64) -> 
     [color.x, color.y, color.z, ocean.clarity]
 }
 
-/// The water uniform's wind: its velocity `velocity` (meters a second along
-/// x and z), how strongly it gusts, `gusts`, and the share of its waves the
-/// water shows, `shown` (`Water::wind_waves`).
-fn blowing(velocity: [f32; 2], gusts: f32, shown: f32) -> [f32; 4] {
-    [velocity[0], velocity[1], gusts, shown]
-}
-
 /// Per meter, how fast water whose light halves over `clarity` meters and
 /// which scatters back `color` takes each channel (rgb): a channel as fast
 /// as the color's luminance exceeds the channel's share of it (at most
@@ -1138,16 +1083,14 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
     }
 }
 
-/// The sea's GPU state: its uniform, and its group binding `waves`,
-/// falling water's `map` and `placeholders` for what only tiles' water
-/// reads.
+/// The sea's GPU state: its uniform, and its group binding falling water's
+/// `map` and `placeholders` for what only tiles' water reads.
 fn ocean_draw(
     device: &wgpu::Device,
     layout: &crate::pipelines::GroupLayout,
     placeholders: &Placeholders,
-    (waves, map): (&WaterWaves, &FallMap),
+    map: &FallMap,
 ) -> OceanDraw {
-    let (moments, sampler) = waves.sampled();
     let array = |texture: &wgpu::Texture| {
         texture.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
@@ -1176,9 +1119,7 @@ fn ocean_draw(
             ("water_surface", crate::pipelines::view(&surfaces)),
             ("water_info", crate::pipelines::view(&info)),
             ("water", uniform.as_entire_binding()),
-            ("water_waves", crate::pipelines::view(moments)),
-            ("water_wave_sampler", crate::pipelines::sampler(sampler)),
-            ("water_whitecaps", crate::pipelines::view(waves.whitecaps())),
+            ("water_fall_sampler", crate::pipelines::sampler(map.sampler())),
             ("water_fall_map", crate::pipelines::view(map.view())),
             crate::buffers::entry("water_sim_cells", &placeholders.sim),
             crate::buffers::entry("water_sim_ground", &placeholders.sim),

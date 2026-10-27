@@ -179,10 +179,10 @@ impl Ocean {
     /// from the spread measured seas hold at its frequency over the peak's
     /// (Donelan, Hamilton and Hui 1985; Banner 1990:
     /// [`engine_tables::waves::spread_turn`]), narrowest at the peak and
-    /// wider above it, the spread the wind's tiles ripple it by, alternately
-    /// to either side. Their phases are seeded, and every wave's points
-    /// circle by the same share of its height, sized so the surface's crests
-    /// sharpen by [`Ocean::choppiness`] without folding over.
+    /// wider above it, alternately to either side. Their phases are seeded,
+    /// and every wave's points circle by the same share of its height, sized
+    /// so the surface's crests sharpen by [`Ocean::choppiness`] without
+    /// folding over.
     pub fn spectrum(&self) -> OceanWaves {
         let settings = self.sanitized();
         let [x, z] = settings.wind;

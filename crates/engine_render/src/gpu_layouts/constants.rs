@@ -274,18 +274,6 @@ gpu_consts! {
     /// rising faster stands as a wall, so steeper ones pack as this steep.
     pub(crate) const WATER_GRADIENT_RANGE: f32 = 4.0 => ["WATER_GRADIENT_RANGE"];
 
-    // crate::water_waves
-    /// Texels along a side of a tile of water's waves: wave numbers of its
-    /// spectrum, and points of its slopes.
-    pub(crate) const WAVE_TEXELS: u32 = engine_core::table_data::waves::TEXELS => ["WAVE_TEXELS" in WATER_WAVES_SHADER];
-    /// Tiles of water's waves, the wind's, each repeating at its own length
-    /// and evolving each frame.
-    pub(crate) const WIND_TILES: usize = engine_core::table_data::waves::WIND_TILES => ["WAVE_WIND_TILES" in WATER_WAVES_SHADER, "WATER_WIND_TILES"];
-    /// Invocations transforming a line of a tile: a butterfly each.
-    pub(crate) const WAVE_LINE_GROUP: u32 = 128 => ["@evolve_rows" in WATER_WAVES_SHADER, "@transform_columns" in WATER_WAVES_SHADER, "@evolve_fold_rows" in WATER_WAVES_SHADER, "@transform_fold_columns" in WATER_WAVES_SHADER];
-    /// Workgroup side of the moments' and the whitecaps' levels.
-    pub(crate) const WAVE_LEVEL_GROUP: u32 = 8 => ["@average_level" in WATER_WAVES_SHADER];
-
     // crate::water_sim
     /// Workgroup side of the simulation's passes over cells and faces: a
     /// block of cells, as its slots store them and water draws them.
@@ -425,7 +413,6 @@ gpu_consts! {
     pub(crate) const DEBUG_VIEW_WATER_SPAN: u32 = 19 => ["DEBUG_VIEW_WATER_SPAN" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_WATER_EDDIES: u32 = 20 => ["DEBUG_VIEW_WATER_EDDIES" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_WATER_ROUGHNESS: u32 = 21 => ["DEBUG_VIEW_WATER_ROUGHNESS" in DEBUG_VIEW_SHADER];
-    pub(crate) const DEBUG_VIEW_WATER_WIND: u32 = 22 => ["DEBUG_VIEW_WATER_WIND" in DEBUG_VIEW_SHADER];
     /// Gravity, and the meters of water under which it lies dry, by which
     /// debug views reckon water's Froude number (`meshes/debug.wgsl`): the
     /// shallow-water scheme's.
@@ -436,10 +423,6 @@ gpu_consts! {
     /// on a logarithmic scale, each about 4% wider than the one before
     /// (`meshes/debug.wgsl`'s `debug_span_code`).
     pub(crate) const DEBUG_SPAN_STEPS: f32 = 254.0 => ["DEBUG_SPAN_STEPS"];
-    /// The most the wind blows over water as a share of the free wind's, a
-    /// gust's most: gusts at their strongest (`Wind::gusts` 1) double it.
-    /// A water pixel's byte in the debug targets holds a share of it.
-    pub(crate) const DEBUG_WIND_MOST: f32 = 2.0 => ["DEBUG_WIND_MOST" in SHADER];
     /// What drew a pixel of the debug targets (`meshes/debug.wgsl`): its
     /// kind in the low four bits of its draw's record, its level of detail
     /// in the four above, then flags; the sun's lookup above
@@ -546,24 +529,8 @@ gpu_consts! {
 gpu_mirrors! {
     engine_core::table_data::sky::MULTIPLE_SIDE => ["SKY_MULTIPLE_SIZE"];
     engine_core::table_data::falls::BUBBLES => ["FALL_MAP_BUBBLES"];
-    engine_core::terrain_data::hydraulics::GRAVITY => ["SIM_GRAVITY" in WATER_SIM_SHADER, "WATER_GRAVITY", "WAVE_GRAVITY" in WATER_WAVES_SHADER];
-    engine_core::wind_waves::RAISED_AGE => ["WATER_RAISED_AGE"];
-    engine_core::wind_waves::AGE_FETCH => ["WATER_AGE_FETCH"];
-    engine_core::wind_waves::AGE_FETCH_POWER => ["WATER_AGE_FETCH_POWER"];
-    engine_core::wind_waves::AGE_POWER => ["WATER_AGE_POWER"];
-    engine_core::wind_waves::LONG_STRENGTH => ["WATER_LONG_STRENGTH"];
-    engine_core::wind_waves::PEAK_ENHANCEMENT => ["WATER_PEAK_ENHANCEMENT"];
-    engine_core::wind_waves::PEAK_ENHANCEMENT_GROWTH => ["WATER_PEAK_ENHANCEMENT_GROWTH"];
-    engine_core::wind_waves::PEAK_WIDTH => ["WATER_PEAK_WIDTH"];
-    engine_core::wind_waves::PEAK_WIDTH_GROWTH => ["WATER_PEAK_WIDTH_GROWTH"];
-    engine_core::wind_waves::RIPPLE_NUMBER => ["WATER_RIPPLE_NUMBER", "WAVE_CAPILLARY" in WATER_WAVES_SHADER];
-    engine_core::wind_waves::RIPPLE_SPEED => ["WATER_RIPPLE_SPEED"];
-    engine_core::wind_waves::SHORT_STRENGTH => ["WATER_SHORT_STRENGTH"];
-    engine_core::wind_waves::SHORT_GROWTH => ["WATER_SHORT_GROWTH"];
-    engine_core::wind_waves::DRAG => ["WATER_DRAG"];
-    engine_core::wind_waves::DRAG_GROWTH => ["WATER_DRAG_GROWTH"];
-    engine_core::wind_waves::WIND_GROWTH => ["WATER_WIND_GROWTH"];
-    engine_core::wind_waves::VISCOSITY => ["WATER_VISCOSITY"];
+    engine_core::terrain_data::hydraulics::GRAVITY => ["SIM_GRAVITY" in WATER_SIM_SHADER, "WATER_GRAVITY"];
+    engine_core::wind_waves::RIPPLE_NUMBER => ["WATER_RIPPLE_NUMBER"];
     engine_core::terrain_data::shallow_water::THETA => ["SIM_THETA" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::THIN => ["SIM_THIN" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::DRY => ["SIM_DRY" in WATER_SIM_SHADER];

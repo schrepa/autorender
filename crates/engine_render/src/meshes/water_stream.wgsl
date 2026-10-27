@@ -1,4 +1,4 @@
-// Running water's own waves, which `water_flow.wgsl` adds to the wind's:
+// Running water's own waves, which `water_flow.wgsl` sums with the rest:
 // short waves its bed holds standing (`water_standing_waves`), and boils,
 // the upwellings its bed's turbulence brings up, riding its current
 // (`water_boils`). Both are sparse convolution noise (Lagae, Lefebvre,
@@ -21,12 +21,12 @@
 // first to the second (`shade_water`'s `flowing`): boils rise only in
 // running water.
 const WATER_FLOWING: vec2<f32> = vec2<f32>(0.05, 0.3);
-// Water's surface tension over its density, σ/ρ (cubic meters a second
-// squared): gravity over the square of the wave number at which surface
-// tension speeds its waves as much as gravity does (WATER_RIPPLE_NUMBER,
-// `engine_core::wind_waves::RIPPLE_NUMBER`, the waves' tiles' own). Its
-// waves run slowest there, 1.7 cm long, at
-// c_min = (4 g σ/ρ)^(1/4) = √(2 g / WATER_RIPPLE_NUMBER), 0.23 m/s.
+// The wave number (radians a meter) at which surface tension speeds water's
+// waves as much as gravity does (`engine_core::wind_waves::RIPPLE_NUMBER`),
+// and water's surface tension over its density, σ/ρ (cubic meters a second
+// squared), gravity over its square. Its waves run slowest there, 1.7 cm
+// long, at c_min = (4 g σ/ρ)^(1/4) = √(2 g / WATER_RIPPLE_NUMBER), 0.23 m/s.
+const WATER_RIPPLE_NUMBER: f32 = 370.0;
 const WATER_TENSION: f32 = WATER_GRAVITY / (WATER_RIPPLE_NUMBER * WATER_RIPPLE_NUMBER);
 // The k h past which tanh(k h) rounds to 1 in single precision, where waves
 // feel no bottom: clamped there, no device's exponentials overflow.
@@ -69,12 +69,9 @@ const WATER_BED_POINTS: u32 = 4u;
 // Boils, the upwellings the bed's turbulent bursts bring to the surface
 // (Nimmo Smith, Thorpe and Graham 1999): round, WATER_BOIL_ACROSS depths
 // across (0.9 ± 0.2), covering WATER_BOIL_COVER of the surface at any time
-// (20 to 30%), and smooth: inside one the surface spreads, smoothing away
-// the short wind ripples riding it, WATER_BOIL_CALM of their slopes at its
-// middle as it stands tallest.
+// (20 to 30%).
 const WATER_BOIL_ACROSS: f32 = 0.9;
 const WATER_BOIL_COVER: f32 = 0.25;
-const WATER_BOIL_CALM: f32 = 0.8;
 // The depths of travel a boil lives, its period scaling with depth over
 // speed as the bed's bursts raising it do (Jackson 1976). Its slot recurs
 // every life but holds a boil in only WATER_BOIL_HELD of them, so boils pass
@@ -85,10 +82,8 @@ const WATER_BOIL_LIFE: f32 = 5.0;
 // A boil's means over its life, its radius growing from half to whole over
 // the first half and its height rising and falling as sin(π age / life):
 // its area's, as a share of its whole one (19/24); and over the area it
-// covers, its height's and its height's square's, as shares of its tallest.
+// covers, its height's square's, as a share of its tallest's.
 const WATER_BOIL_AREA: f32 = 19.0 / 24.0;
-const WATER_BOIL_RISE: f32 = (5.0 / (4.0 * PI) + 2.0 / (PI * PI) - 2.0 / (PI * PI * PI))
-    / WATER_BOIL_AREA;
 const WATER_BOIL_RISE_SQUARED: f32 = (19.0 / 48.0 + 3.0 / (8.0 * PI * PI)) / WATER_BOIL_AREA;
 // The share of its lives a slot holds a boil: as many as cover
 // WATER_BOIL_COVER of the surface, each slot's cell as wide as its boil.
@@ -102,14 +97,12 @@ const WATER_BOIL_COLUMNS: u32 = 14u;
 
 // What a source of running water's waves draws at a pixel, and all it holds.
 struct WaterStream {
-    // What the pixel shows (water_spectrum.wgsl's WaterRead).
+    // What the pixel shows (water_footprint.wgsl's WaterRead).
     drawn: WaterRead,
     // The source's whole slope variance, resolved and hidden.
     spread: f32,
     // The source's whole heights' variance (square meters).
     heights: f32,
-    // What the wind's waves' slopes scale by here: 1 leaves them be.
-    calm: f32,
 }
 
 // The wave number (radians a meter) of the waves running at `speed` meters
@@ -235,7 +228,6 @@ fn water_bed_kernels(p: vec2<f32>, size: f32, salt: u32, flow: vec2<f32>, top: f
 fn water_standing_waves(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>,
         depth: f32) -> WaterStream {
     var stream: WaterStream;
-    stream.calm = 1.0;
     let speed = length(flow);
     // The slowest speed waves stand at, c_min, and the fastest: that of the
     // longest waves dispersion holds apart.
@@ -334,12 +326,10 @@ fn water_standing_waves(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>
 
 // What the boils of one rung and one octave of lives draw at a point
 // (`water_boils_read`): their slopes (meters a meter) and height (meters),
-// summed, and what they leave of the wind's waves' slopes, each one's calm
-// multiplied (1 where none is).
+// summed.
 struct WaterBoiled {
     slopes: vec2<f32>,
     height: f32,
-    calm: f32,
 }
 
 // The boils over `p` (meters along x and z) of the rung whose cells are
@@ -354,16 +344,14 @@ struct WaterBoiled {
 // it by its own current, so it follows bends, and the current's shear draws
 // it out as real boils are drawn out); it grows from half its radius to all
 // of it over the first half of its life and rises and falls as
-// sin(π age / life), a dome A (1 − (r/R)²)², where the surface spreads: the
-// wind's ripples' slopes scale by 1 − WATER_BOIL_CALM × the dome's share at
-// the point, (1 − (r/R)²)², × its rise, sin(π age / life). The cells
-// searched are those whose boils can stand over the point, within a boil's
-// radius of the way back along the current over a life, from p − u life to
-// p: column by column along the current's longer axis, at most
-// WATER_BOIL_COLUMNS of them, two to four cells across each.
+// sin(π age / life), a dome A (1 − (r/R)²)². The cells searched are those
+// whose boils can stand over the point, within a boil's radius of the way
+// back along the current over a life, from p − u life to p: column by column
+// along the current's longer axis, at most WATER_BOIL_COLUMNS of them, two
+// to four cells across each.
 fn water_boils_read(p: vec2<f32>, flow: vec2<f32>, size: f32, life: f32, height: f32,
         time: f32, salt: u32) -> WaterBoiled {
-    var boiled = WaterBoiled(vec2<f32>(0.0), 0.0, 1.0);
+    var boiled = WaterBoiled(vec2<f32>(0.0), 0.0);
     // In cells: the point, and how far a life carries a boil.
     let here = p / size;
     let travel = flow * (life / size);
@@ -409,7 +397,6 @@ fn water_boils_read(p: vec2<f32>, flow: vec2<f32>, size: f32, life: f32, height:
             let dome = inside * inside;
             boiled.height += height * rising * dome;
             boiled.slopes -= apart * (4.0 * height * rising * inside / (radius * radius * size));
-            boiled.calm *= 1.0 - WATER_BOIL_CALM * dome * rising;
         }
     }
     return boiled;
@@ -435,28 +422,23 @@ fn water_boils_read(p: vec2<f32>, flow: vec2<f32>, size: f32, life: f32, height:
 // footprint resolves, or live no longer than WATER_SHORTEST_LIFE, over
 // which their coming and going reads as flicker, reads none, handing over
 // across an octave: what it leaves hides its slopes' variance, alike every
-// way about its round boils, and its calm averages over its cover,
-// 1 − cover × WATER_BOIL_CALM × the dome's mean share (a third) × its
-// rise's mean over the area it covers (WATER_BOIL_RISE). Their variances
+// way about its round boils. Their variances
 // over space and their lives are in closed form: their slopes', (2/3) cover
 // A² / (R² WATER_BOIL_AREA), and their heights' about the surface they rise
 // from, cover A² WATER_BOIL_RISE_SQUARED / 5.
 fn water_boils(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>, depth: f32,
         eddy: f32, time: f32) -> WaterStream {
     var stream: WaterStream;
-    stream.calm = 1.0;
     let speed = length(flow);
     if speed <= WATER_FLOWING.x || eddy <= 0.0 {
         return stream;
     }
     let height = eddy * eddy / (2.0 * WATER_GRAVITY);
-    let calmed = 1.0 - WATER_BOIL_COVER * WATER_BOIL_CALM * WATER_BOIL_RISE / 3.0;
     // The two rungs nearest the boils' width.
     let octave = log2(WATER_BOIL_ACROSS * max(depth, WATER_THINNEST));
     let below = floor(octave);
     let toward = smoothstep(WATER_BAND_BLEND.x, WATER_BAND_BLEND.y, octave - below);
     var reads: array<WaterRead, 2>;
-    var calms = vec2<f32>(1.0);
     var spreads = vec2<f32>(0.0);
     var heights = vec2<f32>(0.0);
     for (var rung = 0u; rung < 2u; rung++) {
@@ -468,7 +450,6 @@ fn water_boils(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>, depth: 
         spreads[rung] = 8.0 * WATER_BOIL_COVER * height * height
             / (3.0 * WATER_BOIL_AREA * size * size);
         heights[rung] = 0.2 * WATER_BOIL_COVER * WATER_BOIL_RISE_SQUARED * height * height;
-        calms[rung] = calmed;
         // How long its slots live, and how much of its boils, a cell
         // across, the pixel draws.
         let life = WATER_BOIL_LIFE * size / (WATER_BOIL_ACROSS * speed);
@@ -482,7 +463,7 @@ fn water_boils(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>, depth: 
             let parts = vec2<f32>(1.0 - bands.toward, bands.toward);
             let shares = parts * inverseSqrt(dot(parts, parts));
             let salt = (bitcast<u32>(i32(ladder)) * 0x85ebca6bu) ^ 0xb5297a4du;
-            var drawn = WaterBoiled(vec2<f32>(0.0), 0.0, 0.0);
+            var drawn = WaterBoiled(vec2<f32>(0.0), 0.0);
             for (var band = 0u; band < 2u; band++) {
                 if parts[band] <= 0.0 {
                     continue;
@@ -491,11 +472,9 @@ fn water_boils(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>, depth: 
                     height, time, salt ^ ((bands.index + band) * 0x632be5abu));
                 drawn.slopes += boiled.slopes * shares[band];
                 drawn.height += boiled.height * shares[band];
-                drawn.calm += boiled.calm * parts[band];
             }
             read.slopes = drawn.slopes * shown;
             read.height = drawn.height * shown;
-            calms[rung] = mix(calmed, drawn.calm, shown);
         }
         reads[rung] = read;
     }
@@ -504,6 +483,5 @@ fn water_boils(p: vec2<f32>, footprint: WaterFootprint, flow: vec2<f32>, depth: 
     let kept = parts * parts / dot(parts, parts);
     stream.spread = dot(kept, spreads);
     stream.heights = dot(kept, heights);
-    stream.calm = mix(calms.x, calms.y, toward);
     return stream;
 }

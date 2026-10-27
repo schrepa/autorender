@@ -3,25 +3,20 @@
 use bytemuck::{Pod, Zeroable};
 use engine_core::{MAX_OCEAN_WAVES, SIM_TOUCHES};
 
-use super::constants::{SIM_SLOTS, WIND_TILES};
+use super::constants::SIM_SLOTS;
 
 gpu_structs! {
     /// WGSL `WaterUniform` of `meshes/water.wgsl`; the sea's parts are zero
     /// for terrains' water, whose projection is the terrain view's, and the
     /// sea carries no sediment and stands on no subdivision, its `lift`
-    /// zero. `wind`'s last part is the share of the wind's waves terrains'
-    /// water shows (`engine_core::Water::wind_waves`); the sea's `wind` is
-    /// its own, gusting as the scene's does, all of its waves shown.
+    /// zero.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct WaterUniform as ["WaterUniform"] {
         pub relative_view_projection: [[f32; 4]; 4],
         pub origin: [f32; 4],
         pub color: [f32; 4],
-        pub wind: [f32; 4],
         pub foam: [f32; 4],
         pub absorption: [f32; 4],
-        pub waves: [[f32; 4]; WIND_TILES],
-        pub turns: [[f32; 4]; WIND_TILES],
         pub ocean: [f32; 4],
         pub ocean_grid: [f32; 4],
         pub ocean_waves: [[f32; 4]; MAX_OCEAN_WAVES],
@@ -86,13 +81,6 @@ gpu_structs! {
         pub count: [u32; 4],
         pub blocks: [u32; 4],
         pub touch: [SimTouch; SIM_TOUCHES],
-    }
-
-    /// WGSL `WaveFrame` of `water_waves.wgsl`.
-    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct WaveFrame as ["WaveFrame" in WATER_WAVES_SHADER] {
-        pub tiles: [[f32; 4]; WIND_TILES],
-        pub clock: [f32; 4],
     }
 
     /// WGSL `FallInput` of `meshes/water_falls.wgsl`: a vertex of a waterfall's
