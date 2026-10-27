@@ -5898,8 +5898,8 @@
           "maximum": 2.0,
           "minimum": 0.0
         },
-        "displacement": {
-          "description": "Meters its maps' heights move the ground itself where that depth\nspans a few pixels: 0, none, to 2.",
+        "depth": {
+          "description": "Meters its maps' heights span on the ground, its mesh moved by their\ncoarser part and its pixels' relief showing the rest: 0, flat, to 2.",
           "type": "number",
           "format": "float",
           "maximum": 2.0,
@@ -5924,13 +5924,6 @@
         "projection": {
           "$ref": "#/$defs/SurfaceProjection",
           "default": "top"
-        },
-        "relief": {
-          "description": "Meters its maps' heights span where the ground's relief shows:\n0, flat, to 1.",
-          "type": "number",
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0
         },
         "roughness": {
           "type": "number",
@@ -6123,7 +6116,7 @@
           "minimum": 1.0
         },
         "relief_steps": {
-          "description": "The most steps a ray takes through the ground's relief. Relief\nshows by its size on screen, its view rays marching through its\nmaterials' heights: whole while its depth moves the ground two\npixels or more, fading out by half a pixel, with about a step per\npixel it moves.",
+          "description": "The most steps a ray takes through the ground's relief, the part\nof its materials' heights finer than its mesh carries. Its view\nrays march through their heights where their depth could move the\nground a pixel on screen, with about a step per pixel it moves.",
           "type": "integer",
           "format": "uint32",
           "default": 8,

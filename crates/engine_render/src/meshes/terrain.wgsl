@@ -198,8 +198,7 @@ fn terrain_surface_vertex(leaf: u32, vertex: u32) -> TerrainSurfaceVertex {
     var point: TerrainSurfaceVertex;
     point.local = surface_vertex(triangle, vertex);
     point.relative = surface_relative(point.local, terrain_true_height(point.local));
-    point.relative += terrain_displacement(point.relative + terrain.eye.xyz, point.local,
-        0.0).moved;
+    point.relative += terrain_displacement(eye_world(point.relative), point.local, 0.0).moved;
     point.spacing = length(triangle.c - triangle.a) / f32(1u << SURFACE_MESHLET_LEVEL);
     return point;
 }
