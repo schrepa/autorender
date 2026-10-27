@@ -222,7 +222,11 @@ impl Renderer {
             (&views, &meshes),
             (&self.device, &self.profiler),
             (
-                (self.camera.group(), self.camera.terrain_group()),
+                (
+                    self.camera.group(),
+                    self.camera.terrain_group(),
+                    self.camera.water_group(),
+                ),
                 &self.materials,
                 lights,
             ),

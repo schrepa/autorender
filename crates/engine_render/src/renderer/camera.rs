@@ -4,8 +4,9 @@
 //! what placed objects cover and the sky's tables and the clouds' shown
 //! domes, keyed by the generations of what it binds, so it rebuilds when the
 //! shadow maps, environment maps, reflection probe grid, horizon maps,
-//! occupancy maps or shown domes are replaced; and terrain's, without what
-//! glass refracts and without the sky's tables and domes.
+//! occupancy maps or shown domes are replaced; terrain's, without what
+//! glass refracts and without the sky's tables and domes; and water's,
+//! without what glass refracts, which water reads from its own copy.
 
 #![expect(
     clippy::expect_used,
@@ -34,6 +35,8 @@ pub(super) struct GroupSources<'a> {
 const CAMERA_BINDINGS: usize = 25;
 /// Bindings of terrain's first group: `CAMERA_TERRAIN`'s.
 const TERRAIN_BINDINGS: usize = 16;
+/// Bindings of water's first group: `CAMERA_WATER`'s.
+const WATER_BINDINGS: usize = 24;
 
 pub(super) struct CameraBindings {
     pub(super) layout: crate::pipelines::GroupLayout,
@@ -58,6 +61,10 @@ pub(super) struct CameraBindings {
     pub(super) terrain_layout: crate::pipelines::GroupLayout,
     terrain_group: GroupCache<TERRAIN_BINDINGS>,
     terrain_probe_groups: [GroupCache<TERRAIN_BINDINGS>; FACES],
+    // Water's first group, the main one without what glass refracts, and
+    // its layout.
+    pub(super) water_layout: crate::pipelines::GroupLayout,
+    water_group: GroupCache<WATER_BINDINGS>,
 }
 
 impl CameraBindings {
@@ -91,10 +98,13 @@ impl CameraBindings {
             ..Default::default()
         });
         let terrain_layout = crate::pipelines::layout(device, &crate::bindings::CAMERA_TERRAIN);
+        let water_layout = crate::pipelines::layout(device, &crate::bindings::CAMERA_WATER);
         let mut bindings = Self {
             terrain_layout,
             terrain_group: GroupCache::default(),
             terrain_probe_groups: Default::default(),
+            water_layout,
+            water_group: GroupCache::default(),
             layout,
             buffer,
             lighting_buffer,
@@ -132,8 +142,8 @@ impl CameraBindings {
         size_of::<LightingUniform>() as u64
     }
 
-    /// Rebuilds the first group and terrain's when what `sources` binds was
-    /// replaced.
+    /// Rebuilds the first group, terrain's and water's when what `sources`
+    /// binds was replaced.
     pub(super) fn refresh(&mut self, device: &wgpu::Device, sources: &GroupSources<'_>) {
         let refraction = (
             Bound::fixed(crate::pipelines::view(&self.refraction_fallback)),
@@ -152,6 +162,16 @@ impl CameraBindings {
             (&crate::bindings::CAMERA_TERRAIN, &self.terrain_layout),
             terrain_entries(uniforms, sources),
         );
+        self.water_group.bind(
+            device,
+            "engine/camera-water-bind-group",
+            (&crate::bindings::CAMERA_WATER, &self.water_layout),
+            water_entries(
+                uniforms,
+                Bound::fixed(crate::pipelines::sampler(&self.refraction_sampler)),
+                sources,
+            ),
+        );
     }
 
     /// The main passes' first group.
@@ -162,6 +182,11 @@ impl CameraBindings {
     /// Terrain's first group.
     pub(super) fn terrain_group(&self) -> &wgpu::BindGroup {
         self.terrain_group.get().expect("built with the bindings")
+    }
+
+    /// Water's first group.
+    pub(super) fn water_group(&self) -> &wgpu::BindGroup {
+        self.water_group.get().expect("built with the bindings")
     }
 
     /// The group of transparent passes when glass refracts:
@@ -287,16 +312,35 @@ fn shown_dome((generation, roles, shown): (u64, [u8; 2], bool), role: usize) -> 
 }
 
 /// The main passes' first group's entries over the `camera` and
-/// `lighting` uniforms: shadow lookups, what glass refracts with its
-/// sampler, what surfaces reflect: the environment maps with their
-/// sampler and the reflection probes' grid, terrain's horizon maps, and the
-/// sky's tables and the clouds' shown domes, which the sky draws and smooth
-/// surfaces mirror.
+/// `lighting` uniforms: water's ([`water_entries`]) and what glass
+/// refracts.
 fn camera_entries<'a>(
-    (camera, lighting, cloud_shadows): (&'a wgpu::Buffer, &'a wgpu::Buffer, &'a wgpu::Buffer),
+    uniforms: (&'a wgpu::Buffer, &'a wgpu::Buffer, &'a wgpu::Buffer),
     (refraction, refraction_sampler): (Bound<'a>, Bound<'a>),
     sources: &GroupSources<'a>,
 ) -> [(&'static str, Bound<'a>); CAMERA_BINDINGS] {
+    let mut entries = water_entries(uniforms, refraction_sampler, sources)
+        .into_iter()
+        .chain([("refraction_source", refraction)]);
+    std::array::from_fn(|_| {
+        entries
+            .next()
+            .expect("water's entries and what glass refracts fill the group")
+    })
+}
+
+/// Water's first group's entries over the `camera` and `lighting`
+/// uniforms (`bindings::CAMERA_WATER`): shadow lookups, the sampler water
+/// reads its copy of what lies behind it through (and glass what it
+/// refracts), what surfaces reflect: the environment maps with their
+/// sampler and the reflection probes' grid, terrain's horizon maps, and the
+/// sky's tables and the clouds' shown domes, which the sky draws and smooth
+/// surfaces mirror.
+fn water_entries<'a>(
+    (camera, lighting, cloud_shadows): (&'a wgpu::Buffer, &'a wgpu::Buffer, &'a wgpu::Buffer),
+    refraction_sampler: Bound<'a>,
+    sources: &GroupSources<'a>,
+) -> [(&'static str, Bound<'a>); WATER_BINDINGS] {
     let [shadow, atlas, tiles, sampler, texel_sampler] = sources.shadows.entries();
     let [horizons, horizon_records, horizon_sampler] = sources.horizons.entries();
     let (environment, environment_sampler) = sources.environment.binding();
@@ -311,7 +355,6 @@ fn camera_entries<'a>(
         tiles,
         sampler,
         texel_sampler,
-        ("refraction_source", refraction),
         ("refraction_sampler", refraction_sampler),
         ("environment_maps", environment),
         ("environment_sampler", environment_sampler),
