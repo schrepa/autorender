@@ -79,8 +79,8 @@
           "minimum": 0,
           "type": "integer"
         },
-        "view_blocks": {
-          "description": "Blocks of the view whose clouds this frame marched: none without\nclouds or with their march in the view off.",
+        "view_pixels": {
+          "description": "Pixels of the view whose clouds this frame marched, a ray each: its\nrender size's, none without clouds or with their march in the view\noff.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -88,7 +88,7 @@
       },
       "required": [
         "rows",
-        "view_blocks"
+        "view_pixels"
       ],
       "type": "object"
     },

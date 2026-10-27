@@ -228,10 +228,11 @@ export interface CloudStats {
    */
   rows: number;
   /**
-   * Blocks of the view whose clouds this frame marched: none without
-   * clouds or with their march in the view off.
+   * Pixels of the view whose clouds this frame marched, a ray each: its
+   * render size's, none without clouds or with their march in the view
+   * off.
    */
-  view_blocks: number;
+  view_pixels: number;
 }
 
 /** What GPU culling ran and left undrawn. */

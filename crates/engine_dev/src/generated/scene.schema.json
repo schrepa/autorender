@@ -2502,14 +2502,6 @@
           "maximum": 10000.0,
           "minimum": 50.0
         },
-        "view_block": {
-          "description": "The pixels along a side of the blocks the view marches a ray each.",
-          "type": "integer",
-          "format": "uint32",
-          "default": 4,
-          "maximum": 16,
-          "minimum": 1
-        },
         "wind": {
           "description": "The wind it drifts in, meters per second along x and z.",
           "type": "array",
