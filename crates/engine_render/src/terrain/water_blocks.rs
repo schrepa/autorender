@@ -1,11 +1,13 @@
 //! Tiles' water on the GPU: each resident tile's water where it stands over
 //! the ground or continues under its banks, a patch at a time, in two
-//! texture arrays of blocks as many samples wide as a patch's grid: their
-//! surfaces beside their tile's ground, and their words, their packed flow,
-//! whitewater and kind, their state and their nearest obstacle
-//! (`engine_core::terrain_data::TileWater::info`), and a fourth, how fast
-//! their surface and their depth fall along x and z, worked out as the block
-//! uploads from the tile's samples on either side, so blocks meet across
+//! texture arrays of blocks as many samples wide as a patch's grid and a
+//! sample more past each of its edges: their surfaces beside their tile's
+//! ground, and their words, their packed flow, whitewater and kind, their
+//! state and their nearest obstacle
+//! (`engine_core::terrain_data::TileWater::info`), the fourth holding
+//! nothing, each sample past the patch's edges the tile's beside them (its
+//! border past its own), so the smooth surface water's pass reads through
+//! them (`meshes/water.wgsl`'s `water_read`) meets itself across tiles and
 //! patches. A tile's blocks upload as it arrives and free as it leaves or
 //! changes, following the tiles the atlas held anew. Water's directory
 //! lists, for each layer of the height array, the blocks of its tile's
@@ -26,9 +28,9 @@ use super::atlas::TileAtlas;
 use super::*;
 use crate::gpu_layouts::constants::{
     NO_WATER_BLOCK, NO_WATER_SURFACE, WATER_BLOCK as BLOCK, WATER_BLOCKS_SIDE as SIDE,
-    WATER_GRADIENT_RANGE, WATER_TILE_WORDS as TILE_WORDS,
+    WATER_TILE_WORDS as TILE_WORDS,
 };
-use engine_core::terrain_data::{PATCHES_PER_TILE, Tile, TileWater};
+use engine_core::terrain_data::{PATCH_QUADS, PATCHES_PER_TILE, Tile, TileWater};
 
 /// Blocks a layer holds, and its texels along a side.
 const PER_LAYER: u32 = SIDE * SIDE;
@@ -559,21 +561,20 @@ impl WaterBlocks {
 }
 
 /// Writes into `texels` the block of patch `(px, pz)` of `tile`, whose
-/// water is `water`: each of its samples' surface (`NO_WATER_SURFACE` where
-/// none reaches) beside the tile's ground, and its words, the fourth how
-/// fast its surface and its depth fall along x and z (`pack_gradients`),
-/// from the tile's samples either side.
+/// water is `water`: of each of its samples and those a sample past its
+/// edges, the tile's beside it (its border past its own), the surface
+/// (`NO_WATER_SURFACE` where none reaches) beside the tile's ground, and its
+/// words, the fourth none.
 fn block_texels(tile: &Tile, water: &TileWater, (px, pz): (usize, usize), texels: &mut Texels) {
     let stride = LAYER_SIZE as usize;
     let side = BLOCK as usize;
+    let quads = PATCH_QUADS as usize;
     let (heights, levels, words) = (tile.heights(), water.surfaces(), water.info());
-    let spacing = tile.spacing();
-    let surface = |at: usize| levels[at];
-    let depth = |at: usize| levels[at] - heights[at];
     for z in 0..side {
         for x in 0..side {
-            // The sample in the tile's layout, which holds a border of one.
-            let at = (pz * (side - 1) + z + 1) * stride + px * (side - 1) + x + 1;
+            // The sample in the tile's layout, which holds a border of one,
+            // the block's first a sample before the patch's.
+            let at = (pz * quads + z) * stride + px * quads + x;
             let texel = z * side + x;
             let level = levels[at];
             texels.surfaces[texel] = [
@@ -585,48 +586,7 @@ fn block_texels(tile: &Tile, water: &TileWater, (px, pz): (usize, usize), texels
                 heights[at],
             ];
             let [packed, state, obstacle] = words[at];
-            let gradients = pack_gradients([
-                falling(&surface, at, 1, spacing),
-                falling(&surface, at, stride, spacing),
-                falling(&depth, at, 1, spacing),
-                falling(&depth, at, stride, spacing),
-            ]);
-            texels.info[texel] = [packed, state, obstacle, gradients];
+            texels.info[texel] = [packed, state, obstacle, 0];
         }
     }
-}
-
-/// How fast `value` (of a tile's samples by their place in its layout, NaN
-/// where a sample holds no surface) falls a meter along `step` places at
-/// sample `at`, its samples `spacing` meters apart: between the samples
-/// either side holding one, or between `at` and the one that does; none
-/// where neither does or `at` holds none.
-fn falling(value: &dyn Fn(usize) -> f32, at: usize, step: usize, spacing: f32) -> f32 {
-    let (before, here, after) = (value(at - step), value(at), value(at + step));
-    if !here.is_finite() {
-        return 0.0;
-    }
-    match (before.is_finite(), after.is_finite()) {
-        (true, true) => (before - after) / (2.0 * spacing),
-        (true, false) => (before - here) / spacing,
-        (false, true) => (here - after) / spacing,
-        (false, false) => 0.0,
-    }
-}
-
-/// A sample's `gradients` (how fast its surface falls along x and z, then
-/// its depth, meters a meter) as the four signed bytes of a word, low
-/// first, which shaders read as snorm shares: each the square root of its
-/// share of `WATER_GRADIENT_RANGE`, signed, so gentle slopes keep fine
-/// steps.
-fn pack_gradients(gradients: [f32; 4]) -> u32 {
-    gradients
-        .iter()
-        .enumerate()
-        .fold(0, |word, (index, &gradient)| {
-            let share = engine_core::math::clamp(gradient.abs() / WATER_GRADIENT_RANGE, 0.0, 1.0);
-            let steps = (share.sqrt() * 127.0).round();
-            let signed = if gradient < 0.0 { -steps } else { steps };
-            word | u32::from(signed as i8 as u8) << (8 * index)
-        })
 }

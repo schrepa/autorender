@@ -766,7 +766,7 @@ const TERRAIN_FRINGE: f32 = 0.5;
 
 // How far the ground stands above the water the tiles hold beside it
 // (meters, negative under it) at a point of `cell` (`water_cell`'s), as
-// water's pass reads its depth there (`water_read`): from the cell's
+// water's pass reads where it lies (`WaterAt`'s `edge`): from the cell's
 // triangle holding the point, each sample's ground less its surface, wet or
 // continued under the banks, blended by the triangle's weights, so shores
 // fall between samples as the water's do. A sample no water reaches, and

@@ -241,8 +241,11 @@ gpu_consts! {
 
     // crate::terrain::water_blocks
     /// Samples along a side of a block of tiles' water: a patch's, its edges
-    /// included, as its grid's vertices.
-    pub(crate) const WATER_BLOCK: u32 = TERRAIN_GRID => ["WATER_BLOCK"];
+    /// included, as its grid's vertices, and a sample more past each edge,
+    /// which the smooth surface through them reaches from any point of the
+    /// patch (the uniform cubic B-spline's four samples along each axis,
+    /// `meshes/water.wgsl`'s `water_read`).
+    pub(crate) const WATER_BLOCK: u32 = TERRAIN_GRID + 2 => ["WATER_BLOCK"];
     /// Blocks along a side of a layer of the water arrays.
     pub(crate) const WATER_BLOCKS_SIDE: u32 = 16 => ["WATER_BLOCKS_SIDE"];
     /// No block: a patch whose parent tile's water holds none over it.
@@ -268,10 +271,10 @@ gpu_consts! {
     /// their packed radius.
     pub(crate) const WATER_OBSTACLE_STEP: f32 = engine_core::terrain_data::WATER_OBSTACLE_STEP => ["WATER_OBSTACLE_STEP"];
     pub(crate) const WATER_RADIUS_STEP: f32 = engine_core::terrain_data::WATER_RADIUS_STEP => ["WATER_RADIUS_STEP"];
-    /// Meters a meter a block's packed gradients reach, how fast a sample's
-    /// surface or depth falls along x or z: a surface falling more than four
-    /// meters a meter (76 degrees) runs off as a fall's sheet, and a bank
-    /// rising faster stands as a wall, so steeper ones pack as this steep.
+    /// The steepest water's surface falls and a bank under it rises, meters
+    /// a meter: a surface falling more than four meters a meter (76 degrees)
+    /// runs off as a fall's sheet, and a bank rising faster stands as a
+    /// wall.
     pub(crate) const WATER_GRADIENT_RANGE: f32 = 4.0 => ["WATER_GRADIENT_RANGE"];
 
     // crate::water_sim

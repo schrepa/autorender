@@ -9,16 +9,20 @@
 // seen from the detail eye (`water_lift`), so the ground drawn under the
 // water never hides it. Each pixel then reads the water's state where it
 // lies (`water_pixel`), at the level of the tiles' pyramid the size a pixel
-// resolves on it seen from the detail eye picks (`detail_resolved`: its span
-// across the view, or a sixteenth of its span along it where it is more
-// stretched), handing over to the next coarser one as detail levels do
-// (`detail_level`): its depth over that level's own ground, whose zero
-// crossing is the shore, and what its samples' words say of the water
-// (`WaterWords`: its flow, the foam it carries, how turbulent it runs, where
-// white water is born in it, its shear, how far across its water body is
-// and whether a lake holds it, the reach of its stream and what stands in
-// it), blended on the level's triangles, so none of it moves as the eye
-// does and no leaf shapes it.
+// resolves on it seen from the detail eye picks (`detail_across`: its span
+// across the view, which its span along it never passes DETAIL_ANISOTROPY
+// times), handing over to the next coarser one as detail levels do
+// (`detail_level`): the smooth surface through that level's samples (the
+// uniform cubic B-spline whose control points they are, as the ground's
+// shading takes its smooth surface), whose gradient tilts the water; its
+// depth over that level's own ground and what its samples' words say of the
+// water (`WaterWords`: its flow, the foam it carries, how turbulent it runs,
+// where white water is born in it, its shear, how far across its water body
+// is and whether a lake holds it, the reach of its stream and what stands in
+// it), read through the same weights, so no triangle of the level shows in
+// it; and where it lies, on the level's triangles as every consumer of the
+// tiles' water reads it, whose zero crossing is the shore. None of it moves
+// as the eye does and no leaf shapes it.
 // Where water is simulated around the camera, its cells hold the same state
 // (`sim_water_output`), the span of its body and what its bed holds taken
 // from the settled water's sample nearest each. Everything drawn of the
@@ -52,9 +56,12 @@
 // jets fall as sheets of their own (`water_falls.rs`), drawn last.
 
 // Tiles' water, a block of samples for each patch holding any surface
-// (`terrain/water_blocks.rs`): their surfaces (terrain-local meters,
-// NO_WATER_SURFACE where none reaches) beside their tile's ground (x and y);
-// and their words (`engine_terrain::TileWater::info`), a texel's channels:
+// (`terrain/water_blocks.rs`), its own and a sample more past each of its
+// edges, the tile's beside it, so the smooth surface through them
+// (`water_read`) reaches across patches and tiles: their surfaces
+// (terrain-local meters, NO_WATER_SURFACE where none reaches) beside their
+// tile's ground (x and y); and their words
+// (`engine_terrain::TileWater::info`), a texel's channels:
 // their flow along x and z as shares of WATER_FLOW_RANGE either way, the
 // foam they carry as a share of WATER_FOAM_MOST (negative where a fall's
 // sheet runs over them), and how far across their water body is, its code
@@ -65,9 +72,7 @@
 // their nearest obstacle's middle along x and z in signed steps of
 // WATER_OBSTACLE_STEP, its radius in steps of WATER_RADIUS_STEP (0 for none)
 // and how strongly a drop or a jump lies just upstream, in 255ths (z, four
-// bytes); and how fast their surface and their depth fall along x and z,
-// between their tile's samples either side holding a surface
-// (`water_gradients`: w, four signed bytes).
+// bytes); w holds nothing.
 @group(1) @binding(50) var water_surface: texture_2d_array<f32>;
 @group(1) @binding(51) var water_info: texture_2d_array<u32>;
 // Water's directory (`terrain/water_blocks.rs`) lies in `terrain_directory`
@@ -168,11 +173,12 @@ fn water_ground(pixel: vec2<f32>) -> vec3<f32> {
     return point.xyz / point.w - camera.position.xyz;
 }
 
-// Samples along a block's side and blocks along a layer's side, no block,
-// and what a sample no water reaches holds; patches along a side of a tile,
-// the words each layer takes in water's directory, and a terrain
-// directory's entry of a tile not resident (`gpu_layouts::constants`).
-const WATER_BLOCK: u32 = 17u;
+// Samples along a block's side (its patch's grid and a sample more each
+// side) and blocks along a layer's side, no block, and what a sample no
+// water reaches holds; patches along a side of a tile, the words each layer
+// takes in water's directory, and a terrain directory's entry of a tile not
+// resident (`gpu_layouts::constants`).
+const WATER_BLOCK: u32 = 19u;
 const WATER_BLOCKS_SIDE: u32 = 16u;
 const NO_WATER_BLOCK: u32 = 0xffffffffu;
 const NO_WATER_SURFACE: f32 = -1.0e30;
@@ -185,8 +191,8 @@ const NOT_RESIDENT: u32 = 0xffffffffu;
 // packed offset to an obstacle and of its packed radius span
 // (`engine_terrain::WATER_FLOW_RANGE`, `WATER_SPAN_LEAST`,
 // `WATER_SPAN_MOST`, `WATER_SHEAR_RANGE`, `WATER_OBSTACLE_STEP`,
-// `WATER_RADIUS_STEP`); and the meters a meter the packed gradients reach
-// (`gpu_layouts::constants::WATER_GRADIENT_RANGE`).
+// `WATER_RADIUS_STEP`); and the steepest a bank rises, meters a meter, past
+// which it stands as a wall (`gpu_layouts::constants::WATER_GRADIENT_RANGE`).
 const WATER_FLOW_RANGE: f32 = 8.0;
 const WATER_SPAN_LEAST: f32 = 0.25;
 const WATER_SPAN_MOST: f32 = 4096.0;
@@ -253,7 +259,8 @@ struct WaterTemporalOutput {
     @location(1) previous: vec3<f32>,
 }
 
-// The texel of block `block` holding its sample `sample` (x and y), and its
+// The texel of block `block` holding its sample `sample` (x and y, counted
+// from the block's first, a sample before its patch's first), and its
 // layer (z).
 fn water_texel(block: u32, sample: vec2<u32>) -> vec3<i32> {
     let blocks = WATER_BLOCKS_SIDE * WATER_BLOCKS_SIDE;
@@ -313,35 +320,32 @@ fn water_span(code: f32) -> f32 {
     return select(WATER_SPAN_LEAST * exp2(octaves * (steps - 1.0) / 126.0), 0.0, steps < 0.5);
 }
 
-// How fast a sample's surface (xy) and its depth (zw) fall along x and z
-// (meters a meter), as the fourth of its words packs them
-// (`terrain/water_blocks.rs`): signed bytes, each the square root of its
-// share of WATER_GRADIENT_RANGE.
-fn water_gradients(word: u32) -> vec4<f32> {
-    let root = unpack4x8snorm(word);
-    return root * abs(root) * WATER_GRADIENT_RANGE;
-}
-
 // The terrain's extent along x and z (meters): its level-0 tiles'.
 fn water_extent() -> vec2<f32> {
     let header = terrain.directory.x;
     let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
-    return vec2<f32>(tiles * (WATER_TILE_PATCHES * (WATER_BLOCK - 1u))) * terrain.anchor.w;
+    return vec2<f32>(tiles * (WATER_TILE_PATCHES * (TERRAIN_GRID - 1u))) * terrain.anchor.w;
 }
 
-// Water at a point as shading reads it: its surface's height above the
-// terrain's origin and its depth over the ground there (none or less where
-// it is dry); what its samples' words say of it, what changes by degrees
-// (its span among it) blended and what names a kind (a lake holding it, a
-// fall's sheet over it, its reach, its nearest obstacle's word) its nearest
-// sample's; how fast its depth and its surface fall along x and z (meters a
+// Water at a point as shading reads it: the height above the terrain's
+// origin of its smooth surface through its samples (`water_read`), and its
+// depth over the ground there, its samples' read through the same weights
+// (none where they hold none); how far it stands over the ground where it
+// lies (`edge`: none or less where it is dry, its zero crossing the shore),
+// on the triangles every consumer of the tiles' water splits cells into
+// (`engine_terrain::Tile::water_at`); what its samples' words say of it,
+// what changes by degrees (its span among it) read through the smooth
+// surface's weights and what names a kind (a lake holding it, a fall's
+// sheet over it, its reach, its nearest obstacle's word) its nearest
+// sample's; how fast its smooth surface falls along x and z (meters a
 // meter); and its nearest obstacle as `water_obstacle` gives it, offset
-// from the point, how strongly a drop or a jump lies just upstream blended.
+// from the point, how strongly a drop or a jump lies just upstream read
+// through those weights.
 struct WaterAt {
     surface: f32,
     depth: f32,
+    edge: f32,
     words: WaterWords,
-    shore: vec2<f32>,
     slope: vec2<f32>,
     obstacle: vec4<f32>,
 }
@@ -351,8 +355,8 @@ struct WaterAt {
 // (the terrain's levels where none is, or the point lies past the terrain),
 // the block of the patch holding the point's cell (NO_WATER_BLOCK where
 // none of the patch's samples holds a surface, or no level is resident),
-// the cell's first corner in the block, and where in the cell the point
-// lies (0 to 1 along x and z).
+// the cell's first corner among the block's samples (`water_texel`), and
+// where in the cell the point lies (0 to 1 along x and z).
 struct WaterCell {
     level: u32,
     block: u32,
@@ -369,7 +373,7 @@ fn water_cell(local: vec2<f32>, level: u32) -> WaterCell {
         return cell;
     }
     let base = terrain.directory.x;
-    let quads = WATER_BLOCK - 1u;
+    let quads = TERRAIN_GRID - 1u;
     let tile_quads = WATER_TILE_PATCHES * quads;
     for (var index = level; index < levels; index++) {
         let header = base + index * 4u;
@@ -381,7 +385,8 @@ fn water_cell(local: vec2<f32>, level: u32) -> WaterCell {
             continue;
         }
         // Samples 0 to 256 within the tile, the cell holding the point and
-        // the patch holding the cell.
+        // the patch holding the cell, whose first sample is its block's
+        // second.
         let within = clamp(samples - vec2<f32>(tile * tile_quads), vec2<f32>(0.0),
             vec2<f32>(f32(tile_quads)));
         let corner = min(vec2<u32>(within), vec2<u32>(tile_quads - 1u));
@@ -389,7 +394,7 @@ fn water_cell(local: vec2<f32>, level: u32) -> WaterCell {
         cell.level = index;
         cell.block = terrain_directory[terrain.water.x + layer * WATER_TILE_WORDS
             + tile_patch.y * WATER_TILE_PATCHES + tile_patch.x];
-        cell.first = corner - tile_patch * quads;
+        cell.first = corner - tile_patch * quads + vec2<u32>(1u);
         cell.within = within - vec2<f32>(corner);
         return cell;
     }
@@ -456,55 +461,151 @@ fn water_field(local: vec2<f32>) -> WaterField {
     return field;
 }
 
-// Tiles' water at a point as `cell` (`water_cell`'s) holds it: from its
-// samples of the triangle holding the point, each one's surface over its
-// level's own ground (so coarse levels' channels, cut to their lowest,
-// stand as deep as they hold them), a sample no water reaches standing a
-// meter under its ground, WATER_DRY dry; its words, slopes and shoaling
-// blended by the triangle's weights; and what names a kind and the nearest
-// obstacle, its offset taken from the point, the nearest sample's. Where
-// the cell holds no block, the water stands WATER_DRY dry.
+// The weights the uniform cubic B-spline gives four samples a step apart
+// along an axis at a point `t` (0 to 1) of the way from the second to the
+// third (`weights`, the first's to the fourth's), and how fast each changes
+// a step (`rates`). They sum to 1 and change smoothly to their second
+// derivative, a sample's weight coming to nothing with its rate and its
+// curvature at the end of its reach, two steps from it.
+struct WaterSpline {
+    weights: vec4<f32>,
+    rates: vec4<f32>,
+}
+
+fn water_spline(t: f32) -> WaterSpline {
+    let s = 1.0 - t;
+    var spline: WaterSpline;
+    spline.weights = vec4<f32>(s * s * s, (3.0 * t - 6.0) * t * t + 4.0,
+        ((3.0 - 3.0 * t) * t + 3.0) * t + 1.0, t * t * t) / 6.0;
+    spline.rates = vec4<f32>(-s * s, (3.0 * t - 4.0) * t, (2.0 - 3.0 * t) * t + 1.0, t * t)
+        * 0.5;
+    return spline;
+}
+
+// Tiles' water at a point as `cell` (`water_cell`'s) holds it, read as a
+// smooth surface through its samples: the uniform cubic B-spline whose
+// control points are the surfaces of the 4 x 4 samples around the point
+// (`water_spline`), as the ground's shading takes its smooth surface
+// (`engine_terrain::SampleShape`), through those holding one, wet or
+// continued under the banks, their weights shared out over them, so it
+// stays smooth up to where the samples holding one end. Its height, and its
+// gradient for its slope; through the same weights, the samples' depths,
+// each one's surface over its level's own ground (so coarse levels'
+// channels, cut to their lowest, stand as deep as they hold them), and what
+// their words say that changes by degrees, so nothing changes at a
+// triangle's edge; and what names a kind and the nearest obstacle, its
+// offset taken from the point, the nearest sample's. Where the water lies
+// is the triangle holding the point's, as every consumer of the tiles'
+// water reads it: its corners' surfaces over their ground blended by its
+// weights, a corner no water reaches standing WATER_DRY dry and its surface
+// a meter under its ground. Where the cell holds no block, the water stands
+// WATER_DRY dry; where none of its corners holds a surface, it reads them
+// alone.
 fn water_read(cell: WaterCell) -> WaterAt {
     var at: WaterAt;
-    at.depth = -WATER_DRY;
+    at.edge = -WATER_DRY;
     if cell.block == NO_WATER_BLOCK {
         return at;
     }
-    at.depth = 0.0;
-    let spacing = terrain.anchor.w * f32(1u << cell.level);
+    // The texel of the first of the 4 x 4 samples around the point, a sample
+    // before the cell's first corner along x and z; and the cell's corners,
+    // from its first along x, then z: their surfaces and their ground, and
+    // the surface of one holding one, from which the smooth surface's sums
+    // count so they keep their precision.
+    let origin = water_texel(cell.block, cell.first - vec2<u32>(1u));
+    var surfaces = vec4<f32>(0.0);
+    var grounds = vec4<f32>(0.0);
+    var counted = 0.0;
+    var holding = false;
+    for (var corner = 0u; corner < 4u; corner++) {
+        let steps = vec2<u32>(corner & 1u, corner >> 1u) + vec2<u32>(1u);
+        let held = textureLoad(water_surface, origin.xy + vec2<i32>(steps), origin.z, 0).xy;
+        surfaces[corner] = held.x;
+        grounds[corner] = held.y;
+        if held.x > NO_WATER_SURFACE * 0.5 {
+            holding = true;
+            counted = held.x;
+        }
+    }
+    var surface = counted;
+    if holding {
+        let along = water_spline(cell.within.x);
+        let across = water_spline(cell.within.y);
+        let nearest = select(vec2<u32>(0u), vec2<u32>(1u), cell.within >= vec2<f32>(0.5));
+        let spacing = terrain.anchor.w * f32(1u << cell.level);
+        // Sums over the samples holding a surface: their weights, their
+        // surfaces over the counted one weighed, and the rates of each along
+        // x and z.
+        var total = 0.0;
+        var raised = 0.0;
+        var rates = vec2<f32>(0.0);
+        var rises = vec2<f32>(0.0);
+        for (var row = 0u; row < 4u; row++) {
+            for (var column = 0u; column < 4u; column++) {
+                let steps = vec2<u32>(column, row);
+                let texel = origin.xy + vec2<i32>(steps);
+                var held: vec2<f32>;
+                if all(steps >= vec2<u32>(1u)) && all(steps <= vec2<u32>(2u)) {
+                    let corner = (row - 1u) * 2u + column - 1u;
+                    held = vec2<f32>(surfaces[corner], grounds[corner]);
+                } else {
+                    held = textureLoad(water_surface, texel, origin.z, 0).xy;
+                }
+                if held.x <= NO_WATER_SURFACE * 0.5 {
+                    continue;
+                }
+                let weight = along.weights[column] * across.weights[row];
+                let rate = vec2<f32>(along.rates[column] * across.weights[row],
+                    along.weights[column] * across.rates[row]);
+                let info = textureLoad(water_info, texel, origin.z, 0);
+                let words = water_words(info);
+                total += weight;
+                raised += (held.x - counted) * weight;
+                rates += rate;
+                rises += (held.x - counted) * rate;
+                at.depth += (held.x - held.y) * weight;
+                at.words.flow += words.flow * weight;
+                at.words.foam += words.foam * weight;
+                at.words.span += words.span * weight;
+                at.words.state += words.state * weight;
+                at.obstacle.w += f32(words.obstacle >> 24u) / 255.0 * weight;
+                if all(steps == nearest + vec2<u32>(1u)) {
+                    // The obstacle's offset from the point: the sample's
+                    // own, plus the sample's from the point.
+                    let toward = vec2<f32>(nearest) - cell.within;
+                    at.words.lake = words.lake;
+                    at.words.sheet = words.sheet;
+                    at.words.reach = words.reach;
+                    at.words.obstacle = words.obstacle;
+                    at.obstacle = vec4<f32>(water_obstacle(words.obstacle, toward * spacing).xyz,
+                        at.obstacle.w);
+                }
+            }
+        }
+        // Each sum shared out over the weights the samples holding a surface
+        // take; the surface's gradient that of the quotient, per meter.
+        let share = 1.0 / total;
+        let lift = raised * share;
+        surface = counted + lift;
+        at.slope = (rates * lift - rises) * (share / spacing);
+        at.depth = max(at.depth * share, 0.0);
+        at.words.flow *= share;
+        at.words.foam *= share;
+        at.words.span *= share;
+        at.words.state *= share;
+        at.obstacle.w *= share;
+    }
+    // Where it lies: on the triangle holding the point.
     let weights = water_weights(cell.within);
     let upper = cell.within.x + cell.within.y > 1.0;
-    var nearest = 4.0;
+    at.edge = 0.0;
     for (var corner = 0u; corner < 3u; corner++) {
         let steps = water_corner(corner, upper);
-        let texel = water_texel(cell.block, cell.first + steps);
-        let held = textureLoad(water_surface, texel.xy, texel.z, 0).xy;
-        let info = textureLoad(water_info, texel.xy, texel.z, 0);
-        let words = water_words(info);
-        let gradients = water_gradients(info.w);
-        let weight = weights[corner];
-        let reached = held.x > NO_WATER_SURFACE * 0.5;
-        at.surface += select(held.y - 1.0, held.x, reached) * weight;
-        at.depth += select(-WATER_DRY, held.x - held.y, reached) * weight;
-        at.words.flow += words.flow * weight;
-        at.words.foam += words.foam * weight;
-        at.words.span += words.span * weight;
-        at.words.state += words.state * weight;
-        at.slope += gradients.xy * weight;
-        at.shore += gradients.zw * weight;
-        at.obstacle.w += f32(words.obstacle >> 24u) / 255.0 * weight;
-        // The obstacle's offset from the point: the sample's own, plus the
-        // sample's from the point.
-        let toward = vec2<f32>(steps) - cell.within;
-        if dot(toward, toward) < nearest {
-            nearest = dot(toward, toward);
-            at.words.lake = words.lake;
-            at.words.sheet = words.sheet;
-            at.words.reach = words.reach;
-            at.words.obstacle = words.obstacle;
-            at.obstacle = vec4<f32>(water_obstacle(words.obstacle, toward * spacing).xyz,
-                at.obstacle.w);
-        }
+        let index = steps.y * 2u + steps.x;
+        let reached = surfaces[index] > NO_WATER_SURFACE * 0.5;
+        at.surface += select(grounds[index] - 1.0, surface, reached) * weights[corner];
+        at.edge += select(-WATER_DRY, surfaces[index] - grounds[index], reached)
+            * weights[corner];
     }
     return at;
 }
@@ -519,11 +620,11 @@ fn water_blend(first: WaterAt, second: WaterAt, toward: f32) -> WaterAt {
     }
     at.surface = mix(first.surface, second.surface, toward);
     at.depth = mix(first.depth, second.depth, toward);
+    at.edge = mix(first.edge, second.edge, toward);
     at.words.flow = mix(first.words.flow, second.words.flow, toward);
     at.words.foam = mix(first.words.foam, second.words.foam, toward);
     at.words.span = mix(first.words.span, second.words.span, toward);
     at.words.state = mix(first.words.state, second.words.state, toward);
-    at.shore = mix(first.shore, second.shore, toward);
     at.slope = mix(first.slope, second.slope, toward);
     at.obstacle.w = mix(first.obstacle.w, second.obstacle.w, toward);
     return at;
@@ -547,19 +648,12 @@ fn water_pixel(local: vec2<f32>, seen: f32) -> WaterAt {
 
 // Tiles' water at the pixel drawing the point `drawn` of its mesh (less the
 // eye): read where the point lies as the pixel, seen from the detail eye,
-// resolves the plane of the mesh's triangle (`water_pixel`, `detail_span`,
-// `detail_resolved`). Its derivatives need it called in uniform control
-// flow.
+// resolves it there (`water_pixel`): the meters it spans across the view
+// (`detail_across`), as its footprint on any surface never stretches past
+// DETAIL_ANISOTROPY times that along it (`detail_span`, `detail_resolved`).
 fn water_drawn(drawn: vec3<f32>) -> WaterAt {
     let world = eye_world(drawn);
-    // The triangle's plane, facing up.
-    let facing = cross(dpdx(world), dpdy(world));
-    let up = select(-facing, facing, facing.y >= 0.0);
-    let squared = dot(up, up);
-    let plane = select(vec3<f32>(0.0, 1.0, 0.0), up * inverseSqrt(max(squared, 1.0e-30)),
-        squared > 1.0e-24);
-    return water_pixel(world.xz - terrain.origin.xz,
-        detail_resolved(detail_span(world, plane).xy));
+    return water_pixel(world.xz - terrain.origin.xz, detail_across(world));
 }
 
 // The point of the water's surface under the point `drawn` of its mesh
@@ -1167,11 +1261,12 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     if !simulated && water_simulated(world.xz) {
         discard;
     }
-    // Meters of water over the ground: the shore's dry side holds none.
-    let depth = at.depth;
-    if depth <= 0.0 {
+    // Where the water lies: the shore's dry side holds none. And the meters
+    // of it over the ground, as its samples hold it.
+    if at.edge <= 0.0 {
         discard;
     }
+    let depth = at.depth;
     let flow = at.words.flow;
     let time = camera.position.w;
     let world_dx = dpdx(world);
@@ -1269,13 +1364,14 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
     let mesh_change = abs(dpdx(mesh_standing)) + abs(dpdy(mesh_standing));
     let bed = min(depth, standing);
     let gathered = water_caustics(world, normal, bed);
-    // The water ends at its waterline, where its depth comes to nothing or
-    // what stands in it rises through its mesh; thin water shows by how fast
-    // it runs: calm shallows fade in over WATER_SHORE of depth, while racing
-    // water, however thin, is all there.
+    // The water ends at its waterline, where it comes to nothing over the
+    // ground where it lies (`WaterAt`'s `edge`) or what stands in it rises
+    // through its mesh; thin water shows by how fast it runs: calm shallows
+    // fade in over WATER_SHORE of it, while racing water, however thin, is
+    // all there.
     let racing = smoothstep(WATER_RACING.x, WATER_RACING.y, speed);
-    let shallows = mix(smoothstep(0.0, WATER_SHORE, min(depth, mesh_standing)), 1.0, racing);
-    let fade = min(water_edge(depth, fwidth(depth)), water_edge(mesh_standing, mesh_change))
+    let shallows = mix(smoothstep(0.0, WATER_SHORE, min(at.edge, mesh_standing)), 1.0, racing);
+    let fade = min(water_edge(at.edge, fwidth(at.edge)), water_edge(mesh_standing, mesh_change))
         * shallows * (1.0 - falling);
     // Light comes back through the water along the view to what it shows,
     // as far as the depth lets it run, after reaching it down from the
@@ -1340,8 +1436,8 @@ fn shade_water(mesh: vec3<f32>, point: vec3<f32>, pixel: vec2<f32>, at: WaterAt,
         * exp(-bed * (1.0 / WATER_CAUSTIC_DEPTH + WATER_BUBBLES * aerated))
         * water_shown(WATER_CAUSTIC_LENGTH * bed, pixel_resolved);
     // Of what the surface lets through, the ground shows darker for being
-    // wet however thin the water; foam covers it.
-    let wet = smoothstep(0.0, 0.03, depth) * WATER_WET;
+    // wet however thin the water where it lies; foam covers it.
+    let wet = smoothstep(0.0, 0.03, at.edge) * WATER_WET;
     let let_through = (1.0 - lit.reflectance) * (1.0 - foam);
     var result: WaterShade;
     result.shaded = lit.shaded;
@@ -1402,8 +1498,8 @@ fn fs_water_temporal(input: WaterTemporalOutput) -> TemporalTargets {
 }
 
 // Simulated water (`water_sim.rs`): a vertex at each cell's middle, its
-// water's surface, depth and flow, the slopes of its surface and depth
-// read across its neighbors, the foam the water carries, how turbulent it
+// water's surface, depth and flow, the slope of its surface read across
+// its neighbors, the foam the water carries, how turbulent it
 // runs, where white water is born in it and its shear, read from the water
 // around it, and how far across its water body is, whether a lake holds it
 // and its bed's reach and nearest obstacle, as the settled water's sample
@@ -1465,25 +1561,22 @@ struct SimWaterOutput {
     // How far across its water body is (meters; none where its bed's words
     // know none), and 1 where a lake holds it.
     @location(2) body: vec2<f32>,
-    // How fast its depth falls along x and z (meters a meter), the ground
-    // rising out of it toward its shores.
-    @location(3) shore: vec2<f32>,
     // How fast its surface falls along x and z (meters a meter).
-    @location(4) slope: vec2<f32>,
+    @location(3) slope: vec2<f32>,
     // The foam its water carries (0 none, WATER_FOAM_MOST the most).
-    @location(5) churned: f32,
+    @location(4) churned: f32,
     // How turbulent it runs (0 calm to 1), how strongly it breaks white (0
     // to 1: where short-lived white water is born), its shear (the
     // magnitude of its velocity's gradient, per second), and 0.
-    @location(6) state: vec4<f32>,
+    @location(5) state: vec4<f32>,
     // The offset from it to the middle of its nearest obstacle within 16
     // meters, rock breaking its surface or a boulder under it (meters along
     // x and z; 0 for none), the obstacle's radius (meters; 0 for none), and
     // how strongly a drop or a jump lies just upstream (0 to 1).
-    @location(7) obstacle: vec4<f32>,
+    @location(6) obstacle: vec4<f32>,
     // The reach of the stream it runs in: 0 for none, else 1 plus
     // `engine_terrain::Reach` (pool, plane bed, steps, cascade, falls).
-    @location(8) @interpolate(flat) reach: u32,
+    @location(7) @interpolate(flat) reach: u32,
 }
 
 // The simulated water's vertex in the temporal pipelines: also where its
@@ -1494,13 +1587,12 @@ struct SimWaterTemporalOutput {
     @location(0) relative: vec3<f32>,
     @location(1) water: vec3<f32>,
     @location(2) body: vec2<f32>,
-    @location(3) shore: vec2<f32>,
-    @location(4) slope: vec2<f32>,
-    @location(5) churned: f32,
-    @location(6) state: vec4<f32>,
-    @location(7) obstacle: vec4<f32>,
-    @location(8) @interpolate(flat) reach: u32,
-    @location(9) previous: vec3<f32>,
+    @location(3) slope: vec2<f32>,
+    @location(4) churned: f32,
+    @location(5) state: vec4<f32>,
+    @location(6) obstacle: vec4<f32>,
+    @location(7) @interpolate(flat) reach: u32,
+    @location(8) previous: vec3<f32>,
 }
 
 // Where the simulated water holds cell (i, j), the nearest inside its
@@ -1635,7 +1727,6 @@ fn sim_water_output(index: u32) -> SimWaterOutput {
     output.water = vec3<f32>(depth, velocity);
     output.slope = vec2<f32>(sim_water_beside(here, west) - sim_water_beside(here, east),
         sim_water_beside(here, south) - sim_water_beside(here, north)) / (2.0 * cell);
-    output.shore = vec2<f32>(west.y - east.y, south.y - north.y) / (2.0 * cell);
     output.churned = sim_water_cell(i, j).w;
     // How turbulent it runs, from the velocities around it as the cook's
     // turbulence reads its water's swings (`engine_terrain`'s
@@ -1686,7 +1777,6 @@ fn vs_sim_water_temporal(@builtin(vertex_index) index: u32) -> SimWaterTemporalO
     temporal.relative = output.relative;
     temporal.water = output.water;
     temporal.body = output.body;
-    temporal.shore = output.shore;
     temporal.slope = output.slope;
     temporal.churned = output.churned;
     temporal.state = output.state;
@@ -1698,17 +1788,18 @@ fn vs_sim_water_temporal(@builtin(vertex_index) index: u32) -> SimWaterTemporalO
 }
 
 // The simulated water at a pixel as its vertices' outputs `input` blend
-// there, as shading reads water (`WaterAt`): no fall's sheet runs over it.
+// there, as shading reads water (`WaterAt`): it lies where it is deep, and
+// no fall's sheet runs over it.
 fn sim_water_values(input: SimWaterOutput) -> WaterAt {
     var at: WaterAt;
     at.depth = input.water.x;
+    at.edge = input.water.x;
     at.words.flow = input.water.yz;
     at.words.foam = input.churned;
     at.words.span = input.body.x;
     at.words.lake = input.body.y > 0.5;
     at.words.state = input.state.xyz;
     at.words.reach = input.reach;
-    at.shore = input.shore;
     at.slope = input.slope;
     at.obstacle = input.obstacle;
     return at;
@@ -1729,7 +1820,6 @@ fn sim_water_present(input: SimWaterTemporalOutput) -> SimWaterOutput {
     output.relative = input.relative;
     output.water = input.water;
     output.body = input.body;
-    output.shore = input.shore;
     output.slope = input.slope;
     output.churned = input.churned;
     output.state = input.state;
