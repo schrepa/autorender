@@ -261,12 +261,7 @@ fn rows(path: &[Passing], carried: f32) -> Vec<Vec<Row>> {
 
 /// Fall `fall`'s jets, its terrain at `origin`: each a strip of its rows,
 /// COLUMNS across.
-fn fall_jets(
-    fall: &Fall,
-    origin: Vec3,
-    vertices: &mut Vec<FallVertex>,
-    indices: &mut Vec<u32>,
-) {
+fn fall_jets(fall: &Fall, origin: Vec3, vertices: &mut Vec<FallVertex>, indices: &mut Vec<u32>) {
     let Some((path, lip_speed)) = passings(fall) else {
         return;
     };
