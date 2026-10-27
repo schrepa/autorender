@@ -52,7 +52,6 @@ struct PaletteEntry {
     canopy: vec4<f32>,
     placed: vec4<f32>,
     placed_size: vec4<f32>,
-    placed_thinning: vec4<f32>,
     heights: vec4<f32>,
 }
 
@@ -75,7 +74,7 @@ const BOUNCE_RECORD_WORDS: u32 = 26u;
 const BOUNCE_NEAREST: f32 = 0.5;
 const BOUNCE_STEPS: f32 = 16.0;
 // As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
-const PALETTE_ENTRIES: u32 = 102u;
+const PALETTE_ENTRIES: u32 = 113u;
 
 @group(0) @binding(60) var<uniform> bounce_frame: BounceFrame;
 // Every slot's record at the level a dispatch relights.

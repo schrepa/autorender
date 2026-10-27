@@ -16,10 +16,10 @@
 //! objects show farther away; renderers set objects on the finest heights
 //! resident. A layer may also stand far away: a coarser
 //! level's tiles, which stay resident farther still (pinned levels
-//! everywhere), place the share of its candidates whose rank falls under
-//! that share of its density, a subset of its own objects in the same
-//! places, its largest, which renderers hide where its own level's tiles
-//! are resident.
+//! everywhere), place every one of its candidates, its own objects in the
+//! same places, which renderers hide where its own level's tiles are
+//! resident; objects retire only as they shrink under a pixel on screen,
+//! by their rank, the largest last.
 //!
 //! Authors stand objects on a surface too: each at its own
 //! point, on the tiles of its level (the finest for small things, coarser
@@ -158,16 +158,14 @@ impl ExtraRules for PlacementLayer {
 
 settings! {
     /// Where a placement layer also stands far away: on the tiles of a
-    /// coarser level, a share of its objects, the candidates ranked first,
-    /// where its own level's tiles are not resident.
+    /// coarser level, every one of its objects, where its own level's tiles
+    /// are not resident.
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct FarPlacement {
         /// The coarser level whose tiles hold them.
         pub level: u8 = 1 => range(1, MAX_LEVEL),
-        /// The share of the layer's objects standing there.
-        pub share: f32 = 1.0 => above_to(0.0, 1.0),
     }
 }
 
@@ -328,8 +326,9 @@ pub(crate) fn place_authored(
 /// layer indices, for objects standing far away the level
 /// whose resident tiles hold it instead, and its rank under the density at
 /// its point (0 to 1; 0 for authored objects): the share of the density
-/// past which it stands, which renderers thin layers by with distance.
-/// Far away, a layer stands the objects ranked first, its largest.
+/// past which it stands, by which renderers retire a layer's objects as
+/// they shrink under a pixel on screen, those ranked first, its largest,
+/// last.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub position: [f32; 3],
@@ -374,12 +373,12 @@ impl Placed {
 
 /// A compiled layer: its tiles' level, its asset indices and cumulative
 /// weights, the share of a square its density fills, its materials as a
-/// 256-bit set (none: any), its mask and its variations, and the level and
-/// share it stands far away at.
+/// 256-bit set (none: any), its mask and its variations, and the level it
+/// stands far away at.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CompiledPlacement {
     pub(crate) level: u8,
-    pub(crate) far: Option<(u8, f32)>,
+    pub(crate) far: Option<u8>,
     choices: Vec<(u16, f32)>,
     fill: f32,
     footprint: f32,
@@ -458,7 +457,7 @@ pub(crate) fn compile(
             .map_err(|error| (error.path, error.rule))?;
         compiled.push(CompiledPlacement {
             level: layer.level,
-            far: layer.far.map(|far| (far.level, far.share)),
+            far: layer.far.map(|far| far.level),
             choices,
             fill,
             footprint: layer.footprint,
@@ -542,7 +541,8 @@ fn lowest_ground(tile: &Tile, local: [f32; 2], reach: f32, height: f32) -> f32 {
 /// Places row `row` (from the first) of layer `layer`'s candidate squares
 /// over `tile`, appending to `out`; `seed` varies them per terrain.
 /// Layers hold rows on tiles of their level, and of the level they stand
-/// far away at, where only their far share stands; others hold none.
+/// far away at, where every one of their candidates stands too; others
+/// hold none.
 /// Returns the work it took (samples' worth) and the next row, none after
 /// the last layer's last.
 /// A row of candidates whose masks a row evaluates at once,
@@ -691,18 +691,18 @@ pub(crate) fn place_row(
     let Some(layer) = layers.get(layer_index) else {
         return (0, None);
     };
-    // Far away, the candidates ranked first: a subset of the layer's own.
-    let (share, near_level) = match layer.far {
-        _ if layer.level == key.level => (1.0, None),
-        Some((level, share)) if level == key.level => (share, Some(layer.level)),
-        _ => (0.0, None),
+    // Far away, every one of the layer's candidates, in their own places.
+    let near_level = match layer.far {
+        _ if layer.level == key.level => None,
+        Some(level) if level == key.level => Some(layer.level),
+        _ => return (0, Some((layer_index + 1, 0))),
     };
     let skipped = match placing {
         Placing::All => false,
         Placing::Near => near_level.is_some(),
         Placing::Far => near_level.is_none(),
     };
-    let fill = layer.fill * share;
+    let fill = layer.fill;
     if fill <= 0.0 || skipped {
         return (0, Some((layer_index + 1, 0)));
     }
@@ -785,7 +785,7 @@ pub(crate) fn place_row(
         }
         // The density at most, with the mask at 1: where the rank passes
         // even that, nothing here can stand.
-        if rank >= layer.fill * share_of_materials * share {
+        if rank >= fill * share_of_materials {
             continue;
         }
         candidates.push(Candidate {
@@ -811,9 +811,9 @@ pub(crate) fn place_row(
             share_of_materials,
         } = *candidate;
         let normal = sample.normal;
-        // The density here, and of it the share standing on this tile.
-        let full = layer.fill * share_of_materials * clamp(mask, 0.0, 1.0);
-        if rank >= full * share {
+        // The density here.
+        let full = fill * share_of_materials * clamp(mask, 0.0, 1.0);
+        if rank >= full {
             continue;
         }
         let pick = unit(hash(square ^ 0x27d4_eb2f));
@@ -826,8 +826,8 @@ pub(crate) fn place_row(
             });
         // Its rank under the density here, which its size follows: from the
         // largest of the layer's scales, ranked first, down to the smallest,
-        // evenly as ranks spread, so those standing far away and those
-        // thinning keeps are the largest.
+        // evenly as ranks spread, so those retiring last as they shrink on
+        // screen are the largest.
         let ranked = rank / full;
         let scale = layer.scale[1] - (layer.scale[1] - layer.scale[0]) * ranked;
         // Turned at random, and down the ground's slope as strongly as the
@@ -886,7 +886,7 @@ pub(crate) fn place_row(
 }
 
 crate::codec::record!(PlacementChoice { asset, weight });
-crate::codec::record!(FarPlacement { level, share });
+crate::codec::record!(FarPlacement { level });
 crate::codec::record!(PlacementLayer {
     id,
     assets,

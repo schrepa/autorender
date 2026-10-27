@@ -89,7 +89,7 @@ try {
   assert.deepEqual(view.terrain.surface.assets.map(asset => asset.id), ["crate", "ball"]);
   assert.deepEqual(view.terrain.surface.assets[0], { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5, collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] }, memberships: 1, filter: 4294967295 } });
   assert.deepEqual(view.terrain.surface.placements.map(layer => layer.id), ["crates"]);
-  assert.deepEqual(view.terrain.surface.placements[0].far, { level: 2, share: 0.25 });
+  assert.deepEqual(view.terrain.surface.placements[0].far, { level: 2 });
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
   // Surroundings: ground generated past the terrain's edges
   // from its layers, four meters a sample, meets its edges where both read

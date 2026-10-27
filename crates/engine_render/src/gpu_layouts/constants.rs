@@ -72,9 +72,6 @@ gpu_consts! {
     pub(crate) const NO_LAYER: u32 = 0x7f => ["NO_LAYER"];
     pub(crate) const NEAR_LEVEL_SHIFT: u32 = 16 => ["NEAR_LEVEL_SHIFT"];
     pub(crate) const RANK_SHIFT: u32 = 21 => ["RANK_SHIFT" in SCATTER_CULL_SHADER];
-    /// Entries of the thinning table each terrain takes: one
-    /// per placement layer a surface may have (a validity bound).
-    pub(crate) const THIN_LAYERS: usize = 64 => ["THIN_LAYERS"];
 
     // crate::shadows
     /// Regions of tiles a frame redraws at most, each a map of the casters
@@ -345,13 +342,16 @@ gpu_consts! {
     // crate::ground_cover
     /// Bytes of a blade or tuft (`CoverBlade`).
     pub(crate) const BLADE_BYTES: u64 = 32 => ["size_of CoverBlade"];
-    /// The share of ground cover's radius within which it grows densest:
-    /// past it blades thin as this share of the radius over the distance,
-    /// each one left a tuft of the leaves of those it stands for, as wide in
-    /// all and so covering as much ground, up to its inverse times their
-    /// roots at the radius (`terrain_variety.wgsl`'s `cover_share` and
-    /// `cover_tuft`).
-    pub(crate) const COVER_CORE: f32 = 0.2 => ["COVER_CORE"];
+    /// The most leaves a tuft of ground cover holds, and so the most blades
+    /// it stands for (`terrain_variety.wgsl`'s `cover_tuft`): as blades
+    /// shrink under a pixel each one left widens to hold the leaves of
+    /// those it replaces, so it spans a pixel, until a tuft a pixel wide
+    /// holds five leaves a fifth of a pixel wide each, which temporal
+    /// antialiasing's eight jittered samples still find; then tufts narrow
+    /// under a pixel and retire, the ground's canopy taking on their leaves
+    /// (`cover_share`). Every blade's and tuft's strip draws as many leaves
+    /// (`cover_grow.wgsl`'s `finish_cover`).
+    pub(crate) const COVER_LEAVES: u32 = 5 => ["COVER_LEAVES"];
     /// How many times as tall, and as dense, ground cover grows on a
     /// terrain's lushest ground as on its driest, the macro colors'
     /// lushness moving it between them geometrically about the cover its

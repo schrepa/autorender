@@ -34,8 +34,9 @@ const FILTERS: &[(&str, &str)] = &[
     ),
     (
         "cover_share",
-        "ground cover's blades thinning and retiring by their distance and size on screen, the \
-         ground's canopy showing the leaves they leave, their average",
+        "ground cover's blades thinning under a pixel into tufts a pixel wide holding their \
+         leaves, and tufts retiring under a pixel, the ground's canopy showing the leaves they \
+         leave, their average",
     ),
     (
         "detail_level",
@@ -71,12 +72,9 @@ const FILTERS: &[(&str, &str)] = &[
          slopes as roughness",
     ),
     (
-        "placed_thinned",
-        "placed objects thinning before their tiles leave, the ground taking on those it hides",
-    ),
-    (
         "seen_share",
-        "things retiring by their size on screen, the ground taking on what they leave",
+        "things retiring as they shrink under a pixel on screen, the ground taking on what they \
+         leave",
     ),
     ("stable_normalize", "a direction, holding no size"),
     (
@@ -90,8 +88,7 @@ const FILTERS: &[(&str, &str)] = &[
     ),
     (
         "terrain_placed_share",
-        "placed objects too small on screen or thinned away, the ground taking on their mean \
-         color",
+        "placed objects retired under a pixel on screen, the ground taking on their mean color",
     ),
     (
         "terrain_shading_level",

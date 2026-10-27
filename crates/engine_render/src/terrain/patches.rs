@@ -692,8 +692,8 @@ fn terrain_uniform(
         // Elsewhere as tufts thin and retire, by their law.
         Some((cover, pixels)) => {
             let terms = tables.cover_terms.get(index).copied().unwrap_or_default();
-            let law = crate::ground_cover::CoverLaw::of(&cover, terms, pixels);
-            [law.radius, law.span, cover.density, 0.0]
+            let law = crate::ground_cover::CoverLaw::of(terms, pixels);
+            [law.span, 0.0, cover.density, 0.0]
         }
     };
     let (vt, vt_scale, vt_layout) = parts

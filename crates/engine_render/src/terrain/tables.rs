@@ -208,14 +208,13 @@ impl TerrainTables {
     /// Writes every terrain's surface materials into the palette when they
     /// change, each terrain's after the one before, with the layers their
     /// `maps` lie in and what its placement layers' objects leave the ground
-    /// where they retire, their `pinned` coarsest levels staying resident
-    /// everywhere; materials past its capacity, and those whose maps the
-    /// arrays cannot hold, are dropped and counted.
+    /// where they retire; materials past its capacity, and those whose maps
+    /// the arrays cannot hold, are dropped and counted.
     pub(super) fn write_palette(
         &mut self,
         queue: &wgpu::Queue,
         terrains: &RenderTerrains,
-        (maps, pinned): (&TerrainMaps, u32),
+        maps: &TerrainMaps,
     ) {
         self.write_covers(queue, terrains);
         let mut entries = std::mem::take(&mut self.palette_spare);
@@ -247,7 +246,7 @@ impl TerrainTables {
                     .zip(terrain_maps)
                     .enumerate()
                     .map(|(material, (look, terrain_maps))| {
-                        let placed = placed_terms(terrain, layers, (material, pinned));
+                        let placed = placed_terms(terrain, layers, material);
                         palette_entry(look, terrain_maps, maps, placed)
                     }),
             );
@@ -509,7 +508,7 @@ fn palette_entry(
     look: &engine_core::SurfaceMaterial,
     terrain_maps: &Option<engine_core::RenderSurfaceMaps>,
     maps: &TerrainMaps,
-    (placed, placed_size, placed_thinning): ([f32; 4], [f32; 4], [f32; 4]),
+    (placed, placed_size): ([f32; 4], [f32; 4]),
 ) -> PaletteEntry {
     let projection = match look.projection {
         engine_core::SurfaceProjection::Top => 0.0,
@@ -591,7 +590,6 @@ fn palette_entry(
         canopy,
         placed,
         placed_size,
-        placed_thinning,
         heights,
     }
 }
@@ -614,18 +612,16 @@ const COVER_FILLED: f32 = 0.6;
 /// One placement layer's objects as the ground takes them on where they
 /// retire, summed over the assets it chooses: the share of ground they
 /// cover where everything allows them, and over it the sums of their linear
-/// colors, of the base-2 logarithms of the bounding spheres' diameters of
-/// those ranked first and last under its density (its largest and
+/// colors and of the base-2 logarithms of the bounding spheres' diameters
+/// of those ranked first and last under its density (its largest and
 /// smallest: their scale falls across its range as their rank rises,
-/// `engine_terrain::placement`), and of the share of them standing far
-/// away.
+/// `engine_terrain::placement`).
 #[derive(Clone, Copy, Default)]
 struct PlacedSums {
     covered: f32,
     color: [f32; 3],
     first: f32,
     last: f32,
-    far: f32,
 }
 
 impl PlacedSums {
@@ -636,7 +632,6 @@ impl PlacedSums {
         }
         self.first += other.first;
         self.last += other.last;
-        self.far += other.far;
     }
 }
 
@@ -677,7 +672,6 @@ fn placed_sums(terrain: &RenderTerrain, layer: &engine_core::RenderPlacementLaye
         sums.first = sums.covered * first / chosen;
         sums.last = sums.covered * last / chosen;
     }
-    sums.far = sums.covered * layer.far.1;
     sums
 }
 
@@ -724,43 +718,27 @@ fn placed_asset(asset: &engine_core::RenderPlacementAsset) -> (f32, f32, [f32; 3
 }
 
 /// What surface material `material` of `terrain` shows where its placement
-/// layers' objects retire (`meshes/terrain.wgsl`'s `terrain_placed_share`),
-/// from the layers' sums `layers`, its `pinned` coarsest levels staying
-/// resident everywhere: the objects' mean linear color and the share of
-/// the ground they cover where the material lies alone, at most all of it;
-/// the base-2 logarithms of the bounding spheres' diameters of those ranked
-/// first and last, over that ground; and how they thin with distance, as
-/// culling thins them: the share standing far away, over that ground, and
-/// the levels the layer covering most of it stands on near and far, each
-/// plus one where it thins there (`scatter::thins_on`), else 0. Zeroes
-/// where none stands on it.
+/// layers' objects retire as they shrink on screen
+/// (`meshes/terrain.wgsl`'s `terrain_placed_share`), from the layers' sums
+/// `layers`: the objects' mean linear color and the share of the ground
+/// they cover where the material lies alone, at most all of it; and the
+/// base-2 logarithms of the bounding spheres' diameters of those ranked
+/// first and last, over that ground. Zeroes where none stands on it.
 fn placed_terms(
     terrain: &RenderTerrain,
     layers: &[PlacedSums],
-    (material, pinned): (usize, u32),
-) -> ([f32; 4], [f32; 4], [f32; 4]) {
+    material: usize,
+) -> ([f32; 4], [f32; 4]) {
     let mut sums = PlacedSums::default();
-    let mut widest: Option<(&engine_core::RenderPlacementLayer, f32)> = None;
     for (layer, held) in terrain.layers.iter().zip(layers) {
         if layer.stands_on(material) {
             sums.add(held);
-            if widest.is_none_or(|(_, covered)| held.covered > covered) {
-                widest = Some((layer, held.covered));
-            }
         }
     }
-    let Some((widest, _)) = widest.filter(|_| sums.covered > 0.0) else {
-        return ([0.0; 4], [0.0; 4], [0.0; 4]);
-    };
     let covered = sums.covered;
-    let levels = terrain.pyramid.levels();
-    let code = |level: u8| {
-        if crate::scatter::thins_on(level, levels, pinned) {
-            f32::from(level) + 1.0
-        } else {
-            0.0
-        }
-    };
+    if covered <= 0.0 {
+        return ([0.0; 4], [0.0; 4]);
+    }
     (
         [
             sums.color[0] / covered,
@@ -769,11 +747,5 @@ fn placed_terms(
             engine_core::math::min(covered, 1.0),
         ],
         [sums.first / covered, sums.last / covered, 0.0, 0.0],
-        [
-            sums.far / covered,
-            code(widest.level),
-            code(widest.far.0),
-            0.0,
-        ],
     )
 }

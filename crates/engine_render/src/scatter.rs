@@ -7,7 +7,7 @@
 //! those blending into the ground the ground's color under them
 //! (`scatter_snap.wgsl`), then culls it against each view (the camera,
 //! then the regions of shadow tiles redrawn this frame) and picks its level
-//! of detail from the detail eye, retiring objects of thinning layers too
+//! of detail from the detail eye, retiring objects of placement layers too
 //! small on screen for their ranks (`scatter_cull.wgsl`), appending it to
 //! its draw group's list for that view and level, and to its parts'
 //! groups', or to the view's impostor cards; each group and level then
@@ -43,7 +43,6 @@ pub(crate) use crate::gpu_layouts::constants::SCATTER_LEVELS as LEVELS;
 use crate::gpu_layouts::constants::SHOWN_NONE;
 pub(crate) use crate::gpu_layouts::constants::STATE_ADOPT;
 pub(crate) use crate::gpu_layouts::constants::TERRAIN_INDEX;
-pub(crate) use crate::gpu_layouts::constants::THIN_LAYERS;
 use crate::gpu_layouts::scatter::FrameUniform;
 
 pub(crate) const STATE_FRESH: u32 = SHOWN_NONE | SHOWN_NONE << 3 | FADED << 6;
@@ -57,15 +56,6 @@ use crate::gpu_layouts::scatter::ViewData;
 
 pub(crate) const NEAR_LEVEL_MASK: u32 = 0x1f;
 pub(crate) const RANK_MAX: f32 = 1023.0;
-
-/// Whether the objects placement layers stand on level `level`'s tiles of a
-/// terrain of `levels` levels thin out with distance: all but those on its
-/// `pinned` coarsest levels, whose tiles stay resident everywhere. Culling
-/// thins them by it, and the ground takes on those it thins alike
-/// (`terrain::tables`).
-pub(crate) fn thins_on(level: u8, levels: u32, pinned: u32) -> bool {
-    u32::from(level) + pinned < levels
-}
 
 pub(crate) use crate::gpu_layouts::scatter::Record;
 
@@ -160,10 +150,6 @@ pub(crate) struct ScatterPass {
     card_args: Growable,
     // Advances when buffers are replaced.
     generation: u64,
-    // How each terrain's placement layers thin with distance,
-    // as last written.
-    thins: Growable,
-    thins_written: Vec<[f32; 4]>,
     cull_group: Cached<u64, wgpu::BindGroup>,
     // The pose groups of plain and temporal mesh pipelines, and of depth
     // passes, whose binding of the shadow regions' layers takes a
@@ -304,8 +290,6 @@ impl ScatterPass {
                 wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
             ),
             generation: 0,
-            thins: growable("engine/scatter-thins", 16),
-            thins_written: Vec::new(),
             cull_group: Cached::default(),
             pose_groups: Cached::default(),
             shadow_group: Cached::default(),
@@ -521,31 +505,12 @@ impl ScatterPass {
             .get_or_insert_with(|| snap_pipeline(device, &self.snap_layout));
     }
 
-    /// Writes how each terrain's placement layers thin with distance
-    /// when it changed: `THIN_LAYERS` entries a terrain.
-    pub(crate) fn set_thinning(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        thins: &[[f32; 4]],
-    ) {
-        if thins == self.thins_written.as_slice() {
-            return;
-        }
-        let bytes: &[u8] = bytemuck::cast_slice(thins);
-        if self.thins.grow(device, (bytes.len() as u64).max(16)) {
-            self.generation += 1;
-        }
-        queue.write_buffer(&self.thins, 0, bytes);
-        self.thins_written = thins.to_vec();
-    }
-
     /// Plans this frame's culling: the camera's view, from its
     /// `view_projection` (world) and the detail eye, which every switch
     /// measures from, and those of the regions of shadow tiles redrawn
     /// this frame (`regions`, each with the map it reads its lists as),
     /// where objects smaller than half a texel cast nothing. Objects of
-    /// thinning layers retire where their bounding spheres span too few
+    /// placement layers retire where their bounding spheres span too few
     /// pixels of a viewport `height` pixels tall for their ranks. Levels
     /// are picked within `pixel_error` pixels of the viewport (no error:
     /// finest levels only); regions cast each object's shadow proxy where
@@ -647,7 +612,6 @@ impl ScatterPass {
                     crate::buffers::entry("views", &self.views),
                     crate::buffers::entry("cards", &self.cards),
                     crate::buffers::entry("card_args", &self.card_args),
-                    crate::buffers::entry("thins", &self.thins),
                 ],
             );
             self.cull_group.set(self.generation, group);
@@ -794,8 +758,8 @@ impl ScatterPass {
 
     /// The objects' records and poses, and a generation advancing when the
     /// buffers are replaced.
-    pub(crate) fn slot_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, &wgpu::Buffer, u64) {
-        (&self.records, &self.poses, &self.thins, self.generation)
+    pub(crate) fn slot_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
+        (&self.records, &self.poses, self.generation)
     }
 
     /// The pose groups of plain and temporal mesh pipelines.

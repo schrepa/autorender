@@ -36,7 +36,6 @@ struct PaletteEntry {
     canopy: vec4<f32>,
     placed: vec4<f32>,
     placed_size: vec4<f32>,
-    placed_thinning: vec4<f32>,
     heights: vec4<f32>,
 }
 
@@ -80,7 +79,7 @@ const HIDDEN: u32 = 0x80000000u;
 // entries as fit 16 KiB (`terrain::PALETTE_ENTRIES`), and their macro
 // colors.
 @group(0) @binding(7) var control: texture_2d_array<u32>;
-const PALETTE_ENTRIES: u32 = 102u;
+const PALETTE_ENTRIES: u32 = 113u;
 @group(0) @binding(8) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
 @group(0) @binding(9) var macro_maps: texture_2d_array<f32>;
 
