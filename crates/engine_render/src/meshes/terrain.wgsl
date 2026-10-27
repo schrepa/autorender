@@ -2086,9 +2086,9 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
 // `terrain_point` before its highlights widen with its normal's turn: the
 // fragment `relative` to the eye, seen as `look` says, where its view ray
 // meets the ground as `seen` says, its pixel's depth holding the point
-// `held` (less the eye).
+// `depth_point` (less the eye).
 fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
-        held: vec3<f32>) -> SurfacePoint {
+        depth_point: vec3<f32>) -> SurfacePoint {
     let site = seen.site;
     let world = eye_world(relative);
     let local = world.xz - terrain.origin.xz;
@@ -2137,7 +2137,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     // for.
     var roughness = ground.roughness;
     let wet = max(terrain_wetness(local, seen.shading),
-        terrain_waterline(eye_world(held), site)) * (1.0 - ground.canopy);
+        terrain_waterline(eye_world(depth_point), site)) * (1.0 - ground.canopy);
     if wet > 0.0 {
         let soaked = terrain_wet_ground(roughness, wet);
         albedo *= soaked.x;
