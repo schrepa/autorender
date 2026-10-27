@@ -205,4 +205,4 @@ pipeline_layouts! {
 /// replaced the camera's patches selected on the CPU, takes one, and the
 /// shadow clipmap's marks one of their own: the one pass reading the depth
 /// buffer with the camera, which tells which tiles get memory.
-pub const LAYOUT_BUDGET: usize = 72;
+pub const LAYOUT_BUDGET: usize = 71;
