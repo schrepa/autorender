@@ -854,8 +854,8 @@ tables! {
     /// directory, with water's after it, and this frame's leaves of its
     /// subdivisions, as the terrain group binds them; tiles' water blocks,
     /// their surfaces beside their ground and their words (packed flow,
-    /// whitewater and kind, state, nearest obstacle and how fast their
-    /// surface and depth fall), which pixels read; water's uniform; the
+    /// whitewater and kind, state and nearest obstacle), which pixels read
+    /// as the water's smooth surface and where it lies; water's uniform; the
     /// sampler repeating falling water's map (`water_fall_map.rs`) and the
     /// map; the simulated water's cells, ground and what the beds hold under
     /// them; and at a dynamic offset, the subdivision of each terrain's
