@@ -1513,7 +1513,13 @@ impl Renderer {
     /// density where it grows, and their group, in frames whose screen
     /// effects reflect; others let the trace go.
     fn prepare_reflections(&mut self, state: &FrameState<'_>) {
-        let Some(frame) = state.features.frames.post.as_ref().map(|post| *post.frame()) else {
+        let Some(frame) = state
+            .features
+            .frames
+            .post
+            .as_ref()
+            .map(|post| *post.frame())
+        else {
             return;
         };
         let Some(post) = self.features.post.get_mut() else {

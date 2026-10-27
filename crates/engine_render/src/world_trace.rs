@@ -202,10 +202,7 @@ impl WorldTrace {
             )
         };
         let textures = [
-            placeholder(
-                "engine/post-world-heights",
-                crate::terrain::HEIGHT_FORMAT,
-            ),
+            placeholder("engine/post-world-heights", crate::terrain::HEIGHT_FORMAT),
             placeholder("engine/post-world-peaks", wgpu::TextureFormat::R16Float),
             placeholder("engine/post-world-control", wgpu::TextureFormat::R32Uint),
         ];
@@ -384,9 +381,9 @@ impl WorldTrace {
             let Some((built, apron)) = grid(&canopies, terrain, key.1) else {
                 continue;
             };
-            let top = canopies
-                .iter()
-                .fold(-f32::MAX, |top, canopy| engine_core::math::max(top, canopy.top));
+            let top = canopies.iter().fold(-f32::MAX, |top, canopy| {
+                engine_core::math::max(top, canopy.top)
+            });
             let words = self.place(&built);
             self.grids.insert(
                 key,
@@ -529,13 +526,16 @@ impl WorldTrace {
             let (levels, apron, highest) = self
                 .grids
                 .range((terrain.id, first)..=(terrain.id, last))
-                .fold((0_u32, 0.0_f32, ground), |(levels, apron, highest), (_, grid)| {
-                    (
-                        levels | 1 << grid.level,
-                        engine_core::math::max(apron, grid.apron),
-                        engine_core::math::max(highest, grid.top),
-                    )
-                });
+                .fold(
+                    (0_u32, 0.0_f32, ground),
+                    |(levels, apron, highest), (_, grid)| {
+                        (
+                            levels | 1 << grid.level,
+                            engine_core::math::max(apron, grid.apron),
+                            engine_core::math::max(highest, grid.top),
+                        )
+                    },
+                );
             records.push(TraceTerrain {
                 info,
                 cutout: terrain
@@ -588,7 +588,10 @@ impl WorldTrace {
             ("world_terrains", self.terrains.bound()),
             ("world_placed", self.placed.bound()),
             ("placed_records", records),
-            ("placed_poses", Bound::counted(placed, poses.as_entire_binding())),
+            (
+                "placed_poses",
+                Bound::counted(placed, poses.as_entire_binding()),
+            ),
         ]
     }
 }
@@ -655,9 +658,9 @@ fn grid(
         return None;
     }
     let size = terrain.pyramid.tile_size(u32::from(key.level));
-    let apron = canopies
-        .iter()
-        .fold(0.0, |widest, canopy| engine_core::math::max(widest, canopy.radius));
+    let apron = canopies.iter().fold(0.0, |widest, canopy| {
+        engine_core::math::max(widest, canopy.radius)
+    });
     let wide = size + 2.0 * apron;
     let spacing = wide / (canopies.len() as f32).sqrt();
     let narrowest = engine_core::math::max(2.0 * apron, spacing);

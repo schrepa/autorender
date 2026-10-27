@@ -86,8 +86,8 @@ use atlas::TileAtlas;
 pub(crate) use patches::{PatchDraws, planes, visible};
 use pipelines::{GroupSources, TerrainPipelines};
 pub(crate) use surface::{SurfaceDraw, SurfaceTrees};
-pub(crate) use tables::placed_color;
 use tables::TerrainTables;
+pub(crate) use tables::placed_color;
 pub(crate) use water_blocks::TerrainWaterDraws;
 
 pub(crate) use crate::gpu_layouts::terrain::PatchRecord;

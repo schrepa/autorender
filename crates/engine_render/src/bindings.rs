@@ -9,11 +9,11 @@
 
 pub(crate) use crate::gpu_layouts::constants::PYRAMID_EXTENT_BYTES;
 use crate::gpu_layouts::impostors::{ImpostorBakeUniform, ImpostorRecord};
+use crate::gpu_layouts::scatter::Record as ScatterRecord;
 use crate::gpu_layouts::scene::{
     CameraUniform, ColorData, GroundData, LightingUniform, MaterialUniform, PoseData, PostUniform,
     ResolveUniform, RouteData, ShadowCullUniform, ShadowUniform, SkyUniform,
 };
-use crate::gpu_layouts::scatter::Record as ScatterRecord;
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::gpu_layouts::world_trace::TraceTerrain;
 use crate::gpu_layouts::{
