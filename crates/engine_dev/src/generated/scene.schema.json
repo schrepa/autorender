@@ -6730,7 +6730,7 @@
       "additionalProperties": false
     },
     "SceneWater": {
-      "description": "Water settings: how terrains' water looks (its color, clarity and\nsediment) and how it draws and runs live; its movement and foam come\nfrom its state, under the scene's wind as the terrain upwind\nshelters it.",
+      "description": "Water settings: how terrains' water looks (its color, clarity,\nsediment and the share of the wind's waves it shows) and how it draws\nand runs live; its movement and foam come from its state, under the\nscene's wind as the terrain upwind shelters it.",
       "type": "object",
       "properties": {
         "clarity": {
@@ -6827,6 +6827,14 @@
           "default": 65536,
           "maximum": 4000000,
           "minimum": 1024
+        },
+        "wind_waves": {
+          "description": "The share of the wind's waves terrains' water shows, from 0 to 1:\ntheir slopes, their heights and how far they fold, whitening\ntheir crests, scale by it, and the variance of their slopes,\nwhich roughens the water, by its square; the sea keeps all of its\nown. At 0 still water is a calm mirror, and running water shows\nonly what its current and its bed raise (the waves the bed holds,\nboils, waves standing about what it flows past).",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0
         }
       },
       "additionalProperties": false
