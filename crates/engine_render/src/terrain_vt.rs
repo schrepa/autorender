@@ -6,9 +6,13 @@
 //! and variety. All of it holds still while the light and the view move,
 //! so pages of it, baked once by the exact path's own code (the ground as
 //! seen where a pixel's footprint spans a texel), stand in for it at the
-//! pixels that ask: a page-table read and three bilinear texel fetches. A
-//! page's texels shade at the levels their own size gives
-//! (`terrain_shading_level`), as pixels of that footprint do, wherever the
+//! pixels that ask, read as anisotropic filtering reads a texture: at the
+//! mips whose texels match the size a pixel's footprint resolves across the
+//! view (`scene.wgsl`'s `detail_resolved`), by taps along its long side up
+//! to [`MATERIAL_ANISOTROPY`](crate::gpu_layouts::constants::MATERIAL_ANISOTROPY),
+//! each three bilinear texel fetches, and a page-table read for each page
+//! the taps enter. A page's texels shade at the levels their own size gives
+//! (`terrain_shading_level`), as pixels resolving that size do, wherever the
 //! eye stands.
 //!
 //! Mip m's texels span [`TEXEL`] · 2^m meters, its pages [`PAGE_TEXELS`] of
@@ -30,14 +34,17 @@
 //! texture adds no binding to them).
 //!
 //! Pixels ask for pages through a compute pass after the resolves, which
-//! marks the pages of the mips around each 8x8 block's footprint (a
-//! different pixel of the block each frame) in a bitmap read back a few
-//! frames late. Pages asked for and absent bake, up to
-//! `virtual_texture_bakes` a frame, coarsest first, into free slots or the
-//! least recently asked for. Until a pixel's two pages are baked it
-//! computes its ground as before, and a page that arrives in a window fades
-//! in from that ground to its own over half a second, so arrivals never
-//! pop. A terrain's macro colors replaced drop its pages.
+//! marks the pages the taps of each 8x8 block's footprint read at the mips
+//! around the size it resolves (a different pixel of the block each frame)
+//! in a bitmap read back a few frames late. Pages asked for and absent
+//! bake, up to `virtual_texture_bakes` a frame, nearest the eye first, into
+//! free slots or the least recently asked for: each distance's pixels read
+//! the mips of its own size, so nearer pages serve more of them, and beyond
+//! the slots the farthest ground computes itself. Until every page a pixel's
+//! taps read is baked it computes its ground as before, and a page that
+//! arrives in a window fades in from that ground to its own over half a
+//! second, so arrivals never pop. A terrain's macro colors replaced drop its
+//! pages.
 //!
 //! Pages go stale and bake again with the budget absent pages leave, those
 //! still asked for only: pages over tiles that arrived, left or were
@@ -596,9 +603,8 @@ impl VirtualTexture {
     }
 
     /// Takes the pages pixels asked for, keeping those resident and baking
-    /// up to the frame's budget of the absent, coarsest and nearest `eye`
-    /// first, then of the stale, those whose tiles changed longest ago
-    /// first.
+    /// up to the frame's budget of the absent, nearest `eye` first, then of
+    /// the stale, those whose tiles changed longest ago first.
     fn ask(&mut self, terrains: &RenderTerrains, eye: Vec3) {
         let arrived = std::mem::take(&mut *self.arrived.borrow_mut());
         let mut wanted: Vec<PageKey> = Vec::new();
@@ -660,18 +666,14 @@ impl VirtualTexture {
                 (key.page[0] as f32 + 0.5) * span + terrain.origin.x - eye.x,
                 (key.page[1] as f32 + 0.5) * span + terrain.origin.z - eye.z,
             ];
-            missing.push((
-                key,
-                (center[0] * center[0] + center[1] * center[1]).sqrt() / span,
-            ));
+            missing.push((key, (center[0] * center[0] + center[1] * center[1]).sqrt()));
         }
         self.stats.missing = missing.len() as u32;
-        // Coarse pages serve more pixels, and near ones first.
-        missing.sort_by(|a, b| {
-            b.0.mip
-                .cmp(&a.0.mip)
-                .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-        });
+        // Nearer pages first, which serve more pixels: pixels read the mips of
+        // the size they resolve, which grows with their distance, so every
+        // octave of distance asks for about as many pages, and nearer octaves
+        // fill more of the view.
+        missing.sort_by(|a, b| a.1.total_cmp(&b.1));
         let absent = missing.len() as u32;
         for (placed, (key, _)) in missing
             .into_iter()

@@ -90,10 +90,52 @@ const TERRAIN_PALETTE_ENTRIES: u32 = 102u;
 // lush plants grow there (alpha).
 @group(1) @binding(35) var terrain_macro: texture_2d_array<f32>;
 
-// The terrain's macro colors at terrain-local `local`, filtered over
-// `footprint` meters (a pixel's, or a page's texel's), once they arrived;
-// before, ground as it is (`macro_tint`).
-fn terrain_macro_texel(local: vec2<f32>, footprint: f32) -> vec4<f32> {
+// What a footprint is to the reads filtering it, a pixel's seen from the
+// detail eye (`detail_span`) or a page's texel's: the meters they resolve
+// (`detail_resolved`), the meters it spans along its long side, which their
+// taps average (`terrain_taps`), and the way that side runs across the
+// ground (x and z a meter along it).
+struct TerrainFootprint {
+    resolved: f32,
+    along: f32,
+    way: vec2<f32>,
+}
+
+// The footprint of sides `span.xy` (either way round) whose long side runs
+// along `span.zw`, as `detail_span` gives them.
+fn terrain_footprint(span: vec4<f32>) -> TerrainFootprint {
+    return TerrainFootprint(detail_resolved(span.xy), max(span.x, span.y), span.zw);
+}
+
+// The taps a read of `footprint` takes whose texels, or features, stand
+// `spacing` meters apart: as many as cover its long side that far apart at
+// most, or as far apart as the size it resolves where that is wider, so
+// one where the footprint is round and more as it stretches, up to
+// DETAIL_ANISOTROPY; evenly along its long side about its center, each an
+// equal share of the read. Their count, the first's offset from the center
+// and the step from one to the next (meters along x and z).
+struct TerrainTaps {
+    count: u32,
+    first: vec2<f32>,
+    step: vec2<f32>,
+}
+
+fn terrain_taps(footprint: TerrainFootprint, spacing: f32) -> TerrainTaps {
+    let count = clamp(ceil(footprint.along / max(spacing, footprint.resolved)), 1.0,
+        DETAIL_ANISOTROPY);
+    var taps: TerrainTaps;
+    taps.count = u32(count);
+    taps.step = footprint.way * (footprint.along / count);
+    taps.first = taps.step * (0.5 - 0.5 * count);
+    return taps;
+}
+
+// The terrain's macro colors at terrain-local `local`, read as `footprint`
+// (a pixel's, or a page's texel's) filters them: at the level whose texels
+// span the size it resolves, by taps along its long side a texel of that
+// level apart at most (`terrain_taps`), once they arrived; before, ground
+// as it is (`macro_tint`).
+fn terrain_macro_texel(local: vec2<f32>, footprint: TerrainFootprint) -> vec4<f32> {
     let layer = terrain.macro_map.x;
     if layer == 0u {
         return vec4<f32>(0.5);
@@ -103,21 +145,28 @@ fn terrain_macro_texel(local: vec2<f32>, footprint: f32) -> vec4<f32> {
         f32(terrain_directory[header + 2u])) * 256.0 * terrain.anchor.w;
     let size = vec2<f32>(textureDimensions(terrain_macro));
     let step = max(extent.x / size.x, extent.y / size.y);
-    let lod = max(log2(max(footprint, 1.0e-6) / step), 0.0);
+    let lod = max(log2(max(footprint.resolved, 1.0e-6) / step), 0.0);
     // Held within the texels of the coarser level read, which the
     // materials' sampler would otherwise wrap past the terrain's edges.
     let edge = 0.5 * exp2(ceil(lod)) / size;
-    let uv = clamp(local / extent, edge, vec2<f32>(1.0) - edge);
-    return textureSampleLevel(terrain_macro, terrain_material_sampler, uv, layer - 1u, lod);
+    let taps = terrain_taps(footprint, step * exp2(lod));
+    var texel = vec4<f32>(0.0);
+    for (var tap = 0u; tap < taps.count; tap++) {
+        let uv = clamp((local + taps.first + taps.step * f32(tap)) / extent, edge,
+            vec2<f32>(1.0) - edge);
+        texel += textureSampleLevel(terrain_macro, terrain_material_sampler, uv, layer - 1u, lod);
+    }
+    return texel / f32(taps.count);
 }
 
 // The tint the terrain's detail and macro colors give `ground` at `world`,
-// filtered over `footprint` meters (a pixel's, or a page's texel's): plain
+// read as `footprint` (a pixel's, or a page's texel's) filters them: plain
 // colors vary at every scale, maps carry their own detail and vary
 // broadly, and the macro colors tint it as they do the blades growing on
 // it, the same wherever the eye stands. Pages bake it in; pixels computing
 // their ground apply it.
-fn terrain_tint(world: vec3<f32>, ground: TerrainGround, footprint: f32) -> vec3<f32> {
+fn terrain_tint(world: vec3<f32>, ground: TerrainGround, footprint: TerrainFootprint)
+        -> vec3<f32> {
     let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
     let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
     let fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, footprint);
@@ -286,18 +335,26 @@ fn terrain_value2(p: vec2<f32>) -> vec2<f32> {
         mix(terrain_hash2(x0 ^ y1), terrain_hash2(x1 ^ y1), u.x), u.y);
 }
 
-// Noise of feature size `size` meters at `p`, as a pixel spanning
-// `footprint` meters averages it: whole while the pixel spans half a
-// feature or less, its mean once it spans a whole one. A noise computed
-// where it shows has no mipmaps to filter it, and a pixel spanning its
-// features would otherwise show one of them at random.
-fn terrain_detail(p: vec2<f32>, size: f32, footprint: f32) -> f32 {
-    let kept = saturate(2.0 - 2.0 * footprint / size);
+// Noise of feature size `size` meters at `p`, as a pixel whose footprint is
+// `footprint` averages it: across it, whole while the size the footprint
+// resolves spans half a feature or less, its mean once it spans a whole
+// one; along it, the mean of taps half a feature apart (`terrain_taps`), so
+// features it resolves across but spans many of along average along it, as
+// filtering averages a map's. A noise computed where it shows has no
+// mipmaps to filter it, and a pixel spanning its features would otherwise
+// show one of them at random.
+fn terrain_detail(p: vec2<f32>, size: f32, footprint: TerrainFootprint) -> f32 {
+    let kept = saturate(2.0 - 2.0 * footprint.resolved / size);
     // Averaged away entirely, it is its mean.
     if kept == 0.0 {
         return 0.5;
     }
-    return 0.5 + (terrain_value(p / size) - 0.5) * kept;
+    let taps = terrain_taps(footprint, 0.5 * size);
+    var sum = 0.0;
+    for (var tap = 0u; tap < taps.count; tap++) {
+        sum += terrain_value((p + taps.first + taps.step * f32(tap)) / size);
+    }
+    return 0.5 + (sum / f32(taps.count) - 0.5) * kept;
 }
 
 // How much of the next coarser level's normals (x) and surface materials
@@ -783,13 +840,13 @@ fn terrain_fringe_wetted(above: f32) -> f32 {
 // its own (`water_cell`), as water's pass reads it (`water_pixel`). Under
 // the water's surface the ground is soaked; above it, it dries over the
 // capillary fringe (TERRAIN_FRINGE), the band averaged over the heights the
-// pixel spans there, its footprint the mean of its two sides
+// pixel spans there, its whole footprint the mean of its two sides
 // (`detail_span`), so a band narrower than the pixel covers its share of it
 // and far banks show its average. Where no water reaches, the ground is as
 // dry as its rules say. Pages of the runtime virtual texture hold none of
 // it: the pixels reading them wet them as the water stands now.
 fn terrain_waterline(local: vec2<f32>, site: TerrainSite) -> f32 {
-    let picked = detail_level(site.footprint, terrain.anchor.w, terrain.directory.y);
+    let picked = detail_level(site.footprint.along, terrain.anchor.w, terrain.directory.y);
     let cell = water_cell(local, picked.level);
     var waterline = terrain_waterline_at(cell);
     if picked.blend > 0.0 && cell.level == picked.level {
@@ -801,7 +858,7 @@ fn terrain_waterline(local: vec2<f32>, site: TerrainSite) -> f32 {
     // averages: where they hardly change, the band's own wetness there;
     // ground lying deeper than that under the water's surface is soaked
     // across the whole of it.
-    let half = 0.5 * length(waterline.rise) * sqrt(site.texel * site.footprint);
+    let half = 0.5 * length(waterline.rise) * sqrt(site.across * site.footprint.along);
     if half < 1.0e-3 * TERRAIN_FRINGE {
         return saturate(1.0 - waterline.above / TERRAIN_FRINGE);
     }
@@ -894,12 +951,6 @@ fn terrain_lattice(uv: vec2<f32>, axis: u32, lattice: u32) -> vec2<f32> {
     return vec2<f32>(uv.x * TERRAIN_STRETCH, uv.y);
 }
 
-// The most anisotropy surface materials' maps filter to
-// (`gpu_layouts::constants::MATERIAL_ANISOTROPY`, their sampler's clamp):
-// past it the filtering under-samples a footprint's long side, and crests
-// seen almost edge on ripple.
-const TERRAIN_ANISOTROPY: f32 = 16.0;
-
 // Derivative `short` of a map's coordinates widened, beside `long`, to at
 // least `least`: along its own way, or across `long` where it has none.
 fn terrain_widened(short: vec2<f32>, long: vec2<f32>, least: f32) -> vec2<f32> {
@@ -914,10 +965,11 @@ fn terrain_widened(short: vec2<f32>, long: vec2<f32>, least: f32) -> vec2<f32> {
 }
 
 // A map's coordinates' derivatives `dx` and `dy` (columns), the shorter
-// widened to at least a TERRAIN_ANISOTROPY-th of the longer, so its
-// filtering resolves the footprint whole, as a site's `texel` measures it.
+// widened to the size their filtering resolves (`detail_resolved`), at
+// least a DETAIL_ANISOTROPY-th of the longer, so its filtering resolves the
+// footprint whole, as a site's footprint measures it.
 fn terrain_filtered(dx: vec2<f32>, dy: vec2<f32>) -> mat2x2<f32> {
-    let least = max(length(dx), length(dy)) / TERRAIN_ANISOTROPY;
+    let least = detail_resolved(vec2<f32>(length(dx), length(dy)));
     return mat2x2<f32>(terrain_widened(dx, dy, least), terrain_widened(dy, dx, least));
 }
 
@@ -1031,13 +1083,13 @@ fn terrain_second_lattice(world: vec3<f32>, tiling: f32) -> f32 {
 }
 
 // Whether material `entry` shows its maps at `site`: while it has maps and
-// a whole repeat spans more than the footprint their filtering resolves
-// (`site.texel`). Past that their mipmaps' last level is all the filtering
-// reads, their means the palette holds, which stand in without reading
-// them; nearer every map reads through its mipmaps and anisotropic
+// a whole repeat spans more than the size its footprint resolves
+// (`detail_resolved`). Past that their mipmaps' last level is all the
+// filtering reads, their means the palette holds, which stand in without
+// reading them; nearer every map reads through its mipmaps and anisotropic
 // filtering by the pixel's own derivatives, at every distance alike.
 fn terrain_mapped(entry: TerrainPaletteEntry, site: TerrainSite) -> bool {
-    return entry.params.w > 0.0 && site.texel < entry.params.x;
+    return entry.params.w > 0.0 && site.footprint.resolved < entry.params.x;
 }
 
 // How far under the highest raised weight materials still show where their
@@ -1058,11 +1110,10 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 // Where a fragment is and how it is seen, as the ground's passes read it:
 // its world position and how that changes per pixel on the terrain's smooth
 // surface, which its maps filter by; a pixel's footprint there seen from
-// the detail eye (meters, its long side, along the view: `detail_span`),
-// which noise computed where it shows averages over, and the footprint the
-// maps' anisotropic filtering resolves (its short side, across the view,
-// never under a sixteenth of the long one), against which a whole repeat of
-// a material's maps shows them or their means (`terrain_mapped`); the
+// the detail eye (`terrain_footprint`), which the virtual texture's pages,
+// the macro colors and noise computed where it shows resolve across the
+// view and average along it, and against whose resolved size a whole repeat
+// of a material's maps shows them or their means (`terrain_mapped`); the
 // terrain's normal and the way toward the eye; the share of its cover's
 // leaves blades no longer show there, and how many times its materials'
 // leaves its cover grows there (`terrain_grown`); and the meters a pixel
@@ -1074,8 +1125,7 @@ struct TerrainSite {
     world: vec3<f32>,
     world_dx: vec3<f32>,
     world_dy: vec3<f32>,
-    footprint: f32,
-    texel: f32,
+    footprint: TerrainFootprint,
     geometric: vec3<f32>,
     toward: vec3<f32>,
     thinned: f32,
@@ -1101,11 +1151,11 @@ fn terrain_thinned(world: vec3<f32>) -> f32 {
 }
 
 // How many times its material's leaves ground cover grows at `world`, as
-// lush as the macro colors hold it there, filtered over `footprint` meters
+// lush as the macro colors hold it there, read as `footprint` filters them,
 // as the tint reads them: its blades' height times their density
 // (`terrain_variety.wgsl`'s `cover_growth`), which the canopy's depth
 // follows, so the far field holds the leaves the near field's blades do.
-fn terrain_grown(world: vec3<f32>, footprint: f32) -> f32 {
+fn terrain_grown(world: vec3<f32>, footprint: TerrainFootprint) -> f32 {
     let growth = cover_growth(terrain_macro_texel(world.xz - terrain.origin.xz, footprint).a);
     return growth.height * growth.density;
 }
@@ -1706,7 +1756,7 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     // from the detail eye: it moves along the view, where a pixel spans its
     // longer side.
     let pixels = terrain_relief_across(site.world - camera.detail.xyz, site.geometric)
-        / detail_span(site.world, site.geometric).y;
+        / site.footprint.along;
     let tracked = terrain_deform_reach(site.world.xz);
     // Without tracks, ground whose deepest relief could not move a pixel
     // looks up no materials.
@@ -1901,15 +1951,14 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     let detail = material_detail();
     let smooth_dx = away * detail * (ray_dx - ray * (dot(geometric, ray_dx) / facing));
     let smooth_dy = away * detail * (ray_dy - ray * (dot(geometric, ray_dy) / facing));
-    // What a pixel spans there seen from the detail eye: along the view, its
-    // long side, and across it, which its maps' filtering resolves.
-    let span = detail_span(world, geometric);
+    // What a pixel spans there seen from the detail eye: across the view,
+    // which reads resolve, and along it, its long side, which their taps
+    // average.
     var site: TerrainSite;
     site.world = world;
     site.world_dx = smooth_dx;
     site.world_dy = smooth_dy;
-    site.footprint = span.y;
-    site.texel = span.x;
+    site.footprint = terrain_footprint(detail_span(world, geometric));
     site.geometric = geometric;
     site.toward = -ray;
     site.thinned = terrain_thinned(world);

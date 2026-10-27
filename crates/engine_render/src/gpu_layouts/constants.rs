@@ -231,8 +231,11 @@ gpu_consts! {
     /// The most anisotropy surface materials' maps filter to, their
     /// sampler's clamp: past it their filtering under-samples a pixel's
     /// footprint along its long side, so shaders sampling them widen their
-    /// derivatives' short side to at least the long side over it.
-    pub(crate) const MATERIAL_ANISOTROPY: u16 = 16 => ["TERRAIN_ANISOTROPY" in SHADER];
+    /// derivatives' short side to at least the long side over it. Every read
+    /// filtering a footprint resolves it so (`scene.wgsl`'s
+    /// `detail_resolved`): the virtual texture's pages, the macro colors and
+    /// the ground's noise by up to this many taps along the long side.
+    pub(crate) const MATERIAL_ANISOTROPY: u16 = 16 => ["DETAIL_ANISOTROPY"];
 
     // crate::deformation
     /// Texels along a side of a block of the map's mask.
