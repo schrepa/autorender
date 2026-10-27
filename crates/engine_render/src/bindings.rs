@@ -906,22 +906,23 @@ tables! {
     /// its vertices take. With water's first group (`CAMERA_WATER`) and what
     /// lies behind the water, within a fragment stage's 16 sampled textures
     /// and 8 storage buffers. The sea's group has placeholders for what only
-    /// tiles' water reads.
+    /// tiles' water reads. Foam's field's passes (`WATER_FOAM`) read the
+    /// water through it as shading reads it (`water_pixel`).
     const WATER: Table = Table {
         label: "engine/water-layout",
         serves: [SHADER @ 1],
         bindings: &[
             texture(17, "terrain_heights", Unfilterable, D2Array, V),
             dynamic_uniform(18, "terrain_view", size_of::<terrain::ViewUniform>(), VF),
-            dynamic_uniform(19, "terrain", size_of::<terrain::TerrainUniform>(), VF),
-            read(23, "terrain_directory", VF),
+            dynamic_uniform(19, "terrain", size_of::<terrain::TerrainUniform>(), VFC),
+            read(23, "terrain_directory", VFC),
             read(36, "terrain_surface_leaves", V),
-            texture(50, "water_surface", Unfilterable, D2Array, VF),
-            texture(51, "water_info", Uint, D2Array, VF),
-            uniform_of(52, "water", size_of::<water::WaterUniform>(), VF),
-            read(56, "water_sim_cells", VF),
-            read(57, "water_sim_ground", VF),
-            read(58, "water_sim_beds", V),
+            texture(50, "water_surface", Unfilterable, D2Array, VFC),
+            texture(51, "water_info", Uint, D2Array, VFC),
+            uniform_of(52, "water", size_of::<water::WaterUniform>(), VFC),
+            read(56, "water_sim_cells", VFC),
+            read(57, "water_sim_ground", VFC),
+            read(58, "water_sim_beds", VC),
             dynamic_uniform(
                 60,
                 "water_tree",
@@ -933,13 +934,36 @@ tables! {
 
     /// Group 2 of water's pipelines: what lies behind the water, copied
     /// from the opaque scene before it draws: the depth, and the color in
-    /// frames drawing the effects' targets (a placeholder in others).
+    /// frames drawing the effects' targets (a placeholder in others); and
+    /// the foam field the water carries (`crate::water_foam_field`), with
+    /// its coarser levels, and the sampler repeating it (a placeholder where
+    /// none runs), which foam's field's passes write outside it.
     const WATER_BEHIND: Table = Table {
         label: "engine/water-behind-layout",
         serves: [SHADER @ 2],
         bindings: &[
             texture(22, "water_depth", Depth, D2, F),
             texture(23, "water_scene", Float, D2, F),
+            texture(24, "water_foam_field", Float, D2, F),
+            sampler(25, "water_foam_sampler", Filtering, F),
+        ],
+    };
+
+    /// Group 2 of foam's field's passes (`meshes/water_foam_field.wgsl`),
+    /// after an empty first group and the water's (`WATER`), through which
+    /// they read the water as its shading does: the field's frame, its
+    /// lattice, its state twice over (the frame before's and this frame's),
+    /// and a level of the texture water's shading reads (written) and the
+    /// level finer than it (read).
+    const WATER_FOAM: Table = Table {
+        label: "engine/water-foam-layout",
+        serves: [SHADER @ 2],
+        bindings: &[
+            uniform_of(32, "foam_frame", size_of::<water::FoamFrame>(), C),
+            write(33, "foam_lattice", C),
+            write(34, "foam_state", C),
+            texture(35, "foam_source", Float, D2, C),
+            bind(36, "foam_target", Kind::Storage(Format::Rgba8Unorm), C),
         ],
     };
 

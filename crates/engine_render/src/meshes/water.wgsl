@@ -47,12 +47,13 @@
 // bent by its surface where the frame copies the scene's color, brighter
 // where that surface's own curvature gathers the sun's light on it, and
 // dimmed channel by channel over the light's path down to it and back, the
-// ground darker for being wet. Its foam is its own, smooth coverage at the
-// simulation's resolution (`meshes/water_foam.wgsl`): the white water born
-// in it and the foam its flow churns up and carries, settling or simulated
-// (`engine_terrain::shallow_water`), and white water where it runs fast
-// against what stands in it. However thin, the water fades only at its
-// waterline. The sea (`meshes/ocean.wgsl`) lights its surface the same way.
+// ground darker for being wet. Its foam is the foam field it carries,
+// smooth coverage simulated around the detail eye on a grid finer than its
+// own cells (`water_foam_field.rs`, `meshes/water_foam.wgsl`): the white
+// water born in it and the foam its flow churns up, carried by the current
+// its surface runs at, and past the field's reach its own state's, the
+// field's mean; and white water where it runs fast against what stands in
+// it. However thin, the water fades only at its waterline. The sea (`meshes/ocean.wgsl`) lights its surface the same way.
 // Where rivers leave their beds, their jets fall as sheets of their own
 // (`water_falls.rs`), drawn last.
 
@@ -94,8 +95,11 @@
 // which half the light passes (w); for the sea, the compression below which
 // its crests whiten (x), the amplitude of one wave holding all its waves'
 // variance, which runs up its shores (y), and its waves' summed height (w),
-// none of it for terrains' water (`foam`); and how fast the water takes
-// each channel of light, per meter (rgb).
+// and for terrains' water its foam field's (`water_foam_held`): the meters
+// across its cells (x, none where none runs), the meters its texture spans
+// (y) and the pixels its cells span where it hands over to the water's own
+// foam (z) (`foam`); and how fast the water takes each channel of light, per
+// meter (rgb).
 // The sea's parts (`meshes/ocean.wgsl`): its wind's heading
 // (`origin`, xy: a unit vector), its still level less the eye, its grid's
 // finest cell, cells around and rings a cell apart; the rings' growth, the
@@ -1256,20 +1260,24 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool,
     let through = min(max(length(behind.ground - point), 0.0), // optics: the view's way through the water
         depth * plane.y / max(dot(view, plane), 0.1)); // optics: the view's way through the water
     let down = clamp(dot(point - behind.ground, plane) / plane.y, 0.0, through); // optics: the light's way down to what the view meets
-    // The water holds bubbles where white water is born in it and where it
-    // carries the foam its flow churned up.
-    let carried = saturate(at.words.foam / WATER_FOAM_MOST);
-    let aerated = max(born, carried);
+    // The white water covering it and the foam it carries, as the foam field
+    // the water carries holds them over the pixel's footprint, and past the
+    // field's reach as its own state holds them, the field's mean
+    // (`water_foam_held`): the white water born where it breaks and the foam
+    // its flow churned up and carries.
+    let footprint = water_footprint(world_dx.xz, world_dy.xz);
+    let held = water_foam_held(world, footprint,
+        vec2<f32>(born, saturate(at.words.foam / WATER_FOAM_MOST)));
+    // The water holds bubbles where it is white and where it carries foam.
+    let aerated = max(held.x, held.y);
     let transmit = water_transmitted(through + down, aerated);
-    // Foam (`meshes/water_foam.wgsl`), smooth coverage of the water's own:
-    // fresh white water where it is born in it, and where the water runs
-    // against what stands in it behind the pixel fast enough to tear air in,
-    // by its speed and how far its surface stands over what it meets
-    // (`water_contact`); and the foam its flow churned up and carries, drained
-    // as it ages (`water_foam`).
-    let contact = water_contact(standing, standing_change,
-        water_footprint(world_dx.xz, world_dy.xz), speed);
-    let foam = water_foam(1.0 - (1.0 - born) * (1.0 - contact), carried);
+    // Foam (`meshes/water_foam.wgsl`), smooth coverage: the white water, and
+    // fresh white water where the water runs against what stands in it
+    // behind the pixel fast enough to tear air in, by its speed and how far
+    // its surface stands over what it meets (`water_contact`); and the foam it
+    // carries, drained as it ages (`water_foam`).
+    let contact = water_contact(standing, standing_change, footprint, speed);
+    let foam = water_foam(1.0 - (1.0 - held.x) * (1.0 - contact), held.y);
     var surface: WaterSurface;
     surface.relative = point;
     surface.world_dx = world_dx;

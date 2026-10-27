@@ -7,9 +7,10 @@ use super::constants::SIM_SLOTS;
 
 gpu_structs! {
     /// WGSL `WaterUniform` of `meshes/water.wgsl`; the sea's parts are zero
-    /// for terrains' water, whose projection is the terrain view's, and the
-    /// sea carries no sediment and stands on no subdivision, its `lift`
-    /// zero.
+    /// for terrains' water, whose projection is the terrain view's and whose
+    /// `foam` holds its foam field's cells, texture and handover
+    /// (`crate::water_foam_field`), and the sea carries no sediment and
+    /// stands on no subdivision, its `lift` zero.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct WaterUniform as ["WaterUniform"] {
         pub relative_view_projection: [[f32; 4]; 4],
@@ -81,6 +82,22 @@ gpu_structs! {
         pub count: [u32; 4],
         pub blocks: [u32; 4],
         pub touch: [SimTouch; SIM_TOUCHES],
+    }
+
+    /// WGSL `FoamFrame` of `meshes/water_foam_field.wgsl`: the first cell
+    /// of foam's field's window along x and z (world cells), then that of
+    /// the window its state held the frame before; its lattice's first
+    /// point along x and z (world lattice points, two cells apart), its
+    /// points along a side and its cells along a side; the meters across a
+    /// cell, the seconds the frame steps and the wind (meters a second along
+    /// x and z); and the half of its state holding the frame before's, and
+    /// 1 where it holds none yet, then nothing.
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct FoamFrame as ["FoamFrame"] {
+        pub window: [i32; 4],
+        pub lattice: [i32; 4],
+        pub step: [f32; 4],
+        pub flags: [u32; 4],
     }
 
     /// WGSL `FallInput` of `meshes/water_falls.wgsl`: a vertex of a

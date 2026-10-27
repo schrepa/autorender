@@ -579,6 +579,11 @@ pub struct WaterStats {
     /// Solids standing in that square past the most its water takes, which
     /// push none of it.
     pub dropped_touches: u32,
+    /// Cells along a side of the foam field terrains' water carries around
+    /// the detail eye: 0 while none runs; as many as reach out to where its
+    /// cells span two pixels, or fewer where the display's pixels or the
+    /// device's storage bindings cut them, and its cells span more there.
+    pub foam_cells: u32,
 }
 
 /// The sea.

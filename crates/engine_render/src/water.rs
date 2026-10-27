@@ -25,6 +25,12 @@
 //! its own uniform, by which they read the water under them: they show only
 //! where they stand clear of it, and write their depth where they show.
 //!
+//! The foam terrains' water carries runs live on a field of its own around
+//! the detail eye (`crate::water_foam_field`), stepped before water draws
+//! over the water of the terrain the detail eye stands over, read as the
+//! water's shading reads it; its texture binds beside what lies behind the
+//! water, which its passes do not bind.
+//!
 //! Water is a feature of the renderer (`crate::render_features`).
 //!
 //! The sea draws first in the same pass, from a grid around
@@ -57,6 +63,7 @@ use crate::scene_shading::SceneShading;
 use crate::targets::{FrameSize, ScreenTarget};
 use crate::terrain::{SurfaceDraw, TerrainWaterDraws};
 use crate::water_falls::{fall_layout, sheets};
+use crate::water_foam_field::{FoamField, FoamView, foam_terrain};
 use crate::water_sim::WaterSim;
 
 /// Cells around the sea's grid, the sectors it splits into for culling,
@@ -116,11 +123,13 @@ struct FallDraws {
 }
 
 /// The copies of the opaque scene water reads, the depth and, in frames
-/// drawing the effects' targets, the color; and their group.
+/// drawing the effects' targets, the color; and their group, which binds
+/// the foam field's texture as of the generation `foam`.
 struct BehindCopies {
     depth: wgpu::Texture,
     scene: Option<wgpu::Texture>,
     group: wgpu::BindGroup,
+    foam: u64,
 }
 
 /// What water draws this frame: tiles' water blocks resident and dropped,
@@ -140,6 +149,9 @@ pub(crate) struct WaterPass {
     placeholders: Placeholders,
     // Water simulated around the camera, where water asks for it.
     sim: WaterSim,
+    // The foam terrains' water carries, simulated on a field of its own
+    // around the detail eye.
+    foam: FoamField,
     // Tiles' water's uniform, and the group binding it with the terrain
     // pass's arrays, uniforms, directory, leaves and trees' uniforms and the
     // simulation's water, as of their generations.
@@ -171,6 +183,7 @@ impl WaterPass {
             behind: ScreenTarget::default(),
             placeholders: placeholders(device),
             sim: WaterSim::new(device),
+            foam: FoamField::new(device),
             uniform: crate::buffers::uniform(device, "engine/water", WATER_UNIFORM_BYTES as u64),
             group: None,
             tiles: None,
@@ -300,16 +313,17 @@ impl WaterPass {
     /// of `terrains`, shaded as `settings` say, and the sea `ocean`, culled
     /// through `cull` and drawn through `view` (both eye-relative) over the
     /// opaque `depth` and, when `refracts`, the color it copies; seen from
-    /// `eye`, the wind `wind` dragging the water simulated live, its waves
-    /// at the simulation time `seconds` the frame presents; `None` when none
-    /// of it draws.
+    /// `eye`, and by the detail eye and the display as `seen` says, which
+    /// size and place the foam field, the wind `wind` dragging the water
+    /// simulated live and the foam riding it, its waves at the simulation
+    /// time `seconds` the frame presents; `None` when none of it draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (tiles, terrains): (Option<TerrainWaterDraws<'_>>, &[RenderTerrain]),
         (settings, ocean): (Water, Ocean),
-        (eye, wind, seconds): (Vec3, Wind, f64),
+        (eye, seen, wind, seconds): (Vec3, FoamView, Wind, f64),
         (cull, view, depth, refracts): (Mat4, Mat4, &wgpu::Texture, bool),
     ) -> Option<WaterFrame> {
         self.tiles = None;
@@ -352,6 +366,17 @@ impl WaterPass {
             let [wrap_x, wrap_z] = drawn.wrap;
             (square, [window.datum, wrap_x as f32, wrap_z as f32, 0.0])
         });
+        // The foam tiles' water carries, over the water of the terrain the
+        // detail eye stands over, after the live steps it reads.
+        let foamed = tiles
+            .as_ref()
+            .and_then(|tiles| foam_terrain(tiles, terrains, seen.detail));
+        self.foam.prepare(
+            (device, queue),
+            foamed,
+            seen,
+            (&settings, wind.velocity, seconds),
+        );
         if let Some(tiles) = tiles {
             self.prepare_tiles(device, &tiles, sim_generation);
             // Terrains' water gives way to the sea where it lies under it.
@@ -366,6 +391,7 @@ impl WaterPass {
                 color: [red, green, blue, settings.clarity],
                 absorption: absorption(settings.color, settings.clarity),
                 ocean: sea,
+                foam: self.foam.shading(),
                 sim: simulated.map_or([0.0; 4], |(square, _)| square),
                 sim_datum: simulated.map_or([0.0; 4], |(_, datum)| datum),
                 sediment: [sediment[0], sediment[1], sediment[2], settings.sediment],
@@ -385,11 +411,13 @@ impl WaterPass {
             width: depth.width(),
             height: depth.height(),
         };
-        let refracted = self
-            .behind
-            .get()
-            .is_some_and(|copies| copies.scene.is_some());
-        if refracted != refracts {
+        // Copies of another frame's kind, or whose group binds the foam
+        // field's texture before it changed, are made again.
+        let foam = self.foam.generation();
+        let stale = self.behind.get().is_some_and(|copies| {
+            copies.scene.is_some() != refracts || copies.foam != foam
+        });
+        if stale {
             self.behind.release();
         }
         if self.behind.resizes(size) {
@@ -430,7 +458,9 @@ impl WaterPass {
     }
 
     /// The copies of the opaque scene at `size`, the depth's of `format`
-    /// and, when water `refracts`, the color's; and their group.
+    /// and, when water `refracts`, the color's; and their group, with the
+    /// foam field's texture (the one-texel color in its place while none
+    /// runs) and its sampler.
     fn behind_copies(
         &self,
         device: &wgpu::Device,
@@ -466,12 +496,18 @@ impl WaterPass {
                     "water_scene",
                     crate::pipelines::view(scene_view.as_ref().unwrap_or(&self.placeholders.scene)),
                 ),
+                (
+                    "water_foam_field",
+                    crate::pipelines::view(self.foam.view().unwrap_or(&self.placeholders.scene)),
+                ),
+                ("water_foam_sampler", crate::pipelines::sampler(self.foam.sampler())),
             ],
         );
         BehindCopies {
             depth,
             scene,
             group,
+            foam: self.foam.generation(),
         }
     }
 
@@ -633,8 +669,8 @@ impl WaterPass {
 
     /// Creates the pipelines into `targets` this frame's water and sea
     /// draw with unless they exist, and tiles' water's when `coming`,
-    /// before a bake gives any; `camera` is water's first group
-    /// (`bindings::CAMERA_WATER`).
+    /// before a bake gives any, and those of the foam field's passes once
+    /// it runs; `camera` is water's first group (`bindings::CAMERA_WATER`).
     pub(crate) fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -659,6 +695,7 @@ impl WaterPass {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Sim);
             self.sim_pipelines.insert(targets, pipeline);
         }
+        self.foam.ensure_pipelines(device, shader, &self.layout);
     }
 
     /// The layout water's pipelines share, its first group `camera`'s, made
@@ -879,9 +916,12 @@ impl RenderFeature for WaterPass {
         encode: &Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        // The simulated water's steps and what lies behind the water, before
-        // it draws.
+        // The simulated water's steps, the foam field's over the water they
+        // leave, and what lies behind the water, before it draws.
         self.sim.encode(encoder, encode.profiler);
+        if let (Some(_), Some((_, group))) = (&self.tiles, &self.group) {
+            self.foam.encode(encoder, group, encode.profiler);
+        }
         self.copy_behind(encoder, encode.depth, encode.scene);
         let mut pass = encode.render_pass(
             encoder,
@@ -892,8 +932,9 @@ impl RenderFeature for WaterPass {
         self.draw(&mut pass, encode.water_camera, encode.targets)
     }
 
-    /// Bytes of the copies, the falls' sheets and the simulated water:
-    /// tiles' water blocks and its subdivisions count with the terrain's.
+    /// Bytes of the copies, the falls' sheets, the simulated water and the
+    /// foam field: tiles' water blocks and its subdivisions count with the
+    /// terrain's.
     fn capacity_bytes(&self) -> u64 {
         let copies = self.behind.size().map_or(0, |size| {
             let texels = u64::from(size.width) * u64::from(size.height);
@@ -907,14 +948,15 @@ impl RenderFeature for WaterPass {
             .falls
             .as_ref()
             .map_or(0, |falls| falls.vertices.size() + falls.indices.size());
-        copies + falls + self.sim.capacity_bytes()
+        copies + falls + self.sim.capacity_bytes() + self.foam.capacity_bytes()
     }
 
     /// The leaves the water's subdivisions drew and the splits their room
     /// refused, as last read back; tiles' water blocks resident and
     /// dropped; the cells along a side of the simulated square, and the
     /// solids pushing its water with those standing in it past the most that
-    /// do; and the sea's sectors drawn and their triangles.
+    /// do; the cells along a side of the foam field; and the sea's sectors
+    /// drawn and their triangles.
     fn stats(
         this: Option<&Self>,
         frame: Option<&WaterFrame>,
@@ -935,6 +977,7 @@ impl RenderFeature for WaterPass {
                 simulated_cells: simulated,
                 touches,
                 dropped_touches,
+                foam_cells: frame.and(this).map_or(0, |this| this.foam.cells()),
             },
             OceanStats {
                 sectors: frame.map_or(0, |frame| frame.sectors),

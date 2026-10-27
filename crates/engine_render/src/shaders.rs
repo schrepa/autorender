@@ -51,6 +51,7 @@ shaders! {
         "meshes/water_falls.wgsl",
         "meshes/ocean.wgsl",
         "meshes/water_foam.wgsl",
+        "meshes/water_foam_field.wgsl",
         "meshes/debug.wgsl",
         "meshes/terrain_debug.wgsl",
     ];
@@ -340,6 +341,10 @@ entry_points! {
             subdivide_begin,
             subdivide_decide,
             subdivide_apply,
+            foam_gather,
+            foam_currents,
+            foam_step,
+            foam_down,
         ],
     }
     terrain_normals = TERRAIN_NORMALS_SHADER {

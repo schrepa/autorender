@@ -76,6 +76,7 @@ mod virtual_geometry;
 mod visibility;
 mod water;
 mod water_falls;
+mod water_foam_field;
 mod water_kernels;
 mod water_settle;
 mod water_sim;

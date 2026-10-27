@@ -36,7 +36,7 @@ use crate::water_kernels::{Capacity, Kernels, SlotBuffers, encode_steps, slot_la
 /// longer frames simulate less time than passed. Eight steps of cells half
 /// a meter across ([`step_seconds`]) cover the longest frame.
 const STEPS_AT_MOST: f32 = 8.0;
-const LONGEST_FRAME: f32 = 1.0 / 30.0;
+pub(crate) const LONGEST_FRAME: f32 = 1.0 / 30.0;
 /// Bytes a block takes of the ground, of a state of the cells and of what
 /// the beds hold under them.
 const BLOCK_GROUND_BYTES: u64 = (BLOCK_GROUND * 4) as u64;
