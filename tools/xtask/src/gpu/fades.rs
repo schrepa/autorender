@@ -86,6 +86,12 @@ const FILTERS: &[(&str, &str)] = &[
          trilinear filtering turns between mipmaps",
     ),
     (
+        "water_bed_waves",
+        "the waves the bed's stones raise, each part drawn while it spans two pixels, its slopes \
+         the pixel's own change of its height, the stones finer than the pixel resolves as \
+         roughness",
+    ),
+    (
         "water_caustics",
         "the caustics a pixel's beam of sunlight gathers",
     ),

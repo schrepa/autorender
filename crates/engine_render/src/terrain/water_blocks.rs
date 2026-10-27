@@ -93,7 +93,10 @@ impl Texels {
 
 /// What water's pass draws tiles' water with: the height array, the views'
 /// and terrains' uniforms, the terrain's directory with water's in it, this
-/// frame's leaves of the subdivisions and their trees' uniforms and the
+/// frame's leaves of the subdivisions and their trees' uniforms, the
+/// ground's fades and holes, control values, palette and materials' data
+/// with the materials' sampler and the control values' (through which
+/// water's pixels read the bed it flows over as the ground draws it) and the
 /// water blocks' arrays, with generations advancing when any of them is
 /// another texture or buffer; each frame terrain whose water subdivides,
 /// its id, its uniform's offset, its water's tree's and that tree's draw of
@@ -109,9 +112,15 @@ pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) directory: &'a wgpu::Buffer,
     pub(crate) leaves: &'a wgpu::Buffer,
     pub(crate) trees: &'a wgpu::Buffer,
+    pub(crate) holes: &'a wgpu::Buffer,
+    pub(crate) control: &'a wgpu::TextureView,
+    pub(crate) palette: &'a wgpu::Buffer,
+    pub(crate) materials: &'a wgpu::TextureView,
+    pub(crate) material_sampler: &'a wgpu::Sampler,
+    pub(crate) control_sampler: &'a wgpu::Sampler,
     pub(crate) surfaces: &'a wgpu::TextureView,
     pub(crate) info: &'a wgpu::TextureView,
-    pub(crate) generation: [u64; 6],
+    pub(crate) generation: [u64; 8],
     pub(crate) terrains: Vec<(u64, u32, u32, SurfaceDraw)>,
     pub(crate) targets: [f32; 2],
     pub(crate) blocks: [u32; 2],
@@ -225,7 +234,7 @@ impl WaterBlocks {
         pass: &'a TerrainPass,
         terrains: &RenderTerrains,
     ) -> Option<TerrainWaterDraws<'a>> {
-        let heights = pass.atlas.heights()?;
+        let (heights, _, control) = pass.atlas.views()?;
         let (surfaces, info) = self.views()?;
         let (leaves, leaves_generation) = pass.surface_leaves()?;
         let trees = pass.surface.uniforms();
@@ -243,6 +252,12 @@ impl WaterBlocks {
             directory: &pass.tables.directory,
             leaves,
             trees,
+            holes: &pass.tables.holes,
+            control,
+            palette: &pass.tables.palette,
+            materials: &pass.maps.views[1],
+            material_sampler: &pass.maps.sampler,
+            control_sampler: &pass.atlas.control_sampler,
             surfaces,
             info,
             generation: [
@@ -252,6 +267,8 @@ impl WaterBlocks {
                 pass.tables.directory_generation,
                 leaves_generation,
                 trees.generation(),
+                pass.tables.holes_generation,
+                pass.maps.views_generation,
             ],
             terrains,
             targets: pass.surface.targets(),

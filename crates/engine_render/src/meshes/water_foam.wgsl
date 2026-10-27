@@ -1,20 +1,23 @@
-// Foam on terrains' water and the sea: the water's own, from its state
-// alone. The water carries the foam its flow churns up, settling or
+// Foam on terrains' water and the sea: the water's own, from its state and
+// what it meets. The water carries the foam its flow churns up, settling or
 // simulated (`water_sim.wgsl`'s `sim_churn`: where it loses energy, plunges
 // or jumps, along its eddy lines and where it converges, fading to 1/e in
-// WATER_FOAM_LIFE), drained as it ages; and it turns white, its foam fresh,
-// where it breaks, where its crests fold (`water_folding`: where its waves
-// pass the breaking slope) and where it runs fast against what stands in it
-// (`water_contact`). Each is a share of the surface, and one bubble texture
-// shows them all (`water_froth`): falling water's map's bubbles and the
-// walls between them, carried only as the water moves them, which a pixel
-// covers where they pass the threshold its share sets, so a little foam
-// shows as sparse lace, more fills the cells as froth and the most heaps
-// solid. A pixel reads them through its own footprint (`water_footprint`),
-// whose levels resolve them across the view and whose anisotropy averages
-// them along it, so far foam streaks along the view, and bubbles finer than
-// it resolves show the share itself (`water_past`, by which falls' jets
-// take their thresholds too).
+// WATER_FOAM_LIFE), drained as it ages, and what it carries downstream off
+// its bed's stones and what stands in it; and it turns white, its foam
+// fresh, where it breaks, where its crests fold (`water_folding`: where its
+// waves pass the breaking slope) and where it runs fast against those stones
+// and what stands in it (`water_bed_foam`; the sea against what stands
+// behind the pixel, `water_contact`), each by how far the water climbs what
+// it meets (`water_climbing`). Each is a share of the surface, and one
+// bubble texture shows them all (`water_froth`): falling water's map's
+// bubbles and the walls between them, carried only as the water moves them,
+// which a pixel covers where they pass the threshold its share sets, so a
+// little foam shows as sparse lace, more fills the cells as froth and the
+// most heaps solid. A pixel reads them through its own footprint
+// (`water_footprint`), whose levels resolve them across the view and whose
+// anisotropy averages them along it, so far foam streaks along the view, and
+// bubbles finer than it resolves show the share itself (`water_past`, by
+// which falls' jets take their thresholds too).
 
 // Falling water's map's foam (`water_fall_map`'s b and a): the cells of its
 // bubbles across it (`engine_tables::falls::BUBBLES`), FALL_MAP_STRETCH
@@ -130,30 +133,95 @@ fn water_folding(spread: f32, hidden: f32, crest: f32) -> f32 {
     return mix(share, on_crests, saturate(1.0 - hidden / variance));
 }
 
-// How strongly water foams against what stands in it behind the pixel
-// (Sea of Thieves' depth test), its surface `standing` meters over it,
-// changing by `change` across a pixel whose footprint is `footprint`
-// (`water_footprint`), where it runs at `speed` meters a second (its
-// current or its eddies, whichever is faster): water climbs what it runs
-// against by its velocity head U²/2g (Bernoulli), whitest where it meets
-// it, and tears air in there as it passes WATER_FOAM_TEARING, so calm water
-// foams at nothing it touches. A band rising less than what stands behind
-// the pixel rises across a pixel of the display (`material_detail`) spreads
-// its foam over that rise, keeping its share, so no line of foam draws
-// finer than a pixel. Only solid ground counts: behind blades and twigs
-// what the pixel sees jumps from pixel to pixel faster than any bank rises
-// along the footprint's long side (WATER_GRADIENT_RANGE a meter).
-fn water_contact(standing: f32, change: f32, footprint: WaterFootprint, speed: f32) -> f32 {
+// How strongly water running at `speed` meters a second foams against what
+// it meets `under` meters under its surface (over it where negative),
+// changing by `change` across a pixel, whose face turns the share `facing` of
+// the water's velocity head up it (from none, flat or facing downstream, to
+// all of it, a wall meeting the flow head on): water climbs what it runs
+// against by its velocity head U²/2g (Bernoulli), whitest where it meets it,
+// and tears air in there as it passes WATER_FOAM_TEARING, so calm water
+// foams at nothing it touches. A band rising less than what it meets rises
+// across a pixel of the display (`material_detail`) spreads its foam over
+// that rise, keeping its share, so no line of foam draws finer than a pixel.
+fn water_climbing(under: f32, change: f32, speed: f32, facing: f32) -> f32 {
     let tearing = smoothstep(WATER_FOAM_TEARING.x, WATER_FOAM_TEARING.y, speed);
     if tearing <= 0.0 {
         return 0.0;
     }
-    let head = speed * speed / (2.0 * WATER_GRAVITY);
-    let climb = change * material_detail();
-    let band = max(head, climb);
-    let rise = climb / max(footprint.along, 1.0e-6);
+    let climbs = speed * speed / (2.0 * WATER_GRAVITY) * facing;
+    let band = max(max(climbs, change * material_detail()), 1.0e-9);
+    return tearing * saturate(1.0 - under / band) * (climbs / band); // filter: a band narrower than a pixel spreading its share over it
+}
+
+// How strongly water foams against what stands in it behind the pixel
+// (Sea of Thieves' depth test), its surface `standing` meters over it,
+// changing by `change` across a pixel whose footprint is `footprint`
+// (`water_footprint`), where it runs at `speed` meters a second, meeting it
+// head on (`water_climbing`). Only solid ground counts: behind blades and
+// twigs what the pixel sees jumps from pixel to pixel faster than any bank
+// rises along the footprint's long side (WATER_GRADIENT_RANGE a meter).
+fn water_contact(standing: f32, change: f32, footprint: WaterFootprint, speed: f32) -> f32 {
+    let rise = change * material_detail() / max(footprint.along, 1.0e-6);
     let solid = 1.0 - smoothstep(WATER_GRADIENT_RANGE, 2.0 * WATER_GRADIENT_RANGE, rise);
-    return tearing * solid * saturate(1.0 - standing / band) * (head / band);
+    return solid * water_climbing(standing, change, speed, 1.0);
+}
+
+// The foam water `depth` meters deep flowing along `flow` (meters a second),
+// running `speed` meters a second (its current or its eddies, whichever is
+// faster), churns against the bed `bed` (`water_bed`) and the obstacle
+// nearest it `obstacle` (`WaterAt`'s), the share `anchored` of that where a
+// pixel's samples agree on it, its point changing by `world_dx` and
+// `world_dy` a pixel, as shares of the surface (`water_climbing`). Fresh
+// white water (x): where the bed's stones stand within the water's climb
+// under its surface, as finely as the pixel resolves them, each face turning
+// up the share of the velocity head that half its tilt's sine and half its
+// tilt's sine into the flow make, all of it on a wall meeting the flow, half
+// beside it and none flat or facing downstream, so the flow piles against a
+// stone's upstream side and runs past its others; and around the obstacle,
+// a round solid of its radius up through the surface (`water_obstacle_waves`)
+// rising out of the bed as steeply as a bank stands as a wall
+// (WATER_GRADIENT_RANGE). And the foam the water carries downstream of them
+// (y): where the stone the bed's mean along the flow upstream stands for
+// (`WaterBed`'s `upstream`), its faces as steep against the flow as it
+// stands tall against the tallest, or the obstacle, across as wide as it out
+// to DETAIL_ANISOTROPY of its radii, would stand within the climb of water
+// meeting it beside. Its derivatives need it called in uniform control flow.
+fn water_bed_foam(bed: WaterBed, obstacle: vec4<f32>, flow: vec2<f32>, depth: f32,
+        speed: f32, world_dx: vec3<f32>, world_dy: vec3<f32>, anchored: f32) -> vec2<f32> {
+    let current = length(flow);
+    let heading = select(vec2<f32>(1.0, 0.0), flow / current, current > 0.0);
+    let side = vec2<f32>(-heading.y, heading.x);
+    // The bed's stones at the point, and how their faces tilt: the sine of
+    // their tilt along the way the bed rises.
+    let under = depth - bed.fine;
+    let rises = -water_rate(under, world_dx.xz, world_dy.xz);
+    let tilt = rises * inverseSqrt(1.0 + dot(rises, rises));
+    let facing = 0.5 * (length(tilt) + dot(tilt, heading));
+    let met = water_climbing(under, fwidth(under), speed, facing);
+    let shedding = depth - bed.upstream;
+    let shed = water_climbing(shedding, fwidth(shedding), speed,
+        0.5 * saturate(bed.upstream / max(bed.reach, 1.0e-6)));
+    // The obstacle: how far out of its rim the point lies, the bed rising
+    // to it as a wall, and how far down its lee across as wide as it; where
+    // the words hold none, a radius of their least step, which shows none.
+    let radius = max(obstacle.z, WATER_RADIUS_STEP);
+    let apart = -obstacle.xy;
+    let distance = length(apart);
+    let outward = apart / max(distance, 1.0e-6);
+    let wall = WATER_GRADIENT_RANGE
+        * inverseSqrt(1.0 + WATER_GRADIENT_RANGE * WATER_GRADIENT_RANGE);
+    let solid = max(distance - radius, 0.0) * WATER_GRADIENT_RANGE;
+    let solid_met = water_climbing(solid, fwidth(solid), speed,
+        0.5 * wall * (1.0 - dot(outward, heading)));
+    let along = dot(apart, heading);
+    let across = dot(apart, side) / radius;
+    let reaching = DETAIL_ANISOTROPY * radius;
+    let trailing = smoothstep(0.0, radius, along)
+        * (1.0 - smoothstep(reaching - radius, reaching, along));
+    let lee = depth * (1.0 - trailing * exp(-across * across));
+    let solid_shed = water_climbing(lee, fwidth(lee), speed, 0.5);
+    let near = select(0.0, anchored, obstacle.z > 0.0);
+    return vec2<f32>(max(met, solid_met * near), max(shed, solid_shed * near));
 }
 
 // A random point of a pattern (in its periods) by which reads at corner

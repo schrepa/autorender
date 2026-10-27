@@ -292,7 +292,7 @@ impl Renderer {
         });
         let cull = snapshot.terrain.relative_view_projection;
         let view = crate::gpu_data::jittered(cull, jitter);
-        let (device, shader, camera) = (&self.device, &self.mesh_shader, &self.camera.layout);
+        let (device, shader, camera) = (&self.device, &self.mesh_shader, &self.camera.water_layout);
         let formats = (self.display.format(), DEPTH_FORMAT);
         let tiles = self.terrain.water_draws(&snapshot.terrain);
         self.features.water.prepare(|water| {

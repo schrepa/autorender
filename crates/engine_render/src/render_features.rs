@@ -414,10 +414,12 @@ pub(crate) struct Encode<'f> {
     pub(crate) meshes: &'f dyn MeshDraws,
     pub(crate) device: &'f wgpu::Device,
     pub(crate) profiler: &'f GpuProfiler,
-    /// The main passes' first group, and that group as terrain binds it,
-    /// which reflections light what their world trace meets through.
+    /// The main passes' first group, that group as terrain binds it, which
+    /// reflections light what their world trace meets through, and as water
+    /// binds it.
     pub(crate) camera: &'f wgpu::BindGroup,
     pub(crate) terrain_camera: &'f wgpu::BindGroup,
+    pub(crate) water_camera: &'f wgpu::BindGroup,
     pub(crate) materials: &'f MaterialStore,
     /// The local lights' group, in frames shading them.
     pub(crate) lights: Option<&'f wgpu::BindGroup>,
@@ -433,8 +435,8 @@ impl<'f> Encode<'f> {
     pub(crate) fn new(
         (views, meshes): (&'f dyn AttachmentViews, &'f dyn MeshDraws),
         (device, profiler): (&'f wgpu::Device, &'f GpuProfiler),
-        ((camera, terrain_camera), materials, lights): (
-            (&'f wgpu::BindGroup, &'f wgpu::BindGroup),
+        ((camera, terrain_camera, water_camera), materials, lights): (
+            (&'f wgpu::BindGroup, &'f wgpu::BindGroup, &'f wgpu::BindGroup),
             &'f MaterialStore,
             Option<&'f wgpu::BindGroup>,
         ),
@@ -447,6 +449,7 @@ impl<'f> Encode<'f> {
             profiler,
             camera,
             terrain_camera,
+            water_camera,
             materials,
             lights,
             targets,

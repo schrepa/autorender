@@ -32,9 +32,12 @@
 // water reads that state and what follows from it: its Froude number and
 // its eddies' speed (`water_eddies`); the water's debug views paint each of
 // its fields (`meshes/debug.wgsl`).
-// Its waves come from that state alone (`water_flow.wgsl`): waves standing
-// about what it flows past, its eddies roughening it unseen. Where none
-// rise, it lies a calm mirror. They are drawn through the pixel's own
+// Its waves come from that state and the bed it flows over
+// (`water_flow.wgsl`): the bed's stones, read at points of the world as the
+// ground draws them, raise the surface over them and leave wedges of waves
+// behind them, as what stands in it does, by the water's speed and depth
+// there, its eddies roughening it unseen. Where none rise, it lies a calm
+// mirror. They are drawn through the pixel's own
 // footprint (`water_footprint.wgsl`), every computed part while it spans two
 // pixels along the way it varies (`water_shown`), so waves running across
 // the view stay drawn far along it, while those running along it average
@@ -51,9 +54,10 @@
 // light on it, and dimmed channel by channel over the light's path down to
 // it and back, the ground darker for being wet. Its foam is its own: what
 // its flow churns up and carries, settling or simulated
-// (`engine_terrain::shallow_water`), and white water where it breaks, its
-// crests fold or it runs fast against what stands in it, all one bubble
-// texture carried as the water moves (`meshes/water_foam.wgsl`). However
+// (`engine_terrain::shallow_water`) and what it carries off its bed's stones
+// downstream, and white water where it breaks, its crests fold or it runs
+// fast against those stones and what stands in it, all one bubble texture
+// carried as the water moves (`meshes/water_foam.wgsl`). However
 // thin, the water fades only at its waterline. The sea (`meshes/ocean.wgsl`)
 // lights its surface the same way. Where rivers leave their beds, their
 // jets fall as sheets of their own (`water_falls.rs`), drawn last.
@@ -1377,9 +1381,10 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool,
     // never pulses all at once (Vlachos's phase noise): the cycles its
     // clock runs ahead by.
     let stagger = water_noise(world.xz / WATER_FLOW_PHASE).x;
-    // Waves stand where the bed holds them, about the obstacle nearest the
-    // water's samples: only where a pixel's samples agree on one, the
-    // obstacle staying put as the point moves across the pixel.
+    // What stands in the water stands where the bed holds it, about the
+    // obstacle nearest the water's samples: only where a pixel's samples
+    // agree on one, the obstacle staying put as the point moves across the
+    // pixel.
     let anchor = world.xz + at.obstacle.xy;
     let anchoring = (length(dpdx(anchor)) + length(dpdy(anchor)))
         / max(length(world_dx.xz) + length(world_dy.xz), 1.0e-6);
@@ -1387,10 +1392,15 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool,
     // How far it is from still to running: what its current raises shows as
     // far as it runs, so nothing changes at once where a river meets a lake.
     let flowing = smoothstep(WATER_FLOWING.x, WATER_FLOWING.y, speed);
-    // Its waves, from its state alone (`water_flow_waves`): those standing
-    // about what it flows past, and its eddies' roughness; none where none
-    // rise.
-    let waves = water_flow_waves(footprint, at, eddy, froude, flowing, anchored);
+    // The bed it flows over, read at points of the world under it and
+    // upstream of it as the ground draws it (`water_bed`), on ground lying as
+    // its plane does.
+    let bed = water_bed(world, depth, plane, flow, froude, footprint, world_dx, world_dy);
+    // Its waves, from its state and its bed (`water_flow_waves`): those its
+    // bed's stones and what stands in it raise, and its eddies' roughness;
+    // none where none rise.
+    let waves = water_flow_waves(footprint, at, eddy, froude, flowing, anchored, bed, world_dx,
+        world_dy);
     // They ride its surface, tilting as it falls; and the slopes they hide
     // within a pixel roughen it, along the view and across it as their
     // ellipse projects into the view, so where they run rough, it glints
@@ -1439,18 +1449,21 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool,
     let aerated = max(born, saturate(at.words.foam / WATER_FOAM_MOST));
     let transmit = water_transmitted(through + down, aerated);
     // Foam (`meshes/water_foam.wgsl`), the water's own: the foam it carries
-    // as its flow churned it up, drained as it ages; and white water, fresh,
-    // where it breaks, where its crests fold and where it runs against what
-    // stands in it behind the pixel fast enough to tear air in, its current
-    // or its eddies, whichever is faster. It floats where the waves carry
-    // it, toward their crests by their slopes, and its relief tilts the
-    // normal it is lit by.
+    // as its flow churned it up, drained as it ages, and off its bed's stones
+    // and what stands in it downstream; and white water, fresh, where it
+    // breaks, where its crests fold and where it runs against those stones
+    // and what stands in it fast enough to tear air in, its current or its
+    // eddies, whichever is faster (`water_bed_foam`). It floats where the
+    // waves carry it, toward their crests by their slopes, and its relief
+    // tilts the normal it is lit by.
     // Its crests fold where its waves pass the breaking slope, by their
     // statistics (`water_folding`).
     let foam_folding = water_folding(waves.spread, waves.hidden.x + waves.hidden.y, waves.crest);
-    let foam_contact = water_contact(standing, standing_change, footprint, max(speed, eddy));
-    let foam_fresh = 1.0 - (1.0 - born) * (1.0 - foam_folding) * (1.0 - foam_contact);
-    let foam_carried = saturate(at.words.foam / WATER_FOAM_MOST);
+    let foam_bed = water_bed_foam(bed, at.obstacle, flow, depth, max(speed, eddy), world_dx,
+        world_dy, anchored);
+    let foam_fresh = 1.0 - (1.0 - born) * (1.0 - foam_folding) * (1.0 - foam_bed.x);
+    let foam_carried = 1.0
+        - (1.0 - saturate(at.words.foam / WATER_FOAM_MOST)) * (1.0 - foam_bed.y);
     let foam_ridden = world.xz - waves.slopes * WATER_FOAM_RIDE;
     let froth = water_froth(foam_ridden, footprint, vec2<f32>(foam_fresh, foam_carried), flow,
         shear, time, stagger, seen);
