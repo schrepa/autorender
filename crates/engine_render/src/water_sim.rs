@@ -291,13 +291,16 @@ impl WaterSim {
     /// device's bindings cut from the window, and the steps this frame
     /// runs.
     pub(crate) fn cells(&self) -> [u32; 3] {
-        self.window.as_ref().filter(|window| window.ready).map_or([0; 3], |window| {
-            [
-                window.fitted.cells,
-                window.source.cells - window.fitted.cells,
-                self.steps,
-            ]
-        })
+        self.window
+            .as_ref()
+            .filter(|window| window.ready)
+            .map_or([0; 3], |window| {
+                [
+                    window.fitted.cells,
+                    window.source.cells - window.fitted.cells,
+                    self.steps,
+                ]
+            })
     }
 
     /// The solids pushing its water this frame, and those standing in its

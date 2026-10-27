@@ -247,11 +247,7 @@ impl WaterBlock {
         if depth.is_nan() || depth <= DRY {
             return [bed, 0.0, 0.0, 0.0];
         }
-        let [heave, along_x, along_z] = if unsteady {
-            water.unsteady
-        } else {
-            [0.0; 3]
-        };
+        let [heave, along_x, along_z] = if unsteady { water.unsteady } else { [0.0; 3] };
         let depth = depth + clamp(heave, -0.5 * depth, 0.5 * depth);
         let velocity = Vec2::from(water.velocity) + Vec2::new(along_x, along_z);
         [
@@ -607,9 +603,8 @@ fn follow(state: &mut TerrainState, (reach, cell): (f32, f32), eye: Vec3) {
         state.hydrology.gathering = None;
         return;
     }
-    let follows = current.is_none_or(|window| {
-        (eye - window.middle()).abs().max_element() > FOLLOW * snap
-    });
+    let follows =
+        current.is_none_or(|window| (eye - window.middle()).abs().max_element() > FOLLOW * snap);
     let waiting = state
         .hydrology
         .ahead
@@ -1165,10 +1160,7 @@ impl SteadyCells {
         let cell = state.settled.cell();
         let pyramid = &state.terrain.pyramid;
         let anchor = state.terrain.origin.y;
-        let first = [
-            (low.x / cell).floor() as i64,
-            (low.y / cell).floor() as i64,
-        ];
+        let first = [(low.x / cell).floor() as i64, (low.y / cell).floor() as i64];
         let last = [
             (high.x / cell).floor() as i64,
             (high.y / cell).floor() as i64,

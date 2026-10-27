@@ -1130,7 +1130,7 @@
       "type": "object"
     },
     "WaterStats": {
-      "description": "Terrains' water, as their tiles hold it.",
+      "description": "Terrains' water, as their tiles hold it and as it runs live around the\ndetail eye.",
       "properties": {
         "blocks": {
           "description": "Blocks of tiles' water resident on the GPU, a patch's each.",
@@ -1162,14 +1162,26 @@
           "minimum": 0,
           "type": "integer"
         },
-        "refused": {
-          "description": "Splits terrains' water's subdivisions refused for want of room for\ntheir leaves (`Water::subdivision_leaves`), as read back a few frames\nlate: the water there stays coarser.",
+        "live_cells": {
+          "description": "Cells along a side of the square around the detail eye over which\nwater runs live this frame: 0 while none does (before its first\nsquare is gathered).",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "simulated_cells": {
-          "description": "Cells along a side of the square around the camera over which\nrivers run live: 0 while none do, fewer than the water settings ask\nwhere the device's storage bindings cannot hold its buffers.",
+        "live_cut": {
+          "description": "Cells along a side of the square the live reach asks for\n(`engine_core::LIVE_PIXELS`) that the device's storage bindings cut\nfrom it, the middle square they hold running instead: the live\nwater then hands back to the settled water nearer the eye.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "live_steps": {
+          "description": "Steps the live water took this frame, each of the same seconds: as\nmany as the simulation time passed holds, at most those of a frame\na thirtieth of a second long.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "refused": {
+          "description": "Splits terrains' water's subdivisions refused for want of room for\ntheir leaves (`Water::subdivision_leaves`), as read back a few frames\nlate: the water there stays coarser.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1186,7 +1198,9 @@
         "refused",
         "blocks",
         "dropped_blocks",
-        "simulated_cells",
+        "live_cells",
+        "live_cut",
+        "live_steps",
         "touches",
         "dropped_touches",
         "foam_cells"

@@ -6718,7 +6718,7 @@
       "additionalProperties": false
     },
     "SceneWater": {
-      "description": "Water settings: how terrains' water looks (its color, clarity and\nsediment) and how it draws and runs live; its movement and foam come\nfrom its state, the scene's wind dragging the water that runs live.",
+      "description": "Water settings: how terrains' water looks (its color, clarity and\nsediment), the cells it settles and runs live in, and how it draws;\nits movement and foam come from its state, the scene's wind dragging\nthe water that runs live.",
       "type": "object",
       "properties": {
         "clarity": {
@@ -6751,14 +6751,6 @@
           "type": "boolean",
           "default": true
         },
-        "live_cell": {
-          "description": "The meters across the live window's cells: the square\n`simulated` asks for runs in cells this size, each starting from\nthe settled water's cells around it.",
-          "type": "number",
-          "format": "float",
-          "default": 0.5,
-          "maximum": 8.0,
-          "minimum": 0.25
-        },
         "sediment": {
           "description": "How strongly the fine sediment water carries scatters light, per\nmeter: light passing through fades by it as well as by what the\nwater's clarity takes, and the water's body scatters back\n`sediment_color` by the sediment's share of the two; 0 none.",
           "type": "number",
@@ -6784,16 +6776,8 @@
           "maxItems": 3,
           "minItems": 3
         },
-        "simulated": {
-          "description": "The meters across the square around the camera over which\nrivers run live as the shallow-water equations say, in cells\n`live_cell` across, starting from their water as it settled\nthere and taking the settled water's past its edges; 0 none, the\nsettled water standing everywhere.",
-          "type": "number",
-          "format": "float",
-          "default": 0.0,
-          "maximum": 1024.0,
-          "minimum": 0.0
-        },
         "simulation_cell": {
-          "description": "The meters across the cells water settles in: the cook makes the\nsettled water's records at this size.",
+          "description": "The meters across the cells water settles in: the cook makes the\nsettled water's records at this size, and the water running live\naround the detail eye runs in these same cells.",
           "type": "number",
           "format": "float",
           "default": 1.0,

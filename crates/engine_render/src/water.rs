@@ -369,7 +369,12 @@ impl WaterPass {
             let [wrap_x, wrap_z] = drawn.wrap;
             (
                 square,
-                [window.datum, wrap_x as f32, wrap_z as f32, drawn.pool as f32],
+                [
+                    window.datum,
+                    wrap_x as f32,
+                    wrap_z as f32,
+                    drawn.pool as f32,
+                ],
             )
         });
         // The foam tiles' water carries, over the water of the terrain the
