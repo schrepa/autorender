@@ -28,7 +28,7 @@ pub use inspect::{
     TOOLING_TYPES, reserved_names,
 };
 pub use protocol::bounds;
-pub use protocol::bounds::{MAX_DESCRIPTION_BYTES, MAX_PAGE_SIZE};
+pub use protocol::bounds::{MAX_DESCRIPTION_BYTES, MAX_PAGE_SIZE, MAX_SCAN_ENTITIES};
 pub use protocol::{
     BenchmarkMode, BrowserControl, Control, DevRequest, EnvironmentControl, HostControl,
     MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION, parse_request,
@@ -44,7 +44,6 @@ pub const FRAME_STATS_SCHEMA: &str = include_str!("generated/frame_stats.schema.
 
 pub const MAX_INSPECTOR_BYTES: usize = 16 * 1024;
 pub const MAX_INSPECTORS: usize = 64;
-pub const MAX_SCAN_ENTITIES: usize = 10_000;
 
 pub(crate) fn bounded<T: engine_settings::Setting>(
     value: T,

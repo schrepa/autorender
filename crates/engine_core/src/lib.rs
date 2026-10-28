@@ -5,6 +5,8 @@
 
 mod antialiasing;
 mod atmosphere;
+mod authored;
+pub mod bounds;
 mod clock;
 mod clouds;
 mod commands;
@@ -30,7 +32,6 @@ pub mod math;
 mod mesh_lods;
 pub use engine_math::collections;
 mod particles;
-mod physics;
 pub mod presentation_bounds;
 mod probes;
 mod records;
@@ -48,6 +49,7 @@ mod water;
 
 pub use antialiasing::*;
 pub use atmosphere::*;
+pub use authored::*;
 pub use bevy_app::{App, Plugin, PluginGroup, PluginGroupBuilder};
 pub use bevy_ecs;
 pub use clock::*;
@@ -89,7 +91,6 @@ pub use jobs::*;
 pub use level_of_detail::*;
 pub use lights::*;
 pub use particles::*;
-pub use physics::{Physics, PhysicsStats};
 pub use probes::*;
 pub use records::*;
 pub use resolution::*;

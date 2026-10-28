@@ -39,7 +39,7 @@ mod games {
         LocalLight, LocalLightSettings, MakeSources, MakeTextures, Material, MaterialHandle, Mesh,
         Mesh3d, MeshHandle, MeshVertex, NavAgent, NavAgents, NavQuery, NavStatus, NavSystems,
         NavWalk, Navigation, NavigationPlugin, NightSky, OcclusionCulling, Occupancy, Parent,
-        ParticleBlend, ParticleEmitter, ParticleSettings, Physics, Plugin, PluginGroup,
+        ParticleBlend, ParticleEmitter, ParticleSettings, Plugin, PluginGroup,
         Presentation, PresentationState, PresentedTime, PresentedTransform, PresentedTransforms,
         Records, ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution,
         ResolutionStats, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamSet,
@@ -52,6 +52,7 @@ mod games {
         WorldSync, WorldSyncSystems, Wrap, edit_transform, math, remove_streamed,
         reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
     };
+    pub use engine_physics::Physics;
 }
 pub use games::*;
 
@@ -100,9 +101,10 @@ pub mod stats {
     pub use engine_core::{
         Applied, CellStats, CloudStats, CullingStats, DetailStats, Drawn, ErosionStats,
         ExposureStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats, Names,
-        NavStats, OccupancyStats, PathStats, PhysicsStats, ProbeStats, RenderStats, ShadowStats,
-        SkyStats, TerrainBounceStats, TerrainRenderStats, TerrainStats, WaterStats,
+        NavStats, OccupancyStats, PathStats, ProbeStats, RenderStats, ShadowStats, SkyStats,
+        TerrainBounceStats, TerrainRenderStats, TerrainStats, WaterStats,
     };
+    pub use engine_physics::PhysicsStats;
 }
 
 pub mod host;
@@ -166,7 +168,7 @@ pub mod prelude {
     pub use crate::games::*;
     pub use crate::{EnginePlugins, Game, Inspectors};
     pub use engine_collision::{
-        Collider, ColliderShape, CollisionLayers, CollisionPlugin, CollisionRay, CollisionSystems,
+        Collider, ColliderShape, Collision, CollisionLayers, CollisionRay, CollisionSystems,
         CollisionWorld, QueryFilter, SensorFilter, ShapeCastOptions, refresh_collision_world,
     };
     pub use engine_core::bevy_ecs::{
@@ -193,6 +195,6 @@ pub mod prelude {
         world::{EntityMut, EntityRef, EntityWorldMut, FromWorld, World},
     };
     pub use engine_core::glam::{Mat4, Quat, Vec2, Vec3, Vec4};
-    pub use engine_physics::{BodyMotion, PhysicsPlugin, PhysicsSystems, PhysicsWorld, RigidBody};
+    pub use engine_physics::{BodyMotion, PhysicsBrick, PhysicsSystems, PhysicsWorld, RigidBody};
     pub use engine_scene::{SceneDocument, SceneEntity, SceneInstance};
 }

@@ -7,7 +7,7 @@ use poses::presentation_view;
 use engine_settings::ErrorCode;
 use std::{collections::BTreeMap, io::Write};
 
-use engine_collision::{CollisionWorld, refresh_collision_world};
+use engine_collision::{CollisionError, CollisionWorld, CollisionWorldView, refresh_collision_world};
 use engine_core::{
     ActionId, ActionInput, AssetLibrary, Atmosphere, Camera, Engine, Feature, FixedTime, FrameTime,
     GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle, Mesh3d,
@@ -392,8 +392,7 @@ impl DevTools {
                 },
             )?;
             if engine.app.world().contains_resource::<CollisionWorld>() {
-                refresh_collision_world(engine.app.world_mut())
-                    .map_err(crate::features::collision::native_error)?;
+                refresh_collision_world(engine.app.world_mut()).map_err(collision_error)?;
             }
         }
         if matches!(query, ToolsQuery::Inspect { .. } | ToolsQuery::Digest) {
@@ -467,7 +466,7 @@ impl DevTools {
             presentation: presentation_view(engine.presentation()),
             collision: world
                 .get_resource::<CollisionWorld>()
-                .map(crate::features::collision::world_view),
+                .map(CollisionWorldView::of),
             fixed_delta_seconds: world
                 .get_resource::<FixedTime>()
                 .map(|time| time.delta_seconds),
@@ -528,7 +527,7 @@ impl DevTools {
                     kind: TypeKind::Protocol,
                     schema: schemas[name].clone(),
                     constraints: format!(
-                        "version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need CollisionPlugin but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source."
+                        "version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need the collision brick but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source."
                     ),
                     control_state: crate::protocol::CONTROL_STATE
                         .iter()
@@ -827,14 +826,12 @@ fn encode(value: &impl Serialize, limit: usize) -> Result<String, serde_json::Er
 }
 
 pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) -> Option<Entity> {
-    scene.entity(id).or_else(|| {
-        scene.streamed()?;
-        world
-            .try_query::<(Entity, &SceneEntity)>()?
-            .iter(world)
-            .find(|(_, metadata)| metadata.authored_id == id && metadata.scene_id == scene.id())
-            .map(|(entity, _)| entity)
-    })
+    scene.authored_entity(world, id)
+}
+
+pub(crate) fn collision_error(error: CollisionError) -> DevError {
+    let error = error.query_error();
+    DevError::new(error.code, error.path, error.message)
 }
 
 fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, DevError> {

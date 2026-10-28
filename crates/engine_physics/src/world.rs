@@ -1,13 +1,13 @@
 use bevy_ecs::prelude::*;
 use engine_collision::{Collider, CollisionWorld};
-use engine_core::{
-    FixedTime, Ground, InterpolateTransform, Parent, Physics, PhysicsStats, Transform, Wind,
-};
+use engine_core::{FixedTime, Ground, InterpolateTransform, Parent, Transform};
+use engine_terrain::Wind;
 use glam::{Quat, Vec3};
 use rapier3d::prelude as rp;
 
 use crate::body::{BodyMotion, BodyProblem, BodyStatus, RigidBody};
 use crate::coupling::{self, AIR_SPIN, Form, Motion};
+use crate::settings::{Physics, PhysicsStats};
 use crate::shapes::{BodyShape, body_shape};
 use crate::solver::Solver;
 use crate::statics::{Statics, groups};
@@ -476,5 +476,10 @@ pub(crate) fn step(world: &mut World, query: &mut QueryState<BodyQuery>) {
     {
         return;
     }
-    world.resource_scope(|world, mut physics: Mut<PhysicsWorld>| physics.tick(world, wanted));
+    world.resource_scope(|world, mut physics: Mut<PhysicsWorld>| {
+        physics.tick(world, wanted);
+        if let Some(mut stats) = world.get_resource_mut::<PhysicsStats>() {
+            stats.set_if_neq(physics.stats());
+        }
+    });
 }

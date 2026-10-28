@@ -215,7 +215,7 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FlyCameraPlugin)
             .configure_sets(Presentation, CameraSystems.run_if(flies));
-        if !app.is_plugin_added::<CollisionPlugin>() {
+        if !app.world().contains_resource::<CollisionWorld>() {
             return;
         }
         app.insert_resource(CollisionConfig {

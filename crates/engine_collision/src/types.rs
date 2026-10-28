@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
-use engine_core::ErrorCode;
+use engine_core::{Error, ErrorCode};
 use glam::{Mat3, Mat4, Vec3};
 
-pub use engine_core::{MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT};
+pub use engine_terrain::{MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT};
 pub const MAX_COLLISION_COORDINATE: f32 = 1.0e6;
 pub const MAX_COLLISION_NODES: usize = 100_000;
 pub const MAX_QUERY_HITS: usize = 4_096;
@@ -194,7 +194,7 @@ pub enum CollisionError {
 impl std::fmt::Display for CollisionError {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         out.write_str(match self {
-            Self::MissingPlugin => "CollisionPlugin is not installed",
+            Self::MissingPlugin => "the collision brick is not added",
             Self::InvalidShape => "collider dimensions must be finite and within [1e-4,1e4]",
             Self::InvalidTransform => "collider requires valid affine world transform, center within +/-1e6, effective basis lengths [1e-4,1e4], and normalized inverse infinity norm <=1000",
             Self::InvalidRay => "ray requires finite bounded origin/end, nonzero finite direction and distance in [0,2e6]",
@@ -224,6 +224,10 @@ impl CollisionError {
             Self::ResultBudget => ErrorCode::CollisionResultBudget,
             Self::NumericalFailure => ErrorCode::CollisionNumericalFailure,
         }
+    }
+
+    pub fn query_error(self) -> Error {
+        Error::new(self.code(), "$.collision", self.to_string())
     }
 }
 

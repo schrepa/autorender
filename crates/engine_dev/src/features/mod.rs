@@ -9,9 +9,7 @@ use crate::{DevError, DevTools};
 macro_rules! dev_features {
     ($then:ident) => {
         $then! {
-            collision,
             navigation,
-            physics,
             terrain,
             world_streaming,
         }
@@ -101,9 +99,7 @@ macro_rules! files {
     };
 }
 
-pub mod collision;
 pub mod navigation;
-pub mod physics;
 pub mod terrain;
 pub mod world_streaming;
 

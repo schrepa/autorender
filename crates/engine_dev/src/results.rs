@@ -1,8 +1,9 @@
+use engine_collision::CollisionWorldView;
 use engine_core::Distribution;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::views::{CollisionWorldView, PresentationStateView};
+use crate::views::PresentationStateView;
 use crate::{InspectorDescriptor, InspectorKind};
 
 pub const UNTYPED_RESULTS: &[&str] = &["benchmark", "debug_device_loss", "debug_panic", "reload"];
@@ -33,10 +34,10 @@ results! {
     distribution: crate::results::DistributionResult,
     inspect: crate::results::InspectResult,
     describe: crate::results::DescribeResult,
-    raycast: crate::features::collision::RaycastResult,
-    overlap: crate::features::collision::OverlapResult,
-    shape_cast: crate::features::collision::ShapeCastResult,
-    collision_events: crate::features::collision::CollisionEventsResult,
+    raycast: engine_collision::results::RaycastResult,
+    overlap: engine_collision::results::OverlapResult,
+    shape_cast: engine_collision::results::ShapeCastResult,
+    collision_events: engine_collision::results::CollisionEventsResult,
     nav_path: crate::features::navigation::NavPathResult,
     nav_go: crate::features::navigation::NavGoResult,
     world_changes: crate::features::world_streaming::WorldChangesResult,
