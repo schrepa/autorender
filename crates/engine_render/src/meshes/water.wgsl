@@ -83,8 +83,10 @@
 // white and their shear as a share of WATER_SHEAR_RANGE, in 255ths, and 0
 // for no reach, else their reach plus one (y, four bytes); and the height
 // above the terrain's origin the water's mesh stands at over them, a float's
-// bits (z, `water_field`). The fourth word holds nothing: WebGPU has no
-// texel of three words.
+// bits (z, `water_field`); and the roughness of the bed under them as the
+// shallow-water scheme reads it (`engine_terrain::shallow_water::roughness`),
+// a float's bits (w), which the live water's setup takes
+// (`meshes/water_setup.wgsl`).
 @group(1) @binding(50) var water_surface: texture_2d_array<f32>;
 @group(1) @binding(51) var water_info: texture_2d_array<u32>;
 // Water's directory (`terrain/water_blocks.rs`) lies in `terrain_directory`

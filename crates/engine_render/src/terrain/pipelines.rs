@@ -4,7 +4,8 @@
 //! levels' patches, and the group binding the arrays (the tiles' error
 //! pyramids among them, which the subdivisions' passes read), tables, views,
 //! leaves, material, sky and macro color maps, deformation's map and the
-//! tiles' water's surfaces they read.
+//! tiles' water's surfaces they read, with the words the live water's setup
+//! reads beside them.
 
 use super::atlas::TileAtlas;
 use super::patches::{PatchDraws, patch_layout};
@@ -21,7 +22,7 @@ type GroupKey = (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64);
 
 /// What the terrain group binds besides the pipelines' own: the arrays,
 /// tables, views, the subdivisions' leaves, material, sky and macro color
-/// maps, deformation's map and the tiles' water's surfaces.
+/// maps, deformation's map and the tiles' water's surfaces and words.
 pub(super) struct GroupSources<'a> {
     pub(super) atlas: &'a TileAtlas,
     pub(super) tables: &'a TerrainTables,
@@ -183,6 +184,7 @@ impl TerrainPipelines {
                             "water_surface",
                             crate::pipelines::view(sources.water.surface_view()),
                         ),
+                        ("water_info", crate::pipelines::view(sources.water.info_view())),
                         ("terrain_errors", crate::pipelines::view(ground_errors)),
                         ("water_errors", crate::pipelines::view(water_errors)),
                     ],

@@ -332,17 +332,6 @@ impl Settled {
         self.cell
     }
 
-    /// Whether the settled water of level-0 tile `key` is known: its record
-    /// is held whole, or its bake's water reaches it not, so it settles
-    /// dry.
-    pub(super) fn has(&self, key: TileKey) -> bool {
-        self.held.contains_key(&key)
-            || self
-                .watered
-                .as_ref()
-                .is_some_and(|(_, watered)| watered.binary_search(&key).is_err())
-    }
-
     /// The settled water of the terrain's lattice cell `(i, j)`: what the
     /// record of the level-0 tile holding its middle says, if held whole.
     pub(super) fn cell_at(&self, pyramid: &Pyramid, i: i64, j: i64) -> Option<SteadyCell> {

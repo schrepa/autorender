@@ -99,7 +99,9 @@ shared_groups! {
             particle_frame, particle_lattice, particle_pool, particle_counts, particle_splat,
             particle_source, particle_target, particle_spread_source, particle_spread_target
         ],
-        bed: 41..45 [bed_frame, bed_taken, bed_ground, bed_kept],
+        setup: 41..47 [
+            setup_frame, setup_list, setup_ground, setup_cells, setup_looks, setup_ring
+        ],
         foam: 47..49 [foam_pool, water_foam_drawn],
     }
     SHADER @ 3 {

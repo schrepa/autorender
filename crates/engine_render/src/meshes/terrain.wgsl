@@ -1612,8 +1612,8 @@ struct TerrainLift {
 // their mean at the level whose texels span `meters.x` (x), and at the
 // level whose texels span `meters.y` (y), read again only where that spans
 // more. Materials of no depth or without maps move none of it. The mesh
-// band (`terrain_displacement`) and the live water's bed
-// (`meshes/water_bed.wgsl`) raise the ground by it alike.
+// band (`terrain_displacement`) and the live water's setup of its bed
+// (`meshes/water_setup.wgsl`) raise the ground by it alike.
 fn terrain_band_rise(blend: TerrainBlend, world: vec3<f32>, normal: vec3<f32>,
         meters: vec2<f32>) -> vec2<f32> {
     var rise = vec2<f32>(0.0);

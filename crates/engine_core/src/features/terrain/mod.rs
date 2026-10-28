@@ -107,8 +107,7 @@ pub use surroundings::*;
 use tile_map::TileMap;
 pub use water::*;
 pub use water_sim::{
-    GHOST_DRY, LIVE_PIXELS, LONGEST_FRAME, SIM_TOUCHES, WaterGhost, WaterSourceCell, WaterWindow,
-    live_steps,
+    LIVE_PIXELS, LONGEST_FRAME, SIM_TOUCHES, WaterRead, WaterSourceCell, WaterWindow, live_steps,
 };
 pub use wind::*;
 

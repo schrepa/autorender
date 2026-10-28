@@ -6,10 +6,12 @@
 //! flow, whitewater and kind and their state
 //! (`engine_core::terrain_data::TileWater::info`), the third the level the
 //! water's mesh stands at over the sample
-//! (`engine_core::terrain_data::WaterMesh`) and the fourth none, WebGPU
-//! having no texel of three words; each sample past the patch's edges the
-//! tile's beside them (its border past its own), so the smooth
-//! surface water's pass reads through them (`meshes/water.wgsl`'s
+//! (`engine_core::terrain_data::WaterMesh`) and the fourth the roughness of
+//! the bed under it as the shallow-water scheme reads it
+//! (`engine_core::terrain_data::shallow_water::roughness`), which the live
+//! water's setup takes (`meshes/water_setup.wgsl`); each sample past the
+//! patch's edges the tile's beside them (its border past its own), so the
+//! smooth surface water's pass reads through them (`meshes/water.wgsl`'s
 //! `water_level`) meets itself across tiles and patches. A tile's blocks
 //! upload as it arrives and free as it leaves or changes, following the
 //! tiles the atlas held anew; a patch whose samples hold no surface
@@ -35,6 +37,8 @@ use crate::gpu_layouts::constants::{
     NO_WATER_BLOCK, NO_WATER_SURFACE, WATER_BLOCK as BLOCK, WATER_BLOCKS_SIDE as SIDE,
     WATER_TILE_WORDS as TILE_WORDS,
 };
+use engine_core::glam::Vec2;
+use engine_core::terrain_data::shallow_water::roughness;
 use engine_core::terrain_data::{PATCH_QUADS, PATCHES_PER_TILE, Tile, TileWater, WaterMesh};
 
 /// Blocks a layer holds, and its texels along a side.
@@ -67,7 +71,8 @@ struct TileBlocks {
 }
 
 /// A block's texels: each sample's surface beside its ground, and its words
-/// with the level the water's mesh stands at over it, and none.
+/// with the level the water's mesh stands at over it and its bed's
+/// roughness.
 struct Texels {
     surfaces: Vec<[f32; 2]>,
     info: Vec<[u32; 4]>,
@@ -100,8 +105,9 @@ impl Texels {
 /// the blocks resident and dropped this frame for want of layers; the
 /// leaves the water's subdivisions drew and the splits their room refused,
 /// as last read back; and the terrain group as the subdivisions' passes
-/// bind it, with its layout, once made, through which the live water's bed
-/// reads the ground's materials (`meshes/water_bed.wgsl`).
+/// bind it, with its layout, once made, through which the live water's
+/// setup reads the ground, its materials and the tiles' water
+/// (`meshes/water_setup.wgsl`).
 pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) heights: &'a wgpu::TextureView,
     pub(crate) views: &'a wgpu::Buffer,
@@ -140,27 +146,33 @@ pub(crate) struct WaterBlocks {
     directory_at: Option<(u32, u64)>,
     directory_stale: bool,
     holding: BTreeSet<u64>,
-    // The surfaces' array the terrain group binds before a block uploads,
-    // while water's directory names none: a texel.
-    stand_in: wgpu::TextureView,
+    // The surfaces' and words' arrays the terrain group binds before a
+    // block uploads, while water's directory names none: a texel each.
+    stand_in: [wgpu::TextureView; 2],
 }
 
 impl WaterBlocks {
     pub(super) fn new(device: &wgpu::Device) -> Self {
-        let stand_in = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("engine/water-surfaces-stand-in"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: SURFACE_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+        let stand_in = |label: &'static str, format| {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            })
+        };
         Self {
             arrays: None,
             generation: 0,
@@ -175,10 +187,10 @@ impl WaterBlocks {
             directory_at: None,
             directory_stale: true,
             holding: BTreeSet::new(),
-            stand_in: stand_in.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            }),
+            stand_in: [
+                stand_in("engine/water-surfaces-stand-in", SURFACE_FORMAT),
+                stand_in("engine/water-info-stand-in", INFO_FORMAT),
+            ],
         }
     }
 
@@ -195,7 +207,16 @@ impl WaterBlocks {
     pub(super) fn surface_view(&self) -> &wgpu::TextureView {
         self.arrays
             .as_ref()
-            .map_or(&self.stand_in, |arrays| &arrays.surface_view)
+            .map_or(&self.stand_in[0], |arrays| &arrays.surface_view)
+    }
+
+    /// The info array's view the terrain group binds, whose words the live
+    /// water's setup reads beside the surfaces: a stand-in before a block
+    /// uploads.
+    pub(super) fn info_view(&self) -> &wgpu::TextureView {
+        self.arrays
+            .as_ref()
+            .map_or(&self.stand_in[1], |arrays| &arrays.info_view)
     }
 
     /// Blocks resident.
@@ -587,7 +608,9 @@ impl WaterBlocks {
 /// sample past its edges, the tile's beside it (its border past its own),
 /// the surface water's pass draws (`NO_WATER_SURFACE` where none is) beside
 /// the tile's ground, and its words, the third the bits of the level the
-/// water's mesh stands at over it and the fourth none.
+/// water's mesh stands at over it and the fourth those of the roughness of
+/// the tile's bed under it (`roughness`: the ground's outside rivers'
+/// channels, and past the tile's own samples).
 fn block_texels(
     tile: &Tile,
     water: &TileWater,
@@ -598,12 +621,15 @@ fn block_texels(
     let stride = LAYER_SIZE as usize;
     let side = BLOCK as usize;
     let quads = PATCH_QUADS as usize;
-    let (heights, words) = (tile.heights(), water.info());
+    let (heights, words, spacing) = (tile.heights(), water.info(), tile.spacing());
     for z in 0..side {
         for x in 0..side {
             // The sample in the tile's layout, which holds a border of one,
-            // the block's first a sample before the patch's.
-            let at = (pz * quads + z) * stride + px * quads + x;
+            // the block's first a sample before the patch's, and its place
+            // in meters from the tile's first corner.
+            let (column, row) = (px * quads + x, pz * quads + z);
+            let at = row * stride + column;
+            let local = Vec2::new(column as f32 - 1.0, row as f32 - 1.0) * spacing;
             let texel = z * side + x;
             let level = mesh.level(at);
             texels.surfaces[texel] = [
@@ -615,7 +641,8 @@ fn block_texels(
                 heights[at],
             ];
             let [packed, state] = words[at];
-            texels.info[texel] = [packed, state, level.to_bits(), 0];
+            let rough = roughness(tile.bed(local).as_ref());
+            texels.info[texel] = [packed, state, level.to_bits(), rough.to_bits()];
         }
     }
 }

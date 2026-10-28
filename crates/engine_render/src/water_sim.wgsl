@@ -59,10 +59,11 @@
 // comes back.
 // - the square running live around the detail eye (`water_sim.rs`), in
 //   cells finer than the settled water's (`engine_core`'s `live_cell`),
-//   over ground the relief of its materials raises at its cells' spacing
-//   (`meshes/water_bed.wgsl`), the stones and cobbles the ground draws,
-//   stores every block of it, and of the square it moves to next, each in
-//   the slot of its place on the terrain's lattice of blocks, and steps
+//   over ground the relief of its materials raises at its cells' spacing,
+//   the stones and cobbles the ground draws, set up on the GPU from the
+//   ground and the tiles' water (`meshes/water_setup.wgsl`), stores every
+//   block of it, each in the slot of its place on the terrain's lattice of
+//   blocks, and steps
 //   every cell by the same seconds, and over its edges water flows to and
 //   from the cells just past them, which stand as the water settled there
 //   (the ring), and comes in as the water settled there brings it: water
@@ -218,7 +219,7 @@ struct SimSlots {
 // Each slot's pool's blocks' ground, SIM_BLOCK_GROUND entries a block: the
 // ground at its cells' corners (meters, WATER_SIM_GROUP + 1 a row, rows
 // along z; the live square's raised by its materials' relief,
-// `meshes/water_bed.wgsl`), then the level a lake holds each of its cells
+// `meshes/water_setup.wgsl`), then the level a lake holds each of its cells
 // at (SIM_UNHELD where none does), then each of its cells' bed's roughness
 // (its D84 in meters where friction follows Ferguson's law, the same
 // negated where steps or knobs are carved into it and friction counts its
@@ -291,10 +292,10 @@ struct SimSlots {
 // cells. The live square's slot, which sums nothing, holds its cells' looks
 // in their place (`sim_looks`), SIM_LIVE_LOOKS entries a cell: the settled
 // water at it (its surface, its flow along x and z and its foam, as its
-// block brings it: the settled water's smooth surface at the live cell,
-// whose mean over each settled cell is that cell's water), which its rim is
-// pulled back to and its swings are measured from; and its water as
-// water's pass draws it (`sim_drawn`).
+// setup stands it, `meshes/water_setup.wgsl`: the settled water's smooth
+// surface at the live cell, whose mean over each settled cell is that
+// cell's water), which its rim is pulled back to and its swings are
+// measured from; and its water as water's pass draws it (`sim_drawn`).
 @group(0) @binding(9) var<storage, read_write> sim_averages: array<vec4<f32>>;
 
 // The most solids that push the square around the camera's water a frame
@@ -2099,7 +2100,7 @@ const SIM_WET_NORTH: u32 = 16u;
 var<workgroup> sim_wet_sides: atomic<u32>;
 
 // The share of the way back to the settled water at its cell `cell` (the
-// first entry of its look, which its block brings: the settled water's
+// first entry of its look, which its setup stands: the settled water's
 // smooth surface at the live cells, whose mean over each settled cell is
 // that cell's water) that the live square pulls it at each step's end:
 // none SIM_RIM cells or more inside its edges, and from there rising to all
@@ -2538,8 +2539,8 @@ fn sim_change(before: vec4<f32>, here: vec2<f32>, after: vec4<f32>, dx: f32) -> 
 // its velocity as a share of SIM_FLOW_RANGE either way, its foam as a share
 // of SIM_FOAM_MOST and its span's code, then its turbulence, how strongly it
 // breaks white, its shear as a share of SIM_SHEAR_RANGE and its reach's
-// code. The codes of its span and reach are its bed's, which its block
-// brings in their top bytes and each look keeps. A cell holding water
+// code. The codes of its span and reach are its bed's, which its setup
+// stands in their top bytes and each look keeps. A cell holding water
 // deeper than SIM_THIN stands at its surface in the state the cook's rules
 // give the water it holds now: its turbulence its velocity's swing from the
 // velocity it settled at, against that speed (at least

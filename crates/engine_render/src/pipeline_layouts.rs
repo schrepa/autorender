@@ -20,8 +20,8 @@ use crate::bindings::{
     TEMPORAL_POSES, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS, TERRAIN_RESOLVE,
     TERRAIN_SUBDIVISION, TERRAIN_SUBDIVISION_CAMERA, TRANSPARENT_COMPOSITE, Table, VIRTUAL_BIN,
     VIRTUAL_POSES, VIRTUAL_SEED, VIRTUAL_SELECT, VIRTUAL_SHADOW, VIRTUAL_TRAVERSE,
-    VISIBILITY_CLASSIFY, VISIBILITY_PASS, VISIBILITY_RESOLVE, WATER, WATER_BED, WATER_BEHIND,
-    WATER_PARTICLES, WATER_SIM,
+    VISIBILITY_CLASSIFY, VISIBILITY_PASS, VISIBILITY_RESOLVE, WATER, WATER_BEHIND,
+    WATER_PARTICLES, WATER_SETUP, WATER_SIM,
 };
 
 /// The bytes one uniform buffer binding holds on every device (wgpu's
@@ -177,10 +177,10 @@ pipeline_layouts! {
     /// Water's simulation: faces, fluxes, cells, the water rivers bring and
     /// the cells past its edges.
     WATER_SIM_PIPELINES = [WATER_SIM];
-    /// The live water's bed: an empty group, the terrain group, through
-    /// which it reads the ground's materials as their mesh band does, and
-    /// its own.
-    WATER_BED_PIPELINES = [EMPTY, TERRAIN, WATER_BED];
+    /// The live water's setup: an empty group, the terrain group, through
+    /// which it reads the ground, its materials as their mesh band does and
+    /// the tiles' water as water's shading does, and its own.
+    WATER_SETUP_PIPELINES = [EMPTY, TERRAIN, WATER_SETUP];
     /// Water's particles: the water's group, read as its shading reads it,
     /// and the particles' own.
     WATER_PARTICLE_PIPELINES = [EMPTY, WATER, WATER_PARTICLES];

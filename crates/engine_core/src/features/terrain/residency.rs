@@ -25,17 +25,14 @@ pub(super) const JUMP: f32 = 100.0;
 
 /// What a terrain's last hydrology bake found, its rivers' flow once a
 /// solid stood in them (their water as what stands there now holds it
-/// back), the square around the detail eye its water runs live over, the
-/// square the eye nears next once gathered, waiting ahead, and while it is
-/// gathered. A new bake's rivers flow anew, and its live water starts over
-/// from their water as it settles.
+/// back) and the square around the detail eye its water runs live over. A
+/// new bake's rivers flow anew, and its live water starts over from their
+/// water as it settles.
 #[derive(Default)]
 pub(super) struct HydrologyState {
     pub(super) stats: Option<HydrologyStats>,
     pub(super) flow: Option<engine_terrain::RiverFlow>,
     pub(super) window: Option<Arc<WaterWindow>>,
-    pub(super) ahead: Option<Arc<WaterWindow>>,
-    pub(super) gathering: Option<super::water_sim::Gathering>,
 }
 
 impl HydrologyState {
