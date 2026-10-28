@@ -201,9 +201,10 @@ struct ParticleFrame {
 // and the height its surface stands at, world meters, a float's bits); then
 // what carries and churns the foam there as `particles_currents` finds it
 // (the current its surface runs at along x and z, meters a second; how hard
-// the water churns foam, `sim_churn`'s churn, and its depth; and the speed
-// its eddies turn at, meters a second): half floats, a pair a word but the
-// surface's, none in the words left over.
+// the water churns foam, `sim_churn`'s churn, and its depth; the speed its
+// eddies turn at, meters a second; and the height its surface stands at, as
+// gathered): half floats, a pair a word but the surfaces', none in the
+// words left over.
 @group(2) @binding(33) var<storage, read_write> particle_lattice: array<vec4<u32>>;
 // The pools twice over, the frame before's particles and this frame's
 // (`pool.z`'s half and the other), each the foam pool's `pool.x` particles,
@@ -250,27 +251,33 @@ struct ParticleWater {
 }
 
 // What carries and churns the foam at a point as `particles_currents`
-// finds it.
+// finds it, and the height (world meters) its water's surface stands at,
+// summed over `wet` of the weights it was read with: the points holding
+// water alone, so no shore pulls it down.
 struct ParticleCarrier {
     current: vec2<f32>,
     churn: f32,
     depth: f32,
     stirring: f32,
+    surface: f32,
+    wet: f32,
 }
 
 // A particle: where it stands (world meters along x and z) and whether it
 // is a wave's; a foam particle's white water and foam (layers times square
 // meters), half its raft's long axis (meters along x and z) and half its
-// short axis (meters); a wave particle's height (meters), how many times as
-// long along the current as across it it has drawn out, its heading (the
-// current's, radians from x toward z) and its radius across the current
-// (meters).
+// short axis (meters), and the height (world meters) the surface of the
+// water carrying it stands at, which it lies on; a wave particle's height
+// (meters), how many times as long along the current as across it it has
+// drawn out, its heading (the current's, radians from x toward z) and its
+// radius across the current (meters).
 struct Particle {
     at: vec2<f32>,
     wave: bool,
     amounts: vec2<f32>,
     axis: vec2<f32>,
     minor: f32,
+    surface: f32,
     amplitude: f32,
     stretch: f32,
     heading: f32,
@@ -391,10 +398,13 @@ fn particle_carrier_point(point: vec2<i32>) -> ParticleCarrier {
     carrier.churn = churning.x;
     carrier.depth = churning.y;
     carrier.stirring = unpack2x16float(words.z).x;
+    carrier.surface = bitcast<f32>(words.w);
+    carrier.wet = select(0.0, 1.0, carrier.depth > 0.0);
     return carrier;
 }
 
-// `sum` with `carrier` added at `weight`.
+// `sum` with `carrier` added at `weight`, its surface only where it holds
+// water.
 fn particle_weighed(sum: ParticleCarrier, carrier: ParticleCarrier, weight: f32)
         -> ParticleCarrier {
     var added = sum;
@@ -402,6 +412,8 @@ fn particle_weighed(sum: ParticleCarrier, carrier: ParticleCarrier, weight: f32)
     added.churn += carrier.churn * weight;
     added.depth += carrier.depth * weight;
     added.stirring += carrier.stirring * weight;
+    added.surface += carrier.surface * carrier.wet * weight;
+    added.wet += carrier.wet * weight;
     return added;
 }
 
@@ -422,6 +434,9 @@ fn particle_carrier(world: vec2<f32>) -> ParticleCarrier {
                 particle_carrier_point(first + vec2<i32>(column, row)),
                 along[column] * across[row]);
         }
+    }
+    if carrier.wet > 0.0 {
+        carrier.surface /= carrier.wet;
     }
     return carrier;
 }
@@ -508,6 +523,7 @@ fn particle_read(first: vec4<u32>, second: vec4<u32>, wave: bool) -> Particle {
         particle.amounts = held;
         particle.axis = shape.xy;
         particle.minor = shape.z;
+        particle.surface = bitcast<f32>(second.w);
         return particle;
     }
     particle.amplitude = held.x;
@@ -523,7 +539,7 @@ fn particle_words(particle: Particle) -> ParticleWords {
     if !particle.wave {
         words.first = bitcast<vec4<u32>>(vec4<f32>(particle.at, particle.amounts));
         words.second = vec4<u32>(bitcast<vec3<u32>>(vec3<f32>(particle.axis, particle.minor)),
-            0u);
+            bitcast<u32>(particle.surface));
         return words;
     }
     words.first = bitcast<vec4<u32>>(vec4<f32>(particle.at, particle.amplitude,
@@ -639,7 +655,8 @@ fn particle_quanta(amount: f32, quantum: f32, drawn: f32) -> vec2<f32> {
 // the site (world lattice points) and its middle (world meters); its
 // burst's slot and middle (world meters), the rafts of white water it lays
 // and each one's amount, whether it raises a boil, the boil's height and
-// the radius of the boils its eddies raise, its patch's.
+// the radius of the boils its eddies raise, its patch's; and the height
+// (world meters) its water's surface stands at.
 struct ParticleBirths {
     cell: vec2<i32>,
     site: vec2<f32>,
@@ -650,6 +667,7 @@ struct ParticleBirths {
     boils: u32,
     boil: f32,
     radius: f32,
+    surface: f32,
 }
 
 // The foam and the wave particles `births` holds.
@@ -690,6 +708,7 @@ fn particle_births(point: vec2<i32>) -> ParticleBirths {
     if here.depth <= WATER_FOAM_WET || !particle_site_in(births.site, particle_square()) {
         return births;
     }
+    births.surface = here.surface;
     let area = spacing * spacing;
     let size = particle_eddy(here.depth);
     births.radius = 0.5 * size;
@@ -726,13 +745,15 @@ fn particle_births(point: vec2<i32>) -> ParticleBirths {
 
 // The `k`th foam particle `births` holds: a round raft of its burst's white
 // water, as thick as fresh white water lies (WATER_FOAM_FRESH), at a point
-// of the burst's patch drawn evenly over its disc.
+// of the burst's patch drawn evenly over its disc, on its site's surface.
 fn particle_born_foam(births: ParticleBirths, k: u32) -> Particle {
     let draws = particle_draws(births.cell, PARTICLE_BURSTS, 2u + k, births.slot);
     let turn = 2.0 * PI * draws.y;
-    return particle_raft(births.middle
+    var raft = particle_raft(births.middle
         + births.radius * sqrt(draws.x) * vec2<f32>(cos(turn), sin(turn)),
         vec2<f32>(births.each, 0.0), sqrt(births.each / (PI * WATER_FOAM_FRESH)));
+    raft.surface = births.surface;
+    return raft;
 }
 
 // The wave particle `births` holds: its boil, at the burst's middle, round,
@@ -843,6 +864,9 @@ fn particle_raft_aged(carried: Particle, middle: ParticleCarrier, shear: mat2x2<
         seconds: f32) -> ParticleAged {
     var aged: ParticleAged;
     aged.particle = carried;
+    if middle.wet > 0.0 {
+        aged.particle.surface = middle.surface;
+    }
     let white = carried.amounts.x * exp(-seconds / particle_draining(middle.depth));
     let foam = (carried.amounts.y + WATER_FOAM_KEPT * (carried.amounts.x - white))
         * exp(-seconds / WATER_FOAM_LIFE);
@@ -1121,7 +1145,7 @@ fn particles_gather(@builtin(global_invocation_id) id: vec3<u32>) {
 // WATER_BREAK_FULL: water running smooth over its bed draws no air in), as
 // a share of WATER_FOAM_POWER; none where it loses energy slower than
 // WATER_FOAM_LOSS. And how fast its eddies turn, as its shading's roughness
-// takes them (`water_stirring`). Its depth comes along.
+// takes them (`water_stirring`). Its depth and its surface come along.
 @compute @workgroup_size(PARTICLE_SIDE, PARTICLE_SIDE)
 fn particles_currents(@builtin(global_invocation_id) id: vec3<u32>) {
     let point = vec2<i32>(id.xy);
@@ -1155,7 +1179,7 @@ fn particles_currents(@builtin(global_invocation_id) id: vec3<u32>) {
             here.turbulence);
         words = vec4<u32>(pack2x16float(particle_surface(here, change)),
             pack2x16float(vec2<f32>(churn, here.depth)),
-            pack2x16float(vec2<f32>(stirring, 0.0)), 0u);
+            pack2x16float(vec2<f32>(stirring, 0.0)), bitcast<u32>(here.surface));
     }
     particle_lattice[particle_lattice_at(point, true)] = words;
 }
@@ -1401,7 +1425,8 @@ struct FoamQuad {
 // the ellipse holds (1 + FOAM_FLAT²)/2 of on average (`fs_foam`).
 fn foam_quad(raft: Particle, corner: vec2<f32>) -> FoamQuad {
     let local = raft.at - terrain.origin.xz;
-    let pixel = detail_across(eye_world(water_relative(local, water_field(local))));
+    let pixel = detail_across(eye_world(water_relative(local,
+        raft.surface - terrain.origin.y)));
     let long = length(raft.axis);
     let along = select(vec2<f32>(1.0, 0.0), raft.axis / long, long > 0.0);
     let across = vec2<f32>(-along.y, along.x);
@@ -1421,9 +1446,11 @@ const FOAM_FLAT: f32 = 0.85;
 
 // Vertex `vertex` of the foam particle at `instance` of this frame's half of
 // the pools (the frame's `particles_place` laid them, those living first):
-// its raft, an ellipse lying on the water's mesh (`foam_quad`), each corner
-// of the quad around it standing where the mesh does there (`water_field`,
-// lifted by `water_lift`), as water's own pixels read it.
+// its raft, an ellipse (`foam_quad`) lying on the surface of the water
+// carrying it, as the lattice the raft rides read it (its `surface`), each
+// corner lifted by `water_lift`: where water's own pixels draw that surface,
+// which the mesh carrying them may stand under where it holds no water
+// (`water_field`).
 @vertex
 fn vs_foam(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32)
         -> FoamOutput {
@@ -1431,7 +1458,7 @@ fn vs_foam(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     let index = (1u - particle_frame.pool.z) * (pools.x + pools.y) + instance;
     let raft = particle_read(foam_pool[2u * index], foam_pool[2u * index + 1u], false);
     let quad = foam_quad(raft, foam_corner(vertex));
-    var relative = water_relative(quad.at, water_field(quad.at));
+    var relative = water_relative(quad.at, raft.surface - terrain.origin.y);
     relative.y += water_lift(eye_world(relative));
     var output: FoamOutput;
     output.clip_position = terrain_view.relative_view_projection * vec4<f32>(relative, 1.0);
