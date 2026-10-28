@@ -66,8 +66,22 @@ impl SceneDocument {
     }
 
     #[cfg(feature = "schema")]
-    pub fn schema_json() -> String {
-        let schema = schemars::schema_for!(Self);
+    pub fn schema_json(registry: &engine_core::BrickRegistry) -> String {
+        let mut schema =
+            serde_json::to_value(schemars::schema_for!(Self)).expect("JSON schema is serializable");
+        if let Some(definitions) = schema
+            .get_mut("$defs")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            let sections = crate::section_schemas(registry, definitions);
+            if let Some(properties) = definitions
+                .get_mut("SceneEnvironment")
+                .and_then(|environment| environment.get_mut("properties"))
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                properties.extend(sections);
+            }
+        }
         let mut source =
             serde_json::to_string_pretty(&schema).expect("JSON schema is serializable");
         source.push('\n');
@@ -334,7 +348,7 @@ macro_rules! scene_object {
     ($(
         $(#[$doc:meta])*
         $field:ident: $type:ty {
-            feature: $feature:ident,
+            brick: $brick:expr,
             shows: $shows:literal,
             rule: $rule:ident $(($($arg:expr),*))?,
             $kind:ident

@@ -182,6 +182,7 @@ impl<'a> RenderFrame<'a> {
             dropped_instances,
             missing_assets,
             invalid_transforms,
+            extracted,
         } = self.snapshot();
         snapshot.view_projection = *view_projection;
         snapshot.camera_position = *camera_position;
@@ -229,6 +230,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.dropped_instances = *dropped_instances;
         snapshot.missing_assets = *missing_assets;
         snapshot.invalid_transforms = *invalid_transforms;
+        snapshot.extracted.clone_from(extracted);
         engine_profile::counter(
             "extraction.instance_capacity_bytes",
             (snapshot.instances.capacity() * size_of::<RenderInstance>()) as f64,
@@ -767,6 +769,14 @@ impl RetainedRender {
     pub(crate) fn set_streamed(&mut self, cells: crate::CellStats, tables: crate::RenderTables) {
         self.snapshot.cells = cells;
         self.snapshot.tables = tables;
+    }
+
+    pub(crate) fn extract_brick(
+        &mut self,
+        world: &World,
+        extract: fn(&World, &mut RenderSnapshot),
+    ) {
+        extract(world, &mut self.snapshot);
     }
 
     pub(crate) fn extract_terrain(&mut self, world: &World, aspect: f32) {

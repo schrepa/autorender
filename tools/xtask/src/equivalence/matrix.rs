@@ -126,7 +126,12 @@ pub(super) fn read_matrix(root: &Path) -> Result<(Vec<Cell>, Vec<String>), Strin
 }
 
 fn environment_sections() -> Result<BTreeSet<String>, String> {
-    let schema: Value = serde_json::from_str(&engine_scene::SceneDocument::schema_json())
+    let engine = crate::bricks::standard_engine();
+    let registry = engine
+        .app
+        .world()
+        .resource::<engine::bricks::BrickRegistry>();
+    let schema: Value = serde_json::from_str(&engine_scene::SceneDocument::schema_json(registry))
         .map_err(|error| format!("the scene schema is not JSON: {error}"))?;
     Ok(schema["$defs"]["SceneEnvironment"]["properties"]
         .as_object()

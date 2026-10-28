@@ -21,8 +21,6 @@ const INTERNAL: &[&str] = &[
     "WaterSourceCell",
     "WaterWindow",
     "atmosphere_fields",
-    "engine_features",
-    "install",
     "live_steps",
     "lod_input",
     "settled_alike",

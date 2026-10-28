@@ -3,22 +3,13 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-macro_rules! section_names {
-    ($($key:ident: $settings:ident { opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
-        &[$((stringify!($key), stringify!($settings))),*]
-    };
-}
-
-pub fn environment_sections() -> &'static [(&'static str, &'static str)] {
-    engine::environment_sections!(section_names)
-}
-
 pub fn coverage(
     root: &Path,
     development: &engine_dev::schemas::Generated,
 ) -> Result<String, String> {
     let (protocol, stats) = (&development.summary, &development.frame_stats);
-    let sections = environment_sections();
+    let mut engine = crate::bricks::standard_engine();
+    let sections = crate::bricks::environment_sections(engine.app.world());
     let smokes: Vec<(String, Claims)> = crate::smoke::scripts(root)?
         .into_iter()
         .map(|(name, source)| (name, Claims::of(&source)))
@@ -31,7 +22,6 @@ pub fn coverage(
             .collect()
     };
     let reported = |key: &str| stats["properties"].get(key).is_some();
-    let mut engine = engine::Engine::default();
     let tools = engine_dev::DevTools::with_schemas(&development.inspectors);
     let described: Value = serde_json::from_str(&tools.execute(
         &mut engine,
@@ -80,7 +70,8 @@ pub fn coverage(
 }
 
 pub fn check(root: &Path) -> Result<(), String> {
-    let development = engine_dev::schemas::generated()?;
+    let engine = crate::bricks::standard_engine();
+    let development = engine_dev::schemas::generated(engine.app.world())?;
     let coverage: Value =
         serde_json::from_str(&coverage(root, &development)?).expect("coverage is JSON");
     let mut unchecked = Vec::new();

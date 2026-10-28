@@ -1,11 +1,10 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { setTimeout as delay } from "node:timers/promises";
+import { readFileSync } from "node:fs";
 import { commander, developmentReady, launch, protocol, routedScene, sceneUrl } from "./harness.mjs";
 
-const features = protocol.features.map(feature => feature.name);
-const needs = Object.fromEntries(protocol.features.map(feature => [feature.name, feature.needs]));
-const plugin = name => protocol.features.find(feature => feature.name === name).plugin;
+const records = JSON.parse(readFileSync(new URL("../../bricks.json", import.meta.url), "utf8")).bricks;
+const bricks = protocol.bricks;
 const core = () => ({
   id: "plugins-fixture", revision: 1,
   camera: { position: [0, 6, 12], target: [0, 0, 0], fov_degrees: 55, near: 0.1, far: 1000 },
@@ -48,9 +47,23 @@ const refusals = {
   collision: ["raycast", ray],
   physics: ["environment", { physics: { enabled: true } }],
 };
-const leftOut = name => features.filter(other => other === name || (needs[other] ?? []).includes(name));
-for (const name of features) {
-  assert.ok(authoring[name] && requests[name] && refusals[name], `plugins-smoke needs ${name}'s authoring, request and refusal`);
+const features = bricks.filter(name => name in authoring);
+const reads = Object.fromEntries(records.map(record => [record.name, record.reads]));
+const needs = name => {
+  const found = new Set();
+  const pending = [...(reads[name] ?? [])];
+  while (pending.length) {
+    const next = pending.pop();
+    if (!found.has(next)) {
+      found.add(next);
+      pending.push(...(reads[next] ?? []));
+    }
+  }
+  return [...found];
+};
+const leftOut = name => bricks.filter(other => other === name || needs(other).includes(name));
+for (const name of Object.keys(authoring)) {
+  assert.ok(features.includes(name) && requests[name] && refusals[name], `plugins-smoke needs ${name}'s brick, authoring, request and refusal`);
 }
 
 const { browser, page, errors } = await launch({ width: 640, height: 400 });
@@ -74,7 +87,7 @@ try {
     const rendering = (await command("render")).result.rendering;
     assert.ok(rendering.frame >= 0);
     const present = (await command("status")).result.features;
-    assert.deepEqual(present, features.filter(other => !without.includes(other)), `${name}: status names the features added`);
+    assert.deepEqual(present, bricks.filter(other => !without.includes(other)), `${name}: status names the bricks added`);
     const [op, fields] = refusals[name];
     const refused = await command(op, fields, false);
     assert.equal(refused.error.code, "missing_plugin", `${name}: ${op} answers missing_plugin: ${JSON.stringify(refused.error)}`);
@@ -85,10 +98,11 @@ try {
     assert.equal(reload.error.code, "missing_plugin", `${name}: ${JSON.stringify(reload.error)}`);
     assert.equal(reload.error.path, authoring[name][1]);
 
-    const alone = [name, ...(needs[name] ?? [])];
-    await open(authored([name]), features.filter(other => !alone.includes(other)));
+    const alone = [name, ...needs(name)];
+    const others = features.filter(other => !alone.includes(other));
+    await open(authored([name]), others);
     await command("render");
-    assert.deepEqual((await command("status")).result.features, features.filter(other => alone.includes(other)));
+    assert.deepEqual((await command("status")).result.features, bricks.filter(other => !others.includes(other)));
     const [askOp, askFields] = requests[name];
     await command(askOp, askFields);
     checks.push({ feature: name, without, refused: refused.error.message, path: reload.error.path });
@@ -96,21 +110,7 @@ try {
 
   await open(authored(features), []);
   await command("render");
-  assert.deepEqual((await command("status")).result.features, features);
-
-  for (const name of features) {
-    for (const need of needs[name]) {
-      const message = `${plugin(name)} needs ${need}: add ${plugin(need)} too, or leave ${name} out`;
-      const before = errors.length;
-      await page.unrouteAll();
-      await routedScene(page, core()).route();
-      const without = features.filter(other => other === need || (other !== name && needs[other].includes(need)));
-      await page.goto(String(sceneUrl({ without: without.join(",") })), { waitUntil: "domcontentloaded" });
-      for (let attempt = 0; attempt < 100 && !errors.slice(before).some(error => error.includes(message)); attempt++) await delay(100);
-      assert.ok(errors.slice(before).some(error => error.includes(message)), `${name} without ${need} refuses: ${errors.slice(before).join(" | ")}`);
-      errors.splice(before);
-    }
-  }
+  assert.deepEqual((await command("status")).result.features, bricks);
 
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ ok: true, checks }));

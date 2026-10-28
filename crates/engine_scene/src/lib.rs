@@ -3,12 +3,12 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+mod bricks;
 mod collider;
 mod components;
 mod document;
 mod environment;
 mod error;
-mod features;
 mod files;
 mod hierarchy;
 mod instance;
@@ -28,13 +28,15 @@ pub use document::{
     SceneSurface, SceneTransform, SceneVertex,
 };
 pub use engine_core::EnvironmentSection;
-pub use environment::{AtmospherePreset, SceneAtmosphere, SceneEnvironment, SectionVisitor};
+pub use environment::{AtmospherePreset, SceneAtmosphere, SceneEnvironment};
+#[cfg(feature = "schema")]
+pub use environment::section_schemas;
 pub use error::SceneError;
 pub use files::{
     MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile, SceneFileKind, SceneFiles,
     decode_mesh_buffer, encode_mesh_buffer, encode_mesh_buffer_with,
 };
-pub use instance::{MeshOrigin, SceneEntity, SceneInstance};
+pub use instance::{MeshOrigin, SceneEntity, SceneInstance, authored_id};
 pub use json::{parse_json, parse_value};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use material::{

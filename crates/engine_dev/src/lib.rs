@@ -3,11 +3,11 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+mod bricks;
 mod bridge;
 mod controls;
 mod digest;
 mod error;
-pub mod features;
 mod inspect;
 mod protocol;
 mod reply;
@@ -19,8 +19,9 @@ pub mod authoring;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod schemas;
 
+pub use bricks::is_control;
 pub use bridge::{Artifact, Effect, HostContext, Outcome, Step};
-pub use controls::{validated_camera, validated_presentation_alpha};
+pub use controls::{OperationCall, validated_camera, validated_presentation_alpha};
 pub use engine_settings::ErrorCode;
 pub use error::DevError;
 pub use inspect::{
@@ -56,14 +57,4 @@ pub(crate) fn bounded<T: engine_settings::Setting>(
         Ok(()) => Ok(value),
         Err(invalid) => Err(DevError::new(code, path, invalid.rule)),
     }
-}
-
-pub(crate) fn coordinate(value: f64, path: &str) -> Result<f32, DevError> {
-    bounded(
-        value,
-        protocol::bounds::COORDINATE,
-        engine_settings::ErrorCode::OutOfRange,
-        path,
-    )
-    .map(|value| value as f32)
 }

@@ -12,52 +12,52 @@ macro_rules! entity_components {
     ($then:ident) => {
         $then! {
             collider: crate::SceneCollider {
-                feature: Collision,
+                brick: Some("collision"),
                 shows: "Collider",
                 rule: any,
                 mirror
             },
-            light: crate::SceneLight { feature: Core, shows: "LocalLight", rule: any, mirror },
+            light: crate::SceneLight { brick: None, shows: "LocalLight", rule: any, mirror },
             particles: crate::SceneEmitter {
-                feature: Core,
+                brick: None,
                 shows: "ParticleEmitter",
                 rule: any,
                 mirror
             },
-            tint: [f32; 4] { feature: Core, shows: "Tint", rule: range(0.0, 1.0), mirror },
+            tint: [f32; 4] { brick: None, shows: "Tint", rule: range(0.0, 1.0), mirror },
             prefetch: engine_core::TerrainPrefetch {
-                feature: Terrain,
+                brick: Some("terrain"),
                 shows: "TerrainPrefetch",
                 rule: any,
                 direct
             },
             grounded: engine_core::Grounded {
-                feature: Core,
+                brick: None,
                 shows: "Grounded",
                 rule: any,
                 direct
             },
             rigid_body: engine_physics::RigidBody {
-                feature: Physics,
+                brick: Some("physics"),
                 shows: "RigidBody.body",
                 rule: any,
                 direct
             },
             nav_agent: engine_core::NavAgent {
-                feature: Navigation,
+                brick: Some("navigation"),
                 shows: "NavAgent.agent",
                 rule: any,
                 direct
             },
-            spline: crate::SceneSpline { feature: Core, shows: "SplineMesh", rule: any, mirror },
+            spline: crate::SceneSpline { brick: None, shows: "SplineMesh", rule: any, mirror },
             reflection_probe: crate::SceneReflectionProbe {
-                feature: Core,
+                brick: None,
                 shows: "ReflectionProbe",
                 rule: any,
                 mirror
             },
             terrain: crate::SceneTerrain {
-                feature: Terrain,
+                brick: Some("terrain"),
                 shows: "Terrain.terrain",
                 rule: any,
                 mirror
@@ -67,17 +67,6 @@ macro_rules! entity_components {
 }
 
 pub(crate) use entity_components;
-
-macro_rules! component_feature {
-    (Core) => {
-        None
-    };
-    ($feature:ident) => {
-        Some(engine_core::Feature::$feature)
-    };
-}
-
-pub(crate) use component_feature;
 
 pub(crate) enum Placement {
     Anywhere,
@@ -243,7 +232,7 @@ macro_rules! components {
     ($(
         $(#[$doc:meta])*
         $field:ident: $type:ty {
-            feature: $feature:ident,
+            brick: $brick:expr,
             shows: $shows:literal,
             rule: $rule:ident $(($($arg:expr),*))?,
             $kind:ident

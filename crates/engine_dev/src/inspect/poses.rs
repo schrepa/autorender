@@ -9,6 +9,7 @@ impl DevTools {
         )
         .expect("built-in descriptor is bounded");
         self.insert(Inspector {
+            brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "GlobalTransform"),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| {
@@ -28,6 +29,7 @@ impl DevTools {
         )
         .expect("built-in descriptor is bounded");
         self.insert(Inspector {
+            brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Hierarchy"),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| {

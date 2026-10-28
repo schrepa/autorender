@@ -1,4 +1,3 @@
-use crate::features::EngineControl;
 use crate::protocol::bounds;
 use crate::results::{DebugMissingAssetResult, result};
 use crate::{BrowserControl, DevError, bounded};
@@ -9,15 +8,6 @@ use serde_json::Value;
 
 impl BrowserControl {
     pub fn parse(source: &str, op: &str, paused: bool) -> Result<Self, DevError> {
-        if op == "environment" {
-            let mut request: serde_json::Value = engine_scene::parse_json(source)?;
-            if let Some(fields) = request.as_object_mut() {
-                for key in ["op", "version", "merge"] {
-                    fields.remove(key);
-                }
-            }
-            engine_scene::parse_json::<engine_scene::SceneEnvironment>(&request.to_string())?;
-        }
         let control: Self = crate::parse_request(source)?;
         control.validate()?;
         if control.needs_pause() && !paused {
@@ -107,13 +97,6 @@ impl BrowserControl {
             Self::Present { .. }
             | Self::Culling { .. }
             | Self::Environment(_)
-            | Self::Terrain { .. }
-            | Self::TerrainEdit { .. }
-            | Self::TerrainUndo { .. }
-            | Self::TerrainRedo { .. }
-            | Self::TerrainRiver { .. }
-            | Self::NavGo { .. }
-            | Self::WorldChanges { .. }
             | Self::Camera { .. }
             | Self::Step { .. }
             | Self::Input { .. }
@@ -170,51 +153,77 @@ pub fn validated_camera(
     Ok(camera)
 }
 
-pub(crate) struct MissingAsset {
-    pub(crate) entity: String,
+pub enum OperationCall {
+    Brick {
+        name: &'static str,
+        request: Value,
+    },
+    MissingAsset {
+        entity: String,
+    },
 }
 
-impl EngineControl for MissingAsset {
-    fn changed(&self) -> &'static str {
-        "asset removed"
+impl OperationCall {
+    pub fn changed(&self) -> String {
+        match self {
+            Self::Brick { name, .. } => format!("{name} changed"),
+            Self::MissingAsset { .. } => "asset removed".to_owned(),
+        }
     }
 
-    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
-        let scene = scene.ok_or_else(|| {
-            DevError::new(
-                ErrorCode::NoScene,
-                "$.entity",
-                "the meshes it removes are authored entities'",
-            )
-        })?;
-        let world = engine.app.world_mut();
-        let mesh = crate::inspect::authored_entity(world, scene, &self.entity)
-            .and_then(|entity| world.get::<Mesh3d>(entity))
-            .map(|mesh3d| mesh3d.mesh)
-            .ok_or_else(|| {
-                DevError::new(
-                    ErrorCode::UnknownEntity,
-                    "$.entity",
-                    format!("no entity {} drawing a mesh in the scene", self.entity),
-                )
-            })?;
-        let entities = world.try_query::<&Mesh3d>().map_or(0, |mut meshes| {
-            meshes
-                .iter(world)
-                .filter(|mesh3d| mesh3d.mesh == mesh)
-                .count()
-        });
-        let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {
-            DevError::new(
-                ErrorCode::MissingResource,
-                "$",
-                "AssetLibrary is not installed",
-            )
-        })?;
-        assets.remove_mesh(mesh);
-        Ok(result::debug_missing_asset(DebugMissingAssetResult {
-            temporary: true,
-            entities,
-        }))
+    pub fn apply(
+        &self,
+        engine: &mut Engine,
+        scene: Option<&SceneInstance>,
+    ) -> Result<Value, DevError> {
+        match self {
+            Self::Brick { name, request } => {
+                crate::bricks::run(engine.app.world_mut(), scene, name, request.clone())
+            }
+            Self::MissingAsset { entity } => missing_asset(engine, scene, entity),
+        }
     }
+}
+
+fn missing_asset(
+    engine: &mut Engine,
+    scene: Option<&SceneInstance>,
+    entity: &str,
+) -> Result<Value, DevError> {
+    let scene = scene.ok_or_else(|| {
+        DevError::new(
+            ErrorCode::NoScene,
+            "$.entity",
+            "the meshes it removes are authored entities'",
+        )
+    })?;
+    let world = engine.app.world_mut();
+    let mesh = crate::inspect::authored_entity(world, scene, entity)
+        .and_then(|entity| world.get::<Mesh3d>(entity))
+        .map(|mesh3d| mesh3d.mesh)
+        .ok_or_else(|| {
+            DevError::new(
+                ErrorCode::UnknownEntity,
+                "$.entity",
+                format!("no entity {entity} drawing a mesh in the scene"),
+            )
+        })?;
+    let entities = world.try_query::<&Mesh3d>().map_or(0, |mut meshes| {
+        meshes
+            .iter(world)
+            .filter(|mesh3d| mesh3d.mesh == mesh)
+            .count()
+    });
+    let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {
+        DevError::new(
+            ErrorCode::MissingResource,
+            "$",
+            "AssetLibrary is not installed",
+        )
+    })?;
+    assets.remove_mesh(mesh);
+    Ok(result::debug_missing_asset(DebugMissingAssetResult {
+        temporary: true,
+        entities,
+    }))
 }

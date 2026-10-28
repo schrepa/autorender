@@ -52,6 +52,10 @@ pub(crate) const MAP: &[Rule] = &[
         checks: &[Equivalence],
     },
     Rule {
+        paths: &["bricks.json"],
+        checks: &[Smokes("plugins")],
+    },
+    Rule {
         paths: &[
             "bench/scenes/**",
             "bench/settings/**",

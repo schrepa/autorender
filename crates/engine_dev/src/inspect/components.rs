@@ -9,6 +9,7 @@ impl DevTools {
         )
         .expect("built-in descriptor is bounded");
         self.insert(Inspector {
+            brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Mesh3d"),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| {
@@ -28,6 +29,7 @@ impl DevTools {
         )
         .expect("built-in descriptor is bounded");
         self.insert(Inspector {
+            brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Grounded"),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| {
@@ -43,6 +45,7 @@ impl DevTools {
         )
         .expect("built-in descriptor is bounded");
         self.insert(Inspector {
+            brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "SplineMesh"),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| {
@@ -57,6 +60,7 @@ impl DevTools {
         )
         .expect("built-in descriptor is bounded");
         self.insert(Inspector {
+            brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Input"),
             kind: InspectorKind::Resource,
             has: Box::new(|world, _| world.get_resource::<InputState>().is_some()),

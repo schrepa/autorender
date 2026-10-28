@@ -1,7 +1,8 @@
-use engine_scene::{SceneAtmosphere, SceneEnvironment};
+use engine_scene::SceneEnvironment;
 use engine_settings::ErrorCode;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::DevError;
 
@@ -33,22 +34,6 @@ pub mod bounds {
     pub const PIXEL: Rule = Rule::Range(0.0, 16_384.0);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn stamp_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
-    engine_settings::stated(engine_core::Stamp::rule_of(field).expect("stamps declare the field"))
-}
-
-use crate::features::{
-    EngineControl, EngineQuery,
-    collision::{CollisionEventsQuery, OverlapQuery, RaycastQuery, ShapeCastQuery},
-    navigation::{NavGoControl, NavPathQuery},
-    terrain::{
-        TerrainControl, TerrainEditControl, TerrainHeightQuery, TerrainRedoControl,
-        TerrainRiverControl, TerrainRouteQuery, TerrainSweepQuery, TerrainUndoControl,
-    },
-    world_streaming::WorldChangesControl,
-};
-
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
@@ -57,13 +42,6 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("present", "PresentationState"),
     ("culling", "status"),
     ("environment", "Environment"),
-    ("terrain", "TerrainDebug"),
-    ("terrain_edit", "Terrain"),
-    ("terrain_undo", "Terrain"),
-    ("terrain_redo", "Terrain"),
-    ("terrain_river", "Terrain"),
-    ("nav_go", "NavAgent"),
-    ("world_changes", "WorldChanges"),
     ("camera", "Camera"),
     ("benchmark", ""),
     ("step", "PresentationState"),
@@ -81,11 +59,6 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("debug_missing_asset", ""),
     ("probe", ""),
 ];
-
-pub(crate) enum Route {
-    Tools(ToolsQuery),
-    Feature(Box<dyn EngineQuery>),
-}
 
 pub(crate) enum ToolsQuery {
     Status,
@@ -107,12 +80,8 @@ pub(crate) enum ToolsQuery {
     },
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "one short-lived control at a time, as BrowserControl"
-)]
 pub enum Control {
-    Feature(Box<dyn EngineControl>),
+    Operation(crate::controls::OperationCall),
     Host(HostControl),
 }
 
@@ -186,26 +155,39 @@ pub enum DevRequest {
         #[serde(default)]
         definition: Option<String>,
     },
-    Raycast(RaycastQuery),
-    Overlap(OverlapQuery),
-    ShapeCast(ShapeCastQuery),
-    TerrainHeight(TerrainHeightQuery),
-    NavPath(NavPathQuery),
-    TerrainSweep(TerrainSweepQuery),
-    TerrainRoute(TerrainRouteQuery),
-    CollisionEvents(CollisionEventsQuery),
 }
 
 pub fn parse_request<T: DeserializeOwned>(source: &str) -> Result<T, DevError> {
-    #[derive(Deserialize)]
-    struct Version {
-        version: u32,
+    let (request, version) = split_version(source)?;
+    let request = engine_scene::parse_value(request)?;
+    check_version(version)?;
+    Ok(request)
+}
+
+pub(crate) fn operation_request(source: &str) -> Result<serde_json::Value, DevError> {
+    let (mut request, version) = split_version(source)?;
+    check_version(version)?;
+    if let Some(fields) = request.as_object_mut() {
+        fields.remove("op");
     }
+    Ok(request)
+}
+
+fn split_version(
+    source: &str,
+) -> Result<(serde_json::Value, Option<serde_json::Value>), DevError> {
     let mut request: serde_json::Value = engine_scene::parse_json(source)?;
     let version = request
         .as_object_mut()
         .and_then(|fields| fields.remove("version"));
-    let request = engine_scene::parse_value(request)?;
+    Ok((request, version))
+}
+
+fn check_version(version: Option<serde_json::Value>) -> Result<(), DevError> {
+    #[derive(Deserialize)]
+    struct Version {
+        version: u32,
+    }
     let Some(version) = version else {
         return Err(DevError::new(
             ErrorCode::MissingField,
@@ -221,7 +203,7 @@ pub fn parse_request<T: DeserializeOwned>(source: &str) -> Result<T, DevError> {
             format!("accepted protocol version: {PROTOCOL_VERSION}"),
         ));
     }
-    Ok(request)
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -256,44 +238,30 @@ pub(crate) fn default_limit() -> usize {
 }
 
 impl DevRequest {
-    pub(crate) fn route(self) -> Route {
+    pub(crate) fn route(self) -> ToolsQuery {
         match self {
-            Self::Status {} => Route::Tools(ToolsQuery::Status),
+            Self::Status {} => ToolsQuery::Status,
             Self::Inspect {
                 entity,
                 parent,
                 component,
                 offset,
                 limit,
-            } => Route::Tools(ToolsQuery::Inspect {
+            } => ToolsQuery::Inspect {
                 entity,
                 parent,
                 component,
                 offset,
                 limit,
-            }),
-            Self::Assets {} => Route::Tools(ToolsQuery::Assets),
-            Self::Digest {} => Route::Tools(ToolsQuery::Digest),
-            Self::Distribution { values } => Route::Tools(ToolsQuery::Distribution { values }),
-            Self::Describe { name, definition } => {
-                Route::Tools(ToolsQuery::Describe { name, definition })
-            }
-            Self::Raycast(query) => Route::Feature(Box::new(query)),
-            Self::Overlap(query) => Route::Feature(Box::new(query)),
-            Self::ShapeCast(query) => Route::Feature(Box::new(query)),
-            Self::CollisionEvents(query) => Route::Feature(Box::new(query)),
-            Self::TerrainHeight(query) => Route::Feature(Box::new(query)),
-            Self::NavPath(query) => Route::Feature(Box::new(query)),
-            Self::TerrainSweep(query) => Route::Feature(Box::new(query)),
-            Self::TerrainRoute(query) => Route::Feature(Box::new(query)),
+            },
+            Self::Assets {} => ToolsQuery::Assets,
+            Self::Digest {} => ToolsQuery::Digest,
+            Self::Distribution { values } => ToolsQuery::Distribution { values },
+            Self::Describe { name, definition } => ToolsQuery::Describe { name, definition },
         }
     }
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "one short-lived request at a time: the environment variant's size does not matter, and boxing its sections would complicate the typed schema"
-)]
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(
     not(target_arch = "wasm32"),
@@ -310,13 +278,6 @@ pub enum BrowserControl {
         enabled: bool,
     },
     Environment(EnvironmentControl),
-    Terrain(TerrainControl),
-    TerrainEdit(TerrainEditControl),
-    TerrainUndo(TerrainUndoControl),
-    TerrainRedo(TerrainRedoControl),
-    TerrainRiver(TerrainRiverControl),
-    NavGo(NavGoControl),
-    WorldChanges(WorldChangesControl),
     Camera {
         #[cfg_attr(
             not(target_arch = "wasm32"),
@@ -462,13 +423,6 @@ impl BrowserControl {
             Self::Present { alpha } => Control::Host(HostControl::Present { alpha }),
             Self::Culling { enabled } => Control::Host(HostControl::Culling { enabled }),
             Self::Environment(control) => Control::Host(HostControl::Environment(control)),
-            Self::Terrain(control) => Control::Feature(Box::new(control)),
-            Self::TerrainEdit(control) => Control::Feature(Box::new(control)),
-            Self::TerrainUndo(control) => Control::Feature(Box::new(control)),
-            Self::TerrainRedo(control) => Control::Feature(Box::new(control)),
-            Self::TerrainRiver(control) => Control::Feature(Box::new(control)),
-            Self::NavGo(control) => Control::Feature(Box::new(control)),
-            Self::WorldChanges(control) => Control::Feature(Box::new(control)),
             Self::Camera {
                 position,
                 target,
@@ -506,7 +460,7 @@ impl BrowserControl {
             Self::DebugPanic {} => Control::Host(HostControl::DebugPanic),
             Self::DebugFault { feature } => Control::Host(HostControl::DebugFault { feature }),
             Self::DebugMissingAsset { entity } => {
-                Control::Feature(Box::new(crate::controls::MissingAsset { entity }))
+                Control::Operation(crate::controls::OperationCall::MissingAsset { entity })
             }
             control @ (Self::Benchmark { .. }
             | Self::Frames { .. }
@@ -525,13 +479,6 @@ impl BrowserControl {
             Self::Present { .. }
             | Self::Culling { .. }
             | Self::Environment(..)
-            | Self::Terrain(_)
-            | Self::TerrainEdit(_)
-            | Self::TerrainUndo(_)
-            | Self::TerrainRedo(_)
-            | Self::TerrainRiver(_)
-            | Self::WorldChanges(_)
-            | Self::NavGo(_)
             | Self::Camera { .. }
             | Self::Benchmark { .. }
             | Self::Step { .. }
@@ -551,34 +498,42 @@ impl BrowserControl {
     }
 }
 
-macro_rules! control_sections {
-    ($($key:ident: $settings:ident { opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
-        #[derive(Debug, Deserialize, Serialize)]
-        #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-        #[serde(deny_unknown_fields)]
-        pub struct EnvironmentControl {
-            #[serde(default)]
-            pub merge: bool,
-            #[serde(default)]
-            pub atmosphere: Option<SceneAtmosphere>,
-            $(
-                #[serde(default)]
-                pub $key: Option<engine_core::$settings>,
-            )*
-        }
-
-        impl EnvironmentControl {
-            pub fn sections(&self) -> SceneEnvironment {
-                SceneEnvironment {
-                    atmosphere: self.atmosphere,
-                    $($key: self.$key,)*
-                }
-            }
-        }
-    };
+#[derive(Debug, Deserialize, Serialize)]
+pub struct EnvironmentControl {
+    #[serde(default)]
+    pub merge: bool,
+    #[serde(flatten)]
+    pub sections: BTreeMap<String, serde_json::Value>,
 }
 
-engine_core::environment_sections!(control_sections);
+impl EnvironmentControl {
+    pub fn sections(&self) -> SceneEnvironment {
+        SceneEnvironment {
+            sections: self.sections.clone(),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl schemars::JsonSchema for EnvironmentControl {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "EnvironmentControl".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let mut atmosphere =
+            generator.subschema_for::<Option<engine_scene::SceneAtmosphere>>();
+        atmosphere.insert("default".to_owned(), serde_json::Value::Null);
+        schemars::json_schema!({
+            "type": "object",
+            "properties": {
+                "merge": { "type": "boolean", "default": false },
+                "atmosphere": atmosphere,
+            },
+            "additionalProperties": false,
+        })
+    }
+}
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]

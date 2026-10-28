@@ -45,6 +45,12 @@ impl PipelineList {
         };
         let world = engine.app.world_mut();
         identity.extend(format!("{:?}", Environment::current(world).sanitized()).bytes());
+        if let Some(registry) = world.get_resource::<engine_core::BrickRegistry>() {
+            for section in registry.sections() {
+                identity.extend(section.key.bytes());
+                identity.extend(section.sanitized(world).to_string().bytes());
+            }
+        }
         let key = RecordKey::new(&engine_render::SOURCE, KIND, &identity);
         if world.contains_resource::<Cooking>() {
             self.state = State::Making { key, quiet: 0 };

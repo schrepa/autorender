@@ -18,9 +18,9 @@ pub(super) fn run(
     size: (u32, u32),
 ) -> Result<Value, DevError> {
     match control {
-        Control::Feature(control) => {
-            let result = control.apply(&mut app.engine, scene)?;
-            then_render(app, size, control.changed(), result)
+        Control::Operation(call) => {
+            let result = call.apply(&mut app.engine, scene)?;
+            then_render(app, size, &call.changed(), result)
         }
         Control::Host(HostControl::Present { alpha }) => view::present(app, alpha, size),
         Control::Host(HostControl::Culling { enabled }) => view::culling(app, enabled, size),

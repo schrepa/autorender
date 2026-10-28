@@ -55,9 +55,25 @@ impl DevHost {
         self.input = InputBatch::default();
     }
 
-    pub fn submits_frame(&self, source: &str, paused: bool) -> bool {
+    pub fn submits_frame(
+        &self,
+        world: &engine_core::bevy_ecs::prelude::World,
+        source: &str,
+        paused: bool,
+    ) -> bool {
         if source.len() > engine_dev::MAX_REQUEST_BYTES {
             return false;
+        }
+        let op = serde_json::from_str::<Value>(source)
+            .ok()
+            .and_then(|request| request.get("op").and_then(Value::as_str).map(str::to_owned));
+        if let Some(op) = op
+            && world
+                .get_resource::<engine_core::BrickRegistry>()
+                .and_then(|registry| registry.operation(&op))
+                .is_some_and(|operation| operation.control)
+        {
+            return paused && self.tools.parse_control(world, source, &op, paused).is_ok();
         }
         let Ok(control) = engine_dev::parse_request::<BrowserControl>(source) else {
             return false;
@@ -107,7 +123,7 @@ impl DevHost {
         };
         app.engine.complete_pending_tick();
         let op = request.get("op").and_then(Value::as_str);
-        if !op.is_some_and(|op| engine_dev::CONTROL_OPS.contains(&op)) {
+        if !op.is_some_and(|op| engine_dev::is_control(app.engine.app.world(), op)) {
             return self.tools_request(app, scene, source, op == Some("status"));
         }
         let op = op.unwrap_or_default().to_owned();
@@ -147,8 +163,10 @@ impl DevHost {
         (width, height): (u32, u32),
         paused: bool,
     ) -> Result<Value, DevError> {
-        let control = BrowserControl::parse(source, op, paused)?;
-        controls::run(self, app, scene, (source, control.route()), (width, height))
+        let control = self
+            .tools
+            .parse_control(app.engine.app.world(), source, op, paused)?;
+        controls::run(self, app, scene, (source, control), (width, height))
     }
 
     pub fn result(

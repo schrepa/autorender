@@ -333,4 +333,5 @@ pub struct RenderSnapshot {
     pub dropped_instances: usize,
     pub missing_assets: usize,
     pub invalid_transforms: usize,
+    pub extracted: crate::Extracted,
 }

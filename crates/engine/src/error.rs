@@ -49,6 +49,12 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+impl From<engine_core::Error> for Error {
+    fn from(error: engine_core::Error) -> Self {
+        Self::new(error.code, error.path, error.message)
+    }
+}
+
 impl From<engine_scene::SceneError> for Error {
     fn from(error: engine_scene::SceneError) -> Self {
         Self::new(error.code, error.path, error.message)

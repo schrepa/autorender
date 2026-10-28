@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use engine::{Engine, EnginePlugins, ErrorCode};
+use engine::{Engine, ErrorCode};
 use engine_dev::{
-    BrowserControl, Context, Control, DevError, DevTools, InspectorDescriptor, MAX_INSPECTORS,
+    Context, Control, DevError, DevTools, InspectorDescriptor, MAX_INSPECTORS,
     MAX_REQUEST_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
 };
 use engine_scene::{SceneDocument, SceneInstance};
@@ -54,6 +54,10 @@ const UNREACHED: &[(&str, &str)] = &[
     ("command_busy", PAGE),
     ("command_timeout", BRIDGE),
     ("content_type", BRIDGE),
+    (
+        "duplicate_brick",
+        "a game adding a brick twice panics at startup (engine_core::AddBrick)",
+    ),
     ("duplicate_request", BRIDGE),
     (
         "game_rule",
@@ -143,6 +147,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         let source = request_source(refusal);
         let error = match refusal["stage"].as_str().unwrap_or("query") {
             "control" => control(
+                &tools,
                 &mut engine,
                 Some(&scene),
                 &source,
@@ -226,9 +231,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
 }
 
 fn engine_with_features() -> Engine {
-    let mut engine = Engine::default();
-    engine.app.add_plugins(EnginePlugins);
-    engine
+    crate::bricks::standard_engine()
 }
 
 fn instantiate(engine: &mut Engine, document: &str) -> Result<SceneInstance, String> {
@@ -286,6 +289,7 @@ fn query(
 }
 
 fn control(
+    tools: &DevTools,
     engine: &mut Engine,
     scene: Option<&SceneInstance>,
     source: &str,
@@ -295,12 +299,12 @@ fn control(
         .ok()
         .and_then(|request| request["op"].as_str().map(str::to_owned))
         .unwrap_or_default();
-    let control = match BrowserControl::parse(source, &op, paused) {
+    let control = match tools.parse_control(engine.app.world(), source, &op, paused) {
         Ok(control) => control,
         Err(error) => return Some(error),
     };
-    match control.route() {
-        Control::Feature(control) => control.apply(engine, scene).err(),
+    match control {
+        Control::Operation(call) => call.apply(engine, scene).err(),
         Control::Host(_) => None,
     }
 }

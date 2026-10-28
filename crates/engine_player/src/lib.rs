@@ -11,4 +11,4 @@ mod player;
 
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
-pub use player::{PlayerWalk, ScenePlayer, features};
+pub use player::{PlayerWalk, ScenePlayer, bricks};

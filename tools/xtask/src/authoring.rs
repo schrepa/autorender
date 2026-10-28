@@ -53,7 +53,9 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         .expect("the client list serializes")
         + "
 ";
-    let development = engine_dev::schemas::generated()?;
+    let engine = crate::bricks::standard_engine();
+    let world = engine.app.world();
+    let development = engine_dev::schemas::generated(world)?;
     tooling_types(root)?;
     let stats = &development.frame_stats;
     let mut files: Vec<(String, String)> = development
@@ -78,7 +80,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         (
             "web/src/generated/reply.ts".to_owned(),
             engine::tooling::message_interfaces(
-                &engine_dev::schemas::reply(),
+                &engine_dev::schemas::reply(world)?,
                 "Reply",
                 "engine_dev::Reply",
                 &[("ErrorCode", "./errors")],
@@ -88,6 +90,10 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         (
             "web/src/generated/coverage.json".to_owned(),
             crate::coverage::coverage(root, &development)?,
+        ),
+        (
+            crate::bricks::BRICKS_FILE.to_owned(),
+            crate::bricks::bricks_json(root)?,
         ),
     ]);
     for client in crate::process::clients()

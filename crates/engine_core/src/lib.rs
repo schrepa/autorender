@@ -5,6 +5,7 @@
 
 mod antialiasing;
 mod atmosphere;
+mod bricks;
 mod clock;
 mod clouds;
 mod commands;
@@ -50,6 +51,7 @@ pub use antialiasing::*;
 pub use atmosphere::*;
 pub use bevy_app::{App, Plugin, PluginGroup, PluginGroupBuilder};
 pub use bevy_ecs;
+pub use bricks::*;
 pub use clock::*;
 pub use clouds::*;
 pub use commands::*;
@@ -298,7 +300,7 @@ impl Engine {
             .init_resource::<PresentedTime>()
             .init_resource::<Camera>()
             .init_resource::<Atmosphere>()
-            .init_resource::<Features>()
+            .init_resource::<BrickRegistry>()
             .init_resource::<WaterSources>()
             .init_resource::<Jobs>()
             .init_resource::<Records>()
@@ -312,7 +314,6 @@ impl Engine {
             .insert_resource(TransformNodeLimit(config.max_transform_nodes))
             .init_resource::<GlobalTransforms>()
             .insert_resource(assets);
-        environment::init_sections(app.world_mut(), None);
         let render_query = app.world_mut().query_filtered::<(
             Entity,
             Has<Transform>,
@@ -663,7 +664,6 @@ impl Engine {
             !matches!(state, PluginsState::Adding),
             "engine plugins must be ready before the first frame"
         );
-        features::check_needs(self.app.world());
         match state {
             PluginsState::Ready => {
                 self.app.finish();

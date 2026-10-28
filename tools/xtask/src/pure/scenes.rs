@@ -175,6 +175,10 @@ fn refuse(source: &str, stage: &str, world: Option<&str>) -> Result<(), SceneErr
                     });
                     engine.app.world_mut()
                 }
+                Some("standard") => {
+                    engine = crate::bricks::standard_engine();
+                    engine.app.world_mut()
+                }
                 _ => {
                     engine = Engine::default();
                     engine.app.world_mut()

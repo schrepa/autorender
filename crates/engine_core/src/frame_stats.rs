@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
+
 use serde::{Serialize, Serializer};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FrameStats {
     pub frame: u64,
@@ -24,11 +26,12 @@ pub struct FrameStats {
     pub resolution: ResolutionStats,
     pub dynamic_resolution: DynamicResolutionStats,
     pub jobs: crate::JobStats,
-    pub navigation: crate::NavStats,
-    pub physics: crate::PhysicsStats,
     pub disabled_features: Names,
     #[serde(flatten)]
     pub render: RenderStats,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
+    pub bricks: BTreeMap<&'static str, serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]

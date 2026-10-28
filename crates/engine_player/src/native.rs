@@ -4,9 +4,9 @@ use std::process::ExitCode;
 use engine::{Engine, Error, ErrorCode};
 use engine_native::{Arguments, HostOptions, files};
 
-use crate::{ScenePlayer, features};
+use crate::{ScenePlayer, bricks};
 
-const USAGE: &str = "Usage: engine-player-native --source PATH [--without FEATURE,...] [OPTIONS]";
+const USAGE: &str = "Usage: engine-player-native --source PATH [--without BRICK,...] [OPTIONS]";
 
 #[cfg(feature = "dev")]
 const PARAMETERS: [(&str, &str); 2] = [
@@ -88,7 +88,7 @@ impl Options {
             )
         })?;
         let files = files::scene_files(path, &source)?;
-        let without = features(&self.without, "$.without")?;
+        let without = bricks(&self.without, "$.without")?;
         ScenePlayer::new(&source, &files, &without).map_err(Error::from)
     }
 }

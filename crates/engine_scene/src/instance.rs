@@ -31,6 +31,15 @@ pub struct SceneEntity {
     pub prefab_local_id: Option<String>,
 }
 
+pub fn authored_id(world: &World, entity: Entity) -> Option<engine_core::AuthoredId> {
+    world
+        .get::<SceneEntity>(entity)
+        .map(|metadata| engine_core::AuthoredId {
+            scene: metadata.scene_id.clone(),
+            id: metadata.authored_id.clone(),
+        })
+}
+
 #[derive(Debug)]
 #[must_use = "retain the instance and explicitly despawn it when the scene is disposed"]
 pub struct SceneInstance {
@@ -179,6 +188,15 @@ impl SceneInstance {
             .map(|(id, entity)| (id.as_str(), *entity))
     }
 
+    pub fn operation_scene(&self) -> engine_core::OperationScene {
+        engine_core::OperationScene {
+            id: self.id.clone(),
+            entities: self.entities.clone(),
+            streamed: self.streamed.is_some(),
+            authored: authored_id,
+        }
+    }
+
     pub fn streamed(&self) -> Option<StreamSet> {
         self.streamed
     }
@@ -212,7 +230,7 @@ impl SceneDocument {
         files: &SceneFiles,
     ) -> Result<SceneInstance, SceneError> {
         let mut prepared = self.prepare(Some(files))?;
-        self.check_features(world)?;
+        self.check_bricks(world)?;
         let owned = self.insert_assets(world, &mut prepared)?;
         let lookups = Lookups::new(self, &owned);
         let spawned = self.spawn(world, &prepared, &lookups);
@@ -248,8 +266,8 @@ impl SceneDocument {
         }
         propagate_transforms(world);
         world.insert_resource(self.camera.camera());
-        if let Some(environment) = prepared.environment {
-            environment.apply_all(world);
+        if let Some(environment) = &prepared.environment {
+            environment.apply_all(world, "$.environment")?;
         }
         let streamed = (!prepared.streamed.items.is_empty()).then(|| {
             let scene = Arc::new(StreamedScene {

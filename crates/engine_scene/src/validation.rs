@@ -138,7 +138,7 @@ impl SceneDocument {
             environment.validate("$.environment")?;
         }
         Ok(PreparedScene {
-            environment: self.environment,
+            environment: self.environment.clone(),
             components,
             meshes,
             materials,

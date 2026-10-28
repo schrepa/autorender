@@ -11,19 +11,16 @@ pub use engine_settings as settings;
 pub mod camera;
 mod error;
 pub mod game;
-mod plugins;
 pub use error::{Error, JS_ERROR_NAME, Result};
 #[doc(hidden)]
 pub mod surface;
 pub use game::{Game, Inspectors};
-pub use plugins::EnginePlugins;
 #[cfg(not(target_arch = "wasm32"))]
 pub use surface::runtime_typescript;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tooling;
 
 pub use engine_core::collections;
-pub use engine_core::environment_sections;
 pub use engine_core::{bevy_ecs, glam};
 
 mod games {
@@ -31,7 +28,7 @@ mod games {
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, App, AssetBudget,
         AssetError, AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, Clouds, Cover, Cube,
         DebugView, DebugViewMode, Dither, DynamicResolution, DynamicResolutionStats, Engine,
-        EngineConfig, EngineEntityCommands, Environment, Feature, Filter, FixedPostSimulation,
+        EngineConfig, EngineEntityCommands, Environment, Filter, FixedPostSimulation,
         FixedPreSimulation, FixedSimulation, FixedSimulationSystems, FixedTime, Foliage,
         FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Ground, GroundCover,
         GroundSample, Grounded, Grounding, Haze, HeightHeld, HierarchyError, Highlights,
@@ -56,14 +53,51 @@ mod games {
 pub use games::*;
 
 pub use engine_core::{
-    DetailShares, DrawnKind, EnvironmentSection, ErrorCode, Features, HierarchyReport,
-    InvalidSetting, LodLevel, MAX_BOUNCE_LEVELS, MAX_EMITTER_PARTICLES, MAX_HIERARCHY_DEPTH,
-    MAX_LIGHT_RANGE, MAX_MOVING_TILES, MAX_OCCUPANCY_LEVELS, MAX_SHADOW_LEVELS, MAX_SPLINE_POINTS,
-    MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION, MAX_TRANSFORM_NODES,
-    MIN_SPOT_DEGREES, MaterialShare, MeshLods, PixelProbe, PluginGroupBuilder, SplineChunks,
-    SunLookup, TerrainProbe, TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit,
-    Viewport, WaterProbe, WaterReach, has_feature,
+    DetailShares, DrawnKind, EnvironmentSection, ErrorCode, HierarchyReport, InvalidSetting,
+    LodLevel, MAX_BOUNCE_LEVELS, MAX_EMITTER_PARTICLES, MAX_HIERARCHY_DEPTH, MAX_LIGHT_RANGE,
+    MAX_MOVING_TILES, MAX_OCCUPANCY_LEVELS, MAX_SHADOW_LEVELS, MAX_SPLINE_POINTS, MAX_SPOT_DEGREES,
+    MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION, MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MaterialShare,
+    MeshLods, PixelProbe, PluginGroupBuilder, SplineChunks, SunLookup, TerrainProbe, TextureFamily,
+    TextureFormat, TextureSampling, TransformNodeLimit, Viewport, WaterProbe, WaterReach,
 };
+
+pub mod bricks {
+    pub use engine_core::{
+        AddBrick, AuthoredId, Brick, BrickList, BrickRecord, BrickRegistry, BrickSet, BrickStats,
+        Bricks, Culling, DebugViewBrick, Error, Extracted, InspectedKind, InspectorEntry,
+        LevelOfDetailBrick, LightingModel, Lights, List, Operation, OperationEntry,
+        OperationScene, Owned, Particles, PostEffects, ReflectionProbes, ResolutionBrick,
+        SettingsEntry, ShadowsBrick, SkyBrick, Slot, StatsEntry, brick_name, missing_brick,
+        parse_json, parse_value, parse_value_at,
+    };
+
+    pub fn standard() -> BrickList {
+        BrickList::default()
+            .with::<engine_terrain::TerrainBrick>()
+            .with::<engine_world_streaming::WorldStreamingBrick>()
+            .with::<engine_navigation::NavigationBrick>()
+            .with::<engine_time_of_day::TimeOfDayBrick>()
+            .with::<engine_collision::Collision>()
+            .with::<engine_physics::PhysicsBrick>()
+            .with::<Lights>()
+            .with::<Particles>()
+            .with::<ReflectionProbes>()
+            .with::<SkyBrick>()
+            .with::<ShadowsBrick>()
+            .with::<PostEffects>()
+            .with::<LevelOfDetailBrick>()
+            .with::<Culling>()
+            .with::<ResolutionBrick>()
+            .with::<DebugViewBrick>()
+            .with::<LightingModel>()
+    }
+
+    pub fn standard_names(names: &str, path: &str) -> crate::Result<Vec<&'static str>> {
+        standard()
+            .check_names(names.split(','), path)
+            .map_err(crate::Error::from)
+    }
+}
 
 pub mod terrain {
     pub use engine_core::terrain_data as data;
@@ -164,7 +198,8 @@ macro_rules! __if_profiling {
 pub mod prelude {
     pub use crate::camera::{CameraSystems, FlyCameraController, FlyCameraPlugin};
     pub use crate::games::*;
-    pub use crate::{EnginePlugins, Game, Inspectors};
+    pub use crate::bricks::AddBrick;
+    pub use crate::{Game, Inspectors};
     pub use engine_collision::{
         Collider, ColliderShape, CollisionLayers, CollisionPlugin, CollisionRay, CollisionSystems,
         CollisionWorld, QueryFilter, SensorFilter, ShapeCastOptions, refresh_collision_world,

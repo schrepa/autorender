@@ -29,6 +29,16 @@ impl From<engine_scene::SceneError> for DevError {
     }
 }
 
+impl From<engine_core::Error> for DevError {
+    fn from(error: engine_core::Error) -> Self {
+        Self {
+            code: error.code,
+            path: error.path,
+            message: error.message,
+        }
+    }
+}
+
 impl std::fmt::Display for DevError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} at {}: {}", self.code, self.path, self.message)

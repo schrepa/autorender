@@ -1,6 +1,7 @@
 mod ambiguities;
 mod authoring;
 mod bench;
+mod bricks;
 mod checkouts;
 mod checks;
 mod cook;
@@ -8,7 +9,6 @@ mod coverage;
 mod development;
 mod equivalence;
 mod exports;
-mod features;
 mod formats;
 mod gpu;
 mod heavy;
@@ -192,7 +192,7 @@ fn commands() -> Vec<(String, &'static str)> {
         ("scene validate --file PATH | save --file TARGET --candidate PATH --expected-revision N | schema".into(), "Validate or save revision-checked scene sources, or print the scene schema, as JSON"),
         ("asset import --file PATH --id ID (--output PATH | --into PATH --expected-revision N) [--replace] [--as-prefab]".into(), "Import a static textured GLB with structured results"),
         ("assets".into(), "Validate authored scene sources without changing them"),
-        ("schema".into(), "Write the generated protocol summary, client list, stats and game surface types, and each app's own"),
+        ("schema".into(), "Write the generated protocol summary, client list, stats and game surface types, each app's own, and bricks.json (every standard brick's record)"),
         ("new --project DIR".into(), "Start a game in DIR, a workspace member, with its page web/NAME.html (NAME the folder's name), from the engine's app template"),
         ("smoke [--project DIR] --list | [--project DIR] [--serve] [--keep-going] [--native-profile PROFILE] (--all | NAME...)".into(), "List or run the browser smoke checks (web/scripts/NAME-smoke.mjs), or with --project a game's own checks (DIR/checks/NAME.mjs): against the development server DEMO_URL names, or with --serve one of this checkout started on a free port (never 5173-5175) and stopped after; holding the machine's heavy-run lock; stopping at the first failure, or with --keep-going running every one and listing each result; --native-profile builds the native programs checks run with that cargo profile (dev: debug assertions on); exit 3 when an assertion failed"),
         ("pure [--bless] [--wasm] [CORPUS...]".into(), "Run the deterministic checks of engine code over tracked fixtures, without a GPU or browser (corpora: terrain, scenes, simplify, gltf, import, caches): each checks what the code promises and that its outputs equal the goldens in tools/xtask/pure/goldens.json; --bless rewrites them from a run whose promises hold, for review; --wasm replays the terrain corpus's jobs in the browser worker's Wasm module with Node (web/pkg-dev, built first) and requires the native bits; exit 3 when a promise broke or an output changed"),

@@ -35,13 +35,12 @@ pub(crate) fn create(bodies: u32, rocks: &RockMaps) -> engine::Result<Engine> {
     if collision {
         engine
             .app
-            .add_plugins(EnginePlugins)
+            .add_bricks(engine::bricks::standard())
             .insert_resource(collision_budgets());
     } else {
-        engine.app.add_plugins(EnginePlugins::without([
-            Feature::Collision,
-            Feature::Physics,
-        ]));
+        engine
+            .app
+            .add_bricks(engine::bricks::standard().without(["collision", "physics"]));
     }
     let (atmosphere, lamps) = look(SCENE_LOOK)?;
     engine.app.insert_resource(atmosphere);

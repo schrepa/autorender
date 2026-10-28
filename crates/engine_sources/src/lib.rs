@@ -119,7 +119,25 @@ fn set_digest(manifest: &Path, modules: &Modules, set: &Set<'_>) -> [u8; 32] {
     digest(&root, manifest, files)
 }
 
+pub fn crate_source(folder: &Path) -> [u8; 32] {
+    let root = workspace_root(folder);
+    let mut files = Vec::new();
+    for folder in &crate_folders(&root, folder, None) {
+        list(folder, &mut files);
+    }
+    hash_files(&root, folder, files)
+}
+
 fn digest(root: &Path, manifest: &Path, files: Vec<PathBuf>) -> [u8; 32] {
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("rust-toolchain.toml").display()
+    );
+    println!("cargo:rerun-if-changed={}", root.join("Cargo.lock").display());
+    hash_files(root, manifest, files)
+}
+
+fn hash_files(root: &Path, manifest: &Path, files: Vec<PathBuf>) -> [u8; 32] {
     let mut named: BTreeMap<String, PathBuf> = files
         .into_iter()
         .map(|path| {
@@ -131,9 +149,10 @@ fn digest(root: &Path, manifest: &Path, files: Vec<PathBuf>) -> [u8; 32] {
             (relative, path)
         })
         .collect();
-    let toolchain = root.join("rust-toolchain.toml");
-    println!("cargo:rerun-if-changed={}", toolchain.display());
-    named.insert("rust-toolchain.toml".to_owned(), toolchain);
+    named.insert(
+        "rust-toolchain.toml".to_owned(),
+        root.join("rust-toolchain.toml"),
+    );
     let mut hash = Sha256::new();
     for (name, path) in &named {
         let bytes = fs::read(path).unwrap_or_else(|error| panic!("cannot read {name}: {error}"));
@@ -143,7 +162,6 @@ fn digest(root: &Path, manifest: &Path, files: Vec<PathBuf>) -> [u8; 32] {
         hash.update([0]);
     }
     let lock = root.join("Cargo.lock");
-    println!("cargo:rerun-if-changed={}", lock.display());
     let package = package_name(&read(&manifest.join("Cargo.toml")));
     hash.update(b"Cargo.lock");
     hash.update([0]);

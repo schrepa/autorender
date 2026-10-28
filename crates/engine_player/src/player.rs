@@ -7,19 +7,19 @@ pub struct ScenePlayer {
     instance: Option<SceneInstance>,
     player: Option<Entity>,
     view: Camera,
-    without: Vec<Feature>,
+    without: Vec<&'static str>,
 }
 
 impl ScenePlayer {
     pub fn new(
         source: &str,
         files: &SceneFiles,
-        without: &[Feature],
+        without: &[&'static str],
     ) -> Result<(Engine, Self), SceneError> {
         let mut engine = Engine::default();
         engine
             .app
-            .add_plugins(EnginePlugins::without(without.iter().copied()))
+            .add_bricks(engine::bricks::standard().without(without.iter().copied()))
             .add_plugins(PlayerPlugin);
         let mut player = Self {
             instance: None,
@@ -121,8 +121,8 @@ impl Game for ScenePlayer {
             content.extend(scene.id().as_bytes());
             content.extend(scene.revision().to_le_bytes());
         }
-        for feature in &self.without {
-            content.extend(feature.name().as_bytes());
+        for brick in &self.without {
+            content.extend(brick.as_bytes());
             content.push(0);
         }
         Some(content)
@@ -146,23 +146,8 @@ impl Game for ScenePlayer {
     }
 }
 
-pub fn features(names: &str, path: &str) -> engine::Result<Vec<Feature>> {
-    names
-        .split(',')
-        .filter(|name| !name.is_empty())
-        .map(|name| {
-            Feature::from_name(name).ok_or_else(|| {
-                engine::Error::new(
-                    ErrorCode::InvalidArguments,
-                    path,
-                    format!(
-                        "{name}, allowed: {}",
-                        Feature::ALL.map(Feature::name).join(", ")
-                    ),
-                )
-            })
-        })
-        .collect()
+pub fn bricks(names: &str, path: &str) -> engine::Result<Vec<&'static str>> {
+    engine::bricks::standard_names(names, path)
 }
 
 #[derive(Resource, Default, Clone, Copy, Debug, serde::Serialize)]
@@ -215,7 +200,11 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FlyCameraPlugin)
             .configure_sets(Presentation, CameraSystems.run_if(flies));
-        if !app.is_plugin_added::<CollisionPlugin>() {
+        if !app
+            .world()
+            .get_resource::<engine::bricks::BrickRegistry>()
+            .is_some_and(|registry| registry.has("collision"))
+        {
             return;
         }
         app.insert_resource(CollisionConfig {

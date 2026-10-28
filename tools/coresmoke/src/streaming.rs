@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use engine::EnginePlugins;
+use engine::bricks::AddBrick;
 use engine_core::glam::Vec3;
 use engine_core::{Camera, Engine, EngineConfig, RenderSnapshot, TerrainSettings};
 use engine_scene::SceneDocument;
@@ -93,7 +93,7 @@ fn load() -> Result<Engine, String> {
     let files = engine_native::files::scene_files(&path, &source)
         .map_err(|error| format!("{FIXTURE}: {}", error.message))?;
     let mut engine = Engine::new(EngineConfig::default());
-    engine.app.add_plugins(EnginePlugins);
+    engine.app.add_bricks(engine::bricks::standard());
     let _scene = document
         .instantiate_with(engine.app.world_mut(), &files)
         .map_err(|error| format!("{FIXTURE}: {error}"))?;

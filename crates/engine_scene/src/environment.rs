@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
+
 use engine_core::{
-    Atmosphere, Environment, EnvironmentSection, InvalidSetting, bevy_ecs::prelude::World,
+    Atmosphere, BrickRegistry, InvalidSetting, SettingsEntry, bevy_ecs::prelude::World,
     glam::Vec3,
 };
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::SceneError;
 
@@ -118,127 +121,199 @@ fn section_error(path: &str, invalid: InvalidSetting) -> SceneError {
     )
 }
 
-pub trait SectionVisitor {
-    fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>);
+const ATMOSPHERE: &str = "atmosphere";
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SceneEnvironment {
+    pub sections: BTreeMap<String, Value>,
 }
-
-macro_rules! scene_sections {
-    ($($key:ident: $settings:ident { opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
-        #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-        #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-        #[serde(default, deny_unknown_fields)]
-        pub struct SceneEnvironment {
-            #[serde(skip_serializing_if = "Option::is_none")]
-            pub atmosphere: Option<SceneAtmosphere>,
-            $(
-                #[serde(skip_serializing_if = "Option::is_none")]
-                pub $key: Option<engine_core::$settings>,
-            )*
-        }
-
-        impl SceneEnvironment {
-            pub fn current(world: &World) -> Self {
-                let environment = Environment::current(world);
-                Self {
-                    atmosphere: Some(SceneAtmosphere::from(&environment.atmosphere)),
-                    $($key: Some(environment.$key),)*
-                }
-            }
-
-            pub fn visit(&self, visitor: &mut impl SectionVisitor) {
-                $(visitor.section(stringify!($key), self.$key);)*
-            }
-        }
-    };
-}
-
-engine_core::environment_sections!(scene_sections);
 
 impl SceneEnvironment {
-    pub fn sections(&self) -> Vec<&'static str> {
-        struct Names(Vec<&'static str>);
-        impl SectionVisitor for Names {
-            fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>) {
-                if section.is_some() {
-                    self.0.push(name);
-                }
-            }
+    pub fn current(world: &World) -> Self {
+        let atmosphere = world
+            .get_resource::<Atmosphere>()
+            .copied()
+            .unwrap_or_default();
+        let mut sections = BTreeMap::new();
+        let atmosphere = serde_json::to_value(SceneAtmosphere::from(&atmosphere))
+            .expect("atmospheres serialize");
+        sections.insert(ATMOSPHERE.to_owned(), atmosphere);
+        for section in registered(world) {
+            sections.insert(section.key.to_owned(), section.current(world));
         }
-        let mut names = Names(Vec::new());
-        if self.atmosphere.is_some() {
-            names.0.push("atmosphere");
-        }
-        self.visit(&mut names);
-        names.0
+        Self { sections }
     }
 
-    pub fn opt_in_sections() -> Vec<&'static str> {
-        struct OptIn(Vec<&'static str>);
-        impl SectionVisitor for OptIn {
-            fn section<T: EnvironmentSection>(&mut self, name: &'static str, _: Option<T>) {
-                if T::OPT_IN {
-                    self.0.push(name);
-                }
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.sections
+            .iter()
+            .filter(|(_, value)| !value.is_null())
+            .map(|(key, _)| key.as_str())
+    }
+
+    pub fn ordered_keys(&self, world: &World) -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+        if self.value(ATMOSPHERE).is_some() {
+            keys.push(ATMOSPHERE.to_owned());
+        }
+        for section in registered(world) {
+            if self.value(section.key).is_some() {
+                keys.push(section.key.to_owned());
             }
         }
-        let mut keys = OptIn(Vec::new());
-        Self::default().visit(&mut keys);
-        keys.0
+        for key in self.keys() {
+            if !keys.iter().any(|known| known == key) {
+                keys.push(key.to_owned());
+            }
+        }
+        keys
+    }
+
+    pub fn value(&self, key: &str) -> Option<&Value> {
+        self.sections.get(key).filter(|value| !value.is_null())
+    }
+
+    pub fn atmosphere(&self) -> Option<SceneAtmosphere> {
+        self.value(ATMOSPHERE)
+            .and_then(|value| engine_core::parse_value(value.clone()).ok())
+    }
+
+    pub fn opt_in_sections(world: &World) -> Vec<&'static str> {
+        registered(world)
+            .filter(|section| section.opt_in)
+            .map(|section| section.key)
+            .collect()
     }
 
     pub fn validate(&self, path: &str) -> Result<(), SceneError> {
-        struct FirstInvalid<'p>(&'p str, Option<SceneError>);
-        impl SectionVisitor for FirstInvalid<'_> {
-            fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>) {
-                if self.1.is_none()
-                    && let Some(Err(invalid)) = section.map(|section| section.section_check())
-                {
-                    self.1 = Some(section_error(&format!("{}.{name}", self.0), invalid));
-                }
-            }
+        if let Some(value) = self.value(ATMOSPHERE) {
+            let path = format!("{path}.{ATMOSPHERE}");
+            let atmosphere: SceneAtmosphere = engine_core::parse_value_at(value.clone(), &path)?;
+            atmosphere.resolve(&path)?;
         }
-        if let Some(atmosphere) = &self.atmosphere {
-            atmosphere.resolve(&format!("{path}.atmosphere"))?;
-        }
-        let mut first = FirstInvalid(path, None);
-        self.visit(&mut first);
-        first.1.map_or(Ok(()), Err)
+        Ok(())
     }
 
-    pub fn apply_sections(&self, world: &mut World) {
-        struct Insert<'w>(&'w mut World);
-        impl SectionVisitor for Insert<'_> {
-            fn section<T: EnvironmentSection>(&mut self, _: &'static str, section: Option<T>) {
-                if let Some(section) = section {
-                    self.0.insert_resource(section);
-                }
+    pub fn check(&self, world: &World, path: &str) -> Result<(), SceneError> {
+        self.validate(path)?;
+        for key in self.keys() {
+            if key == ATMOSPHERE {
+                continue;
             }
+            let at = format!("{path}.{key}");
+            let section = section_of(world, key, &at)?;
+            section.check(self.sections[key].clone(), &at)?;
         }
-        if let Some(atmosphere) = &self.atmosphere {
+        Ok(())
+    }
+
+    pub fn apply_sections(&self, world: &mut World, path: &str) -> Result<(), SceneError> {
+        self.check(world, path)?;
+        if let Some(atmosphere) = self.atmosphere() {
             world.insert_resource(atmosphere.atmosphere());
         }
-        self.visit(&mut Insert(world));
+        for key in self.keys() {
+            if key == ATMOSPHERE {
+                continue;
+            }
+            let at = format!("{path}.{key}");
+            let section = *section_of(world, key, &at)?;
+            section.insert(world, self.sections[key].clone(), &at)?;
+        }
+        Ok(())
     }
 
-    pub fn apply_all(&self, world: &mut World) {
-        struct Own<'w>(&'w mut World);
-        impl SectionVisitor for Own<'_> {
-            fn section<T: EnvironmentSection>(&mut self, _: &'static str, section: Option<T>) {
-                match section {
-                    Some(section) => self.0.insert_resource(section),
-                    None if T::OPT_IN => {
-                        self.0.remove_resource::<T>();
-                    }
-                    None if T::FEATURE
-                        .is_some_and(|feature| !engine_core::has_feature(self.0, feature)) => {}
-                    None => self.0.insert_resource(T::default()),
-                }
-            }
-        }
+    pub(crate) fn apply_all(&self, world: &mut World, path: &str) -> Result<(), SceneError> {
         world.insert_resource(
-            self.atmosphere
+            self.atmosphere()
                 .map_or_else(Atmosphere::default, |atmosphere| atmosphere.atmosphere()),
         );
-        self.visit(&mut Own(world));
+        let sections: Vec<SettingsEntry> = registered(world).copied().collect();
+        for section in sections {
+            match self.value(section.key) {
+                Some(value) => {
+                    section.insert(world, value.clone(), &format!("{path}.{}", section.key))?;
+                }
+                None if section.opt_in => section.remove(world),
+                None => section.reset(world),
+            }
+        }
+        Ok(())
     }
+}
+
+fn registered(world: &World) -> impl Iterator<Item = &SettingsEntry> {
+    world
+        .get_resource::<BrickRegistry>()
+        .into_iter()
+        .flat_map(BrickRegistry::sections)
+}
+
+fn section_of<'w>(
+    world: &'w World,
+    key: &str,
+    path: &str,
+) -> Result<&'w SettingsEntry, SceneError> {
+    world
+        .get_resource::<BrickRegistry>()
+        .and_then(|registry| registry.section(key))
+        .ok_or_else(|| {
+            SceneError::new(
+                ErrorCode::MissingPlugin,
+                path,
+                format!(
+                    "no added brick reads the {key} section: add the brick that owns it, or the \
+                     standard bricks, to the engine"
+                ),
+            )
+        })
+}
+
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for SceneEnvironment {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SceneEnvironment".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let atmosphere = generator.subschema_for::<Option<SceneAtmosphere>>();
+        schemars::json_schema!({
+            "type": "object",
+            "properties": { "atmosphere": atmosphere },
+            "additionalProperties": false,
+        })
+    }
+}
+
+#[cfg(feature = "schema")]
+pub fn section_schemas(
+    registry: &BrickRegistry,
+    definitions: &mut serde_json::Map<String, Value>,
+) -> serde_json::Map<String, Value> {
+    let mut properties = serde_json::Map::new();
+    for section in registry.sections() {
+        let mut schema = serde_json::to_value(section.schema()).expect("schemas serialize");
+        let Some(fields) = schema.as_object_mut() else {
+            continue;
+        };
+        fields.remove("$schema");
+        if let Some(Value::Object(nested)) = fields.remove("$defs") {
+            for (name, definition) in nested {
+                definitions.entry(name).or_insert(definition);
+            }
+        }
+        let title = fields
+            .remove("title")
+            .and_then(|title| title.as_str().map(str::to_owned))
+            .unwrap_or_else(|| section.name.to_owned());
+        definitions.insert(title.clone(), schema);
+        properties.insert(
+            section.key.to_owned(),
+            serde_json::json!({
+                "anyOf": [{ "$ref": format!("#/$defs/{title}") }, { "type": "null" }],
+            }),
+        );
+    }
+    properties
 }

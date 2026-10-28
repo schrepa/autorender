@@ -35,16 +35,14 @@ pub(super) fn set(
     } else {
         control.sections()
     };
-    environment.validate("$")?;
-    environment.check_features(app.engine.app.world(), "$")?;
-    environment.apply_sections(app.engine.app.world_mut());
+    environment.apply_sections(app.engine.app.world_mut(), "$")?;
     rendered(app.dev_render(width, height), "environment changed")?;
     let after = current(app);
-    let named = environment.sections();
+    let named = environment.ordered_keys(app.engine.app.world());
     let pick = |all: &Value| {
         named
             .iter()
-            .map(|&key| (key.to_owned(), all[key].clone()))
+            .map(|key| (key.clone(), all[key.as_str()].clone()))
             .collect::<serde_json::Map<_, _>>()
     };
     Ok(result::environment(EnvironmentResult {

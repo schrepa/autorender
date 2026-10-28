@@ -36,6 +36,16 @@ impl fmt::Display for SceneError {
 
 impl Error for SceneError {}
 
+impl From<engine_core::Error> for SceneError {
+    fn from(error: engine_core::Error) -> Self {
+        Self {
+            code: error.code,
+            path: error.path,
+            message: error.message,
+        }
+    }
+}
+
 pub(crate) fn broken_rule(
     code: ErrorCode,
     path: &str,

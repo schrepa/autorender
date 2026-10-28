@@ -76,7 +76,12 @@ fn scene_command(arguments: &[String]) -> Result<Value, DevError> {
             )?))
         }
         [command] if command == "schema" => {
-            Ok(json!({"schema":engine_scene::SceneDocument::schema_json()}))
+            let engine = crate::bricks::standard_engine();
+            let registry = engine
+                .app
+                .world()
+                .resource::<engine::bricks::BrickRegistry>();
+            Ok(json!({"schema":engine_scene::SceneDocument::schema_json(registry)}))
         }
         _ => Err(DevError::new(
             engine_dev::ErrorCode::InvalidArguments,

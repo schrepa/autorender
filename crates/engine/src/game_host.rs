@@ -414,7 +414,10 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn dev_command(&mut self, request: &str, width: u32, height: u32, paused: bool) -> String {
-        if self.development.submits_frame(request, paused) {
+        if self
+            .development
+            .submits_frame(self.app.engine().app.world(), request, paused)
+        {
             self.game.before_frame(self.app.engine_mut());
         }
         self.development.command(

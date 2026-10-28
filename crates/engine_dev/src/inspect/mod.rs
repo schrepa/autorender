@@ -9,20 +9,21 @@ use std::{collections::BTreeMap, io::Write};
 
 use engine_collision::{CollisionWorld, refresh_collision_world};
 use engine_core::{
-    ActionId, ActionInput, AssetLibrary, Atmosphere, Camera, Engine, Feature, FixedTime, FrameTime,
-    GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle, Mesh3d,
-    MeshHandle, Parent, ParticleEmitter, PresentationMode, PresentationState, ReflectionProbe,
-    TextureHandle, Tint, Transform,
+    ActionId, ActionInput, AssetLibrary, Atmosphere, BrickRegistry, Camera, Engine, FixedTime,
+    FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle,
+    Mesh3d, MeshHandle, Parent, ParticleEmitter, PresentationMode, PresentationState,
+    ReflectionProbe, TextureHandle, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
-    EnvironmentSection, SceneAtmosphere, SceneEmitter, SceneEntity, SceneEnvironment,
-    SceneInstance, SceneLight, SceneMaterial, SceneReflectionProbe, SectionVisitor,
+    SceneAtmosphere, SceneEmitter, SceneEntity, SceneEnvironment, SceneInstance, SceneLight,
+    SceneMaterial, SceneReflectionProbe,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::protocol::{Route, ToolsQuery};
+use crate::bricks::StandardBricks;
+use crate::protocol::ToolsQuery;
 use crate::reply::{Observation, Reply, SceneObservation};
 use crate::results::{
     AssetsResult, AuthoredEntity, DescribeResult, DescribedType, DistributionResult,
@@ -138,7 +139,10 @@ pub(crate) struct Inspector {
     pub(crate) kind: InspectorKind,
     pub(crate) read: ReadInspector,
     pub(crate) has: HasInspector,
+    pub(crate) brick: Option<&'static str>,
 }
+
+type BrickInspectors = BTreeMap<String, Inspector>;
 
 struct InspectSelector<'a> {
     entity: Option<&'a str>,
@@ -151,7 +155,8 @@ struct InspectSelector<'a> {
 pub struct DevTools {
     pub(crate) inspectors: BTreeMap<String, Inspector>,
     builtins: Option<usize>,
-    pub(crate) features: BTreeMap<String, Feature>,
+    pub(crate) schemas: Value,
+    pub(crate) standard: StandardBricks,
 }
 
 impl DevTools {
@@ -159,7 +164,8 @@ impl DevTools {
         Self {
             inspectors: BTreeMap::new(),
             builtins: None,
-            features: BTreeMap::new(),
+            schemas: Value::Null,
+            standard: StandardBricks::default(),
         }
     }
 
@@ -168,9 +174,21 @@ impl DevTools {
         tools.register_poses(schemas);
         tools.register_components(schemas);
         tools.register_environment(schemas);
-        crate::features::register(&mut tools, schemas);
         tools.builtins = Some(tools.inspectors.len());
+        tools.schemas = schemas.clone();
+        tools.standard = StandardBricks::of(schemas);
         tools
+    }
+
+    fn all_inspectors<'a>(
+        &'a self,
+        bricks: &'a BrickInspectors,
+    ) -> impl Iterator<Item = &'a Inspector> + 'a {
+        let mut all: BTreeMap<&str, &Inspector> = BTreeMap::new();
+        for (name, inspector) in bricks.iter().chain(&self.inspectors) {
+            all.insert(name.as_str(), inspector);
+        }
+        all.into_values()
     }
 }
 
@@ -215,16 +233,16 @@ impl DevTools {
         context: Context<'_>,
     ) -> BTreeMap<String, Vec<String>> {
         let entities: Vec<Entity> = world.iter_entities().map(|entity| entity.id()).collect();
-        self.inspectors
-            .iter()
-            .filter(|(_, inspector)| inspector.kind == InspectorKind::Component)
-            .map(|(name, inspector)| {
+        let bricks = self.brick_inspectors(world);
+        self.all_inspectors(&bricks)
+            .filter(|inspector| inspector.kind == InspectorKind::Component)
+            .map(|inspector| {
                 let views = entities
                     .iter()
                     .filter_map(|&entity| (inspector.read)(world, Some(entity), &context))
                     .map(|view| view.to_string())
                     .collect();
-                (name.clone(), views)
+                (inspector.descriptor.name.clone(), views)
             })
             .collect()
     }
@@ -241,6 +259,7 @@ impl DevTools {
                 entity.is_some_and(|entity| world.get::<T>(entity).is_some())
             }),
             read: Box::new(move |world, entity, _context| world.get::<T>(entity?).map(&inspect)),
+            brick: None,
         })
     }
 
@@ -254,6 +273,7 @@ impl DevTools {
             kind: InspectorKind::Resource,
             has: Box::new(|world, _| world.get_resource::<T>().is_some()),
             read: Box::new(move |world, _, _context| world.get_resource::<T>().map(&inspect)),
+            brick: None,
         })
     }
 
@@ -359,18 +379,27 @@ impl DevTools {
                 format!("request must fit {MAX_REQUEST_BYTES} UTF-8 bytes"),
             ));
         }
-        let request: DevRequest = crate::parse_request(source)?;
-        if scene.is_some_and(|scene| !scene.belongs_to(engine.app.world())) {
-            return Err(DevError::new(
+        let wrong_world = |engine: &Engine| {
+            scene.is_some_and(|scene| !scene.belongs_to(engine.app.world()))
+        };
+        let refused = || {
+            DevError::new(
                 ErrorCode::WrongWorld,
                 "$.scene",
                 "scene instance belongs to a different engine world",
-            ));
-        }
-        let query = match request.route() {
-            Route::Feature(query) => return query.answer(engine, scene),
-            Route::Tools(query) => query,
+            )
         };
+        if let Some((name, request)) = self.query_operation(engine.app.world(), source)? {
+            if wrong_world(engine) {
+                return Err(refused());
+            }
+            return crate::bricks::run(engine.app.world_mut(), scene, name, request);
+        }
+        let request: DevRequest = crate::parse_request(source)?;
+        if wrong_world(engine) {
+            return Err(refused());
+        }
+        let query = request.route();
         if let ToolsQuery::Inspect {
             component: Some(component),
             entity,
@@ -392,8 +421,9 @@ impl DevTools {
                 },
             )?;
             if engine.app.world().contains_resource::<CollisionWorld>() {
-                refresh_collision_world(engine.app.world_mut())
-                    .map_err(crate::features::collision::native_error)?;
+                refresh_collision_world(engine.app.world_mut()).map_err(|error| {
+                    DevError::new(error.code(), "$.collision", error.to_string())
+                })?;
             }
         }
         if matches!(query, ToolsQuery::Inspect { .. } | ToolsQuery::Digest) {
@@ -418,7 +448,7 @@ impl DevTools {
                 },
             ))),
             ToolsQuery::Describe { name, definition } => self
-                .describe(name.as_deref(), definition.as_deref())
+                .describe(world, name.as_deref(), definition.as_deref())
                 .map(result::describe),
             ToolsQuery::Distribution { values } => {
                 if values.len() > crate::bounds::MAX_VALUES {
@@ -456,18 +486,18 @@ impl DevTools {
 
     fn status(&self, engine: &Engine, scene: Option<&SceneInstance>) -> StatusResult {
         let world = engine.app.world();
+        let bricks = self.brick_inspectors(world);
+        let registry = world.get_resource::<BrickRegistry>();
         StatusResult {
             world_entities: world.entities().len(),
             authored_entities: scene.map(SceneInstance::entity_count),
-            inspectors: self.inspectors.len(),
+            inspectors: self.all_inspectors(&bricks).count(),
             culling_enabled: engine.frustum_culling(),
-            features: world
-                .get_resource::<engine_core::Features>()
-                .map(|features| features.iter().map(Feature::name).collect()),
+            features: registry.map(|registry| registry.names().collect()),
             presentation: presentation_view(engine.presentation()),
-            collision: world
-                .get_resource::<CollisionWorld>()
-                .map(crate::features::collision::world_view),
+            collision: registry
+                .and_then(|registry| registry.inspector("CollisionWorld"))
+                .and_then(|inspector| inspector.read(world, None)),
             fixed_delta_seconds: world
                 .get_resource::<FixedTime>()
                 .map(|time| time.delta_seconds),
@@ -482,19 +512,19 @@ impl DevTools {
 
     fn describe(
         &self,
+        world: &World,
         name: Option<&str>,
         definition: Option<&str>,
     ) -> Result<DescribeResult, DevError> {
-        let feature = |name: &str| self.features.get(name).map(|feature| feature.name());
+        let bricks = self.brick_inspectors(world);
         let Some(name) = name else {
             let mut types: Vec<DescribedType> = self
-                .inspectors
-                .values()
+                .all_inspectors(&bricks)
                 .map(|inspector| DescribedType {
                     name: inspector.descriptor.name.clone(),
                     kind: inspector.kind.into(),
                     description: inspector.descriptor.description.clone(),
-                    feature: Some(feature(&inspector.descriptor.name)),
+                    feature: Some(inspector.brick),
                 })
                 .collect();
             types.extend(
@@ -516,7 +546,7 @@ impl DevTools {
                 schema: scene_schema(definition)?,
                 constraints: format!(
                     "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state; the opt-in ones ({}) are then off.",
-                    SceneEnvironment::opt_in_sections().join(", ")
+                    SceneEnvironment::opt_in_sections(world).join(", ")
                 ),
             }),
             "protocol" | "BrowserControl" => {
@@ -528,12 +558,9 @@ impl DevTools {
                     kind: TypeKind::Protocol,
                     schema: schemas[name].clone(),
                     constraints: format!(
-                        "version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need CollisionPlugin but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source."
+                        "version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need the collision brick but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source."
                     ),
-                    control_state: crate::protocol::CONTROL_STATE
-                        .iter()
-                        .map(|&(op, shows)| (op.to_owned(), json!(shows)))
-                        .collect(),
+                    control_state: control_state(world),
                 })
             }
             "ErrorCodes" => Ok(DescribeResult::Catalog {
@@ -549,34 +576,38 @@ impl DevTools {
                 source: "every successful reply's result.rendering: the last frame's stats",
             }),
             _ => {
-                let inspector = self.inspector(name)?;
+                let inspector = self.inspector(world, &bricks, name)?;
                 Ok(DescribeResult::Inspector {
                     kind: inspector.kind.into(),
                     descriptor: inspector.descriptor.clone(),
-                    feature: feature(name),
+                    feature: inspector.brick,
                 })
             }
         }
     }
 
-    fn check_feature(&self, world: &World, name: &str) -> Result<(), DevError> {
-        match self.features.get(name) {
-            Some(&feature) if !engine_core::has_feature(world, feature) => {
-                Err(crate::features::missing(feature))
-            }
-            _ => Ok(()),
-        }
-    }
-
-    fn inspector(&self, name: &str) -> Result<&Inspector, DevError> {
+    fn inspector<'a>(
+        &'a self,
+        world: &World,
+        bricks: &'a BrickInspectors,
+        name: &str,
+    ) -> Result<&'a Inspector, DevError> {
         validate_name(name, "$.component")?;
-        self.inspectors.get(name).ok_or_else(|| {
-            DevError::new(
-                ErrorCode::UnknownInspector,
-                "$.component",
-                "use describe to discover registered inspectors",
-            )
-        })
+        if let Some(inspector) = self.inspectors.get(name).or_else(|| bricks.get(name)) {
+            return Ok(inspector);
+        }
+        if let Some(brick) = self.standard.of_inspector(name)
+            && !world
+                .get_resource::<BrickRegistry>()
+                .is_some_and(|registry| registry.has(brick))
+        {
+            return Err(engine_core::missing_brick(brick, "$.op").into());
+        }
+        Err(DevError::new(
+            ErrorCode::UnknownInspector,
+            "$.component",
+            "use describe to discover registered inspectors",
+        ))
     }
 
     #[expect(
@@ -611,7 +642,10 @@ impl DevTools {
                 "limit must be 1..100 and offset 0..10000",
             ));
         }
-        let inspector = component.map(|name| self.inspector(name)).transpose()?;
+        let bricks = self.brick_inspectors(world);
+        let inspector = component
+            .map(|name| self.inspector(world, &bricks, name))
+            .transpose()?;
         if let Some(inspector) =
             inspector.filter(|inspector| inspector.kind == InspectorKind::Resource)
         {
@@ -622,7 +656,6 @@ impl DevTools {
                     "resources have no entity or parent selector or pagination offset",
                 ));
             }
-            self.check_feature(world, &inspector.descriptor.name)?;
             let value = read_value(inspector, world, None, &context)?;
             return Ok(InspectResult::Resource {
                 resource: inspector.descriptor.name.clone(),
@@ -667,7 +700,7 @@ impl DevTools {
                 ));
             }
             return Ok(InspectResult::Entity {
-                entity: self.entity_row(world, context, scene, id, entity, inspector)?,
+                entity: self.entity_row(world, (context, &bricks), scene, (id, entity), inspector)?,
             });
         }
         let parent = parent
@@ -702,7 +735,13 @@ impl DevTools {
                 continue;
             }
             if total >= offset && rows.len() < limit {
-                rows.push(self.entity_row(world, context, scene, id, entity, inspector)?);
+                rows.push(self.entity_row(
+                    world,
+                    (context, &bricks),
+                    scene,
+                    (id, entity),
+                    inspector,
+                )?);
             }
             total += 1;
         }
@@ -719,15 +758,13 @@ impl DevTools {
     fn entity_row(
         &self,
         world: &World,
-        context: Context<'_>,
+        (context, bricks): (Context<'_>, &BrickInspectors),
         scene: &SceneInstance,
-        id: &str,
-        entity: Entity,
+        (id, entity): (&str, Entity),
         inspector: Option<&Inspector>,
     ) -> Result<EntityRow, DevError> {
         let metadata = world.get::<SceneEntity>(entity);
         let components = if let Some(inspector) = inspector {
-            self.check_feature(world, &inspector.descriptor.name)?;
             let context = Context {
                 scene: Some(scene),
                 ..context
@@ -740,8 +777,7 @@ impl DevTools {
             )
         } else {
             EntityComponents::Names(
-                self.inspectors
-                    .values()
+                self.all_inspectors(bricks)
                     .filter(|inspector| {
                         inspector.kind == InspectorKind::Component
                             && (inspector.has)(world, Some(entity))
@@ -925,4 +961,20 @@ fn missing_assets(world: &World, assets: &AssetLibrary) -> (Vec<MissingAsset>, u
         })
         .collect();
     (listed, total)
+}
+
+fn control_state(world: &World) -> serde_json::Map<String, Value> {
+    let mut state: serde_json::Map<String, Value> = crate::protocol::CONTROL_STATE
+        .iter()
+        .map(|&(op, shows)| (op.to_owned(), json!(shows)))
+        .collect();
+    for operation in world
+        .get_resource::<BrickRegistry>()
+        .into_iter()
+        .flat_map(BrickRegistry::operations)
+        .filter(|operation| operation.control)
+    {
+        state.insert(operation.name.to_owned(), json!(operation.shows));
+    }
+    state
 }

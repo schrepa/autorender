@@ -34,7 +34,8 @@ pub fn build() -> engine::Result<(Engine, Template)> {
     let mut engine = Engine::default();
     engine
         .app
-        .add_plugins((EnginePlugins, FlyCameraPlugin, TemplatePlugin))
+        .add_bricks(engine::bricks::standard())
+        .add_plugins((FlyCameraPlugin, TemplatePlugin))
         .insert_resource(Atmosphere::day());
     let world = engine.app.world_mut();
     world.spawn((

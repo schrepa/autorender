@@ -3,8 +3,7 @@ use std::path::Path;
 use engine::bevy_ecs::schedule::{LogLevel, ScheduleBuildSettings, Schedules};
 
 pub fn check(_root: &Path) -> Result<(), String> {
-    let mut engine = engine::Engine::new(engine::EngineConfig::default());
-    engine.app.add_plugins(engine::EnginePlugins);
+    let mut engine = crate::bricks::standard_engine();
     engine.app.finish();
     engine.app.cleanup();
     let world = engine.app.world_mut();

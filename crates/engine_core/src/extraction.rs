@@ -41,6 +41,11 @@ impl Extractions {
                 .map(crate::StaticTables::render)
                 .unwrap_or_default(),
         );
+        if let Some(registry) = world.get_resource::<crate::BrickRegistry>() {
+            for extract in registry.extractions() {
+                retained.extract_brick(world, extract);
+            }
+        }
     }
 }
 

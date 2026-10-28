@@ -73,11 +73,6 @@ pub(crate) const LINT: &[Stage] = &[
         run: crate::verify::check,
     },
     Stage {
-        name: "features",
-        needs: &[],
-        run: crate::features::check,
-    },
-    Stage {
         name: "schedule ambiguities",
         needs: &[],
         run: crate::ambiguities::check,

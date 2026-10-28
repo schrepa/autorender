@@ -1,7 +1,7 @@
 use engine::browser::SceneFileSet;
 use wasm_bindgen::prelude::*;
 
-use crate::{ScenePlayer, features};
+use crate::{ScenePlayer, bricks};
 
 engine::export_game!(
     pub struct PlayerGame(ScenePlayer);
@@ -15,7 +15,7 @@ impl PlayerGame {
         files: SceneFileSet,
         without: &str,
     ) -> Result<PlayerGame, JsValue> {
-        let without = features(without, "?without")?;
+        let without = bricks(without, "?without")?;
         Self::launch(canvas, move || {
             ScenePlayer::new(source, files.files(), &without)
         })

@@ -803,10 +803,9 @@ impl AppHost {
             resolution: self.resolution_stats((width, height)),
             dynamic_resolution,
             jobs: engine_core::JobStats::default(),
-            navigation: engine_core::NavStats::default(),
-            physics: engine_core::PhysicsStats::default(),
             disabled_features: self.renderer.disabled_features(),
             render: rendered,
+            bricks: std::collections::BTreeMap::new(),
         };
         self.exchange_records();
         self.pipeline_list.after_frame(
@@ -907,13 +906,6 @@ impl AppHost {
                     .get_resource::<engine_core::StaticTables>()
                     .is_some_and(engine_core::StaticTables::loading)
                 || self.pipeline_list.waiting(),
-            navigation: self
-                .engine
-                .app
-                .world()
-                .get_resource::<engine_core::NavAgents>()
-                .map(engine_core::NavAgents::stats)
-                .unwrap_or_default(),
             jobs: self
                 .engine
                 .app
@@ -921,14 +913,14 @@ impl AppHost {
                 .get_resource::<engine_core::Jobs>()
                 .map(engine_core::Jobs::stats)
                 .unwrap_or_default(),
-            physics: self
+            bricks: self
                 .engine
                 .app
                 .world()
-                .get_resource::<engine_physics::PhysicsWorld>()
-                .map(engine_physics::PhysicsWorld::stats)
+                .get_resource::<engine_core::BrickRegistry>()
+                .map(|registry| registry.frame_stats(self.engine.app.world()))
                 .unwrap_or_default(),
-            ..self.stats
+            ..self.stats.clone()
         }
     }
 

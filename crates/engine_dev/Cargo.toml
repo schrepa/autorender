@@ -18,7 +18,12 @@ serde_json.workspace = true
 engine_profile.workspace = true
 schemars.workspace = true
 engine_settings = { workspace = true, features = ["schema"] }
+engine_collision = { workspace = true, features = ["schema"] }
 engine_physics = { workspace = true, features = ["schema"] }
+engine_terrain = { workspace = true, features = ["schema"] }
+engine_world_streaming = { workspace = true, features = ["schema"] }
+engine_navigation = { workspace = true, features = ["schema"] }
+engine_time_of_day = { workspace = true, features = ["schema"] }
 engine_scene = { workspace = true, features = ["schema"] }
 
 [lints]

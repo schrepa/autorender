@@ -264,13 +264,15 @@ fn sent(folder: &Path) -> Result<Sent, String> {
 }
 
 fn report_sent(root: &Path, passed: &[&str], everything: bool) -> Result<(), String> {
-    let development = engine_dev::schemas::generated()?;
+    let engine = crate::bricks::standard_engine();
+    let development = engine_dev::schemas::generated(engine.app.world())?;
     let offered: Value = serde_json::from_str(&crate::coverage::coverage(root, &development)?)
         .map_err(|error| format!("the coverage file is not JSON: {error}"))?;
-    let section_of: BTreeMap<&str, &str> = crate::coverage::environment_sections()
-        .iter()
-        .map(|&(key, settings)| (settings, key))
-        .collect();
+    let section_of: BTreeMap<&str, &str> =
+        crate::bricks::environment_sections(engine.app.world())
+            .into_iter()
+            .map(|(key, settings)| (settings, key))
+            .collect();
     let lists = [
         ("ops", "op"),
         ("sections", "section"),

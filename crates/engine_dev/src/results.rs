@@ -2,7 +2,7 @@ use engine_core::Distribution;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::views::{CollisionWorldView, PresentationStateView};
+use crate::views::PresentationStateView;
 use crate::{InspectorDescriptor, InspectorKind};
 
 pub const UNTYPED_RESULTS: &[&str] = &["benchmark", "debug_device_loss", "debug_panic", "reload"];
@@ -33,14 +33,6 @@ results! {
     distribution: crate::results::DistributionResult,
     inspect: crate::results::InspectResult,
     describe: crate::results::DescribeResult,
-    raycast: crate::features::collision::RaycastResult,
-    overlap: crate::features::collision::OverlapResult,
-    shape_cast: crate::features::collision::ShapeCastResult,
-    collision_events: crate::features::collision::CollisionEventsResult,
-    nav_path: crate::features::navigation::NavPathResult,
-    nav_go: crate::features::navigation::NavGoResult,
-    world_changes: crate::features::world_streaming::WorldChangesResult,
-    terrain: crate::features::terrain::TerrainControlResult,
     present: crate::results::PresentResult,
     culling: crate::results::CullingResult,
     camera: crate::results::CameraResult,
@@ -50,13 +42,6 @@ results! {
     input: crate::results::InputResult,
     step: crate::results::StepResult,
     environment: crate::results::EnvironmentResult,
-    terrain_height: crate::features::terrain::TerrainHeightResult,
-    terrain_sweep: crate::features::terrain::TerrainSweepResult,
-    terrain_route: crate::features::terrain::TerrainRouteResult,
-    terrain_edit: crate::features::terrain::TerrainEdited,
-    terrain_undo: crate::features::terrain::TerrainEdited,
-    terrain_redo: crate::features::terrain::TerrainEdited,
-    terrain_river: crate::features::terrain::TerrainEdited,
     frames: crate::results::FramesResult,
     capture: crate::results::CaptureResult,
     probe: crate::results::ProbeResult,
@@ -74,7 +59,11 @@ pub struct StatusResult {
     pub culling_enabled: bool,
     pub features: Option<Vec<&'static str>>,
     pub presentation: PresentationStateView,
-    pub collision: Option<CollisionWorldView>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        schemars(with = "Option<serde_json::Map<String, Value>>")
+    )]
+    pub collision: Option<Value>,
     pub fixed_delta_seconds: Option<f32>,
     pub limits: StatusLimits,
 }
@@ -325,7 +314,7 @@ pub struct StepResult {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct EnvironmentResult {
     pub temporary: bool,
-    pub environment_changed: Vec<&'static str>,
+    pub environment_changed: Vec<String>,
     pub before: serde_json::Map<String, Value>,
     pub after: serde_json::Map<String, Value>,
 }

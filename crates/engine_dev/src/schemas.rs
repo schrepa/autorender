@@ -1,4 +1,5 @@
-use engine_scene::{EnvironmentSection, SectionVisitor};
+use engine_core::bevy_ecs::prelude::World;
+use engine_core::{BrickRegistry, OperationEntry};
 use serde_json::{Map, Value, json};
 
 use crate::{protocol, views};
@@ -10,50 +11,65 @@ pub struct Generated {
     pub inspectors: Value,
 }
 
-pub fn reply() -> Value {
-    let serialized = |schema: schemars::Schema| -> Value {
-        serde_json::to_value(schema).expect("schemas serialize")
+fn registry(world: &World) -> Result<&BrickRegistry, String> {
+    world
+        .get_resource::<BrickRegistry>()
+        .ok_or_else(|| "the schemas' engine adds no bricks: add the standard bricks".to_owned())
+}
+
+fn serialized(schema: schemars::Schema) -> Value {
+    serde_json::to_value(schema).expect("schemas serialize")
+}
+
+fn definition_of(mut schema: Value, definitions: &mut Map<String, Value>) -> (String, Value) {
+    let Some(fields) = schema.as_object_mut() else {
+        return (String::new(), schema);
     };
+    if let Some(Value::Object(theirs)) = fields.remove("$defs") {
+        for (name, definition) in theirs {
+            definitions.entry(name).or_insert(definition);
+        }
+    }
+    fields.remove("$schema");
+    let name = fields
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    (name, schema)
+}
+
+pub fn reply(world: &World) -> Result<Value, String> {
+    let registry = registry(world)?;
     let mut reply = serialized(schemars::schema_for!(crate::Reply));
     let mut definitions = reply["$defs"].as_object().cloned().unwrap_or_default();
-    for mut schema in [
+    for schema in [
         serialized(schemars::schema_for!(crate::Step)),
         serialized(schemars::schema_for!(crate::Outcome)),
         serialized(schemars::schema_for!(crate::HostContext)),
     ] {
-        let Some(fields) = schema.as_object_mut() else {
-            continue;
-        };
-        if let Some(Value::Object(theirs)) = fields.remove("$defs") {
-            for (name, definition) in theirs {
-                if name != "Reply" {
-                    definitions.entry(name).or_insert(definition);
-                }
-            }
+        let mut theirs = Map::new();
+        let (name, schema) = definition_of(schema, &mut theirs);
+        theirs.remove("Reply");
+        for (other, definition) in theirs {
+            definitions.entry(other).or_insert(definition);
         }
-        fields.remove("$schema");
-        let name = fields["title"]
-            .as_str()
-            .expect("root schemas name their type")
-            .to_owned();
+        if name.is_empty() {
+            return Err("root schemas name their type".to_owned());
+        }
         definitions.insert(name, schema);
     }
     let mut results = Map::new();
-    for (op, schema) in crate::results::result_schemas() {
-        let mut schema = serialized(schema);
-        let Some(fields) = schema.as_object_mut() else {
-            continue;
-        };
-        if let Some(Value::Object(theirs)) = fields.remove("$defs") {
-            for (name, definition) in theirs {
-                definitions.entry(name).or_insert(definition);
-            }
+    let typed = crate::results::result_schemas().into_iter().chain(
+        registry
+            .operations()
+            .filter_map(|operation| Some((operation.name, operation.result_schema()?))),
+    );
+    for (op, schema) in typed {
+        let (name, schema) = definition_of(serialized(schema), &mut definitions);
+        if name.is_empty() {
+            return Err(format!("{op}'s result schema names no type"));
         }
-        fields.remove("$schema");
-        let name = fields["title"]
-            .as_str()
-            .expect("root schemas name their type")
-            .to_owned();
         results.insert(op.to_owned(), json!({ "$ref": format!("#/$defs/{name}") }));
         definitions.insert(name, schema);
     }
@@ -66,14 +82,15 @@ pub fn reply() -> Value {
     });
     definitions.insert("OpResults".to_owned(), op_results);
     reply["$defs"] = Value::Object(definitions);
-    reply
+    Ok(reply)
 }
 
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
-pub fn generated() -> Result<Generated, String> {
+pub fn generated(world: &World) -> Result<Generated, String> {
+    let registry = registry(world)?;
     let mut problems = Vec::new();
     let mut schemas = json!({
         "Transform": schemars::schema_for!(views::TransformView),
@@ -93,14 +110,23 @@ pub fn generated() -> Result<Generated, String> {
         "Grounded": schemars::schema_for!(views::GroundedView),
         "Jobs": schemars::schema_for!(views::JobsView),
         "StaticTables": schemars::schema_for!(views::StaticTablesView),
-        "protocol": schemars::schema_for!(protocol::DevRequest),
-        "BrowserControl": control_schema(),
-        "FrameStats": frame_stats(&mut problems),
+        "protocol": protocol_schema(registry),
+        "BrowserControl": control_schema(registry),
+        "FrameStats": frame_stats(registry, &mut problems),
     });
     if let Some(all) = schemas.as_object_mut() {
-        crate::features::schemas(all);
+        for inspector in registry.inspectors() {
+            match inspector.schema() {
+                Some(schema) => {
+                    all.insert(inspector.name.to_owned(), serialized(schema));
+                }
+                None => problems.push(format!(
+                    "the {} brick's inspector {} has no schema",
+                    inspector.brick, inspector.name
+                )),
+            }
+        }
     }
-    dev_features(&mut problems);
     reserved_inspectors(&mut problems);
     let Some(described) = schemas.as_object() else {
         return Err("the inspectors' schemas are not an object".to_owned());
@@ -114,25 +140,27 @@ pub fn generated() -> Result<Generated, String> {
             ));
         }
     }
-    let mut sections = Sections(Map::new());
-    engine_scene::SceneEnvironment::default().visit(&mut sections);
-    for name in sections.0.keys() {
-        if let Some(component) = name.strip_suffix('s')
+    let mut sections = Map::new();
+    for section in registry.sections() {
+        sections.insert(section.name.to_owned(), serialized(section.schema()));
+        if let Some(component) = section.name.strip_suffix('s')
             && schemas.get(component).is_some()
         {
             problems.push(format!(
-                "settings {name} read as a store of {component}s: name them {component}Settings"
+                "settings {} read as a store of {component}s: name them {component}Settings",
+                section.name
             ));
         }
     }
     if let Some(all) = schemas.as_object_mut() {
-        all.extend(sections.0);
+        all.extend(sections);
+        all.insert("bricks".to_owned(), bricks_summary(registry));
     }
-    let scene_schema = engine_scene::SceneDocument::schema_json();
+    let scene_schema = engine_scene::SceneDocument::schema_json(registry);
     let queries = ops(&schemas["protocol"], &mut problems);
     let controls = ops(&schemas["BrowserControl"], &mut problems);
-    control_state(&controls, &schemas, &mut problems);
-    typed_results(&queries, &controls, &mut problems);
+    control_state(registry, &controls, &schemas, &mut problems);
+    typed_results(registry, &queries, &controls, &mut problems);
     match serde_json::from_str::<Value>(&scene_schema) {
         Ok(scene) => authored_parity(&scene, &schemas, &mut problems),
         Err(error) => problems.push(format!("the scene schema is not JSON: {error}")),
@@ -155,14 +183,7 @@ pub const {name}: [&str; {}] = {:?};
         "profile_max_events": engine_profile::MAX_EVENTS,
         "queries": queries,
         "controls": controls,
-        "features": engine_core::Feature::ALL
-            .iter()
-            .map(|feature| json!({
-                "name": feature.name(),
-                "plugin": feature.plugin(),
-                "needs": feature.needs().iter().map(|need| need.name()).collect::<Vec<_>>(),
-            }))
-            .collect::<Vec<_>>(),
+        "bricks": registry.names().collect::<Vec<_>>(),
         "errors": engine_settings::ErrorCode::ALL
             .iter()
             .map(|&(_, name)| name)
@@ -199,8 +220,44 @@ pub const {name}: [&str; {}] = {:?};
     })
 }
 
-fn typed_results(queries: &[String], controls: &[String], problems: &mut Vec<String>) {
-    let ops: Vec<&str> = queries.iter().chain(controls).map(String::as_str).collect();
+fn bricks_summary(registry: &BrickRegistry) -> Value {
+    registry
+        .bricks()
+        .iter()
+        .map(|brick| {
+            let settings: Vec<&str> = brick.settings.iter().map(|section| section.key).collect();
+            let operations: Vec<&str> = brick
+                .operations
+                .iter()
+                .map(|operation| operation.name)
+                .collect();
+            let inspectors: Vec<&str> = brick
+                .inspectors
+                .iter()
+                .map(|inspector| inspector.name)
+                .collect();
+            json!({
+                "name": brick.name,
+                "settings": settings,
+                "operations": operations,
+                "inspectors": inspectors,
+            })
+        })
+        .collect()
+}
+
+fn typed_results(
+    registry: &BrickRegistry,
+    queries: &[String],
+    controls: &[String],
+    problems: &mut Vec<String>,
+) {
+    let ops: Vec<&str> = queries
+        .iter()
+        .chain(controls)
+        .map(String::as_str)
+        .filter(|op| registry.operation(op).is_none())
+        .collect();
     let (typed, untyped) = (
         crate::results::TYPED_RESULTS,
         crate::results::UNTYPED_RESULTS,
@@ -222,29 +279,103 @@ fn typed_results(queries: &[String], controls: &[String], problems: &mut Vec<Str
     }
 }
 
-fn control_schema() -> Value {
-    struct Titles(Vec<(String, &'static str)>);
-    impl SectionVisitor for Titles {
-        fn section<T: EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
-            let schema = serde_json::to_value(T::schema()).unwrap_or_default();
-            if let Some(title) = schema["title"].as_str() {
-                self.0.push((title.to_owned(), T::NAME));
-            }
-        }
-    }
-    let mut schema =
-        serde_json::to_value(schemars::schema_for!(protocol::BrowserControl)).unwrap_or_default();
-    let mut titles = Titles(vec![("SceneAtmosphere".to_owned(), "Atmosphere")]);
-    engine_scene::SceneEnvironment::default().visit(&mut titles);
-    let Some(definitions) = schema["$defs"].as_object_mut() else {
-        return schema;
+fn version_schema() -> Value {
+    serialized(schemars::SchemaGenerator::default().subschema_for::<u32>())
+}
+
+fn operation_variant(operation: &OperationEntry, definitions: &mut Map<String, Value>) -> Value {
+    let (_, mut variant) = definition_of(serialized(operation.schema()), definitions);
+    let Some(fields) = variant.as_object_mut() else {
+        return variant;
     };
-    for (title, inspector) in titles.0 {
-        if let Some(definition) = definitions.get_mut(&title) {
-            *definition = json!({
-                "type": "object",
-                "description": format!("The {inspector} inspector describes its fields."),
-            });
+    fields.remove("title");
+    fields.insert("type".to_owned(), json!("object"));
+    let properties = fields
+        .entry("properties")
+        .or_insert_with(|| json!({}));
+    if let Some(properties) = properties.as_object_mut() {
+        properties.insert(
+            "op".to_owned(),
+            json!({ "const": operation.name, "type": "string" }),
+        );
+        properties.insert("version".to_owned(), version_schema());
+    }
+    let mut required = vec![json!("op"), json!("version")];
+    if let Some(Value::Array(theirs)) = fields.remove("required") {
+        required.extend(theirs);
+    }
+    fields.insert("required".to_owned(), Value::Array(required));
+    variant
+}
+
+fn with_operations(mut schema: Value, registry: &BrickRegistry, control: bool) -> Value {
+    let mut definitions = schema["$defs"].as_object().cloned().unwrap_or_default();
+    let variants: Vec<Value> = registry
+        .operations()
+        .filter(|operation| operation.control == control)
+        .map(|operation| operation_variant(operation, &mut definitions))
+        .collect();
+    if let Some(all) = schema.get_mut("oneOf").and_then(Value::as_array_mut) {
+        all.extend(variants);
+    }
+    if !definitions.is_empty() {
+        schema["$defs"] = Value::Object(definitions);
+    }
+    schema
+}
+
+fn protocol_schema(registry: &BrickRegistry) -> Value {
+    with_operations(
+        serialized(schemars::schema_for!(protocol::DevRequest)),
+        registry,
+        false,
+    )
+}
+
+fn control_schema(registry: &BrickRegistry) -> Value {
+    let mut schema = with_operations(
+        serialized(schemars::schema_for!(protocol::BrowserControl)),
+        registry,
+        true,
+    );
+    let mut titles = vec![("SceneAtmosphere".to_owned(), "Atmosphere")];
+    let mut sections = Map::new();
+    for section in registry.sections() {
+        let title = serialized(section.schema())["title"]
+            .as_str()
+            .unwrap_or(section.name)
+            .to_owned();
+        sections.insert(
+            section.key.to_owned(),
+            json!({
+                "anyOf": [{ "$ref": format!("#/$defs/{title}") }, { "type": "null" }],
+                "default": null,
+            }),
+        );
+        titles.push((title, section.name));
+    }
+    if let Some(environment) = schema["oneOf"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+        .find(|variant| variant["properties"]["op"]["const"] == "environment")
+        .and_then(|variant| variant["properties"].as_object_mut())
+    {
+        environment.extend(sections);
+    }
+    if let Some(definitions) = schema
+        .as_object_mut()
+        .map(|schema| schema.entry("$defs").or_insert_with(|| json!({})))
+        .and_then(Value::as_object_mut)
+    {
+        for (title, inspector) in titles {
+            definitions.insert(
+                title,
+                json!({
+                    "type": "object",
+                    "description": format!("The {inspector} inspector describes its fields."),
+                }),
+            );
         }
     }
     let mut reached = std::collections::BTreeSet::new();
@@ -291,18 +422,31 @@ fn references(value: &Value, names: &mut Vec<String>) {
     }
 }
 
-struct Sections(Map<String, Value>);
-
-impl SectionVisitor for Sections {
-    fn section<T: EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
-        let schema = serde_json::to_value(T::schema()).unwrap_or_default();
-        self.0.insert(T::NAME.to_owned(), schema);
+fn frame_stats(registry: &BrickRegistry, problems: &mut Vec<String>) -> Value {
+    let mut schema = serialized(schemars::schema_for!(engine_core::FrameStats));
+    let mut definitions = schema["$defs"].as_object().cloned().unwrap_or_default();
+    let mut properties = schema["properties"].as_object().cloned().unwrap_or_default();
+    let mut required = schema["required"].as_array().cloned().unwrap_or_default();
+    for stats in registry.stats() {
+        let (name, definition) = definition_of(serialized(stats.schema()), &mut definitions);
+        let mut definition = definition;
+        if let Some(fields) = definition.as_object_mut() {
+            fields.remove("title");
+        }
+        if name.is_empty() {
+            problems.push(format!("the {} brick's stats schema names no type", stats.brick));
+            continue;
+        }
+        definitions.insert(name.clone(), definition);
+        properties.insert(
+            stats.key.to_owned(),
+            json!({ "$ref": format!("#/$defs/{name}") }),
+        );
+        required.push(json!(stats.key));
     }
-}
-
-fn frame_stats(problems: &mut Vec<String>) -> Value {
-    let schema =
-        serde_json::to_value(schemars::schema_for!(engine_core::FrameStats)).unwrap_or_default();
+    schema["$defs"] = Value::Object(definitions);
+    schema["properties"] = Value::Object(properties);
+    schema["required"] = Value::Array(required);
     let objects = std::iter::once(("FrameStats", &schema)).chain(
         schema["$defs"]
             .as_object()
@@ -323,12 +467,9 @@ fn frame_stats(problems: &mut Vec<String>) -> Value {
             }
         }
     }
-    let render =
-        serde_json::to_value(schemars::schema_for!(engine_core::RenderStats)).unwrap_or_default();
+    let render = serialized(schemars::schema_for!(engine_core::RenderStats));
     for (field, property) in render["properties"].as_object().into_iter().flatten() {
-        if property.get("$ref").is_some()
-            && !engine_core::Environment::KEYS.contains(&field.as_str())
-        {
+        if property.get("$ref").is_some() && registry.section(field).is_none() {
             problems.push(format!(
                 "RenderStats.{field} groups a feature's stats under a key that is no environment \
                  section's: name it after the section"
@@ -355,36 +496,29 @@ fn reserved_inspectors(problems: &mut Vec<String>) {
     }
 }
 
-fn dev_features(problems: &mut Vec<String>) {
-    let names = crate::features::NAMES;
-    for name in names {
-        if !engine_core::Feature::ALL
-            .iter()
-            .any(|feature| feature.name() == *name)
-        {
-            problems.push(format!(
-                "dev_features! lists {name}, which is no feature: name it as engine_features! does"
-            ));
-        }
-    }
-    if !names.windows(2).all(|pair| pair[0] < pair[1]) {
-        problems.push("dev_features! lists its features sorted, each once".to_owned());
-    }
-}
-
-fn control_state(controls: &[String], schemas: &Value, problems: &mut Vec<String>) {
+fn control_state(
+    registry: &BrickRegistry,
+    controls: &[String],
+    schemas: &Value,
+    problems: &mut Vec<String>,
+) {
+    let mut state: Vec<(&str, &str)> = protocol::CONTROL_STATE.to_vec();
+    state.extend(
+        registry
+            .operations()
+            .filter(|operation| operation.control)
+            .map(|operation| (operation.name, operation.shows)),
+    );
     for op in controls {
-        let listed = protocol::CONTROL_STATE
-            .iter()
-            .filter(|(listed, _)| listed == op)
-            .count();
+        let listed = state.iter().filter(|(listed, _)| listed == op).count();
         if listed != 1 {
             problems.push(format!(
-                "control {op} must name where its state shows once in CONTROL_STATE"
+                "control {op} must name where its state shows once in CONTROL_STATE or its \
+                 operation's SHOWS"
             ));
         }
     }
-    for (op, shows) in protocol::CONTROL_STATE {
+    for (op, shows) in &state {
         if !controls.iter().any(|control| control == op) {
             problems.push(format!("CONTROL_STATE lists {op}, which is no control"));
         }

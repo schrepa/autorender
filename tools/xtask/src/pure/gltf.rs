@@ -1,8 +1,6 @@
 use std::path::Path;
 
-use engine::EnginePlugins;
 use engine_assetc::{Imported, import_glb, import_glb_prefab};
-use engine_core::{Engine, EngineConfig};
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -69,8 +67,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 }),
             }
         }
-        let mut engine = Engine::new(EngineConfig::default());
-        engine.app.add_plugins(EnginePlugins);
+        let mut engine = crate::bricks::standard_engine();
         let scene = reparsed
             .instantiate_with(engine.app.world_mut(), &files)
             .map_err(|error| format!("gltf {name}: the import does not instantiate: {error}"))?;

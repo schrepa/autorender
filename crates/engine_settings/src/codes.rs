@@ -137,6 +137,7 @@ error_codes! {
     InvalidEnvironment => "invalid_environment",
 
     MissingPlugin => "missing_plugin",
+    DuplicateBrick => "duplicate_brick",
 
     CollisionInvalidShape => "collision_invalid_shape",
     CollisionInvalidTransform => "collision_invalid_transform",
