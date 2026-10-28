@@ -6,8 +6,6 @@ export interface FrameStats {
   clouds: CloudStats;
   culled_instances: number;
   culling_enabled: boolean;
-  decals: Drawn;
-  deformation: DeformationStats;
   disabled_features: string[];
   draw_calls: number;
   dropped_instances: number;
@@ -29,7 +27,6 @@ export interface FrameStats {
   navigation: NavStats;
   occlusion_culling: CullingStats;
   occupancy: OccupancyStats;
-  ocean: OceanStats;
   particles: Drawn;
   physics: PhysicsStats;
   pipelines: number;
@@ -40,7 +37,6 @@ export interface FrameStats {
   read_back_age: number | null;
   reflection_probes: ProbeStats;
   reflections: Applied;
-  refraction: Applied;
   render_candidates: number;
   render_ms: number;
   render_passes: string[];
@@ -57,10 +53,8 @@ export interface FrameStats {
   terrain: TerrainRenderStats;
   texture_upload_bytes: number;
   tick: number;
-  transparent_draws: number;
   triangles: number | null;
   upload_bytes: number;
-  virtual_geometry: VirtualGeometryStats;
   visible_instances: number;
   water: WaterStats;
   world_streaming: CellStats;
@@ -88,11 +82,6 @@ export interface CloudStats {
 export interface CullingStats {
   active: boolean;
   instances: number | null;
-}
-
-export interface DeformationStats {
-  stamps: number;
-  texels: number;
 }
 
 export interface DetailStats {
@@ -173,11 +162,6 @@ export interface OccupancyStats {
   redraws: number;
 }
 
-export interface OceanStats {
-  sectors: number;
-  triangles: number;
-}
-
 export interface PhysicsStats {
   awake: number;
   bodies: number;
@@ -253,21 +237,6 @@ export interface TerrainRenderStats {
   tiles: number;
   triangles: number;
   white_water: number;
-}
-
-export interface VirtualGeometryStats {
-  clusters: number;
-  dropped: number;
-  dropped_pages: number;
-  failed_pages: number;
-  loading_pages: number;
-  missing_pages: number;
-  occluded_clusters: number;
-  resident_pages: number;
-  shadow_clusters: number;
-  shadow_triangles: number;
-  triangles: number;
-  visibility_buffer: boolean;
 }
 
 export interface WaterStats {

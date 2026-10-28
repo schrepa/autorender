@@ -1,14 +1,6 @@
 {
   "inspectors": [
     {
-      "inspector": "AnimationPlayer",
-      "kind": "component",
-      "smokes": [
-        "meshes",
-        "streaming"
-      ]
-    },
-    {
       "inspector": "Atmosphere",
       "kind": "resource",
       "smokes": [
@@ -38,37 +30,13 @@
       ]
     },
     {
-      "inspector": "Decal",
-      "kind": "component",
-      "smokes": [
-        "surfaces"
-      ]
-    },
-    {
-      "inspector": "Deformer",
-      "kind": "component",
-      "smokes": [
-        "terrain-surface"
-      ]
-    },
-    {
       "inspector": "Environment",
       "kind": "resource",
       "smokes": [
         "agent",
         "debug-view",
         "host-parity",
-        "lod",
         "terrain",
-        "terrain-water-sky",
-        "virtual-geometry"
-      ]
-    },
-    {
-      "inspector": "Floating",
-      "kind": "component",
-      "smokes": [
-        "plugins",
         "terrain-water-sky"
       ]
     },
@@ -76,8 +44,8 @@
       "inspector": "GlobalTransform",
       "kind": "component",
       "smokes": [
-        "hierarchy",
-        "interpolation"
+        "collision",
+        "hierarchy"
       ]
     },
     {
@@ -105,16 +73,12 @@
     {
       "inspector": "InterpolateTransform",
       "kind": "component",
-      "smokes": [
-        "interpolation"
-      ]
+      "smokes": []
     },
     {
       "inspector": "Jobs",
       "kind": "resource",
-      "smokes": [
-        "jobs"
-      ]
+      "smokes": []
     },
     {
       "inspector": "LocalLight",
@@ -143,7 +107,6 @@
       "inspector": "NavAgents",
       "kind": "resource",
       "smokes": [
-        "jobs",
         "plugins",
         "terrain"
       ]
@@ -171,14 +134,6 @@
       ]
     },
     {
-      "inspector": "PresentedTransform",
-      "kind": "component",
-      "smokes": [
-        "collision",
-        "interpolation"
-      ]
-    },
-    {
       "inspector": "ReflectionProbe",
       "kind": "component",
       "smokes": [
@@ -190,13 +145,6 @@
       "kind": "component",
       "smokes": [
         "physics"
-      ]
-    },
-    {
-      "inspector": "Skin",
-      "kind": "component",
-      "smokes": [
-        "meshes"
       ]
     },
     {
@@ -244,7 +192,6 @@
       "inspector": "Terrains",
       "kind": "resource",
       "smokes": [
-        "jobs",
         "terrain",
         "terrain-water-sky"
       ]
@@ -257,25 +204,15 @@
       ]
     },
     {
-      "inspector": "Tracks",
-      "kind": "resource",
-      "smokes": [
-        "plugins",
-        "terrain-surface"
-      ]
-    },
-    {
       "inspector": "Transform",
       "kind": "component",
       "smokes": [
         "agent",
         "collision",
         "hierarchy",
-        "interpolation",
         "physics",
         "streaming",
         "terrain",
-        "terrain-water-sky",
         "texture"
       ]
     },
@@ -302,12 +239,10 @@
         "agent",
         "agent-lifecycle",
         "collision",
-        "culling",
         "frame-loop",
         "gpu-presentation",
         "hierarchy",
         "host-parity",
-        "interpolation",
         "native",
         "plugins",
         "taa",
@@ -324,9 +259,6 @@
         "hierarchy",
         "host-parity",
         "input",
-        "interpolation",
-        "jobs",
-        "lod",
         "meshes",
         "native",
         "physics",
@@ -338,18 +270,15 @@
         "terrain-files",
         "terrain-surface",
         "terrain-water-sky",
-        "texture",
-        "virtual-geometry"
+        "texture"
       ]
     },
     {
       "op": "assets",
       "smokes": [
         "agent",
-        "culling",
         "hierarchy",
         "host-parity",
-        "interpolation",
         "texture"
       ]
     },
@@ -375,14 +304,11 @@
         "debug-view",
         "hierarchy",
         "host-parity",
-        "interpolation",
-        "lod",
         "native",
         "physics",
         "spline",
         "surfaces",
-        "terrain",
-        "virtual-geometry"
+        "terrain"
       ]
     },
     {
@@ -410,7 +336,6 @@
       "op": "terrain_height",
       "smokes": [
         "host-parity",
-        "jobs",
         "streaming",
         "terrain",
         "terrain-water-sky"
@@ -420,18 +345,6 @@
       "op": "nav_path",
       "smokes": [
         "terrain"
-      ]
-    },
-    {
-      "op": "water_query",
-      "smokes": [
-        "terrain-water-sky"
-      ]
-    },
-    {
-      "op": "deformation_query",
-      "smokes": [
-        "terrain-surface"
       ]
     },
     {
@@ -459,30 +372,23 @@
         "debug-view",
         "gpu-presentation",
         "host-parity",
-        "interpolation",
-        "lod",
         "terrain",
-        "terrain-surface",
-        "virtual-geometry"
+        "terrain-surface"
       ]
     },
     {
       "op": "culling",
       "smokes": [
-        "culling",
-        "host-parity",
-        "interpolation"
+        "host-parity"
       ]
     },
     {
       "op": "environment",
       "smokes": [
         "agent",
-        "culling",
         "debug-view",
         "gpu-presentation",
         "host-parity",
-        "lod",
         "native",
         "physics",
         "streaming",
@@ -491,9 +397,7 @@
         "terrain",
         "terrain-files",
         "terrain-surface",
-        "terrain-water-sky",
-        "torrent",
-        "virtual-geometry"
+        "terrain-water-sky"
       ]
     },
     {
@@ -527,22 +431,9 @@
       ]
     },
     {
-      "op": "deform",
-      "smokes": [
-        "terrain-surface"
-      ]
-    },
-    {
       "op": "nav_go",
       "smokes": [
         "terrain"
-      ]
-    },
-    {
-      "op": "animation",
-      "smokes": [
-        "meshes",
-        "streaming"
       ]
     },
     {
@@ -554,18 +445,14 @@
     {
       "op": "camera",
       "smokes": [
-        "culling",
         "gpu-presentation",
         "host-parity",
-        "interpolation",
-        "jobs",
         "streaming",
         "surfaces",
         "terrain",
         "terrain-files",
         "terrain-surface",
-        "terrain-water-sky",
-        "virtual-geometry"
+        "terrain-water-sky"
       ]
     },
     {
@@ -584,15 +471,11 @@
         "gpu-presentation",
         "hierarchy",
         "host-parity",
-        "interpolation",
-        "meshes",
         "native",
         "physics",
         "streaming",
         "taa",
         "terrain",
-        "terrain-surface",
-        "terrain-water-sky",
         "texture"
       ]
     },
@@ -610,7 +493,7 @@
         "collision",
         "hierarchy",
         "host-parity",
-        "interpolation",
+        "native",
         "texture"
       ]
     },
@@ -618,12 +501,9 @@
       "op": "render",
       "smokes": [
         "collision",
-        "culling",
         "gpu-presentation",
         "hierarchy",
         "host-parity",
-        "interpolation",
-        "jobs",
         "meshes",
         "physics",
         "plugins",
@@ -634,8 +514,7 @@
         "terrain",
         "terrain-surface",
         "terrain-water-sky",
-        "texture",
-        "torrent"
+        "texture"
       ]
     },
     {
@@ -646,8 +525,6 @@
         "gpu-presentation",
         "host-parity",
         "input",
-        "interpolation",
-        "jobs",
         "meshes",
         "native",
         "plugins",
@@ -663,8 +540,6 @@
         "gpu-presentation",
         "host-parity",
         "input",
-        "interpolation",
-        "jobs",
         "meshes",
         "native",
         "taa",
@@ -676,35 +551,24 @@
       "smokes": [
         "agent",
         "collision",
-        "culling",
         "debug-view",
         "gpu-presentation",
         "hierarchy",
         "host-parity",
-        "interpolation",
-        "lod",
-        "meshes",
         "native",
         "physics",
         "spline",
-        "surfaces",
         "taa",
         "terrain-surface",
-        "texture",
-        "torrent",
-        "virtual-geometry"
+        "texture"
       ]
     },
     {
       "op": "game",
       "smokes": [
-        "debug-view",
         "host-parity",
-        "jobs",
-        "lod",
         "native",
-        "surfaces",
-        "torrent"
+        "surfaces"
       ]
     },
     {
@@ -714,7 +578,7 @@
         "collision",
         "hierarchy",
         "host-parity",
-        "interpolation",
+        "native",
         "physics",
         "plugins",
         "spline",
@@ -750,8 +614,7 @@
       "op": "probe",
       "smokes": [
         "debug-view",
-        "surfaces",
-        "torrent"
+        "surfaces"
       ]
     }
   ],
@@ -761,7 +624,6 @@
       "section": "shadows",
       "smokes": [
         "agent",
-        "culling",
         "gpu-presentation",
         "terrain",
         "terrain-surface",
@@ -827,14 +689,6 @@
       "stats": false
     },
     {
-      "inspector": "Windows",
-      "section": "windows",
-      "smokes": [
-        "agent"
-      ],
-      "stats": false
-    },
-    {
       "inspector": "Reflections",
       "section": "reflections",
       "smokes": [
@@ -846,22 +700,7 @@
       "inspector": "ParticleSettings",
       "section": "particles",
       "smokes": [
-        "agent"
-      ],
-      "stats": true
-    },
-    {
-      "inspector": "Refraction",
-      "section": "refraction",
-      "smokes": [
-        "surfaces"
-      ],
-      "stats": true
-    },
-    {
-      "inspector": "DecalSettings",
-      "section": "decals",
-      "smokes": [
+        "agent",
         "surfaces"
       ],
       "stats": true
@@ -871,16 +710,7 @@
       "section": "reflection_probes",
       "smokes": [
         "debug-view",
-        "lod",
         "terrain-water-sky"
-      ],
-      "stats": true
-    },
-    {
-      "inspector": "VirtualGeometry",
-      "section": "virtual_geometry",
-      "smokes": [
-        "virtual-geometry"
       ],
       "stats": true
     },
@@ -889,7 +719,6 @@
       "section": "level_of_detail",
       "smokes": [
         "debug-view",
-        "lod",
         "terrain"
       ],
       "stats": true
@@ -900,14 +729,12 @@
       "smokes": [
         "agent",
         "debug-view",
-        "jobs",
         "plugins",
         "streaming",
         "terrain",
         "terrain-files",
         "terrain-surface",
-        "terrain-water-sky",
-        "torrent"
+        "terrain-water-sky"
       ],
       "stats": true
     },
@@ -949,29 +776,7 @@
       "section": "water",
       "smokes": [
         "debug-view",
-        "jobs",
-        "physics",
-        "terrain-water-sky",
-        "torrent"
-      ],
-      "stats": true
-    },
-    {
-      "inspector": "Ocean",
-      "section": "ocean",
-      "smokes": [
-        "physics",
-        "plugins",
         "terrain-water-sky"
-      ],
-      "stats": true
-    },
-    {
-      "inspector": "Deformation",
-      "section": "deformation",
-      "smokes": [
-        "plugins",
-        "terrain-surface"
       ],
       "stats": true
     },
@@ -1050,8 +855,7 @@
       "inspector": "OcclusionCulling",
       "section": "occlusion_culling",
       "smokes": [
-        "gpu-presentation",
-        "lod"
+        "gpu-presentation"
       ],
       "stats": true
     },
@@ -1079,8 +883,7 @@
         "debug-view",
         "native",
         "terrain-surface",
-        "terrain-water-sky",
-        "torrent"
+        "terrain-water-sky"
       ],
       "stats": true
     },
@@ -1097,9 +900,7 @@
       "section": "debug_view",
       "smokes": [
         "debug-view",
-        "terrain",
-        "terrain-water-sky",
-        "torrent"
+        "terrain"
       ],
       "stats": false
     }

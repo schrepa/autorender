@@ -98,25 +98,6 @@
       ],
       "type": "object"
     },
-    "DeformationStats": {
-      "properties": {
-        "stamps": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "texels": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "stamps",
-        "texels"
-      ],
-      "type": "object"
-    },
     "DetailStats": {
       "properties": {
         "dropped_impostors": {
@@ -486,25 +467,6 @@
       "required": [
         "redraws",
         "averages"
-      ],
-      "type": "object"
-    },
-    "OceanStats": {
-      "properties": {
-        "sectors": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "triangles": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "sectors",
-        "triangles"
       ],
       "type": "object"
     },
@@ -894,83 +856,6 @@
       ],
       "type": "object"
     },
-    "VirtualGeometryStats": {
-      "properties": {
-        "clusters": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "dropped": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "dropped_pages": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "failed_pages": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "loading_pages": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "missing_pages": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "occluded_clusters": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "resident_pages": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "shadow_clusters": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "shadow_triangles": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "triangles": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "visibility_buffer": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "clusters",
-        "triangles",
-        "shadow_clusters",
-        "shadow_triangles",
-        "occluded_clusters",
-        "dropped",
-        "resident_pages",
-        "loading_pages",
-        "missing_pages",
-        "dropped_pages",
-        "failed_pages",
-        "visibility_buffer"
-      ],
-      "type": "object"
-    },
     "WaterStats": {
       "properties": {
         "blocks": {
@@ -1124,12 +1009,6 @@
     "culling_enabled": {
       "type": "boolean"
     },
-    "decals": {
-      "$ref": "#/$defs/Drawn"
-    },
-    "deformation": {
-      "$ref": "#/$defs/DeformationStats"
-    },
     "disabled_features": {
       "items": {
         "type": "string"
@@ -1214,9 +1093,6 @@
     "occupancy": {
       "$ref": "#/$defs/OccupancyStats"
     },
-    "ocean": {
-      "$ref": "#/$defs/OceanStats"
-    },
     "particles": {
       "$ref": "#/$defs/Drawn"
     },
@@ -1258,9 +1134,6 @@
       "$ref": "#/$defs/ProbeStats"
     },
     "reflections": {
-      "$ref": "#/$defs/Applied"
-    },
-    "refraction": {
       "$ref": "#/$defs/Applied"
     },
     "render_candidates": {
@@ -1330,11 +1203,6 @@
       "minimum": 0,
       "type": "integer"
     },
-    "transparent_draws": {
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
     "triangles": {
       "format": "uint32",
       "minimum": 0,
@@ -1347,9 +1215,6 @@
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
-    },
-    "virtual_geometry": {
-      "$ref": "#/$defs/VirtualGeometryStats"
     },
     "visible_instances": {
       "format": "uint32",
@@ -1397,7 +1262,6 @@
     "resident_textures",
     "texture_upload_bytes",
     "resident_texture_bytes",
-    "transparent_draws",
     "pipelines",
     "pipelines_created",
     "render_passes",
@@ -1408,17 +1272,12 @@
     "haze",
     "reflections",
     "particles",
-    "refraction",
-    "decals",
     "reflection_probes",
-    "virtual_geometry",
     "level_of_detail",
     "terrain",
     "ground_cover",
     "occupancy",
     "water",
-    "ocean",
-    "deformation",
     "clouds",
     "world_streaming",
     "sky",

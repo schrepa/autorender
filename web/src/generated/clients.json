@@ -1,14 +1,26 @@
 [
   {
+    "folder": "crates/engine_worker",
     "game": null,
+    "native": null,
     "package": "engine_worker",
     "page": null,
     "wasm": "engine_worker"
   },
   {
-    "game": "stress",
-    "package": "stress-lab",
-    "page": "stress.html",
-    "wasm": "stress_lab"
+    "folder": "crates/engine_player",
+    "game": "player",
+    "native": "engine-player-native",
+    "package": "engine_player",
+    "page": "player.html",
+    "wasm": "engine_player"
+  },
+  {
+    "folder": "examples/highlands",
+    "game": "highlands",
+    "native": "highlands-native",
+    "package": "highlands",
+    "page": "highlands.html",
+    "wasm": "highlands"
   }
 ]

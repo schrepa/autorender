@@ -9,7 +9,7 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "engine-player"
+name = "engine-player-native"
 path = "src/main.rs"
 
 [[bin]]
@@ -19,7 +19,7 @@ required-features = ["schema"]
 [package.metadata.engine]
 page = "player.html"
 game = "player"
-native = "engine-player"
+native = "engine-player-native"
 
 [features]
 default = []

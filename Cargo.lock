@@ -606,11 +606,9 @@ dependencies = [
  "bevy_ecs",
  "engine",
  "engine_core",
- "engine_dev",
  "engine_native",
  "engine_scene",
  "serde_json",
- "stress-lab",
 ]
 
 [[package]]
@@ -838,7 +836,6 @@ dependencies = [
  "engine_core",
  "engine_lodbuild",
  "engine_scene",
- "engine_vgbuild",
  "glam 0.30.9",
  "gltf",
  "png",
@@ -967,6 +964,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_player"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "engine_native",
+ "engine_sources",
+ "schemars",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "engine_profile"
 version = "0.1.0"
 dependencies = [
@@ -1073,16 +1085,6 @@ dependencies = [
  "engine_math",
  "engine_sources",
  "libm",
-]
-
-[[package]]
-name = "engine_vgbuild"
-version = "0.1.0"
-dependencies = [
- "cc",
- "engine_assets",
- "engine_math",
- "glam 0.30.9",
 ]
 
 [[package]]
@@ -1549,6 +1551,19 @@ name = "hermit-abi"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
+
+[[package]]
+name = "highlands"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "engine_native",
+ "engine_sources",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
 
 [[package]]
 name = "iced-x86"
@@ -3043,21 +3058,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "stress-lab"
-version = "0.1.0"
-dependencies = [
- "engine",
- "engine_native",
- "engine_sources",
- "schemars",
- "serde",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "strict-num"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4063,7 +4063,6 @@ dependencies = [
  "engine_sources",
  "engine_terrain",
  "engine_textures",
- "engine_vgbuild",
  "engine_worker",
  "glam 0.30.9",
  "gltf",
@@ -4074,6 +4073,7 @@ dependencies = [
  "sha2",
  "texture2ddecoder",
  "tiff",
+ "toml_edit",
  "zstd",
 ]
 

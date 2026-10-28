@@ -51,8 +51,6 @@ fn mesh_bytes(mesh: &Mesh) -> Vec<u8> {
         MeshStreams {
             colors: mesh.colors(),
             uv1: mesh.uv1(),
-            joints: mesh.joints(),
-            weights: mesh.weights(),
             lods: mesh.lods().map(AsRef::as_ref),
         },
     )

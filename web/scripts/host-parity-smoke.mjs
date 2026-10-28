@@ -9,7 +9,7 @@ import { expectDisabledFeatures } from "./exercised.mjs";
 import { cargoBinaries, devUrl, protocol } from "./harness.mjs";
 import { workspacePath } from "./workspace.mjs";
 
-const binaries = cargoBinaries(["-p", "engine_player", "--bin", "engine-player", "--profile", "quick", "--features", "dev"]);
+const binaries = cargoBinaries(["-p", "engine_player", "--bin", "engine-player-native", "--profile", "quick", "--features", "dev"]);
 
 const KNOWN = [
   ["describe ProfileCapture: native only *", "host", "native profiles take hardware counters and PIX"],
@@ -129,7 +129,7 @@ await writeFile(commandsPath, JSON.stringify({
   entities: [{ id: "box", mesh: "box", material: "plain", transform: { translation: [0, 0, 0] } }],
 }));
 const native = await launchNativeSession({
-  program: (await binaries)["engine-player"],
+  program: (await binaries)["engine-player-native"],
   args: ["--source", commandsPath, "--without", "collision,physics", "--size=640x400", "--workers=2"],
 }).catch(async error => { await rm(commandsPath, { force: true }); throw error; });
 let web;
@@ -226,7 +226,7 @@ await writeFile(scenePath, JSON.stringify({
 }));
 let imagesWeb, imagesNative;
 try {
-  imagesNative = await launchNativeSession({ program: (await binaries)["engine-player"], args: ["--source", scenePath, "--size=320x200"] });
+  imagesNative = await launchNativeSession({ program: (await binaries)["engine-player-native"], args: ["--source", scenePath, "--size=320x200"] });
   imagesWeb = await launchBrowserSession({ url: devUrl("player.html", { source: "/scenes/host-parity.scene.json" }).href });
   const [web, native] = [await imagesWeb.execute({ op: "digest" }), await imagesNative.execute({ op: "digest" })];
   assert.ok(web.ok && native.ok, JSON.stringify({ web: web.error, native: native.error }));

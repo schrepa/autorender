@@ -9,12 +9,6 @@ export interface Reply {
   version?: number | null;
 }
 
-export interface AnimationResult {
-  after: PlayerValues;
-  before: PlayerValues;
-  temporary: boolean;
-}
-
 export interface Artifact {
   bytes: number;
   mime_type: string;
@@ -23,7 +17,6 @@ export interface Artifact {
 }
 
 export interface AssetDigests {
-  clips: DigestEntry;
   materials: DigestEntry;
   meshes: DigestEntry;
   textures: DigestEntry;
@@ -120,29 +113,6 @@ export interface DebugMissingAssetResult {
   temporary: boolean;
 }
 
-export interface DeformResult {
-  dropped: number;
-  enabled: boolean;
-  stamps: number;
-  temporary: boolean;
-  track: Track;
-}
-
-export interface DeformationQueryResult {
-  dropped: number;
-  samples: DepthSample[];
-  seconds: number;
-  stamps: number;
-}
-
-export interface DepthSample {
-  deform?: number | null;
-  depth?: number | null;
-  ground?: number | null;
-  rim: number;
-  track: number;
-}
-
 export type DescribeResult = { types: DescribedType[] } | { constraints: string; control_state: Record<string, unknown>; kind: TypeKind; name: string; schema: unknown } | { constraints: string; kind: TypeKind; name: string; schema: unknown } | { kind: TypeKind; name: string; schema: unknown; source: string } | { codes: string[]; kind: TypeKind; name: string } | { descriptor: InspectorDescriptor; feature?: string | null; kind: TypeKind };
 
 export interface DescribedType {
@@ -188,7 +158,7 @@ export interface DistributionResult {
   distribution?: Distribution | null;
 }
 
-export type DrawnKind = "mesh" | "placed" | "card" | "placed_card" | "virtual" | "terrain" | "cover" | "water" | "sea" | "falls" | "sky";
+export type DrawnKind = "mesh" | "placed" | "card" | "placed_card" | "terrain" | "cover" | "water" | "falls" | "sky";
 
 export type Effect = { kind: "pause"; paused: boolean } | { kind: "wait"; within_ms: number } | { kind: "frame"; timestamp: number } | { kind: "show" } | { args: Record<string, unknown>; kind: "game"; name: string } | { kind: "source" };
 
@@ -320,16 +290,7 @@ export interface Observation {
   tick?: string | null;
 }
 
-export interface OceanWave {
-  amplitude: number;
-  frequency: number;
-  phase: number;
-  reach: number;
-  vector: number[];
-}
-
 export interface OpResults {
-  animation: AnimationResult;
   assets: AssetsResult;
   camera: CameraResult;
   capture: CaptureResult;
@@ -337,8 +298,6 @@ export interface OpResults {
   culling: CullingResult;
   debug_fault: DebugFaultResult;
   debug_missing_asset: DebugMissingAssetResult;
-  deform: DeformResult;
-  deformation_query: DeformationQueryResult;
   describe: DescribeResult;
   digest: DigestResult;
   distribution: DistributionResult;
@@ -367,7 +326,6 @@ export interface OpResults {
   terrain_route: TerrainRouteResult;
   terrain_sweep: TerrainSweepResult;
   terrain_undo: TerrainEdited;
-  water_query: WaterQueryResult;
   world_changes: WorldChangesResult;
 }
 
@@ -390,13 +348,6 @@ export interface OverlapResult {
 export interface PlacedHit {
   asset: number;
   layer: number;
-}
-
-export interface PlayerValues {
-  clip?: string | null;
-  looping: boolean;
-  speed: number;
-  time: number;
 }
 
 export interface PresentResult {
@@ -484,13 +435,6 @@ export interface RouteOptions {
 export interface SceneObservation {
   id: string;
   revision: string;
-}
-
-export interface SeaSurface {
-  compression: number;
-  height: number;
-  normal: number[];
-  still: number[];
 }
 
 export type SensorEventKindView = "enter" | "exit";
@@ -643,15 +587,6 @@ export interface TextureAsset {
 
 export type TextureState = "cpu_ready" | "missing";
 
-export interface Track {
-  depth: number;
-  flatness: number;
-  from: number[];
-  radius: number;
-  seconds: number;
-  to: number[];
-}
-
 export type TypeKind = "component" | "resource" | "authoring" | "protocol" | "observation" | "catalog";
 
 export interface WalkResult {
@@ -660,8 +595,6 @@ export interface WalkResult {
   points: number[][];
   searched: number;
 }
-
-export type WaterKind = "river" | "lake" | "fall" | "sea";
 
 export interface WaterProbe {
   depth: number;
@@ -675,36 +608,13 @@ export interface WaterProbe {
   white: number;
 }
 
-export interface WaterQueryResult {
-  amplitude?: number | null;
-  level?: number | null;
-  samples: WaterSample[];
-  seconds: number;
-  waves?: OceanWave[] | null;
-}
-
 export type WaterReach = "pool" | "plane" | "steps" | "cascade" | "falls";
-
-export interface WaterSample {
-  depth?: number | null;
-  ground?: number | null;
-  ocean?: SeaSurface | null;
-  water?: WorldWater | null;
-}
 
 export interface WorldChangesResult {
   newly_removed: number;
   removed: number;
   restored: number;
   temporary: boolean;
-}
-
-export interface WorldWater {
-  depth: number;
-  foam: number;
-  kind: WaterKind;
-  surface: number;
-  velocity: number[];
 }
 
 export interface Worst {

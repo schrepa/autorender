@@ -37,7 +37,6 @@ export interface Runtime {
   suspend(): void;
   reset_camera(): void;
   reload_scene(source: string, files: unknown): void;
-  set_gpu_presentation(enabled: boolean): void;
   set_tick_pipelining(enabled: boolean): void;
   set_temporal_antialiasing(enabled: boolean): void;
   set_occlusion_culling(enabled: boolean): void;
@@ -47,7 +46,6 @@ export interface Runtime {
   set_dynamic_resolution(enabled: boolean): void;
   apply_host_settings(query: string): void;
   stats(): Json<FrameStats>;
-  gpu_presentation(): boolean;
   tick_pipelining(): boolean;
   temporal_antialiasing(): boolean;
   occlusion_culling(): boolean;

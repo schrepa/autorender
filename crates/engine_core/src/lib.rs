@@ -28,7 +28,6 @@ mod lights;
 pub mod math;
 mod mesh_lods;
 pub use engine_math::collections;
-mod packed;
 mod particles;
 mod physics;
 pub mod presentation_bounds;

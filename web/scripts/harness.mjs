@@ -93,7 +93,7 @@ export async function nativeBinary(cargoPackage, binary, { profiling = false } =
 }
 
 export function playerProgram(options = {}) {
-  return nativeBinary("engine_player", "engine-player", options);
+  return nativeBinary("engine_player", "engine-player-native", options);
 }
 
 export function cargoBinaries(cargoArguments, env = process.env) {

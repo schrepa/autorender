@@ -398,11 +398,6 @@ impl PresentedTransforms {
         self.prepared_topology = hierarchy.topology_revision();
     }
 
-    #[cold]
-    fn resolve_record(&mut self, node: usize, entity: Entity) -> Option<usize> {
-        resolve_record(&mut self.history_nodes, &self.indices, node, entity)
-    }
-
     #[inline]
     pub(crate) fn observer(&mut self) -> Observer<'_> {
         let records = self.history_nodes.len();

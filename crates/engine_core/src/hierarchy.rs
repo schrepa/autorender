@@ -827,24 +827,6 @@ impl GlobalTransforms {
         Some((self.value_at(index), self.revisions[index]))
     }
 
-    pub(crate) fn valid_index(&self, entity: Entity, hint: &mut TransformIndex) -> Option<usize> {
-        let index = if self
-            .sources
-            .get(hint.0)
-            .is_some_and(|source| source.entity == entity)
-        {
-            hint.0
-        } else {
-            *self.indices.get(&entity)?
-        };
-        hint.0 = index;
-        (self.links[index].global != Global::Invalid).then_some(index)
-    }
-
-    pub(crate) fn validity_epoch(&self) -> u64 {
-        self.validity_epoch
-    }
-
     pub fn len(&self) -> usize {
         self.sources.len()
     }

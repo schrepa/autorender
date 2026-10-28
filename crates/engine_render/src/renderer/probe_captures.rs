@@ -183,9 +183,6 @@ impl Renderer {
             let Some(mesh) = self.meshes.get(&batch.mesh) else {
                 continue;
             };
-            if {
-                continue;
-            }
             let variant = self.batch_binding(batch, Some(mesh)).1.uber();
             if !self.mesh_pipelines.variants.contains_key(&(kind, variant))
                 && !missing.contains(&variant)

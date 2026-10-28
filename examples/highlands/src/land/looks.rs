@@ -12,7 +12,6 @@ pub(super) struct Look {
     pub(super) projection: SurfaceProjection,
     pub(super) cover: Option<Cover>,
     pub(super) depth: f32,
-    pub(super) deform: f32,
 }
 
 pub(super) const LOOKS: [Look; 12] = [
@@ -33,7 +32,6 @@ pub(super) const LOOKS: [Look; 12] = [
             sway: 0.6,
         }),
         depth: 0.03,
-        deform: 0.04,
     },
     Look {
         name: "dry_grass",
@@ -52,7 +50,6 @@ pub(super) const LOOKS: [Look; 12] = [
             sway: 0.7,
         }),
         depth: 0.03,
-        deform: 0.03,
     },
     Look {
         name: "dirt",
@@ -65,7 +62,6 @@ pub(super) const LOOKS: [Look; 12] = [
         projection: SurfaceProjection::Top,
         cover: None,
         depth: 0.05,
-        deform: 0.06,
     },
     Look {
         name: "forest_floor",
@@ -78,7 +74,6 @@ pub(super) const LOOKS: [Look; 12] = [
         projection: SurfaceProjection::Top,
         cover: None,
         depth: 0.06,
-        deform: 0.05,
     },
     Look {
         name: "rock",
@@ -91,7 +86,6 @@ pub(super) const LOOKS: [Look; 12] = [
         projection: SurfaceProjection::Biplanar,
         cover: None,
         depth: 0.25,
-        deform: 0.0,
     },
     Look {
         name: "snow",
@@ -104,7 +98,6 @@ pub(super) const LOOKS: [Look; 12] = [
         projection: SurfaceProjection::Top,
         cover: None,
         depth: 0.04,
-        deform: 0.3,
     },
     Look {
         name: "wet_grass",
@@ -123,7 +116,6 @@ pub(super) const LOOKS: [Look; 12] = [
             sway: 0.6,
         }),
         depth: 0.03,
-        deform: 0.07,
     },
     Look {
         name: "sand",
@@ -136,7 +128,6 @@ pub(super) const LOOKS: [Look; 12] = [
         projection: SurfaceProjection::Top,
         cover: None,
         depth: 0.012,
-        deform: 0.05,
     },
     Look {
         name: "gravel",
@@ -149,7 +140,6 @@ pub(super) const LOOKS: [Look; 12] = [
         projection: SurfaceProjection::Top,
         cover: None,
         depth: 0.035,
-        deform: 0.02,
     },
     Look {
         name: "cobble",
@@ -162,7 +152,6 @@ pub(super) const LOOKS: [Look; 12] = [
         projection: SurfaceProjection::Top,
         cover: None,
         depth: 0.12,
-        deform: 0.0,
     },
     Look {
         name: "road",
@@ -175,7 +164,6 @@ pub(super) const LOOKS: [Look; 12] = [
         projection: SurfaceProjection::Top,
         cover: None,
         depth: 0.03,
-        deform: 0.04,
     },
     Look {
         name: "silt",
@@ -188,6 +176,5 @@ pub(super) const LOOKS: [Look; 12] = [
         projection: SurfaceProjection::Top,
         cover: None,
         depth: 0.008,
-        deform: 0.06,
     },
 ];

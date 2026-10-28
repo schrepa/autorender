@@ -6,7 +6,7 @@ use engine_native::{Arguments, HostOptions, files};
 
 use crate::{ScenePlayer, features};
 
-const USAGE: &str = "Usage: engine-player --source PATH [--without FEATURE,...] [OPTIONS]";
+const USAGE: &str = "Usage: engine-player-native --source PATH [--without FEATURE,...] [OPTIONS]";
 
 #[cfg(feature = "dev")]
 const PARAMETERS: [(&str, &str); 2] = [

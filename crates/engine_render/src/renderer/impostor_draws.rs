@@ -75,7 +75,7 @@ impl Renderer {
             let mesh = &self.meshes[&batch.mesh];
             let source = &snapshot.meshes[batch.source_index].mesh;
             let (group, variant) = self.materials.binding(batch.material);
-            let eligible = && source.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES;
+            let eligible = source.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES;
             let mut record = ImpostorRecord::default();
             if eligible {
                 let material = batch

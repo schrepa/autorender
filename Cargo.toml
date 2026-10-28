@@ -32,7 +32,6 @@ engine_profiler = { path = "crates/engine_profiler" }
 engine_worker = { path = "crates/engine_worker" }
 engine_panic = { path = "crates/engine_panic" }
 engine_assetc = { path = "tools/assetc" }
-engine_vgbuild = { path = "tools/vgbuild" }
 engine_lodbuild = { path = "tools/lodbuild" }
 policy = { path = "tools/policy" }
 base64 = "=0.22.1"
