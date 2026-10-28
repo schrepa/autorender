@@ -24,7 +24,6 @@ pub struct FrameStats {
     pub resolution: ResolutionStats,
     pub dynamic_resolution: DynamicResolutionStats,
     pub jobs: crate::JobStats,
-    pub navigation: crate::NavStats,
     pub physics: crate::PhysicsStats,
     pub disabled_features: Names,
     #[serde(flatten)]

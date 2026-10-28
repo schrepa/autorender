@@ -803,7 +803,6 @@ impl AppHost {
             resolution: self.resolution_stats((width, height)),
             dynamic_resolution,
             jobs: engine_core::JobStats::default(),
-            navigation: engine_core::NavStats::default(),
             physics: engine_core::PhysicsStats::default(),
             disabled_features: self.renderer.disabled_features(),
             render: rendered,
@@ -907,13 +906,6 @@ impl AppHost {
                     .get_resource::<engine_core::StaticTables>()
                     .is_some_and(engine_core::StaticTables::loading)
                 || self.pipeline_list.waiting(),
-            navigation: self
-                .engine
-                .app
-                .world()
-                .get_resource::<engine_core::NavAgents>()
-                .map(engine_core::NavAgents::stats)
-                .unwrap_or_default(),
             jobs: self
                 .engine
                 .app

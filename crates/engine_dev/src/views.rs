@@ -207,36 +207,6 @@ pub struct StreamedCellView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct NavAgentView {
-    pub agent: engine_core::NavAgent,
-    pub status: engine_core::NavStatus,
-    pub searched_for: Option<[f32; 2]>,
-    pub length: f32,
-    pub points: usize,
-    pub next: usize,
-    pub left: f32,
-    pub searched: usize,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct NavAgentsView {
-    pub agents: u32,
-    pub searching: u32,
-    pub waiting: u32,
-    pub walking: u32,
-    pub arrived: u32,
-    pub unreachable: u32,
-    pub work: u64,
-    pub grounds: u32,
-    pub portals: u32,
-    pub failed_jobs: u64,
-    pub latest_job_failure: Option<String>,
-    pub first: Vec<NavAgentRow>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct JobsView {
     pub workers: u32,
     pub running: u32,
@@ -270,16 +240,6 @@ pub struct StaticTableRow {
     pub parts: u64,
     pub arrived: u64,
     pub showing: bool,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct NavAgentRow {
-    pub id: Option<String>,
-    pub status: engine_core::NavStatus,
-    pub position: [f32; 3],
-    pub destination: Option<[f32; 2]>,
-    pub left: f32,
 }
 
 #[derive(Serialize)]

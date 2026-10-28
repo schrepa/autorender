@@ -100,7 +100,7 @@ impl Terrains {
         Some(base.with_stamps(&stamps).map_or(base, Arc::new))
     }
 
-    pub(crate) fn walked_terrain(&self, from: Vec2, to: Vec2) -> Walked {
+    pub fn walked_terrain(&self, from: Vec2, to: Vec2) -> Walked {
         let Some(state) = self.walked(from, to) else {
             return Walked::Off;
         };
@@ -127,7 +127,7 @@ impl Terrains {
         })
     }
 
-    pub(crate) fn walk_obstacles(&self, entity: Entity) -> Vec<Obstacle> {
+    pub fn walk_obstacles(&self, entity: Entity) -> Vec<Obstacle> {
         self.entries
             .iter()
             .find(|state| state.entity == entity && state.around.is_none())
@@ -282,24 +282,24 @@ impl Terrains {
     }
 }
 
-pub(crate) struct WalkedTerrain {
-    pub(crate) entity: Entity,
-    pub(crate) origin: Vec3,
-    pub(crate) pyramid: Pyramid,
-    pub(crate) layers: Arc<Layers>,
-    pub(crate) stack: String,
-    pub(crate) recipe: String,
-    pub(crate) edits: Vec<Stamp>,
+pub struct WalkedTerrain {
+    pub entity: Entity,
+    pub origin: Vec3,
+    pub pyramid: Pyramid,
+    pub layers: Arc<Layers>,
+    pub stack: String,
+    pub recipe: String,
+    pub edits: Vec<Stamp>,
 }
 
-pub(crate) enum Walked {
+pub enum Walked {
     Ready(WalkedTerrain),
     Baking,
     Off,
 }
 
 impl WalkedTerrain {
-    fn reaching(&self, key: TileKey) -> Vec<Stamp> {
+    pub fn reaching(&self, key: TileKey) -> Vec<Stamp> {
         self.edits
             .iter()
             .copied()
@@ -307,24 +307,7 @@ impl WalkedTerrain {
             .collect()
     }
 
-    pub(crate) fn portals_record(&self, key: TileKey, gait: &Gait) -> (Vec<u8>, RecordKey) {
-        let job = PortalsJob {
-            stack: self.stack.clone(),
-            pyramid: self.pyramid,
-            key,
-            stamps: self.reaching(key),
-            gait: *gait,
-        };
-        let input = job.identity();
-        let record = RecordKey::new(
-            &engine_terrain::sources::PORTALS,
-            PortalsJob::KIND.name(),
-            &input,
-        );
-        (input, record)
-    }
-
-    pub(crate) fn tile_record(&self, key: TileKey) -> (Vec<u8>, RecordKey) {
+    pub fn tile_record(&self, key: TileKey) -> (Vec<u8>, RecordKey) {
         let job = TileJob {
             recipe: self.recipe.clone(),
             key,

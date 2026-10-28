@@ -37,8 +37,6 @@ results! {
     overlap: crate::features::collision::OverlapResult,
     shape_cast: crate::features::collision::ShapeCastResult,
     collision_events: crate::features::collision::CollisionEventsResult,
-    nav_path: crate::features::navigation::NavPathResult,
-    nav_go: crate::features::navigation::NavGoResult,
     world_changes: crate::features::world_streaming::WorldChangesResult,
     terrain: crate::features::terrain::TerrainControlResult,
     present: crate::results::PresentResult,

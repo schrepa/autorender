@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{Grounded, InterpolateTransform, Mesh, NavAgent, TerrainPrefetch, Tint};
+use engine_core::{Grounded, InterpolateTransform, Mesh, TerrainPrefetch, Tint};
+use engine_navigation::NavAgent;
 use engine_settings::ErrorCode;
 
 use crate::instance::Lookups;
@@ -43,7 +44,7 @@ macro_rules! entity_components {
                 rule: any,
                 direct
             },
-            nav_agent: engine_core::NavAgent {
+            nav_agent: engine_navigation::NavAgent {
                 feature: Navigation,
                 shows: "NavAgent.agent",
                 rule: any,

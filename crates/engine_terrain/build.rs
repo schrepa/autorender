@@ -1,9 +1,8 @@
 use engine_sources::Set;
 
-const SETS: [(&str, &[&str]); 8] = [
+const SETS: [(&str, &[&str]); 7] = [
     ("TILES", &["tile"]),
     ("BAKES", &["bake"]),
-    ("PORTALS", &["nav"]),
     ("LIGHTING", &["lighting"]),
     ("BOUNCE", &["bounce"]),
     ("MACRO", &["macro_colors"]),

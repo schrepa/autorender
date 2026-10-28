@@ -60,11 +60,7 @@ impl WalkRecords {
                     self.grounds.insert(asked.record, kept);
                 }
                 None => {
-                    let made = job_output(
-                        PortalsJob::KIND.name(),
-                        output,
-                        engine_terrain::jobs::portals_output,
-                    );
+                    let made = job_output(PortalsJob::KIND, output, portals_output);
                     let kept = kept(made, (tick, &mut self.reads), failures);
                     self.portals.insert(asked.record, kept);
                 }
@@ -81,7 +77,7 @@ impl WalkRecords {
         tick: u64,
     ) -> Resolved {
         let gait = running.search.gait();
-        let priority = crate::job_priority(crate::GAMEPLAY_JOBS, 0);
+        let priority = job_priority(GAMEPLAY_JOBS, 0);
         let mut progress = false;
         for &want in running.search.wants() {
             let found = match want {
@@ -100,15 +96,10 @@ impl WalkRecords {
                     found.map(|ground| running.held.grounds.insert(key, ground))
                 }
                 Want::Portals(key) => {
-                    let (input, record) = running.terrain.portals_record(key, &gait);
+                    let (input, record) = portals_record(&running.terrain, key, &gait);
                     let found = read(&mut self.portals, record, (tick, &mut self.reads));
                     if let Found::Missing = found {
-                        self.ask(
-                            slots,
-                            (PortalsJob::KIND.name(), input, record),
-                            priority,
-                            None,
-                        );
+                        self.ask(slots, (PortalsJob::KIND, input, record), priority, None);
                     }
                     found.map(|portals| running.held.portals.insert(key, portals))
                 }
@@ -133,16 +124,11 @@ impl WalkRecords {
         tick: u64,
     ) {
         let gait = running.search.gait();
-        let priority = crate::job_priority(crate::GAMEPLAY_JOBS, 1);
+        let priority = job_priority(GAMEPLAY_JOBS, 1);
         while let Some(&key) = running.search.ahead().get(running.asked_ahead) {
-            let (input, record) = running.terrain.portals_record(key, &gait);
+            let (input, record) = portals_record(&running.terrain, key, &gait);
             if let Found::Missing = read(&mut self.portals, record, (tick, &mut self.reads))
-                && !self.ask(
-                    slots,
-                    (PortalsJob::KIND.name(), input, record),
-                    priority,
-                    None,
-                )
+                && !self.ask(slots, (PortalsJob::KIND, input, record), priority, None)
             {
                 return;
             }

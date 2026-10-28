@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use engine_navigation::NavigationWorker;
 use engine_tables::TableWorker;
 use engine_terrain::jobs::TerrainWorker;
 use engine_textures::TextureWorker;
@@ -50,6 +51,7 @@ struct Held {
 enum Runner {
     Tables,
     Textures,
+    Navigation,
     Terrain,
 }
 
@@ -59,6 +61,8 @@ impl Runner {
             Self::Tables
         } else if TextureWorker::runs(kind) {
             Self::Textures
+        } else if NavigationWorker::runs(kind) {
+            Self::Navigation
         } else {
             Self::Terrain
         }
@@ -68,6 +72,7 @@ impl Runner {
 #[derive(Default)]
 pub struct Worker {
     terrain: TerrainWorker,
+    navigation: NavigationWorker,
     tables: TableWorker,
     textures: TextureWorker,
     held: Vec<Held>,
@@ -88,6 +93,7 @@ impl Worker {
 
     pub fn clear(&mut self) {
         self.terrain = TerrainWorker::new();
+        self.navigation = NavigationWorker::new();
         self.tables = TableWorker::new();
         self.textures = TextureWorker::new();
         self.held.clear();
@@ -110,6 +116,7 @@ impl Worker {
     pub fn cancel(&mut self, id: u64) {
         self.held.retain(|job| job.id != id);
         self.terrain.cancel(id);
+        self.navigation.cancel(id);
         self.tables.cancel(id);
         self.textures.cancel(id);
     }
@@ -129,12 +136,14 @@ impl Worker {
             });
         }
         let runner = Runner::of(&job.kind);
-        let (terrain, tables, textures) = (&mut self.terrain, &mut self.tables, &mut self.textures);
+        let (terrain, navigation) = (&mut self.terrain, &mut self.navigation);
+        let (tables, textures) = (&mut self.tables, &mut self.textures);
         let stepped = (|| {
             if !job.started {
                 match runner {
                     Runner::Tables => tables.start(id, &job.kind, &job.input)?,
                     Runner::Textures => textures.start(id, &job.kind, &job.input)?,
+                    Runner::Navigation => navigation.start(id, &job.kind, &job.input, terrain)?,
                     Runner::Terrain => terrain.start(id, &job.kind, &job.input)?,
                 }
                 job.started = true;
@@ -144,6 +153,7 @@ impl Worker {
                 let output = match runner {
                     Runner::Tables => tables.step(id, STEP_UNITS)?,
                     Runner::Textures => textures.step(id, STEP_UNITS)?,
+                    Runner::Navigation => navigation.step(id, STEP_UNITS)?,
                     Runner::Terrain => terrain.step(id, STEP_UNITS)?,
                 };
                 if let Some(output) = output {
@@ -163,6 +173,7 @@ impl Worker {
             Err(error) => {
                 self.held.remove(at);
                 self.terrain.cancel(id);
+                self.navigation.cancel(id);
                 self.tables.cancel(id);
                 self.textures.cancel(id);
                 Some(Report::Failed(id, error))
@@ -177,6 +188,7 @@ impl Worker {
         }
         match engine_tables::run(kind, input).or_else(|| engine_textures::run(kind, input)) {
             Some(output) => output,
+            None if NavigationWorker::runs(kind) => self.navigation.run(kind, input, &self.terrain),
             None => self.terrain.run(kind, input),
         }
     }
@@ -185,6 +197,7 @@ impl Worker {
         match Runner::of(kind) {
             Runner::Tables => self.tables.start(id, kind, input),
             Runner::Textures => self.textures.start(id, kind, input),
+            Runner::Navigation => self.navigation.start(id, kind, input, &self.terrain),
             Runner::Terrain => self.terrain.start(id, kind, input),
         }
     }
@@ -194,6 +207,8 @@ impl Worker {
             self.tables.step(id, budget)
         } else if self.textures.holds(id) {
             self.textures.step(id, budget)
+        } else if self.navigation.holds(id) {
+            self.navigation.step(id, budget)
         } else {
             self.terrain.step(id, budget)
         }

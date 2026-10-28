@@ -4,18 +4,19 @@ use std::sync::Arc;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::Terrain;
+use engine_navigation::{
+    Gait, NavOptions, NavPath, PortalsJob, TilePortals, WalkData, WalkGround, WalkSearch,
+};
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use engine_terrain::bounce;
 use engine_terrain::jobs::{
-    self, BakeJob, BounceJob, LightingJob, MacroJob, PortalsJob, StackView, TerrainRecipe,
-    TerrainWorker, TileJob, WaterJob,
+    self, BakeJob, BounceJob, LightingJob, MacroJob, StackView, TerrainRecipe, TileJob, WaterJob,
 };
 use engine_terrain::lighting::{self, Ground};
 use engine_terrain::macro_colors;
 use engine_terrain::{
-    BiomeRules, Gait, Generator, Layer, Layers, NavOptions, NavPath, Obstacle, PATCH_QUADS,
-    PATCHES_PER_TILE, Pyramid, SettleRegion, SettleStart, Stamp, StampOp, TILE_QUADS, Tile,
-    TileKey, TilePortals, WalkData, WalkGround, WalkSearch, WaterPart, codec,
+    BiomeRules, Generator, Layer, Layers, Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Pyramid,
+    SettleRegion, SettleStart, Stamp, StampOp, TILE_QUADS, Tile, TileKey, WaterPart, codec,
 };
 use glam::Vec2;
 use serde_json::json;
@@ -253,7 +254,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         graph.portals.insert(key, Arc::new(held));
         graph.grounds.insert(key, Arc::new(ground));
         bytes_held += bytes.len();
-        records.push((PortalsJob::KIND.name(), bytes));
+        records.push((PortalsJob::KIND, bytes));
     }
     let edited_layers = Arc::new(
         baked
@@ -559,7 +560,7 @@ fn portals(
         stamps: stamps.to_vec(),
         gait: *gait,
     };
-    let bytes = worker.run(PortalsJob::KIND.name(), &job.identity())?;
+    let bytes = worker.run(PortalsJob::KIND, &job.identity())?;
     let ground = WalkGround::new(tile, layers, pyramid);
     observed.check(
         codec::encode(&TilePortals::new(&ground, pyramid, gait)) == bytes,
@@ -716,7 +717,7 @@ impl Recipe {
 
 #[derive(Default)]
 struct Worker {
-    worker: TerrainWorker,
+    worker: engine_worker::Worker,
     next: u64,
     log: Vec<serde_json::Value>,
 }

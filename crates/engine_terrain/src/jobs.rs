@@ -10,15 +10,13 @@ use crate::macro_colors::{MACRO_BLOCK, MAX_MACRO_TEXELS, macro_colors};
 use crate::shading::ShadingMaking;
 use crate::steady_water::{PartMaking, SettledReads, Steadying};
 use crate::{
-    BiomeRules, Biomes, Gait, Generator, Layers, MacroCauses, Placing, Pyramid, Solid, Stamp,
-    SteadySummary, SteadyWater, TILE_QUADS, Tile, TileKey, TilePortals, TileShading, TileWater,
-    WaterPart,
+    BiomeRules, Biomes, Generator, Layers, MacroCauses, Placing, Pyramid, Solid, Stamp,
+    SteadySummary, SteadyWater, TILE_QUADS, Tile, TileKey, TileShading, TileWater, WaterPart,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
     Tile,
-    Portals,
     Bake,
     Lighting,
     Water,
@@ -29,9 +27,8 @@ pub enum JobKind {
 }
 
 impl JobKind {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 8] = [
         Self::Tile,
-        Self::Portals,
         Self::Bake,
         Self::Lighting,
         Self::Water,
@@ -44,7 +41,6 @@ impl JobKind {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Tile => "terrain_tile",
-            Self::Portals => "terrain_portals",
             Self::Bake => "terrain_bake",
             Self::Lighting => "terrain_lighting",
             Self::Water => "terrain_water",
@@ -175,35 +171,6 @@ impl TileJob {
 }
 
 pub fn tile_output(bytes: &[u8]) -> Result<Tile, CodecError> {
-    codec::decode(bytes)
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct PortalsJob {
-    pub stack: String,
-    pub pyramid: Pyramid,
-    pub key: TileKey,
-    pub stamps: Vec<Stamp>,
-    pub gait: Gait,
-}
-
-record!(PortalsJob {
-    stack,
-    pyramid,
-    key,
-    stamps,
-    gait,
-});
-
-impl PortalsJob {
-    pub const KIND: JobKind = JobKind::Portals;
-
-    pub fn identity(&self) -> Vec<u8> {
-        codec::encode(self)
-    }
-}
-
-pub fn portals_output(bytes: &[u8]) -> Result<TilePortals, CodecError> {
     codec::decode(bytes)
 }
 
@@ -424,7 +391,7 @@ impl Recipe {
     }
 }
 
-pub(crate) fn stamped(layers: &Arc<Layers>, stamps: &[Stamp]) -> Result<Arc<Layers>, String> {
+pub fn stamped(layers: &Arc<Layers>, stamps: &[Stamp]) -> Result<Arc<Layers>, String> {
     if stamps.is_empty() {
         return Ok(layers.clone());
     }
@@ -577,7 +544,6 @@ fn between(tile: &Tile, x: f32, z: f32) -> f32 {
 
 enum Running {
     Tile(Box<Generator>),
-    Portals(Box<(Arc<Layers>, Pyramid, TileKey, Gait)>),
     Bake(Box<(Layers, Pyramid)>),
     Lighting(Box<(GroundMaking, LightingJob)>),
     Water(Box<PartMaking>),
@@ -650,6 +616,10 @@ impl TerrainWorker {
         self.records.remove(key);
     }
 
+    pub fn stack(&self, key: &str) -> Option<&Arc<Layers>> {
+        self.stacks.get(key)
+    }
+
     pub fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         const WHOLE: u64 = u64::MAX;
         self.start(WHOLE, kind, input)?;
@@ -686,25 +656,6 @@ impl TerrainWorker {
                         .with_surface(recipe.rules.clone())
                         .with_materials(materials),
                 ))
-            }
-            JobKind::Portals => {
-                let PortalsJob {
-                    stack,
-                    pyramid,
-                    key,
-                    stamps,
-                    gait,
-                } = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
-                gait.validate(&pyramid)?;
-                if !pyramid.contains(key) || u32::from(key.level) != gait.level {
-                    return Err("portals of a tile outside its gait's level".into());
-                }
-                let stack = self
-                    .stacks
-                    .get(&stack)
-                    .ok_or_else(|| format!("unknown stack {stack}"))?;
-                Running::Portals(Box::new((stamped(stack, &stamps)?, pyramid, key, gait)))
             }
             JobKind::Bake => {
                 let BakeJob { layers, pyramid } = reader.get().map_err(invalid)?;
@@ -799,11 +750,6 @@ impl TerrainWorker {
                 None if generator.failed() => Err("the tile's heights are invalid".into()),
                 None => return Ok(None),
             },
-            Running::Portals(job) => {
-                let (layers, pyramid, key, gait) = &**job;
-                crate::nav::tile_portals(layers, pyramid, *key, gait)
-                    .map(|portals| codec::encode(&portals))
-            }
             Running::Bake(bake) => {
                 let (layers, pyramid) = &**bake;
                 Ok(codec::encode(&layers.bake_all(pyramid)))

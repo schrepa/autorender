@@ -4,6 +4,7 @@
 )]
 
 pub use engine_collision as collision;
+pub use engine_navigation as navigation;
 pub use engine_physics as physics;
 pub use engine_profile as profiling;
 pub use engine_scene as scene;
@@ -37,8 +38,7 @@ mod games {
         GroundSample, Grounded, Grounding, Haze, HeightHeld, HierarchyError, Highlights,
         InputState, Interior, InterpolateTransform, InterpolationError, LevelOfDetail, LightRegion,
         LocalLight, LocalLightSettings, MakeSources, MakeTextures, Material, MaterialHandle, Mesh,
-        Mesh3d, MeshHandle, MeshVertex, NavAgent, NavAgents, NavQuery, NavStatus, NavSystems,
-        NavWalk, Navigation, NavigationPlugin, NightSky, OcclusionCulling, Occupancy, Parent,
+        Mesh3d, MeshHandle, MeshVertex, NightSky, OcclusionCulling, Occupancy, Parent,
         ParticleBlend, ParticleEmitter, ParticleSettings, Physics, Plugin, PluginGroup,
         Presentation, PresentationState, PresentedTime, PresentedTransform, PresentedTransforms,
         Records, ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution,
@@ -51,6 +51,9 @@ mod games {
         WaterSources, Wind, WorldCells, WorldChanges, WorldStreaming, WorldStreamingPlugin,
         WorldSync, WorldSyncSystems, Wrap, edit_transform, math, remove_streamed,
         reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
+    };
+    pub use engine_navigation::{
+        NavAgent, NavAgents, NavQuery, NavStatus, NavSystems, NavWalk, Navigation, NavigationBrick,
     };
 }
 pub use games::*;
@@ -100,9 +103,10 @@ pub mod stats {
     pub use engine_core::{
         Applied, CellStats, CloudStats, CullingStats, DetailStats, Drawn, ErosionStats,
         ExposureStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats, Names,
-        NavStats, OccupancyStats, PathStats, PhysicsStats, ProbeStats, RenderStats, ShadowStats,
-        SkyStats, TerrainBounceStats, TerrainRenderStats, TerrainStats, WaterStats,
+        OccupancyStats, PathStats, PhysicsStats, ProbeStats, RenderStats, ShadowStats, SkyStats,
+        TerrainBounceStats, TerrainRenderStats, TerrainStats, WaterStats,
     };
+    pub use engine_navigation::NavStats;
 }
 
 pub mod host;

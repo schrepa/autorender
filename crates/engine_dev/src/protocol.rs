@@ -41,7 +41,6 @@ pub(crate) fn stamp_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) 
 use crate::features::{
     EngineControl, EngineQuery,
     collision::{CollisionEventsQuery, OverlapQuery, RaycastQuery, ShapeCastQuery},
-    navigation::{NavGoControl, NavPathQuery},
     terrain::{
         TerrainControl, TerrainEditControl, TerrainHeightQuery, TerrainRedoControl,
         TerrainRiverControl, TerrainRouteQuery, TerrainSweepQuery, TerrainUndoControl,
@@ -190,7 +189,6 @@ pub enum DevRequest {
     Overlap(OverlapQuery),
     ShapeCast(ShapeCastQuery),
     TerrainHeight(TerrainHeightQuery),
-    NavPath(NavPathQuery),
     TerrainSweep(TerrainSweepQuery),
     TerrainRoute(TerrainRouteQuery),
     CollisionEvents(CollisionEventsQuery),
@@ -283,7 +281,6 @@ impl DevRequest {
             Self::ShapeCast(query) => Route::Feature(Box::new(query)),
             Self::CollisionEvents(query) => Route::Feature(Box::new(query)),
             Self::TerrainHeight(query) => Route::Feature(Box::new(query)),
-            Self::NavPath(query) => Route::Feature(Box::new(query)),
             Self::TerrainSweep(query) => Route::Feature(Box::new(query)),
             Self::TerrainRoute(query) => Route::Feature(Box::new(query)),
         }
@@ -315,7 +312,6 @@ pub enum BrowserControl {
     TerrainUndo(TerrainUndoControl),
     TerrainRedo(TerrainRedoControl),
     TerrainRiver(TerrainRiverControl),
-    NavGo(NavGoControl),
     WorldChanges(WorldChangesControl),
     Camera {
         #[cfg_attr(
@@ -467,7 +463,6 @@ impl BrowserControl {
             Self::TerrainUndo(control) => Control::Feature(Box::new(control)),
             Self::TerrainRedo(control) => Control::Feature(Box::new(control)),
             Self::TerrainRiver(control) => Control::Feature(Box::new(control)),
-            Self::NavGo(control) => Control::Feature(Box::new(control)),
             Self::WorldChanges(control) => Control::Feature(Box::new(control)),
             Self::Camera {
                 position,
@@ -531,7 +526,6 @@ impl BrowserControl {
             | Self::TerrainRedo(_)
             | Self::TerrainRiver(_)
             | Self::WorldChanges(_)
-            | Self::NavGo(_)
             | Self::Camera { .. }
             | Self::Benchmark { .. }
             | Self::Step { .. }

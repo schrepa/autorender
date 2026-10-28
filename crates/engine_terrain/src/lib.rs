@@ -19,7 +19,6 @@ pub mod jobs;
 mod layers;
 pub mod lighting;
 pub mod macro_colors;
-mod nav;
 mod noise;
 mod path;
 mod placement;
@@ -52,16 +51,12 @@ pub use layers::{
     Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers,
     NoiseLayer, PathStage, Stamp, StampOp,
 };
-pub use nav::{
-    Gait, NavOptions, NavPath, Obstacle, PORTAL_RUN, Portal, Side, TilePortals, WalkData,
-    WalkGround, WalkSearch, Want, tile_portals,
-};
 pub use path::{
     Bridge, HeightGrid, MASK_MARGIN, MAX_PATH_POINTS, PATH_FAR, PORTAL_HEIGHT, PROFILE_STEP,
     PathLayer, PathProfile, PathSample, PathStats, Route, RouteOptions, route,
 };
 pub use placement::{
-    AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Footprint, Placed, PlacementChoice,
+    AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Footprint, Obstacle, Placed, PlacementChoice,
     PlacementLayer, Placing, Solid,
 };
 pub use pyramid::{Pyramid, PyramidError, TileKey};

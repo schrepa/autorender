@@ -456,7 +456,7 @@ fn next_id() -> JobId {
     JobId(SUBMITTED.fetch_add(1, Ordering::Relaxed) + 1)
 }
 
-pub(crate) fn job_output<T, E: std::fmt::Display>(
+pub fn job_output<T, E: std::fmt::Display>(
     kind: &str,
     output: Result<Vec<u8>, String>,
     decode: impl FnOnce(&[u8]) -> Result<T, E>,
@@ -466,26 +466,26 @@ pub(crate) fn job_output<T, E: std::fmt::Display>(
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct JobFailures {
-    pub(crate) count: u64,
-    pub(crate) last: Option<(u64, String)>,
+pub struct JobFailures {
+    pub count: u64,
+    pub last: Option<(u64, String)>,
 }
 
 impl JobFailures {
-    pub(crate) fn record(&mut self, frame: u64, error: String) {
+    pub fn record(&mut self, frame: u64, error: String) {
         self.count += 1;
         self.last = Some((frame, error));
     }
 }
 
-pub(crate) struct JobBudget<'a> {
-    pub(crate) jobs: &'a mut Jobs,
+pub struct JobBudget<'a> {
+    pub jobs: &'a mut Jobs,
     slots: usize,
     urgent: usize,
 }
 
 impl JobBudget<'_> {
-    pub(crate) fn of(jobs: &mut Jobs) -> JobBudget<'_> {
+    pub fn of(jobs: &mut Jobs) -> JobBudget<'_> {
         let workers = jobs.workers().max(1) as usize;
         let running = jobs.running();
         JobBudget {
@@ -495,7 +495,7 @@ impl JobBudget<'_> {
         }
     }
 
-    pub(crate) fn take(&mut self, priority: u32) -> bool {
+    pub fn take(&mut self, priority: u32) -> bool {
         let free = if job_class(priority) == URGENT_JOBS {
             self.urgent
         } else {
@@ -509,7 +509,7 @@ impl JobBudget<'_> {
         true
     }
 
-    pub(crate) fn release(&mut self) {
+    pub fn release(&mut self) {
         self.slots += 1;
         self.urgent += 1;
     }
