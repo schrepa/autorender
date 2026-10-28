@@ -1939,6 +1939,39 @@
       "direction": null
     },
     {
+      "name": "water.foam_points",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water.foam_points_cut",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "water.foam_reach",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "m",
+      "direction": null
+    },
+    {
       "name": "water.leaves",
       "kind": "work",
       "rule": "shown",

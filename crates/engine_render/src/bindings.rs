@@ -183,11 +183,13 @@ tables! {
     /// Group 0 of water's pipelines: the main passes' without what glass
     /// refracts, which water reads from its own copy of what lies behind it
     /// (`WATER_BEHIND`), keeping the sampler it reads that copy through.
+    /// Water's particles' passes bind it too, measuring the pixel their
+    /// rafts are born no smaller than from its camera.
     const CAMERA_WATER: Table = Table {
         label: "engine/camera-water-layout",
         serves: [SHADER @ 0],
         bindings: &[
-            uniform_of(0, "camera", size_of::<CameraUniform>(), VF),
+            uniform_of(0, "camera", size_of::<CameraUniform>(), VFC),
             uniform_of(1, "lighting", size_of::<LightingUniform>(), VF),
             uniform_of(2, "shadow", size_of::<ShadowUniform>(), VF),
             texture(3, "shadow_atlas", Depth, D2, VF),
@@ -966,7 +968,8 @@ tables! {
     };
 
     /// Group 2 of water's particles' passes
-    /// (`meshes/water_particles.wgsl`), after an empty first group and the
+    /// (`meshes/water_particles.wgsl`), after water's first group
+    /// (`CAMERA_WATER`), whose camera they measure a pixel by, and the
     /// water's (`WATER`), through which they read the water as its shading
     /// does: their frame, their lattice, their pools twice over (the frame
     /// before's and this frame's), their counts, their splat's sums, and a

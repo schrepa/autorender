@@ -332,10 +332,11 @@ impl WaterPass {
     /// through `cull` and drawn through `view` (both eye-relative) over the
     /// opaque `depth` and, when `refracts`, the color it copies; seen from
     /// `eye`, and by the detail eye and the display as `seen` says, which
-    /// size and place the particles' window, the wind `wind` dragging the
-    /// water running live and the particles riding it, its waves and the
-    /// live water's steps at the simulation time `seconds` the frame
-    /// presents; `None` when none of it draws.
+    /// size and place the particles' window and square and size their foam
+    /// pool, the wind `wind` dragging the water running live and the
+    /// particles riding it, its waves and the live water's steps at the
+    /// simulation time `seconds` the frame presents; `None` when none of it
+    /// draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -805,7 +806,7 @@ impl WaterPass {
             self.fall_pipelines.insert(targets, pipeline);
         }
         self.particles
-            .ensure_pipelines(device, shader, &self.layout);
+            .ensure_pipelines(device, shader, (camera, &self.layout));
         self.sim.ensure_setup(device, shader);
     }
 
@@ -1064,8 +1065,12 @@ impl RenderFeature for WaterPass {
         // they leave, and what lies behind the water, before it draws.
         self.sim.encode(encoder, encode.profiler);
         if let (Some(_), Some((_, group))) = (&self.tiles, &self.group) {
-            self.particles
-                .encode(encode.device, encoder, group, encode.profiler);
+            self.particles.encode(
+                encode.device,
+                encoder,
+                (encode.water_camera, group),
+                encode.profiler,
+            );
         }
         self.copy_behind(encoder, encode.depth, encode.scene);
         self.draw_foam(encoder, encode.water_camera);
@@ -1109,9 +1114,10 @@ impl RenderFeature for WaterPass {
     /// steps it ran and those it fell behind the clock by, the blocks the
     /// GPU set up whole this frame, and the solids pushing its water with
     /// those standing in it past the most that do;
-    /// the texels along a side of the particles' window, and the particles
-    /// its pools hold, born and dropped, as last read back; and the sea's
-    /// sectors drawn and their triangles.
+    /// the texels along a side of the particles' window, the points along a
+    /// side of their foam's square, those the device cut and its reach, and
+    /// the particles their pools hold, born and dropped, as last read back;
+    /// and the sea's sectors drawn and their triangles.
     fn stats(
         this: Option<&Self>,
         frame: Option<&WaterFrame>,
@@ -1145,6 +1151,9 @@ impl RenderFeature for WaterPass {
                 touches,
                 dropped_touches,
                 particle_texels: particles.texels,
+                foam_points: particles.points,
+                foam_points_cut: particles.cut,
+                foam_reach: particles.reach,
                 foam_particles: particles.foam,
                 wave_particles: particles.waves,
                 particles_born: particles.born,

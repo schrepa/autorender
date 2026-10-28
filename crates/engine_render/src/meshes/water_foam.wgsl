@@ -5,10 +5,10 @@
 // bubbles rise into the foam they float on, carried and strained by the
 // current its surface runs at, so its shear draws them into streaks and
 // they gather where it converges and against what stands in it, each raft
-// drawn sharp where it lies (`fs_foam`, `water_foam_layers`); out past the
-// particles' reach, the water's own state's, their mean. And white water
-// where it runs against what stands in it behind the pixel fast enough to
-// tear air in (`water_contact`), by how far it climbs what it meets
+// drawn sharp where it lies, at every distance the particles reach
+// (`fs_foam`, `water_foam_layers`), none past it. And white water where it
+// runs against what stands in it behind the pixel fast enough to tear air
+// in (`water_contact`), by how far it climbs what it meets
 // (`water_climbing`). The sea's whitens where its crests fold and where its
 // waves run up its shores (`meshes/ocean.wgsl`). White water and foam add
 // into one coverage (`water_foam`), lit as foam is lit (`water_light`), the
@@ -45,8 +45,9 @@ const WATER_FOAM_HOLLOW: f32 = 0.35;
 // (the extinction paradox), so a single layer lets a third of the light
 // through and heaped foam none.
 const WATER_FOAM_OPTICAL: f32 = 4.0;
-// The most of the surface the water's own foam covers: all but a step of
-// the signed byte its words hold it in (`water_words`), 4.8 layers.
+// The most of the surface foam covers as `water_layers` counts it: all but
+// a step of a signed byte, 4.8 layers, past which it lies opaque however
+// thick.
 const WATER_DENSEST: f32 = 0.99212598;
 // The share of water's depth an obstacle stands up through from which the
 // water starts to climb it, and from which it climbs it whole: a stone half
@@ -142,12 +143,10 @@ fn water_layers(share: f32) -> f32 {
 }
 
 // The layers of white water and foam over the pixel at `pixel`: those the
-// foam particles' rafts drew there (`fs_foam`) as far as the particles show
-// (`shown`, `water_splatted`'s), and past their reach `settled`, those the
-// water's own state holds, their mean.
-fn water_foam_layers(pixel: vec2<f32>, shown: f32, settled: vec2<f32>) -> vec2<f32> {
-    let drawn = textureLoad(water_foam_drawn, vec2<i32>(pixel), 0).xy;
-    return mix(settled, drawn, shown);
+// foam particles' rafts drew there (`fs_foam`), at any distance; none where
+// none lie.
+fn water_foam_layers(pixel: vec2<f32>) -> vec2<f32> {
+    return textureLoad(water_foam_drawn, vec2<i32>(pixel), 0).xy;
 }
 
 // The meters across the eddies of water `depth` meters deep that the waves

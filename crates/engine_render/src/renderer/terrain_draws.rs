@@ -296,8 +296,9 @@ impl Renderer {
         let (device, shader, camera) = (&self.device, &self.mesh_shader, &self.camera.water_layout);
         let formats = (self.display.format(), DEPTH_FORMAT);
         let tiles = self.terrain.water_draws(&snapshot.terrain);
-        // Water's particles reach from the detail eye out to where their
-        // texels span a pixel of the display.
+        // Water's particles' waves reach from the detail eye out to where
+        // their texels span a pixel of the display, and their foam pool
+        // holds a raft for every few of its pixels.
         let display = self.display.region.display;
         let seen = ParticleView {
             detail: snapshot.detail_eye,

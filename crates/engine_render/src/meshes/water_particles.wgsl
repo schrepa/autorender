@@ -19,22 +19,25 @@
 // the boils the bursts bring up and where the water runs against what
 // stands in it: each runs at its waves' group speed along its heading plus
 // the current, spreading, splitting in three as it spreads, and dying by
-// the water's viscosity and its eddy viscosity. Each frame wave particles
-// splat the slopes of the waves' surface into a window of texels anchored
-// in the world around the detail eye, which water's shading reads
-// (`meshes/water_foam.wgsl`'s `water_splatted`), and foam particles draw
-// themselves, each its ellipse on the water's surface, sharp at every
-// distance, into the layers of white water and foam over each pixel
-// (`vs_foam`, `fs_foam`), which water's shading reads as foam
-// (`water_foam_layers`). Nothing but the particles draws any of it: no
-// texture, noise or pattern stands fixed to the world or the screen. Every
-// frame, a fixed number of dispatches:
+// the water's viscosity and its eddy viscosity. Rafts are born and ride
+// over a square of their own around the detail eye (`particle_square`),
+// each born no smaller than a pixel there; wave particles are born and run
+// in a window of texels anchored in the world around the detail eye, inside
+// that square, into which each frame they splat the slopes of the waves'
+// surface, which water's shading reads (`meshes/water_foam.wgsl`'s
+// `water_splatted`). Foam particles draw themselves, each its ellipse on
+// the water's surface, sharp at every distance, into the layers of white
+// water and foam over each pixel (`vs_foam`, `fs_foam`), which water's
+// shading reads as foam (`water_foam_layers`). Nothing but the particles
+// draws any of it: no texture, noise or pattern stands fixed to the world
+// or the screen, and past the square no foam shows. Every frame, a fixed
+// number of dispatches:
 // - the particles the pools held before the frame, and the dispatches over
 //   them (`particles_begin`);
 // - the water read as shading reads it (`water_pixel`) at the points of a
-//   lattice anchored in the world, PARTICLE_LATTICE texels apart
-//   (`particles_gather`), and what carries and churns foam there
-//   (`particles_currents`);
+//   lattice anchored in the world, PARTICLE_LATTICE texels apart, over the
+//   square and PARTICLE_MARGIN points past it (`particles_gather`), and
+//   what carries and churns foam there (`particles_currents`);
 // - each particle's step: carried by the current, draining, strained or
 //   spreading, and how many it leaves (`particles_age`);
 // - what each of the lattice's sites gives birth to (`particles_births`);
@@ -57,8 +60,10 @@
 // the lattice's points and the window's texels.
 const PARTICLE_GROUP: u32 = 256u;
 const PARTICLE_SIDE: u32 = 8u;
-// Texels along a step of the lattice.
+// Texels along a step of the lattice, and the points it keeps past its
+// square on each side.
 const PARTICLE_LATTICE: u32 = 8u;
+const PARTICLE_MARGIN: u32 = 2u;
 // The words of `particle_counts`: the foam and the wave particles the pools
 // hold after the frame, those born in it and those the pools had no room
 // for, and those they held before it; the dispatch over the particles
@@ -111,8 +116,10 @@ const WATER_FOAM_KEPT: f32 = 0.3;
 // The layers of foam fresh white water lies in: wet foam, round bubbles
 // heaped as they churn, which a raft is born as thick as.
 const WATER_FOAM_FRESH: f32 = 2.0;
-// The texels' area over which a foam particle is born with one layer of
-// foam at most (`particle_quantum`).
+// The squares of a texel, or of a pixel where that spans more, over which
+// a foam particle is born with one layer of foam at most
+// (`particle_quantum`): sixteen ninths, so a raft born as thick as fresh
+// white water lies is a little more than one of them across.
 const PARTICLE_QUANTUM: f32 = 1.7777778;
 // The layers of foam under which a raft goes, spread thin by the current: a
 // sixteenth of a layer, covering 6 % of what it spans.
@@ -163,19 +170,20 @@ const PARTICLE_NO_TEXEL: u32 = 0xffffffffu;
 
 // The particles' frame: the first texel of the window along x and z (world
 // texels, `step.x` meters across, counted from the world's origin), then
-// that of the window held the frame before (zw); the lattice's first point
-// along x and z (world points, PARTICLE_LATTICE texels apart, counted from
-// the world's origin), its points along a side and the window's texels
-// along a side (w); the meters across a texel, the seconds this frame steps
-// and the wind's velocity (meters a second along x and z); 1 where the
-// pools hold none yet (x), the index of the simulation's step the frame
-// begins in (y) and of the one it ends in (z), and the least steps a slot
-// of events spans, a power of two (w, `water_burst_slot`); the most foam
-// and wave particles the pools hold, the half of the pools holding the
-// frame before's particles and the lattice's points, its sites (`pool`);
-// and the seconds of a simulation step and the meters across the cells of
-// the water the particles ride, past which wave particles stand for no
-// eddies (`water_eddy_size`), then nothing (`eddies`).
+// that of the window the frame before splatted (zw); the lattice's first
+// point along x and z (world points, PARTICLE_LATTICE texels apart, counted
+// from the world's origin), PARTICLE_MARGIN points before its square's, its
+// points along a side and the window's texels along a side (w); the meters
+// across a texel, the seconds this frame steps and the wind's velocity
+// (meters a second along x and z); 1 where the pools hold none yet (x), the
+// index of the simulation's step the frame begins in (y) and of the one it
+// ends in (z), and the least steps a slot of events spans, a power of two
+// (w, `water_burst_slot`); the most foam and wave particles the pools hold,
+// the half of the pools holding the frame before's particles and the
+// lattice's points, its sites (`pool`); and the seconds of a simulation
+// step and the meters across the cells of the water the particles ride,
+// past which wave particles stand for no eddies (`water_eddy_size`), then
+// nothing (`eddies`).
 struct ParticleFrame {
     window: vec4<i32>,
     lattice: vec4<i32>,
@@ -189,12 +197,13 @@ struct ParticleFrame {
 // The lattice's points, row by row, twice over: first the water there as
 // `particles_gather` reads it (its velocity along x and z, meters a second;
 // its depth, meters, none where it holds no foam, and how turbulent it
-// runs, 0 to 1; and how fast its surface falls along x and z, meters a
-// meter); then what carries and churns the foam there as
-// `particles_currents` finds it (the current its surface runs at along x
-// and z, meters a second; how hard the water churns foam, `sim_churn`'s
-// churn, and its depth; and the speed its eddies turn at, meters a second):
-// half floats, a pair a word, none in the words left over.
+// runs, 0 to 1; how fast its surface falls along x and z, meters a meter;
+// and the height its surface stands at, world meters, a float's bits); then
+// what carries and churns the foam there as `particles_currents` finds it
+// (the current its surface runs at along x and z, meters a second; how hard
+// the water churns foam, `sim_churn`'s churn, and its depth; and the speed
+// its eddies turn at, meters a second): half floats, a pair a word but the
+// surface's, none in the words left over.
 @group(2) @binding(33) var<storage, read_write> particle_lattice: array<vec4<u32>>;
 // The pools twice over, the frame before's particles and this frame's
 // (`pool.z`'s half and the other), each the foam pool's `pool.x` particles,
@@ -237,6 +246,7 @@ struct ParticleWater {
     depth: f32,
     turbulence: f32,
     slope: vec2<f32>,
+    surface: f32,
 }
 
 // What carries and churns the foam at a point as `particles_currents`
@@ -283,12 +293,14 @@ fn particle_spacing() -> f32 {
     return particle_frame.step.x * f32(PARTICLE_LATTICE);
 }
 
-// The most amount (layers times square meters) a foam particle is born
-// with, where its event lays no more than PARTICLE_EVENT_MOST of them: a
-// layer over PARTICLE_QUANTUM texels.
-fn particle_quantum() -> f32 {
-    let texel = particle_frame.step.x;
-    return texel * texel * PARTICLE_QUANTUM;
+// The most amount (layers times square meters) a foam particle born at
+// world point `world` holds, where its event lays no more than
+// PARTICLE_EVENT_MOST of them: a layer over PARTICLE_QUANTUM squares of a
+// texel, or of the pixel there seen from the detail eye where that spans
+// more (`detail_across`), so no raft is born smaller than either.
+fn particle_quantum(world: vec3<f32>) -> f32 {
+    let size = max(particle_frame.step.x, detail_across(world));
+    return size * size * PARTICLE_QUANTUM;
 }
 
 // The meters across the eddies of water `depth` meters deep that wave
@@ -336,6 +348,7 @@ fn particle_water(point: vec2<i32>) -> ParticleWater {
     water.depth = deep.x;
     water.turbulence = deep.y;
     water.slope = unpack2x16float(words.z);
+    water.surface = bitcast<f32>(words.w);
     return water;
 }
 
@@ -441,9 +454,9 @@ fn particle_shear(world: vec2<f32>) -> mat2x2<f32> {
 // The current the boils spread over the surface at world point `world`
 // (meters along x and z, `particle_splat_wave`), as the frame before
 // splatted it, at the textures' level two of the window's texels across
-// (`particle_spread_source`): bilinear between its texels around the point;
-// and how fast it changes a meter along x and along z (the columns), the
-// bilinear's own.
+// (`particle_spread_source`): bilinear between its texels around the point,
+// none past the window it splatted; and how fast it changes a meter along x
+// and along z (the columns), the bilinear's own.
 struct ParticleBoils {
     current: vec2<f32>,
     shear: mat2x2<f32>,
@@ -467,8 +480,14 @@ fn particle_boils(world: vec2<f32>) -> ParticleBoils {
 
 // The current the boils spread over the surface over world texel `cell` of
 // the textures' level two of the window's texels across, as the frame
-// before splatted it.
+// before splatted it; none where the window it splatted (`window.zw`)
+// holds less than the whole of it, its texels another place's past it.
 fn particle_boil_texel(cell: vec2<i32>) -> vec2<f32> {
+    let finest = 2 * cell;
+    let first = particle_frame.window.zw;
+    if any(finest < first) || any(finest + 2 > first + particle_frame.lattice.w) {
+        return vec2<f32>(0.0);
+    }
     let at = particle_remainder(cell, particle_frame.lattice.w / 2);
     return textureLoad(particle_spread_source, at, 0).yz;
 }
@@ -543,22 +562,37 @@ fn particle_thickness(particle: Particle) -> vec2<f32> {
     return particle.amounts / max(area, 1.0e-12);
 }
 
-// Whether world point `world` (meters along x and z) lies in the window.
-fn particle_inside(world: vec2<f32>) -> bool {
+// The lattice's square, over which rafts are born and ride: its first
+// corner and its last (world meters along x and z, xy and zw),
+// PARTICLE_MARGIN points in from the lattice's first point and its last,
+// so what carries a raft in it reads the lattice's points alone.
+fn particle_square() -> vec4<f32> {
+    let spacing = particle_spacing();
+    let margin = i32(PARTICLE_MARGIN);
+    let first = vec2<f32>(particle_frame.lattice.xy + margin) * spacing;
+    let across = f32(particle_frame.lattice.z - 2 * margin - 1) * spacing;
+    return vec4<f32>(first, first + across);
+}
+
+// The window, over which wave particles are born and run: its first corner
+// and its last (world meters along x and z, xy and zw).
+fn particle_window() -> vec4<f32> {
     let texel = particle_frame.step.x;
     let first = vec2<f32>(particle_frame.window.xy) * texel;
-    let last = first + f32(particle_frame.lattice.w) * texel;
-    return all(world >= first) && all(world < last);
+    return vec4<f32>(first, first + f32(particle_frame.lattice.w) * texel);
+}
+
+// Whether world point `world` (meters along x and z) lies in `square`
+// (`particle_square`'s or `particle_window`'s).
+fn particle_inside(world: vec2<f32>, square: vec4<f32>) -> bool {
+    return all(world >= square.xy) && all(world < square.zw);
 }
 
 // Whether the square a lattice spacing across around site `site` (world
-// meters) lies in the window whose first texel is `first`.
-fn particle_site_in(site: vec2<f32>, first: vec2<i32>) -> bool {
-    let texel = particle_frame.step.x;
+// meters) lies in `square`.
+fn particle_site_in(site: vec2<f32>, square: vec4<f32>) -> bool {
     let half = 0.5 * particle_spacing();
-    let low = vec2<f32>(first) * texel;
-    let high = low + f32(particle_frame.lattice.w) * texel;
-    return all(site - half >= low) && all(site + half <= high);
+    return all(site - half >= square.xy) && all(site + half <= square.zw);
 }
 
 // The stream of the burst rule's draws the `k`th draw of an event of kind
@@ -588,14 +622,14 @@ fn particle_slot(site: vec2<i32>, kind: u32, life: f32) -> vec3<u32> {
 }
 
 // The foam particles an event laying `amount` (layers times square meters)
-// lays, as the draw `drawn` (0 to 1) rounds it to whole particles
-// (`particle_quantum`'s each, so their mean is the amount), and each one's
-// amount: PARTICLE_EVENT_MOST each laying their share where it lays more.
-fn particle_quanta(amount: f32, drawn: f32) -> vec2<f32> {
-    let quantum = particle_quantum();
+// lays, as the draw `drawn` (0 to 1) rounds it to whole particles of
+// `quantum` each (`particle_quantum`'s, so their mean is the amount), and
+// each one's amount: PARTICLE_EVENT_MOST each laying their share where it
+// lays more.
+fn particle_quanta(amount: f32, quantum: f32, drawn: f32) -> vec2<f32> {
     let quanta = max(amount, 0.0) / quantum;
     let most = f32(PARTICLE_EVENT_MOST);
-    if quanta > most {
+    if quanta > most { // filter: rafts no smaller than a pixel laying the same white water, their mean the amount
         return vec2<f32>(most, amount / most);
     }
     return vec2<f32>(floor(quanta + drawn), quantum);
@@ -624,9 +658,9 @@ fn particle_births_count(births: ParticleBirths) -> vec2<u32> {
 }
 
 // What the site at lattice point `point` gives birth to this frame, where
-// its square lies in the window and its water holds foam, by the water
-// there (`particle_carrier_point`): where a slot of its eddies' bursts
-// begins (`particle_slot`), its eddies
+// its square lies in the lattice's (`particle_square`) and its water holds
+// foam, by the water there (`particle_carrier_point`): where a slot of its
+// eddies' bursts begins (`particle_slot`), its eddies
 //   `size` across turning over in size / u seconds (u their speed), each
 //   reaching the surface over a size² of it once in that time, as
 //   turbulence renews a surface (Danckwerts 1951): whether one or more is
@@ -636,11 +670,16 @@ fn particle_births_count(births: ParticleBirths) -> vec2<u32> {
 //   ln(1 + c)/τ layers a second, c the cook's churn, the power it loses
 //   breaking (`particles_currents`), and τ the seconds white water drains in
 //   (`particle_draining`), so the white water lying there at rest covers
-//   c / (1 + c) of it, none where it does not break; and raises a boil, as
-//   high as its eddy's velocity head, u²/2g, which the current carries off.
-// Foam comes of nothing else: where the window newly covers water, its foam
-// is born there as it runs on. A wave whose slopes fall under the smoothest water's lobe
-// (`WATER_SMOOTHEST`'s square) turns no glint, and none is born.
+//   c / (1 + c) of it, none where it does not break, in rafts no smaller
+//   than a pixel seen from the detail eye at the burst's middle, on the
+//   water's surface at the site (`particle_quantum`), so their count follows
+//   the foam's area on the screen; and, where the site's square lies in the
+//   window too, raises a boil, as high as its eddy's velocity head, u²/2g,
+//   which the current carries off.
+// Foam comes of nothing else: where the square newly covers water, its foam
+// is born there as it runs on. A wave whose slopes fall under the smoothest
+// water's lobe (`WATER_SMOOTHEST`'s square) turns no glint, and none is
+// born.
 fn particle_births(point: vec2<i32>) -> ParticleBirths {
     var births: ParticleBirths;
     births.cell = particle_frame.lattice.xy + point;
@@ -648,7 +687,7 @@ fn particle_births(point: vec2<i32>) -> ParticleBirths {
     births.site = vec2<f32>(births.cell) * spacing;
     births.middle = births.site;
     let here = particle_carrier_point(point);
-    if here.depth <= WATER_FOAM_WET || !particle_site_in(births.site, particle_frame.window.xy) {
+    if here.depth <= WATER_FOAM_WET || !particle_site_in(births.site, particle_square()) {
         return births;
     }
     let area = spacing * spacing;
@@ -668,12 +707,14 @@ fn particle_births(point: vec2<i32>) -> ParticleBirths {
                 births.slot = slot.xy;
                 births.middle = births.site + (draws.yz - 0.5) * spacing;
                 let lasting = weight * size * size * turnover;
+                let seen = vec3<f32>(births.middle.x, particle_water(point).surface,
+                    births.middle.y);
                 let white = particle_quanta(log(1.0 + max(here.churn, 0.0))
-                    / particle_draining(here.depth) * lasting, draws.w);
+                    / particle_draining(here.depth) * lasting, particle_quantum(seen), draws.w);
                 births.laid = u32(white.x);
                 births.each = white.y;
                 let boil = here.stirring * here.stirring / (2.0 * WATER_GRAVITY);
-                if boil * number >= flattest {
+                if boil * number >= flattest && particle_site_in(births.site, particle_window()) {
                     births.boils = 1u;
                     births.boil = boil;
                 }
@@ -722,13 +763,15 @@ struct ParticleAged {
 
 // `before` after a step of the frame's seconds: carried by the current
 // (`particle_velocity`) by the midpoint rule, the water at the midpoint its
-// water over the step. It leaves none where it leaves the window or the
-// water there holds no foam. A raft's foam, floating, rides the current
-// the boils spread over the surface too (`particle_boils`), where its white
-// water's bubbles, under the surface, ride the water's own, so a raft rides
-// it as far as it holds foam; and it ages as `particle_raft_aged` says,
-// strained by the shear of what carries it at the midpoint
-// (`particle_shear`). A boil sinks back by
+// water over the step. It leaves none where the water there holds no foam,
+// nor a raft where it leaves the lattice's square (`particle_square`) and a
+// boil where it leaves the window (`particle_window`). A raft's foam,
+// floating, rides the current the boils spread over the surface too
+// (`particle_boils`, none past the window), where its white water's
+// bubbles, under the surface, ride the water's own, so a raft rides it as
+// far as it holds foam; and it ages as `particle_raft_aged` says, strained
+// by the shear of what carries it at the midpoint (`particle_shear`). A
+// boil sinks back by
 // e each turnover of its eddy, 2r/u (u its eddies' speed where it rides),
 // as turbulence renews the surface (Danckwerts 1951), and draws out along
 // the current by PARTICLE_STRETCH each turnover as the shear strains it,
@@ -748,7 +791,8 @@ fn particle_aged(before: Particle) -> ParticleAged {
         let boils = particle_boils(halfway);
         aged.particle.at = before.at
             + seconds * (particle_velocity(middle) + floating * boils.current);
-        if middle.depth <= WATER_FOAM_WET || !particle_inside(aged.particle.at) {
+        if middle.depth <= WATER_FOAM_WET
+            || !particle_inside(aged.particle.at, particle_square()) {
             return aged;
         }
         return particle_raft_aged(aged.particle, middle,
@@ -757,7 +801,8 @@ fn particle_aged(before: Particle) -> ParticleAged {
     let halfway = before.at + 0.5 * seconds * particle_velocity(here);
     let middle = particle_carrier(halfway);
     aged.particle.at = before.at + seconds * particle_velocity(middle);
-    if middle.depth <= WATER_FOAM_WET || !particle_inside(aged.particle.at) {
+    if middle.depth <= WATER_FOAM_WET
+        || !particle_inside(aged.particle.at, particle_window()) {
         return aged;
     }
     let turns = seconds * max(middle.stirring, 1.0e-3) / (2.0 * before.radius);
@@ -1041,8 +1086,9 @@ fn particles_begin() {
 
 // Each lattice point's water, read as shading reads it at the point
 // (`water_pixel`, at the finest level the lattice resolves, a lattice
-// spacing), over the terrain the particles ride; none where it holds no
-// foam: where the water ends or lies thinner than WATER_FOAM_WET.
+// spacing), over the terrain the particles ride, with the world height its
+// surface stands at; none where it holds no foam: where the water ends or
+// lies thinner than WATER_FOAM_WET.
 @compute @workgroup_size(PARTICLE_SIDE, PARTICLE_SIDE)
 fn particles_gather(@builtin(global_invocation_id) id: vec3<u32>) {
     let point = vec2<i32>(id.xy);
@@ -1055,7 +1101,8 @@ fn particles_gather(@builtin(global_invocation_id) id: vec3<u32>) {
     var words = vec4<u32>(0u);
     if at.held >= WATER_HELD && at.depth > WATER_FOAM_WET {
         words = vec4<u32>(pack2x16float(at.words.flow),
-            pack2x16float(vec2<f32>(at.depth, at.words.state.x)), pack2x16float(at.slope), 0u);
+            pack2x16float(vec2<f32>(at.depth, at.words.state.x)), pack2x16float(at.slope),
+            bitcast<u32>(terrain.origin.y + at.surface));
     }
     particle_lattice[particle_lattice_at(point, false)] = words;
 }
@@ -1143,7 +1190,7 @@ fn particles_births(@builtin(global_invocation_id) id: vec3<u32>) {
     let count = particle_births_count(particle_births(point));
     let site = u32(point.y * points + point.x);
     atomicStore(&particle_counts[particle_sites() + site], particle_count_word(count));
-    if count.x > 0u {
+    if count.x > 0u { // filter: the tally of rafts no smaller than a pixel, laying the same white water
         atomicAdd(&particle_counts[PARTICLE_FOAM_BORN], count.x);
     }
     if count.y > 0u {

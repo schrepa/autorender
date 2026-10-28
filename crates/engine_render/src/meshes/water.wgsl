@@ -60,9 +60,8 @@
 // foam is what its particles lay: the white water and foam the same bursts
 // lay where it breaks and churns (`engine_terrain::shallow_water`), settling
 // or live, as particles carried by the current its surface runs at, drawn
-// out into streaks with open water between, and past their reach its own
-// state's, their mean; and white water where it runs fast against what
-// stands in it. However thin, the water fades only at its waterline. The
+// out into streaks with open water between, none past their reach; and
+// white water where it runs fast against what stands in it. However thin, the water fades only at its waterline. The
 // sea (`meshes/ocean.wgsl`) lights its surface the same way.
 // Where rivers leave their beds, their jets fall as sheets of their own
 // (`water_falls.rs`), drawn last.
@@ -109,8 +108,8 @@
 // variance, which runs up its shores (y), and its waves' summed height (w),
 // and for terrains' water its particles' (`water_splatted`): the meters
 // across their texels (x, none where none run), the meters their textures
-// span (y), the pixels their texels span where they hand over to the
-// water's own foam (z) and the meters across the cells of the water they
+// span (y), the pixels their texels span where their waves hand over to the
+// water's own surface (z) and the meters across the cells of the water they
 // ride (w) (`foam`); and how fast the water takes each channel of light,
 // per meter (rgb).
 // The sea's parts (`meshes/ocean.wgsl`): its wind's heading
@@ -1425,19 +1424,16 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
         depth * plane.y / max(dot(view, plane), 0.1)); // optics: the view's way through the water
     let down = clamp(dot(point - behind.ground, plane) / plane.y, 0.0, through); // optics: the light's way down to what the view meets
     // Foam (`meshes/water_foam.wgsl`): the layers of white water and foam
-    // the water's particles' rafts lay over the pixel, past their reach the
-    // foam its own state holds, which its flow churned up as fast as the
-    // rafts' white water is born and carried as they are, their mean
-    // (`water_foam_layers`); and
-    // fresh white water where the water runs against what stands in it
-    // behind the pixel fast enough to tear air in, by its speed, how far its
-    // surface stands over what it meets and how much of its depth that
-    // blocks (`water_contact`, `water_blocking`); together hiding the share
-    // of the surface their layers leave (`water_foam`).
+    // the water's particles' rafts lay over the pixel, near or far, none
+    // past the particles' reach (`water_foam_layers`); and fresh white water
+    // where the water runs against what stands in it behind the pixel fast
+    // enough to tear air in, by its speed, how far its surface stands over
+    // what it meets and how much of its depth that blocks (`water_contact`,
+    // `water_blocking`); together hiding the share of the surface their
+    // layers leave (`water_foam`).
     let contact = water_contact(standing, standing_change, footprint, speed,
         water_blocking(standing, depth));
-    let layers = water_foam_layers(pixel, splatted.shown,
-        vec2<f32>(0.0, water_layers(at.words.foam / WATER_FOAM_MOST)));
+    let layers = water_foam_layers(pixel);
     let white = layers.x + water_layers(contact);
     let foam = water_foam(white, layers.y);
     let cover = foam.cover;

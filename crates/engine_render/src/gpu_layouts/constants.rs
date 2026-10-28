@@ -364,9 +364,16 @@ gpu_consts! {
     pub(crate) const PARTICLE_GROUP: u32 = 256 => ["PARTICLE_GROUP", "@particles_age", "@particles_sum", "@particles_scan", "@particles_place", "@particles_splat"];
     pub(crate) const PARTICLE_SIDE: u32 = 8 => ["PARTICLE_SIDE", "@particles_gather", "@particles_currents", "@particles_births", "@particles_look", "@particles_down"];
     /// Texels of the particles' window along a step of their lattice, where
-    /// they read the water: eight, half a meter for the cook's meter cells,
-    /// the cells those run live in.
+    /// they read the water and their rafts are born: eight, half a meter for
+    /// the cook's meter cells, the cells those run live in.
     pub(crate) const PARTICLE_LATTICE: u32 = 8 => ["PARTICLE_LATTICE"];
+    /// The points the particles' lattice keeps past its square on each
+    /// side: the quadratic B-spline reading the current at a particle takes
+    /// the point past its nearest, and the frame's current carries one past
+    /// the square by no more than the fastest water over half the longest
+    /// frame (`shallow_water::FASTEST` over 60 frames a second, a third of
+    /// a meter), under a point more.
+    pub(crate) const PARTICLE_MARGIN: u32 = 2 => ["PARTICLE_MARGIN"];
     /// Words of the particles' counts: the foam and the wave particles the
     /// pools hold after a frame, those born in it and those the pools had no
     /// room for, the tallies read back; those the pools held before it; the

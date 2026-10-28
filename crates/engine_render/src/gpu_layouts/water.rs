@@ -110,17 +110,18 @@ gpu_structs! {
 
     /// WGSL `ParticleFrame` of `meshes/water_particles.wgsl`: the first
     /// texel of water's particles' window along x and z (world texels), then
-    /// that of the window its pools' particles ran in the frame before; its
-    /// lattice's first point along x and z (world lattice points,
-    /// `PARTICLE_LATTICE` texels apart), its points along a side and the
-    /// window's texels along a side; the meters across a texel, the seconds
-    /// the frame steps and the wind (meters a second along x and z); 1 where
-    /// its pools hold none yet, the index of the simulation's step the frame
-    /// begins in and of the one it ends in, and the least steps a slot of
-    /// its events spans; the most foam and wave particles its pools hold,
-    /// the half holding the frame before's and its lattice's points; and the
-    /// seconds of a simulation step and the meters across the cells of the
-    /// water the particles ride, then nothing.
+    /// that of the window its pools' particles ran in and its textures were
+    /// splatted over the frame before; its lattice's first point along x and
+    /// z (world lattice points, `PARTICLE_LATTICE` texels apart),
+    /// `PARTICLE_MARGIN` points before its square's, its points along a side
+    /// and the window's texels along a side; the meters across a texel, the
+    /// seconds the frame steps and the wind (meters a second along x and
+    /// z); 1 where its pools hold none yet, the index of the simulation's
+    /// step the frame begins in and of the one it ends in, and the least
+    /// steps a slot of its events spans; the most foam and wave particles
+    /// its pools hold, the half holding the frame before's and its lattice's
+    /// points; and the seconds of a simulation step and the meters across
+    /// the cells of the water the particles ride, then nothing.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct ParticleFrame as ["ParticleFrame"] {
         pub window: [i32; 4],

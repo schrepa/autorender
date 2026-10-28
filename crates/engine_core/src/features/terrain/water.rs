@@ -67,6 +67,15 @@ settings! {
         /// cuts are counted). The default holds 512 half-meter cells along a
         /// side, 256 meters.
         pub live_budget: u32 = 2_097_152 => range(65_536, 67_108_864),
+        /// Points along a side of the square around the detail eye over
+        /// which the foam's rafts are born and ride, half a settled cell
+        /// apart: past it no foam shows. Each point costs 36 bytes on the
+        /// GPU and five invocations a frame. The default reaches 256
+        /// meters from the eye over meter cells, 512 across; the square
+        /// holds no fewer than the waves' window around the eye needs, and
+        /// the device's storage bindings may hold fewer (the points they
+        /// cut are counted).
+        pub foam_points: u32 = 1024 => range(64, 8192),
         /// Pixels the water's drawn triangles may stray from its surface,
         /// seen from the detail eye: each terrain's water subdivides a tree
         /// of its own, splitting its leaves straying more and merging those

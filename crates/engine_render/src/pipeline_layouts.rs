@@ -181,9 +181,10 @@ pipeline_layouts! {
     /// which it reads the ground, its materials as their mesh band does and
     /// the tiles' water as water's shading does, and its own.
     WATER_SETUP_PIPELINES = [EMPTY, TERRAIN, WATER_SETUP];
-    /// Water's particles: the water's group, read as its shading reads it,
-    /// and the particles' own.
-    WATER_PARTICLE_PIPELINES = [EMPTY, WATER, WATER_PARTICLES];
+    /// Water's particles: water's first group, whose camera measures the
+    /// pixel their rafts are born no smaller than, the water's group, read
+    /// as its shading reads it, and the particles' own.
+    WATER_PARTICLE_PIPELINES = [CAMERA_WATER, WATER, WATER_PARTICLES];
     COVER_GROW_PIPELINES = [COVER_GROW];
     OCCUPANCY_PIPELINES = [OCCUPANCY];
     SCATTER_SNAP_PIPELINES = [SCATTER_SNAP];
