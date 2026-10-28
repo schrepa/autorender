@@ -57,6 +57,9 @@ fn water_turbulent_slopes(depth: f32, stirring: f32) -> f32 {
 // across at least, as every pattern drawn keeps two pixels a feature; the
 // rest is roughness, as a pattern finer than that averages out.
 const WATER_DETAIL_SMALLEST: f32 = 0.017;
+// The octaves under the eddies' size that make up their own waves, on
+// whose crests foam gathers.
+const WATER_DETAIL_EDDY: f32 = 2.0;
 const WATER_DETAIL_OCTAVES: u32 = 7u;
 const WATER_DETAIL_RIDE: f32 = 4.0;
 const WATER_DETAIL_CURRENT: f32 = 2.0;
@@ -116,9 +119,10 @@ fn water_detail_phases(time: f32, seconds: f32) -> vec2<f32> {
 }
 
 // The waves turbulence raises on water between its samples, as a pixel
-// shows them: how far they tilt its surface (x and z), how near the top of
-// their crests it stands, in their root mean square (of the share of them
-// the pixel draws), the variance of the slopes it hides, and the share of
+// shows them: how far they tilt its surface (x and z); how near the top of
+// the crests of its eddies' own waves it stands, the WATER_DETAIL_EDDY
+// octaves under their size, in their root mean square (of the share of them
+// the pixel draws); the variance of the slopes it hides; and the share of
 // their slopes' variance it draws.
 struct WaterDetail {
     slope: vec2<f32>,
@@ -162,6 +166,7 @@ fn water_detail(world: vec3<f32>, flow: vec2<f32>, depth: f32, stirring: f32, ac
     let steep = sqrt(each) / WATER_DETAIL_GRADIENT;
     var slope = vec2<f32>(0.0);
     var crest = 0.0;
+    var counted = 0.0;
     var drawn = 0.0;
     var hidden = 0.0;
     var wavelength = WATER_DETAIL_SMALLEST;
@@ -170,6 +175,10 @@ fn water_detail(world: vec3<f32>, flow: vec2<f32>, depth: f32, stirring: f32, ac
         let shows = smoothstep(WATER_DETAIL_SHOWN.x, WATER_DETAIL_SHOWN.y, wavelength / across); // filter: an octave finer than a pixel draws averages out to roughness
         drawn += each * raised * shows * shows;
         hidden += each * raised * (1.0 - shows * shows);
+        let weight = shows * raised;
+        if f32(octave) + WATER_DETAIL_EDDY >= octaves {
+            counted += weight * weight;
+        }
         if shows * raised > 0.0 {
             let seconds = water_detail_phase(wavelength);
             let phases = water_detail_phases(time, seconds);
@@ -182,13 +191,15 @@ fn water_detail(world: vec3<f32>, flow: vec2<f32>, depth: f32, stirring: f32, ac
                 let noise = water_noise(at / wavelength + shift, pcg(number));
                 let share = phases[phase] * kept * shows * raised;
                 slope += share * steep * noise.yz;
-                crest += share * noise.x / WATER_DETAIL_VALUE;
+                if f32(octave) + WATER_DETAIL_EDDY >= octaves {
+                    crest += share * noise.x / WATER_DETAIL_VALUE;
+                }
             }
         }
         wavelength *= 2.0;
     }
     detail.slope = slope;
-    detail.crest = crest * inverseSqrt(max(octaves, 1.0));
+    detail.crest = crest * inverseSqrt(max(counted, 1.0e-6));
     detail.hidden = hidden;
     detail.shown = select(0.0, drawn / variance, variance > 0.0);
     return detail;

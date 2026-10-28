@@ -133,26 +133,120 @@ fn water_foam(fresh: f32, carried: f32) -> WaterFoam {
     return foam;
 }
 
+// The crest heights (in their root mean square) over which foam thins from
+// heaped to none toward the edge of what it covers; and the crest heights
+// about its edge over which bubbles cloud the water past it.
+const WATER_FOAM_THINNING: f32 = 0.25;
+const WATER_FOAM_HALO: f32 = 0.8;
+// Foam's lace: the meters across the bubble rafts of its two scales, foam
+// draining into clusters of bubbles a few centimeters across whose walls
+// net it (Weaire and Hutzler, The Physics of Foams), the finer's net drawn
+// over the coarser's; the share of a raft its walls span; and the share of
+// the surface the walls of a net cover on average, which stands for it
+// where a pixel spans too many rafts to draw them.
+const WATER_LACE_RAFTS: vec2<f32> = vec2<f32>(0.03, 0.08);
+const WATER_LACE_WALL: f32 = 0.3;
+const WATER_LACE_MEAN: f32 = 0.35;
+
 // The scale of the logistic distribution as spread as a unit normal one,
 // √3/π: the share of a crest field past a threshold, and the threshold
 // leaving a share past it, in closed form.
 const WATER_FOAM_LOGISTIC: f32 = 0.5513289;
 
+// The walls of foam's rafts `size` meters across at the place `at` (world
+// meters along x and z) of a pattern seeded `seed`: 1 on a wall, falling to
+// none inside a raft over WATER_LACE_WALL of it, its edge never sharper than
+// the pixel shows it (cellular noise, Worley 1996: the gap between the
+// nearest two of the points the cells hold, one each).
+fn water_lace_walls(at: vec2<f32>, size: f32, seed: u32) -> f32 {
+    let p = at / size;
+    let cell = floor(p);
+    var nearest = vec2<f32>(8.0);
+    for (var j = -1; j <= 1; j++) {
+        for (var i = -1; i <= 1; i++) {
+            let corner = bitcast<vec2<u32>>(vec2<i32>(cell) + vec2<i32>(i, j));
+            let key = pcg(corner.x ^ pcg(corner.y ^ seed));
+            let point = cell + vec2<f32>(f32(i), f32(j))
+                + vec2<f32>(unit(key), unit(pcg(key)));
+            let gap = length(p - point);
+            if gap < nearest.x {
+                nearest = vec2<f32>(gap, nearest.x);
+            } else if gap < nearest.y {
+                nearest.y = gap;
+            }
+        }
+    }
+    let between = nearest.y - nearest.x;
+    let edge = max(WATER_LACE_WALL, fwidth(between)); // filter: the walls' edge spread over the pixel, keeping their share
+    return 1.0 - smoothstep(0.0, edge, between);
+}
+
+// Foam's lace at `world` on water running at `flow` (meters a second along x
+// and z), a pixel there spanning `across` meters (`detail_across`), at
+// `time` seconds: the walls of its rafts at both scales
+// (`water_lace_walls`), carried by the current as the detail waves are
+// (`water_detail_phase`, `water_detail_phases`), each scale drawing while its
+// rafts span WATER_DETAIL_SHOWN pixels and standing as WATER_LACE_MEAN where
+// they shrink under them.
+fn water_lace(world: vec3<f32>, flow: vec2<f32>, across: f32, time: f32) -> f32 {
+    var lace = 0.0;
+    for (var scale = 0u; scale < 2u; scale++) {
+        let size = WATER_LACE_RAFTS[scale];
+        let shows = smoothstep(WATER_DETAIL_SHOWN.x, WATER_DETAIL_SHOWN.y, size / across); // filter: rafts finer than a pixel draws average out to their walls' share
+        var walls = WATER_LACE_MEAN;
+        if shows > 0.0 {
+            let seconds = water_detail_phase(size);
+            let phases = water_detail_phases(time, seconds);
+            var drawn = 0.0;
+            for (var phase = 0u; phase < 2u; phase++) {
+                let cycle = time / seconds + 0.5 * f32(phase);
+                let number = (u32(i32(floor(cycle))) * 2u + phase) * 4u + scale + 0x51ed270bu;
+                let at = world.xz - flow * (fract(cycle) * seconds);
+                drawn += phases[phase] * water_lace_walls(at, size, pcg(number));
+            }
+            walls = mix(WATER_LACE_MEAN, drawn / max(phases.x + phases.y, 1.0e-6), shows);
+        }
+        lace = max(lace, walls);
+    }
+    return lace;
+}
+
+// Foam over a pixel as the detail waves lay it: the share of it foam hides
+// (`cover`), and the share of it under which breaking water holds bubbles,
+// a halo about the foam (`aerated`).
+struct WaterFoamLaid {
+    cover: f32,
+    aerated: f32,
+}
+
 // Where on the waves foam covering the share `mean` of the surface lies, as
-// a pixel shows it, over the detail waves `detail` (`water_detail`): foam
-// rides to their crests, so it covers what stands past the crest height
-// leaving `mean` of the surface past it, the waves' crest heights taken as
-// logistic, their edge as sharp as their crests change across the pixel; as
-// much of that pattern as the pixel draws of the waves, the rest the mean
-// itself, so the share stays `mean` wherever the waves draw or not.
-fn water_foam_crests(mean: f32, detail: WaterDetail) -> f32 {
+// a pixel shows it, over the detail waves `detail` (`water_detail`), its
+// rafts' walls standing as `lace` (`water_lace`): foam rides to their
+// eddies' crests (`crest`), heaped thick where they stand highest and
+// thinning over WATER_FOAM_THINNING of their height toward its edge, where
+// it drains into the lace of its rafts' walls, whole where it lies thickest
+// and only its walls halfway out, as a raft of foam drains from its edges;
+// and bubbles cloud the water about it as far again (WATER_FOAM_HALO). The
+// threshold leaves `mean` of the surface past it, the crests' heights taken
+// as logistic; as much of that pattern as the pixel draws of the waves, the
+// rest the mean itself.
+fn water_foam_crests(mean: f32, detail: WaterDetail, lace: f32) -> WaterFoamLaid {
+    var laid: WaterFoamLaid;
+    laid.cover = mean;
+    laid.aerated = mean;
     if mean <= 1.0e-4 || mean >= 1.0 - 1.0e-4 {
-        return mean;
+        return laid;
     }
     let threshold = WATER_FOAM_LOGISTIC * log((1.0 - mean) / mean);
-    let edge = max(fwidth(detail.crest), 0.05); // filter: the foam's edge spread over the pixel, keeping its share
-    let crested = 1.0 / (1.0 + exp(-clamp((detail.crest - threshold) / edge, -30.0, 30.0)));
-    return mix(mean, crested, saturate(detail.shown));
+    let edge = max(WATER_FOAM_THINNING, fwidth(detail.crest)); // filter: the foam's edge spread over the pixel, keeping its share
+    let past = (detail.crest - threshold) / edge;
+    let thick = 1.0 / (1.0 + exp(-clamp(past, -30.0, 30.0)));
+    let netted = saturate(2.0 * thick - (1.0 - lace));
+    let halo = 1.0 / (1.0 + exp(-clamp(past + WATER_FOAM_HALO, -30.0, 30.0)));
+    let shown = saturate(detail.shown);
+    laid.cover = mix(mean, netted, shown);
+    laid.aerated = mix(mean, halo, shown);
+    return laid;
 }
 
 // The share of the surface water breaking white covers at once, where its

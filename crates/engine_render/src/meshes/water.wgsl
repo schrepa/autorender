@@ -840,15 +840,17 @@ fn vs_water(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
 
 // Where the point `relative` (less the eye) of water whose surface runs at
 // `flow` (meters a second along x and z) stood in the previous frame's view
-// (x, y and w of its clip position): what its surface shows, its foam and
-// the waves its current carries, rode the current there from where it was
-// the frame before (the previous frame's presentation time,
-// `camera.wind.w`), no more than WATER_LONGEST_FRAME back, so the temporal
-// resolve takes its history where it was, not where the still surface
-// under it stood.
-fn water_previous(relative: vec3<f32>, flow: vec2<f32>) -> vec3<f32> {
+// (x, y and w of its clip position), its own light making up `share` of
+// what the pixel shows: its foam and the waves its current carries, and
+// what they mirror, rode the current there from where they were the frame
+// before (the previous frame's presentation time, `camera.wind.w`), no more
+// than WATER_LONGEST_FRAME back, while what shows through it, the bed, stood
+// still; so the temporal resolve takes the pixel's history as far along the
+// current as its own light makes up of it, and neither smears the bed along
+// the current nor the foam over the still bed.
+fn water_previous(relative: vec3<f32>, flow: vec2<f32>, share: f32) -> vec3<f32> {
     let seconds = clamp(camera.position.w - camera.wind.w, 0.0, WATER_LONGEST_FRAME);
-    let before = eye_world(relative) - vec3<f32>(flow.x, 0.0, flow.y) * seconds;
+    let before = eye_world(relative) - vec3<f32>(flow.x, 0.0, flow.y) * (seconds * share);
     return (camera.previous_view_projection * vec4<f32>(before, 1.0)).xyw;
 }
 
@@ -1438,11 +1440,14 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let contact = water_contact(standing, standing_change, footprint, speed,
         water_blocking(standing, depth));
     let foam = water_foam(1.0 - (1.0 - white) * (1.0 - contact), splatted.foam.y);
-    let cover = water_foam_crests(foam.cover, detail);
-    // The water holds bubbles under its fresh white water, where breaking
-    // drives air down: the lace it carries floats on its surface, its bubbles
-    // burst, and the clear water between its patches holds none.
-    let aerated = cover * (1.0 - foam.thin);
+    let laid = water_foam_crests(foam.cover, detail,
+        water_lace(world, flow, detail_across(world), camera.position.w));
+    let cover = laid.cover;
+    // The water holds bubbles under its fresh white water and about it,
+    // where breaking drives air down: the lace it carries floats on its
+    // surface, its bubbles burst, and the clear water between its patches
+    // holds none.
+    let aerated = laid.aerated * (1.0 - foam.thin);
     let transmit = water_transmitted(through + down, aerated);
     var surface: WaterSurface;
     surface.relative = point;
@@ -1526,7 +1531,7 @@ fn fs_water_post(input: WaterOutput) -> SceneTargets {
 fn fs_water_temporal(input: WaterOutput) -> TemporalTargets {
     let shade = shade_mesh(input.relative, input.clip_position.xy, true);
     var targets = temporal_targets(shade.shaded, input.clip_position,
-        water_previous(input.relative, shade.flow));
+        water_previous(input.relative, shade.flow, saturate(shade.coverage)));
     targets.color = water_covering(shade, input.clip_position.xy);
     return targets;
 }
