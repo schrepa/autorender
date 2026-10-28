@@ -171,7 +171,6 @@ impl<'a> RenderFrame<'a> {
             particles,
             reflection_probes,
             terrain,
-            cells,
             tables,
             instances,
             meshes,
@@ -212,7 +211,6 @@ impl<'a> RenderFrame<'a> {
         snapshot.particles.clone_from(particles);
         snapshot.reflection_probes.clone_from(reflection_probes);
         snapshot.terrain.clone_from(terrain);
-        snapshot.cells = *cells;
         snapshot.tables.clone_from(tables);
         snapshot.instances.clear();
         snapshot
@@ -764,8 +762,7 @@ impl RetainedRender {
         probes.extract(world, &mut self.snapshot);
     }
 
-    pub(crate) fn set_streamed(&mut self, cells: crate::CellStats, tables: crate::RenderTables) {
-        self.snapshot.cells = cells;
+    pub(crate) fn set_tables(&mut self, tables: crate::RenderTables) {
         self.snapshot.tables = tables;
     }
 

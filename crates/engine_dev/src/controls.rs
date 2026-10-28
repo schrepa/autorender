@@ -113,7 +113,6 @@ impl BrowserControl {
             | Self::TerrainRedo { .. }
             | Self::TerrainRiver { .. }
             | Self::NavGo { .. }
-            | Self::WorldChanges { .. }
             | Self::Camera { .. }
             | Self::Step { .. }
             | Self::Input { .. }

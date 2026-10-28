@@ -1,10 +1,18 @@
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
+
 use bevy_ecs::prelude::*;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use crate::FrameTime;
-use crate::math::{max, sin_cos};
-use engine_settings::settings;
+use engine_core::math::{max, sin_cos};
+use engine_core::{
+    Atmosphere, Brick, Bricks, EnvironmentSection, FrameTime, Presentation, RenderSnapshot,
+    ViewSync,
+};
+use engine_settings::{InvalidSetting, settings};
 
 settings! {
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -22,6 +30,29 @@ settings! {
         pub latitude: f32 = 45.0 => range(-90.0, 90.0),
         pub day: f32 = 172.0 => range(0.0, 365.0),
         pub north: f32 = 0.0 => range(-360.0, 360.0),
+    }
+}
+
+impl EnvironmentSection for TimeOfDay {
+    const KEY: &'static str = "time_of_day";
+    const NAME: &'static str = "TimeOfDay";
+    const OPT_IN: bool = true;
+
+    fn section_off() -> Self {
+        Self::off()
+    }
+
+    fn section_check(&self) -> Result<(), InvalidSetting> {
+        self.validate()
+    }
+
+    fn section_sanitized(self) -> Self {
+        self.sanitized()
+    }
+
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema {
+        schemars::schema_for!(TimeOfDay)
     }
 }
 
@@ -113,7 +144,7 @@ fn galactic_axes() -> [Vec3; 3] {
     [centre, pole.cross(centre), pole]
 }
 
-pub(crate) fn advance_time_of_day(time: Res<FrameTime>, day: Option<ResMut<TimeOfDay>>) {
+fn advance_time_of_day(time: Res<FrameTime>, day: Option<ResMut<TimeOfDay>>) {
     let Some(mut day) = day else {
         return;
     };
@@ -124,12 +155,57 @@ pub(crate) fn advance_time_of_day(time: Res<FrameTime>, day: Option<ResMut<TimeO
     day.hours = max(hours.rem_euclid(24.0), 0.0);
 }
 
-#[derive(Default)]
-pub struct TimeOfDayPlugin;
+struct PlacedSun {
+    authored: Vec3,
+    placed: Vec3,
+}
 
-impl bevy_app::Plugin for TimeOfDayPlugin {
-    fn build(&self, app: &mut bevy_app::App) {
-        crate::install(app, crate::Feature::TimeOfDay);
-        app.add_systems(crate::Presentation, advance_time_of_day);
+fn place_sun(
+    day: Option<Res<TimeOfDay>>,
+    atmosphere: Option<ResMut<Atmosphere>>,
+    mut held: Local<Option<PlacedSun>>,
+) {
+    let Some(mut atmosphere) = atmosphere else {
+        return;
+    };
+    let sun = atmosphere.sun_direction;
+    let kept = held.take().filter(|held| held.placed == sun);
+    match day.filter(|day| day.enabled) {
+        Some(day) => {
+            let placed = day.sanitized().sun_direction();
+            if sun != placed {
+                atmosphere.sun_direction = placed;
+            }
+            *held = Some(PlacedSun {
+                authored: kept.map_or(sun, |kept| kept.authored),
+                placed,
+            });
+        }
+        None => {
+            if let Some(kept) = kept {
+                atmosphere.sun_direction = kept.authored;
+            }
+        }
+    }
+}
+
+fn extract_time_of_day(world: &World, snapshot: &mut RenderSnapshot) {
+    snapshot.extracted.insert(
+        world
+            .get_resource::<TimeOfDay>()
+            .copied()
+            .map_or_else(TimeOfDay::off, TimeOfDay::sanitized),
+    );
+}
+
+pub struct TimeOfDayBrick;
+
+impl Brick for TimeOfDayBrick {
+    fn register(bricks: &mut Bricks) {
+        bricks
+            .settings::<TimeOfDay>()
+            .systems(Presentation, advance_time_of_day)
+            .systems(ViewSync, place_sun)
+            .extract(extract_time_of_day);
     }
 }

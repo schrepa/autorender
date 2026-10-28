@@ -28,7 +28,6 @@ pub mod bounds {
     pub const FRAME_INTERVAL: Rule = Rule::Range(1.0, 1000.0);
     pub const AXIS: Rule = Rule::Range(-1.0, 1.0);
     pub const TURN: Rule = Rule::Range(-1000.0, 1000.0);
-    pub const MAX_CHANGES: usize = 256;
     pub const MAX_VALUES: usize = 1024;
     pub const PIXEL: Rule = Rule::Range(0.0, 16_384.0);
 }
@@ -46,7 +45,6 @@ use crate::features::{
         TerrainControl, TerrainEditControl, TerrainHeightQuery, TerrainRedoControl,
         TerrainRiverControl, TerrainRouteQuery, TerrainSweepQuery, TerrainUndoControl,
     },
-    world_streaming::WorldChangesControl,
 };
 
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -316,7 +314,6 @@ pub enum BrowserControl {
     TerrainRedo(TerrainRedoControl),
     TerrainRiver(TerrainRiverControl),
     NavGo(NavGoControl),
-    WorldChanges(WorldChangesControl),
     Camera {
         #[cfg_attr(
             not(target_arch = "wasm32"),
@@ -468,7 +465,6 @@ impl BrowserControl {
             Self::TerrainRedo(control) => Control::Feature(Box::new(control)),
             Self::TerrainRiver(control) => Control::Feature(Box::new(control)),
             Self::NavGo(control) => Control::Feature(Box::new(control)),
-            Self::WorldChanges(control) => Control::Feature(Box::new(control)),
             Self::Camera {
                 position,
                 target,
@@ -530,7 +526,6 @@ impl BrowserControl {
             | Self::TerrainUndo(_)
             | Self::TerrainRedo(_)
             | Self::TerrainRiver(_)
-            | Self::WorldChanges(_)
             | Self::NavGo(_)
             | Self::Camera { .. }
             | Self::Benchmark { .. }

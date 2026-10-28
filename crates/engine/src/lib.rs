@@ -8,6 +8,8 @@ pub use engine_physics as physics;
 pub use engine_profile as profiling;
 pub use engine_scene as scene;
 pub use engine_settings as settings;
+pub use engine_time_of_day as time_of_day;
+pub use engine_world_streaming as world_streaming;
 pub mod camera;
 mod error;
 pub mod game;
@@ -42,15 +44,18 @@ mod games {
         ParticleBlend, ParticleEmitter, ParticleSettings, Physics, Plugin, PluginGroup,
         Presentation, PresentationState, PresentedTime, PresentedTransform, PresentedTransforms,
         Records, ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution,
-        ResolutionStats, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamSet,
-        Streamed, StreamedId, StreamedItem, StreamingFocus, SubpixelCulling, Surface,
-        TemporalAntialiasing, Terrain, TerrainPlugin, TerrainSample, TerrainSettings, Terrains,
-        Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage, TimeOfDay,
-        TimeOfDayPlugin, Tint, TopLayer, Transform, TransformEditError, UvTransform, ViewSync,
+        ResolutionStats, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamingFocus,
+        SubpixelCulling, Surface, TemporalAntialiasing, Terrain, TerrainPlugin, TerrainSample,
+        TerrainSettings, Terrains, Texture, TextureHandle, TextureRef, TextureSet, TextureSource,
+        TextureUsage, Tint, TopLayer, Transform, TransformEditError, UvTransform, ViewSync,
         ViewSyncSystems, Water, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource,
-        WaterSources, Wind, WorldCells, WorldChanges, WorldStreaming, WorldStreamingPlugin,
-        WorldSync, WorldSyncSystems, Wrap, edit_transform, math, remove_streamed,
+        WaterSources, Wind, WorldSync, WorldSyncSystems, Wrap, edit_transform, math,
         reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
+    };
+    pub use engine_time_of_day::{TimeOfDay, TimeOfDayBrick};
+    pub use engine_world_streaming::{
+        StreamSet, Streamed, StreamedId, StreamedItem, WorldCells, WorldChanges, WorldStreaming,
+        WorldStreamingBrick, remove_streamed,
     };
 }
 pub use games::*;
@@ -83,26 +88,27 @@ pub mod terrain {
 
 pub mod render {
     pub use engine_core::{
-        CellView, GUST_QUICK_ACROSS, GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL,
-        GUST_SLOW_RATE, GUST_SLOW_SHARE, GUST_SLOW_TRAVEL, GpuCurrent, GpuPresentation,
-        MAX_NORMAL_INVERSE_NORM, MacroMap, MaterialBinding, NO_PARENT, NODE_ACTIVE, NODE_BLEND,
-        NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo, NodePose, PoseRows, PresentationMode,
-        RenderEmitter, RenderFrame, RenderInstance, RenderLight, RenderLights, RenderMaterial,
-        RenderMesh, RenderParticles, RenderPlacementAsset, RenderPlacementLayer,
-        RenderPlacementPart, RenderReflectionProbe, RenderReflectionProbes, RenderSnapshot,
-        RenderSurfaceMaps, RenderTerrain, RenderTerrains, RenderTexture, STREAMING_GRIDS,
-        StreamingGrid, TerrainBounce, TerrainLighting, TransformIndex, TransformPropagation,
+        GUST_QUICK_ACROSS, GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL, GUST_SLOW_RATE,
+        GUST_SLOW_SHARE, GUST_SLOW_TRAVEL, GpuCurrent, GpuPresentation, MAX_NORMAL_INVERSE_NORM,
+        MacroMap, MaterialBinding, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE,
+        NODE_VALID, NodeInfo, NodePose, PoseRows, PresentationMode, RenderEmitter, RenderFrame,
+        RenderInstance, RenderLight, RenderLights, RenderMaterial, RenderMesh, RenderParticles,
+        RenderPlacementAsset, RenderPlacementLayer, RenderPlacementPart, RenderReflectionProbe,
+        RenderReflectionProbes, RenderSnapshot, RenderSurfaceMaps, RenderTerrain, RenderTerrains,
+        RenderTexture, TerrainBounce, TerrainLighting, TransformIndex, TransformPropagation,
         presentation_bounds, propagate_transforms, valid_global_matrix,
     };
+    pub use engine_world_streaming::{CellView, STREAMING_GRIDS, StreamingGrid};
 }
 
 pub mod stats {
     pub use engine_core::{
-        Applied, CellStats, CloudStats, CullingStats, DetailStats, Drawn, ErosionStats,
-        ExposureStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats, Names,
-        NavStats, OccupancyStats, PathStats, PhysicsStats, ProbeStats, RenderStats, ShadowStats,
-        SkyStats, TerrainBounceStats, TerrainRenderStats, TerrainStats, WaterStats,
+        Applied, CloudStats, CullingStats, DetailStats, Drawn, ErosionStats, ExposureStats,
+        FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats, Names, NavStats,
+        OccupancyStats, PathStats, PhysicsStats, ProbeStats, RenderStats, ShadowStats, SkyStats,
+        TerrainBounceStats, TerrainRenderStats, TerrainStats, WaterStats,
     };
+    pub use engine_world_streaming::CellStats;
 }
 
 pub mod host;

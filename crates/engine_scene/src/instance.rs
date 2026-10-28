@@ -3,15 +3,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use engine_core::{
-    AssetError, AssetLibrary, MaterialHandle, Mesh3d, MeshHandle, StreamSet, Streamed,
-    StreamedItem, TextureHandle, Transform, WorldCells,
+    AssetError, AssetLibrary, MaterialHandle, Mesh3d, MeshHandle, TextureHandle, Transform,
     bevy_ecs::{
         self,
         prelude::{Component, Entity, World},
         world::WorldId,
     },
-    propagate_transforms, remove_streamed, set_parents,
+    propagate_transforms, set_parents,
 };
+use engine_world_streaming::{StreamSet, Streamed, StreamedItem, WorldCells, remove_streamed};
 
 use crate::{
     SceneDocument, SceneError, SceneFiles,

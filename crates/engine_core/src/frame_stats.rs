@@ -68,7 +68,6 @@ pub struct RenderStats {
     pub occupancy: OccupancyStats,
     pub water: WaterStats,
     pub clouds: CloudStats,
-    pub world_streaming: crate::CellStats,
     pub sky: SkyStats,
     pub occlusion_culling: CullingStats,
     pub subpixel_culling: CullingStats,

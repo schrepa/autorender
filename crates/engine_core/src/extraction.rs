@@ -2,9 +2,7 @@ use bevy_ecs::prelude::{Entity, World};
 use glam::Mat4;
 
 use crate::retained_render::RetainedRender;
-use crate::{
-    GlobalTransforms, PresentedTransforms, TransformIndex, WorldCells, lights, particles, probes,
-};
+use crate::{GlobalTransforms, PresentedTransforms, TransformIndex, lights, particles, probes};
 
 pub(crate) struct Extractions {
     lights: lights::LightExtraction,
@@ -31,11 +29,7 @@ impl Extractions {
         retained.extract_lights_and_particles(world, &mut self.lights, &mut self.particles, gpu);
         retained.extract_probes(world, &mut self.probes);
         retained.extract_terrain(world, aspect);
-        retained.set_streamed(
-            world
-                .get_resource::<WorldCells>()
-                .map(WorldCells::stats)
-                .unwrap_or_default(),
+        retained.set_tables(
             world
                 .get_resource::<crate::StaticTables>()
                 .map(crate::StaticTables::render)

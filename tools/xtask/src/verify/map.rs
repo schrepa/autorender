@@ -69,7 +69,12 @@ pub(crate) const MAP: &[Rule] = &[
         checks: &[Everything],
     },
     Rule {
-        paths: &["crates/engine_core/**", "crates/engine/**"],
+        paths: &[
+            "crates/engine_core/**",
+            "crates/engine/**",
+            "crates/engine_world_streaming/**",
+            "crates/engine_time_of_day/**",
+        ],
         checks: &[
             Pure("caches"),
             Pure("scenes"),
@@ -141,8 +146,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_core/src/**/water*",
             "crates/engine_core/src/**/clouds*",
             "crates/engine_core/src/**/sky*",
-            "crates/engine_core/src/**/time_of_day*",
-            "crates/engine_core/src/**/time_of_day/**",
+            "crates/engine_time_of_day/**",
             "crates/engine_core/src/**/atmosphere*",
             "crates/engine_render/src/**/clouds*",
             "crates/engine_render/src/**/sky*",
@@ -217,6 +221,7 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &[
             "crates/engine_core/src/**/streaming*",
             "crates/engine_core/src/**/streaming/**",
+            "crates/engine_world_streaming/**",
         ],
         checks: &[Smokes("streaming")],
     },

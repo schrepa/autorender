@@ -13,7 +13,6 @@ macro_rules! dev_features {
             navigation,
             physics,
             terrain,
-            world_streaming,
         }
     };
 }
@@ -105,6 +104,5 @@ pub mod collision;
 pub mod navigation;
 pub mod physics;
 pub mod terrain;
-pub mod world_streaming;
 
 dev_features!(files);

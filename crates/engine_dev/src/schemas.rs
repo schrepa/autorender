@@ -93,6 +93,7 @@ pub fn generated() -> Result<Generated, String> {
         "Grounded": schemars::schema_for!(views::GroundedView),
         "Jobs": schemars::schema_for!(views::JobsView),
         "StaticTables": schemars::schema_for!(views::StaticTablesView),
+        "StreamedId": schemars::schema_for!(views::StreamedIdView),
         "protocol": schemars::schema_for!(protocol::DevRequest),
         "BrowserControl": control_schema(),
         "FrameStats": frame_stats(&mut problems),
