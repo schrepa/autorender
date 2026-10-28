@@ -1,33 +1,33 @@
-// Foam on terrains' water and the sea: the share of the surface foam hides,
-// from the water's state and what it meets. Terrains' water's is what its
-// particles lay (`water_particles.rs`, `water_splatted`): the white water
-// turbulence's bursts lay where the water breaks (`engine_terrain`'s
-// `breaking`), draining as its bubbles rise out, and the foam they churn up
-// where it churns (`water_sim.wgsl`'s `sim_churn`: where it loses energy,
-// plunges or jumps, along its eddy lines and where it converges), carried as
-// particles by the current its surface runs at, drawn by it into streaks,
-// gathering where it converges and against what stands in it, and fading
-// as they age, with open water between them; out past where their texels
-// span a pixel, the water's own state's, which their mean is. And white
-// water where it runs against what stands in it behind the pixel fast
-// enough to tear air in (`water_contact`), by how far it climbs what it
-// meets (`water_climbing`). The sea's whitens where its crests fold and
-// where its waves run up its shores (`meshes/ocean.wgsl`). Fresh white
-// water and carried foam add into one coverage (`water_foam`), lit as foam
-// is lit (`water_light`); age changes only how it scatters light. No grain
-// and no texture draws any of it: what shape it takes, its flecks, streaks,
-// rafts, lines along eddies and piles behind what stands in the water,
-// comes from the particles and how the water carries them.
+// Foam on terrains' water and the sea: the layers of white water and foam
+// over the surface, from the water's state and what it meets. Terrains'
+// water's are what its particles lay (`water_particles.rs`): rafts of white
+// water born where it breaks, as fast as it loses energy breaking, whose
+// bubbles rise into the foam they float on, carried and strained by the
+// current its surface runs at, so its shear draws them into streaks and
+// they gather where it converges and against what stands in it, each raft
+// drawn sharp where it lies (`fs_foam`, `water_foam_layers`); out past the
+// particles' reach, the water's own state's, their mean. And white water
+// where it runs against what stands in it behind the pixel fast enough to
+// tear air in (`water_contact`), by how far it climbs what it meets
+// (`water_climbing`). The sea's whitens where its crests fold and where its
+// waves run up its shores (`meshes/ocean.wgsl`). White water and foam add
+// into one coverage (`water_foam`), lit as foam is lit (`water_light`), the
+// share of it drained foam setting how thin it lies. No grain and no
+// texture draws any of it: what shape it takes, its flecks, streaks, rafts,
+// lines along eddies and piles behind what stands in the water, comes from
+// the particles and how the water carries them.
 
-// What water's particles splat (`water_particles.rs`) around the detail
-// eye, its texels anchored in the world: each the share of it white water
-// covers and foam covers, and how fast the waves' surface falls along x and
-// z; the squares of those falls and their product (`water_spread`); each
-// with its coarser levels; and the sampler reading them, which repeats
-// them, as their texels hold their world texels' remainders over its side.
+// What water's wave particles splat (`water_particles.rs`) around the
+// detail eye, its texels anchored in the world: how fast the waves' surface
+// falls along x and z and the squares of those falls, and their product
+// (`water_spread`), each with its coarser levels; the sampler reading them,
+// which repeats them, as their texels hold their world texels' remainders
+// over its side; and the layers of white water and foam the foam
+// particles' rafts lay over each pixel, drawn before water (`fs_foam`).
 @group(2) @binding(24) var water_particles: texture_2d<f32>;
 @group(2) @binding(25) var water_particles_sampler: sampler;
 @group(2) @binding(26) var water_particles_spread: texture_2d<f32>;
+@group(2) @binding(48) var water_foam_drawn: texture_2d<f32>;
 
 // The meters a second over which water running against what stands in it
 // tears air in, from the first to the second (Ervine, McKeogh and Elsawy
@@ -40,16 +40,14 @@ const WATER_FOAM_CAPPING: f32 = 0.12;
 // How much of the light heaped foam's hollows lose to the bubbles around
 // them.
 const WATER_FOAM_HOLLOW: f32 = 0.35;
-// The most of the surface water breaking white all over whitens at once:
-// its breaking eddies reach its surface in patches, rollers and boils
-// between which its water runs clear (Brocchini and Peregrine 2001; Chanson
-// 1996, the surface of self-aerated flow), so that rapids show white crests
-// and streaks over dark water.
-const WATER_BREAKING_MOST: f32 = 0.6;
-// The most of the surface the lace drained foam leaves covers: its walls'
-// network over the open water between them, a third of it where it lies
-// thickest (Craig and Stewart; lace below rapids).
-const WATER_FOAM_LACE: f32 = 0.35;
+// The optical depth a layer of foam holds: a layer of bubbles a few
+// millimeters across, each taking twice its cross section out of the light
+// (the extinction paradox), so a single layer lets a third of the light
+// through and heaped foam none.
+const WATER_FOAM_OPTICAL: f32 = 4.0;
+// The most of the surface the water's own foam covers: all but a step of
+// the signed byte its words hold it in (`water_words`), 4.8 layers.
+const WATER_DENSEST: f32 = 0.99212598;
 // The share of water's depth an obstacle stands up through from which the
 // water starts to climb it, and from which it climbs it whole: a stone half
 // as tall as the water runs deep bulges the surface over it, and one
@@ -105,162 +103,51 @@ fn water_blocking(standing: f32, depth: f32) -> f32 {
     return smoothstep(WATER_FOAM_BLOCKING.x, WATER_FOAM_BLOCKING.y, blocked);
 }
 
-// Foam over a pixel: the share of the surface it hides (`cover`), how thin
-// it lies, from heaped (0) to a single drained layer (1), and how much its
-// hollows shade it.
+// Foam over a pixel: the share of the light falling on it it sends back,
+// and of the surface it hides (`cover`); how thin it lies, from heaped (0)
+// to a drained lace (1); and how much its hollows shade it.
 struct WaterFoam {
     cover: f32,
     thin: f32,
     shade: f32,
 }
 
-// The foam of fresh white water covering `fresh` of the surface and of foam
-// the water carries holding `carried` of the most it holds (0 to 1 each):
-// each lies where the other does as often as anywhere, so together they
-// cover all but what both leave. Fresh white water is wet foam, round
-// bubbles heaping as they churn (Weta's foam, 2022), as white as it is
-// thick; the foam the water carries has drained, its bubbles burst into an
-// open lace of the walls between them, which covers WATER_FOAM_LACE of the
-// surface at the most. Its share of the two sets how thin the foam lies,
-// and the hollows of what heaps shade it by WATER_FOAM_HOLLOW: age changes
-// how it scatters light, never where it lies.
-fn water_foam(fresh: f32, carried: f32) -> WaterFoam {
-    var foam: WaterFoam;
-    let lace = carried * WATER_FOAM_LACE;
-    foam.cover = 1.0 - (1.0 - fresh) * (1.0 - lace);
-    foam.thin = lace / max(fresh + lace, 1.0e-6);
-    foam.shade = WATER_FOAM_HOLLOW * (1.0 - foam.thin);
-    return foam;
+// Foam where `white` layers of fresh white water and `foam` layers of the
+// foam the water carries lie: a slab of bubbles scattering light without
+// taking it, of optical depth τ, WATER_FOAM_OPTICAL a layer, sends back
+// τ/(τ + 2) of the light falling on it and lets the rest through
+// (Kubelka and Munk; two-stream, conservative scattering), so heaped foam
+// is bright and opaque and a thin layer grey, the water showing through it.
+// Fresh white water is wet foam, round bubbles heaping as they churn
+// (Weta's foam, 2022); the foam the water carries has drained, its bubbles
+// burst into a lace of the walls between them. Its share of the two sets
+// how thin the foam lies, and the hollows of what heaps shade it by
+// WATER_FOAM_HOLLOW: age changes how it scatters light, never where it
+// lies.
+fn water_foam(white: f32, foam: f32) -> WaterFoam {
+    var result: WaterFoam;
+    let layers = max(white, 0.0) + max(foam, 0.0);
+    let depth = WATER_FOAM_OPTICAL * layers;
+    result.cover = depth / (depth + 2.0);
+    result.thin = max(foam, 0.0) / max(layers, 1.0e-6);
+    result.shade = WATER_FOAM_HOLLOW * (1.0 - result.thin);
+    return result;
 }
 
-// The crest heights (in their root mean square) over which foam thins from
-// heaped to none toward the edge of what it covers; and the crest heights
-// about its edge over which bubbles cloud the water past it.
-const WATER_FOAM_THINNING: f32 = 0.25;
-const WATER_FOAM_HALO: f32 = 0.8;
-// Foam's lace: the meters across the bubble rafts of its two scales, foam
-// draining into clusters of bubbles a few centimeters across whose walls
-// net it (Weaire and Hutzler, The Physics of Foams), the finer's net drawn
-// over the coarser's; the share of a raft its walls span; and the share of
-// the surface the walls of a net cover on average, which stands for it
-// where a pixel spans too many rafts to draw them.
-const WATER_LACE_RAFTS: vec2<f32> = vec2<f32>(0.03, 0.08);
-const WATER_LACE_WALL: f32 = 0.3;
-const WATER_LACE_MEAN: f32 = 0.35;
-
-// The scale of the logistic distribution as spread as a unit normal one,
-// √3/π: the share of a crest field past a threshold, and the threshold
-// leaving a share past it, in closed form.
-const WATER_FOAM_LOGISTIC: f32 = 0.5513289;
-
-// The walls of foam's rafts `size` meters across at the place `at` (world
-// meters along x and z) of a pattern seeded `seed`: 1 on a wall, falling to
-// none inside a raft over WATER_LACE_WALL of it, its edge never sharper than
-// the pixel shows it (cellular noise, Worley 1996: the gap between the
-// nearest two of the points the cells hold, one each).
-fn water_lace_walls(at: vec2<f32>, size: f32, seed: u32) -> f32 {
-    let p = at / size;
-    let cell = floor(p);
-    var nearest = vec2<f32>(8.0);
-    for (var j = -1; j <= 1; j++) {
-        for (var i = -1; i <= 1; i++) {
-            let corner = bitcast<vec2<u32>>(vec2<i32>(cell) + vec2<i32>(i, j));
-            let key = pcg(corner.x ^ pcg(corner.y ^ seed));
-            let point = cell + vec2<f32>(f32(i), f32(j))
-                + vec2<f32>(unit(key), unit(pcg(key)));
-            let gap = length(p - point);
-            if gap < nearest.x {
-                nearest = vec2<f32>(gap, nearest.x);
-            } else if gap < nearest.y {
-                nearest.y = gap;
-            }
-        }
-    }
-    let between = nearest.y - nearest.x;
-    let edge = max(WATER_LACE_WALL, fwidth(between)); // filter: the walls' edge spread over the pixel, keeping their share
-    return 1.0 - smoothstep(0.0, edge, between);
+// The layers of foam covering the share `share` of the surface,
+// −ln(1 − share), each hiding as often as not what the others leave; no
+// more than WATER_DENSEST covers.
+fn water_layers(share: f32) -> f32 {
+    return -log(1.0 - clamp(share, 0.0, WATER_DENSEST));
 }
 
-// Foam's lace at `world` on water running at `flow` (meters a second along x
-// and z), a pixel there spanning `across` meters (`detail_across`), at
-// `time` seconds: the walls of its rafts at both scales
-// (`water_lace_walls`), carried by the current as the detail waves are
-// (`water_detail_phase`, `water_detail_phases`), each scale drawing while its
-// rafts span WATER_DETAIL_SHOWN pixels and standing as WATER_LACE_MEAN where
-// they shrink under them.
-fn water_lace(world: vec3<f32>, flow: vec2<f32>, across: f32, time: f32) -> f32 {
-    var lace = 0.0;
-    for (var scale = 0u; scale < 2u; scale++) {
-        let size = WATER_LACE_RAFTS[scale];
-        let shows = smoothstep(WATER_DETAIL_SHOWN.x, WATER_DETAIL_SHOWN.y, size / across); // filter: rafts finer than a pixel draws average out to their walls' share
-        var walls = WATER_LACE_MEAN;
-        if shows > 0.0 {
-            let seconds = water_detail_phase(size);
-            let phases = water_detail_phases(time, seconds);
-            var drawn = 0.0;
-            for (var phase = 0u; phase < 2u; phase++) {
-                let cycle = time / seconds + 0.5 * f32(phase);
-                let number = (u32(i32(floor(cycle))) * 2u + phase) * 4u + scale + 0x51ed270bu;
-                let at = world.xz - flow * (fract(cycle) * seconds);
-                drawn += phases[phase] * water_lace_walls(at, size, pcg(number));
-            }
-            walls = mix(WATER_LACE_MEAN, drawn / max(phases.x + phases.y, 1.0e-6), shows);
-        }
-        lace = max(lace, walls);
-    }
-    return lace;
-}
-
-// Foam over a pixel as the detail waves lay it: the share of it foam hides
-// (`cover`), and the share of it under which breaking water holds bubbles,
-// a halo about the foam (`aerated`).
-struct WaterFoamLaid {
-    cover: f32,
-    aerated: f32,
-}
-
-// Where on the waves foam covering the share `mean` of the surface lies, as
-// a pixel shows it, over the detail waves `detail` (`water_detail`), its
-// rafts' walls standing as `lace` (`water_lace`): foam rides to their
-// eddies' crests (`crest`), heaped thick where they stand highest and
-// thinning over WATER_FOAM_THINNING of their height toward its edge, where
-// it drains into the lace of its rafts' walls, whole where it lies thickest
-// and only its walls halfway out, as a raft of foam drains from its edges;
-// and bubbles cloud the water about it as far again (WATER_FOAM_HALO). The
-// threshold leaves `mean` of the surface past it, the crests' heights taken
-// as logistic; as much of that pattern as the pixel draws of the waves, the
-// rest the mean itself.
-fn water_foam_crests(mean: f32, detail: WaterDetail, lace: f32) -> WaterFoamLaid {
-    var laid: WaterFoamLaid;
-    laid.cover = mean;
-    laid.aerated = mean;
-    if mean <= 1.0e-4 || mean >= 1.0 - 1.0e-4 {
-        return laid;
-    }
-    let threshold = WATER_FOAM_LOGISTIC * log((1.0 - mean) / mean);
-    let edge = max(WATER_FOAM_THINNING, fwidth(detail.crest)); // filter: the foam's edge spread over the pixel, keeping its share
-    let past = (detail.crest - threshold) / edge;
-    let thick = 1.0 / (1.0 + exp(-clamp(past, -30.0, 30.0)));
-    let netted = saturate(2.0 * thick - (1.0 - lace));
-    let halo = 1.0 / (1.0 + exp(-clamp(past + WATER_FOAM_HALO, -30.0, 30.0)));
-    let shown = saturate(detail.shown);
-    laid.cover = mix(mean, netted, shown);
-    laid.aerated = mix(mean, halo, shown);
-    return laid;
-}
-
-// The share of the surface water breaking white covers at once, where its
-// white water lies as `white` (0 to 1) of what it holds: as much of
-// WATER_BREAKING_MOST.
-fn water_breaking_share(white: f32) -> f32 {
-    return white * WATER_BREAKING_MOST;
-}
-
-// The share of the surface white water hides where `layers` of it lie: each
-// layer hides as often as not what the others leave, so `layers` of them
-// leave e^−layers of it open.
-fn water_white(layers: f32) -> f32 {
-    return 1.0 - exp(-max(layers, 0.0));
+// The layers of white water and foam over the pixel at `pixel`: those the
+// foam particles' rafts drew there (`fs_foam`) as far as the particles show
+// (`shown`, `water_splatted`'s), and past their reach `settled`, those the
+// water's own state holds, their mean.
+fn water_foam_layers(pixel: vec2<f32>, shown: f32, settled: vec2<f32>) -> vec2<f32> {
+    let drawn = textureLoad(water_foam_drawn, vec2<i32>(pixel), 0).xy;
+    return mix(settled, drawn, shown);
 }
 
 // The meters across the eddies of water `depth` meters deep that the waves
@@ -274,14 +161,12 @@ fn water_eddy_size(depth: f32, texel: f32, largest: f32) -> f32 {
     return clamp(depth, smallest, max(largest, smallest));
 }
 
-// What water's particles show under a pixel: the shares of it the white
-// water and the foam the water carries cover (`foam`); how fast the waves'
-// surface falls along x and z (`fall`, meters a meter), as much of it as
-// the particles show; the covariance of the waves' slopes the pixel hides
+// What water's particles show under a pixel: how fast the waves' surface
+// falls along x and z (`fall`, meters a meter), as much of it as the
+// particles show; the covariance of the waves' slopes the pixel hides
 // (`hidden`, `water_spread`); and how much of the particles shows (`shown`,
 // 0 to 1), the rest the water's own state's.
 struct WaterSplatted {
-    foam: vec2<f32>,
     fall: vec2<f32>,
     hidden: vec3<f32>,
     shown: f32,
@@ -293,17 +178,13 @@ struct WaterSplatted {
 // which repeat; the pixels their texels span where they hand over; and the
 // meters across the cells of the water they ride): filtered over the
 // footprint by their levels, out to where their texels span water.foam.z
-// pixels seen from the detail eye, handing over to `settled`, the shares
-// white water and foam cover as the water's own state holds them (the white
-// water born there and the foam its flow churned up), the particles' mean,
-// as a pyramid's level hands over to the next coarser (`detail_level`);
-// `settled` and a surface they draw nothing on past it. The slopes the
-// footprint averages hide in their covariance, the mean of their squares
-// less their mean's (LEAN mapping, Olano and Baker 2010).
-fn water_splatted(world: vec3<f32>, footprint: WaterFootprint, settled: vec2<f32>)
-        -> WaterSplatted {
+// pixels seen from the detail eye, handing over to the water's own state,
+// as a pyramid's level hands over to the next coarser (`detail_level`); a
+// surface they draw nothing on past it. The slopes the footprint averages
+// hide in their covariance, the mean of their squares less their mean's
+// (LEAN mapping, Olano and Baker 2010).
+fn water_splatted(world: vec3<f32>, footprint: WaterFootprint) -> WaterSplatted {
     var held: WaterSplatted;
-    held.foam = settled;
     let texel = water.foam.x;
     if texel <= 0.0 {
         return held;
@@ -317,12 +198,11 @@ fn water_splatted(world: vec3<f32>, footprint: WaterFootprint, settled: vec2<f32
     let dx = footprint.dx / side;
     let dy = footprint.dy / side;
     let splatted = textureSampleGrad(water_particles, water_particles_sampler, at, dx, dy);
-    let squares = textureSampleGrad(water_particles_spread, water_particles_sampler, at, dx,
-        dy).xyz;
-    let hidden = squares - water_spread(splatted.zw);
-    held.foam = mix(splatted.xy, settled, picked.blend);
+    let product = textureSampleGrad(water_particles_spread, water_particles_sampler, at, dx,
+        dy).x;
+    let hidden = vec3<f32>(splatted.zw, product) - water_spread(splatted.xy);
     held.shown = 1.0 - picked.blend;
-    held.fall = splatted.zw * held.shown;
+    held.fall = splatted.xy * held.shown;
     held.hidden = vec3<f32>(max(hidden.xy, vec2<f32>(0.0)), hidden.z);
     return held;
 }

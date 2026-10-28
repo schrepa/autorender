@@ -100,6 +100,7 @@ shared_groups! {
             particle_source, particle_target, particle_spread_source, particle_spread_target
         ],
         bed: 41..45 [bed_frame, bed_taken, bed_ground, bed_kept],
+        foam: 47..49 [foam_pool, water_foam_drawn],
     }
     SHADER @ 3 {
         lights: 0..4 [clusters, lights, cluster_ranges, cluster_lights],

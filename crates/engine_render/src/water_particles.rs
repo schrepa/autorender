@@ -27,16 +27,28 @@
 //! for the eddies finer than the cells of the water they ride, whose own
 //! flow carries larger ones.
 //!
-//! Each frame the particles splat into a window of texels anchored in the
-//! world around the detail eye, by fixed-point atomic sums, which any order
-//! of the particles adds alike: foam particles by a quadratic B-spline over
-//! the 3 x 3 texels around them, wave particles by their raised cosines'
-//! slopes. Its texels split each of the water's settled cells
+//! Foam particles are rafts, ellipses carried by the current and by the
+//! current the boils spread over the surface, whose long axes the shear of
+//! both turns and stretches, their areas spreading with them, tearing in two
+//! once long and thin; their white water
+//! drains into the foam they float on, which drains in turn, so each goes
+//! from heaped white to lace. Each frame they draw themselves on the water's
+//! mesh into a target the size of the frame's, the layers of white water and
+//! foam over each pixel, sharp at every distance, before water draws and
+//! reads it ([`WaterParticles::draw_foam`], `vs_foam`, `fs_foam`).
+//!
+//! Each frame the wave particles splat into a window of texels anchored in
+//! the world around the detail eye, by fixed-point atomic sums, which any
+//! order of the particles adds alike, their raised cosines' slopes and the
+//! current their boils spread over the surface, which the next frame's
+//! rafts ride. Its
+//! texels split each of the water's settled cells
 //! ([`Water::simulation_cell`]) [`TEXEL_SPLIT`] ways along each side, 6.25 cm
 //! for the cook's meter cells. How many it holds follows from the screen: it
 //! shows out to where its texels span [`HANDOVER_PIXELS`] seen from the
 //! detail eye, past which water shows its own foam, the particles' mean, on
-//! a surface they draw nothing on, handing over as a pyramid's level does,
+//! a surface they draw nothing on, handing over as a pyramid's level does
+//! (foam's rafts with it),
 //! so its texels along a side are the pixels a radian holds over
 //! HANDOVER_PIXELS, twice, with [`WINDOW_MARGIN`] more each side; no more than
 //! the display has pixels, nor than one of the device's storage bindings
@@ -63,13 +75,14 @@
 //! the sites' births `particles_births` and the scan over both
 //! `particles_sum` and `particles_scan`; their laying `particles_place`,
 //! the splat `particles_splat`, the textures' finest level `particles_look`
-//! and their coarser levels `particles_down`), sixteen in all; the pools'
-//! tallies alone are read back, a few frames late. It holds 98 MB at
-//! 1920×1080 (its splat's sums 32 MB, its textures and their levels 42 MB,
-//! its pools twice over 20 MB, its counts and lattice 4 MB) and 181 MB at
-//! 2560×1440 (59, 79, 37 and 7 MB). Its passes over the window's texels and
-//! the lattice's points cost as many as the window holds, about 2.0 and 3.7
-//! million texels; those over the particles as many as live.
+//! and their coarser levels `particles_down`), sixteen in all, and the
+//! foam's draw after them, as many rafts as live, drawn from the counts;
+//! the pools' tallies alone are read back, a few frames late. It holds 117
+//! MB at 1920×1080 (its splat's sums 32 MB, its textures and their levels
+//! 42 MB, its pools twice over 40 MB, its counts and lattice 4 MB) and 219
+//! MB at 2560×1440 (59, 79, 74 and 7 MB). Its passes over the window's
+//! texels and the lattice's points cost as many as the window holds, about
+//! 2.0 and 3.7 million texels; those over the particles as many as live.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -82,7 +95,7 @@ use engine_core::{RenderTerrain, Water};
 use crate::bindings::{EMPTY, WATER_PARTICLES};
 use crate::buffers::ReadbackRing;
 use crate::gpu_layouts::constants::{
-    MATERIAL_ANISOTROPY, PARTICLE_ARGS, PARTICLE_FOAM_BEFORE, PARTICLE_FOAM_BORN,
+    MATERIAL_ANISOTROPY, PARTICLE_ARGS, PARTICLE_DRAW, PARTICLE_FOAM_BEFORE, PARTICLE_FOAM_BORN,
     PARTICLE_FOAM_DROPPED, PARTICLE_FOAM_LIVE, PARTICLE_GROUP, PARTICLE_ITEMS, PARTICLE_LATTICE,
     PARTICLE_SIDE, PARTICLE_WAVES_BORN, PARTICLE_WAVES_DROPPED, PARTICLE_WAVES_LIVE,
 };
@@ -96,9 +109,8 @@ use crate::water_sim::LONGEST_FRAME;
 
 /// The window's texels along a side of one of the water's settled cells:
 /// sixteen, 6.25 cm for the cook's meter cells, eight along each of the
-/// half-meter cells those run live in, so foam particles' kernels, three
-/// texels across, draw foam's flecks and lace and the lines the live
-/// water's velocity draws it into, narrower than its cells.
+/// half-meter cells those run live in, so the smallest boils, four texels
+/// across, are narrower than its cells.
 const TEXEL_SPLIT: u32 = 16;
 /// The pixels the window's texels span, seen from the detail eye, where
 /// water hands over from its particles to its own foam (`water_splatted`):
@@ -123,27 +135,31 @@ const WINDOW_MARGIN: u32 = MATERIAL_ANISOTROPY as u32 / HANDOVER_PIXELS as u32 +
 /// under a point more.
 const LATTICE_MARGIN: u32 = 2;
 /// Texels of the window each particle the pools hold stands for: four of
-/// the foam pool's, so it lays nearly half a layer over all of the window,
-/// more than rapids cover of it; and sixteen of the wave pool's, its
-/// particles living a second or so where foam lives tens.
+/// the foam pool's, so its rafts, born a few texels across, cover the
+/// window several times over, more than rapids cover of it; and sixteen of
+/// the wave pool's, its particles living a second or so where foam lives
+/// tens.
 const FOAM_TEXELS: u32 = 4;
 const WAVE_TEXELS: u32 = 16;
-/// Bytes a texel takes of the splat's sums: four words, the layers of white
-/// water and of foam laid over it and how fast the waves' surface falls
-/// along x and z.
+/// Bytes a texel takes of the splat's sums: four words, how fast the waves'
+/// surface falls along x and z, and the current their boils spread over the
+/// surface along x and z.
 const SPLAT_BYTES: u64 = 16;
-/// Bytes a particle takes of each half of the pools, a lattice point of the
-/// lattice (its water, then what carries the foam there) and a texel of each
-/// of the textures (four half floats).
-const PARTICLE_BYTES: u64 = 16;
+/// Bytes a particle takes of each half of the pools (two words of four
+/// floats' bits), a lattice point of the lattice (its water, then what
+/// carries the foam there) and a texel of each of the textures (four half
+/// floats).
+const PARTICLE_BYTES: u64 = 32;
 const POINT_BYTES: u64 = 32;
 const TEXEL_BYTES: u64 = 8;
 /// The words of the pools' counts read back: those before the counts of
 /// the particles the pools held before the frame.
 const TALLIES: usize = PARTICLE_FOAM_BEFORE as usize;
 /// Bytes of the dispatches over the particles and over the scan's items,
-/// three words each.
+/// three words each; and where the foam's draw, four words, follows them.
 const ARGS_BYTES: u64 = 24;
+const DRAW_ARGS: u64 = 32;
+const DRAW_BYTES: u64 = 16;
 
 /// Water's particles: their passes' group layout and pipelines, the empty
 /// group standing first and the sampler water's shading reads their textures
@@ -185,9 +201,9 @@ struct ParticlePipelines {
 /// wave particles its pools hold, the pixels its texels span where they hand
 /// over and the meters across the cells of the water they ride; its frame's
 /// uniform, its lattice, its pools twice over, its counts and the
-/// dispatches copied from them, its splat's sums, and the textures water's
-/// shading reads (its white water's and foam's coverage and the waves'
-/// slopes; and those slopes' squares), with their whole views, and its
+/// dispatches and the foam's draw copied from them, its splat's sums, and
+/// the textures water's shading reads (the waves' slopes and their squares;
+/// and those slopes' product), with their whole views, and its
 /// groups (the first for their finest level, which every pass but the
 /// coarser levels' takes, then each coarser level's); the window its pools'
 /// particles ran in (none until a frame ran) and the half holding them;
@@ -416,9 +432,10 @@ impl WaterParticles {
     /// the lattice's water and what carries it; each particle's step, the
     /// sites' births and the scan over them, after the dispatch over the
     /// particles and over the scan's items are copied from their counts;
-    /// and, after the dispatch over the particles the scan left is, their
-    /// laying into the other half of the pools, their splat and the
-    /// textures' levels; then a copy of the pools' tallies to read back.
+    /// and, after the dispatch over the particles the scan left and the
+    /// foam's draw are, their laying into the other half of the pools, their
+    /// splat and the textures' levels; then a copy of the pools' tallies to
+    /// read back.
     pub(crate) fn encode(
         &self,
         device: &wgpu::Device,
@@ -462,6 +479,13 @@ impl WaterParticles {
             pass.dispatch_workgroups(1, 1, 1);
         }
         encoder.copy_buffer_to_buffer(&grid.counts, args, &grid.args, 0, ARGS_BYTES / 2);
+        encoder.copy_buffer_to_buffer(
+            &grid.counts,
+            u64::from(PARTICLE_DRAW) * 4,
+            &grid.args,
+            DRAW_ARGS,
+            DRAW_BYTES,
+        );
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/water-particles-splat"),
@@ -508,6 +532,34 @@ impl WaterParticles {
         pass.set_bind_group(2, group, &[]);
     }
 
+    /// Records the foam particles' draw into `pass` (water's pipeline
+    /// layout, its first group `camera`, the water's group `water` and
+    /// `behind`, the group of what lies behind the water binding a
+    /// placeholder where the target the pass draws into is) through
+    /// `pipeline` (`vs_foam`, `fs_foam`): their rafts, as many as the
+    /// frame's scan left living, where this frame's passes ran.
+    pub(crate) fn draw_foam(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        pipeline: &wgpu::RenderPipeline,
+        (camera, water, behind): (&wgpu::BindGroup, &wgpu::BindGroup, &wgpu::BindGroup),
+    ) {
+        let Some(grid) = self.grid.as_ref().filter(|grid| grid.encoded.get()) else {
+            return;
+        };
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, camera, &[]);
+        pass.set_bind_group(1, water, &[0, grid.terrain, 0]);
+        pass.set_bind_group(2, behind, &[]);
+        pass.draw_indirect(&grid.args, DRAW_ARGS);
+    }
+
+    /// The particles' frame and pools, which the foam's draw reads; none
+    /// while none run.
+    pub(crate) fn foam_buffers(&self) -> Option<(&wgpu::Buffer, &wgpu::Buffer)> {
+        self.grid.as_ref().map(|grid| (&grid.frame, &grid.pool))
+    }
+
     /// Requests the map of the tallies the frame just submitted copied.
     pub(crate) fn after_submit(&self) {
         let tallies = Rc::clone(&self.tallies);
@@ -516,14 +568,13 @@ impl WaterParticles {
         });
     }
 
-    /// The particles' textures of their white water's and foam's coverage
-    /// and the waves' slopes as water's shading reads them, with their
-    /// levels; none while none run.
+    /// The particles' texture of the waves' slopes and their squares as
+    /// water's shading reads it, with its levels; none while none run.
     pub(crate) fn view(&self) -> Option<&wgpu::TextureView> {
         self.grid.as_ref().map(|grid| &grid.view)
     }
 
-    /// The particles' texture of the waves' slopes' squares as water's
+    /// The particles' texture of the waves' slopes' product as water's
     /// shading reads it, with its levels; none while none run.
     pub(crate) fn spread_view(&self) -> Option<&wgpu::TextureView> {
         self.grid.as_ref().map(|grid| &grid.spread_view)
@@ -632,7 +683,7 @@ impl ParticleGrid {
         );
         let args = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("engine/water-particles-args"),
-            size: ARGS_BYTES.next_multiple_of(16),
+            size: DRAW_ARGS + DRAW_BYTES,
             usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });

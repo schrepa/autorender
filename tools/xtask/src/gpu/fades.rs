@@ -43,6 +43,10 @@ const FILTERS: &[(&str, &str)] = &[
          filtering blends mipmaps",
     ),
     (
+        "foam_quad",
+        "a foam raft drawn no thinner than a pixel, its layers thinned to keep the foam it lays",
+    ),
+    (
         "map_lookup",
         "the shadow clipmap's level whose texels match the pixel, compared with the receiver's \
          plane across the pixel",

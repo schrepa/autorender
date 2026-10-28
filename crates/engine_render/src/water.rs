@@ -34,8 +34,10 @@
 //! small waves on its surface, runs live as particles around the detail eye
 //! (`crate::water_particles`), stepped before water draws over the water of
 //! the terrain the detail eye stands over, read as the water's shading
-//! reads it, and splatted into textures that bind beside what lies behind
-//! the water, which their passes do not bind.
+//! reads it: its waves splatted into textures that bind beside what lies
+//! behind the water, which their passes do not bind, and its foam's rafts
+//! drawn, after the opaque depth copies, into the layers of white water and
+//! foam over each pixel, which bind there too.
 //!
 //! Water is a feature of the renderer (`crate::render_features`).
 //!
@@ -92,8 +94,9 @@ pub(crate) const WATER_UNIFORM_BYTES: usize = size_of::<WaterUniform>();
 /// none of: the terrain's height array, uniforms and directory, its
 /// subdivisions' leaves, tiles' water blocks, water's directory, the live
 /// water's looks (which tiles' water too reads none of while none runs)
-/// and the tree of a terrain's water; and for the scene's color, which
-/// frames blending water read none of.
+/// and the tree of a terrain's water; for the scene's color, which frames
+/// blending water read none of; and for the particles' frame while none
+/// run.
 struct Placeholders {
     surfaces: wgpu::Texture,
     info: wgpu::Texture,
@@ -103,6 +106,7 @@ struct Placeholders {
     live: wgpu::Buffer,
     storage: wgpu::Buffer,
     tree: wgpu::Buffer,
+    particles: wgpu::Buffer,
 }
 
 /// The sea on the GPU: its uniform and group, and this frame's rings and
@@ -130,14 +134,23 @@ struct FallDraws {
 }
 
 /// The copies of the opaque scene water reads, the depth and, in frames
-/// drawing the effects' targets, the color; and their group, which binds
-/// the particles' textures as of the generation `particles`.
+/// drawing the effects' targets, the color; the layers of white water and
+/// foam the foam particles' rafts lay over each pixel, which they draw
+/// before water draws ([`FOAM_FORMAT`]); and the groups binding them,
+/// water's and the foam's draw's (a placeholder in the place of the target
+/// it draws into), with the particles' as of the generation `particles`.
 struct BehindCopies {
     depth: wgpu::Texture,
     scene: Option<wgpu::Texture>,
+    foam: wgpu::TextureView,
     group: wgpu::BindGroup,
+    drawing: wgpu::BindGroup,
     particles: u64,
 }
+
+/// The format of the layers of white water and foam over each pixel: two
+/// half floats, which the rafts covering a pixel add into.
+const FOAM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
 /// What water draws this frame: tiles' water blocks resident and dropped,
 /// the leaves the water's subdivisions drew and the splits their room
@@ -167,6 +180,7 @@ pub(crate) struct WaterPass {
     tiles: Option<TileDraws>,
     pipeline_layout: Option<wgpu::PipelineLayout>,
     pipelines: HashMap<Targets, wgpu::RenderPipeline>,
+    foam_pipeline: Option<wgpu::RenderPipeline>,
     ocean_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
     ocean: Option<OceanDraw>,
     // Terrains' falls' sheets, as of the falls they were built from, and
@@ -195,6 +209,7 @@ impl WaterPass {
             tiles: None,
             pipeline_layout: None,
             pipelines: HashMap::default(),
+            foam_pipeline: None,
             ocean_pipelines: HashMap::default(),
             ocean: None,
             falls: None,
@@ -488,9 +503,12 @@ impl WaterPass {
     }
 
     /// The copies of the opaque scene at `size`, the depth's of `format`
-    /// and, when water `refracts`, the color's; and their group, with the
-    /// particles' textures (the one-texel color in their place while none
-    /// run) and their sampler.
+    /// and, when water `refracts`, the color's; the layers of foam over each
+    /// pixel at `size`; and their groups, with the particles' textures (the
+    /// one-texel color in their place while none run) and their sampler, and
+    /// their frame and pools (placeholders while none run): water's, and the
+    /// foam's draw's, the one-texel color in the place of the foam's layers,
+    /// which it draws.
     fn behind_copies(
         &self,
         device: &wgpu::Device,
@@ -511,46 +529,99 @@ impl WaterPass {
         };
         let depth = copy("engine/water-depth", format);
         let scene = refracts.then(|| copy("engine/water-scene", crate::post::SCENE_FORMAT));
+        let foam = crate::targets::texture_2d(
+            device,
+            "engine/water-foam",
+            size.pixels(),
+            1,
+            1,
+            FOAM_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        )
+        .create_view(&wgpu::TextureViewDescriptor::default());
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
         let scene_view = scene
             .as_ref()
             .map(|scene| scene.create_view(&wgpu::TextureViewDescriptor::default()));
-        let group = crate::pipelines::group(
-            device,
-            "engine/water-behind",
-            &WATER_BEHIND,
-            &self.behind_layout,
-            &[
-                ("water_depth", crate::pipelines::view(&depth_view)),
-                (
-                    "water_scene",
-                    crate::pipelines::view(scene_view.as_ref().unwrap_or(&self.placeholders.scene)),
-                ),
-                (
-                    "water_particles",
-                    crate::pipelines::view(
-                        self.particles.view().unwrap_or(&self.placeholders.scene),
+        let (frame, pool) = self
+            .particles
+            .foam_buffers()
+            .unwrap_or((&self.placeholders.particles, &self.placeholders.storage));
+        let group = |label, drawn: &wgpu::TextureView| {
+            crate::pipelines::group(
+                device,
+                label,
+                &WATER_BEHIND,
+                &self.behind_layout,
+                &[
+                    ("water_depth", crate::pipelines::view(&depth_view)),
+                    (
+                        "water_scene",
+                        crate::pipelines::view(
+                            scene_view.as_ref().unwrap_or(&self.placeholders.scene),
+                        ),
                     ),
-                ),
-                (
-                    "water_particles_sampler",
-                    crate::pipelines::sampler(self.particles.sampler()),
-                ),
-                (
-                    "water_particles_spread",
-                    crate::pipelines::view(
-                        self.particles
-                            .spread_view()
-                            .unwrap_or(&self.placeholders.scene),
+                    (
+                        "water_particles",
+                        crate::pipelines::view(
+                            self.particles.view().unwrap_or(&self.placeholders.scene),
+                        ),
                     ),
-                ),
-            ],
-        );
+                    (
+                        "water_particles_sampler",
+                        crate::pipelines::sampler(self.particles.sampler()),
+                    ),
+                    (
+                        "water_particles_spread",
+                        crate::pipelines::view(
+                            self.particles
+                                .spread_view()
+                                .unwrap_or(&self.placeholders.scene),
+                        ),
+                    ),
+                    ("particle_frame", frame.as_entire_binding()),
+                    crate::buffers::entry("foam_pool", pool),
+                    ("water_foam_drawn", crate::pipelines::view(drawn)),
+                ],
+            )
+        };
         BehindCopies {
+            group: group("engine/water-behind", &foam),
+            drawing: group("engine/water-foam-draw", &self.placeholders.scene),
             depth,
             scene,
-            group,
+            foam,
             particles: self.particles.generation(),
+        }
+    }
+
+    /// Draws the foam particles' rafts into the layers of foam over each
+    /// pixel water reads (`WaterParticles::draw_foam`), water's first group
+    /// `camera`, after the opaque depth copies: cleared first, so a frame
+    /// drawing none leaves none.
+    fn draw_foam(&self, encoder: &mut wgpu::CommandEncoder, camera: &wgpu::BindGroup) {
+        let Some(behind) = self.behind.get() else {
+            return;
+        };
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("engine/water-foam"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &behind.foam,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        if let (Some(pipeline), Some((_, group))) = (&self.foam_pipeline, &self.group) {
+            self.particles
+                .draw_foam(&mut pass, pipeline, (camera, group, &behind.drawing));
         }
     }
 
@@ -723,6 +794,9 @@ impl WaterPass {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Tiles);
             self.pipelines.insert(targets, pipeline);
         }
+        if (coming || self.tiles.is_some()) && self.foam_pipeline.is_none() {
+            self.foam_pipeline = Some(self.foam_pipeline(device, shader, camera));
+        }
         if self.ocean.is_some() && !self.ocean_pipelines.contains_key(&targets) {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Sea);
             self.ocean_pipelines.insert(targets, pipeline);
@@ -752,6 +826,55 @@ impl WaterPass {
                 )
             })
             .clone()
+    }
+
+    /// The foam particles' draw (`vs_foam`, `fs_foam`) through water's
+    /// layout, its first group `camera`'s: their rafts add the layers of
+    /// white water and foam they lay over each pixel into the target water
+    /// reads, with no depth target, each pixel testing the copy of the
+    /// opaque depth itself.
+    fn foam_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        camera: &crate::pipelines::GroupLayout,
+    ) -> wgpu::RenderPipeline {
+        let layout = self.pipeline_layout(device, camera);
+        let added = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let targets = [Some(wgpu::ColorTargetState {
+            format: FOAM_FORMAT,
+            blend: Some(wgpu::BlendState {
+                color: added,
+                alpha: added,
+            }),
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        crate::pipelines::geometry(
+            device,
+            &crate::pipelines::Geometry {
+                label: "engine/water-foam",
+                layout: &layout,
+                module: shader,
+                vertex_constants: &[],
+                vertex: crate::shaders::entry::meshes::vs_foam,
+                buffers: &[],
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth: None,
+                fragment: Some(crate::pipelines::Fragment {
+                    entry: crate::shaders::entry::meshes::fs_foam,
+                    constants: &[],
+                    targets: &targets,
+                }),
+            },
+        )
     }
 
     /// The pipeline of `surface` into `targets`.
@@ -946,6 +1069,7 @@ impl RenderFeature for WaterPass {
                 .encode(encode.device, encoder, group, encode.profiler);
         }
         self.copy_behind(encoder, encode.depth, encode.scene);
+        self.draw_foam(encoder, encode.water_camera);
         let mut pass = encode.render_pass(
             encoder,
             node,
@@ -960,9 +1084,9 @@ impl RenderFeature for WaterPass {
         self.particles.after_submit();
     }
 
-    /// Bytes of the copies, the falls' sheets, the live water and the
-    /// particles: tiles' water blocks and its subdivisions count with the
-    /// terrain's.
+    /// Bytes of the copies and the foam's layers, the falls' sheets, the
+    /// live water and the particles: tiles' water blocks and its
+    /// subdivisions count with the terrain's.
     fn capacity_bytes(&self) -> u64 {
         let copies = self.behind.size().map_or(0, |size| {
             let texels = u64::from(size.width) * u64::from(size.height);
@@ -970,7 +1094,7 @@ impl RenderFeature for WaterPass {
                 .behind
                 .get()
                 .is_some_and(|copies| copies.scene.is_some());
-            texels * if scene { 8 } else { 4 }
+            texels * (if scene { 8 } else { 4 } + 4)
         });
         let falls = self
             .falls
@@ -1158,6 +1282,11 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
             device,
             "engine/water-placeholder-tree",
             size_of::<SubdivisionUniform>() as u64,
+        ),
+        particles: crate::buffers::uniform(
+            device,
+            "engine/water-placeholder-particles",
+            size_of::<crate::gpu_layouts::water::ParticleFrame>() as u64,
         ),
     }
 }

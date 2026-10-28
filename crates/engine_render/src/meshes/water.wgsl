@@ -1355,10 +1355,8 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let flow = at.words.flow;
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
-    // The water as its state holds it: how turbulent it runs and where white
-    // water is born in it.
+    // The water as its state holds it: how turbulent it runs.
     let turbulence = at.words.state.x;
-    let born = at.words.state.y;
     // How fast it runs, and how fast its eddies turn (`water_stirring`):
     // shallow water running fast down a steep surface stirs fast eddies,
     // deep slow water slow ones (`water_eddies`), and turbulent water as fast
@@ -1367,15 +1365,11 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let stirring = water_stirring(speed, water_eddies(speed, length(at.slope), depth),
         turbulence);
     // What the water's particles splat over the pixel's footprint
-    // (`water_splatted`): the shares of it the white water and the foam it
-    // carries cover, and the waves the turbulence reaching its surface raises
-    // on it, as much of them as the particles show; past their reach the
-    // white water born where it breaks and the foam its flow churned up as
-    // its own state holds them, the particles' mean, on a surface they draw
-    // nothing on.
+    // (`water_splatted`): the waves the turbulence reaching its surface
+    // raises on it, as much of them as the particles show, and none past
+    // their reach.
     let footprint = water_footprint(world_dx.xz, world_dy.xz);
-    let splatted = water_splatted(world, footprint,
-        vec2<f32>(water_white(born), saturate(at.words.foam / WATER_FOAM_MOST)));
+    let splatted = water_splatted(world, footprint);
     // The waves its turbulence raises between its samples, carried by its
     // current (`water_detail`), as many of them as the pixel draws.
     let detail = water_detail(world, flow, depth, stirring, detail_across(world),
@@ -1428,26 +1422,26 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let through = min(max(length(behind.ground - point), 0.0), // optics: the view's way through the water
         depth * plane.y / max(dot(view, plane), 0.1)); // optics: the view's way through the water
     let down = clamp(dot(point - behind.ground, plane) / plane.y, 0.0, through); // optics: the light's way down to what the view meets
-    // Foam (`meshes/water_foam.wgsl`): the white water, the share of the
-    // surface its breaking eddies whiten at once (`water_breaking_share`),
-    // and fresh white water where the water runs against what stands in it
+    // Foam (`meshes/water_foam.wgsl`): the layers of white water and foam
+    // the water's particles' rafts lay over the pixel, past their reach the
+    // foam its own state holds, which its flow churned up as fast as the
+    // rafts' white water is born and carried as they are, their mean
+    // (`water_foam_layers`); and
+    // fresh white water where the water runs against what stands in it
     // behind the pixel fast enough to tear air in, by its speed, how far its
     // surface stands over what it meets and how much of its depth that
-    // blocks (`water_contact`, `water_blocking`); and the foam it carries,
-    // drained as it ages (`water_foam`); lying on the detail waves' crests
-    // (`water_foam_crests`).
-    let white = water_breaking_share(splatted.foam.x);
+    // blocks (`water_contact`, `water_blocking`); together hiding the share
+    // of the surface their layers leave (`water_foam`).
     let contact = water_contact(standing, standing_change, footprint, speed,
         water_blocking(standing, depth));
-    let foam = water_foam(1.0 - (1.0 - white) * (1.0 - contact), splatted.foam.y);
-    let laid = water_foam_crests(foam.cover, detail,
-        water_lace(world, flow, detail_across(world), camera.position.w));
-    let cover = laid.cover;
-    // The water holds bubbles under its fresh white water and about it,
-    // where breaking drives air down: the lace it carries floats on its
-    // surface, its bubbles burst, and the clear water between its patches
-    // holds none.
-    let aerated = laid.aerated * (1.0 - foam.thin);
+    let layers = water_foam_layers(pixel, splatted.shown,
+        vec2<f32>(0.0, water_layers(at.words.foam / WATER_FOAM_MOST)));
+    let white = layers.x + water_layers(contact);
+    let foam = water_foam(white, layers.y);
+    let cover = foam.cover;
+    // The water holds bubbles under its white water, as much of it as that
+    // covers; the foam floating on it holds none under it.
+    let aerated = 1.0 - exp(-white);
     let transmit = water_transmitted(through + down, aerated);
     var surface: WaterSurface;
     surface.relative = point;

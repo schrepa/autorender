@@ -276,7 +276,8 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     let foam_capping = saturate((water.foam.x - compression) / capping + 0.5); // filter: the whitecaps' edge spread over the pixel, keeping their share
     let foam_contact = water_contact(below, abs(dpdx(below)) + abs(dpdy(below)), footprint,
         water.foam.y * sqrt(WATER_GRAVITY / max(below, WATER_BREAK_THINNEST)), 1.0);
-    let foam = water_foam(1.0 - (1.0 - foam_capping) * (1.0 - foam_contact), 0.0);
+    let foam = water_foam(water_layers(1.0 - (1.0 - foam_capping) * (1.0 - foam_contact)),
+        0.0);
     // Calm water is a mirror; the slopes of waves the pixel's footprint does
     // not draw spread its highlights, as a rougher surface would, and so does
     // how far the normal of those drawn turns across the pixel

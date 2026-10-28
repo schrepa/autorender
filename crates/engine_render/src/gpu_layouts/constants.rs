@@ -373,7 +373,8 @@ gpu_consts! {
     pub(crate) const PARTICLE_FOAM_BEFORE: u32 = 6 => ["PARTICLE_FOAM_BEFORE"];
     pub(crate) const PARTICLE_WAVES_BEFORE: u32 = 7 => ["PARTICLE_WAVES_BEFORE"];
     pub(crate) const PARTICLE_ARGS: u32 = 8 => ["PARTICLE_ARGS"];
-    pub(crate) const PARTICLE_ITEMS: u32 = 16 => ["PARTICLE_ITEMS"];
+    pub(crate) const PARTICLE_DRAW: u32 = 14 => ["PARTICLE_DRAW"];
+    pub(crate) const PARTICLE_ITEMS: u32 = 18 => ["PARTICLE_ITEMS"];
 
     // crate::ground_cover
     /// Bytes of a blade or tuft (`CoverBlade`).

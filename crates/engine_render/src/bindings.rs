@@ -934,13 +934,16 @@ tables! {
 
     /// Group 2 of water's pipelines: what lies behind the water, copied
     /// from the opaque scene before it draws: the depth, and the color in
-    /// frames drawing the effects' targets (a placeholder in others); and
-    /// what water's particles splat (`crate::water_particles`), the shares
-    /// white water and foam cover and the waves' slopes, and those slopes'
-    /// squares, with their coarser levels, and the sampler repeating them
-    /// (placeholders where none run), which the particles' passes write
-    /// outside it: 15 of a fragment stage's 16 sampled textures with water's
-    /// first group's and water's (`CAMERA_WATER`, `WATER`).
+    /// frames drawing the effects' targets (a placeholder in others); what
+    /// water's particles splat (`crate::water_particles`), the waves' slopes
+    /// and their squares, with their coarser levels, and the sampler
+    /// repeating them, which the particles' passes write outside it; the
+    /// particles' frame and pools, which the foam particles' draw reads
+    /// (`vs_foam`); and the layers of white water and foam their rafts lay
+    /// over each pixel, which that draw writes before water draws, binding a
+    /// placeholder in their place (placeholders for all of the particles'
+    /// where none run): 16 of a fragment stage's 16 sampled textures with
+    /// water's first group's and water's (`CAMERA_WATER`, `WATER`).
     const WATER_BEHIND: Table = Table {
         label: "engine/water-behind-layout",
         serves: [SHADER @ 2],
@@ -950,6 +953,9 @@ tables! {
             texture(24, "water_particles", Float, D2, F),
             sampler(25, "water_particles_sampler", Filtering, F),
             texture(26, "water_particles_spread", Float, D2, F),
+            uniform_of(32, "particle_frame", size_of::<water::ParticleFrame>(), V),
+            read(47, "foam_pool", V),
+            texture(48, "water_foam_drawn", Float, D2, F),
         ],
     };
 
