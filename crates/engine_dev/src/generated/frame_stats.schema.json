@@ -1144,14 +1144,20 @@
           "minimum": 0,
           "type": "integer"
         },
+        "dropped_particles": {
+          "description": "Particles that frame's pools had no room for, born or left by a wave\nsplitting: the foam and the waves there go undrawn.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "dropped_touches": {
           "description": "Solids standing in that square past the most its water takes, which\npush none of it.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "foam_cells": {
-          "description": "Cells along a side of the foam field terrains' water carries around\nthe detail eye: 0 while none runs; as many as reach out to where its\ncells span two pixels, or fewer where the display's pixels or the\ndevice's storage bindings cut them, and its cells span more there.",
+        "foam_particles": {
+          "description": "Foam particles living in that window, white water and the foam the\nwater carries, as read back a few frames late.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1192,6 +1198,18 @@
           "minimum": 0,
           "type": "integer"
         },
+        "particle_texels": {
+          "description": "Texels along a side of the window around the detail eye that the\nparticles terrains' water carries splat into: 0 while none run; as\nmany as reach out to where its texels span a pixel, or fewer where\nthe display's pixels or the device's storage bindings cut them, and\nits texels span more there. Its pools hold a particle for every few\nof its texels.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "particles_born": {
+          "description": "Particles born in the frame last read back, foam and waves together:\nwhere the water breaks and churns, where it runs against what stands\nin it, and where the window newly covers its water or its current\ncarries foam in across the window's rim.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "refused": {
           "description": "Splits terrains' water's subdivisions refused for want of room for\ntheir leaves (`Water::subdivision_leaves`), as read back a few frames\nlate: the water there stays coarser.",
           "format": "uint32",
@@ -1200,6 +1218,12 @@
         },
         "touches": {
           "description": "Solids standing in that square whose push its water takes this\nframe, nearest the eye first: bodies and colliders, at most\n`SIM_TOUCHES`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wave_particles": {
+          "description": "Wave particles living in that window, as read back a few frames\nlate.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1217,7 +1241,11 @@
         "live_behind",
         "touches",
         "dropped_touches",
-        "foam_cells"
+        "particle_texels",
+        "foam_particles",
+        "wave_particles",
+        "particles_born",
+        "dropped_particles"
       ],
       "type": "object"
     }

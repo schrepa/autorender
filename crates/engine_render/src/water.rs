@@ -1022,7 +1022,7 @@ impl RenderFeature for WaterPass {
                 foam_particles: particles.foam,
                 wave_particles: particles.waves,
                 particles_born: particles.born,
-                particles_dropped: particles.dropped,
+                dropped_particles: particles.dropped,
             },
             OceanStats {
                 sectors: frame.map_or(0, |frame| frame.sectors),

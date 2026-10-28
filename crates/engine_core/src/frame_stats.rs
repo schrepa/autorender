@@ -617,7 +617,7 @@ pub struct WaterStats {
     pub particles_born: u32,
     /// Particles that frame's pools had no room for, born or left by a wave
     /// splitting: the foam and the waves there go undrawn.
-    pub particles_dropped: u32,
+    pub dropped_particles: u32,
 }
 
 /// The sea.

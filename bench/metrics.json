@@ -2005,7 +2005,7 @@
       "direction": null
     },
     {
-      "name": "water.particles_dropped",
+      "name": "water.dropped_particles",
       "kind": "work",
       "rule": "not-above",
       "statistic": "the last sampled frame's value",

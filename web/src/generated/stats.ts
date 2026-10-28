@@ -785,17 +785,20 @@ export interface WaterStats {
    */
   dropped_blocks: number;
   /**
+   * Particles that frame's pools had no room for, born or left by a wave
+   * splitting: the foam and the waves there go undrawn.
+   */
+  dropped_particles: number;
+  /**
    * Solids standing in that square past the most its water takes, which
    * push none of it.
    */
   dropped_touches: number;
   /**
-   * Cells along a side of the foam field terrains' water carries around
-   * the detail eye: 0 while none runs; as many as reach out to where its
-   * cells span two pixels, or fewer where the display's pixels or the
-   * device's storage bindings cut them, and its cells span more there.
+   * Foam particles living in that window, white water and the foam the
+   * water carries, as read back a few frames late.
    */
-  foam_cells: number;
+  foam_particles: number;
   /**
    * Leaves of terrains' water's subdivisions the last read-back frame
    * drew, a few frames late.
@@ -833,6 +836,22 @@ export interface WaterStats {
    */
   live_steps: number;
   /**
+   * Texels along a side of the window around the detail eye that the
+   * particles terrains' water carries splat into: 0 while none run; as
+   * many as reach out to where its texels span a pixel, or fewer where
+   * the display's pixels or the device's storage bindings cut them, and
+   * its texels span more there. Its pools hold a particle for every few
+   * of its texels.
+   */
+  particle_texels: number;
+  /**
+   * Particles born in the frame last read back, foam and waves together:
+   * where the water breaks and churns, where it runs against what stands
+   * in it, and where the window newly covers its water or its current
+   * carries foam in across the window's rim.
+   */
+  particles_born: number;
+  /**
    * Splits terrains' water's subdivisions refused for want of room for
    * their leaves (`Water::subdivision_leaves`), as read back a few frames
    * late: the water there stays coarser.
@@ -844,4 +863,9 @@ export interface WaterStats {
    * `SIM_TOUCHES`.
    */
   touches: number;
+  /**
+   * Wave particles living in that window, as read back a few frames
+   * late.
+   */
+  wave_particles: number;
 }
