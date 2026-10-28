@@ -438,12 +438,7 @@ impl WaterSettle {
         queue.write_buffer(&setup.list, 0, bytemuck::cast_slice(&list));
         let frame = SimSetup {
             counts: [blocks as u32, 0, 0, 0],
-            square: [
-                start.window,
-                start.last[0] as u32,
-                start.last[1] as u32,
-                0,
-            ],
+            square: [start.window, start.last[0] as u32, start.last[1] as u32, 0],
             meters: [start.cell, start.datum, 0.0, 0.0],
             ring: [0; 4],
         };
@@ -829,7 +824,8 @@ impl WaterSettle {
                 label: Some("engine/water-settle-raise"),
                 timestamp_writes: None,
             });
-            self.setup.encode_raise(&mut pass, &setup.group, self.raising);
+            self.setup
+                .encode_raise(&mut pass, &setup.group, self.raising);
         }
         if self.steps > 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

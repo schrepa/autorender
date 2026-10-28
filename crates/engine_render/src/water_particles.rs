@@ -348,9 +348,10 @@ impl WaterParticles {
         };
         let texel = settings.simulation_cell / TEXEL_SPLIT as f32;
         let asked = wanted(device, seen);
-        let kept = self.grid.as_ref().filter(|grid| {
-            grid.texel == texel && grid.texels >= asked && grid.texels < 2 * asked
-        });
+        let kept = self
+            .grid
+            .as_ref()
+            .filter(|grid| grid.texel == texel && grid.texels >= asked && grid.texels < 2 * asked);
         let texels = kept.map_or(asked, |grid| grid.texels);
         let (sizes, cut) = sized(device, (texels, seen.display), settings.foam_points);
         let keeps = kept.is_some_and(|grid| {

@@ -212,7 +212,9 @@ pub struct SteadyWater {
 pub enum SteadyCell {
     Dry,
     /// A lake holds it at `level`.
-    Held { level: f32 },
+    Held {
+        level: f32,
+    },
     /// Its water stands at `surface` and runs at `velocity`, as its means
     /// over the time it was wet in its region's last steps, which was `wet`
     /// of them, [`shallow_water::WET_MOST`] or more; over that time, it
@@ -458,17 +460,17 @@ fn finer((first, cells): (i64, u32), split: u32) -> (i64, u32) {
 /// too.
 pub fn settle_regions(layers: &Layers, pyramid: &Pyramid, cell: f32) -> Vec<[u32; 4]> {
     let tiles = pyramid.tiles(0);
-    let split = shallow_water::live_split(cell, pyramid.spacing(0));
-    let reached = Reached::of(layers, pyramid, cell / split as f32);
+    let parts = shallow_water::live_split(cell, pyramid.spacing(0));
+    let reached = Reached::of(layers, pyramid, cell / parts as f32);
     let mut splits: Vec<(u32, u32)> = (1..=tiles[0])
         .flat_map(|x| (1..=tiles[1]).map(move |z| (x, z)))
         .collect();
     splits.sort_by_key(|&(x, z)| (u64::from(x) * u64::from(z), x.abs_diff(z)));
     let fits = |&(along_x, along_z): &(u32, u32)| {
         split(tiles[1], along_z).all(|rows| {
-            let rows = finer(reach(pyramid, 1, rows, cell), split);
+            let rows = finer(reach(pyramid, 1, rows, cell), parts);
             split(tiles[0], along_x).all(|columns| {
-                let columns = finer(reach(pyramid, 0, columns, cell), split);
+                let columns = finer(reach(pyramid, 0, columns, cell), parts);
                 reached.cells(columns, rows) <= REGION_CELLS
             })
         })
@@ -886,10 +888,11 @@ impl<'a> Reading<'a> {
         let span = |line: fn(&TileKey) -> u16| {
             let lines = reached.iter().map(|key| u32::from(line(key)));
             let (first, last) = (lines.clone().min(), lines.max());
-            first.zip(last).map(|(first, last)| (first, (last + 1 - first) as usize))
+            first
+                .zip(last)
+                .map(|(first, last)| (first, (last + 1 - first) as usize))
         };
-        let (Some((x0, columns)), Some((z0, rows))) = (span(|key| key.x), span(|key| key.z))
-        else {
+        let (Some((x0, columns)), Some((z0, rows))) = (span(|key| key.x), span(|key| key.z)) else {
             return Err(MISSING.into());
         };
         let mut grid = vec![None; columns * rows];
@@ -927,7 +930,8 @@ impl<'a> Reading<'a> {
     /// The terrain's last level-0 sample along x and z, counted from its
     /// first corner.
     fn last(&self) -> [i64; 2] {
-        self.tiles.map(|count| i64::from(count) * i64::from(TILE_QUADS))
+        self.tiles
+            .map(|count| i64::from(count) * i64::from(TILE_QUADS))
     }
 
     /// The part holding the terrain's level-0 sample `at` (counted from its
@@ -938,10 +942,13 @@ impl<'a> Reading<'a> {
         let quads = i64::from(TILE_QUADS);
         let last = self.last();
         let [x, z] = [0, 1].map(|axis| at[axis].clamp(0, last[axis]));
-        let [tx, tz] = [(x, 0), (z, 1)]
-            .map(|(at, axis)| (at / quads).min(i64::from(self.tiles[axis]) - 1));
+        let [tx, tz] =
+            [(x, 0), (z, 1)].map(|(at, axis)| (at / quads).min(i64::from(self.tiles[axis]) - 1));
         let part = self.part(tx as u32, tz as u32)?;
-        Some((part, ((z - tz * quads) * (SAMPLES as i64) + x - tx * quads) as usize))
+        Some((
+            part,
+            ((z - tz * quads) * (SAMPLES as i64) + x - tx * quads) as usize,
+        ))
     }
 
     /// The words the GPU raises the ground by at the terrain's level-0
@@ -985,7 +992,11 @@ impl<'a> Reading<'a> {
             return 0.0;
         };
         let height = |dx: usize, dz: usize| part.heights[(cz + dz) * SAMPLES + cx + dx];
-        on_triangle([height(0, 0), height(1, 0), height(0, 1), height(1, 1)], fx, fz)
+        on_triangle(
+            [height(0, 0), height(1, 0), height(0, 1), height(1, 1)],
+            fx,
+            fz,
+        )
     }
 
     /// The bake's water at the terrain's settled cell `at` (counted from its
@@ -2043,7 +2054,10 @@ fn holding(
         for i in 0..nx {
             let x = i as usize;
             let corners = [below[x], below[x + 1], above[x], above[x + 1]];
-            let at = [region.first[0] + i64::from(i), region.first[1] + i64::from(j)];
+            let at = [
+                region.first[0] + i64::from(i),
+                region.first[1] + i64::from(j),
+            ];
             let (bed, water, held) = started(corners, reading.water(at), datum, || warmed(at));
             if !held.is_nan() || water[0] - bed > DRY {
                 let (left, right) = (i * split / BLOCK_SIDE, ((i + 1) * split - 1) / BLOCK_SIDE);

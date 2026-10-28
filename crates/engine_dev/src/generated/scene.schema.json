@@ -415,11 +415,6 @@
           "const": "water_reach"
         },
         {
-          "description": "The foam it carries, as its flow churns it up, carries it and loses\nit (`engine_terrain::shallow_water`), from dark brown (none) through\nsand to white (the most water carries).",
-          "type": "string",
-          "const": "water_foam"
-        },
-        {
           "description": "How far across its water body is: a river's width, a lake's\nequal-area diameter, on a logarithmic scale from violet (a quarter\nmeter) through teal (32 meters) to pale yellow (4096 meters or more).",
           "type": "string",
           "const": "water_span"
@@ -6718,7 +6713,7 @@
       "additionalProperties": false
     },
     "SceneWater": {
-      "description": "Water settings: how terrains' water looks (its color, clarity and\nsediment), the cells it settles and runs live in, and how it draws;\nits movement and foam come from its state, the scene's wind dragging\nthe water that runs live.",
+      "description": "Water settings: how terrains' water looks (its color, clarity and\nsediment), the cells it settles and runs live in, and how it draws;\nits movement and foam come from its state, the scene's wind dragging\nthe foam riding it.",
       "type": "object",
       "properties": {
         "clarity": {
@@ -6750,6 +6745,14 @@
           "description": "Whether water draws.",
           "type": "boolean",
           "default": true
+        },
+        "foam_points": {
+          "description": "Points along a side of the square around the detail eye over\nwhich the foam's rafts are born and ride, half a settled cell\napart: past it no foam shows. Each point costs 36 bytes on the\nGPU and five invocations a frame. The default reaches 256\nmeters from the eye over meter cells, 512 across; the square\nholds no fewer than the waves' window around the eye needs, and\nthe device's storage bindings may hold fewer (the points they\ncut are counted).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1024,
+          "maximum": 8192,
+          "minimum": 64
         },
         "live_budget": {
           "description": "The most cell steps the water running live around the detail eye\ntakes in a frame: its square holds no more cells than this over\nthe steps of the longest frame it steps through (a thirtieth of a\nsecond, eight steps of half-meter cells), reaching nearer the eye\nthan its cells' pixels ask where it would hold more (the cells it\ncuts are counted). The default holds 512 half-meter cells along a\nside, 256 meters.",
@@ -6785,7 +6788,7 @@
           "minItems": 3
         },
         "simulation_cell": {
-          "description": "The meters across the cells water settles in: the cook makes the\nsettled water's records at this size; the water running live\naround the detail eye runs in these cells split along each side\ninto as few as put four across the narrowest channel the\nterrain's bake cuts, half a meter for meter cells over a meter's\nsamples.",
+          "description": "The meters across the cells of the settled water's records,\nwhich the cook makes at this size: settling and the water running\nlive around the detail eye both run in these cells split along\neach side into as few as put four across the narrowest channel the\nterrain's bake cuts, half a meter for meter cells over a meter's\nsamples, each record's cell their mean.",
           "type": "number",
           "format": "float",
           "default": 1.0,

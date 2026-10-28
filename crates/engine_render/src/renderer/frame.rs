@@ -386,8 +386,11 @@ impl Renderer {
         );
         // Water settling for tiles' records, its regions' ground raised
         // through the terrain group the frame laid out.
-        self.water_settle
-            .prepare(&self.device, &self.queue, (&self.mesh_shader, &self.terrain));
+        self.water_settle.prepare(
+            &self.device,
+            &self.queue,
+            (&self.mesh_shader, &self.terrain),
+        );
         self.water_settle.encode(&mut encoder);
         // Ground cover grows on the terrain drawn.
         features.frames.ground_cover = if terrain {

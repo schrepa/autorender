@@ -785,8 +785,8 @@ export interface WaterStats {
    */
   dropped_blocks: number;
   /**
-   * Particles that frame's pools had no room for, born or left by a wave
-   * splitting: the foam and the waves there go undrawn.
+   * Particles that frame's pools had no room for, born or left by a raft
+   * tearing: the foam and the waves there go undrawn.
    */
   dropped_particles: number;
   /**
@@ -795,10 +795,29 @@ export interface WaterStats {
    */
   dropped_touches: number;
   /**
-   * Foam particles living in that window, white water and the foam the
-   * water carries, as read back a few frames late.
+   * Foam particles living in that square, white water and the foam the
+   * water carries, as read back a few frames late: the foam pool holds
+   * one for every few pixels of the display.
    */
   foam_particles: number;
+  /**
+   * Points along a side of the square around the detail eye over which
+   * the foam's rafts are born and ride, half a settled cell apart: 0
+   * while none run; as many as `Water::foam_points` asks, more where the
+   * waves' window needs more, fewer where the device cuts them.
+   */
+  foam_points: number;
+  /**
+   * Points along a side of that square that the device's storage
+   * bindings and dispatches cut from those `Water::foam_points` asks
+   * for: the foam then reaches nearer the eye.
+   */
+  foam_points_cut: number;
+  /**
+   * Meters from the detail eye to the edges of that square, past which
+   * no foam shows, rounded.
+   */
+  foam_reach: number;
   /**
    * Leaves of terrains' water's subdivisions the last read-back frame
    * drew, a few frames late.
@@ -846,18 +865,17 @@ export interface WaterStats {
   live_steps: number;
   /**
    * Texels along a side of the window around the detail eye that the
-   * particles terrains' water carries splat into: 0 while none run; as
-   * many as reach out to where its texels span a pixel, or fewer where
-   * the display's pixels or the device's storage bindings cut them, and
-   * its texels span more there. Its pools hold a particle for every few
-   * of its texels.
+   * wave particles terrains' water carries splat into: 0 while none
+   * run; as many as reach out to where its texels span a pixel, or fewer
+   * where the display's pixels or the device's storage bindings cut
+   * them, and its texels span more there. The wave pool holds a particle
+   * for every few of its texels.
    */
   particle_texels: number;
   /**
    * Particles born in the frame last read back, foam and waves together:
-   * where the water breaks and churns, where it runs against what stands
-   * in it, and where the window newly covers its water or its current
-   * carries foam in across the window's rim.
+   * rafts where the water breaks, each no smaller than a pixel where it
+   * is born, and the boils its bursts raise in the waves' window.
    */
   particles_born: number;
   /**
@@ -873,8 +891,8 @@ export interface WaterStats {
    */
   touches: number;
   /**
-   * Wave particles living in that window, as read back a few frames
-   * late.
+   * Wave particles living in the waves' window, as read back a few
+   * frames late.
    */
   wave_particles: number;
 }

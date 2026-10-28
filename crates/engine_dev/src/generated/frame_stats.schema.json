@@ -1145,7 +1145,7 @@
           "type": "integer"
         },
         "dropped_particles": {
-          "description": "Particles that frame's pools had no room for, born or left by a wave\nsplitting: the foam and the waves there go undrawn.",
+          "description": "Particles that frame's pools had no room for, born or left by a raft\ntearing: the foam and the waves there go undrawn.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1157,7 +1157,25 @@
           "type": "integer"
         },
         "foam_particles": {
-          "description": "Foam particles living in that window, white water and the foam the\nwater carries, as read back a few frames late.",
+          "description": "Foam particles living in that square, white water and the foam the\nwater carries, as read back a few frames late: the foam pool holds\none for every few pixels of the display.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "foam_points": {
+          "description": "Points along a side of the square around the detail eye over which\nthe foam's rafts are born and ride, half a settled cell apart: 0\nwhile none run; as many as `Water::foam_points` asks, more where the\nwaves' window needs more, fewer where the device cuts them.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "foam_points_cut": {
+          "description": "Points along a side of that square that the device's storage\nbindings and dispatches cut from those `Water::foam_points` asks\nfor: the foam then reaches nearer the eye.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "foam_reach": {
+          "description": "Meters from the detail eye to the edges of that square, past which\nno foam shows, rounded.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1205,13 +1223,13 @@
           "type": "integer"
         },
         "particle_texels": {
-          "description": "Texels along a side of the window around the detail eye that the\nparticles terrains' water carries splat into: 0 while none run; as\nmany as reach out to where its texels span a pixel, or fewer where\nthe display's pixels or the device's storage bindings cut them, and\nits texels span more there. Its pools hold a particle for every few\nof its texels.",
+          "description": "Texels along a side of the window around the detail eye that the\nwave particles terrains' water carries splat into: 0 while none\nrun; as many as reach out to where its texels span a pixel, or fewer\nwhere the display's pixels or the device's storage bindings cut\nthem, and its texels span more there. The wave pool holds a particle\nfor every few of its texels.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "particles_born": {
-          "description": "Particles born in the frame last read back, foam and waves together:\nwhere the water breaks and churns, where it runs against what stands\nin it, and where the window newly covers its water or its current\ncarries foam in across the window's rim.",
+          "description": "Particles born in the frame last read back, foam and waves together:\nrafts where the water breaks, each no smaller than a pixel where it\nis born, and the boils its bursts raise in the waves' window.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1229,7 +1247,7 @@
           "type": "integer"
         },
         "wave_particles": {
-          "description": "Wave particles living in that window, as read back a few frames\nlate.",
+          "description": "Wave particles living in the waves' window, as read back a few\nframes late.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1249,6 +1267,9 @@
         "touches",
         "dropped_touches",
         "particle_texels",
+        "foam_points",
+        "foam_points_cut",
+        "foam_reach",
         "foam_particles",
         "wave_particles",
         "particles_born",

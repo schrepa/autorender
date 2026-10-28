@@ -1336,8 +1336,6 @@ export interface WaterProbe {
    * √(g·depth), from which they break its surface white.
    */
   eddies: number;
-  /** The foam it carries, 0 (none) to 1 (the most water carries). */
-  foam: number;
   /**
    * Its speed over its shallow waves' (√(g·depth)): under 1 it runs
    * calm, over 1 it shoots.
