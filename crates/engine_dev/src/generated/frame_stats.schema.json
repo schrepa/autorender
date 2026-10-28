@@ -1162,6 +1162,18 @@
           "minimum": 0,
           "type": "integer"
         },
+        "live_behind": {
+          "description": "Steps the simulation time passed held this frame past the most a\nframe takes, by which the live water fell behind the clock.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "live_budget_cut": {
+          "description": "Cells along a side of the square the live reach asks for\n(`engine_core::LIVE_PIXELS`) that the budget of its cell steps a\nframe cuts from it (`Water::live_budget`): the live water then\nhands back to the settled water nearer the eye.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "live_cells": {
           "description": "Cells along a side of the square around the detail eye over which\nwater runs live this frame: 0 while none does (before its first\nsquare is gathered).",
           "format": "uint32",
@@ -1169,13 +1181,13 @@
           "type": "integer"
         },
         "live_cut": {
-          "description": "Cells along a side of the square the live reach asks for\n(`engine_core::LIVE_PIXELS`) that the device's storage bindings cut\nfrom it, the middle square they hold running instead: the live\nwater then hands back to the settled water nearer the eye.",
+          "description": "Cells along a side of the square the budget holds that the device's\nstorage bindings cut from it, the middle square they hold running\ninstead: the live water then hands back nearer the eye still.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_steps": {
-          "description": "Steps the live water took this frame, each of the same seconds: as\nmany as the simulation time passed holds, at most those of a frame\na thirtieth of a second long.",
+          "description": "Steps the live water took this frame, each of the same seconds, the\nlongest in which its fastest water and waves cross a quarter of its\ncells: as many as the simulation time passed holds, at most those of\na frame a thirtieth of a second long.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1199,8 +1211,10 @@
         "blocks",
         "dropped_blocks",
         "live_cells",
+        "live_budget_cut",
         "live_cut",
         "live_steps",
+        "live_behind",
         "touches",
         "dropped_touches",
         "foam_cells"

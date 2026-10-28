@@ -802,22 +802,34 @@ export interface WaterStats {
    */
   leaves: number;
   /**
+   * Steps the simulation time passed held this frame past the most a
+   * frame takes, by which the live water fell behind the clock.
+   */
+  live_behind: number;
+  /**
+   * Cells along a side of the square the live reach asks for
+   * (`engine_core::LIVE_PIXELS`) that the budget of its cell steps a
+   * frame cuts from it (`Water::live_budget`): the live water then
+   * hands back to the settled water nearer the eye.
+   */
+  live_budget_cut: number;
+  /**
    * Cells along a side of the square around the detail eye over which
    * water runs live this frame: 0 while none does (before its first
    * square is gathered).
    */
   live_cells: number;
   /**
-   * Cells along a side of the square the live reach asks for
-   * (`engine_core::LIVE_PIXELS`) that the device's storage bindings cut
-   * from it, the middle square they hold running instead: the live
-   * water then hands back to the settled water nearer the eye.
+   * Cells along a side of the square the budget holds that the device's
+   * storage bindings cut from it, the middle square they hold running
+   * instead: the live water then hands back nearer the eye still.
    */
   live_cut: number;
   /**
-   * Steps the live water took this frame, each of the same seconds: as
-   * many as the simulation time passed holds, at most those of a frame
-   * a thirtieth of a second long.
+   * Steps the live water took this frame, each of the same seconds, the
+   * longest in which its fastest water and waves cross a quarter of its
+   * cells: as many as the simulation time passed holds, at most those of
+   * a frame a thirtieth of a second long.
    */
   live_steps: number;
   /**

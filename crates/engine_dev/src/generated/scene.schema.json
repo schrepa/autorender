@@ -6751,6 +6751,14 @@
           "type": "boolean",
           "default": true
         },
+        "live_budget": {
+          "description": "The most cell steps the water running live around the detail eye\ntakes in a frame: its square holds no more cells than this over\nthe steps of the longest frame it steps through (a thirtieth of a\nsecond, eight steps of half-meter cells), reaching nearer the eye\nthan its cells' pixels ask where it would hold more (the cells it\ncuts are counted). The default holds 512 half-meter cells along a\nside, 256 meters.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2097152,
+          "maximum": 67108864,
+          "minimum": 65536
+        },
         "sediment": {
           "description": "How strongly the fine sediment water carries scatters light, per\nmeter: light passing through fades by it as well as by what the\nwater's clarity takes, and the water's body scatters back\n`sediment_color` by the sediment's share of the two; 0 none.",
           "type": "number",
@@ -6777,7 +6785,7 @@
           "minItems": 3
         },
         "simulation_cell": {
-          "description": "The meters across the cells water settles in: the cook makes the\nsettled water's records at this size, and the water running live\naround the detail eye runs in these same cells.",
+          "description": "The meters across the cells water settles in: the cook makes the\nsettled water's records at this size; the water running live\naround the detail eye runs in these cells split along each side\ninto as few as put four across the narrowest channel the\nterrain's bake cuts, half a meter for meter cells over a meter's\nsamples.",
           "type": "number",
           "format": "float",
           "default": 1.0,

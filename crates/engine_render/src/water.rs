@@ -965,8 +965,13 @@ impl RenderFeature for WaterPass {
         frame: Option<&WaterFrame>,
         _snapshot: &RenderSnapshot,
     ) -> (WaterStats, OceanStats) {
-        let [live_cells, live_budget_cut, live_cut, live_steps, live_behind] =
-            frame.and(this).map_or([0; 5], |this| this.sim.cells());
+        let [
+            live_cells,
+            live_budget_cut,
+            live_cut,
+            live_steps,
+            live_behind,
+        ] = frame.and(this).map_or([0; 5], |this| this.sim.cells());
         let [touches, dropped_touches] = frame.and(this).map_or([0; 2], |this| this.sim.touches());
         let [leaves, refused] = frame.map_or([0; 2], |frame| frame.subdivided);
         (
