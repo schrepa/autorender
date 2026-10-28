@@ -17,7 +17,7 @@ impl Renderer {
         opaque_kind: PassKind,
         (probes, fades): (bool, bool),
     ) -> bool {
-        let terrains = &snapshot.terrain;
+        let terrains = engine_terrain::RenderTerrains::of(snapshot);
         if terrains.terrains.is_empty() && self.terrain.resident() == 0 {
             self.terrain.rest();
             return false;
@@ -27,7 +27,8 @@ impl Renderer {
         });
         let culling = terrains.relative_view_projection;
         let casts = snapshot.environment.shadows.enabled;
-        let cover = snapshot.environment.ground_cover.sanitized();
+        let terrain_environment = engine_terrain::TerrainEnvironment::of(snapshot);
+        let cover = terrain_environment.ground_cover.sanitized();
         let canopy = (cover.enabled && cover.density > 0.0).then(|| {
             (
                 cover,
@@ -44,9 +45,9 @@ impl Renderer {
                 eye: snapshot.camera_position,
                 detail_eye: snapshot.detail_eye,
                 regions: self.shadows.region_views(),
-                settings: snapshot.environment.terrain.sanitized(),
+                settings: terrain_environment.terrain.sanitized(),
                 shadows: snapshot.environment.shadows.enabled,
-                water: snapshot.environment.water.sanitized(),
+                water: terrain_environment.water.sanitized(),
                 fades,
                 now: snapshot.elapsed_seconds,
                 cover: canopy,
@@ -67,8 +68,8 @@ impl Renderer {
             &self.terrain,
             terrains,
             (
-                &snapshot.environment.ground_cover,
-                snapshot.environment.wind.velocity,
+                &terrain_environment.ground_cover,
+                terrain_environment.wind.velocity,
                 snapshot.view_projection,
                 snapshot.detail_eye,
                 snapshot.elapsed_seconds,
@@ -161,7 +162,7 @@ impl Renderer {
     }
 
     fn warm_terrain(&mut self, snapshot: &RenderSnapshot, opaque_kind: PassKind, probes: bool) {
-        let terrains = &snapshot.terrain.terrains;
+        let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
         if terrains.is_empty() {
             return;
         }
@@ -205,7 +206,8 @@ impl Renderer {
         if snapshot.environment.shadows.enabled {
             self.terrain.pipelines.ensure_shadow_pipeline(&self.device);
         }
-        let cover = snapshot.environment.ground_cover.sanitized();
+        let terrain_environment = engine_terrain::TerrainEnvironment::of(snapshot);
+        let cover = terrain_environment.ground_cover.sanitized();
         let grows = cover.enabled
             && cover.density > 0.0
             && terrains.iter().any(|terrain| {
@@ -226,7 +228,7 @@ impl Renderer {
         }
         if terrains.iter().any(|terrain| !terrain.assets.is_empty()) {
             self.features.scatter.get_mut().warm(&self.device);
-            if snapshot.environment.occupancy.enabled {
+            if terrain_environment.occupancy.enabled {
                 self.features.occupancy.get_mut().warm(&self.device);
             }
         }
@@ -238,14 +240,11 @@ impl Renderer {
         opaque_kind: PassKind,
     ) -> Option<Ready<WaterFrame>> {
         let targets = opaque_kind.targets()?;
-        let coming = snapshot
-            .terrain
-            .terrains
-            .iter()
-            .any(|terrain| terrain.hydrology);
+        let terrains = engine_terrain::RenderTerrains::of(snapshot);
+        let coming = terrains.terrains.iter().any(|terrain| terrain.hydrology);
         let (device, shader, camera) = (&self.device, &self.mesh_shader, &self.camera.water_layout);
         let formats = (self.display.format(), DEPTH_FORMAT);
-        let tiles = self.terrain.water_draws(&snapshot.terrain);
+        let tiles = self.terrain.water_draws(terrains);
         let display = self.display.region.display;
         let seen = ParticleView {
             detail: snapshot.detail_eye,
@@ -256,11 +255,11 @@ impl Renderer {
             if coming {
                 water.ensure_pipeline(device, shader, camera, (targets, true), formats);
             }
-            let environment = &snapshot.environment;
+            let environment = engine_terrain::TerrainEnvironment::of(snapshot);
             let prepared = water.prepare(
                 device,
                 &self.queue,
-                (tiles, &snapshot.terrain.terrains),
+                (tiles, &terrains.terrains),
                 environment.water,
                 (seen, environment.wind, snapshot.presented_seconds),
                 (

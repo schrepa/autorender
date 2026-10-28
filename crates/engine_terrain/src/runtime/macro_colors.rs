@@ -1,8 +1,8 @@
 use super::*;
-use crate::{MakeSources, Records, TextureSet, TextureUsage};
+use crate::jobs::MacroJob;
 use bevy_ecs::prelude::Mut;
 use engine_assets::TextureHandle;
-use engine_terrain::jobs::MacroJob;
+use engine_core::{MakeSources, Records, TextureSet, TextureUsage};
 
 struct Asked {
     job: MacroJob,
@@ -57,11 +57,11 @@ impl MacroColors {
 }
 
 fn macro_texels(settings: &TerrainSettings) -> u32 {
-    let block = engine_terrain::macro_colors::MACRO_BLOCK;
+    let block = crate::macro_colors::MACRO_BLOCK;
     settings
         .macro_resolution
         .next_multiple_of(block)
-        .min(engine_terrain::macro_colors::MAX_MACRO_TEXELS)
+        .min(crate::macro_colors::MAX_MACRO_TEXELS)
 }
 
 pub(super) fn want_colors(state: &mut TerrainState, settings: &TerrainSettings) {
@@ -76,7 +76,7 @@ pub(super) fn want_colors(state: &mut TerrainState, settings: &TerrainSettings) 
 fn colors_set(job: &MacroJob) -> TextureSet {
     let identity = job.identity();
     TextureSet {
-        source: engine_terrain::sources::MACRO,
+        source: crate::sources::MACRO,
         name: format!("terrain/macro/{:032x}", content_hash(&identity)),
         textures: vec![("colors".to_owned(), TextureUsage::Data)],
         make: MakeSources::Job {

@@ -100,7 +100,7 @@ impl Terrains {
         Some(base.with_stamps(&stamps).map_or(base, Arc::new))
     }
 
-    pub(crate) fn walked_terrain(&self, from: Vec2, to: Vec2) -> Walked {
+    pub fn walked_terrain(&self, from: Vec2, to: Vec2) -> Walked {
         let Some(state) = self.walked(from, to) else {
             return Walked::Off;
         };
@@ -127,7 +127,7 @@ impl Terrains {
         })
     }
 
-    pub(crate) fn walk_obstacles(&self, entity: Entity) -> Vec<Obstacle> {
+    pub fn walk_obstacles(&self, entity: Entity) -> Vec<Obstacle> {
         self.entries
             .iter()
             .find(|state| state.entity == entity && state.around.is_none())
@@ -142,7 +142,7 @@ impl Terrains {
             let pyramid = &state.terrain.pyramid;
             let [x, z] = pyramid.tiles(0);
             let size = Vec2::new(x as f32, z as f32)
-                * engine_terrain::TILE_QUADS as f32
+                * crate::TILE_QUADS as f32
                 * pyramid.spacing(0);
             let corner = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
             [from, to].iter().all(|&point| {
@@ -163,7 +163,7 @@ impl Terrains {
                 let reach = match collider.shape {
                     PlacedShape::Sphere { radius } => radius,
                     PlacedShape::Cuboid { half_extents } => {
-                        crate::math::max(half_extents[0], half_extents[2])
+                        engine_core::math::max(half_extents[0], half_extents[2])
                     }
                 };
                 Some(Obstacle {
@@ -190,7 +190,7 @@ impl Terrains {
             return None;
         }
         let origin = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
-        engine_terrain::route(
+        crate::route(
             layers,
             &state.terrain.pyramid,
             from - origin,
@@ -282,17 +282,17 @@ impl Terrains {
     }
 }
 
-pub(crate) struct WalkedTerrain {
-    pub(crate) entity: Entity,
-    pub(crate) origin: Vec3,
-    pub(crate) pyramid: Pyramid,
-    pub(crate) layers: Arc<Layers>,
+pub struct WalkedTerrain {
+    pub entity: Entity,
+    pub origin: Vec3,
+    pub pyramid: Pyramid,
+    pub layers: Arc<Layers>,
     pub(crate) stack: String,
     pub(crate) recipe: String,
     pub(crate) edits: Vec<Stamp>,
 }
 
-pub(crate) enum Walked {
+pub enum Walked {
     Ready(WalkedTerrain),
     Baking,
     Off,
@@ -307,7 +307,7 @@ impl WalkedTerrain {
             .collect()
     }
 
-    pub(crate) fn portals_record(&self, key: TileKey, gait: &Gait) -> (Vec<u8>, RecordKey) {
+    pub fn portals_record(&self, key: TileKey, gait: &Gait) -> (Vec<u8>, RecordKey) {
         let job = PortalsJob {
             stack: self.stack.clone(),
             pyramid: self.pyramid,
@@ -316,26 +316,18 @@ impl WalkedTerrain {
             gait: *gait,
         };
         let input = job.identity();
-        let record = RecordKey::new(
-            &engine_terrain::sources::PORTALS,
-            PortalsJob::KIND.name(),
-            &input,
-        );
+        let record = RecordKey::new(&crate::sources::PORTALS, PortalsJob::KIND.name(), &input);
         (input, record)
     }
 
-    pub(crate) fn tile_record(&self, key: TileKey) -> (Vec<u8>, RecordKey) {
+    pub fn tile_record(&self, key: TileKey) -> (Vec<u8>, RecordKey) {
         let job = TileJob {
             recipe: self.recipe.clone(),
             key,
             stamps: self.reaching(key),
         };
         let input = job.identity();
-        let record = RecordKey::new(
-            &engine_terrain::sources::TILES,
-            TileJob::KIND.name(),
-            &input,
-        );
+        let record = RecordKey::new(&crate::sources::TILES, TileJob::KIND.name(), &input);
         (input, record)
     }
 }

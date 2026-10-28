@@ -6,7 +6,7 @@ use super::queries::TerrainKey;
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainHeightResult {
     pub samples: Vec<Option<HeightSample>>,
-    pub stats: engine_core::TerrainStats,
+    pub stats: engine_terrain::TerrainStats,
 }
 
 #[derive(Serialize)]
@@ -17,7 +17,7 @@ pub struct HeightSample {
     pub normal: [f32; 3],
     pub hole: bool,
     pub level: u32,
-    pub water: Option<engine_core::terrain_data::HydrologySample>,
+    pub water: Option<engine_terrain::HydrologySample>,
     pub standing_water: Option<StandingWater>,
     pub path: Option<f32>,
 }
@@ -85,7 +85,7 @@ pub struct SweepExample {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainRouteResult {
     pub terrain: TerrainKey,
-    pub options: engine_core::RouteOptions,
+    pub options: engine_terrain::RouteOptions,
     pub origin: [f32; 2],
     pub route: Option<RouteFound>,
 }

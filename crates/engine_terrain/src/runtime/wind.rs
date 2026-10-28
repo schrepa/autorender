@@ -2,7 +2,7 @@ use bevy_ecs::prelude::Resource;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
-use crate::math::sin;
+use engine_core::math::sin;
 use engine_settings::settings;
 
 pub const GUST_SLOW_SHARE: f32 = 0.6;

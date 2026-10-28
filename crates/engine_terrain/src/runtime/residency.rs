@@ -15,7 +15,7 @@ pub(super) const JUMP: f32 = 100.0;
 #[derive(Default)]
 pub(super) struct HydrologyState {
     pub(super) stats: Option<HydrologyStats>,
-    pub(super) flow: Option<engine_terrain::RiverFlow>,
+    pub(super) flow: Option<crate::RiverFlow>,
     pub(super) window: Option<Arc<WaterWindow>>,
 }
 
@@ -59,7 +59,7 @@ pub(super) struct TerrainState {
     pub(super) settled: Settled,
     pub(super) shading: Shadings,
     pub(super) whole: Whole,
-    pub(super) surface: Option<(Arc<Layers>, Option<Arc<engine_terrain::gpu::SurfaceData>>)>,
+    pub(super) surface: Option<(Arc<Layers>, Option<Arc<crate::gpu::SurfaceData>>)>,
     pub(super) materials: bool,
 }
 
@@ -130,7 +130,7 @@ impl TerrainState {
                 .is_some_and(|(held, _)| Arc::ptr_eq(held, &layers));
             if !current {
                 let data =
-                    engine_terrain::gpu::SurfaceData::new(&self.terrain.surface.rules, &layers)
+                    crate::gpu::SurfaceData::new(&self.terrain.surface.rules, &layers)
                         .map(Arc::new);
                 self.surface = Some((layers, data));
             }
@@ -252,7 +252,7 @@ impl TerrainState {
                 .collect(),
         };
         let record = RecordKey::new(
-            &engine_terrain::sources::TILES,
+            &crate::sources::TILES,
             TileJob::KIND.name(),
             &job.identity(),
         );

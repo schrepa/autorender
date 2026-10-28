@@ -2,10 +2,10 @@ use bevy_ecs::prelude::World;
 use glam::{Vec2, Vec3};
 
 use super::Terrains;
-use crate::math::{max, min};
-use crate::terrain_data::hydraulics::GRAVITY;
-use crate::terrain_data::{Fall, Layers};
-use crate::{WaterKind, WaterSample};
+use crate::hydraulics::GRAVITY;
+use crate::{Fall, Layers};
+use engine_core::math::{max, min};
+use engine_core::{WaterKind, WaterSample};
 
 const SHEET: f32 = 1.0;
 
@@ -26,10 +26,7 @@ impl Terrains {
             })
     }
 
-    pub fn river_flow(
-        &self,
-        entity: bevy_ecs::entity::Entity,
-    ) -> Option<&crate::terrain_data::RiverFlow> {
+    pub fn river_flow(&self, entity: bevy_ecs::entity::Entity) -> Option<&crate::RiverFlow> {
         self.entries
             .iter()
             .find(|state| state.entity == entity)?

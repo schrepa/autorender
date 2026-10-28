@@ -1,10 +1,10 @@
 use std::cell::Cell;
 
 use bevy_ecs::prelude::Entity;
-use engine_core::terrain_data::{TILE_QUADS, TILE_SAMPLES};
+use engine_terrain::{TILE_QUADS, TILE_SAMPLES};
 use std::sync::Arc;
 
-use engine_core::{Terrains, Tile, TileKey};
+use engine_terrain::{Terrains, Tile, TileKey};
 use glam::Vec3;
 use parry3d::{
     bounding_volume::Aabb,

@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
-use engine_core::terrain_data::lighting::HORIZON_LAYERS;
-use engine_core::{RenderTerrain, RenderTerrains, TerrainLighting, TerrainSettings};
+use engine_terrain::lighting::HORIZON_LAYERS;
+use engine_terrain::lighting::TerrainLighting;
+use engine_terrain::{RenderTerrain, RenderTerrains, TerrainSettings};
 
 use crate::cached::{Bound, Versioned};
 use crate::gpu_layouts::constants::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
 use crate::terrain_bounce::{BOUNCE_LAYERS, BounceLevels, MOST_LEVELS};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const WINDOW_ROW: u32 = engine_core::terrain_data::bounce::MAX_PROBES;
+const WINDOW_ROW: u32 = engine_terrain::bounce::MAX_PROBES;
 
 const _: () = assert!(
     MOST_LEVELS <= 4 * (HORIZON_RECORD_VECTORS as usize - 4),

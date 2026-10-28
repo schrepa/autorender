@@ -90,7 +90,7 @@ impl Terrains {
         let moved = self.last_eye.map_or(Vec3::ZERO, |last| eye - last);
         self.last_eye = Some(eye);
         self.seconds = if seconds.is_finite() {
-            crate::math::max(seconds, 0.0)
+            engine_core::math::max(seconds, 0.0)
         } else {
             0.0
         };
@@ -441,7 +441,7 @@ impl Terrains {
 
 pub(crate) struct TerrainStreaming {
     terrains: QueryState<(Entity, &'static Terrain)>,
-    focus: QueryState<Entity, With<crate::StreamingFocus>>,
+    focus: QueryState<Entity, With<engine_core::StreamingFocus>>,
     prefetch: QueryState<(Entity, &'static TerrainPrefetch)>,
     points: Vec<Vec3>,
     places: Vec<(Vec3, f32)>,
@@ -501,7 +501,7 @@ impl FromWorld for TerrainStreaming {
     fn from_world(world: &mut World) -> Self {
         Self {
             terrains: world.query::<(Entity, &Terrain)>(),
-            focus: world.query_filtered::<Entity, With<crate::StreamingFocus>>(),
+            focus: world.query_filtered::<Entity, With<engine_core::StreamingFocus>>(),
             prefetch: world.query::<(Entity, &TerrainPrefetch)>(),
             points: Vec::new(),
             places: Vec::new(),
@@ -514,7 +514,14 @@ pub(crate) fn stream_terrains(world: &mut World, mut streaming: Local<TerrainStr
     streaming.update(world);
 }
 
-pub(crate) fn work_between_frames(world: &mut World, milliseconds: f64) -> bool {
+pub fn stream_now(world: &mut World) {
+    world
+        .run_system_cached(stream_terrains)
+        .expect("terrain streaming takes no input");
+}
+
+pub fn work_between_frames(world: &mut World, milliseconds: f64) -> bool {
+    join(world);
     let Some(settings) = world
         .get_resource::<TerrainSettings>()
         .copied()
@@ -537,6 +544,7 @@ pub(crate) fn work_between_frames(world: &mut World, milliseconds: f64) -> bool 
 impl TerrainStreaming {
     pub(crate) fn update(&mut self, world: &mut World) {
         let _profile = engine_profile::span("cpu", "terrain_stream");
+        join(world);
         let settings = world
             .get_resource::<TerrainSettings>()
             .copied()
@@ -546,9 +554,9 @@ impl TerrainStreaming {
             .get_resource::<Viewport>()
             .copied()
             .unwrap_or_default();
-        let eye = crate::TerrainDebug::detail_eye(world);
+        let eye = engine_core::TerrainDebug::detail_eye(world);
         let seconds = world
-            .get_resource::<crate::FrameTime>()
+            .get_resource::<engine_core::FrameTime>()
             .map_or(0.0, |time| time.delta_seconds);
         self.points.clear();
         self.points.push(eye);
@@ -565,7 +573,7 @@ impl TerrainStreaming {
                     && reach > 0.0
                     && let Some(point) = globals.get(entity).and_then(|global| global.translation())
                 {
-                    self.places.push((point, crate::math::min(reach, 8.0)));
+                    self.places.push((point, engine_core::math::min(reach, 8.0)));
                 }
             }
         }

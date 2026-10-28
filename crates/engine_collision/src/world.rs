@@ -24,7 +24,7 @@ pub(crate) struct CollisionSync<'w, 's> {
     config: Res<'w, CollisionConfig>,
     frame: Option<Res<'w, FrameTime>>,
     tick: Option<Res<'w, FixedTime>>,
-    terrains: Option<Res<'w, engine_core::Terrains>>,
+    terrains: Option<Res<'w, engine_terrain::Terrains>>,
     collisions: ResMut<'w, CollisionWorld>,
 }
 

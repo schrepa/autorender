@@ -9,11 +9,11 @@ use crate::gpu_layouts::constants::{
 };
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::max;
-use engine_core::terrain_data::Reach;
 use engine_core::{
     DetailShares, DrawnKind, MaterialShare, PixelProbe, SunLookup, TerrainProbe, WaterProbe,
     WaterReach,
 };
+use engine_terrain::Reach;
 use std::{cell::RefCell, rc::Rc};
 
 const IDS: u64 = 0;

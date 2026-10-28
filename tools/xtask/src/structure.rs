@@ -13,11 +13,6 @@ const LONG_FILES: &[(&str, usize)] = &[
 ];
 
 const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
-    (
-        "crates/engine_core/src/features/terrain/residency.rs",
-        "TerrainState",
-        32,
-    ),
     ("crates/engine_core/src/frame_stats.rs", "RenderStats", 42),
     (
         "crates/engine_core/src/interpolation/gpu.rs",
@@ -34,6 +29,11 @@ const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
     ("crates/engine_render/src/renderer.rs", "Renderer", 37),
     ("crates/engine_render/src/scatter.rs", "ScatterPass", 40),
     ("crates/engine_render/src/terrain/atlas.rs", "TileAtlas", 32),
+    (
+        "crates/engine_terrain/src/runtime/residency.rs",
+        "TerrainState",
+        32,
+    ),
 ];
 
 pub fn check(root: &Path) -> Result<(), String> {

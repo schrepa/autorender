@@ -1,6 +1,6 @@
 use bytemuck::Zeroable;
-use engine_core::terrain_data::shallow_water::CELL_MEANS;
-use engine_core::terrain_data::{BLOCK_CELLS, BLOCK_GROUND, StoredBlocks};
+use engine_terrain::shallow_water::CELL_MEANS;
+use engine_terrain::{BLOCK_CELLS, BLOCK_GROUND, StoredBlocks};
 
 use crate::bindings::WATER_SIM;
 use crate::gpu_layouts::constants::{

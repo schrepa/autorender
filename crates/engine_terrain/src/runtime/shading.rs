@@ -1,7 +1,7 @@
 use super::*;
-use crate::MISSING_RECORD;
-use engine_terrain::TileShading;
-use engine_terrain::jobs::{ShadingJob, ShadingReads, shading_key, shading_output, share_shading};
+use crate::TileShading;
+use crate::jobs::{ShadingJob, ShadingReads, shading_key, shading_output, share_shading};
+use engine_core::MISSING_RECORD;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -125,7 +125,7 @@ impl TerrainState {
             reads,
         };
         let record = RecordKey::new(
-            &engine_terrain::sources::SHADING,
+            &crate::sources::SHADING,
             ShadingJob::KIND.name(),
             &job.identity(),
         );
@@ -355,7 +355,7 @@ fn ask(state: &mut TerrainState, slots: &mut JobBudget<'_>, wants: &[Want], fram
                 };
                 let held = Arc::clone(held);
                 state.shading.share(slots.jobs, shading_key(&read.0), || {
-                    share_shading(&engine_terrain::codec::encode(held.as_ref()))
+                    share_shading(&crate::codec::encode(held.as_ref()))
                 });
             }
             let kind = ShadingJob::KIND.name();

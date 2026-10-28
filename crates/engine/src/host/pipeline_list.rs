@@ -45,6 +45,8 @@ impl PipelineList {
         };
         let world = engine.app.world_mut();
         identity.extend(format!("{:?}", Environment::current(world).sanitized()).bytes());
+        let terrain = engine_terrain::TerrainEnvironment::current(world);
+        identity.extend(format!("{terrain:?}").bytes());
         let key = RecordKey::new(&engine_render::SOURCE, KIND, &identity);
         if world.contains_resource::<Cooking>() {
             self.state = State::Making { key, quiet: 0 };

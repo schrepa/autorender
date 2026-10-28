@@ -1,4 +1,7 @@
 use super::*;
+use crate::Reach;
+use engine_core::{EnvironmentSection, WaterReach};
+use std::sync::LazyLock;
 
 #[derive(Clone, Debug)]
 pub struct RenderSurfaceMaps {
@@ -137,7 +140,7 @@ pub struct RenderTerrain {
     pub origin: Vec3,
     pub pyramid: Pyramid,
     pub surface: Vec<SurfaceMaterial>,
-    pub steep: Option<engine_terrain::Steep>,
+    pub steep: Option<crate::Steep>,
     pub maps: Vec<Option<RenderSurfaceMaps>>,
     pub assets: Vec<Option<RenderPlacementAsset>>,
     pub layers: Vec<RenderPlacementLayer>,
@@ -150,10 +153,10 @@ pub struct RenderTerrain {
     pub cutout: Option<(Vec2, Vec2)>,
     pub may_hole: bool,
     pub hydrology: bool,
-    pub gpu_surface: Option<Arc<engine_terrain::gpu::SurfaceData>>,
+    pub gpu_surface: Option<Arc<crate::gpu::SurfaceData>>,
     pub falls: Arc<[Fall]>,
     pub water_window: Option<Arc<WaterWindow>>,
-    pub water_touches: Vec<crate::WaterObstacle>,
+    pub water_touches: Vec<engine_core::WaterObstacle>,
     pub water_touches_beyond: u32,
     pub lighting: Option<Arc<TerrainLighting>>,
     pub bounce: Option<Arc<TerrainBounce>>,
@@ -173,8 +176,82 @@ pub struct RenderTerrains {
     pub stats: TerrainStats,
 }
 
-pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut RenderSnapshot) {
-    let listing = &mut snapshot.terrain;
+impl RenderTerrains {
+    pub fn of(snapshot: &RenderSnapshot) -> &Self {
+        static NONE: LazyLock<RenderTerrains> = LazyLock::new(RenderTerrains::default);
+        snapshot.extracted.get::<Self>().unwrap_or(&*NONE)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TerrainEnvironment {
+    pub terrain: TerrainSettings,
+    pub ground_cover: GroundCover,
+    pub wind: Wind,
+    pub occupancy: Occupancy,
+    pub water: Water,
+}
+
+impl TerrainEnvironment {
+    pub fn current(world: &World) -> Self {
+        fn section<T: EnvironmentSection>(world: &World) -> T {
+            world
+                .get_resource::<T>()
+                .copied()
+                .unwrap_or_else(T::section_off)
+                .section_sanitized()
+        }
+        Self {
+            terrain: section(world),
+            ground_cover: section(world),
+            wind: section(world),
+            occupancy: section(world),
+            water: section(world),
+        }
+    }
+
+    pub fn off() -> Self {
+        fn off<T: EnvironmentSection>() -> T {
+            T::section_off().section_sanitized()
+        }
+        Self {
+            terrain: off(),
+            ground_cover: off(),
+            wind: off(),
+            occupancy: off(),
+            water: off(),
+        }
+    }
+
+    pub fn of(snapshot: &RenderSnapshot) -> Self {
+        snapshot
+            .extracted
+            .get::<Self>()
+            .copied()
+            .unwrap_or_else(Self::off)
+    }
+}
+
+impl From<Reach> for WaterReach {
+    fn from(reach: Reach) -> Self {
+        match reach {
+            Reach::Pool => Self::Pool,
+            Reach::Plane => Self::Plane,
+            Reach::Steps => Self::Steps,
+            Reach::Cascade => Self::Cascade,
+            Reach::Falls => Self::Falls,
+        }
+    }
+}
+
+pub(crate) fn extract_terrains(world: &World, snapshot: &mut RenderSnapshot) {
+    snapshot.extracted.insert(TerrainEnvironment::current(world));
+    if snapshot.extracted.get::<RenderTerrains>().is_none() {
+        snapshot.extracted.insert(RenderTerrains::default());
+    }
+    let Some(listing) = snapshot.extracted.get_mut::<RenderTerrains>() else {
+        return;
+    };
     let missing = &mut snapshot.missing_assets;
     let assets = world.get_resource::<AssetLibrary>();
     let Some(terrains) = world.get_resource::<Terrains>() else {
@@ -183,6 +260,11 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         return;
     };
     let camera = world.resource::<Camera>();
+    let viewport = world
+        .get_resource::<Viewport>()
+        .copied()
+        .unwrap_or_default();
+    let aspect = viewport.width.max(1) as f32 / viewport.height.max(1) as f32;
     listing.relative_view_projection = camera.relative_view_projection(aspect);
     listing.stats = terrains.stats;
     let enabled = world
@@ -270,7 +352,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         render.water_touches_beyond = 0;
         if let (Some(window), Some(obstacles)) = (
             state.hydrology.window.as_deref(),
-            world.get_resource::<crate::WaterObstacles>(),
+            world.get_resource::<engine_core::WaterObstacles>(),
         ) {
             render.water_touches_beyond = window.touching(
                 &obstacles.obstacles,

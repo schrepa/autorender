@@ -17,7 +17,7 @@ fn main() {
         roots,
         stop: &[],
         files: &["src/jobs.rs"],
-        crates: None,
+        crates: Some(&["engine_math", "engine_settings"]),
     });
     engine_sources::emit_sets(&sets);
 }

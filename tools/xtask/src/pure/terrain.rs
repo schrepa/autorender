@@ -3,7 +3,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use engine_core::Terrain;
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use engine_terrain::bounce;
 use engine_terrain::jobs::{
@@ -14,8 +13,8 @@ use engine_terrain::lighting::{self, Ground};
 use engine_terrain::macro_colors;
 use engine_terrain::{
     BiomeRules, Gait, Generator, Layer, Layers, NavOptions, NavPath, Obstacle, PATCH_QUADS,
-    PATCHES_PER_TILE, Pyramid, SettleRegion, SettleStart, Stamp, StampOp, TILE_QUADS, Tile,
-    TileKey, TilePortals, WalkData, WalkGround, WalkSearch, WaterPart, codec,
+    PATCHES_PER_TILE, Pyramid, SettleRegion, SettleStart, Stamp, StampOp, TILE_QUADS, Terrain,
+    Tile, TileKey, TilePortals, WalkData, WalkGround, WalkSearch, WaterPart, codec,
 };
 use glam::Vec2;
 use serde_json::json;

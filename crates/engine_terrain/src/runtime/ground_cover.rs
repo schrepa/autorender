@@ -1,8 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::InvalidSetting;
-use engine_settings::{ExtraRules, settings};
+use engine_settings::{ExtraRules, InvalidSetting, settings};
 
 settings! {
     extra_rules;
@@ -33,7 +32,7 @@ impl ExtraRules for Cover {
     fn sanitize_extra(self) -> Self {
         let [low, high] = self.height;
         Self {
-            height: [crate::math::min(low, high), crate::math::max(low, high)],
+            height: [engine_core::math::min(low, high), engine_core::math::max(low, high)],
             ..self
         }
     }

@@ -7,14 +7,21 @@ publish.workspace = true
 
 [features]
 default = []
-schema = ["dep:schemars", "engine_settings/schema"]
+profiling = ["engine_profile/enabled", "engine_core/profiling"]
+schema = ["dep:schemars", "engine_settings/schema", "engine_core/schema"]
 
 [dependencies]
 engine_math.workspace = true
 engine_settings.workspace = true
+engine_core.workspace = true
+engine_assets.workspace = true
+engine_profile.workspace = true
+engine_textures.workspace = true
+bevy_ecs.workspace = true
 libm.workspace = true
 glam.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 schemars = { workspace = true, optional = true }
 
 [build-dependencies]

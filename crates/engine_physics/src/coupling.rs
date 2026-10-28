@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::World;
 use engine_core::math::clamp;
-use engine_core::{Physics, WaterSample, WaterSources, Wind};
+use engine_core::{Physics, WaterSample, WaterSources};
+use engine_terrain::Wind;
 use glam::{Quat, Vec3};
 
 use crate::body::BodyWater;

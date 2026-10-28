@@ -95,11 +95,7 @@ fn load_records(
             continue;
         };
         state.dispatched.remove(&key);
-        match job_output(
-            TileJob::KIND.name(),
-            output,
-            engine_terrain::jobs::tile_output,
-        ) {
+        match job_output(TileJob::KIND.name(), output, crate::jobs::tile_output) {
             Ok(tile) if made == generation && target.contains(&key) && tile.key() == key => {
                 work.upload(2 * TILE_ARRAY_BYTES);
                 state.failed.remove(&key);
@@ -153,7 +149,7 @@ fn prefetch(
             if let Ok(tile) = job_output(
                 TileJob::KIND.name(),
                 output,
-                engine_terrain::jobs::tile_output,
+                crate::jobs::tile_output,
             ) && made == generation
                 && tile.key() == key
                 && !state.store.contains(&key)
@@ -231,7 +227,7 @@ pub(crate) fn share_recipe(
     let stack_key = match shared {
         Some(key) => key,
         None => {
-            let bytes = engine_terrain::jobs::share_stack(&stack);
+            let bytes = crate::jobs::share_stack(&stack);
             let key = format!("stack-{:032x}", content_hash(&bytes));
             if !jobs.is_shared(&key) {
                 jobs.share(key.clone(), bytes);
@@ -247,7 +243,7 @@ pub(crate) fn share_recipe(
         surface: state.terrain.surface.rules.authored().clone(),
         materials: state.materials,
     };
-    let bytes = engine_terrain::jobs::share_recipe(&recipe);
+    let bytes = crate::jobs::share_recipe(&recipe);
     let key = format!("recipe-{:032x}", content_hash(&bytes));
     if !jobs.is_shared(&key) {
         jobs.share(key.clone(), bytes);

@@ -107,7 +107,6 @@ impl BrowserControl {
             Self::Present { .. }
             | Self::Culling { .. }
             | Self::Environment(_)
-            | Self::Terrain { .. }
             | Self::TerrainEdit { .. }
             | Self::TerrainUndo { .. }
             | Self::TerrainRedo { .. }

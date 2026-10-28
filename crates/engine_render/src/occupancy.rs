@@ -1,6 +1,6 @@
 use crate::shaders::entry::occupancy;
-use engine_core::Occupancy;
 use engine_core::glam::Vec3;
+use engine_terrain::Occupancy;
 
 use crate::bindings::OCCUPANCY;
 use crate::buffers::Growable;

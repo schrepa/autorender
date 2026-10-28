@@ -35,7 +35,9 @@ pub mod bounds {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn stamp_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
-    engine_settings::stated(engine_core::Stamp::rule_of(field).expect("stamps declare the field"))
+    engine_settings::stated(
+        engine_terrain::Stamp::rule_of(field).expect("stamps declare the field"),
+    )
 }
 
 use crate::features::{
@@ -43,8 +45,8 @@ use crate::features::{
     collision::{CollisionEventsQuery, OverlapQuery, RaycastQuery, ShapeCastQuery},
     navigation::{NavGoControl, NavPathQuery},
     terrain::{
-        TerrainControl, TerrainEditControl, TerrainHeightQuery, TerrainRedoControl,
-        TerrainRiverControl, TerrainRouteQuery, TerrainSweepQuery, TerrainUndoControl,
+        TerrainEditControl, TerrainHeightQuery, TerrainRedoControl, TerrainRiverControl,
+        TerrainRouteQuery, TerrainSweepQuery, TerrainUndoControl,
     },
     world_streaming::WorldChangesControl,
 };
@@ -310,7 +312,6 @@ pub enum BrowserControl {
         enabled: bool,
     },
     Environment(EnvironmentControl),
-    Terrain(TerrainControl),
     TerrainEdit(TerrainEditControl),
     TerrainUndo(TerrainUndoControl),
     TerrainRedo(TerrainRedoControl),
@@ -462,7 +463,6 @@ impl BrowserControl {
             Self::Present { alpha } => Control::Host(HostControl::Present { alpha }),
             Self::Culling { enabled } => Control::Host(HostControl::Culling { enabled }),
             Self::Environment(control) => Control::Host(HostControl::Environment(control)),
-            Self::Terrain(control) => Control::Feature(Box::new(control)),
             Self::TerrainEdit(control) => Control::Feature(Box::new(control)),
             Self::TerrainUndo(control) => Control::Feature(Box::new(control)),
             Self::TerrainRedo(control) => Control::Feature(Box::new(control)),
@@ -525,7 +525,6 @@ impl BrowserControl {
             Self::Present { .. }
             | Self::Culling { .. }
             | Self::Environment(..)
-            | Self::Terrain(_)
             | Self::TerrainEdit(_)
             | Self::TerrainUndo(_)
             | Self::TerrainRedo(_)

@@ -1,4 +1,4 @@
-use crate::collections::HashMap;
+use engine_core::collections::HashMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -8,8 +8,8 @@ use engine_assets::{
 use glam::Vec3;
 
 use super::Terrains;
-use crate::terrain_data::Bridge;
-use crate::{Mesh3d, SplineMesh, Transform};
+use crate::Bridge;
+use engine_core::{Mesh3d, SplineMesh, Transform};
 
 pub const DECK_RISE: f32 = 0.2;
 pub const DECK_DEPTH: f32 = 1.1;
@@ -165,7 +165,7 @@ fn tube_section(width: f32) -> Mesh {
         let mut points = vec![(radius, DECK_RISE, 1.0, 0.0)];
         for segment in 0..=VAULT_SEGMENTS {
             let angle = std::f32::consts::PI * segment as f32 / VAULT_SEGMENTS as f32;
-            let (sin, cos) = crate::math::sin_cos(angle);
+            let (sin, cos) = engine_core::math::sin_cos(angle);
             points.push((radius * cos, TUBE_WALL + radius * sin, cos, sin));
         }
         points.push((-radius, DECK_RISE, -1.0, 0.0));

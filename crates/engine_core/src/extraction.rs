@@ -21,16 +21,9 @@ impl Extractions {
         }
     }
 
-    pub(crate) fn extract(
-        &mut self,
-        retained: &mut RetainedRender,
-        world: &World,
-        aspect: f32,
-        gpu: bool,
-    ) {
+    pub(crate) fn extract(&mut self, retained: &mut RetainedRender, world: &World, gpu: bool) {
         retained.extract_lights_and_particles(world, &mut self.lights, &mut self.particles, gpu);
         retained.extract_probes(world, &mut self.probes);
-        retained.extract_terrain(world, aspect);
         retained.set_streamed(
             world
                 .get_resource::<WorldCells>()

@@ -2,16 +2,16 @@ use engine_settings::ErrorCode;
 use std::sync::Arc;
 
 use engine_core::bevy_ecs::world::EntityWorldMut;
-use engine_core::terrain_data::MAX_CREDIT;
-use engine_core::{
+use engine_core::glam::{Vec2, Vec3};
+use engine_core::{MaterialHandle, MeshHandle};
+use engine_settings::{Rule, Setting};
+use engine_terrain::{
     Biome, Biomes, Blend, Cover, ErosionLayer, ErosionStage, HeightImage, HeightmapLayer,
-    HummocksLayer, HydrologyLayer, HydrologyStage, Layer, Layers, MaterialHandle, MeshHandle,
-    NoiseLayer, PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
+    HummocksLayer, HydrologyLayer, HydrologyStage, Layer, Layers, MAX_CREDIT, NoiseLayer,
+    PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
     PlacementLod, PlacementPart, Pyramid, RiversLayer, Stamp, StepsLayer, SurfaceMaterial,
     SurfaceProjection, Surroundings, Terrain, TerrainSurface,
-    glam::{Vec2, Vec3},
 };
-use engine_settings::{Rule, Setting};
 use serde::{Deserialize, Serialize};
 
 use crate::components::{Placement, SceneComponent};
@@ -26,13 +26,13 @@ pub struct SceneTerrain {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schemars(inner(range(min = 1, max = engine_core::Pyramid::MAX_TILES)))
+        schemars(inner(range(min = 1, max = engine_terrain::Pyramid::MAX_TILES)))
     )]
     pub tiles: Option<[u32; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schemars(range(min = engine_core::Pyramid::MIN_SPACING, max = engine_core::Pyramid::MAX_SPACING))
+        schemars(range(min = engine_terrain::Pyramid::MIN_SPACING, max = engine_terrain::Pyramid::MAX_SPACING))
     )]
     pub spacing: Option<f32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -81,7 +81,7 @@ pub struct SceneTerrainSurface {
     pub materials: Vec<SceneTerrainMaterial>,
     pub biomes: Vec<Biome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub steep: Option<engine_core::terrain_data::SteepLayer>,
+    pub steep: Option<engine_terrain::SteepLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bridge: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -89,13 +89,13 @@ pub struct SceneTerrainSurface {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub placements: Vec<PlacementLayer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub placed: Vec<engine_core::terrain_data::AuthoredPlacement>,
+    pub placed: Vec<engine_terrain::AuthoredPlacement>,
     #[serde(default, skip_serializing_if = "is_default_causes")]
-    pub macro_colors: engine_core::terrain_data::MacroCauses,
+    pub macro_colors: engine_terrain::MacroCauses,
 }
 
-fn is_default_causes(causes: &engine_core::terrain_data::MacroCauses) -> bool {
-    *causes == engine_core::terrain_data::MacroCauses::default()
+fn is_default_causes(causes: &engine_terrain::MacroCauses) -> bool {
+    *causes == engine_terrain::MacroCauses::default()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -398,7 +398,7 @@ pub struct SceneHeightmap {
 fn state_heightmap_rules(schema: &mut schemars::Schema) {
     for field in ["min", "size", "low", "high", "falloff"] {
         let rule =
-            engine_core::HeightmapLayer::rule_of(field).expect("heightmaps declare the field");
+            engine_terrain::HeightmapLayer::rule_of(field).expect("heightmaps declare the field");
         engine_settings::state(schema, field, rule);
     }
 }

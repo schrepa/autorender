@@ -1,10 +1,10 @@
 use std::fmt;
 
-use engine_core::terrain_data::codec::CodecError;
 use engine_core::{
-    AssetError, BiomeError, ErrorCode, HierarchyError, InterpolationError, InvalidSetting,
-    LayerError, PyramidError, TransformEditError,
+    AssetError, ErrorCode, HierarchyError, InterpolationError, InvalidSetting, TransformEditError,
 };
+use engine_terrain::codec::CodecError;
+use engine_terrain::{BiomeError, LayerError, PyramidError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {

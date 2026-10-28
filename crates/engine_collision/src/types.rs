@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::ErrorCode;
 use glam::{Mat3, Mat4, Vec3};
 
-pub use engine_core::{MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT};
+pub use engine_terrain::{MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT};
 pub const MAX_COLLISION_COORDINATE: f32 = 1.0e6;
 pub const MAX_COLLISION_NODES: usize = 100_000;
 pub const MAX_QUERY_HITS: usize = 4_096;

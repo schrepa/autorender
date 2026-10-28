@@ -12,8 +12,8 @@ use crate::gpu_layouts::constants::{
     WATER_TILE_WORDS as TILE_WORDS,
 };
 use engine_core::glam::Vec2;
-use engine_core::terrain_data::shallow_water::roughness;
-use engine_core::terrain_data::{PATCH_QUADS, PATCHES_PER_TILE, Tile, TileWater, WaterMesh};
+use engine_terrain::shallow_water::roughness;
+use engine_terrain::{PATCH_QUADS, PATCHES_PER_TILE, Tile, TileWater, WaterMesh};
 
 const PER_LAYER: u32 = SIDE * SIDE;
 const LAYER_TEXELS: u32 = BLOCK * SIDE;

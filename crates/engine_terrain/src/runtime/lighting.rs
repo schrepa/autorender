@@ -74,7 +74,7 @@ pub(super) fn light(
         match job_output(
             LightingJob::KIND.name(),
             output,
-            engine_terrain::jobs::lighting_output,
+            crate::jobs::lighting_output,
         ) {
             Ok(made) => {
                 lighting.made = Some(Arc::new(made));
@@ -116,7 +116,7 @@ pub(super) fn light(
         identity.extend_from_slice(&sizes.0.to_le_bytes());
         identity.extend_from_slice(&sizes.1.to_le_bytes());
         let record = RecordKey::new(
-            &engine_terrain::sources::LIGHTING,
+            &crate::sources::LIGHTING,
             LightingJob::KIND.name(),
             &identity,
         );

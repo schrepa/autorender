@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::math::{clamp, max, min};
-use engine_core::terrain_data::Fall;
+use engine_terrain::Fall;
 
 use crate::gpu_layouts::water::FallVertex;
 

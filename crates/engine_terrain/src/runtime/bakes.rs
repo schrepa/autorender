@@ -55,11 +55,7 @@ pub(super) fn bake(
         }
         .input();
         let identity = content_hash(&input).to_le_bytes();
-        let record = RecordKey::new(
-            &engine_terrain::sources::BAKES,
-            BakeJob::KIND.name(),
-            &identity,
-        );
+        let record = RecordKey::new(&crate::sources::BAKES, BakeJob::KIND.name(), &identity);
         state.bake.key = Some(record);
         state.bake.drawn = Some(state.terrain.rivers.clone());
         state.bake.job = Some(slots.jobs.submit_record(
@@ -79,11 +75,7 @@ pub(super) fn bake(
         .drawn
         .take()
         .unwrap_or_else(|| state.terrain.rivers.clone());
-    let baked = match job_output(
-        BakeJob::KIND.name(),
-        output,
-        engine_terrain::jobs::bake_output,
-    ) {
+    let baked = match job_output(BakeJob::KIND.name(), output, crate::jobs::bake_output) {
         Ok(baked) => baked,
         Err(error) => {
             state.failures.record(frame, error);

@@ -1,20 +1,5 @@
 use super::*;
 
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Viewport {
-    pub width: u32,
-    pub height: u32,
-}
-
-impl Default for Viewport {
-    fn default() -> Self {
-        Self {
-            width: 1920,
-            height: 1080,
-        }
-    }
-}
-
 pub const MAX_BOUNCE_LEVELS: u32 = 8;
 
 settings! {
@@ -86,7 +71,7 @@ impl ExtraRules for MotionDetail {
 
     fn sanitize_extra(self) -> Self {
         Self {
-            fastest: crate::math::max(self.fastest, self.speed),
+            fastest: engine_core::math::max(self.fastest, self.speed),
             ..self
         }
     }
@@ -98,7 +83,7 @@ impl MotionDetail {
             return 0;
         }
         let share = if self.fastest > self.speed {
-            crate::math::clamp((speed - self.speed) / (self.fastest - self.speed), 0.0, 1.0)
+            engine_core::math::clamp((speed - self.speed) / (self.fastest - self.speed), 0.0, 1.0)
         } else {
             1.0
         };

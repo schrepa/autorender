@@ -17,8 +17,8 @@ const ENGINE_DENIES: [&str; 2] = [
 ];
 
 const TILE_MAPS: (&str, &str) = (
-    "crates/engine_core/src/features/terrain/",
-    "crates/engine_core/src/features/terrain/tile_map.rs",
+    "crates/engine_terrain/src/runtime/",
+    "crates/engine_terrain/src/runtime/tile_map.rs",
 );
 
 pub const UNSAFE_FILES: &[(&str, &str)] = &[

@@ -105,9 +105,6 @@ pub(crate) const MAP: &[Rule] = &[
     },
     Rule {
         paths: &[
-            "crates/engine_core/src/**/terrain*",
-            "crates/engine_core/src/**/terrain/**",
-            "crates/engine_core/src/**/bridges*",
             "crates/engine_core/src/**/navigation*",
             "crates/engine_core/src/**/navigation/**",
             "crates/engine_core/src/**/grounded*",
@@ -125,9 +122,9 @@ pub(crate) const MAP: &[Rule] = &[
     },
     Rule {
         paths: &[
-            "crates/engine_core/src/**/ground_cover*",
-            "crates/engine_core/src/**/wind*",
-            "crates/engine_core/src/**/occupancy*",
+            "crates/engine_terrain/src/runtime/ground_cover*",
+            "crates/engine_terrain/src/runtime/wind*",
+            "crates/engine_terrain/src/runtime/occupancy*",
             "crates/engine_render/src/**/ground_cover*",
             "crates/engine_render/src/**/cover_grow*",
             "crates/engine_render/src/**/occupancy*",
@@ -139,6 +136,7 @@ pub(crate) const MAP: &[Rule] = &[
     Rule {
         paths: &[
             "crates/engine_core/src/**/water*",
+            "crates/engine_terrain/src/runtime/water*",
             "crates/engine_core/src/**/clouds*",
             "crates/engine_core/src/**/sky*",
             "crates/engine_core/src/**/time_of_day*",
@@ -217,6 +215,7 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &[
             "crates/engine_core/src/**/streaming*",
             "crates/engine_core/src/**/streaming/**",
+            "crates/engine_terrain/src/runtime/streaming*",
         ],
         checks: &[Smokes("streaming")],
     },
@@ -324,7 +323,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_dev/src/features/physics*",
             "crates/engine_core/src/physics*",
             "crates/engine_core/src/water*",
-            "crates/engine_core/src/**/terrain/flow*",
+            "crates/engine_terrain/src/runtime/flow*",
             "crates/engine_terrain/src/flow*",
         ],
         checks: &[

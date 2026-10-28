@@ -13,6 +13,7 @@ profiling = ["engine_profile/enabled", "engine_core/profiling"]
 [dependencies]
 engine_core.workspace = true
 engine_profile.workspace = true
+engine_terrain.workspace = true
 engine_textures.workspace = true
 bytemuck.workspace = true
 glam.workspace = true

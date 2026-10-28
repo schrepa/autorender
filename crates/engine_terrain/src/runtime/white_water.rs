@@ -3,11 +3,11 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use glam::{Vec2, Vec3};
 
-use super::Terrains;
-use crate::math::{clamp, max};
-use crate::terrain_data::hydraulics::GRAVITY;
-use crate::terrain_data::{Fall, SteadyCell, SteadyWater, TileKey};
-use crate::{ParticleBlend, ParticleEmitter, RecordKey, Transform, Water};
+use super::{Terrains, Water};
+use crate::hydraulics::GRAVITY;
+use crate::{Fall, SteadyCell, SteadyWater, TileKey};
+use engine_core::math::{clamp, max};
+use engine_core::{ParticleBlend, ParticleEmitter, RecordKey, Transform};
 
 const SPRAY_ENERGY: f32 = 200.0;
 const SPRAY_LIP: f32 = 0.2;

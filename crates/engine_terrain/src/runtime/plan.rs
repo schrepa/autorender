@@ -184,7 +184,7 @@ fn wanted(input: &PlanInput<'_>) -> Wanted {
     };
     let want = |eye: Vec3, reach: f32| {
         let mut out = Vec::new();
-        engine_terrain::wanted_tiles(
+        crate::wanted_tiles(
             pyramid,
             input.ranges,
             &view(eye),
@@ -246,8 +246,8 @@ fn ground_bounds(store: &TileStore, pyramid: &Pyramid, key: TileKey) -> Option<[
         for z in first.y as u32..=end.y as u32 {
             for x in first.x as u32..=end.x as u32 {
                 let [patch_low, patch_high] = tile.patch_bounds(x, z);
-                bottom = crate::math::min(bottom, patch_low);
-                top = crate::math::max(top, patch_high);
+                bottom = engine_core::math::min(bottom, patch_low);
+                top = engine_core::math::max(top, patch_high);
             }
         }
         let margin = margin + 4.0 * spacing;
@@ -306,8 +306,8 @@ fn collision_keys(pyramid: &Pyramid, point: Vec3, radius: f32, out: &mut Vec<Til
         return;
     }
     let first = [
-        crate::math::max(low.x, 0.0) as u32,
-        crate::math::max(low.y, 0.0) as u32,
+        engine_core::math::max(low.x, 0.0) as u32,
+        engine_core::math::max(low.y, 0.0) as u32,
     ];
     let last = [
         (high.x as u32).min(tiles_x - 1),
@@ -321,7 +321,7 @@ fn collision_keys(pyramid: &Pyramid, point: Vec3, radius: f32, out: &mut Vec<Til
 }
 
 pub(super) fn push_with_ancestors(
-    pyramid: &engine_terrain::Pyramid,
+    pyramid: &crate::Pyramid,
     key: TileKey,
     order: &mut Vec<TileKey>,
     seen: &mut HashSet<TileKey>,

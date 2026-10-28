@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) type Watered = Option<Arc<engine_terrain::Rivers>>;
+pub(super) type Watered = Option<Arc<crate::Rivers>>;
 
 struct Resident {
     tile: Arc<Tile>,
@@ -126,14 +126,14 @@ impl TileStore {
             .and_then(|parent| self.tiles.get(&parent))
         {
             self.errors[level] =
-                crate::math::max(self.errors[level], tile.morph_error(&parent.tile));
+                engine_core::math::max(self.errors[level], tile.morph_error(&parent.tile));
         }
         if let Some(finer) = level.checked_sub(1) {
             for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                 let child = TileKey::new(finer as u8, key.x * 2 + dx, key.z * 2 + dz);
                 if let Some(child) = self.tiles.get(&child) {
                     self.errors[finer] =
-                        crate::math::max(self.errors[finer], child.tile.morph_error(&tile));
+                        engine_core::math::max(self.errors[finer], child.tile.morph_error(&tile));
                 }
             }
         }

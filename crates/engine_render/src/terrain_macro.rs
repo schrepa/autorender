@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use engine_core::{RenderTerrains, Texture, TextureFormat};
+use engine_core::{Texture, TextureFormat};
+use engine_terrain::RenderTerrains;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Shape {

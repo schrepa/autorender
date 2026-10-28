@@ -279,17 +279,15 @@ impl MaterialStore {
 }
 
 fn placed_materials(snapshot: &RenderSnapshot) -> impl Iterator<Item = &RenderMaterial> {
-    snapshot
-        .terrain
+    engine_terrain::RenderTerrains::of(snapshot)
         .terrains
         .iter()
         .flat_map(|terrain| terrain.assets.iter().flatten())
-        .flat_map(engine_core::RenderPlacementAsset::materials)
+        .flat_map(engine_terrain::RenderPlacementAsset::materials)
 }
 
 fn placed_textures(snapshot: &RenderSnapshot) -> impl Iterator<Item = &engine_core::RenderTexture> {
-    snapshot
-        .terrain
+    engine_terrain::RenderTerrains::of(snapshot)
         .terrains
         .iter()
         .flat_map(|terrain| terrain.assets.iter().flatten())

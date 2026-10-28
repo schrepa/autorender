@@ -1,8 +1,9 @@
 use bevy_ecs::prelude::*;
 use engine_collision::{Collider, CollisionWorld};
 use engine_core::{
-    FixedTime, Ground, InterpolateTransform, Parent, Physics, PhysicsStats, Transform, Wind,
+    FixedTime, Ground, InterpolateTransform, Parent, Physics, PhysicsStats, Transform,
 };
+use engine_terrain::Wind;
 use glam::{Quat, Vec3};
 use rapier3d::prelude as rp;
 

@@ -1,5 +1,5 @@
 use super::*;
-use engine_terrain::{RiverFlow, Rivers};
+use crate::{RiverFlow, Rivers};
 
 const REACH_SAMPLES: f32 = 2.25;
 

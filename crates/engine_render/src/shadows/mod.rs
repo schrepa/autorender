@@ -13,8 +13,8 @@ mod sky;
 
 use std::cell::Cell;
 
-use engine_core::terrain_data::Pyramid;
 use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
+use engine_terrain::Pyramid;
 
 use crate::batches::BatchPlan;
 use crate::bindings::SHADOW_POSES;
@@ -411,7 +411,7 @@ impl ShadowPass {
             inputs.mesh_layout,
         );
         let pipelines = self.pipelines.as_ref().expect("created above");
-        let wind = snapshot.environment.wind;
+        let wind = engine_terrain::TerrainEnvironment::of(snapshot).wind;
         let gusting = [
             wind.velocity[0],
             wind.velocity[1],

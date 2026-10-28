@@ -1,10 +1,8 @@
 mod navigation;
-mod terrain;
 mod time_of_day;
 mod world_streaming;
 
 pub use navigation::*;
-pub use terrain::*;
 pub use time_of_day::*;
 pub use world_streaming::*;
 

@@ -40,7 +40,7 @@ results! {
     nav_path: crate::features::navigation::NavPathResult,
     nav_go: crate::features::navigation::NavGoResult,
     world_changes: crate::features::world_streaming::WorldChangesResult,
-    terrain: crate::features::terrain::TerrainControlResult,
+    terrain: engine_terrain::TerrainControlResult,
     present: crate::results::PresentResult,
     culling: crate::results::CullingResult,
     camera: crate::results::CameraResult,

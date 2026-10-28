@@ -33,7 +33,7 @@ pub(super) fn bounces(settings: &TerrainSettings) -> bool {
 
 pub(super) fn probe_columns(pyramid: &Pyramid, settings: &TerrainSettings) -> u32 {
     let extent = pyramid.extent();
-    let longer = crate::math::max(extent.x, extent.y);
+    let longer = engine_core::math::max(extent.x, extent.y);
     let wanted = (longer / settings.bounce_spacing).ceil();
     let wanted = if wanted.is_finite() && wanted < MOST_PROBES as f32 {
         wanted as u32
@@ -60,11 +60,7 @@ pub(super) fn bounce(
         && let Some(output) = slots.jobs.take(id)
     {
         state.whole.bounce.job = None;
-        match job_output(
-            BounceJob::KIND.name(),
-            output,
-            engine_terrain::jobs::bounce_output,
-        ) {
+        match job_output(BounceJob::KIND.name(), output, crate::jobs::bounce_output) {
             Ok(made) => {
                 state.whole.bounce.made = Some(Arc::new(made));
                 state.whole.bounce.from = Some(record);
@@ -110,11 +106,7 @@ pub(super) fn bounce(
         };
         let mut identity = keys;
         identity.extend_from_slice(&probes.to_le_bytes());
-        let record = RecordKey::new(
-            &engine_terrain::sources::BOUNCE,
-            BounceJob::KIND.name(),
-            &identity,
-        );
+        let record = RecordKey::new(&crate::sources::BOUNCE, BounceJob::KIND.name(), &identity);
         state.whole.bounce.found = Some((basis, job.clone(), record));
         (job, record)
     });

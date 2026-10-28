@@ -4,12 +4,12 @@ use bevy_ecs::prelude::{DetectChangesMut, Res, ResMut};
 use glam::{Vec2, Vec3};
 
 use super::residency::TerrainState;
-use super::{Terrains, Viewport, Water};
-use crate::TerrainDebug;
-use crate::math::{max, min, sin_cos};
-use crate::terrain_data::shallow_water::{live_split, step_seconds};
-use crate::terrain_data::{BLOCK_SIDE, Footprint, SteadyWater, Tile, TileKey};
-use crate::{Camera, WaterObstacle};
+use super::{Terrains, Water};
+use crate::shallow_water::{live_split, step_seconds};
+use crate::{BLOCK_SIDE, Footprint, SteadyWater, Tile, TileKey};
+use engine_core::TerrainDebug;
+use engine_core::math::{max, min, sin_cos};
+use engine_core::{Camera, Viewport, WaterObstacle};
 
 pub const LIVE_PIXELS: f32 = 4.0;
 pub const LONGEST_FRAME: f64 = 1.0 / 30.0;

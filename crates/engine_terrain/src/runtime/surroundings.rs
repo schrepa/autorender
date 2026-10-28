@@ -17,7 +17,7 @@ impl Surroundings {
         let extent = base.extent();
         let spacing = base.spacing(base.levels().saturating_sub(1).min(2));
         let tile = TILE_QUADS as f32 * spacing;
-        let wanted = crate::math::max(extent.x, extent.y) + 2.0 * self.reach;
+        let wanted = engine_core::math::max(extent.x, extent.y) + 2.0 * self.reach;
         let mut tiles = ((wanted / tile).ceil() as u32)
             .clamp(1, Pyramid::MAX_TILES)
             .next_power_of_two()

@@ -160,7 +160,7 @@ settings! {
         pub tiling: f32 = 4.0 => range(0.01, 1000.0),
         pub height_contrast: f32 = 0.5 => range(0.0, 1.0),
         pub projection: SurfaceProjection = SurfaceProjection::Top => any,
-        pub cover: Option<crate::Cover> = None => any,
+        pub cover: Option<Cover> = None => any,
         pub depth: f32 = 0.0 => range(0.0, 2.0),
     }
 }
@@ -322,11 +322,11 @@ impl TerrainSurface {
                 ],
                 wetness: None,
             }],
-            steep: Some(engine_terrain::SteepLayer {
+            steep: Some(crate::SteepLayer {
                 material: "rock".into(),
                 slope: [28.0, 35.0],
             }),
-            macro_colors: engine_terrain::MacroCauses::default(),
+            macro_colors: crate::MacroCauses::default(),
         }
     }
 

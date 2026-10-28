@@ -1,15 +1,15 @@
-use crate::collections::HashMap;
+use engine_core::collections::HashMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use glam::Vec3;
 
-use super::Terrains;
-use crate::math::{clamp, max};
-use crate::terrain_data::Fall;
-use crate::terrain_data::hydraulics::GRAVITY;
-use crate::terrain_data::shallow_water::DENSITY;
-use crate::{ParticleBlend, ParticleEmitter, Transform, Water};
+use super::{Terrains, Water};
+use crate::Fall;
+use crate::hydraulics::GRAVITY;
+use crate::shallow_water::DENSITY;
+use engine_core::math::{clamp, max};
+use engine_core::{ParticleBlend, ParticleEmitter, Transform};
 
 #[derive(Resource, Default)]
 pub(crate) struct TerrainFalls {

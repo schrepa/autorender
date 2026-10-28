@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bevy_ecs::prelude::*;
-use engine_terrain::jobs::TerrainWorker;
 use serde::Serialize;
 
 static SUBMITTED: AtomicU64 = AtomicU64::new(0);
@@ -126,6 +125,12 @@ pub fn content_hash(bytes: &[u8]) -> u128 {
     (u128::from(h2) << 64) | u128::from(h1)
 }
 
+pub trait JobWorker: Send + Sync + 'static {
+    fn share(&mut self, key: &str, bytes: Arc<[u8]>) -> Result<(), String>;
+    fn unshare(&mut self, key: &str);
+    fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String>;
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobShare {
     Clear,
@@ -168,7 +173,8 @@ pub struct Jobs {
     held: u32,
     shared: Vec<(String, Arc<[u8]>)>,
     sharing: u64,
-    here: Option<(TerrainWorker, Vec<String>, u64)>,
+    make_here: Option<fn() -> Box<dyn JobWorker>>,
+    here: Option<(Box<dyn JobWorker>, Vec<String>, u64)>,
     stats: JobStats,
     last_failure: Option<String>,
 }
@@ -190,6 +196,7 @@ impl Default for Jobs {
             held: 0,
             shared: Vec::new(),
             sharing: 0,
+            make_here: None,
             here: None,
             stats: JobStats::default(),
             last_failure: None,
@@ -327,6 +334,15 @@ impl Jobs {
         }
     }
 
+    pub fn works_here(&self) -> bool {
+        self.make_here.is_some()
+    }
+
+    pub fn work_here(&mut self, make: fn() -> Box<dyn JobWorker>) {
+        self.make_here = Some(make);
+        self.here = None;
+    }
+
     pub fn run_here(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         self.stats.in_place += 1;
         if engine_tables::TableWorker::runs(kind) || engine_textures::TextureWorker::runs(kind) {
@@ -337,10 +353,11 @@ impl Jobs {
                 return output;
             }
         }
+        let Some(make) = self.make_here else {
+            return Err(format!("no worker runs {kind} jobs"));
+        };
         let (shared, sharing) = (&self.shared, self.sharing);
-        let (worker, held, synced) = self
-            .here
-            .get_or_insert_with(|| (TerrainWorker::new(), Vec::new(), 0));
+        let (worker, held, synced) = self.here.get_or_insert_with(|| (make(), Vec::new(), 0));
         if *synced != sharing {
             let current: HashSet<&str> = shared.iter().map(|(key, _)| key.as_str()).collect();
             for key in held.iter().filter(|key| !current.contains(key.as_str())) {
@@ -456,7 +473,7 @@ fn next_id() -> JobId {
     JobId(SUBMITTED.fetch_add(1, Ordering::Relaxed) + 1)
 }
 
-pub(crate) fn job_output<T, E: std::fmt::Display>(
+pub fn job_output<T, E: std::fmt::Display>(
     kind: &str,
     output: Result<Vec<u8>, String>,
     decode: impl FnOnce(&[u8]) -> Result<T, E>,
@@ -466,26 +483,26 @@ pub(crate) fn job_output<T, E: std::fmt::Display>(
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct JobFailures {
-    pub(crate) count: u64,
-    pub(crate) last: Option<(u64, String)>,
+pub struct JobFailures {
+    pub count: u64,
+    pub last: Option<(u64, String)>,
 }
 
 impl JobFailures {
-    pub(crate) fn record(&mut self, frame: u64, error: String) {
+    pub fn record(&mut self, frame: u64, error: String) {
         self.count += 1;
         self.last = Some((frame, error));
     }
 }
 
-pub(crate) struct JobBudget<'a> {
-    pub(crate) jobs: &'a mut Jobs,
+pub struct JobBudget<'a> {
+    pub jobs: &'a mut Jobs,
     slots: usize,
     urgent: usize,
 }
 
 impl JobBudget<'_> {
-    pub(crate) fn of(jobs: &mut Jobs) -> JobBudget<'_> {
+    pub fn of(jobs: &mut Jobs) -> JobBudget<'_> {
         let workers = jobs.workers().max(1) as usize;
         let running = jobs.running();
         JobBudget {
@@ -495,7 +512,7 @@ impl JobBudget<'_> {
         }
     }
 
-    pub(crate) fn take(&mut self, priority: u32) -> bool {
+    pub fn take(&mut self, priority: u32) -> bool {
         let free = if job_class(priority) == URGENT_JOBS {
             self.urgent
         } else {
@@ -509,7 +526,7 @@ impl JobBudget<'_> {
         true
     }
 
-    pub(crate) fn release(&mut self) {
+    pub fn release(&mut self) {
         self.slots += 1;
         self.urgent += 1;
     }

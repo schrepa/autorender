@@ -1,12 +1,8 @@
 use super::*;
-use crate::{MISSING_RECORD, RecordParity};
-use engine_terrain::codec::CodecError;
-use engine_terrain::jobs::{
-    SteadiedJob, WaterJob, settled_key, share_settled, share_summary, summary_key,
-};
-use engine_terrain::{
-    SettleRegion, SettleStart, SettledKey, SteadyCell, SteadyWater, TileWater, WaterPart,
-};
+use crate::codec::CodecError;
+use crate::jobs::{SteadiedJob, WaterJob, settled_key, share_settled, share_summary, summary_key};
+use crate::{SettleRegion, SettleStart, SettledKey, SteadyCell, SteadyWater, TileWater, WaterPart};
+use engine_core::{MISSING_RECORD, RecordParity};
 
 pub const SETTLED_KIND: &str = "settled_water";
 
@@ -14,8 +10,8 @@ pub const SETTLED_PARITY: RecordParity = RecordParity::Within(settled_alike);
 
 pub fn settled_alike(handed: &[u8], made: &[u8]) -> bool {
     let (Ok(handed), Ok(made)) = (
-        engine_terrain::codec::decode::<SteadyWater>(handed),
-        engine_terrain::codec::decode::<SteadyWater>(made),
+        crate::codec::decode::<SteadyWater>(handed),
+        crate::codec::decode::<SteadyWater>(made),
     ) else {
         return false;
     };
@@ -354,7 +350,7 @@ impl TerrainState {
         };
         let record = |settled: &SettledKey| {
             let identity = [settling.as_slice(), &settled.identity()].concat();
-            RecordKey::new(&engine_terrain::sources::WATER, SETTLED_KIND, &identity)
+            RecordKey::new(&crate::sources::WATER, SETTLED_KIND, &identity)
         };
         let region = record(&settled);
         settled.tiles = [u32::from(key.x), u32::from(key.z), 1, 1];
@@ -537,10 +533,10 @@ fn refresh(
         let pyramid = state.terrain.pyramid;
         let watered: Arc<[TileKey]> = match state.settled.watered.take() {
             Some((over, keys)) if Arc::ptr_eq(&over, &baked) => keys,
-            _ => engine_terrain::watered_tiles(&baked, &pyramid).into(),
+            _ => crate::watered_tiles(&baked, &pyramid).into(),
         };
         let cell = water.simulation_cell;
-        let regions = engine_terrain::settle_regions(&baked, &pyramid, cell)
+        let regions = crate::settle_regions(&baked, &pyramid, cell)
             .into_iter()
             .map(|tiles| {
                 let [x, z, columns, rows] = tiles;
@@ -921,7 +917,7 @@ fn arrive(
     }
     let held = if kept.binary_search(&key).is_ok() {
         Some(Arc::new(
-            engine_terrain::codec::decode::<SteadyWater>(&bytes).map_err(unread)?,
+            crate::codec::decode::<SteadyWater>(&bytes).map_err(unread)?,
         ))
     } else {
         None
@@ -966,11 +962,7 @@ fn take_parts(
         let Some(output) = slots.jobs.take(*id) else {
             continue;
         };
-        match job_output(
-            WaterJob::KIND.name(),
-            output,
-            engine_terrain::jobs::water_output,
-        ) {
+        match job_output(WaterJob::KIND.name(), output, crate::jobs::water_output) {
             Ok(part) if part.key == key && part.cell == settled.cell => {
                 settled.parts.insert(key, Part::Made(Arc::new(part)));
             }
@@ -1087,7 +1079,7 @@ fn take_waters(state: &mut TerrainState, slots: &mut JobBudget<'_>, work: &Work,
         match job_output(
             SteadiedJob::KIND.name(),
             output,
-            engine_terrain::jobs::steadied_output,
+            crate::jobs::steadied_output,
         ) {
             Ok(water) => {
                 let resident = state.store.contains(&key);
@@ -1220,11 +1212,7 @@ fn water_record(reads: &Reads, cell: f32) -> RecordKey {
         identity.extend_from_slice(&key.z.to_le_bytes());
         identity.extend_from_slice(&record.0);
     }
-    RecordKey::new(
-        &engine_terrain::sources::WATER,
-        SteadiedJob::KIND.name(),
-        &identity,
-    )
+    RecordKey::new(&crate::sources::WATER, SteadiedJob::KIND.name(), &identity)
 }
 
 fn ask_waters(

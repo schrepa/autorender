@@ -148,18 +148,6 @@ pub enum WaterReach {
     Falls,
 }
 
-impl From<engine_terrain::Reach> for WaterReach {
-    fn from(reach: engine_terrain::Reach) -> Self {
-        match reach {
-            engine_terrain::Reach::Pool => Self::Pool,
-            engine_terrain::Reach::Plane => Self::Plane,
-            engine_terrain::Reach::Steps => Self::Steps,
-            engine_terrain::Reach::Cascade => Self::Cascade,
-            engine_terrain::Reach::Falls => Self::Falls,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WaterProbe {

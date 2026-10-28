@@ -4,7 +4,7 @@ use super::constants::{SHADOW_REGIONS, SKY_LAYERS};
 
 pub(crate) const MAX_LEVELS: usize = engine_core::MAX_SHADOW_LEVELS as usize;
 pub(crate) const MAX_MOVING_TILES: usize = engine_core::MAX_MOVING_TILES as usize;
-pub(crate) const MAX_OCCUPANCY_LEVELS: usize = engine_core::MAX_OCCUPANCY_LEVELS as usize;
+pub(crate) const MAX_OCCUPANCY_LEVELS: usize = engine_terrain::MAX_OCCUPANCY_LEVELS as usize;
 
 pub(crate) type PoseData = engine_core::PoseRows;
 
