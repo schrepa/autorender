@@ -133,8 +133,8 @@ const DEBUG_WATER_SPANS = array<vec3<f32>, 3>(
 // The eddies' turbulent Froude number: dark (calm), orange where they start
 // breaking the water's surface white (`engine_terrain::BREAK_ONSET`), white
 // where they break it white all over (`BREAK_FULL`).
-const DEBUG_BREAK_ONSET: f32 = 0.45;
-const DEBUG_BREAK_FULL: f32 = 0.85;
+const DEBUG_BREAK_ONSET: f32 = 0.6;
+const DEBUG_BREAK_FULL: f32 = 1.2;
 const DEBUG_WATER_EDDIES = array<vec3<f32>, 3>(
     vec3<f32>(0.04, 0.05, 0.12), vec3<f32>(0.95, 0.5, 0.1), vec3<f32>(1.0, 1.0, 0.95),
 );

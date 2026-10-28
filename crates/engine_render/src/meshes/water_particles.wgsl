@@ -65,15 +65,12 @@ const PARTICLE_ITEMS: u32 = 16u;
 // it takes to fade to 1/e; the meters of water under which a place holds
 // none; the least rate (square meters a second cubed) water loses energy at,
 // gravity times its surface's slope times its speed, for it to churn any;
-// the vorticity (a second) past which eddy lines churn it, as much again
-// past it holding half the most; the convergence (a second) and the power
-// the water loses (watts a square meter of bed) at which each holds half
-// the most; and water's density (kilograms a cubic meter).
+// the power the water loses breaking (watts a square meter of bed) at which
+// it holds half the most; and water's density (kilograms a cubic meter).
+// Only breaking water draws air in (`water_sim.wgsl`'s `sim_churn`).
 const WATER_FOAM_LIFE: f32 = 20.0;
 const WATER_FOAM_WET: f32 = 0.005;
 const WATER_FOAM_LOSS: f32 = 0.02;
-const WATER_FOAM_SWIRL: f32 = 1.0;
-const WATER_FOAM_PILING: f32 = 0.5;
 const WATER_FOAM_POWER: f32 = 500.0;
 const WATER_DENSITY: f32 = 1000.0;
 // What floats rides the water's surface (`water_sim.wgsl`'s
@@ -1066,9 +1063,9 @@ fn particles_gather(@builtin(global_invocation_id) id: vec3<u32>) {
 // loses as it runs, ρ times its depth times its velocity against the fall
 // of its energy head (gravity times its surface's slope less the rise of
 // its velocity head along the flow), which takes in where it plunges or
-// jumps, as a share of WATER_FOAM_POWER; the vorticity of its eddy lines past
-// WATER_FOAM_SWIRL, as a share of it; and its convergence, as a share of
-// WATER_FOAM_PILING; none where it loses energy slower than WATER_FOAM_LOSS;
+// jumps, as far as it breaks white (its eddies' turbulent Froude number
+// from WATER_BREAK_ONSET to WATER_BREAK_FULL), as a share of
+// WATER_FOAM_POWER; none where it loses energy slower than WATER_FOAM_LOSS;
 // and how fast its eddies turn, as its shading's roughness takes them
 // (`water_stirring`). Its depth, how strongly it breaks white and the foam
 // it carries come along.
@@ -1094,11 +1091,9 @@ fn particles_currents(@builtin(global_invocation_id) id: vec3<u32>) {
             - dot(south.velocity, south.velocity)) / span;
         let power = WATER_DENSITY * here.depth
             * (WATER_GRAVITY * dot(u, here.slope) - dot(u, rising));
-        let swirl = abs(change[0].y - change[1].x);
-        let converging = max(-(change[0].x + change[1].y), 0.0);
-        var churn = max(power, 0.0) / WATER_FOAM_POWER
-            + max(swirl - WATER_FOAM_SWIRL, 0.0) / WATER_FOAM_SWIRL
-            + converging / WATER_FOAM_PILING;
+        let breaking = smoothstep(WATER_BREAK_ONSET, WATER_BREAK_FULL,
+            water_eddy_froude(length(u), length(here.slope), here.depth));
+        var churn = max(power, 0.0) * breaking / WATER_FOAM_POWER;
         if WATER_GRAVITY * length(here.slope) * length(u) < WATER_FOAM_LOSS {
             churn = 0.0;
         }

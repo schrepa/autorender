@@ -16,9 +16,9 @@
 //! water that runs into them and giving none. The ground stands at the
 //! cells' corners, with each cell's bed's roughness ([`roughness`]).
 //! Rivers bring their water at the cells their sources name. The water
-//! carries foam, churned up where it loses energy fast enough to break (as
-//! it runs, where it plunges and jumps, along its eddy lines and where it
-//! piles up), carried off by the current and fading as its bubbles break.
+//! carries foam, churned up where it breaks white as it runs and where it
+//! plunges and jumps, gathered where its current converges, carried off by
+//! the current and fading as its bubbles break.
 //!
 //! Steps run as the live simulation's do, every cell by the same seconds,
 //! or, settling, each cell by as long as its own and its neighbors'
@@ -87,11 +87,12 @@ pub const LOCAL_SHARE: f32 = 0.9;
 pub const SLOWEST: f32 = 1.0;
 /// Foam, the lace white water leaves on the water: churned up where the
 /// water loses energy fast enough to break, and fading as its bubbles
-/// break. A cell's churn sums the shares below of what holds half the most
-/// foam: the power its water loses as it runs and that of the water landing
-/// in it, plunging or jumping ([`FOAM_POWER`]); the vorticity of its eddy
-/// lines ([`FOAM_SWIRL`]); and its convergence ([`FOAM_PILING`]); none where
-/// its water loses energy slower than [`FOAM_LOSS`]. Churning at `c`, its
+/// break. A cell's churn is the share of what holds half the most foam
+/// ([`FOAM_POWER`]) of the power its water loses as it runs, as far as it
+/// breaks white (`tile_water::BREAK_ONSET` to `BREAK_FULL`), and that of the
+/// water landing in it, plunging or jumping; none where its water loses
+/// energy slower than [`FOAM_LOSS`]. Eddy lines and converging currents draw
+/// no air in; they gather the foam the current carries. Churning at `c`, its
 /// foam nears `c / (1 + c)` of [`FOAM_MOST`], `1 + c` times as fast as foam
 /// fades, so it saturates smoothly.
 ///
@@ -109,24 +110,16 @@ pub const FOAM_WET: f32 = 0.005;
 /// slope times its speed, what water running 0.4 meters a second down a
 /// riffle's half percent loses. Pools and gentle runs stay unbroken.
 pub const FOAM_LOSS: f32 = 0.02;
-/// Meters further than it falls on past a cell water drops into it to
-/// plunge (a step, not a slope's steady fall): falling that far it lands at
-/// the meter a second (√(2·g·h)) past which plunging water draws air in
-/// (Ervine, McKeogh and Elsawy 1980).
+/// The least meters further than it falls on past a cell water drops into
+/// it to plunge (a step, not a slope's steady fall), and by more than its
+/// own depth, so its jet falls free: falling that far it lands at the meter
+/// a second (√(2·g·h)) past which plunging water draws air in (Ervine,
+/// McKeogh and Elsawy 1980).
 pub const FOAM_DROP: f32 = 0.05;
 /// The Froude number at which water running into water slower than its
 /// waves jumps, breaking into a roller; slower, its jump stands as undular
 /// waves breaking no surface (Chow 1959).
 pub const FOAM_JUMP: f32 = 1.7;
-/// The vorticity (a second) past which eddy lines churn foam, as much again
-/// past it holding half the most: shear of the meter a second at which
-/// water draws air in, across the meter or so an eddy line beside a rock
-/// spans.
-pub const FOAM_SWIRL: f32 = 1.0;
-/// The convergence (a second) at which water piling up holds half the most
-/// foam: a current of half a meter a second stopping within a meter, as it
-/// piles against a rock.
-pub const FOAM_PILING: f32 = 0.5;
 /// The power water loses (watts a square meter of bed) at which it holds
 /// half the most foam: the power ρ·g·q·S of half a square meter a second
 /// running down a tenth, a cascade's slope.

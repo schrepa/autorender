@@ -40,6 +40,12 @@ const WATER_FOAM_CAPPING: f32 = 0.12;
 // How much of the light heaped foam's hollows lose to the bubbles around
 // them.
 const WATER_FOAM_HOLLOW: f32 = 0.35;
+// The share of water's depth an obstacle stands up through from which the
+// water starts to climb it, and from which it climbs it whole: a stone half
+// as tall as the water runs deep bulges the surface over it, and one
+// reaching nine tenths of the way breaks it (Chanson 2004, flow over large
+// roughness).
+const WATER_FOAM_BLOCKING: vec2<f32> = vec2<f32>(0.5, 0.9);
 
 // How strongly water running at `speed` meters a second foams against what
 // it meets `under` meters under its surface (over it where negative),
@@ -64,14 +70,29 @@ fn water_climbing(under: f32, change: f32, speed: f32, facing: f32) -> f32 {
 // How strongly water foams against what stands in it behind the pixel
 // (Sea of Thieves' depth test), its surface `standing` meters over it,
 // changing by `change` across a pixel whose footprint is `footprint`
-// (`water_footprint`), where it runs at `speed` meters a second, meeting it
-// head on (`water_climbing`). Only solid ground counts: behind blades and
-// twigs what the pixel sees jumps from pixel to pixel faster than any bank
-// rises along the footprint's long side (WATER_GRADIENT_RANGE a meter).
-fn water_contact(standing: f32, change: f32, footprint: WaterFootprint, speed: f32) -> f32 {
+// (`water_footprint`), where it runs at `speed` meters a second, turning
+// the share `facing` of its velocity head up what it meets
+// (`water_climbing`). Only solid ground counts: behind blades and twigs what
+// the pixel sees jumps from pixel to pixel faster than any bank rises along
+// the footprint's long side (WATER_GRADIENT_RANGE a meter).
+fn water_contact(standing: f32, change: f32, footprint: WaterFootprint, speed: f32,
+        facing: f32) -> f32 {
     let rise = change * material_detail() / max(footprint.along, 1.0e-6);
     let solid = 1.0 - smoothstep(WATER_GRADIENT_RANGE, 2.0 * WATER_GRADIENT_RANGE, rise);
-    return solid * water_climbing(standing, change, speed, 1.0);
+    return solid * water_climbing(standing, change, speed, facing);
+}
+
+// The share of running water's velocity head an obstacle turns up its face
+// where its top stands `standing` meters under the surface of water running
+// over a bed `depth` meters under it: water climbs what blocks its way, as
+// far as it stands up through the water's depth, from none for the bed it
+// runs over and its stones standing a share of its depth, to all of it for
+// a rock blocking WATER_FOAM_BLOCKING of the depth or more, so cobbles under
+// running water raise no foam and a boulder breaking the surface rings with
+// it.
+fn water_blocking(standing: f32, depth: f32) -> f32 {
+    let blocked = 1.0 - standing / max(depth, WATER_BREAK_THINNEST);
+    return smoothstep(WATER_FOAM_BLOCKING.x, WATER_FOAM_BLOCKING.y, blocked);
 }
 
 // Foam over a pixel: the share of the surface it hides (`cover`), how thin

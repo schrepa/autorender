@@ -65,12 +65,13 @@ pub const TURBULENT_SWIRL: f32 = 4.0;
 /// large as it is deep over √(g·h), the speed gravity smooths its surface
 /// at) from which its turbulence breaks its surface white (Brocchini and
 /// Peregrine 2001), and from which it breaks white all over. In uniform flow
-/// its cube is the slope times the Froude number: a 3% riffle at Froude 0.8
-/// gives 0.29 and stays clear; a 10% run at Froude 1.5 gives 0.53 and shows
-/// flecks; a 20% chute at Froude 2.9, or water landing below a 30 cm step,
-/// gives about 0.84 and breaks white.
-pub const BREAK_ONSET: f32 = 0.45;
-pub const BREAK_FULL: f32 = 0.85;
+/// its cube is the slope times the Froude number: a 10% run at Froude 1.5
+/// gives 0.53 and stays clear but rough; a 20% chute at Froude 2.9 gives
+/// about 0.84 and shows white in patches; only water plunging down a step
+/// or a chute over 30% at Froude 5 and more (1.2) breaks white all over, as
+/// mountain streams run clear between their white drops.
+pub const BREAK_ONSET: f32 = 0.6;
+pub const BREAK_FULL: f32 = 1.2;
 /// The meters deep thinner water breaks as, so films divide by nothing:
 /// about where surface tension, not gravity, holds a surface flat against
 /// eddies (waves shorter than 1.7 cm are capillary).

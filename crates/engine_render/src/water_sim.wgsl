@@ -180,8 +180,8 @@ const SIM_SHEAR_RANGE: f32 = 8.0;
 // `BREAK_ONSET`, `BREAK_FULL`, `BREAK_THINNEST`).
 const SIM_TURBULENT_SPEED: f32 = 0.5;
 const SIM_TURBULENT_SWIRL: f32 = 4.0;
-const SIM_BREAK_ONSET: f32 = 0.45;
-const SIM_BREAK_FULL: f32 = 0.85;
+const SIM_BREAK_ONSET: f32 = 0.6;
+const SIM_BREAK_FULL: f32 = 1.2;
 const SIM_BREAK_THINNEST: f32 = 0.02;
 
 // The stage (0: the first, 1: the second), the slots the buffers hold, the
@@ -1726,18 +1726,17 @@ fn sim_dissipation(q: Square, cell: SimCell) -> f32 {
 // least rate (square meters a second cubed) the water loses energy at,
 // gravity times its surface's slope times its speed, for it to churn any;
 // the meters water drops into a cell to plunge, and the Froude number it
-// runs at into water slower than its waves to jump; the vorticity (a
-// second) past which eddy lines churn it, as much again past it holding
-// half the most; the convergence (a second) and the power the water loses
-// (watts a square meter of bed) at which each holds half the most.
+// runs at into water slower than its waves to jump; and the power the water
+// loses breaking (watts a square meter of bed) at which it holds half the
+// most. Eddy lines and converging currents draw no air in: they gather the
+// foam the current carries, as its surface's current does
+// (`sim_foam_carried`).
 const SIM_FOAM_LIFE: f32 = 20.0;
 const SIM_FOAM_MOST: f32 = 1.5;
 const SIM_FOAM_WET: f32 = 0.005;
 const SIM_FOAM_LOSS: f32 = 0.02;
 const SIM_FOAM_DROP: f32 = 0.05;
 const SIM_FOAM_JUMP: f32 = 1.7;
-const SIM_FOAM_SWIRL: f32 = 1.0;
-const SIM_FOAM_PILING: f32 = 0.5;
 const SIM_FOAM_POWER: f32 = 500.0;
 // Foam rides the water's surface, which runs as the depth's mean does but
 // for two things. In a bend the helical flow carries the surface toward the
@@ -1787,14 +1786,17 @@ fn sim_foam_froude(water: vec4<f32>) -> f32 {
 // across standing as `here`, the cell past it standing as `beyond` and
 // `toward` the way from it into the cell: the head it loses times the
 // water it brings, where it plunges, its surface falling into the cell
-// SIM_FOAM_DROP or more further than it falls on past it (a step, not the
-// steady fall of a slope), or jumps, running at SIM_FOAM_JUMP times its
-// waves' speed or faster into water slower than its waves; none elsewhere.
+// further than it falls on past it (a step, not the steady fall of a slope)
+// by SIM_FOAM_DROP or more and by more than the water's own depth, so its
+// jet leaves the bed and falls free (a nappe; Chanson 2004) rather than
+// rippling over the stones under it, or jumps, running at SIM_FOAM_JUMP
+// times its waves' speed or faster into water slower than its waves; none
+// elsewhere.
 fn sim_foam_landing(upstream: vec4<f32>, here: vec4<f32>, beyond: vec4<f32>, toward: vec2<f32>,
         dx: f32) -> f32 {
     let drop = upstream.x - here.x;
     let step = drop - max(here.x - beyond.x, 0.0);
-    let plunges = step >= SIM_FOAM_DROP;
+    let plunges = step >= max(SIM_FOAM_DROP, upstream.y);
     let jumps = sim_foam_froude(upstream) >= SIM_FOAM_JUMP && sim_foam_froude(here) < 1.0;
     if !plunges && !jumps {
         return 0.0;
@@ -2029,11 +2031,15 @@ fn sim_foam_carried(q: Square, cell: SimCell, seconds: f32) -> f32 {
 
 // Each cell's foam after a step, into the second state's: what its
 // surface's current carried there conserved (`sim_foam_carried`), faded,
-// and what the water churned up there. Its churn sums the power its water
-// loses as it runs and that of the water landing in it from its neighbors,
-// each as a share of SIM_FOAM_POWER; the vorticity of its eddy lines past
-// SIM_FOAM_SWIRL, as a share of it; and its convergence, as a share of
-// SIM_FOAM_PILING; none where its water loses energy slower than
+// and what the water churned up there. Foam is the air breaking water draws
+// in, so the power its water loses as it runs churns it only as far as that
+// water breaks white (its eddies' turbulent Froude number from
+// SIM_BREAK_ONSET to SIM_BREAK_FULL, as `sim_drawn` breaks it): a steep run
+// loses power to its bed all the way down and runs clear where it does not
+// break. Its churn sums that share of the power lost and the power of the
+// water landing in it from its neighbors (a plunge draws air in whatever
+// its eddies), each as a share of SIM_FOAM_POWER; none where its water
+// loses energy slower than
 // SIM_FOAM_LOSS. Churning at `churn`, its foam nears churn / (1 + churn) of
 // SIM_FOAM_MOST, 1 + churn times as fast as foam fades, so it never passes
 // the most.
@@ -2068,10 +2074,11 @@ fn sim_churn(
         + sim_foam_landing(south, here, north, vec2<f32>(0.0, 1.0), dx)
         + sim_foam_landing(north, here, south, vec2<f32>(0.0, -1.0), dx);
     let slope = length(vec2<f32>(east.x - west.x, north.x - south.x)) / (2.0 * dx);
-    let swirl = abs(east.w - west.w - north.z + south.z) / (2.0 * dx);
-    let converging = max(-(east.z - west.z + north.w - south.w) / (2.0 * dx), 0.0);
-    var churn = (max(sim_dissipation(q, cell), 0.0) + landing) / SIM_FOAM_POWER
-        + max(swirl - SIM_FOAM_SWIRL, 0.0) / SIM_FOAM_SWIRL + converging / SIM_FOAM_PILING;
+    let lost = max(sim_dissipation(q, cell), 0.0);
+    let depth = max(here.y, SIM_BREAK_THINNEST);
+    let breaks = sim_eddy_speed(lost, depth, depth) / sqrt(SIM_GRAVITY * depth);
+    let breaking = smoothstep(SIM_BREAK_ONSET, SIM_BREAK_FULL, breaks);
+    var churn = (lost * breaking + landing) / SIM_FOAM_POWER;
     if SIM_GRAVITY * slope * length(here.zw) < SIM_FOAM_LOSS {
         churn = 0.0;
     }

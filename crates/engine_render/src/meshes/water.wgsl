@@ -1433,10 +1433,12 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let transmit = water_transmitted(through + down, aerated);
     // Foam (`meshes/water_foam.wgsl`): the white water, and fresh white water
     // where the water runs against what stands in it behind the pixel fast
-    // enough to tear air in, by its speed and how far its surface stands over
-    // what it meets (`water_contact`); and the foam it carries, drained as it
-    // ages (`water_foam`).
-    let contact = water_contact(standing, standing_change, footprint, speed);
+    // enough to tear air in, by its speed, how far its surface stands over
+    // what it meets and how much of its depth that blocks (`water_contact`,
+    // `water_blocking`); and the foam it carries, drained as it ages
+    // (`water_foam`).
+    let contact = water_contact(standing, standing_change, footprint, speed,
+        water_blocking(standing, depth));
     let foam = water_foam(1.0 - (1.0 - white) * (1.0 - contact), splatted.foam.y);
     var surface: WaterSurface;
     surface.relative = point;
@@ -1528,6 +1530,8 @@ fn fs_water_temporal(input: WaterTemporalOutput) -> TemporalTargets {
 // `BREAK_THINNEST`).
 const WATER_TURBULENT_SPEED: f32 = 0.5;
 const WATER_BREAK_THINNEST: f32 = 0.02;
+const WATER_BREAK_ONSET: f32 = 0.6;
+const WATER_BREAK_FULL: f32 = 1.2;
 
 // The speed (meters a second) at which the eddies of water `depth` meters
 // deep turn, running `speed` meters a second down a surface falling

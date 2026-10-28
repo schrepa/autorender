@@ -633,8 +633,6 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::FOAM_LOSS => ["SIM_FOAM_LOSS" in WATER_SIM_SHADER, "WATER_FOAM_LOSS"];
     engine_core::terrain_data::shallow_water::FOAM_DROP => ["SIM_FOAM_DROP" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_JUMP => ["SIM_FOAM_JUMP" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::FOAM_SWIRL => ["SIM_FOAM_SWIRL" in WATER_SIM_SHADER, "WATER_FOAM_SWIRL"];
-    engine_core::terrain_data::shallow_water::FOAM_PILING => ["SIM_FOAM_PILING" in WATER_SIM_SHADER, "WATER_FOAM_PILING"];
     engine_core::terrain_data::shallow_water::FOAM_POWER => ["SIM_FOAM_POWER" in WATER_SIM_SHADER, "WATER_FOAM_POWER"];
     engine_core::terrain_data::shallow_water::COURANT => ["SIM_COURANT" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::LOCAL_SHARE => ["SIM_LOCAL_SHARE" in WATER_SIM_SHADER];
@@ -642,8 +640,8 @@ gpu_mirrors! {
     engine_core::SIM_TOUCHES => ["SIM_TOUCHES" in WATER_SIM_SHADER];
     engine_core::terrain_data::TURBULENT_SPEED => ["WATER_TURBULENT_SPEED", "SIM_TURBULENT_SPEED" in WATER_SIM_SHADER];
     engine_core::terrain_data::TURBULENT_SWIRL => ["SIM_TURBULENT_SWIRL" in WATER_SIM_SHADER];
-    engine_core::terrain_data::BREAK_ONSET => ["DEBUG_BREAK_ONSET" in DEBUG_VIEW_SHADER, "SIM_BREAK_ONSET" in WATER_SIM_SHADER];
-    engine_core::terrain_data::BREAK_FULL => ["DEBUG_BREAK_FULL" in DEBUG_VIEW_SHADER, "SIM_BREAK_FULL" in WATER_SIM_SHADER];
+    engine_core::terrain_data::BREAK_ONSET => ["DEBUG_BREAK_ONSET" in DEBUG_VIEW_SHADER, "SIM_BREAK_ONSET" in WATER_SIM_SHADER, "WATER_BREAK_ONSET"];
+    engine_core::terrain_data::BREAK_FULL => ["DEBUG_BREAK_FULL" in DEBUG_VIEW_SHADER, "SIM_BREAK_FULL" in WATER_SIM_SHADER, "WATER_BREAK_FULL"];
     engine_core::terrain_data::BREAK_THINNEST => ["WATER_BREAK_THINNEST", "SIM_BREAK_THINNEST" in WATER_SIM_SHADER];
     engine_core::PAGE_WORDS => ["PAGE_WORDS" in VIRTUAL_SHADER, "VIRTUAL_PAGE_WORDS" in SHADER];
     engine_core::NO_PARENT => ["NO_PARENT" in PRESENTATION_SHADER];
