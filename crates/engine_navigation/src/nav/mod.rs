@@ -5,14 +5,13 @@ use std::sync::Arc;
 use engine_math::collections::HashMap;
 use engine_math::{max, min};
 use engine_settings::settings;
+use engine_terrain::codec::{self, CodecError, Reader, Writer};
+use engine_terrain::{
+    Generator, Layers, MAX_LEVEL, Obstacle, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, Tile,
+    TileKey, TileWater, record, tagged,
+};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
-
-use crate::codec::{self, CodecError, Reader, Writer, record, tagged};
-use crate::{
-    Generator, Layers, MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, Tile, TileKey,
-    TileWater,
-};
 
 mod corridor;
 mod flood;
@@ -81,12 +80,6 @@ impl Gait {
         .validate()
         .map_err(|invalid| invalid.to_string())
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Obstacle {
-    pub center: Vec2,
-    pub radius: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

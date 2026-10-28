@@ -1256,7 +1256,7 @@ impl Layers {
         }
     }
 
-    pub(crate) fn path_profiles(&self) -> impl Iterator<Item = &crate::path::PathProfile> {
+    pub fn path_profiles(&self) -> impl Iterator<Item = &crate::path::PathProfile> {
         self.layers.iter().filter_map(|layer| match layer {
             Layer::Path(PathStage {
                 baked: Some(profile),
@@ -1306,7 +1306,7 @@ impl Layers {
         self.tables.get(index).and_then(Option::as_ref)
     }
 
-    pub(crate) fn holes_reach(&self, min: Vec2, max: Vec2) -> bool {
+    pub fn holes_reach(&self, min: Vec2, max: Vec2) -> bool {
         self.layers.iter().any(|layer| match layer {
             Layer::Stamp(
                 stamp @ Stamp {
@@ -1331,7 +1331,7 @@ impl Layers {
         })
     }
 
-    pub(crate) fn hole_at(&self, x: f32, z: f32) -> bool {
+    pub fn hole_at(&self, x: f32, z: f32) -> bool {
         self.layers.iter().any(|layer| match layer {
             Layer::Stamp(
                 stamp @ Stamp {

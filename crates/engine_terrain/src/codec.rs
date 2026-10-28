@@ -505,6 +505,7 @@ impl Codec for Vec3 {
     }
 }
 
+#[macro_export]
 macro_rules! record {
     ($type:ident { $($field:ident),* $(,)? }) => {
         impl $crate::codec::Codec for $type {
@@ -521,8 +522,9 @@ macro_rules! record {
     };
 }
 
-pub(crate) use record;
+pub use record;
 
+#[macro_export]
 macro_rules! tagged {
     ($type:ident, $invalid:literal { $($tag:literal => $variant:ident $(($field:ident))?,)* }) => {
         impl $crate::codec::Codec for $type {
@@ -550,4 +552,4 @@ macro_rules! tagged {
     };
 }
 
-pub(crate) use tagged;
+pub use tagged;

@@ -73,13 +73,11 @@ use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 pub use engine_terrain::bounce::TerrainBounce;
-use engine_terrain::jobs::{
-    BakeJob, BounceJob, LightingJob, PortalsJob, StackView, TerrainRecipe, TileJob,
-};
+use engine_terrain::jobs::{BakeJob, BounceJob, LightingJob, StackView, TerrainRecipe, TileJob};
 pub use engine_terrain::lighting::TerrainLighting;
 use engine_terrain::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats, Fall,
-    Gait, GivenRiver, HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask, NoiseMask,
+    GivenRiver, HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask, NoiseMask,
     Obstacle, PATCH_QUADS, PATCHES_PER_TILE, PathStage, Pyramid, Remap, Route, RouteOptions, Solid,
     Stamp, TILE_QUADS, TILE_STRIDE, Tile, TileKey, TileSample, WantedTile, WantedView, WaterPoint,
 };

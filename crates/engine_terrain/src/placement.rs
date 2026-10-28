@@ -291,6 +291,12 @@ impl Solid {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Obstacle {
+    pub center: glam::Vec2,
+    pub radius: f32,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Footprint {
     pub center: [f32; 3],

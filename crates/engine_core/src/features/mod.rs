@@ -1,7 +1,5 @@
-mod navigation;
 mod terrain;
 
-pub use navigation::*;
 pub use terrain::*;
 
 use bevy_ecs::prelude::{Component, Resource, World};

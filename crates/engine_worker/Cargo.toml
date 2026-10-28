@@ -13,6 +13,7 @@ worker = true
 
 [dependencies]
 engine_terrain.workspace = true
+engine_navigation.workspace = true
 engine_tables.workspace = true
 engine_textures.workspace = true
 engine_math.workspace = true

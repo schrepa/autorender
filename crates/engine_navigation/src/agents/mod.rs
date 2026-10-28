@@ -5,21 +5,22 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_terrain::jobs::{PortalsJob, TileJob};
-use engine_terrain::{
-    Gait, NavOptions, NavPath, TileKey, TilePortals, WalkData, WalkGround, WalkSearch, Want,
+use engine_core::math::{clamp, max};
+use engine_core::{
+    Brick, BrickStats, Bricks, Cooking, EnvironmentSection, FixedSimulation,
+    FixedSimulationSystems, FixedTime, GAMEPLAY_JOBS, HeightHeld, IDLE_JOBS, JobBudget,
+    JobFailures, JobId, Jobs, Parent, RecordKey, Transform, job_output, job_priority,
 };
+use engine_settings::{InvalidSetting, settings};
+use engine_terrain::jobs::TileJob;
+use engine_terrain::{Terrains, TileKey, Walked, WalkedTerrain};
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::features::terrain::{Walked, WalkedTerrain};
-use crate::math::{clamp, max};
-use crate::{
-    Cooking, FixedTime, JobBudget, JobFailures, JobId, Jobs, Parent, RecordKey, Terrains,
-    Transform, job_output,
-};
+use crate::dev::{self, NavAgentView, NavAgentsView, NavGoControl, NavPathQuery};
+use crate::jobs::{PortalsJob, portals_output};
+use crate::{Gait, NavOptions, NavPath, TilePortals, WalkData, WalkGround, WalkSearch, Want};
 use cook::CookGraph;
-use engine_settings::settings;
 use records::{Resolved, WalkRecords};
 
 settings! {
@@ -47,7 +48,7 @@ impl Navigation {
 
 settings! {
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[require(NavWalk, crate::HeightHeld)]
+    #[require(NavWalk, HeightHeld)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct NavAgent {
@@ -56,10 +57,10 @@ settings! {
         pub speed: f32 = 1.4 => range(0.01, 100.0),
         pub turn: f32 = 360.0 => range(1.0, 10_000.0),
         pub offset: f32 = 0.0 => range(-10_000.0, 10_000.0),
-        pub radius: f32 = 0.4 => same(engine_terrain::NavOptions::rule_of("radius")),
-        pub max_slope: f32 = 0.8 => same(engine_terrain::NavOptions::rule_of("max_slope")),
-        pub max_water: f32 = 0.6 => same(engine_terrain::NavOptions::rule_of("max_water")),
-        pub level: u32 = 0 => same(engine_terrain::NavOptions::rule_of("level")),
+        pub radius: f32 = 0.4 => same(NavOptions::rule_of("radius")),
+        pub max_slope: f32 = 0.8 => same(NavOptions::rule_of("max_slope")),
+        pub max_water: f32 = 0.6 => same(NavOptions::rule_of("max_water")),
+        pub level: u32 = 0 => same(NavOptions::rule_of("level")),
     }
 }
 
@@ -96,7 +97,7 @@ pub struct NavWalk {
     pub searched: usize,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NavStats {
     pub agents: u32,
@@ -118,7 +119,6 @@ pub struct NavAgents {
     cook: Vec<CookGraph>,
     turn: usize,
     tick: u64,
-    stats: NavStats,
     failures: JobFailures,
 }
 
@@ -234,10 +234,6 @@ pub enum NavQuery {
 }
 
 impl NavAgents {
-    pub fn stats(&self) -> NavStats {
-        self.stats
-    }
-
     pub fn job_failures(&self) -> (u64, Option<&str>) {
         let last = self.failures.last.as_ref();
         (self.failures.count, last.map(|(_, error)| error.as_str()))
@@ -329,11 +325,11 @@ pub(crate) fn walk_agents(
     terrains: Res<Terrains>,
     mut jobs: Option<ResMut<Jobs>>,
     mut cooking: Option<ResMut<Cooking>>,
-    mut navigation: ResMut<NavAgents>,
+    (mut navigation, mut stats): (ResMut<NavAgents>, ResMut<NavStats>),
     mut agents: Agents,
 ) {
     let settings = settings.map_or(Navigation::off(), |settings| settings.sanitized());
-    navigation.stats = NavStats::default();
+    *stats = NavStats::default();
     navigation.tick = time.tick;
     let mut jobs = jobs.as_deref_mut();
     if !settings.enabled {
@@ -368,28 +364,28 @@ pub(crate) fn walk_agents(
         &settings,
         &terrains,
         jobs.as_deref_mut(),
-        &mut navigation,
+        (&mut *navigation, &mut *stats),
         &mut agents,
     );
     if let (Some(jobs), Some(cooking)) = (jobs, cooking.as_deref_mut()) {
         navigation.cook(&terrains, &agents, jobs, cooking);
     }
     let (grounds, portals) = navigation.records.held();
-    navigation.stats.grounds = grounds;
-    navigation.stats.portals = portals;
+    stats.grounds = grounds;
+    stats.portals = portals;
     let seconds = time.delta_seconds;
     for (_, agent, mut walk, mut transform) in &mut agents {
-        navigation.stats.agents += 1;
+        stats.agents += 1;
         match walk.status {
-            NavStatus::Searching => navigation.stats.searching += 1,
-            NavStatus::Arrived => navigation.stats.arrived += 1,
-            NavStatus::Unreachable => navigation.stats.unreachable += 1,
+            NavStatus::Searching => stats.searching += 1,
+            NavStatus::Arrived => stats.arrived += 1,
+            NavStatus::Unreachable => stats.unreachable += 1,
             NavStatus::Idle | NavStatus::Walking => {}
         }
         if walk.status != NavStatus::Walking {
             continue;
         }
-        navigation.stats.walking += 1;
+        stats.walking += 1;
         let agent = agent.sanitized();
         step(&agent, &mut walk, &mut transform, &terrains, seconds);
     }
@@ -399,7 +395,7 @@ fn search(
     settings: &Navigation,
     terrains: &Terrains,
     jobs: Option<&mut Jobs>,
-    navigation: &mut NavAgents,
+    (navigation, stats): (&mut NavAgents, &mut NavStats),
     agents: &mut Agents,
 ) {
     let mut budget = u64::from(settings.samples_per_tick);
@@ -423,8 +419,8 @@ fn search(
         }
     }
     navigation.turn = navigation.turn.wrapping_add(1);
-    navigation.stats.work = u64::from(settings.samples_per_tick) - budget;
-    navigation.stats.waiting = navigation
+    stats.work = u64::from(settings.samples_per_tick) - budget;
+    stats.waiting = navigation
         .searches
         .iter()
         .filter(|(_, search)| search.waiting())
@@ -532,25 +528,76 @@ fn walk_height(walk: &NavWalk, position: Vec3) -> f32 {
     a.y + (b.y - a.y) * t
 }
 
-#[derive(Default)]
-pub struct NavigationPlugin;
+fn portals_record(terrain: &WalkedTerrain, key: TileKey, gait: &Gait) -> (Vec<u8>, RecordKey) {
+    let job = PortalsJob {
+        stack: terrain.stack.clone(),
+        pyramid: terrain.pyramid,
+        key,
+        stamps: terrain.reaching(key),
+        gait: *gait,
+    };
+    let input = job.identity();
+    let record = RecordKey::new(&crate::sources::PORTALS, PortalsJob::KIND, &input);
+    (input, record)
+}
 
-impl bevy_app::Plugin for NavigationPlugin {
-    fn build(&self, app: &mut bevy_app::App) {
-        crate::install(app, crate::Feature::Navigation);
-        app.init_resource::<NavAgents>()
-            .add_systems(
-                crate::FixedSimulation,
-                (walk_agents, hold_heights).chain().in_set(NavSystems::Walk),
-            )
-            .configure_sets(
-                crate::FixedSimulation,
-                NavSystems::Walk.in_set(crate::FixedSimulationSystems::Move),
-            );
+impl EnvironmentSection for Navigation {
+    const KEY: &'static str = "navigation";
+    const NAME: &'static str = "Navigation";
+    const OPT_IN: bool = false;
+
+    fn section_off() -> Self {
+        Self::off()
+    }
+
+    fn section_check(&self) -> Result<(), InvalidSetting> {
+        self.validate()
+    }
+
+    fn section_sanitized(self) -> Self {
+        self.sanitized()
+    }
+
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema {
+        schemars::schema_for!(Navigation)
     }
 }
 
-fn hold_heights(mut agents: Query<(&NavWalk, &mut crate::HeightHeld), Changed<NavWalk>>) {
+impl BrickStats for NavStats {
+    const KEY: &'static str = "navigation";
+
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema {
+        schemars::schema_for!(NavStats)
+    }
+}
+
+pub struct NavigationBrick;
+
+impl Brick for NavigationBrick {
+    fn register(bricks: &mut Bricks) {
+        bricks
+            .settings::<Navigation>()
+            .resource::<NavAgents>()
+            .resource::<NavStats>()
+            .stats::<NavStats>()
+            .systems(
+                FixedSimulation,
+                (walk_agents, hold_heights).chain().in_set(NavSystems::Walk),
+            )
+            .configure_sets(
+                FixedSimulation,
+                NavSystems::Walk.in_set(FixedSimulationSystems::Move),
+            )
+            .operation::<NavGoControl>()
+            .operation::<NavPathQuery>()
+            .component_inspector::<NavAgent, NavAgentView>(dev::agent_view)
+            .world_inspector::<NavAgents, NavAgentsView>(dev::agents_view);
+    }
+}
+
+fn hold_heights(mut agents: Query<(&NavWalk, &mut HeightHeld), Changed<NavWalk>>) {
     for (walk, mut held) in &mut agents {
         let walking = walk.status == NavStatus::Walking;
         if held.0 != walking {

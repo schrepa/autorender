@@ -46,24 +46,20 @@ impl NavAgents {
                 let Some(output) = slots.jobs.take(id) else {
                     return true;
                 };
-                let made = job_output(
-                    PortalsJob::KIND.name(),
-                    output,
-                    engine_terrain::jobs::portals_output,
-                );
+                let made = job_output(PortalsJob::KIND, output, portals_output);
                 if let Err(error) = made {
                     self.failures.record(self.tick, error);
                 }
                 false
             });
             while let Some(&key) = graph.tiles.get(graph.next) {
-                let priority = crate::job_priority(crate::IDLE_JOBS, graph.next as u32);
+                let priority = job_priority(IDLE_JOBS, graph.next as u32);
                 if !slots.take(priority) {
                     break;
                 }
-                let (input, record) = graph.terrain.portals_record(key, &graph.gait);
+                let (input, record) = portals_record(&graph.terrain, key, &graph.gait);
                 graph.flight.push(slots.jobs.submit_record(
-                    PortalsJob::KIND.name(),
+                    PortalsJob::KIND,
                     input,
                     priority,
                     record,
