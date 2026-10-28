@@ -1,15 +1,10 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "./harness.mjs";
+import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "../../../web/scripts/harness.mjs";
 
-const config = {
-  seed: 1337, renderables: 20000, moving_percent: 10, hierarchy: true, interpolation: true, colliders: 0,
-  sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 64, textured: true, culling: true,
-  scene: "metro",
-};
-const url = devUrl("stress.html", { config });
-const output = await artifacts("lod-smoke");
+const url = devUrl("highlands.html");
+const output = await artifacts("highlands-lod");
 const { browser, page, errors } = await launch({ timeout: 180_000 });
 
 const command = commander(page);
@@ -54,12 +49,8 @@ try {
   const look = await command("inspect", { component: "Environment" });
   assert.deepEqual(look.result.value.level_of_detail, { enabled: true, pixel_error: 1, impostors: true, fade_seconds: 0.5 });
 
-  const controls = await page.evaluate(() => window.__engineDev.controls);
-  assert.deepEqual(Object.keys(controls).sort(), ["effects", "look", "view", "workload"]);
   const viewed = await command("game", { name: "view", args: { name: "overview" } });
   assert.deepEqual(viewed.result.result, { view: "overview" });
-  const unknownPreset = await command("game", { name: "workload", args: { preset: "nowhere" } }, false);
-  assert.equal(unknownPreset.error.code, "game_rule");
 
   const measurements = [];
   const differs = (name, pixels, note) => measurements.push({

@@ -1,11 +1,12 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { commander, developmentReady, devUrl, launch, waitFrames } from "./harness.mjs";
+import { commander, developmentReady, gridScene, launch, routedScene, sceneUrl, waitFrames } from "./harness.mjs";
 
 const { browser, page, errors } = await launch({ width: 800, height: 600 });
 try {
-  await page.goto(String(devUrl("stress.html", { preset: "visual", prepare: "1" })), { waitUntil: "domcontentloaded" });
+  await routedScene(page, gridScene({ side: 8 })).route();
+  await page.goto(String(sceneUrl({ prepare: "1" })), { waitUntil: "domcontentloaded" });
   await developmentReady(page, { timeout: 120_000 });
   const command = commander(page, { deadline: 120_000 });
   await page.waitForFunction(() => document.querySelector("#status")?.getAttribute("data-state") === "running", null, { timeout: 120_000 });

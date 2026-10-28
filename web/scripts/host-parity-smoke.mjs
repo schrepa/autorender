@@ -9,7 +9,7 @@ import { expectDisabledFeatures } from "./exercised.mjs";
 import { cargoBinaries, devUrl, protocol } from "./harness.mjs";
 import { workspacePath } from "./workspace.mjs";
 
-const binaries = cargoBinaries(["-p", "stress-lab", "--bin", "stress-lab-native", "--profile", "quick", "--features", "dev"]);
+const binaries = cargoBinaries(["-p", "engine_player", "--bin", "engine-player", "--profile", "quick", "--features", "dev"]);
 
 const KNOWN = [
   ["describe ProfileCapture: native only *", "host", "native profiles take hardware counters and PIX"],
@@ -18,7 +18,6 @@ const KNOWN = [
   ["describe PageParameters: web only engine_build", "host", "a watched page is pinned to a build"],
   ["describe PageParameters: native only {size,gpu}", "host", "a native host picks its view's size and GPU; a page has its canvas and browser"],
   ["describe PageParameters: native only {counters,vendor}", "host", "native profiling tools"],
-  ["describe PageParameters: native only {view,assets,rocks}", "app", "the Stress Lab's own native options"],
 ];
 
 function pattern(text) {
@@ -47,23 +46,20 @@ const CASES = [
   ["culling", { op: "culling", enabled: true }],
   ["environment", { op: "environment", bloom: { intensity: 0.5 } }],
   ["camera", { op: "camera", position: [0, 30, 60], target: [0, 0, 0], vertical_fov_radians: 1, near: 0.1, far: 2000 }],
-  ["game look", { op: "game", name: "look", args: { name: "night" } }],
-  ["game workload", { op: "game", name: "workload", args: { preset: "visual" } }],
   ["terrain height", { op: "terrain_height", points: [[0, 0]] }],
   ["distribution", { op: "distribution", values: [4, 1, 3, 2] }],
+  ["inspect", { op: "inspect", limit: 3 }],
   ["unknown op", { op: "weather" }, "error"],
   ["unknown field", { op: "render", sky: 1 }, "error"],
   ["missing op", { ops: "status" }, "error"],
   ["too large", { op: "status", padding: "x".repeat(protocol.max_request_bytes) }, "error"],
-  ["inspect without scene", { op: "inspect", limit: 3 }, "error"],
   ["raycast without collision", { op: "raycast", origin: [0, 50, 0], direction: [0, -1, 0], max_distance: 100 }, "error"],
   ["invalid step", { op: "step", ticks: 0 }, "error"],
   ["invalid input", { op: "input", forward: 2 }, "error"],
   ["invalid benchmark", { op: "benchmark", samples: 0 }, "error"],
   ["invalid frames", { op: "frames", count: 0, interval_ms: 1000 / 60 }, "error"],
   ["unknown game control", { op: "game", name: "weather", args: {} }, "error"],
-  ["unknown look", { op: "game", name: "look", args: { name: "noon" } }, "error"],
-  ["reload without source", { op: "reload", expected_revision: "1", revision: "2" }, "error"],
+  ["reload to a revision the source lacks", { op: "reload", expected_revision: "1", revision: "2" }, "error"],
   ["profile", { op: "profile", duration_ms: 100 }, "error"],
   ["resume", { op: "resume" }],
   ["step while running", { op: "step", ticks: 1 }, "error"],
@@ -75,7 +71,7 @@ const CASES = [
   ["frames after the fault", { op: "frames", count: 30, interval_ms: 1000 / 60 }],
   ["status after the fault", { op: "status" }],
   ["fault in no lazy feature", { op: "debug_fault", feature: "water" }, "error"],
-  ["missing asset without scene", { op: "debug_missing_asset", entity: "box" }, "error"],
+  ["missing asset of no entity", { op: "debug_missing_asset", entity: "nothing" }, "error"],
   ["device loss", { op: "debug_device_loss" }, "error"],
   ["render after the loss", { op: "render" }, "error"],
   ["status after the loss", { op: "status" }],
@@ -123,13 +119,24 @@ async function answer(session, command) {
   catch (error) { return { ok: false, error: { code: error.code ?? "thrown", path: error.path ?? "$", message: String(error.message ?? error) } }; }
 }
 
+const commandsPath = workspacePath("web/public/scenes/host-parity-commands.scene.json");
+await mkdir(workspacePath("web/public/scenes"), { recursive: true });
+await writeFile(commandsPath, JSON.stringify({
+  id: "host-parity-commands", revision: 1,
+  camera: { position: [0, 2, 4], target: [0, 0, 0], fov_degrees: 60, near: 0.1, far: 100 },
+  materials: [{ id: "plain", color: [0.8, 0.3, 0.2, 1] }],
+  meshes: [{ id: "box", source: { kind: "cube" } }],
+  entities: [{ id: "box", mesh: "box", material: "plain", transform: { translation: [0, 0, 0] } }],
+}));
 const native = await launchNativeSession({
-  program: (await binaries)["stress-lab-native"],
-  args: ["--preset=visual", "--size=640x400", "--workers=2"],
-});
+  program: (await binaries)["engine-player"],
+  args: ["--source", commandsPath, "--without", "collision,physics", "--size=640x400", "--workers=2"],
+}).catch(async error => { await rm(commandsPath, { force: true }); throw error; });
 let web;
 try {
-  web = await launchBrowserSession({ url: devUrl("stress.html", { preset: "visual", workers: "2" }).href });
+  web = await launchBrowserSession({
+    url: devUrl("player.html", { source: "/scenes/host-parity-commands.scene.json", without: "collision,physics", workers: "2" }).href,
+  });
   const found = [];
   const replies = {};
   for (const [name, command, expected] of CASES) {
@@ -182,6 +189,7 @@ try {
 } finally {
   await web?.close();
   await native.close();
+  await rm(commandsPath, { force: true });
 }
 
 function png(width, pixels) {
@@ -218,8 +226,8 @@ await writeFile(scenePath, JSON.stringify({
 }));
 let imagesWeb, imagesNative;
 try {
-  imagesNative = await launchNativeSession({ program: (await binaries)["stress-lab-native"], args: ["--source", scenePath, "--size=320x200"] });
-  imagesWeb = await launchBrowserSession({ url: devUrl("stress.html", { source: "/scenes/host-parity.scene.json" }).href });
+  imagesNative = await launchNativeSession({ program: (await binaries)["engine-player"], args: ["--source", scenePath, "--size=320x200"] });
+  imagesWeb = await launchBrowserSession({ url: devUrl("player.html", { source: "/scenes/host-parity.scene.json" }).href });
   const [web, native] = [await imagesWeb.execute({ op: "digest" }), await imagesNative.execute({ op: "digest" })];
   assert.ok(web.ok && native.ok, JSON.stringify({ web: web.error, native: native.error }));
   assert.equal(web.result.assets.textures.count, 1, JSON.stringify(web.result.assets));

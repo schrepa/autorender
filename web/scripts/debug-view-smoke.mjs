@@ -1,15 +1,10 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "./harness.mjs";
+import { artifacts, commander, differentPixels, gridScene, launch, openPaused, routedScene, sceneUrl } from "./harness.mjs";
 import { openTerrain } from "./terrain-fixture.mjs";
 
-const config = {
-  seed: 1337, renderables: 20000, moving_percent: 10, hierarchy: true, interpolation: true, colliders: 0,
-  sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 64, textured: true, culling: true,
-  scene: "metro", bodies: 0,
-};
-const url = devUrl("stress.html", { config });
+const url = sceneUrl();
 const output = await artifacts("debug-view-smoke");
 const { browser, page, errors } = await launch({ timeout: 180_000 });
 
@@ -66,9 +61,9 @@ const kinds = ["mesh", "placed", "card", "placed_card", "virtual", "terrain", "c
 const slotted = ["mesh", "card", "virtual"];
 
 try {
+  await routedScene(page, gridScene()).route();
   await openPaused(page, url, { timeout: 120_000 });
   await command("environment", { reflection_probes: { enabled: false } });
-  await command("game", { name: "view", args: { name: "overview" } });
 
   const listing = await command("describe");
   assert.ok(listing.result.types.some(type => type.name === "DebugView"));
@@ -136,7 +131,7 @@ try {
   const after = await exact("exact-after-probe");
   assert.equal((await differentPixels(page, [before.png, after.png])).changed, 0);
 
-  await openPaused(page, devUrl("stress.html", { config, "debug-view": "cards" }), { timeout: 120_000 });
+  await openPaused(page, sceneUrl({ "debug-view": "cards" }), { timeout: 120_000 });
   assert.equal(await shownView(), "cards");
 
   assert.deepEqual(errors, []);

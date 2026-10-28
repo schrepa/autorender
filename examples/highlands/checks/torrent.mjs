@@ -1,10 +1,10 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { artifacts, commander, devUrl, launch, openPaused } from "./harness.mjs";
+import { artifacts, commander, devUrl, launch, openPaused } from "../../../web/scripts/harness.mjs";
 
-const url = devUrl("stress.html", { preset: "highlands" });
-const output = await artifacts("torrent-smoke");
+const url = devUrl("highlands.html");
+const output = await artifacts("highlands-torrent");
 const { browser, page, errors } = await launch({ width: 960, height: 540, timeout: 600_000 });
 const command = commander(page, { deadline: 600_000 });
 

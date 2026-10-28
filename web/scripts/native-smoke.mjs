@@ -1,17 +1,16 @@
 // @ts-check
-import "./exit-codes.mjs";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { runAb } from "./agent-ab.mjs";
-import { launchNativeSession, nativeProgram } from "./agent-native.mjs";
-import { holdHeavyRun } from "./heavy-run.mjs";
-import { workspace, workspacePath } from "./workspace.mjs";
+import { launchNativeSession } from "./agent-native.mjs";
+import { gardenScene, playerProgram } from "./harness.mjs";
+import { workspacePath } from "./workspace.mjs";
 
-await holdHeavyRun("smoke native-smoke.mjs");
-const program = nativeProgram("stress-lab", { profiling: true });
+const program = await playerProgram({ profiling: true });
+const garden = workspacePath("web/scripts/fixtures/garden.scene.json");
+const revision = String(gardenScene().revision);
 
-const session = await launchNativeSession({ program, args: ["--preset=visual", "--size=640x400", "--workers=2", "--taa=on"] });
+const session = await launchNativeSession({ program, args: ["--source", garden, "--size=640x400", "--workers=2", "--taa=on"] });
 try {
   const run = async command => {
     const reply = await session.execute(command);
@@ -27,9 +26,9 @@ try {
 
   const types = (await run({ op: "describe" })).types;
   const controls = types.find(type => type.name === "GameControls").controls;
-  assert.deepEqual(Object.keys(controls).sort(), ["effects", "look", "view", "workload"]);
+  assert.deepEqual(Object.keys(controls), []);
   const parameters = types.find(type => type.name === "PageParameters").parameters;
-  for (const name of ["preset", "taa", "occlusion", "subpixel", "presentation", "pipeline", "terrain-clock", "dynamic-resolution"]) assert.ok(name in parameters, name);
+  for (const name of ["source", "without", "taa", "occlusion", "subpixel", "presentation", "pipeline", "terrain-clock", "dynamic-resolution"]) assert.ok(name in parameters, name);
 
   assert.equal((await run({ op: "inspect", component: "TemporalAntialiasing" })).value.enabled, true);
   const ordinary = (await run({ op: "frames", count: 4, interval_ms: 1000 / 60 })).rendering;
@@ -54,18 +53,17 @@ try {
   const same = (await run({ op: "compare", a: capture.path, b: capture.path })).compare;
   assert.deepEqual([same.width, same.height, same.different], [640, 400, 0]);
 
-  const workload = await run({ op: "game", name: "workload", args: { preset: "city" } });
-  assert.equal(workload.result.title, "WILD CITY");
-  assert.equal(workload.result.config.scene, "city");
-  await run({ op: "game", name: "look", args: { name: "night" } });
+  const atmosphere = preset => ({ op: "environment", merge: true, atmosphere: { preset } });
+  await run(atmosphere("night"));
   const night = (await run({ op: "capture" })).artifact;
   const changed = (await run({ op: "compare", a: capture.path, b: night.path, tolerance: 8 })).compare;
-  assert.ok(changed.different > changed.total / 10, `the city at night differs from the field: ${JSON.stringify(changed)}`);
+  assert.ok(changed.different > changed.total / 10, `the garden at night differs from its own light: ${JSON.stringify(changed)}`);
   const unknown = await session.execute({ op: "game", name: "weather", args: {} });
   assert.equal(unknown.error.code, "unsupported_command");
 
+  const ticked = (await run({ op: "status" })).observation.tick;
   const stepped = await run({ op: "step", ticks: 12 });
-  assert.equal(stepped.observation.tick, "12");
+  assert.equal(BigInt(stepped.observation.tick) - BigInt(ticked), 12n);
   const benchmark = (await run({ op: "benchmark", mode: "render", warmup: 2, samples: 8 })).benchmark;
   assert.ok(benchmark.frame_interval_ms.median > 0 && benchmark.cpu_ms.total.median > 0, JSON.stringify(benchmark.cpu_ms));
   assert.equal(benchmark.environment.adapter.name, status.adapter.name);
@@ -89,47 +87,38 @@ try {
   assert.ok(firefox.meta && firefox.threads.length >= 3, "the Firefox Profiler file holds the threads");
 
   const ab = await runAb(session, {
-    a: JSON.stringify({ op: "game", name: "look", args: { name: "day" } }),
-    b: JSON.stringify({ op: "game", name: "look", args: { name: "night" } }),
+    a: JSON.stringify(atmosphere("day")),
+    b: JSON.stringify(atmosphere("night")),
     rounds: "1", samples: "4", warmup: "1",
   });
   assert.equal(ab.order, "abba");
   assert.ok(ab.compared.cpu_ms.a > 0 && ab.compared.cpu_ms.b > 0, JSON.stringify(ab.compared));
 
   const digestAfter = async ticks => {
-    await run({ op: "game", name: "workload", args: { preset: "city" } });
+    await run({ op: "reload", expected_revision: revision, revision });
+    await run({ op: "input", forward: 1 });
     await run({ op: "step", ticks });
+    await run({ op: "input" });
     return run({ op: "digest" });
   };
   const digest = await digestAfter(12);
   assert.ok(digest.entities > 0 && digest.components.Transform.count > 0 && digest.assets.meshes.count > 0,
     `a digest counts the world's entities, components and assets: ${JSON.stringify(digest).slice(0, 300)}`);
-  assert.equal((await digestAfter(12)).hash, digest.hash, "the same ticks of the same workload digest the same");
-  assert.notEqual((await digestAfter(24)).hash, digest.hash, "moving renderables change the digest");
+  assert.deepEqual((await digestAfter(12)).components, digest.components, "the same ticks of the same scene digest the same");
+  assert.notDeepEqual((await digestAfter(24)).components, digest.components, "the walking player changes the digest");
 
+  const resumedAt = Number((await run({ op: "status" })).observation.tick);
   await run({ op: "resume" });
   for (let attempt = 0; ; attempt++) {
     const running = await run({ op: "status" });
-    if (Number(running.observation.tick) > 12) break;
+    if (Number(running.observation.tick) > resumedAt) break;
     assert.ok(attempt < 3000, `ticks run while resumed: ${JSON.stringify(running.observation)}`);
     await new Promise(resolve => setTimeout(resolve, 10));
   }
   const paused = await run({ op: "pause" });
   assert.equal(paused.paused, true);
-  assert.ok(Number(paused.observation.tick) > 12, `ticks ran while resumed: ${JSON.stringify(paused.observation)}`);
+  assert.ok(Number(paused.observation.tick) > resumedAt, `ticks ran while resumed: ${JSON.stringify(paused.observation)}`);
 } finally {
   await session.close();
 }
-
-const highlands = verify => JSON.parse(execFileSync(program, [
-  "--preset=highlands", "--size=480x300", "--offscreen=30", "--workers=4", `--jobcache=${verify ? "verify" : "1024"}`,
-], { cwd: workspace, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], timeout: 300_000 }));
-const kept = highlands(false);
-assert.ok(kept.stats.jobs.completed > 0 && kept.stats.jobs.workers === 4, JSON.stringify(kept.stats.jobs));
-const stackLimit = process.env.ENGINE_NATIVE_PROFILE === "dev" ? 1024 * 1024 : 640 * 1024;
-assert.ok(kept.main_stack_peak_bytes === null || kept.main_stack_peak_bytes < stackLimit,
-  `the main thread's stack peaked at ${kept.main_stack_peak_bytes} bytes`);
-const verified = highlands(true);
-assert.ok(verified.stats.jobs.cache_hits > 0, `the verifying run is handed kept outputs: ${JSON.stringify(verified.stats.jobs)}`);
-assert.equal(verified.stats.jobs.cache_mismatches, 0, `kept outputs match fresh runs: ${JSON.stringify(verified.stats.jobs)}`);
 console.log("native smoke passed");

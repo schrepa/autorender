@@ -1,16 +1,11 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { artifacts, commander, devUrl, differentPixels, launch, openPaused, waitFrames } from "./harness.mjs";
+import { artifacts, commander, differentPixels, gridScene, launch, openPaused, routedScene, sceneUrl, waitFrames } from "./harness.mjs";
 
-const config = {
-  seed: 7, renderables: 6000, moving_percent: 100, hierarchy: true, interpolation: true, colliders: 200,
-  sensor_percent: 10, dense_colliders: false, queries_per_tick: 8, mesh_variety: 8, textured: true, culling: true,
-};
 const workloads = [
-  { label: "interpolated", config, fractional: true, culling: true },
-  { label: "authoritative", config: { ...config, interpolation: false }, fractional: false },
-  { label: "still", config: { ...config, moving_percent: 0 }, fractional: false, settle: true },
+  { label: "interpolated", scene: gridScene({ moving: true }), fractional: true, culling: true },
+  { label: "still", scene: gridScene(), fractional: false, settle: true },
 ];
 const output = await artifacts("gpu-presentation-smoke");
 const { browser, page, errors } = await launch();
@@ -81,7 +76,9 @@ async function cullingSettings(label) {
 }
 
 async function verify(workload) {
-  const url = devUrl("stress.html", { config: workload.config });
+  await page.unrouteAll();
+  await routedScene(page, workload.scene).route();
+  const url = sceneUrl();
   await openPaused(page, url);
   if (workload.settle) {
     await command("resume");
@@ -131,7 +128,7 @@ try {
   console.log(JSON.stringify({
     ok: true, urls: results.map(result => result.url), artifact: output,
     cases: results.flatMap(result => result.cases),
-    checks: ["gpu_cpu_pixel_equivalence", "authoritative_gpu_composition", "gpu_visible_count", "gpu_culling_exercised", "fractional_motion", "previews_keep_ticks", "culling_settings_inspected", "culling_settings_controlled", "culling_settings_observed", "culling_settings_validated", "inspection_materializes", "ordinary_frames_gpu", "clean_browser_diagnostics"],
+    checks: ["gpu_cpu_pixel_equivalence", "gpu_visible_count", "gpu_culling_exercised", "fractional_motion", "previews_keep_ticks", "culling_settings_inspected", "culling_settings_controlled", "culling_settings_observed", "culling_settings_validated", "inspection_materializes", "ordinary_frames_gpu", "clean_browser_diagnostics"],
   }));
 } finally {
   await browser.close();

@@ -1,5 +1,4 @@
 mod caches;
-mod content;
 mod random;
 mod streaming;
 
@@ -31,15 +30,13 @@ pub fn hash(bytes: &[u8]) -> String {
 
 struct Options {
     seed: u64,
-    assets: Option<PathBuf>,
     trace: Option<PathBuf>,
 }
 
 fn options() -> Result<Options, String> {
-    let usage = "usage: coresmoke [--seed N] [--assets FOLDER] [--trace FILE]";
+    let usage = "usage: coresmoke [--seed N] [--trace FILE]";
     let mut options = Options {
         seed: caches::SEED,
-        assets: None,
         trace: None,
     };
     let mut arguments = std::env::args().skip(1);
@@ -51,7 +48,6 @@ fn options() -> Result<Options, String> {
                     .parse()
                     .map_err(|error| format!("--seed: {error}"))?;
             }
-            "--assets" => options.assets = Some(value()?.into()),
             "--trace" => options.trace = Some(value()?.into()),
             _ => return Err(usage.into()),
         }
@@ -69,8 +65,7 @@ fn main() -> ExitCode {
     };
     let mut report = Report::default();
     let run = caches::run(options.seed, &mut report)
-        .and_then(|()| streaming::run(options.trace.as_deref(), &mut report))
-        .and_then(|()| content::run(options.assets.as_deref(), &mut report));
+        .and_then(|()| streaming::run(options.trace.as_deref(), &mut report));
     if let Err(error) = run {
         eprintln!("coresmoke: {error}");
         return ExitCode::FAILURE;

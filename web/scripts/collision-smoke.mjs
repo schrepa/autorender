@@ -1,7 +1,7 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
-import { artifacts, commander, devUrl, sceneUrl, developmentReady, launch, openPaused, routedScene } from "./harness.mjs";
+import { artifacts, commander, sceneUrl, developmentReady, launch, openPaused, routedScene } from "./harness.mjs";
 
 const url = sceneUrl(process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
 const output = await artifacts("collision-smoke");
@@ -133,8 +133,8 @@ try {
   await command("raycast", ray);
   await command("pause");
   checks.push("queries_allowed_while_running");
-  const workload = devUrl("stress.html", { config: { renderables: 100, colliders: 0, queries_per_tick: 0, mesh_variety: 1 } });
-  await page.goto(workload.href);
+  scene.serve({ ...structuredClone(fixture), entities: [{ id: "target", mesh: "box", material: "gold", transform: { translation: [4, 0.5, 0] } }] });
+  await page.goto(sceneUrl({ without: "collision,physics" }).href);
   await developmentReady(page);
   const missing = await command("raycast", ray, false);
   assert.match(missing.error.code, /missing_plugin/);

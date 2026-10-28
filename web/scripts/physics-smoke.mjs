@@ -1,7 +1,7 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
-import { artifacts, commander, devUrl, developmentReady, launch, openPaused, routedScene, sceneUrl } from "./harness.mjs";
+import { artifacts, commander, developmentReady, launch, openPaused, routedScene, sceneUrl } from "./harness.mjs";
 
 const url = sceneUrl(process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
 const output = await artifacts("physics-smoke");
@@ -74,8 +74,11 @@ try {
   assert.equal(refused.error?.code, "invalid_rigid_body", JSON.stringify(refused.error));
   assert.deepEqual(await inspect("crate", "Transform"), before);
   checks.push("parented_body_refused");
-  const workload = devUrl("stress.html", { config: { renderables: 100, colliders: 0, queries_per_tick: 0, mesh_variety: 1 } });
-  await page.goto(workload.href);
+  const bare = structuredClone(fixture);
+  delete bare.environment;
+  bare.entities = [{ id: "crate", mesh: "box", material: "wood", transform: { translation: [0, 14, 0] } }];
+  scene.serve(bare);
+  await page.goto(sceneUrl({ without: "collision,physics" }).href);
   await developmentReady(page);
   const missing = await command("inspect", { component: "PhysicsWorld" }, false);
   assert.match(missing.error.code, /missing_plugin/);
