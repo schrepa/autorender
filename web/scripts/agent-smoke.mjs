@@ -159,9 +159,9 @@ try {
   assert.equal(invalidLook.observation.tick, after.observation.tick);
   assert.deepEqual((await cli("inspect", { component: "Environment" })).result.value, look.result.value);
   assert.deepEqual([capture.result.rendering.haze.active, capture.result.rendering.reflections.active], [true, false]);
-  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, haze: { reach: 0 }, reflections: {}, highlights: { capped: false }, windows: {}, sky_occlusion: { strength: 0.5, floor: 0.1 } });
+  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, haze: { reach: 0 }, reflections: {}, highlights: { capped: false }, sky_occlusion: { strength: 0.5, floor: 0.1 } });
   assert.equal(night.result.temporary, true);
-  assert.deepEqual([...night.result.environment_changed].sort(), ["atmosphere", "bloom", "haze", "highlights", "reflections", "sky_occlusion", "windows"]);
+  assert.deepEqual([...night.result.environment_changed].sort(), ["atmosphere", "bloom", "haze", "highlights", "reflections", "sky_occlusion"]);
   assert.ok(night.result.rendering.shadows.sky_maps <= 26);
   assert.ok(night.result.rendering.shadows.sky_drawn <= 1);
   assert.deepEqual(effects(night.result.rendering), [true, true, false]);
@@ -192,7 +192,7 @@ try {
   candidate.revision++;
   candidate.environment = { atmosphere: { preset: "dusk" }, ambient_occlusion: { intensity: 0 } };
   candidate.entities.find(entity => entity.id === playerId).name = "Agent verified player";
-  candidate.materials.push({ id: "agent-glass", color: [0.6, 0.85, 1.0, 1.0], opacity: 0.4 });
+  candidate.materials.push({ id: "agent-glass", color: [0.6, 0.85, 1.0, 1.0], alpha_mode: "mask", alpha_cutoff: 0.3, opacity: 0.4 });
   candidate.entities.push(
     { id: "agent-lamp", transform: { translation: [0, 3, 0] }, light: { intensity: 20, range: 8, radius: 0.25, length: 1.5, region: "interior" }, particles: { rate: 20, lifetime: 1 } },
     { id: "agent-glass-box", mesh: source.meshes[0].id, material: "agent-glass", transform: { translation: [0, 1, 0] } },
@@ -211,7 +211,7 @@ try {
   assert.deepEqual(savedLook.shadows, look.result.value.shadows);
   assert.notDeepEqual(savedLook.atmosphere, nightLook.result.value.atmosphere);
   assert.deepEqual([savedLook.haze, savedLook.reflections.intensity], [look.result.value.haze, 0]);
-  assert.deepEqual([savedLook.highlights.enabled, savedLook.highlights.capped, savedLook.windows.enabled], [true, true, false]);
+  assert.deepEqual([savedLook.highlights.enabled, savedLook.highlights.capped], [true, true]);
   assert.deepEqual([reloaded.result.rendering.haze.active, reloaded.result.rendering.reflections.active], [true, false]);
   const lamp = await cli("inspect", { entity: "agent-lamp", component: "LocalLight" });
   assert.equal(lamp.result.entity.components.LocalLight.intensity, 20);
@@ -223,7 +223,6 @@ try {
   assert.ok(Math.abs(glass.result.entity.components.Mesh3d.material.opacity - 0.4) < 1e-6);
   assert.ok(reloaded.result.rendering.local_lights.shaded >= 1);
   assert.ok(reloaded.result.rendering.particles.drawn > 0);
-  assert.ok(reloaded.result.rendering.transparent_draws >= 1);
   assert.notDeepEqual(savedLook.atmosphere, look.result.value.atmosphere);
   assert.deepEqual(effects(reloaded.result.rendering), [true, false, true]);
   const assets = await cli("request", { op: "assets" });

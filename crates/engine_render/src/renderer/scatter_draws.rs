@@ -272,7 +272,6 @@ impl Renderer {
                 .find(|asset| asset.mesh.handle == group.meshes[0]);
             let eligible = enabled
                 && group.part.is_none()
-                && !group.source.is_transparent()
                 && mesh.is_some_and(|mesh| !mesh.skinned)
                 && asset.is_some_and(|asset| {
                     asset.mesh.mesh.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES
@@ -428,7 +427,6 @@ impl Renderer {
                 let material = &asset.material.material;
                 let (casts, casters, caster_meshes) = match proxy {
                     Some((mesh, range)) => (Some(false), vec![range], vec![mesh.handle]),
-                    None if material.is_transparent() => (None, Vec::new(), Vec::new()),
                     None => (
                         Some(matches!(
                             material.alpha_mode(),

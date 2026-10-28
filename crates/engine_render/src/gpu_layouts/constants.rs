@@ -70,12 +70,9 @@ gpu_consts! {
     pub(crate) const IMPOSTOR_FRAMES_SHIFT: u32 = 19 => ["IMPOSTOR_FRAMES_SHIFT"];
     pub(crate) const IMPOSTOR_HEMISPHERE: u32 = 1 << 16 => ["IMPOSTOR_HEMISPHERE"];
     pub(crate) const IMPOSTOR_MASKED: u32 = 1 << 17 => ["IMPOSTOR_MASKED"];
-    pub(crate) const IMPOSTOR_ROOMS: u32 = 1 << 18 => ["IMPOSTOR_ROOMS"];
     pub(crate) const IMPOSTOR_FOLIAGE: u32 = 1 << 24 => ["IMPOSTOR_FOLIAGE"];
     pub(crate) const IMPOSTOR_KINDS: u32 = 4 => ["IMPOSTOR_KINDS" in REFLECTIONS_SHADER];
     pub(crate) const MASK_MIP_SCALE: f32 = 0.25 => ["MASK_MIP_SCALE"];
-
-    pub(crate) const NO_DECAL_POSE: u32 = u32::MAX => ["NO_DECAL_POSE"];
 
     pub(crate) const NOT_RESIDENT: u32 = u32::MAX => ["NOT_RESIDENT"];
     pub(crate) const ERROR_MIPS: u32 = engine_core::terrain_data::ERROR_MIPS => ["SURFACE_ERROR_MIPS", "PEAK_MIPS" in REFLECTIONS_SHADER];

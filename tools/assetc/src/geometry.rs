@@ -209,10 +209,6 @@ fn opaque(material: &SceneMaterial) -> bool {
     material
         .alpha_mode
         .is_none_or(|mode| mode == SceneAlphaMode::Opaque)
-        && material.opacity.is_none_or(|opacity| opacity >= 1.0)
-        && material
-            .transmission
-            .is_none_or(|transmission| transmission <= 0.0)
 }
 
 fn node_name(node: &gltf::Node<'_>, fallback: &str) -> String {

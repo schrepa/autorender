@@ -108,21 +108,14 @@ impl LightingUniform {
         atmosphere: &Atmosphere,
         bloom: &Bloom,
         reflections: &Reflections,
-        refraction: &engine_core::Refraction,
-        (sky, highlights, windows): (
-            &engine_core::Sky,
-            &engine_core::Highlights,
-            &engine_core::Windows,
-        ),
+        (sky, highlights): (&engine_core::Sky, &engine_core::Highlights),
         (foliage, temporal): (&engine_core::Foliage, bool),
     ) -> Self {
         let atmosphere = atmosphere.sanitized();
         let reflections = reflections.sanitized();
-        let refraction = refraction.sanitized();
         let sky = sky.sanitized();
         let foliage = foliage.sanitized();
         let highlights = highlights.sanitized();
-        let windows = windows.sanitized();
         let (fog, aerial, physical) = if sky.enabled {
             let altitude = sky.altitude * 0.001;
             let rayleigh = (sky.rayleigh[0] + sky.rayleigh[1] + sky.rayleigh[2]) / 3.0
@@ -181,7 +174,6 @@ impl LightingUniform {
             ],
             shadow_tint: unit_luminance(atmosphere.shadow_tint),
             highlight_tint: unit_luminance(atmosphere.highlight_tint),
-            refraction: [refraction.strength, refraction.blur, 0.0, 0.0],
             aerial,
             aerial_color: atmosphere.aerial_color.extend(0.0).to_array(),
             occupancy: [0.0; 4],
@@ -206,15 +198,6 @@ impl LightingUniform {
                 foliage.ground_blend,
             ],
             highlights: sized_highlights(&highlights, &sky),
-            windows: if windows.enabled {
-                let rise = atmosphere.sun_direction.normalize().y;
-                let elevation = engine_core::math::clamp(rise, -1.0, 1.0)
-                    .asin()
-                    .to_degrees();
-                [elevation, windows.dusk, windows.spread, windows.dark]
-            } else {
-                [0.0; 4]
-            },
             haze_march: [0.0; 4],
         }
     }
@@ -406,7 +389,7 @@ impl MaterialUniform {
         ],
         emissive: [0.0; 4],
         params: [1.0, 1.0, 0.5, 0.0],
-        volume: [0.0, 1.5, 0.0, 0.0],
+        variant: [0.0; 4],
         top: [0.0; 4],
         layer: [0.0; 4],
     };
@@ -427,10 +410,9 @@ impl MaterialUniform {
             uniform.top = [r, g, b, top.coverage];
             uniform.layer = [top.roughness, 0.0, 0.0, 0.0];
         }
-        uniform.layer[1] = material.windows().map_or(0.0, |rooms| rooms as f32);
         let cutoff = match material.alpha_mode() {
             AlphaMode::Mask { cutoff } => cutoff,
-            AlphaMode::Opaque | AlphaMode::Blend => 0.5,
+            AlphaMode::Opaque => 0.5,
         };
         let second = material
             .maps()
@@ -444,13 +426,7 @@ impl MaterialUniform {
             cutoff,
             second as f32,
         ];
-        let transmission = material.transmission();
-        uniform.volume = [
-            transmission.factor,
-            transmission.ior,
-            transmission.thickness,
-            f32::from_bits(Variant::of(material).bits()),
-        ];
+        uniform.variant = [f32::from_bits(Variant::of(material).bits()), 0.0, 0.0, 0.0];
         uniform
     }
 }
@@ -476,7 +452,6 @@ impl Variant {
     const DOUBLE_SIDED: u32 = constants::VARIANT_DOUBLE_SIDED;
     const EXTENDED: u32 = 16;
     const SKINNED: u32 = 32;
-    const TRANSMISSION: u32 = 64;
     const METALLIC_ROUGHNESS_MAP: u32 = constants::VARIANT_METALLIC_ROUGHNESS_MAP;
     const OCCLUSION_MAP: u32 = constants::VARIANT_OCCLUSION_MAP;
     const EMISSIVE_MAP: u32 = constants::VARIANT_EMISSIVE_MAP;
@@ -500,7 +475,6 @@ impl Variant {
             || material.emissive() != [0.0; 3]
             || base.is_some_and(|map| map.transform != UvTransform::IDENTITY)
             || matches!(mode, AlphaMode::Mask { .. })
-            || (mode == AlphaMode::Blend && base.is_some())
             || material.world_tiling().is_some();
         let mut bits = 0;
         if maps {
@@ -528,9 +502,6 @@ impl Variant {
         if material.is_double_sided() {
             bits |= Self::DOUBLE_SIDED;
         }
-        if material.transmission().factor > 0.0 {
-            bits |= Self::TRANSMISSION;
-        }
         if material.world_tiling().is_some() {
             bits |= Self::WORLD_MAPPING;
         }
@@ -544,11 +515,7 @@ impl Variant {
     }
 
     pub(crate) fn uber(self) -> Self {
-        let state = Self::EXTENDED
-            | Self::SKINNED
-            | Self::ALPHA_MASK
-            | Self::DOUBLE_SIDED
-            | Self::TRANSMISSION;
+        let state = Self::EXTENDED | Self::SKINNED | Self::ALPHA_MASK | Self::DOUBLE_SIDED;
         Self(self.0 & state | Self::UBER)
     }
 
@@ -556,7 +523,7 @@ impl Variant {
         self.0
     }
 
-    pub(crate) fn constants(self) -> [(&'static str, f64); 16] {
+    pub(crate) fn constants(self) -> [(&'static str, f64); 15] {
         let set = |bit: u32| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("WORLD_MAPPING", set(Self::WORLD_MAPPING)),
@@ -567,7 +534,6 @@ impl Variant {
             ("NORMAL_MAP", set(Self::NORMAL_MAP)),
             ("ALPHA_MASK", set(Self::ALPHA_MASK)),
             ("DOUBLE_SIDED", set(Self::DOUBLE_SIDED)),
-            ("TRANSMISSION", set(Self::TRANSMISSION)),
             ("METALLIC_ROUGHNESS_MAP", set(Self::METALLIC_ROUGHNESS_MAP)),
             ("OCCLUSION_MAP", set(Self::OCCLUSION_MAP)),
             ("EMISSIVE_MAP", set(Self::EMISSIVE_MAP)),
@@ -576,10 +542,6 @@ impl Variant {
             ("FOLIAGE", set(Self::FOLIAGE)),
             ("PRETESTED", set(Self::PRETESTED)),
         ]
-    }
-
-    pub(crate) fn transmission(self) -> bool {
-        self.0 & Self::TRANSMISSION != 0
     }
 
     pub(crate) fn double_sided(self) -> bool {

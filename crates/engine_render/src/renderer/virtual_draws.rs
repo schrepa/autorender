@@ -82,9 +82,6 @@ impl Renderer {
         let mut batches = Vec::new();
         let mut max_instances = 0;
         for (index, batch) in self.plan.batches.iter().enumerate() {
-            if batch.transparent {
-                continue;
-            }
             let Some(mesh) = self.virtual_draws.pass.mesh_index(batch.mesh) else {
                 continue;
             };

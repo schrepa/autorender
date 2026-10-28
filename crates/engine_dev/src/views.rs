@@ -347,16 +347,6 @@ pub struct AnimationPlayerView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct DecalView {
-    pub material: Option<String>,
-    pub material_alive: bool,
-    pub blend: engine_scene::SceneDecalBlend,
-    pub opacity: f32,
-    pub fade_degrees: f32,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct SplineMeshView {
     pub points: Vec<[f32; 3]>,
     pub mesh: Option<String>,

@@ -18,7 +18,6 @@ pub mod pipeline_layouts;
 mod batches;
 mod clouds;
 mod debug_view;
-mod decals;
 mod deformation;
 mod depth_pyramid;
 mod entries;

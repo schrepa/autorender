@@ -220,13 +220,6 @@ fn validate_object(
     if let Some(prefab) = &entity.prefab {
         reference(prefab, prefab_ids, &format!("{path}.prefab"))?;
     }
-    if let Some(decal) = &entity.decal {
-        reference(
-            &decal.material,
-            material_ids,
-            &format!("{path}.decal.material"),
-        )?;
-    }
     entity
         .validate()
         .map_err(|invalid| crate::error::broken_rule(ErrorCode::InvalidValue, path, invalid))?;

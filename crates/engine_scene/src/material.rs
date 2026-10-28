@@ -1,6 +1,5 @@
 use engine_core::{
-    AlphaMode, Filter, Material, Sampler, TextureHandle, TextureRef, Transmission, UvTransform,
-    Wrap,
+    AlphaMode, Filter, Material, Sampler, TextureHandle, TextureRef, UvTransform, Wrap,
 };
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
@@ -50,24 +49,15 @@ pub struct SceneMaterial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foliage: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transmission: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ior: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thickness: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub world_tiling: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top: Option<SceneTopLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grounding: Option<SceneGrounding>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub windows: Option<u32>,
 }
 
 #[cfg(feature = "schema")]
 fn state_material_rules(schema: &mut schemars::Schema) {
-    let part = |rule: Option<engine_settings::Rule>| rule.expect("the part declares the field");
     for (field, rule) in [
         ("color", Material::COLOR),
         ("opacity", Material::OPACITY),
@@ -76,10 +66,6 @@ fn state_material_rules(schema: &mut schemars::Schema) {
         ("emissive", Material::EMISSIVE),
         ("alpha_cutoff", Material::ALPHA_CUTOFF),
         ("world_tiling", Material::WORLD_TILING),
-        ("windows", Material::WINDOWS),
-        ("transmission", part(Transmission::rule_of("factor"))),
-        ("ior", part(Transmission::rule_of("ior"))),
-        ("thickness", part(Transmission::rule_of("thickness"))),
     ] {
         engine_settings::state(schema, field, rule);
     }
@@ -194,7 +180,6 @@ pub enum SceneMipmapFilter {
 pub enum SceneAlphaMode {
     Opaque,
     Mask,
-    Blend,
 }
 
 const MAP_FIELDS: [&str; 5] = [
@@ -258,11 +243,9 @@ impl SceneMaterial {
         };
         let [red, green, blue, opacity] = material.color();
         let surface = material.surface();
-        let transmission = material.transmission();
         let (alpha_mode, alpha_cutoff) = match material.alpha_mode() {
             AlphaMode::Opaque => (SceneAlphaMode::Opaque, None),
             AlphaMode::Mask { cutoff } => (SceneAlphaMode::Mask, Some(cutoff)),
-            AlphaMode::Blend => (SceneAlphaMode::Blend, None),
         };
         Self {
             id: id.into(),
@@ -286,11 +269,7 @@ impl SceneMaterial {
             alpha_cutoff,
             double_sided: Some(material.is_double_sided()),
             foliage: Some(material.is_foliage()),
-            transmission: Some(transmission.factor),
-            ior: Some(transmission.ior),
-            thickness: Some(transmission.thickness),
             world_tiling: material.world_tiling(),
-            windows: material.windows(),
             top: material.top_layer().map(|top| SceneTopLayer {
                 color: top.color,
                 coverage: top.coverage,
@@ -333,11 +312,6 @@ impl SceneMaterial {
         };
         let mut material =
             Material::new(self.color).map_err(|error| invalid("color", error.to_string()))?;
-        if let Some(opacity) = self.opacity {
-            material = material
-                .with_opacity(opacity)
-                .map_err(|error| invalid("opacity", error.to_string()))?;
-        }
         if let Some(mode) = self.alpha_mode {
             if self.alpha_cutoff.is_some() && mode != SceneAlphaMode::Mask {
                 return Err(invalid(
@@ -346,17 +320,10 @@ impl SceneMaterial {
                 ));
             }
             let mode = match mode {
-                SceneAlphaMode::Opaque if self.opacity.is_some_and(|opacity| opacity < 1.0) => {
-                    return Err(invalid(
-                        "alpha_mode",
-                        "opaque materials have opacity 1; use blend or mask".into(),
-                    ));
-                }
                 SceneAlphaMode::Opaque => AlphaMode::Opaque,
                 SceneAlphaMode::Mask => AlphaMode::Mask {
                     cutoff: self.alpha_cutoff.unwrap_or(0.5),
                 },
-                SceneAlphaMode::Blend => AlphaMode::Blend,
             };
             material = material
                 .with_alpha_mode(mode)
@@ -366,6 +333,11 @@ impl SceneMaterial {
                 "alpha_cutoff",
                 "an alpha cutoff needs alpha_mode mask".into(),
             ));
+        }
+        if let Some(opacity) = self.opacity {
+            material = material
+                .with_opacity(opacity)
+                .map_err(|error| invalid("opacity", error.to_string()))?;
         }
         if let Some(surface) = self.surface {
             material = material
@@ -388,11 +360,6 @@ impl SceneMaterial {
                 .with_world_mapping(tiling)
                 .map_err(|error| invalid("world_tiling", error.to_string()))?;
         }
-        if let Some(rooms) = self.windows {
-            material = material
-                .with_windows(rooms)
-                .map_err(|error| invalid("windows", error.to_string()))?;
-        }
         if let Some(top) = self.top {
             material = material
                 .with_top_layer(engine_core::TopLayer {
@@ -408,30 +375,6 @@ impl SceneMaterial {
                     height: grounding.height,
                 })
                 .map_err(|error| invalid("grounding", error.to_string()))?;
-        }
-        match (self.transmission, self.ior, self.thickness) {
-            (Some(factor), ior, thickness) => {
-                material = material
-                    .with_transmission(Transmission {
-                        factor,
-                        ior: ior.unwrap_or(Transmission::NONE.ior),
-                        thickness: thickness.unwrap_or(0.0),
-                    })
-                    .map_err(|error| invalid("transmission", error.to_string()))?;
-            }
-            (None, Some(_), _) => {
-                return Err(invalid(
-                    "ior",
-                    "an index of refraction needs transmission".into(),
-                ));
-            }
-            (None, None, Some(_)) => {
-                return Err(invalid(
-                    "thickness",
-                    "a thickness needs transmission".into(),
-                ));
-            }
-            (None, None, None) => {}
         }
         let normal_scale = self.normal_scale.unwrap_or(1.0);
         if !normal_scale.is_finite() {

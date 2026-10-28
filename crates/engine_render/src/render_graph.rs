@@ -217,7 +217,6 @@ passes! {
     visibility_tiles_phase_two: Classify { phase: Phase::Two },
     visibility_resolve_phase_two: Resolve { phase: Phase::Two },
     shadow_marks: ShadowMarks,
-    decals: Feature(FeaturePass::Decals),
     water: Feature(FeaturePass::Water),
     cloud_march: Feature(FeaturePass::CloudMarch),
     cloud_composite: Feature(FeaturePass::CloudComposite),
@@ -530,7 +529,6 @@ pub(crate) struct FrameShape {
     pub(crate) shadow_clusters: bool,
     pub(crate) resolves: [bool; 2],
     pub(crate) lights: bool,
-    pub(crate) refraction: bool,
     pub(crate) effects: Effects,
     pub(crate) probes: bool,
 }

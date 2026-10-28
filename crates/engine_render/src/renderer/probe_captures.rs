@@ -186,7 +186,7 @@ impl Renderer {
             let Some(mesh) = self.meshes.get(&batch.mesh) else {
                 continue;
             };
-            if batch.transparent || mesh.skinned {
+            if mesh.skinned {
                 continue;
             }
             let variant = self.batch_binding(batch, Some(mesh)).1.uber();

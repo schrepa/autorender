@@ -5,14 +5,8 @@
 
 use super::*;
 use crate::clouds::CloudFrame;
-use crate::decals::{DecalFrame, DecalPass};
 use crate::temporal::ResolveFrame;
 use crate::transparent::TransparencyFrame;
-
-struct PostPrep {
-    post: Option<Ready<Effects>>,
-    refraction: bool,
-}
 
 struct PresentationPrep {
     occlusion: Option<(u32, u32, u32)>,
@@ -52,7 +46,7 @@ impl Renderer {
         self.display
             .plan_region(display && !debug && !self.features.post.disabled());
         let profile_residency = engine_profile::span("render", "validate_and_retire");
-        for source in snapshot.textures.iter().chain(&snapshot.decals.textures) {
+        for source in &snapshot.textures {
             if source.texture.width().max(source.texture.height()) > self.display.max_dimension {
                 return Err(RenderError(format!(
                     "Texture {:?} exceeds the device's {}-pixel dimension limit.",
@@ -425,12 +419,7 @@ impl Renderer {
             &snapshot.environment.atmosphere,
             &snapshot.environment.bloom,
             &snapshot.environment.reflections,
-            &snapshot.environment.refraction,
-            (
-                &snapshot.environment.sky,
-                &snapshot.environment.highlights,
-                &snapshot.environment.windows,
-            ),
+            (&snapshot.environment.sky, &snapshot.environment.highlights),
             (&snapshot.environment.foliage, temporal_frame.is_some()),
         );
         lighting.grade[3] = f32::from(u8::from(snapshot.environment.dither.enabled));
@@ -611,27 +600,20 @@ impl Renderer {
             return Features::debug(occlusion, gpu_prepared, shadow_frame, probe_list);
         }
         let lights = self.prepare_lights(frame, kind, temporal_frame);
-        let lit = lights.is_some();
-        let PostPrep { post, refraction } =
-            self.prepare_post(snapshot, temporal_frame, kind.display);
-        let post_frame = post.as_ref().map(|post| *post.frame());
+        let post = self.prepare_post(snapshot, temporal_frame, kind.display);
         let transparency = self.prepare_transparency(
             snapshot,
             (frame.identity(), frame.emitters_revision()),
-            temporal_frame,
-            post_frame,
+            post.is_some(),
         );
         let temporal = self.prepare_resolve(temporal_frame, transparency.is_some());
-        let decals = self.prepare_decals(snapshot, temporal_frame, lit, post_frame);
         Features {
             occlusion,
             gpu_prepared,
             shadow_frame,
             probe_list,
-            refraction,
             frames: FeatureFrames {
                 lights,
-                decals,
                 transparency,
                 post,
                 temporal,
@@ -684,10 +666,9 @@ impl Renderer {
                 let mesh = &snapshot.meshes[batch.source_index].mesh;
                 let gpu_mesh = &meshes[&batch.mesh];
                 let draw = gpu_mesh.draw(arena);
-                let virtual_geometry = virtual_enabled
-                    && !batch.transparent
-                    && virtual_meshes.mesh_index(batch.mesh).is_some();
-                let levels = lod_levels(batch, gpu_mesh, virtual_geometry);
+                let virtual_geometry =
+                    virtual_enabled && virtual_meshes.mesh_index(batch.mesh).is_some();
+                let levels = lod_levels(gpu_mesh, virtual_geometry);
                 BatchMeta {
                     index_count: draw.index_count,
                     first_index: draw.first_index,
@@ -1019,14 +1000,10 @@ impl Renderer {
         snapshot: &RenderSnapshot,
         temporal_frame: &Option<TemporalFrame>,
         display: bool,
-    ) -> PostPrep {
+    ) -> Option<Ready<Effects>> {
         let effects = crate::screen_effects::targets_read(&snapshot.environment);
-        let refraction = snapshot.environment.refraction.enabled()
-            && self.plan.batches.iter().any(|batch| {
-                batch.transparent && self.materials.binding(batch.material).1.transmission()
-            });
         let region = self.display.region;
-        let needs = temporal_frame.is_some() || effects || refraction || region.upscales();
+        let needs = temporal_frame.is_some() || effects || region.upscales();
         let (device, queue) = (&self.device, &self.queue);
         let format = self.display.format();
         let layouts = (&self.camera.layout, &self.camera.terrain_layout);
@@ -1048,7 +1025,7 @@ impl Renderer {
         if !needs && let Some(post) = self.features.post.get_mut() {
             post.release_targets();
         }
-        PostPrep { post, refraction }
+        post
     }
 
     fn prepare_resolve(
@@ -1072,75 +1049,16 @@ impl Renderer {
         &mut self,
         snapshot: &RenderSnapshot,
         emitters: (u64, u64),
-        temporal_frame: &Option<TemporalFrame>,
-        post_frame: Option<Effects>,
+        post: bool,
     ) -> Option<Ready<TransparencyFrame>> {
-        let meshes = self.plan.batches.iter().any(|batch| batch.transparent);
         let (device, queue) = (&self.device, &self.queue);
         let inputs = (
             (self.display.region, &self.depth.view),
             (&self.camera.layout, (self.display.format(), DEPTH_FORMAT)),
         );
-        let transparency = self.features.transparency.prepare(|transparency| {
-            transparency.prepare(
-                device,
-                queue,
-                snapshot,
-                emitters,
-                inputs.0,
-                inputs.1,
-                (meshes, post_frame.is_some()),
-            )
-        });
-        if transparency.is_some()
-            && meshes
-            && temporal_frame
-                .as_ref()
-                .is_some_and(|frame| frame.parity == 1)
-        {
-            self.instances.prepare_pose_group(&self.device, 1);
-        }
-        transparency
-    }
-
-    fn prepare_decals(
-        &mut self,
-        snapshot: &RenderSnapshot,
-        temporal_frame: &Option<TemporalFrame>,
-        lit: bool,
-        post_frame: Option<Effects>,
-    ) -> Option<Ready<DecalFrame>> {
-        let decal_lights = self
-            .features
-            .lights
-            .get()
-            .filter(|_| lit)
-            .map(LightPass::fragment_layout);
-        let (device, format) = (&self.device, self.display.format());
-        let shading = self.mesh_pipelines.shading;
-        self.features.decals.prepare(
-            (device, DecalPass::wanted(snapshot)),
-            || DecalPass::new(device, format),
-            |decals| {
-                decals.specialize(shading);
-                let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
-                let prepared = decals.prepare(
-                    device,
-                    &self.queue,
-                    snapshot,
-                    (self.instances.palettes[parity].bound(), parity),
-                    &self.depth.view,
-                )?;
-                decals.ensure_pipelines(
-                    device,
-                    &self.mesh_shader,
-                    [&self.camera.layout, self.materials.layout()],
-                    decal_lights,
-                    post_frame.is_some(),
-                );
-                Some(prepared)
-            },
-        )
+        self.features.transparency.prepare(|transparency| {
+            transparency.prepare(device, queue, snapshot, emitters, inputs.0, inputs.1, post)
+        })
     }
 
     pub(super) fn prepare_pipelines(
@@ -1159,8 +1077,7 @@ impl Renderer {
         let lit_frame = light_frame.is_some() && self.features.lights.get().is_some();
         let targets = self.frame_targets(kind, temporal_frame, post_frame);
         let opaque_kind = PassKind::opaque(targets, lit_frame);
-        let transparent_kind = PassKind::transparent(lit_frame);
-        self.ensure_variants(opaque_kind, transparent_kind);
+        self.ensure_variants(opaque_kind);
         if gpu_mode && !kind.debug && !probe_list.is_empty() {
             self.ensure_probe_pipelines(PassKind::probe(lit_frame));
         }
@@ -1188,7 +1105,6 @@ impl Renderer {
         }
         Passes {
             opaque_kind,
-            transparent_kind,
             impostor_pass,
         }
     }
@@ -1263,7 +1179,6 @@ impl Renderer {
                 resolving && phases == 2 && self.virtual_draws.phase_two.is_some(),
             ],
             lights: features.light_frame().is_some(),
-            refraction: features.refraction && post.is_some(),
             effects: post.unwrap_or_default(),
             probes: kind.gpu_mode && !kind.debug && !features.probe_list.is_empty(),
         }
@@ -1288,8 +1203,7 @@ impl Renderer {
     }
 
     pub(super) fn prepare_frame_groups(&mut self, state: &FrameState<'_>) {
-        let (temporal_frame, refraction) =
-            (&state.packing.temporal_frame, state.features.refraction);
+        let temporal_frame = &state.packing.temporal_frame;
 
         if let (Some(_), Some(pass)) = (&temporal_frame, self.features.temporal.get_mut()) {
             let poses = self.instances.frame_poses(0);
@@ -1300,21 +1214,6 @@ impl Renderer {
                 &poses.colors.bound(),
                 poses.palettes.map(|palette| palette.bound()),
                 &Bound::fixed(self.instances.grounds().as_entire_binding()),
-            );
-        }
-        if refraction && let Some(post) = self.features.post.get() {
-            self.camera.prepare_refraction(
-                &self.device,
-                post.scene(),
-                &camera::GroupSources {
-                    shadows: &self.shadows,
-                    environment: self.features.environment.get(),
-                    probes: self.features.probes.get(),
-                    horizons: &self.terrain.horizons,
-                    occupancy: self.features.occupancy.get(),
-                    sky: self.features.sky.get().bindings(),
-                    clouds: self.features.clouds.get().dome(),
-                },
             );
         }
         self.prepare_reflections(state);

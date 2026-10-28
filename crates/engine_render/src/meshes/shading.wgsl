@@ -56,7 +56,6 @@ struct Shaded {
     roughness: f32,
     across: f32,
     body: u32,
-    opacity: f32,
 }
 
 var<private> fragment_plant: u32;
@@ -790,7 +789,6 @@ fn finish_reflecting(point: SurfacePoint, local: vec3<f32>, lobe: EnvironmentLob
     let fogged = through.rgb;
     let covered = through.a;
     var shaded: Shaded;
-    shaded.opacity = point.opacity;
     shaded.normal = normal;
     shaded.roughness = point.roughness;
     shaded.across = point.roughness - point.smoother_across;
@@ -819,7 +817,6 @@ struct Fragment {
     uv1: vec2<f32>,
     surface: u32,
     pixel: vec2<f32>,
-    origin: u32,
 }
 
 fn fragment_color(material: vec4<u32>) -> vec4<f32> {
@@ -844,7 +841,6 @@ fn fragment(input: VertexOutput) -> Fragment {
     values.uv1 = values.uv;
     values.surface = input.material.z;
     values.pixel = input.clip_position.xy;
-    values.origin = input.material.w >> 16u;
     return values;
 }
 
@@ -862,7 +858,6 @@ fn extended_fragment(input: ExtendedOutput) -> Fragment {
     values.uv1 = input.uv1;
     values.surface = input.material.z;
     values.pixel = input.clip_position.xy;
-    values.origin = input.material.w >> 16u;
     return values;
 }
 
@@ -874,60 +869,9 @@ fn masked_depth(input: Fragment) {
     }
 }
 
-const UNLIT_ROOM: f32 = 0.12;
-const COOL_ROOM: vec3<f32> = vec3<f32>(0.78, 0.88, 1.0);
-const WARM_ROOM: vec3<f32> = vec3<f32>(1.0, 0.72, 0.42);
-
-fn room_light(point: SurfacePoint, input: Fragment) -> SurfacePoint {
-    let rooms = material_maps.layer.y;
-    if !WINDOWS || lighting.windows.z <= 0.0 || rooms <= 0.0 {
-        return point;
-    }
-    var base_uv = input.uv;
-    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
-        base_uv = map_uv(0u, input.uv, input.uv1);
-    }
-    let size = vec2<f32>(textureDimensions(base_color_texture));
-    let room = vec2<i32>(floor(base_uv * vec2<f32>(rooms, rooms * size.y / size.x)));
-    let key = pcg(input.origin ^ pcg(bitcast<u32>(room.x) ^ pcg(bitcast<u32>(room.y))));
-    let switched = lighting.windows.y + lighting.windows.z * (2.0 * unit(key) - 1.0);
-    var lit = point;
-    lit.emission = 0.0;
-    lit.emissive = vec3<f32>(0.0);
-    if lighting.windows.x < switched && unit(pcg(key + 1u)) >= lighting.windows.w {
-        let tint = mix(COOL_ROOM, WARM_ROOM, unit(pcg(key + 2u)));
-        let brightness = 0.6 + 0.8 * unit(pcg(key + 3u));
-        lit.emissive = (point.albedo * point.emission + point.emissive) * tint
-            * (brightness / luminance(tint));
-    } else {
-        let window = point.emission / max(unpack4x8unorm(input.surface).z * 16.0, 1e-4);
-        let kept = mix(1.0, UNLIT_ROOM, saturate(window));
-        lit.albedo = point.albedo * kept;
-        lit.diffuse_color = point.diffuse_color * kept;
-    }
-    return lit;
-}
-
-fn far_rooms(point: SurfacePoint, window: f32) -> SurfacePoint {
-    if !WINDOWS || lighting.windows.z <= 0.0 {
-        return point;
-    }
-    let lit = saturate(0.5 - 0.5 * (lighting.windows.x - lighting.windows.y)
-        / lighting.windows.z) * (1.0 - lighting.windows.w);
-    let tint = mix(COOL_ROOM, WARM_ROOM, 0.5);
-    var far = point;
-    far.emission = 0.0;
-    far.emissive = (point.albedo * point.emission + point.emissive) * tint
-        * (lit / luminance(tint));
-    let kept = mix(1.0, UNLIT_ROOM, window * (1.0 - lit));
-    far.albedo = point.albedo * kept;
-    far.diffuse_color = point.diffuse_color * kept;
-    return far;
-}
-
 fn shade(input: Fragment, front: bool) -> Shaded {
-    return finish(room_light(surface_point(input.color, input.normal, input.world, input.uv,
-        input.uv1, input.surface, front), input), vec3<f32>(0.0));
+    return finish(surface_point(input.color, input.normal, input.world, input.uv, input.uv1,
+        input.surface, front), vec3<f32>(0.0));
 }
 
 fn tube_energy(alpha: f32, angle: f32) -> f32 {
@@ -1057,8 +1001,8 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
 }
 
 fn shade_lit(input: Fragment, front: bool) -> Shaded {
-    let point = room_light(surface_point(input.color, input.normal, input.world, input.uv,
-        input.uv1, input.surface, front), input);
+    let point = surface_point(input.color, input.normal, input.world, input.uv, input.uv1,
+        input.surface, front);
     return finish(point, local_light(point, input.pixel));
 }
 
@@ -1118,62 +1062,4 @@ fn temporal_targets(shaded: Shaded, clip_position: vec4<f32>, previous: vec3<f32
         targets.motion = vec2<f32>(2.0);
     }
     return targets;
-}
-
-fn transmitted_share() -> f32 {
-    if TRANSMISSION {
-        return material_maps.volume.x;
-    }
-    return 0.0;
-}
-
-fn transparent_point(input: Fragment, front: bool) -> SurfacePoint {
-    var point = surface_point(input.color, input.normal, input.world, input.uv, input.uv1,
-        input.surface, front);
-    point.diffuse_color *= 1.0 - transmitted_share();
-    return point;
-}
-
-const GLASS_TAPS = array<vec2<f32>, 8>(
-    vec2<f32>(1.0, 0.0), vec2<f32>(0.3535534, 0.3535534),
-    vec2<f32>(0.0, 1.0), vec2<f32>(-0.3535534, 0.3535534),
-    vec2<f32>(-1.0, 0.0), vec2<f32>(-0.3535534, -0.3535534),
-    vec2<f32>(0.0, -1.0), vec2<f32>(0.3535534, -0.3535534),
-);
-
-fn transparent_targets(shaded: Shaded, point: SurfacePoint, input: Fragment)
-        -> TransparentTargets {
-    let distance = length(camera.position.xyz - input.world);
-    let share = transmitted_share();
-    if share <= 0.0 {
-        return weighted(shaded.color, shaded.opacity, distance);
-    }
-    let reflectance = saturate(luminance(environment_brdf(point.f0, point.roughness,
-        point.n_v)));
-    let through = share * (1.0 - reflectance);
-    if lighting.refraction.x <= 0.0 {
-        let coverage = max(shaded.opacity * (1.0 - through), 1.0e-3);
-        return weighted(min(shaded.color / coverage, vec3<f32>(1.0)), coverage, distance);
-    }
-    let bent = refract(-point.view, point.normal, 1.0 / material_maps.volume.y);
-    let exit = point.world + bent * (material_maps.volume.z * lighting.refraction.x);
-    let clip = camera.view_projection * vec4<f32>(exit, 1.0);
-    let size = vec2<f32>(textureDimensions(refraction_source));
-    let reach = camera.region.zw - 0.5 / size;
-    var uv = input.pixel / size;
-    if clip.w > 1.0e-6 {
-        uv = (vec2<f32>(clip.x, -clip.y) / clip.w * 0.5 + 0.5) * camera.region.zw;
-    }
-    uv = min(uv, reach);
-    var behind = textureSampleLevel(refraction_source, refraction_sampler, uv, 0.0).rgb;
-    let radius = point.roughness * lighting.refraction.y / size;
-    if radius.x * size.x >= 0.5 {
-        var sum = behind;
-        for (var tap = 0u; tap < 8u; tap++) {
-            sum += textureSampleLevel(refraction_source, refraction_sampler,
-                min(uv + GLASS_TAPS[tap] * radius, reach), 0.0).rgb;
-        }
-        behind = sum / 9.0;
-    }
-    return weighted(shaded.color + behind * point.albedo * through, shaded.opacity, distance);
 }

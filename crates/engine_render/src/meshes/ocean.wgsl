@@ -113,7 +113,6 @@ fn shade_ocean_below(input: OceanOutput) -> WaterShade {
     shaded.reflect = 0.0;
     shaded.normal = -up;
     shaded.roughness = 0.1;
-    shaded.opacity = 1.0;
     var result: WaterShade;
     result.shaded = shaded;
     result.coverage = 1.0;

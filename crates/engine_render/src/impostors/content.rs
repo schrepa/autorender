@@ -74,19 +74,9 @@ impl Contents {
                 bytes.push(1);
                 floats(&mut bytes, &[cutoff]);
             }
-            AlphaMode::Blend => bytes.push(2),
         }
         bytes.push(u8::from(material.is_double_sided()));
-        let transmission = material.transmission();
-        floats(
-            &mut bytes,
-            &[
-                transmission.factor,
-                transmission.ior,
-                transmission.thickness,
-                material.world_tiling().unwrap_or(-1.0),
-            ],
-        );
+        floats(&mut bytes, &[material.world_tiling().unwrap_or(-1.0)]);
         match material.top_layer() {
             Some(top) => {
                 bytes.push(1);
@@ -102,8 +92,6 @@ impl Contents {
             }
             None => bytes.push(0),
         }
-        bytes.push(u8::from(material.windows().is_some()));
-        words(&mut bytes, &[material.windows().unwrap_or(0)]);
         content_hash(&bytes)
     }
 

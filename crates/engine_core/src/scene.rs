@@ -310,15 +310,6 @@ pub struct RenderMaterial {
     pub version: u64,
 }
 
-impl RenderInstance {
-    pub fn is_transparent(&self, material: Option<&Material>) -> bool {
-        match material {
-            Some(material) => material.is_transparent(),
-            None => self.color[3] < 1.0,
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct RenderSnapshot {
     pub view_projection: Mat4,
@@ -330,7 +321,6 @@ pub struct RenderSnapshot {
     pub environment: crate::Environment,
     pub lights: crate::RenderLights,
     pub particles: crate::RenderParticles,
-    pub decals: crate::RenderDecals,
     pub reflection_probes: crate::RenderReflectionProbes,
     pub terrain: crate::RenderTerrains,
     pub deformation: crate::RenderDeformation,

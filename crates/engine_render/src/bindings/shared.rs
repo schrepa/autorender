@@ -32,7 +32,7 @@ shared_groups! {
     SHADER @ 0 {
         frame: 0..2 [camera, lighting],
         shadows: 2..9 [shadow, shadow_atlas, shadow_tiles, shadow_sampler, shadow_texels],
-        refraction: 9..11 [refraction_source, refraction_sampler],
+        refraction: 10..11 [refraction_sampler],
         environment: 11..13 [environment_maps, environment_sampler],
         probes: 13..14 [probe_words],
         horizons: 14..17 [terrain_horizons, terrain_horizon_records, terrain_horizon_sampler],
@@ -71,7 +71,6 @@ shared_groups! {
         poses: 0..6 [poses, colors, previous_poses, palette, previous_palette, grounds],
         virtual_geometry: 6..9 [virtual_meshes, virtual_clusters, virtual_pages],
         visibility: 9..13 [visibility_draw, visible_clusters, visibility_ids, resolve_tiles],
-        decals: 13..15 [decal_records, decal_depth],
         impostor_bakes: 15..17 [impostor_bake, impostor_shade],
         terrain: 18..19 [terrain_ids_texture],
         water: 22..27 [

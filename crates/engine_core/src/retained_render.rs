@@ -21,7 +21,6 @@ use crate::{
     RenderSnapshot, RenderTexture, SkinExtraction, Surface, TextureHandle, Tint, Transform,
     TransformIndex,
     culling::{Classification, Frustum},
-    decals::DecalExtraction,
     probes::ProbeExtraction,
     ticks::{ChangeWindow, ScanClock, consume_through},
 };
@@ -44,16 +43,10 @@ fn changed_in_window<T: Component>(components: &Query<'_, '_, Ref<'static, T>>) 
 
 static NEXT_STREAM: AtomicU64 = AtomicU64::new(1);
 
-fn draw_class(material: &Material) -> (bool, u8, bool, bool, bool) {
+fn draw_class(material: &Material) -> (bool, bool, bool) {
     (
-        material.is_transparent(),
-        match material.alpha_mode() {
-            AlphaMode::Opaque => 0,
-            AlphaMode::Mask { .. } => 1,
-            AlphaMode::Blend => 2,
-        },
+        matches!(material.alpha_mode(), AlphaMode::Mask { .. }),
         material.is_double_sided(),
-        material.transmission().factor > 0.0,
         material.is_foliage(),
     )
 }
@@ -181,7 +174,6 @@ impl<'a> RenderFrame<'a> {
             environment,
             lights,
             particles,
-            decals,
             reflection_probes,
             terrain,
             deformation,
@@ -226,7 +218,6 @@ impl<'a> RenderFrame<'a> {
             snapshot.lights.list.push(light.posed(model));
         }
         snapshot.particles.clone_from(particles);
-        snapshot.decals.clone_from(decals);
         snapshot.reflection_probes.clone_from(reflection_probes);
         snapshot.terrain.clone_from(terrain);
         snapshot.deformation.clone_from(deformation);
@@ -919,17 +910,6 @@ impl RetainedRender {
         skins.scratch = next;
         engine_profile::counter("extraction.skinned", skins.skinned.len() as f64);
         engine_profile::counter("extraction.joints", self.snapshot.joints.len() as f64);
-    }
-
-    pub(crate) fn extract_decals(
-        &mut self,
-        world: &World,
-        decals: &mut DecalExtraction,
-        gpu: bool,
-    ) {
-        if decals.extract(world, &mut self.snapshot, gpu) {
-            self.joints_revision += 1;
-        }
     }
 
     pub(crate) fn extract_probes(&mut self, world: &World, probes: &mut ProbeExtraction) {

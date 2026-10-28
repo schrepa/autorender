@@ -27,7 +27,6 @@ macro_rules! entity_components {
                 mirror
             },
             tint: [f32; 4] { feature: Core, shows: "Tint", rule: range(0.0, 1.0), mirror },
-            decal: crate::SceneDecal { feature: Core, shows: "Decal", rule: any, mirror },
             floating: engine_core::Floating {
                 feature: Ocean,
                 shows: "Floating",

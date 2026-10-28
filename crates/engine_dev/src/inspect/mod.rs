@@ -9,14 +9,14 @@ use std::{collections::BTreeMap, io::Write};
 
 use engine_collision::{CollisionWorld, refresh_collision_world};
 use engine_core::{
-    ActionId, ActionInput, AssetLibrary, Atmosphere, Camera, Decal, Engine, Feature, FixedTime,
-    FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle,
-    Mesh3d, MeshHandle, Parent, ParticleEmitter, PresentationMode, PresentationState,
-    PresentedTransforms, ReflectionProbe, TextureHandle, Tint, Transform,
+    ActionId, ActionInput, AssetLibrary, Atmosphere, Camera, Engine, Feature, FixedTime, FrameTime,
+    GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle, Mesh3d,
+    MeshHandle, Parent, ParticleEmitter, PresentationMode, PresentationState, PresentedTransforms,
+    ReflectionProbe, TextureHandle, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
-    EnvironmentSection, SceneAtmosphere, SceneDecal, SceneEmitter, SceneEntity, SceneEnvironment,
+    EnvironmentSection, SceneAtmosphere, SceneEmitter, SceneEntity, SceneEnvironment,
     SceneInstance, SceneLight, SceneMaterial, SceneReflectionProbe, SectionVisitor,
 };
 use serde::Serialize;
@@ -33,10 +33,10 @@ use crate::{
     DevError, DevRequest, MAX_DESCRIPTION_BYTES, MAX_INSPECTOR_BYTES, MAX_INSPECTORS,
     MAX_PAGE_SIZE, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
-        CameraView, DecalView, GlobalTransformView, HierarchyView, InputView,
-        InterpolateTransformView, LodLevelView, Mesh3dView, MeshBoundsView, MeshRenderView,
-        MeshView, PresentationModeView, PresentationStateView, PresentedTransformView,
-        SplineMeshView, TextureView, TransformView, VirtualMeshView,
+        CameraView, GlobalTransformView, HierarchyView, InputView, InterpolateTransformView,
+        LodLevelView, Mesh3dView, MeshBoundsView, MeshRenderView, MeshView, PresentationModeView,
+        PresentationStateView, PresentedTransformView, SplineMeshView, TextureView, TransformView,
+        VirtualMeshView,
     },
 };
 
@@ -912,13 +912,6 @@ fn missing_assets(world: &World, assets: &AssetLibrary) -> (Vec<MissingAsset>, u
             };
             if let Some(missing) = missing {
                 found.push((entity, "mesh", missing));
-            }
-        }
-    }
-    if let Some(mut decals) = world.try_query::<(Entity, &engine_core::Decal)>() {
-        for (entity, decal) in decals.iter(world) {
-            if let Some(missing) = lacking(decal.material) {
-                found.push((entity, "decal", missing));
             }
         }
     }

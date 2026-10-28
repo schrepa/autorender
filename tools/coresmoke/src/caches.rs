@@ -38,14 +38,13 @@ impl Assets {
             .map(|mesh| library.insert_mesh(mesh).map_err(|error| error.to_string()))
             .collect::<Result<_, _>>()?;
         let materials = [
-            ([0.8, 0.3, 0.2, 1.0], 1.0),
-            ([0.2, 0.6, 0.9, 1.0], 1.0),
-            ([0.9, 0.9, 0.9, 1.0], 0.5),
+            [0.8, 0.3, 0.2, 1.0],
+            [0.2, 0.6, 0.9, 1.0],
+            [0.9, 0.9, 0.9, 1.0],
         ]
         .into_iter()
-        .map(|(color, opacity)| {
+        .map(|color| {
             Material::new(color)
-                .and_then(|material| material.with_opacity(opacity))
                 .and_then(|material| library.insert_material(material))
                 .map_err(|error| error.to_string())
         })

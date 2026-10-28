@@ -158,10 +158,7 @@ impl fmt::Display for AssetError {
                 f,
                 "material color channel {channel} must be finite and in [0, 1]"
             ),
-            Self::UnsupportedAlpha => write!(
-                f,
-                "material alpha must equal 1; use Material::with_opacity for transparency"
-            ),
+            Self::UnsupportedAlpha => write!(f, "opaque material alpha must equal 1"),
             Self::InvalidOpacity => write!(f, "material opacity must be finite and in (0, 1]"),
             Self::InvalidSurface { field } => write!(
                 f,

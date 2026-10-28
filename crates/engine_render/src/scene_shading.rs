@@ -9,10 +9,9 @@ impl SceneShading {
     const CLOUD_SHADOWS: u8 = 4;
     const OCCUPANCY: u8 = 8;
     const PROBES: u8 = 16;
-    const WINDOWS: u8 = 32;
-    const BOUNCE: u8 = 64;
+    const BOUNCE: u8 = 32;
 
-    pub(crate) const ALL: Self = Self(127);
+    pub(crate) const ALL: Self = Self(63);
 
     pub(crate) fn of(snapshot: &RenderSnapshot) -> Self {
         let environment = &snapshot.environment;
@@ -33,7 +32,6 @@ impl SceneShading {
                 occupancy.enabled && occupancy.strength > 0.0,
             ),
             (Self::PROBES, environment.reflection_probes.enabled),
-            (Self::WINDOWS, environment.windows.enabled),
             (Self::BOUNCE, horizons && terrain.bounce),
         ];
         Self(
@@ -44,7 +42,7 @@ impl SceneShading {
         )
     }
 
-    pub(crate) fn constants(self) -> [(&'static str, f64); 7] {
+    pub(crate) fn constants(self) -> [(&'static str, f64); 6] {
         let set = |bit: u8| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("SHADOW_MAPS", set(Self::SHADOW_MAPS)),
@@ -52,7 +50,6 @@ impl SceneShading {
             ("CLOUD_SHADOWS", set(Self::CLOUD_SHADOWS)),
             ("OCCUPANCY", set(Self::OCCUPANCY)),
             ("PROBES", set(Self::PROBES)),
-            ("WINDOWS", set(Self::WINDOWS)),
             ("BOUNCE", set(Self::BOUNCE)),
         ]
     }

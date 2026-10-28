@@ -85,8 +85,6 @@ tables! {
             texture(4, "shadow_tiles", Uint, D2, VF),
             sampler(6, "shadow_sampler", Comparison, F),
             sampler(7, "shadow_texels", NonFiltering, VF),
-            texture(9, "refraction_source", Float, D2, F),
-            sampler(10, "refraction_sampler", Filtering, F),
             texture(11, "environment_maps", Float, CubeArray, F),
             sampler(12, "environment_sampler", Filtering, F),
             read(13, "probe_words", F),
@@ -253,16 +251,6 @@ tables! {
             read(1, "lights", F),
             read(2, "cluster_ranges", F),
             read(3, "cluster_lights", F),
-        ],
-    };
-
-    const DECALS: Table = Table {
-        label: "engine/decal-layout",
-        serves: [SHADER @ 2],
-        bindings: &[
-            read(3, "palette", V),
-            read(13, "decal_records", VF),
-            texture(14, "decal_depth", Depth, D2, F),
         ],
     };
 
