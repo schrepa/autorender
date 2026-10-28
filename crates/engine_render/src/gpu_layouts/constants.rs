@@ -347,6 +347,14 @@ gpu_consts! {
     /// Cells rivers bring water to a workgroup of the simulation's source
     /// pass takes.
     pub(crate) const WATER_SIM_SOURCE_GROUP: u32 = 64 => ["WATER_SIM_SOURCE_GROUP" in WATER_SIM_SHADER, "@sim_source" in WATER_SIM_SHADER];
+    /// Cells past the live square's edges a workgroup of its setup's pass
+    /// over them takes (`meshes/water_setup.wgsl`'s `setup_ring`).
+    pub(crate) const WATER_SETUP_RING_GROUP: u32 = 64 => ["SETUP_RING_GROUP", "@setup_ring"];
+    /// Entries of four words a solid standing in the settled water takes
+    /// in the live water's setup's list: its center and whether it is a
+    /// ball, then the inverse of its axes, a column each, beside how far it
+    /// reaches along x and z.
+    pub(crate) const SETUP_SOLID_ENTRIES: usize = 4 => ["SETUP_SOLID"];
 
     // crate::water_particles
     /// Particles and items a workgroup of water's particles' passes over
@@ -613,10 +621,10 @@ gpu_mirrors! {
     engine_core::terrain_data::hydraulics::GRAVITY => ["SIM_GRAVITY" in WATER_SIM_SHADER, "WATER_GRAVITY"];
     engine_core::terrain_data::shallow_water::THETA => ["SIM_THETA" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::THIN => ["SIM_THIN" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::DRY => ["SIM_DRY" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::DRY => ["SIM_DRY" in WATER_SIM_SHADER, "SETUP_DRY"];
     engine_core::terrain_data::shallow_water::FASTEST => ["SIM_FASTEST" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SOURCE_SPEED => ["SIM_SOURCE_SPEED" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::UNHELD => ["SIM_UNHELD" in WATER_SIM_SHADER, "WATER_BED_UNHELD"];
+    engine_core::terrain_data::shallow_water::UNHELD => ["SIM_UNHELD" in WATER_SIM_SHADER, "SETUP_UNHELD"];
     engine_core::terrain_data::shallow_water::DENSITY => ["SIM_DENSITY" in WATER_SIM_SHADER, "WATER_DENSITY"];
     engine_core::terrain_data::shallow_water::FERGUSON_A1 => ["SIM_FERGUSON_A1" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FERGUSON_A2 => ["SIM_FERGUSON_A2" in WATER_SIM_SHADER];
@@ -625,7 +633,9 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::STRICKLER => ["SIM_STRICKLER" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::CELL_MEANS => ["SIM_CELL_MEANS" in WATER_SIM_SHADER];
     engine_core::terrain_data::NO_BLOCK => ["SIM_NO_BLOCK" in WATER_SIM_SHADER];
-    engine_core::terrain_data::BLOCK_GROUND => ["SIM_BLOCK_GROUND" in WATER_SIM_SHADER, "WATER_BED_GROUND"];
+    engine_core::terrain_data::BLOCK_GROUND => ["SIM_BLOCK_GROUND" in WATER_SIM_SHADER, "SETUP_GROUND"];
+    engine_core::terrain_data::shallow_water::GROUND_D84 => ["SETUP_GROUND_D84"];
+    engine_core::terrain_data::COVER_POINTS => ["SETUP_COVER_POINTS"];
     engine_core::terrain_data::shallow_water::WET_MOST => ["SIM_WET_MOST" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_LIFE => ["SIM_FOAM_LIFE" in WATER_SIM_SHADER, "WATER_FOAM_LIFE"];
     engine_core::terrain_data::shallow_water::FOAM_MOST => ["SIM_FOAM_MOST" in WATER_SIM_SHADER, "WATER_FOAM_MOST"];

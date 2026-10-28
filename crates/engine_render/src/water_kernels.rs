@@ -4,8 +4,9 @@
 //! depths (between steps, the currents their cells' surfaces run at),
 //! fluxes, sources, waves, outflow's shares, seconds and sums. The
 //! square running live around the detail eye (`water_sim.rs`) is one slot
-//! storing every block of it and the blocks it moves to, with a ring past
-//! its edges, the bursts of turbulence and the solids standing in its
+//! storing every block of it, with a ring past its edges, which the GPU
+//! sets up (`meshes/water_setup.wgsl`), the bursts of turbulence and the
+//! solids standing in its
 //! water, which push it before each step, the steps its frame has run, and
 //! its cells' looks in place of sums: the settled water at each, which its
 //! rim is pulled back to, and the water as water's pass draws it; regions
@@ -349,18 +350,20 @@ impl SlotBuffers {
     /// fewer, its inputs grow to the next power of two of them and its
     /// groups bind them, its other buffers keeping what they hold; grown,
     /// they hold nothing, so each slot's sources and ring are written anew.
+    /// Whether they grew.
     pub(crate) fn hold_sources(
         &mut self,
         device: &wgpu::Device,
         layout: &crate::pipelines::GroupLayout,
         sources: usize,
-    ) {
+    ) -> bool {
         if sources as u32 <= self.capacity.sources {
-            return;
+            return false;
         }
         self.capacity.sources = (sources as u32).next_power_of_two();
         self.inputs = inputs(device, (self.capacity, self.slots), self.live);
         self.bind(device, layout);
+        true
     }
 
     /// Writes each stage's frame: the stage, the slots' count, the blocks

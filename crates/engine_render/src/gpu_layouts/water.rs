@@ -90,13 +90,22 @@ gpu_structs! {
         pub touch: [SimTouch; SIM_TOUCHES],
     }
 
-    /// WGSL `SimBed` of `meshes/water_bed.wgsl`: the blocks whose bed the
-    /// live water raises this frame, then nothing; and the meters across
-    /// their cells, then nothing.
+    /// WGSL `SimSetup` of `meshes/water_setup.wgsl`: the blocks of the live
+    /// square a frame sets up (those set up whole first, then those whose
+    /// ground alone is set up again), those set up whole, the cells past its
+    /// edges it sets up (none where it sets up none) and the solids standing
+    /// in the settled water over it; its first cell on the terrain's lattice
+    /// of its cells along x and z (an `i32`'s bits each), its cells along a
+    /// side and the live cells along each side of a settled cell; the
+    /// meters across a cell and the height its heights stand above (world
+    /// meters), then nothing; and where its ring starts among the
+    /// simulation's inputs, then nothing.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct SimBed as ["SimBed"] {
-        pub blocks: [u32; 4],
-        pub cell: [f32; 4],
+    pub(crate) struct SimSetup as ["SimSetup"] {
+        pub counts: [u32; 4],
+        pub square: [u32; 4],
+        pub meters: [f32; 4],
+        pub ring: [u32; 4],
     }
 
     /// WGSL `ParticleFrame` of `meshes/water_particles.wgsl`: the first

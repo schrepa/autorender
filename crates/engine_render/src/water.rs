@@ -342,9 +342,9 @@ impl WaterPass {
             return None;
         }
         // Rivers running live where a terrain's window stands, pushed by the
-        // solids standing in it, the wind dragging their surface, over a bed
-        // its ground's materials raise through the terrain group at its
-        // terrain's uniform.
+        // solids standing in it, the wind dragging their surface, set up
+        // from the ground, its materials and the tiles' water through the
+        // terrain group at its terrain's uniform.
         let live = terrains
             .iter()
             .find_map(|terrain| {
@@ -360,7 +360,6 @@ impl WaterPass {
                 });
                 Some(Live {
                     window,
-                    ahead: terrain.water_ahead.as_ref(),
                     touches: &terrain.water_touches[..],
                     beyond: terrain.water_touches_beyond,
                     ground,
@@ -733,7 +732,7 @@ impl WaterPass {
         }
         self.particles
             .ensure_pipelines(device, shader, &self.layout);
-        self.sim.ensure_bed(device, shader);
+        self.sim.ensure_setup(device, shader);
     }
 
     /// The layout water's pipelines share, its first group `camera`'s, made
@@ -983,8 +982,9 @@ impl RenderFeature for WaterPass {
     /// refused, as last read back; tiles' water blocks resident and
     /// dropped; the cells along a side of the live square, those the
     /// budget of its cell steps and the device's bindings cut from it, the
-    /// steps it ran and those it fell behind the clock by, and the solids
-    /// pushing its water with those standing in it past the most that do;
+    /// steps it ran and those it fell behind the clock by, the blocks the
+    /// GPU set up whole this frame, and the solids pushing its water with
+    /// those standing in it past the most that do;
     /// the texels along a side of the particles' window, and the particles
     /// its pools hold, born and dropped, as last read back; and the sea's
     /// sectors drawn and their triangles.
@@ -999,7 +999,8 @@ impl RenderFeature for WaterPass {
             live_cut,
             live_steps,
             live_behind,
-        ] = frame.and(this).map_or([0; 5], |this| this.sim.cells());
+            live_setup,
+        ] = frame.and(this).map_or([0; 6], |this| this.sim.cells());
         let [touches, dropped_touches] = frame.and(this).map_or([0; 2], |this| this.sim.touches());
         let [leaves, refused] = frame.map_or([0; 2], |frame| frame.subdivided);
         let particles = frame
@@ -1016,6 +1017,7 @@ impl RenderFeature for WaterPass {
                 live_cut,
                 live_steps,
                 live_behind,
+                live_setup,
                 touches,
                 dropped_touches,
                 particle_texels: particles.texels,

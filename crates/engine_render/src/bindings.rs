@@ -616,7 +616,9 @@ tables! {
     /// under them, and where their materials' mesh band moves it their
     /// blend, normals and heights, which the subdivision's compute passes
     /// measure leaves by alike, with the error pyramids of every tile's
-    /// ground and water, which they alone read.
+    /// ground and water, which they alone read. The live water's setup
+    /// reads the ground and its materials through it, and the tiles' water
+    /// with its words.
     const TERRAIN: Table = Table {
         label: "engine/terrain-layout",
         serves: [SHADER @ 1, TERRAIN_SHADOW_SHADER @ 1],
@@ -658,8 +660,11 @@ tables! {
             // binds them, read through water's directory in the terrain
             // directory: the ground's fragment stages bind fifteen of the
             // sixteen sampled textures a stage may with it, and their lit
-            // ones the eight storage buffers.
-            texture(50, "water_surface", Unfilterable, D2Array, F),
+            // ones the eight storage buffers. The live water's setup reads
+            // them with their words (`meshes/water_setup.wgsl`), which no
+            // fragment stage binds.
+            texture(50, "water_surface", Unfilterable, D2Array, FC),
+            texture(51, "water_info", Uint, D2Array, C),
             // Each tile's error pyramids, its ground's and its water's
             // surface's, a layer each beside its heights' (`atlas.rs`).
             texture(62, "terrain_errors", Unfilterable, D2Array, C),
@@ -1004,22 +1009,25 @@ tables! {
         ],
     };
 
-    /// Group 2 of the live water's bed (`meshes/water_bed.wgsl`), after an
-    /// empty first group and the terrain group (`TERRAIN`), through which
-    /// it reads the ground's materials as their mesh band does: the blocks
-    /// whose bed a frame raises and the meters across their cells, each
-    /// one's slot, first corner and datum, the live water's ground it raises
-    /// (the simulation's `sim_ground`) and the ground each slot's block was
-    /// taken with, which it rises from: five of a compute stage's 8 storage
-    /// buffers with the terrain group's two.
-    const WATER_BED: Table = Table {
-        label: "engine/water-bed-layout",
+    /// Group 2 of the live water's setup (`meshes/water_setup.wgsl`),
+    /// after an empty first group and the terrain group (`TERRAIN`),
+    /// through which it reads the ground, its materials as their mesh band
+    /// does and the tiles' water as water's shading does: what a frame sets
+    /// up, the solids standing in the settled water and the blocks it sets
+    /// up, and what it writes of the simulation's buffers, the live water's
+    /// ground, its cells' start, their looks and its inputs, where its ring
+    /// stands: seven of a compute stage's 8 storage buffers with the terrain
+    /// group's two, and eight of its 16 sampled textures.
+    const WATER_SETUP: Table = Table {
+        label: "engine/water-setup-layout",
         serves: [SHADER @ 2],
         bindings: &[
-            uniform_of(41, "bed_frame", size_of::<water::SimBed>(), C),
-            read(42, "bed_taken", C),
-            write(43, "bed_ground", C),
-            read(44, "bed_kept", C),
+            uniform_of(41, "setup_frame", size_of::<water::SimSetup>(), C),
+            read(42, "setup_list", C),
+            write(43, "setup_ground", C),
+            write(44, "setup_cells", C),
+            write(45, "setup_looks", C),
+            write(46, "setup_ring", C),
         ],
     };
 
