@@ -18,7 +18,7 @@ async function present(gpu) {
   let rendering, previous, stable = 0;
   for (let frame = 1; frame <= 8 || stable < 5; frame++) {
     assert.ok(frame <= 600, `read-back counts settle: ${JSON.stringify(rendering)}`);
-    rendering = (await command("present", { alpha: 0, gpu })).result.rendering;
+    rendering = (await command("present", { alpha: 0 })).result.rendering;
     const counts = JSON.stringify([rendering.occlusion_culling.instances, rendering.level_of_detail.lod0_instances,
       rendering.level_of_detail.lod1_instances, rendering.level_of_detail.lod2_instances, rendering.level_of_detail.impostor_instances]);
     const current = !gpu || (rendering.occlusion_culling.instances != null && rendering.read_back_age < frame);
@@ -31,11 +31,11 @@ async function present(gpu) {
 
 async function capture(name, gpu) {
   for (let frame = 0; frame < 600; frame++) {
-    if (!(await command("present", { alpha: 0, gpu })).result.rendering.pipelines_compiling) break;
+    if (!(await command("present", { alpha: 0 })).result.rendering.pipelines_compiling) break;
     await delay(50);
   }
   const rendering = await present(gpu);
-  await command("capture", { alpha: 0, gpu });
+  await command("capture", { alpha: 0 });
   const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
   return { rendering, png: bytes.toString("base64") };
 }

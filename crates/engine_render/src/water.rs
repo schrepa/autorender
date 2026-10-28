@@ -2,14 +2,10 @@ use engine_core::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use bytemuck::Zeroable;
-use engine_core::glam::{Mat4, Vec3};
+use engine_core::glam::Vec3;
 use engine_core::math::max;
 use engine_core::terrain_data::Fall;
-use engine_core::{
-    Environment, MAX_OCEAN_WAVES, Ocean, OceanStats, RenderSnapshot, RenderTerrain, Water,
-    WaterStats, Wind,
-};
+use engine_core::{RenderSnapshot, RenderTerrain, Water, WaterStats, Wind};
 
 use crate::bindings::{WATER, WATER_BEHIND};
 use crate::gpu_layouts::terrain::{SubdivisionUniform, TerrainUniform, ViewUniform};
@@ -23,33 +19,15 @@ use crate::water_falls::{fall_layout, sheets};
 use crate::water_particles::{ParticleStats, ParticleView, WaterParticles, particle_terrain};
 use crate::water_sim::{Live, LiveGround, WaterSim};
 
-const OCEAN_SEGMENTS: u32 = 192;
-const OCEAN_SECTORS: u32 = 16;
-const OCEAN_FIRST_RINGS: u32 = 31;
-const OCEAN_CELL: f32 = 0.3;
-const OCEAN_CELL_PER_HEIGHT: f32 = 0.004;
-
 use crate::gpu_layouts::water::{FallVertex, WaterUniform};
 
 pub(crate) const WATER_UNIFORM_BYTES: usize = size_of::<WaterUniform>();
 
 struct Placeholders {
-    surfaces: wgpu::Texture,
-    info: wgpu::Texture,
-    views: wgpu::Buffer,
-    terrains: wgpu::Buffer,
     scene: wgpu::TextureView,
     live: wgpu::Buffer,
     storage: wgpu::Buffer,
-    tree: wgpu::Buffer,
     particles: wgpu::Buffer,
-}
-
-struct OceanDraw {
-    uniform: wgpu::Buffer,
-    group: wgpu::BindGroup,
-    rings: u32,
-    runs: Vec<Range<u32>>,
 }
 
 struct TileDraws {
@@ -76,8 +54,6 @@ const FOAM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 pub(crate) struct WaterFrame {
     blocks: [u32; 2],
     subdivided: [u32; 2],
-    sectors: u32,
-    triangles: u32,
 }
 
 pub(crate) struct WaterPass {
@@ -93,8 +69,6 @@ pub(crate) struct WaterPass {
     pipeline_layout: Option<wgpu::PipelineLayout>,
     pipelines: HashMap<Targets, wgpu::RenderPipeline>,
     foam_pipeline: Option<wgpu::RenderPipeline>,
-    ocean_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
-    ocean: Option<OceanDraw>,
     falls: Option<FallDraws>,
     fall_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
     fall_vertices: Vec<FallVertex>,
@@ -118,8 +92,6 @@ impl WaterPass {
             pipeline_layout: None,
             pipelines: HashMap::default(),
             foam_pipeline: None,
-            ocean_pipelines: HashMap::default(),
-            ocean: None,
             falls: None,
             fall_pipelines: HashMap::default(),
             fall_vertices: Vec::new(),
@@ -133,7 +105,6 @@ impl WaterPass {
         if self.shading != shading {
             self.shading = shading;
             self.pipelines.clear();
-            self.ocean_pipelines.clear();
             self.fall_pipelines.clear();
         }
         if self.water_views != water_views {
@@ -192,14 +163,6 @@ impl WaterPass {
         });
     }
 
-    fn ocean_drawn(&self) -> (u32, u32) {
-        self.ocean.as_ref().map_or((0, 0), |ocean| {
-            let sectors: u32 = ocean.runs.iter().map(|run| run.len() as u32).sum();
-            let per_sector = OCEAN_SEGMENTS / OCEAN_SECTORS;
-            (sectors, sectors * ocean.rings * per_sector * 2)
-        })
-    }
-
     fn copy_behind(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -229,42 +192,35 @@ impl WaterPass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (tiles, terrains): (Option<TerrainWaterDraws<'_>>, &[RenderTerrain]),
-        (settings, ocean): (Water, Ocean),
-        (eye, seen, wind, seconds): (Vec3, ParticleView, Wind, f64),
-        (cull, view, depth, refracts): (Mat4, Mat4, &wgpu::Texture, bool),
+        settings: Water,
+        (seen, wind, seconds): (ParticleView, Wind, f64),
+        (depth, refracts): (&wgpu::Texture, bool),
     ) -> Option<WaterFrame> {
         self.tiles = None;
         let blocks = tiles.as_ref().map_or([0; 2], |tiles| tiles.blocks);
         let subdivided = tiles.as_ref().map_or([0; 2], |tiles| tiles.subdivided);
         let tiles = tiles.filter(|tiles| settings.enabled && !tiles.terrains.is_empty());
         self.prepare_falls(device, if settings.enabled { terrains } else { &[] });
-        if tiles.is_none() && !ocean.enabled {
-            self.ocean = None;
-            return None;
-        }
-        let live = terrains
-            .iter()
-            .find_map(|terrain| {
-                let window = terrain.water_window.as_ref()?;
-                let ground = tiles.as_ref().and_then(|tiles| {
-                    let (layout, group) = tiles.ground?;
-                    let drawn = tiles.terrains.iter().find(|drawn| drawn.0 == terrain.id)?;
-                    Some(LiveGround {
-                        layout,
-                        group,
-                        uniform: drawn.1,
-                        terrain: terrain.id,
-                        held: tiles.held,
-                    })
-                });
-                Some(Live {
-                    window,
-                    touches: &terrain.water_touches[..],
-                    beyond: terrain.water_touches_beyond,
-                    ground,
+        let tiles = tiles?;
+        let live = terrains.iter().find_map(|terrain| {
+            let window = terrain.water_window.as_ref()?;
+            let ground = tiles.ground.and_then(|(layout, group)| {
+                let drawn = tiles.terrains.iter().find(|drawn| drawn.0 == terrain.id)?;
+                Some(LiveGround {
+                    layout,
+                    group,
+                    uniform: drawn.1,
+                    terrain: terrain.id,
+                    held: tiles.held,
                 })
+            });
+            Some(Live {
+                window,
+                touches: &terrain.water_touches[..],
+                beyond: terrain.water_touches_beyond,
+                ground,
             })
-            .filter(|_| settings.enabled);
+        });
         self.sim.prepare(device, queue, live, seconds);
         let (running, sim_generation) = self.sim.drawn();
         let running = running.map(|drawn| {
@@ -287,9 +243,7 @@ impl WaterPass {
                 [window.pixels, 0.0, 0.0, 0.0],
             )
         });
-        let carried = tiles
-            .as_ref()
-            .and_then(|tiles| particle_terrain(tiles, terrains, seen.detail));
+        let carried = particle_terrain(&tiles, terrains, seen.detail);
         let ridden = running.map_or(settings.simulation_cell, |(square, _, _)| square[2]);
         self.particles.prepare(
             (device, queue),
@@ -297,33 +251,20 @@ impl WaterPass {
             seen,
             (&settings, ridden, wind.velocity, seconds),
         );
-        if let Some(tiles) = tiles {
-            self.prepare_tiles(device, &tiles, sim_generation);
-            let sea = if ocean.enabled {
-                [ocean.level - eye.y, 1.0, 0.0, 0.0]
-            } else {
-                [0.0; 4]
-            };
-            let [red, green, blue] = settings.color;
-            let sediment = settings.sediment_color;
-            let uniform = WaterUniform {
-                color: [red, green, blue, settings.clarity],
-                absorption: absorption(settings.color, settings.clarity),
-                ocean: sea,
-                foam: self.particles.shading(),
-                sim: running.map_or([0.0; 4], |(square, _, _)| square),
-                sim_datum: running.map_or([0.0; 4], |(_, datum, _)| datum),
-                sim_pixels: running.map_or([0.0; 4], |(_, _, pixels)| pixels),
-                sediment: [sediment[0], sediment[1], sediment[2], settings.sediment],
-                lift: [tiles.targets[0], tiles.targets[1], 0.0, 0.0],
-                ..WaterUniform::zeroed()
-            };
-            queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
-        }
-        let sea = self.prepare_ocean(device, queue, (cull, view), ocean, (eye, seconds));
-        if self.tiles.is_none() && !sea {
-            return None;
-        }
+        self.prepare_tiles(device, &tiles, sim_generation);
+        let [red, green, blue] = settings.color;
+        let sediment = settings.sediment_color;
+        let uniform = WaterUniform {
+            color: [red, green, blue, settings.clarity],
+            absorption: absorption(settings.color, settings.clarity),
+            foam: self.particles.shading(),
+            sim: running.map_or([0.0; 4], |(square, _, _)| square),
+            sim_datum: running.map_or([0.0; 4], |(_, datum, _)| datum),
+            sim_pixels: running.map_or([0.0; 4], |(_, _, pixels)| pixels),
+            sediment: [sediment[0], sediment[1], sediment[2], settings.sediment],
+            lift: [tiles.targets[0], tiles.targets[1], 0.0, 0.0],
+        };
+        queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         let size = FrameSize {
             width: depth.width(),
             height: depth.height(),
@@ -339,13 +280,7 @@ impl WaterPass {
             let copies = self.behind_copies(device, size, depth.format(), refracts);
             self.behind.set(size, copies);
         }
-        let (sectors, triangles) = self.ocean_drawn();
-        Some(WaterFrame {
-            blocks,
-            subdivided,
-            sectors,
-            triangles,
-        })
+        Some(WaterFrame { blocks, subdivided })
     }
 
     fn prepare_tiles(
@@ -512,106 +447,6 @@ impl WaterPass {
         )
     }
 
-    fn prepare_ocean(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        (cull, view): (Mat4, Mat4),
-        ocean: Ocean,
-        (eye, seconds): (Vec3, f64),
-    ) -> bool {
-        if !ocean.enabled {
-            self.ocean = None;
-            return false;
-        }
-        let draw = self
-            .ocean
-            .get_or_insert_with(|| ocean_draw(device, &self.layout, &self.placeholders));
-        let waves = ocean.spectrum();
-        let amplitude = waves.amplitude();
-        let above = max(eye.y - ocean.level, 0.0);
-        let cell = OCEAN_CELL + above * OCEAN_CELL_PER_HEIGHT;
-        let growth = 1.0 + std::f32::consts::TAU / OCEAN_SEGMENTS as f32;
-        let first = OCEAN_FIRST_RINGS as f32 * cell;
-        let widening = max((ocean.reach / first).ln() / growth.ln(), 0.0).ceil() as u32;
-        draw.rings = OCEAN_FIRST_RINGS + widening;
-        let planes = crate::terrain::planes(cull, false);
-        let (low, high) = (
-            ocean.level - eye.y - amplitude,
-            ocean.level - eye.y + amplitude,
-        );
-        draw.runs.clear();
-        for sector in 0..OCEAN_SECTORS {
-            let angle =
-                |step: f32| (sector as f32 + step) / OCEAN_SECTORS as f32 * std::f32::consts::TAU;
-            let (mut min, mut max) = (Vec3::new(0.0, low, 0.0), Vec3::new(0.0, high, 0.0));
-            for step in [0.0, 0.5, 1.0] {
-                let (sin, cos) = engine_core::math::sin_cos(angle(step));
-                let point = Vec3::new(cos, 0.0, sin) * (ocean.reach * 1.02);
-                min = min.min(point.with_y(low));
-                max = max.max(point.with_y(high));
-            }
-            if !crate::terrain::visible(&planes, min, max) {
-                continue;
-            }
-            match draw.runs.last_mut() {
-                Some(run) if run.end == sector => run.end = sector + 1,
-                _ => draw.runs.push(sector..sector + 1),
-            }
-        }
-        let phases = waves.phases(f64::from(eye.x), f64::from(eye.z), seconds);
-        let mut ocean_waves = [[0.0; 4]; MAX_OCEAN_WAVES];
-        let mut ocean_reach = [[0.0; 4]; MAX_OCEAN_WAVES / 4];
-        for (index, wave) in waves.waves().iter().enumerate() {
-            ocean_waves[index] = [
-                wave.vector[0],
-                wave.vector[1],
-                wave.amplitude,
-                phases[index],
-            ];
-            ocean_reach[index / 4][index % 4] = wave.reach;
-        }
-        let [red, green, blue] = ocean.color;
-        let speed = ocean.wind[0].hypot(ocean.wind[1]);
-        let share = 3.84e-6 * speed.powf(3.41);
-        let crests = 0.67 + 0.069 * (max(share, 1.0e-4) / 0.01).ln();
-        let swell = waves
-            .waves()
-            .iter()
-            .map(|wave| wave.amplitude * wave.amplitude)
-            .sum::<f32>()
-            .sqrt();
-        let heading = [ocean.wind[0] / speed, ocean.wind[1] / speed];
-        let uniform = WaterUniform {
-            relative_view_projection: view.to_cols_array_2d(),
-            origin: [heading[0], heading[1], speed, 0.0],
-            color: [red, green, blue, ocean.clarity],
-            foam: [crests, swell, 0.0, amplitude],
-            absorption: absorption(ocean.color, ocean.clarity),
-            ocean: [
-                ocean.level - eye.y,
-                cell,
-                OCEAN_SEGMENTS as f32,
-                OCEAN_FIRST_RINGS as f32,
-            ],
-            ocean_grid: [
-                growth,
-                ocean.reach,
-                (OCEAN_SEGMENTS / OCEAN_SECTORS) as f32,
-                waves.count as f32,
-            ],
-            ocean_waves,
-            ocean_reach,
-            sim: [0.0; 4],
-            sim_datum: [0.0; 4],
-            sediment: [0.0; 4],
-            lift: [0.0; 4],
-            sim_pixels: [0.0; 4],
-        };
-        queue.write_buffer(&draw.uniform, 0, bytemuck::bytes_of(&uniform));
-        !draw.runs.is_empty()
-    }
-
     pub(crate) fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -626,10 +461,6 @@ impl WaterPass {
         }
         if (coming || self.tiles.is_some()) && self.foam_pipeline.is_none() {
             self.foam_pipeline = Some(self.foam_pipeline(device, shader, camera));
-        }
-        if self.ocean.is_some() && !self.ocean_pipelines.contains_key(&targets) {
-            let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Sea);
-            self.ocean_pipelines.insert(targets, pipeline);
         }
         if self.falls.is_some() && !self.fall_pipelines.contains_key(&targets) {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Falls);
@@ -712,7 +543,6 @@ impl WaterPass {
         let layout = self.pipeline_layout(device, camera);
         let (vertex, fragment) = match surface {
             Surface::Tiles => crate::entries::water(targets),
-            Surface::Sea => crate::entries::ocean(targets),
             Surface::Falls => crate::entries::falls(targets),
         };
         let blended = wgpu::BlendState {
@@ -745,7 +575,6 @@ impl WaterPass {
             &crate::pipelines::Geometry {
                 label: match surface {
                     Surface::Tiles => "engine/water",
-                    Surface::Sea => "engine/ocean",
                     Surface::Falls => "engine/water-falls",
                 },
                 layout: &layout,
@@ -753,7 +582,7 @@ impl WaterPass {
                 vertex_constants: &[],
                 vertex,
                 buffers: match surface {
-                    Surface::Tiles | Surface::Sea => &[],
+                    Surface::Tiles => &[],
                     Surface::Falls => &sheets,
                 },
                 primitive: wgpu::PrimitiveState {
@@ -787,17 +616,6 @@ impl WaterPass {
             return 0;
         };
         let mut draws = 0;
-        if let (Some(ocean), Some(pipeline)) = (&self.ocean, self.ocean_pipelines.get(&targets)) {
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, &ocean.group, &[0, 0, 0]);
-            pass.set_bind_group(2, &behind.group, &[]);
-            let vertices = ocean.rings * (OCEAN_SEGMENTS / OCEAN_SECTORS) * 6;
-            for run in &ocean.runs {
-                pass.draw(0..vertices, run.clone());
-                draws += 1;
-            }
-        }
         let Some((_, group)) = &self.group else {
             return draws;
         };
@@ -839,7 +657,7 @@ impl WaterPass {
 
 impl RenderFeature for WaterPass {
     type Frame = WaterFrame;
-    type Stats = (WaterStats, OceanStats);
+    type Stats = WaterStats;
 
     fn declare(_frame: &WaterFrame, shape: &FrameShape, graph: &mut RenderGraph) {
         let mut water = graph
@@ -904,7 +722,7 @@ impl RenderFeature for WaterPass {
         this: Option<&Self>,
         frame: Option<&WaterFrame>,
         _snapshot: &RenderSnapshot,
-    ) -> (WaterStats, OceanStats) {
+    ) -> WaterStats {
         let [
             live_cells,
             live_budget_cut,
@@ -919,35 +737,29 @@ impl RenderFeature for WaterPass {
         let particles = frame
             .and(this)
             .map_or_else(ParticleStats::default, |this| this.particles.stats());
-        (
-            WaterStats {
-                leaves,
-                refused,
-                blocks: frame.map_or(0, |frame| frame.blocks[0]),
-                dropped_blocks: frame.map_or(0, |frame| frame.blocks[1]),
-                live_cells,
-                live_budget_cut,
-                live_cut,
-                live_steps,
-                live_behind,
-                live_setup,
-                live_waiting,
-                touches,
-                dropped_touches,
-                particle_texels: particles.texels,
-                foam_points: particles.points,
-                foam_points_cut: particles.cut,
-                foam_reach: particles.reach,
-                foam_particles: particles.foam,
-                wave_particles: particles.waves,
-                particles_born: particles.born,
-                dropped_particles: particles.dropped,
-            },
-            OceanStats {
-                sectors: frame.map_or(0, |frame| frame.sectors),
-                triangles: frame.map_or(0, |frame| frame.triangles),
-            },
-        )
+        WaterStats {
+            leaves,
+            refused,
+            blocks: frame.map_or(0, |frame| frame.blocks[0]),
+            dropped_blocks: frame.map_or(0, |frame| frame.blocks[1]),
+            live_cells,
+            live_budget_cut,
+            live_cut,
+            live_steps,
+            live_behind,
+            live_setup,
+            live_waiting,
+            touches,
+            dropped_touches,
+            particle_texels: particles.texels,
+            foam_points: particles.points,
+            foam_points_cut: particles.cut,
+            foam_reach: particles.reach,
+            foam_particles: particles.foam,
+            wave_particles: particles.waves,
+            particles_born: particles.born,
+            dropped_particles: particles.dropped,
+        }
     }
 }
 
@@ -956,7 +768,6 @@ type GroupGenerations = ([u64; 6], u64);
 #[derive(Clone, Copy)]
 enum Surface {
     Tiles,
-    Sea,
     Falls,
 }
 
@@ -966,27 +777,6 @@ fn sized(buffer: &wgpu::Buffer, bytes: usize) -> wgpu::BindingResource<'_> {
         offset: 0,
         size: wgpu::BufferSize::new(bytes as u64),
     })
-}
-
-pub(crate) fn underwater(environment: &Environment, eye: Vec3, seconds: f64) -> [f32; 4] {
-    let ocean = environment.ocean;
-    if !ocean.enabled {
-        return [0.0; 4];
-    }
-    let waves = ocean.spectrum();
-    if eye.y > ocean.level + waves.amplitude() {
-        return [0.0; 4];
-    }
-    let surface = waves.surface(f64::from(eye.x), f64::from(eye.z), seconds);
-    let depth = surface.height - eye.y;
-    if depth <= 0.0 {
-        return [0.0; 4];
-    }
-    let atmosphere = &environment.atmosphere;
-    let light = atmosphere.sun_color * max(atmosphere.sun_direction.normalize_or(Vec3::Y).y, 0.0)
-        + atmosphere.zenith * atmosphere.ambient;
-    let color = Vec3::from_array(ocean.color) * light * 3.0 * (-depth / ocean.clarity).exp2();
-    [color.x, color.y, color.z, ocean.clarity]
 }
 
 fn absorption(color: [f32; 3], clarity: f32) -> [f32; 4] {
@@ -1024,21 +814,6 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
     );
     Placeholders {
         scene: scene.create_view(&wgpu::TextureViewDescriptor::default()),
-        surfaces: array("engine/water-placeholder", wgpu::TextureFormat::R32Float),
-        info: array(
-            "engine/water-placeholder-info",
-            wgpu::TextureFormat::Rgba32Uint,
-        ),
-        views: crate::buffers::uniform(
-            device,
-            "engine/water-placeholder-view",
-            size_of::<ViewUniform>() as u64,
-        ),
-        terrains: crate::buffers::uniform(
-            device,
-            "engine/water-placeholder-terrain",
-            size_of::<TerrainUniform>() as u64,
-        ),
         live: crate::buffers::storage(
             device,
             "engine/water-placeholder-live",
@@ -1051,63 +826,10 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
             256,
             wgpu::BufferUsages::empty(),
         ),
-        tree: crate::buffers::uniform(
-            device,
-            "engine/water-placeholder-tree",
-            size_of::<SubdivisionUniform>() as u64,
-        ),
         particles: crate::buffers::uniform(
             device,
             "engine/water-placeholder-particles",
             size_of::<crate::gpu_layouts::water::ParticleFrame>() as u64,
         ),
-    }
-}
-
-fn ocean_draw(
-    device: &wgpu::Device,
-    layout: &crate::pipelines::GroupLayout,
-    placeholders: &Placeholders,
-) -> OceanDraw {
-    let array = |texture: &wgpu::Texture| {
-        texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        })
-    };
-    let (surfaces, info) = (array(&placeholders.surfaces), array(&placeholders.info));
-    let uniform = crate::buffers::uniform(device, "engine/ocean", WATER_UNIFORM_BYTES as u64);
-    let group = crate::pipelines::group(
-        device,
-        "engine/ocean-group",
-        &WATER,
-        layout,
-        &[
-            ("terrain_heights", crate::pipelines::view(&surfaces)),
-            (
-                "terrain_view",
-                sized(&placeholders.views, size_of::<ViewUniform>()),
-            ),
-            (
-                "terrain",
-                sized(&placeholders.terrains, size_of::<TerrainUniform>()),
-            ),
-            crate::buffers::entry("terrain_directory", &placeholders.storage),
-            crate::buffers::entry("terrain_surface_leaves", &placeholders.storage),
-            ("water_surface", crate::pipelines::view(&surfaces)),
-            ("water_info", crate::pipelines::view(&info)),
-            ("water", uniform.as_entire_binding()),
-            crate::buffers::entry("water_live", &placeholders.live),
-            (
-                "water_tree",
-                sized(&placeholders.tree, size_of::<SubdivisionUniform>()),
-            ),
-        ],
-    );
-    OceanDraw {
-        uniform,
-        group,
-        rings: 0,
-        runs: Vec::new(),
     }
 }

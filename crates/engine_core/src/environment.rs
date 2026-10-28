@@ -45,8 +45,6 @@ macro_rules! environment_sections {
             foliage: Foliage { opt_in: false, feature: Core },
             occupancy: Occupancy { opt_in: false, feature: Terrain },
             water: Water { opt_in: false, feature: Terrain },
-            ocean: Ocean { opt_in: false, feature: Ocean },
-            deformation: Deformation { opt_in: false, feature: Deformation },
             clouds: Clouds { opt_in: true, feature: Core },
             world_streaming: WorldStreaming { opt_in: false, feature: WorldStreaming },
             sky: Sky { opt_in: true, feature: Core },

@@ -292,15 +292,6 @@ impl InterpolationState {
             && self.gpu.info.len() == hierarchy.links().len()
     }
 
-    pub(super) fn gathered_current(&self, hierarchy: &HierarchyScratch) -> bool {
-        self.gpu.gathered
-            == Some((
-                hierarchy.topology_revision(),
-                hierarchy.revision(),
-                self.revision,
-            ))
-    }
-
     pub(super) fn gather_gpu(&mut self, hierarchy: &mut HierarchyScratch, alpha: f32) {
         self.gpu.alpha = alpha;
         self.gpu.hold = false;

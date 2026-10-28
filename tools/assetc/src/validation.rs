@@ -50,10 +50,9 @@ fn number(bytes: &[u8], offset: usize) -> Option<u32> {
     ))
 }
 
-pub(crate) const SUPPORTED_EXTENSIONS: [&str; 6] = [
+pub(crate) const SUPPORTED_EXTENSIONS: [&str; 5] = [
     "KHR_texture_transform",
     "KHR_materials_emissive_strength",
-    "KHR_texture_basisu",
     "KHR_materials_transmission",
     "KHR_materials_ior",
     "KHR_materials_volume",

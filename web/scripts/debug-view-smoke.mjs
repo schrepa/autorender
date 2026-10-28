@@ -17,13 +17,13 @@ const command = commander(page);
 
 async function settle() {
   for (let frame = 0; frame < 600; frame++) {
-    if (!(await command("present", { alpha: 0, gpu: true })).result.rendering.pipelines_compiling) break;
+    if (!(await command("present", { alpha: 0 })).result.rendering.pipelines_compiling) break;
     await delay(50);
   }
   let rendering, previous, stable = 0;
   for (let frame = 1; frame <= 8 || stable < 5; frame++) {
     assert.ok(frame <= 600, `read-back counts settle: ${JSON.stringify(rendering)}`);
-    rendering = (await command("present", { alpha: 0, gpu: true })).result.rendering;
+    rendering = (await command("present", { alpha: 0 })).result.rendering;
     const counts = JSON.stringify([rendering.level_of_detail.lod0_instances, rendering.level_of_detail.lod1_instances,
       rendering.level_of_detail.lod2_instances, rendering.level_of_detail.impostor_instances]);
     const current = rendering.read_back_age != null && rendering.read_back_age < frame;
@@ -36,7 +36,7 @@ async function settle() {
 
 async function capture(name) {
   await settle();
-  const reply = await command("capture", { alpha: 0, gpu: true });
+  const reply = await command("capture", { alpha: 0 });
   const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
   return { rendering: reply.result.rendering, png: bytes.toString("base64") };
 }
@@ -62,7 +62,7 @@ const terrainViews = ["levels", "tiles", "materials", "sky", "detail"];
 const waterViews = ["water_depth", "water_speed", "water_froude", "water_turbulence", "water_white", "water_reach",
   "water_span", "water_eddies", "water_roughness"];
 const report = {};
-const kinds = ["mesh", "placed", "card", "placed_card", "virtual", "terrain", "cover", "water", "sea", "falls", "sky"];
+const kinds = ["mesh", "placed", "card", "placed_card", "virtual", "terrain", "cover", "water", "falls", "sky"];
 const slotted = ["mesh", "card", "virtual"];
 
 try {
@@ -111,7 +111,7 @@ try {
   const probes = [];
   for (const fraction of [0.3, 0.4, 0.5, 0.6, 0.7]) {
     const point = { x: Math.floor(width * fraction), y: Math.floor(height * 0.55) };
-    const probed = (await command("probe", { ...point, alpha: 0, gpu: true })).result;
+    const probed = (await command("probe", { ...point, alpha: 0 })).result;
     assert.deepEqual(probed.pixel, [point.x, point.y]);
     assert.ok(kinds.includes(probed.kind), JSON.stringify(probed));
     assert.equal(probed.shaded.length, 3, JSON.stringify(probed));
@@ -128,7 +128,7 @@ try {
     probes.push(probed);
   }
   assert.ok(probes.some(probed => slotted.includes(probed.kind)), `an entity drew one of the points: ${JSON.stringify(probes.map(probed => probed.kind))}`);
-  const sky = (await command("probe", { x: Math.floor(width / 2), y: 2, alpha: 0, gpu: true })).result;
+  const sky = (await command("probe", { x: Math.floor(width / 2), y: 2, alpha: 0 })).result;
   assert.ok(kinds.includes(sky.kind), JSON.stringify(sky));
   const outside = await command("probe", { x: width, y: 0 }, false);
   assert.equal(outside.error.code, "out_of_range");

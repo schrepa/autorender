@@ -84,9 +84,6 @@ macro_rules! settings {
 }
 
 settings! {
-    presentation: bool = "presentation",
-        "how ordinary frames are presented: blended, composed and culled on the GPU, or exactly on the CPU",
-        ["gpu" => Some(true), "cpu" => Some(false)] => set_gpu_presentation;
     pipeline: bool = "pipeline",
         "fixed ticks split across the frames around their due time, on GPU-presented frames",
         ["on" => Some(true), "off" => Some(false)] => set_tick_pipelining;

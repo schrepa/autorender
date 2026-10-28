@@ -24,11 +24,6 @@ impl Renderer {
             Pass::ShadowSelect => self.encode_shadow_selection(state, encoder),
             Pass::VirtualSelect => self.encode_cluster_selection(encoder),
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
-            Pass::Deformation => {
-                self.terrain
-                    .deformation
-                    .encode(&self.device, &self.queue, encoder, &self.profiler)
-            }
             Pass::Bounce => self.terrain.encode_bounce(
                 &self.device,
                 encoder,
@@ -144,7 +139,6 @@ impl Renderer {
             | Resource::Probes
             | Resource::CloudView
             | Resource::CloudDome
-            | Resource::Tracks
             | Resource::Bounce
             | Resource::Leaves
             | Resource::Cover => {

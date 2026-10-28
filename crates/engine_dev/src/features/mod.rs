@@ -11,9 +11,7 @@ macro_rules! dev_features {
         $then! {
             animation,
             collision,
-            deformation,
             navigation,
-            ocean,
             physics,
             terrain,
             world_streaming,
@@ -106,9 +104,7 @@ macro_rules! files {
 
 pub mod animation;
 pub mod collision;
-pub mod deformation;
 pub mod navigation;
-pub mod ocean;
 pub mod physics;
 pub mod terrain;
 pub mod world_streaming;

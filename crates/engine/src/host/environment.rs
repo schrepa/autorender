@@ -8,7 +8,6 @@ pub const KNOWN_DIFFERENCES: &[&str] = &[
     "codegen",
     "timer_resolution",
     "device_limits",
-    "basis_transcoding",
 ];
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]

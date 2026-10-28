@@ -37,7 +37,6 @@ const DEBUG_KIND_VIRTUAL: u32 = 5u;
 const DEBUG_KIND_TERRAIN: u32 = 6u;
 const DEBUG_KIND_COVER: u32 = 7u;
 const DEBUG_KIND_WATER: u32 = 8u;
-const DEBUG_KIND_SEA: u32 = 9u;
 const DEBUG_KIND_FALLS: u32 = 10u;
 const DEBUG_KIND_SKY: u32 = 11u;
 const DEBUG_LEVEL_SHIFT: u32 = 4u;
@@ -142,9 +141,6 @@ fn debug_kind_color(kind: u32) -> vec3<f32> {
         }
         case DEBUG_KIND_WATER: {
             return vec3<f32>(0.2, 0.45, 0.95);
-        }
-        case DEBUG_KIND_SEA: {
-            return vec3<f32>(0.1, 0.28, 0.75);
         }
         case DEBUG_KIND_FALLS: {
             return vec3<f32>(0.55, 0.75, 1.0);

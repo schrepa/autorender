@@ -37,7 +37,6 @@ pub(super) struct Layout<'a> {
     pub(super) surface: &'a SurfaceTrees,
     pub(super) sky: &'a SkyMaps,
     pub(super) macro_maps: &'a MacroMaps,
-    pub(super) shading: crate::deformation::DeformationShading,
 }
 
 impl PatchDraws {
@@ -606,8 +605,6 @@ fn terrain_uniform(
             parts.sky.layer(index),
         ],
         relief: [deepest, views.settings.relief_steps as f32, finest, 0.0],
-        deform_grid: parts.shading.grid,
-        deform: parts.shading.scale,
         cover,
         pixel_error: [views.settings.pixel_error, 0.0, 0.0, 0.0],
         macro_map: [parts.macro_maps.layer(index), 0, 0, 0],

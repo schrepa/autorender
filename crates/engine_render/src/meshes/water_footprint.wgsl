@@ -28,14 +28,6 @@ fn water_footprint(dx: vec2<f32>, dy: vec2<f32>) -> WaterFootprint {
     return footprint;
 }
 
-fn water_footprint_toward(footprint: WaterFootprint, way: vec2<f32>) -> f32 {
-    return length(vec2<f32>(dot(footprint.dx, way), dot(footprint.dy, way)));
-}
-
-fn water_shown(meters: f32, span: f32) -> f32 {
-    return saturate(meters / max(span, 1.0e-9) - 1.0);
-}
-
 fn water_turning(slopes: vec2<f32>) -> vec3<f32> {
     let turning = 2.0 * SPECULAR_VARIANCE
         * (water_spread(dpdx(slopes)) + water_spread(dpdy(slopes)));

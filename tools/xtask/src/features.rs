@@ -11,10 +11,8 @@ fn own_crate(feature: Feature) -> Option<&'static str> {
         Feature::Terrain
         | Feature::WorldStreaming
         | Feature::Navigation
-        | Feature::Ocean
         | Feature::Animation
-        | Feature::TimeOfDay
-        | Feature::Deformation => None,
+        | Feature::TimeOfDay => None,
     }
 }
 

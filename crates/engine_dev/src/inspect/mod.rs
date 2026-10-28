@@ -12,7 +12,7 @@ use engine_core::{
     ActionId, ActionInput, AssetLibrary, Atmosphere, Camera, Decal, Engine, Feature, FixedTime,
     FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle,
     Mesh3d, MeshHandle, Parent, ParticleEmitter, PresentationMode, PresentationState,
-    PresentedTransforms, ReflectionProbe, TextureHandle, Tint, Transform,
+    ReflectionProbe, TextureHandle, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
@@ -35,8 +35,7 @@ use crate::{
     views::{
         CameraView, DecalView, GlobalTransformView, HierarchyView, InputView,
         InterpolateTransformView, LodLevelView, Mesh3dView, MeshBoundsView, MeshRenderView,
-        MeshView, PresentationModeView, PresentationStateView, PresentedTransformView,
-        SplineMeshView, TextureView, TransformView, VirtualMeshView,
+        MeshView, PresentationModeView, PresentationStateView, SplineMeshView, TextureView, TransformView, VirtualMeshView,
     },
 };
 
@@ -399,7 +398,6 @@ impl DevTools {
             }
         }
         if matches!(query, ToolsQuery::Inspect { .. } | ToolsQuery::Digest) {
-            engine.prepare_presented_transforms();
             engine.refresh_transforms();
         }
         let engine = &*engine;

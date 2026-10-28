@@ -1,5 +1,4 @@
 import { jobPool } from "./jobs.ts";
-import { basisBase, targetFormat, transcodeKtx2 } from "./ktx2.ts";
 
 export async function loadSceneSource(url: string, signal: AbortSignal): Promise<string> {
   const response = await fetch(url, { cache: "no-store", signal });
@@ -35,10 +34,9 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
 
 interface SceneLoad<Files> {
   take_reads(): { uri: string; prefix?: number }[];
-  read(uri: string, bytes: Uint8Array, url: string): string | undefined;
+  read(uri: string, bytes: Uint8Array, url: string): boolean;
   image(uri: string, width: number, height: number, pixels: Uint8Array): void;
   decode(uri: string, bytes: Uint8Array): void;
-  compressed_image(uri: string, format: string, width: number, height: number, data: Uint8Array, levels: Uint32Array): void;
   finish(): Files;
   free(): void;
 }
@@ -54,16 +52,10 @@ export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bi
   const file = async ({ uri, prefix }: { uri: string; prefix?: number }) => {
     const url = new URL(uri, base).href;
     const bytes = await fetchBytes(url, prefix, signal);
-    const decoder = load.read(uri, bytes, url);
-    if (decoder === "engine") {
+    if (load.read(uri, bytes, url)) {
       const image = pool && await pool.decodeImage(uri, bytes.slice()).catch(() => undefined);
       if (image) load.image(uri, image.width, image.height, image.pixels);
       else load.decode(uri, bytes);
-    } else if (decoder === "transcoder") {
-      const image = (pool && await pool.transcodeKtx2(uri, bytes.slice(), await targetFormat(), basisBase()).catch(() => undefined))
-        || await transcodeKtx2(uri, bytes);
-      if (image.format === "rgba8") load.image(uri, image.width, image.height, image.pixels);
-      else load.compressed_image(uri, image.format, image.width, image.height, image.data, image.levels);
     }
   };
   try {

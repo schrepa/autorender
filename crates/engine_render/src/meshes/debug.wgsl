@@ -1,7 +1,6 @@
 const DEBUG_KIND_TERRAIN: u32 = 6u;
 const DEBUG_KIND_COVER: u32 = 7u;
 const DEBUG_KIND_WATER: u32 = 8u;
-const DEBUG_KIND_SEA: u32 = 9u;
 const DEBUG_KIND_FALLS: u32 = 10u;
 const DEBUG_KIND_SKY: u32 = 11u;
 const DEBUG_LEVEL_SHIFT: u32 = 4u;
@@ -242,16 +241,6 @@ fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets 
 fn fs_debug_water(input: WaterOutput) -> DebugTargets {
     let at = water_drawn(input.relative);
     return debug_water(water_on_surface(input.relative, at), input.clip_position.xy, at);
-}
-
-@fragment
-fn fs_debug_ocean(input: OceanOutput) -> DebugTargets {
-    let shade = shade_ocean(input, false);
-    if shade.coverage < 0.5 { // optics: the sea covers as its shading sees it
-        discard;
-    }
-    let point = debug_point(eye_world(input.relative), shade.shaded.normal);
-    return debug_targets(DEBUG_KIND_SEA, 0u, 0u, point);
 }
 
 @fragment

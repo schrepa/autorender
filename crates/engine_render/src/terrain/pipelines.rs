@@ -6,7 +6,7 @@ use super::*;
 use crate::scene_shading::SceneShading;
 use crate::shaders::entry::meshes;
 
-type GroupKey = (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64);
+type GroupKey = (u64, u64, u64, u64, u64, u64, u64, u64, u64);
 
 pub(super) struct GroupSources<'a> {
     pub(super) atlas: &'a TileAtlas,
@@ -16,7 +16,6 @@ pub(super) struct GroupSources<'a> {
     pub(super) maps: &'a TerrainMaps,
     pub(super) sky: &'a SkyMaps,
     pub(super) macro_maps: &'a MacroMaps,
-    pub(super) deformation: &'a crate::deformation::DeformationPass,
     pub(super) water: &'a WaterBlocks,
 }
 
@@ -72,12 +71,7 @@ impl TerrainPipelines {
         else {
             return;
         };
-        let (tables, maps, sky, deformation) = (
-            sources.tables,
-            sources.maps,
-            sources.sky,
-            sources.deformation,
-        );
+        let (tables, maps, sky) = (sources.tables, sources.maps, sources.sky);
         let leaves = sources.surface.leaves();
         let key = (
             sources.atlas.generation,
@@ -87,7 +81,6 @@ impl TerrainPipelines {
             maps.views_generation,
             sky.generation(),
             sources.macro_maps.generation(),
-            deformation.map().1,
             leaves.generation(),
             sources.water.generation,
         );
@@ -146,7 +139,6 @@ impl TerrainPipelines {
                             "terrain_macro",
                             crate::pipelines::view(sources.macro_maps.view()),
                         ),
-                        crate::buffers::entry("terrain_deformation", deformation.map().0),
                         (
                             "terrain_control_sampler",
                             crate::pipelines::sampler(&sources.atlas.control_sampler),

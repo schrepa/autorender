@@ -57,7 +57,7 @@ shared_groups! {
             terrain_heights, terrain_view, terrain, terrain_holes, terrain_normals,
             terrain_sky_sampler, terrain_directory, terrain_control, terrain_palette,
             terrain_albedo, terrain_material_data, terrain_material_sampler, terrain_sky,
-            terrain_deformation, terrain_control_sampler
+            terrain_control_sampler
         ],
         cover: 33..35 [cover_blades, cover_frame],
         macro_colors: 35..36 [terrain_macro],

@@ -73,7 +73,7 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let ray = far_point.xyz / far_point.w - post.eye.xyz;
     let ray_length = length(ray);
     let reach = min(ray_length, lighting.haze_march.x);
-    if lighting.underwater.w > 0.0 || !(reach > 0.0) {
+    if !(reach > 0.0) {
         return vec4<f32>(0.0, 0.0, 0.0, inverse);
     }
     let direction = ray / ray_length;

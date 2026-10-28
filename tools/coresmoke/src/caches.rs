@@ -5,8 +5,8 @@ use engine_core::bevy_ecs::prelude::*;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
     Cube, Engine, EngineConfig, FixedSimulation, GlobalTransforms, InterpolateTransform, Material,
-    MaterialHandle, Mesh, Mesh3d, MeshHandle, Parent, PresentationMode, PresentedTransforms,
-    RenderSnapshot, Tint, Transform, reset_interpolation, set_parent, set_parents,
+    MaterialHandle, Mesh, Mesh3d, MeshHandle, Parent, PresentedTransforms, RenderSnapshot, Tint,
+    Transform, reset_interpolation, set_parent, set_parents,
 };
 
 use crate::Report;
@@ -18,7 +18,6 @@ const TICKS: u64 = 200;
 const CHECK_EVERY: u64 = 4;
 const EDITS_BEFORE_TICK: usize = 24;
 const EDITS_AFTER_TICK: usize = 6;
-const FRACTIONS: [f32; 3] = [0.0, 0.37, 1.0];
 const ASPECT: f32 = 16.0 / 9.0;
 const SHOWN: usize = 8;
 
@@ -394,17 +393,15 @@ struct Frame {
     globals: HashMap<Entity, Option<[u32; 16]>>,
     presented: HashMap<Entity, Option<[u32; 16]>>,
     instances: Vec<String>,
-    counts: [usize; 4],
+    counts: [usize; 3],
 }
 
 fn bits(matrix: engine_core::glam::Mat4) -> [u32; 16] {
     matrix.to_cols_array().map(f32::to_bits)
 }
 
-fn frame(engine: &mut Engine, alpha: f32, snapshot: &mut RenderSnapshot) -> Result<Frame, String> {
-    engine
-        .extract_with_presentation(ASPECT, snapshot, PresentationMode::Interpolated { alpha })
-        .map_err(|error| format!("{error:?}"))?;
+fn frame(engine: &mut Engine, snapshot: &mut RenderSnapshot) -> Frame {
+    engine.extract(ASPECT, snapshot);
     let world = engine.app.world();
     let globals = world
         .resource::<GlobalTransforms>()
@@ -432,17 +429,16 @@ fn frame(engine: &mut Engine, alpha: f32, snapshot: &mut RenderSnapshot) -> Resu
         })
         .collect();
     instances.sort_unstable();
-    Ok(Frame {
+    Frame {
         globals,
         presented,
         instances,
         counts: [
             snapshot.instances.len(),
-            snapshot.culled_instances,
             snapshot.dropped_instances,
             snapshot.missing_assets,
         ],
-    })
+    }
 }
 
 fn readable(bits: &Option<[u32; 16]>) -> String {
@@ -452,12 +448,7 @@ fn readable(bits: &Option<[u32; 16]>) -> String {
     )
 }
 
-fn differences(
-    living: &Frame,
-    fresh: &Frame,
-    map: &HashMap<Entity, Entity>,
-    alpha: f32,
-) -> Vec<String> {
+fn differences(living: &Frame, fresh: &Frame, map: &HashMap<Entity, Entity>) -> Vec<String> {
     let mut found = Vec::new();
     for (what, living, fresh) in [
         ("world matrix", &living.globals, &fresh.globals),
@@ -465,7 +456,7 @@ fn differences(
     ] {
         if living.len() != fresh.len() {
             found.push(format!(
-                "{what}s at {alpha}: {} entities against a fresh engine's {}",
+                "{what}s: {} entities against a fresh engine's {}",
                 living.len(),
                 fresh.len()
             ));
@@ -475,7 +466,7 @@ fn differences(
             if other != Some(value) {
                 let other = other.map_or_else(|| "none".to_owned(), readable);
                 found.push(format!(
-                    "{what} of {entity:?} at {alpha}: {}, a fresh engine's {other}",
+                    "{what} of {entity:?}: {}, a fresh engine's {other}",
                     readable(value)
                 ));
             }
@@ -483,8 +474,7 @@ fn differences(
     }
     if living.counts != fresh.counts {
         found.push(format!(
-            "snapshot counts (instances, culled, dropped, missing) at {alpha}: {:?}, a fresh \
-             engine's {:?}",
+            "snapshot counts (instances, dropped, missing): {:?}, a fresh engine's {:?}",
             living.counts, fresh.counts
         ));
     }
@@ -495,7 +485,7 @@ fn differences(
             .zip(&fresh.instances)
             .find(|(a, b)| a != b);
         found.push(format!(
-            "snapshot instances at {alpha} differ, first {differ:?}"
+            "snapshot instances differ, first {differ:?}"
         ));
     }
     found
@@ -585,17 +575,13 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
             &format!("after tick {tick}"),
         );
         let Some((mut engine, _, map)) = fresh else {
-            let alpha = random.range(0.0, 1.0);
-            frame(&mut living, alpha, &mut snapshot)?;
+            frame(&mut living, &mut snapshot);
             continue;
         };
         checks += 1;
-        let mut found = Vec::new();
-        for alpha in FRACTIONS {
-            let living_frame = frame(&mut living, alpha, &mut snapshot)?;
-            let fresh_frame = frame(&mut engine, alpha, &mut fresh_snapshot)?;
-            found.extend(differences(&living_frame, &fresh_frame, &map, alpha));
-        }
+        let living_frame = frame(&mut living, &mut snapshot);
+        let fresh_frame = frame(&mut engine, &mut fresh_snapshot);
+        let found = differences(&living_frame, &fresh_frame, &map);
         if !found.is_empty() {
             mismatches += 1;
             let shown: Vec<_> = found.iter().take(SHOWN).cloned().collect();

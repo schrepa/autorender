@@ -12,7 +12,6 @@
         "bloom": {"intensity": 0.4},
         "haze": {"forward": 0.7, "reach": 200, "spread": 0.4, "size": 50},
         "decals": {},
-        "ocean": {"enabled": true},
         "clouds": {},
         "time_of_day": {}
       },
@@ -41,8 +40,6 @@
         {"id": "mark", "transform": {"translation": [0, 0.1, 0], "scale": [2, 1, 2]}, "decal": {"material": "stain", "opacity": 0.7}},
         {"id": "probe", "transform": {"translation": [0, 2, 0]}, "reflection_probe": {"extent": [6, 3, 6]}},
         {"id": "rail", "spline": {"points": [[0, 0, 0], [4, 0, 2], [8, 1, 0]], "mesh": "box", "material": "plain"}},
-        {"id": "buoy", "mesh": "box", "material": "plain", "floating": {}},
-        {"id": "roller", "deformer": {}},
         {"id": "walker", "nav_agent": {}, "grounded": {"offset": 0.5}},
         {"id": "lookout", "transform": {"translation": [30, 0, 30]}, "prefetch": {}},
         {"id": "lamp-1", "prefab": "lamp", "transform": {"translation": [4, 0, 4]}}
@@ -91,9 +88,8 @@
     {"rule": "invalid_streamed", "path": "$.streamed[0].terrain", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [], "streamed": [{"id": "s", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"noise": {"seed": 1, "height": 1, "wavelength": 10}}]}}]}},
     {"rule": "invalid_nav_agent", "path": "$.entities[1].nav_agent", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "nav_agent": {}}]}},
     {"rule": "invalid_grounded", "path": "$.entities[1].grounded", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "grounded": {}}]}},
-    {"rule": "invalid_floating", "path": "$.entities[1].floating", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "floating": {}}]}},
     {"rule": "invalid_rigid_body", "path": "$.entities[1].rigid_body", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "rigid_body": {}}]}},
-    {"rule": "missing_plugin", "path": "$.entities[0].floating", "stage": "instantiate", "world": "engine", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "floating": {}}]}},
+    {"rule": "missing_plugin", "path": "$.entities[0].prefetch", "stage": "instantiate", "world": "engine", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "prefetch": {}}]}},
     {"rule": "missing_asset_library", "path": "$", "stage": "instantiate", "world": "bare", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": []}},
     {"rule": "asset_budget_exceeded", "path": "$.meshes[0]", "stage": "instantiate", "world": "no meshes", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": []}},
     {"rule": "hierarchy_install_failed", "path": "$.entities", "stage": "instantiate", "world": "one node", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p"}]}}

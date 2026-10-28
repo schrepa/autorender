@@ -270,10 +270,6 @@ impl<G: Game> GameHost<G> {
         Ok(())
     }
 
-    pub fn set_gpu_presentation(&mut self, enabled: bool) {
-        self.app.set_gpu_presentation(enabled);
-    }
-
     pub fn set_tick_pipelining(&mut self, enabled: bool) {
         self.app.set_tick_pipelining(enabled);
     }
@@ -366,10 +362,6 @@ impl<G: Game> GameHost<G> {
 
     pub fn stats(&self) -> String {
         self.app.stats_json()
-    }
-
-    pub fn gpu_presentation(&self) -> bool {
-        self.app.gpu_presentation()
     }
 
     pub fn tick_pipelining(&self) -> bool {

@@ -1,50 +1,21 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ImageDecoder {
-    Engine,
-    Transcoder,
-}
-
-impl ImageDecoder {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Engine => "engine",
-            Self::Transcoder => "transcoder",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImageFormat {
     pub name: &'static str,
     pub what: &'static str,
-    pub page: Option<ImageDecoder>,
-    pub native: Option<ImageDecoder>,
 }
 
 pub const IMAGE_FORMATS: &[ImageFormat] = &[
     ImageFormat {
         name: "png",
         what: "PNG: palettes, low bit depths and transparency expand to 8-bit RGBA, 16-bit channels drop to 8",
-        page: Some(ImageDecoder::Engine),
-        native: Some(ImageDecoder::Engine),
     },
     ImageFormat {
         name: "jpeg",
         what: "JPEG, to RGBA with opaque alpha",
-        page: Some(ImageDecoder::Engine),
-        native: Some(ImageDecoder::Engine),
     },
     ImageFormat {
         name: "ktx2-rgba8",
         what: "uncompressed RGBA8 KTX2 (VK_FORMAT_R8G8B8A8_UNORM or _SRGB), its base level as stored",
-        page: Some(ImageDecoder::Engine),
-        native: Some(ImageDecoder::Engine),
-    },
-    ImageFormat {
-        name: "ktx2-basis",
-        what: "Basis Universal KTX2",
-        page: Some(ImageDecoder::Transcoder),
-        native: None,
     },
 ];
 
@@ -57,9 +28,7 @@ pub struct Image {
 
 pub fn image_format(bytes: &[u8]) -> Option<&'static ImageFormat> {
     let name = if bytes.starts_with(&KTX2_IDENTIFIER) {
-        let rgba8 =
-            bytes.len() >= 48 && RGBA8_FORMATS.contains(&word(bytes, 12)) && word(bytes, 44) == 0;
-        if rgba8 { "ktx2-rgba8" } else { "ktx2-basis" }
+        "ktx2-rgba8"
     } else if bytes.starts_with(b"\x89PNG") {
         "png"
     } else if bytes.starts_with(&[0xff, 0xd8]) {
@@ -75,10 +44,7 @@ pub fn decode_image(uri: &str, bytes: &[u8]) -> Result<Image, String> {
         Some("png") => decode_png(bytes).map_err(|error| format!("{uri}: {error}")),
         Some("jpeg") => decode_jpeg(bytes).map_err(|error| format!("{uri}: {error}")),
         Some("ktx2-rgba8") => read_rgba8_ktx2(uri, bytes),
-        Some(name) => Err(format!(
-            "{uri} is a {name} image, which the engine's decoder does not read (IMAGE_FORMATS)"
-        )),
-        None => Err(format!("{uri} is not a PNG, JPEG or KTX2 image")),
+        Some(_) | None => Err(format!("{uri} is not a PNG, JPEG or KTX2 image")),
     }
 }
 
@@ -96,6 +62,9 @@ fn read_rgba8_ktx2(uri: &str, bytes: &[u8]) -> Result<Image, String> {
     let invalid = |what: &str| format!("{uri} {what}");
     if bytes.len() < 104 {
         return Err(invalid("is not a valid KTX2 image"));
+    }
+    if !RGBA8_FORMATS.contains(&word(bytes, 12)) || word(bytes, 44) != 0 {
+        return Err(invalid("must be uncompressed RGBA8"));
     }
     let (width, height) = (word(bytes, 20), word(bytes, 24));
     if word(bytes, 28) > 1

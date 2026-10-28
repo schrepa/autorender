@@ -10,8 +10,6 @@ gpu_structs! {
         pub scale: [f32; 4],
         pub tier: [f32; 4],
         pub planes: [[f32; 4]; 6],
-        pub deform_grid: [i32; 4],
-        pub deform: [f32; 4],
         pub foliage: [f32; 4],
         pub view: [f32; 4],
     }

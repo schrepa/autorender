@@ -1,6 +1,4 @@
-mod block;
 mod gpu;
-mod presentation;
 
 pub use gpu::{
     GpuCurrent, GpuPresentation, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE,
@@ -8,21 +6,16 @@ pub use gpu::{
 };
 
 use crate::collections::HashSet;
-use presentation::Display;
 
 use bevy_ecs::prelude::*;
-use glam::{Mat4, Quat};
+use glam::Mat4;
 
 use crate::entity_indices::EntityIndices;
-use crate::presentation_bounds::LINEAR_ROTATION_DOT_THRESHOLD;
 
 use crate::{
     FixedTime, FrameTime, GlobalTransform, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, Parent,
     Transform,
-    hierarchy::{
-        HierarchyScratch, Source, TransformIndex, ValueIds, same_local_bits, same_pose_bits,
-    },
-    valid_global_matrix,
+    hierarchy::{HierarchyScratch, Source, TransformIndex, ValueIds, same_pose_bits},
 };
 
 #[derive(Component, Debug, Default, Clone, Copy)]
@@ -234,22 +227,15 @@ pub struct PresentedTransforms {
     epoch: u64,
     active: bool,
     invalidated: Vec<usize>,
-    display: Vec<Display>,
+    valid: Vec<bool>,
     presented: Vec<Mat4>,
     presented_revisions: Vec<u64>,
-    dense_display: bool,
-    blended_locals: Vec<Transform>,
-    touched_display: Vec<usize>,
-    blended_roots: Vec<usize>,
-    display_work: Vec<usize>,
     presented_entities: Vec<Entity>,
     presented_map: EntityIndices,
     prepared_topology: u64,
     value_ids: ValueIds,
-    written_presented: usize,
     revision: u64,
     gpu: gpu::GpuInputs,
-    gpu_pending: Option<f32>,
 }
 
 pub(crate) type InterpolationState = PresentedTransforms;
@@ -270,22 +256,15 @@ impl FromWorld for PresentedTransforms {
             epoch: 0,
             active: false,
             invalidated: Vec::new(),
-            display: Vec::new(),
+            valid: Vec::new(),
             presented: Vec::new(),
             presented_revisions: Vec::new(),
-            dense_display: false,
-            blended_locals: Vec::new(),
-            touched_display: Vec::new(),
-            blended_roots: Vec::new(),
-            display_work: Vec::new(),
             presented_entities: Vec::new(),
             presented_map: EntityIndices::default(),
             prepared_topology: 0,
             value_ids: ValueIds::default(),
-            written_presented: 0,
             revision: 0,
             gpu: gpu::GpuInputs::default(),
-            gpu_pending: None,
         }
     }
 }
@@ -331,9 +310,9 @@ impl PresentedTransforms {
 
     #[inline]
     pub(crate) fn prepared_matrix(&self, index: usize) -> Option<Mat4> {
-        self.display
+        self.valid
             .get(index)
-            .filter(|display| display.valid())
+            .filter(|&&valid| valid)
             .map(|_| self.presented[index])
     }
 
@@ -347,7 +326,7 @@ impl PresentedTransforms {
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (Entity, PresentedTransform)> + '_ {
         self.presented_entities
             .iter()
-            .take(self.display.len())
+            .take(self.valid.len())
             .enumerate()
             .map(|(index, &entity)| (entity, self.value_at(index)))
     }
@@ -362,7 +341,7 @@ impl PresentedTransforms {
 
     #[inline]
     fn presented_matrix(&self, index: usize) -> Option<Mat4> {
-        if self.display[index].valid() {
+        if self.valid[index] {
             Some(self.presented[index])
         } else {
             None
@@ -371,31 +350,31 @@ impl PresentedTransforms {
 
     #[inline]
     fn commit(&mut self, index: usize, value: Option<Mat4>) -> bool {
-        let display = &mut self.display[index];
+        let valid = &mut self.valid[index];
         let matrix = &mut self.presented[index];
         let revision = &mut self.presented_revisions[index];
         let changed = *revision == 0
-            || display.valid() != value.is_some()
+            || *valid != value.is_some()
             || value
                 .is_some_and(|value| !crate::hierarchy::same_finite_matrix_bits(*matrix, value));
         if changed {
             if let Some(value) = value {
                 *matrix = value;
             }
-            display.set_valid(value.is_some());
+            *valid = value.is_some();
             *revision = self.value_ids.next();
         }
         changed
     }
 
-    fn resize_display(&mut self, nodes: usize) {
-        if self.display.len() < nodes {
-            self.display.reserve_exact(nodes - self.display.len());
+    fn resize_presented(&mut self, nodes: usize) {
+        if self.valid.len() < nodes {
+            self.valid.reserve_exact(nodes - self.valid.len());
             self.presented.reserve_exact(nodes - self.presented.len());
             self.presented_revisions
                 .reserve_exact(nodes - self.presented_revisions.len());
         }
-        self.display.resize(nodes, Display::default());
+        self.valid.resize(nodes, false);
         self.presented.resize(nodes, Mat4::IDENTITY);
         self.presented_revisions.resize(nodes, 0);
     }
@@ -415,12 +394,7 @@ impl PresentedTransforms {
             self.presented_entities.push(source.entity);
             self.presented_map.insert(source.entity, index);
         }
-        self.resize_display(hierarchy.links().len());
-        for display in &mut self.display {
-            display.reset();
-        }
-        self.touched_display.clear();
-        self.dense_display = false;
+        self.resize_presented(hierarchy.links().len());
         self.prepared_topology = hierarchy.topology_revision();
     }
 
@@ -601,34 +575,18 @@ impl PresentedTransforms {
             + (self.previous.capacity() + self.next_previous.capacity()) * size_of::<NodePose>()
             + (self.history_nodes.capacity() + self.next_history_nodes.capacity())
                 * size_of::<u32>();
-        state.presented_store_bytes = self.display.capacity() * size_of::<Display>()
+        state.presented_store_bytes = self.valid.capacity() * size_of::<bool>()
             + self.presented.capacity() * size_of::<Mat4>()
             + self.presented_revisions.capacity() * size_of::<u64>()
             + self.presented_entities.capacity() * size_of::<Entity>();
-        state.presentation_scratch_bytes = self.blended_locals.capacity() * size_of::<Transform>()
-            + (self.touched_display.capacity()
-                + self.blended_roots.capacity()
-                + self.display_work.capacity()
-                + self.invalidated.capacity())
-                * size_of::<usize>();
+        state.presentation_scratch_bytes = self.invalidated.capacity() * size_of::<usize>();
     }
 
-    fn prepare(&mut self, world: &mut World, mode: PresentationMode) -> usize {
+    fn prepare(&mut self, world: &mut World) -> usize {
         self.observe_invalid();
-        self.written_presented = 0;
-        let interpolated = match mode {
-            PresentationMode::Interpolated { alpha } if alpha < 1.0 && !self.history.is_empty() => {
-                Some(alpha)
-            }
-            PresentationMode::Current | PresentationMode::Interpolated { .. } => None,
-        };
         world.resource_scope(|_world, hierarchy: Mut<HierarchyScratch>| {
             self.prepare_membership(&hierarchy);
-            if let Some(alpha) = interpolated {
-                self.prepare_interpolated(&hierarchy, alpha)
-            } else {
-                self.apply_current(&hierarchy)
-            }
+            self.apply_current(&hierarchy)
         })
     }
 
@@ -649,14 +607,8 @@ impl PresentedTransforms {
 
     fn apply_current(&mut self, hierarchy: &HierarchyScratch) -> usize {
         let _profile = engine_profile::span("interpolation", "prepare_current_values");
-        self.dense_display = false;
-        self.blended_locals.clear();
-        self.touched_display.clear();
-        self.blended_roots.clear();
-        self.display_work.clear();
         let mut written = 0;
-        for index in 0..self.display.len() {
-            self.display[index].reset();
+        for index in 0..self.valid.len() {
             written += usize::from(self.commit(index, hierarchy.global(index)));
         }
         engine_profile::counter("interpolation.current_reused", f64::from(written == 0));
@@ -973,28 +925,6 @@ fn compatible_scales(previous: &NodePose, current: &NodePose) -> bool {
     })
 }
 
-fn blend_rotation(previous: Quat, current: Quat, alpha: f32) -> Quat {
-    let previous = previous.normalize();
-    let current = current.normalize();
-    if previous.dot(current).abs() >= LINEAR_ROTATION_DOT_THRESHOLD {
-        previous.lerp(current, alpha)
-    } else {
-        previous.slerp(current, alpha).normalize()
-    }
-}
-
-fn blend(previous: &Transform, current: &Transform, alpha: f32) -> Transform {
-    if alpha == 0.0 {
-        return *previous;
-    }
-    let inverse = 1.0 - alpha;
-    Transform {
-        translation: previous.translation * inverse + current.translation * alpha,
-        rotation: blend_rotation(previous.rotation, current.rotation, alpha),
-        scale: previous.scale * inverse + current.scale * alpha,
-    }
-}
-
 pub(crate) fn begin_tick(world: &mut World) {
     let _profile = engine_profile::span("interpolation", "capture_tick_begin");
     world.resource_scope(|world, mut state: Mut<InterpolationState>| {
@@ -1024,15 +954,14 @@ pub(crate) fn end_tick(world: &mut World) {
     });
 }
 
-pub(crate) fn prepare(world: &mut World, mode: PresentationMode) {
+pub(crate) fn prepare(world: &mut World) {
     let _profile = engine_profile::span("interpolation", "prepare_presented_transforms");
     world.resource_scope(|world, mut interpolation: Mut<InterpolationState>| {
-        interpolation.gpu_pending = None;
-        let count = interpolation.prepare(world, mode);
+        let count = interpolation.prepare(world);
         let frame = world.get_resource::<FrameTime>().map(|time| time.frame);
         let tick = world.get_resource::<FixedTime>().map(|time| time.tick);
         let mut state = world.resource_mut::<PresentationState>();
-        state.mode = mode;
+        state.mode = PresentationMode::Current;
         state.frame = frame;
         state.tick = tick;
         state.presented_nodes = count;
@@ -1045,7 +974,6 @@ pub(crate) fn prepare_gpu(world: &mut World, alpha: f32) {
     let _profile = engine_profile::span("interpolation", "prepare_gpu_presentation");
     world.resource_scope(|world, mut interpolation: Mut<InterpolationState>| {
         interpolation.observe_invalid();
-        interpolation.gpu_pending = Some(alpha);
         world.resource_scope(|_world, mut hierarchy: Mut<HierarchyScratch>| {
             interpolation.gather_gpu(&mut hierarchy, alpha);
         });
@@ -1086,34 +1014,12 @@ pub(crate) fn present_gpu_fraction(world: &mut World, alpha: f32, hold: bool) {
     let _profile = engine_profile::span("interpolation", "present_gpu_fraction");
     world.resource_scope(|world, mut interpolation: Mut<InterpolationState>| {
         interpolation.gpu.set_alpha(alpha, hold);
-        interpolation.gpu_pending = Some(alpha);
         let frame = world.get_resource::<FrameTime>().map(|time| time.frame);
         let mut state = world.resource_mut::<PresentationState>();
         state.mode = PresentationMode::Interpolated { alpha };
         state.frame = frame;
         state.gpu_pending = true;
     });
-}
-
-pub(crate) fn prepare_pending(world: &mut World) -> bool {
-    let Some(alpha) = world
-        .get_resource::<InterpolationState>()
-        .and_then(|state| {
-            let hierarchy = world.get_resource::<HierarchyScratch>()?;
-            state
-                .gpu_pending
-                .filter(|_| state.gathered_current(hierarchy))
-        })
-    else {
-        return false;
-    };
-    let frame = world.resource::<PresentationState>().frame;
-    let tick = world.resource::<PresentationState>().tick;
-    prepare(world, PresentationMode::Interpolated { alpha });
-    let mut state = world.resource_mut::<PresentationState>();
-    state.frame = frame;
-    state.tick = tick;
-    true
 }
 
 pub fn reset_interpolation(world: &mut World, root: Entity) -> usize {

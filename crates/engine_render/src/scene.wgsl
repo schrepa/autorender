@@ -26,8 +26,6 @@ struct Lighting {
     occupancy: vec4<f32>,
     occupancy_maps: vec4<f32>,
     occupancy_centers: array<vec4<f32>, 4>,
-    underwater: vec4<f32>,
-    sea: vec4<f32>,
     cloud_shadow: vec4<f32>,
     cloud_layer: vec4<f32>,
     night: vec4<f32>,
@@ -246,18 +244,6 @@ fn sun_halo(direction: vec3<f32>) -> vec3<f32> {
 }
 
 fn sky(direction: vec3<f32>) -> vec3<f32> {
-    if lighting.underwater.w > 0.0 {
-        return underwater_light(direction);
-    }
-    return open_sky(direction);
-}
-
-fn underwater_light(direction: vec3<f32>) -> vec3<f32> {
-    let up = saturate(direction.y * 0.5 + 0.5);
-    return lighting.underwater.rgb * (0.35 + 1.3 * up * up);
-}
-
-fn open_sky(direction: vec3<f32>) -> vec3<f32> {
     return haze(direction) + sun_disc(direction);
 }
 
@@ -304,10 +290,6 @@ fn cloud_dome_direction(domes: CloudDomes, origin: vec3<f32>, start: vec3<f32>,
 fn behind_clouds(light: vec3<f32>, cloud: vec4<f32>, direction: vec3<f32>) -> vec3<f32> {
     let shown = smoothstep(-CLOUD_HORIZON, -0.4 * CLOUD_HORIZON, direction.y);
     return mix(light, light * cloud.a + cloud.rgb, shown);
-}
-
-fn underwater_cover(distance: f32) -> f32 {
-    return 1.0 - exp2(-distance / lighting.underwater.w);
 }
 
 fn sky_average(normal: vec3<f32>) -> vec3<f32> {
@@ -396,16 +378,8 @@ fn sky_behind(direction: vec3<f32>) -> vec3<f32> {
     return textureSampleLevel(environment_maps, environment_sampler, lifted, 0, level).rgb;
 }
 
-fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>)
+fn atmospheric(light: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>)
         -> vec4<f32> {
-    var light = lit;
-    if lighting.sea.z > 0.0 && point.y < lighting.sea.x {
-        light *= exp2((point.y - lighting.sea.x) / lighting.sea.y);
-    }
-    if lighting.underwater.w > 0.0 {
-        let covered = underwater_cover(length(point - eye));
-        return vec4<f32>(mix(light, underwater_light(direction), covered), covered);
-    }
     let air_lit = air_light(direction);
     let ray = point - eye;
     let distance = length(ray);
@@ -431,9 +405,6 @@ fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3
 }
 
 fn atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32 {
-    if lighting.underwater.w > 0.0 {
-        return underwater_cover(length(point - eye));
-    }
     let fogged = fog(eye, point);
     if lighting.aerial.y <= 0.0 {
         return fogged;

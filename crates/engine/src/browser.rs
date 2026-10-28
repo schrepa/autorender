@@ -22,21 +22,6 @@ impl SceneFileSet {
         self.files.add_image(uri, width, height, pixels);
     }
 
-    pub fn add_compressed_image(
-        &mut self,
-        uri: &str,
-        format: &str,
-        width: u32,
-        height: u32,
-        data: Vec<u8>,
-        levels: Vec<u32>,
-    ) -> Result<(), JsValue> {
-        let (format, levels) = compressed_levels(uri, format, &data, &levels)?;
-        self.files
-            .add_compressed_image(uri, format, width, height, levels);
-        Ok(())
-    }
-
     pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
         self.files.add_buffer(uri, bytes);
     }
@@ -62,10 +47,7 @@ impl PageSceneLoad {
     #[wasm_bindgen(constructor)]
     pub fn new(source: &str) -> Result<PageSceneLoad, JsValue> {
         Ok(Self {
-            load: Some(crate::host::SceneLoad::new(
-                source,
-                crate::host::LoadingHost::Page,
-            )?),
+            load: Some(crate::host::SceneLoad::new(source)?),
         })
     }
 
@@ -82,16 +64,8 @@ impl PageSceneLoad {
         Ok(out)
     }
 
-    pub fn read(
-        &mut self,
-        uri: &str,
-        bytes: Vec<u8>,
-        url: &str,
-    ) -> Result<Option<String>, JsValue> {
-        Ok(self
-            .loading()?
-            .read(uri, bytes, url)?
-            .map(|image| image.decoder.name().to_owned()))
+    pub fn read(&mut self, uri: &str, bytes: Vec<u8>, url: &str) -> Result<bool, JsValue> {
+        Ok(self.loading()?.read(uri, bytes, url)?.is_some())
     }
 
     pub fn image(
@@ -114,21 +88,6 @@ impl PageSceneLoad {
         Ok(self.loading()?.decode(uri, bytes)?)
     }
 
-    pub fn compressed_image(
-        &mut self,
-        uri: &str,
-        format: &str,
-        width: u32,
-        height: u32,
-        data: Vec<u8>,
-        levels: Vec<u32>,
-    ) -> Result<(), JsValue> {
-        let (format, levels) = compressed_levels(uri, format, &data, &levels)?;
-        self.loading()?
-            .compressed_image(uri, format, width, height, levels);
-        Ok(())
-    }
-
     pub fn finish(&mut self) -> Result<SceneFileSet, JsValue> {
         let load = self.load.take().ok_or_else(ended)?;
         Ok(SceneFileSet {
@@ -148,45 +107,6 @@ fn ended() -> JsValue {
         "the scene's files were taken",
     )
     .into()
-}
-
-fn compressed_levels(
-    uri: &str,
-    format: &str,
-    data: &[u8],
-    levels: &[u32],
-) -> Result<(engine_core::TextureFormat, Vec<Vec<u8>>), JsValue> {
-    let invalid = |path: &str, message: &str| {
-        JsValue::from(crate::Error::new(
-            engine_core::ErrorCode::InvalidTexture,
-            path,
-            format!("{uri}: {message}"),
-        ))
-    };
-    let format = match format {
-        "bc7" => engine_core::TextureFormat::Bc7,
-        "etc2" => engine_core::TextureFormat::Etc2Rgba8,
-        "astc" => engine_core::TextureFormat::Astc4x4,
-        _ => {
-            return Err(invalid(
-                "$.format",
-                "compressed formats are bc7, etc2 and astc",
-            ));
-        }
-    };
-    let mut rest = data;
-    let mut split = Vec::with_capacity(levels.len());
-    for &length in levels {
-        let Some((level, tail)) = rest.split_at_checked(length as usize) else {
-            return Err(invalid("$.levels", "level lengths exceed the data"));
-        };
-        split.push(level.to_vec());
-        rest = tail;
-    }
-    if !rest.is_empty() {
-        return Err(invalid("$.levels", "data exceeds the level lengths"));
-    }
-    Ok((format, split))
 }
 
 #[wasm_bindgen]

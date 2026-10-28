@@ -1214,12 +1214,9 @@ fn scene(
     if let Some(attribution) = &options.attribution {
         heightmap["attribution"] = json!(attribution);
     }
-    let mut environment = json!({
+    let environment = json!({
         "atmosphere": {"preset": "golden_hour"},
     });
-    if let Some(level) = options.sea {
-        environment["ocean"] = json!({"enabled": true, "level": level});
-    }
     let tiles = (size / 256.0) as u32;
     let mut layers = vec![json!({"heightmap": heightmap})];
     if options.detail > 0.0 {

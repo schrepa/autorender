@@ -27,11 +27,6 @@ impl Renderer {
         });
         let culling = terrains.relative_view_projection;
         let casts = snapshot.environment.shadows.enabled;
-        self.terrain.deformation.prepare(
-            &self.device,
-            &snapshot.deformation,
-            snapshot.presented_seconds,
-        );
         let cover = snapshot.environment.ground_cover.sanitized();
         let canopy = (cover.enabled && cover.density > 0.0).then(|| {
             (
@@ -241,7 +236,6 @@ impl Renderer {
         &mut self,
         snapshot: &RenderSnapshot,
         opaque_kind: PassKind,
-        temporal_frame: &Option<TemporalFrame>,
     ) -> Option<Ready<WaterFrame>> {
         let targets = opaque_kind.targets()?;
         let coming = snapshot
@@ -249,11 +243,6 @@ impl Renderer {
             .terrains
             .iter()
             .any(|terrain| terrain.hydrology);
-        let jitter = temporal_frame.as_ref().map_or([0.0; 2], |frame| {
-            [frame.camera.jitter[0], frame.camera.jitter[1]]
-        });
-        let cull = snapshot.terrain.relative_view_projection;
-        let view = crate::gpu_data::jittered(cull, jitter);
         let (device, shader, camera) = (&self.device, &self.mesh_shader, &self.camera.water_layout);
         let formats = (self.display.format(), DEPTH_FORMAT);
         let tiles = self.terrain.water_draws(&snapshot.terrain);
@@ -272,16 +261,9 @@ impl Renderer {
                 device,
                 &self.queue,
                 (tiles, &snapshot.terrain.terrains),
-                (environment.water, environment.ocean),
+                environment.water,
+                (seen, environment.wind, snapshot.presented_seconds),
                 (
-                    snapshot.camera_position,
-                    seen,
-                    environment.wind,
-                    snapshot.presented_seconds,
-                ),
-                (
-                    cull,
-                    view,
                     &self.depth.texture,
                     matches!(targets, Targets::Post | Targets::Temporal),
                 ),

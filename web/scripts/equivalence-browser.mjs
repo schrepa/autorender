@@ -49,8 +49,7 @@ async function ok(command) {
 function settling(capture) {
   if (capture === "exact") return { op: "render" };
   const [kind, value] = capture.split(":");
-  if (kind === "cpu") return { op: "present", alpha: Number(value) };
-  if (kind === "gpu") return { op: "present", alpha: Number(value), gpu: true };
+  if (kind === "cpu" || kind === "gpu") return { op: "present", alpha: Number(value) };
   return undefined;
 }
 
@@ -83,7 +82,7 @@ async function shoot(capture, file) {
     return { path: file, rendering: reply.result.rendering };
   } else {
     const [kind, value] = capture.split(":");
-    fields = kind === "gpu" ? { alpha: Number(value), gpu: true } : { alpha: Number(value) };
+    fields = { alpha: Number(value) };
   }
   const result = await ok({ op: "capture", ...fields });
   await page.locator("canvas").screenshot({ path: file });

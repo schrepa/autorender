@@ -33,7 +33,6 @@ impl Extractions {
         aspect: f32,
         gpu: bool,
     ) {
-        retained.extract_deformation(world);
         retained.extract_lights_and_particles(world, &mut self.lights, &mut self.particles, gpu);
         retained.extract_skins(world, &mut self.skins, gpu);
         retained.extract_decals(world, &mut self.decals, gpu);

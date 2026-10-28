@@ -42,9 +42,7 @@ use crate::features::{
     EngineControl, EngineQuery,
     animation::AnimationControl,
     collision::{CollisionEventsQuery, OverlapQuery, RaycastQuery, ShapeCastQuery},
-    deformation::{DeformControl, DeformationQuery},
     navigation::{NavGoControl, NavPathQuery},
-    ocean::WaterQuery,
     terrain::{
         TerrainControl, TerrainEditControl, TerrainHeightQuery, TerrainRedoControl,
         TerrainRiverControl, TerrainRouteQuery, TerrainSweepQuery, TerrainUndoControl,
@@ -65,7 +63,6 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("terrain_undo", "Terrain"),
     ("terrain_redo", "Terrain"),
     ("terrain_river", "Terrain"),
-    ("deform", "Tracks"),
     ("nav_go", "NavAgent"),
     ("animation", "AnimationPlayer"),
     ("world_changes", "WorldChanges"),
@@ -124,7 +121,6 @@ pub enum Control {
 pub enum HostControl {
     Present {
         alpha: f64,
-        gpu: bool,
     },
     Culling {
         enabled: bool,
@@ -197,8 +193,6 @@ pub enum DevRequest {
     ShapeCast(ShapeCastQuery),
     TerrainHeight(TerrainHeightQuery),
     NavPath(NavPathQuery),
-    WaterQuery(WaterQuery),
-    DeformationQuery(DeformationQuery),
     TerrainSweep(TerrainSweepQuery),
     TerrainRoute(TerrainRouteQuery),
     CollisionEvents(CollisionEventsQuery),
@@ -292,8 +286,6 @@ impl DevRequest {
             Self::CollisionEvents(query) => Route::Feature(Box::new(query)),
             Self::TerrainHeight(query) => Route::Feature(Box::new(query)),
             Self::NavPath(query) => Route::Feature(Box::new(query)),
-            Self::WaterQuery(query) => Route::Feature(Box::new(query)),
-            Self::DeformationQuery(query) => Route::Feature(Box::new(query)),
             Self::TerrainSweep(query) => Route::Feature(Box::new(query)),
             Self::TerrainRoute(query) => Route::Feature(Box::new(query)),
         }
@@ -315,8 +307,6 @@ pub enum BrowserControl {
     Present {
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::ALPHA)))]
         alpha: f64,
-        #[serde(default)]
-        gpu: bool,
     },
     Culling {
         enabled: bool,
@@ -327,7 +317,6 @@ pub enum BrowserControl {
     TerrainUndo(TerrainUndoControl),
     TerrainRedo(TerrainRedoControl),
     TerrainRiver(TerrainRiverControl),
-    Deform(DeformControl),
     NavGo(NavGoControl),
     Animation(AnimationControl),
     WorldChanges(WorldChangesControl),
@@ -417,8 +406,6 @@ pub enum BrowserControl {
             schemars(with = "f64", transform = stated(bounds::ALPHA))
         )]
         alpha: Option<f64>,
-        #[serde(default)]
-        gpu: bool,
     },
     Game {
         #[cfg_attr(
@@ -469,15 +456,13 @@ pub enum BrowserControl {
             schemars(with = "f64", transform = stated(bounds::ALPHA))
         )]
         alpha: Option<f64>,
-        #[serde(default)]
-        gpu: bool,
     },
 }
 
 impl BrowserControl {
     pub fn route(self) -> Control {
         match self {
-            Self::Present { alpha, gpu } => Control::Host(HostControl::Present { alpha, gpu }),
+            Self::Present { alpha } => Control::Host(HostControl::Present { alpha }),
             Self::Culling { enabled } => Control::Host(HostControl::Culling { enabled }),
             Self::Environment(control) => Control::Host(HostControl::Environment(control)),
             Self::Terrain(control) => Control::Feature(Box::new(control)),
@@ -485,7 +470,6 @@ impl BrowserControl {
             Self::TerrainUndo(control) => Control::Feature(Box::new(control)),
             Self::TerrainRedo(control) => Control::Feature(Box::new(control)),
             Self::TerrainRiver(control) => Control::Feature(Box::new(control)),
-            Self::Deform(control) => Control::Feature(Box::new(control)),
             Self::NavGo(control) => Control::Feature(Box::new(control)),
             Self::Animation(control) => Control::Feature(Box::new(control)),
             Self::WorldChanges(control) => Control::Feature(Box::new(control)),
@@ -550,7 +534,6 @@ impl BrowserControl {
             | Self::TerrainUndo(_)
             | Self::TerrainRedo(_)
             | Self::TerrainRiver(_)
-            | Self::Deform(_)
             | Self::WorldChanges(_)
             | Self::NavGo(_)
             | Self::Animation(_)

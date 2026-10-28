@@ -184,11 +184,7 @@ impl Renderer {
             directory: sources.directory,
             palette: sources.palette,
             macro_maps: sources.macro_maps,
-            generation: (
-                sources.generation.0,
-                sources.generation.1,
-                sources.generation.3,
-            ),
+            generation: sources.generation,
             revision: sources.revision,
             terrains: &infos,
         });

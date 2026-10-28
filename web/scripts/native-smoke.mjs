@@ -29,7 +29,7 @@ try {
   const controls = types.find(type => type.name === "GameControls").controls;
   assert.deepEqual(Object.keys(controls).sort(), ["effects", "look", "view", "workload"]);
   const parameters = types.find(type => type.name === "PageParameters").parameters;
-  for (const name of ["preset", "taa", "occlusion", "subpixel", "presentation", "pipeline", "terrain-clock", "dynamic-resolution"]) assert.ok(name in parameters, name);
+  for (const name of ["preset", "taa", "occlusion", "subpixel", "pipeline", "terrain-clock", "dynamic-resolution"]) assert.ok(name in parameters, name);
 
   assert.equal((await run({ op: "inspect", component: "TemporalAntialiasing" })).value.enabled, true);
   const ordinary = (await run({ op: "frames", count: 4, interval_ms: 1000 / 60 })).rendering;

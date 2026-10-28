@@ -37,7 +37,7 @@ function near(value, expected, epsilon = 0.001) {
 async function state() {
   const observation = (await command("status")).observation;
   return { frame: observation.frame, tick: observation.tick, presentation: observation.presentation,
-    transform: await inspect("player", "Transform"), presented: await inspect("player", "PresentedTransform") };
+    transform: await inspect("player", "Transform"), global: await inspect("player", "GlobalTransform") };
 }
 async function sensorEvents() {
   const { observation, rendering, paused, source, ...snapshot } = (await command("collision_events", { entity: "sensor" })).result;

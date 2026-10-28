@@ -187,8 +187,6 @@ impl LightingUniform {
             occupancy: [0.0; 4],
             occupancy_maps: [0.0; 4],
             occupancy_centers: [[0.0; 4]; crate::gpu_layouts::scene::MAX_OCCUPANCY_LEVELS / 2],
-            underwater: [0.0; 4],
-            sea: [0.0; 4],
             cloud_shadow: [0.0; 4],
             cloud_layer: [0.0; 4],
             night: [0.0; 4],
@@ -380,7 +378,7 @@ pub(crate) fn octahedral(normal: [f32; 3]) -> [i16; 2] {
 }
 
 pub(crate) use crate::shaders::{
-    BOUNCE_SHADER, CLOUDS_SHADER, COVER_GROW_SHADER, DEBUG_VIEW_SHADER, DEFORMATION_SHADER,
+    BOUNCE_SHADER, CLOUDS_SHADER, COVER_GROW_SHADER, DEBUG_VIEW_SHADER,
     DEPTH_PYRAMID_SHADER, ENVIRONMENT_SHADER, EXPOSURE_SHADER, HAZE_SHADER, LIGHT_SHADER,
     MIPMAP_SHADER, OCCUPANCY_SHADER, PARTICLE_SHADER, POST_SHADER, PRESENTATION_SHADER,
     REFLECTIONS_SHADER, SCATTER_CULL_SHADER, SCATTER_SNAP_SHADER, SHADER, SHADOW_MARKS_SHADER,

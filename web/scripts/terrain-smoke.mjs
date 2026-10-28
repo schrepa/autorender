@@ -30,7 +30,7 @@ try {
     `far crates: ${settled.terrain.placed_far_objects} of ${settled.terrain.placed_objects}`);
   let presented;
   for (let frame = 0; frame < 60; frame++) {
-    presented = (await command("present", { alpha: 0, gpu: true })).result.rendering;
+    presented = (await command("present", { alpha: 0 })).result.rendering;
     if (presented.terrain.placed_impostors > 0) break;
   }
   assert.equal(presented.terrain.placed_impostors, 1, `the balls' impostor comes: ${JSON.stringify(presented)}`);

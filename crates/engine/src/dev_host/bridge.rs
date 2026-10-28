@@ -344,9 +344,6 @@ impl<G: Game> GameHost<G> {
             }
         }
         let frame = match control.get("alpha") {
-            Some(alpha) if control.get("gpu") == Some(&json!(true)) => {
-                json!({"op": "present", "alpha": alpha, "gpu": true})
-            }
             Some(alpha) => json!({"op": "present", "alpha": alpha}),
             None => json!({"op": "render"}),
         };
@@ -470,9 +467,6 @@ impl<G: Game> GameHost<G> {
             }
             "capture" => {
                 let command = match control.get("alpha") {
-                    Some(alpha) if control.get("gpu") == Some(&json!(true)) => {
-                        json!({"op": "present", "alpha": alpha, "gpu": true})
-                    }
                     Some(alpha) => json!({"op": "present", "alpha": alpha}),
                     None => json!({"op": "render"}),
                 };

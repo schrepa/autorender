@@ -53,7 +53,6 @@ resources! {
     Probes: Kept,
     CloudView: Frame,
     CloudDome: Kept,
-    Tracks: Kept,
     Bounce: Kept,
     Leaves: Kept,
     Cover: Kept,
@@ -154,7 +153,6 @@ pub(crate) enum Pass {
     ShadowSelect,
     VirtualSelect,
     ShadowMaps,
-    Deformation,
     Bounce,
     Opaque { phase: Phase },
     TerrainIds,
@@ -201,7 +199,6 @@ passes! {
     shadow_maps: ShadowMaps,
     lights: Feature(FeaturePass::Lights),
     cloud_dome: Feature(FeaturePass::CloudDome),
-    deformation: Deformation,
     bounce: Bounce,
     ground_cover: Feature(FeaturePass::GroundCover),
     opaque: Opaque { phase: Phase::One },
@@ -521,7 +518,6 @@ pub(crate) struct FrameShape {
     pub(crate) canvas_clear: [f64; 4],
     pub(crate) phases: u8,
     pub(crate) shadows: bool,
-    pub(crate) deformation: bool,
     pub(crate) bounce: bool,
     pub(crate) subdivision: bool,
     pub(crate) deferred: bool,
@@ -604,9 +600,6 @@ fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
             .read_if(shape.subdivision, Leaves)
             .write(ShadowMaps);
     }
-    if shape.deformation {
-        graph.add(Pass::Deformation).write(Tracks);
-    }
     if shape.bounce {
         graph.add(Pass::Bounce).read(CloudDome).write(Bounce);
     }
@@ -661,7 +654,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(Probes)
             .read(Bounce)
             .read(CloudDome)
-            .read_if(forward, Tracks)
             .read_if(forward, Cover)
             .read_if(forward && shape.subdivision, Leaves);
         for &(target, clear) in targets {
@@ -712,7 +704,6 @@ fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Res
     use Resource::*;
     graph
         .add(Pass::TerrainIds)
-        .read(Tracks)
         .read(Leaves)
         .color(TerrainIds, Access::Clear(Clear::Color(TRANSPARENT)))
         .depth(Depth, Access::Load);
@@ -724,8 +715,7 @@ fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Res
         .read_if(shape.lights, Lights)
         .read(Probes)
         .read(Bounce)
-        .read(CloudDome)
-        .read(Tracks);
+        .read(CloudDome);
     for &(target, _) in targets {
         resolve = resolve.color(target, Access::Load);
     }
@@ -739,7 +729,6 @@ fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Res
         .read(Probes)
         .read(Bounce)
         .read(CloudDome)
-        .read(Tracks)
         .read(Cover);
     for &(target, _) in targets {
         late = late.color(target, Access::Load);

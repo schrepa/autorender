@@ -30,13 +30,6 @@ impl Terrains {
             .map(|sample| sample.height)
     }
 
-    pub fn deform_at(&self, x: f32, z: f32) -> Option<f32> {
-        self.entries.iter().find_map(|state| {
-            let origin = state.terrain.origin;
-            state.deform(Vec2::new(x - origin.x, z - origin.z))
-        })
-    }
-
     pub fn is_hole(&self, x: f32, z: f32) -> Option<bool> {
         self.sample(x, z).map(|sample| sample.hole)
     }

@@ -38,7 +38,6 @@ shaders! {
         "meshes/water_flow.wgsl",
         "meshes/water_setup.wgsl",
         "meshes/water_falls.wgsl",
-        "meshes/ocean.wgsl",
         "meshes/water_foam.wgsl",
         "water_bursts.wgsl",
         "meshes/water_particles.wgsl",
@@ -65,9 +64,6 @@ shaders! {
         "terrain_variety.wgsl",
         "terrain_ground.wgsl",
         "cover_grow.wgsl",
-    ];
-    DEFORMATION_SHADER = [
-        "deformation.wgsl",
     ];
     WATER_SIM_SHADER = [
         "water_bursts.wgsl",
@@ -251,8 +247,7 @@ entry_points! {
             vs_affine_temporal_skinned, vs_resolve, vs_sky, vs_decal, vs_impostor_bake,
             vs_impostor_bake_extended, vs_impostor, vs_impostor_temporal, vs_terrain,
             vs_terrain_temporal, vs_fullscreen, vs_cover,
-            vs_cover_temporal, vs_water, vs_foam, vs_ocean,
-            vs_ocean_temporal, vs_fall, vs_fall_temporal,
+            vs_cover_temporal, vs_water, vs_foam, vs_fall, vs_fall_temporal,
             vs_debug_affine, vs_debug_affine_extended, vs_debug_affine_skinned, vs_debug_virtual,
             vs_debug_impostor
         ],
@@ -275,9 +270,9 @@ entry_points! {
             fs_terrain_probe_lit, fs_cover, fs_cover_lit, fs_cover_post, fs_cover_post_lit,
             fs_cover_temporal, fs_cover_temporal_lit, fs_water, fs_water_post, fs_water_temporal,
             fs_foam,
-            fs_ocean, fs_ocean_post, fs_ocean_temporal, fs_fall, fs_fall_post, fs_fall_temporal,
+            fs_fall, fs_fall_post, fs_fall_temporal,
             fs_debug_mesh, fs_debug_impostor, fs_debug_terrain, fs_debug_cover, fs_debug_water,
-            fs_debug_ocean, fs_debug_fall, fs_debug_sky
+            fs_debug_fall, fs_debug_sky
         ],
         compute: [
             setup_blocks,
@@ -310,9 +305,6 @@ entry_points! {
     }
     cover_grow = COVER_GROW_SHADER {
         compute: [grow_cover, finish_cover],
-    }
-    deformation = DEFORMATION_SHADER {
-        compute: [press, slopes, scroll, wipe, rebase],
     }
     water_sim = WATER_SIM_SHADER {
         compute: [

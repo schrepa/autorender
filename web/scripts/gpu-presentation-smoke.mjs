@@ -32,9 +32,9 @@ function partition(rendering, label) {
 
 async function gpuCapture(name, alpha) {
   for (let attempt = 1; ; attempt++) {
-    await command("present", { alpha, gpu: true });
+    await command("present", { alpha });
     await delay(100);
-    const { reply, png } = await capture(name, { alpha, gpu: true });
+    const { reply, png } = await capture(name, { alpha });
     if (reply.result.rendering.read_back_age > 1 && attempt < 50) continue;
     assert.equal(reply.result.rendering.read_back_age, 1, `${name}: the preview's own count arrives`);
     assert.equal(reply.observation.presentation.gpu_pending, true, "GPU previews leave CPU presented poses pending.");
@@ -60,7 +60,7 @@ async function cullingSettings(label) {
   const inspect = async component => (await command("inspect", { component })).result.value;
   assert.deepEqual(await inspect("OcclusionCulling"), { enabled: true });
   assert.deepEqual(await inspect("SubpixelCulling"), { enabled: true });
-  const preview = async name => (await capture(name, { alpha: 0.5, gpu: true })).reply.result.rendering;
+  const preview = async name => (await capture(name, { alpha: 0.5 })).reply.result.rendering;
   const on = await preview(`${label}-culling-on`);
   assert.equal(on.occlusion_culling.active, true, "GPU frames run occlusion culling by default");
   assert.equal(on.subpixel_culling.active, true, "GPU frames run sub-pixel culling by default");

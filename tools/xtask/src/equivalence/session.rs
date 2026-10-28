@@ -284,8 +284,9 @@ fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Resul
 fn settling_frame(capture: Capture) -> Option<Value> {
     match capture {
         Capture::Exact => Some(json!({"op": "render"})),
-        Capture::Cpu(alpha) => Some(json!({"op": "present", "alpha": alpha})),
-        Capture::Gpu(alpha) => Some(json!({"op": "present", "alpha": alpha, "gpu": true})),
+        Capture::Cpu(alpha) | Capture::Gpu(alpha) => {
+            Some(json!({"op": "present", "alpha": alpha}))
+        }
         Capture::Display(_) => None,
     }
 }
@@ -336,9 +337,8 @@ fn settle(session: &mut Session, frame: &Value, log: &Path) -> Result<Option<Str
 fn shoot(session: &mut Session, capture: Capture, log: &Path) -> Result<Shot, String> {
     let result = match capture {
         Capture::Exact => session.ok(&json!({"op": "capture"}), log)?,
-        Capture::Cpu(alpha) => session.ok(&json!({"op": "capture", "alpha": alpha}), log)?,
-        Capture::Gpu(alpha) => {
-            session.ok(&json!({"op": "capture", "alpha": alpha, "gpu": true}), log)?
+        Capture::Cpu(alpha) | Capture::Gpu(alpha) => {
+            session.ok(&json!({"op": "capture", "alpha": alpha}), log)?
         }
         Capture::Display(frames) => {
             let reply = session.request(

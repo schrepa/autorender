@@ -22,7 +22,7 @@ pub(super) fn run(
             let result = control.apply(&mut app.engine, scene)?;
             then_render(app, size, control.changed(), result)
         }
-        Control::Host(HostControl::Present { alpha, gpu }) => view::present(app, alpha, gpu, size),
+        Control::Host(HostControl::Present { alpha }) => view::present(app, alpha, size),
         Control::Host(HostControl::Culling { enabled }) => view::culling(app, enabled, size),
         Control::Host(HostControl::Camera {
             position,

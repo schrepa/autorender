@@ -482,7 +482,7 @@ fn palette_entry(
         ],
         maps: [scale, occlusion, metalness, far_occlusion],
         far,
-        relief: [look.depth, look.deform, slopes, 0.0],
+        relief: [look.depth, 0.0, slopes, 0.0],
         canopy,
         placed,
         placed_size,
