@@ -1,0 +1,41 @@
+[package]
+name = "highlands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "highlands-native"
+path = "src/main.rs"
+
+[package.metadata.engine]
+page = "highlands.html"
+game = "highlands"
+native = "highlands-native"
+
+[features]
+default = []
+dev = ["engine/dev", "engine_native/dev"]
+profiling = ["engine/profiling", "engine_native/profiling"]
+
+[build-dependencies]
+engine_sources.workspace = true
+
+[dependencies]
+engine.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+engine_native.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys.workspace = true
+
+[lints]
+workspace = true

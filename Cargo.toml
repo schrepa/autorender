@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_textures", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_physics", "crates/engine_profile", "crates/engine_terrain", "crates/engine_tables", "crates/engine_sources", "crates/engine_worker", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "apps/*", "tools/xtask", "tools/assetc", "tools/vgbuild", "tools/lodbuild", "tools/policy", "tools/coresmoke"]
+members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_textures", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_physics", "crates/engine_profile", "crates/engine_terrain", "crates/engine_tables", "crates/engine_sources", "crates/engine_worker", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "crates/engine_player", "examples/highlands", "tools/xtask", "tools/assetc", "tools/lodbuild", "tools/policy", "tools/coresmoke"]
 resolver = "3"
 exclude = ["vendor"]
 
@@ -35,7 +35,6 @@ engine_assetc = { path = "tools/assetc" }
 engine_vgbuild = { path = "tools/vgbuild" }
 engine_lodbuild = { path = "tools/lodbuild" }
 policy = { path = "tools/policy" }
-stress-lab = { path = "apps/stress-lab" }
 base64 = "=0.22.1"
 gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "allow_empty_texture", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
 png = "=0.17.16"
