@@ -313,7 +313,11 @@ fn frame_stats(problems: &mut Vec<String>) -> Value {
             .map(|(name, definition)| (name.as_str(), definition)),
     );
     for (name, object) in objects {
-        for field in object["properties"].as_object().into_iter().flat_map(Map::keys) {
+        for field in object["properties"]
+            .as_object()
+            .into_iter()
+            .flat_map(Map::keys)
+        {
             if field.contains("dropped") && field != "dropped" && !field.starts_with("dropped_") {
                 problems.push(format!(
                     "{name}.{field}: name what budgets drop `dropped` or `dropped_*`"

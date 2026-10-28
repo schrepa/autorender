@@ -13,9 +13,15 @@ pub enum Step {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Effect {
-    Pause { paused: bool },
-    Wait { within_ms: f64 },
-    Frame { timestamp: f64 },
+    Pause {
+        paused: bool,
+    },
+    Wait {
+        within_ms: f64,
+    },
+    Frame {
+        timestamp: f64,
+    },
     Show,
     Game {
         name: String,

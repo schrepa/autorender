@@ -1,10 +1,8 @@
 {
   "$defs": {
     "Applied": {
-      "description": "Whether the frame applied an effect its settings ask for.",
       "properties": {
         "active": {
-          "description": "Whether this frame applied it.",
           "type": "boolean"
         }
       },
@@ -14,46 +12,38 @@
       "type": "object"
     },
     "CellStats": {
-      "description": "World streaming's state after the last extraction.",
       "properties": {
         "cells": {
-          "description": "Cells holding items.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "despawned": {
-          "description": "Entities the frame despawned.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "entities": {
-          "description": "Entities streamed items hold spawned.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "items": {
-          "description": "Items registered.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "loaded": {
-          "description": "Cells loaded.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "pending": {
-          "description": "Cells within range still waiting to load.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "spawned": {
-          "description": "Entities the frame spawned.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -71,16 +61,13 @@
       "type": "object"
     },
     "CloudStats": {
-      "description": "Clouds.",
       "properties": {
         "rows": {
-          "description": "Rows of the clouds' dome this frame marched: all of them on exact\nframes, a slice on ordinary ones, none without clouds.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "view_pixels": {
-          "description": "Pixels of the view whose clouds this frame marched, a ray each: its\nrender size's, none without clouds or with their march in the view\noff.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -93,14 +80,11 @@
       "type": "object"
     },
     "CullingStats": {
-      "description": "What GPU culling ran and left undrawn.",
       "properties": {
         "active": {
-          "description": "Whether this GPU-presented display frame ran it, without an instance\nbudget (occlusion culling draws in two phases around its test).",
           "type": "boolean"
         },
         "instances": {
-          "description": "Visible instances it left undrawn (occluded, or covering no pixel\ncenter), read back with the visible count; `None` otherwise.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -115,16 +99,13 @@
       "type": "object"
     },
     "DeformationStats": {
-      "description": "Runtime deformation.",
       "properties": {
         "stamps": {
-          "description": "Stamps this frame pressed into the map around the camera.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "texels": {
-          "description": "The map's texels along a side: 0 while off, fewer than the settings'\nwhere the device's buffers cannot hold them.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -137,16 +118,13 @@
       "type": "object"
     },
     "DetailStats": {
-      "description": "Levels of detail and impostors.",
       "properties": {
         "dropped_impostors": {
-          "description": "Opaque draw groups that qualified for impostors but draw their meshes\nbecause a budget or the GPU's texture array layers left them none.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "impostor_instances": {
-          "description": "Instances drawn as impostors, read back like `lod0_instances`.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -155,13 +133,11 @@
           ]
         },
         "impostors": {
-          "description": "Impostors resident: loaded from their records, or baked where no\npack or store held them.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "lod0_instances": {
-          "description": "GPU-culled frames with levels of detail: instances drawn as their\nmesh, read back with the visible count; `None` otherwise.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -170,7 +146,6 @@
           ]
         },
         "lod1_instances": {
-          "description": "Instances drawn as their mesh's first simplification, read back like\n`lod0_instances`.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -179,7 +154,6 @@
           ]
         },
         "lod2_instances": {
-          "description": "Instances drawn as their mesh's second simplification, read back like\n`lod0_instances`.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -188,7 +162,6 @@
           ]
         },
         "meshes_without_levels": {
-          "description": "Resident meshes that could have levels of detail drawing without:\nno pack or store held the levels the cook makes\n(`cargo xtask cook`).",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -202,22 +175,18 @@
       "type": "object"
     },
     "Drawn": {
-      "description": "What a feature drew, and what a budget or the GPU's bindings left out.",
       "properties": {
         "drawn": {
-          "description": "Items this frame drew.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped": {
-          "description": "Items a budget or the GPU's bindings left out.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "invalid": {
-          "description": "Items breaking their rules, which no frame draws.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -231,19 +200,15 @@
       "type": "object"
     },
     "DynamicResolutionStats": {
-      "description": "Dynamic resolution's scale.",
       "properties": {
         "active": {
-          "description": "Whether it scaled this frame: a display frame with dynamic resolution\non.",
           "type": "boolean"
         },
         "budget_ms": {
-          "description": "The milliseconds of GPU time frames keep within, while active.",
           "format": "float",
           "type": "number"
         },
         "scale": {
-          "description": "The scale the frame drew at on each axis, of the size the resolution\npolicy and the user's scale give: 1 while inactive.",
           "format": "float",
           "type": "number"
         }
@@ -256,24 +221,19 @@
       "type": "object"
     },
     "ExposureStats": {
-      "description": "Auto exposure's meter.",
       "properties": {
         "active": {
-          "description": "Whether this frame metered its exposure.",
           "type": "boolean"
         },
         "metered": {
-          "description": "The meter's average of the light in view before exposure, in\nhundredths of a stop (log2 of linear light), read back alike.",
           "format": "int32",
           "type": "integer"
         },
         "stops": {
-          "description": "The exposure frames show, in hundredths of a stop above the\natmosphere's authored exposure (below it when negative), read back a\nfew frames late; 0 in frames not metering.",
           "format": "int32",
           "type": "integer"
         },
         "view": {
-          "description": "How much brighter the view is than the light falling on level\nground gives an open view, in hundredths of a stop, read back alike:\nnegative in a cave by day.",
           "format": "int32",
           "type": "integer"
         }
@@ -287,28 +247,23 @@
       "type": "object"
     },
     "GroundCoverStats": {
-      "description": "Ground cover.",
       "properties": {
         "blades": {
-          "description": "Blades the last read-back frame drew.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped": {
-          "description": "Blades past the capacity or budget, which dropped.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "reach": {
-          "description": "Meters from the eye ground cover reached this frame, rounded.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "tiers": {
-          "description": "The most tiers it grew in: the first's, out to where blades span a\npixel, and doublings past it.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -323,88 +278,73 @@
       "type": "object"
     },
     "JobStats": {
-      "description": "Workers, their jobs and the host's output cache.",
       "properties": {
         "cache_bytes": {
-          "description": "Bytes the host's store holds.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "cache_hits": {
-          "description": "Records the host's packs and store handed back instead of running\ntheir jobs.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "cache_mismatches": {
-          "description": "Verifying, records differing from a fresh run.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "cache_misses": {
-          "description": "Records they lacked.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "cancelled": {
-          "description": "Jobs cancelled while running.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "completed": {
-          "description": "Jobs completed.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "failed": {
-          "description": "Jobs failed. A record fetched alone that no pack or store holds\n([`MISSING_RECORD`]) is no failure: its owner makes it.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "held": {
-          "description": "Jobs the host's scheduler holds: on its workers, or looked up in its\npacks and store. None once every job handed out ended, an earlier\nengine's included.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "in_place": {
-          "description": "Jobs run in place: by a host without workers, or an engine no host\nserves.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "running": {
-          "description": "Jobs handed out and not done.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "shared_bytes": {
-          "description": "Bytes of the keys shared.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "shares": {
-          "description": "Keys shared.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "submitted": {
-          "description": "Jobs submitted.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "workers": {
-          "description": "Workers the host runs.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -429,10 +369,8 @@
       "type": "object"
     },
     "LightStats": {
-      "description": "Local lights.",
       "properties": {
         "cluster_overflow": {
-          "description": "Cluster entries beyond the clusters' budget or the storage still\ngrowing, read back like `visible`.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -441,25 +379,21 @@
           ]
         },
         "dropped": {
-          "description": "Usable lights beyond the budget or without a valid pose.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "invalid": {
-          "description": "Lights breaking their rules, which no frame draws.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "shaded": {
-          "description": "Local lights the frame shaded within the budget.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "visible": {
-          "description": "Lights that reached a view cluster, read back a few frames late;\n`None` before the first read-back or without lights.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -476,58 +410,48 @@
       "type": "object"
     },
     "NavStats": {
-      "description": "What navigation did at the last fixed tick: agents, and\nthose searching (and of them those waiting for records or their\nterrain's bakes), walking, arrived and unable to reach their\ndestination; the samples of search work the tick did; and the tiles'\ngrounds and portals held for walks.",
       "properties": {
         "agents": {
-          "description": "Navigation agents.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "arrived": {
-          "description": "Agents at their destination.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "grounds": {
-          "description": "Tiles whose ground navigation holds for walks.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "portals": {
-          "description": "Tiles whose portals of a walk graph navigation holds.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "searching": {
-          "description": "Agents whose walk is being searched.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "unreachable": {
-          "description": "Agents whose destination no walk reaches.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "waiting": {
-          "description": "Agents whose search waits for records the host has yet to hand\nback, or for its terrain's bakes.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "walking": {
-          "description": "Agents walking a found path.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "work": {
-          "description": "Samples of search work the tick did.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -547,16 +471,13 @@
       "type": "object"
     },
     "OccupancyStats": {
-      "description": "The occupancy maps around the detail eye.",
       "properties": {
         "averages": {
-          "description": "Times a map took the mean of the finer one inside it where that one\nchanged.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "redraws": {
-          "description": "Times a map redrew cells: each follows the detail eye in steps and\nredraws where objects change.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -569,16 +490,13 @@
       "type": "object"
     },
     "OceanStats": {
-      "description": "The sea.",
       "properties": {
         "sectors": {
-          "description": "Sectors drawn.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "triangles": {
-          "description": "Triangles of the sectors drawn.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -591,46 +509,38 @@
       "type": "object"
     },
     "PhysicsStats": {
-      "description": "Physics at the last fixed tick, read when the stats are.",
       "properties": {
         "awake": {
-          "description": "Of them, awake: moving, or pushed this tick.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "bodies": {
-          "description": "Bodies the solver holds.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "contacts": {
-          "description": "Contacts touching between bodies and solids or each other.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "held": {
-          "description": "Of them, held still where the world's solids under them are not\nresident yet.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "solids": {
-          "description": "The world's solids the solver holds for bodies to meet: terrain\ntiles, placed objects and colliders near them.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "water_samples": {
-          "description": "Samples of the world's water the tick's bodies took.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "wet": {
-          "description": "Of them, in water.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -648,22 +558,18 @@
       "type": "object"
     },
     "ProbeStats": {
-      "description": "Reflection probes.",
       "properties": {
         "dropped": {
-          "description": "Probes a budget or the GPU's texture array layers left out.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "faces": {
-          "description": "Cube faces this frame captured.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "ready": {
-          "description": "Probes surfaces could reflect this frame.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -677,28 +583,23 @@
       "type": "object"
     },
     "ResolutionStats": {
-      "description": "The frame's sizes: the display's, which the surface or canvas and every\nscreen-sized target take, and the one it drew at from their top-left\ncorner, which its last pass upscaled to the display.",
       "properties": {
         "display_height": {
-          "description": "The display's height in physical pixels.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "display_width": {
-          "description": "The display's width in physical pixels: the host's whole view, unless\nthe device's largest texture holds less, which the display then fits\nwithin at its aspect.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped_pixels": {
-          "description": "Pixels of the view the host asked for that the device's largest\ntexture left out of the display.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "gpu_ms": {
-          "description": "Milliseconds the GPU took over the last frame it timed, from two\ntimestamps around its work, read back a few frames late; `None`\nwhere the device times no work.",
           "format": "float",
           "type": [
             "number",
@@ -706,13 +607,11 @@
           ]
         },
         "render_height": {
-          "description": "The height the frame drew at in physical pixels.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "render_width": {
-          "description": "The width the frame drew at in physical pixels: the resolution\npolicy's for the view at the user's scale, within the display, times\ndynamic resolution's scale; the display's own for debug views and\nexact frames.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -728,14 +627,11 @@
       "type": "object"
     },
     "ShadowStats": {
-      "description": "The sun's shadow clipmap.",
       "properties": {
         "active": {
-          "description": "Whether the sun cast shadows this frame.",
           "type": "boolean"
         },
         "casters": {
-          "description": "Casters the redrawn tiles drew, read back a few frames late; `None`\nbefore the first read-back.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -744,13 +640,11 @@
           ]
         },
         "draws": {
-          "description": "Indexed draws into the clipmap's tiles, beside the camera pass's\n`draw_calls`.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "moving_casters": {
-          "description": "Moving casters' draws into the tiles they cross, read back like\n`casters`.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -759,7 +653,6 @@
           ]
         },
         "moving_left_out": {
-          "description": "Moving casters' draws into tiles they cross that their draw groups'\nroom left out, read back like `casters`.",
           "format": "uint32",
           "minimum": 0,
           "type": [
@@ -768,49 +661,41 @@
           ]
         },
         "moving_tiles": {
-          "description": "Tiles moving casters drew over this frame.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "sky_drawn": {
-          "description": "Sky occlusion's maps this frame drew: one at most, while the camera\nstrays from them or their still meshes change.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "sky_maps": {
-          "description": "Sky occlusion's maps of still meshes seen from the sky\n(`sky_occlusion`), drawn around the camera: two per direction in use\nat most, and until a direction's are drawn it counts as open sky.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "tiles_drawn": {
-          "description": "Tiles this frame redrew.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "tiles_marked": {
-          "description": "Tiles the pixels read back latest read, at the levels their size on\nscreen picks: those the clipmap draws.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "tiles_missing": {
-          "description": "Tiles pixels read that hold no drawn slot yet, for want of slots or\nof the redraw budget: lookups read a coarser level there.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "tiles_reclaimed": {
-          "description": "Kept tiles whose slots this frame gave to tiles pixels read.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "tiles_resident": {
-          "description": "Tiles holding a slot of the atlas: those pixels read and those kept\nfrom before while slots last.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -831,14 +716,11 @@
       "type": "object"
     },
     "SkyStats": {
-      "description": "The physically based sky, and the exposure frames show.",
       "properties": {
         "exposure": {
-          "$ref": "#/$defs/ExposureStats",
-          "description": "Auto exposure's meter, which replaces the sky's own adaptation."
+          "$ref": "#/$defs/ExposureStats"
         },
         "tables": {
-          "description": "Tables this frame uploaded or built: two when its air's tables\narrived, one more when the sun, the camera's height or the air\nchanged; none without the sky.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -851,28 +733,23 @@
       "type": "object"
     },
     "TerrainBounceStats": {
-      "description": "Terrains' bounce light.",
       "properties": {
         "dropped": {
-          "description": "Terrains whose bounce light the horizon maps' layers or the probes'\nbuffers could not hold this frame, which take none.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "levels": {
-          "description": "The most levels of probes a terrain's bounce light relit this frame:\nthose whose reach meets the terrain, the coarsest always.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "probes": {
-          "description": "The probes bounce light relit this frame, over every level around\nthe detail eye.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "relit": {
-          "description": "Terrains whose bounce light relit this frame: every frame, however\nthe sun and sky stand.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -887,128 +764,106 @@
       "type": "object"
     },
     "TerrainRenderStats": {
-      "description": "Terrains.",
       "properties": {
         "bounce": {
-          "$ref": "#/$defs/TerrainBounceStats",
-          "description": "Bounce light this frame."
+          "$ref": "#/$defs/TerrainBounceStats"
         },
         "dropped_materials": {
-          "description": "Surface materials past the palette's capacity, or whose maps the\nshared arrays cannot hold (block compressed, or sized unlike the first\nmaterial's), which show a plain color instead.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped_placed_objects": {
-          "description": "Placed objects the device's storage bindings left out: those past\nwhat the objects' buffers hold, and entries past what the views'\nlists hold, once each view and level leaving them out, read back a\nfew frames late.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped_tiles": {
-          "description": "Tiles the tile budget or the device's texture array layers dropped.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "fallback_tiles": {
-          "description": "Tiles the camera's view draws and shows that are not resident yet,\nwhose ground coarser tiles stand in for.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "gpu_controls": {
-          "description": "Tiles the GPU gave control values this frame.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "horizons": {
-          "description": "Terrains casting long sun shadows through horizon maps.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "leaves": {
-          "description": "Leaves of the terrains' subdivisions the camera drew, as read back a\nfew frames later.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "lighting_uploads": {
-          "description": "Maps of terrains' lighting this frame uploaded, as it arrived or\nchanged: sky and horizon maps, one each per terrain. The sun moving\nuploads none.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "loading_tiles": {
-          "description": "Tiles still loading.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "macro_maps": {
-          "description": "Terrains whose macro color maps are here: the tint and growth their\nbakes give their ground.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "placed_far_objects": {
-          "description": "Of those, objects standing far away, which hide where the tiles\nholding them instead are resident.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "placed_impostors": {
-          "description": "Placed objects' impostors resident, which the camera draws far away\nand shadow maps cast as cards; counted in `level_of_detail.impostors`\ntoo.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "placed_objects": {
-          "description": "Objects placement layers stand on resident level-0 tiles, each culled\non the GPU every frame.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "refused_splits": {
-          "description": "Splits the subdivisions refused for want of room for their leaves\n(`TerrainSettings::subdivision_leaves`), as read back: the ground\nthere stays coarser.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "shadow_patches": {
-          "description": "Patches the shadow clipmap's regions drew of the ground.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "shallow_subdivisions": {
-          "description": "Terrains whose subdivision the device's storage bindings keep\nshallower than `TerrainSettings::subdivision_depth` asks.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "sky_maps": {
-          "description": "Terrains whose sky visibility maps are here.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "tiles": {
-          "description": "Tiles resident on the GPU.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "triangles": {
-          "description": "Triangles of those leaves' meshlets.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "white_water": {
-          "description": "Emitters of spray and mist white water spawned at terrains' rapids,\nwhere their settled water loses energy fastest.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1040,76 +895,63 @@
       "type": "object"
     },
     "VirtualGeometryStats": {
-      "description": "Virtual geometry, read back a few frames late.",
       "properties": {
         "clusters": {
-          "description": "Clusters drawn for the camera.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped": {
-          "description": "Cluster selections dropped while their storage grew.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped_pages": {
-          "description": "Wanted pages (with arrivals since) that found no room under the\nbudget or the device's limits.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "failed_pages": {
-          "description": "Page reads that failed or held no valid page since streaming\nstarted, each read again later; the renderer's\n`latest_page_failure` says why the latest did.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "loading_pages": {
-          "description": "Streamed pages still loading.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "missing_pages": {
-          "description": "Pages the last read-back frame wanted and lacked: 0 once its view had\nall the detail it asked for.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "occluded_clusters": {
-          "description": "The camera's clusters occlusion culling left undrawn.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "resident_pages": {
-          "description": "Streamed pages resident.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "shadow_clusters": {
-          "description": "Clusters drawn into shadow maps.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "shadow_triangles": {
-          "description": "Triangles drawn into shadow maps.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "triangles": {
-          "description": "Triangles drawn for the camera.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "visibility_buffer": {
-          "description": "Whether the visibility buffer resolved the camera's virtual geometry\nrather than drawing it forward.",
           "type": "boolean"
         }
       },
@@ -1130,130 +972,108 @@
       "type": "object"
     },
     "WaterStats": {
-      "description": "Terrains' water, as their tiles hold it and as it runs live around the\ndetail eye.",
       "properties": {
         "blocks": {
-          "description": "Blocks of tiles' water resident on the GPU, a patch's each.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped_blocks": {
-          "description": "Blocks this frame dropped for want of the device's texture array\nlayers, whose water does not draw.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped_particles": {
-          "description": "Particles that frame's pools had no room for, born or left by a raft\ntearing: the foam and the waves there go undrawn.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "dropped_touches": {
-          "description": "Solids standing in that square past the most its water takes, which\npush none of it.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "foam_particles": {
-          "description": "Foam particles living in that square, white water and the foam the\nwater carries, as read back a few frames late: the foam pool holds\none for every few pixels of the display.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "foam_points": {
-          "description": "Points along a side of the square around the detail eye over which\nthe foam's rafts are born and ride, half a settled cell apart: 0\nwhile none run; as many as `Water::foam_points` asks, more where the\nwaves' window needs more, fewer where the device cuts them.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "foam_points_cut": {
-          "description": "Points along a side of that square that the device's storage\nbindings and dispatches cut from those `Water::foam_points` asks\nfor: the foam then reaches nearer the eye.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "foam_reach": {
-          "description": "Meters from the detail eye to the edges of that square, past which\nno foam shows, rounded.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "leaves": {
-          "description": "Leaves of terrains' water's subdivisions the last read-back frame\ndrew, a few frames late.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_behind": {
-          "description": "Steps the simulation time passed held this frame past the most a\nframe takes, by which the live water fell behind the clock.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_budget_cut": {
-          "description": "Cells along a side of the square the live reach asks for\n(`engine_core::LIVE_PIXELS`) that the budget of its cell steps a\nframe cuts from it (`Water::live_budget`): the live water then\nhands back to the settled water nearer the eye.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_cells": {
-          "description": "Cells along a side of the square around the detail eye over which\nwater runs live this frame: 0 while none does (before the GPU can\nset its square up, the terrain group it reads the ground and the\ntiles' water through not made yet).",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_cut": {
-          "description": "Cells along a side of the square the budget holds that the device's\nstorage bindings cut from it, the middle square they hold running\ninstead: the live water then hands back nearer the eye still.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_setup": {
-          "description": "Blocks of that square (a scheme's block of its cells each) the GPU\nset up whole this frame from the ground it holds and the live cells\nof the settled water's records: those whose level-0 tiles, their\nsettled water and its records' live cells all came to be there this\nframe, in a square that came anew, a strip a move uncovered or where\nthey arrived, and those over a tile that changed; 0 in frames none\ndid.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_steps": {
-          "description": "Steps the live water took this frame, each of the same seconds, the\nlongest in which its fastest water and waves cross a quarter of its\ncells: as many as the simulation time passed holds, at most those of\na frame a thirtieth of a second long.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_waiting": {
-          "description": "Blocks of that square waiting for their level-0 tiles, those tiles'\nsettled water or its records' live cells, standing as the settled\nwater does there, none of their water running, while water's pass\ndraws the tiles' water over them.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "particle_texels": {
-          "description": "Texels along a side of the window around the detail eye that the\nwave particles terrains' water carries splat into: 0 while none\nrun; as many as reach out to where its texels span a pixel, or fewer\nwhere the display's pixels or the device's storage bindings cut\nthem, and its texels span more there. The wave pool holds a particle\nfor every few of its texels.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "particles_born": {
-          "description": "Particles born in the frame last read back, foam and waves together:\nrafts where the water breaks, each no smaller than a pixel where it\nis born, and the boils its bursts raise in the waves' window.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "refused": {
-          "description": "Splits terrains' water's subdivisions refused for want of room for\ntheir leaves (`Water::subdivision_leaves`), as read back a few frames\nlate: the water there stays coarser.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "touches": {
-          "description": "Solids standing in that square whose push its water takes this\nframe, nearest the eye first: bodies and colliders, at most\n`SIM_TOUCHES`.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "wave_particles": {
-          "description": "Wave particles living in the waves' window, as read back a few\nframes late.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1286,185 +1106,147 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "CPU observations from the last submitted frame and the renderer's report\nof it. Render time is not GPU time.",
   "properties": {
     "ambient_occlusion": {
-      "$ref": "#/$defs/Applied",
-      "description": "Ambient occlusion."
+      "$ref": "#/$defs/Applied"
     },
     "bloom": {
-      "$ref": "#/$defs/Applied",
-      "description": "Bloom."
+      "$ref": "#/$defs/Applied"
     },
     "clouds": {
-      "$ref": "#/$defs/CloudStats",
-      "description": "Clouds."
+      "$ref": "#/$defs/CloudStats"
     },
     "culled_instances": {
-      "description": "Valid instances culling proved outside the view.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "culling_enabled": {
-      "description": "Whether frustum culling is on.",
       "type": "boolean"
     },
     "decals": {
-      "$ref": "#/$defs/Drawn",
-      "description": "Decals."
+      "$ref": "#/$defs/Drawn"
     },
     "deformation": {
-      "$ref": "#/$defs/DeformationStats",
-      "description": "Runtime deformation."
+      "$ref": "#/$defs/DeformationStats"
     },
     "disabled_features": {
-      "description": "The renderer's features it disabled for good, by name: one whose\ncreation failed validation, or that an uncaptured GPU error named\nby its objects' labels. Frames render without them.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
     "draw_calls": {
-      "description": "Draw commands of the camera's mesh passes, each counted once however\nmany occlusion phases issue it: each opaque mesh group's, one per\nlevel of detail on GPU-presented frames, the impostors', virtual\ngeometry's forward bins and the transparent groups'. `shadows.draws`\ncounts the shadow maps'.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "dropped_instances": {
-      "description": "Visible instances the instance budget left undrawn.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "dropped_seconds": {
-      "description": "Total simulation time discarded by the fixed-step budget in this session.",
       "format": "double",
       "type": "number"
     },
     "dynamic_resolution": {
-      "$ref": "#/$defs/DynamicResolutionStats",
-      "description": "Dynamic resolution's scale of the size frames draw at."
+      "$ref": "#/$defs/DynamicResolutionStats"
     },
     "extraction_ms": {
-      "description": "Milliseconds the frame spent extracting the render snapshot.",
       "format": "double",
       "type": "number"
     },
     "fixed_steps": {
-      "description": "Fixed simulation ticks this frame ran.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "frame": {
-      "description": "The frame these stats describe, as `FrameTime::frame` counts it.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },
     "ground_cover": {
-      "$ref": "#/$defs/GroundCoverStats",
-      "description": "Ground cover."
+      "$ref": "#/$defs/GroundCoverStats"
     },
     "haze": {
-      "$ref": "#/$defs/Applied",
-      "description": "The haze's march: the sunlight the near air scatters."
+      "$ref": "#/$defs/Applied"
     },
     "instances": {
-      "description": "Number of mesh instances submitted (before GPU clipping). GPU-culled\nframes report the read-back visible count limited by the instance\nbudget, or the budgeted candidate count before any read-back.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "invalid_transforms": {
-      "description": "Renderable entities skipped because their derived transform is\ninvalid.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "jobs": {
-      "$ref": "#/$defs/JobStats",
-      "description": "The host's workers and their jobs, read when the stats are."
+      "$ref": "#/$defs/JobStats"
     },
     "level_of_detail": {
-      "$ref": "#/$defs/DetailStats",
-      "description": "Levels of detail and impostors."
+      "$ref": "#/$defs/DetailStats"
     },
     "loading": {
-      "description": "Whether terrains have yet to load the camera's view whole, or a\nrecord game code's content waits for (its generated meshes and\ntextures), a static table the scene wants or its pipeline list has\nyet to arrive, read when the stats are: hosts keep preparing\nmeanwhile.",
       "type": "boolean"
     },
     "local_lights": {
-      "$ref": "#/$defs/LightStats",
-      "description": "Local lights."
+      "$ref": "#/$defs/LightStats"
     },
     "mesh_upload_bytes": {
-      "description": "Vertex/index bytes initialized for meshes first seen this frame.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },
     "missing_assets": {
-      "description": "Renderable entities skipped because a mesh, material, or texture is\nabsent.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "navigation": {
-      "$ref": "#/$defs/NavStats",
-      "description": "Navigation agents at the last fixed tick, read when the stats are."
+      "$ref": "#/$defs/NavStats"
     },
     "occlusion_culling": {
-      "$ref": "#/$defs/CullingStats",
-      "description": "Occlusion culling."
+      "$ref": "#/$defs/CullingStats"
     },
     "occupancy": {
-      "$ref": "#/$defs/OccupancyStats",
-      "description": "The occupancy maps."
+      "$ref": "#/$defs/OccupancyStats"
     },
     "ocean": {
-      "$ref": "#/$defs/OceanStats",
-      "description": "The sea."
+      "$ref": "#/$defs/OceanStats"
     },
     "particles": {
-      "$ref": "#/$defs/Drawn",
-      "description": "Particles."
+      "$ref": "#/$defs/Drawn"
     },
     "physics": {
-      "$ref": "#/$defs/PhysicsStats",
-      "description": "Rigid bodies at the last fixed tick, read when the stats are."
+      "$ref": "#/$defs/PhysicsStats"
     },
     "pipelines": {
-      "description": "Pipelines the renderer has created.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "pipelines_compiling": {
-      "description": "Whether the GPU may still be compiling pipelines earlier frames\ncreated, read when the stats are.",
       "type": "boolean"
     },
     "pipelines_created": {
-      "description": "Pipelines this frame created: 0 once everything the scene draws is\ncompiled.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "pipelines_listed": {
-      "description": "Pipelines the scene's pipeline list created up front, while the\nsession prepared.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "pipelines_unlisted": {
-      "description": "Pipelines the session created that the scene's pipeline list\nlacked, once it arrived: 0 while the list holds every pipeline the\nsession draws with.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "read_back_age": {
-      "description": "GPU-culled frames only: how many GPU-presented frames late the counts\nread back with the visible count (`instances`, `triangles`,\n`occlusion_culling`, `subpixel_culling` and `level_of_detail`'s\ninstances) are, 1 when they arrived as soon as they could, more while\nthe GPU falls behind; `None` before the first read-back. A check that\nchanged what they count presents until this is below the frames it\npresented since.",
       "format": "uint32",
       "minimum": 0,
       "type": [
@@ -1473,108 +1255,87 @@
       ]
     },
     "reflection_probes": {
-      "$ref": "#/$defs/ProbeStats",
-      "description": "Reflection probes."
+      "$ref": "#/$defs/ProbeStats"
     },
     "reflections": {
-      "$ref": "#/$defs/Applied",
-      "description": "Screen-space reflections."
+      "$ref": "#/$defs/Applied"
     },
     "refraction": {
-      "$ref": "#/$defs/Applied",
-      "description": "Glass refraction."
+      "$ref": "#/$defs/Applied"
     },
     "render_candidates": {
-      "description": "Every entity carrying a mesh, before transform and asset checks.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "render_ms": {
-      "description": "Milliseconds the frame spent preparing and submitting GPU work.",
       "format": "double",
       "type": "number"
     },
     "render_passes": {
-      "description": "The passes this frame ran, in order.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
     "resident_mesh_bytes": {
-      "description": "Vertex/index bytes retained on the GPU after this frame.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },
     "resident_meshes": {
-      "description": "Number of distinct meshes retained on the GPU.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "resident_texture_bytes": {
-      "description": "Asset texel bytes retained on the GPU after this frame.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },
     "resident_textures": {
-      "description": "Number of asset textures retained on the GPU, excluding renderer white.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "resolution": {
-      "$ref": "#/$defs/ResolutionStats",
-      "description": "The display's size and the size the frame drew at."
+      "$ref": "#/$defs/ResolutionStats"
     },
     "shadows": {
-      "$ref": "#/$defs/ShadowStats",
-      "description": "Sun shadows."
+      "$ref": "#/$defs/ShadowStats"
     },
     "simulation_ms": {
-      "description": "Milliseconds the frame spent in fixed and variable simulation.",
       "format": "double",
       "type": "number"
     },
     "sky": {
-      "$ref": "#/$defs/SkyStats",
-      "description": "The physically based sky, and the exposure frames show."
+      "$ref": "#/$defs/SkyStats"
     },
     "subpixel_culling": {
-      "$ref": "#/$defs/CullingStats",
-      "description": "Sub-pixel culling."
+      "$ref": "#/$defs/CullingStats"
     },
     "temporal_antialiasing": {
-      "$ref": "#/$defs/Applied",
-      "description": "Temporal antialiasing."
+      "$ref": "#/$defs/Applied"
     },
     "terrain": {
-      "$ref": "#/$defs/TerrainRenderStats",
-      "description": "Terrains."
+      "$ref": "#/$defs/TerrainRenderStats"
     },
     "texture_upload_bytes": {
-      "description": "Texel bytes uploaded for textures first seen this frame.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },
     "tick": {
-      "description": "The last fixed tick that frame completed, as `FixedTime::tick`\ncounts it.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },
     "transparent_draws": {
-      "description": "Transparent draws, also counted in `draw_calls`.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "triangles": {
-      "description": "Triangles the camera's mesh draws submitted, at their levels of\ndetail and impostors' two each: exact on CPU-prepared frames, read\nback with the visible count on GPU-culled ones. Virtual geometry\ncounts its own in `virtual_geometry.triangles`.",
       "format": "uint32",
       "minimum": 0,
       "type": [
@@ -1583,28 +1344,23 @@
       ]
     },
     "upload_bytes": {
-      "description": "Actual bytes uploaded or initialized: changed camera/instances and new\nassets. An unchanged rendered frame can submit draws with zero upload\nbytes. Excludes renderer startup resources such as the four-byte white\ntexture.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },
     "virtual_geometry": {
-      "$ref": "#/$defs/VirtualGeometryStats",
-      "description": "Virtual geometry."
+      "$ref": "#/$defs/VirtualGeometryStats"
     },
     "visible_instances": {
-      "description": "Valid instances surviving culling, before the instance budget;\nGPU-culled frames report the latest read-back count.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "water": {
-      "$ref": "#/$defs/WaterStats",
-      "description": "Lakes and rivers."
+      "$ref": "#/$defs/WaterStats"
     },
     "world_streaming": {
-      "$ref": "#/$defs/CellStats",
-      "description": "World streaming."
+      "$ref": "#/$defs/CellStats"
     }
   },
   "required": [

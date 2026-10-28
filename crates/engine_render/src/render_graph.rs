@@ -156,21 +156,13 @@ pub(crate) enum Pass {
     ShadowMaps,
     Deformation,
     Bounce,
-    Opaque {
-        phase: Phase,
-    },
+    Opaque { phase: Phase },
     TerrainIds,
     TerrainResolve,
     OpaqueLate,
-    VisibilityIds {
-        phase: Phase,
-    },
-    Classify {
-        phase: Phase,
-    },
-    Resolve {
-        phase: Phase,
-    },
+    VisibilityIds { phase: Phase },
+    Classify { phase: Phase },
+    Resolve { phase: Phase },
     OcclusionTest,
     ShadowMarks,
     Feature(FeaturePass),

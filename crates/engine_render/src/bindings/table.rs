@@ -55,18 +55,10 @@ pub enum Format {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    Uniform {
-        min_size: u64,
-        dynamic: bool,
-    },
-    Read {
-        min_size: u64,
-    },
+    Uniform { min_size: u64, dynamic: bool },
+    Read { min_size: u64 },
     Write,
-    Texture {
-        sample: Sample,
-        view: View,
-    },
+    Texture { sample: Sample, view: View },
     Storage(Format),
     StorageArray(Format),
     Sampler(Sampling),

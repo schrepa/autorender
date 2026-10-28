@@ -18,8 +18,14 @@ pub(crate) struct PipelineList {
 enum State {
     #[default]
     Unasked,
-    Asked { key: RecordKey, fetch: JobId },
-    Making { key: RecordKey, quiet: u32 },
+    Asked {
+        key: RecordKey,
+        fetch: JobId,
+    },
+    Making {
+        key: RecordKey,
+        quiet: u32,
+    },
     Done,
 }
 

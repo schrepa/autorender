@@ -16,101 +16,53 @@ export function parseJson<T>(json: Json<T>): T {
 /** The methods every game the engine exports has; those of development
  * and profiling builds are optional. */
 export interface Runtime {
-  /** Runs one frame at `timestamp` on a `width` × `height` canvas with the input gathered since the last one. */
   frame(timestamp: number, width: number, height: number): void;
-  /** A source (a keyboard key, a finger on a touch button) pressed (`down`) or released key `code` (`KeyboardEvent.code`); whether the game uses the key, which the page then keeps from the browser. */
   key(code: string, down: boolean): boolean;
-  /** The view turned by a drag of `dx`, `dy` CSS pixels. */
   look(dx: number, dy: number): void;
-  /** Nothing is held: the page took input away. */
   clear_input(): void;
-  /** The animation frame at `timestamp` on a `width` × `height` canvas, preparation's or one of play: what it did (`FRAME_PHASES`). */
   animation_frame(timestamp: number, width: number, height: number): number;
-  /** Loading while preparation waits for the GPU to compile; whether it still waits. */
   work_while_compiling(width: number, height: number): boolean;
-  /** Terrain loading until shortly before the next frame of play is due; whether tiles remain. */
   load_between_frames(): boolean;
-  /** Whether frames prepare the starting state before play (the default), or play at once, as development sessions start. */
   set_preparation(enabled: boolean): void;
-  /** Workers the page runs jobs on. */
   set_job_workers(workers: number): void;
-  /** Whether the page holds records (the cook's packs, a store keeping what jobs make), and runs every job anyway to verify them. */
   set_job_cache(caching: boolean, verify: boolean): void;
-  /** What the page does for the engine's jobs since the last call, in order: what every worker holds, jobs to run and cancel on each worker, and records to look up, keep and drop as mismatched. */
   take_jobs(): JobOrder[];
-  /** The page's records' answer for job `id`: the record's `key`, and its `output` where a pack or the store holds it. */
   job_kept(id: number, key: string, output?: Uint8Array): void;
-  /** Worker `worker` broke, for `error`: the engine takes back its jobs, and the page `replaced` it or runs one fewer. */
   lose_job_worker(worker: number, error: string, replaced: boolean): void;
-  /** The worker a task of the page's own waits least on, counted on it until `job_task_done`; none without workers. */
   job_task(): number | undefined;
-  /** A task of the page's own on `worker` ended. */
   job_task_done(worker: number): void;
-  /** Job `id`'s output from its worker. */
   complete_job(id: number, output: Uint8Array): void;
-  /** Job `id` failed on its worker. */
   fail_job(id: number, error: string): void;
-  /** The page's records' counters. */
   report_job_cache(hits: number, misses: number, bytes: number, mismatches: number): void;
-  /** Drops suspension time and held input before the next frame. */
   suspend(): void;
-  /** Puts the camera where the game starts. */
   reset_camera(): void;
-  /** Replaces the authored scene with `source` and the files it references; a scene that fails keeps the current one. */
   reload_scene(source: string, files: unknown): void;
-  /** GPU (default) or exact CPU presentation of ordinary frames. */
   set_gpu_presentation(enabled: boolean): void;
-  /** Splits fixed ticks across frames around their due time (default). */
   set_tick_pipelining(enabled: boolean): void;
-  /** Temporal antialiasing of GPU-presented frames, over the world's setting in this and later engines. */
   set_temporal_antialiasing(enabled: boolean): void;
-  /** Occlusion culling of GPU-presented frames, over the world's setting in this and later engines. */
   set_occlusion_culling(enabled: boolean): void;
-  /** Sub-pixel culling of GPU-presented frames, over the world's setting in this and later engines. */
   set_subpixel_culling(enabled: boolean): void;
-  /** The canvas's device pixels per CSS pixel, which the resolution policy sizes ordinary frames by (`engine::host::render_size`): the canvas takes its element's whole size in device pixels, and frames draw within it. */
   set_pixel_ratio(ratio: number): void;
-  /** The user's resolution `scale` of ordinary frames, over the world's in this and later engines. */
   set_resolution_scale(scale: number): void;
-  /** Dynamic resolution of ordinary frames, over the world's setting in this and later engines. */
   set_dynamic_resolution(enabled: boolean): void;
-  /** Applies the engine switches the page's URL search part `query` names (`engine::host::SETTINGS`), in this and later engines; a value a switch does not take fails. */
   apply_host_settings(query: string): void;
-  /** The last frame's statistics, as the JSON object `FrameStats` types. */
   stats(): Json<FrameStats>;
-  /** Whether ordinary frames are presented on the GPU. */
   gpu_presentation(): boolean;
-  /** Whether fixed ticks are split across frames. */
   tick_pipelining(): boolean;
-  /** Whether GPU-presented frames are temporally antialiased. */
   temporal_antialiasing(): boolean;
-  /** Whether GPU-presented frames are occlusion culled. */
   occlusion_culling(): boolean;
-  /** Whether GPU-presented frames are sub-pixel culled. */
   subpixel_culling(): boolean;
-  /** The spread of measured `values`, as the JSON object `Distribution` types; `null` without values, or with one that is not a finite number of at least 0. */
   distribution(values: Float64Array): Json<Distribution | null>;
-  /** Whether ordinary frames scale their size by dynamic resolution. */
   dynamic_resolution(): boolean;
-  /** Runs development request `request` (JSON) on a `width` × `height` canvas; `paused` says whether the page is paused. */
   dev_command?(request: string, width: number, height: number, paused: boolean): Json<Reply>;
-  /** Development request `line` (JSON, as an agent sent it) on the page `context` describes (JSON `HostContext`): the engine's reply, or the first effect of the control it names, which the page carries out. */
   dev_request?(line: string, context: string): Json<Step>;
-  /** The request under way resumed with the `outcome` (JSON `Outcome`) of the effect the page carried out, on the page `context` describes: the next step. */
   dev_resume?(outcome: string, context: string): Json<Step>;
-  /** The reload under way resumed with the authored scene's saved `source` and the `files` it references, on the page `context` describes: the next step. */
   dev_reloaded?(source: string, context: string, files?: unknown): Json<Step>;
-  /** A refusal of `code` at `path` the page decided, with the engine's observation. */
   dev_refusal?(code: string, path: string, message: string): Json<Reply>;
-  /** Starts a capture of at most `max_events` CPU events. */
   profiling_start?(max_events: number): void;
-  /** Stops the capture: its report, as JSON. */
   profiling_stop?(): string;
-  /** Collects finished GPU timings. */
   profiling_poll?(): void;
-  /** The capture's GPU report, as JSON. */
   profiling_report?(): string;
-  /** Whether a capture runs, as JSON. */
   profiling_status?(): string;
   free(): void;
 }

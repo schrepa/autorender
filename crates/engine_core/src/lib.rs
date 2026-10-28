@@ -238,9 +238,7 @@ pub struct Engine {
 enum TickAhead {
     None,
     InFlight,
-    Hidden {
-        gathered: bool,
-    },
+    Hidden { gathered: bool },
     Revealed,
 }
 

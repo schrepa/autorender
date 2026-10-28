@@ -20,9 +20,7 @@ pub struct JobOptions {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheOptions {
     Off,
-    Keep {
-        budget: u64,
-    },
+    Keep { budget: u64 },
     Verify,
 }
 

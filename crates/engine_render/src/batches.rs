@@ -33,28 +33,13 @@ pub(crate) fn is_transparent(instance: &RenderInstance, transparent: &[MaterialH
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SnapshotError {
-    InstanceBudget {
-        actual: usize,
-        limit: usize,
-    },
-    DuplicateMesh {
-        handle: MeshHandle,
-    },
-    MissingMesh {
-        handle: MeshHandle,
-    },
-    DuplicateMaterial {
-        handle: MaterialHandle,
-    },
-    MissingMaterial {
-        handle: MaterialHandle,
-    },
-    DuplicateTexture {
-        handle: TextureHandle,
-    },
-    MissingTexture {
-        handle: TextureHandle,
-    },
+    InstanceBudget { actual: usize, limit: usize },
+    DuplicateMesh { handle: MeshHandle },
+    MissingMesh { handle: MeshHandle },
+    DuplicateMaterial { handle: MaterialHandle },
+    MissingMaterial { handle: MaterialHandle },
+    DuplicateTexture { handle: TextureHandle },
+    MissingTexture { handle: TextureHandle },
     InvalidCamera,
 }
 

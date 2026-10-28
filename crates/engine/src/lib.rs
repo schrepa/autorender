@@ -23,8 +23,8 @@ pub use surface::runtime_typescript;
 pub mod tooling;
 
 pub use engine_core::collections;
-pub use engine_core::{bevy_ecs, glam};
 pub use engine_core::environment_sections;
+pub use engine_core::{bevy_ecs, glam};
 
 mod games {
     pub use engine_core::{
@@ -179,8 +179,6 @@ pub mod prelude {
         Collider, ColliderShape, CollisionLayers, CollisionPlugin, CollisionRay, CollisionSystems,
         CollisionWorld, QueryFilter, SensorFilter, ShapeCastOptions, refresh_collision_world,
     };
-    pub use engine_core::glam::{Mat4, Quat, Vec2, Vec3, Vec4};
-    pub use engine_physics::{BodyMotion, PhysicsPlugin, PhysicsSystems, PhysicsWorld, RigidBody};
     pub use engine_core::bevy_ecs::{
         self,
         bundle::Bundle,
@@ -204,5 +202,7 @@ pub mod prelude {
         },
         world::{EntityMut, EntityRef, EntityWorldMut, FromWorld, World},
     };
+    pub use engine_core::glam::{Mat4, Quat, Vec2, Vec3, Vec4};
+    pub use engine_physics::{BodyMotion, PhysicsPlugin, PhysicsSystems, PhysicsWorld, RigidBody};
     pub use engine_scene::{SceneDocument, SceneEntity, SceneInstance};
 }

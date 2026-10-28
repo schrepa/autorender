@@ -323,8 +323,8 @@ fn register(refusal: &Value) -> Option<DevError> {
             .as_str()
             .unwrap_or("a probe")
             .repeat(repeat);
-        let descriptor = InspectorDescriptor::new(name, json!({"type": "object"}))
-            .with_description(description);
+        let descriptor =
+            InspectorDescriptor::new(name, json!({"type": "object"})).with_description(description);
         last = tools
             .register_resource::<engine::FixedTime>(descriptor, |_| Value::Null)
             .err();

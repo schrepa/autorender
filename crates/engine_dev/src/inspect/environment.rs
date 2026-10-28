@@ -21,8 +21,7 @@ impl DevTools {
                     .unwrap_or_else(|| panic!("schemas generates no schema named {}", T::NAME));
                 self.tools
                     .register_resource::<T>(
-                        InspectorDescriptor::new(T::NAME, schema)
-                            .with_default(json!(T::default())),
+                        InspectorDescriptor::new(T::NAME, schema).with_default(json!(T::default())),
                         |settings| json!(settings),
                     )
                     .expect("built-in descriptor is bounded");

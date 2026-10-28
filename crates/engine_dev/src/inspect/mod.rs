@@ -285,7 +285,11 @@ impl DevTools {
                 format!("a game may register at most {MAX_INSPECTORS} inspectors"),
             ));
         }
-        let description = inspector.descriptor.description.as_deref().unwrap_or_default();
+        let description = inspector
+            .descriptor
+            .description
+            .as_deref()
+            .unwrap_or_default();
         if description.len() > MAX_DESCRIPTION_BYTES
             || encode(&inspector.descriptor, MAX_INSPECTOR_BYTES).is_err()
         {

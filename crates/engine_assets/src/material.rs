@@ -202,7 +202,9 @@ impl TextureRef {
 pub enum AlphaMode {
     #[default]
     Opaque,
-    Mask { cutoff: f32 },
+    Mask {
+        cutoff: f32,
+    },
     Blend,
 }
 

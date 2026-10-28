@@ -20,15 +20,24 @@ pub(crate) enum Pending {
         ran: u32,
         show: bool,
     },
-    Shown { reply: Value },
-    Game { name: String },
+    Shown {
+        reply: Value,
+    },
+    Game {
+        name: String,
+    },
     Reload {
         expected_revision: String,
         revision: String,
     },
     Benchmark(Box<BenchmarkRun>),
-    Probe { reply: Value, waits: u32 },
-    DeviceLoss { waits: u32 },
+    Probe {
+        reply: Value,
+        waits: u32,
+    },
+    DeviceLoss {
+        waits: u32,
+    },
 }
 
 const LOSS_WAITS: u32 = 120;

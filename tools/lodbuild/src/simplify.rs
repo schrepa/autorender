@@ -101,21 +101,31 @@ pub struct Simplified {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SimplifyError {
-    TriangleCount { indices: usize },
+    TriangleCount {
+        indices: usize,
+    },
     IndexOutOfBounds {
         index: usize,
         value: u32,
         vertices: usize,
     },
-    TooLarge { vertices: usize, indices: usize },
+    TooLarge {
+        vertices: usize,
+        indices: usize,
+    },
     AttributeLayout {
         values: usize,
         stride: usize,
         weights: usize,
         vertices: usize,
     },
-    InvalidWeight { attribute: usize },
-    VertexFlagCount { expected: usize, actual: usize },
+    InvalidWeight {
+        attribute: usize,
+    },
+    VertexFlagCount {
+        expected: usize,
+        actual: usize,
+    },
     InvalidTargetError,
 }
 
