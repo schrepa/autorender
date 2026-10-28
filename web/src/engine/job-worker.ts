@@ -1,5 +1,4 @@
 import type { JobWorker } from "../../pkg/engine_worker";
-import { type TranscodedImage, transcodeWith, workerTranscoder } from "./ktx2";
 import { fatal, panicReport } from "./panic";
 
 type Request =
@@ -9,7 +8,6 @@ type Request =
   | { type: "unshare"; key: string }
   | { type: "run"; id: number; kind: string; input: Uint8Array; priority: number }
   | { type: "cancel"; id: number }
-  | { type: "ktx2"; task: number; uri: string; bytes: Uint8Array; format: TranscodedImage["format"]; basis: string }
   | { type: "image"; task: number; uri: string; bytes: Uint8Array }
   | { type: "unpack"; task: number; bytes: Uint8Array; raw: number };
 
@@ -104,15 +102,6 @@ async function handle(request: Request) {
       return;
     case "cancel":
       worker?.cancel(request.id);
-      return;
-    case "ktx2":
-      try {
-        const image = transcodeWith(await workerTranscoder(request.basis), request.uri, request.bytes, request.format);
-        const transfer = image.format === "rgba8" ? [image.pixels.buffer] : [image.data.buffer, image.levels.buffer];
-        scope.postMessage({ type: "task", task: request.task, result: image }, transfer as ArrayBuffer[]);
-      } catch (error) {
-        scope.postMessage({ type: "task_failed", task: request.task, error: String(error) });
-      }
       return;
     case "unpack":
       try {

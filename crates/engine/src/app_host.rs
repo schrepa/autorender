@@ -1,6 +1,6 @@
 use engine_core::{
     Engine, ErrorCode, FrameReport, FrameStats, InputState, JobId, JobRequest, JobShare,
-    PresentationMode, RecordFetch, RecordKey,
+    RecordFetch, RecordKey,
 };
 use engine_render::{RenderError, RenderTarget, Renderer};
 
@@ -82,7 +82,6 @@ pub(crate) struct AppHost {
     last_timestamp_ms: Option<f64>,
     stats: FrameStats,
     size: (u32, u32),
-    gpu_presentation: bool,
     tick_pipelining: bool,
     gpu_inputs_stale: bool,
     terrain_clock: TerrainClock,
@@ -118,7 +117,7 @@ struct Overrides {
 enum FrameKind {
     Display { alpha: f32, interval: Option<f64> },
     Exact,
-    Preview { alpha: f32, gpu: bool },
+    Preview { alpha: f32 },
 }
 
 #[inline(never)]
@@ -145,7 +144,6 @@ impl AppHost {
             last_timestamp_ms: None,
             stats: FrameStats::default(),
             size: (0, 0),
-            gpu_presentation: true,
             tick_pipelining: true,
             gpu_inputs_stale: false,
             terrain_clock: TerrainClock::Wall,
@@ -194,8 +192,7 @@ impl AppHost {
     ) -> bool {
         if self.pipeline_list.unasked() {
             let content = content(&self.engine);
-            self.pipeline_list
-                .ask(&mut self.engine, content, self.gpu_presentation);
+            self.pipeline_list.ask(&mut self.engine, content);
         }
         self.pipeline_list
             .take(&mut self.engine, &mut self.renderer);
@@ -264,17 +261,6 @@ impl AppHost {
         {
             terrains.set_clock(clock.reading());
         }
-    }
-
-    pub fn set_gpu_presentation(&mut self, enabled: bool) {
-        self.gpu_presentation = enabled;
-        if !enabled {
-            self.engine.complete_pending_tick();
-        }
-    }
-
-    pub fn gpu_presentation(&self) -> bool {
-        self.gpu_presentation
     }
 
     pub fn set_tick_pipelining(&mut self, enabled: bool) {
@@ -633,7 +619,7 @@ impl AppHost {
                 interval,
             },
         )?;
-        if self.gpu_presentation && self.tick_pipelining {
+        if self.tick_pipelining {
             let start = now_ms();
             if self.engine.run_ahead(delta) {
                 if self.engine.tick_completed_ahead()
@@ -679,7 +665,7 @@ impl AppHost {
     }
 
     #[cfg(feature = "dev")]
-    pub fn dev_present(&mut self, alpha: f32, width: u32, height: u32, gpu: bool) -> Result<()> {
+    pub fn dev_present(&mut self, alpha: f32, width: u32, height: u32) -> Result<()> {
         if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
             return Err(Error::new(
                 ErrorCode::InvalidPresentationAlpha,
@@ -696,7 +682,7 @@ impl AppHost {
             height,
             0.0,
             FrameReport::default(),
-            FrameKind::Preview { alpha, gpu },
+            FrameKind::Preview { alpha },
         )
     }
 
@@ -755,23 +741,19 @@ impl AppHost {
         let culling_enabled = self.engine.frustum_culling();
         let aspect = width.max(1) as f32 / height.max(1) as f32;
         let gpu = match kind {
-            FrameKind::Display { .. } => self.gpu_presentation,
+            FrameKind::Display { .. } | FrameKind::Preview { .. } => true,
             FrameKind::Exact => false,
-            FrameKind::Preview { gpu, .. } => gpu,
         };
         if gpu && self.gpu_inputs_stale {
             self.engine.complete_pending_tick();
             self.engine.reveal_ticks_ahead();
         }
         let frame = match kind {
-            FrameKind::Display { alpha, .. } | FrameKind::Preview { alpha, .. } if gpu => {
-                self.engine.extract_gpu_frame(aspect, alpha)
+            FrameKind::Display { alpha, .. } | FrameKind::Preview { alpha } => {
+                self.engine.extract_gpu_frame(aspect, alpha)?
             }
-            FrameKind::Display { alpha, .. } | FrameKind::Preview { alpha, .. } => self
-                .engine
-                .extract_frame(aspect, PresentationMode::Interpolated { alpha }),
-            FrameKind::Exact => self.engine.extract_frame(aspect, PresentationMode::Current),
-        }?;
+            FrameKind::Exact => self.engine.extract_frame(aspect),
+        };
         let after_extraction = now_ms();
         let rendered = if let FrameKind::Display { .. } = kind {
             self.renderer
@@ -795,7 +777,7 @@ impl AppHost {
         } else {
             (
                 listed,
-                snapshot.culled_instances.min(u32::MAX as usize) as u32,
+                0,
                 snapshot.dropped_instances.min(u32::MAX as usize) as u32,
             )
         };

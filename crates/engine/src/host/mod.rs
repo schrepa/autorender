@@ -26,8 +26,7 @@ pub(crate) use pipeline_list::PipelineList;
 pub(crate) use resolution::DynamicScale;
 pub use resolution::{render_size, view_size};
 pub use scene_load::{
-    FileRead, IMAGE_FORMATS, Image, ImageDecoder, ImageFormat, ImageRead, LoadingHost, SceneLoad,
-    decode_image, image_format,
+    FileRead, IMAGE_FORMATS, Image, ImageFormat, SceneLoad, decode_image, image_format,
 };
 pub use settings::{HostSettings, SETTINGS, Setting};
 
@@ -68,12 +67,7 @@ pub fn typescript() -> String {
     let formats: serde_json::Map<String, serde_json::Value> = IMAGE_FORMATS
         .iter()
         .map(|format| {
-            let decoder = |decoder: Option<ImageDecoder>| decoder.map(ImageDecoder::name);
-            let described = serde_json::json!({
-                "what": format.what,
-                "page": decoder(format.page),
-                "native": decoder(format.native),
-            });
+            let described = serde_json::json!({ "what": format.what });
             (format.name.to_owned(), described)
         })
         .collect();

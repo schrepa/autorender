@@ -7,7 +7,7 @@
 use engine_settings::ErrorCode;
 use std::collections::BTreeMap;
 
-use engine_core::{MeshLods, MeshVertex, Texture, TextureFormat};
+use engine_core::{MeshLods, MeshVertex, Texture};
 
 use crate::SceneError;
 
@@ -23,12 +23,9 @@ pub struct SceneFile {
     pub kind: SceneFileKind,
 }
 
-type CompressedImage = (TextureFormat, u32, u32, Vec<Vec<u8>>);
-
 #[derive(Clone, Debug, Default)]
 pub struct SceneFiles {
     images: BTreeMap<String, (u32, u32, Vec<u8>)>,
-    compressed: BTreeMap<String, CompressedImage>,
     buffers: BTreeMap<String, Vec<u8>>,
 }
 
@@ -39,18 +36,6 @@ impl SceneFiles {
 
     pub fn add_image(&mut self, uri: &str, width: u32, height: u32, pixels: Vec<u8>) {
         self.images.insert(uri.to_owned(), (width, height, pixels));
-    }
-
-    pub fn add_compressed_image(
-        &mut self,
-        uri: &str,
-        format: TextureFormat,
-        width: u32,
-        height: u32,
-        levels: Vec<Vec<u8>>,
-    ) {
-        self.compressed
-            .insert(uri.to_owned(), (format, width, height, levels));
     }
 
     pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
@@ -65,11 +50,6 @@ impl SceneFiles {
     }
 
     pub(crate) fn texture(&self, uri: &str, path: &str) -> Result<Texture, SceneError> {
-        if let Some((format, width, height, levels)) = self.compressed.get(uri) {
-            return Texture::from_levels(*format, *width, *height, levels.clone()).map_err(
-                |error| SceneError::new(ErrorCode::InvalidTexture, path, error.to_string()),
-            );
-        }
         let (width, height, pixels) = self.images.get(uri).ok_or_else(|| missing(uri, path))?;
         Texture::from_rgba(*width, *height, pixels.clone())
             .map_err(|error| SceneError::new(ErrorCode::InvalidTexture, path, error.to_string()))

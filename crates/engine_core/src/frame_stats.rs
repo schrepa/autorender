@@ -67,8 +67,6 @@ pub struct RenderStats {
     pub ground_cover: GroundCoverStats,
     pub occupancy: OccupancyStats,
     pub water: WaterStats,
-    pub ocean: OceanStats,
-    pub deformation: DeformationStats,
     pub clouds: CloudStats,
     pub world_streaming: crate::CellStats,
     pub sky: SkyStats,
@@ -273,20 +271,6 @@ pub struct WaterStats {
     pub wave_particles: u32,
     pub particles_born: u32,
     pub dropped_particles: u32,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct OceanStats {
-    pub sectors: u32,
-    pub triangles: u32,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct DeformationStats {
-    pub stamps: u32,
-    pub texels: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]

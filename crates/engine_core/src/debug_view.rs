@@ -98,7 +98,6 @@ pub enum DrawnKind {
     Blades,
     #[serde(rename = "water")]
     Lakes,
-    Sea,
     Falls,
     Sky,
 }

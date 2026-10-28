@@ -6,8 +6,6 @@ struct Grow {
     scale: vec4<f32>,
     tier: vec4<f32>,
     planes: array<vec4<f32>, 6>,
-    deform_grid: vec4<i32>,
-    deform: vec4<f32>,
     foliage: vec4<f32>,
     view: vec4<f32>,
 }
@@ -53,7 +51,6 @@ const PALETTE_ENTRIES: u32 = 113u;
 @group(0) @binding(5) var<uniform> grow: Grow;
 @group(0) @binding(6) var<storage, read_write> blades: array<CoverBlade>;
 @group(0) @binding(7) var<storage, read_write> counts: Counts;
-@group(0) @binding(9) var<storage, read> deformation: array<u32>;
 @group(0) @binding(10) var macro_maps: texture_2d_array<f32>;
 @group(0) @binding(11) var normals: texture_2d_array<u32>;
 
@@ -151,22 +148,6 @@ fn box_in_view(low: vec3<f32>, high: vec3<f32>, radius: f32) -> bool {
         }
     }
     return true;
-}
-
-fn pressed_at(point: vec2<f32>) -> f32 {
-    let size = grow.deform_grid.z;
-    if size <= 0 {
-        return 0.0;
-    }
-    let local = point * grow.deform.x - vec2<f32>(grow.deform_grid.xy);
-    if any(local < vec2<f32>(0.0)) || any(local >= vec2<f32>(f32(size))) {
-        return 0.0;
-    }
-    let texel = vec2<i32>(floor(local)) + grow.deform_grid.xy;
-    let slot = ((texel % size) + size) % size;
-    let blocks = grow.deform_grid.w;
-    let word = u32(blocks * blocks + slot.y * size + slot.x);
-    return unpack2x16float(deformation[word]).x * grow.deform.y;
 }
 
 fn in_view(center: vec3<f32>, radius: f32) -> bool {
@@ -394,11 +375,9 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             continue;
         }
         let rise = saturate((keep - rank) / max(0.25 * keep, 1.0e-4));
-        let pressed = min(pressed_at(world_xz), palette[entry].relief.y);
-        let standing = 1.0 - 0.85 * smoothstep(0.01, 0.06, pressed);
         let clumped = cover_clumped(cover_clump(world_xz));
         let height = mix(spec.shape.y, spec.shape.z, unit(hash(seed ^ 0xc2b2ae35u)))
-            * growth.height * clumped.height * rise * standing * edge;
+            * growth.height * clumped.height * rise * edge;
         if height < 0.02 {
             continue;
         }

@@ -7,7 +7,7 @@ use crate::gpu_layouts::scene::{
 };
 use crate::gpu_layouts::world_trace::{PlacedGroup, TraceTerrain};
 use crate::gpu_layouts::{
-    bounce, clouds, debug_view, deformation, ground_cover, occupancy, scatter, sky, terrain, water,
+    bounce, clouds, debug_view, ground_cover, occupancy, scatter, sky, terrain, water,
 };
 
 mod shared;
@@ -358,7 +358,6 @@ tables! {
             texture(27, "terrain_material_data", Float, D2Array, VFC),
             sampler(29, "terrain_material_sampler", Filtering, VFC),
             texture(30, "terrain_sky", Float, D2Array, F),
-            read(31, "terrain_deformation", F),
             sampler(32, "terrain_control_sampler", NonFiltering, VFC),
             texture(35, "terrain_macro", Float, D2Array, F),
             read(36, "terrain_surface_leaves", V),
@@ -460,16 +459,6 @@ tables! {
         ],
     };
 
-    const DEFORMATION: Table = Table {
-        label: "engine/deformation-layout",
-        serves: [DEFORMATION_SHADER @ 0],
-        bindings: &[
-            dynamic_uniform(0, "job", size_of::<deformation::JobUniform>(), C),
-            read(1, "stamps", C),
-            write(2, "map", C),
-        ],
-    };
-
     const TERRAIN_NORMALS: Table = Table {
         label: "engine/terrain-normals-layout",
         serves: [TERRAIN_NORMALS_SHADER @ 0],
@@ -531,7 +520,6 @@ tables! {
             write(6, "blades", C),
             write(7, "counts", C),
             write(8, "args", C),
-            read(9, "deformation", C),
             texture(10, "macro_maps", Float, D2Array, C),
             texture(11, "normals", Uint, D2Array, C),
         ],

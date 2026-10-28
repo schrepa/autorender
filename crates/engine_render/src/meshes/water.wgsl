@@ -3,15 +3,9 @@
 @group(1) @binding(60) var<uniform> water_tree: TerrainSubdivision;
 
 struct WaterUniform {
-    relative_view_projection: mat4x4<f32>,
-    origin: vec4<f32>,
     color: vec4<f32>,
     foam: vec4<f32>,
     absorption: vec4<f32>,
-    ocean: vec4<f32>,
-    ocean_grid: vec4<f32>,
-    ocean_waves: array<vec4<f32>, 16>,
-    ocean_reach: array<vec4<f32>, 4>,
     sim: vec4<f32>,
     sim_datum: vec4<f32>,
     sediment: vec4<f32>,
@@ -512,7 +506,6 @@ const WATER_LONGEST_FRAME: f32 = 0.1;
 
 const WATER_BUBBLES: f32 = 3.0;
 const WATER_BUBBLE_ALBEDO: f32 = 0.2;
-const WATER_CREST_WALL: f32 = 6.3;
 
 fn water_extinction(aerated: f32) -> vec3<f32> {
     return water.absorption.rgb + water.sediment.w + WATER_BUBBLES * aerated;
@@ -636,8 +629,6 @@ struct WaterSurface {
     foam: f32,
     scatter: vec3<f32>,
     transmit: vec3<f32>,
-    crest: f32,
-    crest_wall: vec3<f32>,
 }
 
 struct WaterLit {
@@ -680,18 +671,8 @@ fn water_light(surface: WaterSurface) -> WaterLit {
                 * water_visibility(n_v, n_l, view * tangents, sun * tangents, widened) * n_l
                 * lighting.sun_color.w);
     }
-    var crest_light = vec3<f32>(0.0);
-    let far = 2.0 * dot(surface.normal, surface.plane) * surface.plane - surface.normal;
-    let far_in = dot(far, sun);
-    let above = dot(view, surface.plane) > 0.0; // optics: crests are lit through as seen from above the water
-    if surface.crest > 0.0 && far_in > 0.0 && above && any(sunlight > vec3<f32>(0.0)) {
-        let wall = surface.crest_wall;
-        crest_light = surface.scatter * sunlight * wall * exp(-wall)
-            * (2.0 * surface.crest * (1.0 - fresnel(f0, far_in).r)
-                * water_phase(dot(-sun, view)));
-    }
-    let body = (surface.scatter * (vec3<f32>(1.0) - surface.transmit)
-        * water_scattered(view, sunlight, surface.plane) + crest_light) * (1.0 - reflectance);
+    let body = surface.scatter * (vec3<f32>(1.0) - surface.transmit)
+        * water_scattered(view, sunlight, surface.plane) * (1.0 - reflectance);
     let sky = sky_average(up) * lighting.zenith.w;
     let around = lighting.sun_color.rgb * (0.35 * saturate(sun.y)) + sky * 0.5;
     let foam_n_l = dot(surface.normal, sun);
@@ -823,9 +804,6 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let unresolved = vec3<f32>(0.5 * detail.hidden, 0.5 * detail.hidden, 0.0)
         + splatted.hidden * splatted.shown;
     let roughness = water_roughness(unresolved + water_turning(fall), water_heading(view));
-    if water.ocean.y > 0.5 && world.y < eye_world(vec3<f32>(0.0, water.ocean.x, 0.0)).y {
-        discard;
-    }
     var behind: WaterBehind;
     behind.ground = own;
     behind.color = vec3<f32>(0.0);
@@ -861,8 +839,6 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     surface.foam = cover;
     surface.scatter = water_body(aerated);
     surface.transmit = transmit;
-    surface.crest = 0.0;
-    surface.crest_wall = vec3<f32>(0.0);
     let lit = water_light(surface);
     let caustic = 1.0 + (gathered - 1.0) * lit.sunny
         * exp(-bed_depth * (1.0 / WATER_CAUSTIC_DEPTH + WATER_BUBBLES * aerated));

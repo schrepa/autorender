@@ -36,7 +36,7 @@ mod tables;
 mod water_blocks;
 
 use atlas::TileAtlas;
-pub(crate) use patches::{PatchDraws, planes, visible};
+pub(crate) use patches::{PatchDraws, planes};
 use pipelines::{GroupSources, TerrainPipelines};
 pub(crate) use surface::{SurfaceDraw, SurfaceTrees};
 use tables::TerrainTables;
@@ -89,10 +89,8 @@ pub(crate) struct CoverSources<'a> {
     pub directory: &'a wgpu::Buffer,
     pub palette: &'a wgpu::Buffer,
     pub covers: &'a wgpu::Buffer,
-    pub deformation: &'a wgpu::Buffer,
-    pub shading: crate::deformation::DeformationShading,
     pub macro_maps: &'a wgpu::TextureView,
-    pub generation: (u64, u64, u64, u64),
+    pub generation: (u64, u64, u64),
     pub revision: u64,
 }
 
@@ -159,7 +157,6 @@ pub(crate) struct TerrainPass {
     pub(crate) bounce: Bounce,
     pub(crate) cooking: bool,
     pub(crate) macro_maps: MacroMaps,
-    pub(crate) deformation: crate::deformation::DeformationPass,
     pub(crate) water: water_blocks::WaterBlocks,
 }
 
@@ -177,7 +174,6 @@ impl TerrainPass {
             bounce: Bounce::new(device, queue),
             cooking: false,
             macro_maps: MacroMaps::new(device, queue),
-            deformation: crate::deformation::DeformationPass::new(device),
             water: water_blocks::WaterBlocks::new(device),
         }
     }
@@ -198,7 +194,6 @@ impl TerrainPass {
             + self.bounce.capacity_bytes()
             + self.macro_maps.capacity_bytes()
             + self.maps.capacity_bytes()
-            + self.deformation.capacity_bytes()
             + self.water.capacity_bytes()
     }
 
@@ -279,7 +274,6 @@ impl TerrainPass {
             surface: &self.surface,
             sky: &self.sky,
             macro_maps: &self.macro_maps,
-            shading: self.deformation.shading(),
         };
         self.patches.lay_out(device, terrains, views, &parts);
         let uniforms = (&self.tables.uniforms, self.tables.uniform_generation);
@@ -294,7 +288,6 @@ impl TerrainPass {
                 maps: &self.maps,
                 sky: &self.sky,
                 macro_maps: &self.macro_maps,
-                deformation: &self.deformation,
                 water: &self.water,
             },
         );
@@ -329,13 +322,10 @@ impl TerrainPass {
             directory: &tables.directory,
             palette: &tables.palette,
             covers: &tables.covers,
-            deformation: self.deformation.map().0,
-            shading: self.deformation.shading(),
             macro_maps: self.macro_maps.view(),
             generation: (
                 self.atlas.generation,
                 tables.directory_generation,
-                self.deformation.map().1,
                 self.macro_maps.generation(),
             ),
             revision: tables.directory_revision,

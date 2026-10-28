@@ -87,11 +87,6 @@ const FILTERS: &[(&str, &str)] = &[
         "a fade over the water's depth averaged over the depths the pixel spans",
     ),
     (
-        "water_shown",
-        "a computed pattern's part drawn while it spans two pixels along the way it varies, as \
-         mipmaps keep a texture's, the finer ones' slopes as roughness",
-    ),
-    (
         "water_turning",
         "the water's normal turning within the pixel, its spread as roughness (Kaplanyan)",
     ),
@@ -109,7 +104,7 @@ const FILTERS: &[(&str, &str)] = &[
     ),
     (
         "terrain_parallax",
-        "the ground's pixel band and tracks: the view ray meets its materials' whole heights from the drawn ground where their whole depth moves it a pixel or more, the drawn ground standing in below",
+        "the ground's pixel band: the view ray meets its materials' whole heights from the drawn ground where their whole depth moves it a pixel or more, the drawn ground standing in below",
     ),
     (
         "terrain_resolved",

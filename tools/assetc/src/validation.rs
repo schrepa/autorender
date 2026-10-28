@@ -50,10 +50,9 @@ fn number(bytes: &[u8], offset: usize) -> Option<u32> {
     ))
 }
 
-pub(crate) const SUPPORTED_EXTENSIONS: [&str; 3] = [
+pub(crate) const SUPPORTED_EXTENSIONS: [&str; 2] = [
     "KHR_texture_transform",
     "KHR_materials_emissive_strength",
-    "KHR_texture_basisu",
 ];
 
 pub(crate) fn structure(json: &Value) -> Result<Vec<String>, ImportError> {

@@ -3,7 +3,6 @@ import { FRAME_CORES, MAX_WORKERS, PANIC_PREFIX } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 import { engineWorkerModule } from "./bindings";
 import { JobStore, jobCacheSettings, type Unpacker } from "./job-cache";
-import type { TranscodedImage } from "./ktx2";
 import { fatal, type PanicReport } from "./panic";
 
 export type JobRuntime = Pick<Runtime, "set_job_workers" | "set_job_cache" | "take_jobs" | "complete_job" | "fail_job"
@@ -170,21 +169,6 @@ export class JobPool {
     this.call(runtime => runtime.report_job_cache(hits, misses, bytes, mismatches));
   }
 
-  async transcodeKtx2(uri: string, bytes: Uint8Array, format: TranscodedImage["format"], basis: string): Promise<TranscodedImage> {
-    const store = await this.store;
-    const key = store?.index.key(`ktx2 ${format} ${basis}`, bytes);
-    const kept = store && key ? await store.lookup(key) : undefined;
-    const image = kept && readTranscoded(kept);
-    if (image && !store?.verify) return image;
-    const fresh = await this.task({ type: "ktx2", uri, bytes, format, basis }, [bytes.buffer as ArrayBuffer]) as TranscodedImage;
-    if (store && key) {
-      const written = writeTranscoded(fresh);
-      if (!kept) store.keep(key, written);
-      else if (!sameBytes(kept, written)) store.mismatch(key);
-    }
-    return fresh;
-  }
-
   private unpack(stored: Uint8Array, raw: number): Promise<Uint8Array> | undefined {
     if (this.size === 0) return undefined;
     return this.task({ type: "unpack", bytes: stored, raw }, [stored.buffer as ArrayBuffer]) as Promise<Uint8Array>;
@@ -310,41 +294,6 @@ async function openStore(module: WebAssembly.Module | undefined, unpack: Unpacke
   const bindings = (pinned ? await import(/* @vite-ignore */ pinned) : await import("../../pkg/engine_worker")) as typeof import("../../pkg/engine_worker");
   await bindings.default({ module_or_path: module });
   return JobStore.open(bindings, settings.budget, settings.verify, unpack);
-}
-
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let index = 0; index < a.length; index++) if (a[index] !== b[index]) return false;
-  return true;
-}
-
-function writeTranscoded(image: TranscodedImage): Uint8Array {
-  const header = image.format === "rgba8"
-    ? { format: image.format, width: image.width, height: image.height }
-    : { format: image.format, width: image.width, height: image.height, levels: Array.from(image.levels) };
-  const head = new TextEncoder().encode(JSON.stringify(header));
-  const body = image.format === "rgba8" ? image.pixels : image.data;
-  const out = new Uint8Array(4 + head.length + body.length);
-  new DataView(out.buffer).setUint32(0, head.length, true);
-  out.set(head, 4);
-  out.set(body, 4 + head.length);
-  return out;
-}
-
-function readTranscoded(bytes: Uint8Array): TranscodedImage | undefined {
-  try {
-    const length = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, true);
-    const header = JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + length))) as {
-      format: TranscodedImage["format"]; width: number; height: number; levels?: number[];
-    };
-    const body = bytes.slice(4 + length);
-    if (!Number.isSafeInteger(header.width) || !Number.isSafeInteger(header.height)) return undefined;
-    if (header.format === "rgba8") return { format: "rgba8", width: header.width, height: header.height, pixels: body };
-    if (!["bc7", "etc2", "astc"].includes(header.format) || !Array.isArray(header.levels)) return undefined;
-    return { format: header.format, width: header.width, height: header.height, data: body, levels: Uint32Array.from(header.levels) };
-  } catch {
-    return undefined;
-  }
 }
 
 let pool: JobPool | null | undefined;

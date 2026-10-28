@@ -79,7 +79,6 @@ pub fn generated() -> Result<Generated, String> {
         "Transform": schemars::schema_for!(views::TransformView),
         "GlobalTransform": schemars::schema_for!(views::GlobalTransformView),
         "InterpolateTransform": schemars::schema_for!(views::InterpolateTransformView),
-        "PresentedTransform": schemars::schema_for!(views::PresentedTransformView),
         "PresentationState": schemars::schema_for!(views::PresentationStateView),
         "Hierarchy": schemars::schema_for!(views::HierarchyView),
         "Camera": schemars::schema_for!(views::CameraView),

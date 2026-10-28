@@ -334,41 +334,6 @@ impl TerrainState {
             })
             .flatten()
     }
-
-    pub(super) fn deform(&self, local: Vec2) -> Option<f32> {
-        if self.cut_out(local) {
-            return None;
-        }
-        let pyramid = &self.terrain.pyramid;
-        (0..pyramid.levels()).find_map(|level| {
-            let key = pyramid.tile_at(level, local)?;
-            let tile = self.store.get(&key)?;
-            let at = (local - pyramid.tile_origin(key)) / tile.spacing();
-            let (x, z) = (at.x.round() as i32, at.y.round() as i32);
-            let control = match (tile.control_at(x, z), tile.shading(), &self.surface) {
-                (Some(control), _, _) => control,
-                (None, Some(shading), _) => shading.control_at(x, z),
-                (None, None, Some((layers, _))) => {
-                    let stored =
-                        |sample: i32| (sample.clamp(-1, TILE_STRIDE as i32 - 2) + 1) as usize;
-                    engine_terrain::gpu::sample_control(
-                        tile,
-                        (layers, &self.terrain.surface.rules),
-                        (stored(x), stored(z)),
-                    )
-                }
-                (None, None, None) => return None,
-            };
-            let materials = &self.terrain.surface.materials;
-            let deform = |index: u8| {
-                materials
-                    .get(usize::from(index))
-                    .map_or(0.0, |material| material.deform)
-            };
-            let share = f32::from(control.blend) / 255.0;
-            Some(deform(control.a) + (deform(control.b) - deform(control.a)) * share)
-        })
-    }
 }
 
 #[derive(Resource, Default)]

@@ -8,8 +8,7 @@ use crate::transparent::Transparency;
 use crate::water::WaterPass;
 
 use engine_core::{
-    CullingStats, DeformationStats, DetailStats, ShadowStats, TerrainBounceStats,
-    TerrainRenderStats,
+    CullingStats, DetailStats, ShadowStats, TerrainBounceStats, TerrainRenderStats,
 };
 
 #[cfg(feature = "profiling")]
@@ -78,7 +77,7 @@ impl Renderer {
             features.frames.post.as_ref().map(Ready::frame),
             snapshot,
         );
-        let (water, ocean) = WaterPass::stats(
+        let water = WaterPass::stats(
             Some(self.features.water.get()),
             features.frames.water.as_ref().map(Ready::frame),
             snapshot,
@@ -242,11 +241,6 @@ impl Renderer {
                 snapshot,
             ),
             water,
-            ocean,
-            deformation: DeformationStats {
-                stamps: self.terrain.deformation.pressed,
-                texels: self.terrain.deformation.texels,
-            },
             clouds: CloudPass::stats(
                 Some(self.features.clouds.get()),
                 features.frames.clouds.as_ref().map(Ready::frame),

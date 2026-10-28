@@ -38,14 +38,13 @@ impl PipelineList {
         matches!(self.state, State::Asked { .. })
     }
 
-    pub(crate) fn ask(&mut self, engine: &mut Engine, content: Option<Vec<u8>>, gpu: bool) {
+    pub(crate) fn ask(&mut self, engine: &mut Engine, content: Option<Vec<u8>>) {
         let Some(mut identity) = content else {
             self.state = State::Done;
             return;
         };
         let world = engine.app.world_mut();
         identity.extend(format!("{:?}", Environment::current(world).sanitized()).bytes());
-        identity.push(u8::from(gpu));
         let key = RecordKey::new(&engine_render::SOURCE, KIND, &identity);
         if world.contains_resource::<Cooking>() {
             self.state = State::Making { key, quiet: 0 };

@@ -180,15 +180,6 @@ pub(crate) fn water(targets: Targets) -> (Entry, Entry) {
     }
 }
 
-pub(crate) fn ocean(targets: Targets) -> (Entry, Entry) {
-    match targets {
-        Targets::Canvas => (meshes::vs_ocean, meshes::fs_ocean),
-        Targets::Post => (meshes::vs_ocean, meshes::fs_ocean_post),
-        Targets::Temporal => (meshes::vs_ocean_temporal, meshes::fs_ocean_temporal),
-        Targets::Debug => (meshes::vs_ocean, meshes::fs_debug_ocean),
-    }
-}
-
 pub(crate) fn falls(targets: Targets) -> (Entry, Entry) {
     match targets {
         Targets::Canvas => (meshes::vs_fall, meshes::fs_fall),

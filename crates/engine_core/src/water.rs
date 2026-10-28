@@ -9,7 +9,6 @@ pub enum WaterKind {
     River,
     Lake,
     Fall,
-    Sea,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]

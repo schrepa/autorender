@@ -46,8 +46,6 @@ gpu_structs! {
         pub origin: [f32; 4],
         pub directory: [u32; 4],
         pub relief: [f32; 4],
-        pub deform_grid: [i32; 4],
-        pub deform: [f32; 4],
         pub cover: [f32; 4],
         pub macro_map: [u32; 4],
         pub steep: [f32; 4],

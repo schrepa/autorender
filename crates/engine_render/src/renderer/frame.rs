@@ -310,8 +310,7 @@ impl Renderer {
             self.prepare_scatter(snapshot, passes.opaque_kind, passes.impostor_pass.is_some());
         let scatter = features.frames.scatter.is_some();
         features.frames.occupancy = self.prepare_occupancy();
-        features.frames.water =
-            self.prepare_water(snapshot, passes.opaque_kind, &packing.temporal_frame);
+        features.frames.water = self.prepare_water(snapshot, passes.opaque_kind);
         self.refresh_camera_group();
         let shape = self.frame_shape(kind, (&packing, &features, &passes), (scatter, terrain));
         features.frames.clouds = self.prepare_cloud_composite(shape.targets);

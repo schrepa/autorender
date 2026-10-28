@@ -22,9 +22,6 @@ fn sky_disc(ray: vec3<f32>) -> vec3<f32> {
 }
 
 fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
-    if lighting.underwater.w > 0.0 {
-        return sky(ray);
-    }
     let light = with_night_sky(sky_air_light(ray) + sky_disc(ray), ray);
     if sky_domes.view.x > 0.5 {
         return light;
@@ -387,7 +384,7 @@ const SKY_SURFACE = vec4<u32>(32768u, 32768u, 65535u, 0u);
 fn view_cloud_layer(position: vec2<f32>) -> vec4<f32> {
     let cloud = textureLoad(view_clouds, vec2<i32>(position), 0);
     let covering = 1.0 - cloud.a;
-    if covering <= 1.0e-4 || lighting.underwater.w > 0.0 {
+    if covering <= 1.0e-4 {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
     return vec4<f32>(grade(cloud.rgb / covering) * covering, cloud.a);

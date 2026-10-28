@@ -11,7 +11,7 @@ const ALLOWED: &[(&str, &str)] = &[
     ),
     (
         "crates/engine_render/src/renderer/frame/prepare.rs",
-        "the camera's uniform (transforms), haze, the sea's veil, the clouds and the sky",
+        "the camera's uniform (transforms), haze, the clouds and the sky",
     ),
     (
         "crates/engine_render/src/renderer/terrain_draws.rs",

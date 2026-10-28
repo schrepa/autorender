@@ -226,8 +226,6 @@ pub struct SceneTerrainMaterial {
     pub cover: Option<Cover>,
     #[serde(default, skip_serializing_if = "is_flat")]
     pub depth: f32,
-    #[serde(default, skip_serializing_if = "is_flat")]
-    pub deform: f32,
 }
 
 fn is_flat(meters: &f32) -> bool {
@@ -458,7 +456,6 @@ impl SceneTerrain {
                 projection: material.projection,
                 cover: material.cover,
                 depth: material.depth,
-                deform: material.deform,
             };
             if let Err(error) = look.validate() {
                 return Err(invalid(
@@ -708,7 +705,6 @@ impl SceneTerrain {
                         projection: look.projection,
                         cover: look.cover,
                         depth: look.depth,
-                        deform: look.deform,
                     })
                     .collect(),
                 biomes: authored.biomes.clone(),

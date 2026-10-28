@@ -94,8 +94,6 @@ gpu_consts! {
 
     pub(crate) const MATERIAL_ANISOTROPY: u16 = 16 => ["DETAIL_ANISOTROPY"];
 
-    pub(crate) const DEFORMATION_BLOCK: u32 = 16 => ["BLOCK" in DEFORMATION_SHADER];
-
     pub(crate) const PYRAMID_GROUP: u32 = 8 => ["@pyramid_first" in DEPTH_PYRAMID_SHADER, "@pyramid_down" in DEPTH_PYRAMID_SHADER, "@pyramid_first_nearest" in DEPTH_PYRAMID_SHADER, "@pyramid_down_nearest" in DEPTH_PYRAMID_SHADER];
 
     pub(crate) const WATER_BLOCK: u32 = TERRAIN_GRID + 2 => ["WATER_BLOCK"];
@@ -220,7 +218,6 @@ gpu_consts! {
     pub(crate) const DEBUG_KIND_TERRAIN: u32 = 6 => ["DEBUG_KIND_TERRAIN"];
     pub(crate) const DEBUG_KIND_COVER: u32 = 7 => ["DEBUG_KIND_COVER"];
     pub(crate) const DEBUG_KIND_WATER: u32 = 8 => ["DEBUG_KIND_WATER"];
-    pub(crate) const DEBUG_KIND_SEA: u32 = 9 => ["DEBUG_KIND_SEA"];
     pub(crate) const DEBUG_KIND_FALLS: u32 = 10 => ["DEBUG_KIND_FALLS"];
     pub(crate) const DEBUG_KIND_SKY: u32 = 11 => ["DEBUG_KIND_SKY"];
     pub(crate) const DEBUG_LEVEL_SHIFT: u32 = 4 => ["DEBUG_LEVEL_SHIFT"];
@@ -242,7 +239,6 @@ gpu_consts! {
 
     pub(crate) const SCATTER_GROUP: u32 = 64 => ["@snap_scatter" in SCATTER_SNAP_SHADER, "@cull_scatter" in SCATTER_CULL_SHADER];
     pub(crate) const OCCUPANCY_GROUP: u32 = 64 => ["@select_covers" in OCCUPANCY_SHADER];
-    pub(crate) const DEFORMATION_GROUP: u32 = 8 => ["@press" in DEFORMATION_SHADER, "@slopes" in DEFORMATION_SHADER, "@scroll" in DEFORMATION_SHADER, "@wipe" in DEFORMATION_SHADER, "@rebase" in DEFORMATION_SHADER];
     pub(crate) const CLOUD_GROUP: u32 = 8 => ["@march_view" in CLOUDS_SHADER, "@march_clouds" in CLOUDS_SHADER, "@shadow_clouds" in CLOUDS_SHADER, "@light_clouds" in CLOUDS_SHADER];
     pub(crate) const SKY_TABLE_GROUP: u32 = 8 => ["@build_sky_view" in SKY_SHADER];
     pub(crate) const CONTROL_GROUP: u32 = 8 => ["@tile_control" in TERRAIN_CONTROL_SHADER];
@@ -317,7 +313,6 @@ gpu_mirrors! {
     engine_core::presentation_bounds::MIN_LINEAR_SCALE => ["MIN_LINEAR_SCALE" in PRESENTATION_SHADER];
     engine_core::presentation_bounds::COMMON_DETERMINANT_MARGIN => ["COMMON_DETERMINANT_MARGIN" in PRESENTATION_SHADER];
     engine_core::presentation_bounds::LINEAR_ROTATION_DOT_THRESHOLD => ["LINEAR_ROTATION_DOT" in PRESENTATION_SHADER];
-    engine_core::RIM_START => ["RIM_START" in DEFORMATION_SHADER];
     engine_core::GUST_SLOW_SHARE => ["GUST_SLOW_SHARE"];
     engine_core::GUST_SLOW_RATE => ["GUST_SLOW_RATE"];
     engine_core::GUST_SLOW_TRAVEL => ["GUST_SLOW_TRAVEL"];
@@ -325,7 +320,6 @@ gpu_mirrors! {
     engine_core::GUST_QUICK_RATE => ["GUST_QUICK_RATE"];
     engine_core::GUST_QUICK_TRAVEL => ["GUST_QUICK_TRAVEL"];
     engine_core::GUST_QUICK_ACROSS => ["GUST_QUICK_ACROSS"];
-    engine_core::RIM_REACH => ["RIM_REACH" in DEFORMATION_SHADER];
     engine_core::terrain_data::lighting::DIRECTIONS => ["HORIZON_DIRECTIONS"];
     engine_core::terrain_data::lighting::HORIZON_LAYERS => ["HORIZON_LAYERS"];
     engine_core::terrain_data::bounce::BINS => ["BOUNCE_BINS" in BOUNCE_SHADER];

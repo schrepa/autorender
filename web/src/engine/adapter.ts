@@ -1,5 +1,5 @@
 interface AdapterInfo { vendor: string; architecture: string; device: string; description: string }
-interface GpuAdapter { features: ReadonlySet<string>; info?: AdapterInfo }
+interface GpuAdapter { info?: AdapterInfo }
 interface Gpu { requestAdapter(options?: { powerPreference?: string }): Promise<GpuAdapter | null> }
 
 let adapter: Promise<GpuAdapter | null> | undefined;
@@ -9,10 +9,6 @@ function requested(): Promise<GpuAdapter | null> {
     return await gpu?.requestAdapter({ powerPreference: "high-performance" }).catch(() => null) ?? null;
   })();
   return adapter;
-}
-
-export async function adapterFeatures(): Promise<ReadonlySet<string>> {
-  return (await requested())?.features ?? new Set<string>();
 }
 
 export async function adapterInfo(): Promise<AdapterInfo | null> {

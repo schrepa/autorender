@@ -26,7 +26,6 @@ macro_rules! __game_surface {
                 fn suspend();
                 fn reset_camera();
                 fn reload_scene(source: &str, files: $crate::browser::SceneFileSet) -> Result<(), $crate::__private::JsValue>;
-                fn set_gpu_presentation(enabled: bool);
                 fn set_tick_pipelining(enabled: bool);
                 fn set_temporal_antialiasing(enabled: bool);
                 fn set_occlusion_culling(enabled: bool);
@@ -38,7 +37,6 @@ macro_rules! __game_surface {
             }
             always_ref {
                 fn stats() -> String as Json<FrameStats>;
-                fn gpu_presentation() -> bool;
                 fn tick_pipelining() -> bool;
                 fn temporal_antialiasing() -> bool;
                 fn occlusion_culling() -> bool;

@@ -48,7 +48,7 @@ async function ok(command) {
 function settling(capture) {
   if (capture === "exact") return { op: "render" };
   const [kind, value] = capture.split(":");
-  if (kind === "gpu") return { op: "present", alpha: Number(value), gpu: true };
+  if (kind === "gpu") return { op: "present", alpha: Number(value) };
   return undefined;
 }
 
@@ -80,7 +80,7 @@ async function shoot(capture, file) {
     await page.locator("canvas").screenshot({ path: file });
     return { path: file, rendering: reply.result.rendering };
   } else {
-    fields = { alpha: Number(capture.split(":")[1]), gpu: true };
+    fields = { alpha: Number(capture.split(":")[1]) };
   }
   const result = await ok({ op: "capture", ...fields });
   await page.locator("canvas").screenshot({ path: file });

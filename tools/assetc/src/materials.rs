@@ -89,7 +89,7 @@ pub(crate) fn import(
         };
         let map = |field: &str, info: &Value, texture: Option<gltf::Texture<'_>>| {
             texture
-                .map(|texture| texture_map(json, info, &texture, id, &format!("{path}.{field}")))
+                .map(|texture| texture_map(info, &texture, id, &format!("{path}.{field}")))
                 .transpose()
         };
         let pbr_source = &source["pbrMetallicRoughness"];
@@ -159,33 +159,16 @@ pub(crate) fn import(
 }
 
 fn texture_map(
-    root: &Value,
     info: &Value,
     texture: &gltf::Texture<'_>,
     id: &str,
     path: &str,
 ) -> Result<SceneMap, ImportError> {
-    let basisu = &root["textures"][texture.index()]["extensions"]["KHR_texture_basisu"]["source"];
-    let images = root["images"].as_array().map_or(0, Vec::len);
-    let image = match (basisu.as_u64(), texture.source()) {
-        (Some(image), _) if (image as usize) < images => image as usize,
-        (Some(_), _) => {
-            return Err(ImportError::new(
-                "invalid_texture",
-                format!(
-                    "$.textures[{}].extensions.KHR_texture_basisu.source",
-                    texture.index()
-                ),
-                "the image is outside the image array",
-            ));
-        }
-        (None, Some(image)) => image.index(),
-        (None, None) => {
-            return Err(unsupported(
-                format!("$.textures[{}]", texture.index()),
-                "textures need an image or a KHR_texture_basisu image",
-            ));
-        }
+    let Some(image) = texture.source().map(|image| image.index()) else {
+        return Err(unsupported(
+            format!("$.textures[{}]", texture.index()),
+            "textures need an image",
+        ));
     };
     let transform = &info["extensions"]["KHR_texture_transform"];
     let tex_coord = transform["texCoord"]

@@ -396,15 +396,6 @@ impl Renderer {
                 && !self.features.post.disabled()
                 && crate::screen_effects::haze_runs(&snapshot.environment),
         );
-        lighting.underwater = crate::water::underwater(
-            &snapshot.environment,
-            snapshot.camera_position,
-            snapshot.presented_seconds,
-        );
-        let ocean = snapshot.environment.ocean;
-        if ocean.enabled {
-            lighting.sea = [ocean.level, ocean.clarity, 1.0, 0.0];
-        }
         (lighting.cloud_shadow, lighting.cloud_layer) =
             crate::clouds::shadow_lighting(&snapshot.environment.clouds, snapshot.camera_position);
         if let Some(maps) = self.features.occupancy.get_mut().prepare(
@@ -1059,7 +1050,6 @@ impl Renderer {
             canvas_clear: canvas_clear(),
             phases,
             shadows: features.shadow_frame.is_some(),
-            deformation: self.terrain.deformation.pending(),
             bounce: self.terrain.bounce.relights(),
             subdivision: terrain && self.terrain.subdivides(),
             deferred: self.terrain_deferred(terrain, passes.opaque_kind),

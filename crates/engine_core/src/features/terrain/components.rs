@@ -162,7 +162,6 @@ settings! {
         pub projection: SurfaceProjection = SurfaceProjection::Top => any,
         pub cover: Option<crate::Cover> = None => any,
         pub depth: f32 = 0.0 => range(0.0, 2.0),
-        pub deform: f32 = 0.0 => range(0.0, 2.0),
     }
 }
 

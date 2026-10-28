@@ -22,15 +22,6 @@ impl DevTools {
             |_| json!(InterpolateTransformView { enabled: true }),
         )
         .expect("built-in descriptor is bounded");
-        self.insert(Inspector {
-            descriptor: InspectorDescriptor::generated(schemas, "PresentedTransform"),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| world.get::<Transform>(entity).is_some())
-            }),
-            read: Box::new(presented_transform_view),
-        })
-        .expect("built-in descriptor is bounded");
         self.register_resource::<PresentationState>(
             InspectorDescriptor::generated(schemas, "PresentationState"),
             presentation_value,
@@ -65,26 +56,6 @@ fn global_transform_view(
         translation: value
             .translation()
             .map(|translation| translation.to_array()),
-    }))
-}
-
-fn presented_transform_view(
-    world: &World,
-    entity: Option<Entity>,
-    _context: &Context<'_>,
-) -> Option<Value> {
-    let entity = entity?;
-    world.get::<Transform>(entity)?;
-    let value = world
-        .get_resource::<PresentedTransforms>()
-        .and_then(|poses| poses.get(entity))
-        .unwrap_or_default();
-    Some(json!(PresentedTransformView {
-        valid: value.matrix().is_some(),
-        matrix: value.matrix().map(|matrix| matrix.to_cols_array()),
-        translation: value
-            .matrix()
-            .map(|matrix| matrix.w_axis.truncate().to_array()),
     }))
 }
 

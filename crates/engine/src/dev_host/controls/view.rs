@@ -11,12 +11,11 @@ use engine_dev::results::{
 pub(super) fn present(
     app: &mut AppHost,
     alpha: f64,
-    gpu: bool,
     (width, height): (u32, u32),
 ) -> Result<Value, DevError> {
     let alpha = engine_dev::validated_presentation_alpha(alpha)?;
     rendered(
-        app.dev_present(alpha, width, height, gpu),
+        app.dev_present(alpha, width, height),
         "presentation prepared",
     )?;
     Ok(result::present(PresentResult {

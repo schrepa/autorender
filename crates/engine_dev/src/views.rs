@@ -171,15 +171,6 @@ pub struct FallView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct TracksView {
-    pub stamps: usize,
-    pub pressed: u64,
-    pub dropped: u64,
-    pub latest: Option<engine_core::Track>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct WorldCellsView {
     pub cells: u32,
     pub loaded: u32,
@@ -384,14 +375,6 @@ pub struct GlobalTransformView {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct InterpolateTransformView {
     pub enabled: bool,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct PresentedTransformView {
-    pub valid: bool,
-    pub matrix: Option<[f32; 16]>,
-    pub translation: Option<[f32; 3]>,
 }
 
 #[derive(Serialize)]

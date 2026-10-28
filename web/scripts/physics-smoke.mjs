@@ -12,13 +12,12 @@ const fixture = {
   camera: { position: [26, 9, 22], target: [20, 2, 0] },
   meshes: [{ id: "box", source: { kind: "cube" } }],
   materials: [{ id: "wood", color: [0.55, 0.38, 0.2, 1] }, { id: "stone", color: [0.5, 0.5, 0.52, 1] }],
-  environment: { ocean: { enabled: true, level: 0 }, physics: { water_density: 1000 } },
+  environment: { physics: { water_density: 1000 } },
   entities: [
     { id: "floor", transform: { translation: [0, 9.5, 0] }, collider: { shape: { kind: "cuboid", half_extents: [10, 0.5, 10] } } },
     { id: "crate", mesh: "box", material: "wood", transform: { translation: [0, 14, 0] }, collider: { shape: box }, rigid_body: {} },
     { id: "seabed", transform: { translation: [30, -12.5, 0] }, collider: { shape: { kind: "cuboid", half_extents: [20, 0.5, 20] } } },
-    { id: "raft", mesh: "box", material: "wood", transform: { translation: [26, 2, 0], scale: [2, 0.5, 2] }, collider: { shape: box }, rigid_body: { density: 500 } },
-    { id: "stone", mesh: "box", material: "stone", transform: { translation: [32, 2, 0] }, collider: { shape: { kind: "sphere", radius: 0.5 } }, rigid_body: { density: 2600 } },
+    { id: "stone", mesh: "box", material: "stone", transform: { translation: [32, 40, 0] }, collider: { shape: { kind: "sphere", radius: 0.5 } }, rigid_body: { density: 2600 } },
   ],
 };
 const { browser, page, errors } = await launch({ timeout: 20_000 });
@@ -47,15 +46,12 @@ try {
   assert.ok(Math.abs(crate.translation[1] - 10.5) < 0.05, `the crate rests on the floor: ${JSON.stringify(crate)}`);
   const body = await inspect("crate", "RigidBody");
   assert.ok(body.simulated && body.problem === null && Math.abs(body.mass - 600) < 1, `the crate's body: ${JSON.stringify(body)}`);
-  const raft = await inspect("raft", "RigidBody");
-  assert.equal(raft.water?.kind, "sea", JSON.stringify(raft));
-  assert.ok(raft.water.submerged > 0.3 && raft.water.submerged < 0.75, `the raft floats half under: ${JSON.stringify(raft.water)}`);
   const stone = await inspect("stone", "Transform");
   assert.ok(stone.translation[1] < -2, `the stone sinks: ${JSON.stringify(stone)}`);
   const world = (await command("inspect", { component: "PhysicsWorld" })).result.value;
-  assert.ok(world.bodies === 3 && world.wet >= 2 && world.held === 0 && world.solids >= 2 && world.water_samples > 0, JSON.stringify(world));
-  assert.equal(landed.result.rendering.physics.bodies, 3, "frames observe physics");
-  checks.push("falls_and_rests", "floats_by_density", "sinks", "world_inspects", "frames_observe");
+  assert.ok(world.bodies === 2 && world.held === 0 && world.solids >= 2, JSON.stringify(world));
+  assert.equal(landed.result.rendering.physics.bodies, 2, "frames observe physics");
+  checks.push("falls_and_rests", "sinks", "world_inspects", "frames_observe");
   await command("environment", { merge: true, physics: { enabled: false } });
   const held = await inspect("stone", "Transform");
   await seconds(1);
@@ -68,7 +64,7 @@ try {
   await page.locator("canvas").screenshot({ path: `${output}/physics-fixture.png` });
   const before = await inspect("crate", "Transform");
   const parented = structuredClone(fixture); parented.revision = scene.revision + 1;
-  parented.entities.find(entity => entity.id === "raft").parent = "floor";
+  parented.entities.find(entity => entity.id === "stone").parent = "floor";
   scene.serve(parented);
   const refused = await command("reload", { expected_revision: String(scene.revision), revision: String(parented.revision) }, false);
   assert.equal(refused.error?.code, "invalid_rigid_body", JSON.stringify(refused.error));

@@ -23,7 +23,6 @@ const TERRAIN_PALETTE_ENTRIES: u32 = 113u;
 @group(1) @binding(26) var terrain_albedo: texture_2d_array<f32>;
 @group(1) @binding(27) var terrain_material_data: texture_2d_array<f32>;
 @group(1) @binding(29) var terrain_material_sampler: sampler;
-@group(1) @binding(31) var<storage, read> terrain_deformation: array<u32>;
 @group(1) @binding(35) var terrain_macro: texture_2d_array<f32>;
 
 struct TerrainFootprint {
@@ -1199,81 +1198,8 @@ fn terrain_displacement(world: vec3<f32>, local: vec2<f32>, pieces: f32) -> Terr
     return lift;
 }
 
-fn terrain_deform_slot(texel: vec2<i32>) -> vec2<i32> {
-    let size = terrain.deform_grid.z;
-    if size > 0 && (size & (size - 1)) == 0 {
-        return texel & vec2<i32>(size - 1);
-    }
-    if size > 0 {
-        let rest = texel % size;
-        return select(rest, rest + size, rest < vec2<i32>(0));
-    }
-    return ((texel % size) + size) % size;
-}
-
-fn terrain_deform_local(point: vec2<f32>) -> vec2<f32> {
-    return point * terrain.deform.x - vec2<f32>(terrain.deform_grid.xy);
-}
-
-fn terrain_deform_reach(point: vec2<f32>) -> f32 {
-    let size = terrain.deform_grid.z;
-    if size <= 0 {
-        return 0.0;
-    }
-    let local = terrain_deform_local(point);
-    if any(local < vec2<f32>(0.0)) || any(local >= vec2<f32>(f32(size))) {
-        return 0.0;
-    }
-    let block = terrain_deform_slot(vec2<i32>(floor(local)) + terrain.deform_grid.xy) / 16;
-    let word = u32(block.y * terrain.deform_grid.w + block.x);
-    return bitcast<f32>(terrain_deformation[word]) * terrain.deform.y;
-}
-
-fn terrain_deform_sample(point: vec2<f32>, start: i32) -> vec2<f32> {
-    let size = terrain.deform_grid.z;
-    let local = terrain_deform_local(point);
-    let corner = local - 0.5;
-    let base = floor(corner);
-    let f = corner - base;
-    var values: array<vec2<f32>, 4>;
-    for (var index = 0; index < 4; index++) {
-        let texel = vec2<i32>(base) + vec2<i32>(index & 1, index >> 1);
-        let slot = terrain_deform_slot(texel + terrain.deform_grid.xy);
-        let word = u32(start + slot.y * size + slot.x);
-        let inside = all(texel >= vec2<i32>(0)) && all(texel < vec2<i32>(size));
-        values[index] = select(vec2<f32>(0.0), unpack2x16float(terrain_deformation[word]),
-            inside);
-    }
-    let edge = min(local, vec2<f32>(f32(size)) - local) / (0.125 * f32(size));
-    let fade = smoothstep(0.0, 1.0, saturate(min(edge.x, edge.y)));
-    return mix(mix(values[0], values[1], f.x), mix(values[2], values[3], f.x), f.y)
-        * (terrain.deform.y * fade);
-}
-
-fn terrain_deform_track(point: vec2<f32>) -> vec2<f32> {
-    let blocks = terrain.deform_grid.w;
-    return terrain_deform_sample(point, blocks * blocks);
-}
-
-fn terrain_deform_slope(point: vec2<f32>) -> vec2<f32> {
-    let size = terrain.deform_grid.z;
-    let blocks = terrain.deform_grid.w;
-    return terrain_deform_sample(point, blocks * blocks + size * size);
-}
-
-fn terrain_track_height(track: vec2<f32>, deform: f32) -> f32 {
-    let carve = min(track.x, deform);
-    let rim = min(track.y, 0.5 * deform) * (1.0 - saturate(4.0 * track.x / max(track.y, 1.0e-6)));
-    return (rim - carve) * saturate(deform / 0.02);
-}
-
-fn terrain_track_slope_share(track: vec2<f32>, deform: f32) -> f32 {
-    return saturate(deform / 0.02) * (1.0 - smoothstep(0.85 * deform, deform, track.x));
-}
-
 struct TerrainRelief {
     world: vec3<f32>,
-    deform: f32,
     beyond: f32,
 }
 
@@ -1287,14 +1213,11 @@ struct TerrainReliefLayers {
     dy: vec3<f32>,
 }
 
-fn terrain_sink(layers: TerrainReliefLayers, point: vec3<f32>, deform: f32, fade: f32) -> f32 {
-    var ground = terrain_relief_rise(layers.a, point, layers.dx, layers.dy)
+fn terrain_sink(layers: TerrainReliefLayers, point: vec3<f32>, fade: f32) -> f32 {
+    let ground = terrain_relief_rise(layers.a, point, layers.dx, layers.dy)
         + terrain_relief_rise(layers.b, point, layers.dx, layers.dy)
         + terrain_relief_rise(layers.c, point, layers.dx, layers.dy)
         + terrain_relief_rise(layers.d, point, layers.dx, layers.dy);
-    if deform > 0.0 {
-        ground += terrain_track_height(terrain_deform_track(point.xz), deform);
-    }
     return (layers.lifted - ground) * fade;
 }
 
@@ -1327,7 +1250,6 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
         lifted: f32) -> TerrainRelief {
     var relief: TerrainRelief;
     relief.world = site.world;
-    relief.deform = 0.0;
     relief.beyond = 0.0;
     let to_point = site.world - camera.position.xyz;
     let ray = to_point / max(length(to_point), 1.0e-6);
@@ -1335,25 +1257,12 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     let grazing = smoothstep(0.0, DETAIL_EDGE_ON, into);
     let pixels = terrain_relief_across(site.world - camera.detail.xyz, site.geometric)
         / site.footprint.along;
-    let tracked = terrain_deform_reach(site.world.xz);
     let shows = grazing > 0.0 && terrain.relief.x * pixels >= TERRAIN_BAND_PIXELS;
-    if !shows && tracked < 5.0e-4 {
+    if !shows {
         return relief;
     }
     let blend = terrain_blend(site.world.xz - terrain.origin.xz, site.geometric, shading);
     let weights = blend.weights;
-    if tracked >= 5.0e-4 {
-        var deform = 0.0;
-        for (var index = 0u; index < 4u; index++) {
-            if weights[index] > 0.0 {
-                deform += weights[index] * terrain_material(blend.ids[index]).relief.y;
-            }
-        }
-        relief.deform = deform;
-    }
-    if grazing <= 0.0 {
-        return relief;
-    }
     var layers: TerrainReliefLayers;
     layers.a = terrain_relief_layer(blend.ids.x, weights.x, site);
     layers.b = terrain_relief_layer(blend.ids.y, weights.y, site);
@@ -1362,17 +1271,14 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
     layers.lifted = lifted;
     layers.dx = site.world_dx;
     layers.dy = site.world_dy;
-    let deform = relief.deform;
-    let sunk = min(tracked, deform);
-    let raised = min(tracked, 0.5 * deform);
     let deep = layers.a.depth + layers.b.depth + layers.c.depth + layers.d.depth;
-    if (deep + sunk + raised) * pixels < TERRAIN_BAND_PIXELS {
+    if deep * pixels < TERRAIN_BAND_PIXELS {
         return relief;
     }
     let reach = terrain_relief_reach(layers.a) + terrain_relief_reach(layers.b)
         + terrain_relief_reach(layers.c) + terrain_relief_reach(layers.d);
-    let top = min(lifted - reach.x - raised, 0.0) * grazing;
-    let depth = max(lifted + reach.y + sunk, 0.0) * grazing;
+    let top = min(lifted - reach.x, 0.0) * grazing;
+    let depth = max(lifted + reach.y, 0.0) * grazing;
     let travel = ray / max(into, DETAIL_EDGE_ON);
     let across = length(travel.xz);
     let along = travel.xz * min(1.0, 3.0 / max(across, 1.0e-6));
@@ -1391,25 +1297,23 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel, dither: f32
         min(terrain_relief_repeat(layers.a), terrain_relief_repeat(layers.b)),
         min(terrain_relief_repeat(layers.c), terrain_relief_repeat(layers.d)));
     let wanted = max((depth - top) * pixels, crossed / max(stride, 1.0e-4));
-    let count = max(clamp(wanted, 2.0, terrain.relief.y),
-        min((sunk + raised) * grazing / 0.02, 2.0 * terrain.relief.y));
+    let count = clamp(wanted, 2.0, terrain.relief.y);
     let steps = max(u32(floor(count + dither)), 2u);
     var previous = top;
-    var gap = top - terrain_sink(layers, start + march * top, deform, grazing);
+    var gap = top - terrain_sink(layers, start + march * top, grazing);
     var hit = top;
     if gap < 0.0 {
         hit = depth;
         for (var step = 1u; step <= steps; step++) {
             let at = top + (depth - top) * f32(step) / f32(steps);
             let point = start + march * at;
-            let next_gap = at - terrain_sink(layers, point, deform, grazing);
+            let next_gap = at - terrain_sink(layers, point, grazing);
             if next_gap >= 0.0 {
                 var low = vec2<f32>(previous, gap);
                 var high = vec2<f32>(at, next_gap);
                 for (var refine = 0u; refine < TERRAIN_RELIEF_REFINE; refine++) {
                     let middle = mix(low.x, high.x, low.y / min(low.y - high.y, -1.0e-6));
-                    let middle_gap = middle
-                        - terrain_sink(layers, start + march * middle, deform, grazing);
+                    let middle_gap = middle - terrain_sink(layers, start + march * middle, grazing);
                     if middle_gap >= 0.0 {
                         high = vec2<f32>(middle, middle_gap);
                     } else {
@@ -1459,7 +1363,6 @@ fn terrain_forward_look(relative: vec3<f32>) -> TerrainLook {
 struct TerrainSeen {
     site: TerrainSite,
     shading: TerrainShadingLevel,
-    deform: f32,
     beyond: f32,
 }
 
@@ -1491,7 +1394,7 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     site.across = terrain_across(world);
     let relief = terrain_parallax(site, shading, look.dither, dot(lift, geometric));
     site.world = relief.world;
-    return TerrainSeen(site, shading, relief.deform, relief.beyond);
+    return TerrainSeen(site, shading, relief.beyond);
 }
 
 fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
@@ -1512,19 +1415,8 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     var ground = terrain_ground(surface, seen.shading);
     ground.albedo *= terrain_tint(surface.world, ground, site);
     var albedo = ground.albedo;
-    var normal = ground.normal;
-    var occlusion = ground.occlusion;
-    if seen.deform > 0.0 {
-        let track = terrain_deform_track(site.world.xz);
-        let slope = terrain_deform_slope(site.world.xz)
-            * terrain_track_slope_share(track, seen.deform);
-        let steep = length(slope);
-        let tilt = slope * min(1.0, 1.2 / max(steep, 1.0e-6));
-        normal = stable_normalize(normal - vec3<f32>(tilt.x, 0.0, tilt.y));
-        let pressed = saturate(-terrain_track_height(track, seen.deform) / 0.06);
-        albedo *= 1.0 - 0.15 * pressed;
-        occlusion *= 1.0 - 0.25 * pressed;
-    }
+    let normal = ground.normal;
+    let occlusion = ground.occlusion;
     var roughness = ground.roughness;
     let wet = max(terrain_wetness(local, seen.shading),
         terrain_waterline(eye_world(depth_point), site)) * (1.0 - ground.canopy);

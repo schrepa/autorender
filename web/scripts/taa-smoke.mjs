@@ -215,15 +215,6 @@ try {
   const after = await capture("exact-after-taa");
   assert.equal((await compare([exact, after])).changed[0], 0, "captures must stay exact after temporal frames");
 
-  results.cpu_url = await open(still, { taa: "on", presentation: "cpu" });
-  const [cpu] = await run("cpu-still", 48);
-  const cpuPair = await compare([exact, cpu]);
-  results.cpu = cpuPair;
-  measurements.push({
-    name: "CPU presentation difference", value: cpuPair.changed[8] / cpuPair.total * 100, unit: "%",
-    note: "pixels whose largest channel differs by more than 8 levels between a CPU-presented ordinary frame with antialiasing on and the exact capture",
-  });
-
   results.moving_url = await open(moving, { taa: "on" });
   const movingExact = await capture("moving-exact");
   const [movingFirst] = await run("taa-moving", 90);

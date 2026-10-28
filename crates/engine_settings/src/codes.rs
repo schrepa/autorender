@@ -133,7 +133,6 @@ error_codes! {
     InvalidNavAgent => "invalid_nav_agent",
     InvalidStreamed => "invalid_streamed",
     InvalidGrounded => "invalid_grounded",
-    InvalidFloating => "invalid_floating",
     InvalidRigidBody => "invalid_rigid_body",
     InvalidEnvironment => "invalid_environment",
 

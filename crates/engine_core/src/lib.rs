@@ -8,7 +8,6 @@ mod atmosphere;
 mod clock;
 mod clouds;
 mod commands;
-mod culling;
 mod debug_view;
 mod effects;
 mod entity_indices;
@@ -143,9 +142,6 @@ pub struct WorldSync;
 #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ViewSync;
 
-#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FixedTickEnd;
-
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FixedSimulationSystems {
     Move,
@@ -165,12 +161,6 @@ pub enum WorldSyncSystems {
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ViewSyncSystems {
     Stream,
-    Follow,
-}
-
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FixedTickEndSystems {
-    PressTracks,
 }
 
 pub const MAX_DEV_TICKS: u32 = 120;
@@ -264,7 +254,6 @@ impl Engine {
             })
             .init_schedule(WorldSync)
             .init_schedule(ViewSync)
-            .init_schedule(FixedTickEnd)
             .add_systems(
                 WorldSync,
                 (
@@ -283,10 +272,6 @@ impl Engine {
                     .chain(),
             )
             .configure_sets(
-                ViewSync,
-                (ViewSyncSystems::Stream, ViewSyncSystems::Follow).chain(),
-            )
-            .configure_sets(
                 FixedSimulation,
                 (
                     FixedSimulationSystems::Move,
@@ -303,7 +288,6 @@ impl Engine {
             .edit_schedule(TransformPropagation, single_threaded)
             .edit_schedule(WorldSync, single_threaded)
             .edit_schedule(ViewSync, single_threaded)
-            .edit_schedule(FixedTickEnd, single_threaded)
             .insert_resource(FixedTime {
                 delta_seconds: clock.step_seconds() as f32,
                 elapsed_seconds: 0.0,
@@ -533,10 +517,6 @@ impl Engine {
             }
             self.refresh_transforms();
         }
-        {
-            let _profile = engine_profile::span("ecs", "FixedTickEnd");
-            self.app.world_mut().run_schedule(FixedTickEnd);
-        }
         interpolation::end_tick(self.app.world_mut());
         self.app
             .world_mut()
@@ -594,38 +574,19 @@ impl Engine {
     }
 
     pub fn extract(&mut self, aspect: f32, snapshot: &mut RenderSnapshot) {
-        self.extract_with_presentation(aspect, snapshot, PresentationMode::Current)
-            .expect("current presentation is always valid");
+        self.extract_frame(aspect).copy_to(snapshot);
     }
 
-    pub fn extract_with_presentation(
-        &mut self,
-        aspect: f32,
-        snapshot: &mut RenderSnapshot,
-        mode: PresentationMode,
-    ) -> Result<(), InterpolationError> {
-        self.extract_frame(aspect, mode)?.copy_to(snapshot);
-        Ok(())
-    }
-
-    pub fn extract_frame(
-        &mut self,
-        aspect: f32,
-        mode: PresentationMode,
-    ) -> Result<RenderFrame<'_>, InterpolationError> {
+    pub fn extract_frame(&mut self, aspect: f32) -> RenderFrame<'_> {
         let _profile = engine_profile::span("cpu", "extraction");
-        mode.validate()?;
         self.finalize_plugins();
         self.complete_pending_tick();
-        self.mark_presented_time(match mode {
-            PresentationMode::Current => None,
-            PresentationMode::Interpolated { alpha } => Some(alpha),
-        });
+        self.mark_presented_time(None);
         self.sync_world();
         self.refresh_transforms();
-        interpolation::prepare(self.app.world_mut(), mode);
+        interpolation::prepare(self.app.world_mut());
         self.sync_view();
-        Ok(self.extract_retained(aspect, false))
+        self.extract_retained(aspect, false)
     }
 
     pub fn extract_gpu_frame(
@@ -691,13 +652,6 @@ impl Engine {
         )
     }
 
-    pub fn prepare_presented_transforms(&mut self) -> bool {
-        if self.tick_ahead.presents_previous().is_some() {
-            return false;
-        }
-        interpolation::prepare_pending(self.app.world_mut())
-    }
-
     fn finalize_plugins(&mut self) {
         if self.plugins_finalized {
             return;
@@ -731,7 +685,6 @@ impl Engine {
             TransformPropagation.intern(),
             WorldSync.intern(),
             ViewSync.intern(),
-            FixedTickEnd.intern(),
         ];
         let schedules = self.app.world().resource::<Schedules>();
         for (label, schedule) in schedules.iter() {

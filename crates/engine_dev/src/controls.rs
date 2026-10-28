@@ -59,19 +59,15 @@ impl BrowserControl {
                     "$.interval_ms",
                 )?;
             }
-            Self::Capture { alpha, gpu, .. } | Self::Probe { alpha, gpu, .. } => match alpha {
-                Some(alpha) => {
-                    validated_presentation_alpha(*alpha)?;
-                }
-                None if *gpu => {
-                    return Err(DevError::new(
-                        ErrorCode::InvalidRequest,
-                        "$.gpu",
-                        "GPU-presented frames need an alpha",
-                    ));
-                }
-                None => {}
-            },
+            Self::Capture {
+                alpha: Some(alpha), ..
+            }
+            | Self::Probe {
+                alpha: Some(alpha), ..
+            } => {
+                validated_presentation_alpha(*alpha)?;
+            }
+            Self::Capture { alpha: None, .. } | Self::Probe { alpha: None, .. } => {}
             Self::Game { name, .. } => {
                 let valid = name.len() <= 64
                     && name.starts_with(|first: char| first.is_ascii_lowercase())
@@ -116,7 +112,6 @@ impl BrowserControl {
             | Self::TerrainUndo { .. }
             | Self::TerrainRedo { .. }
             | Self::TerrainRiver { .. }
-            | Self::Deform { .. }
             | Self::NavGo { .. }
             | Self::WorldChanges { .. }
             | Self::Camera { .. }

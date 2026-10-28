@@ -11,8 +11,8 @@ use engine_collision::{CollisionWorld, refresh_collision_world};
 use engine_core::{
     ActionId, ActionInput, AssetLibrary, Atmosphere, Camera, Engine, Feature, FixedTime, FrameTime,
     GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle, Mesh3d,
-    MeshHandle, Parent, ParticleEmitter, PresentationMode, PresentationState, PresentedTransforms,
-    ReflectionProbe, TextureHandle, Tint, Transform,
+    MeshHandle, Parent, ParticleEmitter, PresentationMode, PresentationState, ReflectionProbe,
+    TextureHandle, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
@@ -35,7 +35,7 @@ use crate::{
     views::{
         CameraView, GlobalTransformView, HierarchyView, InputView, InterpolateTransformView,
         LodLevelView, Mesh3dView, MeshBoundsView, MeshRenderView, MeshView, PresentationModeView,
-        PresentationStateView, PresentedTransformView, SplineMeshView, TextureView, TransformView,
+        PresentationStateView, SplineMeshView, TextureView, TransformView,
     },
 };
 
@@ -397,7 +397,6 @@ impl DevTools {
             }
         }
         if matches!(query, ToolsQuery::Inspect { .. } | ToolsQuery::Digest) {
-            engine.prepare_presented_transforms();
             engine.refresh_transforms();
         }
         let engine = &*engine;

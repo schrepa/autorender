@@ -30,28 +30,26 @@ mod games {
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, App, AssetBudget,
         AssetError, AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, Clouds, Cover, Cube,
-        DebugView, DebugViewMode, Deformation, DeformationPlugin, Deformer, Dither, Engine,
-        EngineConfig, EngineEntityCommands, Environment, Feature, Filter, FixedPostSimulation,
-        FixedPreSimulation, FixedSimulation, FixedSimulationSystems, FixedTickEnd,
-        FixedTickEndSystems, FixedTime, Floating, Foliage, FrameReport, FrameTime, GlobalTransform,
+        DebugView, DebugViewMode, Dither, Engine, EngineConfig, EngineEntityCommands, Environment,
+        Feature, Filter, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
+        FixedSimulationSystems, FixedTime, Foliage, FrameReport, FrameTime, GlobalTransform,
         GlobalTransforms, Ground, GroundCover, GroundSample, Grounded, Grounding, Haze, HeightHeld,
         HierarchyError, Highlights, InputState, Interior, InterpolateTransform, InterpolationError,
         LevelOfDetail, LightRegion, LocalLight, LocalLightSettings, MakeSources, MakeTextures,
         Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, NavAgent, NavAgents,
         NavQuery, NavStatus, NavSystems, NavWalk, Navigation, NavigationPlugin, NightSky,
-        OcclusionCulling, Occupancy, Ocean, OceanPlugin, OceanSystems, Parent, ParticleBlend,
-        ParticleEmitter, ParticleSettings, Physics, Plugin, PluginGroup, Presentation,
-        PresentationState, PresentedTime, PresentedTransform, PresentedTransforms, Records,
-        ReflectionProbe, ReflectionProbeSettings, Reflections, Sampler, Shadows, Sky, SkyOcclusion,
-        SplineMesh, Spot, StreamSet, Streamed, StreamedId, StreamedItem, StreamingFocus,
-        SubpixelCulling, Surface, TemporalAntialiasing, Terrain, TerrainPlugin, TerrainSample,
-        TerrainSettings, Terrains, Texture, TextureHandle,
+        OcclusionCulling, Occupancy, Parent, ParticleBlend, ParticleEmitter, ParticleSettings,
+        Physics, Plugin, PluginGroup, Presentation, PresentationState, PresentedTime,
+        PresentedTransform, PresentedTransforms, Records, ReflectionProbe, ReflectionProbeSettings,
+        Reflections, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamSet, Streamed,
+        StreamedId, StreamedItem, StreamingFocus, SubpixelCulling, Surface, TemporalAntialiasing,
+        Terrain, TerrainPlugin, TerrainSample, TerrainSettings, Terrains, Texture, TextureHandle,
         TextureRef, TextureSet, TextureSource, TextureUsage, TimeOfDay, TimeOfDayPlugin, Tint,
-        TopLayer, Track, TrackDepth, Tracks, Transform, TransformEditError, UvTransform, ViewSync,
-        ViewSyncSystems, Water, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource,
-        WaterSources, Wind, WorldCells, WorldChanges, WorldStreaming, WorldStreamingPlugin,
-        WorldSync, WorldSyncSystems, Wrap, edit_transform, math, remove_streamed,
-        reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
+        TopLayer, Transform, TransformEditError, UvTransform, ViewSync, ViewSyncSystems, Water,
+        WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource, WaterSources, Wind,
+        WorldCells, WorldChanges, WorldStreaming, WorldStreamingPlugin, WorldSync, WorldSyncSystems,
+        Wrap, edit_transform, math, remove_streamed, reset_all_interpolation, reset_interpolation,
+        set_parent, set_parents, trim_cards,
     };
 }
 pub use games::*;
@@ -59,12 +57,11 @@ pub use games::*;
 pub use engine_core::{
     DetailShares, DrawnKind, EnvironmentSection, ErrorCode, Features, HierarchyReport,
     InvalidSetting, LodLevel, MAX_BOUNCE_LEVELS, MAX_EMITTER_PARTICLES, MAX_HIERARCHY_DEPTH,
-    MAX_LIGHT_RANGE, MAX_MOVING_TILES, MAX_OCCUPANCY_LEVELS, MAX_OCEAN_WAVES, MAX_SHADOW_LEVELS,
-    MAX_SPLINE_POINTS, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION,
-    MAX_TRACK_DEPTH, MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MaterialShare, MeshLods, OceanPoint,
-    OceanSurface, OceanWave, OceanWaves, PixelProbe, PluginGroupBuilder, SplineChunks, SunLookup,
-    TerrainProbe, TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit, Viewport,
-    WaterProbe, WaterReach, has_feature,
+    MAX_LIGHT_RANGE, MAX_MOVING_TILES, MAX_OCCUPANCY_LEVELS, MAX_SHADOW_LEVELS, MAX_SPLINE_POINTS,
+    MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION, MAX_TRANSFORM_NODES,
+    MIN_SPOT_DEGREES, MaterialShare, MeshLods, PixelProbe, PluginGroupBuilder, SplineChunks,
+    SunLookup, TerrainProbe, TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit,
+    Viewport, WaterProbe, WaterReach, has_feature,
 };
 
 pub mod terrain {
@@ -85,25 +82,24 @@ pub mod terrain {
 
 pub mod render {
     pub use engine_core::{
-        CellView, DEFORMATION_GRAIN, DeformationMap, GUST_QUICK_ACROSS, GUST_QUICK_RATE,
-        GUST_QUICK_SHARE, GUST_QUICK_TRAVEL, GUST_SLOW_RATE, GUST_SLOW_SHARE, GUST_SLOW_TRAVEL,
-        GpuCurrent, GpuPresentation, MAX_NORMAL_INVERSE_NORM, MacroMap, MaterialBinding, NO_PARENT,
-        NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo, NodePose, PoseRows,
-        PresentationMode, RIM_REACH, RIM_START, RenderDeformation, RenderEmitter, RenderFrame,
-        RenderInstance, RenderLight, RenderLights, RenderMaterial, RenderMesh, RenderParticles,
-        RenderPlacementAsset, RenderPlacementLayer, RenderPlacementPart, RenderReflectionProbe,
-        RenderReflectionProbes, RenderSnapshot, RenderSurfaceMaps, RenderTerrain, RenderTerrains,
-        RenderTexture, STREAMING_GRIDS, StreamingGrid, TerrainBounce, TerrainLighting,
-        TransformIndex, TransformPropagation, carve_profile, presentation_bounds,
-        propagate_transforms, rim_profile, valid_global_matrix,
+        CellView, GUST_QUICK_ACROSS, GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL,
+        GUST_SLOW_RATE, GUST_SLOW_SHARE, GUST_SLOW_TRAVEL, GpuCurrent, GpuPresentation,
+        MAX_NORMAL_INVERSE_NORM, MacroMap, MaterialBinding, NO_PARENT, NODE_ACTIVE, NODE_BLEND,
+        NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo, NodePose, PoseRows, PresentationMode,
+        RenderEmitter, RenderFrame, RenderInstance, RenderLight, RenderLights, RenderMaterial,
+        RenderMesh, RenderParticles, RenderPlacementAsset, RenderPlacementLayer,
+        RenderPlacementPart, RenderReflectionProbe, RenderReflectionProbes, RenderSnapshot,
+        RenderSurfaceMaps, RenderTerrain, RenderTerrains, RenderTexture, STREAMING_GRIDS,
+        StreamingGrid, TerrainBounce, TerrainLighting, TransformIndex, TransformPropagation,
+        presentation_bounds, propagate_transforms, valid_global_matrix,
     };
 }
 
 pub mod stats {
     pub use engine_core::{
-        Applied, CellStats, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn,
+        Applied, CellStats, CloudStats, CullingStats, DetailStats, Drawn,
         ErosionStats, ExposureStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats,
-        LightStats, Names, NavStats, OccupancyStats, OceanStats, PathStats, PhysicsStats,
+        LightStats, Names, NavStats, OccupancyStats, PathStats, PhysicsStats,
         ProbeStats, RenderStats, ShadowStats, SkyStats, TerrainBounceStats, TerrainRenderStats,
         TerrainStats, WaterStats,
     };

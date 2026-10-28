@@ -46,7 +46,7 @@ pub(crate) struct GroundCoverPass {
     args: wgpu::Buffer,
     uniforms: wgpu::Buffer,
     frame: wgpu::Buffer,
-    grow_group: Cached<(u64, u64, u64, u64, u64), wgpu::BindGroup>,
+    grow_group: Cached<(u64, u64, u64, u64), wgpu::BindGroup>,
     draw_group: Cached<u64, wgpu::BindGroup>,
     growths: Vec<Growth>,
     grow_uniforms: Vec<GrowUniform>,
@@ -166,7 +166,6 @@ impl GroundCoverPass {
         }
         let planes = planes(culling);
         let pixels_per_meter = pixels_per_meter(culling, height);
-        let shading = sources.shading;
         let mut uniforms = std::mem::take(&mut self.grow_uniforms);
         uniforms.clear();
         let mut most = 0.0;
@@ -208,8 +207,6 @@ impl GroundCoverPass {
                     ],
                     tier: [inner, law.span, scale, 0.0],
                     planes,
-                    deform_grid: shading.grid,
-                    deform: shading.scale,
                     foliage: [f32::from(u8::from(grounded)), 0.0, 0.0, 0.0],
                     view: [pixels_per_meter, 0.0, 0.0, 0.0],
                 };
@@ -266,9 +263,8 @@ impl GroundCoverPass {
         let key = (
             sources.generation.0,
             sources.generation.1,
-            sources.generation.2,
             self.blades_generation,
-            sources.generation.3,
+            sources.generation.2,
         );
         if self.grow_group.stale(&key) {
             let group = crate::pipelines::group(
@@ -293,7 +289,6 @@ impl GroundCoverPass {
                     crate::buffers::entry("blades", &self.blades),
                     crate::buffers::entry("counts", &self.counts),
                     crate::buffers::entry("args", &self.args),
-                    crate::buffers::entry("deformation", sources.deformation),
                     ("macro_maps", crate::pipelines::view(sources.macro_maps)),
                     ("normals", crate::pipelines::view(sources.normals)),
                 ],
@@ -600,7 +595,6 @@ impl RenderFeature for GroundCoverPass {
     fn declare(_frame: &CoverFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
         graph
             .add(Pass::Feature(FeaturePass::GroundCover))
-            .read(Resource::Tracks)
             .write(Resource::Cover);
     }
 

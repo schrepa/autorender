@@ -4,7 +4,6 @@
 @group(2) @binding(49) var water_foam_drawn: texture_2d<f32>;
 
 const WATER_FOAM_TEARING: vec2<f32> = vec2<f32>(0.7, 1.3);
-const WATER_FOAM_CAPPING: f32 = 0.12;
 const WATER_FOAM_HOLLOW: f32 = 0.35;
 const WATER_FOAM_OPTICAL: f32 = 4.0;
 const WATER_DENSEST: f32 = 0.99212598;

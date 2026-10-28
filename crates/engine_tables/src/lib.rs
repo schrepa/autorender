@@ -8,7 +8,6 @@ include!(concat!(env!("OUT_DIR"), "/source.rs"));
 mod bytes;
 pub mod clouds;
 pub mod sky;
-pub mod waves;
 
 pub use bytes::{f16_bits, f16_value};
 

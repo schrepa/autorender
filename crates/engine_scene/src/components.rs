@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 
 use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{
-    Deformer, Floating, Grounded, InterpolateTransform, Mesh, NavAgent, TerrainPrefetch, Tint,
-};
+use engine_core::{Grounded, InterpolateTransform, Mesh, NavAgent, TerrainPrefetch, Tint};
 use engine_settings::ErrorCode;
 
 use crate::instance::Lookups;
@@ -27,18 +25,6 @@ macro_rules! entity_components {
                 mirror
             },
             tint: [f32; 4] { feature: Core, shows: "Tint", rule: range(0.0, 1.0), mirror },
-            floating: engine_core::Floating {
-                feature: Ocean,
-                shows: "Floating",
-                rule: any,
-                direct
-            },
-            deformer: engine_core::Deformer {
-                feature: Deformation,
-                shows: "Deformer",
-                rule: any,
-                direct
-            },
             prefetch: engine_core::TerrainPrefetch {
                 feature: Terrain,
                 shows: "TerrainPrefetch",
@@ -164,47 +150,6 @@ impl SceneComponent for [f32; 4] {
     }
 
     fn spawn(prepared: &Tint, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert(*prepared);
-    }
-}
-
-impl SceneComponent for Floating {
-    type Prepared = Self;
-
-    const PLACEMENT: Placement = Placement::Roots(
-        ErrorCode::InvalidFloating,
-        "only roots ride the sea; float the placement or root instead",
-    );
-
-    fn prepare(
-        &self,
-        _: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<Self, SceneError> {
-        Ok(*self)
-    }
-
-    fn spawn(prepared: &Self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert(*prepared);
-    }
-}
-
-impl SceneComponent for Deformer {
-    type Prepared = Self;
-
-    const PLACEMENT: Placement = Placement::Anywhere;
-
-    fn prepare(
-        &self,
-        _: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<Self, SceneError> {
-        Ok(*self)
-    }
-
-    fn spawn(prepared: &Self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
         entity.insert(*prepared);
     }
 }

@@ -1,20 +1,14 @@
 use bytemuck::{Pod, Zeroable};
-use engine_core::{MAX_OCEAN_WAVES, SIM_TOUCHES};
+use engine_core::SIM_TOUCHES;
 
 use super::constants::SIM_SLOTS;
 
 gpu_structs! {
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct WaterUniform as ["WaterUniform"] {
-        pub relative_view_projection: [[f32; 4]; 4],
-        pub origin: [f32; 4],
         pub color: [f32; 4],
         pub foam: [f32; 4],
         pub absorption: [f32; 4],
-        pub ocean: [f32; 4],
-        pub ocean_grid: [f32; 4],
-        pub ocean_waves: [[f32; 4]; MAX_OCEAN_WAVES],
-        pub ocean_reach: [[f32; 4]; MAX_OCEAN_WAVES / 4],
         pub sim: [f32; 4],
         pub sim_datum: [f32; 4],
         pub sediment: [f32; 4],

@@ -15,11 +15,10 @@ use crate::collections::HashMap;
 use crate::hierarchy::HierarchyScratch;
 
 use crate::{
-    Aabb, AlphaMode, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation,
+    AlphaMode, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation,
     MAX_TRANSFORM_NODES, Material, MaterialBinding, MaterialHandle, Mesh3d, MeshHandle,
     PresentedTransforms, RenderInstance, RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot,
     RenderTexture, Surface, TextureHandle, Tint, Transform, TransformIndex,
-    culling::{Classification, Frustum},
     probes::ProbeExtraction,
     ticks::{ChangeWindow, ScanClock, consume_through},
 };
@@ -172,7 +171,6 @@ impl<'a> RenderFrame<'a> {
             particles,
             reflection_probes,
             terrain,
-            deformation,
             cells,
             tables,
             instances,
@@ -181,7 +179,6 @@ impl<'a> RenderFrame<'a> {
             textures,
             render_candidates,
             visible_instances,
-            culled_instances,
             dropped_instances,
             missing_assets,
             invalid_transforms,
@@ -215,7 +212,6 @@ impl<'a> RenderFrame<'a> {
         snapshot.particles.clone_from(particles);
         snapshot.reflection_probes.clone_from(reflection_probes);
         snapshot.terrain.clone_from(terrain);
-        snapshot.deformation.clone_from(deformation);
         snapshot.cells = *cells;
         snapshot.tables.clone_from(tables);
         snapshot.instances.clear();
@@ -230,7 +226,6 @@ impl<'a> RenderFrame<'a> {
         snapshot.textures.clone_from(textures);
         snapshot.render_candidates = *render_candidates;
         snapshot.visible_instances = *visible_instances;
-        snapshot.culled_instances = *culled_instances;
         snapshot.dropped_instances = *dropped_instances;
         snapshot.missing_assets = *missing_assets;
         snapshot.invalid_transforms = *invalid_transforms;
@@ -283,7 +278,6 @@ struct SlotFrame {
     mesh: u32,
     material: u32,
     source: SourceKey,
-    outside: bool,
 }
 
 impl SlotFrame {
@@ -292,14 +286,12 @@ impl SlotFrame {
         mesh: NO_SOURCE,
         material: NO_SOURCE,
         source: SourceKey::UNKNOWN,
-        outside: false,
     };
 }
 
 #[derive(Default)]
 struct Sources {
     meshes: Vec<RenderMesh>,
-    bounds: Vec<Aabb>,
     materials: Vec<RenderMaterial>,
     textures: Vec<RenderTexture>,
     mesh_indices: HashMap<MeshHandle, usize>,
@@ -318,7 +310,6 @@ struct Sources {
 impl Sources {
     fn clear(&mut self) {
         self.meshes.clear();
-        self.bounds.clear();
         self.materials.clear();
         self.textures.clear();
         self.mesh_indices.clear();
@@ -364,7 +355,6 @@ impl Sources {
         }
         let mesh_index = *self.mesh_indices.entry(handle).or_insert_with(|| {
             let index = self.meshes.len();
-            self.bounds.push(rendered.mesh.bounds());
             self.meshes.push(rendered);
             self.mesh_used.push(false);
             index
@@ -570,8 +560,6 @@ pub(crate) struct RetainedRender {
     material_revision: Option<u64>,
     sources: Sources,
     scans: ScanClock,
-    view: Option<([u32; 16], bool)>,
-    frustum: Option<Frustum>,
     culling: bool,
     budget: usize,
     missing_sources: usize,
@@ -592,9 +580,6 @@ struct Pass {
     resolved: usize,
     poses: usize,
     colors: usize,
-    culling_tests: usize,
-    culling_interior: usize,
-    culling_reused: usize,
 }
 
 impl RetainedRender {
@@ -634,8 +619,6 @@ impl RetainedRender {
             material_revision: None,
             sources: Sources::default(),
             scans: ScanClock::default(),
-            view: None,
-            frustum: None,
             culling,
             budget,
             missing_sources: 0,
@@ -786,13 +769,6 @@ impl RetainedRender {
         self.snapshot.tables = tables;
     }
 
-    pub(crate) fn extract_deformation(&mut self, world: &World) {
-        match world.get_resource::<crate::DeformationFrame>() {
-            Some(frame) => self.snapshot.deformation.copy_from(&frame.out),
-            None => self.snapshot.deformation = crate::RenderDeformation::default(),
-        }
-    }
-
     pub(crate) fn extract_terrain(&mut self, world: &World, aspect: f32) {
         crate::extract_terrains(world, aspect, &mut self.snapshot);
     }
@@ -843,7 +819,6 @@ impl RetainedRender {
             .checked_add(1)
             .expect("render sequence exhausted");
         if self.gpu && !gpu {
-            self.view = None;
             for frame in &mut self.frames {
                 frame.pose_revision = 0;
             }
@@ -884,7 +859,6 @@ impl RetainedRender {
             return;
         }
         engine_profile::counter("extraction.gpu_structure_reused", 0.0);
-        let view_changed = !gpu && self.set_view(view);
         self.begin_pass(total, gpu);
         let presented = world.resource::<PresentedTransforms>();
         let mut pass = Pass {
@@ -928,13 +902,7 @@ impl RetainedRender {
             if gpu {
                 self.list_candidate(entity, index, globals, &mut pass);
             } else {
-                self.cull(
-                    entity,
-                    index,
-                    (presented, globals),
-                    view_changed || source_changed,
-                    &mut pass,
-                );
+                self.list_presented(entity, index, (presented, globals), &mut pass);
             }
         }
         self.finish_pass(pass, assets_changed, gpu, globals.topology_revision());
@@ -995,16 +963,6 @@ impl RetainedRender {
         true
     }
 
-    fn set_view(&mut self, view: Mat4) -> bool {
-        let key = (view.to_cols_array().map(f32::to_bits), self.culling);
-        if self.view == Some(key) {
-            return false;
-        }
-        self.view = Some(key);
-        self.frustum = self.culling.then(|| Frustum::new(view)).flatten();
-        true
-    }
-
     fn begin_pass(&mut self, total: usize, gpu: bool) {
         let hint_count = total.min(MAX_TRANSFORM_NODES);
         if self.query_slots.capacity() < hint_count {
@@ -1020,7 +978,6 @@ impl RetainedRender {
         }
         self.snapshot.render_candidates = total;
         self.snapshot.visible_instances = 0;
-        self.snapshot.culled_instances = 0;
         self.snapshot.invalid_transforms = 0;
         self.snapshot.missing_assets = 0;
         self.snapshot.dropped_instances = 0;
@@ -1112,12 +1069,11 @@ impl RetainedRender {
     }
 
     #[inline]
-    fn cull(
+    fn list_presented(
         &mut self,
         entity: Entity,
         index: usize,
         (presented, globals): (&PresentedTransforms, &GlobalTransforms),
-        reclassify: bool,
         pass: &mut Pass,
     ) {
         let mut hint = TransformIndex(self.pose_indices[index] as usize);
@@ -1155,28 +1111,13 @@ impl RetainedRender {
             pass.casters_changed = true;
         }
         pass.casters += 1;
-        if reclassify || pose_changed {
-            let bounds = self.sources.bounds[frame.mesh as usize];
-            frame.outside = self.frustum.as_ref().is_some_and(|frustum| {
-                pass.culling_tests += 1;
-                let classification = frustum.classify(model, bounds);
-                pass.culling_interior += usize::from(classification == Classification::Interior);
-                classification.outside()
-            });
-        } else if self.frustum.is_some() {
-            pass.culling_reused += 1;
-        }
         let frame = *frame;
-        if frame.outside {
-            self.snapshot.culled_instances += 1;
-        } else {
-            self.snapshot.visible_instances += 1;
-            if pass.submitted == self.budget {
-                self.snapshot.dropped_instances += 1;
-                return;
-            }
-            self.submit(index, pass);
+        self.snapshot.visible_instances += 1;
+        if pass.submitted == self.budget {
+            self.snapshot.dropped_instances += 1;
+            return;
         }
+        self.submit(index, pass);
         self.mark_used(frame);
     }
 
@@ -1250,13 +1191,9 @@ impl RetainedRender {
             self.snapshot.render_candidates as f64,
         );
         engine_profile::counter("extraction.instances", pass.submitted as f64);
-        engine_profile::counter("extraction.culled", self.snapshot.culled_instances as f64);
         engine_profile::counter("extraction.retained_resolved", pass.resolved as f64);
         engine_profile::counter("extraction.retained_pose_updates", pass.poses as f64);
         engine_profile::counter("extraction.retained_color_updates", pass.colors as f64);
-        engine_profile::counter("extraction.culling_tests", pass.culling_tests as f64);
-        engine_profile::counter("extraction.culling_interior", pass.culling_interior as f64);
-        engine_profile::counter("extraction.culling_reused", pass.culling_reused as f64);
         engine_profile::counter(
             "extraction.instance_capacity_bytes",
             (self.snapshot.instances.capacity() * size_of::<RenderInstance>()) as f64,

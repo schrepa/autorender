@@ -14,8 +14,6 @@ struct TerrainUniform {
     origin: vec4<f32>,
     directory: vec4<u32>,
     relief: vec4<f32>,
-    deform_grid: vec4<i32>,
-    deform: vec4<f32>,
     cover: vec4<f32>,
     macro_map: vec4<u32>,
     steep: vec4<f32>,

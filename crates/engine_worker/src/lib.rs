@@ -14,7 +14,7 @@ mod image;
 mod pack;
 
 pub use cache::JobCache;
-pub use image::{IMAGE_FORMATS, Image, ImageDecoder, ImageFormat, decode_image, image_format};
+pub use image::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use pack::{
     PACK_HEADER, PackEntry, PackIndex, key_from_hex, pack_bytes, pack_directory, unpack,
     unpack_bytes,

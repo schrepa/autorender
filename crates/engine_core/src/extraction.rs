@@ -28,7 +28,6 @@ impl Extractions {
         aspect: f32,
         gpu: bool,
     ) {
-        retained.extract_deformation(world);
         retained.extract_lights_and_particles(world, &mut self.lights, &mut self.particles, gpu);
         retained.extract_probes(world, &mut self.probes);
         retained.extract_terrain(world, aspect);

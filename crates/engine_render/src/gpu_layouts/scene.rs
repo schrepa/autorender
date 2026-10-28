@@ -41,8 +41,6 @@ gpu_structs! {
         pub occupancy: [f32; 4],
         pub occupancy_maps: [f32; 4],
         pub occupancy_centers: [[f32; 4]; MAX_OCCUPANCY_LEVELS / 2],
-        pub underwater: [f32; 4],
-        pub sea: [f32; 4],
         pub cloud_shadow: [f32; 4],
         pub cloud_layer: [f32; 4],
         pub night: [f32; 4],
