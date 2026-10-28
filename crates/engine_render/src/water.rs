@@ -731,7 +731,8 @@ impl WaterPass {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Falls);
             self.fall_pipelines.insert(targets, pipeline);
         }
-        self.particles.ensure_pipelines(device, shader, &self.layout);
+        self.particles
+            .ensure_pipelines(device, shader, &self.layout);
         self.sim.ensure_bed(device, shader);
     }
 
@@ -941,7 +942,8 @@ impl RenderFeature for WaterPass {
         // they leave, and what lies behind the water, before it draws.
         self.sim.encode(encoder, encode.profiler);
         if let (Some(_), Some((_, group))) = (&self.tiles, &self.group) {
-            self.particles.encode(encode.device, encoder, group, encode.profiler);
+            self.particles
+                .encode(encode.device, encoder, group, encode.profiler);
         }
         self.copy_behind(encoder, encode.depth, encode.scene);
         let mut pass = encode.render_pass(

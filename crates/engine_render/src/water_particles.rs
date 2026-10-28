@@ -326,7 +326,10 @@ impl WaterParticles {
         // Its texels span HANDOVER_PIXELS where it hands over, or more where
         // it holds fewer than its reach asks.
         let reach = (grid.texels / 2 - WINDOW_MARGIN) as f32;
-        grid.pixels = max(HANDOVER_PIXELS, 1.0 / (reach * max(seen.pixel_angle, 1.0e-6)));
+        grid.pixels = max(
+            HANDOVER_PIXELS,
+            1.0 / (reach * max(seen.pixel_angle, 1.0e-6)),
+        );
         grid.ridden = ridden;
         let half = i64::from(grid.texels / 2);
         let window = [seen.detail.x, seen.detail.z]
@@ -364,7 +367,12 @@ impl WaterParticles {
             ],
             step: [texel, elapsed, wind[0], wind[1]],
             flags: [u32::from(grid.held.is_none()), begun, step, least],
-            pool: [grid.pools[0], grid.pools[1], grid.read, grid.points * grid.points],
+            pool: [
+                grid.pools[0],
+                grid.pools[1],
+                grid.read,
+                grid.points * grid.points,
+            ],
             eddies: [tick, ridden, 0.0, 0.0],
         };
         queue.write_buffer(&grid.frame, 0, bytemuck::bytes_of(&frame));
