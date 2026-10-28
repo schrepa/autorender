@@ -305,7 +305,7 @@ impl From<&RenderInstance> for ColorData {
         Self {
             color: pack_color(instance.color),
             surface: pack_surface(instance.surface),
-            flags: instance.skin.map_or(0, |offset| offset + 1),
+            flags: 0,
         }
     }
 }
@@ -326,7 +326,7 @@ pub(crate) use crate::gpu_layouts::scene::ExtraVertex;
 
 impl ExtraVertex {
     pub(crate) fn stream(mesh: &engine_core::Mesh) -> Option<Vec<Self>> {
-        if mesh.colors().is_none() && mesh.uv1().is_none() && mesh.joints().is_none() {
+        if mesh.colors().is_none() && mesh.uv1().is_none() {
             return None;
         }
         Some(
@@ -340,26 +340,6 @@ impl ExtraVertex {
                         })
                     }),
                     uv1: mesh.uv1().map_or(vertex.uv, |uv1| uv1[index]),
-                })
-                .collect(),
-        )
-    }
-}
-
-pub(crate) use crate::gpu_layouts::scene::SkinVertex;
-
-impl SkinVertex {
-    pub(crate) fn stream(mesh: &engine_core::Mesh) -> Option<Vec<Self>> {
-        let (joints, weights) = (mesh.joints()?, mesh.weights()?);
-        Some(
-            joints
-                .iter()
-                .zip(weights)
-                .map(|(joints, weights)| Self {
-                    joints: *joints,
-                    weights: weights.map(|weight| {
-                        (engine_core::math::clamp(weight, 0.0, 1.0) * 65535.0).round() as u16
-                    }),
                 })
                 .collect(),
         )
@@ -385,7 +365,7 @@ pub(crate) use crate::shaders::{
     MIPMAP_SHADER, OCCUPANCY_SHADER, PARTICLE_SHADER, POST_SHADER, PRESENTATION_SHADER,
     REFLECTIONS_SHADER, SCATTER_CULL_SHADER, SCATTER_SNAP_SHADER, SHADER, SHADOW_MARKS_SHADER,
     SHADOW_SHADER, SKY_SHADER, TEMPORAL_SHADER, TERRAIN_CONTROL_SHADER, TERRAIN_NORMALS_SHADER,
-    TERRAIN_SHADOW_SHADER, TRANSPARENT_SHADER, VIRTUAL_SHADER, VISIBILITY_SHADER, WATER_SIM_SHADER,
+    TERRAIN_SHADOW_SHADER, TRANSPARENT_SHADER, WATER_SIM_SHADER,
 };
 
 pub(crate) use crate::gpu_layouts::scene::MaterialUniform;
@@ -475,7 +455,6 @@ impl Variant {
     const ALPHA_MASK: u32 = 4;
     const DOUBLE_SIDED: u32 = constants::VARIANT_DOUBLE_SIDED;
     const EXTENDED: u32 = 16;
-    const SKINNED: u32 = 32;
     const TRANSMISSION: u32 = 64;
     const METALLIC_ROUGHNESS_MAP: u32 = constants::VARIANT_METALLIC_ROUGHNESS_MAP;
     const OCCLUSION_MAP: u32 = constants::VARIANT_OCCLUSION_MAP;
@@ -544,11 +523,7 @@ impl Variant {
     }
 
     pub(crate) fn uber(self) -> Self {
-        let state = Self::EXTENDED
-            | Self::SKINNED
-            | Self::ALPHA_MASK
-            | Self::DOUBLE_SIDED
-            | Self::TRANSMISSION;
+        let state = Self::EXTENDED | Self::ALPHA_MASK | Self::DOUBLE_SIDED | Self::TRANSMISSION;
         Self(self.0 & state | Self::UBER)
     }
 
@@ -622,18 +597,6 @@ impl Variant {
         self.0 & Self::EXTENDED != 0
     }
 
-    pub(crate) fn with_skinned(self, skinned: bool) -> Self {
-        Self(if skinned {
-            self.0 | Self::SKINNED | Self::EXTENDED
-        } else {
-            self.0 & !Self::SKINNED
-        })
-    }
-
-    pub(crate) fn skinned(self) -> bool {
-        self.0 & Self::SKINNED != 0
-    }
-
     pub(crate) fn with_fading(self, fading: bool) -> Self {
         Self(if fading {
             self.0 | Self::FADING
@@ -702,8 +665,6 @@ pub(crate) use crate::gpu_layouts::scene::PresentationFrame;
 pub(crate) use crate::gpu_layouts::scene::CandidateData;
 
 pub(crate) use crate::gpu_layouts::scene::BatchData;
-
-pub(crate) use crate::gpu_layouts::scene::SkinnedData;
 
 pub(crate) const FAR_DEPTH: f32 = 0.0;
 

@@ -4,7 +4,7 @@ use crate::profiling::Span;
 
 pub(super) fn batch(pass: Pass) -> u8 {
     let first_opaque = Pass::Opaque { phase: Phase::One }.index();
-    let last_opaque = Pass::Resolve { phase: Phase::Two }.index();
+    let last_opaque = Pass::Opaque { phase: Phase::Two }.index();
     let index = pass.index();
     if index < first_opaque {
         0
@@ -87,7 +87,6 @@ impl Renderer {
         encoder: wgpu::CommandEncoder,
     ) {
         let FrameKind { gpu_mode, .. } = state.kind;
-        let virtual_frame = state.virtual_frame;
 
         let profile_submit = engine_profile::span("render", "submit_and_present");
         self.queue.hand(Handover::from(encoder));
@@ -101,9 +100,6 @@ impl Renderer {
         self.impostors.atlas.after_submit();
         self.impostors.placed.after_submit();
         self.water_settle.after_submit();
-        if virtual_frame {
-            self.virtual_draws.pass.after_submit();
-        }
         self.features.after_submit(&state.features.frames);
         #[cfg(feature = "dev")]
         self.map_probe();

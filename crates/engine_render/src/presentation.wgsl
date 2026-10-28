@@ -10,15 +10,14 @@ struct Frame {
     planes: array<vec4<f32>, 6>,
     absolute_view_projection: mat4x4<f32>,
     motion: u32,
-    joints: u32,
     mask: u32,
     occlusion: u32,
+    subpixel: u32,
     view_projection: mat4x4<f32>,
     viewport: vec4<f32>,
-    skinned: u32,
-    subpixel: u32,
     plane: u32,
     lod_error: f32,
+    pad: vec2<u32>,
     eye: vec4<f32>,
     fade: vec4<f32>,
 }
@@ -89,25 +88,8 @@ struct Level {
 @group(0) @binding(12) var<storage, read_write> draws: array<DrawArgs>;
 @group(0) @binding(13) var<storage, read_write> locals_shift: array<f32>;
 @group(0) @binding(14) var<storage, read> slot_candidates: array<Candidate>;
-@group(0) @binding(15) var<storage, read> joint_nodes: array<u32>;
-@group(0) @binding(16) var<storage, read> inverse_binds: array<Rows>;
-@group(0) @binding(17) var<storage, read_write> palette: array<Rows>;
 @group(0) @binding(18) var depth_pyramid: texture_2d<f32>;
 @group(0) @binding(19) var<storage, read_write> occlusion_counts: array<atomic<u32>>;
-struct SlotColor {
-    color: vec2<u32>,
-    surface: u32,
-    flags: u32,
-}
-struct Skinned {
-    slot: u32,
-    position: u32,
-    batch: u32,
-    joints: u32,
-}
-@group(0) @binding(20) var<storage, read> slot_colors: array<SlotColor>;
-@group(0) @binding(21) var<storage, read> skinned: array<Skinned>;
-@group(0) @binding(22) var<storage, read_write> skin_bounds: array<vec4<f32>>;
 @group(0) @binding(23) var<storage, read_write> still_frames: array<vec2<u32>>;
 @group(0) @binding(24) var<storage, read_write> impostor_ids: array<vec2<u32>>;
 @group(0) @binding(25) var<storage, read_write> lod_states: array<u32>;
@@ -366,20 +348,19 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         poses[candidate.slot] = matrix_rows(model);
         let batch = batches[candidate.batch];
-        let skinned = batch.bounds_min.w != 0.0;
-        if skinned || !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
+        if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
             visible |= VISIBLE;
         }
-        if (visible & VISIBLE) != 0u && !skinned && frame.subpixel != 0u
+        if (visible & VISIBLE) != 0u && frame.subpixel != 0u
                 && covers_no_pixel(frame.view_projection * model, batch.bounds_min.xyz,
                     batch.bounds_max.xyz, frame.viewport.xy) {
             visible = (visible & ~VISIBLE) | SUBPIXEL;
         }
         if (visible & VISIBLE) != 0u {
-            if frame.motion != 0u && ((flags & NODE_ACTIVE) != 0u || skinned) {
+            if frame.motion != 0u && (flags & NODE_ACTIVE) != 0u {
                 visible |= MOVING;
             }
-            let occludable = frame.occlusion != 0u && !skinned && batch.bounds_max.w == 0.0;
+            let occludable = frame.occlusion != 0u && batch.bounds_max.w == 0.0;
             if !occludable || previous == 0u {
                 visible |= PHASE1;
             }
@@ -446,9 +427,6 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
     let candidate = slot_candidates[id.x];
     let flags = scan[candidate.position];
     let batch = batches[candidate.batch];
-    if batch.bounds_min.w != 0.0 {
-        return;
-    }
     if (flags & frame.mask) == 0u || frame.fade.x >= 1.0 {
         lod_states[candidate.slot] = 0u;
         return;
@@ -510,7 +488,7 @@ fn occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let batch = batches[candidate.batch];
-    if batch.bounds_min.w != 0.0 || batch.bounds_max.w != 0.0 {
+    if batch.bounds_max.w != 0.0 {
         return;
     }
     let is_hidden = hidden(frame.view_projection * rows_matrix(poses[candidate.slot]),
@@ -567,8 +545,7 @@ fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     var flags = scan[candidate.position] & ~PROBE;
     let batch = batches[candidate.batch];
     let still = still_frames[candidate.slot].y >= STILL_FRAMES;
-    if (flags & VALID) != 0u && still && batch.bounds_min.w == 0.0
-            && batch.bounds_max.w != 1.0 {
+    if (flags & VALID) != 0u && still && batch.bounds_max.w != 1.0 {
         let model = rows_matrix(poses[candidate.slot]);
         if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz)
                 && !(frame.subpixel != 0u && covers_no_pixel(frame.view_projection * model,
@@ -577,86 +554,6 @@ fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     scan[candidate.position] = flags;
-}
-
-@compute @workgroup_size(64)
-fn skin_palette(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= frame.joints {
-        return;
-    }
-    let node = joint_nodes[id.x];
-    var model = mat4x4<f32>(
-        vec4<f32>(1.0, 0.0, 0.0, 0.0),
-        vec4<f32>(0.0, 1.0, 0.0, 0.0),
-        vec4<f32>(0.0, 0.0, 1.0, 0.0),
-        vec4<f32>(0.0, 0.0, 0.0, 1.0),
-    );
-    if node < arrayLength(&info) {
-        let flags = info[node].y;
-        if (flags & NODE_VALID) != 0u {
-            if (flags & NODE_ACTIVE) != 0u {
-                model = rows_matrix(compose(node).display);
-            } else {
-                model = rows_matrix(authority[node]);
-            }
-        }
-    }
-    palette[id.x] = matrix_rows(model * rows_matrix(inverse_binds[id.x]));
-}
-
-@compute @workgroup_size(64)
-fn skin_bounds_pass(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= frame.skinned {
-        return;
-    }
-    let record = skinned[id.x];
-    let batch = batches[record.batch];
-    let center = (batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5;
-    let half = (batch.bounds_max.xyz - batch.bounds_min.xyz) * 0.5;
-    var low = vec3<f32>(F32_MAX);
-    var high = vec3<f32>(-F32_MAX);
-    let offset = slot_colors[record.slot].flags;
-    let joints = select(1u, record.joints, offset != 0u);
-    for (var joint = 0u; joint < joints; joint++) {
-        var rows: Rows;
-        if offset == 0u {
-            rows = poses[record.slot];
-        } else {
-            rows = palette[offset - 1u + joint];
-        }
-        let world_center = vec3<f32>(dot(rows.r0.xyz, center) + rows.r0.w,
-            dot(rows.r1.xyz, center) + rows.r1.w, dot(rows.r2.xyz, center) + rows.r2.w);
-        let world_half = vec3<f32>(dot(abs(rows.r0.xyz), half), dot(abs(rows.r1.xyz), half),
-            dot(abs(rows.r2.xyz), half));
-        low = min(low, world_center - world_half);
-        high = max(high, world_center + world_half);
-    }
-    let pad = max(abs(low), abs(high)) * 0x1p-20f;
-    low -= pad;
-    high += pad;
-    if !(all(low >= vec3<f32>(-F32_MAX)) && all(high <= vec3<f32>(F32_MAX))) {
-        low = vec3<f32>(-F32_MAX);
-        high = vec3<f32>(F32_MAX);
-    }
-    skin_bounds[2u * id.x] = vec4<f32>(low, 0.0);
-    skin_bounds[2u * id.x + 1u] = vec4<f32>(high, 0.0);
-    var flags = scan[record.position];
-    let identity = mat4x4<f32>(
-        vec4<f32>(1.0, 0.0, 0.0, 0.0),
-        vec4<f32>(0.0, 1.0, 0.0, 0.0),
-        vec4<f32>(0.0, 0.0, 1.0, 0.0),
-        vec4<f32>(0.0, 0.0, 0.0, 1.0),
-    );
-    if (flags & VISIBLE) != 0u {
-        if outside(identity, low, high) {
-            flags &= ~(VISIBLE | MOVING | PHASE1);
-            scan[record.position] = flags;
-        } else if frame.subpixel != 0u
-                && covers_no_pixel(frame.view_projection, low, high, frame.viewport.xy) {
-            flags = (flags & ~(VISIBLE | MOVING | PHASE1)) | SUBPIXEL;
-            scan[record.position] = flags;
-        }
-    }
 }
 
 fn bucket(flags: u32) -> u32 {
@@ -801,7 +698,7 @@ fn batch_args(@builtin(global_invocation_id) id: vec3<u32>) {
         batch_bases[4u * id.x + level] = base[level];
     }
     draws[id.x] = DrawArgs(batch.index_count, instances, batch.first_index, batch.base_vertex, batch.first_instance);
-    if (frame.mask & PROBE) == 0u && batch.bounds_max.w != 2.0 {
+    if (frame.mask & PROBE) == 0u {
         let triangles = saturating_add(saturating_add(
             saturating_mul(batch.index_count / 3u, instances),
             saturating_mul(batch.lod_ranges.y / 3u, visible.y)),

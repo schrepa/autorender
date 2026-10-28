@@ -18,7 +18,6 @@ engine_terrain.workspace = true
 engine_worker.workspace = true
 engine_sources.workspace = true
 zstd.workspace = true
-engine_vgbuild.workspace = true
 engine_native.workspace = true
 glam.workspace = true
 gltf.workspace = true

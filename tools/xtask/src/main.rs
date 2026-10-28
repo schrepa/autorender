@@ -194,7 +194,7 @@ fn commands() -> Vec<(String, &'static str)> {
         ("agent help".into(), "The agent client's verbs and options and the engine's queries and controls, as JSON"),
         ("agent VERB [--session S] [--json JSON | --file PATH]".into(), "Run a development query or control in a browser session"),
         ("scene validate --file PATH | save --file TARGET --candidate PATH --expected-revision N | schema".into(), "Validate or save revision-checked scene sources, or print the scene schema, as JSON"),
-        ("asset import --file PATH --id ID (--output PATH | --into PATH --expected-revision N) [--replace] [--as-prefab] [--virtual-triangles N | --no-virtual-geometry]".into(), "Import a static textured GLB with structured results; dense opaque primitives (512 triangles and up by default) become virtual meshes"),
+        ("asset import --file PATH --id ID (--output PATH | --into PATH --expected-revision N) [--replace] [--as-prefab]".into(), "Import a static textured GLB with structured results"),
         ("assets".into(), "Validate authored scene sources without changing them"),
         ("schema".into(), "Write the generated protocol summary, client list, stats and game surface types, and each app's own"),
         ("new app NAME".into(), "Start a game in apps/NAME with its page web/NAME.html, from the engine's app template"),

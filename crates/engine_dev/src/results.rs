@@ -42,7 +42,6 @@ results! {
     water_query: crate::features::ocean::WaterQueryResult,
     deformation_query: crate::features::deformation::DeformationQueryResult,
     deform: crate::features::deformation::DeformResult,
-    animation: crate::features::animation::AnimationResult,
     world_changes: crate::features::world_streaming::WorldChangesResult,
     terrain: crate::features::terrain::TerrainControlResult,
     present: crate::results::PresentResult,
@@ -162,7 +161,6 @@ pub struct AssetDigests {
     pub meshes: DigestEntry,
     pub materials: DigestEntry,
     pub textures: DigestEntry,
-    pub clips: DigestEntry,
 }
 
 #[derive(Serialize)]

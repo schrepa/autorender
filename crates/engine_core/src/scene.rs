@@ -275,7 +275,6 @@ pub struct RenderInstance {
     pub model: Mat4,
     pub color: [f32; 4],
     pub surface: Surface,
-    pub skin: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -337,7 +336,6 @@ pub struct RenderSnapshot {
     pub cells: crate::CellStats,
     pub tables: crate::RenderTables,
     pub instances: Vec<RenderInstance>,
-    pub joints: Vec<crate::RenderJoint>,
     pub meshes: Vec<RenderMesh>,
     pub materials: Vec<RenderMaterial>,
     pub textures: Vec<RenderTexture>,
@@ -347,11 +345,4 @@ pub struct RenderSnapshot {
     pub dropped_instances: usize,
     pub missing_assets: usize,
     pub invalid_transforms: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RenderJoint {
-    pub node: u32,
-    pub inverse_bind: crate::PoseRows,
-    pub matrix: crate::PoseRows,
 }

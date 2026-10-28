@@ -19,7 +19,7 @@ use crate::entries::{MeshPass, PassKind, Streams};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment};
 use crate::gpu_data::{
     CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, GroundData, LOD_LEVELS, LOD_STATE,
-    LightingUniform, PoseData, SHADER, SkinVertex, Variant, Vertex, clamped_extent,
+    LightingUniform, PoseData, SHADER, Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;
@@ -43,11 +43,6 @@ use crate::targets::{FrameSize, ScreenTarget, Targets};
 use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::transparent::accumulation_targets;
 use crate::uploads::UploadCache;
-use crate::virtual_geometry::{
-    CameraTests, Cone, IdBuffers, MAX_VIEWS, SelectionFrame, VirtualBatch, VirtualGeometryPass,
-    VirtualView,
-};
-use crate::visibility::{ID_FORMAT, VisibilityBuffer};
 
 mod camera;
 mod display;
@@ -68,8 +63,6 @@ mod scatter_draws;
 mod scatter_pool;
 mod startup;
 mod terrain_draws;
-mod virtual_draws;
-mod visibility_draws;
 
 use camera::CameraBindings;
 use display::{DepthTarget, Display, DisplayFrame};
@@ -77,12 +70,10 @@ use impostor_draws::ImpostorDraws;
 pub(crate) use instances::FramePoses;
 use instances::Instances;
 use meshes::{BatchBinds, DrawOrder, MeshPipelines, SkyTargets};
-pub(crate) use meshes::{extra_layout, skin_layout, vertex_layout};
+pub(crate) use meshes::{extra_layout, vertex_layout};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::GpuMark;
 pub use startup::StartingRenderer;
-use virtual_draws::{VIRTUAL_ATTRIBUTES, VirtualDraws, VirtualStages};
-use visibility_draws::VisibilityDraws;
 
 const INITIAL_CAPACITY: usize = 1_024;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -90,7 +81,6 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 struct GpuMesh {
     placement: Result<Placement, OwnMesh>,
     extended: bool,
-    skinned: bool,
     index_count: u32,
     byte_len: u64,
     lods: Vec<(u32, u32, f32)>,
@@ -107,7 +97,6 @@ struct MeshUploads {
 struct OwnMesh {
     vertices: wgpu::Buffer,
     extras: Option<wgpu::Buffer>,
-    skin: Option<wgpu::Buffer>,
     indices: wgpu::Buffer,
 }
 
@@ -121,7 +110,6 @@ impl GpuMesh {
             Err(own) => MeshDraw {
                 vertices: &own.vertices,
                 extras: own.extras.as_ref(),
-                skin: own.skin.as_ref(),
                 indices: &own.indices,
                 first_index: 0,
                 base_vertex: 0,
@@ -135,8 +123,8 @@ impl GpuMesh {
     }
 }
 
-fn lod_levels(batch: &DrawBatch, mesh: &GpuMesh, virtual_geometry: bool) -> usize {
-    if batch.transparent || virtual_geometry || mesh.skinned {
+fn lod_levels(batch: &DrawBatch, mesh: &GpuMesh) -> usize {
+    if batch.transparent {
         1
     } else {
         1 + mesh.plan.len().min(LOD_LEVELS - 1)
@@ -209,8 +197,6 @@ pub struct Renderer {
     gpu_presentation: GpuPresentationPass,
     culling: Culling,
     shadows: ShadowPass,
-    virtual_draws: VirtualDraws,
-    visibility: VisibilityDraws,
     impostors: ImpostorDraws,
     water_settle: crate::water_settle::WaterSettle,
     terrain: crate::terrain::TerrainPass,

@@ -93,7 +93,6 @@ pub(crate) struct ScatterPass {
     draws: Growable,
     poses: Growable,
     colors: Growable,
-    palette: wgpu::Buffer,
     grounds: Growable,
     cards: Growable,
     card_args: Growable,
@@ -147,9 +146,6 @@ struct LeftOut {
 
 impl ScatterPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let storage = |label, bytes| {
-            crate::buffers::storage(device, label, bytes, wgpu::BufferUsages::empty())
-        };
         let growable =
             |label, bytes| Growable::new(device, label, bytes, wgpu::BufferUsages::empty());
         let regions_placeholder = crate::targets::texture_2d(
@@ -199,7 +195,6 @@ impl ScatterPass {
             ),
             poses: growable("engine/scatter-poses", size_of::<PoseData>() as u64),
             colors: growable("engine/scatter-colors", size_of::<ColorData>() as u64),
-            palette: storage("engine/scatter-palette", size_of::<PoseData>() as u64),
             grounds: growable("engine/scatter-grounds", size_of::<GroundData>() as u64),
             cards: Growable::new(
                 device,
@@ -517,7 +512,6 @@ impl ScatterPass {
                     &[
                         crate::buffers::entry("poses", &self.poses),
                         crate::buffers::entry("colors", &self.colors),
-                        crate::buffers::entry("palette", &self.palette),
                         crate::buffers::entry("grounds", &self.grounds),
                     ],
                 ),
@@ -530,8 +524,6 @@ impl ScatterPass {
                         crate::buffers::entry("poses", &self.poses),
                         crate::buffers::entry("colors", &self.colors),
                         crate::buffers::entry("previous_poses", &self.poses),
-                        crate::buffers::entry("palette", &self.palette),
-                        crate::buffers::entry("previous_palette", &self.palette),
                         crate::buffers::entry("grounds", &self.grounds),
                     ],
                 ),
@@ -546,7 +538,6 @@ impl ScatterPass {
                 &[
                     crate::buffers::entry("slot_poses", &self.poses),
                     crate::buffers::entry("slot_colors", &self.colors),
-                    crate::buffers::entry("slot_palette", &self.palette),
                     (
                         "shadow_regions",
                         crate::pipelines::view(&self.regions_placeholder.view),

@@ -118,7 +118,6 @@ impl BrowserControl {
             | Self::TerrainRiver { .. }
             | Self::Deform { .. }
             | Self::NavGo { .. }
-            | Self::Animation { .. }
             | Self::WorldChanges { .. }
             | Self::Camera { .. }
             | Self::Step { .. }

@@ -101,7 +101,6 @@ pub(super) struct Writes {
 }
 
 pub(super) struct Features<'s> {
-    pub(super) occlusion: Option<(u32, u32, u32)>,
     pub(super) gpu_prepared: Option<GpuPrepared>,
     pub(super) shadow_frame: Option<ShadowFrame>,
     pub(super) probe_list: &'s [engine_core::RenderReflectionProbe],
@@ -135,10 +134,8 @@ pub(super) struct FrameState<'s> {
     pub(super) writes: Writes,
     pub(super) features: Features<'s>,
     pub(super) passes: Passes,
-    pub(super) virtual_frame: bool,
     pub(super) terrain: bool,
     pub(super) scatter: bool,
-    pub(super) resolving: bool,
     pub(super) shape: FrameShape,
 }
 
@@ -286,13 +283,6 @@ impl Renderer {
         let mut encoder = self.frame_encoder();
         self.display.time_begin(&mut encoder);
         let passes = self.prepare_pipelines(kind, &packing.temporal_frame, &features);
-        let (virtual_frame, resolving) = self.prepare_virtual_frame(
-            snapshot,
-            kind,
-            &packing.temporal_frame,
-            features.occlusion,
-            passes.opaque_kind,
-        );
         let terrain = self.prepare_terrain(
             snapshot,
             &packing.temporal_frame,
@@ -325,11 +315,7 @@ impl Renderer {
         features.frames.water =
             self.prepare_water(snapshot, passes.opaque_kind, &packing.temporal_frame);
         self.refresh_camera_group();
-        let shape = self.frame_shape(
-            kind,
-            (&packing, &features, &passes),
-            (virtual_frame, resolving, scatter, terrain),
-        );
+        let shape = self.frame_shape(kind, (&packing, &features, &passes), (scatter, terrain));
         features.frames.clouds = self.prepare_cloud_composite(shape.targets);
         features.frames.debug_view = self.prepare_debug_view(snapshot, kind);
         let state = FrameState {
@@ -341,8 +327,6 @@ impl Renderer {
             writes,
             features,
             passes,
-            virtual_frame,
-            resolving,
             terrain,
             scatter,
             shape,

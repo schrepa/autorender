@@ -1,7 +1,6 @@
 mod fades;
 mod groups;
 mod inputs;
-mod joints;
 mod layouts;
 mod probes;
 mod totals;
@@ -19,16 +18,13 @@ use crate::renderer::FramePoses;
 use crate::staging::Prestaged;
 
 use crate::gpu_layouts::constants::ARGS_GROUP;
-use crate::gpu_layouts::constants::JOINT_GROUP;
 use crate::gpu_layouts::constants::PARENT_GROUP;
 use crate::gpu_layouts::constants::PRESENTATION_GROUP as GROUP;
 use crate::gpu_layouts::constants::SCAN_GROUP;
-use crate::gpu_layouts::constants::SKIN_BOUNDS_GROUP as SKINNED_GROUP;
 use fades::Fades;
 use groups::{DrawGroups, PHASE_ONE, PHASE_TWO};
 use inputs::NodeInputs;
 pub(crate) use inputs::Staging;
-use joints::Joints;
 use layouts::Shaders;
 use probes::{ProbeFaces, Stillness};
 use totals::Totals;
@@ -74,8 +70,6 @@ pub(crate) struct BatchMeta {
     pub base_vertex: i32,
     pub bounds: Aabb,
     pub group: u32,
-    pub joints: u32,
-    pub virtual_geometry: bool,
     pub lods: Vec<(u32, u32, f32)>,
     pub impostor: f32,
 }
@@ -117,12 +111,10 @@ struct NodeGroups {
 struct PoseGroups {
     cull: wgpu::BindGroup,
     fades: wgpu::BindGroup,
-    skin: wgpu::BindGroup,
-    skin_bounds: Option<wgpu::BindGroup>,
     count_still: Option<wgpu::BindGroup>,
 }
 
-type PoseKey = (u64, u64, u64, u64, u64, u64, bool);
+type PoseKey = (u64, u64, u64, u64, u64);
 
 type OcclusionKey = (usize, u64, u64, u64);
 
@@ -133,7 +125,6 @@ pub(crate) struct GpuPresentationPass {
     frame_uniform: Option<PresentationFrame>,
     nodes: NodeInputs,
     groups: DrawGroups,
-    joints: Joints,
     stillness: Stillness,
     fades: Fades,
     probes: ProbeFaces,
@@ -174,7 +165,6 @@ impl GpuPresentationPass {
             frame_phase2: uniform("engine/presentation-frame-phase2"),
             frame_uniform: None,
             groups: DrawGroups::new(device),
-            joints: Joints::new(device),
             stillness: Stillness::new(device),
             fades: Fades::new(device),
             probes: ProbeFaces::new(std::array::from_fn(|_| {
@@ -199,7 +189,7 @@ impl GpuPresentationPass {
     }
 
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.nodes.capacity_bytes() + self.groups.capacity_bytes() + self.joints.capacity_bytes()
+        self.nodes.capacity_bytes() + self.groups.capacity_bytes()
     }
 
     pub(crate) fn visible(&self) -> Option<u32> {
@@ -264,9 +254,6 @@ impl GpuPresentationPass {
             batches: &self.groups.batches,
             flags: &self.groups.scan,
             count: self.groups.count(),
-            skinned: &self.groups.skinned,
-            skin_bounds: &self.groups.skin_bounds,
-            skinned_count: self.groups.skinned_count(),
             generation: self.groups.generation(),
         }
     }
@@ -301,12 +288,6 @@ impl GpuPresentationPass {
         );
         self.groups
             .ensure(device, plan.ordered_instances.len(), plan.batches.len());
-        self.joints.prepare(
-            device,
-            queue,
-            &frame.snapshot().joints,
-            (frame.identity(), frame.joints_revision()),
-        );
         self.stillness
             .ensure(device, view.stillness, poses.current());
         self.fades
@@ -327,7 +308,7 @@ impl GpuPresentationPass {
         prepared.parent_levels = self.nodes.level_ranges().len();
         prepared.blend = self.nodes.blend();
 
-        if let Some(bytes) = self.groups.rebuild(device, queue, inputs) {
+        if let Some(bytes) = self.groups.rebuild(queue, inputs) {
             prepared.group_upload_bytes = bytes;
         }
         prepared.candidates = self.groups.count();
@@ -357,10 +338,6 @@ impl GpuPresentationPass {
         queue.submit_now([encoder.finish()]);
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     fn bind(&mut self, device: &wgpu::Device, poses: &FramePoses<'_>) {
         let Self {
             shaders,
@@ -368,7 +345,6 @@ impl GpuPresentationPass {
             frame_phase2,
             nodes,
             groups,
-            joints,
             stillness,
             fades,
             occlusion_counts,
@@ -404,15 +380,12 @@ impl GpuPresentationPass {
         let key = (
             nodes.generation(),
             groups.generation(),
-            joints.generation(),
             stillness.generation(),
             fades.generation(),
             poses.generation(),
-            groups.skinned_count() != 0,
         );
         pose_groups[poses.parity].get_or_insert_with(key, || {
             let current = poses.current();
-            let palette = poses.palette();
             let group = |family, label, entries: &[(&str, wgpu::BindingResource<'_>)]| {
                 shaders.group(device, family, label, entries)
             };
@@ -445,36 +418,6 @@ impl GpuPresentationPass {
                         entry("fade_cards", &fades.cards),
                     ],
                 ),
-                skin: group(
-                    &shaders.families.compose,
-                    "engine/presentation-skin-group",
-                    &[
-                        entry("frame", frame),
-                        entry("locals", &nodes.locals),
-                        entry("info", &nodes.info),
-                        entry("authority", &nodes.authority),
-                        entry("composed", &nodes.composed),
-                        entry("joint_nodes", &joints.nodes),
-                        entry("inverse_binds", &joints.inverse_binds),
-                        entry("palette", palette),
-                    ],
-                ),
-                skin_bounds: (groups.skinned_count() != 0).then(|| {
-                    group(
-                        shaders.skin_bounds_family(device),
-                        "engine/presentation-skin-bounds-group",
-                        &[
-                            entry("frame", frame),
-                            entry("batches", &groups.batches),
-                            entry("poses", current),
-                            entry("scan", &groups.scan),
-                            entry("palette", palette),
-                            entry("slot_colors", poses.colors),
-                            entry("skinned", &groups.skinned),
-                            entry("skin_bounds", &groups.skin_bounds),
-                        ],
-                    )
-                }),
                 count_still: stillness.kept().then(|| {
                     group(
                         &shaders.families.tests,
@@ -521,13 +464,13 @@ impl GpuPresentationPass {
             planes,
             absolute_view_projection: absolute,
             motion: u32::from(view.motion),
-            joints: self.joints.count(),
             mask: if self.occlusion {
                 FLAG_PHASE1
             } else {
                 FLAG_VISIBLE
             },
             occlusion: u32::from(self.occlusion),
+            subpixel: u32::from(self.subpixel),
             view_projection: view.view_projection.to_cols_array_2d(),
             viewport: [
                 width as f32,
@@ -535,8 +478,6 @@ impl GpuPresentationPass {
                 view.occlusion.unwrap_or(0) as f32,
                 0.0,
             ],
-            skinned: self.groups.skinned_count(),
-            subpixel: u32::from(self.subpixel),
             plane: self.groups.capacity() as u32,
             lod_error: if unbudgeted { view.lod_error } else { 0.0 },
             eye: view
@@ -544,6 +485,7 @@ impl GpuPresentationPass {
                 .extend(if view.impostors { 1.0 } else { 0.0 })
                 .to_array(),
             fade: [view.fade, fades::FADE_MARGIN, 0.0, 0.0],
+            pad: [0; 2],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&uniform));
         self.fades.begin_frame(queue);
@@ -570,8 +512,6 @@ impl GpuPresentationPass {
         let shaders = &self.shaders;
         let pipelines = &shaders.pipelines;
         let candidates = self.groups.count();
-        let joints = self.joints.count();
-        let skinned = self.groups.skinned_count();
         let lod = self
             .frame_uniform
             .is_some_and(|uniform| uniform.lod_error > 0.0);
@@ -590,12 +530,6 @@ impl GpuPresentationPass {
                 }
             }
             Stage::Cull => {
-                if joints != 0 {
-                    pass.set_pipeline(shaders.skin_palette(device));
-                    pass.set_bind_group(0, &posed.skin, &[]);
-                    pass.set_bind_group(1, self.nodes.level_group(0), &[]);
-                    pass.dispatch_workgroups(joints.div_ceil(JOINT_GROUP), 1, 1);
-                }
                 let workgroups = candidates.div_ceil(GROUP);
                 pass.set_pipeline(&pipelines.cull);
                 pass.set_bind_group(0, &posed.cull, &[]);
@@ -608,11 +542,6 @@ impl GpuPresentationPass {
                     pass.set_pipeline(shaders.count_still(device));
                     pass.set_bind_group(0, group, &[]);
                     pass.dispatch_workgroups(workgroups, 1, 1);
-                }
-                if let Some(group) = posed.skin_bounds.as_ref().filter(|_| skinned != 0) {
-                    pass.set_pipeline(shaders.skin_bounds(device));
-                    pass.set_bind_group(0, group, &[]);
-                    pass.dispatch_workgroups(skinned.div_ceil(SKINNED_GROUP), 1, 1);
                 }
                 if lod {
                     pass.set_pipeline(&pipelines.fade_levels);
@@ -638,7 +567,7 @@ impl GpuPresentationPass {
         };
         let stages = [
             (Stage::Compose, !self.nodes.level_ranges().is_empty()),
-            (Stage::Cull, candidates != 0 || joints != 0),
+            (Stage::Cull, candidates != 0),
             (Stage::Scan, candidates != 0),
             (Stage::Scatter, candidates != 0),
         ];
@@ -747,14 +676,6 @@ impl GpuPresentationPass {
 
     pub(crate) fn after_submit(&mut self) {
         self.totals.after_submit();
-    }
-
-    pub(crate) fn visible_sources(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
-        (
-            &self.groups.visible_ids[PHASE_ONE],
-            &self.groups.draws[PHASE_ONE],
-            self.groups.generation(),
-        )
     }
 
     pub(crate) fn draw_source<'a>(

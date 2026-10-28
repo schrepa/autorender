@@ -56,13 +56,7 @@ pub enum AssetError {
     InvalidTextureHandle,
     InvalidMaterialHandle,
     InvalidMeshHandle,
-    InvalidAnimation {
-        reason: &'static str,
-    },
     InvalidCompressedTexture {
-        reason: &'static str,
-    },
-    InvalidVirtualMesh {
         reason: &'static str,
     },
     InvalidLevels {
@@ -105,9 +99,7 @@ impl AssetError {
             Self::InvalidTextureHandle => "asset.invalid_texture_handle",
             Self::InvalidMaterialHandle => "asset.invalid_material_handle",
             Self::InvalidMeshHandle => "asset.invalid_mesh_handle",
-            Self::InvalidAnimation { .. } => "asset.invalid_animation",
             Self::InvalidCompressedTexture { .. } => "asset.invalid_compressed_texture",
-            Self::InvalidVirtualMesh { .. } => "asset.invalid_virtual_mesh",
             Self::InvalidLevels { .. } => "asset.invalid_levels",
             Self::MeshCapacity { .. } => "asset.mesh_capacity",
             Self::MaterialCapacity { .. } => "asset.material_capacity",
@@ -195,11 +187,9 @@ impl fmt::Display for AssetError {
             Self::InvalidMeshHandle => {
                 write!(f, "mesh must be reserved in the same asset library")
             }
-            Self::InvalidAnimation { reason } => write!(f, "animation: {reason}"),
             Self::InvalidCompressedTexture { reason } => {
                 write!(f, "compressed texture: {reason}")
             }
-            Self::InvalidVirtualMesh { reason } => write!(f, "virtual mesh: {reason}"),
             Self::InvalidLevels { reason } => write!(f, "levels of detail: {reason}"),
             Self::MeshCapacity { limit } => write!(f, "mesh capacity of {limit} reached"),
             Self::MaterialCapacity { limit } => write!(f, "material capacity of {limit} reached"),

@@ -6,11 +6,11 @@ use std::{
 };
 
 use engine_assetc::{
-    DEFAULT_VIRTUAL_TRIANGLES, IMPORTER_VERSION, ImportError, ImportOptions, ImportedFile,
-    MAX_INPUT_BYTES, import_glb_prefab_with, import_glb_with, source_sha256,
+    IMPORTER_VERSION, ImportError, ImportedFile, MAX_INPUT_BYTES, import_glb, import_glb_prefab,
+    source_sha256,
 };
 use engine_dev::authoring;
-use engine_scene::{MeshSource, SceneDocument};
+use engine_scene::SceneDocument;
 use serde_json::{Value, json};
 
 pub fn asset(arguments: &[String]) -> Result<(), String> {
@@ -33,27 +33,14 @@ pub fn asset(arguments: &[String]) -> Result<(), String> {
 fn command(arguments: &[String]) -> Result<Value, ImportError> {
     let options = Options::parse(arguments)?;
     let bytes = read_source(&options.file)?;
-    let import_options = ImportOptions {
-        virtual_triangles: options.virtual_triangles,
-    };
     let result = if options.as_prefab {
-        import_glb_prefab_with(&bytes, &options.id, &import_options)?
+        import_glb_prefab(&bytes, &options.id)?
     } else {
-        import_glb_with(&bytes, &options.id, &import_options)?
+        import_glb(&bytes, &options.id)?
     };
     let imported = result.document;
     let file_bytes: usize = result.files.iter().map(|file| file.bytes.len()).sum();
-    let virtual_meshes = imported
-        .meshes
-        .iter()
-        .filter(|mesh| matches!(mesh.source, MeshSource::Virtual { .. }))
-        .count();
-    let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"virtual_meshes":virtual_meshes,"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>(),"animations":imported.animations.len(),"skins":imported.skins.len(),"files":result.files.len(),"file_bytes":file_bytes});
-    let node_transforms = if imported.animations.is_empty() && imported.skins.is_empty() {
-        "baked"
-    } else {
-        "hierarchy"
-    };
+    let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>(),"files":result.files.len(),"file_bytes":file_bytes});
     let (report, document) = if let Some(output) = &options.output {
         let source = imported.to_json()?;
         write_files(output, &result.files)?;
@@ -89,7 +76,7 @@ fn command(arguments: &[String]) -> Result<Value, ImportError> {
     Ok(json!({
         "save":report,"scene":document.id,"imported":counts,
         "ignored_extensions":result.ignored_extensions,
-        "provenance":{"source":options.file,"source_sha256":source_sha256(&bytes),"importer_version":IMPORTER_VERSION,"namespace":options.id,"settings":{"format":"glb2","authoring":if options.as_prefab {"prefab"} else {"flat"},"coordinates":"right-handed-y-up","node_transforms":node_transforms,"materials":"gltf-metallic-roughness","images":"files-unchanged","meshes":"emb-files","virtual_meshes":{"format":"evg1-files","min_triangles":options.virtual_triangles},"animations":"ean1-files"}}
+        "provenance":{"source":options.file,"source_sha256":source_sha256(&bytes),"importer_version":IMPORTER_VERSION,"namespace":options.id,"settings":{"format":"glb2","authoring":if options.as_prefab {"prefab"} else {"flat"},"coordinates":"right-handed-y-up","node_transforms":"baked","materials":"gltf-metallic-roughness","images":"files-unchanged","meshes":"emb-files"}}
     }))
 }
 
@@ -101,7 +88,6 @@ struct Options {
     revision: Option<u64>,
     replace: bool,
     as_prefab: bool,
-    virtual_triangles: Option<u32>,
 }
 
 impl Default for Options {
@@ -114,7 +100,6 @@ impl Default for Options {
             revision: None,
             replace: false,
             as_prefab: false,
-            virtual_triangles: Some(DEFAULT_VIRTUAL_TRIANGLES),
         }
     }
 }
@@ -125,7 +110,7 @@ impl Options {
             ImportError::new(
                 "invalid_arguments",
                 "$",
-                "usage: cargo xtask asset import --file MODEL.glb --id NAMESPACE [--as-prefab] [--virtual-triangles N | --no-virtual-geometry] (--output NEW.scene.json | --into EXISTING.scene.json --expected-revision N [--replace])",
+                "usage: cargo xtask asset import --file MODEL.glb --id NAMESPACE [--as-prefab] (--output NEW.scene.json | --into EXISTING.scene.json --expected-revision N [--replace])",
             )
         };
         if arguments.first().is_none_or(|command| command != "import") {
@@ -135,13 +120,11 @@ impl Options {
         let mut arguments = arguments[1..].iter();
         let mut replace = false;
         let mut as_prefab = false;
-        let mut no_virtual = false;
         while let Some(flag) = arguments.next() {
-            if flag == "--replace" || flag == "--as-prefab" || flag == "--no-virtual-geometry" {
+            if flag == "--replace" || flag == "--as-prefab" {
                 let present = match flag.as_str() {
                     "--replace" => &mut replace,
-                    "--as-prefab" => &mut as_prefab,
-                    _ => &mut no_virtual,
+                    _ => &mut as_prefab,
                 };
                 if *present {
                     return Err(invalid());
@@ -151,12 +134,7 @@ impl Options {
             }
             if !matches!(
                 flag.as_str(),
-                "--file"
-                    | "--id"
-                    | "--output"
-                    | "--into"
-                    | "--expected-revision"
-                    | "--virtual-triangles"
+                "--file" | "--id" | "--output" | "--into" | "--expected-revision"
             ) {
                 return Err(invalid());
             }
@@ -184,34 +162,12 @@ impl Options {
                 })
             })
             .transpose()?;
-        let virtual_triangles = values
-            .get("--virtual-triangles")
-            .map(|triangles| {
-                triangles
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|triangles| *triangles >= 1)
-                    .ok_or_else(|| {
-                        ImportError::new(
-                            "invalid_arguments",
-                            "--virtual-triangles",
-                            "expected a triangle count of at least 1",
-                        )
-                    })
-            })
-            .transpose()?;
         if output.is_some() == into.is_some()
             || (into.is_some() != revision.is_some())
             || (replace && into.is_none())
-            || (no_virtual && virtual_triangles.is_some())
         {
             return Err(invalid());
         }
-        let virtual_triangles = if no_virtual {
-            None
-        } else {
-            Some(virtual_triangles.unwrap_or(DEFAULT_VIRTUAL_TRIANGLES))
-        };
         Ok(Self {
             file,
             id,
@@ -220,15 +176,10 @@ impl Options {
             revision,
             replace,
             as_prefab,
-            virtual_triangles,
         })
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
 fn merge(
     mut current: SceneDocument,
     mut imported: SceneDocument,
@@ -252,15 +203,7 @@ fn merge(
         || current
             .textures
             .iter()
-            .any(|texture| generated(&texture.id, id, Kind::Texture))
-        || current
-            .animations
-            .iter()
-            .any(|animation| generated(&animation.id, id, Kind::Animation))
-        || current
-            .skins
-            .iter()
-            .any(|skin| generated(&skin.id, id, Kind::Skin));
+            .any(|texture| generated(&texture.id, id, Kind::Texture));
     if (as_prefab && existing_flat)
         || (!as_prefab && existing_prefab)
         || (existing_assets && !existing_flat && !existing_prefab)
@@ -318,12 +261,6 @@ fn merge(
         current
             .textures
             .retain(|texture| !generated(&texture.id, id, Kind::Texture));
-        current
-            .animations
-            .retain(|animation| !generated(&animation.id, id, Kind::Animation));
-        current
-            .skins
-            .retain(|skin| !generated(&skin.id, id, Kind::Skin));
         for mut entity in imported.entities {
             if let Some(old) = previous.get(&entity.id) {
                 if !node_entity(&entity.id, id) {
@@ -334,14 +271,6 @@ fn merge(
                 entity.tags.clone_from(&old.tags);
                 entity.collider = old.collider;
                 entity.tint = old.tint;
-                if let Some(player) = &old.animation
-                    && imported
-                        .animations
-                        .iter()
-                        .any(|animation| animation.id == player.clip)
-                {
-                    entity.animation = Some(player.clone());
-                }
             }
             current.entities.push(entity);
         }
@@ -351,8 +280,6 @@ fn merge(
     current.meshes.extend(imported.meshes);
     current.materials.extend(imported.materials);
     current.textures.extend(imported.textures);
-    current.animations.extend(imported.animations);
-    current.skins.extend(imported.skins);
     current.prefabs.extend(imported.prefabs);
     current.revision = current.revision.checked_add(1).ok_or_else(|| {
         ImportError::new(
@@ -398,8 +325,6 @@ enum Kind {
     Mesh,
     Material,
     Texture,
-    Animation,
-    Skin,
 }
 
 fn decimal(value: &str) -> bool {
@@ -423,8 +348,6 @@ fn generated(value: &str, namespace: &str, kind: Kind) -> bool {
     match kind {
         Kind::Texture => suffix.strip_prefix("image").is_some_and(decimal),
         Kind::Material => suffix.strip_prefix("material").is_some_and(decimal),
-        Kind::Animation => suffix.strip_prefix("anim").is_some_and(decimal),
-        Kind::Skin => suffix.strip_prefix("skin").is_some_and(decimal),
         Kind::Entity if suffix == "root" || node_entity(value, namespace) => true,
         Kind::Entity | Kind::Mesh => {
             let suffix = if matches!(kind, Kind::Mesh) {

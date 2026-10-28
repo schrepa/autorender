@@ -1,5 +1,5 @@
 use crate::batches::DrawBatch;
-use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES, LOD_LEVELS, SkinnedData};
+use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES, LOD_LEVELS};
 use crate::mesh_arena::Ids;
 
 use super::{BatchMeta, PresentationInputs, RecordsKey, SCAN_GROUP, grow, storage};
@@ -21,11 +21,6 @@ pub(super) struct DrawGroups {
     pub(super) draws: [wgpu::Buffer; 3],
     pub(super) visible_ids: [wgpu::Buffer; 3],
     pub(super) impostor_ids: [wgpu::Buffer; 2],
-    skinned_capacity: usize,
-    pub(super) skinned: wgpu::Buffer,
-    pub(super) skin_bounds: wgpu::Buffer,
-    skinned_count: u32,
-    batch_joints: Vec<u32>,
     count: u32,
     batch_count: u32,
     key: Option<GroupsKey>,
@@ -34,7 +29,6 @@ pub(super) struct DrawGroups {
     slot_staging: Vec<CandidateData>,
     slot_positions: Vec<u32>,
     batch_staging: Vec<BatchData>,
-    skinned_staging: Vec<SkinnedData>,
     generation: u64,
 }
 
@@ -65,11 +59,6 @@ impl DrawGroups {
                 empty("engine/presentation-impostor-ids", vertex),
                 empty("engine/presentation-impostor-ids2", vertex),
             ],
-            skinned_capacity: 0,
-            skinned: empty("engine/presentation-skinned", none),
-            skin_bounds: empty("engine/presentation-skin-bounds", none),
-            skinned_count: 0,
-            batch_joints: Vec::new(),
             count: 0,
             batch_count: 0,
             key: None,
@@ -80,7 +69,6 @@ impl DrawGroups {
             slot_staging: Vec::new(),
             slot_positions: Vec::new(),
             batch_staging: Vec::new(),
-            skinned_staging: Vec::new(),
             generation: 0,
         }
     }
@@ -91,10 +79,6 @@ impl DrawGroups {
 
     pub(super) fn batch_count(&self) -> u32 {
         self.batch_count
-    }
-
-    pub(super) fn skinned_count(&self) -> u32 {
-        self.skinned_count
     }
 
     pub(super) fn capacity(&self) -> usize {
@@ -193,13 +177,8 @@ impl DrawGroups {
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub(super) fn rebuild(
         &mut self,
-        device: &wgpu::Device,
         queue: &wgpu::Queue,
         inputs: &PresentationInputs<'_>,
     ) -> Option<u64> {
@@ -227,10 +206,8 @@ impl DrawGroups {
         self.candidate_staging.reserve_exact(candidates);
         self.batch_staging.clear();
         self.batch_staging.reserve_exact(plan.batches.len());
-        self.batch_joints.clear();
         for (index, batch) in plan.batches.iter().enumerate() {
             let meta = batch_meta(index, batch);
-            self.batch_joints.push(meta.joints);
             self.batch_staging.push(batch_record(
                 batch,
                 &meta,
@@ -270,42 +247,6 @@ impl DrawGroups {
                 *position = u32::MAX;
             }
         }
-        self.skinned_staging.clear();
-        self.skinned_staging
-            .extend(self.slot_staging.iter().filter_map(|candidate| {
-                let joints = self.batch_joints[candidate.batch as usize];
-                (joints != 0).then_some(SkinnedData {
-                    slot: candidate.slot,
-                    position: candidate.position,
-                    batch: candidate.batch,
-                    joints,
-                })
-            }));
-        if self.skinned_staging.len() > self.skinned_capacity {
-            self.skinned_capacity = grow(self.skinned_staging.len());
-            let capacity = self.skinned_capacity as u64;
-            self.skinned = storage(
-                device,
-                "engine/presentation-skinned",
-                capacity * size_of::<SkinnedData>() as u64,
-                wgpu::BufferUsages::empty(),
-            );
-            self.skin_bounds = storage(
-                device,
-                "engine/presentation-skin-bounds",
-                capacity * 32,
-                wgpu::BufferUsages::empty(),
-            );
-            self.generation += 1;
-        }
-        if !self.skinned_staging.is_empty() {
-            queue.write_buffer(
-                &self.skinned,
-                0,
-                bytemuck::cast_slice(&self.skinned_staging),
-            );
-        }
-        self.skinned_count = self.skinned_staging.len() as u32;
         if !self.candidate_staging.is_empty() {
             queue.write_buffer(
                 &self.candidates,
@@ -326,8 +267,7 @@ impl DrawGroups {
         self.key = Some(key);
         Some(
             (2 * self.candidate_staging.len() * size_of::<CandidateData>()
-                + self.batch_staging.len() * size_of::<BatchData>()
-                + self.skinned_staging.len() * size_of::<SkinnedData>()) as u64,
+                + self.batch_staging.len() * size_of::<BatchData>()) as u64,
         )
     }
 
@@ -390,7 +330,6 @@ fn batch_record(
     capacity: usize,
 ) -> BatchData {
     let lod = |level: usize| meta.lods.get(level).copied().unwrap_or((0, 0, 0.0));
-    let skinned = meta.joints != 0;
     BatchData {
         start: batch.instances.start,
         count: batch.instances.end - batch.instances.start,
@@ -411,21 +350,11 @@ fn batch_record(
             meta.impostor,
         ],
         group: meta.group,
-        bounds_min: meta
-            .bounds
-            .min()
-            .extend(if skinned { 1.0 } else { 0.0 })
-            .to_array(),
+        bounds_min: meta.bounds.min().extend(0.0).to_array(),
         bounds_max: meta
             .bounds
             .max()
-            .extend(if batch.transparent {
-                1.0
-            } else if meta.virtual_geometry {
-                2.0
-            } else {
-                0.0
-            })
+            .extend(if batch.transparent { 1.0 } else { 0.0 })
             .to_array(),
     }
 }

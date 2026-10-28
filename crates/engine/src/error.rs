@@ -92,7 +92,6 @@ impl From<AssetError> for Error {
             | AssetError::UnsupportedTextureAlpha { .. }
             | AssetError::InvalidTextureHandle
             | AssetError::InvalidCompressedTexture { .. } => ErrorCode::InvalidTexture,
-            AssetError::InvalidAnimation { .. } => ErrorCode::InvalidAnimation,
             AssetError::MeshCapacity { .. }
             | AssetError::MaterialCapacity { .. }
             | AssetError::TextureCapacity { .. }
@@ -106,8 +105,7 @@ impl From<AssetError> for Error {
             | AssetError::InvalidAttribute { .. }
             | AssetError::IndexOutOfBounds { .. }
             | AssetError::InvalidMeshHandle
-            | AssetError::InvalidLevels { .. }
-            | AssetError::InvalidVirtualMesh { .. } => ErrorCode::InvalidMesh,
+            | AssetError::InvalidLevels { .. } => ErrorCode::InvalidMesh,
         };
         Self::new(code, "$", error.to_string())
     }

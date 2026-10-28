@@ -11,7 +11,6 @@ pub(crate) struct ShadowGroup {
     pub mesh: MeshHandle,
     pub source_index: usize,
     pub material: Option<MaterialHandle>,
-    pub virtual_geometry: bool,
     pub start: u32,
     pub capacity: u32,
 }
@@ -33,7 +32,6 @@ fn add_to_group(
                 mesh,
                 source_index,
                 material,
-                virtual_geometry: false,
                 start: 0,
                 capacity: 0,
             });
@@ -51,7 +49,7 @@ pub(super) struct CasterGroups {
     groups: Vec<ShadowGroup>,
     total: u32,
     batch_groups: Vec<u32>,
-    key: Option<(u8, u64, u64, bool)>,
+    key: Option<(u8, u64, u64)>,
     source: Source,
     pub(super) listed: Vec<CandidateData>,
     pub(super) records: Vec<BatchData>,
@@ -94,11 +92,10 @@ impl CasterGroups {
 
     pub(super) fn plan(&mut self, plan: &BatchPlan, frame: RenderFrame<'_>, gpu: bool) -> bool {
         let snapshot = frame.snapshot();
-        let clustered = snapshot.environment.virtual_geometry.enabled;
         let (source, key) = if gpu {
             (
                 Source::Presented,
-                (0, frame.identity(), frame.source_revision(), clustered),
+                (0, frame.identity(), frame.source_revision()),
             )
         } else {
             (
@@ -107,7 +104,6 @@ impl CasterGroups {
                     1,
                     frame.identity(),
                     frame.caster_revision().max(frame.source_revision()),
-                    clustered,
                 ),
             )
         };
@@ -187,8 +183,6 @@ impl CasterGroups {
             start += count;
             let mesh = &snapshot.meshes[group.source_index].mesh;
             let bounds = mesh.bounds();
-            let skinned = if mesh.joint_count() != 0 { 1.0 } else { 0.0 };
-            group.virtual_geometry = clustered && mesh.virtual_geometry().is_some();
             self.records.push(BatchData {
                 start: group.start,
                 count: *count,
@@ -200,11 +194,8 @@ impl CasterGroups {
                 lod_ranges: [0; 4],
                 lod_errors: [0.0, 0.0, 1.0, 0.0],
                 group: self.records.len() as u32,
-                bounds_min: bounds.min().extend(skinned).to_array(),
-                bounds_max: bounds
-                    .max()
-                    .extend(if group.virtual_geometry { 2.0 } else { 0.0 })
-                    .to_array(),
+                bounds_min: bounds.min().extend(0.0).to_array(),
+                bounds_max: bounds.max().extend(0.0).to_array(),
             });
         }
         self.total = start;

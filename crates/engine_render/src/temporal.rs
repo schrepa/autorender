@@ -65,7 +65,7 @@ pub(crate) struct TemporalPass {
     targets: ScreenTarget<Targets>,
     no_particles: wgpu::TextureView,
     resolve_groups: [GroupCache<12>; 2],
-    pose_groups: [GroupCache<6>; 4],
+    pose_groups: [GroupCache<4>; 4],
     history: Option<History>,
     frame: u32,
 }
@@ -251,7 +251,6 @@ impl TemporalPass {
         device: &wgpu::Device,
         poses: [Bound<'_>; 2],
         colors: &Bound<'_>,
-        palettes: [Bound<'_>; 2],
         grounds: &Bound<'_>,
     ) {
         for (index, group) in self.pose_groups.iter_mut().enumerate() {
@@ -264,8 +263,6 @@ impl TemporalPass {
                     ("poses", poses[current].clone()),
                     ("colors", colors.clone()),
                     ("previous_poses", poses[previous].clone()),
-                    ("palette", palettes[current].clone()),
-                    ("previous_palette", palettes[previous].clone()),
                     ("grounds", grounds.clone()),
                 ],
             );

@@ -3,8 +3,7 @@ use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    SceneAnimation, SceneEnvironment, SceneError, SceneFiles, SceneMaterial, ScenePlayer,
-    SceneSkin, SceneTexture, files::valid_uri,
+    SceneEnvironment, SceneError, SceneFiles, SceneMaterial, SceneTexture, files::valid_uri,
 };
 
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
@@ -29,10 +28,6 @@ pub struct SceneDocument {
     pub meshes: Vec<SceneMesh>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prefabs: Vec<ScenePrefab>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub animations: Vec<SceneAnimation>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skins: Vec<SceneSkin>,
     pub entities: Vec<SceneObject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub streamed: Vec<SceneObject>,
@@ -223,19 +218,6 @@ pub enum MeshSource {
         )]
         uri: String,
     },
-    Virtual {
-        #[cfg_attr(
-            feature = "schema",
-            schemars(
-                length(min = 1, max = 256),
-                regex(pattern = r"^[A-Za-z0-9_-][A-Za-z0-9_./-]*$")
-            )
-        )]
-        uri: String,
-        #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        fallback_triangles: Option<u32>,
-    },
 }
 
 impl MeshSource {
@@ -252,31 +234,6 @@ impl MeshSource {
                 };
                 files.mesh(uri, &uri_path)?.mesh(path)
             }
-            Self::Virtual {
-                uri,
-                fallback_triangles,
-            } => {
-                let uri_path = format!("{path}.uri");
-                valid_uri(uri, &uri_path)?;
-                if *fallback_triangles == Some(0) {
-                    return Err(SceneError::new(
-                        ErrorCode::InvalidMesh,
-                        format!("{path}.fallback_triangles"),
-                        "must be at least 1",
-                    ));
-                }
-                let Some(files) = files else {
-                    return Ok(Mesh::cube());
-                };
-                let geometry = files.virtual_mesh(uri, &uri_path)?;
-                Mesh::from_virtual(
-                    std::sync::Arc::new(geometry),
-                    fallback_triangles.unwrap_or(engine_core::DEFAULT_FALLBACK_TRIANGLES),
-                )
-                .map_err(|error| {
-                    SceneError::new(ErrorCode::InvalidMesh, uri_path, error.to_string())
-                })
-            }
             Self::Inline { vertices, indices } => {
                 let extras = |present: &dyn Fn(&SceneVertex) -> bool, what: &str| {
                     let count = vertices.iter().filter(|vertex| present(vertex)).count();
@@ -292,23 +249,6 @@ impl MeshSource {
                 };
                 let colored = extras(&|vertex| vertex.color.is_some(), "a color")?;
                 let second = extras(&|vertex| vertex.uv1.is_some(), "uv1")?;
-                let skinned = extras(
-                    &|vertex| vertex.joints.is_some() && vertex.weights.is_some(),
-                    "joints and weights",
-                )? || vertices
-                    .iter()
-                    .any(|vertex| vertex.joints.is_some() != vertex.weights.is_some());
-                if skinned
-                    && vertices
-                        .iter()
-                        .any(|vertex| vertex.joints.is_none() || vertex.weights.is_none())
-                {
-                    return Err(SceneError::new(
-                        ErrorCode::InvalidMesh,
-                        format!("{path}.vertices"),
-                        "either every vertex has joints and weights or none does",
-                    ));
-                }
                 with_extras(
                     Mesh::new(
                         vertices.iter().copied().map(MeshVertex::from).collect(),
@@ -326,17 +266,6 @@ impl MeshSource {
                             .map(|vertex| vertex.uv1.unwrap_or([0.0; 2]))
                             .collect()
                     }),
-                    skinned.then(|| {
-                        vertices
-                            .iter()
-                            .map(|vertex| {
-                                (
-                                    vertex.joints.unwrap_or_default(),
-                                    vertex.weights.unwrap_or_default(),
-                                )
-                            })
-                            .unzip()
-                    }),
                     path,
                 )
             }
@@ -348,7 +277,6 @@ pub(crate) fn with_extras(
     mesh: Result<Mesh, engine_core::AssetError>,
     colors: Option<Vec<[f32; 4]>>,
     uv1: Option<Vec<[f32; 2]>>,
-    skin: Option<crate::files::SkinStreams>,
     path: &str,
 ) -> Result<Mesh, SceneError> {
     let invalid = |error: engine_core::AssetError| {
@@ -360,9 +288,6 @@ pub(crate) fn with_extras(
     }
     if let Some(uv1) = uv1 {
         mesh = mesh.with_uv1(uv1).map_err(invalid)?;
-    }
-    if let Some((joints, weights)) = skin {
-        mesh = mesh.with_skin(joints, weights).map_err(invalid)?;
     }
     Ok(mesh)
 }
@@ -379,10 +304,6 @@ pub struct SceneVertex {
     pub color: Option<[f32; 4]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uv1: Option<[f32; 2]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub joints: Option<[u16; 4]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub weights: Option<[f32; 4]>,
 }
 
 impl From<SceneVertex> for MeshVertex {
@@ -459,14 +380,6 @@ macro_rules! scene_object {
                     schemars(transform = engine_settings::stated(engine_settings::rule::id()))
                 )]
                 pub prefab: Option<String> = None => any,
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub animation: Option<ScenePlayer> = None => any,
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                #[cfg_attr(
-                    feature = "schema",
-                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
-                )]
-                pub skin: Option<String> = None => any,
                 $(
                     $(#[$doc])*
                     #[serde(default, skip_serializing_if = "Option::is_none")]

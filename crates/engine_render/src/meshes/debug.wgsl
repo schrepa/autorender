@@ -104,21 +104,6 @@ fn vs_debug_affine_extended(input: AffineVertexInput, @location(9) color: vec4<f
         vec4<u32>(draw.x, slot_index(input.slot), 0u, 0u));
 }
 
-@vertex
-fn vs_debug_affine_skinned(input: AffineVertexInput, @location(9) color: vec4<f32>,
-        @location(10) uv1: vec2<f32>, @location(11) joints: vec4<u32>,
-        @location(12) weights: vec4<f32>, @location(14) draw: vec4<u32>) -> DebugOutput {
-    return debug_output(vertex_affine_skinned(input, joints, weights), color, uv1,
-        vec4<u32>(draw.x, slot_index(input.slot), 0u, 0u));
-}
-
-@vertex
-fn vs_debug_virtual(input: VirtualInput, @location(14) draw: vec4<u32>) -> DebugOutput {
-    let vertex = vertex_virtual(input);
-    return debug_output(vertex, vec4<f32>(1.0), vec2<f32>(vertex.normal_u.w, vertex.world_v.w),
-        vec4<u32>(draw.x, slot_index(input.slot), input.cluster, 0u));
-}
-
 @fragment
 fn fs_debug_mesh(input: DebugOutput, @builtin(front_facing) front: bool) -> DebugTargets {
     var extended: ExtendedOutput;

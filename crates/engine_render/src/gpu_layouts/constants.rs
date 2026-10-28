@@ -16,8 +16,6 @@ gpu_consts! {
     pub(crate) const PRESENTATION_GROUP: u32 = 256 => ["@shift_previous" in PRESENTATION_SHADER, "@cull" in PRESENTATION_SHADER, "@count_still" in PRESENTATION_SHADER, "@fade_levels" in PRESENTATION_SHADER, "@occlusion_test" in PRESENTATION_SHADER, "@probe_cull" in PRESENTATION_SHADER];
     pub(crate) const SCAN_GROUP: u32 = 64 => ["GROUP" in PRESENTATION_SHADER, "@sum_groups" in PRESENTATION_SHADER, "@scan_groups" in PRESENTATION_SHADER, "@scatter" in PRESENTATION_SHADER];
     pub(crate) const PARENT_GROUP: u32 = 64 => ["@compose_parents" in PRESENTATION_SHADER];
-    pub(crate) const JOINT_GROUP: u32 = 64 => ["@skin_palette" in PRESENTATION_SHADER];
-    pub(crate) const SKIN_BOUNDS_GROUP: u32 = 64 => ["@skin_bounds_pass" in PRESENTATION_SHADER];
     pub(crate) const ARGS_GROUP: u32 = 64 => ["@batch_args" in PRESENTATION_SHADER];
 
     pub(crate) const CARD_VERTICES: u32 = 6 => ["IMPOSTOR_VERTICES" in PRESENTATION_SHADER];
@@ -33,7 +31,7 @@ gpu_consts! {
     pub(crate) const NEAR_LEVEL_SHIFT: u32 = 16 => ["NEAR_LEVEL_SHIFT"];
     pub(crate) const RANK_SHIFT: u32 = 21 => ["RANK_SHIFT" in SCATTER_CULL_SHADER];
 
-    pub(crate) const SHADOW_REGIONS: usize = MAX_VIEWS - 1 => ["REGIONS" in SHADOW_SHADER];
+    pub(crate) const SHADOW_REGIONS: usize = 7 => ["REGIONS" in SHADOW_SHADER];
     pub(crate) const MOVING_MAP: usize = SHADOW_REGIONS => ["MOVING_MAP" in SHADOW_SHADER];
     pub(crate) const SKY_MAP: usize = SHADOW_REGIONS + 1 => ["SKY_MAP" in SHADOW_SHADER];
     pub(crate) const MOVING_PAIRS: u32 = 8 => ["MOVING_PAIRS" in SHADOW_SHADER];
@@ -41,7 +39,6 @@ gpu_consts! {
     pub(crate) const SHADOW_LEVELS: usize = MAX_LEVELS => ["SHADOW_LEVELS"];
     pub(crate) const SHADOW_TOTALS: usize = 4 => ["TOTALS" in SHADOW_SHADER];
     pub(crate) const SHADOW_GROUP: u32 = 256 => ["@select_casters" in SHADOW_SHADER];
-    pub(crate) const SHADOW_SKINNED_GROUP: u32 = 64 => ["@select_skinned" in SHADOW_SHADER];
     pub(crate) const SHADOW_MARKS_GROUP: u32 = 8 => ["@mark_shadow_tiles" in SHADOW_MARKS_SHADER];
     pub(crate) const STILLNESS: u32 = 1 => ["STILLNESS" in SHADOW_SHADER];
     pub(crate) const SKY_REFRESH: u32 = 2 => ["SKY_REFRESH" in SHADOW_SHADER];
@@ -101,15 +98,6 @@ gpu_consts! {
     pub(crate) const MATERIAL_ANISOTROPY: u16 = 16 => ["DETAIL_ANISOTROPY"];
 
     pub(crate) const DEFORMATION_BLOCK: u32 = 16 => ["BLOCK" in DEFORMATION_SHADER];
-
-    pub(crate) const NONE: u32 = u32::MAX => ["NONE" in VIRTUAL_SHADER];
-    pub(crate) const VIRTUAL_GROUP: u32 = 64 => ["GROUP" in VIRTUAL_SHADER, "@seed" in VIRTUAL_SHADER, "@traverse_even" in VIRTUAL_SHADER, "@traverse_odd" in VIRTUAL_SHADER, "@select_clusters" in VIRTUAL_SHADER, "@retest_clusters" in VIRTUAL_SHADER, "@bin_args" in VIRTUAL_SHADER];
-    pub(crate) const MAX_VIEWS: usize = 8 => ["MAX_VIEWS" in VIRTUAL_SHADER];
-    pub(crate) const VIRTUAL_SHADOW_PLANES: usize = 12 => ["VIEW_PLANES" in VIRTUAL_SHADER];
-    pub(crate) const TEST_PREVIOUS: u32 = 1 => ["TEST_PREVIOUS" in VIRTUAL_SHADER];
-    pub(crate) const TEST_SUBPIXEL: u32 = 2 => ["TEST_SUBPIXEL" in VIRTUAL_SHADER];
-
-    pub(crate) const VISIBILITY_TILE: u32 = 8 => ["@classify_tiles" in VISIBILITY_SHADER];
 
     pub(crate) const PYRAMID_GROUP: u32 = 8 => ["@pyramid_first" in DEPTH_PYRAMID_SHADER, "@pyramid_down" in DEPTH_PYRAMID_SHADER, "@pyramid_first_nearest" in DEPTH_PYRAMID_SHADER, "@pyramid_down_nearest" in DEPTH_PYRAMID_SHADER];
 
@@ -232,7 +220,6 @@ gpu_consts! {
     pub(crate) const DEBUG_KIND_PLACED: u32 = 2 => ["DEBUG_KIND_PLACED"];
     pub(crate) const DEBUG_KIND_CARD: u32 = 3 => ["DEBUG_KIND_CARD"];
     pub(crate) const DEBUG_KIND_PLACED_CARD: u32 = 4 => ["DEBUG_KIND_PLACED_CARD"];
-    pub(crate) const DEBUG_KIND_VIRTUAL: u32 = 5 => ["DEBUG_KIND_VIRTUAL"];
     pub(crate) const DEBUG_KIND_TERRAIN: u32 = 6 => ["DEBUG_KIND_TERRAIN"];
     pub(crate) const DEBUG_KIND_COVER: u32 = 7 => ["DEBUG_KIND_COVER"];
     pub(crate) const DEBUG_KIND_WATER: u32 = 8 => ["DEBUG_KIND_WATER"];
@@ -264,7 +251,6 @@ gpu_consts! {
     pub(crate) const CONTROL_GROUP: u32 = 8 => ["@tile_control" in TERRAIN_CONTROL_SHADER];
     pub(crate) const BOUNCE_GROUP: u32 = 8 => ["@bounce_ground" in BOUNCE_SHADER, "@bounce_down" in BOUNCE_SHADER, "@bounce_gather" in BOUNCE_SHADER];
     pub(crate) const NORMALS_GROUP: u32 = 16 => ["@tile_normals" in TERRAIN_NORMALS_SHADER];
-    pub(crate) const RESOLVE_ARGS_GROUP: u32 = 64 => ["@resolve_args" in VISIBILITY_SHADER];
 
     pub(crate) const WIND_FULL_SPEED: f32 = 12.0 => ["WIND_FULL_SPEED"];
     pub(crate) const WIND_SPAN: f32 = 10.0 => ["WIND_SPAN"];
@@ -283,7 +269,6 @@ gpu_consts! {
     pub(crate) const CARD_OVER: u32 = 1 << 15 => ["IMPOSTOR_OVER", "CARD_OVER" in PRESENTATION_SHADER];
     pub(crate) const CLOUD_HORIZON: f32 = 0.05 => ["HORIZON" in CLOUDS_SHADER, "CLOUD_HORIZON"];
     pub(crate) const CLOUD_REACH: f32 = 60000.0 => ["REACH" in CLOUDS_SHADER, "CLOUD_PARALLAX_REACH"];
-    pub(crate) const CLUSTER_DRAWN_VERTICES: u32 = 3 * engine_core::CLUSTER_TRIANGLES => ["CLUSTER_VERTICES" in VIRTUAL_SHADER];
     pub(crate) const SURFACE_BEND: f32 = 7.0 => ["WATER_SURFACE_BEND"];
     pub(crate) const SURFACE_BEND_MOST: f32 = 1.0 => ["WATER_SURFACE_BEND_MOST"];
     pub(crate) const SURFACE_WIND_DRIFT: f32 = 0.03 => ["WATER_SURFACE_DRIFT"];
@@ -323,7 +308,6 @@ gpu_mirrors! {
     engine_core::terrain_data::BREAK_ONSET => ["DEBUG_BREAK_ONSET" in DEBUG_VIEW_SHADER, "SIM_BREAK_ONSET" in WATER_SIM_SHADER, "WATER_BREAK_ONSET"];
     engine_core::terrain_data::BREAK_FULL => ["DEBUG_BREAK_FULL" in DEBUG_VIEW_SHADER, "SIM_BREAK_FULL" in WATER_SIM_SHADER, "WATER_BREAK_FULL"];
     engine_core::terrain_data::BREAK_THINNEST => ["WATER_BREAK_THINNEST", "SIM_BREAK_THINNEST" in WATER_SIM_SHADER];
-    engine_core::PAGE_WORDS => ["PAGE_WORDS" in VIRTUAL_SHADER, "VIRTUAL_PAGE_WORDS" in SHADER];
     engine_core::NO_PARENT => ["NO_PARENT" in PRESENTATION_SHADER];
     engine_core::NODE_VALID => ["NODE_VALID" in PRESENTATION_SHADER];
     engine_core::NODE_BLEND => ["NODE_BLEND" in PRESENTATION_SHADER];

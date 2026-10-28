@@ -3,13 +3,11 @@ use crate::debug_view::{DebugViewFrame, DebugViewPass};
 
 impl<'s> Features<'s> {
     pub(super) fn debug(
-        occlusion: Option<(u32, u32, u32)>,
         gpu_prepared: Option<GpuPrepared>,
         shadow_frame: Option<ShadowFrame>,
         probe_list: &'s [engine_core::RenderReflectionProbe],
     ) -> Self {
         Self {
-            occlusion,
             gpu_prepared,
             shadow_frame,
             probe_list,

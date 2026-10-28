@@ -40,7 +40,6 @@ pub(crate) fn stamp_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) 
 
 use crate::features::{
     EngineControl, EngineQuery,
-    animation::AnimationControl,
     collision::{CollisionEventsQuery, OverlapQuery, RaycastQuery, ShapeCastQuery},
     deformation::{DeformControl, DeformationQuery},
     navigation::{NavGoControl, NavPathQuery},
@@ -67,7 +66,6 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("terrain_river", "Terrain"),
     ("deform", "Tracks"),
     ("nav_go", "NavAgent"),
-    ("animation", "AnimationPlayer"),
     ("world_changes", "WorldChanges"),
     ("camera", "Camera"),
     ("benchmark", ""),
@@ -329,7 +327,6 @@ pub enum BrowserControl {
     TerrainRiver(TerrainRiverControl),
     Deform(DeformControl),
     NavGo(NavGoControl),
-    Animation(AnimationControl),
     WorldChanges(WorldChangesControl),
     Camera {
         #[cfg_attr(
@@ -487,7 +484,6 @@ impl BrowserControl {
             Self::TerrainRiver(control) => Control::Feature(Box::new(control)),
             Self::Deform(control) => Control::Feature(Box::new(control)),
             Self::NavGo(control) => Control::Feature(Box::new(control)),
-            Self::Animation(control) => Control::Feature(Box::new(control)),
             Self::WorldChanges(control) => Control::Feature(Box::new(control)),
             Self::Camera {
                 position,
@@ -553,7 +549,6 @@ impl BrowserControl {
             | Self::Deform(_)
             | Self::WorldChanges(_)
             | Self::NavGo(_)
-            | Self::Animation(_)
             | Self::Camera { .. }
             | Self::Benchmark { .. }
             | Self::Step { .. }

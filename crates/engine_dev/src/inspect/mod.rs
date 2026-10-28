@@ -36,7 +36,7 @@ use crate::{
         CameraView, DecalView, GlobalTransformView, HierarchyView, InputView,
         InterpolateTransformView, LodLevelView, Mesh3dView, MeshBoundsView, MeshRenderView,
         MeshView, PresentationModeView, PresentationStateView, PresentedTransformView,
-        SplineMeshView, TextureView, TransformView, VirtualMeshView,
+        SplineMeshView, TextureView, TransformView,
     },
 };
 
@@ -123,7 +123,6 @@ pub trait RendererFacts {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderedMesh {
-    pub skinned: bool,
     pub levels: Vec<(u32, f32)>,
 }
 

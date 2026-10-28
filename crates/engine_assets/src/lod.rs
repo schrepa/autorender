@@ -129,7 +129,7 @@ pub struct LodInput {
 }
 
 pub fn takes_levels(mesh: &Mesh) -> bool {
-    mesh.lods().is_none() && mesh.joint_count() == 0 && mesh.virtual_geometry().is_none()
+    mesh.lods().is_none()
 }
 
 pub fn lod_input(mesh: &Mesh) -> Option<Vec<u8>> {

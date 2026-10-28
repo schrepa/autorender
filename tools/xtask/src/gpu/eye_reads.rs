@@ -18,10 +18,6 @@ const ALLOWED: &[(&str, &str)] = &[
         "terrain's eye-relative frame and culling, and water's view",
     ),
     (
-        "crates/engine_render/src/renderer/virtual_draws.rs",
-        "virtual geometry's normal cones, tested from the eye (culling)",
-    ),
-    (
         "crates/engine_render/src/temporal.rs",
         "temporally antialiased frames' camera uniform (transforms)",
     ),

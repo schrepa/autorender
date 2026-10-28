@@ -1,4 +1,3 @@
-mod animation;
 mod deformation;
 mod navigation;
 mod ocean;
@@ -6,7 +5,6 @@ mod terrain;
 mod time_of_day;
 mod world_streaming;
 
-pub use animation::*;
 pub use deformation::*;
 pub use navigation::*;
 pub use ocean::*;
@@ -26,7 +24,6 @@ macro_rules! engine_features {
             world_streaming: WorldStreaming => WorldStreamingPlugin, needs [];
             navigation: Navigation => NavigationPlugin, needs [Terrain];
             ocean: Ocean => OceanPlugin, needs [];
-            animation: Animation => AnimationPlugin, needs [];
             time_of_day: TimeOfDay => TimeOfDayPlugin, needs [];
             deformation: Deformation => DeformationPlugin, needs [];
             collision: Collision => CollisionPlugin, needs [];

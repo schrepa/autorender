@@ -40,10 +40,6 @@ impl SceneFileSet {
     pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
         self.files.add_buffer(uri, bytes);
     }
-
-    pub fn add_virtual_mesh(&mut self, uri: &str, bytes: Vec<u8>, url: Option<String>) {
-        self.files.add_virtual_mesh(uri, bytes, url.as_deref());
-    }
 }
 
 impl SceneFileSet {
@@ -74,23 +70,15 @@ impl PageSceneLoad {
         for read in self.loading()?.take_reads() {
             let object = js_sys::Object::new();
             let _ = js_sys::Reflect::set(&object, &"uri".into(), &read.uri.into());
-            if let Some(prefix) = read.prefix {
-                let _ = js_sys::Reflect::set(&object, &"prefix".into(), &(prefix as f64).into());
-            }
             out.push(&object);
         }
         Ok(out)
     }
 
-    pub fn read(
-        &mut self,
-        uri: &str,
-        bytes: Vec<u8>,
-        url: &str,
-    ) -> Result<Option<String>, JsValue> {
+    pub fn read(&mut self, uri: &str, bytes: Vec<u8>) -> Result<Option<String>, JsValue> {
         Ok(self
             .loading()?
-            .read(uri, bytes, url)?
+            .read(uri, bytes)?
             .map(|image| image.decoder.name().to_owned()))
     }
 
@@ -187,11 +175,6 @@ fn compressed_levels(
         return Err(invalid("$.levels", "data exceeds the level lengths"));
     }
     Ok((format, split))
-}
-
-#[wasm_bindgen]
-pub fn virtual_prefix_bytes(header: &[u8]) -> Option<u32> {
-    engine_core::VirtualMesh::prefix_bytes(header).map(|bytes| bytes as u32)
 }
 
 pub struct PageHost<G: Game> {

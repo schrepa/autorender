@@ -5,7 +5,6 @@ use crate::gpu_layouts::scene::{
     CameraUniform, ColorData, GroundData, LightingUniform, MaterialUniform, PoseData, PostUniform,
     ResolveUniform, RouteData, ShadowCullUniform, ShadowUniform, SkyUniform,
 };
-use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::gpu_layouts::world_trace::{PlacedGroup, TraceTerrain};
 use crate::gpu_layouts::{
     bounce, clouds, debug_view, deformation, ground_cover, occupancy, scatter, sky, terrain, water,
@@ -33,9 +32,6 @@ const VFC: Stages = Stages(VF.0 | C.0);
 const POSE: usize = size_of::<PoseData>();
 const COLOR: usize = size_of::<ColorData>();
 const GROUND: usize = size_of::<GroundData>();
-const VIRTUAL_MESH: usize = size_of::<MeshRecord>();
-const VIRTUAL_CLUSTER: usize = engine_core::CLUSTER_WORDS * 4;
-const VIRTUAL_PAGE: usize = 4;
 pub(crate) const HORIZON_RECORDS_BYTES: usize =
     crate::gpu_layouts::constants::HORIZON_RECORDS * size_of::<[f32; 4]>();
 
@@ -184,7 +180,6 @@ tables! {
         bindings: &[
             read_of(0, "poses", POSE, VF),
             read_of(1, "colors", COLOR, V),
-            read_of(3, "palette", POSE, V),
             read_of(5, "grounds", GROUND, F),
         ],
     };
@@ -196,52 +191,7 @@ tables! {
             read_of(0, "poses", POSE, VF),
             read_of(1, "colors", COLOR, V),
             read_of(2, "previous_poses", POSE, V),
-            read_of(3, "palette", POSE, V),
-            read_of(4, "previous_palette", POSE, V),
             read_of(5, "grounds", GROUND, F),
-        ],
-    };
-
-    const VIRTUAL_POSES: Table = Table {
-        label: "engine/virtual-pose-layout",
-        serves: [SHADER @ 2],
-        bindings: &[
-            read_of(0, "poses", POSE, VF),
-            read_of(1, "colors", COLOR, V),
-            read_of(2, "previous_poses", POSE, V),
-            read_of(5, "grounds", GROUND, F),
-            read_of(6, "virtual_meshes", VIRTUAL_MESH, V),
-            read_of(7, "virtual_clusters", VIRTUAL_CLUSTER, V),
-            read_of(8, "virtual_pages", VIRTUAL_PAGE, V),
-        ],
-    };
-
-    const VISIBILITY_PASS: Table = Table {
-        label: "engine/visibility-layout",
-        serves: [SHADER @ 2],
-        bindings: &[
-            read_of(0, "poses", POSE, V),
-            read_of(6, "virtual_meshes", VIRTUAL_MESH, V),
-            read_of(7, "virtual_clusters", VIRTUAL_CLUSTER, V),
-            read_of(8, "virtual_pages", VIRTUAL_PAGE, V),
-            dynamic_uniform(9, "visibility_draw", 16, V),
-        ],
-    };
-
-    const VISIBILITY_RESOLVE: Table = Table {
-        label: "engine/visibility-resolve-layout",
-        serves: [SHADER @ 2],
-        bindings: &[
-            read_of(0, "poses", POSE, F),
-            read_of(1, "colors", COLOR, F),
-            read_of(2, "previous_poses", POSE, F),
-            read_of(6, "virtual_meshes", VIRTUAL_MESH, F),
-            read_of(7, "virtual_clusters", VIRTUAL_CLUSTER, F),
-            read_of(8, "virtual_pages", VIRTUAL_PAGE, F),
-            dynamic_uniform(9, "visibility_draw", 16, VF),
-            read_of(10, "visible_clusters", 8, F),
-            texture(11, "visibility_ids", Uint, D2, VF),
-            read_of(12, "resolve_tiles", 4, V),
         ],
     };
 
@@ -298,9 +248,6 @@ tables! {
             read(3, "authority", C),
             write(4, "composed", C),
             read(5, "parents", C),
-            read(15, "joint_nodes", C),
-            read(16, "inverse_binds", C),
-            write(17, "palette", C),
         ],
     };
 
@@ -373,91 +320,6 @@ tables! {
         ],
     };
 
-    const PRESENTATION_SKIN_BOUNDS: Table = Table {
-        label: "engine/presentation-skin-bounds-layout",
-        serves: [PRESENTATION_SHADER @ 0],
-        bindings: &[
-            uniform(0, "frame", C),
-            read(7, "batches", C),
-            write(8, "poses", C),
-            write(9, "scan", C),
-            write(17, "palette", C),
-            read(20, "slot_colors", C),
-            read(21, "skinned", C),
-            write(22, "skin_bounds", C),
-        ],
-    };
-
-    const VIRTUAL_SEED: Table = Table {
-        label: "engine/virtual-seed-layout",
-        serves: [VIRTUAL_SHADER @ 0],
-        bindings: &[
-            uniform(0, "frame", C),
-            read(1, "batches", C),
-            read(2, "meshes", C),
-            read(7, "ids", C),
-            read(8, "draws", C),
-            write(9, "queue_a", C),
-            write(10, "queue_b", C),
-            write(12, "counters", C),
-            write(15, "dispatch", C),
-        ],
-    };
-
-    const VIRTUAL_TRAVERSE: Table = Table {
-        label: "engine/virtual-traverse-layout",
-        serves: [VIRTUAL_SHADER @ 0],
-        bindings: &[
-            uniform(0, "frame", C),
-            read(3, "nodes", C),
-            read(6, "poses", C),
-            write(9, "queue_a", C),
-            write(10, "queue_b", C),
-            write(11, "work", C),
-            write(12, "counters", C),
-        ],
-    };
-
-    const VIRTUAL_SELECT: Table = Table {
-        label: "engine/virtual-select-layout",
-        serves: [VIRTUAL_SHADER @ 0],
-        bindings: &[
-            uniform(0, "frame", C),
-            read(4, "groups", C),
-            read(5, "clusters", C),
-            read(6, "poses", C),
-            write(11, "work", C),
-            write(12, "counters", C),
-            write(13, "visible", C),
-            read(14, "bins", C),
-            texture(19, "depth_pyramid", Unfilterable, D2, C),
-            write(20, "retest", C),
-        ],
-    };
-
-    const VIRTUAL_BIN: Table = Table {
-        label: "engine/virtual-bin-layout",
-        serves: [VIRTUAL_SHADER @ 0],
-        bindings: &[
-            uniform(0, "frame", C),
-            write(12, "counters", C),
-            read(14, "bins", C),
-            write(16, "draw_args", C),
-        ],
-    };
-
-    const VIRTUAL_SHADOW: Table = Table {
-        label: "engine/virtual-shadow-layout",
-        serves: [VIRTUAL_SHADER @ 0],
-        bindings: &[
-            read(2, "meshes", V),
-            read(5, "clusters", V),
-            read(6, "poses", V),
-            read(17, "pages", V),
-            dynamic_uniform(18, "shadow_view", 64, V),
-        ],
-    };
-
     const SHADOW_SELECT: Table = Table {
         label: "engine/shadow-select-layout",
         serves: [SHADOW_SHADER @ 0],
@@ -471,22 +333,6 @@ tables! {
             write(6, "ids", C),
             write(7, "args", C),
             write(8, "counters", C),
-            texture(12, "tile_slots", Uint, D2, C),
-        ],
-    };
-
-    const SHADOW_SKINNED: Table = Table {
-        label: "engine/shadow-skinned-layout",
-        serves: [SHADOW_SHADER @ 0],
-        bindings: &[
-            uniform_of(0, "cull", size_of::<ShadowCullUniform>(), C),
-            read(2, "batches", C),
-            read(4, "flags", C),
-            write(6, "ids", C),
-            write(7, "args", C),
-            write(8, "counters", C),
-            read(10, "skinned", C),
-            read(11, "skin_bounds", C),
             texture(12, "tile_slots", Uint, D2, C),
         ],
     };
@@ -860,7 +706,6 @@ tables! {
         bindings: &[
             read_of(0, "slot_poses", POSE, V),
             read_of(1, "slot_colors", COLOR, V),
-            read_of(2, "slot_palette", POSE, V),
             texture(3, "shadow_regions", Depth, D2Array, F),
         ],
     };
@@ -1061,18 +906,6 @@ tables! {
             texture(1, "source_level", Unfilterable, D2, C),
             bind(2, "target_level", Kind::Storage(R32Float), C),
             uniform_of(3, "extent", PYRAMID_EXTENT_BYTES, C),
-        ],
-    };
-
-    const VISIBILITY_CLASSIFY: Table = Table {
-        label: "engine/visibility-classify-layout",
-        serves: [VISIBILITY_SHADER @ 0],
-        bindings: &[
-            uniform(0, "classify", C),
-            texture(1, "ids", Uint, D2, C),
-            write(2, "counts", C),
-            write(3, "tiles", C),
-            write(4, "draw_args", C),
         ],
     };
 }

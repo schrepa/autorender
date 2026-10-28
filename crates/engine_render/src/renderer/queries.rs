@@ -61,14 +61,14 @@ impl Renderer {
         self.materials.is_texture_resident(handle)
     }
 
-    pub fn mesh_levels(&self, handle: MeshHandle) -> Option<(bool, Vec<(u32, f32)>)> {
+    pub fn mesh_levels(&self, handle: MeshHandle) -> Option<Vec<(u32, f32)>> {
         let mesh = self.meshes.get(&handle)?;
         let levels = mesh
             .lods
             .iter()
             .map(|&(_, count, error)| (count, error))
             .collect();
-        Some((mesh.skinned, levels))
+        Some(levels)
     }
 
     pub fn drawn_level(&self, slot: u32) -> Option<u32> {
@@ -81,14 +81,10 @@ impl Renderer {
 
     pub fn impostor_resident(&self, mesh: MeshHandle, material: MaterialHandle) -> Option<bool> {
         let gpu = self.meshes.get(&mesh)?;
-        if gpu.skinned || (gpu.index_count as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {
+        if (gpu.index_count as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {
             return None;
         }
         Some(self.impostors.atlas.contains((mesh, Some(material))))
-    }
-
-    pub fn latest_page_failure(&self) -> Option<&str> {
-        self.virtual_draws.pass.page_failure()
     }
 
     pub fn pipelines_compiling(&self) -> bool {

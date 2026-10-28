@@ -33,7 +33,6 @@ const DEBUG_KIND_MESH: u32 = 1u;
 const DEBUG_KIND_PLACED: u32 = 2u;
 const DEBUG_KIND_CARD: u32 = 3u;
 const DEBUG_KIND_PLACED_CARD: u32 = 4u;
-const DEBUG_KIND_VIRTUAL: u32 = 5u;
 const DEBUG_KIND_TERRAIN: u32 = 6u;
 const DEBUG_KIND_COVER: u32 = 7u;
 const DEBUG_KIND_WATER: u32 = 8u;
@@ -112,14 +111,6 @@ fn debug_normal(packed: u32) -> vec3<f32> {
     return normal / max(length(normal), 1.0e-6);
 }
 
-fn debug_hashed(value: u32) -> vec3<f32> {
-    var h = value * 0x9e3779b9u;
-    h = (h ^ (h >> 16u)) * 0x7feb352du;
-    h = h ^ (h >> 15u);
-    let bytes = vec3<f32>(f32(h & 0xffu), f32((h >> 8u) & 0xffu), f32((h >> 16u) & 0xffu));
-    return 0.25 + 0.7 * bytes / 255.0;
-}
-
 fn debug_kind_color(kind: u32) -> vec3<f32> {
     switch kind {
         case DEBUG_KIND_MESH: {
@@ -130,9 +121,6 @@ fn debug_kind_color(kind: u32) -> vec3<f32> {
         }
         case DEBUG_KIND_CARD, DEBUG_KIND_PLACED_CARD: {
             return DEBUG_CARDS;
-        }
-        case DEBUG_KIND_VIRTUAL: {
-            return vec3<f32>(0.62, 0.42, 0.95);
         }
         case DEBUG_KIND_TERRAIN: {
             return vec3<f32>(0.62, 0.46, 0.3);
@@ -158,7 +146,7 @@ fn debug_kind_color(kind: u32) -> vec3<f32> {
     }
 }
 
-fn debug_level_color(record: u32, cluster: u32) -> vec3<f32> {
+fn debug_level_color(record: u32) -> vec3<f32> {
     let level = min((record >> DEBUG_LEVEL_SHIFT) & 0xfu, 7u);
     switch record & 0xfu {
         case DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_TERRAIN: {
@@ -166,9 +154,6 @@ fn debug_level_color(record: u32, cluster: u32) -> vec3<f32> {
         }
         case DEBUG_KIND_CARD, DEBUG_KIND_PLACED_CARD: {
             return DEBUG_CARDS;
-        }
-        case DEBUG_KIND_VIRTUAL: {
-            return debug_hashed(cluster);
         }
         case DEBUG_KIND_SKY: {
             return DEBUG_SKY;
@@ -267,9 +252,6 @@ fn debug_caster_color(record: u32) -> vec3<f32> {
         case DEBUG_KIND_PLACED_CARD: {
             return DEBUG_CARDS;
         }
-        case DEBUG_KIND_VIRTUAL: {
-            return vec3<f32>(0.62, 0.42, 0.95);
-        }
         default: {
             return DEBUG_OTHER;
         }
@@ -351,7 +333,7 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
             color = debug_kind_color(kind);
         }
         case DEBUG_VIEW_LEVELS: {
-            color = debug_level_color(record, ids.z);
+            color = debug_level_color(record);
         }
         case DEBUG_VIEW_CARDS: {
             color = debug_card_color(record);

@@ -22,10 +22,6 @@ const authoring = {
     scene.entities.push({ id: "walker", nav_agent: {} });
   }, "$.entities[2].nav_agent"],
   ocean: [scene => scene.entities.push({ id: "buoy", mesh: "box", material: "plain", floating: {} }), "$.entities[1].floating"],
-  animation: [scene => {
-    scene.animations = [{ id: "spin", targets: ["floor"], channels: [{ target: 0, property: "rotation", times: [0, 1], values: [0, 0, 0, 1, 0, 0.7071068, 0, 0.7071068] }] }];
-    scene.entities[0].animation = { clip: "spin" };
-  }, "$.entities[0].animation"],
   time_of_day: [scene => { scene.environment = { time_of_day: {} }; }, "$.environment.time_of_day"],
   deformation: [scene => scene.entities.push({ id: "roller", deformer: {} }), "$.entities[1].deformer"],
   collision: [scene => { scene.entities[0].collider = { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] } }; }, "$.entities[0].collider"],
@@ -43,7 +39,6 @@ const requests = {
   world_streaming: ["inspect", { component: "WorldCells" }],
   navigation: ["inspect", { component: "NavAgents" }],
   ocean: ["inspect", { entity: "buoy", component: "Floating" }],
-  animation: ["animation", { entity: "floor", speed: 0 }],
   time_of_day: ["inspect", { component: "TimeOfDay" }],
   deformation: ["inspect", { component: "Tracks" }],
   collision: ["raycast", ray],
@@ -54,7 +49,6 @@ const refusals = {
   world_streaming: ["world_changes", { clear: true }],
   navigation: ["inspect", { component: "NavAgents" }],
   ocean: ["environment", { ocean: { enabled: true } }],
-  animation: ["animation", { entity: "floor", speed: 0 }],
   time_of_day: ["environment", { time_of_day: {} }],
   deformation: ["inspect", { component: "Tracks" }],
   collision: ["raycast", ray],

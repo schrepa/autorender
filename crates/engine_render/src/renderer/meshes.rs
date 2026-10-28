@@ -87,19 +87,6 @@ const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = vertex_attributes!(ExtraVer
     9 => color as Unorm16x4,
     10 => uv1 as Float32x2,
 });
-const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] = vertex_attributes!(SkinVertex {
-    11 => joints as Uint16x4,
-    12 => weights as Unorm16x4,
-});
-
-pub(crate) fn skin_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
-    Some(wgpu::VertexBufferLayout {
-        array_stride: size_of::<SkinVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &SKIN_ATTRIBUTES,
-    })
-}
-
 pub(crate) fn extra_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
     Some(wgpu::VertexBufferLayout {
         array_stride: size_of::<ExtraVertex>() as u64,
@@ -140,9 +127,7 @@ impl Renderer {
         mesh: Option<&GpuMesh>,
     ) -> (&wgpu::BindGroup, Variant) {
         let (group, variant) = self.materials.binding(batch.material);
-        let variant = variant
-            .with_extended(mesh.is_some_and(|mesh| mesh.extended))
-            .with_skinned(mesh.is_some_and(|mesh| mesh.skinned));
+        let variant = variant.with_extended(mesh.is_some_and(|mesh| mesh.extended));
         (group, variant)
     }
 
@@ -198,9 +183,6 @@ impl Renderer {
         bindings.vertex(pass, 0, draw.vertices);
         if let Some(extras) = draw.extras.filter(|_| mesh.extended) {
             bindings.vertex(pass, 2, extras);
-        }
-        if let Some(skin) = draw.skin.filter(|_| mesh.skinned) {
-            bindings.vertex(pass, 3, skin);
         }
         bindings.index(pass, draw.indices);
         draw
@@ -540,10 +522,7 @@ fn mesh_pipeline(
 ) -> wgpu::RenderPipeline {
     let constants = shading.with(&variant.constants());
     let extended = variant.extended();
-    let skinned = variant.skinned();
-    let streams = if skinned {
-        Streams::Skinned
-    } else if extended {
+    let streams = if extended {
         Streams::Extended
     } else {
         Streams::Basic
@@ -555,9 +534,8 @@ fn mesh_pipeline(
         kind.fragment_entry(extended)
     };
     let [mesh, slot_ids] = slot_layouts();
-    let layouts = [mesh, slot_ids, extra_layout(), skin_layout()];
+    let layouts = [mesh, slot_ids, extra_layout()];
     let buffers = match streams {
-        Streams::Skinned => 4,
         Streams::Extended => 3,
         Streams::Basic => 2,
     };

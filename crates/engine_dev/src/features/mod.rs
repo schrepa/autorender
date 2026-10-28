@@ -9,7 +9,6 @@ use crate::{DevError, DevTools};
 macro_rules! dev_features {
     ($then:ident) => {
         $then! {
-            animation,
             collision,
             deformation,
             navigation,
@@ -104,7 +103,6 @@ macro_rules! files {
     };
 }
 
-pub mod animation;
 pub mod collision;
 pub mod deformation;
 pub mod navigation;

@@ -1,5 +1,5 @@
 use super::{SHADOW_FORMAT, VIEWS_BYTES};
-use crate::bindings::{SHADOW_MARKS, SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW};
+use crate::bindings::{SHADOW_MARKS, SHADOW_POSES, SHADOW_SELECT, SHADOW_VIEW};
 use crate::gpu_data::Vertex;
 use crate::gpu_data::{
     ComposeData, RouteData, SHADOW_MARKS_SHADER, SHADOW_SHADER, ShadowCullUniform,
@@ -15,12 +15,10 @@ pub(super) struct ShadowPipelines {
     pub(super) select: wgpu::ComputePipeline,
     pub(super) count: wgpu::ComputePipeline,
     pub(super) select_layout: crate::pipelines::GroupLayout,
-    pub(super) select_skinned: wgpu::ComputePipeline,
-    pub(super) skinned_layout: crate::pipelines::GroupLayout,
     pub(super) marks: wgpu::ComputePipeline,
     pub(super) marks_layout: crate::pipelines::GroupLayout,
-    pub(super) casters: [wgpu::RenderPipeline; 4],
-    pub(super) moving: [wgpu::RenderPipeline; 4],
+    pub(super) casters: [wgpu::RenderPipeline; 2],
+    pub(super) moving: [wgpu::RenderPipeline; 2],
     pub(super) impostor_casters: Option<wgpu::RenderPipeline>,
     module: wgpu::ShaderModule,
     view_layout: crate::pipelines::GroupLayout,
@@ -107,18 +105,6 @@ impl ShadowPipelines {
         };
         let select = compute(shadow::select_casters);
         let count = compute(shadow::count_casters);
-        let skinned_layout = layout(device, &SHADOW_SKINNED);
-        let skinned_pipeline_layout = crate::pipelines::pipeline_layout(
-            device,
-            &crate::pipeline_layouts::SHADOW_SKINNED_PIPELINES,
-            &[&skinned_layout],
-        );
-        let select_skinned = crate::pipelines::compute_entry(
-            device,
-            &skinned_pipeline_layout,
-            &module,
-            shadow::select_skinned,
-        );
         let marks_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/shadow_marks.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHADOW_MARKS_SHADER.into()),
@@ -143,7 +129,6 @@ impl ShadowPipelines {
             7 => uv as Float32x2,
         });
         let slot_attributes = wgpu::vertex_attr_array![2 => Uint32];
-        let skin_layout = crate::renderer::skin_layout();
         let mesh_layout = wgpu::VertexBufferLayout {
             array_stride: size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -165,42 +150,20 @@ impl ShadowPipelines {
             &MASKED_CASTER_PIPELINES,
             &[&view_layout, &pose_layout, material_layout],
         );
-        let kinds: [(&str, _, Vec<Option<wgpu::VertexBufferLayout<'_>>>, _, _); 4] = [
+        let kinds: [(&str, _, Vec<Option<wgpu::VertexBufferLayout<'_>>>, _, _); 2] = [
             (
                 "engine/shadow-affine",
                 plain_layouts,
-                vec![Some(mesh_layout.clone()), Some(slot_layout.clone())],
+                vec![Some(mesh_layout), Some(slot_layout.clone())],
                 (shadow::vs_affine, None),
                 (shadow::vs_moving, shadow::fs_moving),
             ),
             (
                 "engine/shadow-affine-masked",
                 masked_layouts,
-                vec![Some(masked_mesh_layout.clone()), Some(slot_layout.clone())],
+                vec![Some(masked_mesh_layout), Some(slot_layout)],
                 (shadow::vs_affine_masked, Some(shadow::fs_masked)),
                 (shadow::vs_moving_masked, shadow::fs_moving_masked),
-            ),
-            (
-                "engine/shadow-affine-skinned",
-                plain_layouts,
-                vec![
-                    Some(mesh_layout.clone()),
-                    Some(slot_layout.clone()),
-                    skin_layout.clone(),
-                ],
-                (shadow::vs_affine_skinned, None),
-                (shadow::vs_moving_skinned, shadow::fs_moving),
-            ),
-            (
-                "engine/shadow-affine-masked-skinned",
-                masked_layouts,
-                vec![
-                    Some(masked_mesh_layout),
-                    Some(slot_layout.clone()),
-                    skin_layout,
-                ],
-                (shadow::vs_affine_masked_skinned, Some(shadow::fs_masked)),
-                (shadow::vs_moving_masked_skinned, shadow::fs_moving_masked),
             ),
         ];
         let casters = kinds
@@ -282,8 +245,6 @@ impl ShadowPipelines {
             select,
             count,
             select_layout,
-            select_skinned,
-            skinned_layout,
             marks,
             marks_layout,
             casters,

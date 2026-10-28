@@ -28,14 +28,13 @@
         {"id": "floor", "source": {"kind": "plane"}},
         {"id": "gem", "source": {"kind": "octahedron"}}
       ],
-      "animations": [{"id": "turn", "targets": ["spinner"], "channels": [{"target": 0, "property": "rotation", "times": [0, 2], "values": [0, 0, 0, 1, 0, 1, 0, 0]}]}],
       "prefabs": [{"id": "lamp", "entities": [
         {"id": "post", "mesh": "box", "material": "plain", "transform": {"scale": [0.1, 2, 0.1]}},
         {"id": "bulb", "parent": "post", "transform": {"translation": [0, 0.6, 0]}, "light": {"intensity": 12, "range": 6}}
       ]}],
       "entities": [
         {"id": "ground", "name": "The ground", "mesh": "floor", "material": "tiled", "transform": {"scale": [20, 1, 20]}, "collider": {"shape": {"kind": "cuboid", "half_extents": [0.5, 0.05, 0.5]}}, "tags": ["static", "walkable"]},
-        {"id": "spinner", "mesh": "gem", "material": "glass", "transform": {"translation": [2, 1, 0], "rotation_degrees": [0, 45, 0]}, "animation": {"clip": "turn", "speed": 0.5}, "tint": [1, 0.8, 0.8, 1]},
+        {"id": "spinner", "mesh": "gem", "material": "glass", "transform": {"translation": [2, 1, 0], "rotation_degrees": [0, 45, 0]}, "tint": [1, 0.8, 0.8, 1]},
         {"id": "fountain", "transform": {"translation": [-2, 0.5, 0]}, "particles": {"rate": 30, "lifetime": 1.5, "speed": 2}},
         {"id": "spot", "transform": {"translation": [0, 5, 0]}, "light": {"intensity": 40, "range": 12, "spot": {"inner_angle_degrees": 15, "outer_angle_degrees": 30}}},
         {"id": "mark", "transform": {"translation": [0, 0.1, 0], "scale": [2, 1, 2]}, "decal": {"material": "stain", "opacity": 0.7}},
@@ -85,8 +84,6 @@
     {"rule": "invalid_spline", "path": "$.entities[0].spline.points", "document": {"id": "a", "revision": 1, "materials": [{"id": "m", "color": [1, 1, 1, 1]}], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": [{"id": "e", "spline": {"points": [[0, 0, 0]], "mesh": "box", "material": "m"}}]}},
     {"rule": "invalid_value", "path": "$.entities[0].tags", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "tags": ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "t12", "t13", "t14", "t15", "t16"]}]}},
     {"rule": "invalid_value", "path": "$.prefabs[0].entities", "prefab": 10001},
-    {"rule": "invalid_animation", "path": "$.entities[0].animation.speed", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "animations": [{"id": "c", "targets": ["e"]}], "entities": [{"id": "e", "animation": {"clip": "c", "speed": 5000}}]}},
-    {"rule": "invalid_skin", "path": "$.entities[0].skin", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "skins": [{"id": "s", "joints": ["e"]}], "entities": [{"id": "e", "skin": "s"}]}},
     {"rule": "invalid_terrain", "path": "$.entities[0].terrain.layers", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": []}}]}},
     {"rule": "invalid_streamed", "path": "$.streamed[0].terrain", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [], "streamed": [{"id": "s", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"noise": {"seed": 1, "height": 1, "wavelength": 10}}]}}]}},
     {"rule": "invalid_nav_agent", "path": "$.entities[1].nav_agent", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "nav_agent": {}}]}},

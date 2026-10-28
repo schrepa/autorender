@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use engine::EnginePlugins;
-use engine_assetc::{ImportOptions, Imported, import_glb_prefab_with, import_glb_with};
+use engine_assetc::{Imported, import_glb, import_glb_prefab};
 use engine_core::{Engine, EngineConfig};
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use serde_json::json;
@@ -10,17 +10,13 @@ use sha2::{Digest, Sha256};
 use super::Observations;
 use super::simplify::GARDEN_PROP;
 
-const IMPORTS: [(&str, bool, Option<u32>); 3] = [
-    ("scene", false, None),
-    ("virtual", false, Some(16)),
-    ("prefab", true, None),
-];
+const IMPORTS: [(&str, bool); 2] = [("scene", false), ("prefab", true)];
 
-fn import(bytes: &[u8], prefab: bool, options: &ImportOptions) -> Result<Imported, String> {
+fn import(bytes: &[u8], prefab: bool) -> Result<Imported, String> {
     let imported = if prefab {
-        import_glb_prefab_with(bytes, "garden", options)
+        import_glb_prefab(bytes, "garden")
     } else {
-        import_glb_with(bytes, "garden", options)
+        import_glb(bytes, "garden")
     };
     imported.map_err(|error| format!("{GARDEN_PROP}: {error}"))
 }
@@ -28,10 +24,9 @@ fn import(bytes: &[u8], prefab: bool, options: &ImportOptions) -> Result<Importe
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let bytes = std::fs::read(root.join(GARDEN_PROP))
         .map_err(|error| format!("cannot read {GARDEN_PROP}: {error}"))?;
-    for (name, prefab, virtual_triangles) in IMPORTS {
-        let options = ImportOptions { virtual_triangles };
-        let imported = import(&bytes, prefab, &options)?;
-        let again = import(&bytes, prefab, &options)?;
+    for (name, prefab) in IMPORTS {
+        let imported = import(&bytes, prefab)?;
+        let again = import(&bytes, prefab)?;
         let text = imported
             .document
             .to_json()
@@ -67,9 +62,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 Some(SceneFileKind::Image) => {
                     let image = engine_native::files::decode_image(&file.uri, &file.bytes)?;
                     files.add_image(&file.uri, image.width, image.height, image.pixels);
-                }
-                Some(SceneFileKind::VirtualMesh) => {
-                    files.add_virtual_mesh(&file.uri, file.bytes.clone(), None);
                 }
                 Some(SceneFileKind::Buffer) => files.add_buffer(&file.uri, file.bytes.clone()),
                 None => observed.check(false, || {

@@ -3,15 +3,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use engine_core::{
-    AnimationPlayer, AssetError, AssetLibrary, ClipHandle, InterpolateTransform, MaterialHandle,
-    Mesh3d, MeshHandle, Skin, StreamSet, Streamed, StreamedItem, TextureHandle, Transform,
-    WorldCells,
+    AssetError, AssetLibrary, MaterialHandle, Mesh3d, MeshHandle, StreamSet, Streamed,
+    StreamedItem, TextureHandle, Transform, WorldCells,
     bevy_ecs::{
         self,
         prelude::{Component, Entity, World},
         world::WorldId,
     },
-    glam::Mat4,
     propagate_transforms, remove_streamed, set_parents,
 };
 
@@ -44,7 +42,6 @@ pub struct SceneInstance {
     material_ids: Vec<String>,
     mesh_ids: Vec<String>,
     texture_ids: Vec<String>,
-    clip_ids: Vec<String>,
     origins: Origins,
     streamed: Option<StreamSet>,
 }
@@ -53,8 +50,6 @@ pub struct SceneInstance {
 struct Origins {
     meshes: Vec<MeshOrigin>,
     textures: Vec<Option<String>>,
-    clips: Vec<ClipOrigin>,
-    skins: Vec<(String, Arc<[Mat4]>)>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -71,10 +66,6 @@ pub enum MeshOrigin {
     Buffer {
         uri: String,
     },
-    Virtual {
-        uri: String,
-        fallback_triangles: Option<u32>,
-    },
 }
 
 impl From<&crate::MeshSource> for MeshOrigin {
@@ -88,22 +79,8 @@ impl From<&crate::MeshSource> for MeshOrigin {
                 indices: indices.len(),
             },
             crate::MeshSource::Buffer { uri } => Self::Buffer { uri: uri.clone() },
-            crate::MeshSource::Virtual {
-                uri,
-                fallback_triangles,
-            } => Self::Virtual {
-                uri: uri.clone(),
-                fallback_triangles: *fallback_triangles,
-            },
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ClipOrigin {
-    pub name: String,
-    pub targets: Vec<String>,
-    pub uri: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -111,7 +88,6 @@ struct OwnedAssets {
     meshes: Vec<MeshHandle>,
     materials: Vec<MaterialHandle>,
     textures: Vec<TextureHandle>,
-    clips: Vec<ClipHandle>,
 }
 
 impl OwnedAssets {
@@ -124,9 +100,6 @@ impl OwnedAssets {
         }
         for &handle in &self.textures {
             assets.remove_texture(handle);
-        }
-        for &clip in &self.clips {
-            assets.remove_clip(clip);
         }
     }
 }
@@ -188,20 +161,6 @@ impl SceneInstance {
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
-    pub fn clip(&self, id: &str) -> Option<ClipHandle> {
-        self.clip_ids
-            .iter()
-            .position(|clip| clip == id)
-            .map(|index| self.assets.clips[index])
-    }
-
-    pub fn clips(&self) -> impl ExactSizeIterator<Item = (&str, ClipHandle)> {
-        self.clip_ids
-            .iter()
-            .zip(&self.assets.clips)
-            .map(|(id, handle)| (id.as_str(), *handle))
-    }
-
     pub fn mesh_origin(&self, handle: MeshHandle) -> Option<(&str, &MeshOrigin)> {
         let index = self.assets.meshes.iter().position(|&mesh| mesh == handle)?;
         Some((&self.mesh_ids[index], &self.origins.meshes[index]))
@@ -217,19 +176,6 @@ impl SceneInstance {
             &self.texture_ids[index],
             self.origins.textures[index].as_deref(),
         ))
-    }
-
-    pub fn clip_origin(&self, handle: ClipHandle) -> Option<(&str, &ClipOrigin)> {
-        let index = self.assets.clips.iter().position(|&clip| clip == handle)?;
-        Some((&self.clip_ids[index], &self.origins.clips[index]))
-    }
-
-    pub fn skin_id(&self, skin: &Skin) -> Option<&str> {
-        self.origins
-            .skins
-            .iter()
-            .find(|(_, binds)| Arc::ptr_eq(binds, &skin.inverse_binds))
-            .map(|(id, _)| id.as_str())
     }
 
     pub fn entities(&self) -> impl ExactSizeIterator<Item = (&str, Entity)> {
@@ -265,10 +211,6 @@ impl SceneDocument {
         self.instantiate_with(world, &SceneFiles::default())
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub fn instantiate_with(
         &self,
         world: &mut World,
@@ -279,13 +221,6 @@ impl SceneDocument {
         let owned = self.insert_assets(world, &mut prepared)?;
         let lookups = Lookups::new(self, &owned);
         let spawned = self.spawn(world, &prepared, &lookups);
-        attach_rigs(
-            world,
-            prepared.components.iter().zip(spawned.iter().copied()),
-            |index| spawned[index],
-            &owned.clips,
-            &prepared.skin_binds,
-        );
         let entities: BTreeMap<String, Entity> = prepared
             .entities
             .iter()
@@ -325,7 +260,6 @@ impl SceneDocument {
             let scene = Arc::new(StreamedScene {
                 lookups,
                 prepared: std::mem::take(&mut prepared.streamed),
-                skin_binds: prepared.skin_binds.clone(),
             });
             let items: Vec<StreamedItem> = scene
                 .prepared
@@ -366,11 +300,6 @@ impl SceneDocument {
                 .iter()
                 .map(|texture| texture.id.clone())
                 .collect(),
-            clip_ids: self
-                .animations
-                .iter()
-                .map(|animation| animation.id.clone())
-                .collect(),
             origins: Origins {
                 meshes: self
                     .meshes
@@ -381,21 +310,6 @@ impl SceneDocument {
                     .textures
                     .iter()
                     .map(|texture| texture.uri.clone())
-                    .collect(),
-                clips: self
-                    .animations
-                    .iter()
-                    .map(|animation| ClipOrigin {
-                        name: animation.name.clone(),
-                        targets: animation.targets.clone(),
-                        uri: animation.uri.clone(),
-                    })
-                    .collect(),
-                skins: self
-                    .skins
-                    .iter()
-                    .map(|skin| skin.id.clone())
-                    .zip(prepared.skin_binds.iter().cloned())
                     .collect(),
             },
             streamed,
@@ -439,12 +353,6 @@ impl SceneDocument {
                 &mut owned.materials,
                 "materials",
                 |material| assets.insert_material(material.material(|id| texture_lookup[id])),
-            )?;
-            insert_each(
-                std::mem::take(&mut prepared.clips),
-                &mut owned.clips,
-                "animations",
-                |clip| assets.insert_clip(clip),
             )
         })();
         if let Err(error) = inserted {
@@ -473,7 +381,6 @@ pub(crate) struct Lookups {
     pub(crate) materials: BTreeMap<String, MaterialHandle>,
     pub(crate) owned_meshes: Vec<MeshHandle>,
     pub(crate) owned_materials: Vec<MaterialHandle>,
-    clips: Vec<ClipHandle>,
 }
 
 impl Lookups {
@@ -494,7 +401,6 @@ impl Lookups {
                 .collect(),
             owned_meshes: owned.meshes.clone(),
             owned_materials: owned.materials.clone(),
-            clips: owned.clips.clone(),
         }
     }
 }
@@ -530,47 +436,9 @@ fn spawn_entity(
     entity.id()
 }
 
-fn attach_rigs<'a>(
-    world: &mut World,
-    rigged: impl Iterator<Item = (&'a PreparedEntity, Entity)> + Clone,
-    entity_of: impl Fn(usize) -> Entity,
-    clips: &[ClipHandle],
-    skin_binds: &[Arc<[Mat4]>],
-) {
-    for (component, entity) in rigged.clone() {
-        if let Some(player) = &component.player {
-            for &target in &player.targets {
-                world
-                    .entity_mut(entity_of(target))
-                    .insert(InterpolateTransform);
-            }
-            world.entity_mut(entity).insert(AnimationPlayer {
-                clip: clips[player.clip],
-                targets: player
-                    .targets
-                    .iter()
-                    .map(|&target| Some(entity_of(target)))
-                    .collect(),
-                time: player.time,
-                speed: player.speed,
-                looping: player.looping,
-            });
-        }
-    }
-    for (component, entity) in rigged {
-        if let Some(skin) = &component.skin {
-            world.entity_mut(entity).insert(Skin::new(
-                skin.joints.iter().map(|&joint| entity_of(joint)).collect(),
-                skin_binds[skin.skin].clone(),
-            ));
-        }
-    }
-}
-
 struct StreamedScene {
     lookups: Lookups,
     prepared: PreparedStreamed,
-    skin_binds: Vec<Arc<[Mat4]>>,
 }
 
 struct StreamedTree {
@@ -621,16 +489,6 @@ impl Streamed for StreamedTree {
             }
             return;
         }
-        attach_rigs(
-            world,
-            item.entities
-                .iter()
-                .zip(&mine)
-                .map(|(&index, &entity)| (&prepared.components[index], entity)),
-            entity_of,
-            &scene.lookups.clips,
-            &scene.skin_binds,
-        );
         spawned.extend(mine);
     }
 }

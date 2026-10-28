@@ -336,17 +336,6 @@ pub struct TerrainsView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct AnimationPlayerView {
-    pub clip: Option<ClipView>,
-    pub time: f32,
-    pub speed: f32,
-    #[serde(rename = "loop")]
-    pub looping: bool,
-    pub targets: Vec<Option<String>>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct DecalView {
     pub material: Option<String>,
     pub material_alive: bool,
@@ -366,25 +355,6 @@ pub struct SplineMeshView {
     pub chunks: Option<usize>,
     pub vertices: Option<u32>,
     pub error: Option<String>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct ClipView {
-    pub id: Option<String>,
-    pub name: Option<String>,
-    pub targets: Vec<String>,
-    pub channels: usize,
-    pub uri: Option<String>,
-    pub duration: f32,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct SkinView {
-    pub skin: Option<String>,
-    pub joints: Vec<Option<String>>,
-    pub inverse_binds: usize,
 }
 
 #[derive(Serialize)]
@@ -500,24 +470,12 @@ pub struct MeshView {
     pub local_bounds: MeshBoundsView,
     pub colors: bool,
     pub uv1: bool,
-    pub joints: u32,
-    pub virtual_geometry: Option<VirtualMeshView>,
     pub rendered: Option<MeshRenderView>,
 }
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct VirtualMeshView {
-    pub levels: u32,
-    pub clusters: u32,
-    pub pages: u32,
-    pub triangles: u64,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct MeshRenderView {
-    pub skinned: bool,
     pub levels: Vec<LodLevelView>,
     pub impostor: Option<bool>,
 }

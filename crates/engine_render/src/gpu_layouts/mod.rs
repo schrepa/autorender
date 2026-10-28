@@ -160,7 +160,6 @@ layout_modules! {
     scatter,
     sky,
     terrain,
-    virtual_geometry,
     water,
     world_trace,
 }

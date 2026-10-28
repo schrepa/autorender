@@ -141,9 +141,6 @@ impl Renderer {
                 for &index in &self.draw_order.order {
                     let index = index as usize;
                     let batch = &self.plan.batches[index];
-                    if self.meshes[&batch.mesh].skinned {
-                        continue;
-                    }
                     self.bind_batch(&mut pass, &mut binds, (kind, true), batch);
                     let (ids, draws, offset) =
                         self.gpu_presentation.probe_draw_source(batch, index);
@@ -186,7 +183,7 @@ impl Renderer {
             let Some(mesh) = self.meshes.get(&batch.mesh) else {
                 continue;
             };
-            if batch.transparent || mesh.skinned {
+            if batch.transparent {
                 continue;
             }
             let variant = self.batch_binding(batch, Some(mesh)).1.uber();

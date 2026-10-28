@@ -233,17 +233,9 @@ pub(super) fn mesh_view(
             },
             colors: mesh.colors().is_some(),
             uv1: mesh.uv1().is_some(),
-            joints: mesh.joint_count(),
-            virtual_geometry: mesh.virtual_geometry().map(|geometry| VirtualMeshView {
-                levels: geometry.levels(),
-                clusters: geometry.cluster_count() as u32,
-                pages: geometry.page_count() as u32,
-                triangles: u64::from(geometry.triangle_count()),
-            }),
             rendered: renderer.and_then(|renderer| {
                 let rendered = renderer.mesh(mesh3d.mesh)?;
                 Some(MeshRenderView {
-                    skinned: rendered.skinned,
                     levels: rendered
                         .levels
                         .iter()

@@ -3,7 +3,6 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-mod animation;
 mod collider;
 mod components;
 mod decal;
@@ -23,9 +22,6 @@ mod terrain;
 mod texture;
 mod validation;
 
-pub use animation::{
-    SceneAnimation, SceneChannel, SceneInterpolation, ScenePlayer, SceneProperty, SceneSkin,
-};
 pub use collider::{SceneCollider, SceneColliderShape};
 pub use components::COMPONENT_SHOWS;
 pub use decal::{SceneDecal, SceneDecalBlend};
@@ -37,11 +33,10 @@ pub use engine_core::EnvironmentSection;
 pub use environment::{AtmospherePreset, SceneAtmosphere, SceneEnvironment, SectionVisitor};
 pub use error::SceneError;
 pub use files::{
-    ANIMATION_BUFFER_MAGIC, MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile,
-    SceneFileKind, SceneFiles, decode_mesh_buffer, encode_animation_buffer, encode_mesh_buffer,
-    encode_mesh_buffer_with,
+    MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile, SceneFileKind, SceneFiles,
+    decode_mesh_buffer, encode_mesh_buffer, encode_mesh_buffer_with,
 };
-pub use instance::{ClipOrigin, MeshOrigin, SceneEntity, SceneInstance};
+pub use instance::{MeshOrigin, SceneEntity, SceneInstance};
 pub use json::{parse_json, parse_value};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use material::{

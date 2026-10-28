@@ -33,8 +33,6 @@ resources! {
     Surface: Frame,
     Motion: Frame,
     History: Kept,
-    Ids: Frame,
-    Tiles: Frame,
     Accumulated: Frame,
     Revealed: Frame,
     Poses: Kept,
@@ -44,7 +42,6 @@ resources! {
     Casters: Frame,
     ShadowMaps: Kept,
     ShadowMarks: Kept,
-    Clusters: Kept,
     Lights: Frame,
     Pyramid: Kept,
     Effects: Frame,
@@ -152,7 +149,6 @@ pub(crate) enum Pass {
     Presentation,
     Subdivision,
     ShadowSelect,
-    VirtualSelect,
     ShadowMaps,
     Deformation,
     Bounce,
@@ -160,9 +156,6 @@ pub(crate) enum Pass {
     TerrainIds,
     TerrainResolve,
     OpaqueLate,
-    VisibilityIds { phase: Phase },
-    Classify { phase: Phase },
-    Resolve { phase: Phase },
     OcclusionTest,
     ShadowMarks,
     Feature(FeaturePass),
@@ -197,7 +190,6 @@ passes! {
     scatter: Feature(FeaturePass::Scatter),
     occupancy: Feature(FeaturePass::Occupancy),
     shadow_select: ShadowSelect,
-    virtual_select: VirtualSelect,
     shadow_maps: ShadowMaps,
     lights: Feature(FeaturePass::Lights),
     cloud_dome: Feature(FeaturePass::CloudDome),
@@ -208,14 +200,8 @@ passes! {
     terrain_ids: TerrainIds,
     terrain_resolve: TerrainResolve,
     opaque_late: OpaqueLate,
-    visibility: VisibilityIds { phase: Phase::One },
-    visibility_tiles: Classify { phase: Phase::One },
-    visibility_resolve: Resolve { phase: Phase::One },
     occlusion_test: OcclusionTest,
     opaque_phase_two: Opaque { phase: Phase::Two },
-    visibility_phase_two: VisibilityIds { phase: Phase::Two },
-    visibility_tiles_phase_two: Classify { phase: Phase::Two },
-    visibility_resolve_phase_two: Resolve { phase: Phase::Two },
     shadow_marks: ShadowMarks,
     decals: Feature(FeaturePass::Decals),
     water: Feature(FeaturePass::Water),
@@ -526,9 +512,6 @@ pub(crate) struct FrameShape {
     pub(crate) subdivision: bool,
     pub(crate) deferred: bool,
     pub(crate) scatter: bool,
-    pub(crate) clusters: bool,
-    pub(crate) shadow_clusters: bool,
-    pub(crate) resolves: [bool; 2],
     pub(crate) lights: bool,
     pub(crate) refraction: bool,
     pub(crate) effects: Effects,
@@ -585,22 +568,12 @@ fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
             .read_if(gpu, Visible)
             .write(Casters);
     }
-    if shape.clusters {
-        graph
-            .add(Pass::VirtualSelect)
-            .read(Poses)
-            .read_if(gpu, Visible)
-            .read_if(shape.shadow_clusters, Casters)
-            .read(Pyramid)
-            .write(Clusters);
-    }
     if shape.shadows {
         graph
             .add(Pass::ShadowMaps)
             .read(Poses)
             .read(Casters)
             .read_if(shape.scatter, Placed)
-            .read_if(shape.shadow_clusters, Clusters)
             .read_if(shape.subdivision, Leaves)
             .write(ShadowMaps);
     }
@@ -642,10 +615,8 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
                 .add(Pass::OcclusionTest)
                 .read(Depth)
                 .read(Poses)
-                .read_if(shape.clusters, Clusters)
                 .write(Pyramid)
-                .write(Visible)
-                .write_if(shape.clusters, Clusters);
+                .write(Visible);
         }
         let first = phase == Phase::One;
         let forward = first && !shape.deferred;
@@ -657,7 +628,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(Occupancy)
             .read_if(shape.shadows, ShadowMaps)
             .read_if(shape.lights, Lights)
-            .read_if(shape.clusters, Clusters)
             .read(Probes)
             .read(Bounce)
             .read(CloudDome)
@@ -670,29 +640,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
         opaque.depth(Depth, Access::Draw(Clear::Depth(FAR)));
         if first && shape.deferred {
             deferred_terrain(graph, shape, targets);
-        }
-        if shape.resolves[phase.index()] {
-            graph
-                .add(Pass::VisibilityIds { phase })
-                .read(Poses)
-                .read(Clusters)
-                .color(Ids, Access::Clear(Clear::Color(TRANSPARENT)))
-                .depth(Depth, Access::Load);
-            graph.add(Pass::Classify { phase }).read(Ids).write(Tiles);
-            let mut resolve = graph
-                .add(Pass::Resolve { phase })
-                .read(Poses)
-                .read(Clusters)
-                .read(Ids)
-                .read(Tiles)
-                .read_if(shape.shadows, ShadowMaps)
-                .read_if(shape.lights, Lights)
-                .read(Probes)
-                .read(Bounce);
-            for &(target, _) in targets {
-                resolve = resolve.color(target, Access::Load);
-            }
-            resolve.depth(Depth, Access::ReadOnly);
         }
     }
     if shape.shadows {

@@ -1,7 +1,7 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
+import { artifacts, commander, sceneUrl, launch, openPaused, routedScene } from "./harness.mjs";
 
 const url = sceneUrl();
 const output = await artifacts("meshes-smoke");
@@ -23,29 +23,19 @@ function ball(rings, segments) {
   }
   return { kind: "inline", vertices, indices };
 }
-/** @type {[number, number[]][]} */
-const rows = [[0, [1, 0, 0, 0]], [1, [0.5, 0.5, 0, 0]], [2, [0, 1, 0, 0]]];
-const vertices = rows.flatMap(([y, weights]) => [-0.3, 0.3].map(x => ({
-  position: [x, y, 0], normal: [0, 0, 1], uv: [x + 0.3, y / 2], joints: [0, 1, 0, 0], weights,
+const vertices = [0, 1, 2].flatMap(y => [-0.3, 0.3].map(x => ({
+  position: [x, y, 0], normal: [0, 0, 1], uv: [x + 0.3, y / 2],
 })));
-const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-const tipBind = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1];
 const fixture = {
-  id: "skin-fixture", revision: 1,
+  id: "mesh-fixture", revision: 1,
   camera: { position: [0, 1, 4], target: [0, 1, 0], fov_degrees: 60, near: 0.1, far: 2000 },
   materials: [{ id: "plain", color: [0.8, 0.4, 0.2, 1], double_sided: true }, { id: "stone", color: [0.5, 0.55, 0.6, 1], double_sided: true }],
   meshes: [
     { id: "ribbon", source: { kind: "inline", vertices, indices: [0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4] } },
     { id: "ball", source: ball(24, 32) },
   ],
-  skins: [{ id: "rig", joints: ["root-bone", "tip-bone"], inverse_binds: [identity, tipBind] }],
-  animations: [{ id: "bend", targets: ["tip-bone"], channels: [
-    { target: 0, property: "rotation", times: [0, 1], values: [0, 0, 0, 1, 0, 0, 0.7071068, 0.7071068] },
-  ] }],
   entities: [
-    { id: "root-bone", animation: { clip: "bend", speed: 0, loop: false } },
-    { id: "tip-bone", parent: "root-bone", transform: { translation: [0, 1, 0] } },
-    { id: "limb", mesh: "ribbon", material: "plain", skin: "rig" },
+    { id: "limb", mesh: "ribbon", material: "plain" },
     { id: "near-ball", mesh: "ball", material: "stone", transform: { translation: [2.5, 1, -2] } },
     { id: "far-ball", mesh: "ball", material: "stone", transform: { translation: [-40, 1, -300] } },
   ],
@@ -58,35 +48,21 @@ async function inspect(entity, component) {
   return (await command("inspect", { entity, component })).result.entity.components[component];
 }
 
-async function capture(name) {
-  await command("render");
-  await command("capture");
-  const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
-  return bytes.toString("base64");
-}
-
 try {
   await scene.route();
   await openPaused(page, url);
   const checks = [];
 
-  const skin = await inspect("limb", "Skin");
-  assert.deepEqual(skin, { skin: "rig", joints: ["root-bone", "tip-bone"], inverse_binds: 2 }, JSON.stringify(skin));
   await command("render");
   const drawn = await inspect("limb", "Mesh3d");
   assert.equal(drawn.mesh.id, "ribbon");
   assert.deepEqual(drawn.mesh.source, { kind: "inline", vertices: 6, indices: 12 });
-  assert.equal(drawn.mesh.joints, 2, "the weights address both joints");
-  assert.equal(drawn.mesh.rendered?.skinned, true, `the renderer uploads it skinned: ${JSON.stringify(drawn.mesh)}`);
   assert.equal(drawn.material.id, "plain");
   assert.equal(drawn.material.double_sided, true);
-  const player = await inspect("root-bone", "AnimationPlayer");
-  assert.deepEqual(player.clip, { id: "bend", name: "", targets: ["tip-bone"], channels: 1, uri: null, duration: 1 }, JSON.stringify(player.clip));
-  checks.push({ check: "inspects", skin, mesh: drawn.mesh });
+  checks.push({ check: "inspects", mesh: drawn.mesh });
 
   const near = await inspect("near-ball", "Mesh3d");
   assert.ok(near.mesh.rendered?.levels.length > 0, `the ball has coarser levels: ${JSON.stringify(near.mesh.rendered)}`);
-  assert.equal(near.mesh.rendered.skinned, false);
   async function drawnLevel(entity) {
     await inspect(entity, "Mesh3d");
     await command("resume");
@@ -106,14 +82,6 @@ try {
   assert.ok(nearLevel < 3, `the near ball draws as a mesh: ${nearLevel}`);
   assert.ok(farLevel > nearLevel, `the far ball draws coarser: ${farLevel} than ${nearLevel}`);
   checks.push({ check: "levels", levels: near.mesh.rendered.levels, near: nearLevel, far: farLevel });
-
-  const straight = await capture("straight");
-  await command("animation", { entity: "root-bone", time: 1, speed: 0 });
-  await command("step", { ticks: 1 });
-  const bent = await capture("bent");
-  const { changed } = await differentPixels(page, [straight, bent]);
-  assert.ok(changed > 500, `the skin bends with its joint: ${changed} pixels`);
-  checks.push({ check: "bends", pixels: changed });
 
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ ok: true, output, checks }));
