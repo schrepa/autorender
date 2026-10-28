@@ -1,19 +1,18 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
-import { artifacts, commander, devUrl, launch, openPaused, waitFrames } from "./harness.mjs";
+import { artifacts, commander, gridScene, launch, openPaused, routedScene, sceneUrl, waitFrames } from "./harness.mjs";
 
-const still = {
-  seed: 7, renderables: 6000, moving_percent: 0, hierarchy: true, interpolation: true, colliders: 0,
-  sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 8, textured: true, culling: true,
-};
-const moving = { ...still, moving_percent: 100, colliders: 200, sensor_percent: 10, queries_per_tick: 8 };
+const still = gridScene();
+const moving = gridScene({ moving: true });
 const output = await artifacts("taa-smoke");
 const { browser, page, errors } = await launch();
 const command = commander(page);
 
-async function open(config, query) {
-  const url = devUrl("stress.html", { config, ...query });
+async function open(scene, query) {
+  await page.unrouteAll();
+  await routedScene(page, scene).route();
+  const url = sceneUrl(query);
   await openPaused(page, url);
   await command("render");
   await command("step", { ticks: 3 });
@@ -22,7 +21,7 @@ async function open(config, query) {
 
 async function screenshot(name) {
   const bytes = await page.locator("canvas").screenshot({
-    path: `${output}/${name}.png`, style: ".viewport > :not(canvas) { visibility: hidden !important; }",
+    path: `${output}/${name}.png`, style: ".engine-hud { visibility: hidden !important; }",
   });
   return bytes.toString("base64");
 }

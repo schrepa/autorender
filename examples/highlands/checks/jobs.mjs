@@ -2,9 +2,9 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { artifacts, commander, devUrl, developmentReady, launch } from "./harness.mjs";
+import { artifacts, commander, devUrl, developmentReady, launch } from "../../../web/scripts/harness.mjs";
 
-const output = await artifacts("jobs-smoke");
+const output = await artifacts("highlands-jobs");
 const { browser, page, errors } = await launch({ width: 960, height: 540, timeout: 600_000 });
 const drawn = ({ terrain, water }) => ({
   tiles: terrain.tiles, leaves: terrain.leaves, triangles: terrain.triangles, shadow_patches: terrain.shadow_patches,
@@ -42,7 +42,7 @@ async function settle(label) {
 
 async function session(name, query, walk) {
   const opened = Date.now();
-  await page.goto(String(devUrl("stress.html", { preset: "highlands", prepare: "1", ...query })), { waitUntil: "domcontentloaded" });
+  await page.goto(String(devUrl("highlands.html", { prepare: "1", ...query })), { waitUntil: "domcontentloaded" });
   await developmentReady(page, { timeout: 600_000 });
   await page.waitForFunction(() => document.querySelector("canvas")?.style.visibility !== "hidden", null, { timeout: 600_000, polling: 100 });
   const shown = (Date.now() - opened) / 1000;
@@ -113,28 +113,9 @@ try {
   assert.equal(kept.jobs.cache_mismatches, 0, `kept outputs match fresh runs: ${JSON.stringify(kept.jobs)}`);
   assert.deepEqual(kept.samples, workers.samples, "kept outputs sample as fresh ones");
   assert.deepEqual(kept.drawn, workers.drawn, "kept outputs draw as fresh ones");
-  await page.goto(String(devUrl("stress.html", { preset: "highlands", prepare: "1", jobcache: "off" })), { waitUntil: "domcontentloaded" });
-  await developmentReady(page, { timeout: 600_000 });
-  let loading;
-  for (let attempt = 0; attempt < 600; attempt++) {
-    loading = await inspect("Jobs");
-    if (loading.held > 0) break;
-    await delay(20);
-  }
-  assert.ok(loading.held > 0, `jobs are on the workers mid-load: ${JSON.stringify(loading)}`);
-  await command("pause");
-  await command("game", { name: "workload", args: { preset: "visual" } });
-  await command("resume");
-  let switched;
-  for (let attempt = 0; attempt < 600; attempt++) {
-    switched = await inspect("Jobs");
-    if (switched.held === 0 && switched.running === 0) break;
-    await delay(50);
-  }
-  assert.equal(switched.held, 0, `the switch leaves no job held: ${JSON.stringify(switched)}`);
   checks.push({ workers: { shown: workers.shown, jobs: workers.jobs, terrains: workers.terrains, drawn: workers.drawn },
     page: { shown: page_.shown, terrains: page_.terrains, drawn: page_.drawn },
-    kept: { shown: kept.shown, jobs: kept.jobs }, switched: { loading, switched }, answered });
+    kept: { shown: kept.shown, jobs: kept.jobs }, answered });
   assert.deepEqual(errors, [], `page errors: ${errors.join("\n")}`);
   await writeFile(`${output}/report.json`, JSON.stringify(checks, null, 2));
   console.log(JSON.stringify({ ok: true, output, checks }, null, 2));

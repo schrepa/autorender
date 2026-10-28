@@ -28,17 +28,78 @@ export function devUrl(page, query = {}) {
 export const fixtureScene = "/scenes/smoke-fixture.scene.json";
 
 export function sceneUrl(query = {}) {
-  return devUrl("stress.html", { source: fixtureScene, ...query });
+  return devUrl("player.html", { source: fixtureScene, ...query });
 }
 
 export function gardenScene() {
   return JSON.parse(readFileSync(new URL("fixtures/garden.scene.json", import.meta.url), "utf8"));
 }
 
-export function cargoBinaries(cargoArguments) {
+export function gridScene({ side = 24, moving = false } = {}) {
+  const size = 32;
+  const pixels = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const shade = 150 + ((x * 7 + y * 13) % 48);
+      const light = ((x >> 2) + (y >> 2)) % 2 === 0;
+      pixels.set(light ? [shade + 40, shade + 30, shade, 255] : [shade - 80, shade - 70, shade - 50, 255], (y * size + x) * 4);
+    }
+  }
+  const paints = [[0.85, 0.35, 0.2, 1], [0.25, 0.6, 0.85, 1], [0.4, 0.75, 0.3, 1], [0.9, 0.75, 0.25, 1]];
+  const cube = { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] };
+  const entities = [{
+    id: "ground", mesh: "box", material: "ground", transform: { translation: [0, -0.5, 0], scale: [side * 6, 1, side * 6] },
+    ...(moving ? { collider: { shape: cube } } : {}),
+  }];
+  for (let index = 0; index < side * side; index++) {
+    const [row, column] = [Math.floor(index / side), index % side];
+    const scale = 0.8 + (index % 5) * 0.3;
+    entities.push({
+      id: `piece-${index}`, mesh: index % 3 === 0 ? "gem" : "box", material: `paint-${index % paints.length}`,
+      transform: {
+        translation: [(column - (side - 1) / 2) * 4, scale / 2, (row - (side - 1) / 2) * 4],
+        rotation_degrees: [0, (index * 37) % 360, 0], scale: [scale, scale, scale],
+      },
+      ...(moving ? { collider: { shape: cube }, rigid_body: { velocity: [0, 4 + (index % 7), 0], spin: [0, 1 + (index % 3), 0] } } : {}),
+    });
+    if (index % 4 === 0) {
+      entities.push({
+        id: `cap-${index}`, parent: `piece-${index}`, mesh: "box", material: `paint-${(index + 1) % paints.length}`,
+        transform: { translation: [0, 0.75, 0], scale: [0.5, 0.5, 0.5] },
+      });
+    }
+  }
+  return {
+    id: "grid", revision: 1,
+    camera: { position: [0, 30, side * 2.6], target: [0, 0, 0], fov_degrees: 60, near: 0.1, far: 1000 },
+    textures: [{ id: "checker", width: size, height: size, rgba8: pixels.toString("base64") }],
+    materials: [
+      { id: "ground", color: [0.55, 0.58, 0.52, 1], texture: "checker" },
+      ...paints.map((color, index) => ({ id: `paint-${index}`, color, texture: "checker" })),
+    ],
+    meshes: [{ id: "box", source: { kind: "cube" } }, { id: "gem", source: { kind: "octahedron" } }],
+    entities,
+  };
+}
+
+export async function nativeBinary(cargoPackage, binary, { profiling = false } = {}) {
+  const [chosen, features] = profiling ? ["profiling", "dev,profiling"] : ["release", "dev"];
+  const profile = process.env.ENGINE_NATIVE_PROFILE || chosen;
+  const env = profiling && process.platform === "linux"
+    ? { ...process.env, RUSTFLAGS: `${process.env.RUSTFLAGS ?? ""} -Cforce-frame-pointers=yes`.trim() }
+    : process.env;
+  const binaries = await cargoBinaries(["-p", cargoPackage, "--bin", binary, "--profile", profile, "--features", features], env);
+  return binaries[binary];
+}
+
+export function playerProgram(options = {}) {
+  return nativeBinary("engine_player", "engine-player", options);
+}
+
+export function cargoBinaries(cargoArguments, env = process.env) {
   const built = new Promise((resolveBuild, reject) => {
     const child = spawn(process.env.CARGO ?? "cargo", ["build", "-q", "--locked", "--message-format=json", ...cargoArguments],
-      { cwd: workspace, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+      { cwd: workspace, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     try { if (child.pid !== undefined) setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); } catch {}
     let stdout = "", stderr = "";
     child.stdout.on("data", bytes => { stdout += bytes; });

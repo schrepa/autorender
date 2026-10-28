@@ -1,10 +1,11 @@
 // @ts-check
 import assert from "node:assert/strict";
-import { commander, devUrl, launch, openPaused, waitFrames } from "./harness.mjs";
+import { commander, gridScene, launch, openPaused, routedScene, sceneUrl, waitFrames } from "./harness.mjs";
 
 const { browser, page, errors } = await launch({ width: 800, height: 600 });
 try {
-  await openPaused(page, devUrl("stress.html", { preset: "visual" }), { timeout: 120_000 });
+  await routedScene(page, gridScene()).route();
+  await openPaused(page, sceneUrl(), { timeout: 120_000 });
   const command = commander(page, { deadline: 120_000 });
   /** @returns {Promise<{ position: number[], target: number[] }>} */
   const camera = async () => (await command("inspect", { component: "Camera" })).result.value;

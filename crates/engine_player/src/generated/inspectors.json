@@ -1,0 +1,17 @@
+{
+  "PlayerWalk": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "collision_errors": {
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "collision_errors"
+    ],
+    "title": "PlayerWalk",
+    "type": "object"
+  }
+}

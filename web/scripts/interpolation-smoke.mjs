@@ -23,7 +23,7 @@ const checks = [];
 const bindingUrls = new Set();
 const scene = routedScene(page, fixture);
 page.on("response", response => {
-  if (response.request().resourceType() === "script" && new URL(response.url()).pathname.endsWith("/stress_lab.js")) bindingUrls.add(response.url());
+  if (response.request().resourceType() === "script" && new URL(response.url()).pathname.endsWith("/engine_player.js")) bindingUrls.add(response.url());
 });
 let suiteTimer;
 
@@ -101,7 +101,7 @@ try {
   assert.equal(bindingUrls.size, 1, "The ordinary-frame check must use the exact loaded game bindings.");
   /** @type {any} */
   const ordinaryFrames = await page.evaluate(async ({ moduleUrl, fixture, protocolVersion }) => {
-    const { StressGame, SceneFileSet } = await import(moduleUrl);
+    const { PlayerGame, SceneFileSet } = await import(moduleUrl);
     const canvas = document.createElement("canvas");
     canvas.width = 320; canvas.height = 240;
     canvas.style.cssText = "position:fixed;left:-10000px;top:0;width:320px;height:240px";
@@ -109,7 +109,7 @@ try {
     let game;
     const sent = [];
     try {
-      game = await StressGame.create_scene(canvas, JSON.stringify(fixture), new SceneFileSet(), "");
+      game = await PlayerGame.create(canvas, JSON.stringify(fixture), new SceneFileSet(), "");
       game.set_tick_pipelining(false);
       const request = command => {
         sent.push(command);

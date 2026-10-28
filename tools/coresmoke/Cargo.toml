@@ -4,16 +4,14 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "The engine's incremental caches, terrain streaming and the Stress Lab's content, checked without a GPU"
+description = "The engine's incremental caches and terrain streaming, checked without a GPU"
 
 [dependencies]
 bevy_ecs.workspace = true
 engine = { workspace = true, features = ["dev"] }
 engine_core = { workspace = true, features = ["dev"] }
-engine_dev.workspace = true
 engine_native.workspace = true
 engine_scene.workspace = true
-stress-lab.workspace = true
 serde_json.workspace = true
 
 [lints]

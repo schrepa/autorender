@@ -31,7 +31,7 @@ const reservation = createServer();
 await new Promise(resolve => reservation.listen(0, "127.0.0.1", () => resolve(undefined)));
 const port = /** @type {import("node:net").AddressInfo} */ (reservation.address()).port;
 await new Promise(resolve => reservation.close(resolve));
-const url = new URL(process.env.AGENT_URL ?? new URL("stress.html", `${process.env.DEMO_URL ?? "http://127.0.0.1:5173"}/`).href);
+const url = new URL(process.env.AGENT_URL ?? new URL("player.html", `${process.env.DEMO_URL ?? "http://127.0.0.1:5173"}/`).href);
 url.searchParams.set("source", `/scenes/${fixtureName}`);
 const child = spawn(process.execPath, [script, "serve", "--url", url.href, "--port", String(port)], { cwd: workspace, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
 let stderr = "";
