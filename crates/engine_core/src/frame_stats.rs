@@ -574,14 +574,22 @@ pub struct WaterStats {
     /// square is gathered).
     pub live_cells: u32,
     /// Cells along a side of the square the live reach asks for
-    /// (`engine_core::LIVE_PIXELS`) that the device's storage bindings cut
-    /// from it, the middle square they hold running instead: the live
-    /// water then hands back to the settled water nearer the eye.
+    /// (`engine_core::LIVE_PIXELS`) that the budget of its cell steps a
+    /// frame cuts from it (`Water::live_budget`): the live water then
+    /// hands back to the settled water nearer the eye.
+    pub live_budget_cut: u32,
+    /// Cells along a side of the square the budget holds that the device's
+    /// storage bindings cut from it, the middle square they hold running
+    /// instead: the live water then hands back nearer the eye still.
     pub live_cut: u32,
-    /// Steps the live water took this frame, each of the same seconds: as
-    /// many as the simulation time passed holds, at most those of a frame
-    /// a thirtieth of a second long.
+    /// Steps the live water took this frame, each of the same seconds, the
+    /// longest in which its fastest water and waves cross a quarter of its
+    /// cells: as many as the simulation time passed holds, at most those of
+    /// a frame a thirtieth of a second long.
     pub live_steps: u32,
+    /// Steps the simulation time passed held this frame past the most a
+    /// frame takes, by which the live water fell behind the clock.
+    pub live_behind: u32,
     /// Solids standing in that square whose push its water takes this
     /// frame, nearest the eye first: bodies and colliders, at most
     /// `SIM_TOUCHES`.

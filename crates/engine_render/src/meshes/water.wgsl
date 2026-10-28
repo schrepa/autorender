@@ -121,9 +121,11 @@
 // which their water gives way to it. Where water runs live around the
 // detail eye (`water_sim.rs`), `sim` holds its square's first corner along
 // x and z, the meters across a cell and the cells along a side (none,
-// zero), and `sim_datum` the height its heights stand above (x, world
-// meters), the slots its blocks turn by along x and z (yz) and its pool's
-// slots along each side (w).
+// zero), `sim_datum` the height its heights stand above (x, world meters),
+// the slots its blocks turn by along x and z (yz) and its pool's slots
+// along each side (w), and `sim_pixels` the pixels across the view a cell
+// spans where the live water hands back to the tiles' (x,
+// `water_live_share`), then nothing.
 // `sediment` holds the color the fine sediment terrains' water carries
 // scatters back (rgb, linear) and how strongly it scatters light, per meter
 // (w); the sea carries none. `lift` holds the pixels the drawn ground (x,
@@ -145,12 +147,13 @@ struct WaterUniform {
     sim_datum: vec4<f32>,
     sediment: vec4<f32>,
     lift: vec4<f32>,
+    sim_pixels: vec4<f32>,
 }
 @group(1) @binding(52) var<uniform> water: WaterUniform;
 // The live water's cells' looks (`water_sim.wgsl`'s, each block of the
 // live square in its slot of the pool, WATER_LIVE_BLOCK cells along each
-// side, a block's row by row), WATER_LIVE_LOOKS entries a cell: the water it
-// settled to, then its water as water's pass draws it, as a tile's water
+// side, a block's row by row), WATER_LIVE_LOOKS entries a cell: the settled
+// water at it, then its water as water's pass draws it, as a tile's water
 // sample holds it: its surface (above the square's datum; NO_WATER_SURFACE
 // where none) and its ground, then its two words as `water_info`'s first
 // two (`water_words`), their bits.
@@ -159,11 +162,8 @@ const WATER_LIVE_BLOCK: u32 = 8u;
 const WATER_LIVE_LOOKS: u32 = 2u;
 // Cells along each edge of the live square over which the solve pulls its
 // water back to the settled water and water's pass hands it back to the
-// tiles' (`gpu_layouts::constants::SIM_RIM`); and the pixels across the view
-// a live cell spans as far out as the water runs live
-// (`engine_core::LIVE_PIXELS`).
+// tiles' (`gpu_layouts::constants::SIM_RIM`).
 const WATER_LIVE_RIM: u32 = 8u;
-const WATER_LIVE_PIXELS: f32 = 4.0;
 // The most foam water carries, as its flow churns it up
 // (`engine_terrain::shallow_water::FOAM_MOST`).
 const WATER_FOAM_MOST: f32 = 1.5;
@@ -722,15 +722,16 @@ fn water_live_read(local: vec2<f32>) -> WaterAt {
 // How much of the water a pixel resolving `seen` meters at terrain-local
 // `local` (`detail_resolved`, seen from the detail eye) reads from the live
 // water (`water_live_read`) rather than the tiles': all of it inside the
-// live square while a live cell spans √2 times WATER_LIVE_PIXELS pixels or
-// more there, handing back to the tiles' water over the upper half of the
-// octave down to WATER_LIVE_PIXELS, as detail levels hand over
-// (`detail_level`), so it is gone where the live reach ends
-// (`engine_core::LIVE_PIXELS`); and across the WATER_LIVE_RIM cells along
-// the square's edges, from where all
-// the samples its smooth surface reads lie inside it, two cells in, to its
-// edges, where the solve has pulled the live water back to the settled
-// water. None where no water runs live.
+// live square while a live cell spans √2 times `water.sim_pixels.x` pixels
+// or more there, handing back to the tiles' water over the upper half of
+// the octave down to that, as detail levels hand over (`detail_level`), so
+// it is gone where the live square's reach ends: where its cells span
+// `engine_core::LIVE_PIXELS`, or nearer where the budget of their steps
+// cuts the square (`engine_core::WaterWindow::pixels`); and across the
+// WATER_LIVE_RIM cells along the square's edges, from where all the samples
+// its smooth surface reads lie inside it, two cells in, to its edges,
+// where the solve has pulled the live water back to the settled water.
+// None where no water runs live.
 fn water_live_share(local: vec2<f32>, seen: f32) -> f32 {
     let n = water.sim.w;
     if n < f32(2u * WATER_LIVE_RIM) {
@@ -739,7 +740,7 @@ fn water_live_share(local: vec2<f32>, seen: f32) -> f32 {
     let cells = (local + terrain.origin.xz - water.sim.xy) / water.sim.z;
     let inside = min(min(cells.x, cells.y), min(n - cells.x, n - cells.y));
     let rim = smoothstep(2.0, f32(WATER_LIVE_RIM), inside);
-    let handed = detail_level(seen, water.sim.z / (2.0 * WATER_LIVE_PIXELS), 2u);
+    let handed = detail_level(seen, water.sim.z / (2.0 * water.sim_pixels.x), 2u);
     return rim * select(0.0, 1.0 - handed.blend, handed.level == 0u);
 }
 

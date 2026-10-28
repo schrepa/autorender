@@ -23,7 +23,7 @@ fn main() {
             "profiling",
             "shaders",
         ],
-        files: &["src/water_sim.wgsl"],
+        files: &["src/water_bursts.wgsl", "src/water_sim.wgsl"],
         crates: Some(&[]),
     }]);
 }

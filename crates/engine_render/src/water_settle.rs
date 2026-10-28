@@ -400,7 +400,7 @@ impl WaterSettle {
         if let Some(buffers) = self.buffers.as_ref() {
             // No wind drags settling water's surface: its records stand for
             // whatever wind blows over them.
-            buffers.write_frames(queue, [0.0; 2]);
+            buffers.write_frames(queue, [0.0; 2], [0; 3]);
             buffers.write_squares(queue, &squares);
         }
         looks

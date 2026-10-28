@@ -1,39 +1,48 @@
 //! Water running live (`water_sim.wgsl`): rivers running over a terrain's
-//! [`WaterWindow`] by the shallow-water equations, the same water as the
-//! settled water around it, starting from the water as it settled there,
-//! which also stands just past its edges and which its rim is pulled back
-//! to, and pushed by the solids standing in it. Water's pass draws it as one
-//! with the tiles' water, reading each cell's look (`meshes/water.wgsl`'s
-//! `water_live_read`). The window is one slot of the scheme's buffers
-//! ([`crate::water_kernels`]) whose pool holds its blocks and as many more
-//! along each side as it moves by ([`WaterWindow::snap`]), each block in the
-//! slot of its place on the terrain's lattice of blocks taken around the
-//! pool's side, with a ring past its edges. Every frame steps every cell by
-//! the same seconds, as many steps as the simulation time passed holds, at
-//! most those of a frame LONGEST_FRAME long, within a fixed number of
-//! dispatches, and then finds each cell's look. As the window follows the
-//! detail eye a block keeps its slot, and the water there runs on: only the
-//! blocks it newly covers take their ground, their water as it settled and
-//! what their beds hold, while its table, its rivers' sources and its ring
-//! are written anew. The window it moves to next, gathered ahead, takes its
-//! new blocks into the slots the running window leaves free a few a frame,
-//! so they are there when it takes the window's place. Blocks taken are
-//! staged in one write the frame's encoding copies into their slots before
-//! the steps, and a new window runs once every block of it is there, taken
-//! a few a frame. Before each step the solids standing in its water push it
+//! [`WaterWindow`] by the shallow-water equations, in cells finer than the
+//! settled water's, the same water as the settled water around it,
+//! starting from the water as it settled there, which also stands just past
+//! its edges and which its rim is pulled back to, stirred by its own
+//! turbulence's bursts and pushed by the solids standing in it. Water's
+//! pass draws it as one with the tiles' water, reading each cell's look
+//! (`meshes/water.wgsl`'s `water_live_read`). The window is one slot of the
+//! scheme's buffers ([`crate::water_kernels`]) whose pool holds its blocks
+//! and as many more along each side as it moves by ([`WaterWindow::snap`]),
+//! each block in the slot of its place on the terrain's lattice of blocks
+//! taken around the pool's side, with a ring past its edges. Every frame
+//! steps every cell by the same seconds, as many steps as the simulation
+//! time passed holds, at most those of a frame LONGEST_FRAME long
+//! ([`live_steps`]), within a fixed number of dispatches, and then finds
+//! each cell's look. As the window follows the detail eye a block keeps
+//! its slot, and the water there runs on: only the blocks it newly covers
+//! take their ground, their water as it settled and what their beds hold,
+//! while its table, its rivers' sources and its ring are written anew. The
+//! window it moves to next, gathered ahead, takes its new blocks into the
+//! slots the running window leaves free a few a frame, so they are there
+//! when it takes the window's place. Blocks taken are staged in one write
+//! the frame's encoding copies into their slots before the steps, and a new
+//! window runs once every block of it is there, taken a few a frame. Before
+//! each step turbulence bursts in its water, each burst drawn by the one
+//! rule for bursts (`water_bursts.wgsl`) from its cell and the step's
+//! index, and pushes it; then the solids standing in its water push it
 //! toward their own velocity and churn its foam, which rides its surface,
 //! dragged by the scene's wind. Where one of the device's storage bindings
 //! cannot hold a buffer of the window, its middle square whose buffers they
-//! hold runs instead.
+//! hold runs instead. Nothing is read back.
 //!
-//! A meter cell's step is 1/112.5 of a second ([`step_seconds`]), so a frame
-//! at 60 Hz steps about twice. On a view 1080 pixels tall through 55
-//! degrees, the window of meter cells is 568 cells along each side (the
-//! live reach of 259 meters and three quarters of a 32-meter snap past it),
-//! 322,624 cells in a pool of 75 × 75 blocks; on one 1440 pixels tall, 744
-//! cells (a reach of 346 meters), 553,536 cells in a pool of 97 × 97 blocks.
-//! Its buffers take about 133 bytes a cell of its pool: about 48 MB and 80
-//! MB.
+//! The cook's meter cells over a meter's samples run live in half-meter
+//! cells (`engine_core`'s `live_cell`), each step 1/225 of a second
+//! ([`step_seconds`]), so a frame at 60 Hz steps about four times and one
+//! LONGEST_FRAME long eight, each step thirteen dispatches at most, 105 a
+//! frame with the looks'. On a view 1080 pixels tall through 55 degrees,
+//! their live reach of 130 meters asks for a window of 616 cells along each
+//! side (with three quarters of a 32-meter snap past it), and the default
+//! budget of 2,097,152 cell steps over the longest frame's eight holds 512
+//! (256 meters, reaching 104 meters or more from the eye), 262,144 cells in
+//! a pool of 72 × 72 blocks, about a million cell steps a frame at 60 Hz;
+//! on one 1440 pixels tall the reach of 173 meters asks for 792 cells, and
+//! the budget holds the same 512. Its buffers take about 133 bytes a cell
+//! of its pool: about 44 MB.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -42,7 +51,7 @@ use bytemuck::Zeroable;
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::terrain_data::shallow_water::{UNHELD, step_seconds};
 use engine_core::terrain_data::{BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, StoredBlocks};
-use engine_core::{SIM_TOUCHES, WaterObstacle, WaterWindow, Wind};
+use engine_core::{SIM_TOUCHES, WaterObstacle, WaterWindow, Wind, live_steps};
 
 use crate::gpu_layouts::constants::{SIM_LIVE, SIM_LIVE_LOOKS, SIM_STEPPING};
 use crate::gpu_layouts::water::{SimSlot, SimTouch, SimTouches};
@@ -50,11 +59,10 @@ use crate::water_kernels::{
     Capacity, Kernels, SlotBuffers, encode_drawn, encode_steps, live_largest_bytes,
 };
 
-/// The longest frame whose time the live water steps through: a longer
-/// frame steps as many steps as this one holds, so a slow frame costs no
-/// more than this, and the water then runs slower than the clock; the foam
-/// field steps no more of it either.
-pub(crate) const LONGEST_FRAME: f64 = 1.0 / 30.0;
+// The longest frame whose time the live water steps through, whose steps
+// a longer frame steps no more of, nor the foam field.
+pub(crate) use engine_core::LONGEST_FRAME;
+
 /// Blocks a frame takes into its window's slots while they are not needed
 /// yet, a new window's before it runs and the blocks the window moves to
 /// next: about a megabyte staged, a millisecond or so of the main thread's.
@@ -81,14 +89,16 @@ pub(crate) struct Live<'a> {
 }
 
 /// A terrain's water running live over its window: the scheme's passes,
-/// the window's buffers, the steps this frame runs, the step of the
-/// simulation's time the last frame stepped to, a count advancing whenever
-/// what water draws from changes, and the solids pushing its water this
-/// frame with those standing in its window past the most that do.
+/// the window's buffers, the steps this frame runs and those the
+/// simulation's time held past them, the step of the simulation's time the
+/// last frame stepped to, a count advancing whenever what water draws from
+/// changes, and the solids pushing its water this frame with those standing
+/// in its window past the most that do.
 pub(crate) struct WaterSim {
     kernels: Kernels,
     window: Option<SimWindow>,
     steps: u32,
+    behind: u32,
     tick: Option<i64>,
     generation: u64,
     touches: [u32; 2],
@@ -136,6 +146,7 @@ impl WaterSim {
             kernels: Kernels::new(device),
             window: None,
             steps: 0,
+            behind: 0,
             tick: None,
             generation: 0,
             touches: [0; 2],
@@ -150,8 +161,9 @@ impl WaterSim {
     /// window waiting ahead the square leaves slots free for; the solids
     /// pushing its water; the wind dragging its surface; and as many steps,
     /// each of the same seconds, as the simulation time since the last frame
-    /// holds, at most LONGEST_FRAME's. Drops it where there is no window, or
-    /// no square of it fits.
+    /// holds, at most LONGEST_FRAME's, each of its index in the simulation's
+    /// time, which its bursts are drawn by. Drops it where there is no
+    /// window, or no square of it fits.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -177,7 +189,7 @@ impl WaterSim {
             if self.window.take().is_some() {
                 self.generation += 1;
             }
-            (self.steps, self.tick, self.touches) = (0, None, [0; 2]);
+            (self.steps, self.behind, self.tick, self.touches) = (0, 0, None, [0; 2]);
             return;
         };
         self.kernels.pipelines(device);
@@ -207,14 +219,21 @@ impl WaterSim {
             self.generation += 1;
         }
         // The steps: as many of a step's seconds as the simulation's time
-        // has passed through since the last frame, at most LONGEST_FRAME's.
+        // has passed through since the last frame, at most LONGEST_FRAME's,
+        // those past them falling behind the clock, the first of them the
+        // step after the last frame's.
         let (cells, cell) = (current.fitted.cells, current.fitted.cell);
         let step = step_seconds(cell);
         let tick = (seconds / f64::from(step)).floor() as i64;
-        let most = (LONGEST_FRAME / f64::from(step)).ceil() as i64;
-        let steps = self.tick.map_or(0, |last| (tick - last).clamp(0, most));
+        let most = i64::from(live_steps(cell));
+        let passed = self.tick.map_or(0, |last| (tick - last).max(0));
+        let starting = self.tick.map_or(tick, |last| last + 1);
         self.tick = Some(tick);
-        self.steps = if current.ready { steps as u32 } else { 0 };
+        (self.steps, self.behind) = if current.ready {
+            (passed.min(most) as u32, (passed - most).max(0) as u32)
+        } else {
+            (0, 0)
+        };
         let pushing = touching(&current.fitted, live.touches);
         self.touches = [
             pushing.as_ref().map_or(0, |pushing| pushing.count[0]),
@@ -224,8 +243,13 @@ impl WaterSim {
         let pooled = current.stored.stored() as u32;
         // The wind's mean drags the surface: its gusts come and go within
         // seconds (`Wind::at`), carrying what floats back and forth by a few
-        // centimeters in a breeze.
-        current.buffers.write_frames(queue, wind.velocity);
+        // centimeters in a breeze. Bursts are drawn by the cell on the
+        // terrain's lattice of the square's cells, an `i32`'s bits each, and
+        // the step's index.
+        let [x, z] = current.fitted.first;
+        current
+            .buffers
+            .write_frames(queue, wind.velocity, [x as u32, z as u32, starting as u32]);
         current.buffers.write_squares(
             queue,
             &[SimSlot {
@@ -287,18 +311,21 @@ impl WaterSim {
         (drawn, self.generation)
     }
 
-    /// The cells along a side of the square that runs and those the
-    /// device's bindings cut from the window, and the steps this frame
-    /// runs.
-    pub(crate) fn cells(&self) -> [u32; 3] {
+    /// The cells along a side of the square that runs, those the budget of
+    /// its cell steps cut from the square its reach asks for, and those the
+    /// device's bindings cut from the window; and the steps this frame runs
+    /// and those the simulation's time held past them.
+    pub(crate) fn cells(&self) -> [u32; 5] {
         self.window
             .as_ref()
             .filter(|window| window.ready)
-            .map_or([0; 3], |window| {
+            .map_or([0; 5], |window| {
                 [
                     window.fitted.cells,
+                    window.source.asked.saturating_sub(window.source.cells),
                     window.source.cells - window.fitted.cells,
                     self.steps,
+                    self.behind,
                 ]
             })
     }
@@ -427,7 +454,7 @@ impl SimWindow {
     /// cells at, UNHELD where none does, its cells' roughness, and the share
     /// of each covered by solids and the height their tops stand at), its
     /// cells' water to start from, into the step's first state, and its
-    /// cells' looks (the water each settled to, and what its bed holds under
+    /// cells' looks (the settled water at each, and what its bed holds under
     /// it, its span's and reach's codes in the top bytes of its words, as
     /// water's pass reads them). A running square takes all of its own at
     /// once, a square not yet running TAKEN of them a frame, and the square

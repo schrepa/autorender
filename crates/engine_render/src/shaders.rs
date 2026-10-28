@@ -86,8 +86,8 @@ shaders! {
         "deformation.wgsl",
     ];
     /// Water running by the shallow-water equations live around the detail
-    /// eye and settling for tiles' records, after the rule turbulence's
-    /// bursts are drawn by.
+    /// eye, pushed by turbulence's bursts, and settling for tiles' records,
+    /// after the rule those bursts are drawn by.
     WATER_SIM_SHADER = [
         "water_bursts.wgsl",
         "water_sim.wgsl",
@@ -369,7 +369,8 @@ entry_points! {
     water_sim = WATER_SIM_SHADER {
         compute: [
             sim_exchange, sim_waves, sim_seconds, sim_drain, sim_update, sim_source, sim_touch,
-            sim_drift, sim_churn, sim_churned, sim_tally, sim_activity, sim_look, sim_drawn
+            sim_burst, sim_push, sim_drift, sim_churn, sim_churned, sim_tally, sim_activity,
+            sim_look, sim_drawn
         ],
     }
     clouds = CLOUDS_SHADER {

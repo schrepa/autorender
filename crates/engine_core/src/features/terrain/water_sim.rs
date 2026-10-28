@@ -1,28 +1,37 @@
 //! Water's live windows: the square of ground around the detail eye over
 //! which the renderer runs rivers by the shallow-water equations (its
-//! `water_sim`), the same water as the settled water around it in that
-//! water's own cells ([`super::settled`]'s, [`Water::simulation_cell`]
-//! across): out from the eye as far as those cells' unsteady features stay
-//! [`LIVE_PIXELS`] across or more ([`live_reach`]), and as far again as the
-//! eye goes from its middle before it follows, a whole number of the
-//! scheme's blocks of cells along each side. Wherever water draws, a window
-//! runs. It holds its ground and the roughness of its rivers' beds, the
-//! solids standing in its water, the water to start from, where its rivers
-//! bring theirs, the water standing just past its edges, and what the beds
-//! hold under its water (their reach and span), which it draws with as the
-//! settled water does. All of it but the ground and the beds' roughness
-//! comes from the terrain's settled water: its solids are those standing in
-//! the water of the records held whole, covering its cells as they cover
-//! the settled cells ([`cover_cells`]); each of its cells is a settled
-//! cell, running at its velocity, its depth its own over its own ground,
-//! held by a lake where the lake holds it; it starts off that steady state
-//! as unsteadily as the water settled there; and its rivers bring what the
-//! settled cells bring. The window starts with water as it runs at its
-//! steady state, flowing and foaming, the cells past its edges give and
-//! take water as the steady state does, and its rivers gain what they drain
-//! inside it, so water left alone stays as it settled. Its heights stand
-//! above a datum, its lowest ground as probed in whole meters, which keeps
-//! them small for the GPU's single precision.
+//! `water_sim`), the same water as the settled water around it
+//! ([`super::settled`]'s, in cells [`Water::simulation_cell`] across), in
+//! live cells finer than the settled ones, as few as put LIVE_ACROSS across
+//! the narrowest channel its streams fill ([`live_cell`]): out from the eye
+//! as far as those cells' unsteady features stay [`LIVE_PIXELS`] across or
+//! more ([`live_reach`]), no farther than a frame's budget of its cells'
+//! steps holds ([`Water::live_budget`]), and as far again as the eye goes
+//! from its middle before it follows, a whole number of the scheme's blocks
+//! of cells along each side. Wherever water draws, a window runs. It holds
+//! its ground and the roughness of its rivers' beds, the solids standing in
+//! its water, the water to start from, where its rivers bring theirs, the
+//! water standing just past its edges, and what the beds hold under its
+//! water (their reach and span), which it draws with as the settled water
+//! does. Its bed is the terrain's ground under each of its cells, the beds'
+//! roughness and what they hold under each one's middle, and the solids
+//! standing in the water of the settled records held whole, covering its
+//! cells by their share as they cover any cells ([`cover_cells`]); the
+//! drawn ground's materials' mesh band, which the GPU's materials alone
+//! hold and which follows the pixels it is drawn at, raises none of it. Its
+//! water comes from the terrain's settled water through that water's smooth
+//! surface ([`SteadyCells::matched`]): each live cell's at the uniform cubic
+//! B-spline through the settled cells around it, as water's shading takes
+//! its smooth surface, its depth its own over its own ground, held by a
+//! lake where the settled cell holding it is, and the live cells over each
+//! flowing settled cell raised and turned alike so their mean is that
+//! cell's water; it starts off that steady state as unsteadily as the water
+//! settled there; the cells past its edges stand as that same water does
+//! there, giving and taking water as the steady state does; and its rivers
+//! bring what the settled cells bring, shared by area, so water left alone
+//! stays as it settled. Its heights stand above a datum, its lowest ground
+//! as probed in whole meters, which keeps them small for the GPU's single
+//! precision.
 //!
 //! A window holds its cells by the scheme's blocks of them, each made from
 //! its place on the terrain's lattice of blocks, the window's cells' size
@@ -53,8 +62,10 @@ use glam::{Vec2, Vec3};
 use super::residency::TerrainState;
 use super::{TerrainDebug, Terrains, Viewport, Water};
 use crate::math::{clamp, max, min, sin_cos};
-use crate::terrain_data::shallow_water::{DRY, roughness};
-use crate::terrain_data::{BLOCK_CELLS, BLOCK_SIDE, Footprint, SteadyCell, TileKey, cover_cells};
+use crate::terrain_data::shallow_water::{DRY, roughness, step_seconds};
+use crate::terrain_data::{
+    BLOCK_CELLS, BLOCK_SIDE, Footprint, NARROWEST, SteadyCell, TileKey, cover_cells,
+};
 use crate::{Camera, WaterObstacle};
 
 /// Pixels across the view a live cell spans, at the view's middle, as far
@@ -64,6 +75,22 @@ use crate::{Camera, WaterObstacle};
 /// water's pass hands the live water over to on the way out
 /// (`meshes/water.wgsl`'s `water_live_share`).
 pub const LIVE_PIXELS: f32 = 4.0;
+/// Live cells across the narrowest water whose flow the live solve turns
+/// ([`live_cell`]): four, the fewest over which its cells' water, linear
+/// across each of them (`water_sim.wgsl`'s reconstruction), carries a
+/// velocity rising from a bank or a rock's side to the stream's thread and
+/// falling back, two cells each side, so its flow bends around what stands
+/// in it and sheds eddies in its lee.
+const LIVE_ACROSS: f32 = 4.0;
+/// The longest frame whose time the live water steps through: a longer
+/// frame steps as many steps as this one holds, so a slow frame costs no
+/// more than this ([`live_steps`]), and the water then runs slower than the
+/// clock; the foam field steps no more of it either.
+pub const LONGEST_FRAME: f64 = 1.0 / 30.0;
+/// Settled cells a live cell's settled water reads past the one holding
+/// its middle, along each axis: the uniform cubic B-spline's control points
+/// around it reach two of them.
+const SPLINE_REACH: f32 = 2.0;
 /// Meters a window's first corner snaps to, as the whole number of the
 /// scheme's blocks of its cells nearest them, and the share of a snap the
 /// eye goes from its middle, along x or z, before it follows: a window
@@ -86,11 +113,12 @@ const DATUM_DRIFT: f32 = 256.0;
 /// square root of 3.
 const NOISE_REACH: f32 = 1.732_050_8;
 /// Cells a frame gathers at most for the window the eye nears while the
-/// window keeps running: a millisecond or two of the main thread's. A move
-/// of a snap along both axes of a window 568 meters across in meter cells
-/// (its reach on a view 1080 pixels tall) uncovers some 36,000 cells,
-/// gathered over 9 frames as the eye crosses the quarter of a snap between
-/// nearing the next snap and following.
+/// window keeps running: a few milliseconds of the main thread's at most. A
+/// move of a snap along both axes of a window 256 meters across in
+/// half-meter cells (the default budget's, on a view 1080 pixels tall or
+/// taller) uncovers some 61,000 cells, gathered over 15 frames as the eye
+/// crosses the quarter of a snap between nearing the next snap and
+/// following.
 const GATHERED: usize = 4096;
 /// The most solids standing in a window's square that push its water each
 /// frame, nearest the eye first: every cell they reach reads them all, so
@@ -103,22 +131,31 @@ const CORNERS: usize = (SIDE + 1) * (SIDE + 1);
 static STAMPS: AtomicU64 = AtomicU64::new(0);
 
 /// The square over which water runs live: its first corner (world x and
-/// z) and the terrain's lattice cell there, its cells along each side, a
-/// whole number of the scheme's blocks of them, and the meters across each,
-/// the blocks it moves by along x or z as it follows the eye (renderers
-/// keep as many more slots along each side, which the window it moves to
-/// takes its new blocks into ahead), and the height its heights stand above
-/// (world meters, whole: its lowest ground as probed, or the datum of the
-/// window before it while that lies near it); its blocks of cells, row by
-/// row, each as any window holding it gathers it (`WaterBlock`); the cells
-/// just past its edges, each as the settled water stands there (along its
-/// south edge, its north, its west and its east, each from its first
-/// corner); and where its rivers bring water.
+/// z) and the cell there on the terrain's lattice of its cells, its cells
+/// along each side, a whole number of the scheme's blocks of them, those
+/// its live reach asks for, which a frame's budget of their steps cuts it
+/// to ([`Water::live_budget`]), the pixels across the view a cell spans, at
+/// the view's middle, as far out as it holds the live reach about the eye
+/// wherever the eye stands in it, where water's pass hands its water back
+/// to the settled water ([`LIVE_PIXELS`] where it holds all the reach asks,
+/// more where the budget cuts it), and the meters across each cell (a live
+/// cell's, `live_cell`'s), the blocks it moves by along x or z as it
+/// follows the eye (renderers keep as many more slots along each side,
+/// which the window it moves to takes its new blocks into ahead), and the
+/// height its heights stand above (world meters, whole: its lowest ground
+/// as probed, or the datum of the window before it while that lies near
+/// it); its blocks of cells, row by row, each as any window holding it
+/// gathers it (`WaterBlock`); the cells just past its edges, each as the
+/// settled water stands there (along its south edge, its north, its west
+/// and its east, each from its first corner); and where its rivers bring
+/// water.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterWindow {
     pub origin: [f32; 2],
     pub first: [i64; 2],
     pub cells: u32,
+    pub asked: u32,
+    pub pixels: f32,
     pub cell: f32,
     pub snap: u32,
     pub datum: f32,
@@ -131,19 +168,19 @@ pub struct WaterWindow {
 /// window holding it gathers it: the stamp it took, which no other block
 /// holds; the ground at its cells' corners over the datum of the windows
 /// holding it (`BLOCK_SIDE + 1` a row, rows along z); and, cells row by row,
-/// each one's water as the settled cell it is stands there, the
-/// roughness of its ground as the scheme counts it (the D84 of the river bed
-/// under it in meters, negated where steps or boulders are carved into the
-/// bed, whose friction then counts its grains alone, and a hillside's
-/// stones and turf outside rivers' channels), what the bed holds under its
-/// middle as the settled water's sample nearest it holds it (its reach's
-/// code beside its span's, [`crate::terrain_data::Tile::bed_word`]) and the
-/// share of it covered by the solids standing in the settled water, with the
-/// height their tops stand at over the datum ([`cover_cells`]; 0 each where
-/// none covers it); and whether its ground came from the finest tiles
-/// alone, as every block within the live reach's does: one beyond it may
-/// stand on a coarser level's, and is gathered again once the finest tiles
-/// stand under it.
+/// each one's water as the settled water stands at it
+/// (`SteadyCells::matched`), the roughness of its ground as the scheme
+/// counts it (the D84 of the river bed under it in meters, negated where
+/// steps or boulders are carved into the bed, whose friction then counts
+/// its grains alone, and a hillside's stones and turf outside rivers'
+/// channels), what the bed holds under its middle as the settled water's
+/// sample nearest it holds it (its reach's code beside its span's,
+/// [`crate::terrain_data::Tile::bed_word`]) and the share of it covered by
+/// the solids standing in the settled water, with the height their tops
+/// stand at over the datum ([`cover_cells`]; 0 each where none covers it);
+/// and whether its ground came from the finest tiles alone, as every block
+/// within the live reach's does: one beyond it may stand on a coarser
+/// level's, and is gathered again once the finest tiles stand under it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterBlock {
     stamp: u64,
@@ -155,8 +192,8 @@ pub struct WaterBlock {
     cover: [[f32; 2]; BLOCK_CELLS],
 }
 
-/// A cell of a window, or one just past its edges, as the settled cell it
-/// is stands: the surface it stands at (meters above the window's datum;
+/// A cell of a window, or one just past its edges, as the settled water
+/// stands at it: the surface it stands at (meters above the window's datum;
 /// NaN where dry), its velocity along x and z (meters a second), the level
 /// a lake holds it at (NaN where none does) and its foam; and how far it
 /// starts off that steady state, as unsteadily as the water settled there:
@@ -404,7 +441,8 @@ impl WaterWindow {
     /// The square of its middle `cells` cells along each side, whole blocks
     /// of them (all of it, where it has no more): its blocks there, the
     /// cells just past that square's edges standing as it holds them, and
-    /// its sources there, on its datum.
+    /// its sources there, on its datum, its cells spanning as many more
+    /// pixels where it hands back as it holds less of the reach.
     #[must_use]
     pub fn within(&self, cells: u32) -> Self {
         let side = self.blocks();
@@ -415,6 +453,10 @@ impl WaterWindow {
             self.first[0] + i64::from(shift),
             self.first[1] + i64::from(shift),
         ];
+        // The reach it holds about the eye, the eye FOLLOW of a snap from its
+        // middle at most, and the pixels a cell spans there.
+        let follows = FOLLOW * self.snap as f32 * BLOCK_SIDE as f32 * self.cell;
+        let holds = |cells: u32| max(0.5 * cells as f32 * self.cell - follows, self.cell);
         let mut blocks = Vec::with_capacity((kept * kept) as usize);
         for z in off..off + kept {
             for x in off..off + kept {
@@ -440,6 +482,8 @@ impl WaterWindow {
             origin: (Vec2::from(self.origin) + Vec2::splat(shift as f32 * self.cell)).to_array(),
             first,
             cells: n,
+            asked: self.asked,
+            pixels: self.pixels * holds(self.cells) / holds(n),
             cell: self.cell,
             snap: self.snap,
             datum: self.datum,
@@ -519,18 +563,48 @@ impl Terrains {
 /// [`LIVE_PIXELS`] pixels or more across a view `height` pixels tall
 /// through a vertical field of view of `fov` radians, at its middle, as
 /// the detail eye's measures count a pixel (`scene.wgsl`'s
-/// `detail_across`): how far water runs live. Meter cells reach 259 meters
-/// on a view 1080 pixels tall through 55 degrees, and 346 meters on one
-/// 1440 pixels tall.
+/// `detail_across`): how far water runs live, where its budget holds as
+/// far. Half-meter cells reach 130 meters on a view 1080 pixels tall
+/// through 55 degrees, and 173 meters on one 1440 pixels tall.
 fn live_reach(cell: f32, height: u32, fov: f32) -> f32 {
     let (sin, cos) = sin_cos(0.5 * fov);
     cell * height.max(1) as f32 * cos / max(2.0 * sin * LIVE_PIXELS, 1.0e-6)
 }
 
+/// The meters across the live cells over settled cells `settled` meters
+/// across, on a terrain whose finest level's samples stand `finest` apart:
+/// LIVE_ACROSS of them across the narrowest water its streams fill, the
+/// narrowest channel its bake cuts ([`NARROWEST`] of those samples, the
+/// fewest any feature of its ground spans), each settled cell split along
+/// each side into the fewest that does, a power of two no more than a
+/// block's side, so the live cells tile the settled cells and each block
+/// holds whole settled cells; the settled cells themselves where they are
+/// as fine. Rocks standing in the water, solids, turn it by the share of
+/// the live cells they cover. For the cook's meter cells over a meter's
+/// samples, half a meter: four across a two-meter channel, and two or more
+/// across a boulder a meter wide; a quarter of a meter would put four
+/// across it, but its steps, twice as many, would leave the budget a reach
+/// of a few tens of meters.
+fn live_cell(settled: f32, finest: f32) -> f32 {
+    let narrowest = NARROWEST * finest;
+    let split = max((LIVE_ACROSS * settled / narrowest).ceil(), 1.0) as u32;
+    settled / split.next_power_of_two().min(BLOCK_SIDE) as f32
+}
+
+/// The most steps the live water takes a frame over cells `cell` meters
+/// across: as many as a frame [`LONGEST_FRAME`] long holds, each the
+/// longest in which its fastest water and waves cross a share of a cell
+/// (`step_seconds`), so the steps a frame dispatches stay a fixed count:
+/// eight of half-meter cells.
+pub fn live_steps(cell: f32) -> u32 {
+    (LONGEST_FRAME / f64::from(step_seconds(cell))).ceil() as u32
+}
+
 /// Places a window around the detail eye (the camera's eye unless frozen,
 /// [`TerrainDebug`]) wherever water draws, over the first baked terrain no
-/// other surrounds, in its settled water's cells, reaching [`live_reach`]
-/// on the frame's viewport ([`follow`]); drops every other window, and
+/// other surrounds, in live cells over its settled water's ([`live_cell`]),
+/// reaching [`live_reach`] on the frame's viewport, as far as the water's
+/// budget of cell steps holds ([`follow`]); drops every other window, and
 /// every window waiting ahead or being gathered, as it does where water
 /// does not draw.
 pub(crate) fn place_water_windows(
@@ -543,7 +617,9 @@ pub(crate) fn place_water_windows(
     // Windows are read, not watched: placing them changes nothing
     // terrains' observers wait on.
     let terrains = terrains.bypass_change_detection();
+    let water = water.map(|water| *water);
     let drawn = water.is_some_and(|water| water.enabled);
+    let budget = water.unwrap_or_default().live_budget;
     let wanted = drawn
         .then(|| {
             terrains
@@ -558,34 +634,48 @@ pub(crate) fn place_water_windows(
         .and_then(|debug| debug.freeze)
         .unwrap_or(camera.position);
     for (index, state) in terrains.entries.iter_mut().enumerate() {
-        let cell = state.settled.cell();
-        if Some(index) != wanted || !(cell.is_finite() && cell > 0.0) {
+        let settled = state.settled.cell();
+        if Some(index) != wanted || !(settled.is_finite() && settled > 0.0) {
             state.hydrology.window = None;
             state.hydrology.ahead = None;
             state.hydrology.gathering = None;
             continue;
         }
+        let cell = live_cell(settled, state.terrain.pyramid.spacing(0));
         let reach = live_reach(cell, height, camera.vertical_fov_radians);
-        follow(state, (reach, cell), eye);
+        follow(state, (reach, cell, budget), eye);
     }
 }
 
 /// Follows the detail eye at `eye` with `state`'s window, in cells `cell`
 /// meters across, as many along each side as reach `reach` meters from the
-/// eye and FOLLOW of a snap past it with whole blocks of them: once the eye
+/// eye and FOLLOW of a snap past it with whole blocks of them, or as many
+/// as `budget` cell steps hold over a frame's most steps ([`live_steps`])
+/// where they are fewer, though no fewer than hold FOLLOW of a snap about
+/// its middle and a block more on each side, its rim's: once the eye
 /// stands nearer another snap than the window's, the window at the snap
 /// nearest it is gathered ahead, GATHERED cells a frame, taking over what
 /// the window, the window waiting ahead and the gathering before this one
 /// hold on its datum; once whole it waits ahead, and takes the window's
 /// place once the eye has gone FOLLOW of a snap from the window's middle
-/// along x or z, or at once where no window of its size runs.
-fn follow(state: &mut TerrainState, (reach, cell): (f32, f32), eye: Vec3) {
+/// along x or z, or at once where no window of its size runs. The window
+/// running keeps the cells its reach asks for, and the pixels a cell spans
+/// as far out as it holds the reach, as they change.
+fn follow(state: &mut TerrainState, (reach, cell, budget): (f32, f32, u32), eye: Vec3) {
     let side = BLOCK_SIDE as f32;
     let snap_blocks = max((SNAP / (cell * side)).round(), 1.0);
     let snap = snap_blocks * side * cell;
-    let across = 2.0 * (reach + FOLLOW * snap);
-    let cells = max((across / (cell * side)).ceil(), 1.0) as u32 * BLOCK_SIDE;
+    let block = cell * side;
+    let asked = max((2.0 * (reach + FOLLOW * snap) / block).ceil(), 1.0);
+    let afforded = (f64::from(budget) / f64::from(live_steps(cell))).sqrt() as f32 / side;
+    let least = (2.0 * FOLLOW * snap / block).ceil() + 2.0;
+    let cells = min(asked, max(afforded.floor(), least)) as u32 * BLOCK_SIDE;
+    let asked = asked as u32 * BLOCK_SIDE;
     let size = cells as f32 * cell;
+    // The pixels a cell spans as far out as the window holds the reach
+    // about the eye wherever it stands in it: LIVE_PIXELS where it holds all
+    // the reach asks, more where the budget cuts it.
+    let pixels = LIVE_PIXELS * max(reach / max(0.5 * size - FOLLOW * snap, cell), 1.0);
     let eye = Vec2::new(eye.x, eye.z);
     let before = state
         .hydrology
@@ -599,7 +689,14 @@ fn follow(state: &mut TerrainState, (reach, cell): (f32, f32), eye: Vec3) {
     let at = ((eye - flat - Vec2::splat(0.5 * size)) / snap).round();
     let step = snap_blocks as i64 * i64::from(BLOCK_SIDE);
     let first = [at.x as i64 * step, at.y as i64 * step];
-    if current.is_some_and(|window| window.first == first) {
+    if let Some(window) = current.filter(|window| window.first == first) {
+        if (window.asked, window.pixels) != (asked, pixels) {
+            state.hydrology.window = Some(Arc::new(WaterWindow {
+                asked,
+                pixels,
+                ..WaterWindow::clone(window)
+            }));
+        }
         state.hydrology.gathering = None;
         return;
     }
@@ -658,7 +755,7 @@ fn follow(state: &mut TerrainState, (reach, cell): (f32, f32), eye: Vec3) {
         }
     };
     if gathering.gather(state, GATHERED) {
-        let window = Arc::new(gathering.finish(state, before.as_deref()));
+        let window = Arc::new(gathering.finish(state, before.as_deref(), (asked, pixels)));
         if follows {
             state.hydrology.window = Some(window);
             state.hydrology.ahead = None;
@@ -672,9 +769,10 @@ fn follow(state: &mut TerrainState, (reach, cell): (f32, f32), eye: Vec3) {
 
 /// A window being gathered for the square the eye nears, a few of its
 /// blocks a frame while the window keeps running: its first corner (world x
-/// and z) and the terrain's lattice cell there, its cells along each side,
-/// the meters across each and the blocks it moves by, its datum, and its
-/// blocks, row by row, each once gathered or taken over.
+/// and z) and the cell there on the terrain's lattice of its cells, its
+/// cells along each side, the meters across each and the blocks it moves
+/// by, its datum, and its blocks, row by row, each once gathered or taken
+/// over.
 pub(super) struct Gathering {
     origin: Vec2,
     first: [i64; 2],
@@ -686,11 +784,11 @@ pub(super) struct Gathering {
 }
 
 impl Gathering {
-    /// The window from `origin` (world x and z), the terrain's lattice cell
-    /// `first`, of `cells` cells `cell` meters across along each side moving
-    /// by `snap` blocks, on `datum`: each of its blocks `carried` holds at
-    /// its place on the terrain's lattice of blocks taken over, the rest
-    /// still to gather.
+    /// The window from `origin` (world x and z), the cell `first` on the
+    /// terrain's lattice of its cells, of `cells` cells `cell` meters across
+    /// along each side moving by `snap` blocks, on `datum`: each of its
+    /// blocks `carried` holds at its place on the terrain's lattice of
+    /// blocks taken over, the rest still to gather.
     fn new(
         (origin, first): (Vec2, [i64; 2]),
         (cells, cell, snap): (u32, f32, u32),
@@ -774,8 +872,17 @@ impl Gathering {
     /// The window, its blocks all gathered, with the cells just past its
     /// edges and its rivers' sources: taken over from `before`, the window
     /// before it on its datum, where that holds them, and read from `state`
-    /// where it does not.
-    fn finish(self, state: &TerrainState, before: Option<&WaterWindow>) -> WaterWindow {
+    /// where it does not, each cell past its edges as the settled water
+    /// stands at it over its own ground, as it would inside a window
+    /// (`SteadyCells::matched`); with `asked`, the cells its live reach asks
+    /// for along each side, and `pixels`, the pixels a cell spans where its
+    /// live water hands back.
+    fn finish(
+        self,
+        state: &TerrainState,
+        before: Option<&WaterWindow>,
+        (asked, pixels): (u32, f32),
+    ) -> WaterWindow {
         let n = self.cells as usize;
         let around: Vec<[i64; 2]> = ring_cells(self.first, self.cells).collect();
         let mut ring: Vec<Option<WaterCell>> = around
@@ -783,18 +890,37 @@ impl Gathering {
             .map(|&at| before.and_then(|window| window.water_on(at)))
             .collect();
         // Along each edge, the stretch of the cells the window before it
-        // does not hold is read.
+        // does not hold is read, over the settled cells their settled water
+        // reads.
+        let settled = state.settled.cell();
+        let split = (settled / self.cell).round() as i64;
         let middle = |[i, j]: [i64; 2]| (Vec2::new(i as f32, j as f32) + 0.5) * self.cell;
+        let reach = Vec2::splat((SPLINE_REACH + 1.0) * settled);
+        let bed = |i: i64, j: i64| {
+            let corner = |x: i64, z: i64| {
+                ground_at(state, Vec2::new(x as f32, z as f32) * self.cell, self.datum).0
+            };
+            0.25 * (corner(i, j) + corner(i + 1, j) + corner(i, j + 1) + corner(i + 1, j + 1))
+        };
         for edge in 0..4 {
             let line = edge * n..(edge + 1) * n;
             let fresh: Vec<usize> = line.filter(|&at| ring[at].is_none()).collect();
             let (Some(&low), Some(&high)) = (fresh.first(), fresh.last()) else {
                 continue;
             };
-            let ends = (middle(around[low]), middle(around[high]));
+            let ends = (middle(around[low]) - reach, middle(around[high]) + reach);
             let steady = SteadyCells::read(state, ends, self.datum);
+            // The cells along an edge lie a settled cell's live cells in a
+            // row in the same settled cell, read once.
+            let mut read: Option<([i64; 2], Vec<WaterCell>)> = None;
             for at in fresh {
-                ring[at] = Some(steady.at(middle(around[at])));
+                let [i, j] = around[at];
+                let holding = [i.div_euclid(split), j.div_euclid(split)];
+                if read.as_ref().is_none_or(|(those, _)| *those != holding) {
+                    read = Some((holding, steady.matched(holding, (self.cell, split), &bed)));
+                }
+                let within = j.rem_euclid(split) * split + i.rem_euclid(split);
+                ring[at] = read.as_ref().map(|(_, cells)| cells[within as usize]);
             }
         }
         let sources = sources(state, (self.first, self.cells, self.cell), before);
@@ -802,6 +928,8 @@ impl Gathering {
             origin: self.origin.to_array(),
             first: self.first,
             cells: self.cells,
+            asked,
+            pixels,
             cell: self.cell,
             snap: self.snap,
             datum: self.datum,
@@ -873,14 +1001,15 @@ fn refined(state: &TerrainState, at: [i64; 2], cell: f32) -> bool {
     })
 }
 
-/// Whether `state` holds the settled water the window from the terrain's
-/// lattice cell `first` of cells `cell` meters across, over `cells` of them
-/// along each side, reads: that of every level-0 tile its bake's water
-/// reaches under the window and the cells just past its edges.
+/// Whether `state` holds the settled water the window from the cell `first`
+/// of the terrain's lattice of cells `cell` meters across, over `cells` of
+/// them along each side, reads: that of every level-0 tile its bake's water
+/// reaches under the window, the cells just past its edges and the settled
+/// cells their settled water reads around them (`SteadyCells::matched`).
 fn settled(state: &TerrainState, first: [i64; 2], (cells, cell): (u32, f32)) -> bool {
     let pyramid = &state.terrain.pyramid;
     let size = pyramid.tile_size(0);
-    let reach = Vec2::splat(cell);
+    let reach = Vec2::splat(cell + (SPLINE_REACH + 1.0) * state.settled.cell());
     let low = Vec2::new(first[0] as f32, first[1] as f32) * cell - reach;
     let high = Vec2::new(
         (first[0] + i64::from(cells)) as f32,
@@ -900,13 +1029,15 @@ fn settled(state: &TerrainState, first: [i64; 2], (cells, cell): (u32, f32)) -> 
 }
 
 /// The blocks of the terrain's lattice of blocks along row `row`, over
-/// `columns`, in cells `cell` meters across, as `state`'s resident tiles
-/// and settled water stand there, their heights over `datum` (world
-/// meters): the ground at their corners from the finest tiles holding them,
-/// their cells' water from the settled cells they are, their ground's
-/// roughness and what their beds hold from the beds of the finest tiles
-/// under their middles and those tiles' settled water there, and what the
-/// solids standing in the settled water held whole cover of their cells.
+/// `columns`, in live cells `cell` meters across, as `state`'s resident
+/// tiles and settled water stand there, their heights over `datum` (world
+/// meters): the ground at their corners from the finest tiles holding them
+/// (`ground_at`), their cells' water as the settled water stands at them
+/// over their own ground (`SteadyCells::matched`, each block holding whole
+/// settled cells), their ground's roughness and what their beds hold from
+/// the beds of the finest tiles under their middles and those tiles'
+/// settled water there, and what the solids standing in the settled water
+/// held whole cover of their cells.
 fn gather_run(
     state: &TerrainState,
     (cell, datum): (f32, f32),
@@ -916,6 +1047,8 @@ fn gather_run(
     let side = i64::from(BLOCK_SIDE);
     let anchor = state.terrain.origin.y;
     let pyramid = &state.terrain.pyramid;
+    let settled = state.settled.cell();
+    let split = (settled / cell).round() as i64;
     // Its cells, from `low` up to before `high` on the terrain's lattice.
     let low = [columns.start * side, row * side];
     let high = [columns.end * side, (row + 1) * side];
@@ -927,15 +1060,34 @@ fn gather_run(
     let mut fine = Vec::with_capacity(stride * (SIDE + 1));
     for j in low[1]..=high[1] {
         for i in low[0]..=high[0] {
-            let point = Vec2::new(i as f32, j as f32) * cell;
-            let sample = state.sample(point);
-            let height = sample.map_or(anchor, |(_, sample)| anchor + sample.height);
-            ground.push(height - datum);
-            fine.push(sample.is_some_and(|(level, _)| level == 0));
+            let (height, finest) = ground_at(state, Vec2::new(i as f32, j as f32) * cell, datum);
+            ground.push(height);
+            fine.push(finest);
         }
     }
-    let ends = (middle(low[0], low[1]), middle(high[0] - 1, high[1] - 1));
+    // Its cells' water, `stride - 1` cells a row, settled cell by settled
+    // cell, from the settled water around them.
+    let across = stride - 1;
+    let around = Vec2::splat((SPLINE_REACH + 1.0) * settled);
+    let ends = (
+        middle(low[0], low[1]) - around,
+        middle(high[0] - 1, high[1] - 1) + around,
+    );
     let steady = SteadyCells::read(state, ends, datum);
+    let bed = |i: i64, j: i64| {
+        let at = (j - low[1]) as usize * stride + (i - low[0]) as usize;
+        0.25 * (ground[at] + ground[at + 1] + ground[at + stride] + ground[at + stride + 1])
+    };
+    let mut waters = vec![WaterCell::DRY; across * SIDE];
+    for z in low[1].div_euclid(split)..high[1].div_euclid(split) {
+        for x in low[0].div_euclid(split)..high[0].div_euclid(split) {
+            let cells = steady.matched([x, z], (cell, split), &bed);
+            for (k, standing) in (0_i64..).zip(cells) {
+                let (i, j) = (x * split + k % split, z * split + k / split);
+                waters[(j - low[1]) as usize * across + (i - low[0]) as usize] = standing;
+            }
+        }
+    }
     // What the solids standing in the settled water cover of its cells,
     // their tops over the datum, `stride - 1` cells a row.
     let reach = (
@@ -952,7 +1104,6 @@ fn gather_run(
             (at + half).cmpge(reach.0).all() && (at - half).cmple(reach.1).all()
         })
         .collect();
-    let across = stride - 1;
     let mut covers = vec![[0.0_f32; 2]; across * SIDE];
     let cells = [across as u32, BLOCK_SIDE];
     for ([i, j], [share, top]) in cover_cells(&solids, (low, cells), cell) {
@@ -983,13 +1134,23 @@ fn gather_run(
                 stamp: STAMPS.fetch_add(1, Ordering::Relaxed) + 1,
                 fine: (0..CORNERS).all(|k| fine[corners(k)]),
                 corners: std::array::from_fn(|k| ground[corners(k)]),
-                water: std::array::from_fn(|k| steady.at(at(k))),
+                water: std::array::from_fn(|k| waters[k / SIDE * across + corner + k % SIDE]),
                 roughness: beds.map(|(rough, _)| rough),
                 bed_words: beds.map(|(_, word)| word),
                 cover: std::array::from_fn(|k| covers[k / SIDE * across + corner + k % SIDE]),
             }
         })
         .collect()
+}
+
+/// The ground at terrain-local `point` over `datum` (world meters), from
+/// the finest tiles `state` holds there (the terrain's origin where it
+/// holds none), and whether those are the finest level's.
+fn ground_at(state: &TerrainState, point: Vec2, datum: f32) -> (f32, bool) {
+    let anchor = state.terrain.origin.y;
+    let sample = state.sample(point);
+    let height = sample.map_or(anchor, |(_, sample)| anchor + sample.height);
+    (height - datum, sample.is_some_and(|(level, _)| level == 0))
 }
 
 /// Where the rivers of `state`'s settled water bring water to the window
@@ -1212,48 +1373,158 @@ impl SteadyCells {
         self.cells[z as usize * self.columns + x as usize]
     }
 
-    /// The water of the settled cell whose middle is terrain-local `point`,
-    /// a window's cell's or one just past its edges: dry; held still by a
-    /// lake at its level; or flowing at its surface and velocity, starting
-    /// off them by noise of zero mean hashed at the cell, as far as its
-    /// surface and its speed strayed as it settled, its speed's shared by x
-    /// and z; with its foam.
-    fn at(&self, point: Vec2) -> WaterCell {
-        let (i, j) = (
-            (point.x / self.cell).floor() as i64,
-            (point.y / self.cell).floor() as i64,
-        );
-        match self.get(i, j) {
-            Steady::Dry => WaterCell::DRY,
-            Steady::Held { level, foam } => WaterCell {
+    /// The settled water at terrain-local `point`, the middle of cell `at`
+    /// on the terrain's lattice of live cells, through the settled water's
+    /// smooth surface: the uniform cubic B-spline whose control points are
+    /// the 4 × 4 settled cells around it (`spline`), as water's shading
+    /// takes its smooth surface through its samples (`meshes/water.wgsl`'s
+    /// `water_smooth`), its surface, velocity, foam and swings each through
+    /// the weights of those holding water alone, shared out over them, so it
+    /// keeps its level up to where they end, a lake's cells standing at its
+    /// level and still; held by a lake where the settled cell holding it is;
+    /// dry where none of them holds water. It starts off that steady state
+    /// by noise of zero mean hashed at its cell, as far as the settled
+    /// water's surface and its speed strayed as it settled there, its
+    /// speed's shared by x and z.
+    fn smooth(&self, point: Vec2, at: [i64; 2]) -> WaterCell {
+        let spot = point / self.cell;
+        let holding = spot.floor();
+        if let Steady::Held { level, foam } = self.get(holding.x as i64, holding.y as i64) {
+            return WaterCell {
                 surface: level,
                 velocity: [0.0; 2],
                 held: level,
                 foam,
                 unsteady: [0.0; 3],
-            },
-            Steady::Flowing {
-                surface,
-                velocity,
-                foam,
-                heave,
-                rush,
-            } => {
-                let across = rush * std::f32::consts::FRAC_1_SQRT_2;
-                WaterCell {
-                    surface,
-                    velocity: velocity.to_array(),
-                    held: f32::NAN,
-                    foam,
-                    unsteady: [
-                        heave * unit_noise(i, j, 0),
-                        across * unit_noise(i, j, 1),
-                        across * unit_noise(i, j, 2),
-                    ],
-                }
+            };
+        }
+        // The control points, from the one before the settled middle
+        // nearest below the point along x and z, and the point's share of
+        // the way between the middle two.
+        let spot = spot - 0.5;
+        let corner = spot.floor();
+        let (along_x, along_z) = (spline(spot.x - corner.x), spline(spot.y - corner.y));
+        let first = [corner.x as i64 - 1, corner.y as i64 - 1];
+        let (mut total, mut surfaces, mut foams) = (0.0, 0.0, 0.0);
+        let (mut velocities, mut swings) = (Vec2::ZERO, Vec2::ZERO);
+        for (row, &weight_z) in (0_i64..).zip(&along_z) {
+            for (column, &weight_x) in (0_i64..).zip(&along_x) {
+                let (level, running, white, swing) =
+                    match self.get(first[0] + column, first[1] + row) {
+                        Steady::Dry => continue,
+                        Steady::Held { level, foam } => (level, Vec2::ZERO, foam, Vec2::ZERO),
+                        Steady::Flowing {
+                            surface,
+                            velocity,
+                            foam,
+                            heave,
+                            rush,
+                        } => (surface, velocity, foam, Vec2::new(heave, rush)),
+                    };
+                let weight = weight_x * weight_z;
+                total += weight;
+                surfaces += weight * level;
+                velocities += weight * running;
+                foams += weight * white;
+                swings += weight * swing;
             }
         }
+        if total <= 0.0 {
+            return WaterCell::DRY;
+        }
+        let share = 1.0 / total;
+        let swings = swings * share;
+        let across = swings.y * std::f32::consts::FRAC_1_SQRT_2;
+        WaterCell {
+            surface: surfaces * share,
+            velocity: (velocities * share).to_array(),
+            held: f32::NAN,
+            foam: foams * share,
+            unsteady: [
+                swings.x * unit_noise(at[0], at[1], 0),
+                across * unit_noise(at[0], at[1], 1),
+                across * unit_noise(at[0], at[1], 2),
+            ],
+        }
     }
+
+    /// The settled water of the live cells over settled cell `holding` (on
+    /// the terrain's lattice of settled cells), `split` along each side of
+    /// it and `cell` meters across, row by row, each over its own ground,
+    /// which `bed` gives at its place on the terrain's lattice of live
+    /// cells: each through the smooth surface ([`Self::smooth`]); and, where
+    /// the settled cell flows, those of them holding water raised or lowered
+    /// alike and their velocity turned alike, so their mean surface and
+    /// velocity are the settled cell's, or, where none of them would hold
+    /// water, each at the settled cell's surface, velocity and foam. Over
+    /// each settled cell, the live cells' settled water is that cell's
+    /// water, the same water as the settled water around the live window.
+    fn matched(
+        &self,
+        holding: [i64; 2],
+        (cell, split): (f32, i64),
+        bed: impl Fn(i64, i64) -> f32,
+    ) -> Vec<WaterCell> {
+        let first = [holding[0] * split, holding[1] * split];
+        let count = (split * split) as usize;
+        let (mut cells, mut beds) = (Vec::with_capacity(count), Vec::with_capacity(count));
+        for j in first[1]..first[1] + split {
+            for i in first[0]..first[0] + split {
+                let middle = (Vec2::new(i as f32, j as f32) + 0.5) * cell;
+                cells.push(self.smooth(middle, [i, j]));
+                beds.push(bed(i, j));
+            }
+        }
+        let Steady::Flowing {
+            surface,
+            velocity,
+            foam,
+            ..
+        } = self.get(holding[0], holding[1])
+        else {
+            return cells;
+        };
+        let wet = |water: &WaterCell, ground: f32| water.surface - ground > DRY;
+        let (mut wets, mut level, mut running) = (0_u32, 0.0, Vec2::ZERO);
+        for (water, &ground) in cells.iter().zip(&beds) {
+            if wet(water, ground) {
+                wets += 1;
+                level += water.surface;
+                running += Vec2::from(water.velocity);
+            }
+        }
+        if wets == 0 {
+            for water in &mut cells {
+                water.surface = surface;
+                water.velocity = velocity.to_array();
+                water.foam = foam;
+            }
+            return cells;
+        }
+        let share = 1.0 / wets as f32;
+        let (raise, turn) = (surface - level * share, velocity - running * share);
+        for (water, &ground) in cells.iter_mut().zip(&beds) {
+            if wet(water, ground) {
+                water.surface += raise;
+                water.velocity = (Vec2::from(water.velocity) + turn).to_array();
+            }
+        }
+        cells
+    }
+}
+
+/// The weights the uniform cubic B-spline gives four control points a step
+/// apart at a point `t` (0 to 1) of the way from the second to the third,
+/// as water's shading takes them (`meshes/water.wgsl`'s `water_spline`):
+/// they sum to 1.
+fn spline(t: f32) -> [f32; 4] {
+    let s = 1.0 - t;
+    [
+        s * s * s / 6.0,
+        ((3.0 * t - 6.0) * t * t + 4.0) / 6.0,
+        (((3.0 - 3.0 * t) * t + 3.0) * t + 1.0) / 6.0,
+        t * t * t / 6.0,
+    ]
 }
 
 /// `value`, or none where a record holds none of it (NaN).

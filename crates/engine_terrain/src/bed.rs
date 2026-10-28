@@ -41,7 +41,7 @@ pub(crate) const HEAD_FLOOD: f32 = 0.16;
 /// The fewest of the grid's samples a channel spans from bank to bank:
 /// narrower channels are cut that wide, as deep as they carry their flood,
 /// so the water settling over the grid stays in them.
-pub(crate) const NARROWEST: f32 = 2.0;
+pub const NARROWEST: f32 = 2.0;
 
 /// The slopes (meters a meter) at which a reach's bed changes form
 /// (Montgomery and Buffington 1997): gentler than the first, pools and

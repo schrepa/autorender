@@ -1,18 +1,17 @@
 // Turbulence reaching water's surface in bursts: the one rule every
 // simulation of water draws the events of its turbulence by, the foam
 // field's boils and patches (`meshes/water_foam_field.wgsl`) and the live
-// solve's turbulent pushes alike. Below its grid a simulation knows how
-// turbulent each place is: its turbulence, its eddies' speed, the energy it
-// loses, the white water born in it. Turbulence reaches the surface
-// intermittently, so its events are random in space and time, Poisson about
-// the simulation's rate as their mean. Each is drawn from a hash of the
-// cell of the world it stands at and the simulation's step index alone, so
-// every host draws the same events however its frames fall. A caller names
-// its sites (the cells of a grid anchored in the world, counted from the
-// world's origin), how long its events live (`water_burst_slot`: each site
-// runs through slots of steps about that long, each slot's events born as
-// it begins) and how many it expects at a site over a slot, from the rate
-// the simulation holds there (`water_burst_weight`).
+// solve's turbulent pushes (`water_sim.wgsl`'s `sim_burst`) alike. Below its
+// grid a simulation knows how turbulent each place is: its turbulence, its
+// eddies' speed, the energy it loses, the white water born in it.
+// Turbulence reaches the surface intermittently, so its events are random
+// in space and time, Poisson about the simulation's rate as their mean.
+// Each is drawn from a hash of the cell of the world it stands at and the
+// simulation's step index alone, so every host draws the same events
+// however its frames fall. The foam field names its sites, how long its
+// events live (`water_burst_slot`) and how many it expects at a site over a
+// slot (`water_burst_weight`); the live solve draws at most one a cell a
+// step (`water_burst`).
 
 // The most steps a slot spans: 2^WATER_BURST_LONGEST, minutes of the
 // simulation's steps, longer than any eddy turns over.
@@ -74,4 +73,36 @@ fn water_burst_weight(mean: f32, drawn: f32) -> f32 {
         return 0.0;
     }
     return mean / fires;
+}
+
+
+// A burst drawn for a cell at a step: whether one starts there then, where
+// in the cell it starts (0 to 1 along x and z), and a draw of its own (0 to
+// 1) for the burst to use, such as its heading.
+struct WaterBurst {
+    starts: bool,
+    within: vec2<f32>,
+    turn: f32,
+}
+
+// The stream the live solve's bursts draw from (`water_burst_bits`'), past
+// those the foam field's grids use.
+const WATER_BURST_LIVE: u32 = 16u;
+
+// Four draws, each uniform over [0, 1), for world cell `cell` of the live
+// solve's lattice at step `tick` (`water_burst_bits`), each its draw's top
+// 24 bits, which a float holds exactly.
+fn water_burst_draws(cell: vec2<i32>, tick: u32) -> vec4<f32> {
+    let bits = water_burst_bits(cell, WATER_BURST_LIVE, vec2<u32>(tick, 0u));
+    return vec4<f32>(bits >> vec4<u32>(8u)) * (1.0 / 16777216.0);
+}
+
+// The burst of world cell `cell` at step `tick`, where bursts start `mean`
+// times a cell a step on average: one starts with the chance 1 − e^−mean
+// that a Poisson process of that mean starts at least one, so at most one
+// a cell a step, as a step far shorter than an eddy's life keeps the mean
+// well under one.
+fn water_burst(cell: vec2<i32>, tick: u32, mean: f32) -> WaterBurst {
+    let draws = water_burst_draws(cell, tick);
+    return WaterBurst(draws.x < 1.0 - exp(-max(mean, 0.0)), draws.yz, draws.w);
 }
