@@ -1,12 +1,3 @@
-//! The gltf corpus: the importer (engine_assetc's `import_glb` and its
-//! prefab importer) over the garden prop (tools/xtask/pure/garden-prop.glb):
-//! as a scene of ordinary meshes, as one of virtual meshes (built by
-//! vgbuild), and as a prefab. Each import must load back as the native host
-//! loads scenes (its document reparses to the same text, its files are
-//! named by their content, and the scene instantiates in an engine from its
-//! files), and importing twice must give the same bytes. Each document and
-//! file is held to goldens.
-
 use std::path::Path;
 
 use engine::EnginePlugins;
@@ -19,9 +10,6 @@ use sha2::{Digest, Sha256};
 use super::Observations;
 use super::simplify::GARDEN_PROP;
 
-/// The imports: their name, whether a prefab, and the triangles from which
-/// a primitive imports as a virtual mesh (the prop's two primitives hold 52
-/// and 24).
 const IMPORTS: [(&str, bool, Option<u32>); 3] = [
     ("scene", false, None),
     ("virtual", false, Some(16)),
@@ -58,7 +46,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                     .all(|(a, b)| a.uri == b.uri && a.bytes == b.bytes),
             || format!("gltf {name}: importing twice gives different bytes"),
         );
-        // The document reparses to the same text.
         let reparsed = SceneDocument::from_json(&text).map_err(|error| error.to_string())?;
         observed.check(reparsed.to_json().ok().as_ref() == Some(&text), || {
             format!("gltf {name}: the document does not reparse to the same text")
@@ -67,7 +54,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         let mut files = SceneFiles::default();
         let kinds: Vec<_> = reparsed.files();
         for file in &imported.files {
-            // Files are named by their content: `ID/NAME.HASH.EXTENSION`.
             let hash = format!("{:x}", Sha256::digest(&file.bytes));
             observed.check(file.uri.contains(&format!(".{}.", &hash[..12])), || {
                 format!("gltf {name}: {} is not named by its content", file.uri)

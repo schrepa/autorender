@@ -1,13 +1,3 @@
-//! The command line every native game takes beside its own options, and
-//! what [`HostOptions::run`] does with it: the game in a window (measured
-//! for a number of frames where asked), or offscreen for a number of frames
-//! with what tools keep of them (a PNG of the last, its frame-exact GPU
-//! capture, a deep profile, PIX's per-draw counters), or measured as a
-//! method file says, or as a development session, or again under Nsight's
-//! GPU Trace. Games parse their own options
-//! around the host's ([`HostOptions::take`]); `main` parses the host's
-//! alone.
-
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -21,7 +11,6 @@ use crate::{
     Record, Window, WindowReport, host_error,
 };
 
-/// The host's options before the engine switches, as `--help` lists them.
 const USAGE_HOST: &str = "\
 Native options:
   --size WxH           window or offscreen size in physical pixels
@@ -36,7 +25,6 @@ Native options:
   --vsync on|off       whether window frames wait for the display's refresh
                        (default on); off measures as browsers' frame rates do";
 
-/// The host's options after the engine switches, as `--help` lists them.
 const USAGE_TOOLS: &str = "\
   --frames N           measure N window frames after --settle-ms, then close
                        and print their rate and CPU times as JSON
@@ -100,8 +88,6 @@ GPU interface; by default the one browsers use on the platform: on Windows
 D3D12 where DXC (dxcompiler.dll, which Chrome and Firefox ship) is beside
 the program or on the path, else Vulkan.";
 
-/// The host's options, as `--help` lists them: the engine switches every
-/// host takes among them, from their table.
 pub fn usage() -> String {
     let mut text = format!("{USAGE_HOST}\n");
     for setting in SETTINGS {
@@ -113,8 +99,6 @@ pub fn usage() -> String {
     text
 }
 
-/// Option `head`'s lines of the usage text: `what` in a column of its own,
-/// beside the head where it fits, wrapped within 78 columns.
 fn option_lines(head: &str, what: &str) -> String {
     const COLUMN: usize = 23;
     const WIDTH: usize = 78;
@@ -145,8 +129,6 @@ fn option_lines(head: &str, what: &str) -> String {
     text
 }
 
-/// One option of a command line: `--name value`, `--name=value`, or a
-/// switch without a value.
 #[derive(Clone, Debug)]
 pub struct Argument {
     pub name: String,
@@ -154,20 +136,16 @@ pub struct Argument {
 }
 
 impl Argument {
-    /// The failure of an option no one takes.
     pub fn unknown(&self) -> String {
         format!("unknown option {}", self.name)
     }
 }
 
-/// A command line's options, in order.
 pub struct Arguments {
     rest: VecDeque<String>,
-    // Option files read so far: a file that names itself stops here.
     included: usize,
 }
 
-/// Option files one command line may read, those they name included.
 const MAX_OPTION_FILES: usize = 16;
 
 impl Arguments {
@@ -178,12 +156,6 @@ impl Arguments {
         }
     }
 
-    /// Reads the option file `argument` names in place of it: a JSON object
-    /// whose `options` holds options by name (without `--`), their values
-    /// strings, numbers, `true` and `false` for `on` and `off`, or JSON the
-    /// option takes as text; a `note` beside it says what the file is for.
-    /// Its options come before the rest of the command line, so options
-    /// after it override its own.
     pub fn include(&mut self, argument: &Argument) -> Result<(), String> {
         let path = self.value(argument)?;
         self.included += 1;
@@ -234,7 +206,6 @@ impl Arguments {
         Ok(())
     }
 
-    /// `argument`'s value: after its `=`, else the next argument.
     pub fn value(&mut self, argument: &Argument) -> Result<String, String> {
         argument
             .inline
@@ -243,7 +214,6 @@ impl Arguments {
             .ok_or_else(|| format!("{} takes a value", argument.name))
     }
 
-    /// `argument`'s value, `on` or `off`.
     pub fn switch(&mut self, argument: &Argument) -> Result<bool, String> {
         match self.value(argument)?.as_str() {
             "on" => Ok(true),
@@ -252,7 +222,6 @@ impl Arguments {
         }
     }
 
-    /// `argument`'s value, a count above zero.
     pub fn count(&mut self, argument: &Argument) -> Result<u32, String> {
         let value = self.value(argument)?;
         value
@@ -262,7 +231,6 @@ impl Arguments {
             .ok_or_else(|| format!("{} takes a count, not {value}", argument.name))
     }
 
-    /// `argument`, which takes no value.
     pub fn flag(&self, argument: &Argument) -> Result<(), String> {
         match argument.inline {
             Some(_) => Err(format!("{} takes no value", argument.name)),
@@ -289,26 +257,21 @@ impl Iterator for Arguments {
     }
 }
 
-/// The vendor tools `--vendor` names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Vendor {
     Pix,
     Nsight,
 }
 
-/// The host's options of a native game's command line.
 #[derive(Clone, Debug)]
 pub struct HostOptions {
     pub size: Option<(u32, u32)>,
     pub gpu: GpuPreference,
     pub jobs: JobOptions,
     pub vsync: bool,
-    /// The engine switches given (`--taa on`...), as every host takes them.
     pub settings: HostSettings,
-    /// Window frames to measure.
     pub frames: Option<u32>,
     pub settle_ms: u64,
-    /// Frames to draw offscreen, without a window.
     pub offscreen: Option<u32>,
     pub capture: Option<PathBuf>,
     pub gpu_capture: Option<PathBuf>,
@@ -319,13 +282,9 @@ pub struct HostOptions {
     pub vendor_counters: Vec<String>,
     pub dev: bool,
     pub dev_artifacts: Option<PathBuf>,
-    /// A measured run's method.
     pub measure: Option<Method>,
     pub shader_hash: bool,
-    /// The pack a cooking session writes (`--cook`).
     pub cook: Option<PathBuf>,
-    /// Whether `--workers` was given: else a cook runs a worker on every
-    /// logical processor.
     pub workers_given: bool,
 }
 
@@ -357,8 +316,6 @@ impl Default for HostOptions {
     }
 }
 
-/// The options development sessions name as their parameters (the host's
-/// they read at launch), with what each does.
 pub const PARAMETERS: &[(&str, &str)] = &[
     ("size", "WIDTHxHEIGHT of the offscreen texture"),
     ("gpu", "discrete or integrated"),
@@ -375,7 +332,6 @@ pub const PARAMETERS: &[(&str, &str)] = &[
 ];
 
 impl HostOptions {
-    /// The host's options of a command line that holds no others.
     pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Self, String> {
         let mut options = Self::default();
         let mut arguments = Arguments::new(arguments);
@@ -388,8 +344,6 @@ impl HostOptions {
         Ok(options)
     }
 
-    /// Takes `argument` (and its value from `arguments`) where it is one of
-    /// the host's options; whether it was.
     pub fn take(&mut self, argument: &Argument, arguments: &mut Arguments) -> Result<bool, String> {
         let name = argument.name.as_str();
         match name {
@@ -501,7 +455,6 @@ impl HostOptions {
         Ok(true)
     }
 
-    /// Whether the options go together, and the build has what they need.
     pub fn check(&self) -> Result<(), String> {
         if (self.capture.is_some() || self.gpu_capture.is_some() || self.profile.is_some())
             && self.offscreen.is_none()
@@ -550,8 +503,6 @@ impl HostOptions {
         }
     }
 
-    /// Runs the game `build` makes as the options ask; `title` names its
-    /// window.
     pub fn run<G: Game, E: Into<engine::Error>>(
         &self,
         title: &str,
@@ -610,9 +561,6 @@ impl HostOptions {
         }
     }
 
-    /// A development session of the game `build` makes, as the options
-    /// ask, with the host's parameters: games add their own controls and
-    /// parameters before running it.
     #[cfg(feature = "dev")]
     pub fn dev_session<G: Game, E: Into<engine::Error>>(
         &self,
@@ -628,7 +576,6 @@ impl HostOptions {
         build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> engine::Result<crate::dev::DevSession<G>> {
         let size = self.size.unwrap_or((1280, 720));
-        // PIX's capturer must be in the program before its D3D12 device.
         let pix = self.loads_pix().then(Pix::load).flatten();
         let mut game = Offscreen::launch(size, self.gpu, &self.jobs, build)?;
         self.settings.apply(game.host_mut());
@@ -646,13 +593,10 @@ impl HostOptions {
             ))
     }
 
-    /// Whether the options capture through PIX.
     fn loads_pix(&self) -> bool {
         self.gpu_capture.is_some() || self.vendor == Some(Vendor::Pix)
     }
 
-    /// Starts the tools that must exist before the game's GPU does: the
-    /// hardware counters.
     fn start_tools(&self) -> engine::Result<()> {
         #[cfg(feature = "profiling")]
         if let Some(counters) = &self.counters {
@@ -668,13 +612,6 @@ impl HostOptions {
         Ok(())
     }
 
-    /// Cooks the game `build` makes into the pack `path`: offscreen at 60
-    /// Hz, its engine asking for every record its world's content needs
-    /// ([`engine::GameHost::cook`]), until none is left and the host holds no job
-    /// for [`COOK_SETTLE`] frames in a row; then every record the session
-    /// read or made is written into the pack, and what it holds printed. It
-    /// fails where what is left and the jobs held stay as they are for
-    /// [`COOK_STALL`], however long the cook as a whole takes.
     fn run_cook<G: Game, E: Into<engine::Error>>(
         &self,
         path: &Path,
@@ -690,10 +627,8 @@ impl HostOptions {
         let mut game = Offscreen::launch_with(size, self.gpu, jobs.pool(true), build)?;
         self.settings.apply(game.host_mut());
         game.host_mut().cook();
-        // The records the packs it reads held: what an unchanged cook reuses.
         let read = game.jobs_mut().packed();
         let (mut frame, mut settled, mut said) = (0_u32, 0, Instant::now());
-        // What is left and the jobs held, and when either last changed.
         let (mut last, mut moved) = ((u64::MAX, u32::MAX), Instant::now());
         loop {
             game.frame(f64::from(frame) * 1000.0 / 60.0)?;
@@ -757,9 +692,6 @@ impl HostOptions {
         Ok(())
     }
 
-    /// Draws `frames` frames offscreen at 60 Hz after preparing, keeps what
-    /// the options ask of them, then prints their CPU times and the last
-    /// frame's statistics.
     fn run_offscreen<G: Game, E: Into<engine::Error>>(
         &self,
         frames: u32,
@@ -830,8 +762,6 @@ impl HostOptions {
         Ok(())
     }
 
-    /// Runs the program again in a window under Nsight's GPU Trace, with its
-    /// options but the deep dive's, into `folder`.
     #[cfg(feature = "profiling")]
     fn run_nsight(&self, folder: &std::path::Path) -> engine::Result<()> {
         let mut arguments = Vec::new();
@@ -858,17 +788,10 @@ impl HostOptions {
     }
 }
 
-/// Frames in a row a cook draws with nothing left before it writes its
-/// pack: features reporting what they have left a frame late finish.
 const COOK_SETTLE: u32 = 8;
 
-/// The longest a cook may go with what is left and the jobs its host holds
-/// unchanged before it fails as stalled. A whole cook takes as long as its
-/// records take to make: hours for some scenes' settled water.
 const COOK_STALL: Duration = Duration::from_secs(600);
 
-/// The SHA-256 of the renderer's shader modules: each one's name and
-/// source, in order.
 fn shader_hash() -> String {
     use sha2::Digest;
     let mut hash = sha2::Sha256::new();
@@ -884,7 +807,6 @@ fn shader_hash() -> String {
         .collect()
 }
 
-/// The program's name, as reports name what ran.
 fn program() -> String {
     std::env::current_exe()
         .ok()
@@ -895,13 +817,10 @@ fn program() -> String {
         .unwrap_or_default()
 }
 
-/// The spread of `values`, as the engine computes it on every host; null
-/// without values.
 fn distribution(values: &[f64]) -> serde_json::Value {
     json!(engine::host::Distribution::of(values))
 }
 
-/// A measured window's frames as JSON: their rate, interval and CPU times.
 fn window_report(report: &WindowReport) -> serde_json::Value {
     let stats: serde_json::Value =
         serde_json::from_str(&report.stats).expect("frame statistics are JSON");

@@ -1,6 +1,3 @@
-//! Reflection probe captures: still opaque meshes and the
-//! sky's haze drawn into probe cube faces after the frame.
-
 #![expect(
     clippy::expect_used,
     reason = "captures read the lights checked before them"
@@ -9,12 +6,6 @@
 use super::*;
 
 impl Renderer {
-    /// Records up to `faces` reflection probe cube faces, the
-    /// nearest probes waiting first and each face at most once a frame (each
-    /// has one camera): this frame's still opaque instances (drawn from the
-    /// alternate pose buffer when `odd`) and the sky's haze, in linear light,
-    /// then a probe's blurred cube once its last face is drawn. Returns the
-    /// faces drawn.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -48,7 +39,6 @@ impl Renderer {
         }
         let mut used = [false; FACES];
         let mut drawn = 0;
-        // Profiling captures time every face captured as one span.
         let mut timed = false;
         while drawn < faces {
             let Some((cube, face, probe)) = self.features.probes.get_mut().slots.next_face(probes)
@@ -87,7 +77,6 @@ impl Renderer {
             ) {
                 break;
             }
-            // Still lamps light the capture: lights binned for this face.
             if let (Some((frame, settings)), Some(pass)) = (lights, self.features.lights.get_mut())
             {
                 pass.encode_probe_face(
@@ -152,7 +141,6 @@ impl Renderer {
                 for &index in &self.draw_order.order {
                     let index = index as usize;
                     let batch = &self.plan.batches[index];
-                    // Only still opaque meshes without joints are captured.
                     if self.meshes[&batch.mesh].skinned {
                         continue;
                     }
@@ -162,8 +150,6 @@ impl Renderer {
                     binds.bindings.ids(&mut pass, 1, ids);
                     pass.draw_indexed_indirect(draws, offset);
                 }
-                // Terrain stands still: probes capture it, over its own
-                // first group; the sky binds the face's again.
                 self.draw_terrain_face(&mut pass, face, probe.center, lights.is_some());
                 pass.set_pipeline(self.mesh_pipelines.sky(SkyTargets::Probe));
                 pass.set_bind_group(0, self.camera.probe_group(face), &[]);
@@ -181,9 +167,6 @@ impl Renderer {
         drawn
     }
 
-    /// The reflection probe captures' pipelines: the sky's,
-    /// and `kind`'s uber variants for this frame's still
-    /// opaque meshes (and those lit otherwise, as frames relight them).
     pub(super) fn ensure_probe_pipelines(&mut self, kind: PassKind) {
         self.ensure_sky(SkyTargets::Probe);
         if self.relights() {
@@ -192,8 +175,6 @@ impl Renderer {
         self.create_probe_variants(kind);
     }
 
-    /// `kind`'s uber variants for this frame's still opaque meshes, unless
-    /// created.
     fn create_probe_variants(&mut self, kind: PassKind) {
         let key = (self.structure_key(), kind);
         if self.structure_keys.probes == Some(key) {

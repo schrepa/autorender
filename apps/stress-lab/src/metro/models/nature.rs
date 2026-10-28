@@ -1,9 +1,6 @@
-//! The metro's trees, bushes and rocks.
-
 use super::*;
 
 pub(super) fn tree(b: &mut Builder, kind: u8) {
-    // A trunk and crossed leaf cards around a crown.
     let (height, crown, width) =
         [(4.2, 2.2, 3.4), (5.0, 2.8, 3.0), (3.4, 1.8, 3.8)][kind as usize % 3];
     b.paint([0.55, 0.55, 0.55]);
@@ -68,7 +65,6 @@ pub(super) fn pine(b: &mut Builder) {
 
 pub(super) fn palm(b: &mut Builder) {
     b.paint([0.7, 0.7, 0.7]);
-    // A leaning trunk of segments, fronds drooping from the top.
     let mut top = Vec3::ZERO;
     for segment in 0..6 {
         let next = top + v(0.12, 1.0, 0.0);
@@ -83,7 +79,6 @@ pub(super) fn palm(b: &mut Builder) {
         let side = v(-sin, 0.0, cos);
         let tip = top + out * 2.4 - Vec3::Y * 0.9;
         let mid = top + out * 1.2 + Vec3::Y * 0.2;
-        // The frond's base half toward the trunk, its tip half beyond.
         let (base, end) = (
             Map::Rect(0.0, 0.39, 0.5, 0.78),
             Map::Rect(0.0, 0.0, 0.5, 0.39),

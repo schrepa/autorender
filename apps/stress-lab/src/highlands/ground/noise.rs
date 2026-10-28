@@ -1,16 +1,9 @@
-//! What the ground materials are made of: arithmetic, hashes and a small
-//! random sequence, periodic gradient and cellular noise (every lattice
-//! wraps a whole number of times across the texture, so everything built
-//! from them tiles), wrapped blurs and occlusion from heights.
-
 use std::f32::consts::TAU;
 
 use engine::prelude::math::{clamp, exp, max, min, sin_cos};
 
 use super::Rgb;
 
-/// `size` by `size` values of `texel(u, v)` at each texel's center, rows
-/// shared among the machine's threads where it has them.
 pub(super) fn texture<T: Send>(size: usize, texel: impl Fn(f32, f32) -> T + Sync) -> Vec<T> {
     let row = |y: usize| -> Vec<T> {
         (0..size)
@@ -51,8 +44,6 @@ pub(super) fn texture<T: Send>(size: usize, texel: impl Fn(f32, f32) -> T + Sync
     (0..size).flat_map(row).collect()
 }
 
-// Arithmetic.
-
 pub(super) fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
@@ -78,7 +69,6 @@ pub(super) fn smoothstep(from: f32, to: f32, value: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// A well-mixed hash of a lattice point and seed.
 pub(super) fn hash(x: u32, y: u32, seed: u32) -> u32 {
     let mut h =
         x.wrapping_mul(0x8da6_b343) ^ y.wrapping_mul(0xd816_3841) ^ seed.wrapping_mul(0xcb1a_b31f);
@@ -89,12 +79,10 @@ pub(super) fn hash(x: u32, y: u32, seed: u32) -> u32 {
     h ^ (h >> 16)
 }
 
-/// A hash as a number from 0 to 1.
 pub(super) fn unit(hash: u32) -> f32 {
     (hash >> 8) as f32 * (1.0 / 16_777_216.0)
 }
 
-/// A small deterministic random sequence (xorshift64*).
 pub(super) struct Rng(u64);
 
 impl Rng {
@@ -118,8 +106,6 @@ impl Rng {
     }
 }
 
-/// One octave of gradient noise: random unit gradients on a lattice
-/// `period` cells across the texture.
 struct Lattice {
     period: usize,
     gradients: Vec<[f32; 2]>,
@@ -136,7 +122,6 @@ impl Lattice {
         Self { period, gradients }
     }
 
-    /// The noise at texture coordinates `(u, v)`, about -1 to 1.
     fn sample(&self, u: f32, v: f32) -> f32 {
         let period = self.period;
         let x = u * period as f32;
@@ -162,8 +147,6 @@ impl Lattice {
     }
 }
 
-/// Fractal noise: `octaves` lattices from `period` cells across the
-/// texture, each twice as fine and `gain` times as strong as the last.
 pub(super) struct Noise {
     octaves: Vec<(Lattice, f32)>,
     total: f32,
@@ -186,7 +169,6 @@ impl Noise {
         Self { octaves, total }
     }
 
-    /// About -1 to 1.
     pub(super) fn fbm(&self, u: f32, v: f32) -> f32 {
         self.octaves
             .iter()
@@ -195,12 +177,10 @@ impl Noise {
             / self.total
     }
 
-    /// 0 to 1, about a half on average.
     pub(super) fn unit(&self, u: f32, v: f32) -> f32 {
         saturate(self.fbm(u, v) * 0.5 + 0.5)
     }
 
-    /// Sharp crests where each octave crosses zero, 0 to 1.
     pub(super) fn ridged(&self, u: f32, v: f32) -> f32 {
         self.octaves
             .iter()
@@ -213,16 +193,11 @@ impl Noise {
     }
 }
 
-/// Cellular noise: one jittered point in each cell of a `count` by `count`
-/// grid across the texture.
 pub(super) struct Cells {
     count: usize,
     points: Vec<[f32; 2]>,
 }
 
-/// Where a texel lies among cells: its nearest point's cell, its distance
-/// to that point and to the cell's edge (in cells), and the vector from the
-/// texel to the point.
 pub(super) struct Hit {
     pub(super) id: u32,
     pub(super) center: f32,
@@ -231,7 +206,6 @@ pub(super) struct Hit {
 }
 
 impl Cells {
-    /// Points within `jitter` (0 to 1) of their cells' middles.
     pub(super) fn new(count: usize, jitter: f32, seed: u32) -> Self {
         let points = (0..count * count)
             .map(|index| {
@@ -245,8 +219,6 @@ impl Cells {
         Self { count, points }
     }
 
-    /// The cell hit at texture coordinates `(u, v)`; the edge distance is
-    /// exact (Quilez's two passes).
     pub(super) fn sample(&self, u: f32, v: f32) -> Hit {
         let count = self.count as i64;
         let x = u * self.count as f32;
@@ -294,11 +266,6 @@ impl Cells {
         }
     }
 
-    /// A faceted surface: around each cell's point a plane of its own tilt
-    /// (up to one per cell) and depth (`depth` at most), the planes blended
-    /// where cells meet over a width falling with `sharpness`, so facets
-    /// meet in creases instead of steps. Returns the height and the cell
-    /// whose plane weighs most.
     pub(super) fn faceted(
         &self,
         u: f32,
@@ -335,7 +302,6 @@ impl Cells {
     }
 }
 
-/// `field` averaged over a `radius` texel box around each texel, wrapping.
 pub(super) fn blur(field: &[f32], size: usize, radius: usize) -> Vec<f32> {
     let width = (2 * radius + 1) as f32;
     let pass = |source: &[f32], stride: usize, step: usize| {
@@ -355,16 +321,12 @@ pub(super) fn blur(field: &[f32], size: usize, radius: usize) -> Vec<f32> {
     pass(&rows, 1, size)
 }
 
-/// `field` low-passed: a wrapped box blur of `radius` three times over,
-/// about a Gaussian of that deviation.
 pub(super) fn low_pass(field: &[f32], size: usize, radius: usize) -> Vec<f32> {
     let once = blur(field, size, radius);
     let twice = blur(&once, size, radius);
     blur(&twice, size, radius)
 }
 
-/// Ambient occlusion from heights: how far each texel sits below its
-/// surroundings at a few scales, darkened by `strength`.
 pub(super) fn occlusion(height: &[f32], size: usize, strength: f32) -> Vec<f32> {
     let mut cavity = vec![0.0; height.len()];
     for (radius, weight) in [(0.003, 0.45), (0.01, 0.35), (0.03, 0.2)] {

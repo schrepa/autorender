@@ -1,11 +1,5 @@
-//! Inter-stage locations: what each fragment stage reads, against what
-//! the vertex stages of its module write.
-
 use super::Checked;
 
-/// A value a vertex stage passes to a fragment stage at a location: its
-/// type, interpolation and sampling, as naga parsed them (its defaults
-/// applied).
 #[derive(Clone, Debug, PartialEq)]
 struct Varying {
     ty: naga::TypeInner,
@@ -13,8 +7,6 @@ struct Varying {
     sampling: Option<naga::Sampling>,
 }
 
-/// The locations a value of `ty` bound by `binding` carries: the value
-/// when bound to a location, else its struct's members bound to locations.
 fn varyings(
     module: &naga::Module,
     ty: naga::Handle<naga::Type>,
@@ -45,12 +37,6 @@ fn varyings(
     }
 }
 
-/// Inter-stage locations: every fragment stage reads only locations some
-/// vertex stage of its module writes all of, each of the same type,
-/// interpolation and sampling, so some pipeline can pair them (WebGPU
-/// refuses a pipeline whose fragment stage reads a location its vertex
-/// stage does not write alike). Returns how many fragment stages read
-/// locations.
 pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
     let mut errors = Vec::new();
     let mut fragments = 0;

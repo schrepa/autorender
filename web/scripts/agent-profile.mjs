@@ -1,4 +1,3 @@
-/** Optional tooling only: one bounded capture, artifacts instead of huge replies. */
 // @ts-check
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -8,9 +7,6 @@ import { AgentError } from "./agent-protocol.mjs";
 
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 const protocol = JSON.parse(readFileSync(new URL("../src/generated/protocol.json", import.meta.url), "utf8"));
-/** Each numeric option's bounds and default: the schema states them and
- * requests are checked against them; a capture holds at most the
- * collector's events. */
 const LIMITS = {
   duration_ms: { minimum: 100, maximum: 5000, default: 5000 },
   max_events: { minimum: 256, maximum: protocol.profile_max_events, default: protocol.profile_max_events },
@@ -27,10 +23,6 @@ export const profileDescriptor = {
   constraints: "Requires paused profiling build. Runs ordinary frames for the capture, clears input, then pauses. Does not save source. Optional CDP sampling adds overhead. Inspect capture completeness, capabilities and dropped counts before comparing.",
 };
 
-/** Native sessions' profiles: the same capture, each pass's hardware
- * counters where the session counts them (launched with counters=on), and
- * with vendor "pix" the last frame's per-draw counters replayed through PIX
- * where the session loaded it (launched with vendor=pix, on D3D12). */
 export const nativeProfileDescriptor = {
   ...profileDescriptor,
   schema: {
@@ -75,7 +67,6 @@ export async function captureProfile({ page, requestBrowser, command, artifacts,
     resumed = true;
     await page.evaluate(options => window.__engineProfile.start(options), { duration_ms: duration, max_events: maxEvents });
     await page.waitForFunction(() => !window.__engineProfile.status().active, null, { timeout: 10_000 });
-    // stop() also awaits a capture which is currently draining GPU readbacks.
     await page.evaluate(() => window.__engineProfile.stop());
     if (sampling) { stoppedProfile = (await browser.send("Profiler.stop")).profile; sampling = false; }
     const pausedReply = await requestBrowser({ op: "pause" });
@@ -112,7 +103,6 @@ export async function captureProfile({ page, requestBrowser, command, artifacts,
     } };
   } finally {
     if (sampling) await browser.send("Profiler.stop").catch(() => {});
-    // Abort through the same browser API before restoring the pause boundary.
     if (resumed) {
       await page.evaluate(() => window.__engineProfile?.stop()).catch(() => {});
       await requestBrowser({ op: "pause" }).catch(() => {});

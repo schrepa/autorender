@@ -1,6 +1,3 @@
-//! Physics' development tools: the inspectors of rigid bodies and of the
-//! physics world.
-
 use engine_core::PhysicsStats;
 use engine_physics::{BodyProblem, BodyWater, PhysicsWorld, RigidBody};
 use serde::Serialize;
@@ -9,12 +6,6 @@ use serde_json::{Value, json};
 use crate::inspect::Inspector;
 use crate::{DevTools, InspectorDescriptor, InspectorKind};
 
-/// A rigid body as authored, and what physics did with it at the last
-/// fixed tick: whether the solver holds it (not with a problem, nor before
-/// its first tick), its mass (kilograms) and volume (cubic meters), its
-/// velocity (meters a second) and spin (radians a second about the world's
-/// axes), whether it sleeps or holds still where the ground under it is not
-/// resident, and the water it is in.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct RigidBodyView {
@@ -30,14 +21,11 @@ pub struct RigidBodyView {
     pub water: Option<BodyWater>,
 }
 
-/// The physics world at the last fixed tick: its bodies, the world's solids
-/// it holds for them, their contacts and the water samples they took.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct PhysicsWorldView(pub PhysicsStats);
 
-/// Registers physics' inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
     tools
         .insert(Inspector {
@@ -78,7 +66,6 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
         .expect("built-in descriptor is bounded");
 }
 
-/// Adds the schemas of physics' inspectors.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
     schemas.insert("RigidBody".into(), super::schema::<RigidBodyView>());

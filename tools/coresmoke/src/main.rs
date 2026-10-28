@@ -1,22 +1,3 @@
-//! The core smoke: the engine's incremental caches against fresh engines'
-//! (hierarchy, interpolated presentation and the retained render snapshot
-//! under seeded random edits), terrain streaming without a clock or
-//! workers as a deterministic trace, and the Stress Lab's content as
-//! digests. GPU-free, and built in the dev profile so the engine's debug
-//! assertions run. `cargo xtask core-smoke` (the caches corpus of
-//! `cargo xtask pure`) runs it and holds what it observes to goldens.
-//!
-//! ```text
-//! cargo run -p coresmoke -- [--seed N] [--assets FOLDER] [--trace FILE]
-//! ```
-//!
-//! `--assets` names the folder holding the generated meshes the dense scene
-//! reads (`stress/dense/`, as `cargo xtask bench assets` builds them);
-//! without it the dense scene is left out. Prints one JSON object:
-//! `{"observations": {...}, "broken": [...]}`. Exits 3 when a cache
-//! disagreed with a fresh engine's (its entry names the seed and the
-//! operations since the caches last agreed), 1 when it could not run.
-
 mod caches;
 mod content;
 mod random;
@@ -28,7 +9,6 @@ use std::process::ExitCode;
 
 use serde_json::{Value, json};
 
-/// What the smoke observed, by name, and the promises it found broken.
 #[derive(Default)]
 pub struct Report {
     observations: BTreeMap<String, Value>,
@@ -45,7 +25,6 @@ impl Report {
     }
 }
 
-/// The first 16 hexadecimal digits of `bytes`' content hash.
 pub fn hash(bytes: &[u8]) -> String {
     format!("{:016x}", engine_core::content_hash(bytes) as u64)
 }

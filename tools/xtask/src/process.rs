@@ -5,12 +5,6 @@ use std::{
 
 pub const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
-/// The target folder of the native programs a check builds and runs (the
-/// core smoke, the scene schema printers), apart from xtask's own: the job
-/// worker library is a cdylib too, whose files Cargo names without a hash,
-/// so a build of it with other dependency features in xtask's folder
-/// replaces xtask's, which then relinks, and on Windows a running xtask
-/// cannot be relinked.
 pub fn tools_target(root: &Path) -> PathBuf {
     root.join("target").join("tools")
 }
@@ -28,22 +22,14 @@ pub fn repository_root() -> Result<PathBuf, String> {
         .ok_or_else(|| "cannot locate the workspace above tools/xtask".to_owned())
 }
 
-/// A browser client: its Cargo package, its Wasm crate's name, and for
-/// games the name tools select it by and the page serving it.
 pub struct Client {
     pub package: String,
     pub wasm: String,
     pub game: Option<String>,
     pub page: Option<String>,
-    /// Whether the client has a `schema` binary printing its generated
-    /// files.
     pub schema: bool,
 }
 
-/// The browser clients: the workspace members whose manifests declare
-/// `[package.metadata.engine]` (a game's `page` and `game`, or `worker`),
-/// in Cargo's order. `cargo xtask schema` writes them for the web host and
-/// scripts.
 pub fn clients() -> &'static [Client] {
     static CLIENTS: std::sync::OnceLock<Vec<Client>> = std::sync::OnceLock::new();
     CLIENTS.get_or_init(|| {
@@ -111,14 +97,12 @@ fn read_clients() -> Result<Vec<Client>, String> {
     Ok(clients)
 }
 
-/// `-p PACKAGE` for every client.
 pub fn client_packages() -> impl Iterator<Item = &'static str> {
     clients()
         .iter()
         .flat_map(|client| ["-p", client.package.as_str()])
 }
 
-/// Every client's Wasm crate name.
 pub fn client_crates() -> Vec<&'static str> {
     clients()
         .iter()
@@ -126,11 +110,8 @@ pub fn client_crates() -> Vec<&'static str> {
         .collect()
 }
 
-/// The engine features of development builds, as `--features` takes them:
-/// clients declare none of their own.
 pub const DEV_FEATURES: &str = "engine/dev";
 
-/// The clients as the web host and scripts read them.
 pub fn clients_json() -> serde_json::Value {
     clients()
         .iter()
@@ -145,7 +126,6 @@ pub fn clients_json() -> serde_json::Value {
         .collect()
 }
 
-/// The games tools select by name, as `a|b|c`.
 pub fn game_names() -> String {
     clients()
         .iter()
@@ -154,7 +134,6 @@ pub fn game_names() -> String {
         .join("|")
 }
 
-/// The wasm-bindgen version Cargo.lock pins, which the CLI must match.
 fn wasm_bindgen_version(root: &Path) -> Result<String, String> {
     let lock = std::fs::read_to_string(root.join("Cargo.lock"))
         .map_err(|error| format!("cannot read Cargo.lock: {error}"))?;
@@ -173,8 +152,6 @@ fn wasm_bindgen_version(root: &Path) -> Result<String, String> {
         .ok_or_else(|| "Cargo.lock pins no wasm-bindgen".to_owned())
 }
 
-/// Whether wasm-bindgen is the version the bindings need: otherwise an error
-/// code (`bindgen_unavailable` or `bindgen_version`) and how to fix it.
 pub fn check_wasm_bindgen(root: &Path) -> Result<(), (&'static str, String)> {
     let version = wasm_bindgen_version(root).map_err(|error| ("bindgen_version", error))?;
     let install = format!(
@@ -215,8 +192,6 @@ pub fn verify_wasm_bindgen(root: &Path) -> Result<(), String> {
     check_wasm_bindgen(root).map_err(|(_, message)| message)
 }
 
-/// The commit builds are made from, `-dirty` with uncommitted changes to
-/// tracked files: development replies report it (`ENGINE_COMMIT`).
 pub fn engine_commit() -> (&'static str, String) {
     static COMMIT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let commit = COMMIT.get_or_init(|| {
@@ -257,7 +232,6 @@ pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String>
     }
 }
 
-/// Setup diagnostics use stderr so an agent command can reserve stdout for JSON.
 pub fn run_to_stderr(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String> {
     eprintln!("Running {program} {}", arguments.join(" "));
     let mut child = Command::new(program)

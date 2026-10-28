@@ -1,13 +1,3 @@
-//! The development bridge every host serves requests through, the page's
-//! (`web/src/engine/dev.ts`) and the native session's: requests checked and
-//! handed to the engine, and the controls the engine hands back carried out
-//! step by step ([`Step`]), the host doing only what it alone can
-//! ([`Effect`]): pausing its frames, waiting for its next frame, running
-//! and showing frames, the game's own controls and the authored scene's
-//! files. Replies are finished with what every one carries, refusals carry
-//! the engine's observation, and benchmarks sample frame by frame
-//! ([`BenchmarkRun`]).
-
 use engine_core::ErrorCode;
 use engine_dev::results::{CaptureResult, FramesResult, GameResult, KeptArtifact, result};
 use engine_dev::{Effect, HostContext, Outcome, Step};
@@ -18,85 +8,53 @@ use crate::host::policy::BENCHMARK_LIMIT_MS;
 use crate::host::{AdapterStatus, Distribution, HostEnvironment, KNOWN_DIFFERENCES, now_ms};
 use crate::{Game, GameHost};
 
-/// Why a benchmark stops where its view never showed, and where it
-/// changed while it ran.
 const NEEDS_VIEW: &str = "benchmark needs a visible, nonzero paused canvas";
 const VIEW_CHANGED: &str = "visibility, canvas size or paused state changed during benchmark";
 
-/// The development request under way: what it waits for from its host.
 #[derive(Debug)]
 pub(crate) enum Pending {
-    /// The host pausing or resuming its frames.
     Paused,
-    /// Ordinary frames `interval` milliseconds apart, `ran` of `count` so
-    /// far; the last one shown where `show`.
     Frames {
         count: u32,
         interval: f64,
         ran: u32,
         show: bool,
     },
-    /// The host showing the frame `reply` drew.
     Shown { reply: Value },
-    /// The game's control `name` running.
     Game { name: String },
-    /// The authored scene's files being read, for a reload from
-    /// `expected_revision` to `revision`.
     Reload {
         expected_revision: String,
         revision: String,
     },
-    /// A benchmark sampling.
     Benchmark(Box<BenchmarkRun>),
-    /// The pixel probe's read-back, `waits` waits so far, for the request
-    /// whose last frame replied `reply`.
     Probe { reply: Value, waits: u32 },
-    /// The renderer's report of the GPU device it lost, `waits` waits so
-    /// far: a frame then fails.
     DeviceLoss { waits: u32 },
 }
 
-/// Waits for the host's next frame the report of a lost device takes at
-/// most: browsers report it in a later task.
 const LOSS_WAITS: u32 = 120;
 
-/// Waits for the host's next frame a pixel probe's read-back takes at most.
 const PROBE_WAITS: u32 = 120;
 
-/// A benchmark under way: frames of its mode the engine runs, each paired
-/// with the host's wait for its next frame (the page's next animation
-/// frame, the native host's GPU) and timed from the end of the wait before
-/// to the end of its own.
 #[derive(Debug)]
 pub(crate) struct BenchmarkRun {
-    /// The frame command each sample runs.
     frame: Value,
     mode: String,
     warmup: u64,
     samples: u64,
     started: f64,
-    // The view it runs on, which must stay.
     view: (u32, u32),
-    // When the wait before the next frame ended.
     previous: Option<f64>,
-    // The statistics of the frame run and not yet waited for.
     unwaited: Option<Value>,
     ran: u64,
     intervals: Vec<f64>,
     measurements: Vec<Value>,
-    // The assets reply before the frames.
     initial: Value,
-    // The last frame's observation.
     end: Value,
 }
 
-/// Why a benchmark stopped: its code and message.
 type Stopped = (ErrorCode, String);
 
 impl BenchmarkRun {
-    /// The host's wait for the last frame ended at `now`: its interval and
-    /// statistics join the samples past the warm-up. Whether every frame
-    /// ran.
     fn waited(&mut self, now: f64) -> Result<bool, Stopped> {
         if now - self.started >= BENCHMARK_LIMIT_MS as f64 {
             return Err((
@@ -126,9 +84,6 @@ impl BenchmarkRun {
         Ok(self.ran >= self.warmup + self.samples)
     }
 
-    /// The report of the frames sampled, with the assets `after` them, the
-    /// host they ran on and its `timing` (what its frame intervals
-    /// include), at `now`.
     fn report(
         &self,
         now: f64,
@@ -152,7 +107,6 @@ impl BenchmarkRun {
                     .sum()
             })
             .collect();
-        // Every statistic that reads a number in each sample, with its range.
         let sampled: Vec<Vec<(String, f64)>> = self
             .measurements
             .iter()
@@ -199,10 +153,6 @@ impl BenchmarkRun {
 }
 
 impl<G: Game> GameHost<G> {
-    /// Development request `line`, as an agent sent it (JSON), on the host
-    /// `context` describes: refused where it is too large or no object
-    /// naming its `op`, else the engine's reply, or the first effect of the
-    /// control it names. A request under way before it is dropped.
     pub fn dev_request(&mut self, line: &str, context: &HostContext) -> Step {
         self.dev_pending = None;
         if line.len() > engine_dev::MAX_REQUEST_BYTES {
@@ -232,8 +182,6 @@ impl<G: Game> GameHost<G> {
         }
     }
 
-    /// The request under way resumed with the `outcome` of the effect its
-    /// host carried out, on the host `context` describes: the next step.
     pub fn dev_resume(&mut self, outcome: Outcome, context: &HostContext) -> Step {
         let Some(pending) = self.dev_pending.take() else {
             return self.dev_refused(
@@ -351,9 +299,6 @@ impl<G: Game> GameHost<G> {
         }
     }
 
-    /// A frame after the device was lost, `waits` waits so far: its failure,
-    /// which answers the request, or another wait while the renderer has yet
-    /// to hear of the loss.
     fn dev_device_lost(&mut self, waits: u32, context: &HostContext) -> Step {
         let reply = self.dev_invoke(&json!({"op": "render"}), context);
         if reply["ok"] != true {
@@ -372,9 +317,6 @@ impl<G: Game> GameHost<G> {
         )
     }
 
-    /// Starts the pixel probe `control` names on the view `context`
-    /// describes: a frame of the debug views' targets, then a shaded one, as
-    /// `capture` renders them; then its answer, or a wait for it.
     fn dev_probe_start(&mut self, control: &Map<String, Value>, context: &HostContext) -> Step {
         let pixel = |field: &str| {
             control
@@ -410,9 +352,6 @@ impl<G: Game> GameHost<G> {
         self.dev_probe(reply, 0, context)
     }
 
-    /// The pixel probe's answer once its read-back arrived, in the reply of
-    /// its last frame `reply`; otherwise a wait for the host's next frame,
-    /// the `waits`th, while it may still arrive.
     fn dev_probe(&mut self, mut reply: Value, waits: u32, context: &HostContext) -> Step {
         match self.probe_result() {
             Some(Ok(probe)) => {
@@ -435,10 +374,6 @@ impl<G: Game> GameHost<G> {
         }
     }
 
-    /// The reload under way resumed with the authored scene's saved
-    /// `source` and the `files` it references ([`Effect::Source`]), on the
-    /// host `context` describes: the reloaded scene rendered, or why the
-    /// reload was refused.
     pub fn dev_reloaded(
         &mut self,
         source: &str,
@@ -464,10 +399,7 @@ impl<G: Game> GameHost<G> {
         self.dev_done(reply, context)
     }
 
-    /// A refusal of `code` at `path` its host decided, with the engine's
-    /// observation; a request under way goes on.
     pub fn dev_refusal(&mut self, code: ErrorCode, path: &str, message: &str) -> Value {
-        // Status reads neither the view nor whether the host is paused.
         let status = json!({"op": "status", "version": engine_dev::PROTOCOL_VERSION});
         let status: Value =
             serde_json::from_str(&self.dev_command(&status.to_string(), 1, 1, true))
@@ -476,8 +408,6 @@ impl<G: Game> GameHost<G> {
             "error": {"code": code, "path": path, "message": message}})
     }
 
-    /// The engine's reply to `command` (an object) at the protocol's
-    /// version, on the host `context` describes.
     fn dev_invoke(&mut self, command: &Value, context: &HostContext) -> Value {
         let mut command = command.clone();
         command["version"] = json!(engine_dev::PROTOCOL_VERSION);
@@ -490,8 +420,6 @@ impl<G: Game> GameHost<G> {
         serde_json::from_str(&reply).expect("development replies are JSON")
     }
 
-    /// Starts carrying out `control`, which the engine handed back
-    /// validated with its defaults: its first effect, or why it cannot.
     fn dev_control(&mut self, control: &Map<String, Value>, context: &HostContext) -> Step {
         let op = control
             .get("op")
@@ -522,8 +450,6 @@ impl<G: Game> GameHost<G> {
                     .and_then(Value::as_f64)
                     .unwrap_or_default();
                 let show = control.get("capture") == Some(&json!(true));
-                // As play after a pause: the first frame advances no time,
-                // and nothing is held.
                 self.suspend();
                 let pending = Pending::Frames {
                     count,
@@ -586,16 +512,11 @@ impl<G: Game> GameHost<G> {
         }
     }
 
-    /// A step waiting for its host's `effect`, after which the request
-    /// goes on as `pending` says.
     fn dev_effect(&mut self, pending: Pending, effect: Effect) -> Step {
         self.dev_pending = Some(pending);
         Step::Effect(effect)
     }
 
-    /// The request's `reply`, finished where it succeeded: its result with
-    /// the observation again, whether the host is paused, the authored
-    /// scene's source and the last frame's statistics (`rendering`).
     fn dev_done(&mut self, mut reply: Value, context: &HostContext) -> Step {
         self.dev_pending = None;
         if reply["ok"] == true {
@@ -615,15 +536,11 @@ impl<G: Game> GameHost<G> {
         Step::Reply(reply)
     }
 
-    /// A refusal of `code` at `path`, ending the request under way.
     fn dev_refused(&mut self, code: ErrorCode, path: &str, message: &str) -> Step {
         self.dev_pending = None;
         Step::Reply(self.dev_refusal(code, path, message))
     }
 
-    /// Starts benchmark `control` on the view `context` describes: the
-    /// assets before it and the input batch cleared, then a wait for the
-    /// host's frame.
     fn dev_benchmark_start(&mut self, control: &Map<String, Value>, context: &HostContext) -> Step {
         if context.width == 0 || context.height == 0 {
             return self.dev_refused(ErrorCode::BenchmarkInterrupted, "$", NEEDS_VIEW);
@@ -671,8 +588,6 @@ impl<G: Game> GameHost<G> {
         )
     }
 
-    /// Benchmark `run` resumed once its host's wait ended as `outcome`
-    /// says: its next frame and wait, or its report once every frame ran.
     fn dev_benchmark(
         &mut self,
         mut run: Box<BenchmarkRun>,
@@ -710,8 +625,6 @@ impl<G: Game> GameHost<G> {
         self.dev_effect(Pending::Benchmark(run), Effect::Wait { within_ms })
     }
 
-    /// Benchmark `run`'s reply once every frame ran: its report, with the
-    /// assets after it and the host it ran on.
     fn dev_benchmark_report(&mut self, run: &BenchmarkRun, context: &HostContext) -> Step {
         let after = self.dev_invoke(&json!({"op": "assets"}), context);
         if after["ok"] != true {
@@ -737,8 +650,6 @@ impl<G: Game> GameHost<G> {
     }
 }
 
-/// The code and message of the engine's refusal `reply`, as a benchmark
-/// stops with them.
 fn stopped(reply: &Value) -> Stopped {
     let code = reply["error"]["code"]
         .as_str()
@@ -751,7 +662,6 @@ fn stopped(reply: &Value) -> Stopped {
     (code, message)
 }
 
-/// Every number in `value` by its path, such as `terrain.leaves`.
 fn numbers(value: &Value, prefix: &str, out: &mut Vec<(String, f64)>) {
     if let Value::Object(fields) = value {
         for (key, value) in fields {
@@ -769,8 +679,6 @@ fn numbers(value: &Value, prefix: &str, out: &mut Vec<(String, f64)>) {
     }
 }
 
-/// The spread of measured `values`, as the engine computes it on every
-/// host.
 fn distribution(values: &[f64]) -> Result<Value, Stopped> {
     Distribution::of(values)
         .map(|distribution| json!(distribution))

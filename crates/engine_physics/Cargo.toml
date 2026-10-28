@@ -6,7 +6,6 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
-# JSON schemas of bodies and the physics settings (`settings!`).
 schema = ["dep:schemars", "engine_settings/schema"]
 default = []
 profiling = ["engine_profile/enabled", "engine_core/profiling"]

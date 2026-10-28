@@ -1,54 +1,27 @@
-//! A terrain as entities author it: where its tiles come from, its surface
-//! and the objects placed on it, its edits, and what development shows of
-//! it.
-
 use super::*;
 
-/// How a terrain's ground looks: the rules choosing each
-/// sample's materials (its biomes), and how each material looks, in the
-/// rules' order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainSurface {
     pub rules: Arc<BiomeRules>,
     pub materials: Vec<SurfaceMaterial>,
-    /// What the rules' placement layers stand on the terrain,
-    /// in the rules' order of asset IDs.
     pub assets: Vec<PlacementAsset>,
-    /// The material its roads' bridges draw with; without
-    /// one, a weathered stone.
     pub bridge: Option<MaterialHandle>,
 }
 
-/// An object placement layers stand on a terrain: the mesh
-/// it draws and the material it draws with, the coarser meshes it draws at
-/// a distance, finest first (without them, the mesh's automatic levels of
-/// detail), the parts it draws with materials of their own, its shadow
-/// proxy, how far it sways in the wind:
-/// meters at ten meters up in full wind, its bend growing with the square
-/// of the height, 0 (rigid) to 10, and its objects' collider,
-/// if they collide.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementAsset {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
     pub lods: Vec<PlacementLod>,
     pub parts: Vec<PlacementPart>,
-    /// A simpler mesh drawn in place of the asset's levels into shadow
-    /// maps, opaque and depth only; none casts the asset's own levels.
     pub shadow: Option<MeshHandle>,
     pub sway: f32,
     pub collider: Option<PlacedCollider>,
 }
 
 impl PlacementAsset {
-    /// The rule of [`Self::sway`], which terrains check and authored
-    /// placement assets' schemas state.
     pub const SWAY: Rule = Rule::range(0.0, 10.0);
 
-    /// The solid its objects stand as, which water flows around: its
-    /// collider's primitive about its center, or else the bounds of its
-    /// mesh once `assets` holds it; none for bounds thinner along an axis
-    /// than colliders admit ([`MIN_COLLIDER_EXTENT`]).
     pub fn solid(&self, assets: Option<&AssetLibrary>) -> Option<Solid> {
         if let Some(collider) = self.collider {
             let (half, round) = match collider.shape {
@@ -71,26 +44,15 @@ impl PlacementAsset {
     }
 }
 
-/// A part of a placement asset its objects draw with a material of its
-/// own, such as a tree's masked needle cards over its opaque crown: its
-/// mesh at the asset's mesh and then at each of its coarser meshes, as far
-/// as it reaches; coarser levels draw without it. A part takes the asset's
-/// color, surface factors, sway and impostor, and casts no shadow: the
-/// asset's shadow proxy, where it has one, is the whole object's shadow.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementPart {
     pub material: MaterialHandle,
     pub meshes: Vec<MeshHandle>,
 }
 
-/// Parts a placement asset lists at most.
 pub const MAX_PLACEMENT_PARTS: usize = 2;
 
 impl PlacementPart {
-    /// Checks a placement asset's `parts`, of an asset drawing `levels`
-    /// levels (its mesh and coarser ones): at most [`MAX_PLACEMENT_PARTS`],
-    /// each with one mesh at least and one for each level at most. Errors
-    /// name the offending index (none for the count) and the rule.
     pub fn check(parts: &[usize], levels: usize) -> Result<(), (Option<usize>, &'static str)> {
         if parts.len() > MAX_PLACEMENT_PARTS {
             return Err((None, "lists at most 2 parts"));
@@ -108,11 +70,6 @@ impl PlacementPart {
     }
 }
 
-/// The collider of a placement asset's objects, in the
-/// asset's mesh space at scale 1: its primitive about `center`, and the
-/// collision layers the objects belong to and collide with. Objects within
-/// terrains' collision radius collide; those standing far away
-/// never do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlacedCollider {
     pub shape: PlacedShape,
@@ -121,14 +78,10 @@ pub struct PlacedCollider {
     pub filter: u32,
 }
 
-/// Local dimensions admitted by collision shapes, independent of render
-/// meshes: placed colliders', scenes' and the collision world's.
 pub const MIN_COLLIDER_EXTENT: f32 = 1.0e-4;
 
 pub const MAX_COLLIDER_EXTENT: f32 = 1.0e4;
 
-/// A placed collider's primitive: a box's half extents or a sphere's
-/// radius, each from [`MIN_COLLIDER_EXTENT`] to [`MAX_COLLIDER_EXTENT`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PlacedShape {
     Cuboid { half_extents: [f32; 3] },
@@ -136,8 +89,6 @@ pub enum PlacedShape {
 }
 
 impl PlacedCollider {
-    /// A collider of `shape` about `center` in the default layers: a
-    /// member of the first, colliding with every one.
     pub fn new(shape: PlacedShape, center: [f32; 3]) -> Self {
         Self {
             shape,
@@ -147,7 +98,6 @@ impl PlacedCollider {
         }
     }
 
-    /// Whether its dimensions are in range and its center finite.
     fn is_usable(&self) -> bool {
         let usable = |value: f32| (MIN_COLLIDER_EXTENT..=MAX_COLLIDER_EXTENT).contains(&value);
         let dimensions = match self.shape {
@@ -158,7 +108,6 @@ impl PlacedCollider {
     }
 }
 
-/// A placed collider keeps the collision extents, about a finite center.
 impl Setting for PlacedCollider {
     fn check(&self, field: &'static str, _: Rule) -> Result<(), InvalidSetting> {
         if self.is_usable() {
@@ -174,24 +123,15 @@ impl Setting for PlacedCollider {
     }
 }
 
-/// A coarser mesh of a placement asset and the largest deviation from the
-/// asset's mesh it shows, in mesh units: it draws where that projects
-/// within the pixel error.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlacementLod {
     pub mesh: MeshHandle,
     pub error: f32,
 }
 
-/// Coarser meshes a placement asset lists at most: renderers list each
-/// object's levels in a fixed number of planes.
 pub const MAX_PLACEMENT_LODS: usize = 4;
 
 impl PlacementLod {
-    /// Checks a placement asset's coarser meshes' `errors`, in order: at
-    /// most [`MAX_PLACEMENT_LODS`], each finite, positive and greater than
-    /// the last. Errors name the offending index (none for the count) and
-    /// the rule.
     pub fn check(errors: &[f32]) -> Result<(), (Option<usize>, &'static str)> {
         if errors.len() > MAX_PLACEMENT_LODS {
             return Err((None, "lists at most 4 meshes"));
@@ -212,43 +152,20 @@ impl PlacementLod {
 
 settings! {
     unauthored;
-    /// How a surface material looks: an engine material's maps and factors,
-    /// or without one a linear `color` and `roughness`; how its textures
-    /// repeat and blend; and the cover growing where it lies.
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct SurfaceMaterial {
-        /// The engine material shading it, if any.
         pub material: Option<MaterialHandle> = None => any,
-        /// Linear color without a material.
         pub color: [f32; 3] = [0.5; 3] => range(0.0, 1.0),
-        /// Roughness without a material.
         pub roughness: f32 = 0.9 => range(0.03, 1.0),
-        /// The meters its textures repeat over.
         pub tiling: f32 = 4.0 => range(0.01, 1000.0),
-        /// How sharply its height map wins where it blends with another, as
-        /// far as its maps show: 0 even, 1 sharpest. Where they no longer
-        /// show, it blends by its share alone.
         pub height_contrast: f32 = 0.5 => range(0.0, 1.0),
-        /// Whether steep ground projects it from the side.
         pub projection: SurfaceProjection = SurfaceProjection::Top => any,
-        /// The cover growing where it lies.
         pub cover: Option<crate::Cover> = None => any,
-        /// Its depth: the meters its maps' heights span, its stones', tufts'
-        /// and ledges' rise and fall about their mean along the ground's
-        /// smooth normal: 0 flat. Biplanar ones span it across their planes,
-        /// as on rock faces. The part of its heights coarser than the
-        /// ground's mesh carries where it is drawn moves the mesh, and the
-        /// rest, down to the pixel, is relief its pixels' view rays meet, so
-        /// the two always sum to its heights, detail passing from the
-        /// pixels to the mesh as the mesh refines toward the eye.
         pub depth: f32 = 0.0 => range(0.0, 2.0),
-        /// The meters tracks sink it at most: 0 rigid.
         pub deform: f32 = 0.0 => range(0.0, 2.0),
     }
 }
 
-/// How a surface material's textures lie on the ground: from above, or
-/// on steep ground also from the side, so cliffs don't stretch them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -261,8 +178,6 @@ pub enum SurfaceProjection {
 impl Setting for SurfaceProjection {}
 
 impl SurfaceMaterial {
-    /// A material of plain linear `color` and `roughness`, its textures (if
-    /// it gains any) repeating as the defaults do.
     pub fn color(color: [f32; 3], roughness: f32) -> Self {
         Self {
             color,
@@ -273,8 +188,6 @@ impl SurfaceMaterial {
 }
 
 impl TerrainSurface {
-    /// The surface of `surface`'s rules with `materials`, one per
-    /// material it names, in order.
     pub fn new(surface: &Biomes, materials: Vec<SurfaceMaterial>) -> Result<Self, BiomeError> {
         let rules = surface.compile()?;
         if materials.len() != surface.materials.len() {
@@ -291,7 +204,6 @@ impl TerrainSurface {
         })
     }
 
-    /// The surface with `assets`, one per asset its rules name, in order.
     pub fn with_assets(mut self, assets: Vec<PlacementAsset>) -> Result<Self, BiomeError> {
         let fail = |path: String, rule: &str| {
             Err(BiomeError {
@@ -333,8 +245,6 @@ impl TerrainSurface {
         Ok(self)
     }
 
-    /// The first value breaking its rule, if any: one material and asset
-    /// for each the rules name, every material valid.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         if self.materials.len() != self.rules.authored().materials.len() {
             return Err(InvalidSetting::new(
@@ -356,9 +266,6 @@ impl TerrainSurface {
         Ok(())
     }
 
-    /// The default surface's rules as authored: grass, bare dirt where noise
-    /// opens it up, snow above `snow_height` meters, and rock over them
-    /// wherever the ground is steep.
     pub fn default_rules(snow_height: f32) -> Biomes {
         let noise = |wavelength: f32, seed: u32| {
             Mask::Noise(NoiseMask {
@@ -424,7 +331,6 @@ impl TerrainSurface {
         }
     }
 
-    /// The default materials' looks, matching [`Self::default_rules`].
     pub fn default_materials() -> Vec<SurfaceMaterial> {
         vec![
             SurfaceMaterial::color([0.105, 0.135, 0.045], 0.92),
@@ -442,44 +348,24 @@ impl Default for TerrainSurface {
     }
 }
 
-/// A heightfield terrain whose first corner (least x and z)
-/// lies at `origin`, heights measured up from it. Its pyramid sets its
-/// level-0 tiles and spacing; its layers generate its tiles, which load
-/// as records (the cook's, or made by the same jobs).
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Terrain {
     pub origin: Vec3,
     pub pyramid: Pyramid,
     pub layers: Arc<Layers>,
     pub surface: TerrainSurface,
-    /// Whether it collides where collision is installed.
     pub collision: bool,
-    /// Edits over its generated layers and their bakes, in
-    /// order: replacing them regenerates only the tiles under the edits
-    /// added or taken away.
     pub edits: Arc<[TerrainEdit]>,
-    /// Rivers drawn over its layers, in order: given to its first
-    /// hydrology layer after any its rivers layers give it, as a rivers
-    /// layer of their own just before it. Replacing them bakes its hydrology
-    /// and what follows it again, and regenerates only the tiles where its
-    /// rivers or roads then differ.
     pub rivers: Arc<[TerrainRiver]>,
-    /// Ground generated around it to the horizon.
     pub surroundings: Option<Surroundings>,
 }
 
-/// One edit of a generated terrain: a stamp over its layers
-/// and bakes (terrain-local), under an `id` that repeating it with leaves
-/// alone.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainEdit {
     pub id: Arc<str>,
     pub stamp: Stamp,
 }
 
-/// A river drawn over a generated terrain: a given river (terrain-local),
-/// under an `id` that drawing the same river again leaves alone and another
-/// river replaces.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainRiver {
     pub id: Arc<str>,
@@ -487,7 +373,6 @@ pub struct TerrainRiver {
 }
 
 impl Terrain {
-    /// A terrain generated from `layers`.
     pub fn generated(origin: Vec3, pyramid: Pyramid, layers: Layers) -> Self {
         Self {
             origin,
@@ -507,15 +392,12 @@ impl Terrain {
         self
     }
 
-    /// The terrain with ground generated around it to the horizon.
     #[must_use]
     pub fn with_surroundings(mut self, surroundings: Surroundings) -> Self {
         self.surroundings = Some(surroundings);
         self
     }
 
-    /// The first value breaking its rule, if any: streaming uses only
-    /// valid terrains.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         if !self.origin.is_finite() {
             return Err(InvalidSetting::new("origin", "must be finite"));
@@ -526,24 +408,12 @@ impl Terrain {
     }
 }
 
-/// Temporary state for development: an eye that every distance switch
-/// follows instead of the camera's, the detail eye
-/// ([`crate::RenderSnapshot::detail_eye`]). Terrain streaming, its subdivision
-/// and shading levels, the ground's relief, ground cover and its canopy,
-/// placed objects' thinning, kept shadow windows, river water and virtual
-/// texture pages all stay where it stands, so agents can look at what it
-/// selects from elsewhere, and a ring where detail hands over can be walked
-/// away from and seen standing still. Absent, they follow the camera. What
-/// terrain is made of shows in the debug views (`crate::DebugView`).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct TerrainDebug {
-    /// The frozen eye (world space); `None` follows the camera.
     pub freeze: Option<Vec3>,
 }
 
 impl TerrainDebug {
-    /// `world`'s detail eye: the eye a `TerrainDebug` holds, else the
-    /// camera's.
     pub(crate) fn detail_eye(world: &World) -> Vec3 {
         world
             .get_resource::<Self>()
@@ -553,16 +423,10 @@ impl TerrainDebug {
 }
 
 settings! {
-    /// Names a place the camera may be sent to, such as a spawn point:
-    /// while the view wants nothing, the terrain tiles a camera there wants
-    /// load into memory, and stay there while it is named, so the camera
-    /// sent there finds them at once.
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct TerrainPrefetch {
-        /// Each level's tiles within this many times its range; 2 is what a
-        /// camera there loads.
         pub reach: f32 = LOAD_REACH => range(0.0, 8.0),
     }
 }

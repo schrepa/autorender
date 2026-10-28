@@ -1,12 +1,3 @@
-/**
- * Replays a corpus's jobs (`cargo xtask pure --wasm`: terrain, tables,
- * textures) in the job worker's Wasm module as browsers run it
- * (web/pkg-dev/engine_worker_bg.wasm), in Node, no browser: every share,
- * then every job run as the corpus ran it natively (whole, or a slice at
- * a time), each output hashed and held to the native one. Usage:
- *   node web/scripts/pure-wasm.mjs JOBS.json
- * Prints one JSON object; a job whose output differs exits 3.
- */
 // @ts-check
 import "./exit-codes.mjs";
 import { createHash } from "node:crypto";
@@ -20,7 +11,6 @@ if (!path) {
 }
 initSync({ module: readFileSync(new URL("../pkg-dev/engine_worker_bg.wasm", import.meta.url)) });
 const worker = new JobWorker();
-/** The first 16 hexadecimal digits of `bytes`' SHA-256, as xtask names outputs. */
 const hash = bytes => createHash("sha256").update(bytes).digest("hex").slice(0, 16);
 const entries = JSON.parse(readFileSync(path, "utf8"));
 const mismatches = [];

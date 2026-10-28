@@ -1,7 +1,3 @@
-//! A frame's preparation before its passes encode: its plan, kind and
-//! residency, asset uploads, instance packing and writes, each feature's
-//! preparation, the pipelines it draws with, and its render graph's shape.
-
 #![expect(
     clippy::expect_used,
     reason = "temporal frames create the temporal pass"
@@ -13,24 +9,17 @@ use crate::decals::{DecalFrame, DecalPass};
 use crate::temporal::ResolveFrame;
 use crate::transparent::TransparencyFrame;
 
-/// The screen effects' preparation: what they prepared, and whether glass
-/// refracts.
 struct PostPrep {
     post: Option<Ready<Effects>>,
     refraction: bool,
 }
 
-/// GPU presentation's preparation: occlusion culling's viewport and depth
-/// pyramid levels, and what presentation prepared.
 struct PresentationPrep {
     occlusion: Option<(u32, u32, u32)>,
     gpu_prepared: Option<GpuPrepared>,
 }
 
 impl Renderer {
-    /// Plans the frame's batches and shadow casters, retires assets it no
-    /// longer uses and decides its kind; also returns GPU presentation's
-    /// inputs.
     pub(super) fn plan_frame<'f>(
         &mut self,
         frame: RenderFrame<'f>,
@@ -46,15 +35,12 @@ impl Renderer {
         let gpu = frame.gpu();
         let gpu_mode = gpu.is_some();
         if self.gpu_frame && !gpu_mode {
-            // GPU frames wrote poses and skipped the slot-ID stream; CPU frames
-            // must not trust either upload cache.
             self.instances.retained_uploads.invalidate();
             self.instances.slot_revision = None;
         }
         self.gpu_frame = gpu_mode;
         self.apply_temporal_antialiasing(snapshot.environment.temporal_antialiasing.enabled);
         let debug = self.shows_debug_view(snapshot);
-        // Temporal frames resolve through the screen effects' targets.
         let temporal = display
             && gpu_mode
             && !debug
@@ -63,10 +49,6 @@ impl Renderer {
         if !temporal && let Some(pass) = self.features.temporal.get_mut() {
             pass.reset();
         }
-        // Display frames draw at the render size asked for and upscale through
-        // the screen effects' targets; debug views, exact frames, the pixel
-        // probe's and frames while those effects are disabled draw at the
-        // display's size.
         self.display
             .plan_region(display && !debug && !self.features.post.disabled());
         let profile_residency = engine_profile::span("render", "validate_and_retire");
@@ -78,11 +60,7 @@ impl Renderer {
                 )));
             }
         }
-        // Shadow draw groups: CPU-prepared frames also draw
-        // culled casters, whose meshes stay resident and upload with the
-        // batches' meshes.
         self.shadows.plan_groups(&self.plan, frame, gpu_mode);
-        // Terrains' placed objects keep their meshes resident.
         let placed: BTreeSet<MeshHandle> = snapshot
             .terrain
             .terrains
@@ -93,10 +71,6 @@ impl Renderer {
         if placed != self.scatter_meshes.0 {
             self.scatter_meshes = (placed, self.scatter_meshes.1 + 1);
         }
-        // Supplied sources keep residency across culling; uploads below follow
-        // only emitted draw batches, shadow casters and referenced textures.
-        // Residency changes only with the plan's sources, the casters or the
-        // placed objects' meshes.
         let residency = (
             self.plan.rebuilds(),
             self.shadows.groups_generation(),
@@ -143,10 +117,6 @@ impl Renderer {
         ))
     }
 
-    /// Follows the `TemporalAntialiasing` settings: enabling creates the
-    /// pipelines of temporally antialiased display frames, unless the pass
-    /// is disabled, disabling releases their targets and pose buffer. Frame
-    /// targets follow the surface size, 16 bytes per pixel.
     fn apply_temporal_antialiasing(&mut self, enabled: bool) {
         if enabled == self.features.temporal.get().is_some() {
             return;
@@ -163,9 +133,6 @@ impl Renderer {
         }
     }
 
-    /// Forgets what other parts keep for temporal frames once the temporal
-    /// pass goes: the pipelines over its layouts and the alternate pose
-    /// buffers.
     pub(in crate::renderer) fn forget_temporal(&mut self) {
         let current = |&(kind, _): &(PassKind, Variant)| kind.targets() != Some(Targets::Temporal);
         self.mesh_pipelines.variants.retain(|key, _| current(key));
@@ -179,11 +146,6 @@ impl Renderer {
         self.instances.release_alternate();
     }
 
-    /// Specializes the pipelines shading the scene for the features
-    /// `snapshot`'s frame can hold, and water's into the debug targets for
-    /// the view its settings show: when those change, the pipelines made
-    /// for others are dropped, and created anew with their next draws.
-    /// Decals specialize as they prepare.
     pub(super) fn specialize_shading(&mut self, snapshot: &RenderSnapshot) {
         let shading = SceneShading::of(snapshot);
         if shading != self.mesh_pipelines.shading {
@@ -204,10 +166,6 @@ impl Renderer {
             .specialize(shading, water_views);
     }
 
-    /// Uploads the frame's new meshes (with their levels of detail and
-    /// virtual geometry) and textures, bakes new impostors, and orders the
-    /// opaque draws. New textures' mip levels and impostor bakes record into
-    /// `mips`, the prelude's.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -222,8 +180,6 @@ impl Renderer {
 
         let profile_upload = engine_profile::span("render", "asset_uploads");
         let mut mesh_upload_bytes = 0_u64;
-        // Every batch's and caster's mesh is resident unless the plan, the
-        // casters or residency changed since the last upload.
         let uploads = (
             self.plan.rebuilds(),
             self.shadows.groups_generation(),
@@ -231,8 +187,6 @@ impl Renderer {
             self.scatter_meshes.1,
         );
         let mesh_uploads = self.structure_keys.uploads != Some(uploads);
-        // The plan's and casters' meshes, and terrains' placed objects', each
-        // with its cooked levels of detail.
         let sources = self
             .plan
             .batches
@@ -264,8 +218,6 @@ impl Renderer {
                 self.mesh_uploads
                     .staging
                     .extend(source.vertices().iter().map(Vertex::from));
-                // The arena holds the mesh in its streams' class; the device's
-                // limits alone leave a mesh buffers of its own.
                 let extras = ExtraVertex::stream(source);
                 let skin = SkinVertex::stream(source);
                 let mut streams: Vec<&[u8]> =
@@ -276,8 +228,6 @@ impl Renderer {
                 if let Some(skin) = &skin {
                     streams.push(bytemuck::cast_slice(skin));
                 }
-                // Its cooked levels of detail follow the mesh's own indices in
-                // its range, then the triangles shadow maps draw of each.
                 let (indices, lods, casters) = with_levels(source, rendered.lods.as_deref());
                 let index_count = source.indices().len() as u32;
                 let without_levels = rendered.lods.is_none()
@@ -349,14 +299,11 @@ impl Renderer {
             &self.queue,
             snapshot.environment.virtual_geometry.max_resident_pages,
         );
-        // Masked shadow casters bind their materials even when culled.
         let shadow_materials = self
             .shadows
             .groups()
             .iter()
             .filter_map(|group| group.material);
-        // New textures' mip levels render from their uploaded base level in
-        // the prelude, submitted ahead of this frame's command buffer.
         let (texture_upload_bytes, mip_levels) = self.materials.upload(
             &self.device,
             &self.queue,
@@ -365,8 +312,6 @@ impl Renderer {
             shadow_materials,
             mips,
         );
-        // Impostors bake after their materials' levels, the
-        // plan's and then placed objects'.
         self.prepare_impostors(snapshot, gpu_mode, mips);
         self.prepare_scatter_impostors(snapshot, gpu_mode, mips);
         drop(profile_upload);
@@ -378,8 +323,6 @@ impl Renderer {
         }
     }
 
-    /// Sizes instance, pose, color and palette storage for the frame, begins
-    /// its temporal antialiasing, and packs the records to upload.
     pub(super) fn pack_instances(&mut self, frame: RenderFrame<'_>, kind: FrameKind) -> Packing {
         let FrameKind {
             gpu_mode, temporal, ..
@@ -387,8 +330,6 @@ impl Renderer {
         let snapshot = frame.snapshot();
 
         let profile_packing = engine_profile::span("render", "instance_buffer_and_packing");
-        // Every slot, and joint palettes as many as the
-        // frame's joints.
         self.instances.reserve(
             &self.device,
             snapshot.instances.len(),
@@ -405,9 +346,6 @@ impl Renderer {
             )),
             _ => None,
         };
-        // Pose/color buffers retain core slot positions. Only compact IDs follow
-        // changing visibility and mesh/texture grouping, so order changes never
-        // shift payload records or force otherwise unchanged colors to upload.
         let slot_key = Some((frame.identity(), frame.structure_revision()));
         let write_slots = !gpu_mode
             && self
@@ -435,9 +373,6 @@ impl Renderer {
         }
     }
 
-    /// Writes the camera and lighting uniforms and the frame's changed
-    /// poses, colors, palettes and slot IDs; large pose uploads stage their
-    /// copies into `poses`, the prelude's.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -465,10 +400,7 @@ impl Renderer {
             |frame| frame.camera,
         );
         camera.set_region(snapshot.view_projection, self.display.region);
-        // The point every distance switch measures from.
         camera.set_detail(snapshot.detail_eye);
-        // The wind placed objects sway in, and the time they
-        // swayed at last frame for temporal frames' motion.
         let seconds = snapshot.elapsed_seconds;
         let previous = self.last_seconds.replace(seconds).unwrap_or(seconds);
         let wind = snapshot.environment.wind;
@@ -501,10 +433,7 @@ impl Renderer {
             ),
             (&snapshot.environment.foliage, temporal_frame.is_some()),
         );
-        // Whether 8-bit color writes dither.
         lighting.grade[3] = f32::from(u8::from(snapshot.environment.dither.enabled));
-        // The night sky, and haze: the air taking the sky's light, and the
-        // near air's sunlight the screen effects march.
         crate::sky::apply_night(&mut lighting, &snapshot.environment);
         crate::sky::apply_haze(
             &mut lighting,
@@ -515,7 +444,6 @@ impl Renderer {
                 && !self.features.post.disabled()
                 && crate::screen_effects::haze_runs(&snapshot.environment),
         );
-        // Under the sea, its water veils everything.
         lighting.underwater = crate::water::underwater(
             &snapshot.environment,
             snapshot.camera_position,
@@ -525,12 +453,8 @@ impl Renderer {
         if ocean.enabled {
             lighting.sea = [ocean.level, ocean.clarity, 1.0, 0.0];
         }
-        // Clouds' shadows on everything the sun lights.
         (lighting.cloud_shadow, lighting.cloud_layer) =
             crate::clouds::shadow_lighting(&snapshot.environment.clouds, snapshot.camera_position);
-        // What placed objects cover around the detail eye: the
-        // maps shading reads, whose windows follow the detail eye and redraw
-        // the cells they uncover and those whose objects changed.
         if let Some(maps) = self.features.occupancy.get_mut().prepare(
             &self.device,
             &self.queue,
@@ -548,7 +472,6 @@ impl Renderer {
         camera_upload_bytes += self.camera.write_lighting(&self.queue, lighting);
         let mut color_upload_bytes = 0_u64;
         let mut slot_upload_bytes = 0_u64;
-        // GPU-presented frames write poses on the GPU.
         let pose_ranges = if gpu_mode {
             &[][..]
         } else {
@@ -557,15 +480,12 @@ impl Renderer {
         let instance_write_ranges = pose_ranges.len()
             + self.instances.retained_uploads.color_ranges().len()
             + usize::from(write_slots);
-        // Core keeps each slot's pose in this upload layout.
         let pose_rows: &[u8] = bytemuck::cast_slice(frame.pose_rows());
         let stride = size_of::<PoseData>();
         let mut pose_upload_bytes: u64 = pose_ranges
             .iter()
             .map(|range| ((range.end - range.start) * stride) as u64)
             .sum();
-        // Large pose uploads copy into a persistently mapped staging buffer
-        // and a GPU copy submitted before this frame's draws.
         let mut staged = false;
         if pose_upload_bytes as usize >= staging::MIN_STAGED_BYTES {
             let mut encoder = self
@@ -607,8 +527,6 @@ impl Renderer {
             );
             color_upload_bytes += std::mem::size_of_val(records) as u64;
         }
-        // CPU-prepared frames upload skinned slots' palettes;
-        // GPU-presented ones compute them.
         if !gpu_mode && !snapshot.joints.is_empty() {
             self.instances.palette_staging.clear();
             self.instances
@@ -643,11 +561,6 @@ impl Renderer {
         }
     }
 
-    /// Prepares every feature the frame runs, in order: GPU presentation
-    /// with occlusion culling, shadows, clouds, the physically based sky,
-    /// environment maps and reflection probes, local lights, screen effects,
-    /// transparency and particles, and decals. Presentation's input copies,
-    /// the sky's light and the environment's work go in `prelude`.
     pub(super) fn prepare_features<'s>(
         &mut self,
         frame: RenderFrame<'s>,
@@ -662,10 +575,6 @@ impl Renderer {
             gpu_prepared,
         } = self.prepare_presentation(frame, gpu, kind, temporal_frame, &mut prelude.inputs);
         let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
-        // Clouds: this frame's march of their dome from the eye, which the
-        // sky and its environment map show, and from its mirror point across
-        // what lies under it, which what smooth surfaces mirror shows; exact
-        // frames march all of it.
         self.features.clouds.get_mut().prepare(
             &self.device,
             &self.queue,
@@ -678,8 +587,6 @@ impl Renderer {
             (lighting, self.features.sky.get().bindings()),
             !kind.gpu_mode,
         );
-        // And their march in the view, after the opaque
-        // scene and water.
         self.features.clouds.get_mut().prepare_view(
             &self.device,
             &self.queue,
@@ -700,8 +607,6 @@ impl Renderer {
         prelude.sky = self.prepare_sky(snapshot);
         let (environment, probe_list) = self.prepare_environment(snapshot, lighting);
         prelude.environment = environment;
-        // Debug views shade no lights and leave screen effects, transparent
-        // surfaces and decals out; the features keep what they made.
         if kind.debug {
             return Features::debug(occlusion, gpu_prepared, shadow_frame, probe_list);
         }
@@ -735,9 +640,6 @@ impl Renderer {
         }
     }
 
-    /// Occlusion culling's depth pyramid and GPU presentation's inputs, whose
-    /// copies record into `input_copies`, the prelude's; returns the
-    /// occlusion viewport and levels, and what presentation prepared.
     fn prepare_presentation(
         &mut self,
         frame: RenderFrame<'_>,
@@ -749,9 +651,6 @@ impl Renderer {
         let gpu_mode = kind.gpu_mode;
         let snapshot = frame.snapshot();
 
-        // Occlusion culling: the depth pyramid of this frame's
-        // depth buffer, sized before presentation plans two phases; turning
-        // it off releases the pyramid.
         let occlusion_enabled = snapshot.environment.occlusion_culling.enabled;
         if !occlusion_enabled {
             self.culling.pyramid = None;
@@ -768,8 +667,6 @@ impl Renderer {
         } else {
             None
         };
-        // Batches drawing virtual geometry instead of their
-        // fallback meshes, by the arena and whether it draws.
         let virtual_enabled = snapshot.environment.virtual_geometry.enabled;
         let arena = self
             .virtual_draws
@@ -811,8 +708,6 @@ impl Renderer {
             let records = RecordsKey {
                 shadow_groups: !shadows.groups().is_empty(),
                 meshes: virtual_key ^ (self.mesh_layout << 32),
-                // Batch records carry impostor errors: rebuilt with the
-                // impostors, and when turning them on or off.
                 impostors: if snapshot.environment.level_of_detail.impostors {
                     self.impostors.atlas.generation() + 1
                 } else {
@@ -823,13 +718,7 @@ impl Renderer {
                 view_projection: temporal_frame
                     .as_ref()
                     .map_or(snapshot.view_projection, |temporal| temporal.rasterized),
-                // Levels of detail and their cards' fades measure from the
-                // detail eye; culling keeps the projection's planes.
                 eye: snapshot.detail_eye,
-                // Culling tests the pixels the frame draws; levels of detail
-                // keep their error in the display's pixels, the render
-                // pixels' share of them, so they hold however the frame
-                // scales.
                 viewport: region.render.pixels(),
                 motion: temporal_frame
                     .as_ref()
@@ -842,15 +731,11 @@ impl Renderer {
                     0.0
                 },
                 impostors: snapshot.environment.level_of_detail.impostors,
-                // Reflection probes capture still slots,
-                // counted while captures wait.
                 stillness: (snapshot.environment.reflection_probes.enabled
                     && !snapshot.reflection_probes.list.is_empty())
                 .then(|| self.features.probes.get().slots.waiting()),
                 fade: self.switch_fades.share,
             };
-            // Temporal frames alternate pose buffers; the other keeps the
-            // previous frame's poses.
             let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
             let (ring, poses) = self.instances.presentation_inputs(parity);
             Some(self.gpu_presentation.prepare(
@@ -880,7 +765,6 @@ impl Renderer {
         }
     }
 
-    /// The frame's shadow maps, selecting from its poses.
     fn prepare_shadows(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -889,7 +773,6 @@ impl Renderer {
     ) -> Option<ShadowFrame> {
         let gpu_mode = kind.gpu_mode;
 
-        // Shadow maps select from this frame's poses.
         let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
         let meshes = &self.meshes;
         let arena = &self.mesh_arena;
@@ -903,9 +786,6 @@ impl Renderer {
                 },
                 |mesh| {
                     let draw = mesh.draw(arena);
-                    // Levels of detail of meshes without
-                    // joints, which move their vertices; each level's
-                    // caster triangles.
                     let lods = if mesh.skinned || !snapshot.environment.level_of_detail.enabled {
                         Vec::new()
                     } else {
@@ -951,10 +831,6 @@ impl Renderer {
         )
     }
 
-    /// The physically based sky's work this frame: its air's tables as
-    /// they arrive, its sky-view table as it needs building, then the light
-    /// it gives, copied over the authored atmosphere's colors in the
-    /// lighting uniform and the clouds' march's uniform.
     fn prepare_sky(&mut self, snapshot: &RenderSnapshot) -> Option<wgpu::CommandEncoder> {
         use crate::sky::{
             DERIVED_AIR, DERIVED_GLOW, DERIVED_GROUND, DERIVED_HORIZON, DERIVED_SUN, DERIVED_ZENITH,
@@ -975,7 +851,6 @@ impl Renderer {
                 at(offset_of!(LightingUniform, zenith)),
                 12,
             ),
-            // With the exposure adapted to the sky's light.
             (
                 DERIVED_HORIZON,
                 lighting,
@@ -994,7 +869,6 @@ impl Renderer {
                 at(offset_of!(LightingUniform, aerial_color)),
                 12,
             ),
-            // The glow rides in the aerial vector's w.
             (
                 DERIVED_GLOW,
                 lighting,
@@ -1003,7 +877,6 @@ impl Renderer {
             ),
         ];
         copies.extend(self.features.clouds.get().sky_copies());
-        // The moon's light on the night: its brightness times its lit share.
         let sun = snapshot.environment.atmosphere.sun_direction;
         let [night, _, moon] = crate::sky::night_lighting(&snapshot.environment, sun);
         self.features.sky.get_mut().encode(
@@ -1022,10 +895,6 @@ impl Renderer {
         )
     }
 
-    /// Environment maps and reflection probes, and the camera
-    /// group binding them; returns the environment's encoder and the probes
-    /// the frame keeps, and counts those beyond the GPU's arrays in the
-    /// probes feature.
     fn prepare_environment<'s>(
         &mut self,
         snapshot: &'s RenderSnapshot,
@@ -1034,10 +903,6 @@ impl Renderer {
         Option<wgpu::CommandEncoder>,
         &'s [engine_core::RenderReflectionProbe],
     ) {
-        // Environment maps: as many cubes as the reflection
-        // probes kept need (the nearest first, as many as the GPU's texture
-        // arrays hold), the sky's redrawn when it changes, then the probes'
-        // cubes assigned and their grid uploaded.
         let probe_settings = snapshot.environment.reflection_probes;
         let probe_list: &[engine_core::RenderReflectionProbe] = if probe_settings.enabled {
             &snapshot.reflection_probes.list
@@ -1053,7 +918,6 @@ impl Renderer {
         } else {
             self.features.environment.get().cubes()
         };
-        // Frames whose maps and sky stand record nothing here.
         let keys = (
             self.features.clouds.get().environment_key(),
             self.features.sky.get().environment_key(),
@@ -1090,7 +954,6 @@ impl Renderer {
             .slots
             .plan(probe_list, (cubes - 1) as usize, lost, sky_changed);
         probes.upload(&self.device, &self.queue);
-        // Faces count as the frame's probe captures draw them.
         probes.faces = 0;
         probes.dropped = (snapshot.reflection_probes.dropped as u64
             + (probe_list.len() as u64).saturating_sub(u64::from(most_cubes - 1)))
@@ -1099,8 +962,6 @@ impl Renderer {
         (environment_encoder, probe_list)
     }
 
-    /// Rebuilds the main passes' first group when what it binds was
-    /// replaced.
     pub(super) fn refresh_camera_group(&mut self) {
         self.camera.refresh(
             &self.device,
@@ -1116,7 +977,6 @@ impl Renderer {
         );
     }
 
-    /// Local lights, binned from the frame's poses.
     fn prepare_lights(
         &mut self,
         frame: RenderFrame<'_>,
@@ -1126,10 +986,7 @@ impl Renderer {
         let temporal = kind.temporal;
         let snapshot = frame.snapshot();
 
-        // Local lights: binned on the GPU from this frame's
-        // poses, so slot lights follow GPU-presented meshes.
         let needs = snapshot.environment.local_lights.active() && !snapshot.lights.list.is_empty();
-        // Clusters tile the pixels the frame draws.
         let (device, queue, size) = (&self.device, &self.queue, self.display.region.render);
         let layouts = (&self.camera.layout, self.materials.layout());
         let temporal_pass = &mut self.features.temporal;
@@ -1157,20 +1014,13 @@ impl Renderer {
         )
     }
 
-    /// Screen effects and refraction's targets, `display` frames keeping
-    /// the haze's history; returns the effects and whether glass refracts.
     fn prepare_post(
         &mut self,
         snapshot: &RenderSnapshot,
         temporal_frame: &Option<TemporalFrame>,
         display: bool,
     ) -> PostPrep {
-        // Screen effects, which temporal frames apply in their resolve (whose
-        // history averages the occlusion noise), and auto exposure's meter.
         let effects = crate::screen_effects::targets_read(&snapshot.environment);
-        // Glass refracts the opaque color of the scene target:
-        // frames drawing it render into the target. Frames drawing smaller
-        // than the display draw into it too, which the composite upscales.
         let refraction = snapshot.environment.refraction.enabled()
             && self.plan.batches.iter().any(|batch| {
                 batch.transparent && self.materials.binding(batch.material).1.transmission()
@@ -1195,16 +1045,12 @@ impl Renderer {
                 ))
             },
         );
-        // Frames without effects release their targets.
         if !needs && let Some(post) = self.features.post.get_mut() {
             post.release_targets();
         }
         PostPrep { post, refraction }
     }
 
-    /// Temporal frames' resolve over the screen effects' targets, the depth
-    /// buffer and, when something transparent draws (`transparent`), its
-    /// revealage.
     fn prepare_resolve(
         &mut self,
         temporal_frame: &Option<TemporalFrame>,
@@ -1222,9 +1068,6 @@ impl Renderer {
         })
     }
 
-    /// Transparent surfaces and particles; `None` when nothing transparent
-    /// draws. `emitters` is the frame's stream identity and emitters
-    /// revision.
     fn prepare_transparency(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -1232,7 +1075,6 @@ impl Renderer {
         temporal_frame: &Option<TemporalFrame>,
         post_frame: Option<Effects>,
     ) -> Option<Ready<TransparencyFrame>> {
-        // Transparent surfaces and particles.
         let meshes = self.plan.batches.iter().any(|batch| batch.transparent);
         let (device, queue) = (&self.device, &self.queue);
         let inputs = (
@@ -1261,7 +1103,6 @@ impl Renderer {
         transparency
     }
 
-    /// Decals over the opaque surfaces.
     fn prepare_decals(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -1269,8 +1110,6 @@ impl Renderer {
         lit: bool,
         post_frame: Option<Effects>,
     ) -> Option<Ready<DecalFrame>> {
-        // Decals cover the opaque surfaces the depth buffer
-        // holds and read their displayed poses from the joint palette.
         let decal_lights = self
             .features
             .lights
@@ -1304,9 +1143,6 @@ impl Renderer {
         )
     }
 
-    /// The pipelines of the material variants the frame's
-    /// mesh passes draw, reflection probe captures' and the
-    /// impostors'.
     pub(super) fn prepare_pipelines(
         &mut self,
         kind: FrameKind,
@@ -1320,19 +1156,14 @@ impl Renderer {
             features.probe_list,
         );
 
-        // Pipelines of the material variants this frame draws.
         let lit_frame = light_frame.is_some() && self.features.lights.get().is_some();
         let targets = self.frame_targets(kind, temporal_frame, post_frame);
         let opaque_kind = PassKind::opaque(targets, lit_frame);
         let transparent_kind = PassKind::transparent(lit_frame);
         self.ensure_variants(opaque_kind, transparent_kind);
-        // Reflection probes capture once their slots stand
-        // still: their pipelines are prepared with the first frame that has
-        // probes, not in the middle of play.
         if gpu_mode && !kind.debug && !probe_list.is_empty() {
             self.ensure_probe_pipelines(PassKind::probe(lit_frame));
         }
-        // Impostors: this frame's records, group and pipeline.
         let impostor_pass = if gpu_mode
             && self
                 .impostors
@@ -1345,7 +1176,6 @@ impl Renderer {
         } else {
             None
         };
-        // Placed objects' impostors cast cards.
         if impostor_pass.is_some()
             && self
                 .scatter_draws
@@ -1363,9 +1193,6 @@ impl Renderer {
         }
     }
 
-    /// Virtual geometry's selection for the frame and the
-    /// visibility buffer's bins; returns whether clusters
-    /// draw and whether the visibility buffer resolves.
     pub(super) fn prepare_virtual_frame(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -1380,8 +1207,6 @@ impl Renderer {
             ..
         } = kind;
 
-        // Virtual geometry: the clusters the visible
-        // instances of virtual meshes draw this frame.
         let odd = temporal_frame
             .as_ref()
             .is_some_and(|frame| frame.parity == 1);
@@ -1398,8 +1223,6 @@ impl Renderer {
             self.ensure_virtual_pipelines(opaque_kind);
             self.ensure_virtual_pose_groups();
         }
-        // The visibility buffer resolves the camera's bins it
-        // can shade; the others draw forward.
         let resolving =
             virtual_frame && instance_count > 0 && self.prepare_visibility(snapshot, opaque_kind);
         if resolving {
@@ -1409,8 +1232,6 @@ impl Renderer {
         (virtual_frame, resolving)
     }
 
-    /// The frame's shape: which passes its render graph
-    /// declares, from what each feature prepared.
     pub(super) fn frame_shape(
         &self,
         kind: FrameKind,
@@ -1419,9 +1240,6 @@ impl Renderer {
     ) -> FrameShape {
         let post = features.post_frame();
         let targets = self.frame_targets(kind, &packing.temporal_frame, post);
-        // Occlusion culling draws in two phases: what the
-        // last test left visible, then, after the depth pyramid of those
-        // depths and the test, what the test newly finds visible.
         let phases = if kind.gpu_mode && self.gpu_presentation.occlusion() {
             2
         } else {
@@ -1451,13 +1269,10 @@ impl Renderer {
         }
     }
 
-    /// Clouds: what this frame records of them, and the view's
-    /// composite's pipeline into `targets` and its group.
     pub(super) fn prepare_cloud_composite(
         &mut self,
         targets: Targets,
     ) -> Option<Ready<CloudFrame>> {
-        // Debug views show what drew each pixel, clouds aside.
         if targets == Targets::Debug {
             return None;
         }
@@ -1472,9 +1287,6 @@ impl Renderer {
         })
     }
 
-    /// Temporal antialiasing's pose groups, the camera
-    /// group of glass refracting the opaque color, and reflections' world
-    /// trace and group over the terrain and placed objects prepared.
     pub(super) fn prepare_frame_groups(&mut self, state: &FrameState<'_>) {
         let (temporal_frame, refraction) =
             (&state.packing.temporal_frame, state.features.refraction);
@@ -1508,10 +1320,6 @@ impl Renderer {
         self.prepare_reflections(state);
     }
 
-    /// Reflections' world trace over the frame's terrains, as the terrain
-    /// pass streams them, and their placed objects, with ground cover's
-    /// density where it grows, and their group, in frames whose screen
-    /// effects reflect; others let the trace go.
     fn prepare_reflections(&mut self, state: &FrameState<'_>) {
         let Some(frame) = state
             .features
@@ -1554,8 +1362,6 @@ impl Renderer {
     }
 }
 
-/// The canvas's clear color: the scene's in linear light, encoded for the
-/// UNORM canvas.
 fn canvas_clear() -> [f64; 4] {
     let encode = |linear: f64| 1.055 * linear.powf(1.0 / 2.4) - 0.055;
     let [r, g, b, a] = crate::render_graph::SCENE_CLEAR;

@@ -1,23 +1,3 @@
-//! The metro: the wild city's plan (a downtown core and secondary centers,
-//! midtown, residential streets, industry, parks, plazas, markets,
-//! construction sites, stadiums, a river and an elevated rail ring) built
-//! with every engine feature: glTF materials with normal, metal-roughness,
-//! emissive and occlusion maps over procedural textures,
-//! optionally BC7-compressed; grime through second texture
-//! coordinates and trees and people in vertex colors;
-//! alpha-masked foliage, fences and lattices with masked shadows; glass that
-//! refracts and blended panes; per-object tints
-//! and billboards whose materials are replaced in place;
-//! keyframed props and skinned pedestrians;
-//! street lamps, headlights, neon and floodlights, fountains,
-//! steam, sparks and a few smoking stacks.
-//!
-//! Static renderables fill 20-unit blocks between 4-unit streets outward from
-//! the center, as in the wild city. With `hierarchy`, each block's parts are
-//! children of a block node and code-driven assemblies hang from moving
-//! pivots; without it those are roots. Animated models (keyframed props and
-//! people) always keep their own node trees, as imported glTF models do.
-
 mod animated;
 mod materials;
 mod models;
@@ -42,21 +22,15 @@ use models::{Car, MID_FLOORS, Mid, Model, Style, TOWER_FLOORS};
 pub(crate) use world::MetroWorld;
 
 const ROAD_TOP: f32 = 0.15;
-/// Top of sidewalks and lots.
 const LOT: f32 = 0.3;
 const RAIL_BASE: f32 = 9.5;
 const DECK_TOP: f32 = 10.4;
 const WATER_TOP: f32 = -0.2;
-/// Static renderables of an average block, for sizing districts.
 const PER_BLOCK: f32 = 42.0;
-/// Reflection probes: the height they capture from, and the
-/// world distance inside their boxes' faces over which they fade out.
 const PROBE_HEIGHT: f32 = 2.5;
 const PROBE_BLEND: f32 = 2.0;
-/// Scales of people (built in meters) and small street furniture.
 const PERSON: f32 = 0.47;
 const FURNITURE: f32 = 0.5;
-/// Seconds each billboard shows an advertisement.
 pub(crate) const AD_PERIOD: f64 = 6.0;
 
 const WHITE: [f32; 4] = [1.0; 4];
@@ -117,7 +91,6 @@ const CANVAS: [[f32; 4]; 6] = [
 ];
 const CRANE: [f32; 4] = [1.0, 0.72, 0.1, 1.0];
 
-/// A renderable's model, material and tint.
 #[derive(Clone, Copy, Debug)]
 struct Look {
     model: Model,
@@ -138,28 +111,21 @@ struct Node {
     moving: bool,
 }
 
-/// Components beyond a node's transform, motion and mesh.
 #[derive(Clone, Debug)]
 enum Extra {
     Light(LocalLight),
     Emitter(ParticleEmitter),
-    /// Plays `clip` on the `targets` nodes.
     Player {
         clip: Clip,
         targets: Vec<u32>,
         time: f32,
         speed: f32,
     },
-    /// Deforms this node's mesh by the `joints` nodes.
     Skin(Vec<u32>),
-    /// A node players move: presented smoothly with interpolation.
     Animated,
-    /// A billboard face whose material cycles.
     Advert,
 }
 
-/// Where parts attach: a transform-only node (with `hierarchy`) or the
-/// world, through `frame`, which is never scaled.
 #[derive(Clone, Copy)]
 struct Anchor {
     node: Option<u32>,
@@ -174,7 +140,6 @@ struct Site {
     yaw: f32,
 }
 
-/// Animated models blocks offer to the movers.
 #[derive(Clone, Copy)]
 enum Prop {
     Flag,
@@ -186,7 +151,6 @@ enum Prop {
     Carousel,
     Drawbridge,
     Ring,
-    /// A window washer on a tower face of height class `n`.
     Gondola(u8),
 }
 
@@ -204,19 +168,16 @@ struct Metro {
     extras: Vec<(u32, Extra)>,
     static_left: u32,
     moving_left: u32,
-    /// Build-space size and center of every model placed.
     shapes: HashMap<Model, (Vec3, Vec3)>,
     blocks: Vec<(i32, i32, f32)>,
     rooftops: Vec<Rooftop>,
     cranes: Vec<Site>,
     wheels: Vec<Site>,
     props: Vec<(Prop, Site)>,
-    /// Places people stand about at.
     spots: Vec<(Anchor, Vec3)>,
     river: Option<(i32, f32)>,
     rail: Option<i32>,
     radius: f32,
-    /// Skyline centers in block units: position, reach and peak intensity.
     centers: Vec<(Vec2, f32, f32)>,
 }
 
@@ -233,7 +194,6 @@ impl Metro {
         self.shape(model).0
     }
 
-    /// How tall the block at (`bx`, `bz`) builds, in `[0, 1]`.
     fn skyline(&self, bx: i32, bz: i32) -> f32 {
         let at = Vec2::new(bx as f32, bz as f32);
         self.centers
@@ -268,7 +228,6 @@ impl Metro {
         }
     }
 
-    /// A node in `anchor`'s frame (local, or composed into world space).
     fn push(
         &mut self,
         anchor: &Anchor,
@@ -291,7 +250,6 @@ impl Metro {
         self.nodes.len() as u32 - 1
     }
 
-    /// A static part; `None` once the static budget is spent.
     fn part(&mut self, anchor: &Anchor, local: Transform, look: Look) -> Option<u32> {
         if self.static_left == 0 {
             return None;
@@ -300,7 +258,6 @@ impl Metro {
         Some(self.push(anchor, local, Some(look), None, false))
     }
 
-    /// A static part standing on `base`, turned by `yaw` and scaled.
     fn put(
         &mut self,
         anchor: &Anchor,
@@ -321,8 +278,6 @@ impl Metro {
         )
     }
 
-    /// A moving part with its motion as a child of `anchor` (`nested`) and
-    /// as a root (`flat`, in world space).
     fn mover(
         &mut self,
         anchor: &Anchor,
@@ -339,7 +294,6 @@ impl Metro {
         Some(self.push(anchor, local, Some(look), motion, true))
     }
 
-    /// A transform-only pivot for a code-driven assembly, with hierarchies.
     fn pivot(&mut self, frame: Transform, motion: Motion) -> Option<Anchor> {
         let anchor = self.anchor(frame);
         let node = anchor.node?;
@@ -347,7 +301,6 @@ impl Metro {
         Some(anchor)
     }
 
-    /// The root node of an animated model, kept in every layout.
     fn model_root(&mut self, anchor: &Anchor, local: Transform, motion: Option<Motion>) -> Anchor {
         let node = self.push(anchor, local, None, motion, false);
         Anchor {
@@ -356,7 +309,6 @@ impl Metro {
         }
     }
 
-    /// A moving renderable (or, without a look, a node) under a model root.
     fn animated(&mut self, root: &Anchor, local: Transform, look: Option<Look>) -> Option<u32> {
         if look.is_some() {
             if self.moving_left == 0 {
@@ -375,7 +327,6 @@ impl Metro {
         }
     }
 
-    /// `point` of `model` (in its build space) relative to its center.
     fn offset(&mut self, model: Model, point: Vec3) -> Vec3 {
         point - self.shape(model).1
     }
@@ -503,8 +454,6 @@ fn block(city: &mut Metro, bx: i32, bz: i32, rho: f32) {
     let river = city.river.is_some_and(|(row, _)| row == bz);
     let west = v(-HALF_BLOCK - 2.0, 0.0, 0.0);
     let north = v(0.0, 0.0, -HALF_BLOCK - 2.0);
-    // Streets on the west and north sides and their crossing; the west
-    // street bridges the river.
     if river {
         let deck = look(Model::BridgeDeck, Mat::Road, WHITE);
         city.put(
@@ -582,8 +531,6 @@ fn block(city: &mut Metro, bx: i32, bz: i32, rho: f32) {
         street(city, &anchor, &mut rng, true);
         return;
     }
-    // Chances in thousandths of a park, plaza, market, construction site
-    // and stadium; buildings otherwise.
     let chances = [
         if rho > 0.6 && skyline == 0.0 { 130 } else { 55 },
         if rho < 0.5 || skyline > 0.0 { 45 } else { 0 },
@@ -669,16 +616,12 @@ fn block(city: &mut Metro, bx: i32, bz: i32, rho: f32) {
     street(city, &anchor, &mut rng, skyline > 0.0 || rho < 0.55);
 }
 
-/// Street furniture around a block: lamps with lights, a traffic light,
-/// trees along busy streets and a few fixtures.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
 fn street(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, busy: bool) {
     let edge = HALF_BLOCK - 0.6;
-    // Lamps at two corners, and halfway along busy streets, their arms
-    // (along the model's +X) reaching out over the street.
     let mut lamps = vec![
         (-edge, -edge, v(-1.0, 0.0, -1.0)),
         (edge, edge, v(1.0, 0.0, 1.0)),
@@ -749,7 +692,6 @@ fn street(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, busy: bool) {
             );
         }
     }
-    // A few fixtures along the curbs.
     let fixtures = [
         Model::Bench,
         Model::Bin,
@@ -791,7 +733,6 @@ fn street(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, busy: bool) {
         }
     }
     if busy && rng.chance(30) {
-        // A bus shelter with glass sides and someone waiting.
         let (x, z) = (rng.range(-5.0, 5.0), edge - 0.5);
         city.put(
             anchor,
@@ -810,7 +751,6 @@ fn street(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, busy: bool) {
         city.spots.push((*anchor, v(x + 0.6, LOT, z - 0.3)));
     }
     if busy && rng.chance(12) {
-        // Steam rising from a manhole.
         let manhole = city.put(
             anchor,
             look(Model::Manhole, Mat::Fixture, WHITE),
@@ -869,8 +809,6 @@ fn rail(city: &mut Metro, anchor: &Anchor, bx: i32, bz: i32, ring: i32) {
     }
 }
 
-/// The river's water, docks and moored boats, and now and then a
-/// footbridge whose leaves lift.
 fn waterfront(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, bx: i32) {
     let water = look(Model::Ground, Mat::Water, WHITE);
     city.put(
@@ -907,7 +845,6 @@ fn waterfront(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, bx: i32) {
         }
     }
     if bx.rem_euclid(7) == 3 {
-        // A footbridge's piers; its leaves are animated.
         for side in [-1.0, 1.0] {
             city.put(
                 anchor,
@@ -929,7 +866,6 @@ fn waterfront(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, bx: i32) {
     }
 }
 
-/// A skyscraper's material and tint.
 fn tower_paint(rng: &mut Rng) -> (Mat, [f32; 4]) {
     match rng.below(10) {
         0..=3 => (Mat::Glass, rng.pick(&GLASS_TINTS)),
@@ -939,8 +875,6 @@ fn tower_paint(rng: &mut Rng) -> (Mat, [f32; 4]) {
     }
 }
 
-/// A tower of one of the styles with its crown and rooftop parts, a lobby,
-/// neon and window washers.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -1097,7 +1031,6 @@ fn skyscraper(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, heig
         }
         Style::Slant => {}
     }
-    // Street level: a glass lobby and revolving door, or neon on a corner.
     let face = Quat::from_rotation_y(yaw);
     if rng.chance(45) {
         let front = base + face * v(0.0, 0.0, models::TOWER_WIDTH * 0.5 * widen + 1.3);
@@ -1144,7 +1077,6 @@ fn skyscraper(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, heig
             yaw,
             Vec3::ONE,
         );
-        // Its tubes run up the blade from the light.
         let light = NEON_COLORS[color as usize];
         city.extra(
             neon,
@@ -1165,14 +1097,11 @@ fn skyscraper(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, heig
     }
 }
 
-/// Four towers per block, `scale` (0.3 to 1) setting their heights, round a
-/// small plaza.
 fn downtown(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, scale: f32) {
     for (x, z) in [(-4.4, -4.4), (4.4, -4.4), (-4.4, 4.4), (4.4, 4.4)] {
         let height = (40.0 + 95.0 * scale) * rng.range(0.55, 1.1);
         skyscraper(city, anchor, rng, v(x, LOT, z), height);
     }
-    // The cross between the towers.
     match rng.below(4) {
         0 => {
             city.put(
@@ -1222,8 +1151,6 @@ fn downtown(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, scale: f32) {
     city.spots.push((*anchor, v(1.2, LOT, 0.6)));
 }
 
-/// A midrise lot: body, roof and rooftop clutter, shop fronts, balconies,
-/// fire escapes and ads.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -1351,7 +1278,6 @@ fn midrise(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, height:
             });
         }
     }
-    // Street level on the front face (+Z turned by the yaw).
     let front = |x: f32, y: f32, out: f32| base + face * v(x, y, half + out);
     if mat == Mat::Brick && rng.chance(60) {
         city.put(
@@ -1408,7 +1334,6 @@ fn midrise(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, height:
     }
 }
 
-/// Nine lots per block, `scale` (0 to 1) setting their heights.
 fn midtown(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, scale: f32) {
     for row in 0..3 {
         for column in 0..3 {
@@ -1455,7 +1380,6 @@ fn residential(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
                 continue;
             }
             if rng.chance(10) {
-                // A corner shop under an awning.
                 city.put(
                     anchor,
                     look(Model::Shop, Mat::Office, rng.pick(&PASTELS)),
@@ -1518,7 +1442,6 @@ fn residential(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
                 );
             }
             if rng.chance(35) {
-                // A car in the drive.
                 let car = rng.pick(&[Car::Sedan, Car::Hatch, Car::Suv, Car::Van, Car::Pickup]);
                 city.put(
                     anchor,
@@ -1632,7 +1555,6 @@ fn industrial(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
                 );
             }
             2 => {
-                // Stacked containers and a truck to haul them.
                 for index in 0..6 {
                     let (column, level) = (index % 3, index / 3);
                     let at = v(-4.0 + column as f32 * 2.7, LOT + level as f32 * 2.6, z);
@@ -1653,7 +1575,6 @@ fn industrial(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
                 );
             }
             _ => {
-                // A tank farm.
                 for index in 0..3 {
                     city.put(
                         anchor,
@@ -1673,7 +1594,6 @@ fn industrial(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
             }
         }
     }
-    // Parked cars and pallets of crates along the south fence.
     for index in 0..rng.below(4) + 2 {
         let car = rng.pick(&[Car::Sedan, Car::Hatch, Car::Van, Car::Pickup]);
         city.put(
@@ -1698,7 +1618,6 @@ fn industrial(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
             v(0.14, 0.3, 0.35),
         );
     }
-    // A chain-link fence round the yard and a floodlight over it.
     city.put(
         anchor,
         look(Model::Railing(0), Mat::Fence, WHITE),
@@ -1731,7 +1650,6 @@ fn industrial(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
         );
     }
     if rng.chance(20) {
-        // A tall stack; only some of them smoke.
         let base = v(-7.4, LOT, rng.range(-6.0, 6.0));
         let stack = city.put(
             anchor,
@@ -1790,7 +1708,6 @@ fn tree(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, scale: f32
     );
 }
 
-/// A basin with water and a spray of particles.
 fn fountain(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, scale: f32) {
     let basin = city.put(
         anchor,
@@ -1850,7 +1767,6 @@ fn park_block(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
             Vec3::splat(FURNITURE),
         );
     }
-    // Crossing paths, lit at night.
     for yaw in [0.0, FRAC_PI_2] {
         city.put(
             anchor,
@@ -1911,7 +1827,6 @@ fn park_block(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
     );
     match centerpiece {
         0 => {
-            // A Ferris wheel's legs; the wheel turns.
             let (size, yaw) = (rng.range(0.85, 1.1), rng.range(0.0, PI));
             let face = Quat::from_rotation_y(yaw);
             for side in [-1.0, 1.0] {
@@ -2026,7 +1941,6 @@ fn plaza_block(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
         }
         _ => fountain(city, anchor, rng, v(0.0, LOT, 0.0), 0.9),
     }
-    // Palms or trees around, flags, kiosks and cafés.
     let palms = rng.chance(50);
     for index in 0..8 {
         let (sin, cos) = math::sin_cos(TAU * index as f32 / 8.0);
@@ -2213,7 +2127,6 @@ fn construction_block(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
             v(1.9, tall / 12.6, 1.0),
         );
     }
-    // The crane mast; its jib turns.
     let mast = v(5.2, LOT, 5.2);
     let height = tall + rng.range(10.0, 18.0);
     let mast_height = city.size(Model::CraneMast).y;
@@ -2267,7 +2180,6 @@ fn construction_block(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
         Vec3::ONE,
     );
     if rng.chance(50) {
-        // A welder's sparks high on the frame.
         let sparks = city.put(
             anchor,
             look(Model::Gondola, Mat::Fixture, WHITE),
@@ -2304,7 +2216,6 @@ fn stadium_block(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
         Vec3::ONE,
     );
     for (x, z) in [(-8.8f32, -8.8f32), (8.8, -8.8), (-8.8, 8.8), (8.8, 8.8)] {
-        // The lamp faces -Z: turned toward the pitch.
         let yaw = x.atan2(z);
         let light = city.put(
             anchor,
@@ -2392,10 +2303,6 @@ fn landmark(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
     city.spots.push((*anchor, v(3.0, LOT, 3.0)));
 }
 
-// Movers.
-
-/// Every moving renderable: assemblies at the sites the blocks offered,
-/// then trains, boats, aircraft, rooftop parts, people, buses and cars.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -2412,7 +2319,6 @@ fn movers(city: &mut Metro, config: &StressConfig) {
     for site in wheels.iter().take((share(3) / 9) as usize) {
         ferris(city, &mut rng, site);
     }
-    // Keyframed props: shuffled so every kind appears, within their share.
     let mut sites = std::mem::take(&mut city.props);
     for index in (1..sites.len()).rev() {
         sites.swap(index, rng.below(index as u32 + 1) as usize);
@@ -2493,7 +2399,6 @@ fn movers(city: &mut Metro, config: &StressConfig) {
                 Some(motion),
             );
             if boat.is_some() && model == Model::Sailboat {
-                // The sail rides on the same loop.
                 let sail = Motion::Travel(Travel {
                     center: center + Vec3::Y * 2.2,
                     ..travel(motion)
@@ -2549,7 +2454,6 @@ fn movers(city: &mut Metro, config: &StressConfig) {
             );
         }
     }
-    // People walking the sidewalks, and some standing about.
     let spots = std::mem::take(&mut city.spots);
     for index in 0..share(3) as usize {
         if spots.is_empty() {
@@ -2560,7 +2464,6 @@ fn movers(city: &mut Metro, config: &StressConfig) {
         person(city, &mut rng, &anchor, at + jitter, None);
     }
     for _ in 0..share(12) {
-        // Busier toward the center: blocks were laid out from the center.
         let (bx, bz) = if city.blocks.is_empty() {
             (0, 0)
         } else {
@@ -2606,8 +2509,6 @@ fn travel(motion: Motion) -> Travel {
     }
 }
 
-/// A person with a skeleton of joint nodes, walking along `motion` or
-/// standing at `base` in `anchor`'s frame.
 fn person(city: &mut Metro, rng: &mut Rng, anchor: &Anchor, base: Vec3, motion: Option<Motion>) {
     if city.moving_left == 0 {
         return;
@@ -2666,8 +2567,6 @@ fn person(city: &mut Metro, rng: &mut Rng, anchor: &Anchor, base: Vec3, motion: 
     );
 }
 
-/// One animated part of a prop: the pivot its clip turns (or moves) under
-/// the prop's root, and the part's rest pose on it.
 struct Part {
     pivot: Vec3,
     rotation: Quat,
@@ -2686,7 +2585,6 @@ fn piece(pivot: Vec3, look: Look) -> Part {
     }
 }
 
-/// Moves `child` under `parent`, both direct children of one root.
 fn reparent(city: &mut Metro, child: u32, parent: u32) {
     let parent_local = city.nodes[parent as usize].transform;
     let child_local = city.nodes[child as usize].transform;
@@ -2699,7 +2597,6 @@ fn reparent(city: &mut Metro, child: u32, parent: u32) {
     };
 }
 
-/// A bus (kind 0), a truck (1) or a car (2) with headlights on a loop.
 fn vehicle(city: &mut Metro, rng: &mut Rng, kind: u32) {
     let (center, half) = street_loop(&city.blocks, city.radius, rng);
     let direction = rng.sign();
@@ -2745,7 +2642,6 @@ fn vehicle(city: &mut Metro, rng: &mut Rng, kind: u32) {
         Some(motion),
         Some(motion),
     );
-    // Headlights from the front, following the drawn pose.
     let front = v(size.x * 0.5 + 0.05, -size.y * 0.15, 0.0);
     city.extra(
         body,
@@ -2962,7 +2858,6 @@ fn crane(city: &mut Metro, rng: &mut Rng, site: &Site) {
             );
         }
         None => {
-            // The jib's center circles the mast as the jib turns.
             let orbit_jib = Orbit {
                 center: top,
                 radius: (jib_center * site.size).x,
@@ -3162,15 +3057,12 @@ fn welding(seed: u32) -> ParticleEmitter {
     }
 }
 
-/// Billboard ads: every slot's material and the pictures it cycles through.
 #[derive(Resource)]
 pub(crate) struct Adverts {
     slots: Vec<(MaterialHandle, Vec<Material>)>,
     shown: u64,
 }
 
-/// Replaces each board slot's material with its next advertisement every
-/// `AD_PERIOD` seconds of simulated time.
 fn rotate_ads(time: Res<FixedTime>, mut ads: ResMut<Adverts>, mut assets: ResMut<AssetLibrary>) {
     let cycle = (time.elapsed_seconds / AD_PERIOD) as u64;
     if cycle == ads.shown {
@@ -3179,19 +3071,15 @@ fn rotate_ads(time: Res<FixedTime>, mut ads: ResMut<Adverts>, mut assets: ResMut
     ads.shown = cycle;
     for (slot, (handle, pictures)) in ads.slots.iter().enumerate() {
         let picture = pictures[(slot + cycle as usize) % pictures.len()];
-        // A failure keeps the previous picture: the handle lives as long as
-        // the workload.
         let _ = assets.replace_material(*handle, picture);
     }
 }
 
-/// Registers the metro's motion and advertising systems.
 pub(crate) fn add_systems(app: &mut App) {
     crate::kit::motion::add_systems(app);
     app.add_systems(FixedSimulation, rotate_ads.after(Animation));
 }
 
-/// The spawned metro, for the workload's observations.
 pub(crate) struct Spawned {
     pub transform_nodes: u32,
     pub moving_nodes: u32,
@@ -3199,7 +3087,6 @@ pub(crate) struct Spawned {
     pub probes: Vec<Entity>,
 }
 
-/// Builds and spawns the metro of `config` into `world`.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -3207,9 +3094,6 @@ pub(crate) struct Spawned {
 pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Result<Spawned> {
     let mut city = build(config);
     let mut library = Library::new(config.mesh_variety, config.textured);
-    // Meshes, materials and the size stand-ins scale to; each clip once, in
-    // the order the city's players first name them, so the library holds
-    // them in the same slots every run.
     let (drawn, pictures, clips) = world.resource_scope(|world, mut records: Mut<Records>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
         let mut drawn = Vec::with_capacity(city.nodes.len());
@@ -3261,8 +3145,6 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Resu
             .motion
             .map_or(node.transform, |motion| motion.apply(node.transform, 0.0));
         if let (Some(look), Some((_, drawn_size))) = (node.look, mesh.as_ref()) {
-            // Stand-ins of fewer meshes take the size of what they replace,
-            // except along flat axes.
             if look.model.resolve(config.mesh_variety) != look.model {
                 let size = city.size(look.model);
                 let ratio = Vec3::select(
@@ -3320,7 +3202,6 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Resu
         entities.push(id);
     }
     set_parents(world, &parents)?;
-    // Components naming other nodes, once every node exists.
     for (node, extra) in &city.extras {
         let entity = entities[*node as usize];
         let mut target = world.entity_mut(entity);
@@ -3369,11 +3250,6 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Resu
         slots: pictures,
         shown: u64::MAX,
     });
-    // Reflection probes at every street crossing (blocks'
-    // corners lie on multiples of the period), at the
-    // height of cars and people: their boxes overlap their neighbors' by
-    // twice the blend so one fades out as the next is fully in, and surfaces
-    // reflect the crossing nearest them.
     let crossings: std::collections::BTreeSet<(i32, i32)> = city
         .blocks
         .iter()

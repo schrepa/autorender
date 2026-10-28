@@ -1,9 +1,3 @@
-//! What a frame of the clipmap draws and reads besides its tiles: each
-//! region's view, which its casters are drawn and culled through, the views
-//! of the atlas's pass, the moving tiles' routes onto their slots, the
-//! tiles composed from the regions into their slots, the caster
-//! selection's uniform and the lookups'.
-
 use engine_core::glam::{Mat4, Vec3, Vec4};
 
 use super::maps::AtlasLayout;
@@ -15,16 +9,9 @@ use crate::gpu_data::{ComposeData, MAX_LEVELS, RouteData, ShadowCullUniform, Sha
 use crate::gpu_layouts::constants::{SHADOW_REGIONS, STILLNESS};
 use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, Region, region_tiles};
 
-/// Lookups move this many texels along the surface normal. Receiver
-/// planes keep tilted surfaces off their own depths; the offset only covers
-/// where a lookup's texels meet another surface.
 const NORMAL_OFFSET_TEXELS: f32 = 0.5;
-/// Receiver planes steeper than this, in texels of depth per texel (86
-/// degrees from the sun), are clamped.
 const SLOPE_LIMIT_TEXELS: f32 = 16.0;
 
-/// A frame's clipmap as its views and uniforms read it: the light basis,
-/// the clipmap placed and its plan for the frame, and the atlas's layout.
 pub(super) struct FrameRegions<'a> {
     pub(super) basis: LightBasis,
     pub(super) clipmap: &'a Clipmap,
@@ -32,9 +19,6 @@ pub(super) struct FrameRegions<'a> {
     pub(super) layout: AtlasLayout,
 }
 
-/// The casters a frame selects: candidates, skinned slots among them,
-/// caster groups, the ID capacity of each region's map, and whether this
-/// frame keeps still casters (`classify`).
 pub(super) struct SelectionCounts {
     pub(super) candidates: u32,
     pub(super) skinned: u32,
@@ -44,8 +28,6 @@ pub(super) struct SelectionCounts {
 }
 
 impl FrameRegions<'_> {
-    /// World to clip space of `region`'s layer: its rectangle over the
-    /// layer, its band over depths 0 to 1.
     fn region_clip(&self, region: &Region) -> Mat4 {
         MapRegion {
             rect: region.rect,
@@ -54,10 +36,6 @@ impl FrameRegions<'_> {
         .clip(&self.basis)
     }
 
-    /// Inward world planes around the light-space rectangle `rect` and up
-    /// to the band's farthest depth `depth`, beyond which casters darken
-    /// none of its receivers, then one passing everything: what casts
-    /// into it.
     fn rect_planes(&self, rect: [f32; 4], depth: f32) -> [[f32; 4]; 6] {
         let [x0, y0, x1, y1] = rect;
         let [right, up, away] = self.basis.rows;
@@ -72,9 +50,6 @@ impl FrameRegions<'_> {
         ]
     }
 
-    /// Each region this frame redraws as terrain and placed objects cull
-    /// their casters for it: the map whose lists it reads (its index), the
-    /// inward world planes around it and its texels' world size.
     pub(super) fn region_views(&self, out: &mut Vec<(usize, KeptRefresh)>) {
         out.clear();
         for (index, region) in self.plan.regions.iter().enumerate() {
@@ -88,9 +63,6 @@ impl FrameRegions<'_> {
         }
     }
 
-    /// Each region this frame redraws as virtual geometry selects its
-    /// casters' clusters for it: within half its texels whatever the camera
-    /// sees, as the regions draw every other caster.
     pub(super) fn virtual_views(&self, out: &mut Vec<VirtualShadowView>) {
         for (index, region) in self.plan.regions.iter().enumerate() {
             let mut planes = [[0.0, 0.0, 0.0, 1.0]; VIRTUAL_SHADOW_PLANES];
@@ -110,11 +82,6 @@ impl FrameRegions<'_> {
         }
     }
 
-    /// The world error each map's casters may draw with: half a texel of
-    /// a region's level, so rasterized depths differ from the mesh's by
-    /// less than rounding; half a texel of the finest moving tile in the
-    /// moving map; and the sky map draws meshes whole, its texels differing
-    /// near and far from frame to frame.
     pub(super) fn errors(&self) -> [f32; MAPS] {
         let finest_moving = self
             .plan
@@ -134,15 +101,6 @@ impl FrameRegions<'_> {
         })
     }
 
-    /// The views' matrices and what follows each at its view offset, up to
-    /// the sky map's, which a frame redrawing it writes: each region's,
-    /// holding placed objects at the mean bend of `wind` (its velocity)
-    /// without gusts at time zero; the moving tiles' view, whose matrix
-    /// their routes stand in for, holding the wind `gusting` (its velocity,
-    /// gust strength and time) and `viewer`, the detail eye whose distance
-    /// sizes the wind's shaking on screen and (w) the pixels a radian spans
-    /// there; and the compose view, whose first column holds two over the
-    /// atlas's width and height.
     pub(super) fn view_matrices(
         &self,
         (wind, gusting): ([f32; 2], [f32; 4]),
@@ -166,9 +124,6 @@ impl FrameRegions<'_> {
         views
     }
 
-    /// The moving tiles' routes: each tile's world to the atlas's clip
-    /// space, its rectangle (with its apron) mapped onto its slot, and the
-    /// slot's texels.
     pub(super) fn routes(&self) -> RouteData {
         let mut routes: RouteData = bytemuck::Zeroable::zeroed();
         let (width, height) = self.layout.size();
@@ -184,8 +139,6 @@ impl FrameRegions<'_> {
                 depth: self.clipmap.band(tile.level),
             }
             .clip(&self.basis);
-            // The tile's clip x and y, over [-1, 1], onto the slot's part of
-            // the atlas's; texel rows run downward.
             let onto = Mat4::from_cols(
                 Vec4::new(side / width, 0.0, 0.0, 0.0),
                 Vec4::new(0.0, side / height, 0.0, 0.0),
@@ -204,15 +157,11 @@ impl FrameRegions<'_> {
         routes
     }
 
-    /// The tiles composed from the regions into their slots this frame, an
-    /// instance each, for tiles `tile_texels` a side.
     pub(super) fn composes(&self, tile_texels: u32, out: &mut Vec<ComposeData>) {
         out.clear();
         let square = region_tiles(tile_texels);
         for compose in &self.plan.composes {
             let place = self.layout.texels(u32::from(compose.slot));
-            // The tile's first texel in its region's layer, rows running
-            // down from the square's last row.
             let first = [
                 compose.at[0] * tile_texels,
                 (square - 1 - compose.at[1]) * tile_texels,
@@ -229,9 +178,6 @@ impl FrameRegions<'_> {
         }
     }
 
-    /// The selection pass's uniform for `counts`' casters: the regions
-    /// this frame redraws, every level's window, and the counters' layout
-    /// for `mask_words` words of a mask of every level's tiles.
     pub(super) fn selection(&self, counts: &SelectionCounts, mask_words: u32) -> ShadowCullUniform {
         let row = |axis: Vec3| axis.extend(0.0).to_array();
         let mut regions = [[0.0; 4]; SHADOW_REGIONS];
@@ -262,16 +208,12 @@ impl FrameRegions<'_> {
             ],
             words: [mask_words, 0, mask_words, 2 * mask_words],
             moving: [self.layout.still, self.plan.moving.len() as u32, 0, 0],
-            // The sky map's, set where a frame redraws one.
             sky: [[0.0; 4]; 3],
             sky_rect: [0.0; 4],
             sky_depths: [0.0; 4],
         }
     }
 
-    /// The main passes' lookup uniform, the meters into crowns the sun
-    /// reaches being `crown_depth`; the horizon records' count follows
-    /// (`ShadowMaps::write_horizon_records`).
     pub(super) fn lookup_uniform(&self, tile_texels: u32, crown_depth: f32) -> ShadowUniform {
         let (width, height) = self.layout.size();
         let levels = self.clipmap.len();
@@ -296,7 +238,6 @@ impl FrameRegions<'_> {
                 levels as f32,
                 self.clipmap.texel(0),
                 tile_texels as f32,
-                // The horizon records, which the shadows set.
                 0.0,
             ],
             atlas: [

@@ -1,10 +1,3 @@
-//! What hosts wire: job workers, the clock terrain times its work by and
-//! the terrain's debug views; and what the page and
-//! the native host share instead of each keeping its own: the engine
-//! switches they take, the input they gather, the size views draw at, their
-//! policies' values, the spread of measured values, the GPU they name, the
-//! host their reports name and what a panic reports.
-
 mod adapter;
 mod environment;
 mod frame_loop;
@@ -38,9 +31,6 @@ pub use scene_load::{
 };
 pub use settings::{HostSettings, SETTINGS, Setting};
 
-/// The types and values the web host shares with the engine, in
-/// TypeScript: what `cargo xtask schema` writes to
-/// `web/src/generated/host.ts`.
 #[cfg(all(feature = "schema", not(target_arch = "wasm32")))]
 pub fn typescript() -> String {
     use crate::tooling::{constant, declarations};

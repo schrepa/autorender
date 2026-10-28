@@ -1,5 +1,3 @@
-//! Explicit schemas for the adjacent shader, separate from gameplay components.
-
 pub(crate) use crate::gpu_layouts::scene::MAX_LEVELS;
 use engine_core::{
     AlphaMode, Atmosphere, Bloom, Material, MeshVertex, Reflections, RenderInstance, Surface,
@@ -22,10 +20,6 @@ pub(crate) use crate::gpu_layouts::constants::STILL_FRAMES;
 pub(crate) use crate::gpu_layouts::scene::CameraUniform;
 
 impl CameraUniform {
-    /// An unjittered camera at `position` without temporal history, at
-    /// presentation time `seconds`, whose distance switches measure from its
-    /// own eye; frames give it their region ([`Self::set_region`]) and their
-    /// detail eye ([`Self::set_detail`]).
     pub(crate) fn exact(view_projection: Mat4, position: glam::Vec3, seconds: f32) -> Self {
         let columns = view_projection.to_cols_array_2d();
         Self {
@@ -41,28 +35,16 @@ impl CameraUniform {
         }
     }
 
-    /// The frame's `region` seen through `view_projection`: the angle a
-    /// display pixel spans at the view's center, which shading measures
-    /// pixels' footprints by, the mip bias material textures sample with, so
-    /// frames drawing smaller keep the detail the display shows, and the
-    /// region itself.
     pub(crate) fn set_region(&mut self, view_projection: Mat4, region: FrameRegion) {
         self.options[1] = pixel_angle(view_projection, region.display.height);
         self.options[3] = region.mip_bias();
         self.region = region.uniform();
     }
 
-    /// The frame's detail eye `eye`
-    /// ([`RenderSnapshot::detail_eye`](engine_core::RenderSnapshot::detail_eye)),
-    /// which every handover measures from, by distance and by what a pixel
-    /// spans alike (`detail_distance`, `detail_across`, `detail_span`).
     pub(crate) fn set_detail(&mut self, eye: glam::Vec3) {
         self.detail = eye.extend(0.0).to_array();
     }
 
-    /// A reflection probe's cube face `size` texels a side seen from
-    /// `position` through `view_projection`, at presentation
-    /// time `seconds`: drawn whole, its textures without a mip bias.
     pub(crate) fn probe(
         view_projection: Mat4,
         position: glam::Vec3,
@@ -76,10 +58,6 @@ impl CameraUniform {
         }
     }
 
-    /// A temporally antialiased frame drawing `width` x `height` pixels, its
-    /// render size: `view_projection` jittered by `jitter` (see
-    /// [`jitter_clip`]), with the previous frame's unjittered `previous` for
-    /// motion vectors.
     pub(crate) fn temporal(
         view_projection: Mat4,
         position: glam::Vec3,
@@ -89,8 +67,6 @@ impl CameraUniform {
         (width, height): (u32, u32),
         frame: u64,
     ) -> Self {
-        // The golden ratio's fraction turns each frame's dither far from the
-        // last few.
         let turn = (frame % 1024) as f32 * 0.618_034;
         Self {
             view_projection: jittered(view_projection, jitter).to_cols_array_2d(),
@@ -107,9 +83,6 @@ impl CameraUniform {
     }
 }
 
-/// The angle (radians) a pixel spans at the center of a view `height`
-/// pixels tall seen through `view_projection`, which shading measures
-/// pixels' footprints by.
 pub(crate) fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
     let row = view_projection.row(1).truncate().length() * height.max(1) as f32;
     2.0 / engine_core::math::max(row, 1.0e-12)
@@ -117,16 +90,10 @@ pub(crate) fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
 
 pub(crate) use crate::gpu_layouts::scene::LightingUniform;
 
-/// Weight of the grade's S-curve for `contrast`: the shader mixes a
-/// perceptual value `s` toward `smoothstep(0, 1, s)` by it, a curve that keeps
-/// black and white, is monotonic for weights in `[-2, 1]` and has slope
-/// `1 + weight / 2` at mid grey, which is the contrast from 0 up to 1.5.
 pub(crate) fn contrast_weight(contrast: f32) -> f32 {
     engine_core::math::clamp(2.0 * (contrast - 1.0), -2.0, 1.0)
 }
 
-/// `tint` scaled to unit luminance, so it shifts hue without darkening; white
-/// for tints without luminance.
 fn unit_luminance(tint: glam::Vec3) -> [f32; 4] {
     let luminance = tint.dot(glam::Vec3::new(0.2126, 0.7152, 0.0722));
     if luminance > 1.0e-6 {
@@ -156,9 +123,6 @@ impl LightingUniform {
         let foliage = foliage.sanitized();
         let highlights = highlights.sanitized();
         let windows = windows.sanitized();
-        // With the physically based sky the air hazes what
-        // lies far away by its own extinction, thinning with height as its
-        // scattering does; no fog. Its colors come from the sky's tables.
         let (fog, aerial, physical) = if sky.enabled {
             let altitude = sky.altitude * 0.001;
             let rayleigh = (sky.rayleigh[0] + sky.rayleigh[1] + sky.rayleigh[2]) / 3.0
@@ -256,10 +220,6 @@ impl LightingUniform {
     }
 }
 
-/// The lighting uniform's `highlights`: the sun's angular radius, the
-/// physically based sky's while it is on, as its cosine and sine, the cap
-/// while capped and local lights' smallest sphere; a point sun and no
-/// sphere while lights take no sizes, and zeros while neither is on.
 fn sized_highlights(highlights: &engine_core::Highlights, sky: &engine_core::Sky) -> [f32; 4] {
     let cap = if highlights.capped {
         highlights.cap
@@ -282,9 +242,6 @@ fn sized_highlights(highlights: &engine_core::Highlights, sky: &engine_core::Sky
     [cosine, sine, cap, highlights.light_radius]
 }
 
-/// A surface as four unsigned 8-bit fractions: roughness,
-/// metalness, emission over [`Surface::MAX_EMISSION`], and ripples. Any
-/// values pack: out-of-range ones clamp and NaN reads as matte.
 pub(crate) fn pack_surface(surface: Surface) -> u32 {
     let unit = |value: f32, fallback: f32, max: f32| {
         let value = if value.is_nan() { fallback } else { value };
@@ -297,10 +254,6 @@ pub(crate) fn pack_surface(surface: Surface) -> u32 {
         | unit(surface.ripples, matte.ripples, 1.0) << 24
 }
 
-/// Linear color and opacity as four 16-bit fractions in two
-/// words: red and green, then blue and opacity (WGSL `unpack2x16unorm`, or a
-/// `Unorm16x4` vertex attribute). Out-of-range values clamp; NaN color reads
-/// as 0 and NaN opacity as opaque.
 pub(crate) fn pack_color(color: [f32; 4]) -> [u32; 2] {
     let unit = |value: f32, fallback: f32| {
         let value = if value.is_nan() { fallback } else { value };
@@ -312,8 +265,6 @@ pub(crate) fn pack_color(color: [f32; 4]) -> [u32; 2] {
     ]
 }
 
-/// `view_projection` followed by a clip-space translation of `jitter` units
-/// per w: the projection a jittered frame rasterizes, and culls with.
 pub(crate) fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
     Mat4::from_cols(
         glam::Vec4::X,
@@ -329,10 +280,6 @@ pub(crate) use crate::gpu_layouts::scene::ColorData;
 
 pub(crate) use crate::gpu_layouts::scene::GroundData;
 
-/// The ground of an object at `scale` whose base sinks `sink` meters below
-/// ground of normal `normal` (x and z), blending into it as far up as its
-/// material's `grounding` reaches; the ground's color there waits for the
-/// objects' snap to read it.
 pub(crate) fn ground_data(
     grounding: Option<engine_core::Grounding>,
     normal: [f32; 2],
@@ -358,8 +305,6 @@ impl From<&RenderInstance> for ColorData {
         Self {
             color: pack_color(instance.color),
             surface: pack_surface(instance.surface),
-            // One more than the offset of a skinned slot's joint palette;
-            // 0 draws rigidly.
             flags: instance.skin.map_or(0, |offset| offset + 1),
         }
     }
@@ -380,9 +325,6 @@ impl From<&MeshVertex> for Vertex {
 pub(crate) use crate::gpu_layouts::scene::ExtraVertex;
 
 impl ExtraVertex {
-    /// The extra stream of `mesh`, or `None` without colors, second
-    /// coordinates or joints: skinned meshes' entry points
-    /// read it too.
     pub(crate) fn stream(mesh: &engine_core::Mesh) -> Option<Vec<Self>> {
         if mesh.colors().is_none() && mesh.uv1().is_none() && mesh.joints().is_none() {
             return None;
@@ -407,7 +349,6 @@ impl ExtraVertex {
 pub(crate) use crate::gpu_layouts::scene::SkinVertex;
 
 impl SkinVertex {
-    /// The skin stream of `mesh`, or `None` without joints.
     pub(crate) fn stream(mesh: &engine_core::Mesh) -> Option<Vec<Self>> {
         let (joints, weights) = (mesh.joints()?, mesh.weights()?);
         Some(
@@ -425,10 +366,6 @@ impl SkinVertex {
     }
 }
 
-/// A nonzero normal as two 16-bit signed fractions: its direction on the
-/// octahedron |x| + |y| + |z| = 1, the lower half folded over the upper
-/// (Cigolle et al. 2014). `meshes/vertex.wgsl` decodes it with `octahedral_normal`;
-/// directions keep about 0.003 degrees.
 pub(crate) fn octahedral(normal: [f32; 3]) -> [i16; 2] {
     let [x, y, z] = normal;
     let length = x.abs() + y.abs() + z.abs();
@@ -454,7 +391,6 @@ pub(crate) use crate::shaders::{
 pub(crate) use crate::gpu_layouts::scene::MaterialUniform;
 
 impl MaterialUniform {
-    /// Maps of materials without them: identity transforms and no emission.
     pub(crate) const DEFAULT: Self = Self {
         transforms: [
             [1.0, 0.0, 0.0, 0.0],
@@ -496,7 +432,6 @@ impl MaterialUniform {
             AlphaMode::Mask { cutoff } => cutoff,
             AlphaMode::Opaque | AlphaMode::Blend => 0.5,
         };
-        // Maps reading the second texture coordinates, one bit each.
         let second = material
             .maps()
             .iter()
@@ -520,8 +455,6 @@ impl MaterialUniform {
     }
 }
 
-/// The two rows of `transform`'s 2x3 matrix: coordinates scaled, rotated
-/// and offset (`KHR_texture_transform`, as Khronos' sample renderer reads it).
 pub(crate) fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
     let (sin, cos) = engine_core::math::sin_cos(transform.rotation);
     let [sx, sy] = transform.scale;
@@ -532,11 +465,6 @@ pub(crate) fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
     ]
 }
 
-/// A material's pipeline variant: the `meshes/declarations.wgsl` override
-/// constants it sets, whether back faces draw and, for masked surfaces'
-/// depth pre-pass and their colors after it, how they draw depth. Materials
-/// without maps and plain opaque base color textures use
-/// [`Variant::BASIC`], the shading of every material before glTF maps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub(crate) struct Variant(u32);
 
@@ -546,48 +474,20 @@ impl Variant {
     const NORMAL_MAP: u32 = constants::VARIANT_NORMAL_MAP;
     const ALPHA_MASK: u32 = 4;
     const DOUBLE_SIDED: u32 = constants::VARIANT_DOUBLE_SIDED;
-    // Meshes with a second vertex stream: extended entry
-    // points rather than a constant.
     const EXTENDED: u32 = 16;
-    // Skinned slots' meshes: skinned entry points, which
-    // read the second stream and a skin stream.
     const SKINNED: u32 = 32;
-    // Transmissive materials: glass shading in the
-    // transparent pass.
     const TRANSMISSION: u32 = 64;
-    // Maps a material with maps has: the others are not sampled, as the
-    // white texel they would read changes nothing. Occlusion packed in the
-    // metallic-roughness texture's red (the same texture, sampler, transform
-    // and coordinates) is read from its sample.
     const METALLIC_ROUGHNESS_MAP: u32 = constants::VARIANT_METALLIC_ROUGHNESS_MAP;
     const OCCLUSION_MAP: u32 = constants::VARIANT_OCCLUSION_MAP;
     const EMISSIVE_MAP: u32 = constants::VARIANT_EMISSIVE_MAP;
     const PACKED_OCCLUSION: u32 = constants::VARIANT_PACKED_OCCLUSION;
-    // Passes drawn rarely read the map bits from the
-    // material uniform: their pipelines key on pipeline state alone.
     const UBER: u32 = 2048;
-    // Maps laid from the world's axes, and a layer on faces turned up.
     const WORLD_MAPPING: u32 = constants::VARIANT_WORLD_MAPPING;
     const TOP_LAYER: u32 = constants::VARIANT_TOP_LAYER;
-    // Placed objects whose bases blend into the ground: their slot
-    // vertex stages pass their slots, whose grounds and poses their
-    // fragments read. A draw's, not a material's.
     const GROUNDING: u32 = 16384;
-    // Placed objects fading between how the camera shows them:
-    // their lists' entries carry their fades, which their pixels
-    // dither by. A draw's, not a material's.
     const FADING: u32 = 32768;
-    // Foliage shading on materials that are not masked, which masked ones
-    // have anyway.
     const FOLIAGE: u32 = constants::VARIANT_FOLIAGE;
-    // Masked surfaces' depth pre-pass in the opaque passes: their fades and
-    // alpha tests alone, writing the depths their colors then draw at and no
-    // color. A draw's, not a material's.
     const PREPASS: u32 = 131072;
-    // Masked surfaces' colors after their depth pre-pass: drawn where its
-    // depth is theirs, without the alpha test, so early depth testing
-    // rejects every fragment but the one each pixel shows. A draw's, not a
-    // material's.
     const PRETESTED: u32 = 262144;
 
     pub(crate) fn of(material: &Material) -> Self {
@@ -643,9 +543,6 @@ impl Variant {
         Self(bits)
     }
 
-    /// This variant for a pass that reads map presence from the material
-    /// uniform: only what its pipeline state needs, vertex
-    /// streams, culling, alpha masking and transmission.
     pub(crate) fn uber(self) -> Self {
         let state = Self::EXTENDED
             | Self::SKINNED
@@ -655,14 +552,10 @@ impl Variant {
         Self(self.0 & state | Self::UBER)
     }
 
-    /// The bits the material uniform carries (`volume.w`).
     pub(crate) fn bits(self) -> u32 {
         self.0
     }
 
-    /// Override constants: fragment stages read them all, slot vertex
-    /// stages GROUNDING and FADE_LIST. The depth pre-pass sets none of its
-    /// own: its fragment stage is its own entry point.
     pub(crate) fn constants(self) -> [(&'static str, f64); 16] {
         let set = |bit: u32| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
@@ -697,8 +590,6 @@ impl Variant {
         self.0 & Self::ALPHA_MASK != 0
     }
 
-    /// This variant as the opaque passes draw its colors: masked ones
-    /// after their depth pre-pass, where it left their depths, untested.
     pub(crate) fn opaque(self) -> Self {
         if self.alpha_mask() {
             Self(self.0 | Self::PRETESTED)
@@ -707,24 +598,18 @@ impl Variant {
         }
     }
 
-    /// The depth pre-pass of this masked variant in the opaque passes.
     pub(crate) fn prepass(self) -> Self {
         Self(self.0 & !Self::PRETESTED | Self::PREPASS)
     }
 
-    /// Whether this variant draws masked surfaces' depth pre-pass: depth
-    /// alone.
     pub(crate) fn depth_only(self) -> bool {
         self.0 & Self::PREPASS != 0
     }
 
-    /// Whether this variant draws masked surfaces' colors after their depth
-    /// pre-pass.
     pub(crate) fn pretested(self) -> bool {
         self.0 & Self::PRETESTED != 0
     }
 
-    /// This variant drawing a mesh with a second vertex stream, or not.
     pub(crate) fn with_extended(self, extended: bool) -> Self {
         Self(if extended {
             self.0 | Self::EXTENDED
@@ -737,8 +622,6 @@ impl Variant {
         self.0 & Self::EXTENDED != 0
     }
 
-    /// This variant drawing a mesh with joints through retained slots, or
-    /// not; skinned variants are extended.
     pub(crate) fn with_skinned(self, skinned: bool) -> Self {
         Self(if skinned {
             self.0 | Self::SKINNED | Self::EXTENDED
@@ -751,8 +634,6 @@ impl Variant {
         self.0 & Self::SKINNED != 0
     }
 
-    /// This variant drawing placed objects' fading lists, or
-    /// not.
     pub(crate) fn with_fading(self, fading: bool) -> Self {
         Self(if fading {
             self.0 | Self::FADING
@@ -761,8 +642,6 @@ impl Variant {
         })
     }
 
-    /// This variant drawing placed objects whose bases blend into the
-    /// ground, or not.
     pub(crate) fn with_grounding(self, grounding: bool) -> Self {
         Self(if grounding {
             self.0 | Self::GROUNDING
@@ -782,12 +661,10 @@ pub(crate) use crate::gpu_layouts::scene::PostUniform;
 
 pub(crate) use crate::gpu_layouts::scene::SkyUniform;
 
-/// Levels of a full mip chain down to 1x1 for a `width` x `height` texture.
 pub(crate) fn mip_levels(width: u32, height: u32) -> u32 {
     u32::BITS - width.max(height).max(1).leading_zeros()
 }
 
-/// RGBA8 bytes of every level of that chain after the first.
 pub(crate) fn mip_chain_bytes(width: u32, height: u32) -> u64 {
     (1..mip_levels(width, height))
         .map(|level| u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * 4)
@@ -796,10 +673,8 @@ pub(crate) fn mip_chain_bytes(width: u32, height: u32) -> u64 {
 
 pub(crate) use crate::gpu_layouts::scene::ResolveUniform;
 
-/// Samples in the jitter sequence before it repeats.
 pub(crate) const JITTER_SAMPLES: u32 = 8;
 
-/// Radical inverse of `index` in `base`: the Halton sequence.
 fn halton(mut index: u32, base: u32) -> f32 {
     let (mut scale, mut value) = (1.0, 0.0);
     while index > 0 {
@@ -810,16 +685,11 @@ fn halton(mut index: u32, base: u32) -> f32 {
     value
 }
 
-/// Sub-pixel offset of display frame `frame` in pixels, in `[-0.5, 0.5)`:
-/// the Halton (2, 3) sequence of [`JITTER_SAMPLES`] samples, from its
-/// second point (the first is the pixel corner).
 pub(crate) fn jitter_offset(frame: u32) -> [f32; 2] {
     let index = frame % JITTER_SAMPLES + 1;
     [halton(index, 2) - 0.5, halton(index, 3) - 0.5]
 }
 
-/// A pixel offset as the clip-space jitter a vertex shader adds to
-/// `xy / w`: two units span the viewport, and clip y points up.
 pub(crate) fn jitter_clip(offset: [f32; 2], width: u32, height: u32) -> [f32; 2] {
     [
         2.0 * offset[0] / width.max(1) as f32,
@@ -835,12 +705,8 @@ pub(crate) use crate::gpu_layouts::scene::BatchData;
 
 pub(crate) use crate::gpu_layouts::scene::SkinnedData;
 
-/// Clip-space depth of the far plane: depth is reversed, so nearer is
-/// larger and the depth buffer clears to the far plane.
 pub(crate) const FAR_DEPTH: f32 = 0.0;
 
-/// Inward clip planes (WebGPU depth range) of a view-projection matrix and its
-/// absolute value, as the CPU culling test derives them.
 pub(crate) fn frustum_uniform(view_projection: glam::Mat4) -> ([[f32; 4]; 6], [[f32; 4]; 4]) {
     let rows = view_projection.transpose();
     let planes = [

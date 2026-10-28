@@ -40,8 +40,6 @@ use crate::{
     },
 };
 
-/// The types describe answers itself, by name and kind, with what one
-/// is where its name does not say: no inspector may take their names.
 const DESCRIBED: &[(&str, TypeKind, &str)] = &[
     ("SceneDocument", TypeKind::Authoring, ""),
     ("protocol", TypeKind::Protocol, ""),
@@ -54,13 +52,8 @@ const DESCRIBED: &[(&str, TypeKind, &str)] = &[
     ),
 ];
 
-/// The types development hosts' tooling adds to describe's listing (the
-/// agent sessions of web/scripts/agent-browser.mjs and agent-native.mjs):
-/// no inspector may take their names either.
 pub const TOOLING_TYPES: &[&str] = &["ProfileCapture", "GameControls", "PageParameters"];
 
-/// The names no inspector may take: describe's own types and the hosts'
-/// tooling's.
 pub fn reserved_names() -> impl Iterator<Item = &'static str> {
     DESCRIBED
         .iter()
@@ -68,7 +61,6 @@ pub fn reserved_names() -> impl Iterator<Item = &'static str> {
         .chain(TOOLING_TYPES.iter().copied())
 }
 
-/// Names address deliberate SDK projections, never Rust type names or pointers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -77,8 +69,6 @@ pub enum InspectorKind {
     Resource,
 }
 
-/// Structural metadata for a registered projection. Built-in schemas are
-/// generated during host compilation from the same DTOs used for responses.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct InspectorDescriptor {
@@ -99,10 +89,6 @@ impl InspectorDescriptor {
         }
     }
 
-    /// The descriptor of the generated schema named `name` in `schemas`,
-    /// described by its type's doc comment: the engine's are `schemas`', an
-    /// app's are its tooling's. A name without a schema, or a schema without
-    /// a description, is a programming error.
     pub fn generated(schemas: &Value, name: &str) -> Self {
         let schema = schemas
             .get(name)
@@ -125,37 +111,19 @@ impl InspectorDescriptor {
 type ReadInspector =
     Box<dyn Fn(&World, Option<Entity>, &Context<'_>) -> Option<Value> + Send + Sync>;
 
-/// What a host's renderer made of the world's assets, which inspectors
-/// report beside them. Hosts with a renderer answer it; without one, replies
-/// say None where it would.
 pub trait RendererFacts {
-    /// Whether `texture` is resident on the GPU.
     fn texture_resident(&self, texture: TextureHandle) -> bool;
-    /// `mesh` as uploaded; None before it uploads.
     fn mesh(&self, mesh: MeshHandle) -> Option<RenderedMesh>;
-    /// Whether an impostor card of `mesh` drawn with `material` is
-    /// resident; None where it never draws as one.
     fn impostor(&self, mesh: MeshHandle, material: MaterialHandle) -> Option<bool>;
-    /// The level of detail render slot `slot` drew at, read back a few
-    /// frames late: 0 the mesh, 1 and 2 its simplifications, 3 its impostor
-    /// card. Asking watches the slot; None until a frame after that draws
-    /// it with levels of detail.
     fn drawn_level(&self, slot: u32) -> Option<u32>;
 }
 
-/// A mesh as a renderer uploaded it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderedMesh {
-    /// Whether it uploaded with skin joints.
     pub skinned: bool,
-    /// Its coarser levels of detail, finest first: each one's index count
-    /// and largest deviation from the mesh in mesh units.
     pub levels: Vec<(u32, f32)>,
 }
 
-/// What inspectors read beside the world: the active scene, whose authored
-/// IDs name what it holds, the renderer's facts where the host has one, and
-/// the render slot each entity draws in.
 #[derive(Clone, Copy, Default)]
 pub struct Context<'a> {
     pub scene: Option<&'a SceneInstance>,
@@ -179,21 +147,13 @@ struct InspectSelector<'a> {
     limit: usize,
 }
 
-/// Explicitly opted-in inspection registry. Registrations belong to the game
-/// session and cannot be replaced silently. Extension callbacks are trusted
-/// game code: keep their work and allocations bounded and never scan the world.
 pub struct DevTools {
     pub(crate) inspectors: BTreeMap<String, Inspector>,
-    // The engine's own inspectors, once registered: games register up to
-    // MAX_INSPECTORS beyond them.
     builtins: Option<usize>,
-    // The feature of each inspector of a feature's type, by name.
     pub(crate) features: BTreeMap<String, Feature>,
 }
 
 impl DevTools {
-    /// Tools with no inspector registered: what the schema generator checks
-    /// names against before the schemas the built-in inspectors read exist.
     pub(crate) fn bare() -> Self {
         Self {
             inspectors: BTreeMap::new(),
@@ -202,9 +162,6 @@ impl DevTools {
         }
     }
 
-    /// Tools with the built-in inspectors described by `schemas`, the
-    /// inspectors' generated schemas: the compiled-in ones for sessions,
-    /// those a generator just made for the tooling it writes from them.
     pub fn with_schemas(schemas: &Value) -> Self {
         let mut tools = Self::bare();
         tools.register_poses(schemas);
@@ -224,9 +181,6 @@ impl Default for DevTools {
     }
 }
 
-/// The scene schema, which exceeds one response: with `definition`, that
-/// definition; without, the top level with its definitions' names in place
-/// of their bodies.
 fn scene_schema(definition: Option<&str>) -> Result<Value, DevError> {
     let mut schema: Value = serde_json::from_str(include_str!("../generated/scene.schema.json"))
         .expect("generated scene schema is JSON");
@@ -253,7 +207,6 @@ fn scene_schema(definition: Option<&str>) -> Result<Value, DevError> {
     }
 }
 
-/// The first sentence of `doc`, within an inspector description's bytes.
 fn summary(doc: &str) -> String {
     let sentence = doc
         .find(". ")
@@ -271,9 +224,6 @@ fn summary(doc: &str) -> String {
 }
 
 impl DevTools {
-    /// Every component inspector's views of every entity holding its
-    /// component, by inspector name, each view as compact JSON: what
-    /// digests hash.
     pub(crate) fn component_views(
         &self,
         world: &World,
@@ -294,7 +244,6 @@ impl DevTools {
             .collect()
     }
 
-    /// Registers a typed, read-only component projection without reflection.
     pub fn register_component<T: Component>(
         &mut self,
         descriptor: InspectorDescriptor,
@@ -310,7 +259,6 @@ impl DevTools {
         })
     }
 
-    /// Registers a typed world resource, queried with `component` and no entity.
     pub fn register_resource<T: Resource>(
         &mut self,
         descriptor: InspectorDescriptor,
@@ -365,14 +313,9 @@ impl DevTools {
         Ok(())
     }
 
-    /// Processes one request outside ordinary frames. At most 10,000 authored
-    /// records are scanned, 100 rows returned, and 64 KiB encoded. Counters and
-    /// revisions are decimal strings to retain u64 precision across JavaScript.
-    /// Refreshes derived transforms without simulation advance, extraction, or GPU work.
     pub fn execute(&self, engine: &mut Engine, context: Context<'_>, source: &str) -> String {
         let scene = context.scene;
         let world = engine.app.world();
-        // The state before the request.
         let observation = Observation {
             frame: world
                 .get_resource::<FrameTime>()
@@ -447,7 +390,6 @@ impl DevTools {
         } = &query
             && matches!(component.as_str(), "Collider" | "CollisionWorld")
         {
-            // Validate selectors and pagination before refreshing any derived cache.
             self.inspect(
                 engine.app.world(),
                 context,
@@ -465,7 +407,6 @@ impl DevTools {
             }
         }
         if matches!(query, ToolsQuery::Inspect { .. } | ToolsQuery::Digest) {
-            // Materialize a GPU-presented frame before a refresh changes its inputs.
             engine.prepare_presented_transforms();
             engine.refresh_transforms();
         }
@@ -479,8 +420,6 @@ impl DevTools {
         match query {
             ToolsQuery::Status => Ok(result::status(self.status(engine, scene))),
             ToolsQuery::Assets => assets(world, context).map(result::assets),
-            // The world's own state: neither what a renderer made of it nor
-            // the slots it draws in.
             ToolsQuery::Digest => Ok(result::digest(self.digest(
                 world,
                 Context {
@@ -526,7 +465,6 @@ impl DevTools {
         }
     }
 
-    /// What `status` answers of `engine`, running `scene`.
     fn status(&self, engine: &Engine, scene: Option<&SceneInstance>) -> StatusResult {
         let world = engine.app.world();
         StatusResult {
@@ -603,7 +541,6 @@ impl DevTools {
                     constraints: format!(
                         "version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need CollisionPlugin but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source."
                     ),
-                    // Where each control's effect shows: an inspector, status, the game's controls, or nothing.
                     control_state: crate::protocol::CONTROL_STATE
                         .iter()
                         .map(|&(op, shows)| (op.to_owned(), json!(shows)))
@@ -636,8 +573,6 @@ impl DevTools {
         }
     }
 
-    /// Fails with `missing_plugin` when inspector `name` is of a feature
-    /// `world`'s engine lacks.
     fn check_feature(&self, world: &World, name: &str) -> Result<(), DevError> {
         match self.features.get(name) {
             Some(&feature) if !engine_core::has_feature(world, feature) => {
@@ -905,8 +840,6 @@ fn encode(value: &impl Serialize, limit: usize) -> Result<String, serde_json::Er
     Ok(String::from_utf8(output.bytes).expect("JSON is UTF-8"))
 }
 
-/// The entity of authored ID `id` in `scene`: one it spawned, or else a
-/// loaded streamed entity it owns.
 pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) -> Option<Entity> {
     scene.entity(id).or_else(|| {
         scene.streamed()?;
@@ -918,8 +851,6 @@ pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) ->
     })
 }
 
-/// What `assets` answers of `world`'s asset library and the scene
-/// `context` names: missing_resource without a library.
 fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, DevError> {
     let assets = world.get_resource::<AssetLibrary>().ok_or_else(|| {
         DevError::new(
@@ -965,9 +896,6 @@ fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, DevError>
     })
 }
 
-/// What `assets` lacks of each mesh and decal of `world` naming one that is
-/// missing, as rendering resolves them: a mesh's material, then its mesh,
-/// then the material's textures; a decal's material, then its textures.
 fn missing_assets(world: &World, assets: &AssetLibrary) -> (Vec<MissingAsset>, usize) {
     let lacking = |material: MaterialHandle| -> Option<&'static str> {
         let Some(found) = assets.material(material) else {

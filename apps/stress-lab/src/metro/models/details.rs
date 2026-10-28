@@ -1,6 +1,3 @@
-//! The metro's building details: rooftop machinery, signs, balconies,
-//! fire escapes and doors.
-
 use super::*;
 
 pub(super) fn ac_unit(b: &mut Builder) {
@@ -56,7 +53,6 @@ pub(super) fn dish_post(b: &mut Builder) {
 }
 
 pub(super) fn dish_head(b: &mut Builder) {
-    // A dish facing +X around its pivot.
     let start = b.mark();
     b.lathe(
         &[(0.0, -0.25), (0.45, -0.18), (0.8, 0.0), (0.82, 0.03)],
@@ -102,7 +98,6 @@ pub(super) fn solar(b: &mut Builder) {
 }
 
 pub(super) fn railing(b: &mut Builder, size: u8) {
-    // A see-through fence around a roof: four upright sheets.
     let half = [TOWER_WIDTH, MID_WIDTH, HOUSE_WIDTH][size as usize] * 0.5 - 0.15;
     let height = 1.0;
     for (a, b2, outward) in [
@@ -121,7 +116,6 @@ pub(super) fn railing(b: &mut Builder, size: u8) {
 }
 
 pub(super) fn billboard(b: &mut Builder) {
-    // Posts, then the face along X showing the whole picture.
     let frame = Map::patch(0.002, 0.002);
     for x in [-1.3, 1.3] {
         b.cuboid(
@@ -156,7 +150,6 @@ pub(super) fn billboard(b: &mut Builder) {
 }
 
 pub(super) fn trivision(b: &mut Builder) {
-    // A three-sided prism along X turning about its axis.
     for face in 0..3 {
         let angle = |step: f32| TAU * (face as f32 + step) / 3.0;
         let at = |step: f32, x: f32| {
@@ -193,7 +186,6 @@ pub(super) fn neon_blade(b: &mut Builder) {
 }
 
 pub(super) fn awning(b: &mut Builder) {
-    // A sloping canvas over a shop front, open below.
     let canvas = Map::Rect(0.0, 0.0, 3.0, 1.0);
     b.quad(
         [
@@ -264,8 +256,6 @@ pub(super) fn balcony_rail(b: &mut Builder) {
 }
 
 pub(super) fn fire_escape(b: &mut Builder) {
-    // Landings every two floors joined by stair flights, all
-    // see-through lattice.
     let lattice = Map::Rect(0.0, 0.0, 2.0, 1.0);
     for level in 0..3 {
         let y = level as f32 * FLOOR * 2.0 + FLOOR;
@@ -326,7 +316,6 @@ pub(super) fn flagpole(b: &mut Builder) {
 }
 
 pub(super) fn flag(b: &mut Builder) {
-    // Hangs from its pole edge at the origin toward +X.
     let cloth = Map::Rect(0.0, 0.0, 1.0, 1.0);
     b.quad(
         [
@@ -362,7 +351,6 @@ pub(super) fn door_canopy(b: &mut Builder) {
 }
 
 pub(super) fn door_wings(b: &mut Builder) {
-    // Four glass wings about a post, turning about Y.
     let glass = Map::Rect(0.0, 0.0, 1.0, 1.0);
     for wing in 0..4 {
         let start = b.mark();

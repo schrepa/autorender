@@ -1,32 +1,13 @@
-//! A terrain's resident tiles, and the tiles kept in memory after they
-//! left: the one owner of what each resident tile is. Each holds the
-//! [`Generation`] it was made from and the rivers its water was made from
-//! ([`Watered`]);
-//! a tile of another generation than its terrain makes now lies under an
-//! edit since (or was made before its terrain's materials changed) and
-//! regenerates, drawn until then. The
-//! store measures the levels' morph errors as tiles arrive and advances its
-//! revision with every change, which renderers and collision follow. Tiles
-//! become resident through [`TileStore::arrive`] alone; their water and
-//! their shading change in place.
-
 use super::*;
 
-/// The rivers a tile's water was made from: `None` for its bake's own, as
-/// tiles generate; else the rivers as what stood in them held them back.
 pub(super) type Watered = Option<Arc<engine_terrain::Rivers>>;
 
-/// A resident tile: the tile, the generation it was made from and the
-/// rivers its water was made from.
 struct Resident {
     tile: Arc<Tile>,
     made: Generation,
     watered: Watered,
 }
 
-/// A tile kept in memory after it left the view: the rivers its water was
-/// made from, its bytes there and the frame it left, or the last a place a
-/// game names wanted it.
 struct CachedTile {
     tile: Arc<Tile>,
     watered: Watered,
@@ -34,16 +15,12 @@ struct CachedTile {
     left: u64,
 }
 
-/// A resident tile that left: the tile, the rivers its water was made
-/// from, and whether it was whole and of the generation tiles are made
-/// from now.
 pub(super) struct Left {
     pub(super) tile: Arc<Tile>,
     pub(super) watered: Watered,
     pub(super) current: bool,
 }
 
-/// Bytes `tile` holds in memory, its shading's included.
 fn memory_bytes(tile: &Tile) -> u64 {
     let arrays = tile.heights().len() + tile.control().map_or(0, <[u32]>::len);
     let holes = tile.hole_bits().map_or(0, <[u64]>::len) * 8;
@@ -54,21 +31,14 @@ fn memory_bytes(tile: &Tile) -> u64 {
 pub(super) struct TileStore {
     pyramid: Pyramid,
     tiles: TileMap<Resident>,
-    /// The generation tiles arriving now are made from.
     generation: Generation,
     revision: u64,
-    /// The largest height difference measured between each level and the
-    /// next coarser one ([`Tile::morph_error`]), how far a level's ground
-    /// may stand off the one standing in for it; zero until measured.
     errors: Vec<f32>,
-    /// Tiles that left whole, kept in memory to return at once while the
-    /// layers they generated from stay, and their bytes.
     cache: TileMap<CachedTile>,
     cached_bytes: u64,
 }
 
 impl TileStore {
-    /// No tiles of `pyramid`, which tiles of `generation` arrive at.
     pub(super) fn new(pyramid: Pyramid, generation: Generation) -> Self {
         Self {
             pyramid,
@@ -81,12 +51,10 @@ impl TileStore {
         }
     }
 
-    /// The resident tile `key`.
     pub(super) fn get(&self, key: &TileKey) -> Option<&Arc<Tile>> {
         self.tiles.get(key).map(|resident| &resident.tile)
     }
 
-    /// The rivers resident tile `key`'s water was made from.
     pub(super) fn watered(&self, key: &TileKey) -> Option<&Watered> {
         self.tiles.get(key).map(|resident| &resident.watered)
     }
@@ -95,13 +63,10 @@ impl TileStore {
         self.tiles.contains_key(key)
     }
 
-    /// The generation tiles are made from now.
     pub(super) fn generation(&self) -> Generation {
         self.generation
     }
 
-    /// Whether `key` still loads: not resident, or resident of another
-    /// generation.
     pub(super) fn loads(&self, key: &TileKey) -> bool {
         self.tiles
             .get(key)
@@ -112,41 +77,27 @@ impl TileStore {
         self.tiles.len()
     }
 
-    /// The resident tiles' keys `wanted` holds for, in order.
     pub(super) fn keys_where(&self, wanted: impl Fn(&TileKey) -> bool) -> Vec<TileKey> {
         self.tiles.keys_where(|key, _| wanted(key))
     }
 
-    /// The resident tiles, in key order.
     pub(super) fn tiles(&self) -> impl Iterator<Item = &Arc<Tile>> {
         self.tiles.iter().map(|(_, resident)| &resident.tile)
     }
 
-    /// Advances whenever the resident tiles change, or which of them
-    /// regenerate.
     pub(super) fn revision(&self) -> u64 {
         self.revision
     }
 
-    /// Each level's largest measured morph error, which frames hand
-    /// renderers ([`RenderTerrain::errors`]).
     pub(super) fn errors(&self) -> &[f32] {
         &self.errors
     }
 
-    /// Makes `tile` resident, made from the generation tiles are made from
-    /// now, its water made from the rivers `watered`, in place of whatever
-    /// its key held, measuring how far it lies from its resident parent and
-    /// its resident children from it. The only way a tile becomes resident.
     pub(super) fn arrive(&mut self, tile: Arc<Tile>, watered: Watered) {
         let made = self.generation;
         self.put(tile, made, watered);
     }
 
-    /// Gives resident tile `key` its water made from the rivers `watered`:
-    /// `tile`, itself with that water, or where its water stays the same,
-    /// none. It keeps its generation: its ground and
-    /// objects are the same.
     pub(super) fn rewater(&mut self, key: &TileKey, tile: Option<Arc<Tile>>, watered: Watered) {
         let Some(resident) = self.tiles.get_mut(key) else {
             return;
@@ -158,10 +109,6 @@ impl TileStore {
         }
     }
 
-    /// Gives resident tile `key` `tile`, itself with its shading as its
-    /// record arrived ([`Tile::shaded`]). It keeps its generation and the
-    /// rivers its water was made from: its ground, water and objects are the
-    /// same.
     pub(super) fn reshade(&mut self, key: &TileKey, tile: Arc<Tile>) {
         let Some(resident) = self.tiles.get_mut(key) else {
             return;
@@ -201,7 +148,6 @@ impl TileStore {
         self.revision += 1;
     }
 
-    /// Takes tile `key` out of residency.
     pub(super) fn leave(&mut self, key: &TileKey) -> Option<Left> {
         let resident = self.tiles.remove(key)?;
         self.revision += 1;
@@ -212,11 +158,6 @@ impl TileStore {
         })
     }
 
-    /// Makes `generation` the one tiles are made from, which the resident
-    /// tiles `under` takes are not: they regenerate in their turn and draw
-    /// until they do; every other resident tile of the generation before
-    /// is of the new one too. Tiles kept in memory under it are no longer
-    /// the ground.
     pub(super) fn invalidate(&mut self, generation: Generation, under: impl Fn(&TileKey) -> bool) {
         let previous = std::mem::replace(&mut self.generation, generation);
         for key in self
@@ -233,10 +174,6 @@ impl TileStore {
         self.revision += 1;
     }
 
-    // Tiles kept in memory.
-
-    /// Keeps `tile`, its water made from the rivers `watered`, in memory as
-    /// of frame `frame`.
     pub(super) fn keep_in_memory(&mut self, tile: Arc<Tile>, watered: Watered, frame: u64) {
         let key = tile.key();
         let bytes = memory_bytes(&tile);
@@ -253,26 +190,22 @@ impl TileStore {
         );
     }
 
-    /// Drops `key`'s tile from memory, if kept.
     pub(super) fn forget(&mut self, key: TileKey) {
         if let Some(cached) = self.cache.remove(&key) {
             self.cached_bytes -= cached.bytes;
         }
     }
 
-    /// Whether `key`'s tile is kept in memory.
     pub(super) fn in_memory(&self, key: &TileKey) -> bool {
         self.cache.contains_key(key)
     }
 
-    /// Marks `key`'s tile kept in memory as wanted at frame `frame`.
     pub(super) fn wanted_in_memory(&mut self, key: &TileKey, frame: u64) {
         if let Some(cached) = self.cache.get_mut(key) {
             cached.left = frame;
         }
     }
 
-    /// The tiles kept in memory, by the frame each left.
     pub(super) fn kept(&self) -> impl Iterator<Item = (u64, TileKey)> + '_ {
         self.cache.iter().map(|(key, kept)| (kept.left, key))
     }
@@ -285,9 +218,6 @@ impl TileStore {
         self.cached_bytes
     }
 
-    /// Makes the tiles of `missing` kept in memory resident again,
-    /// most important first, within `work`'s upload
-    /// budget; how many.
     pub(super) fn restore(&mut self, missing: &[(TileKey, u32)], work: &Work) -> u64 {
         let mut restored = 0;
         for &(key, _) in missing {
@@ -310,9 +240,6 @@ impl TileStore {
         restored
     }
 
-    /// Checks the residency invariants that need the store alone: R1, each
-    /// resident and kept tile is the tile its key names; R5, the bytes kept
-    /// in memory are their tiles'. Panics naming the first broken.
     #[cfg(debug_assertions)]
     pub(super) fn check(&self) {
         let levels = self.pyramid.levels();

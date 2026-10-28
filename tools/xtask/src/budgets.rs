@@ -1,12 +1,3 @@
-//! Absolute budgets (`bench/budgets.json`): for each bench scene and device
-//! class, a soft and a hard limit on each budgeted metric (a GPU pass
-//! group's milliseconds, a memory pool's bytes, a count of draws,
-//! instances or triangles), the value each came from and where that was
-//! measured, and waivers as data. `cargo xtask bench budgets` judges a
-//! measure report's runs against them, or writes them from one; lint's
-//! bench stage holds the file to the scenes, the device classes and the
-//! metric catalog.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -15,18 +6,12 @@ use serde_json::{Map, Value, json};
 
 use crate::measure::read_json;
 
-/// The device classes budgets name: machine profiles' GPU types.
 const DEVICES: &[&str] = &["integrated", "discrete"];
 
-/// The GPU's timings budgets are written for: the frame's, and each pass
-/// group's (`gpu:stage_*`), but for the spans between and around them.
 const FRAME_GPU: &str = "gpu:frame_gpu";
 const STAGES: &str = "gpu:stage_";
 const NO_PASSES: &[&str] = &["gpu:stage_gaps", "gpu:stage_lead", "gpu:stage_tail"];
-/// Pass groups taking less than this many milliseconds get no budget: their
-/// timings are mostly noise.
 const SMALLEST_STAGE_MS: f64 = 0.05;
-/// The memory pools and counts budgets are written for.
 const AMOUNTS: &[&str] = &[
     "resident_mesh_bytes",
     "resident_texture_bytes",
@@ -38,23 +23,16 @@ const AMOUNTS: &[&str] = &[
     "shadows.draws",
     "transparent_draws",
 ];
-/// The soft and hard limits over a measured timing: times vary from run to
-/// run and with the machine's load, so their limits sit a quarter and a
-/// half above it, and at least 0.1 and 0.2 ms.
 const TIME_HEADROOM: (f64, f64) = (1.25, 1.5);
 const TIME_HEADROOM_MS: (f64, f64) = (0.1, 0.2);
-/// The soft and hard limits over a measured amount: a scene's settled
-/// view draws and holds about the same each run, so a tenth and a quarter.
 const AMOUNT_HEADROOM: (f64, f64) = (1.1, 1.25);
 
 const USAGE: &str = "usage: cargo xtask bench budgets --report REPORT.json --device integrated|discrete [--arm base|candidate] [--today YYYY-MM-DD] [--write]";
 
-/// Reads `bench/budgets.json`.
 fn read(root: &Path) -> Result<Value, String> {
     read_json(&root.join("bench/budgets.json"))
 }
 
-/// A date `YYYY-MM-DD`, as waivers end.
 fn is_date(text: &str) -> bool {
     let bytes = text.as_bytes();
     bytes.len() == 10
@@ -64,12 +42,6 @@ fn is_date(text: &str) -> bool {
         })
 }
 
-/// Problems with `bench/budgets.json`: scenes `bench/scenes` lacks, device
-/// classes but integrated and discrete, budgets without their source,
-/// metrics the catalog (`covered`, whose entries cover names or prefixes)
-/// lacks, limits that are not numbers with the measured value at most soft
-/// at most hard, and waivers naming no budget or lacking a reason or an
-/// end.
 pub fn problems(root: &Path, covered: &dyn Fn(&str) -> bool) -> Result<Vec<String>, String> {
     let budgets = read(root)?;
     let mut problems = Vec::new();
@@ -144,7 +116,6 @@ pub fn problems(root: &Path, covered: &dyn Fn(&str) -> bool) -> Result<Vec<Strin
     Ok(problems)
 }
 
-/// The median of `values`, which must not be empty.
 fn median(mut values: Vec<f64>) -> f64 {
     values.sort_by(f64::total_cmp);
     let middle = values.len() / 2;
@@ -155,26 +126,20 @@ fn median(mut values: Vec<f64>) -> f64 {
     }
 }
 
-/// Today's date in UTC, `YYYY-MM-DD`, from the system clock.
 fn today() -> String {
     crate::measure::iso(std::time::SystemTime::now())[..10].to_owned()
 }
 
-/// `value` rounded up to a multiple of `step`, without the step's float
-/// error.
 fn up_to(value: f64, step: f64) -> f64 {
     ((value / step - 1e-9).ceil() * step * 1000.0).round() / 1000.0
 }
 
-/// The value of `metric` in `run`: its timings and memory, or its work
-/// counters.
 fn value(run: &Value, metric: &str) -> Option<f64> {
     run["metrics"][metric]
         .as_f64()
         .or_else(|| run["work"][metric].as_f64())
 }
 
-/// A workload's settled runs of `arm`.
 fn settled<'a>(workload: &'a Value, arm: &str) -> Vec<&'a Value> {
     workload["runs"]
         .as_array()
@@ -184,7 +149,6 @@ fn settled<'a>(workload: &'a Value, arm: &str) -> Vec<&'a Value> {
         .collect()
 }
 
-/// The metrics `runs` measured that budgets are written for.
 fn budgeted(runs: &[&Value]) -> Vec<String> {
     let mut metrics: Vec<String> = runs
         .iter()
@@ -202,7 +166,6 @@ fn budgeted(runs: &[&Value]) -> Vec<String> {
     metrics
 }
 
-/// Where `runs` of `arm` in `report`'s `workload` were measured, in words.
 fn source(report: &Value, workload: &Value, arm: &str, runs: &[&Value]) -> String {
     let setup = &report["setup"];
     let gpu = report["profile_start"]["setups"]
@@ -248,8 +211,6 @@ fn source(report: &Value, workload: &Value, arm: &str, runs: &[&Value]) -> Strin
     )
 }
 
-/// The budget `runs` of `arm` in `report`'s `workload` call for: each
-/// budgeted metric's median with its headroom.
 fn written(report: &Value, workload: &Value, arm: &str, runs: &[&Value]) -> Value {
     let mut metrics = Map::new();
     for metric in budgeted(runs) {
@@ -284,12 +245,6 @@ fn written(report: &Value, workload: &Value, arm: &str, runs: &[&Value]) -> Valu
     json!({ "source": source(report, workload, arm, runs), "metrics": metrics })
 }
 
-/// Judges a measure report against the budgets, or with `--write` writes
-/// the budgets of the scenes it measured from it: for each workload named
-/// after a bench scene, the median of each budgeted metric over the chosen
-/// arm's settled runs against (or setting) the device class's limits.
-/// Judging prints every verdict as JSON and fails when a hard limit is
-/// broken and no waiver in force excuses it.
 pub fn judge(root: &Path, options: &[String]) -> Result<(), crate::Failure> {
     let mut named = BTreeMap::new();
     let mut write = false;

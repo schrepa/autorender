@@ -1,12 +1,3 @@
-//! The scenes corpus: scene documents through the format's round trip,
-//! and its refusals. Each document (the tracked fixtures and the corpus's
-//! own, tools/xtask/pure/scenes.json) parses and validates, serializes,
-//! and parses back to the same document. Each refusal fails with its
-//! rule's error code at its path, while parsing, validating against its
-//! files or instantiating into a world. Every error code the scene format
-//! answers with (each `ErrorCode::*` engine_scene names) has a refusal, or
-//! is one [`UNREACHED`] lists.
-
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -18,11 +9,8 @@ use serde_json::{Value, json};
 
 use super::Observations;
 
-/// The corpus's own documents and refusals.
 const FIXTURES: &str = "tools/xtask/pure/scenes.json";
 
-/// Error codes engine_scene names that no document reaches, with why.
-/// Sorted; a code a refusal reaches leaves it.
 const UNREACHED: &[(&str, &str)] = &[];
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
@@ -32,7 +20,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         .as_object()
         .ok_or_else(|| format!("{FIXTURES} has no documents"))?
     {
-        // A string names a tracked document by its path.
         let source = match document.as_str() {
             Some(path) => read(root, path)?,
             None => document.to_string(),
@@ -49,12 +36,9 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         let name = format!("refusal {rule} at {path}");
         let generated = (refusal["chain"].as_u64(), refusal["prefab"].as_u64());
         let source = match (&refusal["source"], generated) {
-            // A source one byte over the bound.
             (Value::String(source), _) if source == "OVERSIZED" => " ".repeat(MAX_SOURCE_BYTES + 1),
             (Value::String(source), _) => source.clone(),
-            // A parent chain of that many entities.
             (_, (Some(length), _)) => chain(length),
-            // A prefab of that many entities.
             (_, (_, Some(count))) => prefab(count),
             _ => refusal["document"].to_string(),
         };
@@ -79,8 +63,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             json!({"code": code, "path": error.path, "message": error.message}),
         );
     }
-    // Every error code the format answers with has a refusal, or is listed
-    // as reached by no document.
     let rules = scene_rules(root)?;
     for rule in &rules {
         let unreached = UNREACHED.iter().any(|(code, _)| code == rule);
@@ -100,7 +82,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     Ok(())
 }
 
-/// A document of `length` entities, each the parent of the next.
 fn chain(length: u64) -> String {
     let entities: Vec<Value> = (0..length)
         .map(|index| match index {
@@ -112,7 +93,6 @@ fn chain(length: u64) -> String {
         .to_string()
 }
 
-/// A document whose one prefab holds `count` entities.
 fn prefab(count: u64) -> String {
     let entities: Vec<Value> = (0..count)
         .map(|index| json!({"id": format!("e{index}")}))
@@ -132,9 +112,6 @@ fn read(root: &Path, path: &str) -> Result<String, String> {
     fs::read_to_string(root.join(path)).map_err(|error| format!("cannot read {path}: {error}"))
 }
 
-/// Parses and validates `source`, serializes it, and parses that back:
-/// the second serialization equals the first. Observes the serialized
-/// document's hash and size.
 fn round_trip(name: &str, source: &str, observed: &mut Observations) {
     let written = SceneDocument::from_json(source).and_then(|document| {
         let first = document.to_json()?;
@@ -171,8 +148,6 @@ fn round_trip(name: &str, source: &str, observed: &mut Observations) {
     }
 }
 
-/// `source` through `stage`: `parse` (parse and validate), `files`
-/// (validate against no files) or `instantiate` (into `world`).
 fn refuse(source: &str, stage: &str, world: Option<&str>) -> Result<(), SceneError> {
     let document = SceneDocument::from_json(source)?;
     match stage {
@@ -181,12 +156,10 @@ fn refuse(source: &str, stage: &str, world: Option<&str>) -> Result<(), SceneErr
             let mut engine;
             let mut bare;
             let world: &mut World = match world {
-                // A world without an asset library.
                 Some("bare") => {
                     bare = World::new();
                     &mut bare
                 }
-                // An asset library holding no meshes.
                 Some("no meshes") => {
                     bare = World::new();
                     bare.insert_resource(AssetLibrary::new(AssetBudget {
@@ -195,7 +168,6 @@ fn refuse(source: &str, stage: &str, world: Option<&str>) -> Result<(), SceneErr
                     }));
                     &mut bare
                 }
-                // An engine of one transform node.
                 Some("one node") => {
                     engine = Engine::new(EngineConfig {
                         max_transform_nodes: 1,
@@ -203,7 +175,6 @@ fn refuse(source: &str, stage: &str, world: Option<&str>) -> Result<(), SceneErr
                     });
                     engine.app.world_mut()
                 }
-                // An engine without its features' plugins.
                 _ => {
                     engine = Engine::default();
                     engine.app.world_mut()
@@ -215,8 +186,6 @@ fn refuse(source: &str, stage: &str, world: Option<&str>) -> Result<(), SceneErr
     }
 }
 
-/// The error codes engine_scene answers with: each `ErrorCode::*` its
-/// sources name, by code.
 fn scene_rules(root: &Path) -> Result<BTreeSet<String>, String> {
     let source = root.join("crates/engine_scene/src");
     let mut named = BTreeSet::new();

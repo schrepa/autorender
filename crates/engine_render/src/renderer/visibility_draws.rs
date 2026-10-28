@@ -1,6 +1,3 @@
-//! The visibility buffer: which camera bins it resolves, and
-//! the pipelines and groups of its pass and resolves.
-
 #![expect(
     clippy::expect_used,
     reason = "resolve layouts are created before their pipelines"
@@ -11,12 +8,6 @@ use crate::bindings::{VISIBILITY_PASS, VISIBILITY_RESOLVE};
 use crate::cached::GroupCache;
 use crate::entries;
 
-/// The visibility buffer, created with the first frame resolving through
-/// it: its passes' group layouts, pipelines (the visibility pass's single-
-/// and double-sided; resolves per pass kind and material variant over their
-/// layouts, unlit and lit) and groups (the visibility pass's per current
-/// pose buffer, the resolves' per current and previous one); and which of
-/// this frame's camera bins it resolves.
 pub(super) struct VisibilityDraws {
     pub(super) buffer: Option<VisibilityBuffer>,
     pub(super) layout: crate::pipelines::GroupLayout,
@@ -31,9 +22,6 @@ pub(super) struct VisibilityDraws {
 
 impl VisibilityDraws {
     pub(super) fn new(device: &wgpu::Device) -> Self {
-        // Its pass poses clusters from the arena, and its resolves read
-        // them, the selected clusters and the target in fragments, the tile
-        // lists in vertices, and each draw's bin through a dynamic offset.
         let layout = crate::pipelines::layout(device, &VISIBILITY_PASS);
         let resolve_layout = crate::pipelines::layout(device, &VISIBILITY_RESOLVE);
         Self {
@@ -51,18 +39,9 @@ impl VisibilityDraws {
 }
 
 impl Renderer {
-    /// Readies the visibility buffer for this frame's camera
-    /// bins and marks those it resolves: every bin but those of alpha-masked
-    /// materials, whose coverage its pass does not test. False when it is
-    /// off, resolves no bin, or the device binds too few storage buffers or
-    /// too small ones for `kind`'s resolves; the bins then draw forward.
     pub(super) fn prepare_visibility(&mut self, snapshot: &RenderSnapshot, kind: PassKind) -> bool {
         self.visibility.bins.clear();
         let lit = kind.lit;
-        // The storage buffers its resolves bind in fragments: poses, colors,
-        // previous poses, the arena's meshes, clusters and pages, the
-        // selected clusters, and the camera's reflection probe grid and
-        // cloud shadows; lit frames add the local lights' three.
         let needed = if lit {
             &crate::pipeline_layouts::LIT_RESOLVE_PIPELINES
         } else {
@@ -70,7 +49,6 @@ impl Renderer {
         }
         .limits
         .storage_buffers;
-        // Debug views draw every cluster forward.
         if !snapshot.environment.virtual_geometry.visibility_buffer
             || kind.targets() == Some(Targets::Debug)
             || self.device.limits().max_storage_buffers_per_shader_stage < needed
@@ -105,8 +83,6 @@ impl Renderer {
         true
     }
 
-    /// The visibility pass's pipelines and `kind`'s resolves
-    /// for this frame's resolved bins' material variants.
     pub(super) fn ensure_visibility_pipelines(&mut self, kind: PassKind) {
         if self.visibility.pipelines.is_none() {
             let layout = crate::pipelines::pipeline_layout(
@@ -197,9 +173,6 @@ impl Renderer {
         }
     }
 
-    /// A resolve of the visibility buffer: `vs_resolve`'s
-    /// tiles with `kind`'s resolving fragment stage and targets, testing no
-    /// depth.
     pub(super) fn create_resolve(
         &self,
         kind: PassKind,
@@ -241,9 +214,6 @@ impl Renderer {
         )
     }
 
-    /// The visibility buffer's groups: its pass's per current
-    /// pose buffer, and the resolves' per current and previous one, as
-    /// `virtual_pose_groups`.
     pub(super) fn ensure_visibility_groups(&mut self) {
         let (Some(([meshes, clusters, pages], arena)), Some(visibility)) = (
             self.virtual_draws.pass.arena(),
@@ -263,8 +233,6 @@ impl Renderer {
                 size: wgpu::BufferSize::new(16),
             }),
         );
-        // The arena and the selection count their buffers' replacements
-        // themselves.
         let arena = [meshes, clusters, pages]
             .map(|buffer| Bound::counted(arena, buffer.as_entire_binding()));
         let visible = Bound::counted(selection, visible.as_entire_binding());

@@ -1,7 +1,3 @@
-//! Terrain's development tools: the inspectors of terrains, their streaming,
-//! prefetch places and the development view; the controls of the view, of
-//! edits and of rivers drawn; and the queries of heights, sweeps and routes.
-
 mod controls;
 mod queries;
 mod results;
@@ -32,7 +28,6 @@ pub use results::{
     TerrainEdited, TerrainHeightResult, TerrainRouteResult, TerrainSweepResult, Worst,
 };
 
-/// Registers terrain's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
     tools
         .register_component::<engine_core::TerrainPrefetch>(
@@ -124,7 +119,6 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
         .expect("built-in descriptor is bounded");
 }
 
-/// Adds the schemas of terrain's inspectors.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
     schemas.insert(
@@ -145,8 +139,6 @@ pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
     );
 }
 
-/// The view of the terrain on `entity`: its tiles by level, its
-/// streaming's errors and ranges, its bakes, paths and surroundings.
 fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) -> Option<Value> {
     let scene = context.scene;
     let entity = entity?;
@@ -168,7 +160,6 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
         if holds(|layer| matches!(layer, engine_core::Layer::Hydrology(_))) {
             hydrology = Some(hydrology_view(terrains, entity));
         }
-        // Each path layer's profile, once baked.
         if let Some(layers) = terrains.layers(entity) {
             for (index, layer) in layers.layers().iter().enumerate() {
                 if let engine_core::Layer::Path(stage) = layer {
@@ -257,9 +248,6 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
     }))
 }
 
-/// The hydrology bake of the terrain on `entity`: its progress, what it
-/// found, how its rivers flow, its first falls and its largest rivers
-/// (terrain-local).
 fn hydrology_view(terrains: &engine_core::Terrains, entity: Entity) -> crate::views::HydrologyView {
     let bakes = terrains.bakes(entity);
     let stats = bakes.hydrology;
@@ -315,7 +303,6 @@ fn hydrology_view(terrains: &engine_core::Terrains, entity: Entity) -> crate::vi
     }
 }
 
-/// The pools `flow` holds, world space.
 fn pools(
     flow: &engine_core::terrain_data::RiverFlow,
     origin: engine_core::glam::Vec3,
@@ -342,10 +329,8 @@ fn pools(
         .collect()
 }
 
-/// Lakes a terrain's water view lists at most.
 const LAKES_SHOWN: usize = 8;
 
-/// `found`'s largest lakes (world space, the terrain at `origin`).
 fn lakes(
     found: &engine_core::terrain_data::Hydrology,
     origin: engine_core::glam::Vec3,
@@ -365,8 +350,6 @@ fn lakes(
         .collect()
 }
 
-/// Where `found`'s rivers carry most, run fastest against their waves and
-/// meet with the most water (world space, the terrain at `origin`).
 fn sights(
     found: &engine_core::terrain_data::Hydrology,
     origin: engine_core::glam::Vec3,
@@ -389,7 +372,6 @@ fn sights(
         .collect()
 }
 
-/// How `found`'s rivers and lakes flow.
 fn river_flow(found: &engine_core::terrain_data::Hydrology) -> crate::views::RiverFlowView {
     let flow = found.flow_summary();
     crate::views::RiverFlowView {
@@ -402,18 +384,6 @@ fn river_flow(found: &engine_core::terrain_data::Hydrology) -> crate::views::Riv
     }
 }
 
-/// Temporarily set terrain's level of detail and render while paused:
-/// `subdivision_error` replaces the settings' pixels the drawn ground may
-/// stray from its true surface, `pixel_error` the settings' pixels a level's
-/// samples span where its tiles stream and shade, and `freeze` holds the
-/// detail eye at the camera's current position while the camera moves on,
-/// so every distance switch stays where it stood: terrain streaming, its
-/// subdivision and shading levels, the ground's relief and displacement,
-/// ground cover and its canopy, placed objects' thinning, kept shadow
-/// windows and river water. Omitted fields stay as
-/// they are. Terrain's leaves, normals, tiles and patches, materials, sky
-/// visibility and detail show in the debug views (the environment's
-/// `debug_view` section).
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -428,7 +398,6 @@ pub struct TerrainControl {
     pub freeze: Option<bool>,
 }
 
-/// `value` for terrain setting `name`, held to the settings' own rule.
 fn terrain_setting(value: f32, name: &'static str) -> Result<f32, DevError> {
     let rule = engine_core::TerrainSettings::rule_of(name).expect("terrain settings declare it");
     engine_settings::Setting::check(&value, name, rule)
@@ -490,33 +459,16 @@ impl EngineControl for TerrainControl {
     }
 }
 
-/// What `terrain` answers: terrain's level of detail after.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainControlResult {
-    /// Controls change the session's world, not the scene's source.
     pub temporary: bool,
-    /// Always true: terrain draws as asked.
     pub terrain_changed: bool,
-    /// Where the detail eye stays frozen, where it does (world space).
     pub frozen_at: Option<[f32; 3]>,
-    /// The settings' subdivision error and pixel error, where terrain
-    /// settings exist.
     pub subdivision_error: Option<f32>,
     pub pixel_error: Option<f32>,
 }
 
-/// Temporarily edit a generated terrain over its layers and bakes
-/// and render while paused: `change` raises or lowers the
-/// ground by meters, levels it to a world height or cuts holes in it, at
-/// full strength within `radius` meters of world `center` `[x, z]` and
-/// fading over `falloff` more, under `id` (letters, digits, `_`, `-` and
-/// `.`), which repeating leaves the terrain alone. Only the tiles
-/// under it regenerate. Returns whether it applied, the edits standing,
-/// where tiles regenerate (world `min` and `max` `[x, z]`) and the most
-/// the ground moved (meters). `terrain` names a scene's terrain entity
-/// (the first terrain when omitted). The `Terrain` inspector lists the
-/// edits as stamp layers to save into the scene.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -559,25 +511,6 @@ impl EngineControl for TerrainEditControl {
     }
 }
 
-/// Temporarily draw a river over a generated terrain, or take one away,
-/// and render while paused: `points` (world `[x, z]`, from upstream, two
-/// or more; the river runs along the smooth line through them) with
-/// optional `width` (meters across its channel), `depth` (meters its
-/// channel's middle lies below its banks) and `discharge` (cubic meters a
-/// second its bankfull flood carries), each one value for the whole river
-/// or one for each point, and an optional `name`, under `id` (letters,
-/// digits, `_`, `-` and `.`); no points take away the river drawn under
-/// `id`. Drawing the same river under an `id` again leaves the terrain
-/// alone; another replaces it. What a river leaves out the terrain's
-/// hydrology derives, as for its own rivers. The terrain bakes its
-/// hydrology and what follows it again with every drawn river given just
-/// before it, and only the tiles where its rivers or roads then differ
-/// regenerate. Returns whether it applied, the rivers drawn, and where the
-/// river drawn, replaced or taken away lies (world `min` and `max`
-/// `[x, z]`). `terrain` names a scene's terrain entity (the first terrain
-/// when omitted), which needs a hydrology layer. The `Terrain` inspector
-/// lists the drawn rivers to save into the scene as a rivers layer before
-/// its hydrology layer.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -614,8 +547,6 @@ impl EngineControl for TerrainRiverControl {
     }
 }
 
-/// Take the terrain's last edit away and render while
-/// paused; `terrain` as for `terrain_edit`.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -635,8 +566,6 @@ impl EngineControl for TerrainUndoControl {
     }
 }
 
-/// Put back the last edit undo took away, unless an edit came since,
-/// and render while paused.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -656,13 +585,9 @@ impl EngineControl for TerrainRedoControl {
     }
 }
 
-/// The terrain edits undo took away in this session, latest last: redo
-/// puts them back.
 #[derive(Resource, Default)]
 struct TerrainRedo(Vec<(Entity, engine_core::TerrainEdit)>);
 
-/// Runs `editing` on the terrain `name` names in `scene`, with the session's
-/// redo stack.
 fn editing(
     engine: &mut Engine,
     scene: Option<&SceneInstance>,

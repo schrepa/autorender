@@ -1,8 +1,3 @@
-//! What each expression of a function stands for, from what its operands
-//! stand for: reads of the camera and of positions relative to the eye, or
-//! what the detail eye's measures give and a pixel's derivatives, start
-//! dependences, and decisions' operands stop there.
-
 use naga::{
     AddressSpace, Expression, GlobalVariable, Handle, MathFunction, RelationalFunction, ScalarKind,
     Span, Type, TypeInner,
@@ -14,8 +9,6 @@ use super::{
 };
 
 impl Flow<'_> {
-    /// What expression `handle` of the frame's function stands for; on a
-    /// marked line, its value depends on nothing.
     pub(super) fn evaluate(
         &mut self,
         frame: &Frame<'_>,
@@ -48,8 +41,6 @@ impl Flow<'_> {
                     .get(&handle)
                     .cloned()
                     .unwrap_or_else(Value::clean);
-                // Functions named for positions relative to the eye give
-                // them; the detail eye's measures give sizes on screen.
                 let name = self.module.functions[function].name.as_deref();
                 let read = match self.watch {
                     Watch::Camera
@@ -71,7 +62,6 @@ impl Flow<'_> {
                     None => Slot::Value(value),
                 }
             }
-            // A pixel's derivatives are sizes on screen.
             Expression::Derivative { expr, .. } if self.watch == Watch::Sizes => {
                 let taint = self.source(Read::Derivative, frame.of, &frame.name, span);
                 Slot::Value(frame.value(expr).with(&taint))
@@ -84,7 +74,6 @@ impl Flow<'_> {
         }
     }
 
-    /// What a value expression that reads no memory depends on.
     fn value(
         &self,
         frame: &Frame<'_>,
@@ -110,16 +99,11 @@ impl Flow<'_> {
                         .collect(),
                 )
             }
-            // What a texture gives is its texels as filtering averages them
-            // over the pixel, wherever a size on screen moves the read (a
-            // level's half texel kept inside a frame).
             Expression::ImageSample { .. } | Expression::ImageLoad { .. }
                 if self.watch == Watch::Sizes =>
             {
                 Value::clean()
             }
-            // What a texture gives follows where it is read; how it is
-            // filtered (levels, gradients) is the view's own.
             Expression::ImageSample {
                 coordinate,
                 array_index,
@@ -136,8 +120,6 @@ impl Flow<'_> {
                 frame.value(expr)
             }
             Expression::Binary { left, right, .. } => self.binary(frame, handle, left, right),
-            // A decision's operands stop where it decides: its condition
-            // here, read by the decisions' pass.
             Expression::Select { accept, reject, .. } => {
                 let mut value = frame.value(accept);
                 value.join(&frame.value(reject));
@@ -174,9 +156,6 @@ impl Flow<'_> {
         }
     }
 
-    /// A member, lane, column or element `index` of `base`: a place's part
-    /// for pointers, a value's part otherwise, eye-relative where the
-    /// member is named `relative` and the camera is watched.
     fn access_index(
         &mut self,
         frame: &Frame<'_>,
@@ -204,8 +183,6 @@ impl Flow<'_> {
         }
     }
 
-    /// Whether member `index` of the struct `base` is (or points at) is
-    /// named `relative`.
     fn names_relative(&self, frame: &Frame<'_>, base: Handle<Expression>, index: u32) -> bool {
         let module = self.module;
         let mut inner = type_of(frame.info, module, base);
@@ -221,9 +198,6 @@ impl Flow<'_> {
             == Some(RELATIVE)
     }
 
-    /// What reading `place` at `span` gives: what its root holds there,
-    /// eye-relative where a step names `relative`, depending on the indices
-    /// chosen as the shader runs too.
     pub(super) fn read(&mut self, frame: &Frame<'_>, place: &Place, span: Span) -> Value {
         let value = match place.root {
             Root::Local(local) => frame.locals[local].at_steps(&place.steps),
@@ -245,9 +219,6 @@ impl Flow<'_> {
         }
     }
 
-    /// What module variable `global` holds at `steps`: the camera's reads,
-    /// what functions stored in private and workgroup variables, and
-    /// nothing in other buffers.
     fn global(
         &mut self,
         frame: &Frame<'_>,
@@ -278,7 +249,6 @@ impl Flow<'_> {
         }
     }
 
-    /// What reading the camera at `steps` gives.
     fn camera_read(&mut self, frame: &Frame<'_>, steps: &[Step], span: Span) -> Value {
         match steps.split_first() {
             None => {
@@ -296,9 +266,6 @@ impl Flow<'_> {
         }
     }
 
-    /// What reading member `member` of the camera gives, lane `lane` of it
-    /// where one is read: the eyes' first three lanes, a pixel's angle
-    /// (`options.y`) and a matrix's parts are reads of the camera.
     fn camera_member(
         &mut self,
         frame: &Frame<'_>,
@@ -342,7 +309,6 @@ impl Flow<'_> {
         }
     }
 
-    /// A vector, struct, matrix or array of `components`.
     fn compose(
         &self,
         frame: &Frame<'_>,
@@ -381,9 +347,6 @@ impl Flow<'_> {
         }
     }
 
-    /// An operator applied lane by lane, but for matrices, which mix lanes:
-    /// a camera matrix transforms whole, and applied to a constant vector
-    /// gives the view's eye or an axis.
     fn binary(
         &self,
         frame: &Frame<'_>,
@@ -430,11 +393,6 @@ impl Flow<'_> {
         }
     }
 
-    /// A built-in function's result: decisions' operands stop where they
-    /// decide (all of `smoothstep`'s and `step`'s, `mix`'s weight, and
-    /// `saturate`'s where sizes on screen are watched); a direction
-    /// (`normalize`'s) holds no size; functions of each lane go lane by
-    /// lane; the rest mix everything.
     fn math(
         &self,
         frame: &Frame<'_>,
@@ -489,8 +447,6 @@ impl Flow<'_> {
         }
     }
 
-    /// What expression `handle`'s lanes depend on: each the same lane of
-    /// every operand.
     fn lanewise(
         &self,
         frame: &Frame<'_>,
@@ -511,7 +467,6 @@ impl Flow<'_> {
         }
     }
 
-    /// Whether expression `handle` is a boolean or a vector of them.
     pub(super) fn is_bool(&self, frame: &Frame<'_>, handle: Handle<Expression>) -> bool {
         matches!(
             type_of(frame.info, self.module, handle),
@@ -521,9 +476,6 @@ impl Flow<'_> {
     }
 }
 
-/// A dynamic index into `base`: a place's part chosen as the shader runs for
-/// pointers, which depends on the index too; for values, any element, and
-/// the index.
 fn access(frame: &Frame<'_>, base: Handle<Expression>, index: Handle<Expression>) -> Slot {
     match frame.slot(base) {
         Slot::Place(place) => Slot::Place(place.step(Step::Any, false, &frame.taint(index))),
@@ -538,8 +490,6 @@ fn access(frame: &Frame<'_>, base: Handle<Expression>, index: Handle<Expression>
     }
 }
 
-/// Argument `index` of the frame's function: what pointer arguments point
-/// at is a place, the others values.
 fn argument(frame: &Frame<'_>, index: usize) -> Slot {
     if frame.pointees.get(index).is_some_and(Option::is_some) {
         Slot::Place(Place::of(Root::Argument(index)))
@@ -554,7 +504,6 @@ fn argument(frame: &Frame<'_>, index: usize) -> Slot {
     }
 }
 
-/// Everything the expressions among `handles` depend on.
 fn taints<const N: usize>(frame: &Frame<'_>, handles: [Option<Handle<Expression>>; N]) -> Taint {
     handles
         .into_iter()

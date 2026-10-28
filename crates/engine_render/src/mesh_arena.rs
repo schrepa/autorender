@@ -1,11 +1,3 @@
-//! Shared mesh buffers: every mesh's indices live in one buffer, and its vertex
-//! streams in the buffers of its class (positions alone; with vertex colors and
-//! second texture coordinates; with joints too), whose streams share one vertex
-//! numbering. Passes bind them once and draws select their mesh's ranges
-//! (`first_index`, `base_vertex`) instead of rebinding buffers per draw, which
-//! browsers' WebGPU layers charge per call.
-
-/// A mesh's vertex streams: its class of arena buffers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Streams {
     Plain = 0,
@@ -13,7 +5,6 @@ pub(crate) enum Streams {
     Skinned = 2,
 }
 
-/// Where a mesh's data lies in the arena.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Placement {
     pub first_index: u32,
@@ -23,11 +14,9 @@ pub(crate) struct Placement {
     pub vertex_count: u32,
 }
 
-/// Free ranges of a buffer, in elements: first fit, coalesced on release.
 #[derive(Debug, Default)]
 struct Space {
     capacity: u32,
-    // (start, length), sorted by start and never adjacent.
     free: Vec<(u32, u32)>,
 }
 
@@ -49,7 +38,6 @@ impl Space {
         }
         let slot = self.free.partition_point(|&(free, _)| free < start);
         self.free.insert(slot, (start, length));
-        // Merge with the following, then the preceding range.
         if slot + 1 < self.free.len() {
             let (next_start, next_length) = self.free[slot + 1];
             if start + length == next_start {
@@ -66,7 +54,6 @@ impl Space {
         }
     }
 
-    /// Extends the space to `capacity` elements.
     fn grow(&mut self, capacity: u32) {
         let old = self.capacity;
         self.capacity = capacity;
@@ -74,8 +61,6 @@ impl Space {
     }
 }
 
-/// The capacity (in elements of `bytes` each) a full space grows to for
-/// `length` more: doubled, and at least enough, within `limit` bytes.
 fn grown_capacity(space: &Space, length: u32, bytes: u64, limit: u64) -> Option<u32> {
     let needed = u64::from(space.capacity) + u64::from(length);
     let grown = (u64::from(space.capacity) * 2).max(needed).max(1024);
@@ -90,9 +75,6 @@ mod gpu {
     use super::*;
     use crate::gpu_calls::Queue;
 
-    /// A mesh as passes draw it: the buffers of its vertex streams (colors
-    /// and second coordinates, joints) and indices, where its indices start,
-    /// its base vertex and index count.
     #[derive(Clone, Copy)]
     pub(crate) struct MeshDraw<'a> {
         pub vertices: &'a wgpu::Buffer,
@@ -105,22 +87,16 @@ mod gpu {
     }
 
     impl MeshDraw<'_> {
-        /// The index range of a direct draw.
         pub(crate) fn index_range(&self) -> std::ops::Range<u32> {
             self.first_index..self.first_index + self.index_count
         }
     }
 
-    /// Where a draw finds its visible IDs: a whole buffer, the draw's first
-    /// instance naming its region (`indirect-first-instance`), or the
-    /// draw's own region.
     pub(crate) enum Ids<'a> {
         Whole(&'a wgpu::Buffer),
         Region(wgpu::BufferSlice<'a>),
     }
 
-    /// What a pass has bound (vertex slots, indices and bind groups without
-    /// dynamic offsets), so draws rebind only what changes.
     #[derive(Default)]
     pub(crate) struct Bindings {
         vertex: [Option<*const wgpu::Buffer>; 4],
@@ -149,8 +125,6 @@ mod gpu {
             }
         }
 
-        /// Binds visible IDs at `slot`: a whole buffer stays bound, a
-        /// draw's own region binds with the draw.
         pub(crate) fn ids(&mut self, pass: &mut wgpu::RenderPass<'_>, slot: u32, ids: Ids<'_>) {
             match ids {
                 Ids::Whole(buffer) => self.vertex(pass, slot, buffer),
@@ -161,7 +135,6 @@ mod gpu {
             }
         }
 
-        /// Binds `group`, which takes no dynamic offsets, at `index`.
         pub(crate) fn group(
             &mut self,
             pass: &mut wgpu::RenderPass<'_>,
@@ -176,7 +149,6 @@ mod gpu {
         }
     }
 
-    /// One class's vertex buffers: a stream each, sharing a numbering.
     struct Class {
         buffers: Vec<wgpu::Buffer>,
         strides: Vec<u64>,
@@ -211,7 +183,6 @@ mod gpu {
         })
     }
 
-    /// A buffer of `size` bytes holding `old`'s contents, copied at once.
     fn regrown(
         device: &wgpu::Device,
         queue: &Queue,
@@ -229,9 +200,6 @@ mod gpu {
     }
 
     impl MeshArena {
-        /// An empty arena whose classes' streams are `strides` bytes a
-        /// vertex: positions; positions and extras; positions, extras and
-        /// joints.
         pub(crate) fn new(device: &wgpu::Device, [vertex, extra, skin]: [u64; 3]) -> Self {
             let class = |strides: Vec<u64>| Class {
                 buffers: strides
@@ -262,12 +230,6 @@ mod gpu {
                     .sum::<u64>()
         }
 
-        /// Places a mesh of `vertex_count` vertices whose streams hold
-        /// `streams` (positions, then extras and joints when it has them)
-        /// and its `indices`, writing them. Buffers grow when full, their
-        /// contents copied on the GPU in a submission of its own so later
-        /// writes land after it. `None` when the device's buffer size limit
-        /// leaves no room: the mesh then keeps buffers of its own.
         pub(crate) fn insert(
             &mut self,
             device: &wgpu::Device,
@@ -344,7 +306,6 @@ mod gpu {
             })
         }
 
-        /// Frees a retired mesh's ranges.
         pub(crate) fn remove(&mut self, placement: Placement) {
             self.index_space
                 .release(placement.first_index, placement.index_count);
@@ -353,7 +314,6 @@ mod gpu {
                 .release(placement.base_vertex, placement.vertex_count);
         }
 
-        /// How a placed mesh draws: its class's buffers and the indices.
         pub(crate) fn draw(&self, placement: Placement) -> MeshDraw<'_> {
             let buffers = &self.classes[placement.streams as usize].buffers;
             MeshDraw {

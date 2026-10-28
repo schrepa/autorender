@@ -1,8 +1,3 @@
-//! A host's side of the shared development interface, a page's or a
-//! native window's.
-//!
-//! Calls are synchronous between frames. Input is a temporary batch,
-//! replaced by each input command and consumed only by explicit stepping.
 pub(crate) mod bridge;
 mod controls;
 
@@ -12,7 +7,6 @@ use engine_dev::{BrowserControl, Context, DevError, DevTools, RenderedMesh, Rend
 use engine_scene::SceneInstance;
 use serde_json::{Value, json};
 
-/// What the host's renderer made of the world's assets, for inspectors.
 struct Facts<'a>(&'a engine_render::Renderer);
 
 impl RendererFacts for Facts<'_> {
@@ -38,14 +32,12 @@ impl RendererFacts for Facts<'_> {
     }
 }
 
-/// Per-session temporary control state; excluded from ordinary builds.
 #[derive(Default)]
 pub(crate) struct DevHost {
     pub(crate) tools: DevTools,
     input: InputBatch,
 }
 
-/// The input the next explicit step applies.
 #[derive(Default)]
 struct InputBatch {
     forward: f32,
@@ -63,8 +55,6 @@ impl DevHost {
         self.input = InputBatch::default();
     }
 
-    /// Whether `source` is a valid control that submits a frame on a host
-    /// `paused` or not.
     pub fn submits_frame(&self, source: &str, paused: bool) -> bool {
         if source.len() > engine_dev::MAX_REQUEST_BYTES {
             return false;
@@ -91,9 +81,6 @@ impl DevHost {
         )
     }
 
-    /// Execute an on-demand request, then attach the observed frame and
-    /// revision. `paused` says whether the host is paused: every control but
-    /// pause and resume requires it.
     pub fn command(
         &mut self,
         app: &mut AppHost,
@@ -118,7 +105,6 @@ impl DevHost {
                 return self.error(app, scene, ErrorCode::InvalidJson, "$", &error.to_string());
             }
         };
-        // Commands observe and control completed ticks only.
         app.engine.complete_pending_tick();
         let op = request.get("op").and_then(Value::as_str);
         if !op.is_some_and(|op| engine_dev::CONTROL_OPS.contains(&op)) {
@@ -131,8 +117,6 @@ impl DevHost {
         }
     }
 
-    /// A request the development tools answer, with the renderer's facts;
-    /// `status` replies name the build and the GPU too, as every host does.
     fn tools_request(
         &mut self,
         app: &mut AppHost,
@@ -154,8 +138,6 @@ impl DevHost {
         envelope.to_string()
     }
 
-    /// Runs the control `op` in `source` on a `size` view: its
-    /// result.
     fn control(
         &mut self,
         app: &mut AppHost,
@@ -169,7 +151,6 @@ impl DevHost {
         controls::run(self, app, scene, (source, control.route()), (width, height))
     }
 
-    /// Produce a result from a game-specific development operation.
     pub fn result(
         &mut self,
         app: &mut AppHost,
@@ -182,7 +163,6 @@ impl DevHost {
         envelope.to_string()
     }
 
-    /// Preserve a structured game/authoring error at the host boundary.
     pub fn error(
         &mut self,
         app: &mut AppHost,
@@ -208,7 +188,6 @@ impl DevHost {
     }
 }
 
-/// `tools`' reply to `source` about `app`'s engine, with its renderer's facts.
 fn execute(
     tools: &DevTools,
     app: &mut AppHost,
@@ -224,8 +203,6 @@ fn execute(
     tools.execute(&mut app.engine, context, source)
 }
 
-/// What this build is: the engine's version, the commit xtask built it from
-/// (`-dirty` with uncommitted changes) and its features.
 fn build_identity() -> Value {
     let features: Vec<&str> = [
         cfg!(feature = "dev").then_some("dev"),

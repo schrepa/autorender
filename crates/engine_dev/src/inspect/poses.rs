@@ -1,10 +1,6 @@
-//! Inspectors of poses: local, world and presented transforms, their
-//! interpolation, the presentation state and the hierarchy.
-
 use super::*;
 
 impl DevTools {
-    /// Local, world and presented poses, and the hierarchy.
     pub(super) fn register_poses(&mut self, schemas: &Value) {
         self.register_component::<Transform>(
             InspectorDescriptor::generated(schemas, "Transform")
@@ -52,7 +48,6 @@ impl DevTools {
     }
 }
 
-/// The world pose of the entity's transform, as transform propagation left it.
 fn global_transform_view(
     world: &World,
     entity: Option<Entity>,
@@ -73,7 +68,6 @@ fn global_transform_view(
     }))
 }
 
-/// The pose the last presented frame drew the entity's transform at.
 fn presented_transform_view(
     world: &World,
     entity: Option<Entity>,
@@ -94,7 +88,6 @@ fn presented_transform_view(
     }))
 }
 
-/// The entity's parent and its authored placement.
 fn hierarchy_view(world: &World, entity: Option<Entity>, context: &Context<'_>) -> Option<Value> {
     let scene = context.scene;
     let entity = entity?;
@@ -128,7 +121,6 @@ pub(super) fn presentation_value(value: &PresentationState) -> Value {
     json!(presentation_view(value))
 }
 
-/// What `value` presented, as replies observe it.
 pub(super) fn presentation_view(value: &PresentationState) -> PresentationStateView {
     let (mode, alpha) = match value.mode() {
         PresentationMode::Current => (PresentationModeView::Current, 1.0),

@@ -1,41 +1,23 @@
-// Impostors' frames, which the meshes', the shadow maps' and reflections'
-// shaders share: each record's grid of frames, each one's direction over
-// the sphere or the upper hemisphere, the records of baked impostors, and
-// how a line of sight meets the surface a frame's depths hold.
-// The flag of records whose frames cover only the upper hemisphere, above
-// their texels across a frame.
 const IMPOSTOR_HEMISPHERE: u32 = 0x10000u;
-// The flag of records whose material, or a part's, is masked (alpha
-// tested), above that.
 const IMPOSTOR_MASKED: u32 = 0x20000u;
-// Records' frames along each side of their grid, five bits from this one.
 const IMPOSTOR_FRAMES_SHIFT: u32 = 19u;
 
-// The frames along each side of the grid of a record with `flags`.
 fn impostor_frames(flags: u32) -> u32 {
     return (flags >> IMPOSTOR_FRAMES_SHIFT) & 31u;
 }
 
-// The flags of a card fading in or out as the camera's view of its object
-// switches: its record's index in the low 15
-// bits, whether it draws over its steady mesh at its card's depth (bit
-// 15; scene objects' cards), and how far its fade has come (of 16383) in
-// the 14 bits from 16.
 const IMPOSTOR_FADING: u32 = 0x80000000u;
 const IMPOSTOR_FADING_OUT: u32 = 0x40000000u;
 const IMPOSTOR_OVER: u32 = 0x8000u;
 
-// The record index of a card's `batch` word.
 fn impostor_index(batch: u32) -> u32 {
     return select(batch, batch & 0x7fffu, (batch & IMPOSTOR_FADING) != 0u);
 }
 
-// Whether a card draws over its steady mesh while it fades.
 fn impostor_over(batch: u32) -> bool {
     return (batch & IMPOSTOR_FADING) != 0u && (batch & IMPOSTOR_OVER) != 0u;
 }
 
-// How far a card's fade has come: 1 for cards not fading.
 fn impostor_fade(batch: u32) -> f32 {
     if (batch & IMPOSTOR_FADING) == 0u {
         return 1.0;
@@ -44,26 +26,19 @@ fn impostor_fade(batch: u32) -> f32 {
 }
 
 struct ImpostorRecord {
-    // Mesh-space center and radius of the sphere every frame frames.
     sphere: vec4<f32>,
-    // Mesh-space half extents of the mesh's bounds, and the layer.
     extent: vec3<f32>,
     layer: u32,
-    // The material's emissive color (glTF), linear, and the flags.
     emissive: vec3<f32>,
     flags: u32,
 }
 
-// Octahedral coordinates in [-1, 1] of unit direction `d` about +y: the
-// upper hemisphere fills the central diamond, the lower folds into the
-// corners.
 fn impostor_octahedral(d: vec3<f32>) -> vec2<f32> {
     let n = d / (abs(d.x) + abs(d.y) + abs(d.z));
     let sign = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xz >= vec2<f32>(0.0));
     return select(n.xz, (vec2<f32>(1.0) - abs(n.zx)) * sign, n.y < 0.0);
 }
 
-// The unit direction of octahedral coordinates `p`.
 fn impostor_direction(p: vec2<f32>) -> vec3<f32> {
     var d = vec3<f32>(p.x, 1.0 - abs(p.x) - abs(p.y), p.y);
     let fold = max(-d.y, 0.0);
@@ -72,24 +47,18 @@ fn impostor_direction(p: vec2<f32>) -> vec3<f32> {
     return normalize(d);
 }
 
-// Hemi-octahedral coordinates in [-1, 1] of unit direction `d` about +y:
-// the upper hemisphere's diamond turned to fill the square, its edges the
-// horizon, from which views from below look.
 fn impostor_hemi_octahedral(d: vec3<f32>) -> vec2<f32> {
     let above = vec3<f32>(d.x, max(d.y, 0.0), d.z);
     let n = above / max(abs(above.x) + above.y + abs(above.z), 1.0e-6);
     return vec2<f32>(n.x + n.z, n.x - n.z);
 }
 
-// The unit direction of hemi-octahedral coordinates `p`.
 fn impostor_hemi_direction(p: vec2<f32>) -> vec3<f32> {
     let x = 0.5 * (p.x + p.y);
     let z = 0.5 * (p.x - p.y);
     return normalize(vec3<f32>(x, 1.0 - abs(x) - abs(z), z));
 }
 
-// The grid coordinates in [-1, 1] of direction `d`, over the hemisphere
-// or the sphere.
 fn impostor_grid(d: vec3<f32>, hemisphere: bool) -> vec2<f32> {
     if hemisphere {
         return impostor_hemi_octahedral(d);
@@ -97,9 +66,6 @@ fn impostor_grid(d: vec3<f32>, hemisphere: bool) -> vec2<f32> {
     return impostor_octahedral(d);
 }
 
-// Frame `frame`'s direction toward its viewer, of a grid `frames` a side:
-// the frames sit on the grid points of the octahedral map, or the
-// hemisphere's, edges and corners included.
 fn impostor_frame_direction(frame: u32, frames: u32, hemisphere: bool) -> vec3<f32> {
     let cell = vec2<f32>(f32(frame % frames), f32(frame / frames));
     let p = cell / f32(frames - 1u) * 2.0 - 1.0;
@@ -109,8 +75,6 @@ fn impostor_frame_direction(frame: u32, frames: u32, hemisphere: bool) -> vec3<f
     return impostor_direction(p);
 }
 
-// Right and up of an image seen from direction `d`: up follows +y unless `d`
-// nearly does.
 struct ImpostorBasis {
     right: vec3<f32>,
     up: vec3<f32>,
@@ -125,24 +89,12 @@ fn impostor_basis(d: vec3<f32>) -> ImpostorBasis {
     return ImpostorBasis(right, cross(d, right));
 }
 
-// The coverage frames hold at least where they show their object: half,
-// as cards keep the fragments their blend leaves at least half covered.
 const IMPOSTOR_CUTOFF: f32 = 0.5;
 
-// How squarely a frame faces the line of sight whose image in it moves by
-// `slope` per radius toward the viewer: the cosine between the two, kept
-// from vanishing where views from below see placed objects' frames from
-// the horizon.
 fn impostor_facing(slope: vec2<f32>) -> f32 {
     return sqrt(max(1.0 - dot(slope, slope), 0.01));
 }
 
-// How far toward the viewer, in radii from the center, the line of sight
-// meets the surface a frame's texel holds, times the texel's coverage:
-// `sampled` its premultiplied depth (half of one more than the depth, times
-// coverage), `covered` its coverage, `crossing` the frame's depth where the
-// line of sight crosses the plane through the center, and `facing` how
-// squarely the frame faces it.
 fn impostor_met(sampled: f32, covered: f32, crossing: f32, facing: f32) -> f32 {
     return (2.0 * sampled - covered * (1.0 + crossing)) / facing;
 }

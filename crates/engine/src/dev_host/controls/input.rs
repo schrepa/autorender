@@ -1,6 +1,3 @@
-//! Input and stepping: a temporary batch of input, applied by the next
-//! explicit step of fixed ticks.
-
 use serde_json::Value;
 
 use super::super::{DevHost, InputBatch};
@@ -10,7 +7,6 @@ use engine_dev::results::{InputResult, StepResult, result};
 use engine_dev::{DevError, bounds};
 use engine_settings::Setting;
 
-/// Replaces the batch the next step applies.
 pub(super) fn batch(host: &mut DevHost, input: InputBatch) -> Result<Value, DevError> {
     for (value, field, rule) in [
         (input.forward, "forward", bounds::AXIS),
@@ -34,7 +30,6 @@ pub(super) fn batch(host: &mut DevHost, input: InputBatch) -> Result<Value, DevE
     }))
 }
 
-/// Steps `ticks` fixed ticks with the batch, then presents.
 pub(super) fn step(
     host: &mut DevHost,
     app: &mut AppHost,
@@ -55,7 +50,6 @@ pub(super) fn step(
         look_yaw: host.input.yaw,
         look_pitch: host.input.pitch,
     };
-    // These edges belong to this request even if subsequent GPU submission fails.
     host.input.pressed = 0;
     host.input.released = 0;
     host.input.yaw = 0.0;

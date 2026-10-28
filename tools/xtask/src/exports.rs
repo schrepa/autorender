@@ -1,21 +1,7 @@
-//! The facade exports engine_core's public names once each: every name
-//! engine_core's root exports is in exactly one of the facade's lists (a
-//! `pub use engine_core::…;` in crates/engine/src: the games' list the root
-//! and prelude share, the lower-level list, terrain's, render's...) or in
-//! [`INTERNAL`]. A name added to engine_core fails lint until it is given
-//! an audience.
-//!
-//! engine_core's names are read from its sources as text: the root's public
-//! items and re-exports, those of each module a `pub use module::*`
-//! exports (the items its macro calls and macros declare included), and
-//! every exported macro.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// engine_core's public names the facade leaves out: what engine crates,
-/// hosts and tools use. Sorted.
 const INTERNAL: &[&str] = &[
     "CHUNK_LENGTH",
     "DevStepError",
@@ -43,8 +29,6 @@ const INTERNAL: &[&str] = &[
     "wind_waves",
 ];
 
-/// Fails at a public name of engine_core that no facade list or
-/// [`INTERNAL`] holds, or that more than one does.
 pub fn check(root: &Path) -> Result<(), String> {
     let core = core_names(root)?;
     let lists = facade_lists(root)?;
@@ -91,14 +75,12 @@ pub fn check(root: &Path) -> Result<(), String> {
     }
 }
 
-/// A Rust file's code without comments, literals emptied.
 fn code(path: &Path) -> Result<String, String> {
     let source = fs::read_to_string(path)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     Ok(policy::rust::split(&source).code.join("\n"))
 }
 
-/// The Rust files under `directory`.
 fn rust_files(directory: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
     let mut pending = vec![directory.to_path_buf()];
@@ -117,19 +99,15 @@ fn rust_files(directory: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-/// What a module declares public: a name, or every public name of a module
-/// it re-exports whole (`pub use child::*`).
 enum Declared {
     Name(String),
     Glob(String),
 }
 
-/// Every public name engine_core's root exports.
 fn core_names(root: &Path) -> Result<BTreeSet<String>, String> {
     let source = root.join("crates/engine_core/src");
     let mut names = BTreeSet::new();
     module_names(&source.join("lib.rs"), &source, &mut names)?;
-    // Exported macros are the root's wherever they are declared.
     for file in rust_files(&source)? {
         let code = code(&file)?;
         for (at, _) in code.match_indices("#[macro_export]") {
@@ -144,8 +122,6 @@ fn core_names(root: &Path) -> Result<BTreeSet<String>, String> {
     Ok(names)
 }
 
-/// The public names of the module in `file`, whose child modules are in
-/// `children`, its globs followed.
 fn module_names(file: &Path, children: &Path, names: &mut BTreeSet<String>) -> Result<(), String> {
     let mut declared = Vec::new();
     scan(&code(file)?, &mut declared);
@@ -168,8 +144,6 @@ fn module_names(file: &Path, children: &Path, names: &mut BTreeSet<String>) -> R
     Ok(())
 }
 
-/// The file of module `name`, declared in a file whose child modules are in
-/// `children`, and the folder of its own children.
 fn child_module(children: &Path, name: &str) -> Option<(PathBuf, PathBuf)> {
     let file = children.join(format!("{name}.rs"));
     if file.is_file() {
@@ -179,9 +153,6 @@ fn child_module(children: &Path, name: &str) -> Option<(PathBuf, PathBuf)> {
     file.is_file().then(|| (file, children.join(name)))
 }
 
-/// The public declarations at brace depth 0 of `code`: `pub` items, `pub
-/// use` trees, and those of the bodies of macro calls (`settings! { pub
-/// struct ... }`) and of macro definitions' expansions.
 fn scan(code: &str, declared: &mut Vec<Declared>) {
     let mut at = 0;
     while at < code.len() {
@@ -216,7 +187,6 @@ fn scan(code: &str, declared: &mut Vec<Declared>) {
             if before.ends_with('!') {
                 scan(body, declared);
             } else if definition_before(before) {
-                // A macro definition: each arm's expansion.
                 for expansion in expansions(body) {
                     scan(expansion, declared);
                 }
@@ -228,7 +198,6 @@ fn scan(code: &str, declared: &mut Vec<Declared>) {
     }
 }
 
-/// Whether `before` ends with `macro_rules! name`.
 fn definition_before(before: &str) -> bool {
     let name_start = before
         .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
@@ -236,7 +205,6 @@ fn definition_before(before: &str) -> bool {
     before[..name_start].trim_end().ends_with("macro_rules!")
 }
 
-/// The expansions of a macro definition's arms: the block after each `=>`.
 fn expansions(body: &str) -> Vec<&str> {
     let mut expansions = Vec::new();
     let mut at = 0;
@@ -253,7 +221,6 @@ fn expansions(body: &str) -> Vec<&str> {
     expansions
 }
 
-/// The length of the block `text` opens with, through its closing brace.
 fn matching_brace(text: &str) -> usize {
     let mut depth = 0usize;
     for (at, c) in text.char_indices() {
@@ -271,7 +238,6 @@ fn matching_brace(text: &str) -> usize {
     text.len()
 }
 
-/// The leading identifier of `text`.
 fn identifier(text: &str) -> &str {
     let end = text
         .find(|c: char| !(c.is_alphanumeric() || c == '_'))
@@ -279,7 +245,6 @@ fn identifier(text: &str) -> &str {
     &text[..end]
 }
 
-/// The name a public item's declaration (after `pub`) declares.
 fn item_name(declaration: &str) -> Option<&str> {
     let mut rest = declaration;
     loop {
@@ -290,7 +255,6 @@ fn item_name(declaration: &str) -> Option<&str> {
                 let name = identifier(after);
                 return (!name.is_empty()).then_some(name);
             }
-            // `const fn`, or a constant.
             "const" if identifier(after) == "fn" => rest = after,
             "const" => {
                 let name = identifier(after);
@@ -303,10 +267,7 @@ fn item_name(declaration: &str) -> Option<&str> {
     }
 }
 
-/// The names a use tree brings in: each path's last segment or its alias,
-/// `self` naming the path before it, and globs as `path::*`.
 fn use_names(tree: &str) -> Vec<String> {
-    // `x as y` becomes `x@y`, then whitespace goes.
     let normalized: String = tree
         .split_whitespace()
         .map(|word| if word == "as" { "@" } else { word })
@@ -364,8 +325,6 @@ fn join(prefix: &str, path: &str) -> String {
     }
 }
 
-/// Each engine_core root name the facade exports, with where: each `pub
-/// use engine_core::...;` in crates/engine/src is one list.
 fn facade_lists(root: &Path) -> Result<BTreeMap<String, Vec<String>>, String> {
     let mut lists: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for file in rust_files(&root.join("crates/engine/src"))? {
@@ -391,9 +350,6 @@ fn facade_lists(root: &Path) -> Result<BTreeMap<String, Vec<String>>, String> {
     Ok(lists)
 }
 
-/// The engine_core root names `pub use engine_core::TREE;` exports: the
-/// tree's own entries (`{A, B}`, `A`, `A as B`), not the names inside a
-/// root name (`glam::{Vec3}` exports glam's, not glam).
 fn root_names(tree: &str) -> Vec<String> {
     let tree = tree.trim();
     let entries: Vec<&str> = match tree

@@ -1,5 +1,3 @@
-//! The city's vehicles and machines.
-
 use super::*;
 
 pub(super) fn car(b: &mut Builder) {
@@ -24,7 +22,6 @@ pub(super) fn wagon(b: &mut Builder) {
 }
 
 pub(super) fn boat(b: &mut Builder) {
-    // Hull with a pointed bow toward +x.
     let (y0, y1) = (-0.5, -0.1);
     box_(b, v(-0.5, y0, -0.35), v(0.25, y1, 0.35), BODY, BODY);
     let bow = [v(0.25, y0, -0.35), v(0.25, y0, 0.35), v(0.5, y0, 0.0)];
@@ -66,7 +63,6 @@ pub(super) fn helicopter(b: &mut Builder) {
 }
 
 pub(super) fn rotor(b: &mut Builder) {
-    // Three flat blades about a shaft along Y.
     b.lathe(&[(0.06, -0.5), (0.06, 0.5)], 8, 0.0, BODY, BODY, true);
     for blade in 0..3 {
         let start = b.mark();
@@ -76,7 +72,6 @@ pub(super) fn rotor(b: &mut Builder) {
 }
 
 pub(super) fn jib(b: &mut Builder) {
-    // Arm and counter-arm about the pivot at the origin.
     box_(
         b,
         v(-0.5, 0.3, -0.06),
@@ -104,7 +99,6 @@ pub(super) fn jib(b: &mut Builder) {
 }
 
 pub(super) fn rim(b: &mut Builder) {
-    // A wheel in the XY plane: rim segments, spokes and a hub.
     let segments = 16;
     for segment in 0..segments {
         let start = b.mark();

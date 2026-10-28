@@ -1,4 +1,3 @@
-/** Texture lifecycle integration against a development host; fixtures stay in routed responses. */
 // @ts-check
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -30,7 +29,6 @@ async function capture(name) {
   return { hash: createHash("sha256").update(bytes).digest("hex"), png: bytes.toString("base64") };
 }
 
-/** Pixels of two captures that differ at all, alpha included. */
 const changedPixels = (first, second) => differentPixels(page, [first.png, second.png], { alpha: true });
 
 try {
@@ -53,7 +51,6 @@ try {
   const texturedEntity = meshViews.result.entities.find(entity => entity.components.Mesh3d.textures.some(texture => texture.alive));
   assert.ok(texturedEntity, "A textured material must be used by scenery.");
   const meshView = (await command("inspect", { entity: texturedEntity.id, component: "Mesh3d" })).result.entity.components.Mesh3d;
-  // The material reads back as authored, its texture by ID, resident.
   const [texture] = meshView.textures;
   assert.equal(texture.alive, true);
   assert.equal(texture.gpu_resident, true);
@@ -66,10 +63,8 @@ try {
     assert.equal(warmed.result.rendering.texture_upload_bytes, 0, "Warm frames must not upload texture pixels again.");
   }
 
-  // Keep recognizable gameplay state so a rejected replacement cannot hide a reset.
   await command("input", { forward: 1, held: 1 });
   await command("step", { ticks: 6 });
-  // What the step brought inspects.
   const input = (await command("inspect", { component: "Input" })).result.value;
   assert.equal(input.move_forward, 1, JSON.stringify(input));
   assert.deepEqual(input.held, [0], JSON.stringify(input));
@@ -96,7 +91,6 @@ try {
     assert.deepEqual(await page.locator("canvas").evaluate(canvas => JSON.parse(/** @type {string} */ (canvas.dataset.progress))), progressBefore);
   }
 
-  // Establish a reset baseline so screenshot differences come from edited pixels.
   await scene.reload(command, source);
   const baseline = await capture("original");
   const changed = structuredClone(source);
@@ -126,8 +120,6 @@ try {
     assert.equal(warmed.result.rendering.texture_upload_bytes, 0);
   }
   const repeatedPixels = await changedPixels(changedCapture, await capture("repeated"));
-  // Reallocated mesh handles may reorder ties at shared/coplanar edges. Permit
-  // at most one changed pixel per 10,000 while requiring stable scene coverage.
   assert.ok(repeatedPixels.changed <= Math.ceil(repeatedPixels.total / 10_000),
     `Equivalent replacement changed ${repeatedPixels.changed} of ${repeatedPixels.total} pixels.`);
 

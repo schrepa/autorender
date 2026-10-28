@@ -50,8 +50,6 @@ fn number(bytes: &[u8], offset: usize) -> Option<u32> {
     ))
 }
 
-/// Extensions the importer reads; other
-/// optional extensions are ignored and reported.
 pub(crate) const SUPPORTED_EXTENSIONS: [&str; 6] = [
     "KHR_texture_transform",
     "KHR_materials_emissive_strength",
@@ -61,7 +59,6 @@ pub(crate) const SUPPORTED_EXTENSIONS: [&str; 6] = [
     "KHR_materials_volume",
 ];
 
-/// Checks the static import profile; returns the used extensions it ignores.
 pub(crate) fn structure(json: &Value) -> Result<Vec<String>, ImportError> {
     if json["asset"]["version"] != "2.0"
         || json["asset"]
@@ -73,7 +70,6 @@ pub(crate) fn structure(json: &Value) -> Result<Vec<String>, ImportError> {
             "asset.version and any minVersion must be exactly 2.0",
         ));
     }
-    // A GLB carries one binary buffer.
     if json["buffers"]
         .as_array()
         .is_some_and(|items| items.len() > 1)
@@ -196,7 +192,6 @@ fn visit(
             ));
         }
     }
-    // Cameras are not imported; morph weights are unsupported.
     if node.get("weights").is_some() {
         return Err(unsupported(
             format!("$.nodes[{index}].weights"),
@@ -248,7 +243,6 @@ pub(crate) fn buffers(document: &gltf::Document, binary: &[u8]) -> Result<(), Im
     }
     for accessor in document.accessors() {
         let path = format!("$.accessors[{}]", accessor.index());
-        // Skins read MAT4 inverse bind matrices.
         if accessor.sparse().is_some()
             || matches!(accessor.dimensions(), Dimensions::Mat2 | Dimensions::Mat3)
         {

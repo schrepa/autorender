@@ -1,5 +1,3 @@
-//! The metro's buildings, their roofs and tops, and its industry.
-
 use super::*;
 
 pub(super) fn house(b: &mut Builder, floors: u8) {
@@ -29,7 +27,6 @@ pub(super) fn townhouse(b: &mut Builder) {
             WALL,
             false,
         );
-        // A cornice along the front.
         b.cuboid(
             v(x0, height - 0.3, 1.6),
             v(x0 + 2.1334, height - 0.05, 1.8),
@@ -50,7 +47,6 @@ pub(super) fn shop(b: &mut Builder) {
         WALL,
         false,
     );
-    // A sign band over the shop window.
     b.cuboid(
         v(-2.4, FLOOR * 0.95, 1.6),
         v(2.4, FLOOR * 1.2, 1.85),
@@ -65,7 +61,6 @@ pub(super) fn warehouse(b: &mut Builder) {
     let height = FLOOR * 3.0;
     b.top = Some(height);
     b.cuboid(v(-7.0, 0.0, -3.5), v(7.0, height, 3.5), FACADE, WALL, false);
-    // Sawtooth roof lights along X.
     for tooth in 0..4 {
         let z0 = -3.5 + tooth as f32 * 1.75;
         b.ridge(
@@ -83,7 +78,6 @@ pub(super) fn shed(b: &mut Builder) {
     let height = FLOOR * 2.0;
     b.top = Some(height);
     b.cuboid(v(-5.0, 0.0, -3.0), v(5.0, height, 3.0), FACADE, WALL, false);
-    // A barrel vault along X.
     let steps = 8;
     let arc = |index: u32| {
         let angle = PI * index as f32 / steps as f32;
@@ -213,7 +207,6 @@ pub(super) fn tank(b: &mut Builder) {
         Map::Tile(4.0, 4.0),
         false,
     );
-    // A ladder up its side.
     b.cuboid(
         v(2.2, 0.0, -0.3),
         v(2.35, 6.0, 0.3),
@@ -250,7 +243,6 @@ pub(super) fn container(b: &mut Builder) {
     b.cuboid(v(-3.05, 0.0, -1.2), v(3.05, 2.6, 1.2), side, side, true);
 }
 
-/// Building meshes carry second coordinates spanning them, for grime.
 fn building_frame(b: &mut Builder) {
     b.uv1 = Uv1::Span;
 }
@@ -264,7 +256,6 @@ pub(super) fn tower(b: &mut Builder, style: Style, floors: u32) {
     let height = FLOOR * floors as f32;
     let half = TOWER_WIDTH * 0.5;
     b.top = Some(height);
-    // Floors of a fraction of the height, whole floors.
     let at = |fraction: f32| (floors as f32 * fraction).round() * FLOOR;
     match style {
         Style::Box => b.cuboid(
@@ -348,7 +339,6 @@ pub(super) fn tower(b: &mut Builder, style: Style, floors: u32) {
                 WALL,
                 false,
             );
-            // Vertical fins on every face, one per bay.
             let count = (TOWER_WIDTH / BAY).floor() as i32;
             for index in 0..=count {
                 let along = -reach + index as f32 * (2.0 * reach / count as f32);
@@ -375,7 +365,6 @@ pub(super) fn tower(b: &mut Builder, style: Style, floors: u32) {
             }
         }
         Style::Slant => {
-            // One side rises 8 floors above the other: a sloped roof.
             let low = height - 8.0 * FLOOR;
             let corners = [
                 v(-half, 0.0, half),
@@ -459,7 +448,6 @@ pub(super) fn midrise(b: &mut Builder, style: Mid, floors: u32) {
                 WALL,
                 false,
             );
-            // A cornice and a plinth.
             b.cuboid(
                 v(-half - 0.2, height - 0.35, -half - 0.2),
                 v(half + 0.2, height, half + 0.2),

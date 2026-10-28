@@ -1,6 +1,3 @@
-//! Scene spline meshes: an entity field bending
-//! copies of one of the document's meshes along a curve.
-
 use engine_core::{
     MAX_SPLINE_POINTS, MaterialHandle, MeshHandle, SplineMesh, bevy_ecs::world::EntityWorldMut,
     glam::Vec3,
@@ -12,27 +9,17 @@ use crate::components::{Placement, Reach, SceneComponent};
 use crate::instance::Lookups;
 use crate::{SceneDocument, SceneError, SceneFiles};
 
-/// A mesh bent along a curve on this entity.
-///
-/// The curve passes through `points` (2 to 4096, in the entity's space),
-/// joined by a centripetal Catmull-Rom spline. Copies of the mesh lie end
-/// to end along it, the mesh's x axis along the curve, its y up and its z
-/// across, each stretched along x so a whole number of them spans it; the
-/// curve's frames keep y up. Chunks of at most 256 meters of curve draw
-/// with the material.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneSpline {
     #[cfg_attr(feature = "schema", schemars(length(min = 2, max = MAX_SPLINE_POINTS)))]
     pub points: Vec<[f32; 3]>,
-    /// ID of the bent mesh in this document.
     #[cfg_attr(
         feature = "schema",
         schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub mesh: String,
-    /// ID of the material its chunks draw with in this document.
     #[cfg_attr(
         feature = "schema",
         schemars(transform = engine_settings::stated(engine_settings::rule::id()))
@@ -41,8 +28,6 @@ pub struct SceneSpline {
 }
 
 impl SceneSpline {
-    /// The field of `spline`, whose mesh and material have authored IDs
-    /// `mesh` and `material`.
     pub fn from_runtime(
         spline: &SplineMesh,
         mesh: impl Into<String>,
@@ -55,8 +40,6 @@ impl SceneSpline {
         }
     }
 
-    /// Validates the curve at authored path `path`; its mesh and material
-    /// references are checked with the entity.
     pub(crate) fn validate(&self, path: &str) -> Result<(), SceneError> {
         if !(2..=MAX_SPLINE_POINTS).contains(&self.points.len()) {
             return Err(SceneError::new(
@@ -79,7 +62,6 @@ impl SceneSpline {
         Ok(())
     }
 
-    /// The component, with the mesh's and material's resident handles.
     pub(crate) fn runtime(&self, mesh: MeshHandle, material: MaterialHandle) -> SplineMesh {
         SplineMesh {
             points: self.points.iter().copied().map(Vec3::from_array).collect(),
@@ -89,12 +71,9 @@ impl SceneSpline {
     }
 }
 
-/// Validated with its entity's references (`SceneSpline::validate`).
 impl engine_settings::Setting for SceneSpline {}
 
 impl SceneComponent for SceneSpline {
-    // Its curve is checked with the entity; its mesh and material resolve
-    // when it spawns.
     type Prepared = Self;
 
     const PLACEMENT: Placement = Placement::Anywhere;
@@ -115,7 +94,6 @@ impl SceneComponent for SceneSpline {
         ));
     }
 
-    // Its copies reach past each of its points by their mesh's size.
     fn reach(prepared: &Self, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
         let size = reach.mesh_size(&prepared.mesh);
         for point in &prepared.points {

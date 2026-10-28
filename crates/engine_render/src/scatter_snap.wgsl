@@ -1,32 +1,13 @@
-// Placed objects on the terrain: each frame the eye moved or objects or the
-// resident heights changed, before culling, every live object's base moves
-// onto its terrain's true surface (`terrain_ground.wgsl`), which the
-// terrain draws within about a pixel, as ground cover's roots do
-// (`cover_grow.wgsl`), so objects stand on the ground drawn under them and
-// settle as finer tiles arrive. Its pose's height and its bounding sphere
-// follow its base, and an object blending into the ground takes the
-// ground's color under it, as ground cover's roots do. Objects standing far
-// away hide where tiles of the level holding them instead are resident.
-
 struct Snap {
-    // Slots and terrains.
     counts: vec4<u32>,
-    // The eye (world); w unused.
     eye: vec4<f32>,
 }
 
-// A terrain: its origin (world) and level-0 sample spacing; and where its
-// levels start in the directory, how many there are, where its materials
-// start in the palette and its macro colors' layer plus one (0 until they
-// arrive).
 struct TerrainInfo {
     origin: vec4<f32>,
     levels: vec4<u32>,
 }
 
-// A surface material as the terrain palette holds it (`terrain.wgsl`):
-// its maps' mean color and roughness, its factors applied, in `far`, and
-// its cover's leaves per square meter of ground in `canopy.w`.
 struct PaletteEntry {
     color: vec4<f32>,
     params: vec4<f32>,
@@ -39,8 +20,6 @@ struct PaletteEntry {
     heights: vec4<f32>,
 }
 
-// `scatter_cull.wgsl`'s record: the bounding sphere, draw group and scale,
-// then the terrain word (`scatter.rs`) and how far its base sinks.
 struct Record {
     center: vec3<f32>,
     radius: f32,
@@ -48,12 +27,10 @@ struct Record {
     scale: f32,
     terrain: u32,
     sink: f32,
-    // How the camera shows it (`scatter_cull.wgsl`).
     state: u32,
     pad: array<u32, 3>,
 }
 
-// An object's pose: the rows of its affine world matrix.
 struct Pose {
     r0: vec4<f32>,
     r1: vec4<f32>,
@@ -71,21 +48,12 @@ const HIDDEN: u32 = 0x80000000u;
 @group(0) @binding(3) var<storage, read> terrains: array<TerrainInfo>;
 @group(0) @binding(4) var<storage, read> directory: array<u32>;
 @group(0) @binding(5) var heights: texture_2d_array<f32>;
-// What lies under each object (`meshes/declarations.wgsl`'s `grounds`):
-// the meters up it blends into the ground (z, 0 for none) and the ground's
-// color there (w), which this writes.
 @group(0) @binding(6) var<storage, read_write> grounds: array<vec4<u32>>;
-// The resident tiles' control values, the terrains' palette, as many
-// entries as fit 16 KiB (`terrain::PALETTE_ENTRIES`), and their macro
-// colors.
 @group(0) @binding(7) var control: texture_2d_array<u32>;
 const PALETTE_ENTRIES: u32 = 113u;
 @group(0) @binding(8) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
 @group(0) @binding(9) var macro_maps: texture_2d_array<f32>;
 
-// The ground of terrain `info` at terrain-local `local` from its finest
-// resident level: its height there, its samples blended, whether one is
-// resident there (none beyond its edges), the level and its tile.
 struct FinestGround {
     height: f32,
     found: bool,
@@ -123,8 +91,6 @@ fn finest_ground(info: TerrainInfo, terrain: GroundTerrain, local: vec2<f32>) ->
     return ground;
 }
 
-// The macro colors of terrain `info` at terrain-local `local`,
-// interpolated between their texels; ground as it is before they arrive.
 fn macro_colors(info: TerrainInfo, local: vec2<f32>) -> vec4<f32> {
     let layer = info.levels.w;
     if layer == 0u {
@@ -147,12 +113,6 @@ fn macro_colors(info: TerrainInfo, local: vec2<f32>) -> vec4<f32> {
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// The ground's color under an object at terrain-local `local` of terrain
-// `info`, where `ground` is its finest resident level: the nearest sample's
-// control value's two materials' mean colors and roughness blended by their
-// shares, tinted by the macro colors as the ground and ground cover's roots
-// are (`terrain_variety.wgsl`); as `grounds` hold it, the colors' square
-// roots and the roughness (never 0) in bytes.
 fn ground_color(info: TerrainInfo, local: vec2<f32>, ground: FinestGround) -> u32 {
     let samples = local / (info.origin.w * f32(1u << ground.level));
     let texel = min(vec2<u32>(round(samples)) - ground.tile.first, vec2<u32>(256u))
@@ -183,8 +143,6 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     let pose = poses[id.x];
     let local = vec2<f32>(pose.r0.w, pose.r2.w) - info.origin.xz;
     let ground = finest_ground(info, ground_terrain, local);
-    // Far away, an object hides where the level holding it instead is
-    // resident, or a finer one.
     let near = (record.terrain >> NEAR_LEVEL_SHIFT) & 0x1fu;
     let hidden = near != 0u && ground.found && ground.level < near;
     records[id.x].terrain = select(record.terrain & ~HIDDEN, record.terrain | HIDDEN, hidden);

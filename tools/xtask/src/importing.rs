@@ -1,5 +1,3 @@
-//! Native source import; cooked output is the runtime's validated scene format.
-
 use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
@@ -51,7 +49,6 @@ fn command(arguments: &[String]) -> Result<Value, ImportError> {
         .filter(|mesh| matches!(mesh.source, MeshSource::Virtual { .. }))
         .count();
     let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"virtual_meshes":virtual_meshes,"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>(),"animations":imported.animations.len(),"skins":imported.skins.len(),"files":result.files.len(),"file_bytes":file_bytes});
-    // Animated and skinned models keep their nodes.
     let node_transforms = if imported.animations.is_empty() && imported.skins.is_empty() {
         "baked"
     } else {
@@ -59,7 +56,6 @@ fn command(arguments: &[String]) -> Result<Value, ImportError> {
     };
     let (report, document) = if let Some(output) = &options.output {
         let source = imported.to_json()?;
-        // Files first: a scene is never written without them.
         write_files(output, &result.files)?;
         write_new(output, &source)?;
         (
@@ -105,8 +101,6 @@ struct Options {
     revision: Option<u64>,
     replace: bool,
     as_prefab: bool,
-    // Triangles from which primitives import as virtual meshes;
-    // `None` imports none.
     virtual_triangles: Option<u32>,
 }
 
@@ -332,8 +326,6 @@ fn merge(
             .retain(|skin| !generated(&skin.id, id, Kind::Skin));
         for mut entity in imported.entities {
             if let Some(old) = previous.get(&entity.id) {
-                // Hierarchy nodes' transforms and parents are source data;
-                // other entities keep their placement.
                 if !node_entity(&entity.id, id) {
                     entity.transform = old.transform;
                     entity.parent.clone_from(&old.parent);
@@ -342,7 +334,6 @@ fn merge(
                 entity.tags.clone_from(&old.tags);
                 entity.collider = old.collider;
                 entity.tint = old.tint;
-                // A chosen clip stays while the import still has it.
                 if let Some(player) = &old.animation
                     && imported
                         .animations
@@ -415,7 +406,6 @@ fn decimal(value: &str) -> bool {
     !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-/// A hierarchy import's node entity, `NAMESPACE.nodeN`.
 fn node_entity(value: &str, namespace: &str) -> bool {
     value
         .strip_prefix(namespace)
@@ -435,7 +425,6 @@ fn generated(value: &str, namespace: &str, kind: Kind) -> bool {
         Kind::Material => suffix.strip_prefix("material").is_some_and(decimal),
         Kind::Animation => suffix.strip_prefix("anim").is_some_and(decimal),
         Kind::Skin => suffix.strip_prefix("skin").is_some_and(decimal),
-        // Hierarchy imports' root and node entities.
         Kind::Entity if suffix == "root" || node_entity(value, namespace) => true,
         Kind::Entity | Kind::Mesh => {
             let suffix = if matches!(kind, Kind::Mesh) {
@@ -482,8 +471,6 @@ fn read_source(path: &Path) -> Result<Vec<u8>, ImportError> {
     Ok(bytes)
 }
 
-/// Writes imported files beside `scene`, replacing earlier imports of the
-/// same namespace.
 fn write_files(scene: &Path, files: &[ImportedFile]) -> Result<(), ImportError> {
     let folder = scene.parent().unwrap_or(Path::new("."));
     for file in files {

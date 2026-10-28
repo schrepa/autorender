@@ -1,11 +1,6 @@
-//! Inspectors of the core's components and resources: the camera, meshes,
-//! lights, grounding, tints, decals, spline meshes, probes, input, jobs and
-//! particle emitters.
-
 use super::*;
 
 impl DevTools {
-    /// The camera, meshes and the core's components entities carry.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -137,7 +132,6 @@ impl DevTools {
     }
 }
 
-/// How far above the ground the entity stands, and the level of the tile under it.
 fn grounded_view(world: &World, entity: Option<Entity>, _context: &Context<'_>) -> Option<Value> {
     let entity = entity?;
     let grounded = world.get::<engine_core::Grounded>(entity)?;
@@ -148,7 +142,6 @@ fn grounded_view(world: &World, entity: Option<Entity>, _context: &Context<'_>) 
     }))
 }
 
-/// The entity's decal with its material's authored ID.
 fn decal_view(world: &World, entity: Option<Entity>, context: &Context<'_>) -> Option<Value> {
     let scene = context.scene;
     let decal = world.get::<Decal>(entity?)?;
@@ -169,7 +162,6 @@ fn decal_view(world: &World, entity: Option<Entity>, context: &Context<'_>) -> O
     }))
 }
 
-/// The entity's spline mesh with its mesh's and material's authored IDs and its chunks.
 fn spline_mesh_view(world: &World, entity: Option<Entity>, context: &Context<'_>) -> Option<Value> {
     let scene = context.scene;
     let entity = entity?;
@@ -199,7 +191,6 @@ fn spline_mesh_view(world: &World, entity: Option<Entity>, context: &Context<'_>
     }))
 }
 
-/// The input state with the actions held.
 fn input_view(world: &World, _: Option<Entity>, _: &Context<'_>) -> Option<Value> {
     let input = world.get_resource::<InputState>()?;
     let actions = world.get_resource::<ActionInput>();
@@ -218,9 +209,6 @@ fn input_view(world: &World, _: Option<Entity>, _: &Context<'_>) -> Option<Value
     }))
 }
 
-/// What the Mesh3d inspector reads of `mesh3d`: its mesh, its material as
-/// a scene authors it and the textures its maps read, with what the renderer
-/// made of them.
 pub(super) fn mesh_view(
     assets: &AssetLibrary,
     (entity, mesh3d): (Entity, &Mesh3d),

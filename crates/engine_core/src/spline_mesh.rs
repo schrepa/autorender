@@ -1,12 +1,3 @@
-//! Spline meshes: one mesh repeated end to end and bent
-//! along a curve, for bridges' decks, walls, fences, rails and pipes. The
-//! curve is a centripetal Catmull-Rom spline through the component's
-//! points; copies of the mesh lie along it, stretched so a whole number of
-//! them spans it, and build into meshes of at most [`CHUNK_LENGTH`] meters
-//! of curve each, drawn by child entities, so distant chunks cull. Chunks
-//! build on the extraction path before transforms refresh, so paused
-//! frames show them, and rebuild when the component changes.
-
 use bevy_ecs::{lifecycle::HookContext, prelude::*, world::DeferredWorld};
 use engine_assets::{AssetLibrary, MaterialHandle, Mesh, MeshHandle, MeshVertex};
 use glam::Vec3;
@@ -15,22 +6,10 @@ use crate::hierarchy::set_parents;
 use crate::math::max;
 use crate::{Mesh3d, Transform};
 
-/// Meters of curve a chunk spans at most: long enough that a bridge or
-/// wall is a draw or two (each chunk is one), short enough that long curves
-/// still cull in pieces.
 pub const CHUNK_LENGTH: f32 = 256.0;
-/// Most points a curve names.
 pub const MAX_SPLINE_POINTS: usize = 4096;
-/// Meters between the points the curve is evaluated at.
 const STEP: f32 = 0.5;
 
-/// A mesh bent along a curve through `points`, in the
-/// entity's space: 2 to 4096 of them, joined by a centripetal Catmull-Rom
-/// spline. Copies of `mesh` lie end to end along it, the mesh's x axis
-/// along the curve, its y up and its z across, each stretched along x so a
-/// whole number of them spans the curve. Its frames keep y up: they turn
-/// about the vertical as the curve does and tilt only where it climbs.
-/// Child entities draw it with `material`, a chunk of curve each.
 #[derive(Component, Clone, Debug, PartialEq)]
 #[component(on_remove = release)]
 pub struct SplineMesh {
@@ -39,9 +18,6 @@ pub struct SplineMesh {
     pub material: MaterialHandle,
 }
 
-/// What a spline mesh built: its chunks' entities and meshes,
-/// the curve's length, the copies along it and their vertices, or why it
-/// built nothing.
 #[derive(Component, Clone, Debug, Default)]
 pub struct SplineChunks {
     pub entities: Vec<Entity>,
@@ -53,7 +29,6 @@ pub struct SplineChunks {
     built: Option<SplineMesh>,
 }
 
-/// Despawns a spline mesh's chunks and frees their meshes when it goes.
 fn release(mut world: DeferredWorld, context: HookContext) {
     let Some(chunks) = world.get::<SplineChunks>(context.entity) else {
         return;
@@ -76,8 +51,6 @@ fn discard(world: &mut World, entities: &[Entity], meshes: &[MeshHandle]) {
     }
 }
 
-/// Builds the chunks of every spline mesh that changed since it last
-/// built.
 pub(crate) fn build(world: &mut World) {
     let mut query = world.query::<(Entity, &SplineMesh, Option<&SplineChunks>)>();
     let stale: Vec<(Entity, SplineMesh)> = query
@@ -146,16 +119,12 @@ pub(crate) fn build(world: &mut World) {
     }
 }
 
-/// A curve's chunk meshes, its length and the copies along it.
 struct Bent {
     meshes: Vec<Mesh>,
     length: f32,
     copies: u32,
 }
 
-/// The curve through `points` every [`STEP`] meters or so (a centripetal
-/// Catmull-Rom spline, its ends continued straight), and the meters along
-/// it at each.
 pub(crate) fn curve(points: &[Vec3]) -> (Vec<Vec3>, Vec<f32>) {
     let count = points.len();
     let at = |index: isize| -> Vec3 {
@@ -171,7 +140,6 @@ pub(crate) fn curve(points: &[Vec3]) -> (Vec<Vec3>, Vec<f32>) {
     for segment in 0..count - 1 {
         let index = segment as isize;
         let [p0, p1, p2, p3] = [at(index - 1), at(index), at(index + 1), at(index + 2)];
-        // Knots spaced by the square roots of the distances (centripetal).
         let knot = |a: Vec3, b: Vec3| max(a.distance(b).sqrt(), 1.0e-4);
         let t1 = knot(p0, p1);
         let t2 = t1 + knot(p1, p2);
@@ -198,7 +166,6 @@ pub(crate) fn curve(points: &[Vec3]) -> (Vec<Vec3>, Vec<f32>) {
     (samples, along)
 }
 
-/// The curve's point and direction `distance` meters along it.
 pub(crate) fn point_at(samples: &[Vec3], along: &[f32], distance: f32) -> (Vec3, Vec3) {
     let last = samples.len() - 1;
     let index = along
@@ -212,14 +179,12 @@ pub(crate) fn point_at(samples: &[Vec3], along: &[f32], distance: f32) -> (Vec3,
     } else {
         0.0
     };
-    // The direction across a few samples, smooth through the curve's turns.
     let back = samples[index.saturating_sub(1)];
     let ahead = samples[(index + 2).min(last)];
     let direction = (b - a) * 2.0 + (ahead - back);
     (a + (b - a) * t, direction.normalize_or(b - a))
 }
 
-/// Bends copies of `spline`'s mesh along its curve into chunk meshes.
 fn bend(assets: &AssetLibrary, spline: &SplineMesh) -> Result<Bent, String> {
     if !(2..=MAX_SPLINE_POINTS).contains(&spline.points.len()) {
         return Err(format!("a curve names 2 to {MAX_SPLINE_POINTS} points"));
@@ -257,8 +222,6 @@ fn bend(assets: &AssetLibrary, spline: &SplineMesh) -> Result<Bent, String> {
                 let [x, y, z] = vertex.position;
                 let distance = index as f32 * copy + (x - start) * stretch;
                 let (point, tangent) = point_at(&samples, &along, distance);
-                // Frames keep up as up: turning about the vertical with the
-                // curve, tilting only where it climbs.
                 let up = (Vec3::Y - tangent * Vec3::Y.dot(tangent)).normalize_or(Vec3::Z);
                 let across = tangent.cross(up);
                 let [nx, ny, nz] = vertex.normal;

@@ -1,7 +1,3 @@
-//! Collision's development tools: the inspectors of colliders and the
-//! collision world, and the queries of rays, overlaps, shape casts and
-//! sensor events.
-
 mod queries;
 mod results;
 
@@ -21,7 +17,6 @@ pub use results::{
 use crate::inspect::Inspector;
 use crate::{DevTools, InspectorDescriptor, InspectorKind};
 
-/// Registers collision's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
     tools
         .insert(Inspector {
@@ -41,7 +36,6 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
         .expect("built-in descriptor is bounded");
 }
 
-/// Adds the schemas of collision's inspectors.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
     schemas.insert(

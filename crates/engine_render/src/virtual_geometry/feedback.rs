@@ -1,16 +1,8 @@
-//! What selection reads back a few frames late: the counts
-//! of clusters and triangles each view selected and of entries dropped for
-//! want of room, and the groups it used and would refine into, whose pages
-//! streaming loads.
-
 use std::{cell::Cell, rc::Rc};
 
 use super::VirtualStats;
 use crate::buffers::ReadbackRing;
 
-/// What a frame read back: its counts, dropped queue, group and cluster
-/// entries and whether its retest list overflowed, and the groups it used
-/// and would refine into (bits of global groups).
 pub(super) struct Feedback {
     pub(super) stats: VirtualStats,
     pub(super) drops: [u32; 4],
@@ -20,12 +12,8 @@ pub(super) struct Feedback {
 }
 
 pub(super) struct Readbacks {
-    // Each read-back's frame, and where its used and requested group bits
-    // start and their words each.
     readbacks: ReadbackRing<(u64, (usize, usize))>,
-    // Feedback mapped since the last frame took it.
     read: Rc<Cell<Option<Feedback>>>,
-    // The counts of the last frame taken.
     last: Option<VirtualStats>,
 }
 
@@ -38,26 +26,20 @@ impl Readbacks {
         }
     }
 
-    /// Takes the feedback mapped since the last call, keeping its counts.
     pub(super) fn take(&mut self) -> Option<Feedback> {
         let feedback = self.read.take()?;
         self.last = Some(feedback.stats);
         Some(feedback)
     }
 
-    /// The counts of the last frame taken.
     pub(super) fn last(&self) -> Option<VirtualStats> {
         self.last
     }
 
-    /// Drops the read-back buffers, sized for counters since replaced.
     pub(super) fn clear(&mut self) {
         self.readbacks.clear();
     }
 
-    /// Records a copy of frame `frame`'s `counters`, whose used and
-    /// requested group bits start at `feedback.0` with `feedback.1` words
-    /// each, when a read-back buffer is free.
     pub(super) fn record(
         &mut self,
         device: &wgpu::Device,
@@ -66,7 +48,6 @@ impl Readbacks {
         frame: u64,
         feedback: (usize, usize),
     ) {
-        // Counters, bins and both feedback bitsets.
         self.readbacks.record(
             device,
             encoder,
@@ -76,8 +57,6 @@ impl Readbacks {
         );
     }
 
-    /// Requests maps of counters recorded in the frame just submitted, whose
-    /// retest list had room for `retest_capacity` clusters.
     pub(super) fn after_submit(&mut self, retest_capacity: u32) {
         let read = Rc::clone(&self.read);
         self.readbacks

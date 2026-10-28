@@ -6,12 +6,9 @@ pub use engine_core::{MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT};
 pub const MAX_COLLISION_COORDINATE: f32 = 1.0e6;
 pub const MAX_COLLISION_NODES: usize = 100_000;
 pub const MAX_QUERY_HITS: usize = 4_096;
-/// The most sensor candidate pairs one detection examines.
 pub const MAX_CANDIDATE_PAIRS: usize = 1_000_000;
-/// The most sensor pairs one detection keeps.
 pub const MAX_SENSOR_PAIRS: usize = 65_536;
 
-/// A local convex primitive. Affine world transforms preserve shear/stretch.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ColliderShape {
     Cuboid { half_extents: Vec3 },
@@ -42,7 +39,6 @@ impl ColliderShape {
     }
 }
 
-/// Both participants must admit each other's membership bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CollisionLayers {
     pub memberships: u32,
@@ -68,7 +64,6 @@ impl CollisionLayers {
     }
 }
 
-/// Checked immutable collision data; attach to an entity with a local Transform.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Collider {
     shape: ColliderShape,
@@ -111,12 +106,6 @@ impl Collider {
     }
 }
 
-/// Numerical admission shared by authored validation and runtime synchronization.
-///
-/// Shape-scaled affine basis column lengths must be in [1e-4,1e4], center
-/// coordinates in [-1e6,1e6], and normalized basis inverse infinity norm <=1000.
-/// Render transform validity remains required. These bounds do not claim exact
-/// arithmetic at contact boundaries; narrow-phase has finite tolerances.
 pub fn validate_collider_transform(
     shape: ColliderShape,
     matrix: Mat4,
@@ -152,53 +141,38 @@ pub(crate) fn valid_position(position: Vec3) -> bool {
 
 engine_settings::settings! {
     unauthored;
-    /// Collision budgets, none by default: the collision world's own
-    /// limits bound colliders, sensor pairs and query results. Past a budget
-    /// the world reports itself incomplete or a query fails with its
-    /// budget's code. Changes apply at the next refresh.
     #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
     pub struct CollisionConfig {
-        /// Colliders the world admits; the rest leave it incomplete.
         pub max_colliders: Option<u32> = None => budget,
-        /// Sensor candidate pairs one detection examines.
         pub max_candidate_pairs: Option<u32> = None => budget,
-        /// Sensor pairs one detection keeps.
         pub max_sensor_pairs: Option<u32> = None => budget,
-        /// Candidates one query examines.
         pub max_query_candidates: Option<u32> = None => budget,
-        /// Hits one query returns.
         pub max_query_hits: Option<u32> = None => budget,
     }
 }
 
 impl CollisionConfig {
-    /// Colliders the world admits: the budget within the world's limit.
     pub fn colliders(&self) -> usize {
         within(self.max_colliders, MAX_COLLISION_NODES)
     }
 
-    /// Sensor candidate pairs one detection examines.
     pub fn candidate_pairs(&self) -> usize {
         within(self.max_candidate_pairs, MAX_CANDIDATE_PAIRS)
     }
 
-    /// Sensor pairs one detection keeps.
     pub fn sensor_pairs(&self) -> usize {
         within(self.max_sensor_pairs, MAX_SENSOR_PAIRS)
     }
 
-    /// Candidates one query examines.
     pub fn query_candidates(&self) -> usize {
         within(self.max_query_candidates, MAX_COLLISION_NODES)
     }
 
-    /// Hits one query returns.
     pub fn query_hits(&self) -> usize {
         within(self.max_query_hits, MAX_QUERY_HITS)
     }
 }
 
-/// `budget` within `limit`, or `limit` without one.
 fn within(budget: Option<u32>, limit: usize) -> usize {
     budget.map_or(limit, |budget| (budget as usize).min(limit))
 }
@@ -253,7 +227,6 @@ impl CollisionError {
     }
 }
 
-/// Validation available before any on-demand world refresh.
 pub fn validate_shape_cast(
     shape: ColliderShape,
     matrix: Mat4,
@@ -301,7 +274,6 @@ impl QueryFilter {
     }
 }
 
-/// Direction is normalized internally; max_distance and returned distance use world units.
 #[derive(Debug, Clone, Copy)]
 pub struct CollisionRay {
     pub origin: Vec3,
@@ -339,12 +311,9 @@ pub struct RayHit {
     pub point: Vec3,
     pub normal: Vec3,
     pub started_inside: bool,
-    /// The placed object hit, whose terrain is `entity`.
     pub placed: Option<PlacedPart>,
 }
 
-/// A placed object: its placement layer and asset, by index
-/// in its terrain's surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlacedPart {
     pub layer: u16,
@@ -353,10 +322,7 @@ pub struct PlacedPart {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ShapeCastOptions {
-    /// False permits initial contact when motion is tangential or separating.
     pub stop_at_penetration: bool,
-    /// World-space skin, from 0 to 1. For two cuboids this expands the 15 SAT
-    /// intervals conservatively; corner distance is not an exact rounded hull.
     pub target_distance: f32,
 }
 impl Default for ShapeCastOptions {
@@ -381,14 +347,9 @@ impl ShapeCastOptions {
 pub struct ShapeHit {
     pub entity: Entity,
     pub fraction: f32,
-    /// Representative target surface point, not a contact manifold or a
-    /// guarantee of the closest witness under shear or target-distance skin.
     pub point: Vec3,
-    /// Unit world normal pointing outward from the target.
     pub normal: Vec3,
-    /// Includes initial touching or being within the configured skin/tolerance.
     pub started_overlapping: bool,
-    /// The placed object hit, whose terrain is `entity`.
     pub placed: Option<PlacedPart>,
 }
 
@@ -404,9 +365,7 @@ pub struct CollisionReport {
     pub bvh_nodes: usize,
     pub cache_bytes: usize,
     pub complete: bool,
-    /// Terrain tiles colliding as heightfields.
     pub terrain_tiles: usize,
-    /// Placed objects colliding within terrains' collision radius.
     pub placed_colliders: usize,
 }
 

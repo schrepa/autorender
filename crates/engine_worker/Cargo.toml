@@ -8,29 +8,21 @@ publish.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-# Job workers beside the games: xtask builds them as a browser client.
 [package.metadata.engine]
 worker = true
 
 [dependencies]
 engine_terrain.workspace = true
-# The renderer's static tables (`TableWorker`).
 engine_tables.workspace = true
-# Textures cooked for a device family (`engine_textures::COOK_JOB`).
 engine_textures.workspace = true
-# The job cache's keys and index (`JobCache`).
 engine_math.workspace = true
 sha2.workspace = true
 serde_json.workspace = true
-# Packs' records (`PackIndex`, `unpack`).
 ruzstd.workspace = true
-# The keys of the page's own records (`record_key`).
 engine_sources.workspace = true
-# Images as every host decodes them (`decode_image`).
 png.workspace = true
 zune-jpeg.workspace = true
 
-# The cook's levels of detail, which native hosts' workers make.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_lodbuild.workspace = true
 
@@ -39,7 +31,6 @@ wasm-bindgen.workspace = true
 js-sys.workspace = true
 engine_panic.workspace = true
 
-# `SOURCE`, the hash of this module's code.
 [build-dependencies]
 engine_sources.workspace = true
 

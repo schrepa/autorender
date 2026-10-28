@@ -1,18 +1,3 @@
-//! A physically based sky (`sky_common.wgsl`, `sky.wgsl`): the air's
-//! transmittance and multiple scattering tables, which the scene's static
-//! tables hold for its air (`engine_core::table_data::sky` makes them) and
-//! which upload as they arrive; the sky-view table around the camera, built
-//! when the sun, the camera's height or the air changes; and every frame the
-//! scene's light the sky gives (the sun's color, the zenith's, the
-//! horizon's, the ground's, the air's away from the sun and the sun's glow
-//! in it), copied into the uniforms that hold the authored atmosphere's
-//! colors before any pass reads them. The sky pass, the environment maps
-//! and the reflections of smooth surfaces sample the sky-view table
-//! (`sky_light.wgsl`), and the sky pass the transmittance table, through
-//! which its sun's disc and night sky shine. Until the air's
-//! tables first arrive the sky stays off, and the authored atmosphere's
-//! shows.
-
 use crate::render_features::{Encode, RenderFeature};
 use crate::render_graph::{FrameShape, Node, RenderGraph};
 use crate::shaders::entry::sky;
@@ -25,23 +10,14 @@ use crate::bindings::{SKY_TABLES, SKY_TRANSMITTANCE};
 use crate::gpu_layouts::constants::SKY_TABLE_GROUP;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// Texels of the sky-view table (`sky_common.wgsl`'s size).
 const VIEW_SIZE: (u32, u32) = (192, 108);
-/// Meters of the camera's height per redraw of the sky's environment map;
-/// the sky-view table follows the height exactly.
 const ENVIRONMENT_HEIGHT_STEP: f32 = 200.0;
-/// Bytes of the derived light: seven vec4 (`sky.wgsl`'s `derived`), the
-/// last the exposure as it eased to last frame.
 const DERIVED_BYTES: u64 = 7 * 16;
 
 use crate::gpu_layouts::sky::SkyUniform;
 
-/// Bytes of the sky's uniform.
 pub(crate) const SKY_UNIFORM_BYTES: usize = size_of::<SkyUniform>();
 
-/// The sky's uniform, its sky-view and transmittance tables and their
-/// sampler, which the camera's group, the environment maps' sky and the
-/// clouds' marches bind.
 pub(crate) type AirBindings<'a> = (
     &'a wgpu::Buffer,
     &'a wgpu::TextureView,
@@ -49,13 +25,8 @@ pub(crate) type AirBindings<'a> = (
     &'a wgpu::Sampler,
 );
 
-/// Where a derived color goes: its index in the derived light, the buffer,
-/// the byte offset there and the bytes copied.
 pub(crate) type SkyCopy<'a> = (u64, &'a wgpu::Buffer, u64, u64);
 
-/// The derived light's indices: the sun's color, the zenith's, the
-/// horizon's (with the adapted exposure in w), the ground's, the air's and
-/// the sun's glow in it.
 pub(crate) const DERIVED_SUN: u64 = 0;
 pub(crate) const DERIVED_ZENITH: u64 = 1;
 pub(crate) const DERIVED_HORIZON: u64 = 2;
@@ -92,8 +63,6 @@ fn table(
     Table { texture, view }
 }
 
-/// The sky-view table's and the light's pipelines and each pass's group,
-/// made with the first frame whose sky is on.
 struct Passes {
     view: wgpu::ComputePipeline,
     derive: wgpu::ComputePipeline,
@@ -103,32 +72,22 @@ struct Passes {
 pub(crate) struct SkyPass {
     layout: crate::pipelines::GroupLayout,
     passes: Option<Passes>,
-    // The sky pass's second group, binding the transmittance table, and its
-    // layout.
     pass_layout: crate::pipelines::GroupLayout,
     pass_group: wgpu::BindGroup,
     transmittance: Table,
     multiple: Table,
     view: Table,
-    // A blank texel bound where a pass writes the table, and one the light's
-    // derivation writes.
     blank: Table,
     blank_out: Table,
     sampler: wgpu::Sampler,
     uniform: wgpu::Buffer,
     derived: wgpu::Buffer,
-    // The air's tables uploaded (their number), and the tables, air, sun
-    // and height the sky-view table holds.
     tables: Option<u64>,
     view_key: Option<(u64, [u32; 20], [u32; 3], u32)>,
-    // The presentation time of the last frame, which exposure eases from.
     last_seconds: Option<f64>,
-    // Advances with each sky-view build the environment map follows.
     generation: u64,
     environment_height: i32,
     active: bool,
-    /// Tables this frame uploaded or built: two for the air's, one for the
-    /// sky-view.
     pub(crate) built: u32,
 }
 
@@ -206,21 +165,14 @@ impl SkyPass {
         }
     }
 
-    /// The sky pass's second group's layout
-    /// (`bindings::SKY_TRANSMITTANCE`).
     pub(crate) fn pass_layout(&self) -> &crate::pipelines::GroupLayout {
         &self.pass_layout
     }
 
-    /// The sky pass's second group: the transmittance table, through which
-    /// its sun's disc and night sky shine.
     pub(crate) fn pass_group(&self) -> &wgpu::BindGroup {
         &self.pass_group
     }
 
-    /// The sky's uniform, its sky-view and transmittance tables and their
-    /// sampler, which the camera's group, the environment maps' sky and the
-    /// clouds' marches bind.
     pub(crate) fn bindings(&self) -> AirBindings<'_> {
         (
             &self.uniform,
@@ -230,8 +182,6 @@ impl SkyPass {
         )
     }
 
-    /// What the sky's environment map holds of this sky: it redraws when
-    /// this changes.
     pub(crate) fn environment_key(&self) -> [f32; 4] {
         if self.active {
             [
@@ -245,7 +195,6 @@ impl SkyPass {
         }
     }
 
-    /// Uploads the air's `tables`.
     fn upload(&self, queue: &wgpu::Queue, tables: &SkyTables) {
         for (table, texels, (width, height)) in [
             (
@@ -272,13 +221,6 @@ impl SkyPass {
         }
     }
 
-    /// Records this frame's sky of `settings` with the sun along `sun` (and
-    /// the moon `moon`: its direction and light) seen
-    /// from `eye`, or nothing without one or before its air's tables first
-    /// arrived: the air's `tables` (the latest the scene's tables hold)
-    /// unless uploaded, the sky-view table when the sun, the camera's
-    /// height or the air changed, then the light it gives, copied by
-    /// `copies`. Timed by `profiler` (`sky`).
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -345,9 +287,6 @@ impl SkyPass {
                 height * 0.001,
             ],
             sun: sun.extend(exposure).to_array(),
-            // Seconds since the last frame, over which exposure eases; 0
-            // (a first or repeated time, as exact frames are) takes it at
-            // once.
             frame: [elapsed, 0.0, 0.0, 0.0],
             moon,
         };
@@ -417,8 +356,6 @@ impl SkyPass {
             span.mark(&mut encoder, true);
         }
         if build_view {
-            // The environment map follows the sun's steps and the camera's
-            // height more coarsely.
             let environment_height = (height / ENVIRONMENT_HEIGHT_STEP).floor() as i32;
             let sun_moved = self.view_key.is_none_or(|key| key.2 != view_key.2);
             if uploaded || sun_moved || environment_height != self.environment_height {
@@ -430,16 +367,12 @@ impl SkyPass {
         Some(encoder)
     }
 
-    /// Bytes of the tables.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         let texels = |(width, height): (u32, u32)| u64::from(width) * u64::from(height);
         (texels(TRANSMITTANCE_SIZE) + texels(MULTIPLE_SIZE) + texels(VIEW_SIZE)) * 8
     }
 }
 
-/// The pipelines and the groups of each pass: building the sky-view table,
-/// and deriving the light; `tables` are the transmittance, multiple
-/// scattering and sky-view tables and the blank texels.
 fn passes(
     device: &wgpu::Device,
     layout: &crate::pipelines::GroupLayout,
@@ -483,7 +416,6 @@ fn passes(
     Passes {
         view: pipeline(sky::build_sky_view),
         derive: pipeline(sky::derive_light),
-        // A pass never reads the table it writes.
         groups: [
             group([transmittance, multiple, blank], view),
             group([transmittance, multiple, view], blank_out),
@@ -491,8 +423,6 @@ fn passes(
     }
 }
 
-/// The sky works before the frame, in its prelude ([`SkyPass::encode`]):
-/// it declares no nodes, so the graph encodes none of its.
 impl RenderFeature for SkyPass {
     type Frame = ();
     type Stats = engine_core::SkyStats;
@@ -513,7 +443,6 @@ impl RenderFeature for SkyPass {
         SkyPass::capacity_bytes(self)
     }
 
-    /// The tables this frame built.
     fn stats(
         this: Option<&Self>,
         _frame: Option<&()>,
@@ -526,13 +455,6 @@ impl RenderFeature for SkyPass {
     }
 }
 
-/// The night sky's part of the scene's lighting this frame
-/// ([`engine_core::NightSky`]): the stars' and the moon's brightness,
-/// cirrus' cover and the share of the moon's face the sun along `sun`
-/// lights; the quaternion turning world directions into the galaxy's frame;
-/// and the direction toward the moon, with its size. The time of day turns
-/// the stars and places the moon; without one the stars stand as at its
-/// defaults and there is no moon.
 pub(crate) fn night_lighting(environment: &engine_core::Environment, sun: Vec3) -> [[f32; 4]; 3] {
     let night = environment.night_sky.sanitized();
     let day = environment.time_of_day.sanitized();
@@ -555,9 +477,6 @@ pub(crate) fn night_lighting(environment: &engine_core::Environment, sun: Vec3) 
     ]
 }
 
-/// The night sky's part of `lighting` under `environment`'s sun
-/// ([`night_lighting`]), and the sky's shapes: cirrus' height and drift,
-/// and the stars' density.
 pub(crate) fn apply_night(
     lighting: &mut crate::gpu_data::LightingUniform,
     environment: &engine_core::Environment,
@@ -573,15 +492,6 @@ pub(crate) fn apply_night(
     ];
 }
 
-/// Haze's part of the scene's lighting ([`engine_core::Haze`]): fog and
-/// the air take the sky's light (`aerial_color.w`), and the air begins at
-/// the eye `eye`, at least as thick at its height as the visibility asks
-/// (Koschmieder: a fiftieth of what lies level with the eye is left at
-/// 3.912 over the extinction), twice the distance to the far plane of
-/// `view_projection` unless set; then as thick as its strength makes it.
-/// Where the view `marches` the haze (`screen_effects::haze_runs`), its
-/// march's reach, within which the march gives `atmospheric`'s glow of the
-/// sun instead, forward scattering, spread and size.
 pub(crate) fn apply_haze(
     lighting: &mut crate::gpu_data::LightingUniform,
     haze: &engine_core::Haze,
@@ -596,12 +506,10 @@ pub(crate) fn apply_haze(
     let visibility = if haze.visibility > 0.0 {
         haze.visibility
     } else {
-        // The far plane's middle: depth 0 with reversed depth.
         let far = crate::post::inverse_or_identity(view_projection).project_point3(Vec3::ZERO);
         2.0 * far.distance(eye)
     };
     let extinction = 3.912 / engine_core::math::max(visibility, 1.0);
-    // The density at height zero that is `extinction` at the eye's height.
     let falloff = lighting.aerial[2];
     let at_zero = extinction * engine_core::math::min(falloff * eye.y, 60.0).exp();
     lighting.aerial[0] = 0.0;

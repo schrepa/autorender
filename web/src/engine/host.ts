@@ -9,34 +9,23 @@ import { HOST_PARAMETERS } from "./parameters";
 import "./style.css";
 
 export type { Distribution, FrameStats, Runtime };
-/** The last frame's statistics of `runtime`, typed from Rust's
- * `FrameStats`. */
 export function readStats(runtime: Pick<Runtime, "stats">): FrameStats {
   return parseJson(runtime.stats());
 }
-/** The spread of measured `values` as the engine computes it on every host
- * (`Runtime.distribution`, typed from Rust's `Distribution`): null without
- * values, or with one that is not a finite number of at least 0. */
 export function readDistribution(runtime: Pick<Runtime, "distribution">, values: readonly number[]): Distribution | null {
   return parseJson(runtime.distribution(Float64Array.from(values)));
 }
-/** Controls for a game's own panels; mutations run between frames. */
 export interface HostControls<T extends Runtime> {
   mutate(action: (game: T) => void): void;
   setResolutionScale(scale: number): void;
   setInputEnabled(enabled: boolean): void;
-  /** The spread of measured `values` (`readDistribution`); null without
-   * values or once the engine stopped. */
   distribution(values: readonly number[]): Distribution | null;
   size(): [number, number];
   paused(): boolean;
   busy(): boolean;
 }
-/** The elements the host fills, by ID. */
 const PAGE_ELEMENTS = ["scene", "status", "message", "pause", "reset", "fps", "simulation", "extraction", "draws", "uploads", "render-time"];
 
-/** A page without a canvas `#scene` gets the engine's own page; a page with
- * one must have every element the host fills. */
 function ensurePage() {
   if (!document.getElementById("scene")) {
     document.body.classList.add("engine-page");
@@ -59,7 +48,6 @@ function element<T extends HTMLElement>(id: string): T {
   return found as T;
 }
 
-/** Shows `value` with `unit` in metric `id`. */
 function metric(id: string, value: string, unit = "") {
   const node = element(id);
   node.replaceChildren(document.createTextNode(value));
@@ -70,11 +58,6 @@ function metric(id: string, value: string, unit = "") {
   }
 }
 
-/**
- * The page's frame rate and CPU timing readouts. Statistics are polled four
- * times a second, outside entity loops, and averaged over bounded windows so
- * the readouts follow workload changes.
- */
 class FrameHud {
   private frames = 0;
   private previous: number | undefined;
@@ -88,18 +71,14 @@ class FrameHud {
 
   constructor(private readonly canvas: HTMLCanvasElement) {}
 
-  /** Leaves the time until the next frame out of the frame rate. */
   skipInterval() { this.previous = undefined; }
 
-  /** Restarts every average, e.g. after a suspension. */
   reset() {
     this.previous = undefined;
     this.intervals = 0; this.elapsed = 0;
     this.simulation = 0; this.extraction = 0; this.submission = 0; this.samples = 0;
   }
 
-  /** Counts a frame of `runtime` at `timestamp`; returns whether it sampled
-   * the statistics, four times a second. */
   frame(runtime: Runtime, timestamp: number): boolean {
     this.frames++;
     if (this.previous !== undefined) { this.elapsed += timestamp - this.previous; this.intervals++; }
@@ -134,14 +113,9 @@ class FrameHud {
   }
 }
 
-/** What a game's page starts it with. */
 export interface GameOptions<T extends Runtime> {
-  /** Creates the game on `canvas`. */
   create(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<T>;
-  /** The game's own development controls, which agents run with the
-   * `game` control by name; each refreshes the image after. */
   controls?: Record<string, { description: string; run(game: T, args: Record<string, unknown>): unknown }>;
-  /** The page parameters the game reads, with what each does. */
   parameters?: Record<string, string>;
   poll?(game: T): void;
   reload?(game: T, signal: AbortSignal): Promise<void>;
@@ -153,9 +127,6 @@ export interface GameOptions<T extends Runtime> {
   interrupted?(reason: string): void;
 }
 
-/** Runs the game `options.create` makes on the page: frames, input, job
- * workers, loading, the page's switches, statistics and, in development
- * builds with `?engine_dev=1`, the development tools. */
 export function startGame<T extends Runtime>(options: GameOptions<T>) {
 ensurePage();
 
@@ -172,39 +143,19 @@ const input = new BrowserInput(canvas);
 let game: T | undefined;
 const instrumented = import.meta.env.MODE === "profiling" || import.meta.env.MODE === "attribution";
 const development = (import.meta.env.DEV || instrumented) && new URLSearchParams(location.search).get("engine_dev") === "1";
-// ?prepare=1 starts a development session as ordinary sessions start, so
-// agents can inspect loading as players see it.
 const preparedDevelopment = development && new URLSearchParams(location.search).get("prepare") === "1";
 let paused = development && !preparedDevelopment;
-// Pipelines compile when a frame first needs them. Ordinary
-// sessions first render their starting state without advancing time behind a
-// hidden canvas (Firefox paints a visible WebGPU canvas by waiting on its GPU
-// process), until rendered frames stop creating pipelines, the GPU has
-// compiled them, terrains have loaded the camera's view and textures their
-// records; then play starts. Development sessions start paused and compile with the
-// frames their commands render.
 let preparing = !development || preparedDevelopment;
-// Hidden from the start: creating the renderer already compiles pipelines.
 if (preparing) canvas.style.visibility = "hidden";
 let developmentBusy = false;
 let disposeDevelopment: (() => void) | undefined;
-// Once the engine failed, nothing calls into its module again; `stopped`
-// says why when its module stopped (a panic's message, or the trap).
 let failed = false;
 let stopped: string | undefined;
 let request = 0;
-// Loading work while pipelines compile: browsers stop calling
-// animation frames while their GPU process compiles, so it runs in tasks.
 let working = 0;
-// Terrain loading between frames: after a frame of play, a task loads
-// terrain until shortly before the next frame is due, by the engine's pace
-// of recent frames. Frames waiting on the GPU leave that time free; frames
-// waiting on the CPU leave none.
 let between = 0;
 const hud = new FrameHud(canvas);
-// Job workers, for games that hand out jobs.
 let jobs: JobPool | undefined;
-// The canvas's size in device pixels: its element's whole size.
 let pixelWidth = 1;
 let pixelHeight = 1;
 let inputEnabled = true;
@@ -216,27 +167,18 @@ function setStatus(text: string, state: string) {
 
 function clearInput() { input.clear(); }
 
-/** Sends the page's input to the game while it takes input, and the
- * module runs. */
 function connectInput() {
   input.game = inputEnabled && !failed ? game : undefined;
 }
 
-/** Tells the game's page `reason` interrupted its timing, while the engine
- * runs: its handlers may call into the module. */
 function interrupt(reason: string) {
   if (!failed) options.interrupted?.(reason);
 }
 
-/** Drops the game's suspension time and held input, while its module runs. */
 function suspendGame() {
   if (!failed) game?.suspend();
 }
 
-/** Sizes the canvas to its element's whole size in device pixels, which
- * frames draw within at the size the engine's resolution policy gives, as on
- * every host; frames need no size before the game exists, which sizes it at
- * start. */
 function resize() {
   if (disposed || failed || !game) return;
   const bounds = canvas.getBoundingClientRect();
@@ -248,15 +190,12 @@ function resize() {
   pixelWidth = width;
   pixelHeight = height;
   game.set_pixel_ratio(ratio);
-  // A view that regains area asks for frames again.
   if (idle && width > 0 && height > 0) resume();
 }
 const observer = new ResizeObserver(resize);
 observer.observe(canvas);
 window.addEventListener("resize", resize, listenerOptions);
 
-/** Stops frames and the loading tasks between them; calls nothing in the
- * module. */
 function halt() {
   cancelAnimationFrame(request);
   request = 0;
@@ -274,18 +213,11 @@ function stopClock() {
   suspendGame();
 }
 
-/** Stops the page for good after `error`: the engine's panic or its
- * module's trap, or a failure to start or run a frame. The page says so
- * first; then frames, loading and the job workers stop, and nothing calls
- * into the module again. */
 function fail(error: unknown) {
   if (disposed || failed) return;
   failed = true;
-  // Nothing calls into the module again.
   connectInput();
   stopped = fatal(error) ? panicReport(error)?.message ?? String(error) : undefined;
-  // The engine's own refusal (a page parameter it does not take, a scene it
-  // cannot run) says what failed; anything else is likely WebGPU's.
   const refused = engineError(error);
   setStatus(stopped ? "Engine stopped" : refused ? "Engine error" : "Renderer unavailable", "error");
   message.hidden = false;
@@ -300,13 +232,10 @@ function fail(error: unknown) {
   console.error(error);
 }
 
-/** Runs `work`, which calls into the module; a module that stopped stops
- * the page. */
 function guarded(work: () => void) {
   try { work(); } catch (error) { fail(error); }
 }
 
-/** Terrain loading until shortly before the next frame of play is due. */
 function workBetweenFrames() {
   between = 0;
   if (disposed || !game || paused || document.hidden || failed || preparing) return;
@@ -317,7 +246,6 @@ function workBetweenFrames() {
   });
 }
 
-/** Loading work in tasks while preparation waits on compiles. */
 function workWhileCompiling() {
   working = 0;
   if (disposed || !game || paused || document.hidden || failed || !preparing) return;
@@ -329,7 +257,6 @@ function workWhileCompiling() {
   });
 }
 
-/** Play starts: the canvas shows what preparation drew. */
 function started() {
   preparing = false;
   hud.skipInterval();
@@ -338,19 +265,15 @@ function started() {
   setStatus("WebGPU active", "running");
 }
 
-/** The animation frame at `timestamp`: preparation's or one of play, as
- * the engine's frame loop runs them. */
 function frame(timestamp: number) {
   request = 0;
   if (disposed || !game || paused || document.hidden || failed) return;
-  // The module stopped where the page's own code caught its error.
   if (panicReport()) { fail(new Error("the engine panicked")); return; }
   try {
     if (!preparing) options.beforeFrame?.(game, timestamp);
     const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
     jobs?.exchange();
     if (phase === FRAME_PHASES.compiling) {
-      // Browsers stop animation frames while their GPU process compiles.
       if (!working) working = window.setTimeout(workWhileCompiling, 0);
     } else if (phase === FRAME_PHASES.started) {
       started();
@@ -360,7 +283,6 @@ function frame(timestamp: number) {
       options.afterHostFrame?.(game, timestamp);
       if (!between) between = window.setTimeout(workBetweenFrames, 0);
     } else if (phase === FRAME_PHASES.idle) {
-      // A view without area asks for no frames until it has area again.
       hud.skipInterval();
       return;
     }
@@ -385,7 +307,6 @@ function resume() {
 
 window.addEventListener("blur", () => { interrupt("focus_lost"); clearInput(); suspendGame(); hud.skipInterval(); }, listenerOptions);
 canvas.addEventListener("blur", () => { interrupt("focus_lost"); suspendGame(); hud.skipInterval(); }, listenerOptions);
-// A module that stops where nothing caught its error stops the page too.
 window.addEventListener("error", event => { if (fatal(event.error)) fail(event.error); }, listenerOptions);
 window.addEventListener("unhandledrejection", event => { if (fatal(event.reason)) fail(event.reason); }, listenerOptions);
 document.addEventListener("visibilitychange", () => {
@@ -433,18 +354,12 @@ async function start() {
   reset.disabled = true;
   if (!("gpu" in navigator)) throw new Error("WebGPU is not available in this browser or execution context.");
   const created = await options.create(canvas, lifecycle.signal);
-  // GPU initialization may finish after teardown even when fetch was aborted.
   if (disposed) { created.free(); return; }
   game = created;
-  // Play on the page scales its frames to keep them within their GPU
-  // budget, unless its parameters say otherwise.
   created.set_dynamic_resolution(true);
-  // The engine switches the page's parameters name.
   created.apply_host_settings(location.search);
   created.set_preparation(preparing);
   connectInput();
-  // The game's jobs run on the page's workers; a module of theirs or the
-  // game's that stops stops the page.
   jobs = jobPool();
   jobs?.attach(created, fail);
   resize();
@@ -458,8 +373,6 @@ async function start() {
       try {
         action(game);
         game.suspend();
-        // Reset timing before an ordinary zero-delta frame: this also refreshes
-        // the image in production while the host is paused.
         game.frame(performance.now(), pixelWidth, pixelHeight);
         game.suspend();
         options.poll?.(game);
@@ -494,7 +407,6 @@ async function start() {
         jobs?.exchange();
       },
       source: options.source,
-      // The engine's canvas context, whose device the engine draws with.
       gpuWorkDone: () => (canvas.getContext("webgpu") as GPUCanvasContext | null)
         ?.getConfiguration()?.device.queue.onSubmittedWorkDone(),
       fail, stopped: () => stopped,
@@ -506,10 +418,6 @@ async function start() {
     pause.textContent = "Resume";
     pause.setAttribute("aria-pressed", "true");
     await window.__engineDev!.request({ op: "render" });
-    // ?environment={...}: sections merged over the scene's, so a look can be
-    // tried from a link. The environment control wants the host paused, so
-    // a playing session pauses for it and plays on. The page fails with why
-    // the engine refused them.
     const environment = new URLSearchParams(location.search).get("environment");
     if (environment) {
       const playing = !paused;

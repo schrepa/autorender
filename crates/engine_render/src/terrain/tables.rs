@@ -1,71 +1,36 @@
-//! The terrain tables shaders look up: each layer's fades and the hole bits
-//! of tiles with holes; the directory of every terrain's levels and
-//! resident tiles' layers, with water's directory after it (the ground's
-//! fragments bind as many storage buffers as they may, so it takes none of
-//! its own); every terrain's surface materials, their covers and
-//! what their placement layers' objects leave the ground where they
-//! retire; and each terrain's uniform. Each is written where it changed: the
-//! directory is laid out again only as the terrains or their pyramids
-//! change, and otherwise rewrites the entries of the tiles that took or
-//! left layers.
-
 use super::atlas::TileAtlas;
 use super::*;
 use crate::gpu_layouts::constants::WATER_TILE_WORDS;
 use engine_core::terrain_data::Pyramid;
 
 pub(crate) struct TerrainTables {
-    // One uniform slot per terrain, and each frame terrain's id, whose
-    // uniform sits at its index's slot.
     pub(super) uniforms: wgpu::Buffer,
     pub(super) uniform_generation: u64,
     pub(super) uniform_ids: Vec<u64>,
-    // Each layer's fades, then each layer's word naming where its tile's
-    // hole bits start (all ones without), then the hole bits of the tiles
-    // with holes, and where each tile's start; whether the buffer holds
-    // no fades yet, and the words they take.
     pub(super) holes: crate::buffers::Growable,
     pub(super) hole_offsets: HashMap<(u64, TileKey), u32>,
     hole_layers: HashMap<(u64, TileKey), u32>,
     pub(super) holes_generation: u64,
     fades_stale: bool,
     pub(super) fade_words: u32,
-    // Every terrain's levels and their resident tiles' layers, the
-    // terrains (ids and pyramids) they are laid out for, and the words
-    // they replaced, kept for the next layout.
     pub(super) directory: crate::buffers::Growable,
     pub(super) directory_written: Vec<u32>,
     directory_layout: Vec<(u64, Pyramid)>,
     directory_spare: Vec<u32>,
     pub(super) directory_generation: u64,
-    // Advances whenever the directory's words change.
     pub(super) directory_revision: u64,
-    // Where each terrain's start.
     pub(super) directory_bases: Vec<u32>,
-    // Where water's directory starts in the directory buffer, after the
-    // directory's own words.
     pub(super) water_base: u32,
-    // Every terrain's surface materials, where each
-    // terrain's start, what the buffer holds and the entries it held
-    // before, kept for the next frame's.
     pub(super) palette: wgpu::Buffer,
     pub(super) palette_bases: Vec<u32>,
     palette_written: Vec<PaletteEntry>,
     palette_spare: Vec<PaletteEntry>,
-    // The terrain being written's placement layers as the ground takes
-    // their objects on, kept from terrain to terrain.
     placed_layers: Vec<PlacedSums>,
-    /// Surface materials past the palette's capacity, which show the
-    /// palette's first instead.
     pub(crate) dropped_materials: u32,
-    // Every material's cover beside its palette entry,
-    // what the buffer holds and the entries it held before.
     pub(super) covers: wgpu::Buffer,
     covers_written: Vec<CoverEntry>,
     covers_spare: Vec<CoverEntry>,
-    // Each terrain's covers as ground cover's law takes them.
     pub(super) cover_terms: Vec<crate::ground_cover::CoverTerms>,
-    // The tallest blade any material's cover names.
     pub(super) cover_tallest: f32,
 }
 
@@ -122,11 +87,6 @@ impl TerrainTables {
         }
     }
 
-    /// Rewrites the hole bits whole when `atlas`' resident tiles with holes
-    /// changed, or a tile replaced under its key changed its bits
-    /// (`edited`), after each layer's fades for `max_layers` layers and each
-    /// layer's word naming where its tile's bits start, which fragments look
-    /// the bits up by wherever they stand (`terrain_holes_test`).
     pub(super) fn write_holes(
         &mut self,
         device: &wgpu::Device,
@@ -134,7 +94,6 @@ impl TerrainTables {
         (atlas, edited): (&TileAtlas, bool),
         max_layers: u32,
     ) {
-        // Each layer's fades come first: two layers a word.
         let fade_words = max_layers.div_ceil(2).max(1);
         let unchanged = !edited
             && fade_words == self.fade_words
@@ -172,7 +131,6 @@ impl TerrainTables {
         let bytes = start + (words.len() * 4) as u64;
         if self.holes.grow(device, bytes) {
             self.holes_generation += 1;
-            // A new buffer holds no fades yet.
             self.fades_stale = true;
         }
         if !words.is_empty() {
@@ -180,8 +138,6 @@ impl TerrainTables {
         }
     }
 
-    /// Writes each layer's fades, `words`, before the hole bits where
-    /// `dirty` changed them, or whole into a buffer holding none yet.
     pub(super) fn write_fades(
         &mut self,
         queue: &wgpu::Queue,
@@ -202,11 +158,6 @@ impl TerrainTables {
         }
     }
 
-    /// Writes every terrain's surface materials into the palette when they
-    /// change, each terrain's after the one before, with the layers their
-    /// `maps` lie in and what its placement layers' objects leave the ground
-    /// where they retire; materials past its capacity, and those whose maps
-    /// the arrays cannot hold, are dropped and counted.
     pub(super) fn write_palette(
         &mut self,
         queue: &wgpu::Queue,
@@ -222,7 +173,6 @@ impl TerrainTables {
             let room = PALETTE_ENTRIES - entries.len();
             let kept = terrain.surface.len().min(room);
             self.dropped_materials += (terrain.surface.len() - kept) as u32;
-            // Out of room, a terrain shows the palette's first material.
             self.palette_bases.push(if kept == terrain.surface.len() {
                 entries.len() as u32
             } else {
@@ -256,8 +206,6 @@ impl TerrainTables {
         self.palette_spare = std::mem::replace(&mut self.palette_written, entries);
     }
 
-    /// Writes every terrain's materials' covers at their
-    /// palette indices when they change, and notes each terrain's terms.
     fn write_covers(&mut self, queue: &wgpu::Queue, terrains: &RenderTerrains) {
         let mut entries = std::mem::take(&mut self.covers_spare);
         entries.clear();
@@ -292,12 +240,6 @@ impl TerrainTables {
         self.covers_spare = std::mem::replace(&mut self.covers_written, entries);
     }
 
-    /// Writes the directory of every terrain's levels and resident tiles
-    /// (`atlas`'s layers) where it changed: each level's entries start,
-    /// tiles and reach, then its entries. The same terrains over the same
-    /// pyramids keep their layout: their levels' reach and the entries of
-    /// the tiles that took or left layers this frame are worked out again,
-    /// and only the words that changed are written.
     pub(super) fn write_directory(
         &mut self,
         device: &wgpu::Device,
@@ -338,7 +280,6 @@ impl TerrainTables {
             if u32::from(key.x) >= tiles_x || u32::from(key.z) >= tiles_z {
                 continue;
             }
-            // The level's header holds where its entries start.
             let header =
                 (self.directory_bases.get(index)).map(|&base| base as usize + 4 * level as usize);
             let Some(&first) = header.and_then(|header| self.directory_written.get(header)) else {
@@ -367,8 +308,6 @@ impl TerrainTables {
         self.directory_revision += 1;
     }
 
-    /// Lays the directory out whole for `terrains` over `atlas`'s layers,
-    /// and writes it when it changed.
     fn lay_out_directory(
         &mut self,
         device: &wgpu::Device,
@@ -413,7 +352,6 @@ impl TerrainTables {
                 .iter()
                 .map(|terrain| (terrain.id, terrain.pyramid)),
         );
-        // Water's directory follows.
         self.water_base = words.len() as u32;
         let bytes = self.directory_bytes(atlas);
         let grown = self.directory.grow(device, bytes);
@@ -429,17 +367,11 @@ impl TerrainTables {
         self.directory_revision += 1;
     }
 
-    /// The bytes the directory buffer holds over `atlas`' layers: the
-    /// directory's words, and water's directory after them, from
-    /// `water_base`: a word for each patch of each layer's tile
-    /// (`water_blocks`).
     fn directory_bytes(&self, atlas: &TileAtlas) -> u64 {
         let water_words = atlas.layers() as usize * WATER_TILE_WORDS as usize;
         ((self.water_base as usize + water_words) * 4) as u64
     }
 
-    /// Grows the uniforms to a slot for each of `terrains`' terrains, whose
-    /// ids it notes in order.
     pub(super) fn size_uniforms(&mut self, device: &wgpu::Device, terrains: &RenderTerrains) {
         let uniform_bytes = terrains.terrains.len() as u64 * SLOT;
         if uniform_bytes > self.uniforms.size() {
@@ -455,9 +387,6 @@ impl TerrainTables {
             .extend(terrains.terrains.iter().map(|terrain| terrain.id));
     }
 
-    /// The palette entries of the frame's terrain `index`, which has
-    /// `materials` surface materials, as the palette holds them; none where
-    /// they did not fit.
     pub(super) fn palette_of(&self, index: usize, materials: usize) -> &[PaletteEntry] {
         let base = self.palette_bases.get(index).copied().unwrap_or(0) as usize;
         self.palette_written
@@ -465,7 +394,6 @@ impl TerrainTables {
             .unwrap_or_default()
     }
 
-    /// The uniform offset of the frame terrain `id`.
     pub(super) fn uniform_of(&self, id: u64) -> Option<u32> {
         self.uniform_ids
             .iter()
@@ -474,8 +402,6 @@ impl TerrainTables {
     }
 }
 
-/// The meters from the eye within which `terrain`'s level `level` shades:
-/// its reach; without one, nowhere but at the coarsest level.
 fn reach(terrain: &RenderTerrain, level: u32) -> f32 {
     match terrain.reach.get(level as usize) {
         Some(&reach) => reach,
@@ -484,7 +410,6 @@ fn reach(terrain: &RenderTerrain, level: u32) -> f32 {
     }
 }
 
-/// Sets `words[at]` to `value`, widening `dirty` over it where it changed.
 fn set_word(words: &mut [u32], at: usize, value: u32, dirty: &mut Range<usize>) {
     if let Some(word) = words.get_mut(at)
         && *word != value
@@ -494,9 +419,6 @@ fn set_word(words: &mut [u32], at: usize, value: u32, dirty: &mut Range<usize>) 
     }
 }
 
-/// The palette entry of surface material `look` with `terrain_maps`, its
-/// maps in `maps`' arrays, and its placement layers' objects' terms
-/// `placed` ([`placed_terms`]).
 fn palette_entry(
     look: &engine_core::SurfaceMaterial,
     terrain_maps: &Option<engine_core::RenderSurfaceMaps>,
@@ -507,13 +429,11 @@ fn palette_entry(
         engine_core::SurfaceProjection::Top => 0.0,
         engine_core::SurfaceProjection::Biplanar => 1.0,
     };
-    // An engine material's factors, its maps in their layer.
     let (color, roughness, layer, scale, occlusion, metalness) = match terrain_maps {
         Some(terrain_maps) => {
             let material = &terrain_maps.material;
             let color = material.color();
             let surface = material.surface();
-            // Occlusion reads the packed map's red.
             let packed = material.occlusion_texture().map(|map| map.texture)
                 == material.metallic_roughness_texture().map(|map| map.texture);
             (
@@ -531,7 +451,6 @@ fn palette_entry(
         }
         None => (look.color, look.roughness, None, 1.0, 0.0, 0.0),
     };
-    // Where a whole repeat of its maps spans less than a pixel, their means.
     let means = layer.map(|layer| maps.means(layer));
     let far = means.map_or([color[0], color[1], color[2], roughness], |means| {
         [
@@ -542,17 +461,8 @@ fn palette_entry(
         ]
     });
     let far_occlusion = means.map_or(1.0, |means| 1.0 + occlusion * (means.occlusion - 1.0));
-    // The slopes its normal maps' mean averages away roughen it where their
-    // means stand in, as their filtering's do nearer, scaled as their
-    // deflections are.
     let slopes = means.map_or(0.0, |means| means.slopes * scale * scale);
-    // Where its maps' means stand in, its heights' mean raises it as height
-    // blending does.
     let heights = means.map_or([0.0; 4], |means| [means.height, 0.0, 0.0, 0.0]);
-    // Its cover's canopy: the blades' tip color, which shaders mix with the
-    // ground's at their roots as a view meets them (`terrain_variety.wgsl`'s
-    // `cover_seen`), and their leaves' area: blades a square meter, each as
-    // wide as its root and tapering up the height they stand on average.
     let canopy = look.cover.map_or([0.0; 4], |cover| {
         let height = COVER_RISEN * 0.5 * (cover.height[0] + cover.height[1]);
         [
@@ -572,7 +482,6 @@ fn palette_entry(
         ],
         maps: [scale, occlusion, metalness, far_occlusion],
         far,
-        // Its depth, which its mesh and pixel bands share.
         relief: [look.depth, look.deform, slopes, 0.0],
         canopy,
         placed,
@@ -581,23 +490,10 @@ fn palette_entry(
     }
 }
 
-/// The share of their full height ground cover's blades stand on average:
-/// candidates ranked within the last quarter under their threshold grow
-/// short, rising with it (`cover_grow.wgsl`), seven eighths.
 const COVER_RISEN: f32 = 0.875;
 
-/// The share of the rectangle a blade's root width and height span that it
-/// fills, tapering as 1 - along^1.5 (`meshes/cover.wgsl`): the taper's
-/// integral.
 const COVER_FILLED: f32 = 0.6;
 
-/// One placement layer's objects as the ground takes them on where they
-/// retire, summed over the assets it chooses: the share of ground they
-/// cover where everything allows them, and over it the sums of their linear
-/// colors and of the base-2 logarithms of the bounding spheres' diameters
-/// of those ranked first and last under its density (its largest and
-/// smallest: their scale falls across its range as their rank rises,
-/// `engine_terrain::placement`).
 #[derive(Clone, Copy, Default)]
 struct PlacedSums {
     covered: f32,
@@ -617,22 +513,12 @@ impl PlacedSums {
     }
 }
 
-/// The base-2 logarithm of `meters`, the same on every host, as palette
-/// entries are.
 fn octaves(meters: f32) -> f32 {
     engine_core::math::ln(engine_core::math::max(meters, 1.0e-6)) * std::f32::consts::LOG2_E
 }
 
-/// `layer`'s objects on `terrain` as the ground takes them on where they
-/// retire ([`PlacedSums`]): each asset it chooses, by its share, at the
-/// layer's density, its mask whole, its scales spread evenly across its
-/// range; those ranked first and last as large and as small as the range
-/// lets each asset stand, by how often it is chosen. Assets not here yet
-/// bring none.
 fn placed_sums(terrain: &RenderTerrain, layer: &engine_core::RenderPlacementLayer) -> PlacedSums {
     let [smallest, largest] = layer.scale;
-    // The mean square of scales spread evenly from the smallest to the
-    // largest.
     let squared = (smallest * smallest + smallest * largest + largest * largest) / 3.0;
     let mut sums = PlacedSums::default();
     let (mut chosen, mut first, mut last) = (0.0, 0.0, 0.0);
@@ -657,11 +543,6 @@ fn placed_sums(terrain: &RenderTerrain, layer: &engine_core::RenderPlacementLaye
     sums
 }
 
-/// What a placed asset brings the ground at scale 1: the square meters an
-/// object covers, the ellipse within its mesh's bounds across the ground;
-/// its bounding sphere's diameter, around its mesh, its parts' finest and
-/// its shadow proxy as culling bounds it (`renderer::scatter_draws`); and
-/// its objects' color ([`placed_color`]).
 fn placed_asset(asset: &engine_core::RenderPlacementAsset) -> (f32, f32, [f32; 3]) {
     let bounds = asset.mesh.mesh.bounds();
     let extent = bounds.max() - bounds.min();
@@ -678,9 +559,6 @@ fn placed_asset(asset: &engine_core::RenderPlacementAsset) -> (f32, f32, [f32; 3
     (area, (high - low).length(), placed_color(asset))
 }
 
-/// A placed asset's objects' linear color: its material's base color
-/// factor, its base color texture's mean applied where that is summarized,
-/// which the ground takes on where they retire.
 fn placed_color(asset: &engine_core::RenderPlacementAsset) -> [f32; 3] {
     let material = &asset.material.material;
     let factor = material.color();
@@ -701,13 +579,6 @@ fn placed_color(asset: &engine_core::RenderPlacementAsset) -> [f32; 3] {
     ]
 }
 
-/// What surface material `material` of `terrain` shows where its placement
-/// layers' objects retire as they shrink on screen
-/// (`meshes/terrain.wgsl`'s `terrain_placed_share`), from the layers' sums
-/// `layers`: the objects' mean linear color and the share of the ground
-/// they cover where the material lies alone, at most all of it; and the
-/// base-2 logarithms of the bounding spheres' diameters of those ranked
-/// first and last, over that ground. Zeroes where none stands on it.
 fn placed_terms(
     terrain: &RenderTerrain,
     layers: &[PlacedSums],

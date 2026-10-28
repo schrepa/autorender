@@ -1,14 +1,3 @@
-//! White water: where terrains' settled water loses energy fastest, at
-//! their rivers' rapids, steps and ledges, the engine spawns spray thrown up
-//! and along the flow, with mist rising over the strongest, and despawns
-//! them as that water goes. It reads the records of settled water terrains
-//! hold whole, those of the level-0 tiles around the camera (`settled`):
-//! a record's sites are its cells breaking hardest, the strongest within
-//! `SITE_APART` meters of each other and clear of falls, which spray their
-//! own (`waterfalls`), each spraying as much as the power its water loses
-//! there throws (particles). A tile's emitters change only as its record
-//! does. Water that does not draw spawns none.
-
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -20,45 +9,24 @@ use crate::terrain_data::hydraulics::GRAVITY;
 use crate::terrain_data::{Fall, SteadyCell, SteadyWater, TileKey};
 use crate::{ParticleBlend, ParticleEmitter, RecordKey, Transform, Water};
 
-/// The watts a square meter of bed water loses from which it throws spray:
-/// about what half a square meter a second loses running down a step
-/// pool's four percent (ρ·g·q·S).
 const SPRAY_ENERGY: f32 = 200.0;
-/// The share of the time water leaves its bed from which it throws spray
-/// off a ledge, however little it loses.
 const SPRAY_LIP: f32 = 0.2;
-/// Meters apart white water's sites stand at least: about as far apart as
-/// a steep stream's steps, one to four channel widths (Montgomery and
-/// Buffington 1997); and the most a tile's water sprays from, the strongest
-/// first, which bounds the emitters a tile spawns.
 const SITE_APART: f32 = 8.0;
 const SITES_MOST: usize = 32;
-/// Watts of breaking water each droplet of spray a second stands for, and
-/// the fewest and most a site throws a second.
 const SPRAY_WATTS: f32 = 400.0;
 const SPRAY_RATE: [f32; 2] = [8.0, 200.0];
-/// The share of its water's speed spray is thrown at, as falls' splashes
-/// are at a share of the speed they land at, and the slowest and fastest
-/// it is thrown (meters a second); and the meters it rises for each it
-/// flies along the flow.
 const SPRAY_THROW: f32 = 0.8;
 const SPRAY_SPEED: [f32; 2] = [1.5, 5.0];
 const SPRAY_RISE: f32 = 1.5;
-/// The watts a site's water loses from which mist rises over it, the watts
-/// each puff a second stands for, and the fewest and most it puffs.
 const MIST_POWER: f32 = 4.0e4;
 const MIST_WATTS: f32 = 2.0e4;
 const MIST_RATE: [f32; 2] = [1.0, 6.0];
 
-/// What white water spawned over the settled water terrains hold whole.
 #[derive(Resource, Default)]
 pub(crate) struct TerrainWhiteWater {
     spawned: Vec<Spawned>,
 }
 
-/// The emitters spawned over a level-0 tile's settled water: its terrain,
-/// where the terrain stood, the tile and its record's key, and the
-/// emitters.
 struct Spawned {
     terrain: Entity,
     origin: Vec3,
@@ -67,8 +35,6 @@ struct Spawned {
     entities: Vec<Entity>,
 }
 
-/// A level-0 tile's settled water a terrain holds whole: the terrain, its
-/// origin and its falls, the tile, its record's key and the record.
 struct Held {
     terrain: Entity,
     origin: Vec3,
@@ -78,10 +44,6 @@ struct Held {
     water: Arc<SteadyWater>,
 }
 
-/// A cell breaking hard enough to spray: how many times the least it
-/// breaks by, its index among its tile's cells, its middle (terrain-local x
-/// and z), the surface its water stands at, the velocity it runs at (meters
-/// a second along x and z) and the watts it loses.
 struct Breaking {
     strength: f32,
     index: u32,
@@ -91,11 +53,6 @@ struct Breaking {
     power: f32,
 }
 
-/// Where white water sprays from: the middle of its strongest cell
-/// (terrain-local, at its water's surface), the velocity its water runs at
-/// there, the watts the water breaking around it loses, and the meters
-/// about its middle that water spans, at most a quarter of the least
-/// spacing of sites.
 struct Site {
     at: Vec3,
     flow: Vec2,
@@ -103,8 +60,6 @@ struct Site {
     reach: f32,
 }
 
-/// The settled water every terrain holds whole, terrain by terrain and its
-/// tiles in key order.
 fn held(terrains: &Terrains) -> Vec<Held> {
     let mut found = Vec::new();
     for state in terrains
@@ -126,13 +81,6 @@ fn held(terrains: &Terrains) -> Vec<Held> {
     found
 }
 
-/// Where white water sprays over `water`, a level-0 tile's settled water,
-/// clear of `falls` (terrain-local): its cells losing SPRAY_ENERGY or more
-/// or leaving their bed SPRAY_LIP of the time or more, the hardest breaking
-/// first (in their order where alike), each a site of its own where none
-/// stands within SITE_APART, fewer than SITES_MOST do and no fall's path
-/// passes that near, else adding the watts it loses to the first site
-/// standing that near.
 fn sites(water: &SteadyWater, falls: &[Fall]) -> Vec<Site> {
     let cell = water.cell;
     let [columns, rows] = water.cells.map(i64::from);
@@ -184,7 +132,6 @@ fn sites(water: &SteadyWater, falls: &[Fall]) -> Vec<Site> {
         .map(|point| Vec2::new(point[0], point[2]))
         .filter(|point| point.cmpge(low).all() && point.cmple(high).all())
         .collect();
-    // Each site's strongest cell, the watts its cells lose and its cells.
     let mut found: Vec<(Breaking, f32, u32)> = Vec::new();
     for candidate in breaking {
         let near = found
@@ -217,12 +164,6 @@ fn sites(water: &SteadyWater, falls: &[Fall]) -> Vec<Site> {
         .collect()
 }
 
-/// White water's emitters at `site`, its terrain at `origin`, seeded by
-/// `seed`: droplets thrown up and along the flow at a share of its water's
-/// speed, falling back to the water as they fly, as many as the power its
-/// water loses throws; and over a site losing MIST_POWER or more, mist
-/// rising, as much as that power stirs, its puffs as big as the breaking
-/// water is wide.
 fn emitters(site: &Site, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmitter)> {
     let at = |rise: f32| Transform {
         translation: origin + site.at + Vec3::Y * rise,
@@ -235,8 +176,6 @@ fn emitters(site: &Site, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
         SPRAY_SPEED[0],
         SPRAY_SPEED[1],
     );
-    // A droplet lands back on the water when gravity has turned its rise
-    // round and brought it down again.
     let flight = 2.0 * speed * direction.y / GRAVITY;
     let mut spawned = vec![(
         at(0.05),
@@ -282,20 +221,12 @@ fn emitters(site: &Site, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
     spawned
 }
 
-/// The seed of site `number` of tile `key`'s white water: the same wherever
-/// and whenever its record is held.
 fn seed_of(key: TileKey, number: usize) -> u32 {
     let tile =
         u32::from(key.x).wrapping_mul(0x9e37_79b9) ^ u32::from(key.z).wrapping_mul(0x85eb_ca6b);
     tile.wrapping_add((number as u32).wrapping_mul(0xc2b2_ae35))
 }
 
-/// Spawns and despawns white water's emitters to match the settled water
-/// terrains hold whole, where water draws: a tile's once its record is
-/// held, anew when another record replaces it or its terrain moves, and
-/// none once it goes, in the order terrains hold them. Frames draw them
-/// within the particle budget as every emitter, the nearest first. The
-/// terrains' stats count them.
 pub(crate) fn sync(world: &mut World) {
     let drawn = world
         .get_resource::<Water>()

@@ -10,8 +10,6 @@ use gltf::{
 
 use crate::{ImportError, ImportOptions, ImportedFile, unsupported};
 
-/// Static models bake node transforms into their vertices; models with
-/// animations or skins keep their nodes.
 pub(crate) fn import(
     document: &gltf::Document,
     binary: &[u8],
@@ -79,10 +77,6 @@ pub(crate) fn import(
     Ok(())
 }
 
-/// A primitive's entity, mesh and mesh file, its vertices transformed by
-/// `matrix`; with `skinned`, carrying the primitive's joints and weights.
-/// Dense opaque primitives without extra streams become virtual meshes
-/// as `options` say.
 #[expect(clippy::too_many_arguments, reason = "a primitive and the import")]
 fn import_primitive(
     output: &SceneDocument,
@@ -129,8 +123,6 @@ fn import_primitive(
     }
     let object_id = format!("{id}.node{}.p{}", node.index(), primitive.index());
     let mesh_id = format!("{object_id}.mesh");
-    // Vertex colors, second coordinates, joints and weights
-    // ride in an EMB2 buffer's optional streams.
     let colors: Option<Vec<[f32; 4]>> = vertices.iter().map(|vertex| vertex.color).collect();
     let uv1: Option<Vec<[f32; 2]>> = vertices.iter().map(|vertex| vertex.uv1).collect();
     let joints: Option<Vec<[u16; 4]>> = vertices.iter().map(|vertex| vertex.joints).collect();
@@ -162,8 +154,6 @@ fn import_primitive(
         };
         (file, source)
     } else {
-        // Its levels of detail, made here, offline: meshes with joints,
-        // which move their vertices, have none.
         let lods = joints
             .is_none()
             .then(|| {
@@ -215,8 +205,6 @@ fn import_primitive(
     Ok((object, mesh, file))
 }
 
-/// Whether `material` draws opaque: neither alpha-tested (virtual shadows
-/// cast whole clusters) nor blended, see-through or transmissive.
 fn opaque(material: &SceneMaterial) -> bool {
     material
         .alpha_mode
@@ -234,9 +222,6 @@ fn node_name(node: &gltf::Node<'_>, fallback: &str) -> String {
         .to_owned()
 }
 
-/// Animated and skinned models: one entity per node (`ID.nodeN`) with its
-/// local transform, below one root (`ID.root`) that plays the first
-/// animation; primitives are children (`ID.nodeN.pM`) in their node's space.
 fn hierarchy(
     document: &gltf::Document,
     binary: &[u8],
@@ -270,7 +255,6 @@ fn hierarchy(
         });
         if let Some(mesh) = node.mesh() {
             for primitive in mesh.primitives() {
-                // Skinned vertices stay in bind space: joints place them.
                 let (mut object, mesh, file) = import_primitive(
                     output,
                     binary,
@@ -312,8 +296,6 @@ fn hierarchy(
     Ok(())
 }
 
-/// A node's local transform as scene TRS: rotations as XYZ Euler degrees,
-/// scales positive (mirrored nodes are unsupported in hierarchies).
 fn local_transform(node: &gltf::Node<'_>, path: &str) -> Result<SceneTransform, ImportError> {
     let (translation, rotation, scale) = node.transform().decomposed();
     let rotation = Quat::from_array(rotation);
@@ -333,7 +315,6 @@ fn local_transform(node: &gltf::Node<'_>, path: &str) -> Result<SceneTransform, 
             "animated and skinned models need node scales between 0.0001 and 10000; mirrored nodes are unsupported",
         ));
     }
-    // A matrix must be exactly a rotation, scale and translation.
     let original = Mat4::from_cols_array_2d(&node.transform().matrix());
     let rebuilt = Mat4::from_scale_rotation_translation(scale, rotation, translation);
     let tolerance = 0.0001
@@ -384,10 +365,6 @@ fn primitive_data(
         let dimensions = match semantic {
             Semantic::Positions | Semantic::Normals => Dimensions::Vec3,
             Semantic::TexCoords(0) => Dimensions::Vec2,
-            // Normal maps derive their tangent frames; maps
-            // read TEXCOORD_0 or TEXCOORD_1, and base colors COLOR_0,
-            // skins JOINTS_0 and WEIGHTS_0,
-            // whose formats the reader converts.
             Semantic::Tangents
             | Semantic::TexCoords(_)
             | Semantic::Colors(_)
@@ -416,7 +393,6 @@ fn primitive_data(
             "POSITION is required",
         )
     })?;
-    // Without normals, glTF asks for flat ones.
     let normals = primitive.get(&Semantic::Normals);
     let texcoords = primitive.get(&Semantic::TexCoords(0));
     if normals
@@ -438,7 +414,6 @@ fn primitive_data(
             "textured primitives require TEXCOORD_0",
         ));
     }
-    // Unindexed primitives draw their vertices in order.
     if let Some(accessor) = primitive.indices() {
         if accessor.dimensions() != Dimensions::Scalar
             || !matches!(
@@ -491,7 +466,6 @@ fn primitive_data(
     let color_data: Option<Vec<[f32; 4]>> = reader
         .read_colors(0)
         .map(|colors| colors.into_rgba_f32().collect());
-    // A skin's primitives carry both; without a skin glTF draws them rigid.
     let skin_data = if skinned {
         match (reader.read_joints(0), reader.read_weights(0)) {
             (Some(joints), Some(weights)) => Some((
@@ -551,7 +525,6 @@ fn primitive_data(
             "triangle index is outside the vertex array",
         ));
     }
-    // Flat normals give each triangle its own three vertices.
     let (sources, local_normals): (Vec<u32>, Vec<Vec3>) = match &normal_data {
         Some(normals) => ((0..position_data.len() as u32).collect(), normals.clone()),
         None => {
@@ -560,7 +533,6 @@ fn primitive_data(
             for triangle in indices.as_chunks::<3>().0 {
                 let [a, b, c] = triangle.map(|index| position_data[index as usize]);
                 let normal = (b - a).cross(c - a);
-                // Degenerate triangles cover no pixels; any normal is valid.
                 let normal = if normal.length_squared() > 0.0 {
                     normal
                 } else {

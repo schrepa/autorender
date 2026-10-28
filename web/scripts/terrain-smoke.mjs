@@ -1,16 +1,3 @@
-/**
- * The terrain fixture streams, draws, answers queries and collides.
- *
- * Its tiles stream and draw with their placed objects, impostors and
- * shadows; it inspects as authored; its surroundings fill the view past its
- * edges; its erosion bake, roads, bridge, tunnel and routes read back;
- * height queries, a tile budget, collision against rendering, the settings
- * section, speed-aware detail and tile memory hold;
- * terrain's debug views, the sky visibility map and freezing work; edits,
- * walks and navigation agents cross it and authored objects stand on it;
- * and a place a game names prefetches its tiles. The fixture and what the
- * terrain smokes share: terrain-fixture.mjs.
- */
 // @ts-check
 import assert from "node:assert/strict";
 import { differentPixels } from "./harness.mjs";
@@ -19,9 +6,6 @@ import { fast, fixture, openTerrain, overview, terrain } from "./terrain-fixture
 const { page, errors, command, scene, settled, close, settle, capture, rendersUntil, heights, inspectTerrains } = await openTerrain("terrain");
 const checks = [];
 
-/** Renders until the subdivision's leaves, read back a few frames late,
- * have held for sixteen frames (it splits or merges a level every other
- * frame); returns that frame's stats. */
 async function subdivided() {
   let last = -1;
   let held = 0;
@@ -34,8 +18,6 @@ async function subdivided() {
 
 try {
   assert.ok(settled.terrain.leaves > 0 && settled.terrain.triangles > 0, "terrain draws");
-  // The ground casts into the shadow clipmap's tiles as they draw, which
-  // finer texels make every one of again.
   const shadows = (await command("inspect", { component: "Shadows" })).result.value;
   await command("environment", { shadows: { ...shadows, finest_texel: shadows.finest_texel / 2 } });
   const cast = await rendersUntil(rendering => rendering.terrain.shadow_patches > 0, "terrain casts shadows");
@@ -44,11 +26,8 @@ try {
   assert.equal(settled.terrain.dropped_tiles, 0);
   assert.equal(settled.terrain.dropped_materials, 0);
   assert.ok(settled.terrain.placed_objects > 0, `crates stand on the meadow: ${settled.terrain.placed_objects}`);
-  // The pinned tiles stand a share of them everywhere.
   assert.ok(settled.terrain.placed_far_objects > 0 && settled.terrain.placed_far_objects < settled.terrain.placed_objects,
     `far crates: ${settled.terrain.placed_far_objects} of ${settled.terrain.placed_objects}`);
-  // GPU-presented frames supply the balls' impostor, from its record or
-  // baked, which far balls draw and cast as cards.
   let presented;
   for (let frame = 0; frame < 60; frame++) {
     presented = (await command("present", { alpha: 0, gpu: true })).result.rendering;
@@ -58,7 +37,6 @@ try {
   assert.equal(presented.level_of_detail.dropped_impostors, 0);
   checks.push({ check: "streams and draws", tiles: settled.terrain.tiles, leaves: settled.terrain.leaves, triangles: settled.terrain.triangles, shadow_patches: cast.terrain.shadow_patches, placed_impostors: presented.terrain.placed_impostors, placed_far: settled.terrain.placed_far_objects });
 
-  // Discovery and inspection.
   const listing = await command("describe");
   for (const name of ["Terrain", "Terrains", "TerrainSettings"]) {
     assert.ok(listing.result.types.some(type => type.name === name), `describe lists ${name}`);
@@ -75,13 +53,9 @@ try {
   assert.equal(view.terrain.layers[9].heightmap.uri, "terrain-smoke/dome.r16");
   assert.deepEqual(view.extent, [1024, 1024]);
   assert.ok(view.resident_tiles_by_level.reduce((a, b) => a + b, 0) > 0);
-  // Each level's largest measured difference from the next coarser one,
-  // and ranges growing level by level.
   assert.ok(view.level_errors.slice(0, -1).every(error => error > 0), `measured ${view.level_errors}`);
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
   assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow", "gravel"]);
-  // Depth: the meters a material's heights span between its stones reads
-  // back as authored, and its relief's steps take a range.
   assert.ok(Math.abs(view.terrain.surface.materials[3].depth - 0.1) < 1e-6, `depth reads back: ${view.terrain.surface.materials[3].depth}`);
   const stepless = await command("environment", { terrain: { relief_steps: 1 } }, false);
   assert.equal(stepless.error.path, "$.terrain.relief_steps");
@@ -91,10 +65,6 @@ try {
   assert.deepEqual(view.terrain.surface.placements.map(layer => layer.id), ["crates"]);
   assert.deepEqual(view.terrain.surface.placements[0].far, { level: 2 });
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
-  // Surroundings: ground generated past the terrain's edges
-  // from its layers, four meters a sample, meets its edges where both read
-  // the same ground and fills the view from on high; queries past the
-  // edges read it, it places nothing, and settings turn it off.
   {
     const around = view.surroundings;
     assert.ok(around && around.reach.every(reach => reach >= 3000) && around.spacing === 4 && around.resident_tiles > 0,
@@ -131,15 +101,11 @@ try {
     await settle();
     checks.push({ check: "surroundings", reach: around.reach, tiles: status.surroundings_tiles, pixels: filled.changed });
   }
-  // The erosion bake ran its rounds over the same samples
-  // first, wearing ground away.
   const worn = view.erosion;
   assert.equal(worn.baking, false, "erosion is done once tiles load");
   assert.equal(worn.samples, 513 * 513, `erosion reads its level: ${JSON.stringify(worn)}`);
   assert.ok(worn.rounds === 6 && worn.deepest > 0, `erosion wears ground away: ${JSON.stringify(worn)}`);
   checks.push({ check: "erosion", rounds: worn.rounds, deepest: worn.deepest, highest: worn.highest });
-  // The path's bake profiled the ground along its line; the
-  // road lies level across, and queries report how far its edge is.
   const [road] = view.paths;
   const line = terrain.layers[4].path.points;
   const length = Math.hypot(150, 40) + Math.hypot(150, 110) + Math.hypot(50, 90);
@@ -160,7 +126,6 @@ try {
   let tilt = 0, level = 0;
   for (let i = 0; i < sections.length; i += 3) {
     const [center, left, right] = sections.slice(i, i + 3);
-    // Bridges carry the road over the hills' streams.
     if (center.path === null) continue;
     assert.ok(Math.abs(center.path + 3) < 0.05, `the centerline lies 3 m inside the road's edges: ${JSON.stringify(center)}`);
     tilt = Math.max(tilt, Math.abs(left.height - right.height));
@@ -170,9 +135,6 @@ try {
   const [away] = await heights([[400, -400]]);
   assert.equal(away.path, null, "far from roads, queries report none");
   checks.push({ check: "path", length: road.length, samples: road.samples, steepest: road.steepest, cut: road.deepest_cut, fill: road.highest_fill, tilt });
-  // Where the road would fill over the trench it bridges:
-  // the ground under the deck stays a trench, which is no road, and rays
-  // land on the deck above it.
   assert.ok(road.bridges >= 1 && road.bridged > 15, `the road bridges the trench: ${JSON.stringify(road)}`);
   assert.equal((await command("inspect", { component: "Terrains" })).result.value.bridges, view.paths.reduce((sum, path) => sum + path.bridges, 0));
   const trench = [430 - 512, 96 - 512];
@@ -181,16 +143,11 @@ try {
   const landing = (await command("raycast", { origin: [trench[0], 300, trench[1]], direction: [0, -1, 0], max_distance: 600 })).result.hit;
   assert.ok(landing?.placed?.layer === 65535 && landing.point[1] > floor.height + 5, `rays land on the deck: ${JSON.stringify(landing)} over ${floor.height}`);
   checks.push({ check: "bridge", bridged: road.bridged, deck: landing.point[1], floor: floor.height });
-  // The straight road bores through the mound: no road on the
-  // ground above it, which rays land on, and the ground opens at its
-  // portals.
   const bore = view.paths[1];
   assert.ok(bore && bore.layer === 6 && bore.tunnels === 1 && bore.tunneled > 40, `the road tunnels the mound: ${JSON.stringify(bore)}`);
   assert.equal((await command("inspect", { component: "Terrains" })).result.value.tunnels, 1);
   const [mound] = await heights([[750 - 512, 200 - 512]]);
   assert.ok(mound.path === null && !mound.hole, `above the tunnel the ground is no road: ${JSON.stringify(mound)}`);
-  // Rays from above land on the mound where its collision tiles are
-  // resident, and on the tunnel's floor, well below it, where they are not.
   const top = (await command("raycast", { origin: [750 - 512, 400, 200 - 512], direction: [0, -1, 0], max_distance: 600 })).result.hit;
   const landed = top?.placed ? top.placed.layer === 65535 && top.point[1] < mound.height - 10 : Math.abs(top?.point[1] - mound.height) < 0.05;
   assert.ok(landed, `rays land on the mound or the floor under it: ${JSON.stringify(top)} under ${mound.height}`);
@@ -199,7 +156,6 @@ try {
   const portals = (await heights(bored)).filter(sample => sample?.hole).length;
   assert.ok(portals > 0, "the ground opens at its portals");
   checks.push({ check: "tunnel", tunneled: bore.tunneled, portals, mound: mound.height });
-  // Routes keep within their grade between their ends.
   const routed = (await command("terrain_route", { from: [-400, 100], to: [300, -250], max_grade: 0.2 })).result;
   assert.equal(routed.terrain, "ground");
   const route = routed.route;
@@ -213,7 +169,6 @@ try {
   assert.equal(unrouted.error.code, "out_of_range");
   checks.push({ check: "route", points: route.points.length, length: route.length, steepest: route.steepest });
 
-  // Heights: the plateau is flat at 30 m, the hole is a hole, outside is null.
   const [plateau, hole, outside] = await heights([[0, 0], [48, 0], [5000, 5000]]);
   assert.equal(plateau.terrain, "ground");
   assert.ok(Math.abs(plateau.height - 30) < 1e-3, `plateau height ${plateau.height}`);
@@ -223,12 +178,10 @@ try {
   assert.equal(outside, null);
   checks.push({ check: "height queries", plateau: plateau.height });
 
-  // The imported heightmap's peak, at one of its samples, is exact.
   const [peak] = await heights([[252, 252]]);
   assert.ok(Math.abs(peak.height - 200) < 1e-3, `heightmap peak ${peak.height}`);
   checks.push({ check: "imported heightmap", peak: peak.height });
 
-  // A tile budget keeps residency within it and reports what it drops.
   const budget = await command("environment", { terrain: { ...fast, max_tiles: 3 } });
   assert.ok(budget.result.rendering.terrain.tiles <= 3, `${budget.result.rendering.terrain.tiles} tiles under a budget of 3`);
   const budgeted = (await command("render")).result.rendering;
@@ -237,7 +190,6 @@ try {
   await settle();
   checks.push({ check: "tile budget", resident: budgeted.terrain.tiles, dropped: budgeted.terrain.dropped_tiles });
 
-  // Collision: rays hit the terrain entity where queries say the ground is.
   const ray = await command("raycast", { origin: [10, 200, -7], direction: [0, -1, 0], max_distance: 400 });
   const [under] = await heights([[10, -7]]);
   assert.equal(ray.result.hit.entity.id, "ground");
@@ -247,17 +199,12 @@ try {
   const sweep = (await command("terrain_sweep", { center: [0, 0], half_extent: 120, samples: 24 })).result;
   assert.ok(sweep.collision.compared > 100, `sweep compared ${sweep.collision.compared}`);
   assert.ok(sweep.collision.worst.max_difference < 5e-3, `collision differs by ${sweep.collision.worst.max_difference}`);
-  // Placed crates and balls collide: some rays meet them
-  // above the ground, which still compares beneath them.
   assert.ok(ray.result.snapshot.placed_colliders > 0, `placed colliders: ${ray.result.snapshot.placed_colliders}`);
   assert.ok(sweep.collision.placed_first > 0, `rays meeting placed objects first: ${sweep.collision.placed_first}`);
   assert.ok(sweep.layers.compared > 100);
   assert.ok(sweep.layers.worst.max_difference < 5e-3, `layers differ by ${sweep.layers.worst.max_difference}`);
   checks.push({ check: "render versus collision", compared: sweep.collision.compared, worst: sweep.collision.worst.max_difference, layers: sweep.layers.worst.max_difference, placed_colliders: ray.result.snapshot.placed_colliders, placed_first: sweep.collision.placed_first });
 
-  // The settings section: finer level of detail reaches further, and a
-  // smaller subdivision error draws more triangles once the subdivision
-  // settles; invalid values are refused; disabled terrain draws nothing.
   const coarse = await subdivided();
   const fine = await command("environment", { terrain: { ...fast, pixel_error: 2, subdivision_error: 0.5 } });
   await settle();
@@ -279,10 +226,6 @@ try {
   await settle();
   checks.push({ check: "settings section", fewer: coarse.terrain.triangles, more: finer.terrain.triangles, terrainPixels: shown.changed });
 
-  // Speed-aware detail: while the camera moves fast the
-  // finest levels' tiles in view wait, and those out of view until it
-  // settles; then they load. Collision's tiles never wait, so collision is
-  // off here.
   const moving = { ...fast, collision_radius: 0, motion_detail: { speed: 1, fastest: 2, levels: 8, settle: 0.25 } };
   await command("environment", { terrain: moving });
   let waited = 0;
@@ -305,10 +248,6 @@ try {
   await settle();
   checks.push({ check: "motion detail", waited });
 
-  // Tiles the view leaves stay in memory and return at once
-  // when it comes back. Memory starts empty, so the tiles under the view
-  // after the move load as records then, and hold the heights the layers
-  // give.
   await command("environment", { terrain: { ...fast, cache_bytes: 1 } });
   await command("render");
   await command("environment", { terrain: fast });
@@ -322,7 +261,6 @@ try {
   await settle();
   const back = await inspectTerrains();
   assert.ok(back.restored_tiles > home.restored_tiles, `tiles return from memory: ${JSON.stringify(back)}`);
-  // A budget of a byte empties memory.
   await command("environment", { terrain: { ...fast, cache_bytes: 1 } });
   await command("render");
   const emptied = await inspectTerrains();
@@ -331,9 +269,6 @@ try {
   await settle();
   checks.push({ check: "memory", restored: back.restored_tiles });
 
-  // Terrain's development views are debug views and change pixels; the
-  // terrain control's freezing keeps the subdivision cut for the frozen eye
-  // while the camera moves away.
   const baseline = await capture("view-shaded");
   const levels = await command("environment", { debug_view: { view: "levels" } });
   assert.deepEqual(levels.result.environment_changed, ["debug_view"]);
@@ -341,19 +276,15 @@ try {
   assert.ok((await differentPixels(page, [baseline, levelView])).changed > 10_000, "the levels view differs");
   await command("environment", { debug_view: { view: "tiles" } });
   await capture("view-tiles");
-  // Each surface material in its own color.
   await command("environment", { debug_view: { view: "materials" } });
   const materialView = await capture("view-materials");
   assert.ok((await differentPixels(page, [baseline, materialView])).changed > 10_000, "the materials view differs");
-  // The sky visibility map arrives with each terrain's lighting once
-  // the pinned level is resident; its view shows it unlit.
   let sky;
   for (let frame = 0; frame < 400; frame++) {
     sky = (await command("render")).result.rendering;
     if (sky.terrain.sky_maps === 2) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  // One for the terrain and one for its surroundings.
   assert.equal(sky.terrain.sky_maps, 2, `the sky maps arrive: ${JSON.stringify(sky)}`);
   await command("environment", { debug_view: { view: "sky" } });
   const skyView = await capture("view-sky");
@@ -362,7 +293,6 @@ try {
   await command("environment", { debug_view: { view: "off" } });
   const frozen = await command("terrain", { freeze: true });
   assert.ok(Array.isArray(frozen.result.frozen_at));
-  // The control's state inspects.
   assert.deepEqual((await command("inspect", { component: "TerrainDebug" })).result.value, { freeze: frozen.result.frozen_at });
   await command("camera", { ...overview, position: [0, 900, 1400] });
   const afar = await subdivided();
@@ -374,14 +304,10 @@ try {
   await settle();
   checks.push({ check: "terrain control", frozenLeaves: afar.terrain.leaves, unfrozenLeaves: moved.terrain.leaves });
 
-  // Edits stand over a terrain's layers and bakes: the
-  // ground moves where one reaches once its tiles regenerate, its id
-  // repeated leaves it alone, undo takes it away and redo puts it back.
   {
     const spot = [-200, 150];
     const ground = async () => (await heights([spot]))[0].height;
     const until = async (wanted, what) => {
-      // Workers regenerate the tiles under it.
       for (let frame = 0; frame < 400; frame++) {
         const height = await ground();
         if (Math.abs(height - wanted) < 0.05) return height;
@@ -408,9 +334,6 @@ try {
     await until(authored, "the fixture is left as authored");
     checks.push({ check: "edits", raised: risen - authored, change: raised.largest_change });
   }
-  // A river drawn live is given to the terrain's hydrology as authored
-  // rivers are: it applies once under its ID, the inspector lists it to
-  // save, and drawing no points under its ID takes it away.
   {
     const stream = { id: "smoke-river", points: [[-260, 120], [-200, 150], [-140, 190]], width: [3], discharge: [2] };
     const drawn = (await command("terrain_river", stream)).result;
@@ -422,11 +345,6 @@ try {
     assert.ok(taken.applied && taken.rivers === 0, `no points take the river away: ${JSON.stringify(taken)}`);
     checks.push({ check: "drawn rivers", drawn: drawn.rivers, taken: taken.rivers });
   }
-  // Walks cross ground an agent stands on: around a hole
-  // cut across the straight line, never into it, and longer than the
-  // straight line; options out of range are refused. A walk's search
-  // reads its tiles' portals and records as the page's jobs make them,
-  // and says it goes on until they are back.
   {
     const [start, end] = [[-300, -250], [-100, -250]];
     await command("terrain_edit", { id: "smoke-pit", center: [-200, -250], radius: 18, change: "hole" });
@@ -448,19 +366,11 @@ try {
     assert.equal((await command("terrain_undo", {})).result.undone, "smoke-pit");
     checks.push({ check: "navigation", length: walked.length, straight, points: walked.points.length, searched: walked.searched });
   }
-  // Navigation agents: sent somewhere, an agent's walk is
-  // searched over ticks, then it walks there on the ground and arrives; a
-  // destination off the terrain is unreachable; settings out of range are
-  // refused.
   {
-    // North of the channel the hydrology bake found across the plateau.
     const goal = [-25, 12];
     const sent = await command("nav_go", { entity: "hiker", destination: goal });
     assert.deepEqual(sent.result.destination, goal);
     let agent;
-    // Its walk is searched over ticks from its tiles' portals and records,
-    // which the page's jobs make in the page's time, which paused steps
-    // outrun.
     for (let attempt = 0; attempt < 400; attempt++) {
       await command("step", { ticks: 1 });
       agent = (await command("inspect", { entity: "hiker", component: "NavAgent" })).result.entity.components.NavAgent;
@@ -488,13 +398,9 @@ try {
     await command("nav_go", { entity: "hiker", destination: null });
     checks.push({ check: "agents", length: agent.length, searched: agent.searched, at });
   }
-  // Authored objects stand where authors put them, on the
-  // ground drawn there, and collide in their own layer.
   {
     const [ground] = await heights([[18, -12]]);
     const top = (await command("raycast", { origin: [18, ground.height + 50, -12], direction: [0, -1, 0], max_distance: 100 })).result.hit;
-    // The box's middle stands on the ground, as the layers' crates' do: its
-    // top half the scale above it.
     assert.ok(top?.placed?.layer === 65534 && Math.abs(top.point[1] - (ground.height + 1.5)) < 0.3,
       `the authored crate stands on the plateau: ${JSON.stringify(top)} over ${ground.height}`);
     const view = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
@@ -502,8 +408,6 @@ try {
     checks.push({ check: "authored placements", top: top.point[1], ground: ground.height });
   }
 
-  // While the view wants nothing, the terrain a camera at a place a game
-  // names wants loads into memory, and the camera sent there finds it.
   const spawnPoint = [380, 90, 380];
   const named = structuredClone(fixture);
   named.entities.push({ id: "spawn-point", prefetch: {}, transform: { translation: spawnPoint } });

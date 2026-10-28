@@ -19,17 +19,9 @@ pub(crate) struct ExpandedScene {
     pub transforms: Vec<Transform>,
 }
 
-/// A document's prefab definitions by ID, with their source indices.
 type Prefabs<'a> = BTreeMap<&'a str, (usize, &'a ScenePrefab)>;
 
 impl SceneDocument {
-    /// Returns validated entities with prefab definitions expanded once.
-    ///
-    /// Instance roots retain their authored ID. Template entity IDs become
-    /// `instance.local`; local roots attach to the instance root and local
-    /// parents become qualified IDs. Prefab references are cleared in this flat
-    /// result. Runtime setup should normally use [`crate::SceneInstance::entities`]
-    /// and [`crate::SceneEntity`] metadata instead of expanding a second time.
     pub fn expanded_entities(&self) -> Result<Vec<SceneObject>, SceneError> {
         Ok(self
             .prepare(None)?
@@ -39,9 +31,6 @@ impl SceneDocument {
             .collect())
     }
 
-    /// The document's entities and its streamed entities,
-    /// each list expanded and validated on its own: parents stay within
-    /// a list, and expanded IDs are unique across both.
     pub(crate) fn expand(
         &self,
         mesh_ids: &BTreeSet<&str>,
@@ -71,8 +60,6 @@ impl SceneDocument {
         Ok([entities, streamed])
     }
 
-    /// Validates prefab definitions: their IDs, entities and local graphs.
-    /// Returns their IDs and the definitions by ID.
     fn validate_prefabs(
         &self,
         mesh_ids: &BTreeSet<&str>,
@@ -83,8 +70,6 @@ impl SceneDocument {
             "$.prefabs",
         )?;
         for (index, prefab) in self.prefabs.iter().enumerate() {
-            // Its own rules: its ID's, checked with the others' above, and
-            // its entities' count.
             prefab.validate().map_err(|invalid| {
                 crate::error::broken_rule(
                     ErrorCode::InvalidValue,
@@ -135,8 +120,6 @@ impl SceneDocument {
     }
 }
 
-/// `list` (at authored path `list_path`) with prefab placements expanded,
-/// validated against the document's mesh, material and prefab IDs.
 fn expand_list(
     list: &[SceneObject],
     list_path: &str,
@@ -196,7 +179,6 @@ fn expand_list(
                 format!("expanded entity ID '{}' is already used", entity.source.id),
             ));
         }
-        // Components only roots author.
         entity.source.check_placement(&entity.path)?;
     }
     validate_graph(
@@ -245,7 +227,6 @@ fn validate_object(
             &format!("{path}.decal.material"),
         )?;
     }
-    // Every field keeps its rule, each component its own.
     entity
         .validate()
         .map_err(|invalid| crate::error::broken_rule(ErrorCode::InvalidValue, path, invalid))?;
@@ -274,7 +255,6 @@ fn validate_object(
             ));
         }
     }
-    // Its transform's rules are checked with its own.
     Ok(entity.transform.transform())
 }
 
@@ -306,8 +286,6 @@ fn validate_graph<'a>(
                 .transpose()?,
         );
     }
-    // Every walk is bounded by 64 parent edges, regardless of authoring order.
-    // Keep full matrices rather than decomposing a sheared parent/child product.
     let mut worlds: Vec<Option<Mat4>> = vec![None; entries.len()];
     let mut depths = vec![0usize; entries.len()];
     let mut path = Vec::with_capacity(MAX_DEPTH + 1);

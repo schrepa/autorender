@@ -1,13 +1,3 @@
-//! The arena of virtual geometry: resident virtual meshes'
-//! hierarchies, groups and clusters in one arena with absolute indices,
-//! rebased once at upload, and the page pool their pages stream into
-//! (`virtual_streaming`). Each page lives in a slot found through the
-//! pool's slot table, and selection draws a group only while it is
-//! resident. Pages the read-back feedback asks for load from the meshes'
-//! words or are fetched from their files by byte range, coarser groups
-//! first, and pages unused for a while make room under a budget or the
-//! device's limits.
-
 #![expect(
     clippy::expect_used,
     reason = "pages are placed into an arena that exists"
@@ -24,8 +14,6 @@ use crate::gpu_calls::Queue;
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::virtual_streaming::{MeshLinks, PageState, Placement, Residency};
 
-/// A fetched byte range of a mesh's file: pages `first..first + count`,
-/// starting at byte `start`, or the failure; for arena `generation`.
 struct Arrival {
     generation: u64,
     mesh: u32,
@@ -51,39 +39,23 @@ pub(super) struct ArenaBuffers {
 pub(super) struct VirtualArena {
     resident: Vec<Resident>,
     index: HashMap<MeshHandle, u32>,
-    // Resident meshes changed since the last upload.
     dirty: bool,
     buffers: Option<ArenaBuffers>,
-    // Advances whenever arena buffers are replaced.
     generation: u64,
-    // Streaming: the resident pages and groups, each mesh's first global
-    // group and page, the pool's slots, the words of its slot table (and of
-    // the groups buffer before the residency bits), fetched ranges that
-    // arrived, the frame count and this frame's dropped loads.
     residency: Residency,
-    // Advances with every arena rebuild (not pool growth): fetches of an
-    // earlier one are ignored.
     layout_generation: u64,
     bases: Vec<(u32, u32)>,
-    // Each arena mesh's handle, in arena order.
     layout: Vec<MeshHandle>,
     pool_slots: usize,
     table_words: u64,
     bits_base: u64,
     inbox: Rc<RefCell<Vec<Arrival>>>,
     frame: u64,
-    // The first frame of the current layout: earlier frames' read-back
-    // groups are those of an older one.
     layout_frame: u64,
-    // Pages the last read-back frame wanted and lacked, and those of them
-    // (with arrivals since) that found no room.
     missing_pages: u32,
     dropped_pages: u32,
-    // Page reads that failed or held no valid page since streaming started,
-    // and why the latest did.
     failed_pages: u32,
     page_failure: Option<String>,
-    // Nodes on the longest root-to-leaf path of any resident mesh.
     depth: u32,
 }
 
@@ -104,8 +76,6 @@ fn storage_init(device: &wgpu::Device, label: &str, words: &[u32]) -> wgpu::Buff
     })
 }
 
-/// The page pool: a slot table of `table_words` words, then `slots` slots
-/// of PAGE_WORDS words.
 fn pool(device: &wgpu::Device, table_words: u64, slots: usize) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("engine/virtual-pages"),
@@ -117,7 +87,6 @@ fn pool(device: &wgpu::Device, table_words: u64, slots: usize) -> wgpu::Buffer {
     })
 }
 
-/// Fetches bytes `range` of `url` into `inbox` as `arrival`.
 fn fetch(
     url: &str,
     range: std::ops::Range<u64>,
@@ -155,42 +124,30 @@ impl VirtualArena {
         }
     }
 
-    /// The arena's buffers, once uploaded.
     pub(super) fn buffers(&self) -> Option<&ArenaBuffers> {
         self.buffers.as_ref()
     }
 
-    /// Advances whenever arena buffers are replaced.
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// Nodes on the longest root-to-leaf path of any resident mesh: the
-    /// traversal's levels.
     pub(super) fn depth(&self) -> u32 {
         self.depth
     }
 
-    /// Where the groups' residency bits start in the groups buffer, in
-    /// words.
     pub(super) fn bits_base(&self) -> u64 {
         self.bits_base
     }
 
-    /// Groups of every resident mesh: the bits of each feedback set.
     pub(super) fn group_count(&self) -> usize {
         self.residency.group_count()
     }
 
-    /// Frames streamed so far, and the first of the current layout:
-    /// feedback of earlier frames names an older one's groups.
     pub(super) fn frames(&self) -> (u64, u64) {
         (self.frame, self.layout_frame)
     }
 
-    /// This frame's resident and loading pages, the pages the last
-    /// read-back frame wanted and lacked and those that found no room, and
-    /// the page reads that failed since streaming started.
     pub(super) fn pages(&self) -> [u32; 5] {
         [
             self.residency.resident_pages() as u32,
@@ -201,7 +158,6 @@ impl VirtualArena {
         ]
     }
 
-    /// Why the latest failed page read did, if any failed.
     pub(super) fn page_failure(&self) -> Option<&str> {
         self.page_failure.as_deref()
     }
@@ -216,7 +172,6 @@ impl VirtualArena {
         })
     }
 
-    /// Makes `geometry` resident as mesh `handle`'s, once.
     pub(super) fn insert(&mut self, handle: MeshHandle, geometry: &Arc<VirtualMesh>) {
         if !self.index.contains_key(&handle)
             && !self
@@ -232,7 +187,6 @@ impl VirtualArena {
         }
     }
 
-    /// Releases every resident mesh `keep` rejects.
     pub(super) fn retain(&mut self, keep: impl Fn(MeshHandle) -> bool) {
         let before = self.resident.len();
         self.resident.retain(|resident| keep(resident.handle));
@@ -241,22 +195,16 @@ impl VirtualArena {
         }
     }
 
-    /// The arena index of mesh `handle`'s geometry, once uploaded.
     pub(super) fn mesh_index(&self, handle: MeshHandle) -> Option<u32> {
         self.index.get(&handle).copied()
     }
 
-    /// Whether resident mesh `index` is closed (`VirtualMesh::closed`).
     pub(super) fn closed(&self, index: u32) -> bool {
         self.resident
             .get(index as usize)
             .is_some_and(|resident| resident.geometry.closed())
     }
 
-    /// Rebuilds the arena when resident meshes changed: every record
-    /// rebased to absolute indices, and a new page pool holding the pinned
-    /// pages (and, without `budget`, every page the meshes' words hold).
-    /// Returns whether it rebuilt.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -271,8 +219,6 @@ impl VirtualArena {
             return false;
         }
         self.dirty = false;
-        // The resident pages of the layout being replaced, by mesh and page
-        // in it: meshes that stay keep them in the same slots.
         let kept: Vec<(MeshHandle, u32, u32)> = self
             .residency
             .resident_slots()
@@ -309,7 +255,6 @@ impl VirtualArena {
             self.bases.push((group_base, page_base));
             links.push(MeshLinks::of(geometry));
             let (position_min, position_step, uv_min, uv_step) = geometry.quantization();
-            // The last base is where the pool's slots start.
             meshes.push(MeshRecord {
                 bases: [node_base, group_base, cluster_base, self.table_words as u32],
                 info: [geometry.levels(), geometry.depth(), 0, 0],
@@ -331,7 +276,6 @@ impl VirtualArena {
                 group[5] += cluster_base;
                 groups.extend(group);
             }
-            // Offsets within the page, and the global page.
             for words in geometry.cluster_section().as_chunks::<CLUSTER_WORDS>().0 {
                 let refined = if words[5] == NONE {
                     NONE
@@ -356,7 +300,6 @@ impl VirtualArena {
             page_base += geometry.page_count() as u32;
             self.depth = self.depth.max(geometry.depth());
         }
-        // The groups' residency bits follow their records.
         self.bits_base = groups.len() as u64;
         groups.resize(groups.len() + (groups.len() / GROUP_WORDS).div_ceil(32), 0);
         self.residency.rebuild(&links, &self.bases);
@@ -365,7 +308,6 @@ impl VirtualArena {
             .iter()
             .map(|resident| resident.handle)
             .collect();
-        // The kept pages of meshes that stay, as pages of the new layout.
         let kept: Vec<(u32, u32)> = kept
             .into_iter()
             .filter_map(|(handle, local, slot)| {
@@ -373,8 +315,6 @@ impl VirtualArena {
                 Some((self.bases[mesh as usize].1 + local, slot))
             })
             .collect();
-        // Slots for the pinned pages (every held one without a budget) and
-        // the kept pages where they are, as the device allows.
         let preload = if budget.is_some() {
             self.residency.pinned()
         } else {
@@ -392,8 +332,6 @@ impl VirtualArena {
             .max(1);
         self.residency.add_slots(self.pool_slots);
         let pages = pool(device, self.table_words, self.pool_slots);
-        // The kept pages' words move to the new pool's slots, submitted at
-        // once so later writes land after them.
         if let Some((old, old_table_words, old_slots)) = previous {
             let slots = old_slots.min(self.pool_slots) as u64;
             if slots > 0 {
@@ -439,7 +377,6 @@ impl VirtualArena {
         true
     }
 
-    /// The most pages the pool can hold on this device.
     fn device_slots(&self, device: &wgpu::Device) -> usize {
         let limits = device.limits();
         let bytes = limits
@@ -448,7 +385,6 @@ impl VirtualArena {
         ((bytes / 4).saturating_sub(self.table_words) / PAGE_WORDS as u64) as usize
     }
 
-    /// Loads page `page` (loading) from its mesh's words, or fails it.
     fn load_held(&mut self, device: &wgpu::Device, queue: &Queue, page: u32, limit: usize) {
         let (mesh, local, _) = self.residency.page(page);
         let geometry = Arc::clone(&self.resident[mesh as usize].geometry);
@@ -458,8 +394,6 @@ impl VirtualArena {
         }
     }
 
-    /// Places loading page `page`'s `words` in a slot (growing the pool
-    /// when allowed) and uploads them, or drops the load.
     fn place(
         &mut self,
         device: &wgpu::Device,
@@ -497,8 +431,6 @@ impl VirtualArena {
         }
     }
 
-    /// Replaces the pool with one of `slots` slots holding the same pages.
-    /// The copy is submitted at once, so later writes land after it.
     fn grow_pool(&mut self, device: &wgpu::Device, queue: &Queue, slots: usize) {
         let Some(arena) = self.buffers.as_mut() else {
             return;
@@ -515,8 +447,6 @@ impl VirtualArena {
         self.generation += 1;
     }
 
-    /// Writes the slot table and the groups' residency bits where they
-    /// changed.
     fn write_residency(&mut self, queue: &wgpu::Queue) {
         let Some(arena) = &self.buffers else {
             return;
@@ -533,10 +463,6 @@ impl VirtualArena {
         }
     }
 
-    /// Streams pages for this frame: loads the groups the last read-back
-    /// frame requested (from the meshes' words, or fetched by byte range),
-    /// places fetched pages that arrived, and keeps at most `budget` pages
-    /// resident (the pinned ones always).
     pub(super) fn stream(
         &mut self,
         device: &wgpu::Device,
@@ -563,7 +489,6 @@ impl VirtualArena {
             );
             self.missing_pages = requests.missing as u32;
             self.dropped_pages = requests.dropped as u32;
-            // Fetched ones coalesce into byte ranges of consecutive pages.
             let mut ranges: Vec<(u32, u32, u32)> = Vec::new();
             for page in requests.begun {
                 let (mesh, local, held) = self.residency.page(page);
@@ -648,7 +573,6 @@ impl VirtualArena {
                 match words {
                     Ok(words) => self.place(device, queue, page, &words, limit),
                     Err(reason) => {
-                        // Read again later; the reason stays.
                         self.failed_pages += 1;
                         self.page_failure = Some(reason);
                         self.residency.fail(page, self.frame, 0);
@@ -659,8 +583,6 @@ impl VirtualArena {
         self.write_residency(queue);
     }
 
-    /// The arena buffers vertex shaders read (meshes, clusters, pages) and
-    /// their generation.
     pub(super) fn vertex_buffers(&self) -> Option<([&wgpu::Buffer; 3], u64)> {
         self.buffers.as_ref().map(|arena| {
             (

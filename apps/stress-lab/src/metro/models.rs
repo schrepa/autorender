@@ -1,10 +1,3 @@
-//! Low-poly models of the metro, built at their nominal world size and
-//! centered on their bounds (skinned people stand on their origin). Each
-//! model's texture coordinates suit one family of texture sets: façades
-//! repeat per 8 bays and 8 floors, tiling ground and metal sets repeat in
-//! world units, and atlases (street fixtures, vehicles) map faces into
-//! uniform regions.
-
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
 use engine::prelude::*;
@@ -19,28 +12,22 @@ mod nature;
 mod streets;
 mod vehicles;
 
-/// Width of a façade bay and height of a floor, in world units.
 pub(crate) const BAY: f32 = 1.4;
 pub(crate) const FLOOR: f32 = 1.8;
-/// Façade textures repeat every 8 bays and 8 floors.
 const FACADE: Map = Map::Tile(BAY * 8.0, FLOOR * 8.0);
-/// A wall-colored spot of every façade texture, for roofs and ledges.
 const WALL: Map = Map::patch(0.002, 0.002);
 
-/// Footprints of towers, midrises and houses.
 pub(crate) const TOWER_WIDTH: f32 = 6.4;
 pub(crate) const MID_WIDTH: f32 = 4.8;
 pub(crate) const HOUSE_WIDTH: f32 = 3.2;
 pub(crate) const TOWER_FLOORS: [u32; 5] = [20, 30, 42, 56, 72];
 pub(crate) const MID_FLOORS: [u32; 4] = [4, 7, 11, 16];
 
-/// Region `(col, row)` of a 4 × 4 atlas, inset from its edges.
 const fn cell(col: u32, row: u32) -> Map {
     let (u, v) = (col as f32 * 0.25, row as f32 * 0.25);
     Map::Rect(u + 0.04, v + 0.04, u + 0.21, v + 0.21)
 }
 
-// Street fixture atlas regions (textures::fixture).
 const DARK: Map = cell(0, 0);
 const STEEL: Map = cell(1, 0);
 const CHROME: Map = cell(2, 0);
@@ -55,7 +42,6 @@ const TIMBER: Map = cell(3, 2);
 const PAINTED: Map = cell(1, 3);
 const STONE: Map = cell(2, 3);
 
-// Vehicle atlas regions (textures::vehicle).
 const PAINT: Map = Map::Rect(0.03, 0.03, 0.47, 0.22);
 const WINDOW: Map = cell(2, 0);
 const TRIM: Map = cell(3, 0);
@@ -68,10 +54,6 @@ const SIREN_RED: Map = cell(1, 2);
 const INTERIOR: Map = cell(2, 2);
 const TAXI_SIGN: Map = cell(3, 2);
 
-// Foliage textures: leaves above, bark below a transparent gap. Cards stop
-// short of the bark and trunks start inside it: filtering and coarser mip
-// levels would otherwise draw an opaque bark line along every card's lower
-// edge (and its shadow).
 const CANOPY: Map = Map::Rect(0.0, 0.0, 1.0, 0.78);
 const DENSE: Map = Map::Rect(0.3, 0.25, 0.7, 0.55);
 const TRUNK: Map = Map::Rect(0.0, 0.86, 1.0, 1.0);
@@ -110,10 +92,8 @@ pub(crate) enum Car {
     Police,
 }
 
-/// Every model of the metro.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Model {
-    // Buildings: façade-textured, with second coordinates for grime.
     Tower(Style, u8),
     Midrise(Mid, u8),
     House(u8),
@@ -121,7 +101,6 @@ pub(crate) enum Model {
     Shop,
     Warehouse,
     Shed,
-    // Roofs and tops.
     RoofSlab(u8),
     Gable,
     Hip,
@@ -129,12 +108,10 @@ pub(crate) enum Model {
     Crown,
     Dome,
     Helipad,
-    // Industry.
     Tank,
     Silo,
     Stack,
     Container,
-    // Building details.
     AcUnit,
     WaterTank,
     Antenna,
@@ -155,7 +132,6 @@ pub(crate) enum Model {
     GlassBox(u8),
     DoorCanopy,
     DoorWings,
-    // Streets.
     Road,
     RoadCross,
     Sidewalk,
@@ -185,14 +161,12 @@ pub(crate) enum Model {
     Hedge,
     Manhole,
     StreetSign,
-    // Nature.
     Tree(u8),
     Poplar,
     Pine,
     Palm,
     Bush,
     Rock,
-    // Vehicles and machines.
     Car(Car),
     Bus,
     DoubleDecker,
@@ -223,7 +197,6 @@ pub(crate) enum Model {
     TurbineTower,
     TurbineRotor,
     Beacon,
-    // Infrastructure and landmarks.
     RailDeck,
     RailPillar,
     StationFrame,
@@ -239,14 +212,10 @@ pub(crate) enum Model {
     TvTower,
     ObsPod,
     TowerRing,
-    // Skinned people.
     Person(u8),
 }
 
 impl Model {
-    /// The primitive standing in for this model when a workload keeps fewer
-    /// meshes (`mesh_variety` below 64): eight shared stand-ins, or the
-    /// cube at 1. People keep their skinned mesh.
     pub(crate) fn resolve(self, variety: u32) -> Model {
         use Model::*;
         if variety >= 64 || matches!(self, Person(_)) {
@@ -273,7 +242,6 @@ impl Model {
         }
     }
 
-    /// Whether a sphere collider fits this model better than a box.
     pub(crate) fn round(self) -> bool {
         use Model::*;
         matches!(
@@ -298,8 +266,6 @@ impl Model {
         self.assemble().map(|(mesh, _)| mesh)
     }
 
-    /// The mesh and the build-space point at its origin: pivots of animated
-    /// parts and light positions are given in build space.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"

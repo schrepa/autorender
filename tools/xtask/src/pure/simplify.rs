@@ -1,15 +1,3 @@
-//! The simplify corpus: `engine_lodbuild::simplify`, a Rust port of
-//! meshoptimizer's simplifier, against meshoptimizer itself (vendored and
-//! linked through vgbuild). Over a wavy grid, a grid with a seam and
-//! locked, protected and favored vertices, a sphere, a torus and the garden
-//! prop's primitives (tools/xtask/pure/garden-prop.glb), with every
-//! combination of options, three index targets and two error limits, both
-//! must give the same indices and the same error, bit for bit. Over the
-//! same meshes the levels of detail the cook makes from the port
-//! (`engine_lodbuild`) are observed: each level's triangles and measured
-//! error, and their record's bytes, which must read back as they went in
-//! and suit their mesh.
-
 use std::path::Path;
 
 use engine_core::math::{cos, sin};
@@ -21,29 +9,19 @@ use sha2::{Digest, Sha256};
 
 use super::Observations;
 
-/// The garden prop: two textured primitives of flat-shaded boxes and a
-/// pyramid roof, every face its own vertices.
 pub const GARDEN_PROP: &str = "tools/xtask/pure/garden-prop.glb";
-/// Fractions of a mesh's indices each run targets.
 const TARGETS: [f32; 3] = [0.5, 0.25, 0.05];
-/// Error limits: a hundredth of the extent (or meters, with absolute
-/// errors) and a whole one.
 const LIMITS: [f32; 2] = [0.01, 1.0];
-/// Disagreements listed at most.
 const SHOWN: usize = 6;
 
-/// A mesh the corpus simplifies: positions, triangles, and optionally
-/// weighted attributes and per-vertex flags.
 struct Mesh {
     name: String,
     positions: Vec<[f32; 3]>,
     indices: Vec<u32>,
-    /// Values per vertex, their weights.
     attributes: Option<(Vec<f32>, usize, Vec<f32>)>,
     flags: Option<Vec<u8>>,
 }
 
-/// Each option and meshoptimizer's bit for it.
 fn option_bits(options: SimplifyOptions) -> u32 {
     [
         (options.lock_border, 1 << 0),
@@ -60,7 +38,6 @@ fn option_bits(options: SimplifyOptions) -> u32 {
     .fold(0, |bits, (_, bit)| bits | bit)
 }
 
-/// The options of combination `mask`, bit `n` setting the `n`th option.
 fn options(mask: u32) -> SimplifyOptions {
     let set = |bit: u32| mask & (1 << bit) != 0;
     SimplifyOptions {
@@ -169,12 +146,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     Ok(())
 }
 
-/// Observes `mesh`'s levels of detail as the cook makes them: each level's
-/// triangles and error, and their record's hash; they must read back from
-/// their record as they went in and suit the mesh.
 fn levels(mesh: &Mesh, observed: &mut Observations) -> Result<(), String> {
-    // Normals and texture coordinates where the mesh weighs five values a
-    // vertex, else straight up and nothing.
     let vertices: Vec<MeshVertex> = mesh
         .positions
         .iter()
@@ -220,8 +192,6 @@ fn levels(mesh: &Mesh, observed: &mut Observations) -> Result<(), String> {
     Ok(())
 }
 
-/// Two triangles of each quad of a `columns` by `rows` grid of vertices
-/// whose index is `at(column, row)`.
 fn quads(columns: u32, rows: u32, at: impl Fn(u32, u32) -> u32) -> Vec<u32> {
     let mut indices = Vec::new();
     for row in 0..rows - 1 {
@@ -234,13 +204,10 @@ fn quads(columns: u32, rows: u32, at: impl Fn(u32, u32) -> u32) -> Vec<u32> {
     indices
 }
 
-/// The grid's height at `x`, `z`: gentle waves.
 fn wave(x: f32, z: f32) -> f32 {
     sin(x * 0.35) * cos(z * 0.25) * 0.8
 }
 
-/// A `columns` by `rows` grid of waves, a meter between vertices, without
-/// attributes: meshoptimizer's `meshopt_simplify`.
 fn wavy_grid(columns: u32, rows: u32) -> Mesh {
     let mut positions = Vec::new();
     for row in 0..rows {
@@ -258,13 +225,8 @@ fn wavy_grid(columns: u32, rows: u32) -> Mesh {
     }
 }
 
-/// A `side` by `side` grid of waves whose middle column is two columns of
-/// vertices at the same positions, texture coordinates differing (a seam),
-/// with normals and texture coordinates weighted, its corners locked, its
-/// seam protected and a diagonal of vertices favored.
 fn seamed_grid(side: u32) -> Mesh {
     let seam = side / 2;
-    // Each row: the columns up to the seam, the seam again, the rest.
     let stride = side + 1;
     let (mut positions, mut values, mut flags) = (Vec::new(), Vec::new(), Vec::new());
     for row in 0..side {
@@ -295,8 +257,6 @@ fn seamed_grid(side: u32) -> Mesh {
             flags.push(bits);
         }
     }
-    // Quads left of the seam use its first column; those right of it, the
-    // second.
     let at = |column: u32, row: u32, right: bool| {
         row * stride
             + if column > seam || (column == seam && right) {
@@ -323,9 +283,6 @@ fn seamed_grid(side: u32) -> Mesh {
     }
 }
 
-/// A unit sphere of `segments` around and `rings` from pole to pole, its
-/// seam and poles split by texture coordinates, normals and texture
-/// coordinates weighted.
 fn sphere(segments: u32, rings: u32) -> Mesh {
     let (mut positions, mut values) = (Vec::new(), Vec::new());
     for ring in 0..=rings {
@@ -353,7 +310,6 @@ fn sphere(segments: u32, rings: u32) -> Mesh {
     }
 }
 
-/// A closed torus of `around` by `across` vertices, positions alone.
 fn torus(around: u32, across: u32) -> Mesh {
     let mut positions = Vec::new();
     for i in 0..around {
@@ -375,7 +331,6 @@ fn torus(around: u32, across: u32) -> Mesh {
     }
 }
 
-/// The garden prop's primitives, normals and texture coordinates weighted.
 fn garden_prop(root: &Path) -> Result<Vec<Mesh>, String> {
     let bytes = std::fs::read(root.join(GARDEN_PROP))
         .map_err(|error| format!("cannot read {GARDEN_PROP}: {error}"))?;

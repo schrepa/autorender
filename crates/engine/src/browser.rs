@@ -1,6 +1,3 @@
-//! The page's side of a hosted game: the files a scene references, decoded
-//! by the page, and [`PageHost`](crate::browser::PageHost), a [`GameHost`] with the page's types,
-//! which [`crate::export_game!`] exports.
 use crate::GameHost;
 use crate::game::Game;
 use crate::host::JobOrder;
@@ -8,8 +5,6 @@ use engine_core::{Engine, JobId, JobShare};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-/// Decoded images and buffers of the files a scene references,
-/// filled by the page before the scene loads.
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct SceneFileSet {
@@ -23,15 +18,10 @@ impl SceneFileSet {
         Self::default()
     }
 
-    /// Adds image `uri`, decoded to `width` × `height` RGBA8 sRGB pixels.
     pub fn add_image(&mut self, uri: &str, width: u32, height: u32, pixels: Vec<u8>) {
         self.files.add_image(uri, width, height, pixels);
     }
 
-    /// Adds image `uri` transcoded to block-compressed `format` (`bc7`,
-    /// `etc2` or `astc`): `width` × `height`, its levels
-    /// concatenated in `data` from the base down with their byte lengths in
-    /// `levels`.
     pub fn add_compressed_image(
         &mut self,
         uri: &str,
@@ -47,14 +37,10 @@ impl SceneFileSet {
         Ok(())
     }
 
-    /// Adds buffer `uri`'s bytes.
     pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
         self.files.add_buffer(uri, bytes);
     }
 
-    /// Adds virtual mesh `uri`: its prefix
-    /// ([`virtual_prefix_bytes`] long) and the URL renderers stream its
-    /// other pages from.
     pub fn add_virtual_mesh(&mut self, uri: &str, bytes: Vec<u8>, url: Option<String>) {
         self.files.add_virtual_mesh(uri, bytes, url.as_deref());
     }
@@ -66,9 +52,6 @@ impl SceneFileSet {
     }
 }
 
-/// The files a scene references, loading as the page loads them
-/// ([`crate::host::SceneLoad`]): the page reads what it asks and decodes
-/// each image as it says, then takes the scene's files.
 #[wasm_bindgen(js_name = SceneLoad)]
 pub struct PageSceneLoad {
     load: Option<crate::host::SceneLoad>,
@@ -76,7 +59,6 @@ pub struct PageSceneLoad {
 
 #[wasm_bindgen(js_class = SceneLoad)]
 impl PageSceneLoad {
-    /// The load of the files scene `source` references.
     #[wasm_bindgen(constructor)]
     pub fn new(source: &str) -> Result<PageSceneLoad, JsValue> {
         Ok(Self {
@@ -87,13 +69,10 @@ impl PageSceneLoad {
         })
     }
 
-    /// The reads it asks for since the last call, as `{uri, prefix?}`: a
-    /// file whole, or its first `prefix` bytes.
     pub fn take_reads(&mut self) -> Result<js_sys::Array, JsValue> {
         let out = js_sys::Array::new();
         for read in self.loading()?.take_reads() {
             let object = js_sys::Object::new();
-            // Setting a field of a plain new object cannot fail.
             let _ = js_sys::Reflect::set(&object, &"uri".into(), &read.uri.into());
             if let Some(prefix) = read.prefix {
                 let _ = js_sys::Reflect::set(&object, &"prefix".into(), &(prefix as f64).into());
@@ -103,9 +82,6 @@ impl PageSceneLoad {
         Ok(out)
     }
 
-    /// The page read `bytes` of file `uri`, which streams from `url` where
-    /// it is a streamed file: for an image, who decodes it here (`engine`
-    /// or `transcoder`, as `IMAGE_FORMATS` says).
     pub fn read(
         &mut self,
         uri: &str,
@@ -118,8 +94,6 @@ impl PageSceneLoad {
             .map(|image| image.decoder.name().to_owned()))
     }
 
-    /// Image `uri` decoded to `width` × `height` RGBA8 pixels, rows from
-    /// the top.
     pub fn image(
         &mut self,
         uri: &str,
@@ -136,14 +110,10 @@ impl PageSceneLoad {
         Ok(())
     }
 
-    /// Image `uri`'s `bytes` decoded here with the engine's decoder.
     pub fn decode(&mut self, uri: &str, bytes: &[u8]) -> Result<(), JsValue> {
         Ok(self.loading()?.decode(uri, bytes)?)
     }
 
-    /// Image `uri` transcoded to block-compressed `format` (`bc7`, `etc2`
-    /// or `astc`): `width` × `height`, its levels concatenated in `data`
-    /// from the base down with their byte lengths in `levels`.
     pub fn compressed_image(
         &mut self,
         uri: &str,
@@ -159,7 +129,6 @@ impl PageSceneLoad {
         Ok(())
     }
 
-    /// The scene's files, once every one is held; the load ends.
     pub fn finish(&mut self) -> Result<SceneFileSet, JsValue> {
         let load = self.load.take().ok_or_else(ended)?;
         Ok(SceneFileSet {
@@ -172,7 +141,6 @@ impl PageSceneLoad {
     }
 }
 
-/// A finished load's refusal.
 fn ended() -> JsValue {
     crate::Error::new(
         engine_core::ErrorCode::InvalidRequest,
@@ -182,9 +150,6 @@ fn ended() -> JsValue {
     .into()
 }
 
-/// The texture format `format` names (`bc7`, `etc2` or `astc`) and
-/// `data` split into its levels by their byte lengths `levels`, for image
-/// `uri`.
 fn compressed_levels(
     uri: &str,
     format: &str,
@@ -224,18 +189,11 @@ fn compressed_levels(
     Ok((format, split))
 }
 
-/// Bytes of the prefix of the virtual mesh file whose first
-/// 128 bytes are `header`: what hosts fetch before a scene loads; renderers
-/// stream the rest. `None` when it is not a virtual mesh file of this
-/// engine's version.
 #[wasm_bindgen]
 pub fn virtual_prefix_bytes(header: &[u8]) -> Option<u32> {
     engine_core::VirtualMesh::prefix_bytes(header).map(|bytes| bytes as u32)
 }
 
-/// A hosted game as the page calls it: the game surface's methods whose
-/// types are the page's convert here; the others are [`GameHost`]'s own,
-/// which it dereferences to.
 pub struct PageHost<G: Game> {
     host: GameHost<G>,
 }
@@ -255,8 +213,6 @@ impl<G: Game> std::ops::DerefMut for PageHost<G> {
 }
 
 impl<G: Game> PageHost<G> {
-    /// Starts the renderer of `canvas` and, while the browser compiles its
-    /// pipelines, the engine and game `build` makes.
     pub async fn launch<E: Into<crate::Error>>(
         canvas: HtmlCanvasElement,
         build: impl FnOnce() -> Result<(Engine, G), E>,
@@ -271,8 +227,6 @@ impl<G: Game> PageHost<G> {
         Ok(self.host.frame(timestamp, width, height)?)
     }
 
-    /// [`GameHost::animation_frame`]'s phase, as the page's `FRAME_PHASES`
-    /// number it.
     pub fn animation_frame(
         &mut self,
         timestamp: f64,
@@ -282,14 +236,9 @@ impl<G: Game> PageHost<G> {
         Ok(self.host.animation_frame(timestamp, width, height)? as u32)
     }
 
-    /// [`GameHost::take_jobs`] as the page's pool reads them:
-    /// `{clear: true}`, `{share, bytes}`, `{unshare}`, `{run, worker, kind,
-    /// input, priority}`, `{cancel, worker}`, `{lookup, key}`, `{keep,
-    /// output}` and `{mismatch}`.
     pub fn take_jobs(&mut self) -> js_sys::Array {
         let out = js_sys::Array::new();
         let set = |object: &js_sys::Object, field: &str, value: &JsValue| {
-            // Setting a field of a plain new object cannot fail.
             let _ = js_sys::Reflect::set(object, &JsValue::from_str(field), value);
         };
         let bytes = |bytes: &[u8]| JsValue::from(js_sys::Uint8Array::from(bytes));
@@ -365,8 +314,6 @@ impl<G: Game> PageHost<G> {
         Ok(self.host.reload_scene(source, files.files())?)
     }
 
-    /// Applies the engine switches `query` (a URL's search part) names, as
-    /// [`crate::host::HostSettings::set`] reads them.
     pub fn apply_host_settings(&mut self, query: &str) -> Result<(), JsValue> {
         let parameters = web_sys::UrlSearchParams::new_with_str(query)?;
         let mut settings = crate::host::HostSettings::default();
@@ -385,16 +332,12 @@ impl<G: Game> PageHost<G> {
         Ok(())
     }
 
-    /// [`crate::host::Distribution::of`] `values`, as JSON (`null` for none).
     pub fn distribution(&self, values: Vec<f64>) -> String {
         serde_json::to_string(&crate::host::Distribution::of(&values))
             .expect("distributions serialize")
     }
 }
 
-/// The development bridge's calls ([`GameHost::dev_request`] and the
-/// rest) with the page's JSON, as JSON; JSON the bridge cannot read is the
-/// request's refusal.
 #[cfg(feature = "dev")]
 impl<G: Game> PageHost<G> {
     pub fn dev_request(&mut self, line: &str, context: &str) -> String {
@@ -432,15 +375,12 @@ impl<G: Game> PageHost<G> {
         written(&step)
     }
 
-    /// [`GameHost::dev_refusal`] of the code `code` names; an unknown one
-    /// is `browser_command_failed`.
     pub fn dev_refusal(&mut self, code: &str, path: &str, message: &str) -> String {
         let code = engine_core::ErrorCode::named(code)
             .unwrap_or(engine_core::ErrorCode::BrowserCommandFailed);
         self.host.dev_refusal(code, path, message).to_string()
     }
 
-    /// The refusal of a call whose JSON the bridge could not read.
     fn unreadable(&mut self, message: &str) -> engine_dev::Step {
         engine_dev::Step::Reply(self.host.dev_refusal(
             engine_core::ErrorCode::InvalidRequest,
@@ -450,13 +390,11 @@ impl<G: Game> PageHost<G> {
     }
 }
 
-/// `json`, the page's `what`, or why it is no such thing.
 #[cfg(feature = "dev")]
 fn read<T: serde::de::DeserializeOwned>(json: &str, what: &str) -> Result<T, String> {
     serde_json::from_str(json).map_err(|error| format!("invalid {what}: {error}"))
 }
 
-/// `step` as the page reads it.
 #[cfg(feature = "dev")]
 fn written(step: &engine_dev::Step) -> String {
     serde_json::to_string(step).expect("development steps serialize")
@@ -486,12 +424,10 @@ impl<G: Game> PageHost<G> {
     }
 }
 
-/// The job the page's `id` names: none unless finite and at least 1.
 fn job_id(id: f64) -> Option<JobId> {
     (id.is_finite() && id >= 1.0).then_some(JobId(id as u64))
 }
 
-/// A profiling capture's refusal, as the engine's error.
 #[cfg(feature = "profiling")]
 fn capture_failed(message: &str) -> JsValue {
     crate::Error::new(engine_core::ErrorCode::CaptureFailed, "$", message).into()

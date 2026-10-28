@@ -1,10 +1,3 @@
-//! The solids standing in the world's water, which physics lists each fixed
-//! tick for terrains' water to meet ([`WaterObstacles`]): its bodies where
-//! and as fast as the last step left them, and the colliders (sensors
-//! aside) within reach of terrains' rivers or within the squares their
-//! water runs live over around the camera, such as an authored dam or a
-//! pier, standing still. Worlds without rivers or live water list none.
-
 use bevy_ecs::prelude::*;
 use engine_collision::{ColliderShape, CollisionWorld};
 use engine_core::{Terrains, WaterObstacle, WaterObstacles};
@@ -12,8 +5,6 @@ use glam::Vec3;
 
 use crate::PhysicsWorld;
 
-/// The colliders within the reaches listed, at a collision revision and
-/// over those reaches.
 #[derive(Default)]
 pub(crate) struct Standing {
     revision: Option<u64>,
@@ -21,7 +12,6 @@ pub(crate) struct Standing {
     colliders: Vec<WaterObstacle>,
 }
 
-/// Lists the tick's obstacles.
 pub(crate) fn obstruct(
     physics: Res<PhysicsWorld>,
     collision: Option<Res<CollisionWorld>>,
@@ -29,8 +19,6 @@ pub(crate) fn obstruct(
     mut obstacles: ResMut<WaterObstacles>,
     mut standing: Local<Standing>,
 ) {
-    // Rivers' bounds and the live squares, as high and low as anything
-    // stands.
     let rivers = terrains
         .iter()
         .flat_map(|terrains| terrains.waters())

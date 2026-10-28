@@ -1,9 +1,3 @@
-//! The world's solids where bodies may meet them, mirrored into the solver as
-//! fixed colliders following the collision world: terrains' heightfields
-//! wherever collision holds them (shared, not copied), and the placed
-//! objects, bridge decks and colliders (sensors aside) within reach of the
-//! bodies.
-
 use std::sync::Arc;
 
 use bevy_ecs::entity::{Entity, EntityHashMap};
@@ -17,15 +11,10 @@ use rapier3d::prelude as rp;
 use crate::shapes::solid_shape;
 use crate::solver::Solver;
 
-/// Meters beyond the bodies' reach the world's solids are mirrored within,
-/// so moving bodies find them already there.
 const SLACK: f32 = 8.0;
-/// How the terrain's surface grips, and the other solids'.
 const GROUND_FRICTION: f32 = 0.8;
 const SOLID_FRICTION: f32 = 0.7;
 
-/// A terrain tile's heightfield in the solver: its terrain and key, the
-/// field collision built for it, its world footprint and its collider.
 struct Ground {
     terrain: Entity,
     key: TileKey,
@@ -35,8 +24,6 @@ struct Ground {
     handle: rp::ColliderHandle,
 }
 
-/// A collider in the solver: its solid and layers as mirrored, its
-/// collider, and the pass that last found it.
 struct Mirror {
     solid: Solid,
     layers: CollisionLayers,
@@ -44,12 +31,8 @@ struct Mirror {
     seen: u64,
 }
 
-/// A placed object: its terrain, placement layer and asset, and its
-/// center's bits.
 type PlacedKey = (Entity, u16, u16, [u32; 3]);
 
-/// The solver's interaction groups of `layers`: both must admit each
-/// other's memberships, as collision's queries do.
 pub(crate) fn groups(layers: CollisionLayers) -> rp::InteractionGroups {
     rp::InteractionGroups::new(
         rp::Group::from_bits_retain(layers.memberships),
@@ -58,7 +41,6 @@ pub(crate) fn groups(layers: CollisionLayers) -> rp::InteractionGroups {
     )
 }
 
-/// The world's solids mirrored into the solver.
 #[derive(Default)]
 pub(crate) struct Statics {
     ground: Vec<Ground>,
@@ -69,7 +51,6 @@ pub(crate) struct Statics {
     pass: u64,
 }
 
-/// A fixed collider of `shape` at `pose`.
 fn fixed(shape: rp::SharedShape, pose: rp::Pose, friction: f32) -> rp::ColliderBuilder {
     rp::ColliderBuilder::new(shape)
         .position(pose)
@@ -77,21 +58,16 @@ fn fixed(shape: rp::SharedShape, pose: rp::Pose, friction: f32) -> rp::ColliderB
 }
 
 impl Statics {
-    /// Solids mirrored.
     pub fn len(&self) -> usize {
         self.ground.len() + self.placed.len() + self.colliders.len()
     }
 
-    /// Whether a mirrored heightfield lies under world `(x, z)`.
     pub fn grounded(&self, x: f32, z: f32) -> bool {
         self.ground.iter().any(|ground| {
             x >= ground.min.x && x <= ground.max.x && z >= ground.min.z && z <= ground.max.z
         })
     }
 
-    /// Follows `collision`: its heightfields, and its placed objects and
-    /// colliders within reach of the box from `bodies`' first to second
-    /// corner, leaving out the colliders `is_body` names.
     pub fn sync(
         &mut self,
         solver: &mut Solver,
@@ -122,7 +98,6 @@ impl Statics {
         }
     }
 
-    /// The heightfields collision holds now, sharing their fields.
     fn sync_ground(&mut self, solver: &mut Solver, collision: &CollisionWorld) {
         let mut kept = std::mem::take(&mut self.ground);
         for solid in collision.ground_solids() {
@@ -157,7 +132,6 @@ impl Statics {
         }
     }
 
-    /// The placed objects within `reach`.
     fn sync_placed(
         &mut self,
         solver: &mut Solver,
@@ -187,7 +161,6 @@ impl Statics {
         }
     }
 
-    /// The colliders within `reach` but bodies' own, moved as theirs move.
     fn sync_colliders(
         &mut self,
         solver: &mut Solver,
@@ -248,7 +221,6 @@ impl Statics {
         });
     }
 
-    /// Lets go of every solid but the heightfields: no body is near any.
     fn forget_near(&mut self, solver: &mut Solver) {
         for (_, handle) in self.placed.drain() {
             solver.remove_collider(handle);

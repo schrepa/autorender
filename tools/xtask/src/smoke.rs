@@ -1,16 +1,3 @@
-//! The browser smoke checks: every `web/scripts/*-smoke.mjs`, found by
-//! name, each opening with a `/**` comment
-//! that says what it checks. They drive a running development server
-//! (`DEMO_URL`, Vite's default otherwise; see `web/scripts/harness.mjs`), or
-//! with `--serve` one of this checkout that the run starts and stops, and
-//! build, run and write in this checkout (`ENGINE_WORKSPACE`), running
-//! this program where they need xtask (`ENGINE_XTASK_BIN`). A run holds
-//! the machine's heavy-run lock throughout ([`crate::heavy`]); each check
-//! exits 0, 3 for a failed assertion or 1 for anything else that stopped
-//! it, and so does the run. What each check sent the engine is recorded
-//! (`web/scripts/exercised.mjs`) and compared with what its code claims
-//! ([`crate::coverage::Claims`]) in `target/smoke-coverage/report.json`.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -22,9 +9,6 @@ use crate::Failure;
 use crate::heavy::{HELD, HeavyRun};
 use crate::serve::Server;
 
-/// Every smoke check's name (`terrain` for `terrain-smoke.mjs`), file name
-/// and source, by name. Local scratch scripts (`zz-`, which git ignores)
-/// are not checks.
 pub fn scripts(root: &Path) -> Result<Vec<(String, String, String)>, String> {
     let directory = root.join("web/scripts");
     let entries = fs::read_dir(&directory)
@@ -51,14 +35,10 @@ pub fn scripts(root: &Path) -> Result<Vec<(String, String, String)>, String> {
     Ok(scripts)
 }
 
-/// Where a run records what each check sent: `NAME/` for each, as every
-/// process of the check writes it, and `report.json`.
 fn sent_folder(root: &Path) -> PathBuf {
     root.join("target").join("smoke-coverage")
 }
 
-/// Every smoke check: its name and the first line of what it checks. A
-/// check without its opening comment is an error.
 fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
     let mut smokes = Vec::new();
     for (name, file, source) in scripts(root)? {
@@ -82,8 +62,6 @@ fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(smokes)
 }
 
-/// Fails unless every smoke check opens with the `/**` comment saying what
-/// it checks, which `smoke --list` shows: lint's stage.
 pub fn check(root: &Path) -> Result<(), String> {
     let smokes = smokes(root)?;
     println!(
@@ -93,13 +71,6 @@ pub fn check(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// `smoke --list` lists the checks; `smoke NAME...` runs those in order and
-/// `smoke --all` every one, stopping at the first failure unless
-/// `--keep-going`, against the server `DEMO_URL` names or, with `--serve`,
-/// one of this checkout; with `--native-profile PROFILE` the native programs
-/// the checks build use that cargo profile (`dev`: debug assertions on).
-/// Fails with exit code 3 when a check's assertion failed, 1 when one
-/// stopped otherwise.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -162,9 +133,6 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
     } else {
         None
     };
-    // A check runs this program rather than building xtask again, which
-    // fails on Windows while an xtask runs (this one, or a lint beside it):
-    // Cargo cannot replace a running program.
     let program = std::env::current_exe()
         .map_err(|error| format!("cannot name the running program: {error}"))?;
     let _heavy = HeavyRun::hold(&format!("cargo xtask smoke {}", names.join(" ")))?;
@@ -175,7 +143,6 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
         let started = Instant::now();
         let mut command = Command::new("node");
         let sent = sent_folder(root).join(name);
-        // A record left by an earlier run is not this one's.
         if let Err(error) = fs::remove_dir_all(&sent)
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -197,7 +164,6 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
         let status = command
             .status()
             .map_err(|error| format!("cannot run node {script}: {error}"))?;
-        // A check that ended without an exit code (a signal) stopped.
         let code = status.code().unwrap_or(1);
         results.push((name, Some(code), started.elapsed()));
         if code != 0 && !keep_going {
@@ -252,8 +218,6 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
     }
 }
 
-/// What a check's processes sent, merged: ops, environment sections set
-/// and components or resources inspected.
 #[derive(Default)]
 struct Sent {
     ops: BTreeSet<String>,
@@ -261,12 +225,10 @@ struct Sent {
     inspectors: BTreeSet<String>,
 }
 
-/// The records of what one check sent in `folder`, one a process.
 fn sent(folder: &Path) -> Result<Sent, String> {
     let mut sent = Sent::default();
     let entries = match fs::read_dir(folder) {
         Ok(entries) => entries,
-        // A check that sent nothing left no record.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(sent),
         Err(error) => return Err(format!("cannot read {}: {error}", folder.display())),
     };
@@ -291,12 +253,6 @@ fn sent(folder: &Path) -> Result<Sent, String> {
     Ok(sent)
 }
 
-/// Compares what each check that passed (`passed`) sent with what its code
-/// claims (the coverage file's lists), and, when every check ran and
-/// passed (`everything`), what the engine offers with what no check sent:
-/// writes `target/smoke-coverage/report.json` and prints a summary. A
-/// section counts as sent when an environment control set it or its
-/// settings were inspected.
 fn report_sent(root: &Path, passed: &[&str], everything: bool) -> Result<(), String> {
     let development = engine_dev::schemas::generated()?;
     let offered: Value = serde_json::from_str(&crate::coverage::coverage(root, &development)?)

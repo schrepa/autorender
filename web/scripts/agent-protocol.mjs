@@ -1,4 +1,3 @@
-/** Bounded, loopback-only transport for an explicitly enabled engine dev session. */
 // @ts-check
 import { createServer } from "node:http";
 
@@ -63,7 +62,6 @@ async function readRequest(request) {
   catch { throw new AgentError("invalid_json", "Request must be valid UTF-8 JSON."); }
 }
 
-/** Injecting execute keeps transport and failure contracts testable without a GPU. */
 /** @param {{ session: string, url: string, build?: string, execute: (command: any) => any, onTimeout?: () => void, onClose: () => any, development?: () => any, initiallyUnavailable?: boolean, deadlineMs?: number, queueLimit?: number }} options */
 export function createBridge({ session, url, build, execute, onTimeout = () => {}, onClose, development, initiallyUnavailable = false, deadlineMs = 15_000, queueLimit = 16 }) {
   let startedAt = new Date().toISOString();
@@ -83,7 +81,6 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
         try {
           if (closed) throw new AgentError("session_closed", "The bridge closed before replacement.");
           if (item.replacement.validate && !await item.replacement.validate()) throw new AgentError("build_superseded", "Sources changed before this build could be activated.");
-          // Commit coordinator state synchronously at the same boundary as identity.
           item.replacement.commit?.();
           ({ session, url, build, execute, onTimeout = () => {} } = item.replacement);
           startedAt = new Date().toISOString();
@@ -94,7 +91,6 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
         finally { replacing = false; }
         continue;
       }
-      // A response always belongs to the session that accepted its command.
       const acceptedSession = session;
       const acceptedBuild = build;
       let timer;
@@ -114,7 +110,6 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
           new Promise((_, reject) => {
             timer = setTimeout(() => {
               unavailable = true;
-              // A timed-out mutation has an uncertain outcome. Never overlap later work with it.
               Promise.resolve().then(onTimeout).catch(() => {});
               reject(new AgentError("command_timeout", "The command deadline expired. Its outcome is unknown; this session is now unavailable."));
             }, remaining);
@@ -186,7 +181,6 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
   return {
     server, submit,
     markUnavailable: () => { unavailable = true; },
-    /** Drain accepted work before swapping identity; reject arrivals during this boundary. */
     replaceSession(next) {
       if (closed || replacing) return Promise.reject(new AgentError("session_replacing", "The bridge is closing or already replacing a session."));
       replacing = true;

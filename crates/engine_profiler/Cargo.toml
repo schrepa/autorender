@@ -8,9 +8,6 @@ description = "Profiles and GPU captures of native engine games: graphics debugg
 
 [features]
 default = []
-# Deep profiles (in-process CPU samples, symbols and disassembly, merged
-# with the engine's spans and GPU timings into Firefox Profiler files),
-# hardware counters through Vulkan, and vendor deep dives.
 profiling = [
     "engine/profiling",
     "dep:serde_json",
@@ -23,8 +20,6 @@ profiling = [
     "dep:ash",
     "dep:wgpu",
 ]
-# What other programs load the machine with while a measuring tool times a
-# run: their processor and GPU engine shares, and the GPU's clock.
 load = ["dep:windows-sys"]
 
 [dependencies]

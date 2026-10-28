@@ -1,9 +1,3 @@
-//! Placed objects' draws: what terrains' placement layers
-//! stand on their tiles, held in the scatter pool's slots as tiles arrive
-//! and leave, culled each frame and drawn after terrain in the first opaque
-//! phase. Draw groups follow the assets: one per terrain asset, then one
-//! per part of it drawing the same objects with its own material.
-
 use engine_core::collections::HashMap;
 use std::sync::Arc;
 
@@ -23,51 +17,35 @@ use crate::scatter::{
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{Tile, TileKey};
 
-/// A part's levels as its group draws them (`Renderer::part_levels`), and
-/// their meshes.
 type PartLevels = (Vec<(u32, u32, i32)>, Vec<MeshHandle>);
 
-/// Placed objects' draw groups and slots.
 #[derive(Default)]
 pub(super) struct ScatterDraws {
-    // What the groups were built from.
     key: Option<ScatterKey>,
     groups: Vec<ScatterDraw>,
     layouts: Vec<GroupLayout>,
-    // The group of each terrain's asset, and each terrain's index among the
-    // frame's terrains.
     indices: HashMap<(u64, usize), u32>,
     terrains: HashMap<u64, u32>,
     pool: ScatterPool,
-    // Each group's impostor, zeroed without one, and whether
-    // the groups' layouts changed since they last uploaded.
     impostors: Vec<ImpostorRecord>,
     changed: bool,
-    // Each group's cover, and its objects' packed color.
     covers: Vec<Cover>,
     colors: Vec<[u32; 2]>,
 }
 
 impl ScatterDraws {
-    /// Each draw group's impostor record in the placed objects' atlas,
-    /// zeroed without one.
     pub(super) fn impostors(&self) -> &[ImpostorRecord] {
         &self.impostors
     }
 
-    /// Resident objects standing far away.
     pub(super) fn far_objects(&self) -> u32 {
         self.pool.far
     }
 
-    /// Each draw group's cover, which the occupancy map draws.
     pub(super) fn covers(&self) -> &[Cover] {
         &self.covers
     }
 
-    /// What reflections' world trace reads of placed objects: the pool's
-    /// tiles, slots' records and poses and its revision, and each draw
-    /// group's impostor and its objects' packed color.
     pub(super) fn placements(&self) -> crate::world_trace::Placements<'_> {
         crate::world_trace::Placements {
             tiles: self.pool.tiles(),
@@ -80,14 +58,6 @@ impl ScatterDraws {
     }
 }
 
-/// One draw group of placed objects: each level's mesh, its material, its
-/// objects' color and bounding sphere (mesh space, around its parts' meshes
-/// and its shadow proxy too), the group whose objects it draws (its own, or
-/// for a part its asset's) and which of the asset's parts it draws, its
-/// live objects, whether it casts shadows and tests its material's texels
-/// doing so (parts cast none, and shadow proxies never test), and the mesh
-/// of each level shadow maps draw of it: its shadow proxy alone where it
-/// has one, else its levels'.
 struct ScatterDraw {
     meshes: Vec<MeshHandle>,
     material: MaterialHandle,
@@ -101,9 +71,6 @@ struct ScatterDraw {
     casters: Vec<MeshHandle>,
 }
 
-/// An asset as its groups were built: its mesh, material and version, its
-/// coarser meshes, which of all its meshes were resident, its sway's bits,
-/// its parts, and its shadow proxy.
 type AssetKey = (
     MeshHandle,
     MaterialHandle,
@@ -115,17 +82,10 @@ type AssetKey = (
     Option<MeshHandle>,
 );
 
-/// A part as its group was built: its material and version, and its
-/// meshes.
 type PartKey = (MaterialHandle, u64, Vec<MeshHandle>);
 
-/// What the draw groups were built from: each terrain's identity and
-/// assets, and the meshes' layout.
 type ScatterKey = (Vec<(u64, Vec<Option<AssetKey>>)>, u64);
 
-/// A placed asset's levels as drawn: each one's index count, first index
-/// and base vertex, and those of the triangles shadow maps draw of it,
-/// its mesh, the coarser ones' errors, and how many the camera draws.
 type Levels = (
     Vec<(u32, u32, i32)>,
     Vec<(u32, u32, i32)>,
@@ -135,12 +95,6 @@ type Levels = (
 );
 
 impl Renderer {
-    /// Brings the scatter pool up to `snapshot`'s terrains: rebuilds the
-    /// draw groups when their assets changed, gives tiles that arrived
-    /// slots and frees those of tiles that left, uploads what changed,
-    /// creates the groups' pipelines for `kind`, and plans this frame's
-    /// culling, with impostors when `impostors`, advancing how the camera
-    /// shows objects by this frame's fades. `None` when no object draws.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -168,8 +122,6 @@ impl Renderer {
                 .filter(|tile| !tile.placed().is_empty())
                 .map(|tile| (tile.key(), tile))
                 .collect();
-            // A tile replaced with the same objects (its water made again)
-            // keeps them as they stand.
             draws.pool.retain(terrain.id, |key, held| {
                 current.get(&key).is_some_and(|tile| {
                     Arc::ptr_eq(tile, held) || std::ptr::eq(tile.placed(), held.placed())
@@ -185,8 +137,6 @@ impl Renderer {
                     .insert((terrain.id, tile.key()), Arc::clone(tile), objects);
             }
         }
-        // Objects stand on the ground's true surface, of the heights
-        // resident this frame, and take its colors there.
         let infos: Vec<TerrainInfo> = terrains
             .iter()
             .enumerate()
@@ -194,8 +144,6 @@ impl Renderer {
             .collect();
         let draws = &mut self.scatter_draws;
         let (dirty, counts_changed) = draws.pool.take_changes();
-        // The shadow clipmap's tiles and the occupancy maps redraw where
-        // objects came or went.
         for (min, max) in draws.pool.take_moved() {
             self.shadows.dirty_kept(min, max);
             self.features.occupancy.get_mut().dirty_box(min, max);
@@ -215,7 +163,6 @@ impl Renderer {
             draws.pool.uploaded(slots);
         }
         if counts_changed || std::mem::take(&mut draws.changed) {
-            // A part's group draws the objects of its asset's.
             let counts: Vec<u32> = draws
                 .groups
                 .iter()
@@ -245,15 +192,12 @@ impl Renderer {
             revision: sources.revision,
             terrains: &infos,
         });
-        // On the ground's true surface.
         self.features.scatter.get_mut().prepare_snap(
             &self.device,
             &self.queue,
             sources,
             snapshot.detail_eye,
         );
-        // Each group's pipelines, and those its fading objects draw with:
-        // masked groups' depth pre-pass too.
         let variants: Vec<Variant> = self
             .scatter_draws
             .groups
@@ -270,14 +214,10 @@ impl Renderer {
         let pixel_error = level_of_detail
             .enabled
             .then_some(level_of_detail.pixel_error);
-        // How much of their way the camera's switches fade this frame.
         let fade = self.switch_fades.share;
         let height = self.display.size().height as f32;
         let impostors = impostors.then_some(level_of_detail.impostor_pixels);
         let (device, queue, shadows) = (&self.device, &self.queue, &self.shadows);
-        // Objects switch how they show, and retire, by their distance from
-        // the detail eye; the views cull by their own planes, and placed
-        // objects cast into the regions of shadow tiles redrawn this frame.
         self.features.scatter.prepare(|scatter| {
             scatter
                 .prepare(
@@ -291,8 +231,6 @@ impl Renderer {
         })
     }
 
-    /// What placed objects cover around the camera: the maps this frame
-    /// redraws, from the placed objects' slots.
     pub(super) fn prepare_occupancy(&mut self) -> Option<Ready<OccupancyFrame>> {
         let device = &self.device;
         let slots = self.features.scatter.get().slot_buffers();
@@ -301,13 +239,6 @@ impl Renderer {
             .prepare(|occupancy| occupancy.prepare_draws(device, slots))
     }
 
-    /// The impostors of placed draw groups on GPU-presented frames with
-    /// impostors: each asset's, its parts drawn into it, supplied into the
-    /// placed objects' atlas where missing (baked into `encoder` after its
-    /// materials' levels where no host holds its record), zeroed where its
-    /// material blends, its mesh is too small, it is still coming or the
-    /// budget the plan batches' leave is spent; parts' groups take none.
-    /// The groups' layouts take their errors and records.
     pub(super) fn prepare_scatter_impostors(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -324,7 +255,6 @@ impl Renderer {
             },
             |handle| Self::placed_material(snapshot, handle),
         );
-        // Plan batches' impostors come first within a budget.
         let budget = settings
             .max_impostors
             .map(|budget| budget.saturating_sub(self.impostors.atlas.live()));
@@ -401,8 +331,6 @@ impl Renderer {
             records.push(record);
         }
         self.impostors.placed.release_targets();
-        // The shadow clipmap's tiles cast impostors as cards: they redraw
-        // whole when those change.
         if records != self.scatter_draws.impostors {
             self.shadows.dirty_kept_all();
         }
@@ -417,7 +345,6 @@ impl Renderer {
         draws.impostors = records;
     }
 
-    /// What the draw groups of `terrains` are built from.
     fn scatter_key(&self, terrains: &[engine_core::RenderTerrain]) -> ScatterKey {
         let terrains = terrains
             .iter()
@@ -463,10 +390,6 @@ impl Renderer {
         (terrains, self.mesh_layout)
     }
 
-    /// Builds one draw group per asset of `terrains` that draws, casting
-    /// its shadow proxy alone while that is resident, and one per part of
-    /// it whose finest mesh is resident, right after it, and empties the
-    /// pool for them: every tile takes new slots.
     fn build_scatter_groups(&mut self, terrains: &[engine_core::RenderTerrain]) {
         let mut groups = Vec::new();
         let mut layouts = Vec::new();
@@ -491,14 +414,10 @@ impl Renderer {
                     })
                     .collect();
                 let bounds = asset.mesh.mesh.bounds();
-                // Its shadow proxy, while resident, is the one level its
-                // objects cast at.
                 let proxy = asset
                     .shadow
                     .as_ref()
                     .and_then(|mesh| Some((mesh, self.proxy_caster(mesh)?)));
-                // Its bounding sphere holds its parts' meshes and its shadow
-                // proxy too.
                 let (low, high) = parts
                     .iter()
                     .map(|&(part, _)| asset.parts[part].meshes[0].mesh.bounds())
@@ -507,9 +426,6 @@ impl Renderer {
                         (low.min(held.min()), high.max(held.max()))
                     });
                 let material = &asset.material.material;
-                // Blending materials cast nothing and masked ones test their
-                // texels; a shadow proxy casts depth alone in place of the
-                // levels, whatever the material.
                 let (casts, casters, caster_meshes) = match proxy {
                     Some((mesh, range)) => (Some(false), vec![range], vec![mesh.handle]),
                     None if material.is_transparent() => (None, Vec::new(), Vec::new()),
@@ -524,8 +440,6 @@ impl Renderer {
                 };
                 let objects = groups.len() as u32;
                 indices.insert((terrain.id, asset_index), objects);
-                // Swaying objects carry their sway in the flags skinned slots
-                // keep palettes in.
                 let color = ColorData {
                     color: pack_color(material.color()),
                     surface: pack_surface(material.surface()),
@@ -599,19 +513,12 @@ impl Renderer {
             .collect();
     }
 
-    /// The levels placed asset `asset` draws, all of which the camera draws:
-    /// its coarser meshes when it has them, as far as they are resident and
-    /// stream like its mesh; otherwise its mesh's cooked levels, whose
-    /// measured errors hold even where a level prunes whole parts. `None`
-    /// while its mesh is not resident or is skinned.
     fn scatter_levels(&self, asset: &engine_core::RenderPlacementAsset) -> Option<Levels> {
         let mesh = self.meshes.get(&asset.mesh.handle)?;
         if mesh.skinned {
             return None;
         }
         let draw = mesh.draw(&self.mesh_arena);
-        // Level `level` of `mesh` drawn from `draw`, whose own triangles
-        // are `own`, as the camera and as shadow maps draw it.
         let level = |mesh: &GpuMesh, draw: &MeshDraw<'_>, level: usize, own: (u32, u32)| {
             let (first, count) = mesh.caster_range(level, own);
             (
@@ -656,10 +563,6 @@ impl Renderer {
         Some((levels, casters, meshes, errors, camera))
     }
 
-    /// The levels part `part` of an asset drawing `levels` levels draws:
-    /// each of its meshes' own triangles, finest first, as far as they are
-    /// resident and stream like its first; `None` while its first is not
-    /// resident or is skinned.
     fn part_levels(
         &self,
         part: &engine_core::RenderPlacementPart,
@@ -685,9 +588,6 @@ impl Renderer {
         Some((ranges, meshes))
     }
 
-    /// The index count, first index and base vertex of the triangles shadow
-    /// maps draw of shadow proxy `proxy`; `None` while it is not resident or
-    /// is skinned.
     fn proxy_caster(&self, proxy: &engine_core::RenderMesh) -> Option<(u32, u32, i32)> {
         let mesh = self.meshes.get(&proxy.handle)?;
         if mesh.skinned {
@@ -698,8 +598,6 @@ impl Renderer {
         Some((count, draw.first_index + first, draw.base_vertex))
     }
 
-    /// The material group and pipeline variant of placed group `draw`,
-    /// blending into the ground where its material says.
     fn scatter_binding(&self, draw: &ScatterDraw) -> (&wgpu::BindGroup, Variant) {
         let mesh = self.meshes.get(&draw.meshes[0]);
         let (group, variant) = self.materials.binding(Some(draw.material));
@@ -710,12 +608,6 @@ impl Renderer {
         (group, variant)
     }
 
-    /// Draws this frame's placed objects into the first opaque phase: their
-    /// colors, masked groups' where their depth pre-pass left their depths,
-    /// and their impostors' cards; or with `prepass` the masked groups' depth
-    /// pre-pass, first in the phase's opaque pass, from the same lists, at
-    /// the same levels and with the same fades as their colors. Returns the
-    /// draws.
     pub(super) fn draw_scatter(
         &self,
         state: &FrameState<'_>,
@@ -732,7 +624,6 @@ impl Renderer {
         let temporal =
             state.packing.temporal_frame.is_some() && self.features.temporal.get().is_some();
         pass.set_bind_group(0, self.camera.group(), &[]);
-        // The pre-pass reads no lights.
         if kind.lit
             && !prepass
             && let Some(lights) = self.features.lights.get()
@@ -740,13 +631,10 @@ impl Renderer {
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
         pass.set_bind_group(2, &groups[usize::from(temporal)], &[]);
-        // Debug views' draws read their records.
         let debug = self
             .debug_records(state)
             .map(|records| (records, state.shape.shadows));
         let mut draws = 0;
-        // The camera's lists, then those of objects fading between how the
-        // camera shows them, at the levels the camera draws.
         let fading = self.features.scatter.get().fading_view();
         for (view, fades) in [(0, false), (fading, true)] {
             for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
@@ -767,8 +655,6 @@ impl Renderer {
         if prepass {
             return draws;
         }
-        // Impostors: every group's cards in one draw, over
-        // the poses and lights the meshes bound.
         if let Some((targets, lit)) = state.passes.impostor_pass
             && let (Some(pipeline), Some(group)) = (
                 self.impostors.pipelines.pipeline(targets, lit),
@@ -789,8 +675,6 @@ impl Renderer {
         draws
     }
 
-    /// The engine material of handle `handle` among `snapshot`'s placed
-    /// objects' and their parts'.
     pub(super) fn placed_material(
         snapshot: &RenderSnapshot,
         handle: MaterialHandle,
@@ -805,11 +689,6 @@ impl Renderer {
             .map(|material| material.material)
     }
 
-    /// Draws this frame's placed objects culled for the shadow region of
-    /// map `map` at the levels their groups cast at, each group's shadow
-    /// proxy alone where it has one, with the depth passes' caster
-    /// pipelines `casters`, and their impostor cards with `cards`; the
-    /// region's view is bound. Returns the draws.
     pub(super) fn draw_scatter_shadow(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -854,11 +733,6 @@ impl Renderer {
         draws
     }
 
-    /// Draws group `draw` (the `index`th) at each of its levels from
-    /// `view`'s lists (the camera's, or its fading objects'), binding each
-    /// level's mesh with its extra stream and, in debug views, each level's
-    /// record of `debug`'s records, the group casting sun shadows where they
-    /// say; returns the draws.
     fn draw_scatter_levels(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -894,9 +768,6 @@ impl Renderer {
         draws
     }
 
-    /// Draws group `draw` (the `index`th) from shadow region view `view`'s
-    /// lists, at each level it casts at with that level's mesh; returns the
-    /// draws.
     fn draw_scatter_casters(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -924,11 +795,6 @@ impl Renderer {
     }
 }
 
-/// The parts `asset`, the asset of `groups`' draw group `index`, draws with
-/// its objects, the groups after it, as its impostor's bake draws them over
-/// its mesh: each at its finest, from `meshes` in `arena` with `materials`'
-/// groups; and the impostor's `content` and `bounds` grown by theirs, whose
-/// contents `contents` hashes.
 fn bake_parts<'a>(
     (groups, index, asset): (&[ScatterDraw], usize, &engine_core::RenderPlacementAsset),
     (meshes, arena, materials): (
@@ -982,7 +848,6 @@ fn bake_parts<'a>(
     (parts, content, (low, high))
 }
 
-/// The content of an impostor of what `first` and `second` hold together.
 fn combined(first: u128, second: u128) -> u128 {
     let mut bytes = [0_u8; 32];
     bytes[..16].copy_from_slice(&first.to_le_bytes());
@@ -990,8 +855,6 @@ fn combined(first: u128, second: u128) -> u128 {
     engine_core::content_hash(&bytes)
 }
 
-/// The objects terrain `terrain`'s tile `tile` holds for the draw groups of
-/// `draws`: those of assets without a group are left out.
 fn tile_objects(
     draws: &ScatterDraws,
     terrain: &engine_core::RenderTerrain,
@@ -1004,8 +867,6 @@ fn tile_objects(
         Vec::with_capacity(placed.len()),
         Vec::with_capacity(placed.len()),
     );
-    // The terrain's index, and for objects standing far away the level
-    // whose tiles hold them instead.
     let index = draws
         .terrains
         .get(&terrain.id)
@@ -1017,8 +878,6 @@ fn tile_objects(
             continue;
         };
         let near = placed.near_level.map_or(0, |level| u32::from(level) + 1);
-        // Its layer and its rank under the density, in ten
-        // bits.
         let layer = u32::from(placed.layer).min(NO_LAYER);
         let rank = (engine_core::math::clamp(placed.rank, 0.0, 1.0) * RANK_MAX).round() as u32;
         let draw = &draws.groups[group as usize];
@@ -1046,7 +905,6 @@ fn tile_objects(
     objects
 }
 
-/// The three rows of `model`'s affine part, the layout slot poses keep.
 fn pose_rows(model: Mat4) -> crate::gpu_data::PoseData {
     let rows = model.transpose();
     [

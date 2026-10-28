@@ -1,16 +1,6 @@
-//! The highlands' surface materials: how each looks.
-
 use engine::Cover;
 use engine::terrain::SurfaceProjection;
 
-/// How one surface material looks: its name; the material whose maps it
-/// uses (whose files start with that name, its own unless it borrows
-/// another's); its linear color and roughness without maps, and the color
-/// its maps' colors are multiplied by; the meters its maps repeat over; how
-/// sharply its heights win where it blends; how it lies on steep ground;
-/// the cover growing where it lies; its depth, the meters its heights span
-/// between its stones, tufts, blocks and ledges; and the meters tracks sink
-/// it at most.
 pub(super) struct Look {
     pub(super) name: &'static str,
     pub(super) maps: &'static str,
@@ -77,8 +67,6 @@ pub(super) const LOOKS: [Look; 12] = [
         depth: 0.05,
         deform: 0.06,
     },
-    // Needle litter under the spruces: the dirt's maps, darkened toward
-    // olive, so forests read as dark stands from afar.
     Look {
         name: "forest_floor",
         maps: "dirt",
@@ -92,9 +80,6 @@ pub(super) const LOOKS: [Look; 12] = [
         depth: 0.06,
         deform: 0.05,
     },
-    // The rock of every steep slope, laid across the slope's faces, its
-    // blocks and ledges a quarter meter deep, so steep ground reads as rock
-    // whatever stands on it.
     Look {
         name: "rock",
         maps: "rock",
@@ -121,8 +106,6 @@ pub(super) const LOOKS: [Look; 12] = [
         depth: 0.04,
         deform: 0.3,
     },
-    // Grass where water gathers: deeper green, taller and
-    // denser, in hollows and along streams.
     Look {
         name: "wet_grass",
         maps: "grass",
@@ -142,9 +125,6 @@ pub(super) const LOOKS: [Look; 12] = [
         depth: 0.03,
         deform: 0.07,
     },
-    // Stream and river beds of the grains their floods leave, dry as their
-    // maps make them, the ground's wetness darkening them where water runs.
-    // Sand where the water runs slowest, rippled by it.
     Look {
         name: "sand",
         maps: "sand",
@@ -158,7 +138,6 @@ pub(super) const LOOKS: [Look; 12] = [
         depth: 0.012,
         deform: 0.05,
     },
-    // Gravel: small water-worn stones of every rock the water brings down.
     Look {
         name: "gravel",
         maps: "gravel",
@@ -172,7 +151,6 @@ pub(super) const LOOKS: [Look; 12] = [
         depth: 0.035,
         deform: 0.02,
     },
-    // Cobbles on steep beds: rounded stones packed with dark gaps between.
     Look {
         name: "cobble",
         maps: "cobble",
@@ -186,8 +164,6 @@ pub(super) const LOOKS: [Look; 12] = [
         depth: 0.12,
         deform: 0.0,
     },
-    // Roads: packed gravel, the scree's stones finer and
-    // warmer, where no grass grows.
     Look {
         name: "road",
         maps: "scree",
@@ -201,9 +177,6 @@ pub(super) const LOOKS: [Look; 12] = [
         depth: 0.03,
         deform: 0.04,
     },
-    // Silt floods lay bare on bars and banks: the streams' sand's maps a
-    // shade darker and warmer, buff, its ripples larger and fainter,
-    // taking tracks deeply.
     Look {
         name: "silt",
         maps: "sand",

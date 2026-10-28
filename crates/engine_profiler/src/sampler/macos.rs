@@ -1,7 +1,3 @@
-//! macOS: the sampler suspends the thread through its Mach port, reads its
-//! registers and follows the frame pointer chain Apple's ABIs keep, then
-//! resumes it. A process may suspend its own threads without privilege.
-
 #![expect(unsafe_code, reason = "suspends threads and reads their registers")]
 
 use mach2::kern_return::KERN_SUCCESS;

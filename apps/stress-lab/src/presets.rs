@@ -1,27 +1,16 @@
-//! The workloads the Stress Lab offers by name, on the page and natively:
-//! each a configuration over the maximum visual load, with its title and
-//! what it shows.
-
 use serde::Serialize;
 
 use crate::{StressConfig, StressScene};
 
-/// A named workload.
 #[derive(Clone, Debug, Serialize)]
 pub struct Preset {
-    /// What hosts select it by.
     pub value: &'static str,
-    /// Its name in menus.
     pub label: &'static str,
-    /// Its name over a running workload.
     pub title: &'static str,
-    /// What it shows.
     pub note: &'static str,
     pub config: StressConfig,
 }
 
-/// What every preset changes: the most objects the tower field draws,
-/// textured, culled and still.
 fn baseline() -> StressConfig {
     StressConfig {
         seed: 1337,
@@ -41,7 +30,6 @@ fn baseline() -> StressConfig {
     }
 }
 
-/// Every preset, the default first.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -177,7 +165,6 @@ pub fn presets() -> Vec<Preset> {
     ]
 }
 
-/// The preset named `value`.
 pub fn preset(value: &str) -> Option<Preset> {
     presets().into_iter().find(|preset| preset.value == value)
 }

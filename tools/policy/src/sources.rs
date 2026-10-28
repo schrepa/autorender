@@ -1,16 +1,7 @@
-//! Source rules: unsafe code stays in the files the list names and every
-//! unsafe block and impl says why it is sound (in files Clippy does not
-//! build on this platform too), crate roots allow no workspace lint
-//! crate-wide, terrain keys no hash map by tile, and no file leaves work for
-//! later behind a marker.
-
 use crate::{Problems, rust};
 
-/// Files the source rules skip: what package managers write.
 pub const LOCKFILES: &[&str] = &["Cargo.lock", "web/package-lock.json"];
 
-/// Markers of work left for later, which belongs in an issue or a commit,
-/// not in the tree (spelled in parts so this file holds none).
 const MARKERS: [&str; 4] = [
     concat!("TO", "DO"),
     concat!("FIX", "ME"),
@@ -18,30 +9,18 @@ const MARKERS: [&str; 4] = [
     concat!("HA", "CK"),
 ];
 
-/// Lint groups that take every workspace lint with them.
 const GROUPS: [&str; 2] = ["warnings", "clippy::all"];
 
-/// The lints every engine crate denies at its root: a match names the
-/// variants each arm takes, so a new variant fails to compile wherever it
-/// needs a decision. (Apps and tools match their content tables with
-/// wildcards.)
 const ENGINE_DENIES: [&str; 2] = [
     "clippy::wildcard_enum_match_arm",
     "clippy::match_wildcard_for_single_variants",
 ];
 
-/// Terrain's folder, whose maps keyed by tile are `TileMap`s (its
-/// tile_map.rs), which no one walks in a hash table's order: that order
-/// differs between native and Wasm builds and follows each table's
-/// history, and what a frame does would too.
 const TILE_MAPS: (&str, &str) = (
     "crates/engine_core/src/features/terrain/",
     "crates/engine_core/src/features/terrain/tile_map.rs",
 );
 
-/// The files that may contain unsafe code, each for a reason. Every other
-/// Rust file has none (the workspace denies `unsafe_code`, and a file
-/// allowing it must be listed here), and every listed file still has some.
 pub const UNSAFE_FILES: &[(&str, &str)] = &[
     (
         "crates/engine_profile/src/allocator.rs",
@@ -93,14 +72,12 @@ pub const UNSAFE_FILES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Checks the text file `path` (relative, `/`-separated) with text `text`.
 pub fn check_text(path: &str, text: &str, problems: &mut Problems) {
     for (index, line) in text.lines().enumerate() {
         for marker in MARKERS {
             if line.match_indices(marker).any(|(at, _)| {
                 let before = line[..at].chars().next_back();
                 let after = line[at + marker.len()..].chars().next();
-                // `MARKERs` counts; `MARKERX` and `aMARKER` are other words.
                 !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
                     && !after
                         .is_some_and(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
@@ -118,8 +95,6 @@ pub fn check_text(path: &str, text: &str, problems: &mut Problems) {
     }
 }
 
-/// Checks the Rust file `path` (relative, `/`-separated) with text
-/// `source`, where `lints` are the workspace's.
 pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems) {
     let split = rust::split(source);
     if crate_root(path) {
@@ -197,7 +172,6 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
                 "impl" => "impl",
                 _ => continue,
             };
-            // Above the block, or above the statement it is part of.
             if !split.safety_comment_above(index)
                 && !split.safety_comment_above(split.statement_start(index))
             {
@@ -214,20 +188,14 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
     }
 }
 
-/// The engine's error for games, and the file of every engine error's
-/// conversion into it.
 const ENGINE_ERROR: &str = "crates/engine/src/error.rs";
 
-/// A public error type an engine crate declares: where, and its name.
 pub struct ErrorType {
     path: String,
     line: usize,
     name: String,
 }
 
-/// Collects the public error types (`pub struct` or `pub enum` named
-/// `*Error`) the engine crate file `path` declares in `source`; the engine's
-/// own error is not one.
 pub fn error_types(path: &str, source: &str, found: &mut Vec<ErrorType>) {
     if !path.starts_with("crates/") || path == ENGINE_ERROR {
         return;
@@ -254,8 +222,6 @@ pub fn error_types(path: &str, source: &str, found: &mut Vec<ErrorType>) {
     }
 }
 
-/// Fails at each of `found` that does not convert into the engine's error:
-/// an `impl From<…Name> for Error` in [`ENGINE_ERROR`].
 pub fn conversions(
     root: &std::path::Path,
     found: &[ErrorType],
@@ -290,8 +256,6 @@ pub fn conversions(
     Ok(())
 }
 
-/// Whether the workspace lint `key` is `lint`, or a tool's whole group
-/// (`rustdoc::all`) that holds it.
 fn covers(key: &str, lint: &str) -> bool {
     key == lint
         || key
@@ -299,15 +263,12 @@ fn covers(key: &str, lint: &str) -> bool {
             .is_some_and(|tool| tool.ends_with("::") && lint.starts_with(tool))
 }
 
-/// Whether `path` is an engine crate's library root (`crates/*/src/lib.rs`).
 fn engine_library(path: &str) -> bool {
     path.strip_prefix("crates/")
         .and_then(|rest| rest.strip_suffix("/src/lib.rs"))
         .is_some_and(|name| !name.contains('/'))
 }
 
-/// Whether `path` is the root file of a crate target (a library, binary,
-/// example or build script), where inner attributes apply crate-wide.
 fn crate_root(path: &str) -> bool {
     let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
     matches!(name, "lib.rs" | "main.rs" | "build.rs")

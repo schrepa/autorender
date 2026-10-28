@@ -1,17 +1,3 @@
-//! Auto exposure (`engine_core::AutoExposure`): a meter of each frame the
-//! screen effects' scene target holds, and the exposure later frames show.
-//! The meter (`exposure.wgsl`) reads a grid of samples of the frame into a
-//! histogram of their light in stops; one thread then averages the light
-//! between the shares of the darkest and the brightest samples left out,
-//! sets the exposure from the time of day's part (the physically based sky's
-//! own adaptation, within the night's limit) and the view's (that average
-//! against what the light falling on level ground gives an open view), and
-//! eases toward it, into a state the next frame's prelude copies over the
-//! lighting's exposure (after the physically based sky's), so every pass
-//! grading color shows it. A feature of the renderer
-//! (`crate::render_features`) created with the first frame metering; frames
-//! with the section on draw into the screen effects' targets.
-
 use std::cell::Cell;
 use std::mem::offset_of;
 use std::rc::Rc;
@@ -35,9 +21,6 @@ const STATE_BYTES: u64 = size_of::<ExposureState>() as u64;
 const UNIFORM_BYTES: u64 = size_of::<ExposureUniform>() as u64;
 const BIN_BYTES: u64 = EXPOSURE_BINS as u64 * 4;
 
-// The sun's depth below the horizon over which the most stops the time of
-// day raises exposure eases from the sky's own most to the night's: 4 to 14
-// degrees, as sines.
 const DUSK: f32 = 0.069_756;
 const NIGHT: f32 = 0.241_922;
 
@@ -49,24 +32,15 @@ pub(crate) struct ExposurePass {
     bins: wgpu::Buffer,
     state: wgpu::Buffer,
     group: GroupCache<6>,
-    // The settings last written, which frames repeating them keep.
     written: Option<ExposureUniform>,
-    // Whether the state still waits for its first exposure, the authored
-    // one, which the first frame shows.
     fresh: bool,
-    // The presentation time and camera of the last metered frame.
     last_seconds: Option<f64>,
     last_camera: [u32; 16],
-    // Whether the last frame metering copied its exposure over the
-    // lighting's.
     showing: bool,
-    // The state, read back a few frames late: the stops frames show from
-    // the authored exposure, the meter's average and the view's stops.
     readbacks: ReadbackRing<()>,
     read: Rc<Cell<Option<[f32; 3]>>>,
 }
 
-/// A frame metering its exposure.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ExposureFrame;
 
@@ -108,9 +82,6 @@ impl ExposurePass {
         }
     }
 
-    /// Prepares a frame of `snapshot` metering `scene`, the screen effects'
-    /// scene color, beside the depth buffer `depth`, both `drawn` pixels of
-    /// them from their top-left corner, under the scene's `lighting`.
     pub(crate) fn prepare(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -132,10 +103,6 @@ impl ExposurePass {
             queue.write_buffer(&self.state, 0, bytemuck::bytes_of(&state));
             self.fresh = false;
         }
-        // Exposure eases over the seconds since the last metered frame. At
-        // the same time it takes what the meter asks at once where the view
-        // is the same (exact frames settle), and keeps where the view moved
-        // (no time passed for the eye): -1.
         let seconds = snapshot.presented_seconds;
         let camera = snapshot.view_projection.to_cols_array().map(f32::to_bits);
         let moved = std::mem::replace(&mut self.last_camera, camera) != camera;
@@ -147,8 +114,6 @@ impl ExposurePass {
         } else {
             elapsed
         };
-        // The time of day's part follows the physically based sky's own
-        // adaptation to its light, within the night's limit.
         let sky = snapshot.environment.sky.sanitized();
         let noon = if sky.enabled {
             sky.sun_intensity * NOON_LIGHT
@@ -202,8 +167,6 @@ impl ExposurePass {
         ExposureFrame
     }
 
-    /// Records the copy of the exposure frames show over the lighting's,
-    /// `lighting`, after the physically based sky's own.
     pub(crate) fn show(&mut self, encoder: &mut wgpu::CommandEncoder, lighting: &wgpu::Buffer) {
         self.showing = true;
         let exposure = offset_of!(LightingUniform, horizon) + 12;
@@ -216,9 +179,6 @@ impl ExposurePass {
         );
     }
 
-    /// Whether the lighting still holds an exposure this copied, which no
-    /// copy will replace now that it is off: the lighting's own must be
-    /// written again.
     pub(crate) fn stop_showing(&mut self) -> bool {
         std::mem::take(&mut self.showing)
     }
@@ -234,8 +194,6 @@ impl RenderFeature for ExposurePass {
 
     const LABELS: &'static [&'static str] = &["engine/exposure"];
 
-    /// The meter reads the scene color and the depth buffer, and writes the
-    /// exposure later frames show.
     fn declare(_frame: &ExposureFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
         graph
             .add(Pass::Feature(FeaturePass::Exposure))
@@ -272,7 +230,6 @@ impl RenderFeature for ExposurePass {
         0
     }
 
-    /// Requests the map of the state the frame just submitted wrote.
     fn after_submit(&mut self, frame: Option<&ExposureFrame>) {
         if frame.is_none() {
             return;
@@ -287,8 +244,6 @@ impl RenderFeature for ExposurePass {
         ExposurePass::capacity_bytes(self)
     }
 
-    /// Whether the frame metered, and the stops frames show, the meter's
-    /// average and the view's stops, a few frames late.
     fn stats(
         this: Option<&Self>,
         frame: Option<&ExposureFrame>,

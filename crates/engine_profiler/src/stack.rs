@@ -1,10 +1,3 @@
-//! How much of its stack the calling thread used at most, where the
-//! operating system tells: Windows commits a thread's stack pages as it
-//! first reaches them and keeps them, so the committed part is the deepest
-//! the thread went. Native hosts report their main thread's, which has a
-//! megabyte on Windows, so that growing startup frames show before they
-//! overflow it. Unsafe code, as `pix.rs` holds: two system calls.
-
 #![cfg_attr(
     windows,
     expect(
@@ -13,7 +6,6 @@
     )
 )]
 
-/// The calling thread's deepest stack use in bytes; `None` off Windows.
 pub fn peak() -> Option<usize> {
     #[cfg(windows)]
     {
@@ -27,7 +19,6 @@ pub fn peak() -> Option<usize> {
 
 #[cfg(windows)]
 mod windows {
-    // `MEMORY_BASIC_INFORMATION` on 64-bit Windows.
     #[repr(C)]
     struct Region {
         base: usize,
@@ -52,7 +43,6 @@ mod windows {
         ) -> usize;
     }
 
-    /// The span from the stack's top down to its lowest committed page.
     pub(super) fn peak() -> Option<usize> {
         let (mut low, mut high) = (0, 0);
         // SAFETY: two out parameters.

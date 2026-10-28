@@ -1,12 +1,3 @@
-//! `cargo xtask cook`: the Stress Lab's presets cooked into packs, every
-//! record each one's content needs (`--cook`), in `web/public/cooked/`,
-//! which native hosts read whole and the page reads by range through the
-//! list `index.json` gives; and `--check`, the cook's parity: each preset
-//! runs on its pack with every record made again and compared
-//! (`--jobcache verify`), and must read records from it with none
-//! differing, and create every pipeline it draws with up front from its
-//! pipeline list, none after.
-
 use std::fs;
 use std::path::Path;
 
@@ -16,10 +7,6 @@ use crate::heavy::HeavyRun;
 use crate::pipeline::QUICK;
 use crate::process::run;
 
-/// The presets cooked when none is named: every one, as each scene's
-/// content makes records (its meshes' levels of detail, impostors and
-/// pipeline list, Highlands its terrain, those with clouds and water their
-/// tables, Highlands, Metro and City their generated textures).
 const PRESETS: &[&str] = &[
     "visual",
     "city",
@@ -32,10 +19,8 @@ const PRESETS: &[&str] = &[
     "sensors",
 ];
 
-/// Where packs are written and read, from the repository's root.
 const COOKED: &str = "web/public/cooked";
 
-/// Frames a check draws on its pack.
 const CHECK_FRAMES: &str = "600";
 
 pub fn cook(root: &Path, options: &[String]) -> Result<(), String> {
@@ -80,8 +65,6 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), String> {
     write_index(&folder)
 }
 
-/// Runs `preset` on its pack, every record made again and compared: it
-/// must read records from the pack and find none differing.
 fn check_pack(root: &Path, program: &str, preset: &str) -> Result<(), String> {
     let output = std::process::Command::new(program)
         .args([
@@ -143,7 +126,6 @@ fn check_pack(root: &Path, program: &str, preset: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Lists every pack in `folder` in its `index.json`, which the page reads.
 fn write_index(folder: &Path) -> Result<(), String> {
     let mut packs: Vec<String> = fs::read_dir(folder)
         .map_err(|error| format!("cannot list {}: {error}", folder.display()))?

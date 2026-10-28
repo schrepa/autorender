@@ -1,9 +1,3 @@
-//! Authoring data and explicitly owned scene instances.
-//!
-//! Parse and validate at load/reload boundaries, then instantiate through an
-//! exclusive [`engine_core::bevy_ecs::world::World`] borrow between frames.
-//! Serialization and authored identifier lookup are never part of extraction.
-//! Runtime entities and asset handles are deliberately absent from the format.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants

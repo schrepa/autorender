@@ -1,23 +1,9 @@
-//! How far a level of detail's surface strays from its mesh's, both
-//! ways: the largest distance from a point of either surface to the nearest
-//! point of the other, at points sampled over each (every vertex, edge
-//! middle and triangle center, and across triangles wider than the
-//! sampling step a grid of points). Pruned parts, folded silhouettes and
-//! collapsed ridges all show in it, as the error the simplifier estimates
-//! from its quadrics need not. Nearest points come from a bounding volume
-//! hierarchy over the other surface's triangles. Every step is plain f32
-//! arithmetic in a fixed order, so every host measures the same bits.
-
 use engine_math::{max, min};
 use glam::Vec3;
 
-/// Triangles a leaf of the hierarchy holds at most.
 const LEAF: usize = 4;
-/// Grid points across a triangle's longest edge at most.
 const MOST_STEPS: u32 = 64;
 
-/// The largest distance between the surfaces of triangles `a` and `b`
-/// (indices into `positions`), both ways, sampled every `step` units.
 pub(crate) fn surface_distance(positions: &[Vec3], a: &[u32], b: &[u32], step: f32) -> f32 {
     let (towards_b, towards_a) = (Hierarchy::new(positions, b), Hierarchy::new(positions, a));
     let one_way = |from: &[u32], to: &Hierarchy| {
@@ -31,7 +17,6 @@ pub(crate) fn surface_distance(positions: &[Vec3], a: &[u32], b: &[u32], step: f
     farthest.sqrt()
 }
 
-/// The mean length of `triangles`' edges.
 pub(crate) fn mean_edge(positions: &[Vec3], triangles: &[u32]) -> f32 {
     let mut total = 0.0_f64;
     let mut edges = 0_u64;
@@ -46,10 +31,6 @@ pub(crate) fn mean_edge(positions: &[Vec3], triangles: &[u32]) -> f32 {
     (total / edges as f64) as f32
 }
 
-/// Calls `visit` with every point sampled over `triangles`: their
-/// corners, edge middles and centers, and where a triangle's longest edge
-/// is longer than `step`, a grid of points across it that many steps a
-/// side (at most [`MOST_STEPS`]).
 fn samples(positions: &[Vec3], triangles: &[u32], step: f32, visit: &mut impl FnMut(Vec3)) {
     for triangle in triangles.as_chunks::<3>().0 {
         let [a, b, c] = triangle.map(|index| positions[index as usize]);
@@ -60,7 +41,6 @@ fn samples(positions: &[Vec3], triangles: &[u32], step: f32, visit: &mut impl Fn
             2
         };
         let steps = steps.max(2);
-        // Barycentric grid points, corners and edge middles among them.
         for i in 0..=steps {
             for j in 0..=steps - i {
                 let (u, v) = (i as f32 / steps as f32, j as f32 / steps as f32);
@@ -71,19 +51,14 @@ fn samples(positions: &[Vec3], triangles: &[u32], step: f32, visit: &mut impl Fn
     }
 }
 
-/// A node of the hierarchy: its box, and either its two children or its
-/// triangles (a range of the ordered triangles).
 #[derive(Clone, Copy)]
 struct Node {
     low: Vec3,
     high: Vec3,
-    // Leaves: the first triangle and the count; inner nodes: the first
-    // child (the second follows it) and a count of 0.
     first: u32,
     count: u32,
 }
 
-/// A bounding volume hierarchy over a surface's triangles.
 struct Hierarchy {
     nodes: Vec<Node>,
     triangles: Vec<[Vec3; 3]>,
@@ -111,8 +86,6 @@ impl Hierarchy {
         Self { nodes, triangles }
     }
 
-    /// The squared distance from `point` to the nearest of its triangles:
-    /// infinite without any.
     fn distance_squared(&self, point: Vec3) -> f32 {
         let mut best = f32::INFINITY;
         if self.nodes.is_empty() {
@@ -136,7 +109,6 @@ impl Hierarchy {
                 }
                 continue;
             }
-            // The nearer child is searched first.
             let (left, right) = (node.first, node.first + 1);
             let near = |child: u32| {
                 let child = self.nodes[child as usize];
@@ -152,9 +124,6 @@ impl Hierarchy {
     }
 }
 
-/// Fills node `at` over `triangles[range]`: a leaf of at most [`LEAF`], or
-/// two children split at the middle of the triangles ordered along the
-/// longest side of their centers' box.
 fn build(nodes: &mut Vec<Node>, triangles: &mut [[Vec3; 3]], at: usize, range: (usize, usize)) {
     let (first, count) = range;
     let slice = &mut triangles[first..first + count];
@@ -186,7 +155,6 @@ fn build(nodes: &mut Vec<Node>, triangles: &mut [[Vec3; 3]], at: usize, range: (
     } else {
         2
     };
-    // A total order, so every host builds the same hierarchy.
     slice.sort_by(|a, b| {
         let key = |triangle: &[Vec3; 3]| triangle[0][axis] + triangle[1][axis] + triangle[2][axis];
         key(a).total_cmp(&key(b)).then_with(|| {
@@ -214,14 +182,11 @@ fn build(nodes: &mut Vec<Node>, triangles: &mut [[Vec3; 3]], at: usize, range: (
     build(nodes, triangles, children + 1, (first + half, count - half));
 }
 
-/// The squared distance from `point` to the box `low` to `high`.
 fn box_distance_squared(point: Vec3, low: Vec3, high: Vec3) -> f32 {
     let outside = (low - point).max(point - high).max(Vec3::ZERO);
     outside.dot(outside)
 }
 
-/// The point of triangle `a`, `b`, `c` nearest `point` (Ericson, Real-Time
-/// Collision Detection, 5.1.5); of its edges where it has no area.
 fn closest_on_triangle(point: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
     let (ab, ac, ap) = (b - a, c - a, point - a);
     let (d1, d2) = (ab.dot(ap), ac.dot(ap));
@@ -252,7 +217,6 @@ fn closest_on_triangle(point: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
     }
     let sum = va + vb + vc;
     if sum.is_nan() || sum <= 0.0 {
-        // No area: the nearest of its edges.
         let edges = [(a, b), (b, c), (c, a)].map(|(from, to)| closest_on_segment(point, from, to));
         return edges
             .into_iter()
@@ -270,7 +234,6 @@ fn closest_on_triangle(point: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
     a + ab * (vb * denominator) + ac * (vc * denominator)
 }
 
-/// The point of the segment `from` to `to` nearest `point`.
 fn closest_on_segment(point: Vec3, from: Vec3, to: Vec3) -> Vec3 {
     let along = to - from;
     let length = along.dot(along);

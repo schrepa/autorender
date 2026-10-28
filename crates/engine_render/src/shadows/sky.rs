@@ -1,16 +1,3 @@
-//! Sky occlusion's maps: depth maps of still mesh casters seen from fixed
-//! directions of the sky (the zenith and rings below it), each a layer of
-//! one texture, around the camera: a sharp set reaching the settings'
-//! `near_distance` and a coarse set reaching their `far_distance`, one
-//! layer per direction each. They look along fixed directions, so the sun's
-//! movement redraws none. A frame redraws at most one map: one never drawn
-//! first (the sharp set first), then the one the camera strayed farthest
-//! from; maps whose still casters changed (in a city, mostly vehicles that
-//! stopped or left) wait their turn, one every few frames. Lookups (the screen effects'
-//! occlusion pass, `post.wgsl`) read a map only once drawn, fading it in
-//! over its first frames, and count where no map reaches as open sky, so
-//! nothing turns dark before its maps hold it.
-
 use engine_core::SkyOcclusion;
 use engine_core::glam::{Mat4, Vec3, Vec4};
 
@@ -19,29 +6,14 @@ use crate::cached::{Bound, Versioned};
 use crate::gpu_data::SkyUniform;
 use crate::gpu_layouts::constants::{SKY_DIRECTIONS, SKY_LAYERS};
 
-/// Texels along a side of every map.
 const RESOLUTION: u32 = 512;
-/// A map's reach (half its side) over its distance: lookups within the
-/// distance of the camera stay where the map counts whole while the camera
-/// strays less than [`STRAY`] of the reach from where it was drawn.
 const SPAN: f32 = 4.0 / 3.0;
-/// The share of a map's reach the camera strays before the map is drawn
-/// again around it, and half the reach beyond which it is drawn anew,
-/// fading in again.
 const STRAY: f32 = 0.1;
 const ANEW: f32 = 0.5;
-/// Frames a map drawn anew takes to fade in.
 const FADE_FRAMES: u32 = 12;
-/// Frames shadows run before the first map is drawn: casters count as still
-/// after eight, and the maps hold still casters alone.
 const SETTLE_FRAMES: u32 = 10;
-/// Frames between redraws of maps whose still casters changed.
 const STALE_FRAMES: u32 = 16;
 
-/// The redraw of one map this frame: its layer, world to its clip space,
-/// world to its space (rows: its right, up and away-from-the-sky axes), its
-/// rectangle there, and the depth beyond which casters hide no sky from its
-/// receivers.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SkyDraw {
     pub layer: usize,
@@ -51,9 +23,6 @@ pub(crate) struct SkyDraw {
     pub depth: f32,
 }
 
-/// A map's state: where it was last drawn around (the camera then) and its
-/// world to clip space there, once drawn; frames since it was drawn anew;
-/// and whether its still casters changed since it was last drawn.
 #[derive(Clone, Copy, Debug, Default)]
 struct Layer {
     drawn: Option<(Vec3, Mat4)>,
@@ -61,9 +30,6 @@ struct Layer {
     stale: bool,
 }
 
-/// Direction `index` of `count` toward the sky: the zenith, then a ring
-/// halfway down and a ring low over the horizon, each ring's directions
-/// turned half a step from the other's.
 fn direction(count: u32, index: usize) -> Vec3 {
     let (ring, step, elevation, offset) = match (count, index) {
         (_, 0) => return Vec3::Y,
@@ -79,7 +45,6 @@ fn direction(count: u32, index: usize) -> Vec3 {
     Vec3::new(cos_e * cos_a, sin_e, cos_e * sin_a)
 }
 
-/// The right and up axes of a map looking down along `toward_sky`.
 fn axes(toward_sky: Vec3) -> (Vec3, Vec3) {
     let reference = if toward_sky.y.abs() > 0.99 {
         Vec3::X
@@ -90,8 +55,6 @@ fn axes(toward_sky: Vec3) -> (Vec3, Vec3) {
     (right, toward_sky.cross(right))
 }
 
-/// The maps' texture: every layer as one array (lookups) and each layer
-/// (drawing).
 struct SkyTextures {
     texture: wgpu::Texture,
     array: wgpu::TextureView,
@@ -106,20 +69,15 @@ impl Drop for SkyTextures {
 
 pub(crate) struct SkyMaps {
     textures: Versioned<Option<SkyTextures>>,
-    // Stands in for the maps while there are none.
     _placeholder: wgpu::Texture,
     placeholder: Versioned<wgpu::TextureView>,
     layers: [Layer; SKY_LAYERS],
-    // Directions and the near and far distances (bits) the maps hold.
     key: Option<(u32, u32, u32)>,
-    // Frames run since shadows began, and since a map was redrawn for its
-    // changed casters.
     frames: u32,
     since_stale: u32,
     uniform: wgpu::Buffer,
     written: Option<SkyUniform>,
     sampler: wgpu::Sampler,
-    // Maps drawn around the camera and drawn this frame, for stats.
     ready: u32,
     drawn: u32,
 }
@@ -166,8 +124,6 @@ impl SkyMaps {
         }
     }
 
-    /// What the occlusion pass binds: the maps (or a placeholder), their
-    /// comparison sampler and where each looks.
     pub(crate) fn bindings(&self) -> [(&'static str, Bound<'_>); 3] {
         let maps = match self.textures.as_ref() {
             Some(textures) => Bound::of(
@@ -186,20 +142,16 @@ impl SkyMaps {
         ]
     }
 
-    /// Maps drawn around the camera, and drawn this frame.
     pub(crate) fn counts(&self) -> (u32, u32) {
         (self.ready, self.drawn)
     }
 
-    /// The view of layer `layer`, for drawing it.
     pub(crate) fn layer_view(&self, layer: usize) -> Option<&wgpu::TextureView> {
         self.textures
             .as_ref()
             .and_then(|textures| textures.layers.get(layer))
     }
 
-    /// No maps: shadows are off or sky occlusion darkens nothing. Lookups
-    /// see open sky everywhere.
     pub(crate) fn release(&mut self, queue: &wgpu::Queue) {
         if self.textures.is_some() {
             self.textures.replace(None);
@@ -211,9 +163,6 @@ impl SkyMaps {
         self.write(queue, bytemuck::Zeroable::zeroed());
     }
 
-    /// This frame's work under `settings` (sanitized) around the detail eye
-    /// at `eye`: the map it redraws, if any, after `changed` still casters
-    /// marked every map stale; writes the lookup uniform.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -264,7 +213,6 @@ impl SkyMaps {
         let far = engine_core::math::max(settings.far_distance, near * 1.5);
         let key = (count, near.to_bits(), far.to_bits());
         if self.key != Some(key) {
-            // Other directions or reaches: every map is drawn anew.
             self.key = Some(key);
             self.layers = [Layer::default(); SKY_LAYERS];
         }
@@ -295,7 +243,6 @@ impl SkyMaps {
             if within >= count as usize {
                 continue;
             }
-            // Every direction in use, counted once its map is drawn.
             let weight = layer.drawn.map_or(0.0, |(_, clip)| {
                 uniform.clips[index] = clip.to_cols_array_2d();
                 (layer.age + 1).min(FADE_FRAMES) as f32 / FADE_FRAMES as f32
@@ -308,9 +255,6 @@ impl SkyMaps {
         draw
     }
 
-    /// The map to redraw: one never drawn (the near set first), else the
-    /// one strayed farthest from beyond a share of its reach, else, every
-    /// [`STALE_FRAMES`], one whose still casters changed (the near set first).
     fn choose(&mut self, count: usize, eye: Vec3, reaches: [f32; 2]) -> Option<usize> {
         let in_use = || (0..count).chain(SKY_DIRECTIONS..SKY_DIRECTIONS + count);
         let mut best: Option<(usize, f32)> = None;
@@ -334,8 +278,6 @@ impl SkyMaps {
         Some(stale)
     }
 
-    /// Layer `layer` drawn anew around `eye`: its center snapped to its
-    /// texels in its own plane, so still casters land on the same texels.
     fn redraw(&mut self, layer: usize, count: u32, eye: Vec3, reaches: [f32; 2]) -> SkyDraw {
         let toward_sky = direction(count, layer % SKY_DIRECTIONS);
         let (right, up) = axes(toward_sky);
@@ -345,8 +287,6 @@ impl SkyMaps {
         let x = (right.dot(eye) / texel).round() * texel;
         let y = (up.dot(eye) / texel).round() * texel;
         let z = away.dot(eye);
-        // Depth runs from a reach toward the sky to a reach away from it;
-        // casters nearer the sky flatten onto the near plane.
         let row = |axis: Vec3, scale: f32, offset: f32| (axis * scale).extend(offset);
         let clip = Mat4::from_cols(
             row(right, 1.0 / reach, -x / reach),

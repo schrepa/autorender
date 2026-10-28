@@ -1,18 +1,9 @@
-//! The structure ratchet: no source file longer than [`MAX_FILE_LINES`]
-//! lines and no struct with more than [`MAX_STRUCT_FIELDS`] fields, but
-//! those [`LONG_FILES`] and [`WIDE_STRUCTS`] list, each at most its size
-//! when listed. A listed one that grows fails; one that is no longer over
-//! the limit fails until its entry goes, so the lists only shrink.
-
 use std::path::Path;
 use std::process::Command;
 
-/// The most lines a source file has (Rust, WGSL, TypeScript, scripts).
 const MAX_FILE_LINES: usize = 1500;
-/// The most fields a struct has.
 const MAX_STRUCT_FIELDS: usize = 30;
 
-/// The files longer than [`MAX_FILE_LINES`]: each one's most lines.
 const LONG_FILES: &[(&str, usize)] = &[
     ("apps/stress-lab/src/city/mod.rs", 1583),
     ("apps/stress-lab/src/highlands/mod.rs", 2050),
@@ -23,8 +14,6 @@ const LONG_FILES: &[(&str, usize)] = &[
     ("tools/lodbuild/src/simplify.rs", 2387),
 ];
 
-/// The structs with more than [`MAX_STRUCT_FIELDS`] fields, by file and
-/// name: each one's most fields.
 const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
     ("crates/engine_core/src/frame_stats.rs", "RenderStats", 42),
     (
@@ -42,7 +31,6 @@ const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
     ("crates/engine_render/src/scatter.rs", "ScatterPass", 40),
 ];
 
-/// Checks every source file git would commit against the limits and lists.
 pub fn check(root: &Path) -> Result<(), String> {
     let mut problems = Vec::new();
     let mut long = Vec::new();
@@ -112,8 +100,6 @@ pub fn check(root: &Path) -> Result<(), String> {
     Err(problems.join("\n"))
 }
 
-/// The sources git would commit, `/`-separated: Rust, WGSL, TypeScript
-/// and scripts, but vendored and generated files.
 pub(crate) fn sources(root: &Path) -> Result<Vec<String>, String> {
     let output = Command::new("git")
         .args([
@@ -149,8 +135,6 @@ pub(crate) fn sources(root: &Path) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
-/// `text` with its comments and its string and character literals blanked
-/// out, lines kept, so only code is left to read.
 fn code(text: &str) -> String {
     let characters: Vec<char> = text.chars().collect();
     let blank = |from: &[char]| -> String {
@@ -225,14 +209,10 @@ fn code(text: &str) -> String {
     out
 }
 
-/// Whether a word character comes before `at`.
 fn word_before(characters: &[char], at: usize) -> bool {
     at > 0 && (characters[at - 1].is_alphanumeric() || characters[at - 1] == '_')
 }
 
-/// Each struct `code` declares, by name, with its fields: a named struct's
-/// (as rustfmt lays them out, one `name:` each), a tuple struct's, none for
-/// a unit struct.
 fn structs(code: &str) -> Vec<(String, usize)> {
     let characters: Vec<char> = code.chars().collect();
     let word_at = |at: usize| -> String {
@@ -264,7 +244,6 @@ fn structs(code: &str) -> Vec<(String, usize)> {
             continue;
         }
         index += name.chars().count();
-        // Generics, where `->` is no closing bracket.
         let mut angle = 0_i32;
         while index < characters.len() {
             match characters[index] {
@@ -287,8 +266,6 @@ fn structs(code: &str) -> Vec<(String, usize)> {
     found
 }
 
-/// The fields of the named struct whose body opens at `open`: each word
-/// directly inside it followed by a single `:`.
 fn named_fields(characters: &[char], open: usize) -> usize {
     let mut depth = 0;
     let mut fields = 0;
@@ -331,8 +308,6 @@ fn named_fields(characters: &[char], open: usize) -> usize {
     fields
 }
 
-/// The fields of the tuple struct whose fields open at `open`: its
-/// top-level parts between commas.
 fn tuple_fields(characters: &[char], open: usize) -> usize {
     let mut depth = 0;
     let mut parts = 0;

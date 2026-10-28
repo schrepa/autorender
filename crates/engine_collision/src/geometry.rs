@@ -74,19 +74,14 @@ impl Bounds {
     }
 }
 
-/// Dimension-scaled linear map of a unit box or unit ball. Translation remains
-/// separate so narrow-phase works in pair-relative coordinates.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AffineShape {
     pub shape: ColliderShape,
     pub center: Vec3,
     pub basis: Mat3,
     pub bounds: Bounds,
-    /// Radius of a ball around `center` inside the shape (a lower bound).
     pub inner: f64,
-    /// Radius of a ball around `center` containing the shape (an upper bound).
     pub outer: f64,
-    /// Inverse of `basis` in f64: maps offsets from `center` into the unit shape.
     pub inverse: DMat3,
 }
 impl AffineShape {
@@ -105,7 +100,6 @@ impl AffineShape {
                 Vec3::new(squared.x.sqrt(), squared.y.sqrt(), squared.z.sqrt())
             }
         };
-        // Round broadphase bounds outward at the scene's current magnitude.
         let margin = 16.0 * f32::EPSILON * math::max((center.abs() + half).max_element(), 1.0);
         let bounds = Bounds {
             min: center - half,
@@ -181,7 +175,6 @@ impl AffineShape {
     }
 }
 
-/// An affine shape's support map relative to its center, counting calls.
 pub(crate) struct Support<'a> {
     affine: &'a AffineShape,
     calls: &'a Cell<usize>,
@@ -208,10 +201,6 @@ impl SupportMap for Support<'_> {
     }
 }
 
-/// Conservative radii of balls around the center inside and around the unit box
-/// or unit ball mapped by `basis`, in f64: the inner radius is at most, and the
-/// outer at least, the exact value up to f64 rounding, which the pair tests'
-/// relative margin exceeds by orders of magnitude.
 fn ball_radii(shape: ColliderShape, basis: Mat3) -> (f64, f64) {
     let (x, y, z) = (
         basis.x_axis.as_dvec3(),
@@ -221,8 +210,6 @@ fn ball_radii(shape: ColliderShape, basis: Mat3) -> (f64, f64) {
     let determinant = x.dot(y.cross(z)).abs();
     match shape {
         ColliderShape::Cuboid { .. } => {
-            // The nearest face plane is |det| over the largest face area away;
-            // the farthest corner bounds the rest.
             let face = y
                 .cross(z)
                 .length()
@@ -236,9 +223,6 @@ fn ball_radii(shape: ColliderShape, basis: Mat3) -> (f64, f64) {
             (if face > 0.0 { determinant / face } else { 0.0 }, corner)
         }
         ColliderShape::Sphere { .. } => {
-            // Gershgorin bounds on the Gram matrix's eigenvalues, the squared
-            // singular values of `basis` (exact for orthogonal columns), and
-            // σ_min >= |det| / σ_max² when shear loosens them.
             let columns = [x, y, z];
             let (mut largest, mut smallest) = (0.0_f64, f64::INFINITY);
             for (row, column) in columns.iter().enumerate() {
@@ -260,17 +244,8 @@ fn ball_radii(shape: ColliderShape, basis: Mat3) -> (f64, f64) {
     }
 }
 
-/// Relative widening of pre-test radii: far beyond f64 radius rounding,
-/// the box test's 64-epsilon tolerance and parry's f32 GJK tolerances.
 const PRETEST_MARGIN: f64 = 1.0 / 4096.0;
 
-/// Whether two affine shapes overlap (touching counts). Pre-tests settle pairs
-/// far from contact exactly as the tests below would: pairs sharing an interior
-/// point (overlapping inscribed balls, or reaches along the line between the
-/// centers that together cover it) are accepted by every exact test; for GJK
-/// pairs, disjoint containing balls or a separating axis along that line leave a
-/// gap GJK always finds. Two boxes that are not settled early run the exact
-/// separating-axis test, and other remaining pairs GJK, with unchanged decisions.
 #[cfg_attr(feature = "attribution", inline(never))]
 pub(crate) fn intersects(a: &AffineShape, b: &AffineShape) -> Result<bool, CollisionError> {
     let offset = b.center.as_dvec3() - a.center.as_dvec3();
@@ -279,9 +254,6 @@ pub(crate) fn intersects(a: &AffineShape, b: &AffineShape) -> Result<bool, Colli
     if squared < inner * inner {
         return Ok(true);
     }
-    // Each shape reaches 1/n of the way along the center line, n being the
-    // offset's norm in its unit shape (max norm for boxes). Reaches summing
-    // past the whole line meet at a point inside both shapes.
     let (from_a, from_b) = (a.unit_norm(offset), b.unit_norm(offset));
     if from_a + from_b > (1.0 + PRETEST_MARGIN) * from_a * from_b {
         return Ok(true);
@@ -292,7 +264,6 @@ pub(crate) fn intersects(a: &AffineShape, b: &AffineShape) -> Result<bool, Colli
         return Ok(boxes_overlap(a, b));
     }
     let outer = (a.outer + b.outer) * (1.0 + PRETEST_MARGIN);
-    // Along the center line both projections are offset-scaled half-widths.
     if squared > outer * outer
         || squared > (a.half_width(offset) + b.half_width(offset)) * (1.0 + PRETEST_MARGIN)
     {
@@ -302,8 +273,6 @@ pub(crate) fn intersects(a: &AffineShape, b: &AffineShape) -> Result<bool, Colli
 }
 
 impl AffineShape {
-    /// Norm of `offset` mapped into the unit shape: the shape's surface lies
-    /// 1/norm of `offset` away from its center in that direction.
     #[inline]
     fn unit_norm(&self, offset: DVec3) -> f64 {
         let local = self.inverse * offset;
@@ -313,8 +282,6 @@ impl AffineShape {
         }
     }
 
-    /// Half-width of the shape along `direction`, times `direction`'s length:
-    /// the largest `direction · (x - center)` over the shape.
     #[inline]
     fn half_width(&self, direction: DVec3) -> f64 {
         let projected = self.basis.as_dmat3().transpose() * direction;
@@ -325,9 +292,6 @@ impl AffineShape {
     }
 }
 
-/// `cast_boxes(a, b, Vec3::ZERO, ShapeCastOptions::default()).is_some()`: the
-/// same 15 axes and f64 operations, stopping at the first separating axis
-/// instead of first forming every axis.
 #[cfg_attr(feature = "attribution", inline(never))]
 fn boxes_overlap(a: &AffineShape, b: &AffineShape) -> bool {
     let a_axes = [
@@ -342,10 +306,6 @@ fn boxes_overlap(a: &AffineShape, b: &AffineShape) -> bool {
     ];
     let offset = a.center.as_dvec3() - b.center.as_dvec3();
     let separates = |axis: DVec3| {
-        // The unnormalized gap is the normalized gap times the axis length. A
-        // nonpositive one stays below the positive tolerance after
-        // normalization, whose rounding is far smaller than that tolerance,
-        // so only positive gaps pay for the exact normalized test.
         let spread = a_axes
             .iter()
             .chain(&b_axes)
@@ -386,7 +346,6 @@ fn boxes_overlap(a: &AffineShape, b: &AffineShape) -> bool {
     true
 }
 
-/// GJK intersection of two support maps with parry's iteration bound exposed.
 #[cfg_attr(feature = "attribution", inline(never))]
 fn intersects_support_maps(a: &AffineShape, b: &AffineShape) -> Result<bool, CollisionError> {
     let calls = Cell::new(0);
@@ -401,8 +360,6 @@ fn intersects_support_maps(a: &AffineShape, b: &AffineShape) -> Result<bool, Col
             calls: &calls,
         },
     );
-    // Parry's 100-iteration exhaustion maps to a miss. Expose an error instead
-    // when its support-call bound is reached, including marginal convergence.
     if calls.get() >= 200 {
         Err(CollisionError::NumericalFailure)
     } else {
@@ -411,12 +368,9 @@ fn intersects_support_maps(a: &AffineShape, b: &AffineShape) -> Result<bool, Col
 }
 
 thread_local! {
-    // The polytope expansion's buffers, which every shape cast on this
-    // thread reuses.
     static EPA_SCRATCH: RefCell<EPA> = RefCell::new(EPA::default());
 }
 
-/// The narrow phase of shape casts.
 pub(crate) struct Narrow;
 
 impl Narrow {
@@ -484,8 +438,6 @@ impl Narrow {
             return Ok(None);
         }
         calls.set(0);
-        // Penetrating cases above use our retained EPA instead of Parry's
-        // allocating convenience contact path.
         let hit = details::cast_shapes_support_map_support_map(
             &pose,
             -displacement,
@@ -522,9 +474,6 @@ impl Narrow {
     }
 }
 
-/// Fixed-orientation affine boxes have exactly 15 separating-axis families:
-/// three face normals each, and nine edge cross products. f64 projection avoids
-/// f32 GJK witness cancellation at exact contact with wide floors.
 fn cast_boxes(
     a: &AffineShape,
     b: &AffineShape,
@@ -611,8 +560,6 @@ fn cast_boxes(
         }
         (enter, enter_normal)
     };
-    // A representative surface witness on the target. At a face/edge contact
-    // the closest point to the moving center is nonunique under affine shear.
     let moving_center = a.center.as_dvec3() + movement * fraction;
     let mut target_local = b.basis.as_dmat3().inverse() * (moving_center - b.center.as_dvec3());
     if target_local.abs().max_element() < 1.0 {

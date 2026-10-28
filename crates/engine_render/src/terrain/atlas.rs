@@ -1,24 +1,3 @@
-//! The tile atlas: every resident tile's heights, with their peaks
-//! (`world_trace::peaks`) in the mips below them, normals (the smooth
-//! surface's gradient at each sample), control values and rivers (meters to
-//! their edges and their beds) in four texture arrays, and the error
-//! pyramids of its ground and of its water's surface, every mip, in two
-//! more, a layer each, written as the layer takes the tile and as its water
-//! changes; which tile each
-//! layer holds, when it arrived, and the layers
-//! free; the GPU's normal maps and control values of the tiles shading with
-//! their own samples uploaded each frame (level-0 tiles, and surroundings'
-//! tiles); a terrain's coarser tiles' control values and normal maps
-//! uploaded from their shading, level 0's averaged, as it arrives; and each
-//! layer's fades.
-//!
-//! A sync reads what each terrain's list gained, lost or replaced since the
-//! list it last synced (both in key order), beside the listed tiles still
-//! waiting for a layer, so its work follows what changed, not how many
-//! tiles are resident. Fades are worked out again only for the tiles whose
-//! fades can have changed: those fading in as time passes, and those whose
-//! layer, arrival or surface materials changed.
-
 #![expect(
     clippy::expect_used,
     reason = "the arrays are allocated before tiles upload"
@@ -31,14 +10,8 @@ use engine_core::collections::HashSet;
 use engine_core::terrain_data::{ERROR_CELLS, ERROR_TEXELS, ErrorPyramid, Pyramid, TileShading};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Each tile's error pyramids: half floats, which hold every bound to a
-/// part in a thousand, rounded up, and the water's marks exactly.
 const ERROR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 
-/// The arrays: heights, whose mip `m + 1` holds mip `m` of their peaks,
-/// which reflections' world trace skips over, control values, normals and
-/// rivers' edges and beds, and the error pyramids of the ground and of the
-/// water's surface, a layer per tile.
 struct Arrays {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -55,8 +28,6 @@ struct Arrays {
     layers: u32,
 }
 
-/// Mips of the heights: the heights, then their peaks' every mip, each
-/// below the heights' mip whose texels a side hold its cells.
 const HEIGHT_MIPS: u32 = 1 + ERROR_MIPS;
 
 const _: () = assert!(
@@ -64,17 +35,12 @@ const _: () = assert!(
     "each mip of the heights below the first holds a mip of their peaks"
 );
 
-/// A terrain's tiles as last synced: their revision and list, in key
-/// order, and whether the GPU gave them control values.
 struct Listed {
     revision: u64,
     tiles: Arc<[Arc<engine_core::Tile>]>,
     surface: bool,
 }
 
-/// What changed in the terrains' lists since they were last synced: the
-/// tiles that left them, those that arrived in them and those replaced
-/// under their keys.
 #[derive(Default)]
 struct Changes {
     left: Vec<(u64, TileKey)>,
@@ -83,8 +49,6 @@ struct Changes {
 }
 
 impl Changes {
-    /// Notes what changed from `before` to `now`, terrain `id`'s lists in
-    /// key order.
     fn compare(
         &mut self,
         id: u64,
@@ -124,9 +88,6 @@ impl Changes {
     }
 }
 
-/// Resident tiles replaced under their keys that upload again: the layers
-/// they leave, which they take again, and the tiles they replace, so the
-/// arrays keep what did not change.
 #[derive(Default)]
 struct Replaced {
     layers: HashMap<(u64, TileKey), u32>,
@@ -135,68 +96,35 @@ struct Replaced {
 
 pub(crate) struct TileAtlas {
     arrays: Option<Arrays>,
-    /// Advances whenever the arrays are replaced.
     pub(super) generation: u64,
     pub(super) slots: HashMap<(u64, TileKey), u32>,
-    // When each resident tile arrived, and when its surface
-    // materials did, in seconds of presentation time; tiles
-    // without them are absent; and this frame's time.
     pub(super) arrivals: HashMap<(u64, TileKey), f32>,
     pub(super) surfaced: HashMap<(u64, TileKey), f32>,
     pub(super) now: f32,
-    /// The resident tiles shading with their shading, whose normal maps
-    /// arrive with their surface materials.
     pub(super) shaded: HashSet<(u64, TileKey)>,
-    // The tile each slot holds: edits replace tiles under the
-    // same key, which upload again into their layers.
     pub(super) held: HashMap<(u64, TileKey), Arc<engine_core::Tile>>,
-    /// The highest of each resident tile's heights, its peaks' whole-tile
-    /// cell (terrain-local).
     pub(super) tops: HashMap<(u64, TileKey), f32>,
     pub(super) free: Vec<u32>,
     pub(super) next_layer: u32,
-    /// Each terrain's tiles as last synced, by id.
     synced: HashMap<u64, Listed>,
-    /// Listed tiles that found no layer, which every sync tries again, and
-    /// the resident tiles with holes, in key order.
     pub(super) unplaced: HashSet<(u64, TileKey)>,
     pub(super) holed: BTreeSet<(u64, TileKey)>,
-    /// Tiles uploaded this frame, resident on the GPU, and dropped for want
-    /// of layers.
     pub(crate) uploads: u32,
     pub(crate) dropped: u32,
-    /// Tiles the GPU gave control values this frame.
     pub(crate) controls: u32,
-    // Normal maps of tiles uploaded this frame (layer, spacing), and the
-    // pass computing them.
     normal_jobs: Vec<(u32, f32)>,
     normal_pass: Option<(crate::pipelines::GroupLayout, wgpu::ComputePipeline)>,
-    // Control values the GPU gives tiles uploaded this frame,
-    // the pass giving them, and each terrain's surface data there with
-    // the data it holds, which changes when the data does.
     control_jobs: Vec<ControlJob>,
     control_pass: Option<(crate::pipelines::GroupLayout, wgpu::ComputePipeline)>,
     surfaces: HashMap<u64, (Arc<SurfaceData>, wgpu::Buffer)>,
-    // The sky maps' sampler, linear; and the nearest one the control
-    // values and normal maps gather through.
     pub(super) sky_sampler: wgpu::Sampler,
     pub(super) control_sampler: wgpu::Sampler,
-    /// The tiles that arrived, left or were replaced this frame, whose
-    /// directory entries are written again; and those whose held tile
-    /// changed, each once, which their water follows.
     pub(super) changed: Vec<(u64, TileKey)>,
     pub(super) held_changes: Vec<(u64, TileKey)>,
-    /// Each layer's fades as shaders read them, the words this frame
-    /// changed, and whether frames faded and the time when they were last
-    /// worked out.
     pub(super) fades: Vec<u32>,
     pub(super) fades_dirty: Range<usize>,
     pub(super) faded_with: Option<(bool, f32)>,
-    // The resident tiles a coarser level still shows over whose fades move
-    // as time passes.
     moving: HashSet<(u64, TileKey)>,
-    // The tiles whose layer, arrival or surface materials' time changed
-    // since fades were last worked out, and the layers tiles left.
     touched: Vec<(u64, TileKey)>,
     vacated: Vec<u32>,
 }
@@ -226,8 +154,6 @@ impl TileAtlas {
             control_jobs: Vec::new(),
             control_pass: None,
             surfaces: HashMap::default(),
-            // Nearest texels: control values and normal maps gather as
-            // stored.
             control_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/terrain-control-sampler"),
                 ..Default::default()
@@ -249,7 +175,6 @@ impl TileAtlas {
         }
     }
 
-    /// The height, normal and control arrays' views, once tiles arrived.
     pub(super) fn views(
         &self,
     ) -> Option<(&wgpu::TextureView, &wgpu::TextureView, &wgpu::TextureView)> {
@@ -258,18 +183,12 @@ impl TileAtlas {
             .map(|arrays| (&arrays.view, &arrays.normals_view, &arrays.control_view))
     }
 
-    /// The views of the ground's and the water's error pyramids, once tiles
-    /// arrived.
     pub(super) fn errors(&self) -> Option<(&wgpu::TextureView, &wgpu::TextureView)> {
         self.arrays
             .as_ref()
             .map(|arrays| (&arrays.ground_errors_view, &arrays.water_errors_view))
     }
 
-    /// Bytes of the height, normal, control and river arrays, four, four,
-    /// four and eight a texel, of the heights' mips below them holding their
-    /// peaks, four a texel, and of the error pyramids, two a cell of every
-    /// mip each.
     pub(super) fn capacity_bytes(&self) -> u64 {
         self.arrays.as_ref().map_or(0, |arrays| {
             let pyramids = 2 * 2 * ERROR_TEXELS as u64;
@@ -280,24 +199,16 @@ impl TileAtlas {
         })
     }
 
-    /// Layers the arrays hold.
     pub(super) fn layers(&self) -> u32 {
         self.arrays.as_ref().map_or(0, |arrays| arrays.layers)
     }
 
-    /// Starts a frame at `now`, in seconds of presentation time: no tile
-    /// uploaded, given control values or changed yet.
     pub(super) fn begin(&mut self, now: f32) {
         (self.uploads, self.controls, self.now) = (0, 0, now);
         self.changed.clear();
         self.held_changes.clear();
     }
 
-    /// Uploads tiles the GPU lacks and releases those no terrain lists, from
-    /// what each terrain's list gained, lost or replaced since it was last
-    /// synced and the listed tiles still waiting for a layer: `None` when
-    /// every terrain's tiles stand as last synced, else whether a tile
-    /// replaced under its key changed its hole bits.
     pub(super) fn sync(
         &mut self,
         device: &wgpu::Device,
@@ -317,7 +228,6 @@ impl TileAtlas {
         self.dropped = 0;
         let mut changes = self.changes(terrains);
         self.release(&mut changes.left);
-        // Terrains whose tiles' control values the GPU gives.
         let surfaces: BTreeMap<u64, &Arc<SurfaceData>> = terrains
             .terrains
             .iter()
@@ -326,8 +236,6 @@ impl TileAtlas {
         self.sync_surfaces(device, queue, &surfaces);
         self.surface_times(terrains, &surfaces, &changes);
         let mut replaced = self.replace(queue, terrains, &changes.swapped);
-        // Upload the rest, coarse levels first: the tiles that arrived,
-        // those replaced and those still waiting for a layer.
         let mut missing: Vec<(u64, TileKey)> = (self.unplaced.iter().copied())
             .chain(changes.arrived)
             .chain(replaced.layers.keys().copied())
@@ -350,7 +258,6 @@ impl TileAtlas {
             edited |= self.upload(queue, (key, tile), terrain, &mut replaced, room);
         }
         self.compute_controls(device, queue);
-        // Layers of replaced tiles that found no upload are free again.
         self.free.extend(replaced.layers.into_values());
         self.compute_normals(device, queue);
         self.synced.retain(|id, _| listed(id));
@@ -365,9 +272,6 @@ impl TileAtlas {
         Some(edited)
     }
 
-    /// What changed in `terrains`' lists since they were last synced: each
-    /// list against the one before where its revision advanced, and every
-    /// tile of the terrains no longer listed, left.
     fn changes(&self, terrains: &RenderTerrains) -> Changes {
         let mut changes = Changes::default();
         for terrain in &terrains.terrains {
@@ -394,9 +298,6 @@ impl TileAtlas {
         changes
     }
 
-    /// Releases the tiles of `left` holding layers, in key order, so which
-    /// layers tiles take next follows no hash: layers free last are taken
-    /// first.
     fn release(&mut self, left: &mut [(u64, TileKey)]) {
         left.sort_unstable();
         for &key in left.iter() {
@@ -418,12 +319,6 @@ impl TileAtlas {
         }
     }
 
-    /// Gives tiles their surface materials' times as the lists changed: a
-    /// resident tile replaced without control values by one with them
-    /// takes them over from now, and a tile without them on a terrain whose
-    /// surface the GPU does not read has none, every such tile of a terrain
-    /// whose surface the GPU stopped reading included. Tiles shading with
-    /// their shading take its time as it uploads ([`Self::shade`]).
     fn surface_times(
         &mut self,
         terrains: &RenderTerrains,
@@ -467,22 +362,12 @@ impl TileAtlas {
         }
     }
 
-    /// Takes resident tile `key`'s surface materials' time away, if it had
-    /// one.
     fn unsurface(&mut self, key: (u64, TileKey)) {
         if self.surfaced.remove(&key).is_some() {
             self.touched.push(key);
         }
     }
 
-    /// Of the resident tiles `swapped` replaced under their keys, keeps
-    /// those over the same ground, materials and shading in their layers as
-    /// they are (their water made again as their rivers run now, which the
-    /// water's blocks follow, its error pyramid written where it changed),
-    /// and takes the rest out of their layers to upload again, keeping what
-    /// they replace: a tile arriving whole after its shape, or with its
-    /// objects standing far away, has the same heights, and one taking its
-    /// shading the same ground.
     fn replace(
         &mut self,
         queue: &Queue,
@@ -524,15 +409,6 @@ impl TileAtlas {
         replaced
     }
 
-    /// Uploads listed tile `key`, `tile` (of `terrain`), into a layer: the
-    /// one it left as it was replaced (`replaced`), else a free one or a new
-    /// one within `capacity`; a tile finding none leaves its parent standing
-    /// in and waits for the next sync, dropped. The GPU gives the tiles
-    /// shading with their own samples their normal maps, and those without
-    /// control values on terrains it reads the surface of (`surfaces`)
-    /// theirs ([`Self::give_control`]); a terrain's coarser tiles take both
-    /// from their shading ([`Self::shade`]). Returns whether it changed the
-    /// hole bits of the tile it replaced.
     fn upload(
         &mut self,
         queue: &Queue,
@@ -556,16 +432,12 @@ impl TileAtlas {
         };
         self.unplaced.remove(&key);
         let shades = TileShading::shades(key.1.level, terrain.surroundings);
-        // Tiles arriving grow out of their parents; edited ones
-        // change in place.
         if arriving {
             self.arrivals.insert(key, self.now);
             if tile.control().is_some() && !shades {
                 self.surfaced.insert(key, self.now);
             }
         }
-        // What draws over it changes only as it uploads; tiles finding
-        // no layer leave their parents standing in.
         self.changed.push(key);
         self.held_changes.push(key);
         self.touched.push(key);
@@ -580,7 +452,6 @@ impl TileAtlas {
             let peaks = crate::world_trace::peaks(tile.heights());
             write_peaks(queue, &arrays.texture, layer, &peaks);
             self.tops.insert(key, crate::world_trace::peaks_top(&peaks));
-            // Tiles shading with their shading take its normal maps.
             if !shades {
                 self.normal_jobs.push((layer, tile.spacing()));
             }
@@ -608,15 +479,6 @@ impl TileAtlas {
         edited
     }
 
-    /// Gives tile `key`, in `layer`, of `terrain`, which shades with its
-    /// own samples, its control values as they change from those of
-    /// `before`, the tile it replaces. Without its own on a terrain whose
-    /// surface the GPU reads (`surfaces`), the GPU gives them as its heights
-    /// (`heights`, whether they changed) or rivers change, from the rivers'
-    /// edges and beds it uploads, its materials then taking over from the
-    /// coarser level's; else its own upload, and a tile without its own yet
-    /// takes its nearest ancestor's for ground cover, and without a surface,
-    /// the first material everywhere. Whether it wrote them from here.
     fn give_control(
         &mut self,
         queue: &Queue,
@@ -675,12 +537,6 @@ impl TileAtlas {
         control
     }
 
-    /// Writes tile `key`'s control values and normal maps into `layer` from
-    /// its shading as it arrives or changes from that of `before`, the tile
-    /// it replaces, its materials and normals then fading in from the
-    /// coarser level's; until its shading arrives, its nearest listed
-    /// ancestor's for ground cover (of `terrain`), the coarser level's
-    /// materials and normals showing over it. Whether it wrote them.
     fn shade(
         &mut self,
         queue: &Queue,
@@ -721,19 +577,11 @@ impl TileAtlas {
         true
     }
 
-    /// How much of a coarser level still shows of what arrived at `at`:
-    /// 1 then, 0 [`ARRIVAL_SECONDS`] later.
     pub(super) fn fade_since(&self, at: f32) -> f32 {
         let since = engine_core::math::max(self.now - at, 0.0);
         1.0 - engine_core::math::min(since / ARRIVAL_SECONDS, 1.0)
     }
 
-    /// How much of the next coarser level's normals and surface materials
-    /// shows over resident tile `key` now: as it grows out of its parent on
-    /// ordinary frames (with `fades`) and none on exact ones, but the whole
-    /// of the coarser level's materials over a tile without its own yet. A
-    /// tile shading with its shading takes its normals with its materials,
-    /// the coarser level's showing whole until they arrive.
     pub(super) fn fades_of(&self, key: &(u64, TileKey), fades: bool) -> (f32, f32) {
         let materials = match self.surfaced.get(key) {
             None => 1.0,
@@ -750,13 +598,6 @@ impl TileAtlas {
         (normals, materials)
     }
 
-    /// Works each layer's fades out for `count` words, noting the words that
-    /// changed: how much of the next coarser level's normals and surface
-    /// materials still show over its tile's ([`Self::fades_of`]), two
-    /// layers a word ([`fade_half`]). Only the tiles whose fades can have
-    /// changed are worked out again: those fading in as time passes and
-    /// those whose layer, arrival or surface materials changed; every tile
-    /// when the words or `fades` changed or time ran back.
     pub(super) fn fade(&mut self, fades: bool, count: u32) {
         let whole = self.fades.len() != count as usize
             || (self.faded_with).is_none_or(|(faded, then)| faded != fades || self.now < then);
@@ -786,18 +627,12 @@ impl TileAtlas {
         self.touched = touched;
     }
 
-    /// Works tile `key`'s fades out again: its half of the word of the layer
-    /// it holds, and whether it changes as time passes; a tile holding no
-    /// layer fades in no more.
     fn refade(&mut self, key: (u64, TileKey), fades: bool) {
         let Some(&layer) = self.slots.get(&key) else {
             self.moving.remove(&key);
             return;
         };
         let (normals, materials) = self.fades_of(&key, fades);
-        // Materials fading in from their own time move; a tile without its
-        // own shows the coarser level's whole until they arrive, its normals
-        // too where they come with them.
         let timed = self.surfaced.contains_key(&key);
         let normals_move = normals > 0.0 && (timed || !self.shaded.contains(&key));
         if normals_move || (materials > 0.0 && timed) {
@@ -808,8 +643,6 @@ impl TileAtlas {
         self.set_fade(layer, fade_half(normals, materials));
     }
 
-    /// Sets `layer`'s half of its word of fades to `half`, noting the word
-    /// where it changed; layers past the words are left out.
     fn set_fade(&mut self, layer: u32, half: u32) {
         let at = layer as usize / 2;
         let shift = (layer % 2) * 16;
@@ -823,15 +656,11 @@ impl TileAtlas {
         }
     }
 
-    /// Creates the compute pipelines tiles' normal maps and control values
-    /// build with unless they exist.
     pub(super) fn warm(&mut self, device: &wgpu::Device) {
         self.normal_pass(device);
         self.control_pass(device);
     }
 
-    /// Creates the pipeline giving tiles control values and
-    /// its group's layout unless they exist.
     fn control_pass(&mut self, device: &wgpu::Device) {
         self.control_pass.get_or_insert_with(|| {
             let layout = crate::pipelines::layout(device, &TERRAIN_CONTROL);
@@ -854,8 +683,6 @@ impl TileAtlas {
         });
     }
 
-    /// Uploads each terrain's surface data for the GPU when
-    /// it changes, and releases those of terrains without.
     fn sync_surfaces(
         &mut self,
         device: &wgpu::Device,
@@ -883,8 +710,6 @@ impl TileAtlas {
         }
     }
 
-    /// Gives the tiles uploaded this frame without control values theirs,
-    /// after their heights, in a submission of its own.
     fn compute_controls(&mut self, device: &wgpu::Device, queue: &Queue) {
         if self.arrays.is_none() || self.control_jobs.is_empty() {
             self.control_jobs.clear();
@@ -894,7 +719,6 @@ impl TileAtlas {
         let (Some(arrays), Some((layout, pipeline))) = (&self.arrays, &self.control_pass) else {
             return;
         };
-        // One uniform slot per job.
         let mut words = vec![0_u32; self.control_jobs.len() * SLOT as usize / 4];
         for (index, job) in self.control_jobs.iter().enumerate() {
             let at = index * SLOT as usize / 4;
@@ -963,8 +787,6 @@ impl TileAtlas {
         self.control_jobs.clear();
     }
 
-    /// Creates the pipeline computing tiles' normal maps and its group's
-    /// layout unless they exist.
     fn normal_pass(&mut self, device: &wgpu::Device) {
         self.normal_pass.get_or_insert_with(|| {
             let layout = crate::pipelines::layout(device, &TERRAIN_NORMALS);
@@ -987,8 +809,6 @@ impl TileAtlas {
         });
     }
 
-    /// Computes the normal maps of the tiles uploaded this frame, after
-    /// their heights, in a submission of its own.
     fn compute_normals(&mut self, device: &wgpu::Device, queue: &Queue) {
         if self.arrays.is_none() {
             self.normal_jobs.clear();
@@ -1001,7 +821,6 @@ impl TileAtlas {
         let (Some(arrays), Some((layout, pipeline))) = (&self.arrays, &self.normal_pass) else {
             return;
         };
-        // One uniform slot per job.
         let mut words = vec![0_u32; self.normal_jobs.len() * SLOT as usize / 4];
         for (index, &(layer, spacing)) in self.normal_jobs.iter().enumerate() {
             let at = index * SLOT as usize / 4;
@@ -1060,8 +879,6 @@ impl TileAtlas {
         self.normal_jobs.clear();
     }
 
-    /// Grows the arrays to hold `needed` layers, doubling, up to
-    /// `max_layers`; existing layers are copied over.
     fn ensure_arrays(
         &mut self,
         device: &wgpu::Device,
@@ -1093,7 +910,6 @@ impl TileAtlas {
                 view_formats: &[],
             })
         };
-        // The heights, their peaks in the mips below them.
         let texture = array(
             "engine/terrain-heights",
             HEIGHT_FORMAT,
@@ -1106,7 +922,6 @@ impl TileAtlas {
             wgpu::TextureUsages::STORAGE_BINDING,
             1,
         );
-        // The GPU writes control values.
         let control = array(
             "engine/terrain-control",
             CONTROL_FORMAT,
@@ -1119,7 +934,6 @@ impl TileAtlas {
             wgpu::TextureUsages::empty(),
             1,
         );
-        // The error pyramids: a texel a cell, every mip.
         let pyramid = |label: &'static str| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -1193,7 +1007,6 @@ impl TileAtlas {
                 rivers.as_image_copy(),
                 extent,
             );
-            // Before this frame's tile writes, which the queue runs in order.
             queue.submit_now([encoder.finish()]);
         }
         let array_view = |texture: &wgpu::Texture| {
@@ -1221,15 +1034,11 @@ impl TileAtlas {
     }
 }
 
-/// A layer's half of its word of fades: how much of the coarser level's
-/// normals and surface materials show, 0 to 255 in a byte each.
 pub(super) fn fade_half(normals: f32, materials: f32) -> u32 {
     let byte = |fade: f32| (engine_core::math::clamp(fade, 0.0, 1.0) * 255.0 + 0.5) as u32;
     byte(normals) | (byte(materials) << 8)
 }
 
-/// Writes `texels` of `bytes` bytes each, a tile's samples with their
-/// border, into `layer` of `texture`.
 fn write_layer(queue: &Queue, texture: &wgpu::Texture, layer: u32, (texels, bytes): (&[u8], u32)) {
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
@@ -1256,15 +1065,10 @@ fn write_layer(queue: &Queue, texture: &wgpu::Texture, layer: u32, (texels, byte
     );
 }
 
-/// Writes `pyramid`, a tile's error pyramid, into `layer` of `texture`, every
-/// mip.
 fn write_errors(queue: &Queue, texture: &wgpu::Texture, layer: u32, pyramid: &ErrorPyramid) {
     write_mips(queue, texture, layer, |mip| pyramid.mip(mip));
 }
 
-/// Writes a tile's pyramid of half floats, its mip `mip` the bits `mips`
-/// gives ([`ERROR_CELLS`] cells a side at the finest, each coarser mip half
-/// as many, row by row), into `layer` of `texture`, every mip.
 fn write_mips<'a>(
     queue: &Queue,
     texture: &wgpu::Texture,
@@ -1299,9 +1103,6 @@ fn write_mips<'a>(
     }
 }
 
-/// Writes `peaks`, a tile's peaks (`world_trace::peaks`), below its heights
-/// in `layer` of the heights `texture`: mip `m` of the peaks into the
-/// heights' mip `m + 1` from its first texel, which holds its cells.
 fn write_peaks(queue: &Queue, texture: &wgpu::Texture, layer: u32, peaks: &[f32]) {
     for mip in 0..ERROR_MIPS {
         let side = ERROR_CELLS >> mip;
@@ -1331,7 +1132,6 @@ fn write_peaks(queue: &Queue, texture: &wgpu::Texture, layer: u32, peaks: &[f32]
     }
 }
 
-/// Mip `mip` of `texture`, from its first layer, as copies take it.
 fn mip_copy(texture: &wgpu::Texture, mip: u32) -> wgpu::TexelCopyTextureInfo<'_> {
     wgpu::TexelCopyTextureInfo {
         texture,
@@ -1341,18 +1141,15 @@ fn mip_copy(texture: &wgpu::Texture, mip: u32) -> wgpu::TexelCopyTextureInfo<'_>
     }
 }
 
-/// Whether `a` and `b` are one error pyramid, or hold the same.
 fn same_errors(a: &ErrorPyramid, b: &ErrorPyramid) -> bool {
     std::ptr::eq(a, b) || a == b
 }
 
-/// The tile `tiles`, a terrain's list in key order, lists under `key`.
 fn listed_tile(tiles: &[Arc<engine_core::Tile>], key: TileKey) -> Option<&Arc<engine_core::Tile>> {
     let at = tiles.binary_search_by_key(&key, |tile| tile.key()).ok()?;
     tiles.get(at)
 }
 
-/// The tile `terrains` list under terrain `id`'s `key`.
 fn listed_in(
     terrains: &RenderTerrains,
     (id, key): (u64, TileKey),
@@ -1361,15 +1158,12 @@ fn listed_in(
     listed_tile(&terrain.tiles, key)
 }
 
-/// A tile uploading: its key and layer, the tile, and the tile it
-/// replaces in that layer.
 type Uploading<'a> = (
     ((u64, TileKey), u32),
     &'a engine_core::Tile,
     Option<&'a Arc<engine_core::Tile>>,
 );
 
-/// Whether `a` and `b` are the same shading, or both none.
 fn same_shading(a: Option<&Arc<TileShading>>, b: Option<&Arc<TileShading>>) -> bool {
     match (a, b) {
         (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -1378,23 +1172,14 @@ fn same_shading(a: Option<&Arc<TileShading>>, b: Option<&Arc<TileShading>>) -> b
     }
 }
 
-/// The control values `tile` uploads from the CPU, in its layer's layout:
-/// its own, or its shading's.
 fn held_control(tile: &engine_core::Tile) -> Option<Box<[u32]>> {
     (tile.control().map(Box::from)).or_else(|| tile.shading().map(|held| held.control_texels()))
 }
 
-/// The normal maps `tile` uploads from the CPU, in its layer's layout: its
-/// shading's.
 fn held_gradients(tile: &engine_core::Tile) -> Option<Box<[u32]>> {
     tile.shading().map(|held| held.gradient_texels())
 }
 
-/// What tile `key` without its own control values or normal maps yet, of a
-/// terrain over `pyramid` listing `tiles`, uploads for ground cover to grow
-/// from: what `held` gives of its nearest listed ancestor giving any, each
-/// texel its nearest sample's there; zeros without one (the first material,
-/// and level ground).
 fn ancestor_texels(
     (tiles, pyramid): (&[Arc<engine_core::Tile>], Pyramid),
     key: TileKey,
@@ -1412,8 +1197,6 @@ fn ancestor_texels(
             break values;
         }
     };
-    // Layers keep a border sample before the tile's first: texel `i` holds
-    // sample `i - 1`, counted from the level's first.
     let quads = i64::from(engine_core::terrain_data::TILE_QUADS);
     let half = 1_i64 << (shift - 1);
     let nearest = |texel: usize, tile: u16, ancestor: u16| {
@@ -1431,10 +1214,6 @@ fn ancestor_texels(
     out
 }
 
-/// A tile the GPU gives control values: its layer, its
-/// terrain, its first sample, spacing, the hydrology images' level its
-/// masks read, and whether its layer of the river array holds its rivers'
-/// edges and beds.
 struct ControlJob {
     layer: u32,
     terrain: u64,

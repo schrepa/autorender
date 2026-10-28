@@ -1,13 +1,3 @@
-//! Waterfalls: where terrains' hydrology bakes find rivers falling down steep
-//! rock and off its ledges, the engine spawns their spray and mist and
-//! despawns them as terrains' bakes finish and terrains go. The water pass
-//! draws the falling water itself from the terrains' falls (the renderer's
-//! `water_falls`). Fine spray leaves each ledge at the jet's speed and falls
-//! under gravity along it, droplets splash up where each jet lands and where
-//! the water reaches the foot of the rock, and mist billows up there, as
-//! much as the falling water's power stirs (particles). Water that does not
-//! draw spawns none.
-
 use crate::collections::HashMap;
 use std::sync::Arc;
 
@@ -21,33 +11,23 @@ use crate::terrain_data::hydraulics::GRAVITY;
 use crate::terrain_data::shallow_water::DENSITY;
 use crate::{ParticleBlend, ParticleEmitter, Transform, Water};
 
-/// What each terrain's falls spawned.
 #[derive(Resource, Default)]
 pub(crate) struct TerrainFalls {
     spawned: HashMap<Entity, Spawned>,
 }
 
-/// A terrain's falls and the entities spawned for them.
 struct Spawned {
     set: Arc<[Fall]>,
     entities: Vec<Entity>,
 }
 
-/// Watts of falling water each splashing droplet and each puff of mist a
-/// second stands for, and the fewest and most a fall's splash and mist
-/// emit: the power its jet brings down is the water's density times
-/// gravity, its discharge and its drop.
 const SPLASH_WATTS: f32 = 2.0e3;
 const SPLASH_RATE: [f32; 2] = [20.0, 600.0];
 const MIST_WATTS: f32 = 1.5e5;
 const MIST_RATE: [f32; 2] = [1.0, 12.0];
-/// Watts each puff bursting out of a landing stands for, and the fewest and
-/// most a landing bursts out a second.
 const BURST_WATTS: f32 = 6.0e4;
 const BURST_RATE: [f32; 2] = [2.0, 24.0];
 
-/// Each jet of fall `fall`: where it leaves (the index of its path's point),
-/// where it lands, and the speed it lands at (meters a second).
 fn jets(fall: &Fall) -> Vec<(usize, usize, f32)> {
     let mut found = Vec::new();
     let mut leaving = None;
@@ -73,14 +53,6 @@ fn jets(fall: &Fall) -> Vec<(usize, usize, f32)> {
     found
 }
 
-/// A fall's emitters at `origin`, seeded by `seed`: fine spray leaving each
-/// lip it leaps off at the jet's speed, falling under gravity along the
-/// jet's parabola; and where each jet lands, and where the water clinging
-/// down its rock reaches its foot, droplets splashing up and out, as fast
-/// as a share of the landing speed throws them, mist bursting out low over
-/// the pool, and mist billowing up, as much as the falling water's power
-/// stirs, its puffs as big as the fall is wide; each as dim as the ground
-/// around hides the sky from the water there (the fall's `sky`).
 fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmitter)> {
     let width = fall.width;
     let at = |point: Vec3| Transform {
@@ -95,8 +67,6 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
         let (top, bottom) = (point(lip), point(landing));
         let flight = Vec3::new(bottom.x - top.x, 0.0, bottom.z - top.z);
         let (reach, drop) = (flight.length(), max(top.y - bottom.y, 0.1));
-        // The jet leaves the lip level at the speed that lands it `reach`
-        // away `drop` below: drop = g reach^2 / (2 v^2).
         let speed = max(reach * (GRAVITY / (2.0 * drop)).sqrt(), 0.5);
         let seconds = (2.0 * drop / GRAVITY).sqrt();
         spawned.push((
@@ -120,8 +90,6 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
         ));
         landings.push((bottom, drop, landing_speed, sky(landing)));
     }
-    // Water clinging to its rock to the end lands at its foot, from the
-    // last place it landed or its lip, unless its last jet lands there.
     let last = fall.path.len() - 1;
     let clinging = jets(fall)
         .last()
@@ -202,7 +170,6 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
     spawned
 }
 
-/// Spawns and despawns waterfall emitters to match terrains' falls.
 pub(crate) fn sync(world: &mut World) {
     let drawn = world
         .get_resource::<Water>()

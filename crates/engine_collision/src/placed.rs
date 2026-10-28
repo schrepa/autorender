@@ -1,12 +1,3 @@
-//! Placed objects' colliders: what terrains' placement layers
-//! stand within their collision radius, each object its
-//! asset's primitive at its pose, its base on the finest resident heights
-//! as renderers set it. Rays, overlaps and shape casts test them after the
-//! colliders; hits report the terrain's entity and the object's placement
-//! layer and asset. Objects standing far away never collide.
-//! Bridges' decks collide as a box a deck segment, reporting
-//! layer [`BRIDGE_LAYER`] and their bridge's index as the asset.
-
 use engine_core::collections::HashMap;
 use std::sync::Arc;
 
@@ -22,7 +13,6 @@ use crate::{
     SensorFilter, ShapeCastOptions, ShapeHit,
 };
 
-/// The placement layer bridges' decks report hits in.
 pub const BRIDGE_LAYER: u16 = u16::MAX;
 
 #[derive(Clone, Copy)]
@@ -33,8 +23,6 @@ struct Object {
     affine: AffineShape,
 }
 
-/// The colliders of every colliding terrain's placed objects within its
-/// collision radius.
 #[derive(Default)]
 pub(crate) struct PlacedShapes {
     objects: Vec<Object>,
@@ -43,15 +31,12 @@ pub(crate) struct PlacedShapes {
     revision: Option<u64>,
 }
 
-/// A colliding terrain's level-0 tiles around the camera and focus
-/// entities, by column and row, with its origin and their size.
 struct Ground<'a> {
     origin: Vec3,
     size: f32,
     tiles: HashMap<(u16, u16), &'a Arc<Tile>>,
 }
 
-/// Whether `filter` accepts `object`: never as a sensor.
 fn accepts(filter: QueryFilter, object: &Object) -> bool {
     filter.exclude != Some(object.entity)
         && filter.layers.interacts(object.layers)
@@ -59,13 +44,10 @@ fn accepts(filter: QueryFilter, object: &Object) -> bool {
 }
 
 impl PlacedShapes {
-    /// Objects colliding.
     pub(crate) fn len(&self) -> usize {
         self.objects.len()
     }
 
-    /// The objects whose bounds meet `bounds`: each one's terrain,
-    /// placement and shape.
     pub(crate) fn objects_in(
         &self,
         bounds: Bounds,
@@ -77,8 +59,6 @@ impl PlacedShapes {
             .map(|object| (object.entity, object.part, &object.affine))
     }
 
-    /// Follows `terrains`' resident tiles; returns whether the objects
-    /// changed.
     pub(crate) fn sync(&mut self, terrains: Option<&Terrains>) -> bool {
         let revision = terrains.map(Terrains::revision);
         if revision == self.revision {
@@ -102,7 +82,6 @@ impl PlacedShapes {
         reason = "longer than the line ceiling; it may only shrink"
     )]
     fn collect(&mut self, terrains: &Terrains) {
-        // Bridges' decks: a box a segment, as the deck's slab and road stand.
         for (entity, origin, bridges) in terrains.colliding_bridges() {
             for (index, bridge) in bridges.iter().enumerate() {
                 for pair in bridge.deck.windows(2) {
@@ -168,8 +147,6 @@ impl PlacedShapes {
             if assets.iter().all(|asset| asset.collider.is_none()) {
                 continue;
             }
-            // Only tiles reaching the collision tiles hold objects that
-            // collide.
             let (low, high) = tiles.keys().fold(
                 (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
                 |(low, high), &(x, z)| {
@@ -234,7 +211,6 @@ impl PlacedShapes {
         }
     }
 
-    /// The nearest object hit of `ray` (normalized) that `filter` accepts.
     pub(crate) fn ray(&self, ray: CollisionRay, filter: QueryFilter) -> Option<RayHit> {
         let mut nearest: Option<RayHit> = None;
         for index in self.bvh.query(|bounds| bounds.ray(ray)) {
@@ -251,7 +227,6 @@ impl PlacedShapes {
         nearest
     }
 
-    /// Every object hit of `ray`, into `output`.
     pub(crate) fn ray_all(&self, ray: CollisionRay, filter: QueryFilter, output: &mut Vec<RayHit>) {
         for index in self.bvh.query(|bounds| bounds.ray(ray)) {
             let object = &self.objects[index];
@@ -263,7 +238,6 @@ impl PlacedShapes {
         }
     }
 
-    /// The terrains whose objects `shape` overlaps, into `output` once each.
     pub(crate) fn overlap(
         &self,
         shape: &AffineShape,
@@ -282,7 +256,6 @@ impl PlacedShapes {
         Ok(())
     }
 
-    /// The first object `shape` meets moving by `displacement`.
     pub(crate) fn cast(
         &self,
         shape: &AffineShape,
@@ -318,7 +291,6 @@ impl PlacedShapes {
     }
 }
 
-/// `ray`'s hit of `object`, if any.
 fn hit(ray: CollisionRay, object: &Object) -> Option<RayHit> {
     let (distance, normal, started_inside) = object.affine.ray(ray)?;
     Some(RayHit {

@@ -1,26 +1,15 @@
-//! Levels of detail kept and faded: each slot's level as last
-//! drawn, which culling's level gives way to only a margin past its
-//! distance, and the cards fading in or out over their steady meshes, drawn
-//! in one draw.
-
 use engine_core::PoseRows;
 
 use super::storage;
 use crate::gpu_layouts::constants::CARD_VERTICES;
 
-/// The share of its distance past a switch the eye goes before a candidate
-/// switches back (`presentation.wgsl`'s `fade_levels`).
 pub(super) const FADE_MARGIN: f32 = 0.1;
 
-/// Each slot's level state, and the fading cards' draw arguments and
-/// instances.
 pub(super) struct Fades {
     pub(super) states: wgpu::Buffer,
     pub(super) cards: wgpu::Buffer,
-    // Slots the states cover and cards the instances hold.
     slots: u64,
     card_capacity: usize,
-    // Advances when either is replaced.
     generation: u64,
 }
 
@@ -40,8 +29,6 @@ impl Fades {
         }
     }
 
-    /// Keeps a state for every slot of `poses` and room for a fading card
-    /// per candidate of `candidates`; replaced states start over, zeroed.
     pub(super) fn ensure(
         &mut self,
         device: &wgpu::Device,
@@ -66,12 +53,10 @@ impl Fades {
         }
     }
 
-    /// Advances when the storage is replaced.
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// Starts this frame's fading cards at none.
     pub(super) fn begin_frame(&self, queue: &wgpu::Queue) {
         queue.write_buffer(
             &self.cards,
@@ -80,15 +65,11 @@ impl Fades {
         );
     }
 
-    /// The fading cards' instances (each one's slot and batch word) and the
-    /// buffer and offset of their draw's arguments.
     pub(super) fn source(&self) -> (wgpu::BufferSlice<'_>, &wgpu::Buffer, u64) {
         (self.cards.slice(16..), &self.cards, 0)
     }
 }
 
-/// The fading cards' storage: a draw's arguments, then `capacity`
-/// instances of two words.
 fn cards(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
     storage(
         device,

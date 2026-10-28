@@ -1,18 +1,3 @@
-//! Vendor deep dives: one capture through the tools a GPU's vendor (or its
-//! platform's) makes, opt-in and set up once, as deep profiles' summaries
-//! recommend them highly:
-//!
-//! - PIX on D3D12: a frame-exact capture, replayed for each draw's hardware
-//!   counters (by its counter plugins: Intel's, AMD's, NVIDIA's and
-//!   Qualcomm's GPUs), summed per render-graph node;
-//! - Nsight Graphics on NVIDIA's GPUs: a GPU Trace of a window's frames,
-//!   with its units' throughputs per pass and, by its real-time shader
-//!   profiler, warp stalls per shader line.
-//!
-//! Each tells the setup it lacks where it cannot run. Radeon GPU Profiler
-//! and Xcode are captured as their setup in the summary's recommendations
-//! says.
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,10 +11,6 @@ const NGFX: &[&str] = &[
     r"C:\Program Files\NVIDIA Corporation\Nsight Graphics */host/windows-desktop-nomad-x64/ngfx.exe",
 ];
 
-/// The counters a PIX summary sums, where the GPU's plugin has them: its
-/// clocks and Intel's names, then Direct3D's pipeline statistics, which
-/// every GPU's plugin offers. Not PIX's own durations, which pixtool fails
-/// to replay (2603.25), and which replays' clocks make incomparable.
 const PIX_COUNTERS: &[&str] = &[
     "GPU Core Clocks",
     "XVE Active",
@@ -49,11 +30,6 @@ const PIX_COUNTERS: &[&str] = &[
     "Clipper Primitives Out",
 ];
 
-/// The capture at `capture` (a `.wpix` file PIX's capturer wrote) replayed
-/// for each event's hardware counters into `folder`, as `pix-events.csv`
-/// and a summary: each render-graph node's counters and the costliest
-/// draws'. `counters` names those to replay, PIX's names, where given;
-/// else the summary's own, where the GPU's plugin has them.
 pub fn pix_counters(capture: &Path, folder: &Path, counters: &[String]) -> Result<Value, String> {
     let pixtool = installed("pixtool", PIXTOOL).ok_or(
         "PIX is not installed: install it (https://devblogs.microsoft.com/pix/download) and \
@@ -96,8 +72,6 @@ pub fn pix_counters(capture: &Path, folder: &Path, counters: &[String]) -> Resul
         .arg(capture)
         .arg("save-event-list")
         .arg(&events);
-    // pixtool's parser splits at spaces and parentheses, whatever their
-    // quoting; `*` matches them.
     for name in &wanted {
         command.arg(format!("--counters={}", name.replace([' ', '(', ')'], "*")));
     }
@@ -123,10 +97,6 @@ pub fn pix_counters(capture: &Path, folder: &Path, counters: &[String]) -> Resul
     Ok(summary)
 }
 
-/// Each render-graph node's counters and the costliest events' from PIX's
-/// event list `table`, of the counters `wanted`: counts summed, and shares
-/// (activity, stalls, occupancy, busy, bottleneck) weighted by the events'
-/// clocks.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -134,7 +104,6 @@ pub fn pix_counters(capture: &Path, folder: &Path, counters: &[String]) -> Resul
 fn summarize_events(table: &str, wanted: &[String]) -> Value {
     let mut lines = table.lines();
     let header = lines.next().map(split_csv).unwrap_or_default();
-    // Each counter wanted, at its first column (some names repeat).
     let columns: Vec<(String, usize)> = wanted
         .iter()
         .filter_map(|name| {
@@ -162,7 +131,6 @@ fn summarize_events(table: &str, wanted: &[String]) -> Value {
             .any(|word| name.contains(word))
         })
         .collect();
-    // Events: their parents, names and counters (where they have them).
     let mut events: BTreeMap<i64, (i64, String, Option<Vec<f64>>)> = BTreeMap::new();
     for line in lines {
         let fields = split_csv(line);
@@ -177,7 +145,6 @@ fn summarize_events(table: &str, wanted: &[String]) -> Value {
             .iter()
             .map(|(_, index)| fields.get(*index).and_then(|field| field.parse().ok()))
             .collect();
-        // wgpu's markers carry PIX's note on their old format.
         let name = name
             .trim_start_matches("<deprecated - use pix3.h instead> ")
             .to_owned();
@@ -215,7 +182,6 @@ fn summarize_events(table: &str, wanted: &[String]) -> Value {
             })
             .collect()
     };
-    // Markers' counters are their events' totals: only the events count.
     let parents: std::collections::BTreeSet<i64> =
         events.values().map(|(parent, _, _)| *parent).collect();
     let mut nodes: BTreeMap<String, Vec<&Vec<f64>>> = BTreeMap::new();
@@ -266,9 +232,6 @@ fn summarize_events(table: &str, wanted: &[String]) -> Value {
     })
 }
 
-/// Once PIX finished writing the capture at `path`, which it goes on doing
-/// after its capture ends: its size unchanged for a second (a minute at
-/// most).
 fn settled(path: &Path) {
     let size = || std::fs::metadata(path).map_or(0, |metadata| metadata.len());
     let started = std::time::Instant::now();
@@ -284,7 +247,6 @@ fn settled(path: &Path) {
     }
 }
 
-/// A line of comma-separated values, with quoted values.
 fn split_csv(line: &str) -> Vec<String> {
     let mut fields = Vec::new();
     let mut field = String::new();
@@ -305,9 +267,6 @@ fn split_csv(line: &str) -> Vec<String> {
     fields
 }
 
-/// A GPU Trace by Nsight Graphics of the program run again with
-/// `arguments`, in a window: `frames` frames from `start_ms` after it
-/// starts, with the real-time shader profiler, into `folder`.
 pub fn nsight_trace(
     arguments: &[String],
     start_ms: u64,
@@ -322,8 +281,6 @@ pub fn nsight_trace(
     let directory = std::env::current_dir().map_err(|error| error.to_string())?;
     std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
     let before = files(folder);
-    // ngfx takes the program's arguments as one; `--platform` crashes it
-    // (2026.2), and the platform is the host's without it.
     let quoted: Vec<String> = arguments
         .iter()
         .map(|argument| {
@@ -388,7 +345,6 @@ pub fn nsight_trace(
     Ok(summary)
 }
 
-/// The files in `folder` and its folders.
 fn files(folder: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut folders = vec![folder.to_path_buf()];
@@ -405,7 +361,6 @@ fn files(folder: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// A tool's last words, for its failures.
 fn tail(stdout: &[u8], stderr: &[u8]) -> String {
     let said = format!(
         "{}{}",

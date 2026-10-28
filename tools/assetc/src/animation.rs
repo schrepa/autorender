@@ -1,7 +1,3 @@
-//! glTF skins and animations: skins keep their joint
-//! nodes and inverse bind matrices; animations become clips in `EAN1` files
-//! targeting node entities.
-
 use engine_core::{AnimatedProperty, AnimationChannel, KeyInterpolation, Keyframes};
 use engine_scene::{SceneAnimation, SceneDocument, SceneSkin, encode_animation_buffer};
 use glam::{Quat, Vec3};
@@ -179,8 +175,6 @@ pub(crate) fn import(
     Ok(())
 }
 
-/// Drops keys at or before an earlier key's time, which some exporters
-/// write; the first of equal times is kept.
 fn distinct_keys(
     times: Vec<f32>,
     keyframes: Keyframes,

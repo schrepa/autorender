@@ -1,4 +1,3 @@
-//! Opt-in authoritative collision queries and fixed-tick sensor transitions.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
@@ -21,11 +20,9 @@ use bevy_app::{App, Plugin};
 use bevy_ecs::prelude::*;
 use engine_core::{FixedPostSimulation, FixedPreSimulation};
 
-/// Install once before the first simulation frame. Rendering needs no plugin.
 #[derive(Default)]
 pub struct CollisionPlugin;
 
-/// Named insertion points in the engine's fixed boundary schedules.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CollisionSystems {
     Sync,

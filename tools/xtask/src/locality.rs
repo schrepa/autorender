@@ -1,19 +1,11 @@
-//! The Stress Lab's content locality: a world module (each module the world
-//! registry, `apps/stress-lab/src/world.rs`, names) imports only the content
-//! kit (`crate::kit`), the engine's crates, the standard library and
-//! itself, so no world reaches into another world's code or the workload's.
-//! What worlds share goes in the kit.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The app whose worlds are checked, and its registry and kit.
 const SOURCE: &str = "apps/stress-lab/src";
 const REGISTRY: &str = "apps/stress-lab/src/world.rs";
 const MANIFEST: &str = "apps/stress-lab/Cargo.toml";
 const KIT: &str = "kit";
 
-/// Checks every world module's files.
 pub fn check(root: &Path) -> Result<(), String> {
     let worlds = worlds(root)?;
     let foreign = foreign_crates(root)?;
@@ -48,7 +40,6 @@ pub fn check(root: &Path) -> Result<(), String> {
     ))
 }
 
-/// The world modules the registry names: `Self::Name => &module::Type`.
 fn worlds(root: &Path) -> Result<Vec<String>, String> {
     let text = fs::read_to_string(root.join(REGISTRY))
         .map_err(|error| format!("cannot read {REGISTRY}: {error}"))?;
@@ -68,8 +59,6 @@ fn worlds(root: &Path) -> Result<Vec<String>, String> {
     Ok(worlds)
 }
 
-/// The app's dependencies other than the engine's crates, as paths name
-/// them: what no world may use.
 fn foreign_crates(root: &Path) -> Result<Vec<String>, String> {
     let text = fs::read_to_string(root.join(MANIFEST))
         .map_err(|error| format!("cannot read {MANIFEST}: {error}"))?;
@@ -94,8 +83,6 @@ fn foreign_crates(root: &Path) -> Result<Vec<String>, String> {
     Ok(found)
 }
 
-/// A world's source files and each one's module depth below the world's
-/// own module: `world.rs` or `world/mod.rs` 0, `world/part.rs` 1...
 fn world_files(source: &Path, world: &str) -> Result<Vec<(PathBuf, usize)>, String> {
     let mut found = Vec::new();
     let file = source.join(format!("{world}.rs"));
@@ -114,7 +101,6 @@ fn world_files(source: &Path, world: &str) -> Result<Vec<(PathBuf, usize)>, Stri
     Ok(found)
 }
 
-/// The Rust files under `folder`, `depth` modules below the world's.
 fn collect(folder: &Path, depth: usize, found: &mut Vec<(PathBuf, usize)>) -> Result<(), String> {
     let mut entries: Vec<PathBuf> = fs::read_dir(folder)
         .map_err(|error| format!("cannot read {}: {error}", folder.display()))?
@@ -133,8 +119,6 @@ fn collect(folder: &Path, depth: usize, found: &mut Vec<(PathBuf, usize)>) -> Re
     Ok(())
 }
 
-/// What the code `text` of a module `depth` below world `world` imports
-/// that it may not: each by its line.
 fn imports(text: &str, world: &str, depth: usize, foreign: &[String]) -> Vec<(usize, String)> {
     let mut found = Vec::new();
     let line_of = |at: usize| text[..at].matches('\n').count() + 1;
@@ -183,8 +167,6 @@ fn imports(text: &str, world: &str, depth: usize, foreign: &[String]) -> Vec<(us
     found
 }
 
-/// Whether the path starting at `at` begins a path: no identifier character
-/// or `::` right before it.
 fn boundary(text: &str, at: usize) -> bool {
     let before = &text[..at];
     !before.ends_with("::")
@@ -194,8 +176,6 @@ fn boundary(text: &str, at: usize) -> bool {
             .is_some_and(|character| character.is_alphanumeric() || character == '_')
 }
 
-/// The first segments a path after `crate::` names: one, or each item of a
-/// `{...}` group.
 fn roots(path: &str) -> Vec<String> {
     let path = path.trim_start();
     let Some(group) = path.strip_prefix('{') else {
@@ -234,8 +214,6 @@ fn roots(path: &str) -> Vec<String> {
         .collect()
 }
 
-/// `text` with its comments, strings and character literals blanked
-/// (newlines kept), so paths inside them do not count.
 fn code(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = bytes.to_vec();
@@ -298,8 +276,6 @@ fn code(text: &str) -> String {
             blank(&mut out, at, end + 1);
             at = end + 1;
         } else if rest[0] == b'\'' {
-            // A character literal ('x', '\n', '\u{..}'); a lifetime has no
-            // closing quote.
             let end = if rest.get(1) == Some(&b'\\') {
                 rest[2..]
                     .iter()

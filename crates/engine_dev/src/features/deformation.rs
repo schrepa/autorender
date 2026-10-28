@@ -1,6 +1,3 @@
-//! Deformation's development tools: the inspectors of deformers and the
-//! tracks they press, pressing tracks and the query of tracks.
-
 use engine_core::{
     Deformation, Engine, Feature, FixedTime, PresentedTime, Terrains, Track, Tracks, glam::Vec2,
 };
@@ -16,7 +13,6 @@ use crate::protocol::bounds::MAX_POINTS;
 use crate::results::result;
 use crate::{DevError, DevTools, InspectorDescriptor, bounded, coordinate};
 
-/// Registers deformation's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
     tools
         .register_component::<engine_core::Deformer>(
@@ -40,21 +36,12 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
         .expect("built-in descriptor is bounded");
 }
 
-/// Adds the schemas of deformation's inspectors.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
     schemas.insert("Deformer".into(), super::schema::<engine_core::Deformer>());
     schemas.insert("Tracks".into(), super::schema::<crate::views::TracksView>());
 }
 
-/// Press a track as a deformer would, now, and render
-/// while paused: a capsule `radius` meters across from world `from`
-/// `[x, z]` to `to` (a footprint at `from` when omitted), sinking ground
-/// as deformable as that `depth` meters along its middle, round
-/// (`flatness` 0) to flat (1). `clear`
-/// forgets every track first. Not a source change: the log and the map
-/// keep it until cleared or refilled. Returns the stamp, the stamps the
-/// log holds and whether deformation is enabled.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -87,8 +74,6 @@ fn default_flatness() -> f64 {
     0.5
 }
 
-/// Presses `press` into the log as a deformer would at the fixed clock's
-/// time; its result.
 fn press_track(engine: &mut Engine, press: &DeformControl) -> Result<Value, DevError> {
     let from = [
         coordinate(press.from[0], "$.from[0]")?,
@@ -98,7 +83,6 @@ fn press_track(engine: &mut Engine, press: &DeformControl) -> Result<Value, DevE
         Some(to) => [coordinate(to[0], "$.to[0]")?, coordinate(to[1], "$.to[1]")?],
         None => from,
     };
-    // A press keeps a deformer's rules.
     for (value, field) in [
         (press.radius, "radius"),
         (press.depth, "depth"),
@@ -133,60 +117,35 @@ fn press_track(engine: &mut Engine, press: &DeformControl) -> Result<Value, DevE
     }))
 }
 
-/// What `deform` answers: the track pressed and the log after.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct DeformResult {
-    /// Controls change the session's world, not the scene's source.
     pub temporary: bool,
-    /// The track pressed.
     pub track: Track,
-    /// Tracks the log holds.
     pub stamps: usize,
-    /// Tracks the log's budget left out.
     pub dropped: u64,
-    /// Whether deformation draws.
     pub enabled: bool,
 }
 
-/// What `deformation_query` answers: the tracks under each point.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct DeformationQueryResult {
-    /// The simulation time sampled.
     pub seconds: f64,
-    /// Each point's.
     pub samples: Vec<DepthSample>,
-    /// Tracks the log holds.
     pub stamps: usize,
-    /// Tracks the log's budget left out.
     pub dropped: u64,
 }
 
-/// The tracks and ground under one point.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct DepthSample {
-    /// Meters the tracks sink the ground.
     pub track: f64,
-    /// Meters their rims raise it.
     pub rim: f64,
-    /// Meters the terrain's deformation map sinks it, where resident.
     pub deform: Option<f64>,
-    /// The depth drawn: the shallower of both, where resident.
     pub depth: Option<f64>,
-    /// The ground's height, where a tile is resident.
     pub ground: Option<f64>,
 }
 
-/// The tracks deformers and agents pressed at world points
-/// `[x, z]`, refilled to simulation time `seconds` (by default
-/// the time the last frame presented), as the log holds them: how deep
-/// the deepest sinks deformable ground (`track`) and how high rims raise
-/// it (`rim`); where a tile is resident, the most its surface materials
-/// let tracks sink it (`deform`), the depth it shows (`depth`, the
-/// lesser) and the ground's height. Also the stamps the log holds and
-/// those its budget dropped.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -203,7 +162,6 @@ impl EngineQuery for DeformationQuery {
     }
 }
 
-/// The tracks pressed at `points`, refilled to `seconds`.
 fn tracks(
     engine: &mut Engine,
     points: &[[f64; 2]],
@@ -237,7 +195,6 @@ fn tracks(
         .sanitized();
     let tracks = feature::<Tracks>(world, Feature::Deformation)?;
     let terrains = feature::<Terrains>(world, Feature::Terrain)?;
-    // Tenths of millimeters keep responses small.
     let round = |value: f32| (f64::from(value) * 1.0e4).round() / 1.0e4;
     let samples = points
         .iter()

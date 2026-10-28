@@ -1,25 +1,3 @@
-/** The web and native hosts answer the development protocol alike: the same
- * commands sent to the Stress Lab on the development server's page and
- * natively give replies with the same fields, the same error codes and
- * paths, and describe lists the same page parameters and game controls,
- * and an authored scene's partially transparent PNG decodes to a texture
- * of the same content hash on both,
- * but for the known divergences listed here, each tagged with the hosts
- * step that removes it (`host`: a difference of the transports, which
- * stays). A divergence that no longer shows fails the check until its entry
- * goes. A fault injected into the screen effects (`debug_fault`) disables
- * them alone on both, which render on without them. A mesh removed from an
- * authored scene's asset library (`debug_missing_asset`) leaves its entity
- * drawing nothing, which both count and list alike, with the entity's
- * authored identity and position. A lost GPU device
- * (`debug_device_loss`) fails the renderer for good on both: each answers
- * `render_failed` naming the loss, the frames after it alike, while the
- * engine answers on. Last, `debug_panic` stops the engine on both: each
- * answers
- * `runtime_panicked` with the same report, and the page shows it stopped
- * and calls into its module no more. Builds `stress-lab` natively
- * (`--profile quick --features dev`) and opens the development server's
- * stress.html (`DEMO_URL`). */
 // @ts-check
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";
@@ -31,13 +9,8 @@ import { expectDisabledFeatures } from "./exercised.mjs";
 import { cargoBinaries, devUrl, protocol } from "./harness.mjs";
 import { workspacePath } from "./workspace.mjs";
 
-// The native Stress Lab with its development tools, built in the background
-// while the page starts: nothing here is timed.
 const binaries = cargoBinaries(["-p", "stress-lab", "--bin", "stress-lab-native", "--profile", "quick", "--features", "dev"]);
 
-/** What differs between the hosts today: the divergences each pattern
- * names (`*` stands for any text), the hosts step that removes them, and
- * what differs. */
 const KNOWN = [
   ["describe ProfileCapture: native only *", "host", "native profiles take hardware counters and PIX"],
   ["describe PageParameters: web only engine_dev", "host", "the page's development tools are a URL parameter"],
@@ -48,8 +21,6 @@ const KNOWN = [
   ["describe PageParameters: native only {view,assets,rocks}", "app", "the Stress Lab's own native options"],
 ];
 
-/** A pattern of `KNOWN` as a regular expression: `*` any text, `{a,b}`
- * either word. */
 function pattern(text) {
   const escaped = text.replace(/[.+?^$()|[\]\\]/g, "\\$&")
     .replace(/\*/g, ".*")
@@ -57,9 +28,6 @@ function pattern(text) {
   return new RegExp(`^${escaped}$`);
 }
 
-/** The commands both hosts run, in order, by name; `error` where both must
- * refuse it. Commands only compare while the hosts start alike: each sets
- * what it reads. */
 const CASES = [
   ["status", { op: "status" }],
   ["describe", { op: "describe" }],
@@ -83,7 +51,6 @@ const CASES = [
   ["game workload", { op: "game", name: "workload", args: { preset: "visual" } }],
   ["terrain height", { op: "terrain_height", points: [[0, 0]] }],
   ["distribution", { op: "distribution", values: [4, 1, 3, 2] }],
-  // Refusals: the same code at the same path.
   ["unknown op", { op: "weather" }, "error"],
   ["unknown field", { op: "render", sky: 1 }, "error"],
   ["missing op", { ops: "status" }, "error"],
@@ -103,28 +70,19 @@ const CASES = [
   ["capture while running", { op: "capture" }, "error"],
   ["frames while running", { op: "frames", count: 1, interval_ms: 1000 / 60 }, "error"],
   ["pause", { op: "pause" }],
-  // A fault in the screen effects, which bloom needs, disables them alone:
-  // the next frames find it, as browsers report GPU errors later.
   ["bloom before the fault", { op: "environment", bloom: { intensity: 0.5 } }],
   ["debug fault", { op: "debug_fault", feature: "post" }],
   ["frames after the fault", { op: "frames", count: 30, interval_ms: 1000 / 60 }],
   ["status after the fault", { op: "status" }],
   ["fault in no lazy feature", { op: "debug_fault", feature: "water" }, "error"],
   ["missing asset without scene", { op: "debug_missing_asset", entity: "box" }, "error"],
-  // Losing the GPU device fails the renderer for good: the frame after it
-  // answers the loss, as every later one; the engine answers on.
   ["device loss", { op: "debug_device_loss" }, "error"],
   ["render after the loss", { op: "render" }, "error"],
   ["status after the loss", { op: "status" }],
-  // A panic stops the engine on both hosts, which then answer everything
-  // with the panic's report: last, as nothing runs after it.
   ["debug panic", { op: "debug_panic" }, "error"],
   ["status after the panic", { op: "status" }, "error"],
 ];
 
-/** Every field path of `value`: object fields by name, array elements as
- * `[]` (their fields merged). The parameters and controls describe lists
- * are compared by name instead. */
 function shape(value, prefix = "", out = new Set()) {
   if (Array.isArray(value)) {
     for (const item of value) shape(item, `${prefix}[]`, out);
@@ -138,13 +96,10 @@ function shape(value, prefix = "", out = new Set()) {
   return out;
 }
 
-/** The names in field `field` of type `name` that a describe reply lists. */
 function described(reply, name, field) {
   return new Set(Object.keys(reply.result?.types?.find(type => type.name === name)?.[field] ?? {}));
 }
 
-/** Each divergence between the web's reply and the native one to a case,
- * as the check names them. */
 function divergences(name, expectError, web, native) {
   const found = [];
   for (const [host, reply] of [["web", web], ["native", native]]) {
@@ -152,7 +107,6 @@ function divergences(name, expectError, web, native) {
   }
   if (web.ok !== native.ok) return found;
   if (!web.ok) {
-    // A panic's message is the same report on both hosts.
     const fields = web.error?.code === "runtime_panicked" ? ["code", "path", "message"] : ["code", "path"];
     for (const field of fields) {
       if (web.error?.[field] !== native.error?.[field]) found.push(`${name}: error ${field} ${web.error?.[field]} on web, ${native.error?.[field]} natively`);
@@ -164,7 +118,6 @@ function divergences(name, expectError, web, native) {
   return found;
 }
 
-/** `session`'s reply to `command`, a driver's refusal included. */
 async function answer(session, command) {
   try { return await session.execute(structuredClone(command)); }
   catch (error) { return { ok: false, error: { code: error.code ?? "thrown", path: error.path ?? "$", message: String(error.message ?? error) } }; }
@@ -185,8 +138,6 @@ try {
     replies[name] = pair;
     found.push(...divergences(name, expected === "error", pair.web, pair.native));
   }
-  // What describe lists beside the engine's types: the page's parameters
-  // and the game's controls.
   for (const [type, field] of [["PageParameters", "parameters"], ["GameControls", "controls"]]) {
     const [webNames, nativeNames] = [described(replies.describe.web, type, field), described(replies.describe.native, type, field)];
     for (const parameter of webNames) if (!nativeNames.has(parameter)) found.push(`describe ${type}: web only ${parameter}`);
@@ -201,20 +152,16 @@ try {
   }, null, 1));
   assert.deepEqual(unknown, [], `the hosts diverge where no known divergence says so:\n${unknown.join("\n")}`);
   assert.deepEqual(gone, [], `known divergences that no longer show; delete their entries:\n${gone.join("\n")}`);
-  // The fault disabled the screen effects alone, on both hosts.
   const fault = replies["status after the fault"];
   for (const reply of [fault.web, fault.native]) {
     assert.deepEqual(reply.result?.rendering?.disabled_features, ["post"], JSON.stringify(reply.result?.rendering));
   }
-  // Both name the lost device, in the frame after the loss and the next.
   for (const name of ["device loss", "render after the loss"]) {
     for (const reply of [replies[name].web, replies[name].native]) {
       assert.equal(reply.error?.code, "render_failed", JSON.stringify(reply));
       assert.match(reply.error.message, /GPU device lost/, reply.error.message);
     }
   }
-  // Both report the engine's own panic, where it happened; the page says the
-  // engine stopped and calls into its module no more (nothing fails after).
   const panic = replies["debug panic"];
   for (const reply of [panic.web, panic.native]) {
     assert.equal(reply.error?.code, "runtime_panicked", JSON.stringify(reply));
@@ -223,8 +170,6 @@ try {
   const errors = [];
   web.page.on("pageerror", error => errors.push(String(error)));
   web.page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
-  // Ninety of the browser's animation frames, in which the stopped page
-  // must call into its module no more.
   await web.page.evaluate(() => new Promise(/** @param {(value?: unknown) => void} resolve */ resolve => {
     let frames = 0;
     const next = () => (++frames >= 90 ? resolve() : requestAnimationFrame(next));
@@ -239,7 +184,6 @@ try {
   await native.close();
 }
 
-/** An RGBA8 PNG `width` pixels wide of `pixels`, rows from the top. */
 function png(width, pixels) {
   const chunk = (type, data) => {
     const head = Buffer.alloc(8);
@@ -254,15 +198,12 @@ function png(width, pixels) {
   header.writeUInt32BE(width, 0);
   header.writeUInt32BE(height, 4);
   header.set([8, 6, 0, 0, 0], 8);
-  // Each row after its filter byte, none.
   const rows = Buffer.concat(Array.from({ length: height }, (_, row) =>
     Buffer.from([0, ...pixels.slice(row * width * 4, (row + 1) * width * 4)])));
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk("IHDR", header), chunk("IDAT", deflateSync(rows)), chunk("IEND", Buffer.alloc(0))]);
 }
 
-// A scene whose texture is a PNG with partial alpha: a decoder that
-// premultiplies changes its colors (the faintest pixel's most).
 const folder = workspacePath("web/public/scenes/host-parity");
 const scenePath = workspacePath("web/public/scenes/host-parity.scene.json");
 await mkdir(folder, { recursive: true });
@@ -283,8 +224,6 @@ try {
   assert.ok(web.ok && native.ok, JSON.stringify({ web: web.error, native: native.error }));
   assert.equal(web.result.assets.textures.count, 1, JSON.stringify(web.result.assets));
   assert.deepEqual(web.result.assets.textures, native.result.assets.textures, "the PNG decodes to the same texture on both hosts");
-  // A mesh a game unloads: its entity draws nothing, which both hosts count
-  // and list alike, by the entity's authored identity and position.
   const missing = {};
   for (const [host, session] of [["web", imagesWeb], ["native", imagesNative]]) {
     await session.execute({ op: "pause" });

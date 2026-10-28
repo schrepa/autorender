@@ -1,9 +1,3 @@
-//! PIX on Windows: its GPU capturer, loaded into the program before the
-//! D3D12 device exists, captures the GPU work between [`Pix::begin`] and
-//! [`Pix::end`] into a `.wpix` file, as PIX's `PIXBeginCapture2` and
-//! `PIXEndCapture` do. Unsafe code, as `renderdoc.rs` holds: loading the
-//! library and calling its two exports.
-
 #![cfg_attr(
     windows,
     expect(
@@ -14,7 +8,6 @@
 
 use std::path::Path;
 
-/// PIX's GPU capturer, loaded.
 pub struct Pix {
     #[cfg(windows)]
     begin: BeginCapture,
@@ -22,8 +15,6 @@ pub struct Pix {
     end: EndCapture,
 }
 
-// `PIX_CAPTURE_GPU`'s parameters: the capture's file, then room for the
-// largest member of PIX's parameter union.
 #[cfg(windows)]
 #[repr(C)]
 struct Parameters {
@@ -44,9 +35,6 @@ unsafe extern "system" {
 }
 
 impl Pix {
-    /// PIX's GPU capturer from its newest installed version, loaded into
-    /// the program; `None` where PIX is not installed (and off Windows).
-    /// Load it before the game's D3D12 device exists.
     pub fn load() -> Option<Self> {
         #[cfg(windows)]
         {
@@ -82,7 +70,6 @@ impl Pix {
         }
     }
 
-    /// Starts capturing the GPU work submitted from now into `path`.
     pub fn begin(&self, path: &Path) -> Result<(), String> {
         #[cfg(windows)]
         {
@@ -103,7 +90,6 @@ impl Pix {
         }
     }
 
-    /// Ends the capture, keeping its file.
     pub fn end(&self) -> Result<(), String> {
         #[cfg(windows)]
         {
@@ -118,7 +104,6 @@ impl Pix {
     }
 }
 
-/// `result` of PIX's `what`, an `HRESULT`.
 #[cfg(windows)]
 fn checked(what: &str, result: i32) -> Result<(), String> {
     if result < 0 {
@@ -131,7 +116,6 @@ fn checked(what: &str, result: i32) -> Result<(), String> {
     }
 }
 
-/// `text` as a NUL-terminated UTF-16 string.
 #[cfg(windows)]
 fn wide(text: &std::ffi::OsStr) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;

@@ -1,12 +1,7 @@
-//! Flat-shaded unit-cube shapes for the city: faces map rectangles of
-//! their texture ([`Uv`]); parts that rest on something omit faces nobody
-//! sees.
-
 use std::f32::consts::TAU;
 
 use engine::prelude::*;
 
-/// A rectangle of texture coordinates; `v` grows downward.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Uv {
     u0: f32,
@@ -29,18 +24,12 @@ impl Uv {
         ]
     }
 
-    /// The part of this rectangle between `top` and `bottom` (fractions of
-    /// its height, top first).
     pub(crate) fn band(self, top: f32, bottom: f32) -> Self {
         let v = |fraction: f32| self.v0 + (self.v1 - self.v0) * fraction;
         Self::new(self.u0, v(top), self.u1, v(bottom))
     }
 }
 
-/// The unit normal of the flat convex polygon `corners` on its `outward`
-/// side (Newell's normal: counterclockwise corners seen from its side), and
-/// whether its corners turn the other way from there; `None` when it is
-/// degenerate. Both mesh builders face polygons with it.
 pub(crate) fn polygon_normal(corners: &[Vec3], outward: Vec3) -> Option<(Vec3, bool)> {
     let mut normal = Vec3::ZERO;
     for (index, a) in corners.iter().enumerate() {
@@ -58,8 +47,6 @@ pub(crate) fn polygon_normal(corners: &[Vec3], outward: Vec3) -> Option<(Vec3, b
     Some((if flip { -normal } else { normal }.normalize(), flip))
 }
 
-/// The triangles fanning a polygon of `count` corners from vertex `base`,
-/// wound the other way when `flip`.
 pub(crate) fn fan(indices: &mut Vec<u32>, base: u32, count: u32, flip: bool) {
     for index in 1..count - 1 {
         if flip {
@@ -77,7 +64,6 @@ pub(crate) struct Builder {
 }
 
 impl Builder {
-    /// A flat convex polygon fanned from its first corner, facing `outward`.
     pub(crate) fn face(&mut self, corners: &[Vec3], uvs: &[[f32; 2]], outward: Vec3) {
         let Some((normal, flip)) = polygon_normal(corners, outward) else {
             return;
@@ -93,8 +79,6 @@ impl Builder {
         fan(&mut self.indices, base, corners.len() as u32, flip);
     }
 
-    /// A quad through its bottom-left, bottom-right, top-right and top-left
-    /// corners as seen from outside.
     pub(crate) fn quad(&mut self, corners: [Vec3; 4], uv: Uv, outward: Vec3) {
         self.face(
             &corners,
@@ -108,8 +92,6 @@ impl Builder {
         );
     }
 
-    /// An axis-aligned box: its sides map `side`, its top `cap`, and its
-    /// bottom `cap` when `bottom`.
     pub(crate) fn cuboid(&mut self, min: Vec3, max: Vec3, side: Uv, cap: Uv, bottom: bool) {
         let [x0, y0, z0] = min.to_array();
         let [x1, y1, z1] = max.to_array();
@@ -149,10 +131,6 @@ impl Builder {
         }
     }
 
-    /// A surface of revolution about Y through `profile` points (radius,
-    /// height) from bottom to top, with `sides` faces from `angle`. Rings of
-    /// radius zero close to a point; other ends get flat caps (the bottom one
-    /// only when `bottom`). Each face maps all of `side` across its width.
     pub(crate) fn lathe(
         &mut self,
         profile: &[(f32, f32)],
@@ -173,11 +151,9 @@ impl Builder {
             let (v0, v1) = (1.0 - (y0 - low) / height, 1.0 - (y1 - low) / height);
             for index in 0..sides {
                 let (sin, cos) = math::sin_cos(angle + TAU * (index as f32 + 0.5) / sides as f32);
-                // Outward in the profile plane: up the profile, then turn right.
                 let outward = Vec3::new(cos, 0.0, sin) * (y1 - y0) - Vec3::Y * (r1 - r0);
                 let (b0, b1) = (point((r0, y0), index), point((r0, y0), index + 1));
                 let (t0, t1) = (point((r1, y1), index), point((r1, y1), index + 1));
-                // Angles increase leftward seen from outside.
                 if r1 == 0.0 {
                     self.face(
                         &[b1, b0, t0],
@@ -226,7 +202,6 @@ impl Builder {
         }
     }
 
-    /// Moves the vertices added since `start` rigidly by `matrix`.
     pub(crate) fn place(&mut self, start: usize, matrix: Mat4) {
         for vertex in &mut self.vertices[start..] {
             vertex.position = matrix
@@ -238,8 +213,6 @@ impl Builder {
         }
     }
 
-    /// A prism along X from `x0` to `x1` over a triangle `section` of (z, y)
-    /// points whose first two lie on the base, which stays open.
     pub(crate) fn ridge(&mut self, x0: f32, x1: f32, section: [(f32, f32); 3], side: Uv) {
         let at = |x: f32, (z, y): (f32, f32)| Vec3::new(x, y, z);
         let uv = [[0.0, 1.0], [1.0, 1.0], [0.5, 0.0]];

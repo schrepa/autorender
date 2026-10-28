@@ -1,9 +1,3 @@
-//! The groups several features share (`SHARED_GROUPS`): each feature's
-//! range of binding numbers in them, which `cargo xtask lint` holds every
-//! table serving one to.
-
-/// The bindings one feature takes in a group features share: its numbers
-/// (a range of them) and its bindings' names.
 #[derive(Debug)]
 pub struct FeatureRange {
     pub feature: &'static str,
@@ -11,9 +5,6 @@ pub struct FeatureRange {
     pub names: &'static [&'static str],
 }
 
-/// The groups several features share and each feature's range in them:
-/// group `group` of module `module`, every table serving it holding each
-/// binding within its feature's range.
 #[derive(Debug)]
 pub struct SharedGroup {
     pub module: &'static str,
@@ -21,15 +12,10 @@ pub struct SharedGroup {
     pub ranges: &'static [FeatureRange],
 }
 
-/// Declares [`SHARED_GROUPS`]: `MODULE @ group { feature: start..end [names], .. }`.
 macro_rules! shared_groups {
     ($($module:ident @ $group:literal {
         $($feature:ident: $start:literal..$end:literal [$($name:ident),* $(,)?]),* $(,)?
     })*) => {
-        /// The mesh module's groups, which every surface pipeline shares,
-        /// each feature in a range of its own: `cargo xtask lint` holds every
-        /// table serving one to the ranges, so a feature adding a binding
-        /// takes a number in its range, and features never collide.
         pub const SHARED_GROUPS: &[SharedGroup] = &[$(SharedGroup {
             module: stringify!($module),
             group: $group,

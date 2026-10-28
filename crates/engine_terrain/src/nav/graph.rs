@@ -1,24 +1,12 @@
-//! A* over a walk graph: the ends and the portals of the tiles between
-//! them, a node each by where it lies; and first, a search from the goal's
-//! side toward the start's tile, which finds a goal walled in by ground no
-//! walk crosses before the walk's own search takes up every portal the
-//! start reaches.
-
 use engine_math::collections::HashSet;
 
 use super::*;
 use search::{Flow, Reach, Stage, tiles_holding};
 
-/// The node of the walk graph for the start, and for the goal.
 const START: u32 = 0;
 const GOAL: u32 = 1;
-/// Portals the search from the goal's side takes up at most before it
-/// takes the goal for reachable: a few dozen tiles' worth.
 const WALLED: usize = 1024;
 
-/// A node of the walk graph: where it lies, the cheapest cost found to it,
-/// the node that was found through and the tile walked between them, and
-/// whether it is settled.
 struct Node {
     at: Sample,
     cost: u64,
@@ -27,9 +15,6 @@ struct Node {
     closed: bool,
 }
 
-/// The search from the goal's side: the portals it saw, those still open
-/// (the nearest the start first, then the first seen) and the one taken up
-/// and waiting for its tiles' portals.
 struct Walled {
     seen: HashSet<Sample>,
     open: BinaryHeap<Reverse<(u64, u32)>>,
@@ -38,7 +23,6 @@ struct Walled {
 }
 
 impl Walled {
-    /// Opens `sample`, unless seen, toward the start at `start`.
     fn open(&mut self, sample: Sample, start: Sample) {
         if self.seen.insert(sample) {
             self.open
@@ -48,15 +32,12 @@ impl Walled {
     }
 }
 
-/// A* over the walk graph: the ends and the portals reached so far, by
-/// where they lie, after the search from the goal's side where one runs.
 pub(super) struct Graph {
     reach: Reach,
     walled: Option<Walled>,
     nodes: Vec<Node>,
     index: HashMap<Sample, u32>,
     open: BinaryHeap<Reverse<(u64, u32)>>,
-    // The node taken up and waiting for its tiles' portals.
     next: Option<u32>,
 }
 
@@ -72,7 +53,6 @@ impl Graph {
         let [start, goal] = reach.samples;
         let mut open = BinaryHeap::new();
         open.push(Reverse((octile(start, goal), START)));
-        // The start's tile walking to the goal reaches it.
         let walled = reach.direct.is_none().then(|| Walled {
             seen: HashSet::default(),
             open: BinaryHeap::new(),
@@ -89,12 +69,10 @@ impl Graph {
         }
     }
 
-    /// The goal's sample.
     fn goal(&self) -> Sample {
         self.reach.samples[1]
     }
 
-    /// The node lying at `at`, made where none does.
     fn node(&mut self, at: Sample) -> u32 {
         let next = self.nodes.len() as u32;
         let id = *self.index.entry(at).or_insert(next);
@@ -110,8 +88,6 @@ impl Graph {
         id
     }
 
-    /// Reaches node `id` from `parent` across tile `via` at `cost`, where
-    /// that is cheaper than found so far.
     fn relax(&mut self, id: u32, cost: u64, parent: u32, via: TileKey) {
         let goal = self.goal();
         let node = &mut self.nodes[id as usize];
@@ -125,7 +101,6 @@ impl Graph {
         self.open.push(Reverse((cost + estimate, id)));
     }
 
-    /// The open node to take up next, the cheapest by its estimate.
     fn take(&mut self) -> Option<u32> {
         if let Some(next) = self.next.take() {
             return Some(next);
@@ -145,7 +120,6 @@ impl Graph {
         None
     }
 
-    /// The tiles the cheapest way found crosses, from the start's.
     fn tiles(&self) -> Vec<TileKey> {
         let mut tiles = Vec::new();
         let mut id = GOAL;
@@ -159,8 +133,6 @@ impl Graph {
     }
 }
 
-/// What the search from the goal's side came to: the goal walled in, the
-/// goal reachable as far as it saw, or neither yet.
 enum Seen {
     Walled,
     Open,
@@ -168,10 +140,6 @@ enum Seen {
 }
 
 impl WalkSearch {
-    /// A* over the walk graph from the start to the goal, taking up nodes
-    /// once their tiles' portals are held, after the search from the goal's
-    /// side: the tiles its cheapest way crosses, then the corridor over
-    /// them.
     pub(super) fn graph(
         &mut self,
         mut graph: Box<Graph>,
@@ -248,10 +216,6 @@ impl WalkSearch {
         Flow::Stay(Stage::Graph(graph))
     }
 
-    /// The search from the goal's side toward the start's tile, over
-    /// portals alone, nearest the start first: the goal is walled in where
-    /// it ends within [`WALLED`] portals short of a portal the start
-    /// reaches, and open where it meets one or sees as many.
     fn walled(&mut self, graph: &mut Graph, budget: &mut u64, data: &dyn WalkData) -> Seen {
         let (Some([start_tile, goal_tile]), Some(mut walled)) = (self.tiles, graph.walled.take())
         else {
@@ -314,8 +278,6 @@ impl WalkSearch {
         Seen::Waiting
     }
 
-    /// Takes up the start: its tile's portals at what reaching each costs,
-    /// and the goal where the start's tile walks to it.
     fn leave_start(&self, graph: &mut Graph, portals: &TilePortals) {
         let first = self.pyramid.first_sample(portals.key());
         for (index, portal) in portals.portals().iter().enumerate() {
@@ -332,9 +294,6 @@ impl WalkSearch {
         }
     }
 
-    /// The tile of the gait's level a sample belongs to: the one it lies
-    /// in, or past an edge, the one beyond; at the terrain's far edges, the
-    /// last.
     fn owner(&self, sample: Sample) -> TileKey {
         let [columns, rows] = self.pyramid.tiles(self.gait.level);
         let x = (sample[0] / QUADS).min(i64::from(columns) - 1);
@@ -343,8 +302,6 @@ impl WalkSearch {
     }
 }
 
-/// The tiles of a level `[columns, rows]` of tiles around `key`, its eight
-/// neighbors, in order.
 pub(super) fn neighbors(key: TileKey, [columns, rows]: [u32; 2]) -> Vec<TileKey> {
     NEIGHBORS
         .iter()

@@ -1,8 +1,3 @@
-//! Dense entity lookups for hot paths: each entity's index by its entity
-//! index, instead of hashing `Entity` keys. A lookup reads one entry and
-//! compares the stored entity, generation included, so entries of despawned
-//! entities whose index was reused never match.
-
 use std::ops::Index;
 
 use bevy_ecs::entity::Entity;
@@ -18,13 +13,9 @@ const EMPTY: Entry = Entry {
     value: usize::MAX,
 };
 
-/// A map from entities to indices with the calls of the `HashMap`s it
-/// replaces. Memory follows the largest entity index inserted; clearing
-/// costs as many writes as entries were inserted.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct EntityIndices {
     entries: Vec<Entry>,
-    // Entity indices holding entries, for proportional clearing.
     occupied: Vec<u32>,
 }
 
@@ -35,7 +26,6 @@ impl EntityIndices {
         (entry.entity == *entity).then_some(&entry.value)
     }
 
-    /// Sets `entity`'s index, returning the one it replaces.
     pub(crate) fn insert(&mut self, entity: Entity, value: usize) -> Option<usize> {
         let slot = entity.index_u32() as usize;
         if slot >= self.entries.len() {
@@ -54,7 +44,6 @@ impl EntityIndices {
         previous
     }
 
-    /// Entities indexed since the last clear, which invariants check.
     #[cfg(debug_assertions)]
     pub(crate) fn len(&self) -> usize {
         self.occupied.len()

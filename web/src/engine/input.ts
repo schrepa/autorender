@@ -2,16 +2,8 @@ import type { Runtime } from "../generated/runtime";
 
 const MAX_TOUCH_POINTERS = 32;
 
-/** The page's keyboard, drag and touch-button events as the input the
- * engine gathers between frames (`Runtime.key` and `Runtime.look`), which
- * keeps the holds, action edges and look deltas. The page tracks only
- * which keyboard keys and touch pointers hold what, and the drag. */
 export class BrowserInput {
-  /** The game input goes to; none while the page takes input away. */
   game: Pick<Runtime, "key" | "look"> | undefined;
-  // The keys the keyboard holds that the game uses. Each physical source
-  // owns its hold: releasing one does not release another finger or a key
-  // bound to the same input.
   private keyboard = new Set<string>();
   private pointers = new Map<number, { key: string; target: HTMLElement }>();
   private abort = new AbortController();
@@ -22,7 +14,6 @@ export class BrowserInput {
   constructor(canvas: HTMLCanvasElement) {
     const options = { signal: this.abort.signal };
     canvas.addEventListener("keydown", event => {
-      // A held key's repeats keep it from the page; the engine counts it once.
       if (this.keyboard.has(event.code)) { event.preventDefault(); return; }
       if (this.game?.key(event.code, true)) { this.keyboard.add(event.code); event.preventDefault(); }
     }, options);
@@ -63,8 +54,6 @@ export class BrowserInput {
     }
   }
 
-  /** Nothing the page tracks holds anything; the engine's holds go with
-   * its suspension or `clear_input`. */
   clear() { this.keyboard.clear(); this.pointers.clear(); this.dragging = undefined; }
   dispose() { this.abort.abort(); this.clear(); this.game = undefined; }
 }

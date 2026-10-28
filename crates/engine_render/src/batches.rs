@@ -1,5 +1,3 @@
-//! CPU-only draw planning. Storage is reused for mesh/material batches.
-
 #![expect(
     clippy::expect_used,
     reason = "materials' textures are validated before they are ranked"
@@ -15,22 +13,17 @@ use engine_core::{
 
 const UNMAPPED_BUCKET: u32 = u32::MAX;
 
-/// Draw group keys to their compact IDs.
 type GroupIds = HashMap<u64, u32>;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct DrawBatch {
     pub mesh: MeshHandle,
     pub source_index: usize,
-    /// The material whose maps the batch binds.
     pub material: Option<MaterialHandle>,
-    /// Transparent instances draw in the transparent pass and cast no shadow.
     pub transparent: bool,
     pub instances: Range<u32>,
 }
 
-/// Whether `instance` draws in the transparent pass:
-/// `transparent` lists the snapshot's transparent materials.
 pub(crate) fn is_transparent(instance: &RenderInstance, transparent: &[MaterialHandle]) -> bool {
     match instance.material {
         Some(material) => transparent.contains(&material),
@@ -40,7 +33,6 @@ pub(crate) fn is_transparent(instance: &RenderInstance, transparent: &[MaterialH
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SnapshotError {
-    /// More instances than this GPU's instance buffers hold.
     InstanceBudget {
         actual: usize,
         limit: usize,
@@ -104,66 +96,41 @@ impl fmt::Display for SnapshotError {
     }
 }
 
-/// Indices avoid moving gameplay records. Counting scatter groups opaque draws
-/// by mesh/material while preserving slot order within each group, including
-/// coherent static/moving runs. A frame of the same retained structure and
-/// sources reuses the previous order; every other frame validates its sources.
-/// Each stable slot keeps one draw-group ID for its frame's source epoch, so
-/// visibility-only changes scatter compact IDs without per-instance key
-/// lookup. Draw groups get compact IDs for the mesh, material and opacity
-/// combinations in use, so no mesh or material count bounds them.
 #[derive(Default)]
 pub(crate) struct BatchPlan {
     pub ordered_instances: Vec<usize>,
     pub batches: Vec<DrawBatch>,
-    // The previous rebuild's order and batches, and a generation that
-    // advances when a rebuild changes them.
     previous_order: Vec<usize>,
     previous_batches: Vec<DrawBatch>,
     generation: u64,
-    // Advances with every rebuild of the source lists.
     rebuilds: u64,
     source_indices: Vec<usize>,
     material_source_indices: Vec<usize>,
     texture_source_indices: Vec<usize>,
-    /// Material sources referenced by emitted instances, sorted by handle.
     pub material_sources: Vec<usize>,
-    /// Texture sources those materials read, sorted by handle for upload.
     pub texture_sources: Vec<usize>,
-    /// Transparent materials among the supplied ones.
     pub transparent_materials: Vec<MaterialHandle>,
-    /// All supplied sources keep existing residency, including culled objects.
     mesh_handles: Vec<MeshHandle>,
     material_handles: Vec<MaterialHandle>,
     texture_handles: Vec<TextureHandle>,
-    // Rebuild scratch: one draw group per admitted instance and one cursor
-    // per group in use.
     instance_buckets: Vec<u32>,
     bucket_cursors: Vec<usize>,
-    // Compact IDs of draw-group keys (opacity class, mesh rank, material slot)
-    // and each ID's key; they last as long as the slot mapping.
     group_ids: GroupIds,
     group_keys: Vec<u64>,
     group_order: Vec<u32>,
-    // Material and texture sources referenced by this plan's draws.
     used_material_sources: Vec<bool>,
     used_texture_sources: Vec<bool>,
-    /// Most instances the GPU's buffers hold; `None` bounds nothing.
     pub instance_limit: Option<usize>,
     valid: bool,
-    /// Last successful decision, also exposed through profiling counters.
     order_reused: bool,
     retained_structure: Option<(u64, u64)>,
     retained_sources: Option<(u64, u64)>,
-    // Each slot's draw group for one core frame/source epoch; never-visible
-    // slots resolve lazily.
     slot_buckets: Vec<u32>,
     slot_mapping_reused: bool,
     key_resolutions: usize,
 }
 
 impl BatchPlan {
-    /// A plan that rejects snapshots of more than `limit` instances.
     pub(crate) fn with_instance_limit(limit: usize) -> Self {
         Self {
             instance_limit: Some(limit),
@@ -171,8 +138,6 @@ impl BatchPlan {
         }
     }
 
-    /// Validates `frame`'s sources before any GPU cache changes, then
-    /// produces contiguous draw ranges of its visible slots.
     pub fn prepare_frame(&mut self, frame: &RenderFrame<'_>) -> Result<(), SnapshotError> {
         let key = (frame.identity(), frame.structure_revision());
         let source_key = (frame.identity(), frame.source_revision());
@@ -243,13 +208,10 @@ impl BatchPlan {
         }
     }
 
-    /// Advances whenever the draw order or batches change.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// Advances whenever the plan rebuilds: its meshes, materials and
-    /// textures may differ.
     pub(crate) fn rebuilds(&self) -> u64 {
         self.rebuilds
     }
@@ -280,8 +242,6 @@ impl BatchPlan {
         self.texture_handles.clear();
     }
 
-    /// Plans the `selected` slots of `snapshot`, keeping their draw groups
-    /// with `reuse_slot_mapping`.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -304,8 +264,6 @@ impl BatchPlan {
         self.mesh_handles.clear();
         self.material_handles.clear();
         self.texture_handles.clear();
-        // Only the GPU's buffers bound instances; meshes and textures are
-        // bounded by GPU memory alone.
         if let Some(limit) = self.instance_limit
             && (snapshot.instances.len() > limit || instance_count > limit)
         {
@@ -359,7 +317,6 @@ impl BatchPlan {
                 return Err(SnapshotError::DuplicateTexture { handle });
             }
         }
-        // Every supplied material's textures must be supplied too.
         for source in &snapshot.materials {
             for handle in source.material.textures() {
                 if self
@@ -376,8 +333,6 @@ impl BatchPlan {
         }
         drop(profile_sources);
         if !reuse_slot_mapping {
-            // Budget/source validation precedes any per-slot cache growth.
-            // Group IDs start over with the slots that refer to them.
             self.group_ids.clear();
             self.group_keys.clear();
             self.slot_buckets.clear();
@@ -394,7 +349,6 @@ impl BatchPlan {
         if self.ordered_instances != self.previous_order || self.batches != self.previous_batches {
             self.generation += 1;
         }
-        // Textures of the used materials.
         self.used_texture_sources.clear();
         self.used_texture_sources
             .resize(snapshot.textures.len(), false);
@@ -451,7 +405,6 @@ impl BatchPlan {
                         .is_transparent(),
                     None => instance.color[3] < 1.0,
                 };
-                // Opaque groups sort first, then by mesh and material.
                 let key = (u64::from(transparent) << 62)
                     | ((mesh_rank as u64) << 31)
                     | material_rank.map_or(0, |rank| rank as u64 + 1);
@@ -537,11 +490,6 @@ impl BatchPlan {
         Ok((mesh_index, material_index))
     }
 
-    /// Supplied sources retain already uploaded assets even when all their
-    /// instances are culled. This does not trigger an upload for unused sources.
-    /// Used at every valid frame boundary, including suspended/occluded frames.
-    /// Dropping a GPU cache entry retires its owned buffers; submitted work keeps
-    /// any internal references it needs until the GPU has finished with them.
     pub fn contains_mesh(&self, handle: MeshHandle) -> bool {
         self.mesh_handles.binary_search(&handle).is_ok()
     }
@@ -550,7 +498,6 @@ impl BatchPlan {
         self.material_handles.binary_search(&handle).is_ok()
     }
 
-    /// The material `snapshot` (the one planned) supplies for `handle`.
     pub fn material<'a>(
         &self,
         snapshot: &'a RenderSnapshot,

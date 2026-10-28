@@ -1,10 +1,3 @@
-//! The pipelines of the shadow clipmap: caster selection's compute passes,
-//! the marks of the tiles the depth buffer's pixels read, slot casters
-//! plain, masked and skinned (into a region's layer, and through moving
-//! tiles' routes into the atlas), placed objects' impostor cards, the clear
-//! of moving tiles' slots and the tiles composed from the regions into
-//! their slots; with the views, routes and selection uniform they read.
-
 use super::{SHADOW_FORMAT, VIEWS_BYTES};
 use crate::bindings::{SHADOW_MARKS, SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW};
 use crate::gpu_data::Vertex;
@@ -18,31 +11,19 @@ use crate::pipelines::{group, layout, vertex_attributes};
 use crate::shaders::Entry;
 use crate::shaders::entry::{shadow, shadow_marks};
 
-/// Shadow pipelines and their fixed bindings, created with the first frame
-/// that has shadows: games without them never compile them.
 pub(super) struct ShadowPipelines {
     pub(super) select: wgpu::ComputePipeline,
     pub(super) count: wgpu::ComputePipeline,
     pub(super) select_layout: crate::pipelines::GroupLayout,
-    // Skinned casters of GPU-presented frames.
     pub(super) select_skinned: wgpu::ComputePipeline,
     pub(super) skinned_layout: crate::pipelines::GroupLayout,
-    // The marks of the tiles pixels read, after the opaque passes.
     pub(super) marks: wgpu::ComputePipeline,
     pub(super) marks_layout: crate::pipelines::GroupLayout,
-    // Slot casters by `masked + 2 * skinned`: plain; alpha-masked,
-    // with a material group; and of meshes with joints,
-    // which read a skin stream and the joint palettes. Into a region's
-    // layer, then drawn over moving tiles through their routes.
     pub(super) casters: [wgpu::RenderPipeline; 4],
     pub(super) moving: [wgpu::RenderPipeline; 4],
-    // Placed objects' impostor cards, created once they
-    // have impostors, and what creating them takes.
     pub(super) impostor_casters: Option<wgpu::RenderPipeline>,
     module: wgpu::ShaderModule,
     view_layout: crate::pipelines::GroupLayout,
-    // The moving tiles' slots cleared, and the tiles composed from the
-    // regions into their slots, quads over the slots.
     pub(super) clear_moving: wgpu::RenderPipeline,
     pub(super) compose: wgpu::RenderPipeline,
     pub(super) view_buffer: wgpu::Buffer,
@@ -52,9 +33,6 @@ pub(super) struct ShadowPipelines {
     pub(super) cull: wgpu::Buffer,
 }
 
-/// A shadow caster pipeline of `module`'s `entry_point` over `layouts` and
-/// vertex `buffers`; `overwrite` passes write their depth whatever lies
-/// there, and casters with a `fragment` stage test texels.
 #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
 fn caster_pipeline(
     device: &wgpu::Device,
@@ -76,11 +54,7 @@ fn caster_pipeline(
             vertex_constants: &[],
             vertex: entry_point,
             buffers,
-            // Both faces cast: open and single-sided meshes shadow too.
             primitive: wgpu::PrimitiveState::default(),
-            // Receiver planes keep lit surfaces off
-            // their own depth; a unit of bias covers the haze's march's
-            // plain comparisons.
             depth: Some(wgpu::DepthStencilState {
                 format: SHADOW_FORMAT,
                 depth_write_enabled: Some(true),
@@ -100,8 +74,6 @@ fn caster_pipeline(
                     }
                 },
             }),
-            // Masked casters, cards and moving casters test texels; the rest
-            // write depth alone.
             fragment: fragment.map(|entry| crate::pipelines::Fragment {
                 entry,
                 constants: &[],
@@ -124,7 +96,6 @@ impl ShadowPipelines {
             label: Some("engine/shadows.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHADOW_SHADER.into()),
         });
-        // Selection and counting share one explicit layout, and so one group.
         let select_layout = layout(device, &SHADOW_SELECT);
         let compute_layout = crate::pipelines::pipeline_layout(
             device,
@@ -136,8 +107,6 @@ impl ShadowPipelines {
         };
         let select = compute(shadow::select_casters);
         let count = compute(shadow::count_casters);
-        // Skinned casters bind their palette bounds instead of
-        // candidates, poses and stillness: within eight storage buffers.
         let skinned_layout = layout(device, &SHADOW_SKINNED);
         let skinned_pipeline_layout = crate::pipelines::pipeline_layout(
             device,
@@ -150,8 +119,6 @@ impl ShadowPipelines {
             &module,
             shadow::select_skinned,
         );
-        // The marks read the camera and the lookups' uniform, after the
-        // scene's declarations.
         let marks_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/shadow_marks.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHADOW_MARKS_SHADER.into()),
@@ -169,8 +136,6 @@ impl ShadowPipelines {
             shadow_marks::mark_shadow_tiles,
         );
         let view_layout = layout(device, &SHADOW_VIEW);
-        // Slot poses, and slot colors and palettes for masked and skinned
-        // casters.
         let pose_layout = layout(device, &SHADOW_POSES);
         let vertex_attributes = vertex_attributes!(Vertex { 0 => position as Float32x3 });
         let masked_vertex_attributes = vertex_attributes!(Vertex {
@@ -200,9 +165,6 @@ impl ShadowPipelines {
             &MASKED_CASTER_PIPELINES,
             &[&view_layout, &pose_layout, material_layout],
         );
-        // Each kind of caster: its label, layouts, vertex buffers and its
-        // entry points into a region's layer and over moving tiles, with
-        // the fragment stages of each.
         let kinds: [(&str, _, Vec<Option<wgpu::VertexBufferLayout<'_>>>, _, _); 4] = [
             (
                 "engine/shadow-affine",
@@ -262,8 +224,6 @@ impl ShadowPipelines {
                     Some(*fragment),
                 )
             });
-        // The clear binds nothing but shares the plain casters' layout: each
-        // distinct layout costs Firefox a root signature.
         let clear_moving = caster_pipeline(
             device,
             &module,
@@ -274,8 +234,6 @@ impl ShadowPipelines {
             true,
             None,
         );
-        // Composing writes every texel's depth as it reads it, through the
-        // plain casters' layout, whose pose group binds the regions' layers.
         let compose_attributes = wgpu::vertex_attr_array![3 => Float32x4, 4 => Sint32x4];
         let compose = caster_pipeline(
             device,
@@ -292,7 +250,6 @@ impl ShadowPipelines {
             Some(shadow::fs_compose),
         );
         let view_buffer = crate::buffers::uniform(device, "engine/shadow-views", VIEWS_BYTES);
-        // Too large for a uniform binding: storage.
         let routes = crate::buffers::storage(
             device,
             "engine/shadow-routes",
@@ -344,9 +301,6 @@ impl ShadowPipelines {
         }
     }
 
-    /// The pipeline of placed objects' impostor cards: the
-    /// view, the objects' poses and `impostor_layout`'s impostors, each
-    /// card's slot and record as instance attributes.
     pub(super) fn impostor_caster(
         &self,
         device: &wgpu::Device,

@@ -1,26 +1,13 @@
-//! Loading a terrain's tiles: after its bakes, the tiles a frame finds
-//! missing load as records, most urgent first, each a whole tile with every
-//! object its level places. The host hands a record back from the cook's
-//! packs or what it kept before, or runs the tile's job (on a worker, or in
-//! place on a host without workers) and keeps what it makes: where a tile
-//! came from is the host's alone, and loading only ever loads records.
-
 use super::*;
 
-/// A frame's terrain work: slices of samples' worth handed out while its
-/// time lasts, or a single slice without a clock, and the bytes tiles may
-/// bring the GPU.
 pub(super) struct Work {
     pub(super) slice: u64,
     pub(super) clock: Option<fn() -> f64>,
     pub(super) end: f64,
-    /// Bytes tiles may still bring the GPU this frame.
     pub(super) upload: std::cell::Cell<u64>,
 }
 
 impl Work {
-    /// Refills `budget` with a slice once spent, while the frame's time
-    /// lasts; whether it did.
     pub(super) fn refill(&self, budget: &mut u64) -> bool {
         if *budget > 0 {
             return false;
@@ -34,30 +21,19 @@ impl Work {
         }
     }
 
-    /// Whether the work's time is up; never without a clock.
     pub(super) fn expired(&self) -> bool {
         self.clock.is_some_and(|clock| clock() >= self.end)
     }
 
-    /// Whether tiles may still become resident within the frame's upload
-    /// budget.
     pub(super) fn uploads(&self) -> bool {
         self.upload.get() > 0
     }
 
-    /// Spends `bytes` of the frame's upload budget.
     pub(super) fn upload(&self, bytes: u64) {
         self.upload.set(self.upload.get().saturating_sub(bytes));
     }
 }
 
-/// Loads `missing` tiles of `state`, most important first, as records,
-/// once its bakes are done, within `slots`, the frame's job budget and
-/// `work`'s time and uploads: `target` is every tile it loads and `keep`
-/// every tile it keeps; `named` are the tiles places games name want,
-/// which load into memory once nothing else waits. Frames load what they
-/// find missing, and hosts what is left between frames. Returns whether a
-/// bake is still in progress, which nothing loads behind.
 pub(super) fn load_tiles(
     state: &mut TerrainState,
     missing: &[(TileKey, u32)],
@@ -74,14 +50,6 @@ pub(super) fn load_tiles(
     false
 }
 
-/// Loads `state`'s `missing` tiles as records of its shared recipe: what
-/// is no longer kept, no longer loads (back from memory), or was asked for
-/// under edits or materials since, stops; records handed back become
-/// resident, most urgent first, the first at once and the rest within
-/// `work`'s time and uploads; then the missing tiles still loading, not
-/// under way nor failed a moment ago, are asked for while `slots` admits
-/// them, and the tiles places games name (`named`) load into memory once
-/// nothing is missing.
 fn load_records(
     state: &mut TerrainState,
     missing: &[(TileKey, u32)],
@@ -90,8 +58,6 @@ fn load_records(
     slots: &mut JobBudget<'_>,
     frame: u64,
 ) {
-    // A recipe of other layers than its tiles generate from now, as just
-    // after its bakes changed them, waits to be shared again.
     let Some(recipe) = state
         .recipe
         .as_ref()
@@ -148,7 +114,6 @@ fn load_records(
         }
     }
     for &(key, priority) in missing {
-        // Tiles that arrived this frame no longer load.
         if state.dispatched.contains_key(&key)
             || !state.store.loads(&key)
             || state
@@ -170,10 +135,6 @@ fn load_records(
     prefetch(state, (missing, named), (&recipe, generation), slots, frame);
 }
 
-/// Loads the tiles places games name (`named`, nearest first) into memory
-/// while nothing is `missing`: their records, neither resident nor in
-/// memory, at idle priority; those no longer named, or asked for under
-/// edits since, stop.
 fn prefetch(
     state: &mut TerrainState,
     (missing, named): (&[(TileKey, u32)], &[TileKey]),
@@ -227,23 +188,12 @@ fn prefetch(
     }
 }
 
-/// A terrain's recipe as jobs hold it: its key, the stack it shares (the
-/// layers its tiles generate from, which surroundings see from afar), and
-/// whether its tiles hold control values.
 pub(crate) struct SharedRecipe {
     pub(crate) key: String,
     pub(crate) stack: Arc<Layers>,
     materials: bool,
 }
 
-/// Shares the recipe `state`'s tiles generate from once its bakes are
-/// done, and again whenever the layers its tiles generate from change:
-/// their stack, shared once for every terrain seeing it, and how its
-/// terrain sees it. Edits stay out of both, each tile's job carrying those
-/// reaching it. Shares are named by their content, so records of jobs
-/// reading them have the same keys in every session; `stacks` holds the
-/// stacks shared with their keys, and the key of the recipe replaced goes
-/// to `released`.
 pub(crate) fn share_recipe(
     state: &mut TerrainState,
     jobs: &mut Jobs,
@@ -257,7 +207,6 @@ pub(crate) fn share_recipe(
     if layers.unbaked().is_some() {
         return;
     }
-    // Surroundings see their terrain's stack from afar.
     let (stack, view) = match &state.around {
         Some(around) => (
             around.base.clone(),

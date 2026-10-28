@@ -1,15 +1,3 @@
-//! The commits measure and check tasks build, run and serve. A measured
-//! commit builds in one reused checkout, `target/measure/tree`, where git
-//! rewrites only the files that differ from the commit built before, so
-//! cargo recompiles only what changed ([`reused`]); its build goes to
-//! `target/measure/builds/<sha>` beside the files its runs read. A check
-//! serves each commit from its own checkout, `target/measure/source/<sha>`,
-//! whose page builds in its own target folder ([`checkout`]). Each process
-//! leases the commits it uses ([`lease`]), which no task removes while that
-//! process runs; besides those, the [`KEPT_BUILDS`] builds and
-//! [`KEPT_CHECKOUTS`] checkouts used most recently stay, older ones going
-//! once a task has its commits ready ([`prune`]).
-
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::fs;
@@ -21,39 +9,22 @@ use serde_json::{Value, json};
 
 use crate::measure::{ensure_commit, git, iso};
 
-/// Builds kept besides those running tasks use: the most recently used. A
-/// build holds a commit's program, its symbols and the files its runs read
-/// (about 100 MB).
 const KEPT_BUILDS: usize = 12;
 
-/// Checkouts kept besides those running tasks use: the most recently used.
-/// A checkout a check served holds a build of the page (a few GB).
 const KEPT_CHECKOUTS: usize = 3;
 
-/// The folders of a commit's tree its runs read (bench files, fixtures),
-/// kept with its build.
 pub const RUN_FILES: &[&str] = &["bench", "web/scripts/fixtures"];
 
-/// The extension of a checkout or build being removed: renamed first, so
-/// its folder is whole or gone, then deleted (by a later prune, where
-/// something held a file open).
 const REMOVING: &str = "removing";
 
-/// How long a process waiting for another's lock waits before looking
-/// again.
 const LOCK_POLL: Duration = Duration::from_secs(1);
 
-/// The commits this process leased.
 static USING: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
-/// `target/measure/NAME`.
 fn folder(root: &Path, name: &str) -> PathBuf {
     root.join("target").join("measure").join(name)
 }
 
-/// Leases commit `sha` to this process, recorded as used now: its lease,
-/// `target/measure/leases/<pid>`, lists the commits whose checkouts and
-/// builds no task removes while it runs.
 pub fn lease(root: &Path, sha: &str) -> Result<(), String> {
     let _registry = Lock::hold(root, "registry")?;
     let mut using = USING.lock().unwrap_or_else(PoisonError::into_inner);
@@ -70,8 +41,6 @@ pub fn lease(root: &Path, sha: &str) -> Result<(), String> {
         .map_err(|error| format!("cannot write {}: {error}", used.display()))
 }
 
-/// The source at `sha` in its own checkout under `target/measure/source/`
-/// (anew where a removal left part of it), leased to this process.
 pub fn checkout(root: &Path, sha: &str, pull: Option<u64>) -> Result<PathBuf, String> {
     ensure_commit(root, sha, pull)?;
     lease(root, sha)?;
@@ -91,8 +60,6 @@ pub fn checkout(root: &Path, sha: &str, pull: Option<u64>) -> Result<PathBuf, St
     Ok(source)
 }
 
-/// The reused checkout measured commits build in, at a commit, which other
-/// processes wait for until this drops.
 pub struct Tree {
     path: PathBuf,
     _held: Lock,
@@ -104,8 +71,6 @@ impl Tree {
     }
 }
 
-/// The reused checkout `target/measure/tree` at `sha`, leased to this
-/// process and held until the result drops.
 pub fn reused(root: &Path, sha: &str, pull: Option<u64>) -> Result<Tree, String> {
     ensure_commit(root, sha, pull)?;
     lease(root, sha)?;
@@ -115,9 +80,6 @@ pub fn reused(root: &Path, sha: &str, pull: Option<u64>) -> Result<Tree, String>
     Ok(Tree { path, _held: held })
 }
 
-/// Checks `sha` out in `tree`, a checkout of `root` reused from commit to
-/// commit (made the first time): git rewrites only the files that differ,
-/// so builds there recompile only what changed.
 pub fn check_out(root: &Path, tree: &Path, sha: &str) -> Result<(), String> {
     if !tree.join(".git").exists() {
         let path = tree.display().to_string();
@@ -131,7 +93,6 @@ pub fn check_out(root: &Path, tree: &Path, sha: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Copies the folder `from` into `into`, every file under it.
 pub fn copy_folder(from: &Path, into: &Path) -> Result<(), String> {
     fs::create_dir_all(into).map_err(|error| error.to_string())?;
     for entry in
@@ -149,13 +110,7 @@ pub fn copy_folder(from: &Path, into: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Removes what earlier removals left, then the checkouts and builds of
-/// the commits past the [`KEPT_CHECKOUTS`] and [`KEPT_BUILDS`] used most
-/// recently, but those running processes lease. A folder something holds
-/// open stays, said on stderr: a task never fails for what it could not
-/// remove.
 pub fn prune(root: &Path) {
-    // Chosen and set aside while no process leases, then deleted.
     let doomed = match Lock::hold(root, "registry") {
         Ok(_registry) => doom(root),
         Err(error) => {
@@ -173,14 +128,11 @@ pub fn prune(root: &Path) {
             ),
         }
     }
-    // Checkouts are git worktrees: forget those whose folders went.
     if removed && let Err(error) = git(root, &["worktree", "prune"]) {
         eprintln!("{error}");
     }
 }
 
-/// The folders to delete: those earlier removals left, and the checkouts
-/// and builds past those kept, set aside.
 fn doom(root: &Path) -> Vec<PathBuf> {
     let leased = leased(root);
     let used = |sha: &str| {
@@ -207,7 +159,6 @@ fn doom(root: &Path) -> Vec<PathBuf> {
             doomed.extend(set_aside(&folder(root, name).join(&sha)));
         }
     }
-    // A commit with neither a checkout nor a build left is no longer used.
     for path in entries(&folder(root, "used")) {
         let sha = path.file_name().unwrap_or_default();
         if !folder(root, "source").join(sha).exists() && !folder(root, "builds").join(sha).exists()
@@ -218,8 +169,6 @@ fn doom(root: &Path) -> Vec<PathBuf> {
     doomed
 }
 
-/// The commits running processes lease, this one's included; the leases of
-/// processes that ended go.
 fn leased(root: &Path) -> BTreeSet<String> {
     let mut leased = USING.lock().unwrap_or_else(PoisonError::into_inner).clone();
     let mine = std::process::id().to_string();
@@ -247,12 +196,10 @@ fn leased(root: &Path) -> BTreeSet<String> {
     leased
 }
 
-/// Whether `name` is a full commit id, as checkouts and builds are named.
 fn is_commit(name: &str) -> bool {
     name.len() == 40 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-/// What `folder` holds.
 fn entries(folder: &Path) -> impl Iterator<Item = PathBuf> {
     fs::read_dir(folder)
         .into_iter()
@@ -261,8 +208,6 @@ fn entries(folder: &Path) -> impl Iterator<Item = PathBuf> {
         .map(|entry| entry.path())
 }
 
-/// The folder `path`, renamed aside to be deleted, if it is there and
-/// nothing holds it open.
 fn set_aside(path: &Path) -> Option<PathBuf> {
     if !path.exists() {
         return None;
@@ -277,13 +222,9 @@ fn set_aside(path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// A lock among this repository's processes: the folder
-/// `target/measure/NAME.lock`, holding its owner's process id, released
-/// when dropped; a lock whose owner ended is taken over.
 struct Lock(PathBuf);
 
 impl Lock {
-    /// Takes lock `NAME`, waiting while a running process holds it.
     fn hold(root: &Path, name: &str) -> Result<Self, String> {
         let path = folder(root, &format!("{name}.lock"));
         let owner = path.join("owner.json");
@@ -311,16 +252,12 @@ impl Lock {
             let held = holder();
             let stale = match held {
                 Some(pid) => !crate::heavy::alive(pid),
-                // A holder that stopped between making the folder and
-                // writing its file.
                 None => fs::metadata(&path)
                     .and_then(|metadata| metadata.modified())
                     .ok()
                     .and_then(|made| made.elapsed().ok())
                     .is_some_and(|age| age > crate::heavy::OWNERLESS),
             };
-            // Taken over only from the holder found stale, not one that
-            // took it since.
             if stale && holder() == held {
                 let _ = fs::remove_dir_all(&path);
                 continue;

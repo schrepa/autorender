@@ -1,8 +1,3 @@
-//! Reflection probe captures: each cube face's cull and
-//! compaction over the poses this frame's culling wrote, after the frame's
-//! own drawing, and the still frames of every slot, which captures wait
-//! for.
-
 use engine_core::PoseRows;
 
 use super::groups::PROBE_FACES;
@@ -11,27 +6,18 @@ use crate::batches::DrawBatch;
 use crate::gpu_data::{FLAG_PROBE, PresentationFrame, STILL_FRAMES, frustum_uniform};
 use crate::mesh_arena::Ids;
 
-// Draw group storage generation, pose storage generation and pose buffer
-// index, and still frame storage generation, that a set of face groups
-// binds.
 type FacesKey = (u64, u64, usize, u64);
 
-/// One cube face's cull and compaction groups.
 struct FaceGroups {
     cull: wgpu::BindGroup,
     compact: wgpu::BindGroup,
 }
 
-/// Each slot's pose fingerprint and still frames while probes need them.
 pub(super) struct Stillness {
     pub(super) frames: wgpu::Buffer,
-    // Slots the frames cover (0 without probes), whether this frame counts
-    // them (only while captures wait), and the frames counted in a row, up
-    // to STILL_FRAMES.
     slots: u64,
     counting: bool,
     counted: u32,
-    // Advances when `frames` is replaced.
     generation: u64,
 }
 
@@ -51,10 +37,6 @@ impl Stillness {
         }
     }
 
-    /// Keeps still frames over every slot of `poses` while `stillness` is
-    /// some, counting them this frame when it holds true (captures wait):
-    /// storage replaced or released, and counting resumed, start the count
-    /// over.
     pub(super) fn ensure(
         &mut self,
         device: &wgpu::Device,
@@ -87,30 +69,23 @@ impl Stillness {
         }
     }
 
-    /// Whether still frames exist, for slots while probes need them.
     pub(super) fn kept(&self) -> bool {
         self.slots != 0
     }
 
-    /// Whether this frame counts still frames.
     pub(super) fn counting(&self) -> bool {
         self.counting
     }
 
-    /// Advances when the still frames' storage is replaced.
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// Whether frames were counted long enough for captures to find every
-    /// still slot.
     pub(super) fn settled(&self) -> bool {
         self.counting && self.counted >= STILL_FRAMES
     }
 }
 
-/// Every cube face's uniform, and its groups per pose buffer (temporally
-/// antialiased frames alternate two), the latest of which this frame binds.
 pub(super) struct ProbeFaces {
     uniforms: [wgpu::Buffer; 6],
     groups: Vec<(FacesKey, Vec<FaceGroups>)>,
@@ -128,10 +103,6 @@ impl ProbeFaces {
 }
 
 impl GpuPresentationPass {
-    /// Records the cull and compaction of reflection probe cube face `face`,
-    /// `size` texels across, seen through `view_projection`,
-    /// over `poses` (this frame's culling wrote them), after the frame's own
-    /// drawing; returns whether [`Self::probe_draw_source`] can draw it.
     #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     pub(crate) fn encode_probe_face(
         &mut self,
@@ -143,7 +114,6 @@ impl GpuPresentationPass {
         view_projection: glam::Mat4,
         poses: &wgpu::Buffer,
     ) -> bool {
-        // Prepared frames wrote a uniform and bound their groups.
         let Some(mut uniform) = self.frame_uniform else {
             return false;
         };
@@ -157,12 +127,10 @@ impl GpuPresentationPass {
         uniform.culling = 1;
         uniform.mask = FLAG_PROBE;
         uniform.occlusion = 0;
-        // Candidates covering no texel center draw nothing.
         uniform.subpixel = 1;
         uniform.viewport = [size as f32, size as f32, 0.0, 0.0];
         uniform.motion = 0;
         uniform.budget = u32::MAX;
-        // Probe faces draw every candidate at full detail.
         uniform.lod_error = 0.0;
         queue.write_buffer(
             &self.probes.uniforms[face],
@@ -184,7 +152,6 @@ impl GpuPresentationPass {
         {
             self.probes.current = index;
         } else {
-            // Stale generations never come back.
             self.probes.groups.retain(|((groups, poses, _, still), _)| {
                 (*groups, *poses, *still) == (key.0, key.1, key.3)
             });
@@ -229,7 +196,6 @@ impl GpuPresentationPass {
                     entry("still_frames", &self.stillness.frames),
                 ],
             ),
-            // Probe faces count no triangles and draw no impostors.
             compact: compact_group(
                 device,
                 &self.shaders,
@@ -242,8 +208,6 @@ impl GpuPresentationPass {
         }
     }
 
-    /// Visible IDs and indirect arguments of plan batch `index` in the
-    /// reflection probe face last recorded.
     pub(crate) fn probe_draw_source<'a>(
         &'a self,
         batch: &DrawBatch,
@@ -252,14 +216,10 @@ impl GpuPresentationPass {
         self.groups.draw_source(batch, index, PROBE_FACES, 0)
     }
 
-    /// Each slot's pose fingerprint and still frames, and the
-    /// generation of their storage.
     pub(crate) fn still_frames(&self) -> (&wgpu::Buffer, u64) {
         (&self.stillness.frames, self.stillness.generation())
     }
 
-    /// Whether culling has counted still frames long enough for reflection
-    /// probe captures to find every still slot.
     pub(crate) fn stillness_settled(&self) -> bool {
         self.stillness.settled()
     }

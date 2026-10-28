@@ -1,6 +1,3 @@
-//! Temporary edits of generated terrains, with undo and redo, and rivers
-//! drawn over them.
-
 use std::sync::Arc;
 
 use engine_core::{
@@ -18,7 +15,6 @@ use crate::DevError;
 use crate::coordinate;
 use crate::features::feature;
 
-/// A terrain edit control.
 pub(super) enum TerrainEditing {
     Edit {
         id: String,
@@ -31,12 +27,8 @@ pub(super) enum TerrainEditing {
     Redo,
 }
 
-/// Samples across an edit's reach along each side for the most the ground
-/// moved.
 const CHANGE_SAMPLES: usize = 9;
 
-/// The terrain entity `name` names in `scene` (the first terrain when
-/// `None`).
 fn terrain_entity(
     world: &mut World,
     scene: Option<&SceneInstance>,
@@ -62,7 +54,6 @@ fn terrain_entity(
     }
 }
 
-/// Whether `id` is an authored ID, which edits and drawn rivers go by.
 fn valid_id(id: &str) -> Result<(), DevError> {
     if engine_settings::is_id(id) {
         Ok(())
@@ -78,9 +69,6 @@ fn valid_id(id: &str) -> Result<(), DevError> {
     }
 }
 
-/// Runs `editing` on the terrain `name` names in `scene` (the first terrain
-/// when `None`), taking edits undo removed from and putting them back on
-/// `redo`; its result.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -97,7 +85,6 @@ pub(super) fn edit_terrain(
     let terrain = world.get::<Terrain>(entity).cloned().expect("found above");
     let origin = terrain.origin;
     let mut edits = terrain.edits.to_vec();
-    // Where an edit reaches, world.
     let reach = |stamp: &Stamp| {
         let center = Vec2::from(stamp.center) + Vec2::new(origin.x, origin.z);
         let radius = stamp.radius + stamp.falloff;
@@ -129,7 +116,6 @@ pub(super) fn edit_terrain(
                     largest_change: 0.0,
                 });
             }
-            // Levels to a world height, as the terrain's stamps hold it.
             let op = match change {
                 StampOp::Flatten(height) => StampOp::Flatten(height - origin.y),
                 other @ (StampOp::Raise(_) | StampOp::Lower(_) | StampOp::Hole) => other,
@@ -140,7 +126,6 @@ pub(super) fn edit_terrain(
                 falloff,
                 op,
             };
-            // The stamp's own rules, named as the request names its fields.
             stamp.validate().map_err(|invalid| {
                 let field = match invalid.field.strip_prefix("op") {
                     Some(rest) => format!("change{rest}"),
@@ -159,7 +144,6 @@ pub(super) fn edit_terrain(
             let after = before.with_stamps(&[stamp]).map_err(|error| {
                 DevError::new(ErrorCode::InvalidRequest, "$.change", error.to_string())
             })?;
-            // The most the ground moved across the edit's reach.
             let span = radius + falloff;
             let mut largest = 0.0_f32;
             for row in 0..CHANGE_SAMPLES {
@@ -234,10 +218,6 @@ pub(super) fn edit_terrain(
     Ok(result)
 }
 
-/// Draws `drawing`'s river (world points, which the terrain holds
-/// terrain-local) under its id on the terrain its `terrain` names in
-/// `scene` (the first terrain when `None`), replacing the one drawn under
-/// that id, or takes that one away where it names no points; its result.
 pub(super) fn draw_river(
     engine: &mut Engine,
     scene: Option<&SceneInstance>,
@@ -256,8 +236,6 @@ pub(super) fn draw_river(
     }
     valid_id(&drawing.id)?;
     let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
-    // Where rivers lie, world: their points' bounds out past the widest
-    // half each gives its channel.
     let reach = |rivers: &[&GivenRiver]| -> Option<Reach> {
         let mut bounds: Option<(Vec2, Vec2)> = None;
         for river in rivers {
@@ -286,7 +264,6 @@ pub(super) fn draw_river(
         dirty,
     };
     let dirty = if drawing.points.is_empty() {
-        // No points take the river drawn under the id away.
         let Some(at) = standing else {
             return Ok(unchanged(&rivers, None));
         };
@@ -312,7 +289,6 @@ pub(super) fn draw_river(
             depth: values(&drawing.depth),
             discharge: values(&drawing.discharge),
         };
-        // The river's own rules, named as the request names its fields.
         river.validate().map_err(|invalid| {
             DevError::new(
                 ErrorCode::OutOfRange,

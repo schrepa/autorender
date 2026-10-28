@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 use std::fmt;
 
-/// Validation or admission failure. No library mutation occurs on failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssetError {
     EmptyMesh,
@@ -17,13 +16,11 @@ pub enum AssetError {
     InvalidUv {
         vertex: usize,
     },
-    /// An optional vertex attribute of the wrong length.
     AttributeCount {
         attribute: &'static str,
         expected: usize,
         actual: usize,
     },
-    /// An optional vertex attribute value outside its range.
     InvalidAttribute {
         attribute: &'static str,
         vertex: usize,
@@ -41,7 +38,6 @@ pub enum AssetError {
     InvalidSurface {
         field: Cow<'static, str>,
     },
-    /// A texture map parameter outside its range.
     InvalidMaterialMap {
         field: &'static str,
     },
@@ -59,21 +55,16 @@ pub enum AssetError {
     },
     InvalidTextureHandle,
     InvalidMaterialHandle,
-    /// A mesh handle neither live nor reserved where one must be.
     InvalidMeshHandle,
-    /// An animation clip or channel breaking a rule.
     InvalidAnimation {
         reason: &'static str,
     },
-    /// Block-compressed texture levels breaking a rule.
     InvalidCompressedTexture {
         reason: &'static str,
     },
-    /// A virtual mesh file breaking a rule.
     InvalidVirtualMesh {
         reason: &'static str,
     },
-    /// Levels of detail breaking a rule, or not suiting their mesh.
     InvalidLevels {
         reason: &'static str,
     },
@@ -93,7 +84,6 @@ pub enum AssetError {
 }
 
 impl AssetError {
-    /// Stable machine-readable error identifier; display wording may evolve.
     pub const fn code(&self) -> &'static str {
         match self {
             Self::EmptyMesh => "asset.empty_mesh",

@@ -1,23 +1,14 @@
-//! Animation clips: keyframed translation, rotation and scale
-//! of target nodes, sampled as glTF 2.0 animations are.
-
 use glam::{Quat, Vec3};
 
 use crate::AssetError;
 
-/// How a channel moves between keys (glTF sampler interpolation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyInterpolation {
-    /// Holds each key's value until the next key.
     Step,
-    /// Straight lines between keys; rotations take the shortest arc.
     Linear,
-    /// Cubic Hermite curves through the keys, with an in-tangent and an
-    /// out-tangent stored around each key's value.
     CubicSpline,
 }
 
-/// What a channel animates: one component of its target's local transform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AnimatedProperty {
     Translation,
@@ -25,7 +16,6 @@ pub enum AnimatedProperty {
     Scale,
 }
 
-/// A sampled value of one channel.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AnimationSample {
     Translation(Vec3),
@@ -33,17 +23,12 @@ pub enum AnimationSample {
     Scale(Vec3),
 }
 
-/// Key values of one channel: vectors (translation, scale) as `[x, y, z]`,
-/// rotations as quaternions `[x, y, z, w]`. Cubic-spline channels hold three
-/// per key: in-tangent, value, out-tangent.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Keyframes {
     Vectors(Box<[Vec3]>),
     Rotations(Box<[Quat]>),
 }
 
-/// One animated property of one target, keyed at strictly increasing times
-/// in seconds.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimationChannel {
     target: u32,
@@ -51,14 +36,9 @@ pub struct AnimationChannel {
     interpolation: KeyInterpolation,
     times: Box<[f32]>,
     keyframes: Keyframes,
-    // Linear rotations: the arc from each key to the next, derived once.
     arcs: Box<[Arc]>,
 }
 
-/// The spherical interpolation from one rotation key to the next, derived
-/// as `Quat::slerp` derives it: the next key on the near side, and either
-/// linear blending when the keys nearly coincide or the angle between them
-/// and its sine's reciprocal. [`Arc::at`] then gives `slerp`'s bits.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Arc {
     end: Quat,
@@ -92,11 +72,9 @@ impl Arc {
         }
     }
 
-    /// `start.slerp(next, s)` for the arc from `start` to `next`.
     #[inline]
     fn at(&self, start: Quat, s: f32) -> Quat {
         if self.linear {
-            // `end` lies on `start`'s side, as `slerp` leaves it.
             start.lerp(self.end, s)
         } else {
             let scale1 = engine_math::sin(self.theta * (1.0 - s));
@@ -106,8 +84,6 @@ impl Arc {
     }
 }
 
-/// glam's `acos` approximation, which `Quat::slerp` uses: identical
-/// operations give identical bits.
 fn acos_approx(v: f32) -> f32 {
     let nonnegative = v >= 0.0;
     let x = v.abs();
@@ -134,9 +110,6 @@ fn acos_approx(v: f32) -> f32 {
     }
 }
 
-/// Where a time falls among a channel's keys: the key at or before it, how
-/// far toward the next key it is (0 before the first key and after the
-/// last), and the time between those keys.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct KeyPosition {
     key: usize,
@@ -171,10 +144,6 @@ impl KeyPosition {
 }
 
 impl AnimationChannel {
-    /// A channel animating `property` of target `target` (an index into the
-    /// targets a player binds). Times must be finite, not negative and
-    /// strictly increasing; there is one value per time (three for cubic
-    /// splines), finite, rotations nonzero (they are normalized).
     pub fn new(
         target: u32,
         property: AnimatedProperty,
@@ -206,7 +175,6 @@ impl AnimationChannel {
                     if !rotation.is_finite() {
                         return invalid("rotations must be finite");
                     }
-                    // Tangents keep their scale; values are unit quaternions.
                     if per_key == 1 || index % 3 == 1 {
                         if rotation.length_squared() == 0.0 {
                             return invalid("rotations must be nonzero");
@@ -267,13 +235,10 @@ impl AnimationChannel {
         &self.keyframes
     }
 
-    /// The channel's value at `time` seconds: its first value before the
-    /// first key and its last after the last.
     pub fn sample(&self, time: f32) -> AnimationSample {
         self.sample_at(KeyPosition::find(&self.times, time))
     }
 
-    /// The channel's value at `position` among its keys.
     #[inline]
     fn sample_at(&self, position: KeyPosition) -> AnimationSample {
         let KeyPosition {
@@ -311,7 +276,6 @@ impl AnimationChannel {
             }
             Keyframes::Rotations(values) => AnimationSample::Rotation(match self.interpolation {
                 KeyInterpolation::Step => values[key],
-                // `values[key].slerp(values[key + 1], fraction)`.
                 KeyInterpolation::Linear if has_next => self.arcs[key].at(values[key], fraction),
                 KeyInterpolation::Linear => values[key],
                 KeyInterpolation::CubicSpline if has_next => {
@@ -348,8 +312,6 @@ impl AnimationChannel {
     }
 }
 
-/// The cubic Hermite curve from `p0` (tangent `m0`) to `p1` (tangent `m1`)
-/// at `t` in `[0, 1]`; tangents are scaled by the key span.
 fn hermite(p0: Vec3, m0: Vec3, p1: Vec3, m1: Vec3, t: f32) -> Vec3 {
     let [a, b, c, d] = hermite_weights(t);
     p0 * a + m0 * b + p1 * c + m1 * d
@@ -371,20 +333,15 @@ fn hermite_weights(t: f32) -> [f32; 4] {
     ]
 }
 
-/// An immutable set of channels animating up to [`Self::target_count`]
-/// targets for [`Self::duration`] seconds. Players bind the
-/// targets to nodes, so one clip serves every instance of a model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimationClip {
     channels: Box<[AnimationChannel]>,
-    // Whether each channel is keyed at the same times as the one before.
     shared_times: Box<[bool]>,
     target_count: u32,
     duration: f32,
 }
 
 impl AnimationClip {
-    /// A clip of `channels`, at least one; its duration is its latest key.
     pub fn new(channels: Vec<AnimationChannel>) -> Result<Self, AssetError> {
         if channels.is_empty() {
             return Err(AssetError::InvalidAnimation {
@@ -421,9 +378,6 @@ impl AnimationClip {
         &self.channels
     }
 
-    /// Samples every channel at `time` in order, passing each channel and
-    /// its value ([`AnimationChannel::sample`]'s). Channels keyed at the
-    /// same times as the channel before them share its key search.
     pub fn sample_channels(
         &self,
         time: f32,
@@ -440,17 +394,14 @@ impl AnimationClip {
         }
     }
 
-    /// One more than the largest target index a channel names.
     pub fn target_count(&self) -> u32 {
         self.target_count
     }
 
-    /// The latest key time in seconds.
     pub fn duration(&self) -> f32 {
         self.duration
     }
 
-    /// Owned key bytes; excludes allocation and `Arc` metadata.
     pub fn byte_len(&self) -> usize {
         self.channels.iter().map(AnimationChannel::byte_len).sum()
     }

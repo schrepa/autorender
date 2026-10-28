@@ -1,12 +1,3 @@
-//! Terrain streaming as a deterministic trace: the terrain fixture scene
-//! (web/scripts/fixtures/terrain.scene.json) with every engine feature,
-//! its terrain streaming in place, with neither a clock nor job workers, a
-//! slice of samples a frame, while the camera
-//! flies a fixed path over it: it looks the terrain over, flies across it,
-//! jumps to a far corner and returns. Each frame's line holds the
-//! streaming counters, a hash of each terrain's resident tiles and whether
-//! it draws; equal traces between two builds mean equal streaming.
-
 use std::path::Path;
 
 use engine::EnginePlugins;
@@ -18,8 +9,6 @@ use crate::{Report, hash};
 
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const ASPECT: f32 = 16.0 / 9.0;
-/// The path's frames: the overview, the flight across, the far corner
-/// and the overview again.
 const FRAMES: u32 = 400;
 const SAMPLES_PER_FRAME: u32 = 1 << 18;
 
@@ -67,8 +56,6 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
     Ok(())
 }
 
-/// The camera at `frame` of the path, in world meters (the terrain spans
-/// -512 to 512 along x and z).
 fn camera(frame: u32) -> Camera {
     let overview = (Vec3::new(0.0, 80.0, 140.0), Vec3::new(0.0, 30.0, 0.0));
     let across = (Vec3::new(380.0, 90.0, 380.0), Vec3::new(450.0, 40.0, 450.0));
@@ -94,8 +81,6 @@ fn camera(frame: u32) -> Camera {
     }
 }
 
-/// An engine with every feature holding the fixture scene, its files read
-/// from beside it as the native host reads them.
 fn load() -> Result<Engine, String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -109,12 +94,9 @@ fn load() -> Result<Engine, String> {
         .map_err(|error| format!("{FIXTURE}: {}", error.message))?;
     let mut engine = Engine::new(EngineConfig::default());
     engine.app.add_plugins(EnginePlugins);
-    // The scene stays for the engine's life.
     let _scene = document
         .instantiate_with(engine.app.world_mut(), &files)
         .map_err(|error| format!("{FIXTURE}: {error}"))?;
-    // Frames work a slice of this many samples each, without a clock:
-    // enough that the views load within the path's legs.
     engine
         .app
         .world_mut()

@@ -3,7 +3,6 @@ use serde::Serialize;
 use std::cell::RefCell;
 use std::{marker::PhantomData, rc::Rc};
 
-/// `aggregate` durations are summed samples, not continuous timeline spans.
 #[derive(Debug, Serialize)]
 pub struct Event {
     pub kind: &'static str,
@@ -96,7 +95,6 @@ impl Collector {
 }
 thread_local! { static COLLECTOR: RefCell<Collector> = const { RefCell::new(Collector::new()) }; }
 
-/// Install before capture. Changing clocks during a capture is ignored.
 pub fn set_clock(clock: fn() -> f64) {
     COLLECTOR.with_borrow_mut(|collector| {
         if !collector.active {
@@ -117,7 +115,6 @@ pub fn set_frame(frame: u64) {
     COLLECTOR.with_borrow_mut(|collector| collector.frame = frame);
 }
 
-/// Allocate the entire event budget before opening the measured window.
 pub fn start(max_events: usize) -> Result<u64, &'static str> {
     if !(1..=MAX_EVENTS).contains(&max_events) {
         return Err("event budget must be at least 1 and at most MAX_EVENTS");
@@ -144,8 +141,6 @@ pub fn start(max_events: usize) -> Result<u64, &'static str> {
     })
 }
 
-/// Stops immediately; moving the event buffer out requires no new allocation.
-/// Open guards mark this result incomplete and cannot affect the next capture.
 pub fn finish() -> Capture {
     COLLECTOR.with_borrow_mut(|collector| {
         let was_active = collector.active;
@@ -256,8 +251,6 @@ pub fn counter(name: &'static str, value: f64) {
     });
 }
 
-/// Fine-grained hot-loop timing sums into one event. Timing each operation has
-/// overhead: these diagnostic aggregates must not be mistaken for baseline cost.
 pub struct Aggregate {
     generation: u64,
     frame: u64,

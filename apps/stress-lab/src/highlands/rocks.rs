@@ -1,13 +1,3 @@
-//! Boulders for the highlands: icospheres displaced by smooth,
-//! low-frequency noise into rounded, weathered stones, squashed and
-//! stretched by their seed and settled flatter underneath, their normals
-//! smooth throughout. Texture coordinates project along the axis each
-//! vertex's normal turns most toward; the highlands lay their rock maps
-//! from the world's axes instead. Each shape is built at one detail; its
-//! coarser levels are its mesh's own, simplified offline. Every vertex's
-//! color bakes in how much the shape around it hides it, darker in
-//! hollows; where terrains place them, their bases blend into the ground.
-
 use engine::collections::HashMap;
 
 use engine::prelude::*;
@@ -15,24 +5,16 @@ use engine::prelude::*;
 use crate::kit::random::{golden_hash, noise, unit};
 use crate::kit::records;
 
-/// Boulder `seed`'s mesh as a record ([`records::mesh`]): its handle,
-/// reserved until the record is here.
 pub(crate) fn boulder_record(world: &mut World, seed: u32) -> engine::Result<MeshHandle> {
     records::mesh(world, "highlands_boulder", &seed.to_le_bytes(), move || {
         boulder(seed)
     })
 }
 
-/// Icosphere subdivisions of boulders.
 const LEVELS: u32 = 4;
 
-/// Meters one repeat of the rock maps covers on a boulder.
 const TILING: f32 = 3.0;
 
-/// Boulder `seed`'s mesh: about a meter across before its stretch, lumpy
-/// with two octaves of smooth noise, its underside settling flatter than
-/// its top from its middle down, below its origin, where it rests in the
-/// ground.
 fn boulder(seed: u32) -> engine::Result<Mesh> {
     let random = |index: u32| unit(golden_hash(seed.wrapping_mul(0x9e37_79b9) ^ index));
     let stretch = Vec3::new(
@@ -41,8 +23,6 @@ fn boulder(seed: u32) -> engine::Result<Mesh> {
         0.8 + 0.5 * random(3),
     );
     let offset = Vec3::new(random(4), random(5), random(6)) * 37.0;
-    // Below its middle the underside flattens by up to half over a quarter
-    // of its height, easing in, so no edge rings it.
     let settling = 0.25 * stretch.y;
     let shape = |direction: Vec3| {
         let broad = noise(direction * 1.5 + offset);
@@ -59,10 +39,6 @@ fn boulder(seed: u32) -> engine::Result<Mesh> {
         .map_err(|error| engine::Error::from(error).context(format!("boulder {seed}")))
 }
 
-/// The vertices, indices and colors of `shape` (each unit direction's
-/// point) over an icosphere subdivided [`LEVELS`] times: each vertex's
-/// normal and color ([`baked`]), and its texture coordinates along the axis
-/// its normal turns most toward, repeating every [`TILING`] units.
 fn shaped(shape: &impl Fn(Vec3) -> Vec3) -> (Vec<MeshVertex>, Vec<u32>, Vec<[f32; 4]>) {
     let (directions, triangles) = icosphere(LEVELS);
     let points: Vec<Vec3> = directions.into_iter().map(shape).collect();
@@ -90,10 +66,6 @@ fn shaped(shape: &impl Fn(Vec3) -> Vec3) -> (Vec<MeshVertex>, Vec<u32>, Vec<[f32
     (vertices, indices, colors)
 }
 
-/// Each of `points`' normals and colors over `triangles`: its normal the
-/// area-weighted mean of the faces around it; its color how little the
-/// shape around it hides it, from how far its neighbors stand out along
-/// its normal against the edges' length, so hollows darken.
 fn baked(points: &[Vec3], triangles: &[[u32; 3]]) -> (Vec<Vec3>, Vec<[f32; 4]>) {
     let mut normals = vec![Vec3::ZERO; points.len()];
     let mut sums = vec![(Vec3::ZERO, 0.0_f32, 0_u32); points.len()];
@@ -129,8 +101,6 @@ fn baked(points: &[Vec3], triangles: &[[u32; 3]]) -> (Vec<Vec3>, Vec<[f32; 4]>) 
     (normals, colors)
 }
 
-/// A unit icosphere subdivided `levels` times: its vertices and
-/// counter-clockwise triangles seen from outside.
 fn icosphere(levels: u32) -> (Vec<Vec3>, Vec<[u32; 3]>) {
     let t = (1.0 + 5.0_f32.sqrt()) / 2.0;
     let mut positions: Vec<Vec3> = [

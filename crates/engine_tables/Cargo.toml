@@ -9,7 +9,6 @@ publish.workspace = true
 engine_math.workspace = true
 libm.workspace = true
 
-# `SOURCE`, the hash of the code making the tables' records.
 [build-dependencies]
 engine_sources.workspace = true
 

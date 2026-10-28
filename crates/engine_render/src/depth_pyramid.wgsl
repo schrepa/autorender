@@ -1,14 +1,3 @@
-// Depth pyramids: level 0 holds the farthest depth of each 2x2 block of the
-// depth buffer, every further level the farthest of each 2x2 block of the
-// level below, for occlusion culling; or the nearest depths,
-// for screen-space reflections. Depth is reversed:
-// the farthest is the smallest, the nearest the largest. Levels have
-// power-of-two sizes, so each halves the last exactly; only the texels
-// covering the depth buffer are written, and reads past the level below's
-// repeat its edge texel, whose extreme already includes the buffer's edge.
-
-// The written texels of the level written, and the last written texel of
-// the level read (the depth buffer's last pixel for level zero).
 struct Extent {
     size: vec2<u32>,
     last: vec2<u32>,

@@ -1,16 +1,3 @@
-//! The terrain corpus: the tracked terrain fixture's generated terrain
-//! (web/scripts/fixtures/terrain.scene.json and its dome heightmap). Its
-//! bakes; every tile of its pyramid and some of its surroundings'; tiles
-//! under edits; its lighting, bounce transfer and macro colors; every
-//! finest tile's portals of a walk graph, and a walk over them; the parts
-//! of the water a tile settles over alone and what it settles from (which
-//! the GPU settles, cooked once, so its record is no corpus's); and a pack
-//! of what they made. Each job runs as
-//! workers run it, whole and a slice at a time, and must give the bits its
-//! code gives in place (a tile's portals, the bits its tile's record
-//! gives); every record must read back from the pack the cook would write
-//! as it went in.
-
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -35,27 +22,15 @@ use serde_json::json;
 
 use super::{Observations, hash};
 
-/// The fixture scene and the entity holding its terrain.
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const ENTITY: &str = "ground";
-/// Work units each slice of a job gets: few enough that each takes many
-/// slices, as workers slice them.
 const SLICE: u64 = 4096;
-/// Meters across the cells the corpus's settled water settles in: the
-/// coarsest water simulates at, so the job stays quick.
 const WATER_CELL: f32 = 8.0;
-/// The terrain settings' pinned levels, whose finest its lighting reads,
-/// and the texels along its sky and horizon maps' sides.
 const PINNED: u32 = 2;
 const SKY_TEXELS: u32 = 256;
 const HORIZON_TEXELS: u32 = 128;
-/// Probe columns along each side of its bounce transfer.
 const BOUNCE_PROBES: u32 = 64;
-/// Texels along its macro colors' sides.
 const MACRO_TEXELS: u32 = 256;
-/// Every share and job the corpus ran through its worker, in order, each
-/// job's output by its hash: what `cargo xtask pure --wasm` replays in the
-/// browser worker's Wasm module.
 pub const JOBS: &str = "target/pure/terrain-jobs.json";
 
 #[expect(
@@ -68,7 +43,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let pyramid = terrain.pyramid;
     let mut worker = Worker::default();
 
-    // The bakes in place, and as a worker's job.
     let baked = authored.bake_all(&pyramid);
     let bytes = codec::encode(&baked);
     observed.hash("bakes", &bytes);
@@ -106,7 +80,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         rules: rules.clone(),
     };
 
-    // Every tile with all its objects, the way each runs.
     let mut tiles = BTreeMap::new();
     for level in (0..pyramid.levels()).rev() {
         for key in pyramid.level_tiles(level) {
@@ -116,9 +89,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             tiles.insert(key, tile);
         }
     }
-    // What culling knows of every patch holds of its ground: each
-    // quarter's floor lies under its samples, and every triangle's slopes
-    // inside its disk.
     for (&key, tile) in &tiles {
         observed.check(culling_holds(tile), || {
             format!(
@@ -132,9 +102,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.record("tile objects", objects);
     observed.check(objects > 0, || "no tile holds objects".into());
 
-    // The terrain's lighting from its finest pinned level's tiles, as
-    // engines ask for it: the worker generates them as their records hold
-    // them, which must give the heights of the tiles above.
     let job = lighting_job(&pyramid);
     let input = job.input();
     let bytes = worker.run(LightingJob::KIND.name(), &input)?;
@@ -174,9 +141,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let surface = (baked.as_ref(), rules.as_ref());
     let transfer = bounce_transfer(&mut worker, (&job, &ground, extent), surface, observed)?;
     records.push((BounceJob::KIND.name(), transfer));
-    // Its macro colors from its recipe, read at its finest pinned level as
-    // engines ask for them: no record of their own, the records engines
-    // cook from them are the textures corpus' kind.
     let colors = MacroJob {
         recipe: "recipe".into(),
         level: pyramid.levels().saturating_sub(PINNED),
@@ -214,8 +178,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         }),
     );
 
-    // A tile under edits, which its job carries: two pits dug in the
-    // meadow, the later over the earlier.
     let edits = [
         Stamp {
             center: [600.0, 600.0],
@@ -238,8 +200,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     });
     records.push((TileJob::KIND.name(), bytes));
 
-    // The ground around the terrain to the horizon: the same layers seen
-    // from afar, without objects.
     let surroundings = terrain
         .surroundings
         .ok_or_else(|| format!("{FIXTURE}'s {ENTITY} has no surroundings"))?;
@@ -278,9 +238,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         }
     }
 
-    // Every finest tile's portals of the walk graph agents walk by default,
-    // made by their jobs, which generate each tile's ground, and from the
-    // tiles' records, which must give the same bits; and the edited tile's.
     let gait = NavOptions::default().gait(&pyramid);
     let mut graph = Graph::default();
     let mut bytes_held = 0;
@@ -321,9 +278,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     );
     observed.check(count > 0, || "no tile has portals".into());
 
-    // A walk over the south-western hills, around a boulder on the
-    // straight line (where terrain-smoke's walk goes around a pit), from
-    // one tile into the next: whole, and a slice at a time.
     let route = (Vec2::new(212.0, 262.0), Vec2::new(412.0, 262.0));
     let obstacles = [Obstacle {
         center: Vec2::new(312.0, 262.0),
@@ -351,9 +305,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         json!({"points": found.points.len(), "length": found.length, "level": found.level}),
     );
 
-    // The parts of the water the first finest tile the bake's water
-    // reaches settles over alone, each whole and a slice at a time, and
-    // what it settles from.
     let watered = engine_terrain::watered_tiles(&baked, &pyramid);
     let key = *watered
         .first()
@@ -398,15 +349,12 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         }),
     );
 
-    // The pack the cook writes of every record above, which reads each
-    // back as it went in.
     let pack = pack(&records, observed)?;
     observed.hash("pack", &pack);
 
     worker.write(root)
 }
 
-/// The fixture's terrain, its heightmaps read from beside the scene.
 fn load(root: &Path) -> Result<Terrain, String> {
     let path = root.join(FIXTURE);
     let source = std::fs::read_to_string(&path)
@@ -439,9 +387,6 @@ fn load(root: &Path) -> Result<Terrain, String> {
         .map_err(|error| error.to_string())
 }
 
-/// The lighting job of `pyramid`'s terrain over the recipe shared as
-/// "recipe", as engines ask for it: its finest pinned level's tiles, each
-/// itself and under no edits.
 fn lighting_job(pyramid: &Pyramid) -> LightingJob {
     let level = pyramid.levels().saturating_sub(PINNED);
     LightingJob {
@@ -456,10 +401,6 @@ fn lighting_job(pyramid: &Pyramid) -> LightingJob {
     }
 }
 
-/// The finest pinned level's samples of `pyramid`'s terrain over the
-/// whole terrain from `tiles`, the tiles' records: its samples along x and
-/// z, their spacing and their heights, row by row, which the lighting job
-/// must read the same.
 fn level_heights(pyramid: &Pyramid, tiles: &BTreeMap<TileKey, Tile>) -> ([u32; 2], f32, Vec<f32>) {
     let level = pyramid.levels().saturating_sub(PINNED);
     let [tiles_x, tiles_z] = pyramid.tiles(level);
@@ -483,11 +424,6 @@ fn level_heights(pyramid: &Pyramid, tiles: &BTreeMap<TileKey, Tile>) -> ([u32; 2
     )
 }
 
-/// The terrain's bounce transfer from the heights its lighting job `job`
-/// reads (`ground`, over `extent`), its surface chosen by the recipe's
-/// rules over its layers (`baked` and `rules`, the recipe shared as
-/// "recipe"), as engines ask for it: the job's record, which must equal the
-/// transfer made in place and the job run a slice at a time.
 fn bounce_transfer(
     worker: &mut Worker,
     (job, ground, extent): (&LightingJob, &Ground<'_>, [f32; 2]),
@@ -526,9 +462,6 @@ fn bounce_transfer(
     Ok(bytes)
 }
 
-/// Whether what culling knows of each of `tile`'s patches holds of its
-/// ground: every triangle's slopes within its disk, each quarter's samples
-/// on or above its floor.
 fn culling_holds(tile: &Tile) -> bool {
     let quads = PATCH_QUADS as i32;
     let half = quads / 2;
@@ -565,16 +498,10 @@ fn culling_holds(tile: &Tile) -> bool {
     })
 }
 
-/// `key` as goldens name it: level/x/z.
 fn name(key: TileKey) -> String {
     format!("{}/{}/{}", key.level, key.x, key.z)
 }
 
-/// A pack of `records` (each keyed by its kind and a hash of its bytes
-/// standing for its identity, under a fixed source hash, so the pack
-/// changes only with what it holds and how packs are written), its records
-/// compressed as the cook compresses them; each must read back from it as
-/// it went in.
 fn pack(records: &[(&str, Vec<u8>)], observed: &mut Observations) -> Result<Vec<u8>, String> {
     let keyed: Vec<([u8; 32], &[u8], Vec<u8>)> = records
         .iter()
@@ -611,20 +538,13 @@ fn pack(records: &[(&str, Vec<u8>)], observed: &mut Observations) -> Result<Vec<
     Ok(pack)
 }
 
-/// zstd's level the corpus packs at, the cook's.
 const PACK_LEVEL: i32 = 19;
 
-/// What stands for a record's identity in the corpus's pack: its bytes'
-/// hash, as the records differ by what made them.
 fn codec_identity(bytes: &[u8]) -> Vec<u8> {
     use sha2::Digest;
     sha2::Sha256::digest(bytes).to_vec()
 }
 
-/// A tile's portals of `gait`'s walk graph over `pyramid` made by their job
-/// on `worker` (under `stamps`, the edits reaching it), which must equal
-/// those its record `tile` gives over `layers` (its stack under those
-/// edits): the tile's ground and the job's bytes.
 fn portals(
     worker: &mut Worker,
     (tile, layers): (&Tile, &Arc<Layers>),
@@ -654,7 +574,6 @@ fn portals(
     Ok((ground, bytes))
 }
 
-/// The walk graph's portals and the tiles' grounds of the corpus's walks.
 #[derive(Default)]
 struct Graph {
     grounds: BTreeMap<TileKey, Arc<WalkGround>>,
@@ -672,8 +591,6 @@ impl WalkData for Graph {
 }
 
 impl Graph {
-    /// The walk from `route.0` to `route.1` among `obstacles` as agents walk
-    /// by default, searched `slice` samples of work at a time.
     fn walk(
         &self,
         pyramid: &Pyramid,
@@ -698,7 +615,6 @@ impl Graph {
     }
 }
 
-/// What the bakes found, as readable numbers.
 fn record_bakes(layers: &Layers, observed: &mut Observations) {
     for (index, layer) in layers.layers().iter().enumerate() {
         let stats = match layer {
@@ -742,8 +658,6 @@ fn record_bakes(layers: &Layers, observed: &mut Observations) {
     }
 }
 
-/// A recipe shared with the worker as `key`, and what engines generate
-/// its tiles from in place.
 struct Recipe {
     key: &'static str,
     layers: Arc<Layers>,
@@ -752,10 +666,6 @@ struct Recipe {
 }
 
 impl Recipe {
-    /// Tile `key` under `stamps` (edits, in order), with every object its
-    /// level places, generated by a worker's job, which must equal the tile
-    /// generated in place and the job run a slice at a time: the tile and
-    /// its record's bytes.
     fn tile(
         &self,
         worker: &mut Worker,
@@ -804,13 +714,10 @@ impl Recipe {
     }
 }
 
-/// A job worker as hosts run one beside the engine, recording every share
-/// and job (with its output's hash) for the replay in Wasm.
 #[derive(Default)]
 struct Worker {
     worker: TerrainWorker,
     next: u64,
-    /// What `cargo xtask pure --wasm` replays: [`JOBS`].
     log: Vec<serde_json::Value>,
 }
 
@@ -821,7 +728,6 @@ impl Worker {
         self.worker.share(key, bytes)
     }
 
-    /// Job `kind` on `input`, run whole.
     fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         let output = self.worker.run(kind, input)?;
         self.log.push(json!({
@@ -832,7 +738,6 @@ impl Worker {
         Ok(output)
     }
 
-    /// Job `kind` on `input`, run a slice at a time.
     fn sliced(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         self.next += 1;
         self.worker.start(self.next, kind, input)?;
@@ -849,7 +754,6 @@ impl Worker {
         }
     }
 
-    /// Writes what it ran to [`JOBS`].
     fn write(&self, root: &Path) -> Result<(), String> {
         let path = root.join(JOBS);
         if let Some(folder) = path.parent() {

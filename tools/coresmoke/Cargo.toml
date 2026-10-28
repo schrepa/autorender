@@ -7,7 +7,6 @@ publish.workspace = true
 description = "The engine's incremental caches, terrain streaming and the Stress Lab's content, checked without a GPU"
 
 [dependencies]
-# Its own components (the drift the caches check moves entities with).
 bevy_ecs.workspace = true
 engine = { workspace = true, features = ["dev"] }
 engine_core = { workspace = true, features = ["dev"] }

@@ -1,15 +1,10 @@
-//! Bounded action input. Host transitions survive frames with no fixed tick.
 use bevy_ecs::prelude::Resource;
 
-/// An index in the engine's fixed 32-action bitset. Bind physical keys in the host.
-/// Projects allocate their own IDs with [`ActionId::new`]; `JUMP` is the
-/// conventional first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ActionId(u8);
 
 impl ActionId {
     pub const JUMP: Self = Self(0);
-    /// Actions by index: a bit each of the hosts' action words.
     pub const COUNT: u32 = u32::BITS;
 
     pub const fn new(index: u8) -> Option<Self> {
@@ -25,13 +20,6 @@ impl ActionId {
     }
 }
 
-/// Held actions and edges for the currently executing fixed tick.
-///
-/// `ingest` merges a coarse browser batch before `Engine::advance`. Press/release
-/// edges are consumed by the first fixed tick only. They remain pending if no
-/// tick runs; a press and release between frames are both retained. Repeated
-/// presses before a tick coalesce into one edge. Storage is fixed and allocation
-/// free. Read `just_pressed`/`just_released` in `FixedSimulation`, not presentation.
 #[derive(Resource, Debug, Default)]
 pub struct ActionInput {
     held: u32,
@@ -42,7 +30,6 @@ pub struct ActionInput {
 }
 
 impl ActionInput {
-    /// Merge explicit host transitions and transitions inferred from held state.
     pub fn ingest(&mut self, held: u32, pressed: u32, released: u32) {
         self.pending_pressed |= pressed | (held & !self.held);
         self.pending_released |= released | (self.held & !held);
@@ -59,7 +46,6 @@ impl ActionInput {
         self.tick_released & action.mask() != 0
     }
 
-    /// Release held state and discard pending edges on pause/focus loss.
     pub fn clear(&mut self) {
         *self = Self::default();
     }

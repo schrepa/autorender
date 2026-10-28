@@ -1,10 +1,3 @@
-//! A captured, generation-scoped build for the development supervisor.
-//!
-//! This module never publishes bindings. The supervisor selects a generation only
-//! after a successful build and browser startup, retaining the previous session
-//! when compilation fails. All child output is drained with bounded storage so
-//! stdout remains one machine-readable result, even for very large diagnostics.
-
 use std::{
     collections::BTreeMap,
     fs,
@@ -28,9 +21,6 @@ const MAX_DIAGNOSTIC_BYTES: usize = 256 * 1024;
 const MAX_SPANS: usize = 8;
 const MAX_CHILDREN: usize = 8;
 
-/// Compile all development clients and generate bindings into a new directory.
-/// `output` must be an unused direct child of `root/web/pkg-iterations`.
-/// The returned value is bounded and is the only output the caller should print.
 pub fn build(root: &Path, output: &Path) -> Value {
     let started = Instant::now();
     let mut report = json!({
@@ -94,9 +84,6 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
     .map_err(|message| ("cargo_unavailable", "cargo".into(), message))?;
     admit_compilation(report, &compiled)?;
 
-    // Validate all compiler artifacts before admitting any generated bindings.
-    // The dedicated target directory keeps ordinary dev/lint builds from
-    // replacing a compiled artifact while wasm-bindgen reads it.
     let mut artifacts = Vec::with_capacity(clients().len());
     let artifact_root = target_dir.join(WASM_TARGET).join(crate::pipeline::QUICK);
     for package in client_crates() {
@@ -125,8 +112,6 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
         artifacts.push((package, actual));
     }
 
-    // A failed compilation cannot create or mutate the generation directory.
-    // create_dir is exclusive: even a racing second build cannot reuse it.
     fs::create_dir(&output).map_err(|error| {
         (
             "output_io",
@@ -206,8 +191,6 @@ fn prepare_output(root: &Path, output: &Path) -> Result<(PathBuf, PathBuf), Stri
             "generation must contain 1–100 ASCII letters, digits, underscores or hyphens".to_owned()
         })?;
     let parent = web.join("pkg-iterations");
-    // Validate the requested parent before creating anything. Resolving the web
-    // directory also handles Windows' canonical extended-length path prefix.
     let requested_parent = requested
         .parent()
         .ok_or_else(|| "missing output parent".to_owned())?;

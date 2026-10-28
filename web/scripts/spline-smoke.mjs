@@ -1,9 +1,3 @@
-/**
- * Spline meshes: a fixture bends a box
- * along a curve; the inspector reports what it built and its chunks draw;
- * moving a point rebuilds them, an invalid curve is refused with the scene
- * kept, and removing the field removes the chunks.
- */
 // @ts-check
 import assert from "node:assert/strict";
 import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
@@ -11,7 +5,6 @@ import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, ro
 const url = sceneUrl();
 const output = await artifacts("spline-smoke");
 const curve = [[-12, 0.5, 4], [-4, 0.5, -2], [4, 0.5, 3], [12, 0.5, -3]];
-/** Meters along the straight lines between `points`, which the curve through them exceeds a little. */
 const polyline = points => points.slice(1).reduce((sum, point, index) => sum + Math.hypot(...point.map((value, axis) => value - points[index][axis])), 0);
 /** @type {any} */
 const fixture = {
@@ -22,7 +15,6 @@ const fixture = {
   entities: [
     { id: "player", mesh: "box", material: "plain", tags: ["player"], collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] }, memberships: 2, filter: 1, sensor: false }, transform: { translation: [0, 0.5, 8] } },
     { id: "floor", mesh: "box", material: "ground", transform: { translation: [0, -0.5, 0], scale: [40, 1, 30] } },
-    // A rail of the unit box bent along the curve, a meter of box a copy.
     { id: "rail", spline: { points: curve, mesh: "box", material: "rail" }, transform: { scale: [1, 1, 1] } },
   ],
 };
@@ -47,8 +39,6 @@ try {
   await openPaused(page, url);
   const checks = [];
 
-  // The inspector describes it and reports what it built: the curve's
-  // length, a copy of the unit box per meter, chunks of at most 256 m.
   const listing = await command("describe");
   assert.ok(listing.result.types.some(type => type.name === "SplineMesh"), "describe lists SplineMesh");
   const first = await command("render");
@@ -61,11 +51,9 @@ try {
   assert.equal(built.copies, Math.round(built.length));
   assert.equal(built.chunks, 1);
   assert.equal(built.vertices, built.copies * 24);
-  // The player, the floor and the rail's chunk.
   assert.equal(first.result.rendering.render_candidates, 3);
   checks.push({ check: "built", length: built.length, copies: built.copies, chunks: built.chunks });
 
-  // It draws: without it the view differs.
   const withRail = await capture("rail");
   const bare = structuredClone(fixture);
   delete bare.entities[2].spline;
@@ -77,7 +65,6 @@ try {
   assert.equal(removed.result.rendering.render_candidates, 2, "removing the field removes its chunks");
   checks.push({ check: "draws and goes", pixels: changed });
 
-  // A longer curve rebuilds into more copies and a second chunk.
   const longer = structuredClone(fixture);
   longer.entities[2].spline.points = [...curve, [40, 0.5, 2], [70, 0.5, -2], [160, 0.5, 6], [290, 0.5, -4]];
   await scene.reload(command, longer);
@@ -89,7 +76,6 @@ try {
   assert.equal(rebuilt.chunks, Math.ceil(rebuilt.copies / 256));
   checks.push({ check: "rebuilds", length: rebuilt.length, chunks: rebuilt.chunks });
 
-  // A curve of one point is refused and the scene kept.
   const invalid = structuredClone(fixture);
   invalid.entities[2].spline.points = [[0, 0, 0]];
   invalid.revision = scene.revision + 1;

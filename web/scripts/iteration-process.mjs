@@ -1,4 +1,3 @@
-/** Bounded worker I/O and ownership of the compiler process tree. */
 // @ts-check
 import { spawn } from "node:child_process";
 
@@ -17,7 +16,6 @@ export async function stopProcessTree(child) {
   }
 }
 
-/** Uses the already compiled native tool, so broken engine Rust cannot break diagnostics. */
 export function runBuild({ executable, root, output, signal, timeoutMs = 600_000 }) {
   return new Promise(resolve => {
     const child = spawn(executable, ["build-dev", "--output", output], {
@@ -56,7 +54,7 @@ export function runBuild({ executable, root, output, signal, timeoutMs = 600_000
         try {
           const result = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           if (typeof result.ok === "boolean" && !(result.ok && code !== 0)) { finish(result); return; }
-        } catch { /* Report malformed worker output with a bounded diagnostic tail. */ }
+        } catch {}
       }
       finish({ ok: false, diagnostics: [], error: { code: "build_worker_failed", path: "$", message: `Build worker exited ${code}; ${overflow ? "output exceeded 1 MiB" : stderr || "invalid JSON result"}` } });
     });

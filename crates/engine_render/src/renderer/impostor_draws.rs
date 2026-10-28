@@ -1,13 +1,5 @@
-//! Impostors: supplying the frame's missing ones, from their records or
-//! baked, and preparing their records and draw pipeline (hosts exchange the
-//! records with the renderer: `records`).
-
 use super::*;
 
-/// Impostors: the plan batches' layers and placed objects', the pipelines
-/// both share, the contents their records are keyed by, this frame's
-/// record per plan batch (zeroed without an impostor), and the draw groups
-/// a budget or the GPU left without one.
 pub(super) struct ImpostorDraws {
     pub(super) atlas: ImpostorAtlas,
     pub(super) placed: ImpostorAtlas,
@@ -18,25 +10,16 @@ pub(super) struct ImpostorDraws {
 }
 
 impl ImpostorDraws {
-    /// Impostors resident in both atlases.
     pub(super) fn live(&self) -> u32 {
         self.atlas.live() + self.placed.live()
     }
 
-    /// GPU bytes of both atlases.
     pub(super) fn capacity_bytes(&self) -> u64 {
         self.atlas.capacity_bytes() + self.placed.capacity_bytes()
     }
 }
 
 impl Renderer {
-    /// Impostors of this frame: sizes placed objects' frames to where their
-    /// cards take over, drops those of retired or replaced meshes
-    /// and materials, supplies the missing ones of opaque draw groups
-    /// whose meshes have enough triangles on GPU-presented frames with
-    /// them (baking into `encoder` after the materials' levels those no
-    /// host holds), and fills the record of every plan batch, zeroed
-    /// without one.
     pub(super) fn prepare_impostors(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -44,14 +27,10 @@ impl Renderer {
         encoder: &mut Option<wgpu::CommandEncoder>,
     ) {
         let settings = snapshot.environment.level_of_detail;
-        // Placed objects' frames hold the texels their cards span where
-        // they take over.
         let pixels = settings.sanitized().impostor_pixels;
         self.impostors
             .placed
             .fit(&self.device, AtlasShape::placed(pixels));
-        // Records follow the plan, mesh residency, material groups, the
-        // settings and the atlas.
         let key = |renderer: &Self| {
             (
                 renderer.structure_key(),
@@ -96,8 +75,6 @@ impl Renderer {
             let mesh = &self.meshes[&batch.mesh];
             let source = &snapshot.meshes[batch.source_index].mesh;
             let (group, variant) = self.materials.binding(batch.material);
-            // Virtual geometry bakes its fallback cut: its
-            // camera clusters select only instances not drawn as impostors.
             let eligible = !batch.transparent
                 && !mesh.skinned
                 && !variant.transmission()
@@ -157,10 +134,6 @@ impl Renderer {
         }
     }
 
-    /// Uploads this frame's impostor records, the plan
-    /// batches' and placed draw groups' to their atlases, and
-    /// creates the pipeline drawing them in the opaque pass of `kind`;
-    /// returns its key, `None` when impostors cannot draw.
     pub(super) fn prepare_impostor_draws(&mut self, kind: PassKind) -> Option<(Targets, bool)> {
         let targets = kind.targets()?;
         let lit = kind.lit;

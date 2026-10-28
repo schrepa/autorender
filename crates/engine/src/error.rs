@@ -1,33 +1,3 @@
-//! One error for games: every engine error converts to it with `?`, keeping
-//! a code from the catalog (`ErrorCode`), the JSON path or field at fault
-//! where there is one, and a message for people.
-//!
-//! # When the engine panics, refuses, or degrades
-//!
-//! - **Panic** only on a broken invariant of the engine's own code, with an
-//!   `expect` or `unreachable!` message that names the invariant. Nothing a
-//!   game, scene, request, file, worker, device or budget supplies may
-//!   panic: shipped builds abort, and Wasm cannot unwind, so
-//!   `catch_unwind` would catch nothing.
-//! - **Return an [`Error`]** when a caller asked for something that cannot
-//!   be done. Check before changing anything, so a failure changes nothing.
-//!   A library crate's own error converts into [`Error`] here, through an
-//!   exhaustive match with no `_` arm, so a new variant chooses its code.
-//!   `Result<_, String>` is for tools, binaries and job payloads only.
-//! - **Degrade and report** when engine-scheduled work fails or is refused
-//!   during a frame: skip the work and keep the frame, and count what was
-//!   left out as `dropped_*` in the frame's statistics, or as a failure
-//!   with its latest message in the feature's inspector. Never `.ok()` an
-//!   engine error away uncounted. Only the failure path allocates.
-//!
-//! # Codes
-//!
-//! Every code is declared once, in the catalog ([`ErrorCode`],
-//! `engine_settings::codes`); Rust never spells one as a string. A code
-//! names the caller's remedy. [`ErrorCode::GameRule`] is only for a game's
-//! own refusals, made with [`Error::game_rule`]. Lint fails at a public
-//! engine error type without a conversion here.
-
 use std::fmt;
 
 use engine_core::terrain_data::codec::CodecError;
@@ -36,21 +6,15 @@ use engine_core::{
     LayerError, PyramidError, TransformEditError,
 };
 
-/// An engine or game error: its code, where, and what is wrong.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
     pub code: ErrorCode,
-    /// The JSON path or field at fault, `$` when none applies.
     pub path: String,
     pub message: String,
 }
 
-/// A result whose error is the engine's.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-/// The name of the JavaScript `Error`s the engine throws on a page, which
-/// carry its `code` and `path` (the page's generated `engineError` tells
-/// them apart).
 pub const JS_ERROR_NAME: &str = "EngineError";
 
 impl Error {
@@ -62,14 +26,10 @@ impl Error {
         }
     }
 
-    /// A game's own refusal (`game_rule`) with its message: a request the
-    /// game's rules refuse, where the engine's would take it.
     pub fn game_rule(message: impl Into<String>) -> Self {
         Self::new(ErrorCode::GameRule, "$", message)
     }
 
-    /// The error with `what` it was doing before its message (`what:
-    /// message`); its code and path stay.
     #[must_use]
     pub fn context(mut self, what: impl fmt::Display) -> Self {
         self.message = format!("{what}: {}", self.message);
@@ -238,9 +198,6 @@ impl From<InterpolationError> for Error {
     }
 }
 
-/// What the page receives of a failure: an `Error` named
-/// [`JS_ERROR_NAME`], whose `code` and `path` say what failed and where,
-/// and whose message says both and what is wrong.
 #[cfg(target_arch = "wasm32")]
 impl From<Error> for wasm_bindgen::JsValue {
     fn from(error: Error) -> Self {
@@ -248,7 +205,6 @@ impl From<Error> for wasm_bindgen::JsValue {
         thrown.set_name(JS_ERROR_NAME);
         let object: &js_sys::Object = thrown.as_ref();
         for (field, value) in [("code", error.code.as_str()), ("path", error.path.as_str())] {
-            // Setting a field of a new error object cannot fail.
             let _ = js_sys::Reflect::set(object, &field.into(), &value.into());
         }
         thrown.into()

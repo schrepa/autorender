@@ -1,10 +1,3 @@
-//! The renderer's shaders checked against its Rust side: every module
-//! parses and validates with naga, and every WGSL struct mirroring an upload
-//! struct (`engine_render::gpu_layouts`) matches its Rust layout. Last, no
-//! handover reads the camera where it should read the detail eye: in
-//! shaders (`handovers`), and on the CPU (`eye_reads`); and no shader fades
-//! a pattern by its size on screen where it should filter it (`fades`).
-
 use std::path::Path;
 
 use engine_render::bindings::{
@@ -23,14 +16,12 @@ mod fades;
 mod handovers;
 mod inter_stage;
 
-/// A module naga parsed and validated, and what its functions use.
 pub struct Checked {
     pub name: &'static str,
     pub module: naga::Module,
     pub info: naga::valid::ModuleInfo,
 }
 
-/// Every module of `engine_render::shaders`, parsed and validated.
 pub fn modules() -> Result<Vec<Checked>, String> {
     let mut checked = Vec::new();
     let mut failures = Vec::new();
@@ -55,7 +46,6 @@ pub fn modules() -> Result<Vec<Checked>, String> {
     }
 }
 
-/// The members of struct `name` in `module`: name, offset and size each.
 fn wgsl_struct(module: &naga::Module, name: &str) -> Option<Vec<(String, u32, u32)>> {
     module.types.iter().find_map(|(_, ty)| {
         let naga::TypeInner::Struct { members, .. } = &ty.inner else {
@@ -76,7 +66,6 @@ fn wgsl_struct(module: &naga::Module, name: &str) -> Option<Vec<(String, u32, u3
     })
 }
 
-/// Mismatches between `layout` and its mirror `members` in module `module`.
 fn compare(
     layout: &Layout,
     mirror: &str,
@@ -103,7 +92,6 @@ fn compare(
     errors
 }
 
-/// Every upload struct's WGSL mirrors against its Rust layout.
 fn check_layouts(modules: &[Checked]) -> Result<usize, String> {
     let mut errors = Vec::new();
     let mut mirrors = 0;
@@ -137,8 +125,6 @@ fn check_layouts(modules: &[Checked]) -> Result<usize, String> {
     }
 }
 
-/// A resource a shader module declares: its group, binding, name and the
-/// global naga holds it in.
 struct Declared<'a> {
     group: u32,
     binding: u32,
@@ -162,20 +148,15 @@ fn declared(module: &naga::Module) -> Vec<Declared<'_>> {
         .collect()
 }
 
-/// How a table's minimum buffer size fits a shader's type.
 #[derive(Clone, Copy, PartialEq)]
 enum Fit {
-    /// The type's size, or a whole number of a flat array's elements.
     Exact,
-    /// More than the type needs: a shared table sized for another module.
     Larger,
 }
 
-/// How `min_size` fits the type of `global` (0 leaves it to draws).
 fn fit(module: &naga::Module, global: &naga::GlobalVariable, min_size: u64) -> Result<Fit, String> {
     let inner = &module.types[global.ty].inner;
     let size = inner.size(module.to_ctx()) as u64;
-    // Words read as a flat runtime-sized array may be bound a record at a time.
     let flat_stride = match inner {
         naga::TypeInner::Array {
             base,
@@ -200,8 +181,6 @@ fn fit(module: &naga::Module, global: &naga::GlobalVariable, min_size: u64) -> R
     }
 }
 
-/// Why `binding` of a table cannot hold `global` of `module`, if it cannot:
-/// its kind, and for buffers how its minimum size fits.
 fn mismatch(
     module: &naga::Module,
     global: &naga::GlobalVariable,
@@ -330,10 +309,6 @@ fn covers(stages: Stages, stage: Stages) -> bool {
         || (stage.compute() && stages.compute())
 }
 
-/// Every bind group table (`engine_render::bindings`) against the shader
-/// groups it serves: each binding declared by one of them, under its
-/// number and name, of a matching kind and size; and every entry point's
-/// resources in one table serving their group, visible to its stage.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -411,7 +386,6 @@ fn check_bindings(modules: &[Checked]) -> Result<usize, String> {
             }
         }
     }
-    // Each entry point's resources of a group, in one table serving it.
     let mut entry_points = 0;
     for checked in modules {
         let resources = declared(&checked.module);
@@ -480,10 +454,6 @@ fn check_bindings(modules: &[Checked]) -> Result<usize, String> {
     }
 }
 
-/// Every entry point `engine_render::shaders::ENTRIES` declares against its
-/// module: an entry point of the module, of the stage declared, declared
-/// once; and every entry point of every module declared there, so a stage
-/// no pipeline names does not linger. Returns how many there are.
 fn check_entries(modules: &[Checked]) -> Result<usize, String> {
     let mut errors = Vec::new();
     for (index, entry) in ENTRIES.iter().enumerate() {
@@ -551,12 +521,6 @@ fn check_entries(modules: &[Checked]) -> Result<usize, String> {
     }
 }
 
-/// Every table's binding numbers, and the shared groups' ranges
-/// (`engine_render::bindings::SHARED_GROUPS`): no table holds one number
-/// twice; in a shared group, features' ranges do not overlap, each binding
-/// of each table serving the group belongs to one feature and lies in its
-/// range, and every name a range lists is some table's. Returns how many
-/// bindings the ranges place.
 fn check_ranges() -> Result<usize, String> {
     let mut errors = Vec::new();
     for &(table_name, table) in TABLES {
@@ -646,7 +610,6 @@ fn check_ranges() -> Result<usize, String> {
     }
 }
 
-/// What a binding takes of the limits per stage.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Resource {
     UniformBuffer,
@@ -696,8 +659,6 @@ impl Resource {
     }
 }
 
-/// How many of `resource` the bindings of `layout`'s tables visible to
-/// `stage` take: every one counts, used or not.
 fn stage_count(layout: &PipelineLayout, stage: Stages, resource: Resource) -> u32 {
     let count = layout
         .groups
@@ -708,16 +669,6 @@ fn stage_count(layout: &PipelineLayout, stage: Stages, resource: Resource) -> u3
     u32::try_from(count).unwrap_or(u32::MAX)
 }
 
-/// Every pipeline layout (`engine_render::pipeline_layouts`): its tables
-/// serve one shader module's groups at their slots (a table binding nothing
-/// stands in anywhere), within the bind groups every device grants; each
-/// stage's buffers, textures and samplers, counted over its tables'
-/// bindings visible to the stage, within the limits every device grants
-/// ([`REQUIRED_LIMITS`]), or within larger ones it names, which must be what
-/// it takes; its dynamic uniform buffers within the limit; no two layouts of
-/// the same tables, every table in some layout, no two tables of one label
-/// (pipeline layouts check their groups by it); and as many layouts as
-/// [`LAYOUT_BUDGET`]. Returns how many layouts there are.
 fn check_pipeline_layouts() -> Result<usize, String> {
     let mut errors = Vec::new();
     for (index, &(name, table)) in TABLES.iter().enumerate() {
@@ -833,8 +784,6 @@ fn check_pipeline_layouts() -> Result<usize, String> {
     }
 }
 
-/// `word` spelled out where it is a vector or matrix alias: `vec3f` as
-/// `vec3<f32>`.
 fn spelled_out(word: &str) -> Option<[String; 4]> {
     let scalar = |suffix: u8| match suffix {
         b'f' => Some("f32"),
@@ -856,7 +805,6 @@ fn spelled_out(word: &str) -> Option<[String; 4]> {
     ])
 }
 
-/// The tokens of WGSL `source`, without comments, aliases spelled out.
 fn wgsl_tokens(source: &str) -> Vec<String> {
     const OPERATORS: [&str; 18] = [
         "->", "<<=", ">>=", "<=", ">=", "==", "!=", "&&", "||", "<<", ">>", "+=", "-=", "*=", "/=",
@@ -873,7 +821,6 @@ fn wgsl_tokens(source: &str) -> Vec<String> {
         } else if rest.starts_with("//") {
             at += rest.find('\n').unwrap_or(rest.len());
         } else if rest.starts_with("/*") {
-            // Block comments nest.
             let mut depth = 0;
             while at < bytes.len() {
                 if source[at..].starts_with("/*") {
@@ -893,7 +840,6 @@ fn wgsl_tokens(source: &str) -> Vec<String> {
             || byte == b'_'
             || (byte == b'.' && bytes.get(at + 1).is_some_and(u8::is_ascii_digit))
         {
-            // A word or a number, exponent signs included.
             let number = byte.is_ascii_digit() || byte == b'.';
             let mut end = at + 1;
             while let Some(&next) = bytes.get(end) {
@@ -928,9 +874,6 @@ fn wgsl_tokens(source: &str) -> Vec<String> {
     tokens
 }
 
-/// The functions of WGSL `tokens`: each one's name, and its signature and
-/// body with its parameters and locals renamed in the order they are
-/// declared, so the same code under other names compares equal.
 fn wgsl_functions(tokens: &[String]) -> Vec<(String, Vec<String>)> {
     let identifier = |token: &str| {
         token
@@ -946,7 +889,6 @@ fn wgsl_functions(tokens: &[String]) -> Vec<(String, Vec<String>)> {
             continue;
         }
         let name = tokens[at + 1].clone();
-        // The signature runs to the body's brace; the body to its match.
         let Some(open) = tokens[at..].iter().position(|token| token == "{") else {
             break;
         };
@@ -969,8 +911,6 @@ fn wgsl_functions(tokens: &[String]) -> Vec<(String, Vec<String>)> {
         }
         let code = &tokens[code_start..=close];
         let signature = open - code_start;
-        // Parameters: names before a colon directly inside the signature's
-        // parentheses. Locals: names after let, const and var (or var<..>).
         let mut renamed: Vec<(&str, String)> = Vec::new();
         let mut parentheses = 0usize;
         for (index, token) in code.iter().enumerate() {
@@ -1003,7 +943,6 @@ fn wgsl_functions(tokens: &[String]) -> Vec<(String, Vec<String>)> {
             .iter()
             .enumerate()
             .map(|(index, token)| {
-                // Fields keep their names.
                 let field = index > 0 && code[index - 1] == ".";
                 renamed
                     .iter()
@@ -1017,11 +956,6 @@ fn wgsl_functions(tokens: &[String]) -> Vec<(String, Vec<String>)> {
     functions
 }
 
-/// No WGSL function written twice: functions of the same signature and
-/// body, whatever the names of the functions, their parameters and their
-/// locals, in one file or two, are one function, which a file the modules
-/// using it list (`engine_render::shaders`) holds once. Returns how many
-/// functions there are.
 fn check_duplicate_bodies() -> Result<usize, String> {
     let mut files: Vec<(&str, &str)> = Vec::new();
     for &(file, source) in engine_render::shaders::FILES {
@@ -1051,7 +985,6 @@ fn check_duplicate_bodies() -> Result<usize, String> {
     }
 }
 
-/// The module-scope constants of `module` with a literal value.
 fn wgsl_constants(module: &naga::Module) -> Vec<(&str, f64)> {
     module
         .constants
@@ -1076,9 +1009,6 @@ fn wgsl_constants(module: &naga::Module) -> Vec<(&str, f64)> {
         .collect()
 }
 
-/// The value a mirror names in `checked`: a constant `NAME`, the workgroup
-/// side of entry point `@entry` (each dimension the side or 1), or the size
-/// of struct `size_of Name`.
 fn mirrored(checked: &Checked, mirror: &str) -> Option<f64> {
     if let Some(entry) = mirror.strip_prefix('@') {
         let entry = checked
@@ -1104,10 +1034,6 @@ fn mirrored(checked: &Checked, mirror: &str) -> Option<f64> {
         .find_map(|(name, value)| (name == mirror).then_some(value))
 }
 
-/// Every shared constant (`engine_render::gpu_layouts::constants`) against
-/// its WGSL mirrors; WGSL constants of one name in several modules against
-/// each other; and Rust constants of the renderer named as a WGSL constant
-/// is, which belong with the shared ones.
 fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
     let mut errors = Vec::new();
     let declared: Vec<(&str, Vec<(&str, f64)>)> = modules
@@ -1144,7 +1070,6 @@ fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
             }
         }
     }
-    // One name, one value, in every module.
     let mut by_name: std::collections::BTreeMap<&str, Vec<(&str, f64)>> = Default::default();
     for (module, values) in &declared {
         for &(name, value) in values {
@@ -1163,8 +1088,6 @@ fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
             ));
         }
     }
-    // Rust constants named as WGSL ones are the registered ones, declared
-    // in gpu_layouts, or are named apart.
     fn walk(directory: &Path, files: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
             let path = entry.path();
@@ -1217,7 +1140,6 @@ fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
     }
 }
 
-/// The words of `source` outside its comments, counted.
 fn word_counts(source: &str) -> engine_core::collections::HashMap<&str, usize> {
     let mut counts = engine_core::collections::HashMap::default();
     for line in source.lines() {
@@ -1231,9 +1153,6 @@ fn word_counts(source: &str) -> engine_core::collections::HashMap<&str, usize> {
     counts
 }
 
-/// Shader items nothing uses: functions, variables, structs and overrides
-/// no entry point of any module holding them reaches (naga's compaction
-/// drops them), and constants no module holding them names again.
 fn check_unused(modules: &[Checked]) -> Result<(), String> {
     use std::collections::{BTreeMap, BTreeSet};
     fn reachable(module: &naga::Module) -> Vec<String> {
@@ -1310,8 +1229,6 @@ fn check_unused(modules: &[Checked]) -> Result<(), String> {
     }
 }
 
-/// Upload structs (`Pod` derives) outside `gpu_layouts`, which no check
-/// would see.
 fn check_upload_structs(root: &Path) -> Result<(), String> {
     fn walk(directory: &Path, found: &mut Vec<String>) {
         for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
@@ -1345,7 +1262,6 @@ fn check_upload_structs(root: &Path) -> Result<(), String> {
             found.join(", ")
         ));
     }
-    // Sizes are this check's to know: docs restating them go stale.
     let layouts = root.join("crates/engine_render/src/gpu_layouts");
     for entry in std::fs::read_dir(&layouts).into_iter().flatten().flatten() {
         let Ok(text) = std::fs::read_to_string(entry.path()) else {
@@ -1386,7 +1302,6 @@ fn check_upload_structs(root: &Path) -> Result<(), String> {
     }
 }
 
-/// Runs every check of the renderer's shaders.
 pub fn check(root: &Path) -> Result<(), String> {
     let modules = modules()?;
     let mirrors = check_layouts(&modules);

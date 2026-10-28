@@ -1,13 +1,3 @@
-//! Runtime deformation's map (`deformation.wgsl`): the tracks
-//! frames press around the camera, kept on the GPU between frames. Each
-//! frame's stamps press in dispatches of at most [`CHUNK`], a workgroup per
-//! 8 by 8 texels of a stamp's reach, every texel taking the deepest of its
-//! dispatch's stamps; then their slopes and blocks. The map moves with the
-//! camera without copying (texels wrap), emptying the slots it leaves, and
-//! refills by one factor for the whole map: values are kept in reference
-//! units, which shading scales by what is left of a track since the
-//! reference time, and which a rebase scales once that falls below half.
-
 use crate::shaders::entry::deformation;
 use engine_core::math::{max, min};
 use engine_core::{DeformationMap, RIM_REACH, RenderDeformation};
@@ -17,19 +7,14 @@ use crate::cached::Cached;
 use crate::gpu_layouts::constants::DEFORMATION_BLOCK as BLOCK;
 use crate::gpu_layouts::constants::DEFORMATION_GROUP;
 
-/// Stamps one dispatch presses: every texel tries each of them.
 const CHUNK: usize = 64;
-/// Uniform offsets of the jobs, at the WebGPU alignment.
 const SLOT: u64 = 256;
-/// A rebase moves the reference time to now once less than this much of a
-/// track is left since it.
 const REBASE: f32 = 0.5;
 
 use crate::gpu_layouts::deformation::StampRecord;
 
 use crate::gpu_layouts::deformation::JobUniform;
 
-/// A recorded job: its entry point, uniform and workgroups.
 #[derive(Clone, Copy, Debug)]
 struct Job {
     entry: Entry,
@@ -46,10 +31,6 @@ enum Entry {
     Slopes,
 }
 
-/// The map's shading inputs for terrain and ground cover: the map's first
-/// texel (world texel indices), texels and blocks along a side (0 while
-/// off); texels per meter and what is left of a track since the reference
-/// time.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct DeformationShading {
     pub grid: [i32; 4],
@@ -59,29 +40,20 @@ pub(crate) struct DeformationShading {
 pub(crate) struct DeformationPass {
     layout: crate::pipelines::GroupLayout,
     pipelines: Option<[wgpu::ComputePipeline; 5]>,
-    // The map's words, and the texels along a side they hold (0: a
-    // placeholder).
     map: wgpu::Buffer,
     resolution: u32,
     generation: u64,
-    // What the map holds: where it lies, the reference time and the refill
-    // its values decay with.
     placed: Option<DeformationMap>,
     reference: f64,
     refill: f32,
-    // Jobs and stamps recorded since the last encoding, in order.
     jobs: Vec<Job>,
     records: Vec<StampRecord>,
     stamps: crate::buffers::Growable,
     uniforms: wgpu::Buffer,
-    // The jobs' uniforms as written, each at its slot, kept from frame to
-    // frame.
     uniform_bytes: Vec<u8>,
     buffers_generation: u64,
     group: Cached<(u64, u64), wgpu::BindGroup>,
     shading: DeformationShading,
-    /// Stamps this frame pressed, and the texels along the map's side (0
-    /// while off).
     pub(crate) pressed: u32,
     pub(crate) texels: u32,
 }
@@ -115,29 +87,22 @@ impl DeformationPass {
         }
     }
 
-    /// The map's words, and a generation advancing whenever it is another
-    /// buffer.
     pub(crate) fn map(&self) -> (&wgpu::Buffer, u64) {
         (&self.map, self.generation)
     }
 
-    /// The map's shading inputs this frame.
     pub(crate) fn shading(&self) -> DeformationShading {
         self.shading
     }
 
-    /// Bytes of the map.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.map.size()
     }
 
-    /// Whether jobs wait for the next encoding, which runs or drops them.
     pub(crate) fn pending(&self) -> bool {
         !self.jobs.is_empty() || !self.records.is_empty()
     }
 
-    /// Records this frame's jobs: emptying, moving or rebasing the map as
-    /// `frame` lays it at simulation time `now`, then its stamps.
     pub(crate) fn prepare(&mut self, device: &wgpu::Device, frame: &RenderDeformation, now: f64) {
         self.pressed = 0;
         let Some(map) = frame.map.and_then(|map| fit(device, map)) else {
@@ -150,7 +115,6 @@ impl DeformationPass {
         };
         let resized = self.resolution != map.resolution;
         if resized {
-            // Jobs recorded for the last map would not fit the new one.
             self.jobs.clear();
             self.records.clear();
             self.map = map_buffer(device, map.resolution);
@@ -171,7 +135,6 @@ impl DeformationPass {
                 .placed
                 .is_none_or(|last| last.texel != map.texel || last.resolution != map.resolution);
         if reset {
-            // The new map starts empty, its reference time now.
             if !resized {
                 self.jobs.push(Job {
                     entry: Entry::Wipe,
@@ -189,10 +152,6 @@ impl DeformationPass {
                     groups: whole,
                 });
             }
-            // Tracks left refilling at the refill the map's values decay
-            // with, until a new one or so little is left that precision
-            // would suffer: then the values take the decay and the
-            // reference time moves to now.
             let left = left(now - self.reference, self.refill);
             if map.refill != self.refill || left < REBASE {
                 if left < 1.0 {
@@ -228,9 +187,6 @@ impl DeformationPass {
         self.record_stamps(frame, map, uniform(map.first, map.first, 1.0));
     }
 
-    /// Records the frame's stamps within the map, in reference units:
-    /// dispatches of similar reaches together, all pressing before their
-    /// slopes.
     fn record_stamps(&mut self, frame: &RenderDeformation, map: DeformationMap, base: JobUniform) {
         let size = map.resolution as i32;
         let low = map.first;
@@ -248,7 +204,6 @@ impl DeformationPass {
             if bounds[0] > bounds[2] || bounds[1] > bounds[3] {
                 continue;
             }
-            // Its depth where the reference time's values would hold it.
             let scale = if self.refill > 0.0 {
                 ((track.seconds - self.reference) / f64::from(self.refill))
                     .min(8.0)
@@ -289,7 +244,6 @@ impl DeformationPass {
                     chunk.len() as u32,
                 ],
             });
-            // Slopes reach a texel further each way.
             let wider = (widest + 2).div_ceil(DEFORMATION_GROUP);
             slopes.push(Job {
                 entry: Entry::Slopes,
@@ -300,8 +254,6 @@ impl DeformationPass {
         self.jobs.extend(slopes);
     }
 
-    /// Runs the jobs recorded since the last encoding, timed by `profiler`
-    /// (`deformation`).
     pub(crate) fn encode(
         &mut self,
         device: &wgpu::Device,
@@ -382,8 +334,6 @@ impl DeformationPass {
     }
 }
 
-/// What is left of a track `age` seconds after it was pressed, refilling
-/// over `refill` seconds (0, never).
 fn left(age: f64, refill: f32) -> f32 {
     if refill > 0.0 && age > 0.0 {
         (-age / f64::from(refill)).exp() as f32
@@ -392,8 +342,6 @@ fn left(age: f64, refill: f32) -> f32 {
     }
 }
 
-/// Words of a map of `resolution` texels along a side: its blocks', its
-/// tracks' and its slopes'.
 fn map_words(resolution: u32) -> u64 {
     let blocks = u64::from(resolution / BLOCK);
     let texels = u64::from(resolution) * u64::from(resolution);
@@ -409,9 +357,6 @@ fn map_buffer(device: &wgpu::Device, resolution: u32) -> wgpu::Buffer {
     )
 }
 
-/// `map` with as many texels as the device's storage buffers hold: halved
-/// (each texel twice as wide, the map as wide) while they do not, at most
-/// three times; `None` beyond.
 fn fit(device: &wgpu::Device, map: DeformationMap) -> Option<DeformationMap> {
     let limits = device.limits();
     let most = limits
@@ -445,7 +390,6 @@ fn pipelines(
         &crate::pipeline_layouts::DEFORMATION_PIPELINES,
         &[layout],
     );
-    // In `Entry`'s order.
     [
         deformation::wipe,
         deformation::scroll,

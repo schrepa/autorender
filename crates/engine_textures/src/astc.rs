@@ -1,18 +1,5 @@
-//! ASTC 4 × 4, low dynamic range: blocks of 4 × 4 texels in 128 bits (the
-//! Khronos Data Format Specification's ASTC). The encoder writes blocks of
-//! one partition over a 4 × 4 grid of weights, one per texel: colors on a
-//! line between two endpoints (RGB direct, or RGBA direct where alpha
-//! varies), or with one channel on a second plane of weights of its own;
-//! and blocks of one color as void extents, exactly. It tries each layout
-//! of weight and endpoint precision a block's colors suit, endpoints from
-//! the principal axis refined by least squares, and keeps the least
-//! squared error as decoders reconstruct it. Integer and plain `f32`
-//! arithmetic only: the same blocks on every host.
-
 use std::sync::OnceLock;
 
-/// How a range's values are stored: bits alone, or a trit or a quint above
-/// them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
     Bits,
@@ -20,7 +7,6 @@ enum Kind {
     Quints,
 }
 
-/// A range of values the block stores in integer sequences.
 #[derive(Clone, Copy, Debug)]
 struct Range {
     kind: Kind,
@@ -41,7 +27,6 @@ impl Range {
         digit << self.bits
     }
 
-    /// Bits `count` values take.
     fn sequence_bits(self, count: u32) -> u32 {
         count * self.bits
             + match self.kind {
@@ -51,7 +36,6 @@ impl Range {
             }
     }
 
-    /// Weight `symbol`'s value, 0 to 64.
     fn weight(self, symbol: u32) -> u32 {
         let digit = symbol >> self.bits;
         let low = symbol & ((1 << self.bits) - 1);
@@ -78,7 +62,6 @@ impl Range {
         if value > 32 { value + 1 } else { value }
     }
 
-    /// Endpoint `symbol`'s value, 0 to 255.
     fn endpoint(self, symbol: u32) -> u32 {
         let digit = symbol >> self.bits;
         let low = symbol & ((1 << self.bits) - 1);
@@ -115,8 +98,6 @@ impl Range {
     }
 }
 
-/// Weight ranges by their index in block modes (invalid indices hold the
-/// smallest).
 const WEIGHT_RANGES: [Range; 16] = [
     Range::new(Kind::Bits, 1),
     Range::new(Kind::Bits, 1),
@@ -136,8 +117,6 @@ const WEIGHT_RANGES: [Range; 16] = [
     Range::new(Kind::Bits, 5),
 ];
 
-/// Endpoint ranges, most levels first: a block's is the first whose values
-/// fit the bits its weights and layout leave.
 const ENDPOINT_RANGES: [Range; 19] = [
     Range::new(Kind::Bits, 8),
     Range::new(Kind::Trits, 6),
@@ -160,7 +139,6 @@ const ENDPOINT_RANGES: [Range; 19] = [
     Range::new(Kind::Bits, 1),
 ];
 
-/// For each endpoint range, the symbol whose value lies nearest each byte.
 fn nearest_endpoints() -> &'static [[u8; 256]; 19] {
     static TABLE: OnceLock<[[u8; 256]; 19]> = OnceLock::new();
     TABLE.get_or_init(|| {
@@ -180,7 +158,6 @@ fn nearest_endpoints() -> &'static [[u8; 256]; 19] {
     })
 }
 
-/// The trits of an 8-bit packed group, as the specification unpacks them.
 fn trits_of(packed: u32) -> [u32; 5] {
     let bits = |high: u32, low: u32, of: u32| (of >> low) & ((1 << (high - low + 1)) - 1);
     let (c, t4, t3) = if bits(4, 2, packed) == 0b111 {
@@ -206,7 +183,6 @@ fn trits_of(packed: u32) -> [u32; 5] {
     [t0, t1, t2, t3, t4]
 }
 
-/// The quints of a 7-bit packed group, as the specification unpacks them.
 fn quints_of(packed: u32) -> [u32; 3] {
     let bits = |high: u32, low: u32, of: u32| (of >> low) & ((1 << (high - low + 1)) - 1);
     if bits(2, 1, packed) == 0b11 && bits(6, 5, packed) == 0 {
@@ -231,9 +207,6 @@ fn quints_of(packed: u32) -> [u32; 3] {
     }
 }
 
-/// The packed group of each group of five trits (`t0 + 3 t1 + ... + 81
-/// t4`) and of three quints (`q0 + 5 q1 + 25 q2`): the first packing
-/// unpacking to it.
 fn packings() -> &'static ([u8; 243], [u8; 125]) {
     static TABLES: OnceLock<([u8; 243], [u8; 125])> = OnceLock::new();
     TABLES.get_or_init(|| {
@@ -261,7 +234,6 @@ fn packings() -> &'static ([u8; 243], [u8; 125]) {
     })
 }
 
-/// Bits written from the least significant up.
 #[derive(Default)]
 struct Writer {
     bits: u128,
@@ -276,9 +248,6 @@ impl Writer {
         }
     }
 
-    /// `symbols` of `range` as an integer sequence: groups of five values
-    /// sharing a packed trit group, or of three sharing a quint group, the
-    /// last group cut to the bits its values take.
     fn sequence(&mut self, symbols: &[u32], range: Range) {
         let low = |symbol: u32| symbol & ((1 << range.bits) - 1);
         let digit = |symbol: u32| symbol >> range.bits;
@@ -348,9 +317,6 @@ impl Writer {
     }
 }
 
-/// A layout a block may take: its color endpoint mode (8, RGB direct; 12,
-/// RGBA direct), its weights' range by index, and the channel on a second
-/// plane of weights, if any.
 #[derive(Clone, Copy)]
 struct Layout {
     mode: u32,
@@ -375,8 +341,6 @@ impl Layout {
         if self.mode == 12 { 8 } else { 6 }
     }
 
-    /// The endpoint range the bits left after the weights hold, by its
-    /// index.
     fn endpoint_range(self) -> usize {
         let header = 17 + if self.plane.is_some() { 2 } else { 0 };
         let left = 128 - header - self.weight_bits();
@@ -386,8 +350,6 @@ impl Layout {
             .unwrap_or(ENDPOINT_RANGES.len() - 1)
     }
 
-    /// The 11 bits of its block mode: a 4 × 4 grid of weights in the
-    /// layout `D H B B A A R0 0 0 R2 R1` (width B + 4, height A + 2).
     fn block_mode(self) -> u32 {
         let range = self.weights;
         let (r0, r1, r2, high) = (range & 1, (range >> 1) & 1, (range >> 2) & 1, range >> 3);
@@ -396,7 +358,6 @@ impl Layout {
     }
 }
 
-/// Layouts tried for opaque blocks and for blocks whose alpha varies.
 const OPAQUE: [Layout; 6] = [
     Layout {
         mode: 8,
@@ -467,9 +428,6 @@ const ALPHA: [Layout; 7] = [
     },
 ];
 
-/// A layout's fit: each channel's two endpoint symbols and their values,
-/// each texel's weight symbols (the second plane's after the first's) and
-/// the squared error decoders reconstruct.
 #[derive(Clone, Copy)]
 struct Fit {
     symbols: [[u32; 2]; 4],
@@ -478,18 +436,12 @@ struct Fit {
     error: u32,
 }
 
-/// A channel of a decoded texel: the decoders' 16-bit interpolation of
-/// endpoint values `low` and `high` at weight `weight` (0 to 64), read as a
-/// byte.
 fn decoded(low: u32, high: u32, weight: u32) -> u32 {
     let interpolated =
         (((low << 8) | low) * (64 - weight) + ((high << 8) | high) * weight + 32) >> 6;
     (interpolated * 255 + 32_768) / 65_536
 }
 
-/// The best fit of `texels` in `layout` from endpoints `ends` (per
-/// channel): endpoints quantized and ordered as the mode requires, then
-/// each texel's weights on each plane picked by the error they leave.
 fn assign(texels: &[[f32; 4]; 16], layout: Layout, ends: [[f32; 2]; 4]) -> Fit {
     let channels = if layout.mode == 12 { 4 } else { 3 };
     let range_index = layout.endpoint_range();
@@ -509,8 +461,6 @@ fn assign(texels: &[[f32; 4]; 16], layout: Layout, ends: [[f32; 2]; 4]) -> Fit {
             fit.values[channel][end] = range.endpoint(symbol);
         }
     }
-    // Decoders swap endpoints whose second sums less (RGB), contracting
-    // blue: the second end sums at least as much.
     let sum = |end: usize| (0..3).map(|channel| fit.values[channel][end]).sum::<u32>();
     if sum(0) > sum(1) {
         for channel in 0..4 {
@@ -551,9 +501,6 @@ fn assign(texels: &[[f32; 4]; 16], layout: Layout, ends: [[f32; 2]; 4]) -> Fit {
     fit
 }
 
-/// The endpoints least squares find for each channel given the weights
-/// `fit` picks on that channel's plane; a channel whose texels all take one
-/// weight keeps `ends`.
 fn least_squares(
     texels: &[[f32; 4]; 16],
     layout: Layout,
@@ -587,9 +534,6 @@ fn least_squares(
     refined
 }
 
-/// The ends of `texels`' colors in `layout`: the line through the first
-/// plane's channels along their principal axis, and the second plane's
-/// channel from its least to its most.
 fn starting_ends(texels: &[[f32; 4]; 16], layout: Layout) -> [[f32; 2]; 4] {
     let channels = if layout.mode == 12 { 4 } else { 3 };
     let on_line: Vec<usize> = (0..channels)
@@ -632,7 +576,6 @@ fn starting_ends(texels: &[[f32; 4]; 16], layout: Layout) -> [[f32; 2]; 4] {
         }
         axis = next.map(|value| value / length);
     }
-    // The line ascends in red, green and blue, as the mode orders it.
     if axis[0] + axis[1] + axis[2] < 0.0 {
         axis = axis.map(|value| -value);
     }
@@ -663,8 +606,6 @@ fn starting_ends(texels: &[[f32; 4]; 16], layout: Layout) -> [[f32; 2]; 4] {
     ends
 }
 
-/// The best fit of `texels` in `layout`: from its starting ends, refined
-/// twice by least squares while that helps.
 fn fit(texels: &[[f32; 4]; 16], layout: Layout) -> Fit {
     let mut ends = starting_ends(texels, layout);
     let mut best = assign(texels, layout, ends);
@@ -682,10 +623,6 @@ fn fit(texels: &[[f32; 4]; 16], layout: Layout) -> Fit {
     best
 }
 
-/// `fit`'s block in `layout`: block mode, one partition, its color
-/// endpoint mode, the endpoints' integer sequence, then from the top down
-/// the weights' (bit-reversed), the second plane's channel just below
-/// them.
 fn pack(layout: Layout, fit: &Fit) -> [u8; 16] {
     let mut out = Writer::default();
     out.put(layout.block_mode(), 11);
@@ -712,7 +649,6 @@ fn pack(layout: Layout, fit: &Fit) -> [u8; 16] {
     bits.to_le_bytes()
 }
 
-/// A void-extent block: every texel `color`.
 fn solid(color: [u8; 4]) -> [u8; 16] {
     let mut block = [0xff_u8; 16];
     block[0] = 0xfc;
@@ -724,8 +660,6 @@ fn solid(color: [u8; 4]) -> [u8; 16] {
     block
 }
 
-/// The block of `texels` (RGBA8, rows from the top) with the least squared
-/// error over the layouts tried.
 pub(crate) fn encode_block(texels: &[[u8; 4]; 16]) -> [u8; 16] {
     if texels.iter().all(|texel| *texel == texels[0]) {
         return solid(texels[0]);

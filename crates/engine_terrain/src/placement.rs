@@ -1,35 +1,3 @@
-//! Terrain placement: objects standing on a terrain's
-//! surface, layer by layer. A layer lays a grid of candidate squares a
-//! footprint wide over the terrain; each square holds one candidate,
-//! placed, ranked and varied by a hash of the layer and the square, so
-//! candidates stay where they are however tiles stream and whoever asks.
-//! A candidate stands where its rank falls under the layer's density at its
-//! point: the share of a square the density fills, times the layer's mask
-//! and the share of the surface materials it stands on there; its scale
-//! falls across the layer's range as its rank under that density rises, so
-//! the objects ranked first are the largest; it turns at random about the
-//! vertical, and down the ground's slope as strongly as its layer turns its
-//! objects downhill. Placement
-//! is a pure function of a tile's heights and control values; each
-//! candidate belongs to the tile of the layer's level holding its point.
-//! Coarser levels stay resident farther from the camera, so their layers'
-//! objects show farther away; renderers set objects on the finest heights
-//! resident. A layer may also stand far away: a coarser
-//! level's tiles, which stay resident farther still (pinned levels
-//! everywhere), place every one of its candidates, its own objects in the
-//! same places, which renderers hide where its own level's tiles are
-//! resident; objects retire only as they shrink under a pixel on screen,
-//! by their rank, the largest last.
-//!
-//! Authors stand objects on a surface too: each at its own
-//! point, on the tiles of its level (the finest for small things, coarser
-//! for large ones, which then show as far as those tiles stay resident),
-//! drawn, shadowed and collided with as the layers' objects are.
-//!
-//! Objects stand as their assets' solids ([`Solid`]) where they stand in
-//! water ([`Placed::footprint`]), which the water settled over the finest
-//! tiles flows around.
-
 use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, settings};
 use serde::{Deserialize, Serialize};
@@ -37,13 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::surface::{Compiled, Control, Mask, Reads, RowInputs, RowScratch, erosion_row};
 use crate::{TILE_QUADS, TILE_STRIDE, Tile};
 
-/// The placement layer authored objects report collision
-/// hits in, beside bridges' `u16::MAX`.
 pub const AUTHORED_LAYER: u16 = u16::MAX - 1;
 
-/// Which of a tile's objects a generator places: all of
-/// them; those of layers of its own level and its authored objects; or
-/// those of layers standing far away at its level.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Placing {
     #[default]
@@ -52,24 +15,17 @@ pub enum Placing {
     Far,
 }
 
-/// Validity guards: how many layers a surface places, how many assets a
-/// layer chooses from, the coarsest level a layer's tiles may be, and the
-/// widest bed an object rests on (meters at scale 1).
 const MAX_LAYERS: usize = 64;
 const MAX_CHOICES: usize = 64;
 const MAX_LEVEL: u8 = crate::MAX_LEVEL as u8;
 const MAX_BED: f32 = 1000.0;
 
 settings! {
-    /// An asset a placement layer chooses, by ID of the surface's assets, and
-    /// how often against the layer's others.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct PlacementChoice {
-        /// The asset's ID.
         pub asset: String = String::new() => any,
-        /// How often it is chosen against the layer's others.
         #[serde(default = "one")]
         pub weight: f32 = one() => at_least(0.0),
     }
@@ -77,66 +33,36 @@ settings! {
 
 settings! {
     extra_rules;
-    /// One layer of objects on a surface.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct PlacementLayer {
-        /// The layer's ID.
         pub id: String = String::new() => any,
-        /// The assets it chooses from.
         pub assets: Vec<PlacementChoice> = Vec::new() => any,
-        /// Objects per hectare where everything allows, at most one per
-        /// footprint square.
         pub density: f32 = 0.0 => at_least(0.0),
-        /// The meters between candidates.
         pub footprint: f32 = 1.0 => range(0.25, 256.0),
-        /// The surface materials it stands on (IDs; any when empty),
-        /// weighted by their share.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub materials: Vec<String> = Vec::new() => any,
-        /// Where it stands.
         #[serde(default = "Mask::one")]
         pub mask: Mask = Mask::one() => any,
-        /// Its objects' scale range, the smaller first.
         #[serde(default = "unit_scale")]
         pub scale: [f32; 2] = unit_scale() => range(MIN_SCALE, MAX_SCALE),
-        /// How far its objects lean with the ground: 0 upright, 1 along its
-        /// normal.
         #[serde(default)]
         pub align: f32 = 0.0 => range(0.0, 1.0),
-        /// How strongly its objects turn their length, their meshes' x
-        /// axis, down the ground's slope: each points the way of its random
-        /// turn, a unit vector, plus the ground's downhill gradient (the
-        /// slope's tangent, pointing downhill) times this. Level ground
-        /// leaves them at random and steeper ground turns them further
-        /// downhill, as fallen trees lie: where the gradient times this
-        /// reaches 2, every one within thirty degrees of downhill. 0 turns
-        /// them at random everywhere.
         #[serde(default, skip_serializing_if = "is_zero_f32")]
         pub downhill: f32 = 0.0 => at_least(0.0),
-        /// How deep they sink, in meters at scale 1, below the lowest ground
-        /// within their bed.
         #[serde(default)]
         pub sink: f32 = 0.0 => finite,
-        /// How far around them they rest on, in meters at scale 1: 0, the
-        /// ground at their point; objects on steep slopes then stand in it
-        /// instead of hanging over it.
         #[serde(default, skip_serializing_if = "is_zero_f32")]
         pub bed: f32 = 0.0 => range(0.0, MAX_BED),
-        /// The pyramid level whose tiles hold its candidates: 0, the finest.
         #[serde(default, skip_serializing_if = "is_zero")]
         pub level: u8 = 0 => range(0, MAX_LEVEL),
-        /// Where it also stands far away.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub far: Option<FarPlacement> = None => any,
     }
 }
 
 impl ExtraRules for PlacementLayer {
-    /// Its objects fit their footprints, its scale range runs smaller
-    /// first, its choices weigh something, and its far placement stands on
-    /// a coarser level.
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if self.density * self.footprint * self.footprint / 10_000.0 > 1.0 {
             return Err(InvalidSetting::new(
@@ -161,19 +87,14 @@ impl ExtraRules for PlacementLayer {
 }
 
 settings! {
-    /// Where a placement layer also stands far away: on the tiles of a
-    /// coarser level, every one of its objects, where its own level's tiles
-    /// are not resident.
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct FarPlacement {
-        /// The coarser level whose tiles hold them.
         pub level: u8 = 1 => range(1, MAX_LEVEL),
     }
 }
 
-/// The smallest and largest scale placed objects take.
 const MIN_SCALE: f32 = 0.001;
 const MAX_SCALE: f32 = 1000.0;
 
@@ -196,30 +117,20 @@ fn unit_scale() -> [f32; 2] {
 }
 
 settings! {
-    /// An object an author stands on the surface.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct AuthoredPlacement {
-        /// Its asset, by ID of the surface's assets.
         pub asset: String = String::new() => any,
-        /// Its base's terrain-local point `[x, z]`, where it stands on the
-        /// ground.
         pub position: [f32; 2] = [0.0; 2] => finite,
-        /// Its turn about the vertical, degrees.
         #[serde(default, skip_serializing_if = "is_zero_f32")]
         pub yaw: f32 = 0.0 => finite,
-        /// Its scale.
         #[serde(default = "one", skip_serializing_if = "is_one")]
         pub scale: f32 = one() => range(MIN_SCALE, MAX_SCALE),
-        /// How deep its base sinks, in meters at scale 1.
         #[serde(default, skip_serializing_if = "is_zero_f32")]
         pub sink: f32 = 0.0 => finite,
-        /// How far it leans with the ground: 0 upright, 1 along its normal.
         #[serde(default, skip_serializing_if = "is_zero_f32")]
         pub align: f32 = 0.0 => range(0.0, 1.0),
-        /// The pyramid level whose tiles hold it: 0, the finest; coarser for
-        /// objects seen from farther away.
         #[serde(default, skip_serializing_if = "is_zero")]
         pub level: u8 = 0 => range(0, MAX_LEVEL),
     }
@@ -229,8 +140,6 @@ fn is_one(value: &f32) -> bool {
     *value == 1.0
 }
 
-/// An authored object ready to stand: its asset index, point, turn
-/// (radians), scale, sink, lean and level.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CompiledAuthored {
     asset: u16,
@@ -242,8 +151,6 @@ pub(crate) struct CompiledAuthored {
     pub(crate) level: u8,
 }
 
-/// Validates `placed` against the surface's `assets` IDs; errors name the
-/// offending path and rule.
 pub(crate) fn compile_authored(
     placed: &[AuthoredPlacement],
     assets: &[String],
@@ -274,9 +181,6 @@ pub(crate) fn compile_authored(
         .collect()
 }
 
-/// The authored objects standing on `tile`, appended to
-/// `out`: those of its level whose point it holds, on its ground; none on
-/// holes. Returns the work it took (samples' worth).
 pub(crate) fn place_authored(
     placed: &[CompiledAuthored],
     tile: &Tile,
@@ -323,16 +227,6 @@ pub(crate) fn place_authored(
     cost
 }
 
-/// One object a layer placed: its base's terrain-local position, its turn
-/// about the vertical (radians), how its up leans (x and z of its up
-/// vector), its scale, how far its base sinks below the ground (meters),
-/// the ground's normal under it (x and z), its asset and
-/// layer indices, for objects standing far away the level
-/// whose resident tiles hold it instead, and its rank under the density at
-/// its point (0 to 1; 0 for authored objects): the share of the density
-/// past which it stands, by which renderers retire a layer's objects as
-/// they shrink under a pixel on screen, those ranked first, its largest,
-/// last.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub position: [f32; 3],
@@ -348,10 +242,6 @@ pub struct Placed {
 }
 
 impl Placed {
-    /// The world matrix of the object on a terrain whose origin is
-    /// `origin`, with its base at height `base` (terrain-local) instead of
-    /// where it was placed: its up leaning as placed, turned about it by its
-    /// yaw, and scaled.
     pub fn model(&self, origin: glam::Vec3, base: f32) -> glam::Mat4 {
         use glam::Vec3;
         let [lean_x, lean_z] = self.lean;
@@ -374,8 +264,6 @@ impl Placed {
         )
     }
 
-    /// The solid it stands as, `solid` being its asset's: terrain-local, its
-    /// base where it was placed, as colliders stand it.
     pub fn footprint(&self, solid: &Solid) -> Footprint {
         use glam::{Mat3, Mat4, Vec3};
         let model = self.model(Vec3::ZERO, self.position[1])
@@ -389,10 +277,6 @@ impl Placed {
     }
 }
 
-/// The solid a placement asset's objects stand as, in the asset's mesh
-/// space at scale 1: a box of half extents `half` about `center`, or where
-/// `round` the ball (an ellipsoid) of those radii: its collider, or else
-/// its mesh's bounds. Water flows around what stands in it as its solid.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Solid {
     pub center: [f32; 3],
@@ -401,16 +285,12 @@ pub struct Solid {
 }
 
 impl Solid {
-    /// Whether its center is finite and its extents positive and finite.
     pub fn valid(&self) -> bool {
         self.center.iter().all(|value| value.is_finite())
             && self.half.iter().all(|&half| half.is_finite() && half > 0.0)
     }
 }
 
-/// A solid standing on a terrain ([`Placed::footprint`]): its terrain-local
-/// center, the axes mapping the unit cube (or ball, where `round`) to it, a
-/// column each (x, y and z of each, column by column).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Footprint {
     pub center: [f32; 3],
@@ -423,13 +303,10 @@ impl Footprint {
         glam::Mat3::from_cols_array(&self.axes)
     }
 
-    /// Its middle along x and z.
     pub fn middle(&self) -> glam::Vec2 {
         glam::Vec2::new(self.center[0], self.center[2])
     }
 
-    /// How far it reaches from its middle along x and z: a box the sum of
-    /// its axes' parts along each, a ball their length.
     pub fn reach(&self) -> glam::Vec2 {
         let rows = self.axes().transpose();
         let along = |row: glam::Vec3| {
@@ -442,11 +319,6 @@ impl Footprint {
         glam::Vec2::new(along(rows.x_axis), along(rows.z_axis))
     }
 
-    /// The lowest and the highest terrain-local heights it spans on the
-    /// upright line through `point` (terrain-local x and z), if it stands
-    /// on it: in its unit cube or ball the line runs from `at`, at height
-    /// 0, by `up` a meter; a ball holds it where |at + y·up| ≤ 1, a box
-    /// where each of its parts lies within 1.
     pub fn span(&self, point: glam::Vec2) -> Option<[f32; 2]> {
         let inverse = self.axes().inverse();
         let at = inverse
@@ -474,7 +346,6 @@ impl Footprint {
         (span[0] <= span[1]).then_some(span)
     }
 
-    /// Whether its center is finite and its axes finite and invertible.
     pub(crate) fn valid(&self) -> bool {
         self.center
             .iter()
@@ -484,10 +355,6 @@ impl Footprint {
     }
 }
 
-/// A compiled layer: its tiles' level, its asset indices and cumulative
-/// weights, the share of a square its density fills, its materials as a
-/// 256-bit set (none: any), its mask and its variations, and the level it
-/// stands far away at.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CompiledPlacement {
     pub(crate) level: u8,
@@ -505,8 +372,6 @@ pub(crate) struct CompiledPlacement {
     bed: f32,
 }
 
-/// Validates `layers` against the surface's `materials` and `assets` IDs;
-/// errors name the offending path and rule.
 pub(crate) fn compile(
     layers: &[PlacementLayer],
     materials: &[String],
@@ -598,7 +463,6 @@ fn unit(value: u32) -> f32 {
     (value >> 8) as f32 / 16_777_216.0
 }
 
-/// The share of control value `control` held by the materials in `set`.
 fn material_share(control: Control, set: &Option<[u64; 4]>) -> f32 {
     let Some(set) = set else {
         return 1.0;
@@ -615,18 +479,11 @@ fn material_share(control: Control, set: &Option<[u64; 4]>) -> f32 {
     share
 }
 
-/// The work of placing one candidate square, against one per sample of a
-/// layer: hashing it, and for those its rank keeps, sampling the tile.
 const SQUARE_COST: u64 = 1;
 const SAMPLE_COST: u64 = 8;
 
-/// Samples of the ground around an object resting on a bed: eight around
-/// its edge and four halfway.
 const BED_SAMPLES: u32 = 12;
 
-/// The lowest of `height` and `tile`'s ground at the [`BED_SAMPLES`] points
-/// within `reach` meters of tile-local point `local`, held within the
-/// tile.
 fn lowest_ground(tile: &Tile, local: [f32; 2], reach: f32, height: f32) -> f32 {
     let size = TILE_QUADS as f32 * tile.spacing();
     let mut lowest = height;
@@ -651,31 +508,15 @@ fn lowest_ground(tile: &Tile, local: [f32; 2], reach: f32, height: f32) -> f32 {
     lowest
 }
 
-/// Places row `row` (from the first) of layer `layer`'s candidate squares
-/// over `tile`, appending to `out`; `seed` varies them per terrain.
-/// Layers hold rows on tiles of their level, and of the level they stand
-/// far away at, where every one of their candidates stands too; others
-/// hold none.
-/// Returns the work it took (samples' worth) and the next row, none after
-/// the last layer's last.
-/// A row of candidates whose masks a row evaluates at once,
-/// reused row after row: each candidate's square, rank, point, offset in
-/// its tile, ground, material share and its mask's inputs.
 #[derive(Default)]
 pub(crate) struct PlaceScratch {
     candidates: Vec<Candidate>,
     inputs: MaskInputs,
     values: Vec<f32>,
     rows: RowScratch,
-    // Control values the rules gave samples of a tile holding none,
-    // packed, `u32::MAX` where not asked yet: each sample's
-    // once a tile, however many candidates share it.
     controls: Vec<u32>,
 }
 
-/// What a row of candidates' masks read, a candidate at a time, in order:
-/// each one's point (x and z), height, gradient (rise per meter along x and
-/// z), curvature, water, the meters erosion changed its ground by and road.
 #[derive(Default)]
 struct MaskInputs {
     xs: Vec<f32>,
@@ -704,14 +545,6 @@ impl MaskInputs {
         self.path.clear();
     }
 
-    /// Adds what a mask reading `reads` reads of a candidate at `point` over
-    /// `stack`, on `tile` (`local` in it, `nearest` its nearest sample) at
-    /// its ground `sample`: the gradient its ground's normal stands on and
-    /// the curvature at its nearest sample; the water standing there, the
-    /// tile's, lake or river, as deep as it stands over the ground, and the
-    /// meters to rivers' edges and the rivers' beds the tile's too; what the
-    /// stack's erosions changed there; and the nearest road. Inputs the mask
-    /// never reads are left unread.
     fn push(
         &mut self,
         (tile, stack, reads): (&Tile, &crate::Layers, Reads),
@@ -753,8 +586,6 @@ impl MaskInputs {
         });
     }
 
-    /// The candidates' inputs as masks read a row, at a level whose samples
-    /// lie `spacing` meters apart.
     fn row(&self, spacing: f32) -> RowInputs<'_> {
         RowInputs {
             xs: &self.xs,
@@ -804,7 +635,6 @@ pub(crate) fn place_row(
     let Some(layer) = layers.get(layer_index) else {
         return (0, None);
     };
-    // Far away, every one of the layer's candidates, in their own places.
     let near_level = match layer.far {
         _ if layer.level == key.level => None,
         Some(level) if level == key.level => Some(layer.level),
@@ -830,9 +660,6 @@ pub(crate) fn place_row(
         ((origin[1] + size) / footprint).floor() as i64,
     ];
     let square_z = first[1] + row as i64;
-    // The row's candidates that may stand, with their masks' inputs; then
-    // their masks over the row at once, each as one evaluation reads it;
-    // then, in order, those that stand.
     let PlaceScratch {
         candidates,
         inputs,
@@ -852,8 +679,6 @@ pub(crate) fn place_row(
         if rank >= fill {
             continue;
         }
-        // The candidate's point, which belongs to the tile holding
-        // it.
         let point = [
             (square_x as f32 + unit(square)) * footprint,
             (square_z as f32 + unit(hash(square ^ 0x5bd1_e995))) * footprint,
@@ -872,8 +697,6 @@ pub(crate) fn place_row(
             (local[0] / spacing).round() as i32,
             (local[1] / spacing).round() as i32,
         ];
-        // Tiles whose control values the GPU gives hold
-        // none: the rules give the sample's, the same bits.
         let control = match tile.control_at(nearest[0], nearest[1]) {
             Some(control) => control,
             None => {
@@ -896,8 +719,6 @@ pub(crate) fn place_row(
         if share_of_materials <= 0.0 {
             continue;
         }
-        // The density at most, with the mask at 1: where the rank passes
-        // even that, nothing here can stand.
         if rank >= fill * share_of_materials {
             continue;
         }
@@ -924,7 +745,6 @@ pub(crate) fn place_row(
             share_of_materials,
         } = *candidate;
         let normal = sample.normal;
-        // The density here.
         let full = fill * share_of_materials * clamp(mask, 0.0, 1.0);
         if rank >= full {
             continue;
@@ -937,15 +757,8 @@ pub(crate) fn place_row(
             .map_or(layer.choices[layer.choices.len() - 1].0, |(asset, _)| {
                 *asset
             });
-        // Its rank under the density here, which its size follows: from the
-        // largest of the layer's scales, ranked first, down to the smallest,
-        // evenly as ranks spread, so those retiring last as they shrink on
-        // screen are the largest.
         let ranked = rank / full;
         let scale = layer.scale[1] - (layer.scale[1] - layer.scale[0]) * ranked;
-        // Turned at random, and down the ground's slope as strongly as the
-        // layer turns its objects downhill: toward its random turn plus the
-        // downhill gradient times that strength.
         let (turn_sin, turn_cos) =
             sin_cos(unit(hash(square ^ 0x85eb_ca6b)) * std::f32::consts::TAU);
         let downhill = layer.downhill / max(normal.y, 1.0e-3);
@@ -953,16 +766,12 @@ pub(crate) fn place_row(
             turn_sin + normal.z * downhill,
             turn_cos + normal.x * downhill,
         );
-        // Its up leans toward the ground's normal as far as the
-        // layer aligns; a wobble keeps upright objects from
-        // standing too straight.
         let (wobble_sin, wobble_cos) =
             sin_cos(unit(hash(square ^ 0x9e37_79b9)) * std::f32::consts::TAU);
         let lean = [
             normal.x * layer.align + 0.03 * wobble_cos,
             normal.z * layer.align + 0.03 * wobble_sin,
         ];
-        // Resting on its bed, it sinks below the lowest ground there.
         let below = if layer.bed > 0.0 {
             sample.height - lowest_ground(tile, local, layer.bed * scale, sample.height)
         } else {

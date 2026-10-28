@@ -1,4 +1,3 @@
-/** Culling and GPU residency checks; authored fixtures exist only in routed responses. */
 // @ts-check
 import assert from "node:assert/strict";
 import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
@@ -6,8 +5,6 @@ import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, ro
 const url = sceneUrl();
 const output = await artifacts("culling-smoke");
 const camera = { position: [0, 0.6, 8], target: [0, 0.6, 0], vertical_fov_radians: Math.PI / 3, near: 1, far: 50 };
-// Shadows start off, so residency first follows visibility alone: shadow maps
-// draw off-screen casters too.
 /** @type {any} */
 const fixture = {
   id: "culling-fixture", revision: 1,
@@ -76,7 +73,6 @@ try {
   assert.equal((await command("assets")).result.texture_assets[0].gpu_resident, false);
   assert.equal(initial.shadows.active, false);
 
-  // An off-screen caster needs its mesh for the shadow maps, never its texture.
   const lit = await command("environment", { shadows: { enabled: true } });
   assert.deepEqual(lit.result.environment_changed, ["shadows"]);
   const shadowed = stats(lit);
@@ -118,8 +114,6 @@ try {
     { id: "behind-camera", mesh: "box", material: "plain", transform: { translation: [0, 0.6, 12] } },
     { id: "beyond-far", mesh: "box", material: "plain", transform: { translation: [0, 0.6, -80] } },
   );
-  // Without an environment a reload keeps the current look: shadows stay on,
-  // and culled casters must still shadow the view.
   delete complex.environment;
   const reloaded = await scene.reload(command, complex);
   assert.equal(reloaded.result.rendering.shadows.active, true);

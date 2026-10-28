@@ -1,13 +1,3 @@
-/**
- * The terrain fixture's surface draws its materials, cover and tracks.
- *
- * The GPU's surface materials match the CPU's; ground cover grows
- * near the eye; the wind and occupancy sections read back, refuse values
- * out of range and change what draws; tracks press into the ground as deep
- * as its materials let them and refill; the shadow clipmap draws every tile
- * the pixels read, sharper with finer texels. The fixture:
- * terrain-fixture.mjs.
- */
 // @ts-check
 import assert from "node:assert/strict";
 import { differentPixels } from "./harness.mjs";
@@ -17,10 +7,6 @@ const { page, errors, command, settled, output, close, settle, capture, heights 
 const checks = [];
 
 try {
-  // The GPU gives tiles their surface materials, the rules'
-  // own but where its rounding crosses a threshold: the view drawn with
-  // the CPU's differs in few pixels. Back on the GPU, tiles loading at a
-  // new place get theirs from it as they upload.
   const gpuView = await capture("gpu-materials");
   await command("environment", { terrain: { ...fast, gpu_materials: false } });
   await settle();
@@ -42,14 +28,11 @@ try {
   await settle();
   checks.push({ check: "gpu materials", differing: materials.changed, controls });
 
-  // Ground cover: the meadow's grass grows near the eye,
-  // counted a few frames late; turned off, none grows.
   await command("camera", { position: [-12, 32, -8], target: [10, 30, 6], vertical_fov_radians: 1, near: 0.1, far: 5000 });
   let grown;
   for (let frame = 0; frame < 60; frame++) {
     grown = (await command("render")).result.rendering;
     if (grown.ground_cover.blades > 0) break;
-    // The tiles around the eye arrive from workers.
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   assert.ok(grown.ground_cover.blades > 0, `grass grows: ${JSON.stringify(grown)}`);
@@ -61,8 +44,6 @@ try {
   assert.equal(bare.ground_cover.blades, 0, "no blades once cover stops");
   await command("environment", { ground_cover: cover });
   checks.push({ check: "ground cover", blades: grown.ground_cover.blades });
-  // The wind blades and swaying crates bend in: its section
-  // reads back as set, and refuses speeds out of range.
   const calm = (await command("inspect", { component: "Wind" })).result.value;
   await command("environment", { wind: { velocity: [8, -2], gusts: 0.25 } });
   assert.deepEqual((await command("inspect", { component: "Wind" })).result.value, { velocity: [8, -2], gusts: 0.25 });
@@ -71,9 +52,7 @@ try {
   assert.equal(gale.error.path, "$.wind.velocity");
   await command("environment", { wind: calm });
   checks.push({ check: "wind", calm });
-  // Occupancy: the crates' covers are drawn around the camera.
   assert.ok(settled.occupancy.redraws > 0, `the occupancy map draws: ${settled.occupancy.redraws}`);
-  // Occupancy reads back as set, and refuses a resolution out of range.
   const occupancy = (await command("inspect", { component: "Occupancy" })).result.value;
   await command("environment", { occupancy: { ...occupancy, strength: 0.5 } });
   assert.equal((await command("inspect", { component: "Occupancy" })).result.value.strength, 0.5);
@@ -81,11 +60,6 @@ try {
   assert.equal(coarse.error.path, "$.occupancy.resolution");
   await command("environment", { occupancy });
   checks.push({ check: "occupancy", redraws: settled.occupancy.redraws });
-  // Tracks press into the ground as deep as its materials
-  // let them, from the deform control and from deformers each tick: the
-  // log answers queries and presses them again where the map returns, they
-  // refill over the refill time, the budget drops the oldest, and the map
-  // shows them.
   {
     const spot = [-12, -6];
     const settings = (await command("inspect", { component: "Deformation" })).result.value;
@@ -107,14 +81,12 @@ try {
     const tracked = await capture("tracks");
     const trackPixels = await differentPixels(page, [flat, tracked]);
     assert.ok(trackPixels.changed > 500, `the track shows: ${trackPixels.changed} pixels`);
-    // Far beyond the map and back: the log presses the track again.
     await command("camera", { ...close, position: [600, 200, 600], target: [500, 100, 500] });
     await command("camera", close);
     await settle();
     const returned = await capture("tracks-returned");
     const replay = await differentPixels(page, [tracked, returned]);
     assert.ok(replay.changed * 2 < trackPixels.changed, `the track persists: ${replay.changed} pixels differ`);
-    // The roller presses where it stands each tick, and inspects as authored.
     const roller = (await command("inspect", { entity: "roller", component: "Deformer" })).result.entity.components.Deformer;
     const authored = { radius: 0.5, depth: 0.2, contact: 0.5, flatness: 0.2 };
     assert.deepEqual(roller, Object.fromEntries(Object.entries(authored).map(([key, value]) => [key, Math.fround(value)])), `the roller inspects as authored: ${JSON.stringify(roller)}`);
@@ -124,12 +96,10 @@ try {
     assert.ok(rolled.pressed >= counted.pressed + 3, `the roller presses each tick: ${JSON.stringify([counted, rolled])}`);
     const [dimple] = await query([[10, 10]]);
     assert.ok(dimple.track > 0.1, `the roller's dimple: ${JSON.stringify(dimple)}`);
-    // Two refill times after it was pressed, an e-squared of it is left.
     await command("environment", { deformation: { ...settings, refill: 0.5 } });
     const [later] = await query([middle], pressed.track.seconds + 1);
     const left = inside.track * Math.exp(-2);
     assert.ok(Math.abs(later.track - left) < 0.005, `the track refills: ${later.track} against ${left}`);
-    // The budget drops the oldest stamps.
     await command("environment", { deformation: { ...settings, max_stamps: 1 } });
     await command("deform", { from: [spot[0] + 5, spot[1]], radius: 0.2, depth: 0.1 });
     const budgeted = (await command("inspect", { component: "Tracks" })).result.value;
@@ -143,16 +113,10 @@ try {
     await command("camera", overview);
     checks.push({ check: "deformation", track: inside.track, depth: inside.depth, pixels: trackPixels.changed, replayed: replay.changed, dimple: dimple.track, refilled: later.track });
   }
-  // The shadow clipmap draws every tile the pixels read on GPU-presented
-  // frames once they settle; coarser finest texels blur what its finest
-  // levels held. The section refuses more levels than the engine holds.
   const clipmap = (await command("inspect", { component: "Shadows" })).result.value;
   const gpuCapture = async (name, shadows) => {
     await command("environment", { shadows });
     let rendering;
-    // GPU-presented frames need pipelines of their own, which compile for
-    // seconds on some GPUs while the browser presents nothing: the capture
-    // waits for them as for the tiles.
     const until = Date.now() + COMPILE_MS;
     for (let frame = 0; ; frame++) {
       rendering = (await command("present", { alpha: 1, gpu: true })).result.rendering;

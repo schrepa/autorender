@@ -1,7 +1,3 @@
-/** Serial, dependency-injected ownership of development build attempts.
- * Only the newest requested source fingerprint is retained while work runs.
- * Browser/process/filesystem policy lives in the supervisor adapters.
- */
 // @ts-check
 import { randomUUID } from "node:crypto";
 
@@ -66,7 +62,6 @@ export class IterationController {
     } else signal?.addEventListener("abort", this.#abort, { once: true });
   }
 
-  /** Notifications are values: callers cannot mutate pending input or status. */
   enqueue(snapshot) {
     if (this.#closed) return;
     snapshot = source(snapshot);
@@ -80,14 +75,10 @@ export class IterationController {
     return JSON.parse(JSON.stringify({ state: this.#state, active: this.#active, latest: this.#latest }));
   }
 
-  /** Wait for all currently pending work, including coalesced follow-up work. */
   async whenIdle() {
     while (this.#runner) await this.#runner;
   }
 
-  /** Prevent activation immediately, then wait for adapter work to settle.
-   * The supervisor cancels processes through its own shared AbortSignal.
-   */
   stop() {
     if (!this.#closed) {
       this.#closed = true;
@@ -100,8 +91,6 @@ export class IterationController {
   }
 
   #emit() {
-    // Status observers cannot break build ownership or create unhandled
-    // promise rejections. The adapter should log its own observer failures.
     try { Promise.resolve(this.#operations.onEvent(this.status())).catch(() => {}); } catch {}
   }
 
@@ -118,11 +107,8 @@ export class IterationController {
       this.#emit();
       return;
     }
-    // Deferral assigns #runner before adapters/observers can enqueue again.
     this.#runner = Promise.resolve().then(() => this.#run()).finally(() => {
       this.#runner = undefined;
-      // Include a notification arriving after #run settled but before this
-      // cleanup microtask, without retrying an unchanged failed build.
       if (this.#desired?.fingerprint !== this.#latest?.fingerprint) this.#start();
     });
   }
@@ -132,7 +118,6 @@ export class IterationController {
     const sequence = this.#sequence;
     const current = source(await this.#operations.fingerprint());
     if (this.#closed) return false;
-    // A later explicit notification takes precedence over an older scan.
     if (sequence === this.#sequence) this.#desired = current;
     return current.fingerprint === snapshot.fingerprint && this.#desired?.fingerprint === snapshot.fingerprint;
   }
@@ -177,8 +162,6 @@ export class IterationController {
               if (this.#desired?.fingerprint !== snapshot.fingerprint) {
                 throw new IterationError("build_superseded", "A newer source fingerprint superseded this build.");
               }
-              // The adapter invokes commit at the same synchronous boundary
-              // where its bridge makes the new session authoritative.
               committed = true;
               this.#active = { build: attempt.id, session: candidate.session, fingerprint: snapshot.fingerprint };
               this.#stage("ready");
@@ -188,8 +171,6 @@ export class IterationController {
         }
       } catch (error) {
         if (committed) {
-          // Retirement is adapter-owned. A failure after the atomic switch
-          // cannot roll the bridge back or discard its now-active browser.
           this.#stage("ready", { retirement_error: failure(error) });
         } else if (this.#closed) {
           this.#stage("stopped", { error: failure(error) });
@@ -201,8 +182,6 @@ export class IterationController {
       } finally {
         if (!committed) await this.#discard(attempt, candidate);
       }
-      // A failed unchanged source waits for an edit. Intermediate desired
-      // versions were never queued and cannot create redundant builds.
       if (this.#desired?.fingerprint === snapshot.fingerprint) break;
     }
   }

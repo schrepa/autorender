@@ -1,16 +1,3 @@
-//! The textures corpus: `engine_textures`, the cook's textures, over
-//! synthetic images of each usage: a smooth color gradient, colored noise,
-//! a cutout masked by alpha, data with an independent height in alpha, and
-//! a normal map of rippled ground. Each cooks for every device family; an
-//! independent decoder (texture2ddecoder) reads every level back, which
-//! must lie within the image's error of the levels the cook compressed;
-//! the engine's own BC7 decoder must read the same texels, a record must
-//! read back as the texture it holds, and the job cooking it must make the
-//! same record run whole, as hosts without workers run it, and a slice at
-//! a time, as workers do. Every job and its output's hash go into a file
-//! `cargo xtask pure --wasm` replays in the browser worker's Wasm module.
-//! Observed: each family's record hash and each image's error by level.
-
 use std::path::Path;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -21,24 +8,16 @@ use serde_json::{Map, json};
 
 use super::Observations;
 
-/// Texels along a side of every image.
 const SIDE: u32 = 64;
-/// Every job the corpus ran, each output by its hash: what `cargo xtask
-/// pure --wasm` replays.
 pub const JOBS: &str = "target/pure/textures-jobs.json";
-/// Work units each slice of a job gets, as workers slice them.
 const SLICE: u64 = 4096;
 
-/// An image: its name, its texels and how they read, and the least peak
-/// signal-to-noise ratio (dB, over every channel) each family's base
-/// level keeps.
 struct Image {
     name: &'static str,
     source: Source,
     floors: [f64; 2],
 }
 
-/// A well-mixed hash of a texel and a salt.
 fn hash(x: u32, y: u32, salt: u32) -> u32 {
     let mut h =
         x.wrapping_mul(0x8da6_b343) ^ y.wrapping_mul(0xd816_3841) ^ salt.wrapping_mul(0xcb1a_b31f);
@@ -49,7 +28,6 @@ fn hash(x: u32, y: u32, salt: u32) -> u32 {
     h ^ (h >> 16)
 }
 
-/// `SIDE` × `SIDE` RGBA8 texels of `texel(x, y)`.
 fn texels(texel: impl Fn(u32, u32) -> [u8; 4]) -> Vec<u8> {
     (0..SIDE)
         .flat_map(|y| (0..SIDE).map(move |x| (x, y)))
@@ -132,8 +110,6 @@ fn images() -> Vec<Image> {
     ]
 }
 
-/// Peak signal-to-noise ratio of `decoded` against `expected`, RGBA8, over
-/// every channel; 99 where they agree.
 fn psnr(expected: &[u8], decoded: &[u8]) -> f64 {
     let squared: f64 = expected
         .iter()
@@ -146,7 +122,6 @@ fn psnr(expected: &[u8], decoded: &[u8]) -> f64 {
     10.0 * (255.0_f64 * 255.0 * expected.len() as f64 / squared).log10()
 }
 
-/// `texture`'s level `level` as the independent decoder reads it, RGBA8.
 fn reference(texture: &Texture, level: usize) -> Result<Vec<u8>, String> {
     let width = (texture.width() >> level).max(1) as usize;
     let height = (texture.height() >> level).max(1) as usize;
@@ -193,7 +168,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                     )
                 },
             );
-            // Cooked as hosts and workers cook it, the same record.
             let input = engine_textures::cook_input(&image.source, family);
             let (whole, sliced) = worker.both(&input)?;
             observed.check(whole == record && sliced == record, || {
@@ -241,8 +215,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     worker.write(root)
 }
 
-/// Runs texture jobs as hosts and workers run them, recording every job
-/// (with its output's hash) for the replay in Wasm.
 #[derive(Default)]
 struct Worker {
     worker: TextureWorker,
@@ -251,8 +223,6 @@ struct Worker {
 }
 
 impl Worker {
-    /// The cooking job on `input`, run whole and a slice at a time: both
-    /// outputs.
     fn both(&mut self, input: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
         let whole =
             engine_textures::run(COOK_JOB, input).ok_or("the cooking job is no texture job")??;
@@ -277,7 +247,6 @@ impl Worker {
         Ok((whole, sliced))
     }
 
-    /// Writes what it ran to [`JOBS`].
     fn write(&self, root: &Path) -> Result<(), String> {
         let path = root.join(JOBS);
         if let Some(folder) = path.parent() {

@@ -1,40 +1,29 @@
-// Color helpers of the modules that shade and present color.
-
-// The luminance of linear Rec. 709 `color`.
 fn luminance(color: vec3<f32>) -> f32 {
     return dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
 }
 
-// Linear `color` encoded as sRGB, for targets that store what they are
-// given (WebGPU canvases are UNORM).
 fn encode_srgb(color: vec3<f32>) -> vec3<f32> {
     let low = color * 12.92;
     let high = 1.055 * pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
     return select(high, low, color <= vec3<f32>(0.0031308));
 }
 
-// sRGB-encoded `encoded` as linear color: `encode_srgb`'s inverse.
 fn decode_srgb(encoded: vec3<f32>) -> vec3<f32> {
     let low = encoded * (1.0 / 12.92);
     let high = pow((max(encoded, vec3<f32>(0.0)) + 0.055) * (1.0 / 1.055), vec3<f32>(2.4));
     return select(high, low, encoded <= vec3<f32>(0.04045));
 }
 
-// Narkowicz's fit of the ACES filmic curve.
 fn filmic(x: vec3<f32>) -> vec3<f32> {
     return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
 }
 
-// The exposed light the filmic curve shows as `shown` (0 to 1): `filmic`'s
-// inverse, its quadratic solved for x.
 fn unfilmic(shown: f32) -> f32 {
     let a = 2.51 - 2.43 * shown;
     let b = 0.03 - 0.59 * shown;
     return (sqrt(b * b + 0.56 * a * shown) - b) / (2.0 * a);
 }
 
-// Three independent 32-bit hashes of `seed` (Jarzynski and Olano's pcg3d,
-// "Hash Functions for GPU Rendering", JCGT 2020).
 fn dither_hash(seed: vec3<u32>) -> vec3<u32> {
     var v = seed * 1664525u + 1013904223u;
     v.x += v.y * v.z;
@@ -47,15 +36,6 @@ fn dither_hash(seed: vec3<u32>) -> vec3<u32> {
     return v;
 }
 
-// Encoded color `encoded` (in [0, 1]) dithered for an 8-bit target at pixel
-// `pixel`: each channel gains noise of a triangular distribution reaching
-// one step of the target either side, which leaves the average of what the
-// target stores exactly the value, and its error independent of it, so
-// smooth gradients show no bands. Within half a step of black or white the
-// noise narrows to an even spread of half a step either side, which the
-// target's clamp cannot bias. `turn` changes the noise (temporally
-// antialiased frames turn it every frame, which their history averages);
-// `salt` gives each write of the same pixel its own.
 fn dithered(encoded: vec3<f32>, pixel: vec2<f32>, turn: f32, salt: u32) -> vec3<f32> {
     let bits = dither_hash(vec3<u32>(vec2<u32>(max(pixel, vec2<f32>(0.0))),
         bitcast<u32>(turn) ^ salt));

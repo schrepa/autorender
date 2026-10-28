@@ -18,15 +18,9 @@ pub use global::GlobalTransform;
 pub(crate) use global::ValueIds;
 use validation::Certificate;
 
-/// Maximum parent edges from a root to a transformed entity.
 pub const MAX_HIERARCHY_DEPTH: usize = 64;
-/// Most transformed entities one propagation pass can index (node indices
-/// are 32-bit). [`TransformNodeLimit`] sets a lower budget.
 pub const MAX_TRANSFORM_NODES: usize = u32::MAX as usize - 1;
 
-/// Transformed entities propagation admits; beyond it the rest have no
-/// world pose and count as overflow in the [`HierarchyReport`]. The default,
-/// [`MAX_TRANSFORM_NODES`], sets no budget: memory bounds it.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransformNodeLimit(pub usize);
 
@@ -36,7 +30,6 @@ impl Default for TransformNodeLimit {
     }
 }
 
-/// The world's transform-node limit, at most [`MAX_TRANSFORM_NODES`].
 fn node_limit(world: &World) -> usize {
     world
         .get_resource::<TransformNodeLimit>()
@@ -44,17 +37,8 @@ fn node_limit(world: &World) -> usize {
             limit.0.min(MAX_TRANSFORM_NODES)
         })
 }
-/// Conservative bound for GPU normal transformation conditioning.
-///
-/// After normalizing the cofactor matrix's largest absolute coefficient to one,
-/// its inverse infinity norm must not exceed this value. This limits cancellation
-/// and keeps transformed unit normals away from floating-point underflow.
 pub const MAX_NORMAL_INVERSE_NORM: f32 = 10_000.0;
 
-/// A non-owning relationship established through [`set_parent`].
-///
-/// Despawning a parent never despawns children. An orphan has no valid global
-/// transform until explicitly detached or attached to another live parent.
 #[derive(Component, Debug, Clone, Copy)]
 #[component(immutable,
     on_insert = tracking::topology_changed,
@@ -68,16 +52,13 @@ impl Parent {
     }
 }
 
-/// Counts from the latest explicit propagation pass.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HierarchyReport {
     pub transforms: usize,
     pub invalid_transforms: usize,
-    /// Nodes beyond the fixed cache bound; also included in invalid transforms.
     pub overflow_transforms: usize,
 }
 
-/// A rejected relationship edit. Rejection leaves the world unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HierarchyError {
     MissingEntity(Entity),
@@ -122,13 +103,6 @@ fn require_transform(world: &World, entity: Entity) -> Result<(), HierarchyError
     Ok(())
 }
 
-/// Changes a relationship while preserving the child's **local** transform.
-///
-/// Validates both the prospective ancestor chain and the moved subtree before
-/// mutation. This explicit control operation allocates bounded topology storage;
-/// ordinary propagation uses a separate reusable linear-time cache. Detachment
-/// is explicit and does not preserve the previous world matrix. Derived globals
-/// become fresh at the next [`propagate_transforms`] call.
 pub fn set_parent(
     world: &mut World,
     child: Entity,
@@ -145,13 +119,6 @@ struct RelationshipNode {
     affected: bool,
 }
 
-/// Atomically validates and installs several local-preserving relationships.
-///
-/// Use one batch for authored scene installation. Costs O(N + changes) work and
-/// bounded temporary storage, where N is the world's transformed entity count.
-/// Changed nodes and their descendants must have valid ancestry and depth;
-/// unrelated invalid branches do not block repairs or scene installation.
-/// Repeated child IDs are rejected, including identical repeated changes.
 pub fn set_parents(
     world: &mut World,
     changes: &[(Entity, Option<Entity>)],
@@ -247,24 +214,11 @@ pub fn set_parents(
     Ok(())
 }
 
-/// Shared admission predicate for composed affine transform matrices.
-///
-/// Rejects nonfinite, non-affine or singular matrices and unsafe normal data.
-/// The renderer rescales the basis and its cofactors before normalizing normals.
-/// The normalized normal matrix must satisfy [`MAX_NORMAL_INVERSE_NORM`]; this
-/// conservative conditioning bound rejects severe anisotropy and near-singular
-/// shear even when an inverse technically contains finite values.
 #[inline]
 pub fn valid_global_matrix(matrix: Mat4) -> bool {
     validation::valid_global_matrix(matrix)
 }
 
-/// Exact bit equality of two poses in upload layout, including NaN payloads
-/// and signed zeros, in vector compares (a plain lane fold is scalarized in
-/// some contexts, measured slower in the change scan). Non-NaN values are
-/// bit-identical exactly when they compare equal with equal sign bits; only a
-/// NaN lane needs the bit comparison. No call takes either pose, so callers'
-/// poses can stay in registers.
 #[inline(always)]
 pub(crate) fn same_pose_bits(left: &NodePose, right: &NodePose) -> bool {
     let lanes = |pose: &NodePose| (Vec4::from_slice(&pose[..4]), Vec4::from_slice(&pose[4..8]));
@@ -275,7 +229,6 @@ pub(crate) fn same_pose_bits(left: &NodePose, right: &NodePose) -> bool {
     if (a.cmpeq(c) & b.cmpeq(d)).all() && signs == 0 {
         return tail;
     }
-    // Unequal compares prove different bits unless a lane holds NaN.
     if !(a.is_nan() || b.is_nan() || c.is_nan() || d.is_nan()) {
         return false;
     }
@@ -284,8 +237,6 @@ pub(crate) fn same_pose_bits(left: &NodePose, right: &NodePose) -> bool {
     tail && bits(a) == bits(c) && bits(b) == bits(d)
 }
 
-/// Exact bit equality of two local poses, including NaN payloads and signed
-/// zeros. Branch-free, so hot scans need no memcmp or early exits.
 #[inline]
 pub(crate) fn same_local_bits(left: &Transform, right: &Transform) -> bool {
     let bits = |pose: &Transform| {
@@ -316,13 +267,8 @@ type TransformQuery = QueryState<(
     Option<&'static Parent>,
     Option<Ref<'static, InterpolateTransform>>,
 )>;
-// Unfiltered: scans read each table's stamp slice through `contiguous_iter`.
 type ChangedTransforms = SystemState<Query<'static, 'static, (Entity, Ref<'static, Transform>)>>;
 
-/// Validated cache hint into a published transform store.
-///
-/// A hint never identifies an entity on its own. Every read checks the complete
-/// generational Entity before using it, including after topology changes.
 #[derive(Debug, Clone, Copy)]
 pub struct TransformIndex(pub(crate) usize);
 impl Default for TransformIndex {
@@ -331,15 +277,10 @@ impl Default for TransformIndex {
     }
 }
 
-// Node indices and depths are stored compactly in `Link`.
 const _: () = assert!(MAX_TRANSFORM_NODES < u32::MAX as usize, "indices fit a u32");
 const _: () = assert!(MAX_HIERARCHY_DEPTH < u8::MAX as usize, "depths fit a u8");
 const NO_NODE: u32 = u32::MAX;
 
-/// Source identity and change keys. Every per-node array (`sources`, `locals`,
-/// `links`, `globals`, `revisions`) shares one index space. Passes stream only
-/// the arrays they read: presentation and evaluation never load identity keys
-/// with every matrix, and topology/validity checks never load matrices.
 pub(crate) struct Source {
     pub(crate) entity: Entity,
     pub(crate) parent: Option<Entity>,
@@ -347,7 +288,6 @@ pub(crate) struct Source {
     pub(crate) marker_added: Option<u32>,
 }
 
-/// Compact traversal and validity record (16 bytes).
 #[derive(Clone, Copy)]
 pub(crate) struct Link {
     parent: u32,
@@ -355,23 +295,15 @@ pub(crate) struct Link {
     next_sibling: u32,
     depth: u8,
     state: State,
-    // Topology validity does not depend on the current pose. An invalid pose
-    // can recover without rebuilding ancestry, while cycles/depth cannot.
     topology_valid: bool,
     global: Global,
 }
 
-/// Publication state of a node's authoritative global.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum Global {
-    /// No valid global; invalid payloads are never exposed.
     Invalid,
-    /// Valid and stored in `globals[index]`.
     Stored,
-    /// A leaf proven valid by its parent's [`Certificate`] and not composed:
-    /// reads compose the parent's stored global with the cached local, the
-    /// same operations and bits as eager evaluation.
     Deferred,
 }
 
@@ -411,7 +343,6 @@ impl Link {
         self.topology_valid
     }
 
-    /// Parent edges from the root; meaningful only with valid topology.
     #[inline]
     pub(crate) fn depth(&self) -> u8 {
         self.depth
@@ -422,7 +353,6 @@ impl Link {
         self.global != Global::Invalid
     }
 
-    /// Children with valid topology are linked; others never read this node.
     #[inline]
     pub(crate) fn has_children(&self) -> bool {
         self.first_child != NO_NODE
@@ -437,7 +367,6 @@ enum State {
     Complete,
 }
 
-/// A node [`complete_parents_first`] walks.
 trait Walked {
     fn state(&mut self) -> &mut State;
 }
@@ -454,10 +383,6 @@ impl Walked for Link {
     }
 }
 
-/// Completes every pending node of `nodes` once, parents first, by walking
-/// each one's chain of `parent`s (scratch `path`): `complete(nodes, index)`
-/// runs after the node's parent completed or, when the chain cycles, while
-/// it is still visited. Stops at `complete`'s first error.
 fn complete_parents_first<N: Walked, E>(
     nodes: &mut [N],
     path: &mut Vec<usize>,
@@ -487,52 +412,30 @@ fn complete_parents_first<N: Walked, E>(
     Ok(())
 }
 
-/// Canonical authoritative world poses from the latest propagation boundary.
-///
-/// Local Transform remains ordinary mutable ECS data. Read these derived values
-/// through this resource; gameplay cannot mutate or replace the published poses.
-/// An absent entry is unprepared, removed, or beyond the transform budget.
 #[derive(Resource)]
 pub struct GlobalTransforms {
     query: TransformQuery,
-    // Taken out while scanning so changed leaves can evaluate in the same pass.
     changed_query: Option<ChangedTransforms>,
-    // Each source's Entity, the only source key the change scan reads, in a
-    // dense copy so matching rows streams 8 bytes per node.
     entities: Vec<Entity>,
     sources: Vec<Source>,
-    // The sole cached copy of each admitted local pose, in upload layout: GPU
-    // presentation uploads current poses from it directly.
     locals: Vec<NodePose>,
-    // Boundary revision (`Self::revision`) at which each local last changed.
     local_revisions: Vec<u64>,
-    // Interpolation record of each node (u32::MAX: none), paired with the
-    // record's node index and rewritten at every topology rebuild.
     history_hints: Vec<u32>,
     links: Vec<Link>,
     globals: Vec<Mat4>,
-    // Admission bounds of each stored global with children, checked by its
-    // leaves instead of composing theirs.
     certificates: Vec<Certificate>,
     revisions: Vec<u64>,
     indices: EntityIndices,
     order: Vec<usize>,
-    // Advances whenever any node's validity may have changed: a node turned
-    // valid or invalid, or topology rebuilt.
     validity_epoch: u64,
     path: Vec<usize>,
     dirty: Dirty,
-    // Nodes whose local or output revision changed since GPU presentation
-    // last gathered: its gather visits only these.
     changes: ChangeLog,
     scans: ScanClock,
     incomplete: bool,
-    // Transformed entities admitted ([`TransformNodeLimit`]).
     limit: usize,
     report: HierarchyReport,
     topology_revision: u64,
-    // Advances whenever a boundary observed a changed source, rebuilt topology
-    // or evaluated nodes: consumers of local/world state can skip otherwise.
     revision: u64,
 }
 
@@ -571,20 +474,14 @@ impl FromWorld for GlobalTransforms {
 #[derive(Default)]
 struct PropagationWork {
     evaluated: usize,
-    // Certified leaves whose globals were not composed.
     deferred: usize,
     written: usize,
     value_ids: ValueIds,
 }
 
-/// Nodes awaiting evaluation at the current boundary.
 #[derive(Default)]
 struct Dirty {
-    // Compact flags parallel to `nodes`: marking a changed source does not
-    // touch its large matrix/topology record before evaluation reads it.
     flags: Vec<bool>,
-    // Sparse traversal seeds. Collection stops at the dense threshold because
-    // dense traversal streams every node in parent-first order instead.
     seeds: Vec<usize>,
     count: usize,
 }
@@ -595,7 +492,6 @@ impl Dirty {
         self.count = 0;
     }
 
-    /// Each index is marked at most once per scan: sources are unique rows.
     #[inline]
     fn mark(&mut self, index: usize, threshold: usize) {
         self.flags[index] = true;
@@ -606,14 +502,8 @@ impl Dirty {
     }
 }
 
-/// Nodes whose cached local or output revision changed since the log was
-/// last drained, each listed once. GPU presentation's gather drains it and
-/// visits only these nodes instead of every node. Past a
-/// quarter of the nodes the log stops listing and reports `overflow`: the
-/// next gather walks every node. Rebuilds and full scans also overflow it.
 pub(crate) struct ChangeLog {
     nodes: Vec<u32>,
-    // Per node: the drain generation in which it was last listed.
     marks: Vec<u32>,
     generation: u32,
     limit: usize,
@@ -627,14 +517,12 @@ impl Default for ChangeLog {
             marks: Vec::new(),
             generation: 1,
             limit: 0,
-            // Nothing drained this node space yet.
             overflow: true,
         }
     }
 }
 
 impl ChangeLog {
-    /// Starts a new node space: every node counts as changed.
     fn reset(&mut self, nodes: usize) {
         self.nodes.clear();
         self.marks.clear();
@@ -644,7 +532,6 @@ impl ChangeLog {
         self.overflow = true;
     }
 
-    /// Lists `index` once per drain. One flag test after overflow.
     #[inline(always)]
     fn record(&mut self, index: usize) {
         if self.overflow {
@@ -661,14 +548,10 @@ impl ChangeLog {
         }
     }
 
-    /// Changes since the last drain: every node listed, or `None` after an
-    /// overflow. Hand the list back with [`Self::restore`].
     pub(crate) fn take(&mut self) -> Option<Vec<u32>> {
         (!self.overflow).then(|| std::mem::take(&mut self.nodes))
     }
 
-    /// Ends a drain: later changes are listed again. Keeps the capacity of a
-    /// list returned by [`Self::take`].
     pub(crate) fn restore(&mut self, nodes: Option<Vec<u32>>) {
         if let Some(nodes) = nodes {
             self.nodes = nodes;
@@ -677,7 +560,6 @@ impl ChangeLog {
         self.overflow = false;
         self.generation = self.generation.wrapping_add(1);
         if self.generation == 0 {
-            // Marks from 2^32 drains ago must not pass as current.
             self.marks.fill(0);
             self.generation = 1;
         }
@@ -686,14 +568,9 @@ impl ChangeLog {
 
 struct Scan {
     topology_changed: bool,
-    // Rows whose local pose or identity keys changed.
     observed: usize,
 }
 
-/// Split borrow of the per-node arrays that evaluation reads and writes.
-/// Passes hold one for their whole loop, so each node's work keeps array
-/// pointers and lengths in locals instead of reloading them from the store
-/// after every element write.
 struct Nodes<'a> {
     locals: &'a mut [NodePose],
     history_hints: &'a mut [u32],
@@ -707,16 +584,12 @@ struct Nodes<'a> {
     changes: &'a mut ChangeLog,
 }
 
-/// Index of a source whose row left the retained table order. Out of line
-/// and by value, so the common sequential match keeps its Entity in registers.
 #[cold]
 #[inline(never)]
 fn find_index(indices: &EntityIndices, entity: Entity) -> Option<usize> {
     indices.get(&entity).copied()
 }
 
-/// A deferred leaf's global: its parent's stored global (identity for roots)
-/// times its cached local, exactly as eager evaluation composes it.
 #[cfg_attr(not(feature = "attribution"), inline)]
 #[cfg_attr(feature = "attribution", inline(never))]
 fn deferred_global(links: &[Link], globals: &[Mat4], locals: &[NodePose], index: usize) -> Mat4 {
@@ -728,9 +601,6 @@ fn deferred_global(links: &[Link], globals: &[Mat4], locals: &[NodePose], index:
 }
 
 impl Nodes<'_> {
-    /// Views every array at `len` elements, the common per-node length: after
-    /// one checked access at an index, compiled passes skip the other checks.
-    /// Inlined so the view stays in registers.
     #[inline(always)]
     fn trimmed(self, len: usize) -> Self {
         let Self {
@@ -759,7 +629,6 @@ impl Nodes<'_> {
         }
     }
 
-    /// Authoritative matrix at an admitted index; `None` when invalid.
     #[inline(always)]
     fn global(&self, index: usize) -> Option<Mat4> {
         match self.links[index].global {
@@ -774,11 +643,6 @@ impl Nodes<'_> {
         }
     }
 
-    /// The global of `index` for `local`, which equals its cached local's bits.
-    // Measured natively: keeping this per-node path inlined into both
-    // traversals matters more than batching local matrix construction.
-    // Attribution builds keep it and other hot helpers
-    // out of line so sampling profilers can separate their costs.
     #[cfg_attr(not(feature = "attribution"), inline(always))]
     #[cfg_attr(feature = "attribution", inline(never))]
     fn derived_global(&self, index: usize, local: &Transform) -> Option<Mat4> {
@@ -794,8 +658,6 @@ impl Nodes<'_> {
         valid_global_matrix(matrix).then_some(matrix)
     }
 
-    /// Whether `index`, a leaf with `local` (its cached local's bits), is
-    /// proven valid by its parent's certificate without composing its global.
     #[cfg_attr(not(feature = "attribution"), inline(always))]
     #[cfg_attr(feature = "attribution", inline(never))]
     fn certified(&self, index: usize, local: &Transform) -> bool {
@@ -813,9 +675,6 @@ impl Nodes<'_> {
         certificate.admits(local)
     }
 
-    /// Evaluates a changed node for `local` (its cached local's bits): a
-    /// certified leaf defers its global, anything else composes and validates
-    /// it. Returns whether descendants need to inherit a changed global.
     #[inline(always)]
     fn settle(
         &mut self,
@@ -826,15 +685,12 @@ impl Nodes<'_> {
     ) -> bool {
         if self.certified(index, local) {
             self.defer(index, work, observer);
-            // Deferred nodes are leaves: nothing inherits their global.
             return true;
         }
         let next = self.derived_global(index, local);
         self.commit(index, next, work, observer)
     }
 
-    /// Evaluates a dirty node from its cached local; returns whether
-    /// descendants need to inherit a changed global.
     #[inline(always)]
     fn update(
         &mut self,
@@ -846,9 +702,6 @@ impl Nodes<'_> {
         self.settle(index, &local, work, observer)
     }
 
-    /// Publishes a certified leaf without composing its global. Its inputs
-    /// changed, so it always takes a new output revision (a conservative one
-    /// in the rare case that the composed bits are unchanged).
     #[cfg_attr(not(feature = "attribution"), inline(always))]
     #[cfg_attr(feature = "attribution", inline(never))]
     fn defer(
@@ -880,9 +733,6 @@ impl Nodes<'_> {
         self.changes.record(index);
     }
 
-    /// Publishes an evaluated global; returns whether it changed. Unchanged
-    /// validity and matrix bits leave their records unwritten. A node with
-    /// children also refreshes the certificate its leaves are checked against.
     #[cfg_attr(not(feature = "attribution"), inline(always))]
     #[cfg_attr(feature = "attribution", inline(never))]
     fn commit(
@@ -898,7 +748,6 @@ impl Nodes<'_> {
         let valid = next.is_some();
         let before = link.global;
         let validity_changed = (before != Global::Invalid) != valid;
-        // A deferred global was never stored: the stored bits are stale.
         let changed = validity_changed
             || before == Global::Deferred
             || next.is_some_and(|matrix| !same_finite_matrix_bits(*global, matrix));
@@ -944,7 +793,6 @@ impl Nodes<'_> {
 }
 
 impl GlobalTransforms {
-    /// Returns a read value. Invalid admitted poses have matrix() == None.
     pub fn get(&self, entity: Entity) -> Option<GlobalTransform> {
         let index = *self.indices.get(&entity)?;
         Some(self.value_at(index))
@@ -960,9 +808,6 @@ impl GlobalTransforms {
             .map(|(value, _)| value)
     }
 
-    /// Revision changes when matrix bits or validity change, and may be
-    /// conservatively reissued when the topology cache is rebuilt. u64::MAX is an
-    /// exhausted revision sentinel and must never be reused by a consumer cache.
     #[inline]
     pub fn get_indexed_with_revision(
         &self,
@@ -982,9 +827,6 @@ impl GlobalTransforms {
         Some((self.value_at(index), self.revisions[index]))
     }
 
-    /// The admitted index of `entity` (checked against `hint` first, then
-    /// stored in it) when its global is valid: validity without composing a
-    /// deferred global.
     pub(crate) fn valid_index(&self, entity: Entity, hint: &mut TransformIndex) -> Option<usize> {
         let index = if self
             .sources
@@ -999,7 +841,6 @@ impl GlobalTransforms {
         (self.links[index].global != Global::Invalid).then_some(index)
     }
 
-    /// Advances whenever a node's validity may have changed.
     pub(crate) fn validity_epoch(&self) -> u64 {
         self.validity_epoch
     }
@@ -1025,19 +866,15 @@ impl GlobalTransforms {
         GlobalTransform::read_value(self.global(index), self.revisions[index])
     }
 
-    /// Output revision at an admitted index.
     #[inline]
     pub(crate) fn revision_at(&self, index: usize) -> u64 {
         self.revisions[index]
     }
 
-    /// Authoritative matrix at an admitted index; `None` when invalid.
     #[inline]
     pub(crate) fn global(&self, index: usize) -> Option<Mat4> {
         match self.links[index].global {
             Global::Stored => Some(self.globals[index]),
-            // Composed on read from the parent's stored global and the cached
-            // local: the bits eager evaluation would have stored.
             Global::Deferred => Some(deferred_global(
                 &self.links,
                 &self.globals,
@@ -1048,22 +885,16 @@ impl GlobalTransforms {
         }
     }
 
-    /// Children with valid ancestry, reusing the bounded topology cache.
     pub(crate) fn children(&self, index: usize) -> impl Iterator<Item = usize> + '_ {
         std::iter::successors(self.links[index].first_child(), |&child| {
             self.links[child].next_sibling()
         })
     }
 
-    /// Dense traversal visits the whole parent-first order at this many seeds.
     fn dense_threshold(&self) -> usize {
         self.links.len().div_ceil(2)
     }
 
-    /// Classifies each table's change stamps in blocks before touching any
-    /// payload or source record; unchanged blocks cost one pass over their
-    /// stamps. The system state owns its window independently of
-    /// `World::clear_trackers`.
     fn scan_changed(
         &mut self,
         world: &World,
@@ -1099,7 +930,6 @@ impl GlobalTransforms {
         interpolation: &mut Option<&mut InterpolationState>,
     ) -> Scan {
         let threshold = self.dense_threshold();
-        // Every observed change advances this boundary's revision.
         let next_revision = self.revision.wrapping_add(1);
         let mut checked = 0;
         let mut observed = 0;
@@ -1157,8 +987,6 @@ impl GlobalTransforms {
             let (transforms, ticks) = ContiguousRef::split(transforms);
             let window = ChangeWindow::new(ticks.last_run(), ticks.this_run());
             let (changed, added) = (ticks.changed(), ticks.added());
-            // Refreshes between ticks usually find no change: one unrolled pass
-            // over the table's stamps then replaces the per-block loop.
             if !window.any(changed) {
                 continue;
             }
@@ -1174,8 +1002,6 @@ impl GlobalTransforms {
                     checked += 1;
                     let entity = entities[row];
                     let transform = &transforms[row];
-                    // Consecutive changed rows use the retained table order; sparse
-                    // changes or unrelated archetype moves fall back to full Entity IDs.
                     let index = if source_entities.get(next_index) == Some(&entity) {
                         next_index
                     } else if let Some(index) = find_index(indices, entity) {
@@ -1188,15 +1014,8 @@ impl GlobalTransforms {
                     };
                     next_index = index + 1;
                     let local = &mut nodes.locals[index];
-                    // The stamp passed this window; only an equal-value mutable
-                    // write remains to be filtered out.
                     let pose = transform.to_pose();
                     let local_changed = !same_pose_bits(local, &pose);
-                    // Parent and marker changes are structural and never reach
-                    // this scan; only a re-added Transform changes identity
-                    // (`World::modify_component` resets its added tick without
-                    // an insertion hook). That tick then lies in this window, so
-                    // other rows never load their source record.
                     let transform_added = added[row];
                     let identity_changed = window.contains(transform_added)
                         && sources[index].transform_added != transform_added.get();
@@ -1209,12 +1028,9 @@ impl GlobalTransforms {
                             let hint = &mut nodes.history_hints[index];
                             let motion = !identity_changed
                                 && observer.observe_motion(*hint, index, local, &pose);
-                            // Non-interpolated sources keep their empty hint.
                             if !motion
                                 && (*hint != u32::MAX || sources[index].marker_added.is_some())
                             {
-                                // A fresh copy keeps `pose` out of memory on the
-                                // common path.
                                 observer.observe_source(
                                     hint,
                                     index,
@@ -1232,21 +1048,13 @@ impl GlobalTransforms {
                     }
                     local_revisions[index] = next_revision;
                     nodes.changes.record(index);
-                    // A changed leaf under a parent not waiting for this
-                    // boundary evaluates now, while its pose is hot, instead of in
-                    // the parent-first pass. A parent marked later in this scan
-                    // re-evaluates its subtree there.
                     let link = &nodes.links[index];
                     if !link.has_children()
                         && link.parent().is_none_or(|parent| !nodes.flags[parent])
                     {
-                        // Evaluated from the ECS value just cached, bit for
-                        // bit, instead of unpacking the upload-layout copy.
                         nodes.settle(index, transform, work, &mut observer);
                         early += 1;
                     } else {
-                        // Each index is marked at most once per scan:
-                        // sources are unique rows.
                         nodes.flags[index] = true;
                         if *dirty_count < threshold {
                             seeds.push(index);
@@ -1264,8 +1072,6 @@ impl GlobalTransforms {
         }
     }
 
-    /// Revalidate all source identities and payloads after structural changes,
-    /// interrupted propagation, or an aged change-stamp window.
     fn scan_full(
         &mut self,
         world: &World,
@@ -1274,7 +1080,6 @@ impl GlobalTransforms {
         let _profile = engine_profile::span("hierarchy", "change_tick_scan");
         engine_profile::counter("hierarchy.full_scan", 1.0);
         self.dirty.clear();
-        // Rare: consumers of the change log walk every node once.
         self.changes.overflow = true;
         let threshold = self.dense_threshold();
         let mut count = 0;
@@ -1339,8 +1144,6 @@ impl GlobalTransforms {
         }
     }
 
-    /// Structural edits rebuild indices, ancestry, order and child links once.
-    /// Local-pose edits never clear these retained collections.
     fn rebuild_topology(
         &mut self,
         world: &mut World,
@@ -1378,7 +1181,6 @@ impl GlobalTransforms {
         self.path.reserve_exact(admitted);
         self.dirty.flags.clear();
         self.dirty.flags.reserve_exact(admitted);
-        // Sparse seeds never exceed the dense threshold.
         self.dirty.seeds.reserve_exact(admitted.div_ceil(2));
         let mut report = HierarchyReport::default();
         for (entity, transform, parent, marker) in self.query.iter(world) {
@@ -1395,8 +1197,6 @@ impl GlobalTransforms {
             };
             let mut history_hint = u32::MAX;
             if let Some(state) = interpolation.as_deref_mut() {
-                // Reconciliation cleared every record's node index; this
-                // resolves the record by Entity and restores the pair.
                 state.observe_source(
                     &mut history_hint,
                     self.sources.len(),
@@ -1450,8 +1250,6 @@ impl GlobalTransforms {
                 Ok(())
             },
         );
-        // Only valid ancestry enters child traversal. Cycles and their dependent
-        // branches remain invalid until a structural edit repairs them.
         for index in 0..self.links.len() {
             if self.links[index].topology_valid
                 && let Some(parent) = self.links[index].parent()
@@ -1460,12 +1258,9 @@ impl GlobalTransforms {
                 self.links[parent].first_child = index as u32;
             }
         }
-        // Every node is dirty, which always selects dense parent-first traversal.
         self.dirty.flags.resize(self.links.len(), true);
         self.dirty.count = self.links.len();
         self.changes.reset(self.links.len());
-        // A structural rebuild conservatively reissues output revisions. No
-        // duplicate full-pose buffer is retained solely to preserve those stamps.
         report.invalid_transforms = report.transforms;
         self.report = report;
         self.validity_epoch += 1;
@@ -1511,8 +1306,6 @@ impl GlobalTransforms {
         let mut observer = interpolation
             .as_deref_mut()
             .map(InterpolationState::observer);
-        // Dense movement streams the cached parent-first order instead of
-        // walking the ancestor chain separately for every changed entity.
         if dense {
             for &index in order.iter() {
                 if nodes.flags[index] && nodes.update(index, work, &mut observer) {
@@ -1526,8 +1319,6 @@ impl GlobalTransforms {
             return;
         }
         for &index in dirty.seeds.iter() {
-            // A dirty ancestor can evaluate to the same matrix (or remain
-            // invalid). Its independently edited descendant must still run.
             while nodes.flags[index] {
                 let mut root = index;
                 if nodes.links[index].topology_valid {
@@ -1559,7 +1350,6 @@ impl GlobalTransforms {
         world: &mut World,
         mut interpolation: Option<&mut InterpolationState>,
     ) -> HierarchyReport {
-        // A changed limit rescans every source.
         let limit = node_limit(world);
         if limit != self.limit {
             self.limit = limit;
@@ -1577,8 +1367,6 @@ impl GlobalTransforms {
         } else {
             self.scan_changed(world, &mut work, &mut interpolation)
         };
-        // Source reconciliation includes component lifetimes and interpolation
-        // membership, not just parent links. A forced rebuild is rare.
         scan.topology_changed |= interrupted || structural;
         if scan.topology_changed {
             self.rebuild_topology(world, &mut work, &mut interpolation);
@@ -1596,8 +1384,6 @@ impl GlobalTransforms {
         engine_profile::counter("hierarchy.evaluated_nodes", work.evaluated as f64);
         engine_profile::counter("hierarchy.deferred_globals", work.deferred as f64);
         engine_profile::counter("hierarchy.written_globals", work.written as f64);
-        // Only the local input scan touches ECS timestamps. A completed boundary
-        // owns its window independently of external clear_trackers calls.
         let completed_tick = world.read_change_tick();
         self.scans.scanned(completed_tick);
         consume_through(
@@ -1606,8 +1392,6 @@ impl GlobalTransforms {
                 .expect("change scan state is restored after scanning"),
             completed_tick,
         );
-        // The next ordinary mutable borrow must be newer than the window just
-        // consumed, even without a schedule run or clear_trackers in between.
         world.increment_change_tick();
         self.incomplete = false;
         #[cfg(debug_assertions)]
@@ -1616,21 +1400,11 @@ impl GlobalTransforms {
     }
 }
 
-/// Local poses must be finite with a near-unit rotation before composition.
-///
-/// Only the rotation needs an explicit test: `<=` also rejects NaN/infinite
-/// norms. A non-finite scale or translation component makes every lane of
-/// its matrix column non-finite (0 * inf is NaN; other products are infinite),
-/// and multiplying by any parent keeps that column non-finite, so admission of
-/// the composed matrix rejects it exactly as an early local check would.
 #[inline]
 fn local_matrix(local: &Transform) -> Option<Mat4> {
     ((local.rotation.length_squared() - 1.0).abs() <= 1.0e-3).then(|| local.matrix())
 }
 
-/// Bit equality for finite matrices (admitted poses): non-NaN floats are
-/// bit-identical exactly when they compare equal and share a sign bit, which
-/// also distinguishes the two zeros. Four vector compares and sign masks.
 #[inline(always)]
 pub(crate) fn same_finite_matrix_bits(left: Mat4, right: Mat4) -> bool {
     debug_assert!(left.is_finite() && right.is_finite(), "matrices are finite");
@@ -1645,18 +1419,6 @@ pub(crate) fn same_finite_matrix_bits(left: Mat4, right: Mat4) -> bool {
     equal.all() && signs == 0
 }
 
-/// Refreshes derived globals without advancing clocks or running gameplay.
-///
-/// Ordinary mutable writes use Bevy change stamps and an engine-owned scan
-/// window. Metadata is visited in table order; unchanged payloads are not read.
-/// Structural changes and aged scan windows use full source validation. Explicit
-/// change-detection bypasses/manual stamp edits are unsupported for transform data.
-///
-/// Orphans, cycles, excessive depth, invalid matrices, and overflow become
-/// `GlobalTransform::matrix() == None`; healthy unrelated branches still update.
-/// Removing `Transform` removes its published pose at the next refresh. Storage is bounded by
-/// [`TransformNodeLimit`]; traversal is iterative, with ancestor walks bounded
-/// by [`MAX_HIERARCHY_DEPTH`].
 pub fn propagate_transforms(world: &mut World) -> HierarchyReport {
     let _profile = engine_profile::span("hierarchy", "propagate");
     tracking::init(world);

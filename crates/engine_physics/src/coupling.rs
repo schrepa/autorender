@@ -1,11 +1,3 @@
-//! What the world's water and wind do to bodies. Water buoys a body by the
-//! weight of the water it displaces and drags it toward the water's own
-//! velocity, so lighter bodies float, currents carry them and falls drop
-//! them; the wind, gusting as it sways the placed objects, drags what stands
-//! out of the water. A body's box divides into cells water presses on one by
-//! one, so a floating body rights itself and a log turns with the current;
-//! round bodies take the exact share of a sphere below a surface.
-
 use bevy_ecs::prelude::World;
 use engine_core::math::clamp;
 use engine_core::{Physics, WaterSample, WaterSources, Wind};
@@ -14,17 +6,11 @@ use glam::{Quat, Vec3};
 use crate::body::BodyWater;
 use crate::shapes::BodyShape;
 
-/// The most cells a body's box divides into along an axis.
 const MOST_CELLS: f32 = 6.0;
-/// The spin damping a body takes in air, and the more it takes wholly in water.
 pub(crate) const AIR_SPIN: f32 = 0.05;
 const WATER_SPIN: f32 = 1.5;
-/// Meters a second of current that wake a body asleep in it.
 const STILL_WATER: f32 = 0.05;
 
-/// How water presses on a body: the half extents of its box, the cells it
-/// divides into along each local axis, the axis it is longest along, whether
-/// it is round, and its volume.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Form {
     pub half: Vec3,
@@ -59,8 +45,6 @@ impl Form {
         }
     }
 
-    /// Where along its long axis water is sampled, from -1 to 1: its middle,
-    /// and for a long body its end cells too.
     fn stations(&self) -> &'static [f32] {
         if self.half[self.long] >= 2.0 * self.half.min_element() {
             &[-1.0, 0.0, 1.0]
@@ -69,8 +53,6 @@ impl Form {
         }
     }
 
-    /// The area it turns to a flow: a face of its box on average, or a
-    /// round body's cross-section.
     fn area(&self) -> f32 {
         let h = self.half;
         if self.round {
@@ -82,8 +64,6 @@ impl Form {
     }
 }
 
-/// A body as the forces read it: its pose, center of mass, velocities and
-/// mass.
 pub(crate) struct Motion {
     pub translation: Vec3,
     pub rotation: Quat,
@@ -94,15 +74,11 @@ pub(crate) struct Motion {
 }
 
 impl Motion {
-    /// The velocity of its point `point`.
     fn at(&self, point: Vec3) -> Vec3 {
         self.velocity + self.spin.cross(point - self.center)
     }
 }
 
-/// What water and wind do to a body this tick: the force and the torque
-/// about its center of mass, its spin damping, the water it is in and
-/// whether that water runs fast enough to wake it.
 pub(crate) struct Push {
     pub force: Vec3,
     pub torque: Vec3,
@@ -111,8 +87,6 @@ pub(crate) struct Push {
     pub running: bool,
 }
 
-/// `force` limited to what changes `mass`'s velocity by at most `speed` over
-/// `seconds`: drag slows toward the flow and never past it.
 fn limited(force: Vec3, mass: f32, speed: f32, seconds: f32) -> Vec3 {
     let impulse = force.length() * seconds;
     let most = mass * speed;
@@ -123,16 +97,12 @@ fn limited(force: Vec3, mass: f32, speed: f32, seconds: f32) -> Vec3 {
     }
 }
 
-/// The water sampled along a body: each station's position along its long
-/// axis (-1 to 1) and the water there.
 struct Along {
     stations: [(f32, Option<WaterSample>); 3],
     count: usize,
 }
 
 impl Along {
-    /// The world's water over `motion`'s body at each of `form`'s
-    /// stations; `samples` counts them.
     fn sample(world: &World, form: &Form, motion: &Motion, samples: &mut u32) -> Self {
         let mut axis = Vec3::ZERO;
         axis[form.long] = form.half[form.long];
@@ -152,7 +122,6 @@ impl Along {
         along
     }
 
-    /// The water at `at` along the body, between the stations around it.
     fn at(&self, at: f32) -> Option<WaterSample> {
         let stations = &self.stations[..self.count];
         let (low, high) = match stations {
@@ -182,7 +151,6 @@ impl Along {
         }
     }
 
-    /// The water at the body's middle, or any station's.
     fn middle(&self) -> Option<WaterSample> {
         self.at(0.0).or_else(|| {
             self.stations[..self.count]
@@ -192,8 +160,6 @@ impl Along {
     }
 }
 
-/// What the world's water and wind do to a body of `form` and `drag`
-/// coefficient moving as `motion` this tick of `seconds` at time `time`.
 #[expect(
     clippy::too_many_arguments,
     reason = "each is one of the tick's inputs"
@@ -244,7 +210,6 @@ pub(crate) fn push(
     }
     let share = clamp(submerged / form.volume, 0.0, 1.0);
     push.damping = AIR_SPIN + WATER_SPIN * share;
-    // The wind on what stands out of the water.
     if let Some(wind) = wind
         && settings.air_density > 0.0
         && share < 1.0
@@ -259,8 +224,6 @@ pub(crate) fn push(
     push
 }
 
-/// Water's push on a box body, cell by cell, added to `push`: the volume
-/// below the surface.
 #[expect(
     clippy::too_many_arguments,
     reason = "each is one of the tick's inputs"
@@ -278,7 +241,6 @@ fn cells(
     let counts = form.cells.map(f32::from);
     let cell = form.half / Vec3::from_array(counts);
     let axes = [Vec3::X, Vec3::Y, Vec3::Z].map(|axis| motion.rotation * axis);
-    // Each cell's half height in the world.
     let rise = axes[0].y.abs() * cell.x + axes[1].y.abs() * cell.y + axes[2].y.abs() * cell.z;
     let count = counts[0] * counts[1] * counts[2];
     let volume = form.volume / count;
@@ -320,8 +282,6 @@ fn cells(
     submerged
 }
 
-/// Water's push on a round body, added to `push`: the volume below the
-/// surface, the share of a sphere as tall as the body stands.
 #[expect(
     clippy::too_many_arguments,
     reason = "each is one of the tick's inputs"

@@ -1,17 +1,9 @@
-//! What impostors' records are keyed by beyond the renderer's code and the
-//! atlas: the content of the mesh and of the material they depict, hashed
-//! ([`engine_core::content_hash`]) from what they hold, never from the
-//! handles a session gives them, so a record names the same impostor in
-//! every session.
-
 use engine_core::collections::HashMap;
 use engine_core::{
     AlphaMode, Filter, Material, Mesh, MeshHandle, Texture, TextureFormat, TextureHandle,
     TextureRef, Wrap, content_hash,
 };
 
-/// The contents hashed so far: each mesh's and texture's, by handle, which
-/// names the same content while it lives.
 #[derive(Default)]
 pub(crate) struct Contents {
     meshes: HashMap<MeshHandle, u128>,
@@ -19,8 +11,6 @@ pub(crate) struct Contents {
 }
 
 impl Contents {
-    /// The content of mesh `handle`, `mesh`: its vertices, indices, colors
-    /// and second texture coordinates.
     pub(crate) fn mesh(&mut self, handle: MeshHandle, mesh: &Mesh) -> u128 {
         *self.meshes.entry(handle).or_insert_with(|| {
             let mut bytes = Vec::with_capacity(mesh.byte_len() + 16);
@@ -46,8 +36,6 @@ impl Contents {
         })
     }
 
-    /// The content of `material`, whose textures `texture` finds: every
-    /// value it holds and each texture's texels; 0 without a material.
     pub(crate) fn material<'a>(
         &mut self,
         material: Option<&Material>,
@@ -119,8 +107,6 @@ impl Contents {
         content_hash(&bytes)
     }
 
-    /// The content of texture `handle`, which `texture` finds: its size,
-    /// format and texels; 0, and not kept, while it is not there.
     fn texture<'a>(
         &mut self,
         handle: TextureHandle,
@@ -148,8 +134,6 @@ impl Contents {
         content
     }
 
-    /// Forgets the meshes `mesh` and textures `texture` refuse: their
-    /// handles are gone.
     pub(crate) fn retain(
         &mut self,
         mut mesh: impl FnMut(MeshHandle) -> bool,
@@ -160,21 +144,18 @@ impl Contents {
     }
 }
 
-/// `values` into `bytes`, little-endian, as they are stored.
 fn floats(bytes: &mut Vec<u8>, values: &[f32]) {
     for value in values {
         bytes.extend_from_slice(&value.to_bits().to_le_bytes());
     }
 }
 
-/// `values` into `bytes`, little-endian.
 fn words(bytes: &mut Vec<u8>, values: &[u32]) {
     for value in values {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
 }
 
-/// `map`'s sampler, transform and coordinates into `bytes`.
 fn texture_ref(bytes: &mut Vec<u8>, map: &TextureRef) {
     let wrap = |wrap: Wrap| match wrap {
         Wrap::Repeat => 0,

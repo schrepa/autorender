@@ -15,13 +15,10 @@ serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# The generated schemas and protocol summary (`schemas`, which
-# `cargo xtask schema` runs), profiling's event budget among them.
 engine_profile.workspace = true
 schemars.workspace = true
 engine_settings = { workspace = true, features = ["schema"] }
 engine_physics = { workspace = true, features = ["schema"] }
-# Environment controls reuse the scene sections, schemas included.
 engine_scene = { workspace = true, features = ["schema"] }
 
 [lints]

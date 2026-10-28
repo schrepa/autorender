@@ -1,6 +1,3 @@
-# Optional workspace-local Rust installation. This does not change the user PATH.
-# Dot-source from PowerShell: . ./scripts/activate.ps1
-# Worktrees use the main checkout's installation.
 $engineRoot = Split-Path -Parent $PSScriptRoot
 $toolsRoot = $engineRoot
 if (-not (Test-Path -LiteralPath (Join-Path $toolsRoot '.tools\cargo\bin\cargo.exe'))) {

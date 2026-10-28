@@ -1,22 +1,9 @@
-//! Rust sources as text, per line: the code without comments or literal
-//! contents, and the comments. Enough of Rust's lexical grammar for the
-//! policy's checks: line, block (nested) and doc comments; string, byte,
-//! C and raw string literals; character and byte literals told apart from
-//! lifetimes and labels.
-
-/// A Rust file split per line (index 0 is line 1).
 pub struct Split {
-    /// Each line's code: comments removed, literals kept as empty quotes
-    /// (`""`, `''`).
     pub code: Vec<String>,
-    /// Each line's comment text, markers included (`// SAFETY: ...`).
     pub comments: Vec<String>,
 }
 
 impl Split {
-    /// Whether a `SAFETY:` comment stands above line `line` (from 0): the
-    /// comment lines and attributes above it are walked upward, up to code
-    /// or a blank line.
     pub fn safety_comment_above(&self, line: usize) -> bool {
         let mut above = line;
         while above > 0 {
@@ -34,9 +21,6 @@ impl Split {
         false
     }
 
-    /// The first line of the statement line `line` (from 0) belongs to:
-    /// lines above it whose code ends without `;`, `{` or `}` continue onto
-    /// it, up to a blank line, a comment or an attribute.
     pub fn statement_start(&self, line: usize) -> usize {
         let mut start = line;
         while start > 0 {
@@ -50,8 +34,6 @@ impl Split {
         start
     }
 
-    /// The token after byte `end` of line `line`'s code, across lines: a
-    /// word, or a single other character (`{`).
     pub fn token_after(&self, line: usize, end: usize) -> String {
         let rest = std::iter::once(&self.code[line][end..])
             .chain(self.code[line + 1..].iter().map(String::as_str))
@@ -76,12 +58,10 @@ fn identifier(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// Whether `word` occurs in `text` whole: not inside a longer identifier.
 pub fn has_word(text: &str, word: &str) -> bool {
     words(text, word).next().is_some()
 }
 
-/// The byte offset just past each whole occurrence of `word` in `text`.
 pub fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
     text.match_indices(word).filter_map(move |(at, _)| {
         let before = text[..at].chars().next_back();
@@ -91,7 +71,6 @@ pub fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 
     })
 }
 
-/// Splits `source` into its lines' code and comments.
 pub fn split(source: &str) -> Split {
     let chars: Vec<char> = source.chars().collect();
     let mut split = Split {
@@ -114,7 +93,6 @@ pub fn split(source: &str) -> Split {
         } else if c == '/' && next == Some('*') {
             at = block_comment(&chars, at, &mut split);
         } else if let Some((end, quote)) = literal(&chars, at) {
-            // The literal's own newlines still end lines.
             for &inside in &chars[at..end] {
                 if inside == '\n' {
                     split.code.push(String::new());
@@ -137,8 +115,6 @@ fn last(lines: &mut [String]) -> &mut String {
         .expect("a split starts with one line and only adds lines")
 }
 
-/// Past the block comment opening at `start` (nested comments included),
-/// its text recorded line by line.
 fn block_comment(chars: &[char], start: usize, split: &mut Split) -> usize {
     let mut depth = 0usize;
     let mut at = start;
@@ -167,11 +143,8 @@ fn block_comment(chars: &[char], start: usize, split: &mut Split) -> usize {
     at
 }
 
-/// The end of the literal starting at `start` (prefix included) and its
-/// quote character, or `None` where no literal starts.
 fn literal(chars: &[char], start: usize) -> Option<(usize, char)> {
     let previous = start.checked_sub(1).map(|at| chars[at]);
-    // Prefixes (`b`, `c`, `r`, `br`, `cr`) start a token, not end one.
     let prefix = if previous.is_some_and(identifier) {
         ""
     } else {
@@ -205,8 +178,6 @@ fn literal(chars: &[char], start: usize) -> Option<(usize, char)> {
     }
 }
 
-/// A raw string's `#`s and quotes from `body`: its end, or `None` for a
-/// raw identifier (`r#match`).
 fn raw_string(chars: &[char], body: usize) -> Option<(usize, char)> {
     let hashes = chars[body..].iter().take_while(|&&c| c == '#').count();
     if chars.get(body + hashes) != Some(&'"') {
@@ -229,12 +200,9 @@ fn raw_string(chars: &[char], body: usize) -> Option<(usize, char)> {
     Some((chars.len(), '"'))
 }
 
-/// A character literal at `quote`: its end, or `None` for a lifetime or
-/// label (`'a`, `'outer:`).
 fn character(chars: &[char], quote: usize) -> Option<(usize, char)> {
     match chars.get(quote + 1)? {
         '\\' => {
-            // `'\''` escapes the quote itself; no other escape holds one.
             let mut at = quote + 3;
             while at < chars.len() && chars[at] != '\'' {
                 at += 1;

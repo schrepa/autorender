@@ -1,6 +1,3 @@
-//! Structural invalidation complements the hierarchy's private change-tick
-//! watermark. Ordinary mutable writes are detected from component metadata;
-//! deliberately bypassing change detection or rewriting ticks opts out.
 use bevy_ecs::{
     change_detection::CheckChangeTicks, lifecycle::HookContext, prelude::*, world::DeferredWorld,
 };
@@ -16,9 +13,6 @@ impl Default for Invalidation {
     }
 }
 
-/// Install once for the lifetime of the engine-owned resource. Tick maintenance
-/// may clamp component timestamps, so the next boundary must adopt authoritative
-/// values rather than mistake an aged, unobserved edit for an unchanged value.
 pub(super) fn init(world: &mut World) {
     if world.contains_resource::<Invalidation>() {
         return;

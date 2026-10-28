@@ -1,8 +1,3 @@
-//! What a world holds, as hashes that depend on neither entity ids nor the
-//! order entities were made in: the `digest` query, which equivalence checks
-//! and the core smoke compare between builds, and between hosts after the
-//! same ticks.
-
 use engine_core::bevy_ecs::world::World;
 use engine_core::{AssetLibrary, Mesh, Texture, content_hash};
 use serde_json::{Map, Value, json};
@@ -11,11 +6,6 @@ use crate::results::DigestResult;
 use crate::{Context, DevTools};
 
 impl DevTools {
-    /// `world`'s digest: for each component inspector, how many entities
-    /// hold its component and a hash of their views, sorted, so neither
-    /// entity ids nor spawn order count; for each kind of asset, how many
-    /// the library holds and a hash of their contents in slot order (the
-    /// order components name them by); and one hash over both.
     pub fn digest(&self, world: &World, context: Context<'_>) -> DigestResult {
         let mut components = Map::new();
         for (name, mut views) in self.component_views(world, context) {
@@ -45,13 +35,10 @@ impl DevTools {
     }
 }
 
-/// The first 16 hexadecimal digits of `bytes`' content hash.
 fn hash(bytes: &[u8]) -> String {
     format!("{:016x}", content_hash(bytes) as u64)
 }
 
-/// Each kind of asset `library` holds: how many and a hash of their
-/// contents, slot by slot.
 fn assets(library: &AssetLibrary) -> Value {
     let kind = |entries: Vec<(usize, Vec<u8>)>| {
         let mut bytes = Vec::new();
@@ -85,9 +72,6 @@ fn assets(library: &AssetLibrary) -> Value {
     })
 }
 
-/// A mesh's geometry as bytes: its vertices, indices, extra attributes,
-/// skin, bounds and virtual geometry (not where that streams from, which
-/// is a host's path).
 fn mesh_bytes(mesh: &Mesh) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(mesh.byte_len());
     let mut floats = |values: &[f32]| {
@@ -129,7 +113,6 @@ fn mesh_bytes(mesh: &Mesh) -> Vec<u8> {
     bytes
 }
 
-/// A texture's size, format and levels' bytes.
 fn texture_bytes(texture: &Texture) -> Vec<u8> {
     let mut bytes = format!(
         "{}x{} {:?} {}",
@@ -145,8 +128,6 @@ fn texture_bytes(texture: &Texture) -> Vec<u8> {
     bytes
 }
 
-/// `debug` (an asset's `Debug` text) without the library its handles
-/// name, which differs between engines: `library: 3, ` goes.
 fn without_libraries(debug: &str) -> Vec<u8> {
     const LIBRARY: &str = "library: ";
     let mut kept = String::with_capacity(debug.len());

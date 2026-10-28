@@ -1,45 +1,22 @@
-//! Games the page runs: the state beside an [`Engine`] that
-//! [`crate::export_game!`] exports with the methods every game has.
-
 use engine_core::ErrorCode;
 use engine_core::{Engine, bevy_ecs::resource::Resource};
 use engine_scene::{SceneError, SceneFiles, SceneInstance};
 
-/// A game: what it keeps beside its engine and the hooks the engine calls.
-/// The engine runs frames, jobs, loading, statistics, development tools and
-/// profiling for every game.
 pub trait Game: 'static {
-    /// The game's action keys: UI Events code names
-    /// ([`crate::host::KEYS`]) by action index, which every host reads
-    /// input by.
     const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0)];
 
-    /// Runs before each frame the engine simulates or submits, development
-    /// steps and renders included.
     fn before_frame(&mut self, _engine: &mut Engine) {}
 
-    /// Puts the camera where the game starts.
     fn reset_camera(&mut self, _engine: &mut Engine) {}
 
-    /// The authored scene running, which development tools inspect and
-    /// reload.
     fn scene(&self) -> Option<&SceneInstance> {
         None
     }
 
-    /// What the scene `engine` runs draws depends on beyond the engine's
-    /// code: bytes that change whenever it may, such as the hash of the
-    /// game's code (`engine_sources`) and its workload or scene. The
-    /// scene's pipeline list is kept by them, and created up front in later
-    /// sessions; with `None`, the default, the game keeps none, and frames
-    /// create each pipeline as they first draw with it.
     fn content(&self, _engine: &Engine) -> Option<Vec<u8>> {
         None
     }
 
-    /// Replaces the authored scene with `source` and the `files` it
-    /// references; a scene that fails keeps the current one. Development
-    /// reloads call it once the source's scene ID and revision matched.
     fn reload_scene(
         &mut self,
         _engine: &mut Engine,
@@ -53,12 +30,9 @@ pub trait Game: 'static {
         })
     }
 
-    /// Registers the game's own inspectors with the development tools.
     fn inspectors(_inspectors: &mut Inspectors) {}
 }
 
-/// The development tools' inspectors, which games register their own with;
-/// outside development builds registration does nothing.
 pub struct Inspectors<'a> {
     #[cfg(feature = "dev")]
     tools: &'a mut engine_dev::DevTools,
@@ -72,9 +46,6 @@ impl<'a> Inspectors<'a> {
         Self { tools }
     }
 
-    /// Inspects resource `R` as `view` reads it, described by the schema
-    /// named `name` in `schemas`, the JSON object of schemas the game
-    /// generates. A missing schema or description panics.
     pub fn resource<R: Resource>(
         &mut self,
         schemas: &str,

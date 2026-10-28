@@ -8,11 +8,8 @@ publish.workspace = true
 [dependencies]
 engine_assets.workspace = true
 engine_math.workspace = true
-# Powers for the sRGB transfer function, the same bits on every host.
 libm.workspace = true
 
-# `SOURCE`, the hash of the code cooking textures, which keys the records
-# of the jobs cooking them.
 [build-dependencies]
 engine_sources.workspace = true
 

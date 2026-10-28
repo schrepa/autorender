@@ -1,57 +1,3 @@
-// Terrain's subdivision, after `meshes/terrain.wgsl`: each frame, every
-// terrain the camera draws splits and merges the leaves of a concurrent
-// binary tree over its square (Dupuy et al., "Concurrent Binary Trees (with
-// application to longest edge bisection)", HPG 2020) by how far the meshlet
-// each leaf draws strays from its surface in pixels seen from the detail
-// eye, and lists the leaves the frame draws (`terrain_surface.wgsl`). A
-// terrain holding water has a second tree for its water, run by the same
-// code over its own buffers: a ground's tree measures the ground, a water's
-// the mesh its water stands on, and draws only the leaves its surface can
-// reach, where each pixel decides whether water shows.
-//
-// A leaf's error is exact, not sampled: every resident tile carries error
-// pyramids of its ground and of its water's mesh, each cell of its
-// samples' grid holding the most a triangle of the bisection lying in it
-// strays from the samples' surface, and a leaf's meshlet strays by at most
-// the most of the cells of its pieces' size it covers, read where the finest
-// resident tile holds each (`surface_ground_error`, `surface_water`). The
-// ground's materials add what the meshlet's pieces cannot carry of their
-// mesh band and how far the rest bends over them.
-//
-// The tree is the paper's bitfield, a bit for each node of its deepest
-// level, set at the first of each leaf's, under the counts of its levels
-// down to SUBDIVISION_COUNTED above the deepest, each node's leaves; the
-// levels between are counted from the bitfield's words. Its leaves are the
-// triangles of longest edge bisection over the square's two halves, and a
-// split also splits every triangle across a hypotenuse whose split it needs
-// (the paper's neighbor rule), so the triangulation stays conforming,
-// without cracks or T-junctions.
-//
-// A frame takes three dispatches per terrain, every decision read from the
-// tree as the frame found it:
-// - begin: the frame's arguments from the leaves the tree holds, which the
-//   frame copies to the buffer the dispatches after it and the draws take
-//   them from (no dispatch takes its arguments from a buffer it writes);
-// - decide: each leaf found by the counts, listed for the frame's draws
-//   (collapsed where the terrain draws nothing), and marked to split or, on
-//   the frames merging (every other one, so splits and merges never meet),
-//   its diamond to merge;
-// - apply: the marks set into the bitfield, every count over a bit changing
-//   by one as it changes, so the counts always hold the bitfield's sums
-//   without a pass summing them.
-// A leaf thus changes a level every other frame at most, as the paper's do.
-// Splits stop where a terrain's leaves would outnumber its room, counted.
-
-// A terrain's subdivision: the side of its square (meters, terrain-local
-// from its origin), the pixels a leaf's meshlet may stray from its surface
-// seen from the detail eye, and 1 for a tree of its water's surface (0: of
-// its ground); its tree's deepest level, where its bitfield starts in
-// `subdivision_tree` (words, after the counts), where its leaves start in
-// `subdivision_leaves` and `subdivision_nodes` and how many it holds at
-// most; 1 on frames merging leaves (0: splitting) and its place in
-// `subdivision_args`; the ground it draws (terrain-local, least corner then
-// greatest) and the ground surroundings leave to the terrain they surround
-// (all 0 without); and the camera's frustum, its planes inward in the world.
 struct TerrainSubdivision {
     square: vec4<f32>,
     tree: vec4<u32>,
@@ -61,49 +7,27 @@ struct TerrainSubdivision {
     planes: array<vec4<f32>, 6>,
 }
 @group(2) @binding(27) var<uniform> subdivision: TerrainSubdivision;
-// The terrain's tree: its counts by node (words 1 on), then its bitfield.
 @group(2) @binding(28) var<storage, read_write> subdivision_tree: array<atomic<u32>>;
-// Each leaf's node this frame and what it decided (the top two bits).
 @group(2) @binding(29) var<storage, read_write> subdivision_nodes: array<u32>;
-// The leaves the frame draws (`terrain_surface_leaves`).
 @group(2) @binding(30) var<storage, read_write> subdivision_leaves: array<SurfaceTriangle>;
-// Every tree's SUBDIVISION_ARGS words: its dispatches' arguments, its
-// leaves as the frame found them and its draw's indexed arguments, as begin
-// writes them, then the leaves its splits reserved and the splits its room
-// refused.
 @group(2) @binding(31) var<storage, read_write> subdivision_args: array<atomic<u32>>;
 
-// Lanes of the passes over leaves; the words each tree takes of
-// `subdivision_args`, and where among them lie its leaves as the frame found
-// them, its draw's arguments, the leaves its splits reserved and the splits
-// its room refused.
 const SUBDIVISION_GROUP: u32 = 64u;
 const SUBDIVISION_ARGS: u32 = 16u;
 const SUBDIVISION_LEAVES: u32 = 3u;
 const SUBDIVISION_DRAW: u32 = 4u;
 const SUBDIVISION_RESERVED: u32 = 9u;
 const SUBDIVISION_REFUSED: u32 = 10u;
-// The deepest levels the tree keeps no counts of: their nodes span at most
-// four of the bitfield's words, which count them.
 const SUBDIVISION_COUNTED: u32 = 8u;
-// How many times the target a leaf the camera does not see may stray: it
-// still casts into shadow maps and shows in reflection probe faces, whose
-// texels span several of the camera's pixels, and stands a few levels short
-// of what the view needs (error grows as a leaf's square), which it reaches
-// within frames as the view turns to it.
 const SUBDIVISION_UNSEEN: f32 = 8.0;
-// What a leaf decided, in the top bits of its word in `subdivision_nodes`.
 const SUBDIVISION_SPLIT: u32 = 1u;
 const SUBDIVISION_MERGE: u32 = 2u;
 
-// The first bit of node `node`'s range at the tree's deepest level.
 fn subdivision_bit(node: u32) -> u32 {
     let deepest = subdivision.tree.x;
     return (node << (deepest - firstLeadingBit(node))) - (1u << deepest);
 }
 
-// The leaves within node `node`'s range: its count where the tree keeps it,
-// or the bits set in its range of the bitfield.
 fn subdivision_count(node: u32) -> u32 {
     let deepest = subdivision.tree.x;
     let depth = firstLeadingBit(node);
@@ -124,8 +48,6 @@ fn subdivision_count(node: u32) -> u32 {
     return countOneBits(atomicLoad(&subdivision_tree[word]) & mask);
 }
 
-// The node of leaf `index`, counting leaves in the tree's order: down from
-// the root by the counts to the first node holding a single leaf.
 fn subdivision_leaf(index: u32) -> u32 {
     var node = 1u;
     var count = atomicLoad(&subdivision_tree[1]);
@@ -144,10 +66,6 @@ fn subdivision_leaf(index: u32) -> u32 {
     return node;
 }
 
-// Node `node`'s triangle, terrain-local: the square's half its first bit
-// below the root picks (the first from the far corner to the origin, its
-// right angle at x 0, the second back, its right angle at z 0), halved by
-// each bit after it (`surface_half`).
 fn subdivision_triangle(node: u32) -> SurfaceTriangle {
     let side = subdivision.square.x;
     let depth = firstLeadingBit(node);
@@ -161,13 +79,6 @@ fn subdivision_triangle(node: u32) -> SurfaceTriangle {
     return triangle;
 }
 
-// The node across node `node`'s hypotenuse at its own depth, 0 past the
-// square's edge: as every node of that depth splits the square, from each
-// half's three neighbors (across its hypotenuse, its edge from `b` to `c`
-// and its edge from `c` back to `a`) to its halves': a half's hypotenuse
-// meets the half of its parent's neighbor across that side, its side along
-// the parent's hypotenuse the half of the neighbor there, and its side
-// from the middle its sibling.
 fn subdivision_neighbor(node: u32) -> u32 {
     let depth = firstLeadingBit(node);
     var across = 5u - (node >> (depth - 1u));
@@ -190,12 +101,6 @@ fn subdivision_neighbor(node: u32) -> u32 {
     return across;
 }
 
-// A point of a leaf whose meshlet's vertices stand `pieces` meters apart:
-// on the ground's true surface (world), moved by `lift` where its
-// materials' mesh band moves it as a ground's tree draws it (`displaced`; a
-// water's tree reads the ground alone), `kept` the part of that the
-// meshlet's pieces carry (`terrain_displacement`); and whether any level
-// holds ground there.
 struct SubdivisionPoint {
     world: vec3<f32>,
     lift: vec3<f32>,
@@ -217,8 +122,6 @@ fn subdivision_point(local: vec2<f32>, displaced: bool, pieces: f32) -> Subdivis
     return point;
 }
 
-// Whether any of the box from `low` to `high` (world) lies inside the
-// camera's frustum.
 fn subdivision_seen(low: vec3<f32>, high: vec3<f32>) -> bool {
     for (var index = 0u; index < 6u; index++) {
         let plane = subdivision.planes[index];
@@ -230,14 +133,6 @@ fn subdivision_seen(low: vec3<f32>, high: vec3<f32>) -> bool {
     return true;
 }
 
-// How a leaf stands: whether its tree draws it (within the terrain's edges,
-// not wholly within its cutout, and over ground some level holds, or on a
-// water's tree within its surface's reach: `surface_water`), and whether
-// it wants splitting: across those edges, which its leaves split to follow,
-// or where the meshlet it draws may stray from its surface by more pixels
-// than the target, at the size of its nearest pixel seen from the detail
-// eye, where the camera sees it, SUBDIVISION_UNSEEN times as many where it
-// does not.
 struct SubdivisionMeasure {
     drawn: bool,
     splits: bool,
@@ -261,8 +156,6 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
             return measure;
         }
     }
-    // The meters between its meshlet's vertices, as they stand
-    // (`terrain_surface_vertex`).
     let pieces = length(triangle.c - triangle.a) / f32(1u << SURFACE_MESHLET_LEVEL);
     let a = subdivision_point(triangle.a, !water, pieces);
     let b = subdivision_point(triangle.b, !water, pieces);
@@ -280,21 +173,9 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
     let ab = subdivision_point((triangle.a + triangle.b) * 0.5, !water, pieces);
     let bc = subdivision_point((triangle.b + triangle.c) * 0.5, !water, pieces);
     let ca = subdivision_point((triangle.c + triangle.a) * 0.5, !water, pieces);
-    // How far its meshlet may stray from its surface (meters), and how far
-    // its surface may stand above its points and that bound: the ground's
-    // not at all; the water's by its depth over its ground, which the
-    // leaf's side holds, as water deeper than its leaves are wide lies flat
-    // and open, where its leaves do not split.
     var bound = over.error;
     var rise = max(high.x - low.x, high.y - low.y);
     if !water {
-        // Its materials' mesh band, which its meshlet must carry: its part
-        // finer than the meshlet's pieces carry strays as far as it moves
-        // the leaf's points off the rest; the rest as far as it moves its
-        // sides' middles and its center off the plane through its corners
-        // beyond what it moves its corners, over its meshlet's pieces, a
-        // 2^SURFACE_MESHLET_LEVEL-th of its sides, over which a smoothly
-        // curving displacement strays as the square of that less.
         let normal = cross(b.world - a.world, c.world - a.world);
         let unit = normal / max(length(normal), 1.0e-12);
         let bent = abs(vec4<f32>(dot(ab.kept - (a.kept + b.kept) * 0.5, unit),
@@ -310,10 +191,6 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
         bound = surface_ground_error(triangle) + displacement;
         rise = 0.0;
     }
-    // The size of its nearest pixel, the least a pixel spans seen from the
-    // detail eye at its points (and on a water's tree at them risen as far
-    // as its surface may stand); seen where the box of its points, widened
-    // by its bound and up by its rise, reaches into the camera's frustum.
     let up = vec3<f32>(0.0, rise, 0.0);
     let risen = vec3<f32>(0.0, bound + rise, 0.0);
     var points = array<vec3<f32>, 7>(a.world, b.world, c.world, center.world, ab.world,
@@ -336,10 +213,6 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
     return measure;
 }
 
-// Whether the diamond of node `base`, both of whose halves are leaves, and
-// the node across its hypotenuse merges this frame: decided once, by the
-// first half of the lower-numbered of the two, where every half of both is
-// a leaf and neither, a leaf itself, would split.
 fn subdivision_merges(base: u32) -> bool {
     let top = subdivision_neighbor(base);
     if top != 0u && top < base {
@@ -354,8 +227,6 @@ fn subdivision_merges(base: u32) -> bool {
     return top == 0u || !subdivision_measure(subdivision_triangle(top)).splits;
 }
 
-// Adds a leaf to (or takes one from) every count over the bitfield's bit
-// `bit`.
 fn subdivision_tally(bit: u32, gained: bool) {
     let deepest = subdivision.tree.x;
     let heap = (1u << deepest) + bit;
@@ -368,10 +239,6 @@ fn subdivision_tally(bit: u32, gained: bool) {
     }
 }
 
-// Sets the bit of node `node`, a second half, which splits its parent into
-// its two halves, and adds the leaf that makes to every count over it;
-// returns whether the bit was clear. With `apply` false it only says whether
-// the bit is clear.
 fn subdivision_mark(node: u32, apply: bool) -> bool {
     let bit = subdivision_bit(node);
     let word = subdivision.tree.y + bit / 32u;
@@ -386,9 +253,6 @@ fn subdivision_mark(node: u32, apply: bool) -> bool {
     return true;
 }
 
-// Clears the bit of node `node`, a second half, which merges its parent's
-// halves into it, and takes the leaf that loses from every count over it,
-// where the bit is set.
 fn subdivision_clear(node: u32) {
     let bit = subdivision_bit(node);
     let mask = 1u << (bit % 32u);
@@ -397,13 +261,6 @@ fn subdivision_clear(node: u32) {
     }
 }
 
-// Splits leaf `node` and, by longest edge bisection's rule, every node
-// across a hypotenuse whose split that needs: the node across its own at
-// its depth, which is a leaf or whose parent is (split first), and on across
-// that parent's toward the root. It stops at the first node already split:
-// in the tree as the frame found it every node past a split one is split
-// too, and a node this frame split continues its own chain. Returns how many
-// it split, or with `apply` false how many it would.
 fn subdivision_chain(node: u32, apply: bool) -> u32 {
     if !subdivision_mark(2u * node + 1u, apply) {
         return 0u;
@@ -425,11 +282,6 @@ fn subdivision_chain(node: u32, apply: bool) -> u32 {
     return count;
 }
 
-// The frame's indirect arguments of the tree, from the leaves it holds as
-// the frame found it: the decisions' and changes' dispatches, a lane a leaf;
-// its draw, a meshlet an instance, each its SURFACE_MESHLET_INDICES indices
-// from the first into its lattice (`terrain::SurfaceDraw`); and its room's
-// counters cleared.
 @compute @workgroup_size(1)
 fn subdivide_begin() {
     let args = subdivision.frame.y * SUBDIVISION_ARGS;
@@ -438,8 +290,6 @@ fn subdivide_begin() {
     atomicStore(&subdivision_args[args + 1u], 1u);
     atomicStore(&subdivision_args[args + 2u], 1u);
     atomicStore(&subdivision_args[args + SUBDIVISION_LEAVES], leaves);
-    // Its indices, its instances, its first index, the base its indices
-    // count from and its first instance.
     let draw = args + SUBDIVISION_DRAW;
     atomicStore(&subdivision_args[draw], SURFACE_MESHLET_INDICES);
     atomicStore(&subdivision_args[draw + 1u], leaves);
@@ -450,10 +300,6 @@ fn subdivide_begin() {
     atomicStore(&subdivision_args[args + SUBDIVISION_REFUSED], 0u);
 }
 
-// Each leaf: listed for the frame's draws, all its corners on one point
-// where the terrain draws nothing; and marked to split where it strays too
-// far (on frames splitting) or, as the first half of its diamond, to merge
-// where neither half's parent would split (on frames merging).
 @compute @workgroup_size(SUBDIVISION_GROUP)
 fn subdivide_decide(@builtin(global_invocation_id) id: vec3<u32>) {
     let args = subdivision.frame.y * SUBDIVISION_ARGS;
@@ -481,10 +327,6 @@ fn subdivide_decide(@builtin(global_invocation_id) id: vec3<u32>) {
     subdivision_nodes[at] = node | (decision << 30u);
 }
 
-// Each leaf's decision set into the tree: a split with its chain where the
-// terrain's room holds every leaf the chain adds (none of a chain splits
-// otherwise, since half of one would crack the ground; counted), or its
-// diamond merged.
 @compute @workgroup_size(SUBDIVISION_GROUP)
 fn subdivide_apply(@builtin(global_invocation_id) id: vec3<u32>) {
     let args = subdivision.frame.y * SUBDIVISION_ARGS;

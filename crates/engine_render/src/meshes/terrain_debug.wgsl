@@ -1,20 +1,3 @@
-// Terrain in the debug views (`meshes/debug.wgsl`, `debug_view.wgsl`): what
-// its ground is made of, as shading computes it at every pixel
-// (`meshes/terrain.wgsl`). Its record holds its leaf's
-// level (the pyramid level whose spacing its leaf's meshlet vertices stand
-// apart), whether it lies on a level-0 tile's edge or a patch's (sixteen
-// samples) and, above DEBUG_PATCH_SHIFT, the patch it lies in within that
-// tile (x in the low four bits, z in the next four); its object word the
-// share of the sky it sees and its detail's shares (showing its maps'
-// detail, of their slopes averaged into roughness, canopy), a byte each;
-// its detail word its materials' shares, a byte each; its
-// normal the terrain's smooth one. The third target holds its tile (x and
-// z, signed 16 bits each) and its materials (a byte each,
-// DEBUG_NO_MATERIAL for none).
-
-// Its leaf's level, from its meshlet's vertex spacing; its level-0 tile and
-// patch, from where it lies on the terrain; and its materials, sky and
-// detail.
 @fragment
 fn fs_debug_terrain(input: TerrainOutput) -> DebugTargets {
     terrain_holes_test(input.cell);
@@ -29,7 +12,6 @@ fn fs_debug_terrain(input: TerrainOutput) -> DebugTargets {
     point.on_terrain = true;
     let spacing = input.relative.w;
     let level = u32(clamp(round(log2(spacing / terrain.anchor.w)), 0.0, 7.0));
-    // The level-0 tile it lies in, and its patch within it.
     let tile = vec2<i32>(floor(input.cell / 256.0));
     let within = vec2<u32>(clamp(floor(fract(input.cell / 256.0) * 16.0), vec2<f32>(0.0),
         vec2<f32>(15.0)));

@@ -1,17 +1,7 @@
-// Weighted blended transparency: the composite of the
-// accumulated transparent surfaces and particles over the opaque color.
-// Blending computes average * (1 - revealed) + opaque * revealed, and keeps
-// only the opaque share of the ambient light alpha, which ambient occlusion
-// darkens. Pixels nothing transparent covered are discarded.
-
 @group(0) @binding(0) var accumulated: texture_2d<f32>;
 @group(0) @binding(1) var revealed: texture_2d<f32>;
 
-// Frames with screen effects composite into the sRGB scene target, which
-// encodes as it stores; others into the UNORM canvas, encoded here.
 override TARGET_IS_SRGB: bool = false;
-// Whether 8-bit color writes dither (the `dithered` noise of a fixed
-// pixel).
 override DITHER: bool = false;
 
 @fragment

@@ -1,41 +1,17 @@
-//! Surroundings: the far ground a terrain draws beyond its own tiles, and
-//! how far it has been built.
-
 use super::*;
 
 settings! {
     unauthored;
-    /// Ground generated past a terrain's edges to the horizon:
-    /// a coarser terrain around it from the same layers, its samples four
-    /// times as far apart as the terrain's finest, reaching about `reach`
-    /// meters past every edge (the terrain's inspection reports how far: its
-    /// tiles align with the terrain's sample grids). Its stamps, heightmaps,
-    /// bakes and roads fade into its noise over `blend` meters past the edges,
-    /// so the two meet where the terrain ends; it never collides, places
-    /// objects, grows blades or holds water. Terrains read from files have
-    /// none.
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct Surroundings {
-        /// Meters the ground reaches past every edge.
         pub reach: f32 = 4096.0 => above_to(0.0, Surroundings::MAX_REACH),
-        /// Meters past the edges over which the terrain's own features fade
-        /// into its noise.
         pub blend: f32 = 1024.0 => range(0.0, Surroundings::MAX_REACH),
     }
 }
 
 impl Surroundings {
-    /// The most meters surroundings reach past a terrain's edges or blend
-    /// over.
     pub const MAX_REACH: f32 = 1.0e6;
 
-    /// Where `terrain`'s surroundings lie: their origin, their pyramid and
-    /// the rectangle of their ground (local) the terrain covers. Their
-    /// tiles along a side are a power of two, as few as reach `reach` past
-    /// the terrain's widest side while the terrain's edges stay on the
-    /// edges of every level's patches, so the ground the terrain covers is
-    /// left whole patches and both draw the same samples where they meet;
-    /// `None` where no count fits.
     pub fn layout(&self, terrain: &Terrain) -> Option<(Vec3, Pyramid, (Vec2, Vec2))> {
         let base = terrain.pyramid;
         let extent = base.extent();
@@ -51,8 +27,6 @@ impl Surroundings {
             ratio >= 1.0 && ratio == ratio.floor()
         };
         while tiles >= 1 {
-            // The coarsest level's samples lie `tiles` times as far apart
-            // as the finest's, its patches sixteen of them across.
             let patch = PATCH_QUADS as f32 * spacing * tiles as f32;
             let offset = (Vec2::splat(tiles as f32 * tile) - extent) * 0.5;
             if offset.x > 0.0
@@ -72,9 +46,6 @@ impl Surroundings {
     }
 }
 
-/// A terrain's surroundings as they stream: how far they
-/// reach past its edges along x and z, their level-0 tiles along a side and
-/// sample spacing, their resident tiles and whether they draw.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct SurroundingsStatus {
     pub reach: [f32; 2],
@@ -85,8 +56,6 @@ pub struct SurroundingsStatus {
 }
 
 impl Terrains {
-    /// `entity`'s surroundings while they stream: they start
-    /// once its bakes are done.
     pub fn surroundings(&self, entity: Entity) -> Option<SurroundingsStatus> {
         let state = self
             .entries
@@ -102,12 +71,6 @@ impl Terrains {
         })
     }
 
-    /// Follows each terrain's surroundings: drawn, once its
-    /// bakes are done, from its baked layers without its edits (which lie
-    /// under the ground the terrain covers itself), so an edit leaves their
-    /// tiles' records as they were; dropped with it or when those layers or
-    /// its settings for them change. They stream after every terrain, which
-    /// take the frame's work first.
     pub(super) fn sync_surroundings(&mut self) {
         let mut wanted = Vec::new();
         for state in &mut self.entries {
@@ -159,8 +122,6 @@ impl Terrains {
             {
                 continue;
             }
-            // Their ground reads the terrain's layers where it lies in the
-            // terrain's, whose own ground spans the cutout.
             let layers = base.surroundings(
                 -cutout.0,
                 (Vec2::ZERO, cutout.1 - cutout.0),

@@ -3,7 +3,6 @@ use std::{path::Path, process::Command};
 use engine_dev::{DevError, authoring};
 use serde_json::{Value, json};
 
-/// Keep stdout as one JSON result per command; subprocess diagnostics use stderr.
 pub fn agent(root: &Path, arguments: &[String]) -> Result<(), String> {
     if arguments
         .first()

@@ -1,11 +1,5 @@
-//! Baking a terrain's layers: one record, every bake of its stack, and
-//! again from its hydrology on whenever the rivers drawn over it change.
-
 use super::*;
 
-/// Makes `baked` the layers `state`'s tiles generate from: once every bake
-/// is done, with its roads' bridges (collision follows the
-/// revision) and its rivers' waterfalls.
 pub(super) fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
     if baked.unbaked().is_none() {
         state.bridges = baked
@@ -37,13 +31,6 @@ pub(super) fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
     state.baked = Some(baked);
 }
 
-/// Bakes run before any tile loads: `state`'s layers (`authored`, until
-/// baked, with the rivers drawn over it given before its hydrology) take
-/// every bake as one record, which the host's packs and store hand back or
-/// a job makes, asked for once `slots` admits it and again a while after it
-/// failed. Rivers drawn since its layers baked bake them again from its
-/// hydrology on, its tiles kept where its rivers and roads stay. Whether a
-/// bake is not done yet, which no tile loads behind.
 pub(super) fn bake(
     state: &mut TerrainState,
     authored: &Arc<Layers>,
@@ -59,8 +46,6 @@ pub(super) fn bake(
             return true;
         }
         let priority = job_priority(URGENT_JOBS, 0);
-        // Admitted as every owner's jobs are; tiles wait
-        // for the bake meanwhile.
         if !slots.take(priority) {
             return true;
         }
@@ -69,8 +54,6 @@ pub(super) fn bake(
             pyramid: state.terrain.pyramid,
         }
         .input();
-        // As its layers can hold whole heightmaps, its identity is
-        // its input's hash.
         let identity = content_hash(&input).to_le_bytes();
         let record = RecordKey::new(
             &engine_terrain::sources::BAKES,

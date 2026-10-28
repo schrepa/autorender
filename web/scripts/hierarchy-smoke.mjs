@@ -1,4 +1,3 @@
-/** Real browser hierarchy/prefab checks. All scene changes stay in routed responses. */
 // @ts-check
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -16,11 +15,9 @@ async function inspect(id, component) {
   return reply.result.entity.components[component];
 }
 
-// Matrices compose here in JavaScript doubles: allow a little more.
 const near = (actual, expected, message) => nearly(actual, expected, message, 0.0002);
 
 function localMatrix({ translation: [tx, ty, tz], rotation: [x, y, z, w], scale: [sx, sy, sz] }) {
-  // Independent column-major TRS composition from the public quaternion view.
   return [
     (1 - 2 * (y * y + z * z)) * sx, 2 * (x * y + z * w) * sx, 2 * (x * z - y * w) * sx, 0,
     2 * (x * y - z * w) * sy, (1 - 2 * (x * x + z * z)) * sy, 2 * (y * z + x * w) * sy, 0,
@@ -59,8 +56,6 @@ try {
   const player = fixture.entities.find(entity => entity.tags?.includes("player"))?.id;
   assert.ok(player);
   assert.equal(fixture.entities.find(entity => entity.id === "player-accessory")?.parent, player);
-  // Rotate a template child only in this isolated browser fixture. Combining it
-  // with a nonuniform placement scale must retain shear in the complete matrix.
   const tilted = prefab.entities.find(entity => entity.id === "lantern");
   tilted.transform = { ...tilted.transform, rotation_degrees: [17, 31, -9] };
   const scene = routedScene(page, fixture);
@@ -219,8 +214,6 @@ try {
   for (const id of ["west-lantern", "west-lantern.lantern", "east-lantern.planter"]) {
     assert.equal((await command("inspect", { entity: id }, false)).error.code, "unknown_entity");
   }
-  // Definitions and declared global assets remain available for later placement,
-  // while the renderer retires meshes/textures with no remaining instances.
   assert.equal(retired.result.resident_cpu_bytes, initialResidency.cpu);
   assert.ok(retired.result.rendering.resident_meshes < initialResidency.gpuMeshes);
   assert.ok(retired.result.rendering.resident_mesh_bytes < initialResidency.meshGpu);

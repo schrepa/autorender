@@ -1,21 +1,7 @@
-//! Levels of detail: coarser index lists over a mesh's own vertices, each
-//! with the largest geometric deviation from the mesh it shows in mesh
-//! units, the last possibly empty, and the triangles shadow maps draw of
-//! each. The cook makes them offline for every mesh a scene draws (the
-//! [`LOD_RECORD`] records, from [`lod_input`]) and the importer writes them
-//! into the mesh files it makes; runtimes only load them. Renderers draw
-//! the coarsest level whose error projects within a pixel budget: past the
-//! empty level's, nothing.
-
 use crate::{AssetError, Mesh, MeshVertex};
 
-/// The kind of a mesh's levels' records, and of the job making one.
 pub const LOD_RECORD: &str = "mesh_lods";
 
-/// A level of detail: where its indices start in its mesh's indices
-/// followed by [`MeshLods::indices`], how many there are (none for the
-/// empty level), and the largest geometric deviation from the mesh in mesh
-/// units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LodLevel {
     pub first_index: u32,
@@ -23,10 +9,6 @@ pub struct LodLevel {
     pub error: f32,
 }
 
-/// A mesh's levels of detail, finest first, with errors that grow from
-/// level to level; the triangles shadow maps draw of each level, the mesh
-/// itself first (none where those are each level's own); and the indices
-/// both name beyond the mesh's own, which follow them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MeshLods {
     pub levels: Vec<LodLevel>,
@@ -34,15 +16,10 @@ pub struct MeshLods {
     pub indices: Vec<u32>,
 }
 
-/// The magic of a mesh's levels' bytes, and of a level job's input.
 const LODS_MAGIC: &[u8; 4] = b"ELOD";
 const INPUT_MAGIC: &[u8; 4] = b"ELDI";
 
 impl MeshLods {
-    /// The levels as bytes: `ELOD`, the counts of levels, of caster ranges
-    /// and of indices (little-endian u32 each), then each level's first
-    /// index, index count and error, each caster range's first index and
-    /// count, and the indices.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(
             16 + self.levels.len() * 12 + self.casters.len() * 8 + self.indices.len() * 4,
@@ -66,7 +43,6 @@ impl MeshLods {
         bytes
     }
 
-    /// The levels [`Self::to_bytes`] wrote.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, AssetError> {
         let invalid = |reason| AssetError::InvalidLevels { reason };
         let mut words = Words::new(bytes, LODS_MAGIC).ok_or(invalid("not levels of detail"))?;
@@ -106,10 +82,6 @@ impl MeshLods {
         Ok(lods)
     }
 
-    /// Whether they suit a mesh of `index_count` indices over `vertices`
-    /// vertices: every range within its indices followed by theirs, whole
-    /// triangles of its vertices, errors finite, positive and growing, and
-    /// a caster range for the mesh and each level, or none.
     pub fn check(&self, index_count: usize, vertices: usize) -> Result<(), AssetError> {
         let invalid = |reason| Err(AssetError::InvalidLevels { reason });
         let total = index_count + self.indices.len();
@@ -145,30 +117,21 @@ impl MeshLods {
         Ok(())
     }
 
-    /// Bytes their indices and ranges hold.
     pub fn byte_len(&self) -> usize {
         self.indices.len() * 4 + self.levels.len() * 12 + self.casters.len() * 8
     }
 }
 
-/// What the levels of a mesh are made from: its vertices and indices.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LodInput {
     pub vertices: Vec<MeshVertex>,
     pub indices: Vec<u32>,
 }
 
-/// Whether `mesh` takes the levels of detail the cook makes: it carries
-/// none of its own and can have some, having neither joints, which move its
-/// vertices, nor virtual geometry, whose clusters are its levels.
 pub fn takes_levels(mesh: &Mesh) -> bool {
     mesh.lods().is_none() && mesh.joint_count() == 0 && mesh.virtual_geometry().is_none()
 }
 
-/// The input of `mesh`'s levels' job ([`LOD_RECORD`]): `ELDI`, the vertex
-/// and index counts, each vertex's position, normal and texture coordinates
-/// (eight f32), then the indices, little-endian. `None` where it takes no
-/// levels from the cook ([`takes_levels`]).
 pub fn lod_input(mesh: &Mesh) -> Option<Vec<u8>> {
     if !takes_levels(mesh) {
         return None;
@@ -195,7 +158,6 @@ pub fn lod_input(mesh: &Mesh) -> Option<Vec<u8>> {
 }
 
 impl LodInput {
-    /// The input [`lod_input`] wrote.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, AssetError> {
         let invalid = |reason| AssetError::InvalidLevels { reason };
         let mut words = Words::new(bytes, INPUT_MAGIC).ok_or(invalid("not a level job's input"))?;
@@ -222,7 +184,6 @@ impl LodInput {
     }
 }
 
-/// Little-endian words after a magic.
 struct Words<'a> {
     bytes: &'a [u8],
     at: usize,

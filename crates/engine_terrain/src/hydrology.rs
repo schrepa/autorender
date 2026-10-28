@@ -1,28 +1,3 @@
-//! Hydrology: where water runs over a terrain and the channels it
-//! cuts. A bake reads the heights the layers below it give at one
-//! pyramid level, fills their pits so that every sample drains off the
-//! grid's edge (Priority-Flood with epsilon; Barnes, Lehman and Mulla
-//! 2014), sends each sample's water to one of its lower neighbors, drawn
-//! by a hash of the sample with odds in proportion to the slope down to
-//! each, so courses follow the ground's fall rather than the grid's eight
-//! ways, and sums upstream area in the reverse of the flood's order.
-//! Inside a filled pit the flood spreads from the spill point over the
-//! lowest ground first and water drains back the way the flood came, so
-//! rivers crossing a pit follow its low line rather than straight rays from
-//! the spill point. Channels then run where enough area drains, deeper and
-//! wider downstream. The maps of flow and the wetness index spread each
-//! sample's water over all its lower neighbors instead, and the depths of
-//! filled pits follow from the same grids. Each result is a 16-bit image
-//! with coarser levels, read through its uniform cubic B-spline, so every
-//! terrain level samples it without aliasing or the image's grid, and
-//! every sample is the same on every target: the bake is deterministic.
-//! Rivers given in the rivers layers below the bake (`given.rs`) run as
-//! its first courses, gathering the water reaching their channels; channels
-//! of the water left run where the bake finds them. Rivers (`rivers.rs`)
-//! follow both as lines, each cutting its channel into the ground with its
-//! water in it, the one place channels are cut; the grid of standing water
-//! holds lakes alone.
-
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -42,39 +17,17 @@ use crate::noise::hash;
 use crate::rivers::{Channels, RiverLine, Rivers, trace};
 
 settings! {
-    /// A layer that bakes where water runs over the layers below it and cuts
-    /// channels into them: the rivers the rivers layers below it give, then
-    /// those it finds where the water left gathers.
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct HydrologyLayer {
-        /// The pyramid level whose samples the bake reads: rivers are traced
-        /// along its grid, and begin where their channels span two of its
-        /// samples from bank to bank, the narrowest water settling over
-        /// samples that far apart holds; its maps and lakes lie over the
-        /// landscape [`MAP_LEVELS`] levels coarser. Finer levels trace narrower
-        /// channels more closely and take longer.
         pub level: u32 = 0 => range(0, MAX_LEVEL),
-        /// Cubic meters a second each square kilometer drained brings the
-        /// channels full to their banks: every channel whose flood is not
-        /// given carries this times the area draining through it, which sets
-        /// how wide and deep its channel stands where that is not given, as
-        /// channels full to their banks widen and deepen downstream.
         pub discharge: f32 = DISCHARGE => range(0.001, 1000.0),
     }
 }
 
-/// The default [`HydrologyLayer::discharge`]: a cubic meter a second each
-/// square kilometer brings.
 const DISCHARGE: f32 = 1.0;
 
-/// What a bake found: samples read, samples channels run through, samples
-/// of filled pits, the largest upstream area (square meters), the
-/// waterfalls rivers drop over, the river points in each reach (Pool to
-/// Falls, as [`crate::Reach`] numbers them), the steps and knobs carved
-/// into rivers' beds, the rivers following given ones, and the river points
-/// whose channel the heights already hold, which nothing cuts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct HydrologyStats {
     pub samples: usize,
@@ -89,17 +42,6 @@ pub struct HydrologyStats {
     pub uncut: usize,
 }
 
-/// A waterfall: where a river leaves its bed over a drop, the lip's water
-/// and where it lands at last (terrain-local meters), its water's path from
-/// one to the other: through the air on each jet and down the chutes
-/// between where one jet lands in the chute the next leaves (a cascade),
-/// the seconds after leaving the lip its water passes each point of it,
-/// whether it flies through the air from each point to the next, the
-/// meters across its water there and how much of the sky it sees there (0
-/// to 1, the ground around hiding the rest); the meters across the river at
-/// its lip, the area draining over it (square meters), the water's speed as
-/// it lands at last (meters a second) and the discharge it carries (cubic
-/// meters a second).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Fall {
     pub top: [f32; 3],
@@ -115,77 +57,39 @@ pub struct Fall {
     pub discharge: f32,
 }
 
-/// The ranges the baked images encode, from 0 to 65535: base-10 logarithms
-/// of upstream area (square meters), wetness indexes and lake depths
-/// (meters).
 pub const FLOW_RANGE: [f32; 2] = [0.0, 12.0];
 pub const WETNESS_RANGE: [f32; 2] = [-5.0, 25.0];
 pub const LAKE_RANGE: [f32; 2] = [0.0, 200.0];
 
-/// A bake's results over the terrain, from its first corner: images whose
-/// samples lie `spacing` meters apart.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hydrology {
     pub spacing: f32,
-    /// Upstream area, each sample's water spread over all its lower
-    /// neighbors, as [`FLOW_RANGE`] encodes it.
     pub flow: HeightImage,
-    /// The topographic wetness index ln(a / tan b): a the area draining
-    /// through a meter of contour, spread as `flow`'s, b the ground's
-    /// steepest slope down; as [`WETNESS_RANGE`] encodes it.
     pub wetness: HeightImage,
-    /// How deep water would stand in filled pits, as [`LAKE_RANGE`]
-    /// encodes it.
     pub lakes: HeightImage,
-    /// Where lakes stand in filled pits.
     pub(crate) water: Arc<WaterGrid>,
-    /// Rivers in the channels, their water set from the
-    /// finest ground once the bake reads it.
     pub(crate) rivers: Arc<Rivers>,
-    /// Where rivers fall.
     pub falls: Arc<[Fall]>,
     pub stats: HydrologyStats,
 }
 
-/// Where a bake's lakes stand, sample by sample of its grid: level at
-/// their pits' spill heights. Surfaces reach a sample or two past the shore,
-/// under the banks, so water meets the ground where they cross; elsewhere
-/// they lie well below the ground. Each lake has a number: the samples
-/// holding its water and those reaching past its shore name it (from 1; 0
-/// for none), and `levels` and `areas` hold its level and the area its
-/// water covers by number. Rivers stand on lines of their own ([`Rivers`]).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WaterGrid {
     pub width: usize,
     pub height: usize,
-    /// Meters between samples, from the terrain's first corner.
     pub spacing: f32,
-    /// The water's surface (terrain-local meters).
     pub surface: Vec<f32>,
-    /// Meters of water above the ground; 0 where dry.
     pub depth: Vec<f32>,
-    /// The water's velocity along x and z (meters a second); still in
-    /// lakes.
     pub flow: Vec<[f32; 2]>,
-    /// The lake each sample's surface belongs to, from 1; 0 for none.
     pub lake: Vec<u16>,
-    /// Each lake's level (terrain-local meters), lake 1 first.
     pub levels: Vec<f32>,
-    /// The square meters each lake's water covers, its connected samples'
-    /// squares, lake 1 first.
     pub areas: Vec<f32>,
 }
 
-/// Samples past the shore water's surface reaches under the banks.
 const SHORE_SAMPLES: usize = 2;
-/// Meters below the water a dry sample's ground may stand and still take
-/// its level.
 const SHORE_DROP: f32 = 0.5;
-/// Meters below the ground dry samples' surfaces lie.
 const DRY_DEPTH: f32 = 20.0;
 
-/// The eight neighbors, orthogonal first, and how far each lies in
-/// samples.
 const NEIGHBORS: [(i32, i32, f32); 8] = [
     (1, 0, 1.0),
     (-1, 0, 1.0),
@@ -197,16 +101,9 @@ const NEIGHBORS: [(i32, i32, f32); 8] = [
     (-1, -1, std::f32::consts::SQRT_2),
 ];
 
-/// Meters of water a filled pit must hold somewhere to stand as a lake:
-/// shallower pits stay dry and rivers run through them, such as the
-/// hollows erosion's smoothly read change leaves, centimeters deep over the
-/// pits its sediment filled and decimeters deep beside its sharpest cuts.
 const LAKE_DEPTH: f32 = 2.0;
-/// Meters of water a sample of a lake holds at least.
 const WET: f32 = 1.0e-3;
 
-/// Which samples lie in lakes: the connected samples a pit fills (eight
-/// neighbors each), where it fills [`LAKE_DEPTH`] or deeper somewhere.
 fn lakes(heights: &[f32], filled: &[f32], width: usize) -> Vec<bool> {
     let count = heights.len();
     let height = count / width;
@@ -218,7 +115,6 @@ fn lakes(heights: &[f32], filled: &[f32], width: usize) -> Vec<bool> {
         if seen[start] || depth(start) <= WET {
             continue;
         }
-        // The pit's connected samples, and its deepest.
         region.clear();
         region.push(start);
         seen[start] = true;
@@ -250,9 +146,6 @@ fn lakes(heights: &[f32], filled: &[f32], width: usize) -> Vec<bool> {
     lake
 }
 
-/// `height` as a key whose order as an unsigned integer is
-/// [`f32::total_cmp`]'s: negative heights' bits flipped, the others' sign
-/// bit set.
 #[inline]
 fn level_key(height: f32) -> u64 {
     let bits = height.to_bits();
@@ -260,22 +153,15 @@ fn level_key(height: f32) -> u64 {
     u64::from(bits ^ flip)
 }
 
-/// Encodes `value` over `range` as a 16-bit sample.
 fn encode(value: f32, range: [f32; 2]) -> u16 {
     let unit = (value - range[0]) / (range[1] - range[0]);
     (max(min(unit, 1.0), 0.0) * 65_535.0 + 0.5) as u16
 }
 
-/// Decodes a sample (0 to 65535, interpolated) over `range`.
 pub fn decode(sample: f32, range: [f32; 2]) -> f32 {
     range[0] + (range[1] - range[0]) * sample * (1.0 / 65_535.0)
 }
 
-/// A flood's marks and queues, kept from one flood to the next: whether it
-/// has reached each sample, the sample each one it raised spills into
-/// (`u32::MAX` for the others), its open edge by height then sample, and
-/// the raised samples of the pit it fills by their own ground, then by when
-/// it reached them.
 #[derive(Default)]
 pub(crate) struct Flood {
     closed: Vec<bool>,
@@ -285,12 +171,6 @@ pub(crate) struct Flood {
 }
 
 impl Flood {
-    /// Fills `heights`' pits so every sample drains off the edge of a grid
-    /// `width` samples wide, each raised just above the sample it spills
-    /// into; puts the samples in `order` in the order the flood reached
-    /// them, and notes the sample each raised one spills into. The flood
-    /// fills a pit from its spill point over the lowest ground first, in
-    /// the order it reached samples of equal heights.
     fn fill(&mut self, heights: &mut [f32], width: usize, order: &mut Vec<u32>) {
         let count = heights.len();
         let height = count / width;
@@ -324,7 +204,6 @@ impl Flood {
             let sample = match pits.pop() {
                 Some(Reverse((_, sample))) => sample,
                 None => match open.pop() {
-                    // The sample is the key's low half.
                     Some(Reverse(key)) => key as u32,
                     None => break,
                 },
@@ -356,11 +235,6 @@ impl Flood {
     }
 }
 
-/// Where water drains over a grid: its heights
-/// with every pit filled to spill, the samples in the order the flood
-/// reached them, each sample's receiver (`u32::MAX` on the edge, which
-/// drains off the grid) and the slope down to it, and the area draining
-/// through each sample (square meters).
 #[derive(Default)]
 pub(crate) struct Drainage {
     pub(crate) filled: Vec<f32>,
@@ -370,13 +244,8 @@ pub(crate) struct Drainage {
     pub(crate) area: Vec<f32>,
 }
 
-/// Seed of the hash drawing each sample's receiver among its lower
-/// neighbors; each draw of receivers hashes under a seed of its own.
 const RECEIVER_SEED: u32 = 0x2f6b_3c91;
 
-/// The eight neighbors' offsets in a grid `width` samples wide, in
-/// [`NEIGHBORS`]' order, and the inverse of the meters to each where its
-/// samples lie `spacing` meters apart.
 fn neighbor_steps(width: usize, spacing: f32) -> [(isize, f32); 8] {
     NEIGHBORS.map(|(dx, dz, distance)| {
         (
@@ -386,9 +255,6 @@ fn neighbor_steps(width: usize, spacing: f32) -> [(isize, f32); 8] {
     })
 }
 
-/// How water drains over the grid of `heights`, `width` samples wide
-/// (row by row along z, at least two each way), whose samples lie
-/// `spacing` meters apart.
 pub(crate) fn drainage(heights: &[f32], width: usize, spacing: f32) -> Drainage {
     let mut drainage = Drainage {
         filled: heights.to_vec(),
@@ -399,12 +265,6 @@ pub(crate) fn drainage(heights: &[f32], width: usize, spacing: f32) -> Drainage 
 }
 
 impl Drainage {
-    /// How water drains over the grid its filled heights hold, `width`
-    /// samples wide (row by row along z, at least two each way) and
-    /// `spacing` meters apart, found in place: its pits filled, then its
-    /// receivers, slopes and areas, in its own buffers and `flood`'s kept
-    /// from the routing before. `draw` says which of the hash's draws picks
-    /// the receivers.
     pub(crate) fn route(&mut self, width: usize, spacing: f32, draw: u32, flood: &mut Flood) {
         let Self {
             filled,
@@ -416,13 +276,6 @@ impl Drainage {
         let count = filled.len();
         let height = count / width;
         flood.fill(filled, width, order);
-        // Each sample drains to one of its lower neighbors, drawn by a hash
-        // of the sample with odds in proportion to the slope down to each.
-        // The flood reached every lower neighbor of a sample it did not
-        // raise before that sample, so courses only fall and the reverse of
-        // its order visits every sample before the one it drains to. Each
-        // raised sample drains to the one it spills into, back the way the
-        // flood came; edge samples drain off the grid.
         receivers.clear();
         receivers.resize(count, u32::MAX);
         slopes.clear();
@@ -450,8 +303,6 @@ impl Drainage {
                 let Some(first) = first else {
                     continue;
                 };
-                // A draw from 0 up to the slopes' sum falls within one of
-                // theirs.
                 let unit = (hash(x as i32, z as i32, seed) >> 8) as f32 * (1.0 / 16_777_216.0);
                 let mut pick = unit * total;
                 let mut chosen = first;
@@ -479,14 +330,6 @@ impl Drainage {
     }
 }
 
-/// The area draining through each sample of the grid `drained` routes over
-/// `heights` (`width` samples wide, `spacing` meters apart, square meters)
-/// as the maps read it, and the steepest slope down from each: every
-/// sample's water spread over all its lower neighbors in proportion to the
-/// fourth power of the slope down to each (Holmgren 1994), in the reverse
-/// of the flood's order, so it neither runs in the grid's eight ways nor
-/// gathers into single courses as rivers do. Samples the flood raised pass
-/// theirs back the way the flood came, as they drain.
 fn spread(heights: &[f32], drained: &Drainage, width: usize, spacing: f32) -> (Vec<f32>, Vec<f32>) {
     let count = heights.len();
     let steps = neighbor_steps(width, spacing);
@@ -516,7 +359,6 @@ fn spread(heights: &[f32], drained: &Drainage, width: usize, spacing: f32) -> (V
             continue;
         }
         steepest[sample] = most;
-        // Shares of the steepest's, whose own is 1.
         let scale = 1.0 / most;
         let mut total = 0.0_f32;
         for slope in &mut down {
@@ -535,13 +377,8 @@ fn spread(heights: &[f32], drained: &Drainage, width: usize, spacing: f32) -> (V
     (area, steepest)
 }
 
-/// Levels coarser than a hydrology bake's own its maps and lakes are made
-/// at: they lie smooth over the landscape, eight times as many meters a
-/// sample as the grid rivers are traced along.
 pub const MAP_LEVELS: u32 = 3;
 
-/// A bake's grid of heights: its samples, `width` a row, row by row along
-/// z from the terrain's first corner, `spacing` meters apart.
 #[derive(Clone, Copy)]
 pub(crate) struct Grid<'a> {
     pub(crate) heights: &'a [f32],
@@ -550,13 +387,10 @@ pub(crate) struct Grid<'a> {
 }
 
 impl Grid<'_> {
-    /// Its rows.
     pub(crate) fn rows(&self) -> usize {
         self.heights.len() / self.width
     }
 
-    /// The ground's height at terrain-local `(x, z)`, between its four
-    /// nearest samples, the grid's edge holding beyond it.
     pub(crate) fn height(&self, x: f32, z: f32) -> f32 {
         let rows = self.rows();
         let x = min(max(x / self.spacing, 0.0), (self.width - 1) as f32);
@@ -571,14 +405,6 @@ impl Grid<'_> {
     }
 }
 
-/// Bakes `layer` over two grids of the ground (each its heights, samples
-/// a row, row by row along z, at least two each way, and meters between
-/// them): its own level's, along which water runs and rivers are traced,
-/// and the landscape's, over which its maps and lakes lie; the rivers
-/// `given` it (the rivers layers below it) running as its first courses
-/// over its own, the terrain's finest samples lying `finest` meters apart.
-/// Its rivers' lines come back, given ones first, for their channels and
-/// water to be set (`crate::hydraulics::river`); it holds no rivers yet.
 pub(crate) fn bake(
     (heights, width, spacing): (&[f32], usize, f32),
     (landscape, across, apart): (&[f32], usize, f32),
@@ -588,7 +414,6 @@ pub(crate) fn bake(
     let rows = count / across;
     let routed = drainage(landscape, across, apart);
     let lake = lakes(landscape, &routed.filled, across);
-    // The maps read water spread over every lower neighbor.
     let (spread_area, steepest) = spread(landscape, &routed, across, apart);
     let filled = routed.filled;
     let found = Found {
@@ -607,8 +432,6 @@ pub(crate) fn bake(
         } else {
             0.0
         };
-        // libm's logarithms, as browsers compute them: the platform's
-        // differ.
         flow.push(encode(libm::log10f(spread_area[sample]), FLOW_RANGE));
         let catchment = spread_area[sample] / apart;
         let index = libm::logf(catchment / max(steepest[sample], 1.0e-3));
@@ -619,9 +442,6 @@ pub(crate) fn bake(
         HeightImage::new(across as u32, rows as u32, samples)
             .expect("grids hold two samples each way")
     };
-    // Rivers run where single courses gather water over the ground they
-    // are cut into, its own grid: a sample lies in a lake where a lake's
-    // level stands above its ground.
     let Drainage {
         order,
         receivers,
@@ -665,16 +485,6 @@ pub(crate) fn bake(
     (hydrology, lines)
 }
 
-/// The rivers' lines over a bake's own grid of `heights` (`width` a row,
-/// `spacing` meters apart), where water drains in the flood's `order` to
-/// `receivers`, `area` draining through each sample (square meters), and
-/// `water` holds its lakes, which hold the samples `in_lake` marks: the
-/// rivers the rivers layers below `layer` give (`given`) first, gathering
-/// the water reaching their channels, then the channels the water left
-/// gathers, which begin where their flood reaches the head's
-/// ([`HEAD_FLOOD`]), the terrain's finest samples `finest` meters apart;
-/// with the samples channels run through, the largest area draining
-/// through one (square meters) and how many lines follow given rivers.
 fn rivers_over(
     (heights, width, spacing): (&[f32], usize, f32),
     (water, in_lake): (&WaterGrid, &[bool]),
@@ -738,15 +548,6 @@ fn rivers_over(
     (lines, channel_samples, max_area, given)
 }
 
-/// What a bake found about one place: the base-10 logarithm of its
-/// upstream area (square meters), its wetness index, how deep water would
-/// stand there in a filled pit (meters), and meters from the nearest
-/// river's edge, negative in its water, [`RIVER_FAR`] beyond every river's
-/// reach; and of the bed of the river holding it, the median size of its
-/// grains (d50, meters) and the river's stream power at its bankfull flood
-/// (watts per square meter of bed), 0 outside every river's bed, and meters
-/// the ground stands above that flood's level, negative below it,
-/// [`RIVER_FAR`] outside every river's bed.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HydrologySample {
@@ -759,7 +560,6 @@ pub struct HydrologySample {
     pub flood: f32,
 }
 
-/// What [`HydrologySample::river`] reads beyond every river's reach.
 pub const RIVER_FAR: f32 = 1.0e9;
 
 impl Default for HydrologySample {
@@ -777,22 +577,15 @@ impl Default for HydrologySample {
 }
 
 impl Hydrology {
-    /// The image level terrain samples `spacing` meters apart read: the
-    /// coarsest whose samples lie no further apart than the terrain's.
     pub fn level_for(&self, spacing: f32) -> usize {
         image_level(self.spacing, self.flow.levels(), spacing)
     }
 
-    /// What the bake found at terrain-local `(x, z)`, as terrain samples
-    /// `spacing` meters apart see it.
     pub fn at(&self, x: f32, z: f32, spacing: f32) -> HydrologySample {
         let river = self.rivers.edge(x, z, spacing);
         self.masks_at(x, z, spacing, river)
     }
 
-    /// [`Self::at`] with the meters to the nearest river's edge, `river`,
-    /// already read: the images through their uniform cubic B-splines, as
-    /// the GPU reads them.
     pub(crate) fn masks_at(&self, x: f32, z: f32, spacing: f32, river: f32) -> HydrologySample {
         let level = self.level_for(spacing);
         let (u, v) = (x / self.spacing, z / self.spacing);
@@ -805,25 +598,14 @@ impl Hydrology {
         }
     }
 
-    /// Its rivers, as a handle: what their flow and tiles' water are made
-    /// from. Their lines and water are the crate's own: water is read from
-    /// tiles ([`crate::Tile::water_at`]), courses from
-    /// [`Rivers::courses`].
     pub fn rivers(&self) -> &Arc<Rivers> {
         &self.rivers
     }
 
-    /// The water standing at terrain-local `(x, z)`, in a lake or a river,
-    /// as bakes after this one read it before there are tiles: its surface
-    /// and depth; `None` where dry.
     pub(crate) fn water_at(&self, x: f32, z: f32) -> Option<(f32, f32)> {
         self.water.at(x, z).or_else(|| self.rivers.water_at(x, z))
     }
 
-    /// Whether a lake or a river reaches into the terrain-local rectangle
-    /// from `low` to `high`: a sample of a lake's water within a sample of
-    /// it, or a river's channel, out as far again as it is wide, within a
-    /// sample.
     pub(crate) fn water_reaches(&self, low: Vec2, high: Vec2) -> bool {
         let water = &self.water;
         let pad = Vec2::splat(water.spacing);
@@ -842,23 +624,16 @@ impl Hydrology {
     }
 }
 
-/// What a bake found that lakes stand by: the filled heights and lake
-/// samples.
 struct Found<'a> {
     filled: &'a [f32],
     lakes: &'a [bool],
 }
 
-/// Where lakes stand over the grid of `heights` (`width` samples wide,
-/// `spacing` meters apart), from what the bake `found`, each numbered and
-/// the area its water covers measured.
 fn water(heights: &[f32], found: &Found<'_>, width: usize, spacing: f32) -> WaterGrid {
     let Found { filled, lakes } = *found;
     let count = heights.len();
     let height = count / width;
     let (last_x, last_z) = (width as i32 - 1, height as i32 - 1);
-    // Lakes stand level at their spill heights, each connected one numbered
-    // and its samples' squares summed, in the grid's order on every host.
     let mut surface = vec![f32::NAN; count];
     let mut lake = vec![0_u16; count];
     let mut levels = Vec::new();
@@ -893,12 +668,6 @@ fn water(heights: &[f32], found: &Found<'_>, width: usize, spacing: f32) -> Wate
         }
         areas.push(region.len() as f32 * spacing * spacing);
     }
-    // Depths over the ground, then surfaces reaching past the
-    // shore: dry samples beside water take its level, a sample at a time,
-    // where their ground stands about as high, so it hides them. Ground
-    // falling away below the water (where lakes spill and rivers leave
-    // terrain's water for the sea) takes none: a surface reaching over it
-    // would stand in the air.
     let depth: Vec<f32> = (0..count)
         .map(|sample| {
             if surface[sample].is_nan() {
@@ -933,7 +702,6 @@ fn water(heights: &[f32], found: &Found<'_>, width: usize, spacing: f32) -> Wate
             }
         }
     }
-    // Elsewhere well below the ground.
     for (sample, level) in surface.iter_mut().enumerate() {
         if level.is_nan() {
             *level = heights[sample] - DRY_DEPTH;
@@ -953,8 +721,6 @@ fn water(heights: &[f32], found: &Found<'_>, width: usize, spacing: f32) -> Wate
 }
 
 impl WaterGrid {
-    /// The water at terrain-local `(x, z)`: its surface and depth,
-    /// interpolated between the samples around it; `None` where dry.
     pub fn at(&self, x: f32, z: f32) -> Option<(f32, f32)> {
         let (u, v) = (x / self.spacing, z / self.spacing);
         if !(u >= 0.0 && v >= 0.0) {
@@ -975,9 +741,6 @@ impl WaterGrid {
         (depth > 0.0).then(|| (blend(&self.surface), depth))
     }
 
-    /// The highest level of the lakes holding the sample nearest
-    /// terrain-local `(x, z)` or one beside it, if any do: where a river
-    /// leaving a lake begins.
     pub fn lake_beside(&self, x: f32, z: f32) -> Option<f32> {
         let center = self.nearest(x, z)?;
         let (cx, cz) = ((center % self.width) as i64, (center / self.width) as i64);
@@ -998,11 +761,6 @@ impl WaterGrid {
         level
     }
 
-    /// The level and the span of the lake whose water or shore holds
-    /// terrain-local `(x, z)` by half or more, the four samples around it
-    /// blended: the lake of the one of them nearest it ([`Self::span`]).
-    /// Tiles' water stands at it there ([`crate::tile_water::water_rows`]):
-    /// out under its banks, never past its outlet, whose ground falls away.
     pub(crate) fn lake_reach(&self, x: f32, z: f32) -> Option<(f32, f32)> {
         if self.levels.is_empty() {
             return None;
@@ -1040,14 +798,10 @@ impl WaterGrid {
         Some((self.levels[usize::from(*lake) - 1], self.span(*lake)))
     }
 
-    /// How far across lake `number` (from 1) is: the diameter of a circle
-    /// as large as its water, 2√(A/π) (meters), the fetch the wind has over
-    /// it whichever way it blows.
     fn span(&self, number: u16) -> f32 {
         2.0 * (self.areas[usize::from(number) - 1] / std::f32::consts::PI).sqrt()
     }
 
-    /// The sample nearest terrain-local `(x, z)`; `None` off the grid.
     fn nearest(&self, x: f32, z: f32) -> Option<usize> {
         let (u, v) = ((x / self.spacing).round(), (z / self.spacing).round());
         if !(u >= 0.0 && v >= 0.0) || u as usize >= self.width || v as usize >= self.height {
@@ -1057,9 +811,6 @@ impl WaterGrid {
     }
 }
 
-/// The level of an image whose samples lie `image_spacing` meters apart,
-/// with `levels` coarser levels, that terrain samples `spacing` meters
-/// apart read: the coarsest whose samples lie no further apart.
 pub(crate) fn image_level(image_spacing: f32, levels: usize, spacing: f32) -> usize {
     let mut level = 0;
     while level < levels && image_spacing * (2_u32 << level) as f32 <= spacing * 1.0001 {

@@ -1,10 +1,5 @@
 import { HOST_SETTINGS } from "../generated/host";
 
-/** The page parameters the engine's host reads, with what each does: the
- * engine switches every host takes (which the engine reads), and the
- * page's own. The web check holds every parameter src/engine reads to this
- * list, and the development bridge's describe lists it with the game's
- * own. */
 export const HOST_PARAMETERS: Record<string, string> = {
   ...HOST_SETTINGS,
   engine_dev: "1: open the development tools (development builds)",

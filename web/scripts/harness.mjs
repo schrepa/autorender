@@ -1,23 +1,3 @@
-/**
- * What the browser smoke checks share: Chrome with WebGPU and a page that
- * records its errors, development commands under one retry rule and
- * deadline, pixel comparisons with explicit tolerances, the development
- * server's pages, and the authored fixture scenes the Stress Lab loads in
- * place of a workload.
- *
- * A check asserts what must be true. What it measures about the image
- * (pixels changed between frames, an error against a reference) goes in
- * the `measurements` of the JSON object it prints last, each
- * `{ name, value, unit, note? }`, which `cargo xtask checks` keeps with the
- * attempt; it never fails on a fixed limit of those. A failed assertion
- * exits 3, anything else that stops a check 1 (`exit-codes.mjs`).
- *
- * Every check opens a browser or a native GPU host, so importing the
- * harness holds the machine's heavy-run lock for the check's life
- * (`heavy-run.mjs`). Checks build, run and write into the served workspace
- * (`workspace.mjs`). What their commands send is recorded for the smoke
- * runner (`exercised.mjs`).
- */
 // @ts-check
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";
@@ -34,11 +14,8 @@ import { workspace, workspacePath } from "./workspace.mjs";
 
 await holdHeavyRun(`smoke ${basename(process.argv[1] ?? "")}`);
 
-/** The development server the checks open: `DEMO_URL`, else Vite's default. */
 export const base = `${(process.env.DEMO_URL ?? "http://127.0.0.1:5173").replace(/\/$/, "")}/`;
 
-/** `page` of the development server with development tools, and `query`
- * (objects as JSON, such as the Stress Lab's `config`). */
 export function devUrl(page, query = {}) {
   const url = new URL(page, base);
   url.searchParams.set("engine_dev", "1");
@@ -48,32 +25,21 @@ export function devUrl(page, query = {}) {
   return url;
 }
 
-/** The scene URL fixtures are served at, which no file on disk holds. */
 export const fixtureScene = "/scenes/smoke-fixture.scene.json";
 
-/** The Stress Lab with development tools, loading the fixture scene in
- * place of a workload, and `query`. */
 export function sceneUrl(query = {}) {
   return devUrl("stress.html", { source: fixtureScene, ...query });
 }
 
-/** The garden fixture: a scene with a player, solids,
- * pickups, a textured prefab and parents, as a fresh object. */
 export function gardenScene() {
   return JSON.parse(readFileSync(new URL("fixtures/garden.scene.json", import.meta.url), "utf8"));
 }
 
-/** Builds the workspace's binaries `cargoArguments` select (`-p PACKAGE`,
- * `--bin NAME`, `--profile quick`) with the `cargo` on PATH, or `CARGO`, in
- * the background and below normal priority, so a check's browser work runs
- * meanwhile and keeps the processors it needs: resolves to each binary's
- * path by name, wherever the target folder is. Await it before running one. */
 export function cargoBinaries(cargoArguments) {
   const built = new Promise((resolveBuild, reject) => {
     const child = spawn(process.env.CARGO ?? "cargo", ["build", "-q", "--locked", "--message-format=json", ...cargoArguments],
       { cwd: workspace, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    // The compilers it starts inherit the priority.
-    try { if (child.pid !== undefined) setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* Not permitted: normal priority. */ }
+    try { if (child.pid !== undefined) setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); } catch {}
     let stdout = "", stderr = "";
     child.stdout.on("data", bytes => { stdout += bytes; });
     child.stderr.on("data", bytes => { stderr = (stderr + bytes).slice(-16_384); });
@@ -88,13 +54,10 @@ export function cargoBinaries(cargoArguments) {
       resolveBuild(binaries);
     });
   });
-  // A failed build fails the check where it is awaited.
   built.catch(() => {});
   return built;
 }
 
-/** The workspace's `artifacts/NAME/`, emptied, for `name`'s captures: each
- * run replaces the last one's. */
 export async function artifacts(name) {
   const output = `${workspacePath("artifacts", name)}${sep}`;
   await rm(output, { recursive: true, force: true });
@@ -102,11 +65,6 @@ export async function artifacts(name) {
   return output;
 }
 
-/** Headless Chrome (`BROWSER_PATH`, or the `BROWSER_CHANNEL` channel) with
- * unsafe WebGPU, SwiftShader with `SOFTWARE_GPU=1`, the shaders earlier
- * checks compiled (`launchContext`), and one page of `width` by `height`
- * whose first errors collect in `errors`; `browser.close()` ends it and
- * `browser.version()` names Chrome's version. */
 export async function launch({ width = 1200, height = 900, timeout = 30_000, args = [] } = {}) {
   const { page, version, close } = await launchContext({ args, viewport: { width, height }, deviceScaleFactor: 1 });
   const browser = { close, version: () => version };
@@ -118,12 +76,6 @@ export async function launch({ width = 1200, height = 900, timeout = 30_000, arg
   return { browser, page, errors };
 }
 
-/** Sends development commands to `page`, each answering within `deadline`
- * milliseconds with `ok` equal to `expectedOk`, time the page spends
- * waiting on its GPU before presenting not counted (browsers present
- * nothing while their GPU process compiles pipelines or catches up). Only
- * a `command_busy` reply is retried, until the deadline: it rejects a
- * command before it runs, so no command is ever repeated after it ran. */
 export function commander(page, { deadline = 30_000 } = {}) {
   return async function command(op, fields = {}, expectedOk = true) {
     recordSent({ op, ...fields });
@@ -153,9 +105,6 @@ export function commander(page, { deadline = 30_000 } = {}) {
   };
 }
 
-/** A frame's stats (a reply's `rendering`) whose reads of a field they lack
- * throw, at any depth: every field is always present, so a renamed or
- * misspelt one fails the check instead of reading `undefined`. */
 export function strictStats(stats) {
   return new Proxy(stats, {
     get(target, field, receiver) {
@@ -168,10 +117,7 @@ export function strictStats(stats) {
   });
 }
 
-/** Waits while the page runs ordinary frames (after `resume`) until
- * `frames` more were drawn and `done` holds for a status reply: frame
- * counts and the engine's own state, not milliseconds, say when enough
- * ran, on a fast machine and a slow one alike. Resolves to that reply.
+/**
  * @param {(op: string) => Promise<any>} command
  * @param {number} frames
  * @param {{ done?: (status: any) => boolean, deadline?: number }} [options]
@@ -189,27 +135,18 @@ export async function waitFrames(command, frames, { done = () => true, deadline 
   }
 }
 
-/** The development protocol's version, request limit and ops, generated
- * from the engine (`cargo xtask schema`). */
 export const protocol = JSON.parse(readFileSync(new URL("../src/generated/protocol.json", import.meta.url), "utf8"));
 
-/** Waits up to `timeout` milliseconds for the page's development host to
- * answer this protocol's version. */
 export async function developmentReady(page, { timeout = 60_000 } = {}) {
   await page.waitForFunction(version => window.__engineDev?.version === version, protocol.version, { timeout });
 }
 
-/** Opens `url` and pauses it once its development host answers, waiting up
- * to `timeout` milliseconds while the page starts and builds its workload. */
 export async function openPaused(page, url, { timeout = 60_000 } = {}) {
   await page.goto(String(url), { waitUntil: "domcontentloaded" });
   await developmentReady(page, { timeout });
   return commander(page, { deadline: timeout })("pause");
 }
 
-/** How many pixels of two PNG captures (base64) differ by more than
- * `tolerance` in a color channel, or in alpha too with `alpha`; the
- * captures must have one size. */
 export function differentPixels(page, images, { tolerance = 0, alpha = false } = {}) {
   return page.evaluate(async ({ images, tolerance, channels }) => {
     const pixels = await Promise.all(images.map(async png => {
@@ -233,14 +170,12 @@ export function differentPixels(page, images, { tolerance = 0, alpha = false } =
   }, { images, tolerance, channels: alpha ? 4 : 3 });
 }
 
-/** Asserts finite `actual` within `epsilon` of `expected`, element by element. */
 export function near(actual, expected, message, epsilon = 0.00005) {
   assert.equal(actual?.length, expected.length, message);
   actual.forEach((value, index) => assert.ok(Number.isFinite(value) && Math.abs(value - expected[index]) <= epsilon,
     `${message}[${index}]: ${value} != ${expected[index]}`));
 }
 
-/** CPU and GPU residency of an `assets` reply, for comparisons. */
 export function residency(reply) {
   const { result } = reply;
   return {
@@ -251,10 +186,6 @@ export function residency(reply) {
   };
 }
 
-/** A disposable scene the Stress Lab loads from `fixtureScene`:
- * `route()` serves it, `reload(command, next)` replaces it with `next` as
- * the following revision through the reload control, and `serve(document)`
- * serves `document` as it is, e.g. for a reload that must be refused. */
 export function routedScene(page, document) {
   let served = structuredClone(document);
   let revision = document.revision;

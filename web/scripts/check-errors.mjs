@@ -1,10 +1,3 @@
-/** Every error code the web host, the agent tools, the smokes and Rust's
- * hand-written replies name is one the engine's catalog (`ErrorCode`,
- * generated into protocol.json) describes, so agents look each up in one
- * place. The web host's TypeScript takes the catalog's own type
- * (src/generated/errors.ts), which tsc checks; this check reads the rest:
- * where the host and the scripts make codes, the codes smokes expect, and
- * codes Rust writes into JSON. */
 // @ts-check
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -13,16 +6,10 @@ const web = fileURLToPath(new URL("../", import.meta.url));
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const { errors } = JSON.parse(await readFile(`${web}src/generated/protocol.json`, "utf8"));
 const code = String.raw`["']([a-z]+(?:_[a-z0-9]+)*)["']`;
-/** Where codes are made: an error constructor's or reply helper's first
- * argument (the built-in Error takes a message, not a code), a `code:`
- * field, or a code's `??` default. */
 const made = [String.raw`\b(?:\w+Error|error|failure|fail)\s*\(\s*${code}`, String.raw`\bcode\s*(?::|\?\?)\s*${code}`];
-/** Where smokes expect codes: a reply's code compared or asserted equal. */
 const expected = [String.raw`\bcode\s*(?:===|!==|,)\s*${code}`];
-/** Codes Rust writes into JSON by hand rather than as `ErrorCode`s. */
 const written = [String.raw`"code"\s*:\s*${code}`];
 
-/** The files under `folder` (relative to the repository) whose names end in `suffix`. */
 async function files(folder, suffix) {
   const names = await readdir(`${root}${folder}`, { recursive: true });
   return names.filter(name => name.endsWith(suffix)).map(name => `${folder}/${name.replaceAll("\\", "/")}`);

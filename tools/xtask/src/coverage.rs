@@ -1,31 +1,18 @@
-//! What the smokes check of each engine feature: every environment
-//! section, inspector and development op, whether frame stats report the
-//! section, and which smokes name each in their code by the syntax that
-//! uses it ([`Claims`]): a comment or a message naming one checks nothing.
-//! `cargo xtask schema` writes it as web/src/generated/coverage.json; lint
-//! keeps it current, so a gap shows where agents and reviewers look. What
-//! the checks actually sent when they ran, `cargo xtask smoke` records
-//! beside it.
-
 use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde_json::{Value, json};
 
-/// Each environment section's key and settings type, in authored order.
 macro_rules! section_names {
     ($($key:ident: $settings:ident { opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
         &[$((stringify!($key), stringify!($settings))),*]
     };
 }
 
-/// Each environment section's key and settings type, in authored order.
 pub fn environment_sections() -> &'static [(&'static str, &'static str)] {
     engine::environment_sections!(section_names)
 }
 
-/// The coverage file: each section, inspector and op with the smokes whose
-/// code claims it, as JSON.
 pub fn coverage(
     root: &Path,
     development: &engine_dev::schemas::Generated,
@@ -36,7 +23,6 @@ pub fn coverage(
         .into_iter()
         .map(|(name, _, source)| (name, Claims::of(&source)))
         .collect();
-    // The smokes whose claims of one kind (`kind`) hold `word`.
     let naming = |kind: fn(&Claims) -> &BTreeSet<String>, word: &str| -> Vec<String> {
         smokes
             .iter()
@@ -45,10 +31,7 @@ pub fn coverage(
             .collect()
     };
     let reported = |key: &str| stats["properties"].get(key).is_some();
-    // The protocol's own description of its types.
     let mut engine = engine::Engine::default();
-    // The inspectors as this generation describes them, not as the build
-    // running it last generated them.
     let tools = engine_dev::DevTools::with_schemas(&development.inspectors);
     let described: Value = serde_json::from_str(&tools.execute(
         &mut engine,
@@ -96,8 +79,6 @@ pub fn coverage(
         + "\n")
 }
 
-/// Fails unless some smoke checks every inspector, environment section and
-/// protocol op: what the engine offers agents is exercised.
 pub fn check(root: &Path) -> Result<(), String> {
     let development = engine_dev::schemas::generated()?;
     let coverage: Value =
@@ -122,31 +103,19 @@ pub fn check(root: &Path) -> Result<(), String> {
         unchecked.join(", ")
     ))
 }
-/// What a smoke's code claims to check, by the syntax that uses each name:
-/// a word in a comment, a message or any other string claims nothing.
 #[derive(Debug, Default)]
 pub struct Claims {
-    /// Ops: strings a plain function call takes first (`command("render"`,
-    /// `cli("capture"`) or an `op` field holds (`op: "status"`).
     pub ops: BTreeSet<String>,
-    /// Inspectors: strings a `component` field holds or a call of an
-    /// `inspect…` function takes (`inspect("player", "Transform")`).
     pub inspectors: BTreeSet<String>,
-    /// Section keys, among other names: names used as properties
-    /// (`terrain:`, `.terrain`, `{ terrain }`).
     pub properties: BTreeSet<String>,
 }
 
 impl Claims {
-    /// The claims of JavaScript `source`.
     pub fn of(source: &str) -> Self {
-        // Both strippings keep every character but the comments' in place,
-        // so a position in one is the same position in the other.
         let code: Vec<char> = stripped(source, true).chars().collect();
         let bare: Vec<char> = stripped(source, false).chars().collect();
         assert_eq!(code.len(), bare.len(), "strippings keep positions");
         let mut claims = Self::default();
-        // Without their contents, the strings' quotes pair up in order.
         let mut open: Option<(usize, char)> = None;
         for (at, &c) in bare.iter().enumerate() {
             if c != '"' && c != '\'' {
@@ -196,12 +165,10 @@ impl Claims {
     }
 }
 
-/// Whether `c` can be part of a JavaScript name.
 fn is_name(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '$'
 }
 
-/// The last character before `at` that is not white space, and where.
 fn previous(code: &[char], at: usize) -> Option<(usize, char)> {
     (0..at)
         .rev()
@@ -209,8 +176,6 @@ fn previous(code: &[char], at: usize) -> Option<(usize, char)> {
         .map(|before| (before, code[before]))
 }
 
-/// The name that ends where the white space before `end` starts, and where
-/// it starts.
 fn name_before(code: &[char], end: usize) -> Option<(usize, String)> {
     let (last, c) = previous(code, end)?;
     if !is_name(c) {
@@ -223,7 +188,6 @@ fn name_before(code: &[char], end: usize) -> Option<(usize, String)> {
     Some((start, code[start..=last].iter().collect()))
 }
 
-/// The field a value at `at` is given to (`op` in `op: "status"`).
 fn field_before(code: &[char], at: usize) -> Option<&'static str> {
     let (colon, c) = previous(code, at)?;
     if c != ':' {
@@ -233,8 +197,6 @@ fn field_before(code: &[char], at: usize) -> Option<&'static str> {
     ["op", "component"].into_iter().find(|field| *field == name)
 }
 
-/// Whether the value at `at` is the first argument of a plain function
-/// call: `command("render"`, not a method's (`text.includes("render"`).
 fn first_argument(code: &[char], at: usize) -> bool {
     match previous(code, at) {
         Some((paren, '(')) => plain_call(code, paren).is_some(),
@@ -242,7 +204,6 @@ fn first_argument(code: &[char], at: usize) -> bool {
     }
 }
 
-/// The name of the plain function whose call's parenthesis is at `paren`.
 fn plain_call(code: &[char], paren: usize) -> Option<String> {
     const KEYWORDS: [&str; 9] = [
         "if", "while", "for", "switch", "return", "catch", "function", "typeof", "await",
@@ -252,7 +213,6 @@ fn plain_call(code: &[char], paren: usize) -> Option<String> {
     (!method && !KEYWORDS.contains(&name.as_str())).then_some(name)
 }
 
-/// The plain function whose call's arguments hold the value at `at`.
 fn enclosing_call(code: &[char], at: usize) -> Option<String> {
     let mut depth = 0usize;
     for before in (0..at).rev() {
@@ -276,20 +236,13 @@ fn enclosing_call(code: &[char], at: usize) -> Option<String> {
     None
 }
 
-/// JavaScript `source` without its comments, each of which leaves a space
-/// (a line comment its line's end). Strings, template literals' text and
-/// regular expressions stay as written with `keep`; without it each of
-/// their characters becomes a space between their delimiters, which stay.
 fn stripped(source: &str, keep: bool) -> String {
     let chars: Vec<char> = source.chars().collect();
     let mut out = String::with_capacity(source.len());
-    // A character of a string's, a template's or a regular expression's text.
     let text = |c: char| if keep { c } else { ' ' };
-    // For each open template literal hole, the brace depth it opened at.
     let mut holes: Vec<usize> = Vec::new();
     let mut depth = 0usize;
     let mut at = 0;
-    // Inside a template literal's text (not in one of its holes).
     let mut template = false;
     while at < chars.len() {
         let c = chars[at];
@@ -356,8 +309,6 @@ fn stripped(source: &str, keep: bool) -> String {
                 template = true;
             }
             '/' if regex_starts(&out) => {
-                // A regular expression: to its closing slash outside a
-                // character class.
                 out.push(c);
                 at += 1;
                 let mut class = false;
@@ -408,9 +359,6 @@ fn stripped(source: &str, keep: bool) -> String {
     out
 }
 
-/// Whether a `/` after `before` (code so far) starts a regular expression
-/// rather than dividing: after an operator, an opening bracket, or a
-/// keyword such as `return`; not after a value.
 fn regex_starts(before: &str) -> bool {
     let trimmed = before.trim_end();
     let Some(last) = trimmed.chars().next_back() else {

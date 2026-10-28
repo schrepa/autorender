@@ -1,36 +1,15 @@
-//! The development protocol's generated files, which `cargo xtask schema`
-//! writes and lint keeps current: every inspector's schema, the frame
-//! stats' and the scene's, the ops of queries and controls, and the
-//! protocol's summary for hosts and tools. Generating them checks the rules
-//! that keep what agents see complete: every type and field describes
-//! itself, fits one reply, and whatever a scene authors shows in an
-//! inspector.
-
 use engine_scene::{EnvironmentSection, SectionVisitor};
 use serde_json::{Map, Value, json};
 
 use crate::{protocol, views};
 
-/// The development protocol's generated files, and the values tools
-/// generate others from.
 pub struct Generated {
-    /// Each file by path from the repository root, with its contents.
     pub files: Vec<(&'static str, String)>,
-    /// The protocol's summary: its version, request limit, ops, features
-    /// and error codes.
     pub summary: Value,
-    /// The schema of what a frame observed ([`engine_core::FrameStats`]).
     pub frame_stats: Value,
-    /// The inspectors' schemas, as `inspectors.json` holds them: what
-    /// tooling built from this generation describes inspectors by.
     pub inspectors: Value,
 }
 
-/// The schema of every development reply ([`crate::Reply`]), which the
-/// page's reply types are generated from, with the bridge's types beside
-/// its own definitions: the steps the engine answers ([`crate::Step`]),
-/// the outcomes of the host's effects ([`crate::Outcome`]) and the host's
-/// side of each call ([`crate::HostContext`]).
 pub fn reply() -> Value {
     let serialized = |schema: schemars::Schema| -> Value {
         serde_json::to_value(schema).expect("schemas serialize")
@@ -45,7 +24,6 @@ pub fn reply() -> Value {
         let Some(fields) = schema.as_object_mut() else {
             continue;
         };
-        // The reply is the root here, the definitions the others' too.
         if let Some(Value::Object(theirs)) = fields.remove("$defs") {
             for (name, definition) in theirs {
                 if name != "Reply" {
@@ -60,7 +38,6 @@ pub fn reply() -> Value {
             .to_owned();
         definitions.insert(name, schema);
     }
-    // Each typed op's result, and one object naming them by op.
     let mut results = Map::new();
     for (op, schema) in crate::results::result_schemas() {
         let mut schema = serialized(schema);
@@ -92,7 +69,6 @@ pub fn reply() -> Value {
     reply
 }
 
-/// The generated files and values, or every rule the types break.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -131,8 +107,6 @@ pub fn generated() -> Result<Generated, String> {
     let Some(described) = schemas.as_object() else {
         return Err("the inspectors' schemas are not an object".to_owned());
     };
-    // Each type's description fits one reply, its envelope and constraints
-    // beside it.
     for (name, schema) in described {
         let bytes = schema.to_string().len();
         if bytes + 8 * 1024 > protocol::MAX_RESPONSE_BYTES {
@@ -142,7 +116,6 @@ pub fn generated() -> Result<Generated, String> {
             ));
         }
     }
-    // Inspectors describe themselves by their types' doc comments.
     for (name, schema) in described {
         if ["protocol", "BrowserControl", "FrameStats"].contains(&name.as_str()) {
             continue;
@@ -161,9 +134,6 @@ pub fn generated() -> Result<Generated, String> {
     };
     engine_scene::SceneEnvironment::default().visit(&mut sections);
     problems.append(&mut sections.problems);
-    // A settings section is never named as the plural of a component, which
-    // reads as a store of them: `LocalLight`'s settings are
-    // `LocalLightSettings`, not `LocalLights`.
     for name in sections.schemas.keys() {
         if let Some(component) = name.strip_suffix('s')
             && schemas.get(component).is_some()
@@ -177,7 +147,6 @@ pub fn generated() -> Result<Generated, String> {
         all.extend(sections.schemas);
     }
     let scene_schema = engine_scene::SceneDocument::schema_json();
-    // The ops of queries and controls, from their schemas: no list to keep.
     let queries = ops(&schemas["protocol"], &mut problems);
     let controls = ops(&schemas["BrowserControl"], &mut problems);
     control_state(&controls, &schemas, &mut problems);
@@ -201,12 +170,9 @@ pub const {name}: [&str; {}] = {:?};
     let summary = json!({
         "version": protocol::PROTOCOL_VERSION,
         "max_request_bytes": protocol::MAX_REQUEST_BYTES,
-        // Profiling captures, which the agent's bridge requests.
         "profile_max_events": engine_profile::MAX_EVENTS,
         "queries": queries,
         "controls": controls,
-        // The engine's features in its bundle's order: each one's name, the
-        // plugin adding it and the features it needs.
         "features": engine_core::Feature::ALL
             .iter()
             .map(|feature| json!({
@@ -215,7 +181,6 @@ pub const {name}: [&str; {}] = {:?};
                 "needs": feature.needs().iter().map(|need| need.name()).collect::<Vec<_>>(),
             }))
             .collect::<Vec<_>>(),
-        // Every error code replies answer with and what it means.
         "errors": engine_settings::ErrorCode::ALL
             .iter()
             .map(|&(code, name, _)| (name.to_owned(), json!(code.description())))
@@ -252,9 +217,6 @@ pub const {name}: [&str; {}] = {:?};
     })
 }
 
-/// Checks that every op's result is typed (`results!`) or listed in
-/// `UNTYPED_RESULTS`, not both, that both name only ops, and that the
-/// untyped list is sorted.
 fn typed_results(queries: &[String], controls: &[String], problems: &mut Vec<String>) {
     let ops: Vec<&str> = queries.iter().chain(controls).map(String::as_str).collect();
     let (typed, untyped) = (
@@ -278,11 +240,6 @@ fn typed_results(queries: &[String], controls: &[String], problems: &mut Vec<Str
     }
 }
 
-/// The controls' schema, each environment section the environment control
-/// replaces (the atmosphere among them) named by its inspector, which
-/// describes its fields, rather than written out, as the `Environment`
-/// inspector names them: it fits one reply however many sections there are.
-/// Definitions only the sections used go with them.
 fn control_schema() -> Value {
     struct Titles(Vec<(String, &'static str)>);
     impl SectionVisitor for Titles {
@@ -308,7 +265,6 @@ fn control_schema() -> Value {
             });
         }
     }
-    // Keep the definitions the schema still reaches.
     let mut reached = std::collections::BTreeSet::new();
     let mut pending = Vec::new();
     let mut root = schema.clone();
@@ -329,7 +285,6 @@ fn control_schema() -> Value {
     schema
 }
 
-/// Adds the names of the definitions `value` refers to to `names`.
 fn references(value: &Value, names: &mut Vec<String>) {
     match value {
         Value::Object(object) => {
@@ -354,8 +309,6 @@ fn references(value: &Value, names: &mut Vec<String>) {
     }
 }
 
-/// Each scene environment section's schema, by the name of its inspector,
-/// and the fields that lack a doc comment.
 struct Sections {
     schemas: Map<String, Value>,
     problems: Vec<String>,
@@ -364,7 +317,6 @@ struct Sections {
 impl SectionVisitor for Sections {
     fn section<T: EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
         let schema = serde_json::to_value(T::schema()).unwrap_or_default();
-        // Agents learn each field from its own doc comment.
         for (field, property) in schema["properties"].as_object().into_iter().flatten() {
             if property["description"].as_str().is_none_or(str::is_empty) {
                 self.problems.push(format!(
@@ -377,10 +329,6 @@ impl SectionVisitor for Sections {
     }
 }
 
-/// The schema of what a frame observed, after checking the rules that keep it
-/// one readable definition: every field has a doc comment, a feature's
-/// numbers live under its environment section's key, and what a budget or
-/// the device's limits left out is named `dropped` or `dropped_*`.
 fn frame_stats(problems: &mut Vec<String>) -> Value {
     let schema =
         serde_json::to_value(schemars::schema_for!(engine_core::FrameStats)).unwrap_or_default();
@@ -420,9 +368,6 @@ fn frame_stats(problems: &mut Vec<String>) -> Value {
     schema
 }
 
-/// Adds to `problems` each name describe or the hosts' tooling answers
-/// that an inspector may take: a probe registered under each must be
-/// refused as reserved.
 fn reserved_inspectors(problems: &mut Vec<String>) {
     let mut tools = crate::DevTools::bare();
     for name in crate::reserved_names() {
@@ -440,7 +385,6 @@ fn reserved_inspectors(problems: &mut Vec<String>) {
     }
 }
 
-/// Checks that `dev_features!` lists features by name, sorted.
 fn dev_features(problems: &mut Vec<String>) {
     let names = crate::features::NAMES;
     for name in names {
@@ -458,8 +402,6 @@ fn dev_features(problems: &mut Vec<String>) {
     }
 }
 
-/// Checks that every control names, once, where its state shows, and that
-/// the inspectors named exist.
 fn control_state(controls: &[String], schemas: &Value, problems: &mut Vec<String>) {
     for op in controls {
         let listed = protocol::CONTROL_STATE
@@ -476,7 +418,6 @@ fn control_state(controls: &[String], schemas: &Value, problems: &mut Vec<String
         if !controls.iter().any(|control| control == op) {
             problems.push(format!("CONTROL_STATE lists {op}, which is no control"));
         }
-        // The environment's inspector is its sections' together.
         if !["", "status", "GameControls", "Environment"].contains(shows)
             && schemas.get(*shows).is_none()
         {
@@ -487,11 +428,6 @@ fn control_state(controls: &[String], schemas: &Value, problems: &mut Vec<String
     }
 }
 
-/// Where each property scenes author on an entity shows when it is
-/// inspected: in every entity reply's header, as an inspector, or as one
-/// field of an inspector. A property shown as an object shows each of its
-/// fields there. The components engine_scene lists say where they show
-/// themselves ([`engine_scene::COMPONENT_SHOWS`]).
 const AUTHORED: &[(&str, &str)] = &[
     ("id", "header"),
     ("name", "header"),
@@ -505,10 +441,6 @@ const AUTHORED: &[(&str, &str)] = &[
     ("transform", "Transform"),
 ];
 
-/// Where each top-level property of a scene shows: the definitions of the
-/// assets entities use, shown with them; the environment and camera, as
-/// their inspectors; and the document's structure, in the entities and
-/// replies' observations.
 const DOCUMENT: &[(&str, &str)] = &[
     ("id", "structure"),
     ("revision", "structure"),
@@ -524,8 +456,6 @@ const DOCUMENT: &[(&str, &str)] = &[
     ("animations", "AnimationPlayer.clip"),
 ];
 
-/// Authored fields inspectors show under another name: the scene's form and
-/// the runtime's.
 const RENAMED: &[(&str, &str)] = &[
     ("SceneTransform.rotation_degrees", "rotation"),
     ("SceneCamera.fov_degrees", "vertical_fov_radians"),
@@ -533,11 +463,6 @@ const RENAMED: &[(&str, &str)] = &[
     ("SceneSkin.id", "skin"),
 ];
 
-/// Checks that whatever a scene authors, an inspector shows: each entity
-/// property and top-level property where [`AUTHORED`] and [`DOCUMENT`] say,
-/// every field of an object there, under its name or the one [`RENAMED`]
-/// gives. A property without an entry fails, so new ones come with their
-/// inspection.
 fn authored_parity(scene: &Value, schemas: &Value, problems: &mut Vec<String>) {
     let definitions = &scene["$defs"];
     let object = definitions["SceneObject"]["properties"]
@@ -584,9 +509,6 @@ fn authored_parity(scene: &Value, schemas: &Value, problems: &mut Vec<String>) {
     }
 }
 
-/// Checks that authored property `what` (of schema `property`) shows where
-/// `shows` says, every field of it: `definitions` are the scene's, `schemas`
-/// the inspectors'.
 fn shown(
     (definitions, schemas): (&Value, &Value),
     what: &str,
@@ -621,8 +543,6 @@ fn shown(
     let Some(fields) = authored["properties"].as_object() else {
         return;
     };
-    // A field holding the scene's own type refers agents to its
-    // definition there instead of repeating it.
     let declared = format!("`{name}`");
     if target.get("properties").is_none()
         && target["description"]
@@ -644,8 +564,6 @@ fn shown(
     }
 }
 
-/// The definition `schema` names, directly, as an option, or as the items
-/// of a list: its name and body.
 fn definition<'a>(definitions: &'a Value, schema: &'a Value) -> Option<(String, &'a Value)> {
     if let Some(reference) = schema["$ref"].as_str() {
         let name = reference.rsplit('/').next()?;
@@ -661,8 +579,6 @@ fn definition<'a>(definitions: &'a Value, schema: &'a Value) -> Option<(String, 
     definition(definitions, schema.get("items")?)
 }
 
-/// The object schema `schema` resolves to through references, options and
-/// list items, within `definitions`.
 fn resolve<'a>(definitions: &'a Value, schema: &'a Value) -> Option<&'a Value> {
     if schema.is_null() {
         return None;
@@ -680,7 +596,6 @@ fn resolve<'a>(definitions: &'a Value, schema: &'a Value) -> Option<&'a Value> {
         .or(Some(schema))
 }
 
-/// The `op` of every variant of an internally tagged request enum's schema.
 fn ops(schema: &Value, problems: &mut Vec<String>) -> Vec<String> {
     let variants = schema
         .get("oneOf")

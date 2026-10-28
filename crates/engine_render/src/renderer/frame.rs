@@ -1,10 +1,3 @@
-//! One frame of [`Renderer`], stage by stage: planning, the surface, asset
-//! uploads, instance packing and writes, each feature's preparation, the
-//! frame's pipelines, encoding and submission. `prepare` prepares the
-//! frame, `encode` and `opaque` encode its render graph's passes, `submit`
-//! hands its prelude and its passes a batch at a time to the queue's
-//! submission side, and `frame_stats` reports it.
-
 use super::*;
 use crate::exposure::{ExposureFrame, ExposurePass};
 use crate::gpu_calls::Recorded;
@@ -19,9 +12,6 @@ mod opaque;
 mod prepare;
 mod submit;
 
-/// How far switches between how objects show fade each frame:
-/// the presentation time of the last displayed GPU-presented
-/// frame, and this frame's share of a switch's fade.
 #[derive(Default)]
 pub(super) struct SwitchFades {
     presented: f32,
@@ -29,11 +19,6 @@ pub(super) struct SwitchFades {
 }
 
 impl SwitchFades {
-    /// This frame's share of a fade `fade_seconds` long, at presentation time
-    /// `seconds`: displayed GPU-presented frames advance by the time since
-    /// the last (none for one presenting the same moment again, as the
-    /// first after a pause does); previews switch at once (1), and exact
-    /// frames show objects as they stand (a negative share).
     fn advance(&mut self, kind: FrameKind, seconds: f32, fade_seconds: f32) {
         self.share = match (kind.gpu_mode, kind.display) {
             (false, _) => -1.0,
@@ -50,28 +35,15 @@ impl SwitchFades {
     }
 }
 
-/// What kind of frame this is, decided before any GPU work.
 #[derive(Clone, Copy)]
 pub(super) struct FrameKind {
-    /// Presented on the GPU.
     pub(super) gpu_mode: bool,
-    /// Temporally antialiased.
     pub(super) temporal: bool,
-    /// Shown as the page's next frame, not a preview or capture.
     pub(super) display: bool,
-    /// Showing a debug view: drawn into the debug targets, without screen
-    /// effects, decals, transparent surfaces or temporal antialiasing.
     pub(super) debug: bool,
     pub(super) instance_count: usize,
 }
 
-/// The work a frame hands over first, once its features are prepared, while
-/// its passes prepare and record (`Renderer::hand_prelude`), in
-/// submission order: the physically based sky's light, which everything
-/// after reads; new textures' mip levels and impostor bakes; staged pose
-/// copies; GPU presentation's input copies; environment maps' and
-/// reflection probes' work. Profiling captures time each but the sky's,
-/// which times its own passes, between marks of its own.
 #[derive(Default)]
 pub(super) struct Prelude {
     pub(super) sky: Option<wgpu::CommandEncoder>,
@@ -82,7 +54,6 @@ pub(super) struct Prelude {
 }
 
 impl Prelude {
-    /// The span profiling captures time each part as, in submission order.
     const SPANS: [Option<&'static str>; 5] = [
         None,
         Some("pre_mips"),
@@ -91,8 +62,6 @@ impl Prelude {
         Some("pre_environment"),
     ];
 
-    /// Each part's recorded work, in submission order, which the submission
-    /// side finishes.
     fn parts(self) -> [Option<Recorded>; 5] {
         [
             self.sky.map(Recorded::Encoder),
@@ -104,16 +73,13 @@ impl Prelude {
     }
 }
 
-/// A frame's asset uploads.
 pub(super) struct AssetUploads {
     pub(super) mesh_bytes: u64,
     pub(super) texture_bytes: u64,
     pub(super) mip_levels: u32,
 }
 
-/// How a frame packed its instance storage.
 pub(super) struct Packing {
-    /// This frame's temporal antialiasing.
     pub(super) temporal_frame: Option<TemporalFrame>,
     write_slots: bool,
     slot_key: Option<(u64, u64)>,
@@ -124,7 +90,6 @@ pub(super) struct Packing {
     pub(super) fallback: bool,
 }
 
-/// A frame's uniform and instance writes.
 pub(super) struct Writes {
     pub(super) lighting: LightingUniform,
     pub(super) camera_bytes: u64,
@@ -135,32 +100,25 @@ pub(super) struct Writes {
     pub(super) ranges: usize,
 }
 
-/// What each feature prepared for a frame.
 pub(super) struct Features<'s> {
-    /// The viewport and depth pyramid levels of occlusion culling.
     pub(super) occlusion: Option<(u32, u32, u32)>,
     pub(super) gpu_prepared: Option<GpuPrepared>,
     pub(super) shadow_frame: Option<ShadowFrame>,
     pub(super) probe_list: &'s [engine_core::RenderReflectionProbe],
     pub(super) refraction: bool,
-    /// What the features render_features! lists prepared.
     pub(super) frames: FeatureFrames,
 }
 
 impl Features<'_> {
-    /// The local lights binned for the frame, when it shades them.
     pub(super) fn light_frame(&self) -> Option<&LightFrame> {
         self.frames.lights.as_ref().map(Ready::frame)
     }
 
-    /// The screen effects the frame runs, when it draws into their
-    /// targets.
     pub(super) fn post_frame(&self) -> Option<Effects> {
         self.frames.post.as_ref().map(|post| *post.frame())
     }
 }
 
-/// The mesh pass kinds a frame draws with, and its impostors' pipeline.
 #[derive(Clone, Copy)]
 pub(super) struct Passes {
     pub(super) opaque_kind: PassKind,
@@ -168,7 +126,6 @@ pub(super) struct Passes {
     pub(super) impostor_pass: Option<(Targets, bool)>,
 }
 
-/// Everything a frame's encoding, submission and stats read.
 pub(super) struct FrameState<'s> {
     pub(super) snapshot: &'s RenderSnapshot,
     pub(super) frame: RenderFrame<'s>,
@@ -178,20 +135,13 @@ pub(super) struct FrameState<'s> {
     pub(super) writes: Writes,
     pub(super) features: Features<'s>,
     pub(super) passes: Passes,
-    /// Virtual geometry draws its clusters, and the
-    /// visibility buffer resolves some of them.
     pub(super) virtual_frame: bool,
-    /// Terrain draws.
     pub(super) terrain: bool,
-    /// Placed objects draw.
     pub(super) scatter: bool,
     pub(super) resolving: bool,
-    /// What the frame's render graph declares.
     pub(super) shape: FrameShape,
 }
 
-/// What encoding counted: the opaque passes' draws, shadow draws and the
-/// render graph's passes (the probes feature counts its faces).
 #[derive(Default)]
 pub(super) struct EncodeReport {
     pub(super) draws: u32,
@@ -200,19 +150,10 @@ pub(super) struct EncodeReport {
 }
 
 impl Renderer {
-    /// Renders a borrowed core frame using its retained structural and pose
-    /// revisions. Lost or outdated surfaces recover on a later frame; device
-    /// loss and validation errors permanently fail this renderer, but for
-    /// errors in one lazily created feature, which disable it alone, and frame
-    /// source errors return before uploads or cache changes. The frame is
-    /// exact: never jittered or blended with earlier frames.
     pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, RenderError> {
         self.render_inner(frame, false)
     }
 
-    /// Auto exposure's meter of frames drawing into the screen effects'
-    /// targets (`drawn`), whose exposure the prelude's `inputs` copy over the
-    /// lighting's, after the physically based sky's.
     fn prepare_exposure(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -223,7 +164,6 @@ impl Renderer {
         let (device, queue) = (&self.device, &self.queue);
         let (post, depth) = (self.features.post.get(), &self.depth.view);
         let lighting = self.camera.lighting_buffer();
-        // The meter reads the pixels the frame drew.
         let drawn = self.display.region.render.pixels();
         self.features.exposure.prepare(
             (device, needs),
@@ -242,9 +182,6 @@ impl Renderer {
         )
     }
 
-    /// Where the frame's main passes draw: the debug targets of frames
-    /// showing a debug view, the temporal targets of temporal frames, the
-    /// screen effects' targets of frames with effects, otherwise the canvas.
     fn frame_targets(
         &self,
         kind: FrameKind,
@@ -259,10 +196,6 @@ impl Renderer {
         }
     }
 
-    /// [`Self::render_frame`] for ordinary display frames. With temporal
-    /// antialiasing enabled, GPU-presented frames rasterize with a sub-pixel
-    /// jitter and blend with the reprojected output of the previous display
-    /// frame. Any other frame ends that history.
     pub fn render_display_frame(
         &mut self,
         frame: RenderFrame<'_>,
@@ -270,12 +203,6 @@ impl Renderer {
         self.render_inner(frame, true)
     }
 
-    /// Copies GPU presentation's current poses into a staging buffer between
-    /// frames, e.g. right after a fixed tick completes ahead of its due frame.
-    /// The next GPU frame copies them on the GPU instead of staging them again
-    /// when its gather still has the same version and uploads every current
-    /// pose. Poses whose gather stamped fewer than three quarters of them
-    /// upload record by record instead, so they are not staged here.
     pub fn prestage_gpu_current(&mut self, current: engine_core::GpuCurrent<'_>) {
         let bytes: &[u8] = bytemuck::cast_slice(current.poses);
         if self.display.suspended
@@ -291,8 +218,6 @@ impl Renderer {
         }
     }
 
-    /// Ends pass `end`'s span and begins pass `begin`'s, those there are, in
-    /// frames profiling captures: from one empty pass where both are.
     fn mark_stages(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -332,8 +257,6 @@ impl Renderer {
         let assets = self.upload_assets(snapshot, kind, &mut prelude.mips);
         let packing = self.pack_instances(frame, kind);
         let profile_writes = engine_profile::span("render", "queue_writes");
-        // With auto exposure off again, the lighting takes its authored
-        // exposure back over the one the meter copied.
         if !snapshot.environment.auto_exposure.enabled
             && self
                 .features
@@ -344,7 +267,6 @@ impl Renderer {
             self.camera.forget_lighting();
         }
         let writes = self.write_frame_data(frame, kind, &packing, &mut prelude.poses);
-        // Profiling captures time this frame's passes from here.
         self.profiler.begin_frame(&self.device);
         let mut features = self.prepare_features(
             frame,
@@ -356,16 +278,12 @@ impl Renderer {
         let drawn = features.frames.post.is_some();
         features.frames.exposure = self.prepare_exposure(snapshot, drawn, &mut prelude.inputs);
         drop(profile_writes);
-        // The GPU works on the prelude while the frame prepares and records
-        // its passes.
         self.hand_prelude(prelude);
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let view = surface
             .texture()
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.frame_encoder();
-        // The frame's GPU time, which dynamic resolution keeps within its
-        // budget, from here to its last pass.
         self.display.time_begin(&mut encoder);
         let passes = self.prepare_pipelines(kind, &packing.temporal_frame, &features);
         let (virtual_frame, resolving) = self.prepare_virtual_frame(
@@ -384,15 +302,12 @@ impl Renderer {
                 kind.gpu_mode,
             ),
         );
-        // Water settling for tiles' records, its regions' ground raised
-        // through the terrain group the frame laid out.
         self.water_settle.prepare(
             &self.device,
             &self.queue,
             (&self.mesh_shader, &self.terrain),
         );
         self.water_settle.encode(&mut encoder);
-        // Ground cover grows on the terrain drawn.
         features.frames.ground_cover = if terrain {
             self.features
                 .ground_cover
@@ -400,19 +315,15 @@ impl Renderer {
         } else {
             None
         };
-        // Lookups loop over the horizon records the terrain now binds.
         let horizon_records = self.terrain.horizons.record_count();
         self.shadows
             .set_horizon_records(&self.queue, horizon_records);
         features.frames.scatter =
             self.prepare_scatter(snapshot, passes.opaque_kind, passes.impostor_pass.is_some());
         let scatter = features.frames.scatter.is_some();
-        // What placed objects cover, where the camera moved.
         features.frames.occupancy = self.prepare_occupancy();
-        // Water on terrains.
         features.frames.water =
             self.prepare_water(snapshot, passes.opaque_kind, &packing.temporal_frame);
-        // Terrain's horizon maps may have been replaced.
         self.refresh_camera_group();
         let shape = self.frame_shape(
             kind,
@@ -437,14 +348,11 @@ impl Renderer {
             shape,
         };
         self.prepare_frame_groups(&state);
-        // The frame's passes as a render graph: declared,
-        // compiled into attachment operations, then encoded in order.
         let mut graph = std::mem::take(&mut self.graph);
         render_graph::plan(&mut graph, &state.shape);
         RenderFeatures::declare(&state.features.frames, &state.shape, &mut graph);
         if let Err(invalid) = graph.compile() {
             self.graph = graph;
-            // Nothing after the prelude reads it, but later work waits for it.
             self.queue.settle();
             return Err(RenderError(invalid.to_string()));
         }
@@ -453,13 +361,9 @@ impl Renderer {
             ..EncodeReport::default()
         };
         let mut batch = 0;
-        // Profiling captures time every pass whole, with whatever it
-        // records: the pass recorded last, whose span ends where the next
-        // one's begins.
         let mut timed = None;
         for node in graph.kept_passes() {
             let pass = node.pass();
-            // Each batch of passes goes to the GPU before the next records.
             let next = submit::batch(pass);
             if next != batch {
                 batch = next;
@@ -467,8 +371,6 @@ impl Renderer {
                 encoder = self.hand_batch(encoder);
             }
             self.mark_stages(&mut encoder, timed.replace(pass), Some(pass));
-            // GPU debuggers (PIX, RenderDoc, Xcode) name each pass's work;
-            // ordinary page builds make no calls for them.
             #[cfg(any(not(target_arch = "wasm32"), feature = "profiling"))]
             encoder.push_debug_group(pass.name());
             self.encode_pass(node, &state, &mut encoder, &view, &mut report);

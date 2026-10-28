@@ -1,8 +1,6 @@
 use engine::prelude::*;
 use serde::Serialize;
 
-/// The last frame's CPU simulation subsets in milliseconds and the bounded
-/// spatial query counters, every frame's totals as decimal strings.
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct StressMetrics {
@@ -17,7 +15,6 @@ pub struct StressMetrics {
     pub total_calls: String,
     pub total_hits: String,
     pub total_errors: String,
-    /// The last query's error code.
     pub last_error: Option<String>,
 }
 
@@ -40,7 +37,6 @@ impl From<&FrameMetrics> for StressMetrics {
     }
 }
 
-/// Demo-only wall-clock brackets, reset at each browser submission boundary.
 #[derive(Resource, Default, Clone, Copy)]
 pub struct FrameMetrics {
     pub sync_pre_ms: f64,

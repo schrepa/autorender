@@ -5,8 +5,6 @@ use std::{
 
 use engine_dev::authoring::{read_scene_source, validate_scene};
 
-/// Validates the tracked fixture scenes the smokes load and any local scenes
-/// in `web/public/scenes`, which a checkout need not have.
 pub fn validate_sources(root: &Path) -> Result<(), String> {
     let mut paths = scene_paths(&root.join("web/scripts/fixtures"))?;
     if paths.is_empty() {
@@ -18,7 +16,6 @@ pub fn validate_sources(root: &Path) -> Result<(), String> {
     }
     for path in &paths {
         let display = path.strip_prefix(root).unwrap_or(path).display();
-        // The same bounded reader and validation as `cargo xtask scene validate`.
         let report = read_scene_source(path)
             .and_then(|source| validate_scene(&source))
             .map_err(|error| format!("{display}: {error}"))?;
@@ -51,18 +48,11 @@ fn scene_paths(directory: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(paths)
 }
 
-/// The files Rust generates for the web host, scripts and apps, by path
-/// from the repository root: the development protocol's summary, the
-/// browser clients, the frame stats', game surface's, shared host, reply
-/// and error code types, and each app's own, which its `schema` binary
-/// prints.
 fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     let clients = serde_json::to_string_pretty(&crate::process::clients_json())
         .expect("the client list serializes")
         + "
 ";
-    // The development protocol's: its inspectors', frame stats' and
-    // scene's schemas, its ops and its summary.
     let development = engine_dev::schemas::generated()?;
     tooling_types(root)?;
     let stats = &development.frame_stats;
@@ -144,9 +134,6 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(files)
 }
 
-/// The error catalog's codes (`ErrorCode`) as the TypeScript type the web
-/// host's errors take, protocol.json holding what each means, and the
-/// errors the engine throws on a page.
 fn error_codes() -> String {
     let codes: String = engine::ErrorCode::ALL
         .iter()
@@ -167,9 +154,6 @@ fn error_codes() -> String {
     )
 }
 
-/// Fails unless every type the hosts' tooling adds to describe's listing
-/// (`name: "X", kind: "tooling"` in web/scripts) is one engine_dev reserves
-/// ([`engine_dev::TOOLING_TYPES`]), so no inspector can take its name.
 fn tooling_types(root: &Path) -> Result<(), String> {
     const MARK: &str = "kind: \"tooling\"";
     let folder = root.join("web/scripts");
@@ -208,7 +192,6 @@ fn tooling_types(root: &Path) -> Result<(), String> {
     }
 }
 
-/// Writes the generated files the web host and scripts read.
 pub fn write_generated(root: &Path) -> Result<(), String> {
     for (path, contents) in generated(root)? {
         if let Some(directory) = Path::new(&path).parent() {
@@ -222,8 +205,6 @@ pub fn write_generated(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Fails, naming every generated file that is missing or out of date,
-/// unless all match what `cargo xtask schema` writes.
 pub fn check_generated(root: &Path) -> Result<(), String> {
     let mut stale = Vec::new();
     for (path, contents) in generated(root)? {

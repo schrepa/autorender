@@ -1,59 +1,33 @@
-//! The physically based sky's tables that depend on its air alone, after
-//! Hillaire, "A Scalable and Production Ready Sky and Atmosphere Rendering
-//! Technique" (2020): the transmittance to the top of the atmosphere by
-//! height and zenith angle (Bruneton's parametrization), and multiple
-//! scattering's isotropic light by height and the sun's angle, integrated
-//! over the planet and its air ([`Air`]). Distances are kilometers; the
-//! planet's center is the origin. Both are half-precision RGBA texels, rows
-//! from the top, as the renderer's 16-bit float textures hold them, and
-//! the multiple scattering table reads the transmittance table as the GPU
-//! samples it: its half-precision texels, filtered bilinearly.
-
 use engine_math::{clamp, cos, max, sin};
 
 use crate::bytes::{Reader, Writer, f16_bits, f16_value};
 
-/// Texels of the tables: the transmittance's by zenith angle and height,
-/// multiple scattering's by the sun's angle and height, as many each way.
 pub const TRANSMITTANCE_SIZE: (u32, u32) = (256, 64);
 pub const MULTIPLE_SIDE: u32 = 32;
 pub const MULTIPLE_SIZE: (u32, u32) = (MULTIPLE_SIDE, MULTIPLE_SIDE);
 
-/// Samples along each ray to the top of the atmosphere; samples along each
-/// of the directions multiple scattering's light gathers over.
 const TRANSMITTANCE_STEPS: u32 = 40;
 const MULTIPLE_STEPS: u32 = 20;
 const MULTIPLE_DIRECTIONS: u32 = 64;
-/// Kilometers above the ground scattering starts, avoiding the sphere's
-/// own surface.
 const RADIUS_OFFSET: f32 = 0.01;
 const PI: f32 = std::f32::consts::PI;
 
 const TAG: &[u8; 4] = b"SKYT";
 
-/// Air over a planet: what the tables depend on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Air {
-    /// Rayleigh scattering per kilometer at the ground (red, green, blue)
-    /// and the height over which it thins by e.
     pub rayleigh: [f32; 3],
     pub rayleigh_height: f32,
-    /// Mie scattering and absorption per kilometer, and the height over
-    /// which they thin by e.
     pub mie: f32,
     pub mie_absorption: f32,
     pub mie_height: f32,
-    /// Ozone absorption per kilometer at its densest, 25 km up.
     pub ozone: [f32; 3],
-    /// The ground's albedo.
     pub ground: [f32; 3],
-    /// The planet's radius and the atmosphere's top, from the center.
     pub bottom: f32,
     pub top: f32,
 }
 
 impl Air {
-    /// The tables' job: their identity and input.
     pub fn identity(&self) -> Vec<u8> {
         let mut writer = Writer::new(TAG, 17 * 4);
         for value in self.values() {
@@ -125,13 +99,10 @@ impl Air {
         })
     }
 
-    /// Scattering and extinction per kilometer `height` km above the
-    /// ground.
     fn medium(&self, height: f32) -> Medium {
         let above = max(height, 0.0);
         let rayleigh_density = libm::expf(-above / self.rayleigh_height);
         let mie_density = libm::expf(-above / self.mie_height);
-        // Ozone: a tent 30 km wide, densest 25 km up.
         let ozone_density = max(0.0, 1.0 - (height - 25.0).abs() / 15.0);
         let scattering: [f32; 3] = std::array::from_fn(|channel| {
             self.rayleigh[channel] * rayleigh_density + self.mie * mie_density
@@ -147,20 +118,17 @@ impl Air {
     }
 }
 
-/// The air's scattering and extinction at a point, per kilometer.
 struct Medium {
     scattering: [f32; 3],
     extinction: [f32; 3],
 }
 
-/// The tables for an air: half-precision RGBA texels, rows from the top.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkyTables {
     pub transmittance: Vec<u16>,
     pub multiple: Vec<u16>,
 }
 
-/// The tables' record for the air `identity` names.
 pub(crate) fn record(identity: &[u8]) -> Result<Vec<u8>, String> {
     let air = Air::from_identity(identity)?;
     let transmittance = Table::transmittance(&air);
@@ -175,7 +143,6 @@ pub(crate) fn record(identity: &[u8]) -> Result<Vec<u8>, String> {
     Ok(writer.finish())
 }
 
-/// The tables `bytes` hold.
 pub fn decode(bytes: &[u8]) -> Result<SkyTables, String> {
     let mut reader = Reader::new(bytes, TAG)?;
     for size in [TRANSMITTANCE_SIZE, MULTIPLE_SIZE] {
@@ -201,7 +168,6 @@ pub fn decode(bytes: &[u8]) -> Result<SkyTables, String> {
     })
 }
 
-/// A point or direction in kilometers.
 type Vec3 = [f32; 3];
 
 fn dot(a: Vec3, b: Vec3) -> f32 {
@@ -212,8 +178,6 @@ fn along(origin: Vec3, direction: Vec3, distance: f32) -> Vec3 {
     std::array::from_fn(|axis| origin[axis] + direction[axis] * distance)
 }
 
-/// The distance along a ray from `origin` in `direction` (unit) to a sphere
-/// of `radius` around the origin: the nearest hit ahead, or -1.
 fn sphere_hit(origin: Vec3, direction: Vec3, radius: f32) -> f32 {
     let b = dot(origin, direction);
     let c = dot(origin, origin) - radius * radius;
@@ -233,21 +197,16 @@ fn sphere_hit(origin: Vec3, direction: Vec3, radius: f32) -> f32 {
     }
 }
 
-/// Table coordinates whose ends are texel centers, back to the unit range.
 fn from_sub_uv(u: f32, size: f32) -> f32 {
     (u - 0.5 / size) * (size / (size - 1.0))
 }
 
-/// The transmittance table: its half-precision texels and their values,
-/// which multiple scattering samples.
 struct Table {
     texels: Vec<u16>,
     values: Vec<Vec3>,
 }
 
 impl Table {
-    /// The share of light passing the air from each texel's radius along
-    /// its zenith cosine to the top of the atmosphere.
     fn transmittance(air: &Air) -> Self {
         let (width, height) = TRANSMITTANCE_SIZE;
         let mut texels = Vec::with_capacity((width * height * 4) as usize);
@@ -282,8 +241,6 @@ impl Table {
         Self { texels, values }
     }
 
-    /// The table at `uv`, filtered bilinearly between texel centers and
-    /// clamped to its edges, as a linear sampler reads it.
     fn sample(&self, uv: [f32; 2]) -> Vec3 {
         let (width, height) = TRANSMITTANCE_SIZE;
         let x = uv[0] * width as f32 - 0.5;
@@ -304,8 +261,6 @@ impl Table {
         )
     }
 
-    /// The share of light through the air from radius `r` along zenith
-    /// cosine `mu`; none through the planet.
     fn through(&self, air: &Air, r: f32, mu: f32) -> Vec3 {
         let origin = [0.0, r, 0.0];
         let direction = [max(1.0 - mu * mu, 0.0).sqrt(), mu, 0.0];
@@ -320,8 +275,6 @@ fn length(point: Vec3) -> f32 {
     dot(point, point).sqrt()
 }
 
-/// The transmittance table's coordinates of radius `r` and zenith cosine
-/// `mu`.
 fn transmittance_uv(air: &Air, r: f32, mu: f32) -> [f32; 2] {
     let (bottom, top) = (air.bottom, air.top);
     let h = max(top * top - bottom * bottom, 0.0).sqrt();
@@ -333,7 +286,6 @@ fn transmittance_uv(air: &Air, r: f32, mu: f32) -> [f32; 2] {
     [(d - d_min) / max(d_max - d_min, 1e-6), rho / max(h, 1e-6)]
 }
 
-/// The radius and zenith cosine of transmittance table coordinates `uv`.
 fn transmittance_parameters(air: &Air, uv: [f32; 2]) -> (f32, f32) {
     let (bottom, top) = (air.bottom, air.top);
     let h = max(top * top - bottom * bottom, 0.0).sqrt();
@@ -350,7 +302,6 @@ fn transmittance_parameters(air: &Air, uv: [f32; 2]) -> (f32, f32) {
     (r, mu)
 }
 
-/// A direction of `count` spread evenly over the sphere (Fibonacci).
 fn sphere_direction(index: u32, count: u32) -> Vec3 {
     let golden = 2.399_963_1;
     let y = 1.0 - (index as f32 + 0.5) / count as f32 * 2.0;
@@ -359,10 +310,6 @@ fn sphere_direction(index: u32, count: u32) -> Vec3 {
     [cos(angle) * radius, y, sin(angle) * radius]
 }
 
-/// Multiple scattering's table: at each texel's height with the sun at its
-/// angle, the light scattered once more (isotropically, with the ground's
-/// reflection) gathered over the sphere of directions, summed over every
-/// further order as a geometric series of the share scattered again.
 fn multiple(air: &Air, transmittance: &Table) -> Vec<u16> {
     let (width, height) = MULTIPLE_SIZE;
     let mut texels = Vec::with_capacity((width * height * 4) as usize);
@@ -401,11 +348,6 @@ fn multiple(air: &Air, transmittance: &Table) -> Vec<u16> {
     texels
 }
 
-/// The light the air scatters isotropically toward `origin` along
-/// `direction` (unit) from the sun along `sun` with unit illuminance, over
-/// [`MULTIPLE_STEPS`] samples to the top of the atmosphere or the ground,
-/// with the ground's reflection of the sun; and the share of light
-/// scattered once more there (Hillaire's f_ms).
 fn scattered(
     air: &Air,
     transmittance: &Table,
@@ -437,7 +379,6 @@ fn scattered(
         let medium = air.medium(r - air.bottom);
         let sun_cos = dot(sun, up);
         let toward_sun = transmittance.through(air, r, sun_cos);
-        // The planet's shadow.
         let shadowed = sphere_hit(point, sun, air.bottom) >= 0.0;
         for channel in 0..3 {
             let sample = libm::expf(-medium.extinction[channel] * dt);
@@ -445,16 +386,11 @@ fn scattered(
             let source =
                 if shadowed { 0.0 } else { toward_sun[channel] } * scattering * uniform_phase;
             let extinction = max(medium.extinction[channel], 1e-6);
-            // The light scattered over the step, integrated exactly for a
-            // constant medium across it.
             light[channel] += throughput[channel] * (source - source * sample) / extinction;
             again[channel] += throughput[channel] * (scattering - scattering * sample) / extinction;
             throughput[channel] *= sample;
         }
     }
-    // The ground's reflection of the sun: the point lies on the ground
-    // exactly, where the sun stands above its horizon, through the air the
-    // table's bottom row holds.
     if ground_hit >= 0.0 {
         let point = along(origin, direction, span);
         let up = point.map(|axis| axis / length(point));

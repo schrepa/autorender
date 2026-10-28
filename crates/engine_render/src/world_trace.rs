@@ -1,35 +1,3 @@
-//! The world trace's data, which reflections' rays walk where the screen
-//! cannot see (`reflections.wgsl`): each terrain's record, every draw
-//! group of placed objects' impostor and color, and the placements. A
-//! terrain's ground needs no copy of its own: the trace reads the heights
-//! of its resident tiles through the directory the terrain pass streams
-//! them by, each tile at its level, and skips over them by their peaks
-//! ([`peaks`]), which the atlas writes into the mips below each layer's
-//! heights as the layer takes its tile.
-//!
-//! Placed objects are met as themselves: within the box their draw group's
-//! impostor frames (`ImpostorRecord`'s bounds), at their pose, a ray reads
-//! the impostor's own views from the placed objects' atlas, bound whole;
-//! and the screen's foliage is as deep as the box of the object holding it.
-//! The placements grid the objects every resident
-//! tile holds, as the scatter pool's slots hold them, by those boxes: a
-//! tile's grid spans its square widened each way by the widest of its
-//! objects' footprints (its apron), in cells as wide as that footprint
-//! across or as its objects' mean spacing, whichever is wider, a power of
-//! two of them a side and no more than it holds objects: each cell lists
-//! the objects whose footprints reach into it, so one reaches into four at
-//! most, and holds the highest of their tops, which a pyramid of cells,
-//! each the highest of the four below it, gathers for skipping. Objects of
-//! draw groups without views are left out. A grid is built as its tile
-//! takes its slots and left as it stands until the tile leaves them or the
-//! boxes it was built with change; grids lie first fit after each atlas
-//! layer's word naming where its tile's grid starts, and are written where
-//! they changed.
-//!
-//! The placements never outgrow what one storage binding holds while the
-//! objects' records fit theirs: a grid takes at most four entries and seven
-//! thirds of a cell's words an object, and a record twelve words.
-
 use engine_core::terrain_data::{ERROR_CELLS, ERROR_TEXELS, TILE_STRIDE};
 use engine_core::{RenderTerrains, TileKey};
 use std::collections::BTreeMap;
@@ -43,13 +11,6 @@ use crate::gpu_layouts::world_trace::{PlacedGroup, TraceTerrain};
 use crate::impostors::ImpostorRecord;
 use crate::scatter::{Record, TerrainInfo};
 
-/// The highest of a tile's heights over each cell of its samples, the
-/// heights in their stored layout (`TILE_STRIDE` a row, its border
-/// included): cells of 2 samples a side at the finest mip, each coarser mip
-/// half as many a side, up to one cell of the whole tile, as its error
-/// pyramids lie; each cell's peak over the samples on its edges too, so a
-/// peak stays above every triangle within its cell. The atlas keeps them
-/// as they are, in the heights' own format.
 pub(crate) fn peaks(heights: &[f32]) -> Box<[f32]> {
     let stride = TILE_STRIDE as usize;
     let height = |x: usize, z: usize| heights.get((z + 1) * stride + x + 1).copied();
@@ -87,28 +48,16 @@ pub(crate) fn peaks(heights: &[f32]) -> Box<[f32]> {
     all.into_boxed_slice()
 }
 
-/// The highest of the heights `peaks` ([`peaks`]) holds: its coarsest mip's
-/// one cell.
 pub(crate) fn peaks_top(peaks: &[f32]) -> f32 {
     peaks.last().copied().unwrap_or(-f32::MAX)
 }
 
-/// Mip `mip` of `peaks` ([`peaks`]): [`ERROR_CELLS`] cells a side at the
-/// finest, each coarser mip half as many, row by row along z.
 pub(crate) fn peaks_mip(peaks: &[f32], mip: u32) -> &[f32] {
     let side = |level: u32| (ERROR_CELLS >> level) as usize;
     let start: usize = (0..mip).map(|finer| side(finer) * side(finer)).sum();
     &peaks[start..start + side(mip) * side(mip)]
 }
 
-/// What the world trace reads of placed objects: every resident tile
-/// holding them, by terrain and key in key order, with its slots and its
-/// objects' identity, which a tile replaced under its key with other
-/// objects changes; every slot's record and pose as the pool holds them,
-/// before the scatter pass sets them on the ground; each draw group's
-/// impostor in the placed objects' atlas, zeroed without one, and its
-/// objects' packed color; and a revision advancing whenever tiles take or
-/// leave slots.
 pub(crate) struct Placements<'a> {
     pub tiles: Vec<((u64, TileKey), Range<u32>, usize)>,
     pub records: &'a [Record],
@@ -118,10 +67,6 @@ pub(crate) struct Placements<'a> {
     pub revision: u64,
 }
 
-/// What a frame's world trace is built from: its terrains, each one's place
-/// by its index among them (as setting objects on them reads it), the
-/// terrain pass, the placed objects, and ground cover's density, 0 where it
-/// does not grow.
 pub(crate) struct TraceFrame<'a> {
     pub terrains: &'a RenderTerrains,
     pub infos: &'a [TerrainInfo],
@@ -130,9 +75,6 @@ pub(crate) struct TraceFrame<'a> {
     pub cover: f32,
 }
 
-/// A tile's grid among the placements: the words it takes, the slots and
-/// objects it was built from, its level, its apron and its highest object's
-/// top (world).
 struct Grid {
     words: Range<u32>,
     slots: Range<u32>,
@@ -142,10 +84,6 @@ struct Grid {
     top: f32,
 }
 
-/// A placed object as its tile's grid takes it: its slot, the middle of
-/// the box its views frame at its pose (terrain-local x and z), the radius
-/// of the disc holding that box's footprint, and the highest the box
-/// stands (world).
 struct Reach {
     slot: u32,
     middle: [f32; 2],
@@ -153,11 +91,6 @@ struct Reach {
     top: f32,
 }
 
-/// Placeholders for the terrain pass's height and control arrays before
-/// tiles arrive, when no directory entry names a layer, for the placed
-/// objects' atlas before an impostor is resident, when no draw group has
-/// views, and for the placed objects' records before their buffer holds
-/// one, when no grid lists a slot.
 struct Placeholders {
     _textures: [wgpu::Texture; 3],
     views: [wgpu::TextureView; 3],
@@ -165,18 +98,10 @@ struct Placeholders {
 }
 
 pub(crate) struct WorldTrace {
-    // The terrains' records, and those the buffer holds.
     terrains: Growable,
     written: Vec<TraceTerrain>,
-    // The draw groups' impostors and colors, and those the buffer holds.
     groups: Growable,
     written_groups: Vec<PlacedGroup>,
-    // The placements' words, which the buffer holds but for the runs
-    // `dirty`; each tile's grid, by terrain and key; the free runs of words
-    // among the grids, in order, none adjacent; and what the words were
-    // laid out for: the atlas's layers, the draw groups' impostors whose
-    // boxes the grids were built from, and the revisions of the pool and of
-    // the directory they follow.
     placed: Growable,
     words: Vec<u32>,
     dirty: Vec<Range<usize>>,
@@ -261,14 +186,10 @@ impl WorldTrace {
         }
     }
 
-    /// Bytes of the terrains' records, the draw groups' and the
-    /// placements.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.terrains.size() + self.groups.size() + self.placed.size()
     }
 
-    /// The terrains the trace walks this frame: those `terrains` draws, in
-    /// order, which [`Self::prepare`] writes the records of.
     pub(crate) fn walked(terrains: &RenderTerrains) -> u32 {
         terrains
             .terrains
@@ -277,13 +198,6 @@ impl WorldTrace {
             .count() as u32
     }
 
-    /// Brings the trace up to `frame` while frames reflect: the records of
-    /// the terrains it draws, the draw groups' impostors and colors, and the
-    /// placements, whose grids follow the tiles taking and leaving slots,
-    /// whose layer words follow the tiles taking and leaving layers, which
-    /// are laid out anew when the atlas's layers change, and whose grids are
-    /// built anew when the boxes the draw groups' impostors frame change.
-    /// Frames that do not reflect let it go ([`Self::release`]).
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -315,8 +229,6 @@ impl WorldTrace {
         self.write_terrains(device, queue, frame);
     }
 
-    /// Lets the placements' grids go: the next frame that reflects builds
-    /// them again.
     pub(crate) fn release(&mut self) {
         if self.synced.is_some() {
             self.grids.clear();
@@ -328,9 +240,6 @@ impl WorldTrace {
         }
     }
 
-    /// Lays the placements out anew for `layers` atlas layers: a word for
-    /// each layer, then every grid moved first fit to the end as it stands,
-    /// or none where they are `rebuilt`.
     fn lay_out(&mut self, layers: u32, rebuilt: bool) {
         let mut words = vec![NO_PLACED; layers as usize];
         if rebuilt {
@@ -346,16 +255,12 @@ impl WorldTrace {
         self.free.clear();
         self.layers = layers;
         self.dirty = vec![0..self.words.len()];
-        // The layer words name the grids where they lie now.
         self.synced = self.synced.map(|(pool, _)| (pool, u64::MAX));
         if rebuilt {
             self.synced = None;
         }
     }
 
-    /// Frees the grids of tiles that left their slots or hold other objects
-    /// in them, and builds those of tiles that took slots; once freed words
-    /// outnumber those in use, lays the grids out again, packed.
     fn sync_grids(&mut self, frame: &TraceFrame<'_>) {
         let placed = &frame.placed;
         let current: BTreeMap<(u64, TileKey), (Range<u32>, usize)> = placed
@@ -415,12 +320,9 @@ impl WorldTrace {
         if freed > used {
             self.lay_out(self.layers, false);
         }
-        // The layer words name the grids built and freed.
         self.synced = self.synced.map(|(pool, _)| (pool, u64::MAX));
     }
 
-    /// Places `built`'s words in the first free run holding them, or after
-    /// the last; returns where they lie.
     fn place(&mut self, built: &[u32]) -> Range<u32> {
         let count = built.len() as u32;
         let start = match self
@@ -448,7 +350,6 @@ impl WorldTrace {
         start..start + count
     }
 
-    /// Frees the run `words`, merging it with the free runs it touches.
     fn free_run(&mut self, words: Range<u32>) {
         let at = self.free.partition_point(|run| run.start < words.start);
         self.free.insert(at, words);
@@ -462,9 +363,6 @@ impl WorldTrace {
         }
     }
 
-    /// Writes each atlas layer's word: where the grid of the tile it holds
-    /// starts, NO_PLACED where that tile holds none, as `terrain`'s atlas
-    /// lays its tiles out.
     fn write_layer_words(&mut self, terrain: &crate::terrain::TerrainPass) {
         let count = self.layers;
         let layers = 0..count as usize;
@@ -477,14 +375,10 @@ impl WorldTrace {
         self.mark(layers);
     }
 
-    /// Notes `words` as changed since the last upload.
     fn mark(&mut self, words: Range<usize>) {
         self.dirty.push(words);
     }
 
-    /// Writes the runs of words changed since the last upload, all of them
-    /// when the buffer grew to hold them; words past what one binding holds
-    /// stay out.
     fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let bytes = (self.words.len() * 4) as u64;
         let mut dirty = std::mem::take(&mut self.dirty);
@@ -504,8 +398,6 @@ impl WorldTrace {
         }
     }
 
-    /// Writes each draw group's impostor and its objects' color (`placed`'s)
-    /// where they changed.
     fn write_groups(
         &mut self,
         device: &wgpu::Device,
@@ -537,11 +429,6 @@ impl WorldTrace {
         }
     }
 
-    /// Writes the records of the terrains `frame` draws where they changed:
-    /// each one's place, its cutout, its sky map's layer, the levels whose
-    /// tiles hold grids and the widest of their aprons, ground cover's
-    /// density, and the highest its resident ground or a placed object of
-    /// its grids stands (world), above which a ray rising meets none of it.
     fn write_terrains(
         &mut self,
         device: &wgpu::Device,
@@ -597,14 +484,6 @@ impl WorldTrace {
         self.written = records;
     }
 
-    /// What reflections bind of the trace, by their names in
-    /// `reflections.wgsl`: the terrain pass's arrays, or placeholders before
-    /// tiles arrive, its directory, palette, macro colors and sky maps
-    /// (`sources`), the terrains' records and the placements, the placed
-    /// objects' records and poses, whose buffers `placed` counts, the draw
-    /// groups' impostors and colors, and every layer of the placed objects'
-    /// atlas undecoded, counted by its arrays (`frames`), or a placeholder
-    /// before an impostor is resident.
     pub(crate) fn bindings<'a>(
         &'a self,
         sources: crate::terrain::TraceSources<'a>,
@@ -646,8 +525,6 @@ impl WorldTrace {
     }
 }
 
-/// Whether the draw groups' impostors `a` and `b` frame the same boxes:
-/// as many groups, each with the same bounds, zeroed alike without views.
 fn same_boxes(a: &[ImpostorRecord], b: &[ImpostorRecord]) -> bool {
     a.len() == b.len()
         && a.iter()
@@ -655,11 +532,6 @@ fn same_boxes(a: &[ImpostorRecord], b: &[ImpostorRecord]) -> bool {
             .all(|(a, b)| a.sphere == b.sphere && a.extent == b.extent)
 }
 
-/// The objects in slots `slots` of `terrain`'s tile `key` as its grid takes
-/// them: each live object whose draw group has views, the box they frame
-/// at its pose, its top raised by how far the ground the scatter pass sets
-/// it on may stand above the level that placed it: the differences measured
-/// between the finer levels and the next coarser.
 fn reaches(
     terrain: &engine_core::RenderTerrain,
     key: TileKey,
@@ -689,8 +561,6 @@ fn reaches(
         else {
             continue;
         };
-        // The box at the pose: its middle, and its half extents along the
-        // world's axes.
         let [x, y, z, _] = views.sphere;
         let [half_x, half_y, half_z] = views.extent;
         let middle = |row: [f32; 4]| row[0] * x + row[1] * y + row[2] * z + row[3];
@@ -714,14 +584,6 @@ fn reaches(
     reaches
 }
 
-/// The grid of `reaches`, the objects of `terrain`'s tile `key`, as the
-/// placements hold it, and its apron; `None` without any. Its words: its
-/// cells a side, its apron's bits, where its entries start from its first
-/// word and one unused; its cells' tops as float bits, the finest first,
-/// each mip a quarter as many up to the one of the whole grid, rows along
-/// z, empty cells the lowest float; each finest cell's end among its
-/// entries, row by row, every cell's starting where the one before ends;
-/// and the entries, slots.
 fn grid(
     reaches: &[Reach],
     terrain: &engine_core::RenderTerrain,
@@ -800,8 +662,6 @@ fn grid(
     Some((words, apron))
 }
 
-/// `tops`, a grid's `cells` by `cells` cells, then each coarser mip of
-/// them, each cell the highest of the four below it, up to one cell.
 fn top_pyramid(tops: Vec<f32>, cells: u32) -> Vec<f32> {
     let mut side = cells as usize;
     let mut pyramid = tops.clone();
@@ -825,11 +685,6 @@ fn top_pyramid(tops: Vec<f32>, cells: u32) -> Vec<f32> {
     pyramid
 }
 
-/// The place of terrain `terrain`, the frame's `index`th, as setting
-/// objects on it and the world trace read it: its origin and level-0
-/// spacing, where its levels start in `pass`'s directory, how many there
-/// are, where its materials start in the palette and its macro colors'
-/// layer plus one (0 until they arrive).
 pub(crate) fn terrain_info(
     pass: &crate::terrain::TerrainPass,
     index: usize,

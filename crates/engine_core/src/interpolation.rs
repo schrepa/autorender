@@ -25,8 +25,6 @@ use crate::{
     valid_global_matrix,
 };
 
-/// Opts a local transform into interpolation between its latest two fixed poses.
-/// Descendants inherit the displayed parent matrix even without this marker.
 #[derive(Component, Debug, Default, Clone, Copy)]
 #[component(
     on_insert = crate::hierarchy::tracking::topology_changed,
@@ -34,8 +32,6 @@ use crate::{
 )]
 pub struct InterpolateTransform;
 
-/// Read-only last prepared display pose from [`PresentedTransforms`].
-/// Refreshing authoritative transforms never replaces this retained value.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PresentedTransform(GlobalTransform);
 
@@ -43,13 +39,11 @@ impl PresentedTransform {
     pub fn matrix(&self) -> Option<Mat4> {
         self.0.matrix()
     }
-    /// Output revision; u64::MAX must never be reused by a consumer cache.
     pub fn revision(&self) -> u64 {
         self.0.revision()
     }
 }
 
-/// Selects exact current poses or a bounded fraction of the latest fixed interval.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum PresentationMode {
     #[default]
@@ -70,7 +64,6 @@ impl PresentationMode {
     }
 }
 
-/// An invalid presentation fraction, rejected before changing engine state.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InterpolationError {
     pub alpha: f32,
@@ -87,11 +80,6 @@ impl std::fmt::Display for InterpolationError {
 }
 impl std::error::Error for InterpolationError {}
 
-/// Last extraction identity and bounded interpolation storage observations.
-///
-/// History counters describe live opt-in records and retained Vec payload;
-/// component bytes are zero: derived poses are not ECS components. Storage counters
-/// exclude allocator, HashMap, query metadata and Bevy archetype storage overhead.
 #[derive(Resource, Debug, Default)]
 pub struct PresentationState {
     mode: PresentationMode,
@@ -107,10 +95,6 @@ pub struct PresentationState {
 }
 
 impl PresentationState {
-    /// Whether the last extraction left blending and composition to the GPU
-    /// and [`PresentedTransforms`] still hold earlier
-    /// CPU-prepared values. [`crate::Engine::prepare_presented_transforms`]
-    /// materializes that frame while its inputs are unchanged.
     pub fn gpu_pending(&self) -> bool {
         self.gpu_pending
     }
@@ -126,7 +110,6 @@ impl PresentationState {
     pub fn history_nodes(&self) -> usize {
         self.history_nodes
     }
-    /// Sum of both reusable history Vec capacities, in records.
     pub fn history_capacity(&self) -> usize {
         self.history_capacity
     }
@@ -136,8 +119,6 @@ impl PresentationState {
     pub fn presented_nodes(&self) -> usize {
         self.presented_nodes
     }
-    /// Reserved canonical Display and Entity Vec payload, excluding index-map
-    /// and allocator overhead; derived poses have no ECS component allocation.
     pub fn presented_store_bytes(&self) -> usize {
         self.presented_store_bytes
     }
@@ -146,11 +127,6 @@ impl PresentationState {
     }
 }
 
-/// Cold state of one opted-in record: identity, read by structural
-/// reconciliation, identity changes, validity transitions and resets.
-/// Presentation decisions use the parallel [`Interval`] only, and the
-/// interval's previous pose lives in a parallel dense array: written when an
-/// interval starts, read only to blend it and to check scale compatibility.
 #[derive(Clone, Copy)]
 struct History {
     entity: Entity,
@@ -159,19 +135,13 @@ struct History {
     invalidated: bool,
 }
 
-/// Hot interval state of the same record in 16 bytes: written by every motion
-/// observation and read by every presentation decision.
 #[derive(Clone, Copy)]
 struct Interval {
     epoch: u64,
     valid: bool,
     previous_valid: bool,
     cancelled: bool,
-    // Cached `interval_identity == identity` of the cold record. Every change
-    // to either identity refreshes it.
     stable: bool,
-    // Cached `compatible_scales(previous, current local)`. Every local change
-    // reaches `observe_source`, which refreshes it, as do interval starts.
     scales_compatible: bool,
 }
 
@@ -196,8 +166,6 @@ impl Interval {
     }
 
     fn cancel(&mut self, epoch: u64) {
-        // Cancelled endpoints are never consumed. The next epoch freezes its
-        // previous pose from the authoritative source only if it changes.
         self.epoch = epoch;
         self.cancelled = true;
     }
@@ -210,9 +178,6 @@ impl History {
     }
 }
 
-/// Starts the interval of `epoch` from `current` once; the interval identity
-/// becomes the current identity. The cold record is touched only when the
-/// interval identity was unstable.
 #[inline(always)]
 fn begin_interval(
     history: &mut History,
@@ -233,8 +198,6 @@ fn begin_interval(
     }
 }
 
-/// The pose `epoch`'s interval starts from: its captured previous pose, or
-/// `current` when the interval did not start this epoch.
 #[inline]
 fn previous_pose<'a>(
     previous: &'a NodePose,
@@ -256,19 +219,12 @@ type HistoryQuery = QueryState<(
     Option<&'static Parent>,
 )>;
 
-/// Canonical poses from the last prepared extraction, independent of later
-/// authoritative refreshes. Also owns bounded local interpolation history.
 #[derive(Resource)]
 pub struct PresentedTransforms {
     history_query: HistoryQuery,
-    // Parallel per-record arrays in history-query order.
     history: Vec<History>,
     intervals: Vec<Interval>,
-    // Interval start poses in upload layout, like the hierarchy's cached
-    // locals they are copied from.
     previous: Vec<NodePose>,
-    // Hierarchy index of each record. With the hierarchy's per-node history
-    // hint it forms a mutually validated pair; topology rebuilds rewrite both.
     history_nodes: Vec<u32>,
     next_history: Vec<History>,
     next_intervals: Vec<Interval>,
@@ -277,13 +233,7 @@ pub struct PresentedTransforms {
     indices: EntityIndices,
     epoch: u64,
     active: bool,
-    // Invalidity is consumed at the same observation boundary as presentation.
-    // A temporarily invalid branch repaired before observation can retain its
-    // interval. Duplicates are bounded and coalesced by the record's flag.
     invalidated: Vec<usize>,
-    // Traversal flags, canonical presented matrices and their revisions are
-    // parallel arrays: consumers of matrices never stream flags, and flags
-    // never stream matrices.
     display: Vec<Display>,
     presented: Vec<Mat4>,
     presented_revisions: Vec<u64>,
@@ -297,11 +247,8 @@ pub struct PresentedTransforms {
     prepared_topology: u64,
     value_ids: ValueIds,
     written_presented: usize,
-    // Advances on every change to interval state or the tick boundary flags;
-    // with the hierarchy revision it gates GPU input gathering.
     revision: u64,
     gpu: gpu::GpuInputs,
-    // Fraction of the last GPU-presented frame, pending CPU preparation.
     gpu_pending: Option<f32>,
 }
 
@@ -344,7 +291,6 @@ impl FromWorld for PresentedTransforms {
 }
 
 impl PresentedTransforms {
-    /// Inputs of the latest GPU-prepared frame.
     pub(crate) fn gpu_presentation<'a>(
         &'a self,
         hierarchy: &'a HierarchyScratch,
@@ -352,10 +298,6 @@ impl PresentedTransforms {
         self.gpu.view(hierarchy)
     }
 
-    /// Reads the last prepared snapshot. Absence means this entity was not
-    /// admitted in that extraction (or none has run); an invalid admitted pose
-    /// has matrix() == None. Later authoritative edits and removals do not alter
-    /// this snapshot until another extraction prepares it.
     pub fn get(&self, entity: Entity) -> Option<PresentedTransform> {
         let index = *self.presented_map.get(&entity)?;
         Some(self.value_at(index))
@@ -371,9 +313,6 @@ impl PresentedTransforms {
             .map(|(value, _)| value)
     }
 
-    /// Validates the full Entity before using a cached slot. Reindexing can
-    /// conservatively change a revision even for an equal matrix; u64::MAX is
-    /// an uncacheable exhaustion sentinel.
     #[inline]
     pub fn get_indexed_with_revision(
         &self,
@@ -390,9 +329,6 @@ impl PresentedTransforms {
         Some((value, value.revision()))
     }
 
-    /// Prepared matrix at a store index already validated for its entity during
-    /// this preparation, e.g. by [`Self::get_indexed`]. Retained frames read
-    /// poses through that mapping instead of copying every changed matrix.
     #[inline]
     pub(crate) fn prepared_matrix(&self, index: usize) -> Option<Mat4> {
         self.display
@@ -433,7 +369,6 @@ impl PresentedTransforms {
         }
     }
 
-    /// Publishes one prepared value. Equal bits and validity keep the revision.
     #[inline]
     fn commit(&mut self, index: usize, value: Option<Mat4>) -> bool {
         let display = &mut self.display[index];
@@ -453,8 +388,6 @@ impl PresentedTransforms {
         changed
     }
 
-    /// Sizes every per-node presentation array to the hierarchy. New slots
-    /// start unpublished (revision 0) and are always written by the next commit.
     fn resize_display(&mut self, nodes: usize) {
         if self.display.len() < nodes {
             self.display.reserve_exact(nodes - self.display.len());
@@ -483,8 +416,6 @@ impl PresentedTransforms {
             self.presented_map.insert(source.entity, index);
         }
         self.resize_display(hierarchy.links().len());
-        // A different source order invalidates sparse traversal flags, never
-        // silently reuses one entity's scratch as another entity's ancestry.
         for display in &mut self.display {
             display.reset();
         }
@@ -493,18 +424,13 @@ impl PresentedTransforms {
         self.prepared_topology = hierarchy.topology_revision();
     }
 
-    /// Record of `node` whose hint was stale: resolves the full Entity and
-    /// restores the mutual pair. Topology rebuilds make this rare.
     #[cold]
     fn resolve_record(&mut self, node: usize, entity: Entity) -> Option<usize> {
         resolve_record(&mut self.history_nodes, &self.indices, node, entity)
     }
 
-    /// Borrows the record arrays observations update, for one boundary pass.
     #[inline]
     pub(crate) fn observer(&mut self) -> Observer<'_> {
-        // Record arrays share one length: a record index checked against
-        // `history_nodes` then needs no further bounds checks.
         let records = self.history_nodes.len();
         Observer {
             history: &mut self.history[..records],
@@ -520,11 +446,6 @@ impl PresentedTransforms {
         }
     }
 
-    /// Reconcile opted-in membership only after structural/lifetime changes.
-    /// Ordinary fixed motion is observed by the hierarchy's existing source
-    /// scan, so tick boundaries and presentation never query every history.
-    /// Runs before the hierarchy reindexes: it reads the previous sources, then
-    /// clears node hints for the rebuild to re-establish.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -577,8 +498,6 @@ impl PresentedTransforms {
                 continue;
             }
             if !rebuilding {
-                // Prefix records already consumed this observation. Remaining
-                // query entities cannot be in that unique prefix.
                 rebuilding = true;
                 self.next_history.clear();
                 self.next_intervals.clear();
@@ -631,7 +550,6 @@ impl PresentedTransforms {
             self.next_previous.clear();
             self.next_history_nodes.clear();
         } else {
-            // Tail removal has no mismatching input row but changes membership.
             self.history.truncate(count);
             self.intervals.truncate(count);
             self.previous.truncate(count);
@@ -650,8 +568,6 @@ impl PresentedTransforms {
                 self.indices.insert(record.entity, index);
             }
         }
-        // Structural work may reorder slots. Recreate this rare pending list
-        // from current validity rather than retaining stale slot indices.
         self.invalidated.clear();
         for (index, (record, interval)) in self.history.iter_mut().zip(&self.intervals).enumerate()
         {
@@ -660,18 +576,9 @@ impl PresentedTransforms {
                 push_invalid(&mut self.invalidated, index);
             }
         }
-        // Node indices are about to be reassigned; the rebuild re-establishes
-        // every admitted pair through `observe_source`.
         self.history_nodes.fill(u32::MAX);
     }
 
-    /// Observe source values while hierarchy validation already has them hot:
-    /// the local before and after this boundary, in upload layout.
-    /// `hint` and the record's node index are a mutually validated pair.
-    /// `local_changed` reuses the hierarchy's exact old/new bit comparison.
-    /// `identity_changed` is false when the source keys that feed the record
-    /// identity are unchanged, so only the hot interval can change.
-    /// See [`Observer::observe_source`].
     pub(crate) fn observe_source(
         &mut self,
         hint: &mut u32,
@@ -758,11 +665,6 @@ impl PresentedTransforms {
     }
 }
 
-/// Split borrow of the record arrays that boundary observations update. The
-/// hierarchy's scans hold one for a whole pass, so per-record work keeps array
-/// pointers and lengths in locals instead of reloading them from the store
-/// after every write. The interpolation revision advances once, on drop, when
-/// anything was observed: consumers compare revisions only for equality.
 pub(crate) struct Observer<'a> {
     history: &'a mut [History],
     intervals: &'a mut [Interval],
@@ -785,7 +687,6 @@ impl Drop for Observer<'_> {
 }
 
 impl Observer<'_> {
-    /// Record index for a node's hint, validated by the mutual node index.
     #[inline]
     fn record_for(&mut self, hint: u32, node: usize, entity: Entity) -> Option<usize> {
         if self.history_nodes.get(hint as usize) == Some(&(node as u32)) {
@@ -795,10 +696,6 @@ impl Observer<'_> {
         }
     }
 
-    /// The common observation, a local change of an unchanged source identity,
-    /// exactly as [`Self::observe_source`] performs it. Returns false without
-    /// changing anything unless `hint` is valid for `node`; the caller then
-    /// takes the general path.
     #[cfg_attr(not(feature = "attribution"), inline(always))]
     #[cfg_attr(feature = "attribution", inline(never))]
     pub(crate) fn observe_motion(
@@ -830,12 +727,6 @@ impl Observer<'_> {
         true
     }
 
-    /// Observe source values while hierarchy validation already has them hot:
-    /// the local before and after this boundary, in upload layout.
-    /// `hint` and the record's node index are a mutually validated pair.
-    /// `local_changed` reuses the hierarchy's exact old/new bit comparison.
-    /// `identity_changed` is false when the source keys that feed the record
-    /// identity are unchanged, so only the hot interval can change.
     #[cfg_attr(feature = "attribution", inline(never))]
     pub(crate) fn observe_source(
         &mut self,
@@ -911,8 +802,6 @@ impl Observer<'_> {
             return;
         }
         self.observed = true;
-        // A repair after an invalid completed tick must not resurrect an old
-        // valid interval, even if no local pose changed during that tick.
         begin_interval(history, interval, previous, self.epoch, local);
         interval.scales_compatible = compatible_scales(previous, local);
         if !valid && !history.invalidated {
@@ -923,8 +812,6 @@ impl Observer<'_> {
     }
 }
 
-/// Record of `node` whose hint was stale: resolves the full Entity and
-/// restores the mutual pair. Topology rebuilds make this rare.
 #[cold]
 fn resolve_record(
     history_nodes: &mut [u32],
@@ -983,8 +870,6 @@ fn initial_record(
     (history, interval, previous, u32::MAX)
 }
 
-/// `node` is the record's hint into the hierarchy being replaced; it is
-/// validated by full Entity against those previous sources.
 #[expect(clippy::too_many_arguments, reason = "history and record, apart")]
 fn observe_record(
     history: &mut History,
@@ -1024,8 +909,6 @@ fn observe_record(
             active,
         );
     } else {
-        // No authoritative old source exists for a new/unadmitted lifetime.
-        // Start from current until a later valid fixed interval is available.
         history.identify(interval, identity);
         interval.cancel(epoch);
     }
@@ -1043,7 +926,6 @@ fn observe_record(
         );
     }
     interval.valid = valid;
-    // Rebuilding the hierarchy observes the admitted current local again.
     interval.scales_compatible = compatible_scales(previous, &current);
 }
 
@@ -1067,7 +949,6 @@ fn observe_local(
     }
 }
 
-/// A local change with the record's current identity.
 #[inline]
 fn observe_motion(
     history: &mut History,
@@ -1084,8 +965,6 @@ fn observe_motion(
     }
 }
 
-/// Scale components of two poses in upload layout are nonzero (NaN included,
-/// as for `!= 0.0`) with equal sign bits. Branch-free over the three.
 #[inline]
 fn compatible_scales(previous: &NodePose, current: &NodePose) -> bool {
     [3, 8, 9].into_iter().fold(true, |compatible, component| {
@@ -1098,7 +977,6 @@ fn blend_rotation(previous: Quat, current: Quat, alpha: f32) -> Quat {
     let previous = previous.normalize();
     let current = current.normalize();
     if previous.dot(current).abs() >= LINEAR_ROTATION_DOT_THRESHOLD {
-        // glam's quaternion lerp normalizes and selects the shortest hemisphere.
         previous.lerp(current, alpha)
     } else {
         previous.slerp(current, alpha).normalize()
@@ -1122,8 +1000,6 @@ pub(crate) fn begin_tick(world: &mut World) {
     world.resource_scope(|world, mut state: Mut<InterpolationState>| {
         state.epoch = state.epoch.wrapping_add(1);
         if state.epoch == 0 {
-            // A bounded repair only after 2^64 fixed ticks keeps epoch equality
-            // unambiguous without adding wrap checks to every history event.
             state.epoch = 1;
             for interval in &mut state.intervals {
                 interval.epoch = 0;
@@ -1131,8 +1007,6 @@ pub(crate) fn begin_tick(world: &mut World) {
         }
         state.active = true;
         state.revision += 1;
-        // GPU presentation keeps last gather's current poses as this tick's
-        // previous poses when no boundary changed locals in between.
         let hierarchy = world
             .get_resource::<HierarchyScratch>()
             .map(|hierarchy| hierarchy.revision());
@@ -1143,8 +1017,6 @@ pub(crate) fn begin_tick(world: &mut World) {
 pub(crate) fn end_tick(world: &mut World) {
     let _profile = engine_profile::span("interpolation", "capture_tick_end");
     world.resource_scope(|world, mut state: Mut<InterpolationState>| {
-        // Usually empty. Only branches whose validity changed need an end-boundary
-        // check; a repair before this point retains the valid endpoint pair.
         state.observe_invalid();
         state.active = false;
         state.revision += 1;
@@ -1169,9 +1041,6 @@ pub(crate) fn prepare(world: &mut World, mode: PresentationMode) {
     });
 }
 
-/// Prepares inputs for GPU blending/composition of `alpha`
-/// instead of CPU presented poses; the CPU store keeps its previous values
-/// until [`prepare_pending`] or another CPU preparation.
 pub(crate) fn prepare_gpu(world: &mut World, alpha: f32) {
     let _profile = engine_profile::span("interpolation", "prepare_gpu_presentation");
     world.resource_scope(|world, mut interpolation: Mut<InterpolationState>| {
@@ -1180,7 +1049,6 @@ pub(crate) fn prepare_gpu(world: &mut World, alpha: f32) {
         world.resource_scope(|_world, mut hierarchy: Mut<HierarchyScratch>| {
             interpolation.gather_gpu(&mut hierarchy, alpha);
         });
-        // This view carries no hold: consumers apply the latest gather now.
         interpolation.gpu.presented();
         let frame = world.get_resource::<FrameTime>().map(|time| time.frame);
         let tick = world.get_resource::<FixedTime>().map(|time| time.tick);
@@ -1193,12 +1061,6 @@ pub(crate) fn prepare_gpu(world: &mut World, alpha: f32) {
     });
 }
 
-/// Gathers GPU inputs for a tick completed before its due frame, keeping the
-/// displayed fraction, and returns whether it did. The due frame's
-/// [`prepare_gpu`] then finds its inputs current and gathers nothing, unless a
-/// later boundary changed them. Nothing is gathered before GPU presentation
-/// first gathered or after the tick changed the node space: frames that hold
-/// consumers at their applied inputs must keep that node space.
 pub(crate) fn gather_ahead(world: &mut World) -> bool {
     world.resource_scope(|world, mut interpolation: Mut<InterpolationState>| {
         world.resource_scope(|_world, mut hierarchy: Mut<HierarchyScratch>| {
@@ -1220,11 +1082,6 @@ pub(crate) fn gather_ahead(world: &mut World) -> bool {
     })
 }
 
-/// Presents `alpha` of the last gathered GPU inputs while a fixed tick is in
-/// flight: its partial changes are neither propagated nor gathered. With
-/// `hold` the inputs were gathered ahead for a tick not yet due, and consumers
-/// present the inputs they applied before at `alpha`. The presentation state
-/// keeps the gathered frame's tick.
 pub(crate) fn present_gpu_fraction(world: &mut World, alpha: f32, hold: bool) {
     let _profile = engine_profile::span("interpolation", "present_gpu_fraction");
     world.resource_scope(|world, mut interpolation: Mut<InterpolationState>| {
@@ -1238,10 +1095,6 @@ pub(crate) fn present_gpu_fraction(world: &mut World, alpha: f32, hold: bool) {
     });
 }
 
-/// CPU-prepares the fraction of the last GPU-presented frame: exactly what a CPU
-/// extraction of that frame prepares. A no-op when the last extraction was
-/// CPU-prepared, and refused once a tick, refresh or reset changed the inputs
-/// that frame gathered. Called only on explicit request, never per frame.
 pub(crate) fn prepare_pending(world: &mut World) -> bool {
     let Some(alpha) = world
         .get_resource::<InterpolationState>()
@@ -1257,24 +1110,16 @@ pub(crate) fn prepare_pending(world: &mut World) -> bool {
     let frame = world.resource::<PresentationState>().frame;
     let tick = world.resource::<PresentationState>().tick;
     prepare(world, PresentationMode::Interpolated { alpha });
-    // Identity stays that of the GPU-presented frame.
     let mut state = world.resource_mut::<PresentationState>();
     state.frame = frame;
     state.tick = tick;
     true
 }
 
-/// Snaps tracked histories on this root and its current descendants.
-///
-/// Call after teleports. A reset during FixedSimulation suppresses that pending
-/// interval; a later tick can interpolate normally. Returns reset record count.
-/// This explicit control scans bounded ancestry and does not advance clocks or
-/// change local, authoritative global, or last presented poses.
 pub fn reset_interpolation(world: &mut World, root: Entity) -> usize {
     reset_roots(world, &[root])
 }
 
-/// Snaps every tracked history, including pending mid-tick intervals.
 pub fn reset_all_interpolation(world: &mut World) -> usize {
     let Some(mut state) = world.get_resource_mut::<InterpolationState>() else {
         return 0;

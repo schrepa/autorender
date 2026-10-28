@@ -1,13 +1,3 @@
-//! The requests corpus: development requests, controls, inspector
-//! registrations and scene saves that fail, each with its rule's error
-//! code at its path, through the development tools as hosts run them, on
-//! an engine with every feature and the scenes corpus's components
-//! document. Their messages are observed too, serde's English among them,
-//! which the codes of malformed requests and sources are read from. Every
-//! code of the catalog is reached by a refusal here or in the scenes
-//! corpus, or [`UNREACHED`] says why none can be without a GPU, a host or
-//! a browser.
-
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -22,15 +12,10 @@ use serde_json::{Value, json};
 
 use super::Observations;
 
-/// The corpus's refusals.
 const FIXTURES: &str = "tools/xtask/pure/requests.json";
-/// The scenes corpus, whose refusals count too and whose components
-/// document requests select entities in.
 const SCENES: &str = "tools/xtask/pure/scenes.json";
-/// Where scene saves' refusals write their files.
 const AUTHORING: &str = "target/pure/requests";
 
-/// Who answers codes the engine never does.
 const BRIDGE: &str = "the agent bridge and its sessions answer it (web/scripts/agent*.mjs)";
 const WATCH: &str = "the watch tools answer it (web/scripts/iteration*.mjs and the build worker)";
 const PAGE: &str = "the page answers it (web/src/engine/dev.ts and the benchmark it runs)";
@@ -38,8 +23,6 @@ const NATIVE_PROFILE: &str = "native profile captures answer it (crates/engine_n
 const COLLISION: &str = "engine_collision's own check, after the development tools' and scenes' bounds, \
                          or its budgets, which overflow only with more colliders than the corpora load";
 
-/// Codes of the catalog no refusal here or in the scenes corpus reaches,
-/// with why. Sorted by code.
 const UNREACHED: &[(&str, &str)] = &[
     ("activation_committed", WATCH),
     ("activation_expired", WATCH),
@@ -145,7 +128,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let components = scenes["documents"]["components"].to_string();
     let mut engine = engine_with_features();
     let scene = instantiate(&mut engine, &components)?;
-    // An engine without features, and a scene of another engine's world.
     let mut bare = Engine::default();
     let mut other = engine_with_features();
     let foreign = instantiate(&mut other, &components)?;
@@ -170,7 +152,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             "authoring" => authoring(root, refusal)?,
             _ => match (refusal["engine"].as_str(), refusal["scene"].as_str()) {
                 (Some("bare"), _) => query(&tools, &mut bare, None, &source),
-                // An engine whose asset library was taken away.
                 (Some("without assets"), _) => {
                     let mut fresh = Engine::default();
                     fresh
@@ -181,13 +162,11 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 }
                 (_, Some("none")) => query(&tools, &mut engine, None, &source),
                 (_, Some("foreign")) => query(&tools, &mut engine, Some(&foreign), &source),
-                // A scene of more entities than lookups scan.
                 (_, Some("large")) => {
                     let mut large = engine_with_features();
                     let scene = instantiate(&mut large, &crowd())?;
                     query(&tools, &mut large, Some(&scene), &source)
                 }
-                // The components document with one entity despawned since.
                 (_, Some(despawned)) if despawned.starts_with("without ") => {
                     let mut fresh = engine_with_features();
                     let scene = instantiate(&mut fresh, &components)?;
@@ -222,7 +201,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             reached.insert(rule.to_owned());
         }
     }
-    // Every code is reached, or listed as reached by none, with why.
     observed.check(
         UNREACHED.windows(2).all(|pair| pair[0].0 < pair[1].0),
         || "UNREACHED (tools/xtask/src/pure/requests.rs) must be sorted and unique".to_owned(),
@@ -247,21 +225,18 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     Ok(())
 }
 
-/// An engine with every feature's plugin.
 fn engine_with_features() -> Engine {
     let mut engine = Engine::default();
     engine.app.add_plugins(EnginePlugins);
     engine
 }
 
-/// `document` instantiated into `engine`'s world.
 fn instantiate(engine: &mut Engine, document: &str) -> Result<SceneInstance, String> {
     SceneDocument::from_json(document)
         .and_then(|document| document.instantiate(engine.app.world_mut()))
         .map_err(|error| format!("a corpus scene: {error}"))
 }
 
-/// A scene of one entity more than lookups scan.
 fn crowd() -> String {
     let entities: Vec<Value> = (0..=MAX_SCAN_ENTITIES)
         .map(|index| json!({"id": format!("e{index}")}))
@@ -270,8 +245,6 @@ fn crowd() -> String {
         .to_string()
 }
 
-/// The request a refusal sends: its `source` text (`OVERSIZED` for one
-/// byte over the bound), or its `request` with the protocol's version.
 fn request_source(refusal: &Value) -> String {
     match &refusal["source"] {
         Value::String(source) if source == "OVERSIZED" => format!(
@@ -289,8 +262,6 @@ fn request_source(refusal: &Value) -> String {
     }
 }
 
-/// `source` as hosts hand the development tools a request: the reply's
-/// error, if it failed.
 fn query(
     tools: &DevTools,
     engine: &mut Engine,
@@ -314,9 +285,6 @@ fn query(
     ))
 }
 
-/// `source` as hosts take a control: parsed and checked on a host `paused`
-/// or not, then a feature's control applied as its development file does
-/// (the host's own need a renderer, which a pure check has not).
 fn control(
     engine: &mut Engine,
     scene: Option<&SceneInstance>,
@@ -337,9 +305,6 @@ fn control(
     }
 }
 
-/// A registration of the inspector `refusal` describes: the error of the
-/// last of `count` registered on fresh tools, 1 by default and one more
-/// than games may register for `"beyond"`.
 fn register(refusal: &Value) -> Option<DevError> {
     let mut tools = DevTools::default();
     let count = match &refusal["count"] {
@@ -366,11 +331,6 @@ fn register(refusal: &Value) -> Option<DevError> {
     last
 }
 
-/// The scene save or read `refusal` describes, in a folder of its own
-/// under [`AUTHORING`]: its `saved` document (and a `lock` left by
-/// another save, or `bytes` instead of a document), then `candidate`
-/// saved over it expecting `expected` (`"max"` for the last revision), or
-/// the file read back. A path naming the file reads `FILE`.
 fn authoring(root: &Path, refusal: &Value) -> Result<Option<DevError>, String> {
     let folder = root
         .join(AUTHORING)
@@ -397,7 +357,6 @@ fn authoring(root: &Path, refusal: &Value) -> Result<Option<DevError>, String> {
             .map_err(|error| error.to_string())?;
     }
     let target = match refusal["target"].as_str() {
-        // The folder's root, which names no file.
         Some("root") => folder
             .ancestors()
             .last()
@@ -414,8 +373,6 @@ fn authoring(root: &Path, refusal: &Value) -> Result<Option<DevError>, String> {
             engine_dev::authoring::save_scene(&target, &candidate.to_string(), expected).err()
         }
     };
-    // Paths naming the files read alike on every machine, and so do the
-    // operating system's messages, which differ between systems.
     Ok(error.map(|mut error| {
         if error.code == ErrorCode::SourceIo {
             "the operating system's message".clone_into(&mut error.message);
@@ -438,7 +395,6 @@ fn authoring(root: &Path, refusal: &Value) -> Result<Option<DevError>, String> {
     }))
 }
 
-/// The JSON file at `path` from the repository root.
 fn read_json(root: &Path, path: &str) -> Result<Value, String> {
     let text = fs::read_to_string(root.join(path))
         .map_err(|error| format!("cannot read {path}: {error}"))?;

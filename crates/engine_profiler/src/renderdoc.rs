@@ -1,9 +1,3 @@
-//! RenderDoc on Windows, through its in-application API: when the program
-//! runs under RenderDoc (`renderdoccmd capture -w PROGRAM ...`, or launched
-//! from its UI), the GPU work between [`RenderDoc::begin`] and
-//! [`RenderDoc::end`] is captured into an `.rdc` file. wgpu reaches
-//! RenderDoc only in builds with debug assertions; this reaches it in any.
-
 #![cfg_attr(
     windows,
     expect(unsafe_code, reason = "calls RenderDoc's capture functions")
@@ -11,14 +5,11 @@
 
 use std::path::Path;
 
-/// RenderDoc's API, in a program running under it.
 pub struct RenderDoc {
     #[cfg(windows)]
     api: *const Api,
 }
 
-// The leading entries of `RENDERDOC_API_1_1_2`, as `renderdoc_app.h`
-// orders them; this module calls the capture path template, start and end.
 #[cfg(windows)]
 #[repr(C)]
 struct Api {
@@ -30,7 +21,6 @@ struct Api {
     end_frame_capture: unsafe extern "C" fn(*mut u8, *mut u8) -> u32,
 }
 
-// `eRENDERDOC_API_Version_1_1_2`.
 #[cfg(windows)]
 const VERSION_1_1_2: u32 = 10102;
 
@@ -45,8 +35,6 @@ unsafe extern "system" {
 }
 
 impl RenderDoc {
-    /// RenderDoc's API where the program runs under RenderDoc; `None`
-    /// otherwise (and off Windows).
     pub fn attached() -> Option<Self> {
         #[cfg(windows)]
         {
@@ -71,8 +59,6 @@ impl RenderDoc {
         }
     }
 
-    /// Starts capturing the GPU work submitted from now, into a file named
-    /// after `path` (RenderDoc adds `_capture.rdc`).
     pub fn begin(&self, path: &Path) -> Result<(), String> {
         #[cfg(windows)]
         {
@@ -97,7 +83,6 @@ impl RenderDoc {
         }
     }
 
-    /// Ends the capture, keeping its file.
     pub fn end(&self) -> Result<(), String> {
         #[cfg(windows)]
         {

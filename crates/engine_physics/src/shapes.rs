@@ -1,17 +1,9 @@
-//! The engine's primitives as the solver holds them: bodies' colliders at
-//! their transforms' scale, and the world's solids at their poses, sheared
-//! ones as the hulls they are.
-
 use engine_collision::{ColliderShape, Solid};
 use glam::{Mat3, Quat, Vec3};
 use rapier3d::prelude::{Pose, SharedShape};
 
-/// How far from orthogonal a solid's axes may lean and still stand as the
-/// primitive it is, rather than as a hull.
 const SQUARE: f32 = 1.0e-4;
 
-/// A body's shape at its scale: the solver's shape, its volume (cubic
-/// meters), the half extents of the box about it, and whether it is round.
 pub(crate) struct BodyShape {
     pub shape: SharedShape,
     pub volume: f32,
@@ -19,8 +11,6 @@ pub(crate) struct BodyShape {
     pub round: bool,
 }
 
-/// The unit sphere's points a stretched or sheared sphere's hull passes
-/// through: the directions to a cube's faces, edges and corners.
 fn sphere_points() -> impl Iterator<Item = Vec3> {
     (0..27).filter(|&index| index != 13).map(|index| {
         Vec3::new(
@@ -32,7 +22,6 @@ fn sphere_points() -> impl Iterator<Item = Vec3> {
     })
 }
 
-/// The unit cube's corners.
 fn cube_points() -> impl Iterator<Item = Vec3> {
     (0..8).map(|corner| {
         Vec3::new(
@@ -43,12 +32,10 @@ fn cube_points() -> impl Iterator<Item = Vec3> {
     })
 }
 
-/// Whether `radii` are one radius.
 fn uniform(radii: Vec3) -> bool {
     radii.max_element() - radii.min_element() <= SQUARE * radii.max_element()
 }
 
-/// A sphere of `radii` along its axes: a ball, or the hull of a stretched one.
 fn ellipsoid(radii: Vec3) -> Option<SharedShape> {
     if uniform(radii) {
         return Some(SharedShape::ball(radii.x));
@@ -57,8 +44,6 @@ fn ellipsoid(radii: Vec3) -> Option<SharedShape> {
     SharedShape::convex_hull(&points)
 }
 
-/// `shape` of a body whose transform scales it by `scale`; `None` where the
-/// scale leaves it no usable size.
 pub(crate) fn body_shape(shape: ColliderShape, scale: Vec3) -> Option<BodyShape> {
     let scale = scale.abs();
     if !scale.is_finite() || scale.min_element() < 1.0e-4 {
@@ -86,8 +71,6 @@ pub(crate) fn body_shape(shape: ColliderShape, scale: Vec3) -> Option<BodyShape>
     }
 }
 
-/// A world solid as the solver holds it, with the pose it stands at; `None`
-/// for one too thin to stand.
 pub(crate) fn solid_shape(solid: &Solid) -> Option<(SharedShape, Pose)> {
     let columns = [solid.axes.x_axis, solid.axes.y_axis, solid.axes.z_axis];
     let lengths = columns.map(Vec3::length);
@@ -103,8 +86,6 @@ pub(crate) fn solid_shape(solid: &Solid) -> Option<(SharedShape, Pose)> {
         && units[1].dot(units[2]).abs() < SQUARE;
     let radii = Vec3::from_array(lengths);
     if square {
-        // Both primitives are their own mirror images: a reflecting
-        // transform stands them the same.
         let third = if units[0].cross(units[1]).dot(units[2]) < 0.0 {
             -units[2]
         } else {
@@ -117,7 +98,6 @@ pub(crate) fn solid_shape(solid: &Solid) -> Option<(SharedShape, Pose)> {
         };
         return Some((shape, Pose::from_parts(solid.center, rotation)));
     }
-    // Sheared: the hull of the unit primitive mapped by its axes.
     let points: Vec<Vec3> = match solid.shape {
         ColliderShape::Cuboid { .. } => cube_points().map(|point| solid.axes * point).collect(),
         ColliderShape::Sphere { .. } => sphere_points().map(|point| solid.axes * point).collect(),

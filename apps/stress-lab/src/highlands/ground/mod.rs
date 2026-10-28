@@ -1,21 +1,3 @@
-//! The highlands' ground materials: tileable procedural grass, dry grass,
-//! dirt, scree, rock and snow, and streams' beds of sand, gravel and
-//! cobbles, each three maps ([`sources`]): sRGB base
-//! color; tangent-space normals in OpenGL's convention (+X the image's
-//! right, +Y its up, world -z, +Z out of the ground); and ambient occlusion
-//! in red, roughness in green, metalness in blue and height in alpha (0 to
-//! 1, a half on average), which height-based blending reads. Maps lie
-//! top-down: rows run from the texture's top, u along world x and v along
-//! world z, and every map wraps seamlessly. Each generates at twice its
-//! size and averages down. They load as texture records
-//! (`engine::Records`): this code runs where no pack or store holds them,
-//! as the cook runs it.
-//!
-//! Maps keep no structure broader than about a sixth of the texture: a
-//! repeating texture's broad light and dark regions and tilts survive
-//! mipmapping and show as a grid of blotches from afar. Engines vary the
-//! ground broadly themselves.
-
 mod kinds;
 mod noise;
 
@@ -24,15 +6,9 @@ use engine::prelude::{TextureSource, TextureUsage};
 
 use noise::{low_pass, occlusion, saturate, scale};
 
-/// Texels along each side of every map.
 pub(super) const SIZE: usize = 1024;
-/// Materials generate at this many times their size, then average down.
 const SUPERSAMPLE: usize = 2;
 
-/// The maps of ground material `name` (`grass`, `dry_grass`, `dirt`,
-/// `scree`, `rock`, `snow`, `sand`, `gravel` or `cobble`) as sources the
-/// cook compresses: base color, normal, and occlusion, roughness,
-/// metalness and height.
 pub(super) fn sources(name: &str) -> Result<Vec<TextureSource>, String> {
     let kind = Kind::named(name).ok_or_else(|| format!("no ground material is named {name}"))?;
     let mut maps = kind.generate(SIZE * SUPERSAMPLE).downsample();
@@ -51,7 +27,6 @@ pub(super) fn sources(name: &str) -> Result<Vec<TextureSource>, String> {
     ])
 }
 
-/// The generated materials.
 #[derive(Clone, Copy)]
 enum Kind {
     Grass,
@@ -81,8 +56,6 @@ impl Kind {
         })
     }
 
-    /// How steeply height turns the normals: texels of rise per unit of
-    /// height at 512 texels.
     fn relief(self) -> f32 {
         match self {
             Self::Grass => 4.0,
@@ -97,7 +70,6 @@ impl Kind {
         }
     }
 
-    /// The material at `size` texels along each side.
     fn generate(self, size: usize) -> Maps {
         match self {
             Self::Grass => kinds::meadow(size, false),
@@ -113,10 +85,8 @@ impl Kind {
     }
 }
 
-/// Linear RGB.
 type Rgb = [f32; 3];
 
-/// One texel of a material while it generates.
 #[derive(Clone, Copy, Default)]
 struct Texel {
     albedo: Rgb,
@@ -124,8 +94,6 @@ struct Texel {
     roughness: f32,
 }
 
-/// A generated material: `size` by `size` texels of linear albedo, height
-/// (in its own units, about 0 to 1), ambient occlusion and roughness.
 struct Maps {
     size: usize,
     albedo: Vec<Rgb>,
@@ -135,7 +103,6 @@ struct Maps {
 }
 
 impl Maps {
-    /// Maps of `texels`, with occlusion of `strength` from their heights.
     fn new(size: usize, texels: Vec<Texel>, strength: f32) -> Self {
         let height: Vec<f32> = texels.iter().map(|texel| texel.height).collect();
         Self {
@@ -147,18 +114,8 @@ impl Maps {
         }
     }
 
-    /// Removes structure broader than about a sixth of the texture, which
-    /// would repeat as a grid from afar: height and the occlusion and
-    /// roughness maps lose their low-passed variation around their means
-    /// (heights spread over 0 to 1 again when encoded, before their
-    /// normals derive), and albedo is divided by its low-passed luminance
-    /// and multiplied by its mean luminance, keeping hue and small-scale
-    /// contrast.
     fn equalize(&mut self) {
         let size = self.size;
-        // Three box passes of this radius: about a Gaussian whose low-pass
-        // keeps half of structure a sixth of the texture across, nearly all
-        // of anything broader.
         let radius = usize::max(1, size / 32);
         let flatten = |values: &mut [f32]| {
             let mean = values.iter().sum::<f32>() / values.len() as f32;
@@ -182,7 +139,6 @@ impl Maps {
         }
     }
 
-    /// These maps at half the size, each texel the mean of four.
     fn downsample(&self) -> Self {
         let half = self.size / 2;
         let mean = |values: &[f32], x: usize, y: usize| {
@@ -212,7 +168,6 @@ impl Maps {
     }
 }
 
-/// A material's three maps as RGBA8 texels.
 struct Encoded {
     albedo: Vec<u8>,
     normal: Vec<u8>,
@@ -220,11 +175,8 @@ struct Encoded {
 }
 
 impl Encoded {
-    /// Encodes `maps`, its normals turned by `relief` texels of rise per
-    /// unit of height at 512 texels.
     fn new(maps: &Maps, relief: f32) -> Self {
         let size = maps.size;
-        // Heights spread over 0 to 1 between their extreme percentiles.
         let mut sorted = maps.height.clone();
         sorted.sort_by(f32::total_cmp);
         let tail = sorted.len() / 200;
@@ -235,7 +187,6 @@ impl Encoded {
             .iter()
             .map(|value| (value - low) / span)
             .collect();
-        // Alpha: clamped, with a power bringing its mean to about a half.
         let mut alpha: Vec<f32> = height.iter().map(|&value| saturate(value)).collect();
         for _ in 0..4 {
             let mean = alpha.iter().sum::<f32>() / alpha.len() as f32;
@@ -283,7 +234,6 @@ fn unorm(value: f32) -> u8 {
     (saturate(value) * 255.0 + 0.5) as u8
 }
 
-/// Linear to 8-bit sRGB.
 fn srgb(value: f32) -> u8 {
     let value = saturate(value);
     let encoded = if value <= 0.003_130_8 {

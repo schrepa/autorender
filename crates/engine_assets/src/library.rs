@@ -16,51 +16,39 @@ struct Id {
     generation: u64,
 }
 
-/// Weak runtime mesh reference, valid only in the originating library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MeshHandle(Id);
 
-/// Weak runtime material reference, valid only in the originating library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MaterialHandle(Id);
 
-/// Weak runtime texture reference, valid only in the originating library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TextureHandle(Id);
 
 impl MeshHandle {
-    /// Its slot in its library, which reports name it by.
     pub fn slot(self) -> usize {
         self.0.slot
     }
 }
 
 impl MaterialHandle {
-    /// Its slot in its library, which reports name it by.
     pub fn slot(self) -> usize {
         self.0.slot
     }
 }
 
-/// Handles name assets; libraries check them as they resolve.
 impl engine_settings::Setting for MeshHandle {}
 impl engine_settings::Setting for MaterialHandle {}
 impl engine_settings::Setting for TextureHandle {}
 
-/// Weak runtime animation clip reference, valid only in the originating
-/// library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ClipHandle(Id);
 
-/// Library admission limits. Zero is supported for every limit; the default
-/// admits everything, so only memory bounds a library until a game sets one.
 #[derive(Debug, Clone, Copy)]
 pub struct AssetBudget {
     pub max_meshes: usize,
     pub max_materials: usize,
     pub max_textures: usize,
-    /// Resident payload bytes (vertices, indices, material records and pixels),
-    /// excluding allocation/slot metadata and assets retained by old snapshots.
     pub max_cpu_bytes: usize,
 }
 
@@ -78,7 +66,6 @@ impl Default for AssetBudget {
 struct Slot<T> {
     generation: u64,
     value: Option<T>,
-    // Held for a value to come.
     reserved: bool,
 }
 
@@ -100,8 +87,6 @@ impl<T> Default for Storage<T> {
 
 impl<T> Storage<T> {
     fn has_capacity(&self, limit: usize) -> bool {
-        // Exhausted generations retire their slots permanently. Count those
-        // slots against metadata admission as well as bounding live values.
         self.count < limit && (!self.free.is_empty() || self.slots.len() < limit)
     }
 
@@ -109,8 +94,6 @@ impl<T> Storage<T> {
         self.place(library, Some(value))
     }
 
-    /// A slot for a value to come ([`Self::fill`]), which names none until
-    /// then.
     fn reserve(&mut self, library: u64) -> Id {
         self.place(library, None)
     }
@@ -142,7 +125,6 @@ impl<T> Storage<T> {
         }
     }
 
-    /// Puts `value` in reserved slot `id`; whether `id` was reserved.
     fn fill(&mut self, library: u64, id: Id, value: T) -> bool {
         match self.slot_mut(library, id) {
             Some(slot) if slot.reserved => {
@@ -154,7 +136,6 @@ impl<T> Storage<T> {
         }
     }
 
-    /// Whether `id` names a value or a reserved slot.
     fn holds(&self, library: u64, id: Id) -> bool {
         id.library == library
             && self.slots.get(id.slot).is_some_and(|slot| {
@@ -182,7 +163,6 @@ impl<T> Storage<T> {
         slot.value.as_ref()
     }
 
-    /// Every value held, with its slot, in slot order.
     fn values(&self) -> impl Iterator<Item = (usize, &T)> {
         self.slots
             .iter()
@@ -201,15 +181,12 @@ impl<T> Storage<T> {
         slot.value.as_mut()
     }
 
-    /// Frees slot `id`: its value, `None` for a reserved slot; `None` where
-    /// `id` names neither.
     fn remove(&mut self, library: u64, id: Id) -> Option<Option<T>> {
         let slot = self
             .slot_mut(library, id)
             .filter(|slot| slot.value.is_some() || slot.reserved)?;
         let value = slot.value.take();
         slot.reserved = false;
-        // Retire an exhausted slot instead of wrapping and reviving old IDs.
         let next = slot.generation.checked_add(1);
         if let Some(next) = next {
             slot.generation = next;
@@ -222,16 +199,12 @@ impl<T> Storage<T> {
     }
 }
 
-/// A mesh held, and its levels of detail: `None` while awaited (the cook's,
-/// which its owner asks hosts for), else those it has, if any.
 struct HeldMesh {
     mesh: Arc<Mesh>,
     lods: Option<Option<Arc<MeshLods>>>,
 }
 
 impl HeldMesh {
-    /// `mesh` with its own levels, none where it can have none, or awaiting
-    /// the cook's.
     fn new(mesh: Mesh) -> Self {
         let lods = match mesh.lods() {
             Some(lods) => Some(Some(Arc::clone(lods))),
@@ -245,22 +218,13 @@ impl HeldMesh {
     }
 }
 
-/// Single CPU asset owner. Insertions and removals are explicit synchronous
-/// operations; no background work or automatic eviction exist. A mesh or
-/// texture still to come (a record its owner fetches) holds a reserved handle
-/// meanwhile, which names nothing until filled: what reads it finds it
-/// missing, as a removed one.
 #[derive(Resource)]
 pub struct AssetLibrary {
     id: u64,
     revision: u64,
-    // Advances with every material replacement; each material keeps the
-    // value of its last one (0 until replaced).
     material_revision: u64,
     budget: AssetBudget,
     meshes: Storage<HeldMesh>,
-    // Meshes taken since the last [`Self::take_awaiting_lods`] whose levels
-    // are awaited.
     awaiting_lods: Vec<MeshHandle>,
     materials: Storage<(Material, u64)>,
     textures: Storage<Arc<Texture>>,
@@ -276,18 +240,14 @@ impl Default for AssetLibrary {
 }
 
 impl AssetLibrary {
-    /// Limits later admissions to `budget`; assets already admitted stay.
     pub fn set_budget(&mut self, budget: AssetBudget) {
         self.budget = budget;
     }
 
-    /// The admission limits.
     pub fn budget(&self) -> AssetBudget {
         self.budget
     }
 
-    /// Creates an empty library without preallocating the configured budgets.
-    /// Panics only if this process exhausts all possible library identities.
     pub fn new(budget: AssetBudget) -> Self {
         let id = NEXT_LIBRARY
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
@@ -325,8 +285,6 @@ impl AssetLibrary {
         Ok(handle)
     }
 
-    /// A handle for a mesh to come, which counts against the mesh capacity
-    /// and names no mesh until [`Self::fill_mesh`] gives it one.
     pub fn reserve_mesh(&mut self) -> Result<MeshHandle, AssetError> {
         if !self.meshes.has_capacity(self.budget.max_meshes) {
             return Err(AssetError::MeshCapacity {
@@ -337,8 +295,6 @@ impl AssetLibrary {
         Ok(MeshHandle(self.meshes.reserve(self.id)))
     }
 
-    /// Gives reserved `handle` its mesh, admitted as [`Self::insert_mesh`]
-    /// admits one; a handle not reserved is refused.
     pub fn fill_mesh(&mut self, handle: MeshHandle, mesh: Mesh) -> Result<(), AssetError> {
         if !self.meshes.holds(self.id, handle.0) || self.mesh(handle).is_some() {
             return Err(AssetError::InvalidMeshHandle);
@@ -352,17 +308,10 @@ impl AssetLibrary {
         Ok(())
     }
 
-    /// The meshes taken since the last call whose levels of detail are
-    /// awaited: those their owner asks hosts for, settling each
-    /// ([`Self::settle_lods`]). Meshes removed since are among them.
     pub fn take_awaiting_lods(&mut self) -> Vec<MeshHandle> {
         std::mem::take(&mut self.awaiting_lods)
     }
 
-    /// Gives mesh `handle`, whose levels were awaited, `lods`, or none:
-    /// what extraction then draws it with. Levels not suiting the mesh are
-    /// refused, leaving them awaited, as are those of a mesh whose levels
-    /// were not awaited.
     pub fn settle_lods(
         &mut self,
         handle: MeshHandle,
@@ -383,16 +332,11 @@ impl AssetLibrary {
         Ok(())
     }
 
-    /// Mesh `handle`'s levels of detail once settled, its own or the
-    /// cook's, `Some(None)` where it has none; `None` while awaited, which
-    /// extraction draws nothing of, or without a mesh.
     pub fn mesh_lods(&self, handle: MeshHandle) -> Option<Option<&Arc<MeshLods>>> {
         let held = self.meshes.get(self.id, handle.0)?;
         held.lods.as_ref().map(Option::as_ref)
     }
 
-    /// Admits `material`, whose textures must be live in this library or
-    /// reserved there ([`Self::reserve_texture`]).
     pub fn insert_material(&mut self, material: Material) -> Result<MaterialHandle, AssetError> {
         if material
             .textures()
@@ -411,14 +355,6 @@ impl AssetLibrary {
         ))
     }
 
-    /// Replaces live material `handle` in place, keeping the handle:
-    /// objects using it draw with `material` from their next
-    /// extraction. Its textures must be live in this library or reserved
-    /// there. This advances
-    /// [`Self::material_revision`] and the material's
-    /// [`Self::material_version`], not [`Self::revision`]: renderers
-    /// re-resolve only the objects using it. Prefer per-object tints
-    /// (`engine_core::Tint`) for frequent color changes.
     pub fn replace_material(
         &mut self,
         handle: MaterialHandle,
@@ -452,9 +388,6 @@ impl AssetLibrary {
         ))
     }
 
-    /// A handle for a texture to come, which materials may name and which
-    /// counts against the texture capacity; it names no texture until
-    /// [`Self::fill_texture`] gives it one.
     pub fn reserve_texture(&mut self) -> Result<TextureHandle, AssetError> {
         if !self.textures.has_capacity(self.budget.max_textures) {
             return Err(AssetError::TextureCapacity {
@@ -465,8 +398,6 @@ impl AssetLibrary {
         Ok(TextureHandle(self.textures.reserve(self.id)))
     }
 
-    /// Gives reserved `handle` its texture, admitted as
-    /// [`Self::insert_texture`] admits one; a handle not reserved is refused.
     pub fn fill_texture(
         &mut self,
         handle: TextureHandle,
@@ -481,7 +412,6 @@ impl AssetLibrary {
         Ok(())
     }
 
-    /// Admits an animation clip; its keys count against the byte budget.
     pub fn insert_clip(&mut self, clip: AnimationClip) -> Result<ClipHandle, AssetError> {
         self.reserve_bytes(clip.byte_len())?;
         Ok(ClipHandle(self.clips.insert(self.id, Arc::new(clip))))
@@ -504,18 +434,10 @@ impl AssetLibrary {
         self.meshes.get(self.id, handle.0).map(|held| &held.mesh)
     }
 
-    /// Opaque library identity and successful mutation revision: insertions
-    /// and removals. Asset lookups may be retained until this token changes,
-    /// material contents only while [`Self::material_revision`] stands too.
-    /// An exhausted revision (`u64::MAX`) must always be treated as
-    /// uncacheable.
     pub fn revision(&self) -> (u64, u64) {
         (self.id, self.revision)
     }
 
-    /// Advances with every [`Self::replace_material`]: compare each retained
-    /// material's [`Self::material_version`] to find the replaced ones. An
-    /// exhausted value (`u64::MAX`) must always be treated as uncacheable.
     pub fn material_revision(&self) -> u64 {
         self.material_revision
     }
@@ -526,8 +448,6 @@ impl AssetLibrary {
             .map(|(material, _)| material)
     }
 
-    /// The [`Self::material_revision`] of live material `handle`'s last
-    /// replacement, 0 until replaced.
     pub fn material_version(&self, handle: MaterialHandle) -> Option<u64> {
         self.materials
             .get(self.id, handle.0)
@@ -538,8 +458,6 @@ impl AssetLibrary {
         self.textures.get(self.id, handle.0)
     }
 
-    /// Removes mesh `handle`, or releases it while reserved; whether it
-    /// named either.
     pub fn remove_mesh(&mut self, handle: MeshHandle) -> bool {
         let Some(mesh) = self.meshes.remove(self.id, handle.0) else {
             return false;
@@ -565,9 +483,6 @@ impl AssetLibrary {
         true
     }
 
-    /// Invalidates this handle, or releases it while reserved, without
-    /// changing materials that refer to it. Those weak references fail
-    /// texture lookup; retained snapshots remain valid.
     pub fn remove_texture(&mut self, handle: TextureHandle) -> bool {
         let Some(texture) = self.textures.remove(self.id, handle.0) else {
             return false;
@@ -591,30 +506,24 @@ impl AssetLibrary {
         self.textures.count
     }
 
-    /// Every mesh held, by slot ([`MeshHandle::slot`]), in slot order.
     pub fn meshes(&self) -> impl Iterator<Item = (usize, &Arc<Mesh>)> {
         self.meshes.values().map(|(slot, held)| (slot, &held.mesh))
     }
 
-    /// Every material held, by slot ([`MaterialHandle::slot`]), in slot
-    /// order.
     pub fn materials(&self) -> impl Iterator<Item = (usize, &Material)> {
         self.materials
             .values()
             .map(|(slot, (material, _))| (slot, material))
     }
 
-    /// Every texture held, by slot, in slot order.
     pub fn textures(&self) -> impl Iterator<Item = (usize, &Arc<Texture>)> {
         self.textures.values()
     }
 
-    /// Every animation clip held, by slot, in slot order.
     pub fn clips(&self) -> impl Iterator<Item = (usize, &Arc<AnimationClip>)> {
         self.clips.values()
     }
 
-    /// Resident texture pixel bytes, also included in [`Self::resident_bytes`].
     pub fn texture_bytes(&self) -> usize {
         self.texture_bytes
     }

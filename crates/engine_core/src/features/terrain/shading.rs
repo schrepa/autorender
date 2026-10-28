@@ -1,31 +1,8 @@
-//! Terrains' shading ([`TileShading`]): the control values and normal maps
-//! each terrain's tiles of level 1 and coarser shade with, level 0's
-//! averaged, records the cook makes for every such tile and hosts keep. A
-//! level-1 tile's is a job on a worker generating the level-0 tiles under it
-//! and around it as their records hold them, under the edits reaching each;
-//! a coarser tile's averages the records of the level finer under it and
-//! around it, which are shared with workers by key while the jobs reading
-//! them run. Each record is kept by its job, which names what it reads, so
-//! an edit makes anew the records reading the ground it reaches, level by
-//! level, and leaves every other as it was.
-//!
-//! Frames ask for the records of the resident tiles shading with them, the
-//! pinned levels' first and then nearest the eye: fetched where a host
-//! holds them, else made once what they read is here, each read fetched or
-//! made in turn; while a session cooks, every such tile's, the finer levels
-//! first, each coarser record made once the level finer under it is in. A
-//! record that arrives attaches to its resident tile
-//! ([`Tile::shaded`]), whose layers upload it and whose materials fade in;
-//! until it does, the tile draws its heights and shows the next coarser
-//! level's materials and normals over them.
-
 use super::*;
 use crate::MISSING_RECORD;
 use engine_terrain::TileShading;
 use engine_terrain::jobs::{ShadingJob, ShadingReads, shading_key, shading_output, share_shading};
 
-/// Where a shading record asked for stands: fetched from a host's packs and
-/// store, or made by its job, whose output the host keeps.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Fetching(JobId),
@@ -33,7 +10,6 @@ enum Phase {
 }
 
 impl Phase {
-    /// Its job.
     fn job(self) -> JobId {
         match self {
             Self::Fetching(id) | Self::Making(id) => id,
@@ -41,16 +17,12 @@ impl Phase {
     }
 }
 
-/// A shading record asked for: where it stands, and its key.
 #[derive(Clone, Copy)]
 struct Asked {
     phase: Phase,
     record: RecordKey,
 }
 
-/// A tile whose shading a frame wants: its key, its job's priority, and
-/// whether its record is held here once it arrives (for its resident tile,
-/// or for a record made from it), not only had arrive.
 #[derive(Clone, Copy)]
 struct Want {
     key: TileKey,
@@ -58,13 +30,6 @@ struct Want {
     held: bool,
 }
 
-/// A terrain's shading: each tile's job and its record's key, over the
-/// recipe and generation they were found for; the record each tile last
-/// had arrive, and those held here, decoded, with their keys; the records
-/// asked for, those that failed (at the frame they did) and those no host
-/// holds; the keys it shares with workers; the resident tiles holding their
-/// shading as it last attached them; and whether its session cooks, which
-/// asks for every tile's, with how many of those it has left.
 #[derive(Default)]
 pub(super) struct Shadings {
     found: TileMap<(ShadingJob, RecordKey)>,
@@ -81,7 +46,6 @@ pub(super) struct Shadings {
 }
 
 impl Shadings {
-    /// The jobs of its records asked for.
     pub(super) fn asked(&self) -> Vec<JobId> {
         self.asked
             .iter()
@@ -89,31 +53,24 @@ impl Shadings {
             .collect()
     }
 
-    /// The resident tiles holding their shading, and the records asked for.
     pub(super) fn counts(&self) -> (u32, u32) {
         (self.shaded, self.asked.len() as u32)
     }
 
-    /// The records its session cooking has left: every tile's whose record
-    /// under the edits the ground has now has not arrived and did not fail.
     pub(super) fn left(&self) -> u64 {
         self.left
     }
 
-    /// The keys it shares with workers, in order.
     pub(super) fn shares(&self) -> Vec<String> {
         let mut keys: Vec<String> = self.sharing.iter().cloned().collect();
         keys.sort_unstable();
         keys
     }
 
-    /// Whether it shares `key` with workers.
     pub(super) fn holds_share(&self, key: &str) -> bool {
         self.sharing.contains(key)
     }
 
-    /// Shares the bytes `bytes` makes with workers as `key`, unless it does
-    /// already; another terrain sharing the same takes it up.
     fn share(&mut self, jobs: &mut Jobs, key: String, bytes: impl FnOnce() -> Vec<u8>) {
         if !self.sharing.insert(key.clone()) {
             return;
@@ -123,8 +80,6 @@ impl Shadings {
         }
     }
 
-    /// Whether tile `key`'s record `record` is here as a want takes it:
-    /// held here where `held`, else arrived.
     fn has(&self, key: TileKey, record: RecordKey, held: bool) -> bool {
         if held {
             self.held.get(&key).is_some_and(|(_, at)| *at == record)
@@ -133,10 +88,6 @@ impl Shadings {
         }
     }
 
-    /// Whether tile `key`'s record `record` is made rather than fetched: a
-    /// level-1 tile's always (its job hands back what a host holds), a
-    /// coarser one's where no host holds it, and while its session cooks
-    /// where it has yet to arrive.
     fn made(&self, key: TileKey, record: RecordKey) -> bool {
         key.level == 1
             || self.missing.contains(&record)
@@ -145,11 +96,6 @@ impl Shadings {
 }
 
 impl TerrainState {
-    /// The key of tile `key`'s shading record over the recipe shared as
-    /// `recipe`, its job found with it under the generation tiles are made
-    /// from now: a level-1 tile's naming the level-0 tiles it reads with the
-    /// edits reaching each, a coarser one's the records of the level finer
-    /// it reads by their keys.
     fn shading_record(&mut self, recipe: &str, key: TileKey) -> RecordKey {
         let basis = (recipe.to_owned(), self.store.generation());
         if self.shading.found_for.as_ref() != Some(&basis) {
@@ -188,15 +134,6 @@ impl TerrainState {
     }
 }
 
-/// Follows `state`'s shading for this frame: takes the records that
-/// arrived; asks, while `slots` admits them, for those of its resident
-/// tiles of level 1 and coarser, the `settings`' pinned levels' first, then
-/// nearest `eye` (terrain-local), and for what the records made here read
-/// (while its session cooks, for every such tile's), those of tiles no
-/// longer wanted stopping; shares with workers what the records being made
-/// read, the shares it lets go of going to `released`; and attaches the
-/// records here to their resident tiles within `work`'s time and uploads.
-/// Surroundings, which shade with their own samples, hold nothing.
 pub(super) fn follow(
     state: &mut TerrainState,
     settings: &TerrainSettings,
@@ -226,9 +163,6 @@ pub(super) fn follow(
     attach(state, work);
 }
 
-/// Takes the records of `state`'s shading asked for that arrived, each held
-/// here with its key; a record no host holds is counted missing, made next
-/// time it is wanted, and one that failed fails its tile, at `frame`.
 fn take_arrived(state: &mut TerrainState, slots: &mut JobBudget<'_>, frame: u64) {
     let kind = ShadingJob::KIND.name();
     let asked: Vec<(TileKey, Asked)> = state
@@ -276,13 +210,6 @@ fn take_arrived(state: &mut TerrainState, slots: &mut JobBudget<'_>, frame: u64)
     }
 }
 
-/// The tiles whose shading `state` wants over the recipe shared as `recipe`,
-/// most important first, with their jobs' priorities: its resident tiles
-/// shading with theirs, held, the coarsest `pinned` levels' first, then
-/// nearest `eye` (terrain-local); while its session cooks, every tile of
-/// level 1 and coarser, the finer levels first; then what the records made
-/// here and not yet arrived read, held for their jobs to read, those a
-/// resident tile's record reads after the others, while nothing else waits.
 fn wanted(state: &mut TerrainState, recipe: &str, pinned: u32, eye: Vec2) -> Vec<Want> {
     let pyramid = state.terrain.pyramid;
     let levels = pyramid.levels();
@@ -349,11 +276,6 @@ fn wanted(state: &mut TerrainState, recipe: &str, pinned: u32, eye: Vec2) -> Vec
     wants
 }
 
-/// Keeps what `state`'s shading still wants of `wants`: the records asked
-/// for under their tiles' keys now (those of tiles no longer wanted, or
-/// under other keys, stop, `slots` given theirs back), and the records held
-/// for a want holding them or a tile kept in memory, under their keys now;
-/// and counts what its session cooking has left.
 fn keep(state: &mut TerrainState, slots: &mut JobBudget<'_>, wants: &[Want]) {
     let mut wanted: TileMap<bool> = TileMap::default();
     for want in wants {
@@ -393,12 +315,6 @@ fn keep(state: &mut TerrainState, slots: &mut JobBudget<'_>, wants: &[Want]) {
     };
 }
 
-/// Asks for the records of `wants` that `state`'s shading lacks, in their
-/// order, while `slots` admits them: a record is fetched where a host may
-/// hold it, and made where none does ([`Shadings::made`]), a coarser one
-/// once every record it reads is held here, which it then shares with
-/// workers first. A record that failed is asked for again a while after it
-/// did (never while a session cooks), `frame` now.
 fn ask(state: &mut TerrainState, slots: &mut JobBudget<'_>, wants: &[Want], frame: u64) {
     for want in wants {
         let key = want.key;
@@ -423,7 +339,6 @@ fn ask(state: &mut TerrainState, slots: &mut JobBudget<'_>, wants: &[Want], fram
             ShadingReads::Tiles(_) => Vec::new(),
         };
         if made && !reads.iter().all(|&(at, read)| shading.has(at, read, true)) {
-            // While a session cooks, what reads a record that failed fails.
             if shading.cooking && reads.iter().any(|(at, _)| shading.failed.contains_key(at)) {
                 state.shading.failed.insert(key, frame);
             }
@@ -452,9 +367,6 @@ fn ask(state: &mut TerrainState, slots: &mut JobBudget<'_>, wants: &[Want], fram
     }
 }
 
-/// Lets go of the shares no record `shading` makes reads any more into
-/// `released`, for streaming to drop at the frame's end where no terrain
-/// holds them.
 fn release_shares(shading: &mut Shadings, released: &mut Vec<String>) {
     let mut reading: HashSet<String> = HashSet::default();
     for (key, asked) in shading.asked.iter() {
@@ -475,11 +387,6 @@ fn release_shares(shading: &mut Shadings, released: &mut Vec<String>) {
     }
 }
 
-/// Attaches the records held here to `state`'s resident tiles shading with
-/// them that do not hold them yet, in key order, the first at once and the
-/// rest within `work`'s time and uploads: each tile current, the record
-/// the one its key names now. Counts the resident tiles holding their
-/// shading.
 fn attach(state: &mut TerrainState, work: &Work) {
     let keys = state
         .store

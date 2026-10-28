@@ -1,15 +1,3 @@
-//! Temporal antialiasing of GPU-presented display frames, and their
-//! upscaling to the display.
-//!
-//! Each frame rasterizes at its render size with a sub-pixel jitter (in
-//! render pixels) into the screen effects' scene and glow targets and a
-//! motion target, then one full-screen pass over the display blends the
-//! scene, upsampled, with the previous output reprojected at the display's
-//! size, applies ambient occlusion and bloom, and writes both the canvas and
-//! the next history. The history keeps however the render size changes.
-//! Culling alternates between two pose buffers, so the previous frame's
-//! displayed poses stay readable for motion vectors without copies.
-
 #![expect(
     clippy::expect_used,
     reason = "the resolve reads the targets and groups its frame prepared"
@@ -31,12 +19,9 @@ use crate::targets::{FrameRegion, FrameSize, ScreenTarget};
 
 pub(crate) const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-/// Weight of each frame's color against the history: an exponential average
-/// over about ten frames, beyond the eight-sample jitter cycle.
 const CURRENT_WEIGHT: f32 = 0.1;
 
 struct Targets {
-    // Motion and both histories, destroyed with the targets.
     textures: [wgpu::Texture; 3],
     motion: wgpu::TextureView,
     history: [wgpu::TextureView; 2],
@@ -44,46 +29,31 @@ struct Targets {
 
 impl Drop for Targets {
     fn drop(&mut self) {
-        // Browsers otherwise keep the memory until garbage collection;
-        // submitted work that still reads them completes first.
         for texture in &self.textures {
             texture.destroy();
         }
     }
 }
 
-/// What the last submitted temporal frame leaves for the next one.
 #[derive(Clone, Copy)]
 struct History {
-    // Its unjittered view-projection, the origin of camera motion, and the
-    // display's size, which the history is.
     view_projection: Mat4,
     size: FrameSize,
-    // Retained render identity, structure revision and pose storage
-    // generation: previous poses are per slot of that structure.
     identity: u64,
     structure: u64,
     pose_generation: u64,
 }
 
-/// One temporal frame's settings, from [`TemporalPass::begin`].
 pub(crate) struct TemporalFrame {
-    /// Pose buffer and history texture this frame writes; it reads the other.
     pub parity: usize,
     pub camera: CameraUniform,
-    /// The jittered projection this frame rasterizes and culls with.
     pub rasterized: Mat4,
     pub history_valid: bool,
-    /// The other pose buffer holds this structure's previous-frame poses.
-    /// Otherwise objects keep this frame's poses: motion is the camera's.
     pub motion_valid: bool,
     history: History,
 }
 
 pub(crate) struct TemporalPass {
-    // Mesh pipelines live with the renderer's other variants;
-    // the pass owns their layouts, the lit one created with the first lit
-    // temporal frame.
     mesh_layout: wgpu::PipelineLayout,
     lit_layout: Option<wgpu::PipelineLayout>,
     pose_layout: crate::pipelines::GroupLayout,
@@ -93,23 +63,14 @@ pub(crate) struct TemporalPass {
     uniform: wgpu::Buffer,
     written: Option<ResolveUniform>,
     targets: ScreenTarget<Targets>,
-    // What frames drawing nothing transparent bind as transparency's
-    // revealage: one texel leaving everything visible.
     no_particles: wgpu::TextureView,
-    // Frames writing history `p` read history `1 - p` through group `p`,
-    // over the screen effects' targets.
     resolve_groups: [GroupCache<12>; 2],
-    // Pose groups for (current, previous) buffer pairs, index 2 * current +
-    // previous.
     pose_groups: [GroupCache<6>; 4],
     history: Option<History>,
     frame: u32,
 }
 
 impl TemporalPass {
-    /// Creates the resolve pipeline, the mesh pipeline layout and fixed
-    /// resources; targets follow the surface. Mesh and sky pipelines are the
-    /// renderer's.
     pub(crate) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -200,19 +161,12 @@ impl TemporalPass {
         }
     }
 
-    /// Target bytes: motion and two history textures of 4 bytes per pixel
-    /// each, at the display's size (the scene target belongs to the screen
-    /// effects).
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
             u64::from(size.width) * u64::from(size.height) * 12
         })
     }
 
-    /// Starts a frame of `region` whose culling writes pose buffer `parity`
-    /// of storage `pose_generation`: sizes the targets to the display,
-    /// decides what history is valid, jitters by render pixels and writes
-    /// the resolve uniform.
     pub(crate) fn begin(
         &mut self,
         device: &wgpu::Device,
@@ -223,7 +177,6 @@ impl TemporalPass {
     ) -> TemporalFrame {
         let (size, render) = (region.display, region.render);
         if self.targets.resizes(size) {
-            // Recreated history starts over.
             let targets = self.create_targets(device, size);
             self.targets.set(size, targets);
             self.history = None;
@@ -239,7 +192,6 @@ impl TemporalPass {
         let last = self
             .history
             .filter(|last| last.size == size && last.identity == history.identity);
-        // Samples move within the pixels the frame draws: render pixels.
         let offset = jitter_offset(self.frame);
         let jitter = jitter_clip(offset, render.width, render.height);
         let previous = last.map_or(view_projection, |last| last.view_projection);
@@ -259,7 +211,6 @@ impl TemporalPass {
             current_weight: CURRENT_WEIGHT,
             history_valid: u32::from(last.is_some()),
             options: [
-                // Undithered frames leave the uniform unchanged.
                 if environment.dither.enabled {
                     camera.options[2]
                 } else {
@@ -295,9 +246,6 @@ impl TemporalPass {
         }
     }
 
-    /// Builds the pose bindings over the pair of pose buffers `poses`,
-    /// `colors`, the joint palettes alternating with the poses and
-    /// `grounds`, unless built over them.
     pub(crate) fn prepare_pose_groups(
         &mut self,
         device: &wgpu::Device,
@@ -324,8 +272,6 @@ impl TemporalPass {
         }
     }
 
-    /// Pose bindings of `frame`: its pose buffer, the colors, and the
-    /// previous frame's poses when valid (otherwise its own again).
     pub(crate) fn pose_group(&self, frame: &TemporalFrame) -> &wgpu::BindGroup {
         let previous = if frame.motion_valid {
             1 - frame.parity
@@ -337,8 +283,6 @@ impl TemporalPass {
             .expect("prepared this frame")
     }
 
-    /// Creates the lit mesh pipeline layout unless it exists; `layouts` are
-    /// the camera, texture and lights layouts.
     pub(crate) fn ensure_lit_layout(
         &mut self,
         device: &wgpu::Device,
@@ -356,8 +300,6 @@ impl TemporalPass {
         self.lit_layout = Some(layout);
     }
 
-    /// The layout of temporal frames' mesh pipelines, lit or not; lit ones
-    /// after [`Self::ensure_lit_layout`].
     pub(crate) fn mesh_layout(&self, lit: bool) -> &wgpu::PipelineLayout {
         if lit {
             self.lit_layout
@@ -368,26 +310,18 @@ impl TemporalPass {
         }
     }
 
-    /// The pose group layout of temporal frames: poses, colors, previous
-    /// poses and joint palettes.
     pub(crate) fn pose_layout(&self) -> &crate::pipelines::GroupLayout {
         &self.pose_layout
     }
 
-    /// The history target `frame` resolves into.
     pub(crate) fn history_target(&self, frame: &ResolveFrame) -> &wgpu::TextureView {
         &self.targets.get().expect("sized in begin").history[frame.parity]
     }
 
-    /// The motion target of the opaque pass.
     pub(crate) fn motion(&self) -> &wgpu::TextureView {
         &self.targets.get().expect("sized in begin").motion
     }
 
-    /// Binds the resolve of `frame` to the screen effects' current targets,
-    /// the depth buffer `depth` and transparency's revealage `revealed`
-    /// (`None` in frames drawing nothing transparent): what the resolve and
-    /// the next frame read of it.
     pub(crate) fn prepare_resolve(
         &mut self,
         device: &wgpu::Device,
@@ -435,8 +369,6 @@ impl TemporalPass {
         resolve
     }
 
-    /// Draws the resolve of `frame` into `pass`, its node's pass over the
-    /// canvas and the history it writes.
     fn draw_resolve(&self, mut pass: wgpu::RenderPass<'_>, frame: &ResolveFrame) {
         let group = self.resolve_groups[frame.parity]
             .get()
@@ -446,7 +378,6 @@ impl TemporalPass {
         pass.draw(0..3, 0..1);
     }
 
-    /// A frame drawn without temporal antialiasing ends the history.
     pub(crate) fn reset(&mut self) {
         self.history = None;
     }
@@ -479,9 +410,6 @@ impl TemporalPass {
     }
 }
 
-/// What a frame's resolve writes and leaves: the history texture it writes
-/// (its parity), and the history the next frame reads; and whether it reads
-/// transparency's revealage.
 pub(crate) struct ResolveFrame {
     parity: usize,
     history: History,
@@ -494,10 +422,6 @@ impl RenderFeature for TemporalPass {
 
     const LABELS: &'static [&'static str] = &["engine/taa-", "engine/temporal"];
 
-    /// The resolve reads the scene, the motion, the depth buffer and the
-    /// history (and the effects that run, and transparency's revealage where
-    /// something transparent drew), and writes the canvas and the next
-    /// history over the display.
     fn declare(frame: &ResolveFrame, shape: &FrameShape, graph: &mut RenderGraph) {
         if shape.targets != crate::render_graph::Targets::Temporal {
             return;
@@ -531,7 +455,6 @@ impl RenderFeature for TemporalPass {
         0
     }
 
-    /// A submitted frame's history is the next frame's.
     fn after_submit(&mut self, frame: Option<&ResolveFrame>) {
         if let Some(frame) = frame {
             self.history = Some(frame.history);

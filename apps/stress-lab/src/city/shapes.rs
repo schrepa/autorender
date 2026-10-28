@@ -1,8 +1,3 @@
-//! Low-poly shapes and textures of the city scene, built through the public
-//! asset API. Every mesh fits the unit cube centered at its origin, so an
-//! instance's scale is its size and a unit cuboid collider bounds it. Faces
-//! are flat-shaded; parts that rest on something omit faces nobody sees.
-
 use engine::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
@@ -16,34 +11,25 @@ mod landmarks;
 mod nature;
 mod vehicles;
 
-// Façade textures: 30 floors of windows above a 16-texel roof band.
 const FLOORS: f32 = 30.0;
 const WALL: f32 = 240.0 / 256.0;
-/// The top `floors` of a façade's thirty.
 const fn facade(floors: f32) -> Uv {
     Uv::new(0.0, 0.0, 1.0, WALL * floors / FLOORS)
 }
 const ROOF: Uv = Uv::new(0.1, 0.955, 0.9, 0.995);
-// Foliage textures: leaves above, bark below.
 const LEAVES: Uv = Uv::new(0.0, 0.0, 1.0, 0.7);
 const BARK: Uv = Uv::new(0.0, 0.8, 1.0, 1.0);
-// Vehicle textures: a window band across the upper half.
 const BODY: Uv = Uv::new(0.0, 0.55, 1.0, 1.0);
 const WINDOWS: Uv = Uv::new(0.0, 0.1, 1.0, 0.5);
 
-/// The point (`x`, `y`, `z`).
 fn v(x: f32, y: f32, z: f32) -> Vec3 {
     Vec3::new(x, y, z)
 }
 
-/// An axis-aligned box closed below as well: its sides map `side`, its top
-/// and bottom `cap`.
 fn box_(b: &mut Builder, min: Vec3, max: Vec3, side: Uv, cap: Uv) {
     b.cuboid(min, max, side, cap, true);
 }
 
-/// Every shape of the city; the first eight survive at `mesh_variety` 8,
-/// the first 32 at 32, and all at 64. Others fall back to a coarser shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Shape {
     Block,
@@ -156,7 +142,6 @@ impl Shape {
         Shape::Deck,
     ];
 
-    /// The coarser shape standing in for this one when fewer meshes exist.
     fn fallback(self) -> Shape {
         use Shape::*;
         match self {
@@ -188,7 +173,6 @@ impl Shape {
         }
     }
 
-    /// The shape drawn when `variety` meshes exist (1, 8, 32 or 64).
     pub(crate) fn resolve(self, variety: u32) -> Shape {
         let mut shape = self;
         while shape as usize >= variety as usize {
@@ -197,7 +181,6 @@ impl Shape {
         shape
     }
 
-    /// Whether a unit sphere collider fits the shape better than a cuboid.
     pub(crate) fn round(self) -> bool {
         use Shape::*;
         matches!(
@@ -272,8 +255,6 @@ impl Shape {
     }
 }
 
-/// Procedural textures; building façades are 64x256 with a roof band. Alpha
-/// masks emission: lit windows, neon and lamp heads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Tex {
     Office,
@@ -312,9 +293,6 @@ impl Tex {
         Tex::Lamp,
     ];
 
-    /// How the surface responds to light: glass and metal
-    /// reflect the sky, water ripples, and lit windows, neon and lamp heads
-    /// emit where the texture's alpha lets them.
     pub(crate) fn surface(self) -> Surface {
         let surface = |roughness, metalness, emission, ripples| Surface {
             roughness,
@@ -339,8 +317,6 @@ impl Tex {
         }
     }
 
-    /// Its texels, a source the cook compresses: colors, alpha masking
-    /// emission.
     fn source(self) -> TextureSource {
         let facade = matches!(
             self,
@@ -364,7 +340,6 @@ impl Tex {
         }
     }
 
-    /// A texel's color and whether it emits.
     fn texel(self, x: usize, y: usize, noise: i32, seed: u32) -> ([u8; 3], bool) {
         let shade = |value: i32| (value + noise).clamp(0, 255) as u8;
         let gray = |value: i32| [shade(value); 3];
@@ -383,8 +358,6 @@ impl Tex {
                     true,
                 );
             }
-            // The lamp head's texture rows (the shapes' window band) glow
-            // warm white; the rest is dark painted metal.
             Tex::Lamp => {
                 return if (6..32).contains(&y) {
                     ([shade(255), shade(232), shade(176)], true)
@@ -397,7 +370,6 @@ impl Tex {
         (color, false)
     }
 
-    /// Façade texels: windows, some lit, between walls, under a roof band.
     fn facade(self, x: usize, y: usize, noise: i32, seed: u32) -> ([u8; 3], bool) {
         let shade = |value: i32| (value + noise).clamp(0, 255) as u8;
         let gray = |value: i32| [shade(value); 3];
@@ -506,7 +478,6 @@ impl Tex {
                     170
                 },
             ),
-            // Built by `texel` and `facade`.
             Tex::Office
             | Tex::Glass
             | Tex::Residential
@@ -517,14 +488,12 @@ impl Tex {
     }
 }
 
-/// A texture and a linear color: one material.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Paint {
     pub tex: Tex,
     pub color: [f32; 3],
 }
 
-/// Meshes and textures of one city, and its materials on demand.
 pub(crate) struct Library {
     variety: u32,
     meshes: HashMap<Shape, MeshHandle>,
@@ -533,9 +502,6 @@ pub(crate) struct Library {
 }
 
 impl Library {
-    /// Inserts the meshes `variety` keeps (1, 8, 32 or all) into `world`'s
-    /// assets and, when `textured`, asks its records for the textures,
-    /// whose alpha masks emission.
     pub(crate) fn new(world: &mut World, variety: u32, textured: bool) -> engine::Result<Self> {
         world.resource_scope(|world, mut records: Mut<Records>| {
             let mut assets = world.resource_mut::<AssetLibrary>();
@@ -543,7 +509,6 @@ impl Library {
         })
     }
 
-    /// [`Self::new`] over `records` and `assets`.
     fn admit(
         (records, assets): (&mut Records, &mut AssetLibrary),
         variety: u32,
@@ -577,8 +542,6 @@ impl Library {
         })
     }
 
-    /// `tex`'s surface; without textures only neon emits, as no mask
-    /// limits the others' emission to their lit texels.
     fn surface(&self, tex: Tex) -> Surface {
         let surface = tex.surface();
         if self.textures.is_empty() && tex != Tex::Neon {
@@ -591,7 +554,6 @@ impl Library {
         }
     }
 
-    /// The mesh and material drawing `shape` with `paint`.
     pub(crate) fn get(
         &mut self,
         assets: &mut AssetLibrary,
@@ -599,7 +561,6 @@ impl Library {
         paint: Paint,
     ) -> engine::Result<Mesh3d> {
         let mesh = self.meshes[&shape.resolve(self.variety)];
-        // Glass domes are see-through.
         let opacity: f32 = if shape == Shape::Dome && paint.tex == Tex::Glass {
             0.4
         } else {
@@ -616,7 +577,6 @@ impl Library {
                 }
                 .and_then(|material| material.with_surface(self.surface(paint.tex)))
                 .and_then(|material| material.with_opacity(opacity))
-                // Façades' window cells are rooms, eight across.
                 .and_then(|material| match paint.tex {
                     Tex::Office | Tex::Glass | Tex::Residential | Tex::Industrial => {
                         material.with_windows(8)

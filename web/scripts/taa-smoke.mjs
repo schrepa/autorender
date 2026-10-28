@@ -1,16 +1,8 @@
-/** Temporal antialiasing in real Chrome: captures stay exact, while how
- * much ordinary GPU-presented frames change and smooth edges, keep content,
- * flicker when still, keep detail when moving, and how far CPU-presented
- * frames stray from the capture are measured; its settings are inspected,
- * changed by the paused environment control and observed in ordinary
- * frames, as are dithered 8-bit writes'. */
 // @ts-check
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { artifacts, commander, devUrl, launch, openPaused, waitFrames } from "./harness.mjs";
 
-// Textured meshes of several shapes give many edges; nothing moves, so any
-// difference between ordinary frames and captures is the antialiasing.
 const still = {
   seed: 7, renderables: 6000, moving_percent: 0, hierarchy: true, interpolation: true, colliders: 0,
   sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 8, textured: true, culling: true,
@@ -29,7 +21,6 @@ async function open(config, query) {
 }
 
 async function screenshot(name) {
-  // Hide the frame-rate and label overlays, which change while frames run.
   const bytes = await page.locator("canvas").screenshot({
     path: `${output}/${name}.png`, style: ".viewport > :not(canvas) { visibility: hidden !important; }",
   });
@@ -41,8 +32,6 @@ async function capture(name) {
   return screenshot(name);
 }
 
-// Ordinary frames, screenshots taken while they run: the first once
-// `frames` were drawn, the second 18 frames later.
 async function run(name, frames) {
   await command("resume");
   await waitFrames(command, frames);
@@ -53,10 +42,6 @@ async function run(name, frames) {
   return [first, second];
 }
 
-// Per image pair: pixels whose largest channel difference exceeds each
-// tolerance, the mean absolute channel difference, the same between averages
-// of 8x8 blocks (content without its sampling), and each image's total
-// variation (summed absolute neighbor differences per pixel).
 async function compare(images, tolerances = [0, 8, 24]) {
   return page.evaluate(async ({ images, tolerances }) => {
     const pixels = await Promise.all(images.map(async png => {
@@ -124,11 +109,8 @@ async function compare(images, tolerances = [0, 8, 24]) {
 try {
   const results = {};
 
-  // Exact captures do not depend on the setting, which is off by default.
   results.exact_url = await open(still, {});
   const inspect = async () => (await command("inspect", { component: "TemporalAntialiasing" })).result.value;
-  // The resolve's options at their defaults: the nearest surface's motion
-  // and particles' response on, the rounded box off.
   const defaults = { nearest_motion: true, rounded_clamp: false, particle_response: 2 };
   assert.deepEqual(await inspect(), { enabled: false, ...defaults }, "temporal antialiasing is off by default");
   const exactOff = await capture("exact-taa-off");
@@ -139,10 +121,6 @@ try {
   assert.equal(exactPair.changed[0], 0, `captures must not depend on the setting: ${JSON.stringify(exactPair)}`);
   assert.ok(exactPair.distinct_colors > 16, "the view must draw textured geometry");
 
-  // Converged ordinary frames against the exact capture: how many edge
-  // pixels change, how much the content at a coarser scale does, how much
-  // smoother the image is, and how much a still view then flickers, all
-  // measured, not judged. Thin, distant towers alias across much of the view.
   const [first, second] = await run("taa-still", 90);
   const smoothed = await compare([exact, first]);
   results.smoothed = smoothed;
@@ -162,8 +140,6 @@ try {
     note: "pixels whose largest channel differs by more than 24 levels between two converged still frames 300 ms apart",
   }];
 
-  // The page's ?taa=on set the world's settings; ordinary frames report what
-  // they ran, and the paused environment control turns it off and on.
   const observed = async () => (await command("status")).result.rendering;
   assert.deepEqual(await inspect(), { enabled: true, ...defaults });
   const temporalFrame = await observed();
@@ -182,9 +158,6 @@ try {
   const [again] = await run("taa-again", 30);
   assert.equal((await observed()).temporal_antialiasing.active, true, "turned on again, ordinary frames resolve temporally");
 
-  // Dithered 8-bit writes, on by default and turned off and on again by
-  // the paused environment control: how much they change converged frames,
-  // and how much a still view flickers with them, measured.
   const inspectDither = async () => (await command("inspect", { component: "Dither" })).result.value;
   assert.deepEqual(await inspectDither(), { enabled: true }, "dithering is on by default");
   const undithered = await command("environment", { dither: { enabled: false } });
@@ -203,10 +176,6 @@ try {
     note: "pixels whose largest channel differs by more than 24 levels between two converged still frames with dithering, 300 ms apart",
   });
 
-  // The bare resolve (every option off) against the sturdiest (the
-  // nearest surface's motion, the rounded box and particles' response),
-  // each set by the paused environment control: how much the options
-  // change converged still frames, and how much those then flicker.
   const bare = { nearest_motion: false, rounded_clamp: false, particle_response: 0 };
   await command("environment", { temporal_antialiasing: { enabled: true, ...bare } });
   assert.deepEqual(await inspect(), { enabled: true, ...bare });
@@ -231,11 +200,6 @@ try {
   await command("environment", { temporal_antialiasing: { enabled: true } });
   assert.deepEqual(await inspect(), { enabled: true, ...defaults });
 
-  // Foliage's looks at their defaults (transmission, variation, the ground
-  // blend and crown depth on), and masked leaves' hashed cutoffs, off by
-  // default and turned on by the paused environment control, which only
-  // temporally antialiased frames take; how much they change converged
-  // frames, measured.
   const inspectFoliage = async () => (await command("inspect", { component: "Foliage" })).result.value;
   assert.deepEqual(await inspectFoliage(), { transmission: 1, variation: 1, hashed_cutoff: false, ground_blend: Math.fround(0.4), crown_depth: 2 }, "foliage's defaults");
   const leaves = await command("environment", { foliage: { hashed_cutoff: true } });
@@ -249,11 +213,9 @@ try {
   });
   await command("environment", { foliage: {} });
 
-  // Captures after temporal frames are still exact.
   const after = await capture("exact-after-taa");
   assert.equal((await compare([exact, after])).changed[0], 0, "captures must stay exact after temporal frames");
 
-  // CPU-presented ordinary frames with the setting on, against the capture.
   results.cpu_url = await open(still, { taa: "on", presentation: "cpu" });
   const [cpu] = await run("cpu-still", 48);
   const cpuPair = await compare([exact, cpu]);
@@ -263,8 +225,6 @@ try {
     note: "pixels whose largest channel differs by more than 8 levels between a CPU-presented ordinary frame with antialiasing on and the exact capture",
   });
 
-  // Moving objects: ordinary frames keep drawing the scene. Reprojection
-  // follows each object, so motion should blur little beyond the still view.
   results.moving_url = await open(moving, { taa: "on" });
   const movingExact = await capture("moving-exact");
   const [movingFirst] = await run("taa-moving", 90);

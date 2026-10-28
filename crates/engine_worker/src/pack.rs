@@ -1,23 +1,7 @@
-//! Packs: the records the cook made, in one file a host reads by byte
-//! range, on disk or from a server. A header, then a directory of every
-//! record by key, then the records in the order the cook took them (the
-//! coarsest and nearest first), each compressed on its own with zstd so a
-//! byte range of the file is a record a server can cache whole. The
-//! directory, compressed too, lists every record by key: its key's 32
-//! bytes, its offset from the first record, and its bytes stored and
-//! decompressed.
-//!
-//! Header, little-endian: the magic `EPAK`, the records' count, the
-//! directory's offset, its bytes stored and its bytes decompressed.
-
-/// The header's bytes, which name the directory's range.
 pub const PACK_HEADER: usize = 32;
 const MAGIC: &[u8; 4] = b"EPAK";
-/// Bytes of one directory entry: a key, an offset and two lengths.
 const ENTRY: usize = 48;
 
-/// Where a record lies in its pack (its offset from the file's start) and
-/// how large it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PackEntry {
     pub key: [u8; 32],
@@ -26,14 +10,11 @@ pub struct PackEntry {
     pub raw: u32,
 }
 
-/// A pack's directory: its records by key.
 #[derive(Clone, Debug, Default)]
 pub struct PackIndex {
     entries: Vec<PackEntry>,
 }
 
-/// The directory's range in a pack and its bytes decompressed, from the
-/// pack's first [`PACK_HEADER`] bytes.
 pub fn pack_directory(header: &[u8]) -> Result<(u64, u64, u64), String> {
     let header = header
         .get(..PACK_HEADER)
@@ -46,8 +27,6 @@ pub fn pack_directory(header: &[u8]) -> Result<(u64, u64, u64), String> {
 }
 
 impl PackIndex {
-    /// The directory of the pack whose `header` names it and whose
-    /// directory's bytes, as stored, are `directory`.
     pub fn open(header: &[u8], directory: &[u8]) -> Result<Self, String> {
         let (at, stored, raw) = pack_directory(header)?;
         let count = u32::from_le_bytes(header[4..8].try_into().unwrap_or_default()) as usize;
@@ -78,7 +57,6 @@ impl PackIndex {
         Ok(Self { entries })
     }
 
-    /// The record kept as `key`, 64 hexadecimal digits.
     pub fn find(&self, key: &str) -> Option<PackEntry> {
         let key = key_from_hex(key)?;
         self.entries
@@ -87,7 +65,6 @@ impl PackIndex {
             .map(|at| self.entries[at])
     }
 
-    /// Its records.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -97,7 +74,6 @@ impl PackIndex {
     }
 }
 
-/// The record `entry` names, from its `stored` bytes.
 pub fn unpack(entry: &PackEntry, stored: &[u8]) -> Result<Vec<u8>, String> {
     if stored.len() != entry.stored as usize {
         return Err("a pack's record has the wrong size".into());
@@ -105,7 +81,6 @@ pub fn unpack(entry: &PackEntry, stored: &[u8]) -> Result<Vec<u8>, String> {
     unpack_bytes(stored, entry.raw)
 }
 
-/// A record of `raw` bytes from its `stored` bytes, as a pack holds it.
 pub fn unpack_bytes(stored: &[u8], raw: u32) -> Result<Vec<u8>, String> {
     decompress(stored, raw as usize)
 }
@@ -121,10 +96,6 @@ fn decompress(stored: &[u8], raw: usize) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// A pack's bytes, from its `records` (each key's 32 bytes, the record's
-/// bytes and the record compressed) in the order they are stored, the
-/// first of each key's alone, and `compress`, which compresses its
-/// directory.
 pub fn pack_bytes(
     records: &[([u8; 32], &[u8], Vec<u8>)],
     compress: impl Fn(&[u8]) -> Vec<u8>,
@@ -167,7 +138,6 @@ pub fn pack_bytes(
     out
 }
 
-/// The key `hex` names, 64 lowercase hexadecimal digits.
 pub fn key_from_hex(hex: &str) -> Option<[u8; 32]> {
     let digits = hex.as_bytes();
     if digits.len() != 64 {

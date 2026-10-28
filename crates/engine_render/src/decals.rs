@@ -1,7 +1,3 @@
-//! Decals: one record per decal and the pass drawing their
-//! boxes after the opaque meshes, a feature of the renderer
-//! (`crate::render_features`) created with the first frame that has decals.
-
 #![expect(
     clippy::expect_used,
     reason = "drawing reads the group this frame prepared"
@@ -15,8 +11,6 @@ pub(crate) use crate::gpu_layouts::constants::NO_DECAL_POSE as NO_POSE;
 pub(crate) use crate::gpu_layouts::decals::DecalData;
 
 impl DecalData {
-    /// A decal's record, reading its pose from the frame's joint palette
-    /// where it holds one.
     pub(crate) fn new(decal: &RenderDecal) -> Self {
         let rows = decal.model.transpose();
         Self {
@@ -37,7 +31,6 @@ impl DecalData {
     }
 }
 
-/// Consecutive decals drawing with one material and blend.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DecalRun {
     pub material: Option<MaterialHandle>,
@@ -45,8 +38,6 @@ pub(crate) struct DecalRun {
     pub records: Range<u32>,
 }
 
-/// Records of `decals` in order, up to `room` (what the GPU's binding
-/// holds), and their runs; returns the decals that did not fit.
 pub(crate) fn pack_decals(
     decals: &[RenderDecal],
     room: usize,
@@ -89,39 +80,29 @@ mod gpu {
     use crate::scene_shading::SceneShading;
     use crate::targets::Targets;
 
-    /// A frame's decals: those drawn and those beyond the GPU's binding.
     pub(crate) struct DecalFrame {
         pub drawn: u32,
         pub dropped: u32,
     }
 
-    /// Pipelines by target (canvas or scene target), blend and whether they
-    /// shade local lights.
     type PipelineKey = (bool, DecalBlend, bool);
 
     pub(crate) struct DecalPass {
         layout: crate::pipelines::GroupLayout,
-        // Without and with the local lights' group.
         pipeline_layouts: [Option<wgpu::PipelineLayout>; 2],
-        // The pipelines, and the scene features they are specialized for.
         pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
         shading: SceneShading,
         surface_format: wgpu::TextureFormat,
-        // As many records as its room holds.
         records: Growable,
         staging: Vec<DecalData>,
         uploaded: Vec<DecalData>,
         runs: Vec<DecalRun>,
-        // Per pose buffer parity (temporal frames alternate them), and the
-        // parity this frame binds.
         groups: [GroupCache<3>; 2],
         parity: usize,
     }
 
     impl DecalPass {
         pub(crate) fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
-            // Group 2 beside the mesh poses' bindings: the joint palette
-            // holds retained frames' decal poses.
             let layout = crate::pipelines::layout(device, &DECALS);
             Self {
                 layout,
@@ -143,8 +124,6 @@ mod gpu {
             }
         }
 
-        /// Specializes the pipelines for `shading`'s scene features: those
-        /// made for others are dropped, to be created anew.
         pub(crate) fn specialize(&mut self, shading: SceneShading) {
             if self.shading != shading {
                 self.shading = shading;
@@ -152,15 +131,10 @@ mod gpu {
             }
         }
 
-        /// Whether `snapshot`'s frame draws decals.
         pub(crate) fn wanted(snapshot: &RenderSnapshot) -> bool {
             snapshot.environment.decals.enabled && !snapshot.decals.list.is_empty()
         }
 
-        /// Uploads `snapshot`'s decals when they changed; `None` when the
-        /// frame draws none. Decals read their displayed poses from
-        /// `palette` (the frame's joint palette, bound, and its parity) and
-        /// sample the depth buffer `depth`.
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
@@ -204,9 +178,6 @@ mod gpu {
             })
         }
 
-        /// Creates the pipelines this frame's runs draw with: into the canvas
-        /// or the scene target (`post`), shading local lights with `lights`'
-        /// group layout.
         pub(crate) fn ensure_pipelines(
             &mut self,
             device: &wgpu::Device,
@@ -218,7 +189,6 @@ mod gpu {
             let lit = lights.is_some();
             for index in 0..self.runs.len() {
                 let blend = self.runs[index].blend;
-                // Multiplied color keeps the surface's light.
                 let shades_lights = lit && blend == DecalBlend::Alpha;
                 let key = (!post, blend, shades_lights);
                 if self.pipelines.contains_key(&key) {
@@ -251,9 +221,6 @@ mod gpu {
             }
         }
 
-        /// Draws the prepared decals over the opaque pass's color; call
-        /// [`Self::ensure_pipelines`] first. `lights` is the local lights'
-        /// group of lit frames.
         fn draw(
             &self,
             pass: &mut wgpu::RenderPass<'_>,
@@ -294,8 +261,6 @@ mod gpu {
 
         const LABELS: &'static [&'static str] = &["engine/decal-", "engine/decals"];
 
-        /// Decals draw over the opaque surfaces whose depth they sample,
-        /// shading local lights in frames binning them.
         fn declare(_frame: &DecalFrame, shape: &FrameShape, graph: &mut RenderGraph) {
             graph
                 .add(Pass::Feature(FeaturePass::Decals))
@@ -324,7 +289,6 @@ mod gpu {
                 encode.lights,
                 encode.targets != Targets::Canvas,
             );
-            // Their draws are not the frame's mesh draws.
             0
         }
 
@@ -332,8 +296,6 @@ mod gpu {
             self.records.size()
         }
 
-        /// Decals drawn, invalid ones, and those left out: the snapshot's
-        /// and those beyond the GPU's binding.
         fn stats(
             _this: Option<&Self>,
             frame: Option<&DecalFrame>,
@@ -361,7 +323,6 @@ mod gpu {
             ("DECAL_MULTIPLY", flag(blend == DecalBlend::Multiply)),
             ("DECAL_CANVAS", flag(canvas)),
         ]);
-        // Alpha keeps the scene target's ambient share.
         let keep = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::Zero,
             dst_factor: wgpu::BlendFactor::One,
@@ -393,7 +354,6 @@ mod gpu {
                 vertex_constants: &[],
                 vertex: crate::entries::DECAL_VERTEX,
                 buffers: &[],
-                // The box's far faces cover its pixels once, from inside too.
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     cull_mode: Some(wgpu::Face::Front),

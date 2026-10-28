@@ -1,33 +1,14 @@
-//! Each terrain's macro colors ([`engine_terrain::macro_colors`]): the
-//! tint its ground takes and how lush its plants grow, from what its bakes
-//! found. They are a texture set of one texture like every texture record
-//! game code asks for ([`crate::Records`]): its source made by a worker job
-//! (the colors of the terrain's recipe at its finest pinned level), its
-//! records cooked for the family of compressed formats the device samples,
-//! every family while a session cooks, hosts handing them back from the
-//! cook's packs or their stores and, verifying, having them made again. A
-//! record is kept by the content of the terrain's recipe (its key, whose
-//! surface says how strongly each cause tints the colors), the level and
-//! the size, and the code making and cooking it. A recipe that changes asks
-//! anew; the colors before stay until the new ones arrive, then leave the
-//! asset library.
-
 use super::*;
 use crate::{MakeSources, Records, TextureSet, TextureUsage};
 use bevy_ecs::prelude::Mut;
 use engine_assets::TextureHandle;
 use engine_terrain::jobs::MacroJob;
 
-/// The colors asked of the records: their job, and the handle their records
-/// fill with their identity (none where the asset library had no room).
 struct Asked {
     job: MacroJob,
     held: Option<(TextureHandle, u128)>,
 }
 
-/// A terrain's macro colors: those streaming wants (none before its recipe
-/// is shared, or with terrain off), those last asked for, and those shown,
-/// the last filled, with their job.
 #[derive(Default)]
 pub(super) struct MacroColors {
     pub(super) wanted: Option<MacroJob>,
@@ -36,7 +17,6 @@ pub(super) struct MacroColors {
 }
 
 impl MacroColors {
-    /// Whether colors are asked for and not yet shown.
     pub(super) fn asking(&self) -> bool {
         self.asked.as_ref().is_some_and(|asked| {
             asked.held.is_some()
@@ -47,13 +27,10 @@ impl MacroColors {
         })
     }
 
-    /// Whether colors are shown.
     pub(super) fn shown(&self) -> bool {
         self.shown.is_some()
     }
 
-    /// Whether the colors wanted are not shown yet: a session cooking
-    /// waits for them.
     pub(super) fn left(&self) -> bool {
         self.wanted.as_ref().is_some_and(|wanted| {
             self.shown
@@ -62,7 +39,6 @@ impl MacroColors {
         })
     }
 
-    /// The textures its colors hold or will, which go with the terrain.
     pub(super) fn handles(&self) -> impl Iterator<Item = TextureHandle> + '_ {
         self.asked
             .iter()
@@ -70,7 +46,6 @@ impl MacroColors {
             .chain(self.shown.iter().map(|&(_, handle, _)| handle))
     }
 
-    /// The colors shown as renderers take them, from `assets`.
     pub(super) fn map(&self, assets: Option<&AssetLibrary>) -> Option<MacroMap> {
         let (_, handle, identity) = self.shown.as_ref()?;
         let texture = assets?.texture(*handle)?;
@@ -81,8 +56,6 @@ impl MacroColors {
     }
 }
 
-/// Texels along `settings`' macro color maps' sides: their resolution, in
-/// whole blocks.
 fn macro_texels(settings: &TerrainSettings) -> u32 {
     let block = engine_terrain::macro_colors::MACRO_BLOCK;
     settings
@@ -91,10 +64,6 @@ fn macro_texels(settings: &TerrainSettings) -> u32 {
         .min(engine_terrain::macro_colors::MAX_MACRO_TEXELS)
 }
 
-/// Sets the macro colors `settings` want of `state`: those of its recipe at
-/// its finest pinned level, `macro_resolution` texels a side in whole
-/// blocks; none before its recipe is shared, or with terrain off, which
-/// leaves those shown as they are.
 pub(super) fn want_colors(state: &mut TerrainState, settings: &TerrainSettings) {
     let recipe = state.recipe.as_ref().filter(|_| settings.enabled);
     state.whole.colors.wanted = recipe.map(|recipe| MacroJob {
@@ -104,8 +73,6 @@ pub(super) fn want_colors(state: &mut TerrainState, settings: &TerrainSettings) 
     });
 }
 
-/// The texture set of `job`'s colors: named by the hash of the job, its
-/// source the job's texels.
 fn colors_set(job: &MacroJob) -> TextureSet {
     let identity = job.identity();
     TextureSet {
@@ -120,8 +87,6 @@ fn colors_set(job: &MacroJob) -> TextureSet {
     }
 }
 
-/// What made `job`'s colors, the same in every family: the job and the
-/// cook's code, which records renderers bake from them are kept by.
 fn colors_identity(job: &MacroJob) -> u128 {
     let mut identity = job.identity();
     identity.extend_from_slice(&engine_textures::SOURCE);
@@ -129,10 +94,6 @@ fn colors_identity(job: &MacroJob) -> u128 {
 }
 
 impl Terrains {
-    /// Asks `records` for the colors each terrain wants that it has not
-    /// asked for, their handles reserved in `assets`; shows those filled,
-    /// and removes from `assets` the colors replaced or gone with their
-    /// terrains once filled (those still to come fill first).
     pub(super) fn ask_colors(&mut self, records: &mut Records, assets: &mut AssetLibrary) {
         let frame = self.frame;
         for state in &mut self.entries {
@@ -158,7 +119,6 @@ impl Terrains {
             if colors.asked.as_ref().is_some_and(|asked| asked.job == job) {
                 continue;
             }
-            // Colors asked for and not shown are no one's once filled.
             if let Some(Asked {
                 held: Some((handle, _)),
                 ..
@@ -188,8 +148,6 @@ impl Terrains {
     }
 }
 
-/// Asks the records for the terrains' macro colors (`Terrains::ask_colors`),
-/// where the world holds terrains, records and an asset library.
 pub(super) fn ask_colors(world: &mut World) {
     if !(world.contains_resource::<Terrains>()
         && world.contains_resource::<Records>()

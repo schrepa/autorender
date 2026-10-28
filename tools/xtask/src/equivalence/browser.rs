@@ -1,8 +1,3 @@
-//! The browser leg (`--browser`, `--both`): the same cells run in headless
-//! Chrome against a development server of each side, driven by
-//! `web/scripts/equivalence-browser.mjs`, and judged as the native leg's
-//! runs are.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,14 +11,10 @@ use crate::heavy::HELD;
 use crate::measure::{self, read_json};
 use crate::serve::Server;
 
-/// A side's page, served from its own tree.
 pub(super) struct Page {
     pub(super) server: Server,
 }
 
-/// Serves `side`'s page: the working tree in place, or its commit (`sha`)
-/// checked out in the reused tree `name`, with the side's generated files
-/// where the page reads them; logs into `folder`.
 pub(super) fn serve(root: &Path, side: &Side, name: &str, folder: &Path) -> Result<Page, String> {
     let tree = match &side.sha {
         Some(sha) => checkout_tree(root, name, sha)?,
@@ -35,7 +26,6 @@ pub(super) fn serve(root: &Path, side: &Side, name: &str, folder: &Path) -> Resu
     Ok(Page { server })
 }
 
-/// The page size every cell draws at: the settings bundle's.
 pub(super) fn size(root: &Path) -> Result<[u32; 2], String> {
     let settings = read_json(&root.join(SETTINGS))?;
     settings["options"]["size"]
@@ -45,16 +35,11 @@ pub(super) fn size(root: &Path) -> Result<[u32; 2], String> {
         .ok_or_else(|| format!("{SETTINGS} names no size WIDTHxHEIGHT"))
 }
 
-/// The page parameters of `cell` on `side`: the settings bundle's switches,
-/// the scene's options and the cell's, job workers off; a source cell's
-/// scene comes from the driver.
 fn page_parameters(cell: &Cell, side: &Side) -> Result<Map<String, Value>, String> {
     let mut parameters = Map::new();
     parameters.insert("workers".into(), json!("off"));
     let settings = read_json(&side.tree.join(SETTINGS))?;
     for (name, value) in settings["options"].as_object().into_iter().flatten() {
-        // The page takes its size from the viewport; scanned rocks are left
-        // out by the driver.
         if !["size", "rocks"].contains(&name.as_str()) {
             parameters.insert(name.clone(), switch(value));
         }
@@ -70,7 +55,6 @@ fn page_parameters(cell: &Cell, side: &Side) -> Result<Map<String, Value>, Strin
     Ok(parameters)
 }
 
-/// An option file's value as the page's parameter: switches as on and off.
 fn switch(value: &Value) -> Value {
     match value {
         Value::Bool(true) => json!("on"),
@@ -79,8 +63,6 @@ fn switch(value: &Value) -> Value {
     }
 }
 
-/// One round of `cell` in the browser: `runs` (each a side's page, its role
-/// and the run's number), into `folder`; each run's record, in order.
 pub(super) fn round(
     root: &Path,
     cell: &Cell,
@@ -159,7 +141,6 @@ pub(super) fn round(
     }
 }
 
-/// A run the driver reported, as the judge reads it.
 fn run_record(reported: &Value) -> Run {
     let mut run = Run {
         error: reported["error"].as_str().map(str::to_owned),

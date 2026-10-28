@@ -1,50 +1,3 @@
-//! Terrains' settled water: each level-0 tile's rivers at their steady
-//! state ([`SteadyWater`]), records the cook makes for every tile its
-//! bake's water reaches and hosts keep, at the cells' size water's
-//! simulation takes ([`Water::simulation_cell`]). Frames ask for the
-//! records of the resident level-0 tiles water reaches and of the watered
-//! tiles beside them, held whole, and fetch every other tile's where a host
-//! holds it, nearest first, for its summary ([`engine_terrain::SteadySummary`]).
-//! Each record's head (its summary) is shared with workers as it arrives,
-//! and the records held whole are shared whole.
-//!
-//! A tile's water is a record of its own, a job on a worker
-//! ([`SteadiedJob`]) reading the tile's record and the shared records
-//! around it: a resident level-0 tile's water stands as its record and its
-//! neighbors' say ([`engine_terrain::Tile::steadied`]), a resident coarser
-//! tile's runs as the summaries under it and around it say
-//! ([`engine_terrain::Tile::flowing`]). It is asked for once everything it
-//! reads is here, or known never to come, and kept by the keys of what it
-//! reads, so it is made again only when one of them changes, as after an
-//! edit, never as each neighbor arrives; the cook ships them as every
-//! record. Frames only swap what the jobs made into the resident tiles:
-//! drawing, queries and the window simulated around the camera read water
-//! as it settles, near and far. A record made under other edits than the
-//! ground has now stands until the one made under them arrives. A tile
-//! whose rivers something standing in them holds back keeps the water they
-//! run with now.
-//!
-//! Each tile's record is the one its water settled to over its region of
-//! the cook's, the terrain whole where it fits a region (else the fewest
-//! regions that fit, [`engine_terrain::settle_regions`]); where no host
-//! holds that one, outside a cooking session, the one it settled to over a
-//! region of its own ([`SettleRegion::alone`]). The two are kept apart, so
-//! a session that made a tile's water alone leaves the cook's to make. A
-//! cooking session makes every record a region of the cook's keeps that no
-//! host holds, together, once each of its tiles was fetched, and every
-//! watered tile's water and every coarser tile's over them; another
-//! session makes a tile's alone, from the record it holds under other
-//! edits where it holds one.
-//! Each level-0 tile a region reaches gives its part, a job on a worker
-//! ([`WaterPart`], shared by the regions settling while it is made), its
-//! objects standing in it as the solids the terrain's placement assets
-//! stand as ([`PlacementAsset::solid`]), which the water flows around; the
-//! parts make what the region settles from ([`SettleStart::assemble`]),
-//! which the renderer settles on the GPU, handing each record to its host
-//! to keep ([`SettleQueue`]); records the GPU made are cooked once, and a
-//! verifying host compares those made again within their tolerance
-//! ([`settled_alike`]).
-
 use super::*;
 use crate::{MISSING_RECORD, RecordParity};
 use engine_terrain::codec::CodecError;
@@ -55,17 +8,10 @@ use engine_terrain::{
     SettleRegion, SettleStart, SettledKey, SteadyCell, SteadyWater, TileWater, WaterPart,
 };
 
-/// The kind settled water's records are kept by.
 pub const SETTLED_KIND: &str = "settled_water";
 
-/// How a verifying host compares settled water made again on the GPU with
-/// the record it handed back ([`settled_alike`]).
 pub const SETTLED_PARITY: RecordParity = RecordParity::Within(settled_alike);
 
-/// Whether settled water `made` again keeps within its tolerance of the
-/// record `handed`: the same tile and cells, wet and dry alike at all but
-/// one cell in fifty, and the cells wet in both standing within five
-/// centimeters of each other at all but one in a hundred.
 pub fn settled_alike(handed: &[u8], made: &[u8]) -> bool {
     let (Ok(handed), Ok(made)) = (
         engine_terrain::codec::decode::<SteadyWater>(handed),
@@ -100,9 +46,6 @@ pub fn settled_alike(handed: &[u8], made: &[u8]) -> bool {
     wetness * 50 <= cells && apart * 100 <= wet.max(1)
 }
 
-/// Where a record of settled water asked for stands: fetched from a host's
-/// packs and store (by its job), its region's parts being made, or
-/// settling on the GPU.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Fetching(JobId),
@@ -110,16 +53,12 @@ enum Phase {
     Settling,
 }
 
-/// A level-0 tile's records of settled water under the edits the ground
-/// has now: over its region of the cook's, and alone.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Keys {
     region: RecordKey,
     alone: RecordKey,
 }
 
-/// A record of settled water asked for: where it stands, its key, and
-/// whether it is made where no host holds it (or only fetched).
 #[derive(Clone, Copy)]
 struct Asked {
     phase: Phase,
@@ -127,10 +66,6 @@ struct Asked {
     made: bool,
 }
 
-/// A region whose tiles' records are made: the region, each tile it keeps'
-/// record's key (in its order), whether it settles from the records its
-/// tiles hold under other edits, the tiles whose parts it settles from,
-/// and how near the view it is, which its parts' jobs go by.
 struct Making {
     region: SettleRegion,
     records: Vec<RecordKey>,
@@ -139,43 +74,29 @@ struct Making {
     place: u32,
 }
 
-/// A level-0 tile's part of the water settling over regions: its job asked
-/// for, or made.
 enum Part {
     Asked(JobId),
     Made(Arc<WaterPart>),
 }
 
-/// What a tile's water reads: its tile's record and the records of settled
-/// water of the level-0 tiles it reads (whole for a level-0 tile, their
-/// summaries for a coarser one), each by its tile with its key, in key
-/// order.
 #[derive(Clone, PartialEq, Eq)]
 struct Reads {
     tile: RecordKey,
     settled: Vec<(TileKey, RecordKey)>,
 }
 
-/// What a tile's water reads as its settled water stands: all of it here,
-/// some still to come, or nothing to read.
 enum Wants {
     Here(Reads),
     Coming,
     Nothing,
 }
 
-/// Where a record of settled water a tile's water reads stands: here, with
-/// its key; still to come; or never coming (it failed, or no host holds it
-/// and nothing makes it).
 enum Found {
     Here(RecordKey),
     Coming,
     Never,
 }
 
-/// A tile's water from settled water: what it reads and its record's key;
-/// its job while asked for; and once made, the water (none where none
-/// stands on the tile), kept for tiles resident when it came.
 struct Watering {
     reads: Reads,
     record: RecordKey,
@@ -183,14 +104,6 @@ struct Watering {
     made: Option<Arc<Option<TileWater>>>,
 }
 
-/// Water settling on the GPU, which terrains share: the hash of the
-/// renderer's code settling it, which its records are keyed by with their
-/// tiles' own ([`Terrains::set_water_settling`]), and whether a renderer
-/// settles it here; the starts handed to the renderer, each with the id
-/// renderers key its terrain by, through whose materials the renderer
-/// raises its bed, and the keys of the records it makes, until its host
-/// takes them; and what the renderer settled, by key, for the frame's
-/// terrains to take (each a record, or why it failed).
 #[derive(Default)]
 pub(super) struct SettleQueue {
     pub(super) source: [u8; 32],
@@ -200,63 +113,31 @@ pub(super) struct SettleQueue {
 }
 
 impl SettleQueue {
-    /// What the renderer settled as `record`, taken.
     fn take(&mut self, record: RecordKey) -> Option<Result<Vec<u8>, String>> {
         let at = self.settled.iter().position(|(held, _)| *held == record)?;
         Some(self.settled.swap_remove(at).1)
     }
 
-    /// Drops what the renderer settled that no terrain took this frame:
-    /// records none asks for any more.
     pub(super) fn drop_untaken(&mut self) {
         self.settled.clear();
     }
 }
 
 impl Terrains {
-    /// Has water settle on the GPU with code hashing to `source`, which
-    /// settled water's records are keyed by, where a renderer `settles` it
-    /// (without one, records are only fetched).
     pub fn set_water_settling(&mut self, source: [u8; 32], settles: bool) {
         self.settling.source = source;
         self.settling.settles = settles;
     }
 
-    /// The starts of water to settle handed to the renderer since the last
-    /// call, each with the id renderers key its terrain by
-    /// ([`crate::RenderTerrain::id`]), through whose materials it raises
-    /// its bed, and the keys of the records it makes, in the order it keeps
-    /// their tiles.
     pub fn take_water_settles(&mut self) -> Vec<(u64, Vec<RecordKey>, Arc<SettleStart>)> {
         std::mem::take(&mut self.settling.asked)
     }
 
-    /// The renderer's settled water of `record`: its record's bytes, or why
-    /// it failed.
     pub fn water_settled(&mut self, record: RecordKey, settled: Result<Vec<u8>, String>) {
         self.settling.settled.push((record, settled));
     }
 }
 
-/// A terrain's settled water: the cells' size its records hold; the
-/// level-0 tiles its bake's water reaches, found over its baked layers,
-/// and the cook's regions over them (each a rectangle of tiles, with its
-/// watered ones); the generation of tiles, the solids and the relief its
-/// keys were found for, and each watered tile's records' keys then; the records held whole,
-/// decoded, and those shared whole with workers, and the record of each
-/// tile whose head (its summary) is shared, each by its key; the records
-/// asked for, those that failed (at the frame they did) and those no host
-/// holds; the regions whose records are made and the parts they settle
-/// from; the tiles' jobs and records' keys its tiles' water reads, over the
-/// recipe and generation they were found for; each tile's water asked for
-/// or made, those whose jobs failed (at the frame they did), and the tiles
-/// given their water, as given and with its key; the keys it shares with
-/// workers; how often what its tiles' water reads changed, and what it last
-/// asked for their water at, whether it waits to ask again, and how many
-/// tiles' water waits, for what it reads or for a job's slot, as it last
-/// asked (those whose jobs run count as they run); and whether its session
-/// cooks, which makes every watered tile's records over the cook's regions
-/// and every tile's water over them.
 #[derive(Default)]
 pub(super) struct Settled {
     cell: f32,
@@ -286,7 +167,6 @@ pub(super) struct Settled {
 }
 
 impl Settled {
-    /// The jobs of its records, parts and tiles' water asked for.
     pub(super) fn asked(&self) -> Vec<JobId> {
         let fetches = self
             .asked
@@ -303,15 +183,10 @@ impl Settled {
         fetches.chain(parts).chain(waters).collect()
     }
 
-    /// Records arrived, whose summaries it shares, and those asked for.
     pub(super) fn counts(&self) -> (u32, u32) {
         (self.summaries.len() as u32, self.asked.len() as u32)
     }
 
-    /// Watered tiles whose record over their region of the cook's under
-    /// the edits the ground has now has not arrived and did not fail, and
-    /// the tiles whose water its cooking session has still to make, those
-    /// waiting and those whose jobs run now: what a cook has left.
     pub(super) fn left(&self) -> u64 {
         let Some((_, watered)) = &self.watered else {
             return 0;
@@ -330,26 +205,16 @@ impl Settled {
         records + self.waters_waiting + running.count() as u64
     }
 
-    /// The meters across its records' cells.
     pub(super) fn cell(&self) -> f32 {
         self.cell
     }
 
-    /// The settled water of the terrain's lattice cell `(i, j)`: what the
-    /// record of the level-0 tile holding its middle says, if held whole.
     pub(super) fn cell_at(&self, pyramid: &Pyramid, i: i64, j: i64) -> Option<SteadyCell> {
         let middle = Vec2::new((i as f32 + 0.5) * self.cell, (j as f32 + 0.5) * self.cell);
         let key = pyramid.tile_at(0, middle)?;
         self.held.get(&key)?.0.at(i, j)
     }
 
-    /// Whether the water running live over level-0 tile `key` can start
-    /// from what is held of its settled water, `tile` the resident tile
-    /// holding it and `held_back` whether something standing in its rivers
-    /// holds them back: its bake's water reaches none of it, so none ever
-    /// settles there; or its record is held whole, with its live cells, and
-    /// `tile` holds the water that record stands (held back, the water its
-    /// rivers run with now).
     pub(super) fn ready(&self, key: TileKey, tile: &Arc<Tile>, held_back: bool) -> bool {
         let watered = self
             .watered
@@ -366,20 +231,16 @@ impl Settled {
                     .is_some_and(|(given, _)| Arc::ptr_eq(given, tile)))
     }
 
-    /// The keys it shares with workers, in order.
     pub(super) fn shares(&self) -> Vec<String> {
         let mut keys: Vec<String> = self.sharing.iter().cloned().collect();
         keys.sort_unstable();
         keys
     }
 
-    /// Whether it shares `key` with workers.
     pub(super) fn holds_share(&self, key: &str) -> bool {
         self.sharing.contains(key)
     }
 
-    /// Shares the bytes `bytes` makes with workers as `key`, unless it does
-    /// already; another terrain sharing the same takes it up.
     fn share(&mut self, jobs: &mut Jobs, key: String, bytes: impl FnOnce() -> Vec<u8>) {
         if !self.sharing.insert(key.clone()) {
             return;
@@ -389,23 +250,17 @@ impl Settled {
         }
     }
 
-    /// Lets go of its share `key`: `released` takes it, for streaming to
-    /// drop at the frame's end where no terrain holds it.
     fn release(&mut self, key: String, released: &mut Vec<String>) {
         if self.sharing.remove(&key) {
             released.push(key);
         }
     }
 
-    /// Lets go of every share it holds into `released`.
     fn release_all(&mut self, released: &mut Vec<String>) {
         released.extend(self.shares());
         self.sharing.clear();
     }
 
-    /// The record level-0 tile `key` wants under the edits the ground has
-    /// now: over its region of the cook's, or, outside a cooking session
-    /// where no host holds that one, alone.
     fn wanted(&self, key: TileKey) -> Option<RecordKey> {
         let keys = self.records.get(&key)?;
         if self.cooking || !self.missing.contains(&keys.region) {
@@ -415,9 +270,6 @@ impl Settled {
         }
     }
 
-    /// The record level-0 tile `key` asks a host for: its record over its
-    /// region of the cook's, else (outside a cooking session) alone, unless
-    /// no host holds either.
     fn fetched(&self, key: TileKey) -> Option<RecordKey> {
         let keys = self.records.get(&key)?;
         if !self.missing.contains(&keys.region) {
@@ -429,8 +281,6 @@ impl Settled {
         }
     }
 
-    /// Whether level-0 tile `key`'s wanted record arrived as a tile kept
-    /// `whole` takes it: shared whole, or for another tile its summary.
     fn done(&self, key: TileKey, whole: bool) -> bool {
         let here = if whole {
             self.shared.get(&key)
@@ -440,18 +290,12 @@ impl Settled {
         here.copied() == self.wanted(key)
     }
 
-    /// Whether no host holds level-0 tile `key`'s record over its region of
-    /// the cook's under the edits the ground has now.
     fn missing(&self, key: TileKey) -> bool {
         self.records
             .get(&key)
             .is_some_and(|keys| self.missing.contains(&keys.region))
     }
 
-    /// Where the record of level-0 tile `key` a tile's water reads stands,
-    /// shared whole (`whole`) or its head: here; still to come, asked for,
-    /// to fetch, or to make (`made` where it is made, `settles` where a
-    /// renderer settles water); or never coming.
     fn found(&self, key: TileKey, whole: bool, (made, settles): (bool, bool)) -> Found {
         let here = if whole {
             self.shared.get(&key)
@@ -468,8 +312,6 @@ impl Settled {
         if coming { Found::Coming } else { Found::Never }
     }
 
-    /// Fails the records of `keys`, at `frame`: asked for no more, and
-    /// asked for again a while after.
     fn fail(&mut self, keys: &[TileKey], frame: u64) {
         for &key in keys {
             self.asked.remove(&key);
@@ -480,12 +322,6 @@ impl Settled {
 }
 
 impl TerrainState {
-    /// The keys of level-0 tile `key`'s settled water's records over the
-    /// recipe shared as `recipe`, under the edits reaching the square it
-    /// settles over alone, its objects standing as its solids, its bed raised
-    /// by its relief, in cells `cell` meters across, settled by code hashing
-    /// to `settling`: over the region of `tiles` (its region of the cook's),
-    /// and alone.
     fn water_records(
         &self,
         recipe: &str,
@@ -526,9 +362,6 @@ impl TerrainState {
         }
     }
 
-    /// The job making level-0 tile `key`'s part of the water settling over
-    /// the recipe shared as `recipe`, under the edits reaching its ground,
-    /// its objects standing as its solids, in cells `cell` meters across.
     fn water_part(&self, recipe: &str, key: TileKey, cell: f32) -> WaterJob {
         let pyramid = self.terrain.pyramid;
         WaterJob {
@@ -546,9 +379,6 @@ impl TerrainState {
         }
     }
 
-    /// Tile `key`'s job over the recipe shared as `recipe` and its record's
-    /// key, as its settled water found them under the generation tiles are
-    /// made from now.
     fn settled_tile(&mut self, recipe: &str, key: TileKey) -> (TileJob, RecordKey) {
         let basis = (recipe.to_owned(), self.store.generation());
         if self.settled.tiles_for.as_ref() != Some(&basis) {
@@ -564,8 +394,6 @@ impl TerrainState {
     }
 }
 
-/// Cancels every record, part and tile's water `state`'s settled water
-/// asked for, giving `slots` theirs back.
 fn cancel_all(state: &TerrainState, slots: &mut JobBudget<'_>) {
     for id in state.settled.asked() {
         slots.jobs.cancel(id);
@@ -573,17 +401,6 @@ fn cancel_all(state: &TerrainState, slots: &mut JobBudget<'_>) {
     }
 }
 
-/// Follows `state`'s settled water for this frame, where `water` asks for
-/// water: takes the records that arrived (fetched, or settled on the GPU
-/// through `queue`), sharing them with workers, and the parts made, handing
-/// `queue` the regions whose parts are all made; asks for the records of
-/// the resident level-0 tiles its bake's water reaches and of the watered
-/// tiles beside them, whole (every watered tile's while its session cooks),
-/// and fetches the other watered tiles' while `slots` admits them, nearest
-/// `eye` (terrain-local) first, those of tiles no longer resident made no
-/// more; and has its tiles' water made on workers and swapped into resident
-/// tiles within `work`. The shares it lets go of go to `released`. Without
-/// water, or without a bake's water, it holds nothing.
 pub(super) fn follow(
     state: &mut TerrainState,
     water: Option<&Water>,
@@ -598,9 +415,6 @@ pub(super) fn follow(
     let near: Vec<TileKey> = state
         .store
         .keys_where(|key| key.level == 0 && watered.binary_search(key).is_ok());
-    // Held whole: the tiles of `near` and the watered tiles beside them,
-    // which their water reads; shared whole while a session cooks, every
-    // watered tile's.
     let kept = beside(&pyramid, &near, &watered);
     let whole: Vec<TileKey> = if state.settled.cooking {
         watered.to_vec()
@@ -639,8 +453,6 @@ pub(super) fn follow(
                     slots.jobs.cancel(id);
                     slots.release();
                 }
-                // What its region settles still comes, for its host to
-                // keep; a region none of whose tiles is asked for stops.
                 Phase::Starting | Phase::Settling => {}
             }
         }
@@ -661,8 +473,6 @@ pub(super) fn follow(
     );
 }
 
-/// The tiles of `watered` (in key order) among `near`, level-0 tiles of
-/// `pyramid`, or beside one of them, in key order.
 fn beside(pyramid: &Pyramid, near: &[TileKey], watered: &[TileKey]) -> Vec<TileKey> {
     let [columns, rows] = pyramid.tiles(0);
     let mut tiles = Vec::with_capacity(near.len() * 2);
@@ -685,14 +495,6 @@ fn beside(pyramid: &Pyramid, near: &[TileKey], watered: &[TileKey]) -> Vec<TileK
     tiles
 }
 
-/// Readies `state`'s settled water for `water`: none without water or a
-/// bake's water (what it asked for cancelled, `slots` given theirs back,
-/// its shares let go of into `released`), anew over other baked layers or
-/// cells' size, and each watered tile's record's key found again under
-/// other edits, solids or relief (keyed by `queue`'s settling), the records
-/// asked for under others asked for no more and the parts made with other
-/// solids dropped. The recipe its records settle over and the level-0 tiles its
-/// bake's water reaches, in key order.
 fn refresh(
     state: &mut TerrainState,
     water: Option<&Water>,
@@ -701,8 +503,6 @@ fn refresh(
     released: &mut Vec<String>,
 ) -> Option<(String, Arc<[TileKey]>)> {
     let asking = water.filter(|water| water.enabled && state.around.is_none());
-    // Its recipe, once its stack holds its baked layers: just after its
-    // bakes changed them, the recipe waits to be shared again.
     let baked = state.baked.clone();
     let recipe = state
         .recipe
@@ -782,8 +582,6 @@ fn refresh(
             }
         }
         let settled = &mut state.settled;
-        // Every part stands its tile's objects as the solids it was made
-        // with: under others, none is kept.
         if settled
             .checked
             .as_ref()
@@ -820,19 +618,6 @@ fn refresh(
     Some((recipe, watered))
 }
 
-/// Asks, while `slots` admits them, for the records over the recipe shared
-/// as `recipe` that `state`'s settled water lacks under the edits the ground
-/// has now, nearest `eye` (terrain-local) first: those of the resident
-/// level-0 tiles `near` (every tile of `watered` while its session cooks),
-/// fetched where a host holds them and else made over regions where
-/// `queue` has a renderer settle them (each tile alone, from the record it
-/// holds under other edits where it holds any; while its session cooks,
-/// those of each of the cook's regions together once each of its tiles was
-/// fetched), the parts the regions settle from asked for; with them those
-/// of the other tiles of `whole`, fetched whole where a host holds them;
-/// then those of the other tiles of `watered`, fetched where a host holds
-/// them, for their summaries. A record that failed is asked for again a
-/// while after it did, `frame` now.
 fn ask(
     state: &mut TerrainState,
     slots: &mut JobBudget<'_>,
@@ -879,8 +664,6 @@ fn ask(
     let cell = settled.cell;
     let mut alone = Vec::new();
     for (place, key, record) in making {
-        // No host holds the record it wants: its region of the cook's makes
-        // it while a session cooks, else it settles alone where it is near.
         let Some(record) = record else {
             if queue.settles && !cooking && is_near(key) && state.settled.records.contains_key(&key)
             {
@@ -936,11 +719,6 @@ fn ask(
     }
 }
 
-/// The cook's regions of `state`'s settled water ready to settle, each
-/// over its rectangle of tiles (in cells of its records' size), keeping
-/// those of its watered tiles no host holds the records of, neither asked
-/// for nor failed, once each of them was fetched: not warmed, and all
-/// alike near.
 fn cook_regions(state: &TerrainState) -> Vec<(SettleRegion, bool, u32)> {
     let pyramid = state.terrain.pyramid;
     let settled = &state.settled;
@@ -981,10 +759,6 @@ fn cook_regions(state: &TerrainState) -> Vec<(SettleRegion, bool, u32)> {
     ready
 }
 
-/// Has `settled` make `region`'s records (those its tiles settle to
-/// `alone`, else those over their regions of the cook's), from the records
-/// its tiles hold under other edits where `warm`, its parts' jobs going by
-/// `place`.
 fn start_making(
     settled: &mut Settled,
     pyramid: &Pyramid,
@@ -1017,9 +791,6 @@ fn start_making(
     });
 }
 
-/// Asks, while `slots` admits them, for the parts over the recipe shared as
-/// `recipe` the regions `state`'s settled water makes settle from and lack,
-/// nearest region first.
 fn ask_parts(state: &mut TerrainState, recipe: &str, slots: &mut JobBudget<'_>) {
     let settled = &state.settled;
     let mut wanted: Vec<(u32, TileKey)> = settled
@@ -1047,9 +818,6 @@ fn ask_parts(state: &mut TerrainState, recipe: &str, slots: &mut JobBudget<'_>) 
     }
 }
 
-/// Drops the regions `settled` makes none of whose tiles it asks for any
-/// more, and the parts no region it makes settles from, cancelling those
-/// asked for (`slots` given theirs back).
 fn release_parts(settled: &mut Settled, slots: &mut JobBudget<'_>) {
     let asked = &settled.asked;
     settled.making.retain(|making| {
@@ -1077,13 +845,6 @@ fn release_parts(settled: &mut Settled, slots: &mut JobBudget<'_>) {
     });
 }
 
-/// Takes what arrived of `state`'s settled water's records and parts:
-/// records fetched or settled on the GPU (through `queue`), each taken in
-/// ([`arrive`]) for the tiles `kept` holds whole and `whole` shares whole;
-/// a record no host holds counted missing (made next where its tile's is);
-/// parts made, and regions whose parts are all made assembled and handed to
-/// `queue` to settle (a region that fails failing its tiles' records, at
-/// `frame`). The shares it lets go of go to `released`.
 fn take_arrived(
     state: &mut TerrainState,
     slots: &mut JobBudget<'_>,
@@ -1143,14 +904,6 @@ fn take_arrived(
     }
 }
 
-/// Takes `bytes`, the record `record` of level-0 tile `key`'s settled
-/// water, into `state`'s settled water, in place of the tile's record
-/// before (whose shares `released` takes): its head (its summary) shared
-/// with workers through `jobs`, for coarser tiles' water; the record
-/// shared whole where `whole` holds the tile, for level-0 tiles' water; and
-/// held whole where `kept` does, read here for the window simulated around
-/// the camera and the regions settling warm. Whether it is the tile's, on
-/// the lattice of its records' cells; an error where it does not read.
 fn arrive(
     state: &mut TerrainState,
     jobs: &mut Jobs,
@@ -1195,10 +948,6 @@ fn arrive(
     Ok(true)
 }
 
-/// Takes the parts `state`'s settled water asked for that were made, a
-/// part that failed failing the regions settling from it (at `frame`); and
-/// assembles each region whose parts are all made, handing `queue` what it
-/// settles from and the keys of its records.
 fn take_parts(
     state: &mut TerrainState,
     slots: &mut JobBudget<'_>,
@@ -1283,19 +1032,6 @@ fn take_parts(
     }
 }
 
-/// Gives `state`'s tiles the water their settled water stands, each tile's
-/// a job's record ([`SteadiedJob`]) over the recipe its tiles generate
-/// from: takes what jobs made, within `work`'s time; once what its records
-/// or resident tiles hold changed (or asking had to wait), asks for each
-/// tile's water whose reads are all here and differ from those asked for,
-/// as `slots` admits them, nearest `eye` (terrain-local) first, a tile whose
-/// reads changed no longer waiting for what it asked for before, and the
-/// water of tiles it no longer gives water stopping; then swaps what was
-/// made into the resident tiles not holding it, within `work`'s time and
-/// uploads. `watered` are the level-0 tiles its bake's water reaches, of
-/// which `near` are resident; a record no host holds is made where
-/// `settles` and its tile is near (or its session cooks); a job that
-/// failed is asked for again a while after it did, `frame` now.
 fn water_tiles(
     state: &mut TerrainState,
     (slots, work): (&mut JobBudget<'_>, &Work),
@@ -1324,9 +1060,6 @@ fn water_tiles(
     give_waters(state, work);
 }
 
-/// Takes the water of `state`'s tiles its jobs made, within `work`'s time
-/// (the first at once), keeping it for tiles still resident; a job that
-/// failed fails its tile's water, at `frame`.
 fn take_waters(state: &mut TerrainState, slots: &mut JobBudget<'_>, work: &Work, frame: u64) {
     let asked = state
         .settled
@@ -1371,11 +1104,6 @@ fn take_waters(state: &mut TerrainState, slots: &mut JobBudget<'_>, work: &Work,
     }
 }
 
-/// The tiles whose water `state`'s settled water makes, in key order: the
-/// resident tiles of `near` and the resident coarser tiles holding water of
-/// their own, but those whose rivers something standing in them holds
-/// back; while its session cooks, also every tile of `watered` and every
-/// coarser tile over one of them or beside one, resident or not.
 fn watering(state: &TerrainState, (watered, near): (&[TileKey], &[TileKey])) -> Vec<TileKey> {
     let store = &state.store;
     let mut tiles = store.keys_where(|key| {
@@ -1413,14 +1141,6 @@ fn watering(state: &TerrainState, (watered, near): (&[TileKey], &[TileKey])) -> 
     tiles
 }
 
-/// What tile `key`'s water reads of `settled` (its tile's record being
-/// `tile`), over `pyramid`: a level-0 tile's, the records of itself and the
-/// tiles of `watered` around it, shared whole, its own here; a coarser
-/// tile's, the summaries of those under it and around it as far as its
-/// samples' footprints reach ([`engine_terrain::Tile::flowing`]). Where one
-/// is still to come it waits; where none is here it reads nothing. Those of
-/// `near` (every one while its session cooks) are made where no host holds
-/// them, where a renderer `settles` water.
 fn wants(
     settled: &Settled,
     (pyramid, key, tile): (&Pyramid, TileKey, RecordKey),
@@ -1454,10 +1174,6 @@ fn wants(
             }
         }
     } else {
-        // The level-0 tiles under it and as many around them as its samples'
-        // footprints reach: its border's samples average squares up to two
-        // of its spacings (`2 << up` level-0 quads) past its edges, a tile
-        // at least.
         let up = u32::from(key.level);
         let around = (2_u32 << up).div_ceil(TILE_QUADS).max(1);
         let span = |at: u16, count: u32| {
@@ -1492,9 +1208,6 @@ fn wants(
     })
 }
 
-/// The key of the record of a tile's water reading `reads`, on the
-/// lattice of cells `cell` meters across: the keys of what it reads, never
-/// their bytes.
 fn water_record(reads: &Reads, cell: f32) -> RecordKey {
     let mut identity = Vec::with_capacity(36 + reads.settled.len() * 37);
     identity.extend_from_slice(&reads.tile.0);
@@ -1512,14 +1225,6 @@ fn water_record(reads: &Reads, cell: f32) -> RecordKey {
     )
 }
 
-/// Asks, as `slots` admits them, for the water of each tile `state`'s
-/// settled water gives water ([`watering`]) whose reads over the recipe
-/// shared as `recipe` are all here and differ from those asked for or made
-/// ([`wants`]), nearest `eye` (terrain-local) first: a tile whose reads
-/// changed no longer waits for what it asked for before. The water of
-/// tiles it gives water no more stops, and that of tiles whose jobs failed
-/// waits a while from the frame they did, `frame` now. Counts the tiles
-/// whose water waits, for what it reads or for a job's slot.
 fn ask_waters(
     state: &mut TerrainState,
     slots: &mut JobBudget<'_>,
@@ -1575,7 +1280,6 @@ fn ask_waters(
         {
             continue;
         }
-        // What it read before is not what it reads now.
         if let Some(Watering { job: Some(id), .. }) = settled.waters.remove(&key) {
             slots.jobs.cancel(id);
             slots.release();
@@ -1613,11 +1317,6 @@ fn ask_waters(
     state.settled.waters_waiting = waiting;
 }
 
-/// Swaps the water `state`'s tiles' jobs made into the resident tiles not
-/// holding it, in key order, the first at once and the rest within
-/// `work`'s time and uploads: each tile current, its rivers running as its
-/// bake's, and the water made over its record. The tiles given water that
-/// are neither resident nor kept in memory are forgotten.
 fn give_waters(state: &mut TerrainState, work: &Work) {
     let store = &state.store;
     state
@@ -1625,7 +1324,6 @@ fn give_waters(state: &mut TerrainState, work: &Work) {
         .given
         .retain(|key, _| store.contains(key) || store.in_memory(key));
     let settled = &state.settled;
-    // Each tile to give its settled water: its key, ground, water and record.
     type Giving = (TileKey, Arc<Tile>, Arc<Option<TileWater>>, RecordKey);
     let giving: Vec<Giving> = settled
         .waters

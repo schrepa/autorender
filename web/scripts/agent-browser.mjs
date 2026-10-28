@@ -1,4 +1,3 @@
-/** Own one identified development runtime, independent of its HTTP transport. */
 // @ts-check
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
@@ -9,8 +8,6 @@ import { launchContext } from "./browser-launch.mjs";
 import { recordReceived, recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
 
-/** How many pixels of two captures under artifacts/agent differ by more
- * than `tolerance` (0 to 255) in a color channel: `{a, b, tolerance}`. */
 async function compareCaptures(command, requestBrowser, page) {
   if (Object.keys(command).some(key => !["op", "a", "b", "tolerance"].includes(key))) {
     throw new AgentError("unknown_field", "compare takes a, b and tolerance.", "$");
@@ -53,9 +50,6 @@ async function compareCaptures(command, requestBrowser, page) {
   return { ...response, result: { compare: result, a: command.a, b: command.b, tolerance } };
 }
 
-/** A replacement is ready only after its identity, build, pause, and render checks pass. */
-// Sessions' captures stay under artifacts/agent/SESSION; past the most
-// recent SESSIONS_KEPT, the oldest go.
 const SESSIONS_KEPT = 10;
 
 async function pruneSessions(root) {
@@ -68,16 +62,10 @@ async function pruneSessions(root) {
   await Promise.all(sessions.slice(SESSIONS_KEPT).map(({ path }) => rm(path, { recursive: true, force: true })));
 }
 
-/**
- * A development session of the page `url` (a loopback address) in Chrome,
- * `browserPath`'s where given, named `session`, refusing a page of another
- * build than `expectedBuild` where given, which `signal` ends.
- * @param {{ url: string | URL, browserPath?: string, session?: string, expectedBuild?: string | null, signal?: AbortSignal }} options
- */
+/** @param {{ url: string | URL, browserPath?: string, session?: string, expectedBuild?: string | null, signal?: AbortSignal }} options */
 export async function launchBrowserSession({ url: value, browserPath, session = randomUUID(), expectedBuild, signal }) {
   const url = loopbackUrl(String(value));
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "Session identity must be a bounded identifier.", "session");
-  // The shaders earlier sessions compiled stay compiled (launchContext).
   const browser = await launchContext({ executablePath: browserPath, viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
   let page;
   let instance;
@@ -145,7 +133,6 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
           new Promise((_, reject) => { timer = setTimeout(() => reject(new AgentError("runtime_unavailable", "The initialization command timed out.")), remaining); }),
         ]);
       } finally { clearTimeout(timer); }
-      // Busy means the command was rejected before dispatch, so retry is safe.
       if (response?.error?.code === "command_busy") { await delay(25); continue; }
       if (!response?.ok) throw new AgentError(response?.error?.code ?? "runtime_unavailable", response?.error?.message ?? "The development runtime rejected initialization.", response?.error?.path);
       if (response.result?.paused !== true) throw new AgentError("runtime_not_paused", "A new development runtime must start paused.");
@@ -170,8 +157,6 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     });
     await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: 30_000 });
     try {
-      // Navigations before the runtime is ready (the dev server reloading
-      // after a rebuild) still belong to loading it.
       await page.waitForFunction(() => typeof window.__engineDev?.request === "function" || document.querySelector("#status")?.getAttribute("data-state") === "error", null, { timeout: 60_000 });
       const identity = await page.evaluate(() => ({
         instance: window.__engineDev?.instance,
@@ -195,7 +180,6 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     await pruneSessions(resolve(workspace, "artifacts", "agent"));
     return {
       session, url: url.href, instance, build, close, setInvalidated,
-      /** The page the runtime runs in, for checks that read it. */
       page,
       async execute(command) {
         if (command.op === "describe" && command.name === "ProfileCapture") {
@@ -212,7 +196,6 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
           try { return await captureProfile({ page, requestBrowser, command, artifacts, workspace }); }
           catch (error) {
             if (!(error instanceof AgentError)) throw error;
-            // A refusal carries the engine's observation, as every host's does.
             const { observation } = await requestBrowser({ op: "status" });
             return { ok: false, ...(observation ? { observation } : {}), error: { code: error.code, path: error.path, message: error.message } };
           }
@@ -232,7 +215,6 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
           response.result.types.push({ name: "GameControls", kind: "tooling", description: "The game's own controls, which the game control runs by name with args", controls });
           response.result.types.push({ name: "PageParameters", kind: "tooling", description: "The page URL's parameters the host and game read", parameters });
         }
-        // Captures, and frames that keep their last: the canvas as shown.
         if ((command.op === "capture" || (command.op === "frames" && command.capture === true)) && response.ok) {
           if (response.result?.paused !== true) throw new AgentError("capture_requires_pause", "The browser must confirm it is paused before capture.");
           try {

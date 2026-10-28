@@ -1,9 +1,6 @@
-//! Upload structs of `crate::ground_cover`.
-
 use bytemuck::{Pod, Zeroable};
 
 gpu_structs! {
-    /// WGSL `Grow` of `cover_grow.wgsl`.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct GrowUniform as ["Grow"] {
         pub origin: [f32; 4],
@@ -19,7 +16,6 @@ gpu_structs! {
         pub view: [f32; 4],
     }
 
-    /// WGSL `CoverFrame` of `meshes/cover.wgsl`.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct FrameUniform as ["CoverFrame"] {
         pub wind: [f32; 4],

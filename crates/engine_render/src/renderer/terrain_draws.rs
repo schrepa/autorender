@@ -1,25 +1,15 @@
-//! Terrain's draws: its preparation each frame, and its
-//! subdivisions' leaves in the opaque pass and reflection probe faces.
-
 use super::frame::FrameState;
 use super::*;
 use crate::terrain::TerrainViews;
 use crate::water::WaterFrame;
 use crate::water_particles::ParticleView;
 
-/// Terrain's visibility target: each pixel's terrain (its
-/// directory start plus one; 0 where none shows) and depth's bits, and the
-/// group its resolves read it through.
 pub(super) struct TerrainIds {
     pub(super) view: wgpu::TextureView,
     group: wgpu::BindGroup,
 }
 
 impl Renderer {
-    /// Prepares this frame's terrain: tile uploads, its subdivisions and the
-    /// pipelines drawing their leaves into `opaque_kind`'s targets, the
-    /// shadow maps and, when `probes` capture, reflection probe faces.
-    /// Returns whether terrain draws.
     pub(super) fn prepare_terrain(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -37,14 +27,11 @@ impl Renderer {
         });
         let culling = terrains.relative_view_projection;
         let casts = snapshot.environment.shadows.enabled;
-        // Runtime deformation's map before the terrain's
-        // uniforms, which shade with it.
         self.terrain.deformation.prepare(
             &self.device,
             &snapshot.deformation,
             snapshot.presented_seconds,
         );
-        // Ground under cover turns to its canopy as blades thin out.
         let cover = snapshot.environment.ground_cover.sanitized();
         let canopy = (cover.enabled && cover.density > 0.0).then(|| {
             (
@@ -71,21 +58,14 @@ impl Renderer {
             },
             (self.display.max_layers, self.materials.mips()),
         );
-        // The shadow clipmap redraws its tiles over ground that arrived, left
-        // or changed.
         for change in self.terrain.ground_changes() {
             self.shadows
                 .dirty_ground((change.min, change.max), (&change.pyramid, change.level));
         }
-        // What terrains draw with is created before they first draw,
-        // so the GPU compiles it while they bake and load.
         self.warm_terrain(snapshot, opaque_kind, probes);
         if !drawn {
             return false;
         }
-        // Ground cover on the terrain, seen through the
-        // camera's unjittered view, growing and retiring by its distance
-        // from the detail eye.
         let covered = self.features.ground_cover.get_mut().prepare(
             &self.device,
             &self.queue,
@@ -110,15 +90,11 @@ impl Renderer {
             &self.mesh_pipelines.empty_layout,
             lights,
         );
-        // Terrain's pipelines over its own first group, its cover's over the
-        // main one.
         let terrain_layouts = (
             &self.camera.terrain_layout,
             &self.mesh_pipelines.empty_layout,
             lights,
         );
-        // Terrains with holes draw with their own pipelines, created with the
-        // first frame that has them.
         let variants: &[bool] = if self.terrain.has_holes() {
             &[false, true]
         } else {
@@ -165,8 +141,6 @@ impl Renderer {
         true
     }
 
-    /// Terrain's visibility target and its resolves' group, at the frame's
-    /// size, for frames whose terrain may shade deferred.
     fn prepare_terrain_ids(&mut self) {
         let size = self.display.size();
         if self.terrain_ids.resizes(size) {
@@ -191,12 +165,6 @@ impl Renderer {
         }
     }
 
-    /// Creates the pipelines `snapshot`'s terrains draw with unless they
-    /// exist, before any draws: their leaves into
-    /// `opaque_kind`'s targets, with holes where tiles may hold any, into
-    /// reflection probe faces when `probes` capture and into shadow maps;
-    /// their tiles' normal and sky maps; their cover's growth and blades;
-    /// and their placed objects' culling and occupancy.
     fn warm_terrain(&mut self, snapshot: &RenderSnapshot, opaque_kind: PassKind, probes: bool) {
         let terrains = &snapshot.terrain.terrains;
         if terrains.is_empty() {
@@ -210,8 +178,6 @@ impl Renderer {
             &self.mesh_pipelines.empty_layout,
             lights,
         );
-        // Terrain's pipelines over its own first group, its cover's over the
-        // main one.
         let terrain_layouts = (
             &self.camera.terrain_layout,
             &self.mesh_pipelines.empty_layout,
@@ -271,11 +237,6 @@ impl Renderer {
         }
     }
 
-    /// Prepares this frame's water and its pipelines into
-    /// `opaque_kind`'s targets, created while terrains with hydrology stream
-    /// in, tiles' water on the leaves of the terrains' subdivisions; the sea
-    /// draws through the terrain's projection, jittered as
-    /// `temporal_frame` jitters it; `None` when none of it draws.
     pub(super) fn prepare_water(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -296,9 +257,6 @@ impl Renderer {
         let (device, shader, camera) = (&self.device, &self.mesh_shader, &self.camera.water_layout);
         let formats = (self.display.format(), DEPTH_FORMAT);
         let tiles = self.terrain.water_draws(&snapshot.terrain);
-        // Water's particles' waves reach from the detail eye out to where
-        // their texels span a pixel of the display, and their foam pool
-        // holds a raft for every few of its pixels.
         let display = self.display.region.display;
         let seen = ParticleView {
             detail: snapshot.detail_eye,
@@ -333,9 +291,6 @@ impl Renderer {
         })
     }
 
-    /// Whether this frame's terrain draws deferred, given whether it draws
-    /// and the opaque passes' `kind`: into the effects' targets (debug views
-    /// draw it forward), its pipelines and target ready.
     pub(super) fn terrain_deferred(&self, terrain: bool, kind: PassKind) -> bool {
         terrain
             && self.terrain_ids.get().is_some()
@@ -348,8 +303,6 @@ impl Renderer {
             && !self.terrain.patches.frame.terrains.is_empty()
     }
 
-    /// The leaves of the terrains' subdivisions into terrain's visibility
-    /// target; returns the draws.
     pub(super) fn draw_terrain_ids(&self, pass: &mut wgpu::RenderPass<'_>) -> u32 {
         pass.set_bind_group(0, self.camera.terrain_group(), &[]);
         let mut draws = 0;
@@ -367,8 +320,6 @@ impl Renderer {
         draws
     }
 
-    /// Each terrain's pixels shaded once from its visibility target;
-    /// returns the draws.
     pub(super) fn draw_terrain_resolve(
         &self,
         state: &FrameState<'_>,
@@ -392,9 +343,6 @@ impl Renderer {
             };
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
-        // Each within the pixels its ground covers: elsewhere it would only
-        // read the visibility target and discard. Pixels of the frame's
-        // render size, which it draws.
         let render = self.display.region.render;
         let mut draws = 0;
         for terrain in &self.terrain.patches.frame.terrains {
@@ -411,8 +359,6 @@ impl Renderer {
         draws
     }
 
-    /// The terrain's cover, after it so depth tests leave only blades in
-    /// view; returns the draws.
     pub(super) fn draw_terrain_cover(
         &self,
         state: &FrameState<'_>,
@@ -436,8 +382,6 @@ impl Renderer {
             .draw(pass, targets, kind.lit)
     }
 
-    /// Draws the leaves of the terrains' subdivisions into the opaque pass;
-    /// returns the draws.
     pub(super) fn draw_terrain_patches(
         &self,
         state: &FrameState<'_>,
@@ -472,9 +416,6 @@ impl Renderer {
         draws
     }
 
-    /// Draws every terrain's leaves into reflection probe face `face` of the
-    /// probe at `center`, after its meshes (`lit` when lights shade it), over
-    /// terrain's first group of that face: what draws after it binds its own.
     pub(super) fn draw_terrain_face(
         &self,
         pass: &mut wgpu::RenderPass<'_>,

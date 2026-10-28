@@ -1,36 +1,11 @@
-// A physically based sky, after Hillaire, "A Scalable and
-// Production Ready Sky and Atmosphere Rendering Technique" (2020): air over
-// a planet, integrated into a transmittance table (to the top of the
-// atmosphere by height and zenith angle), a table of multiple scattering's
-// isotropic light (by height and the sun's angle) and a sky-view table (the
-// sky's light around the camera). Distances are kilometers; the planet's
-// center is the origin and the camera stands over its north pole, so world
-// directions are the sky's. These are the shared declarations: the
-// transmittance and multiple scattering tables are the scene's static
-// tables (`engine_tables::sky` makes them for its air), the sky-view's
-// build is `sky.wgsl`, and the sky's passes sample them.
-
-// WGSL `SkyUniform` (`sky.rs`).
 struct SkyUniform {
-    // Rayleigh scattering per km (rgb) and scale height (km).
     rayleigh: vec4<f32>,
-    // Mie scattering and absorption per km, scale height (km), phase g.
     mie: vec4<f32>,
-    // Ozone absorption per km at its densest (rgb), the sun's intensity.
     ozone: vec4<f32>,
-    // Ground albedo (rgb), the sun's angular radius (radians).
     ground: vec4<f32>,
-    // The planet's and the atmosphere's radius (km), how far exposure
-    // adapts (0 to 1), and the camera's height above the planet's ground
-    // (km).
     radii: vec4<f32>,
-    // Direction toward the sun, and the authored exposure.
     sun: vec4<f32>,
-    // Seconds since the last frame, over which exposure eases;
-    // 0 takes it at once.
     frame: vec4<f32>,
-    // The direction toward the moon, and its light: its brightness times
-    // the share of its face the sun lights (0 without one).
     moon: vec4<f32>,
 }
 
@@ -38,8 +13,6 @@ const SKY_PI: f32 = 3.14159265358979;
 const SKY_VIEW_SIZE: vec2<f32> = vec2<f32>(192.0, 108.0);
 const SKY_MULTIPLE_SIZE: f32 = 32.0;
 
-/// The distance along a ray from `origin` in `direction` (unit) to a sphere
-/// of `radius` around the origin: the nearest hit ahead, or -1.
 fn sphere_hit(origin: vec3<f32>, direction: vec3<f32>, radius: f32) -> f32 {
     let b = dot(origin, direction);
     let c = dot(origin, origin) - radius * radius;
@@ -59,7 +32,6 @@ fn sphere_hit(origin: vec3<f32>, direction: vec3<f32>, radius: f32) -> f32 {
     return -1.0;
 }
 
-// Table coordinates whose ends are texel centers.
 fn to_sub_uv(u: f32, size: f32) -> f32 {
     return (u + 0.5 / size) * (size / (size + 1.0));
 }
@@ -68,8 +40,6 @@ fn from_sub_uv(u: f32, size: f32) -> f32 {
     return (u - 0.5 / size) * (size / (size - 1.0));
 }
 
-/// The transmittance table's coordinates of radius `r` (km from the
-/// center) and zenith cosine `mu` (Bruneton's parametrization).
 fn transmittance_uv(air: SkyUniform, r: f32, mu: f32) -> vec2<f32> {
     let bottom = air.radii.x;
     let top = air.radii.y;
@@ -82,9 +52,6 @@ fn transmittance_uv(air: SkyUniform, r: f32, mu: f32) -> vec2<f32> {
     return vec2<f32>((d - d_min) / max(d_max - d_min, 1e-6), rho / max(h, 1e-6));
 }
 
-/// The share of light through the air from radius `r` along zenith cosine
-/// `mu` to the top of the atmosphere, from `table`; none through the
-/// planet.
 fn air_transmittance(table: texture_2d<f32>, table_sampler: sampler, air: SkyUniform, r: f32, mu: f32)
         -> vec3<f32> {
     let origin = vec3<f32>(0.0, r, 0.0);
@@ -95,12 +62,6 @@ fn air_transmittance(table: texture_2d<f32>, table_sampler: sampler, air: SkyUni
     return textureSampleLevel(table, table_sampler, transmittance_uv(air, r, mu), 0.0).rgb;
 }
 
-/// The sunlight, the sun along `sun`, reaching a point `height` km above
-/// the planet's ground and `across` km (world x and z) from the ground
-/// straight below the eye, with the sun standing over that point's own place
-/// on the curved planet: what passes the air to it from `table`, the sun's
-/// disc setting behind the planet's limb there, so its shadow rises past
-/// the point after sunset below.
 fn sunlight_over(table: texture_2d<f32>, table_sampler: sampler, air: SkyUniform,
         across: vec2<f32>, height: f32, sun: vec3<f32>) -> vec3<f32> {
     let bottom = air.radii.x;
@@ -109,7 +70,6 @@ fn sunlight_over(table: texture_2d<f32>, table_sampler: sampler, air: SkyUniform
     let mu = dot(place / r, sun);
     let ratio = bottom / r;
     let limb = -sqrt(max(1.0 - ratio * ratio, 0.0));
-    // The sun's elevation above the limb, in radians for small angles.
     let above = (mu - limb) / max(ratio, 1.0e-3);
     let disc = smoothstep(-air.ground.w, air.ground.w, above);
     if disc <= 0.0 {
@@ -119,9 +79,6 @@ fn sunlight_over(table: texture_2d<f32>, table_sampler: sampler, air: SkyUniform
         * air_transmittance(table, table_sampler, air, r, max(mu, limb + 2.0e-3));
 }
 
-/// The sky-view table's coordinates of a view at zenith cosine `view_cos`
-/// whose azimuth is `light_cos`'s cosine from the sun's, from radius `r`;
-/// `ground` when the view meets the planet.
 fn sky_view_uv(air: SkyUniform, ground: bool, view_cos: f32, light_cos: f32, r: f32) -> vec2<f32> {
     let bottom = air.radii.x;
     let horizon = sqrt(max(r * r - bottom * bottom, 0.0));
@@ -140,8 +97,6 @@ fn sky_view_uv(air: SkyUniform, ground: bool, view_cos: f32, light_cos: f32, r: 
     return vec2<f32>(to_sub_uv(uv.x, SKY_VIEW_SIZE.x), to_sub_uv(uv.y, SKY_VIEW_SIZE.y));
 }
 
-/// A view's zenith cosine and its azimuth's cosine from the sun's, at
-/// sky-view table coordinates `uv` from radius `r`.
 fn sky_view_parameters(air: SkyUniform, sub_uv: vec2<f32>, r: f32) -> vec2<f32> {
     let uv = vec2<f32>(from_sub_uv(sub_uv.x, SKY_VIEW_SIZE.x), from_sub_uv(sub_uv.y, SKY_VIEW_SIZE.y));
     let bottom = air.radii.x;
@@ -162,13 +117,10 @@ fn sky_view_parameters(air: SkyUniform, sub_uv: vec2<f32>, r: f32) -> vec2<f32> 
     return vec2<f32>(view_cos, -(x * 2.0 - 1.0));
 }
 
-/// The camera's radius from the planet's center (km).
 fn air_radius(air: SkyUniform) -> f32 {
     return air.radii.x + max(air.radii.w, 0.0005);
 }
 
-/// The sky's light looking along `direction` (unit) from `view_table`,
-/// without the sun's disc (`air_disc`).
 fn air_sky(view_table: texture_2d<f32>, table_sampler: sampler, air: SkyUniform,
         direction: vec3<f32>) -> vec3<f32> {
     let r = air_radius(air);
@@ -185,9 +137,6 @@ fn air_sky(view_table: texture_2d<f32>, table_sampler: sampler, air: SkyUniform,
     return textureSampleLevel(view_table, table_sampler, uv, 0.0).rgb;
 }
 
-/// The sun's disc's light looking along `direction` (unit), through the air
-/// `transmittance` holds: none off the disc or where the view meets the
-/// planet.
 fn air_disc(transmittance: texture_2d<f32>, table_sampler: sampler, air: SkyUniform,
         direction: vec3<f32>) -> vec3<f32> {
     let r = air_radius(air);
@@ -196,7 +145,6 @@ fn air_disc(transmittance: texture_2d<f32>, table_sampler: sampler, air: SkyUnif
     if angle >= radius || sphere_hit(vec3<f32>(0.0, r, 0.0), direction, air.radii.x) >= 0.0 {
         return vec3<f32>(0.0);
     }
-    // Limb darkening toward the disc's edge.
     let edge = angle / radius;
     let limb = 1.0 - 0.6 * (1.0 - sqrt(max(1.0 - edge * edge, 0.0)));
     return air.ozone.w * air_transmittance(transmittance, table_sampler, air, r, direction.y)

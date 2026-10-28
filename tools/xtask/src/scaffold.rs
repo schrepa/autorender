@@ -1,8 +1,3 @@
-//! `cargo xtask new app NAME`: a new game from the engine's app template
-//! (`crates/engine/examples/app_template.rs`) and native entry
-//! (`crates/engine_native/examples/app_native.rs`), which lint compiles, its
-//! page and its page entry, registered by its manifest.
-
 use std::{fs, path::Path};
 
 use crate::process::{clients, run};
@@ -57,7 +52,6 @@ pub fn new(root: &Path, options: &[String]) -> Result<(), String> {
 
     let template = fs::read_to_string(root.join("crates/engine/examples/app_template.rs"))
         .map_err(|error| format!("cannot read the app template: {error}"))?;
-    // The template's own header describes the template.
     let body = template
         .lines()
         .skip_while(|line| line.starts_with("//!"))
@@ -161,8 +155,6 @@ startGame({{
             path.strip_prefix(root).unwrap_or(path).display()
         );
     }
-    // Adds the app to Cargo.lock, checks it builds and registers it with
-    // the web host.
     run(root, "cargo", &["check", "-p", name])?;
     run(root, "cargo", &["xtask", "schema"])?;
     println!(
@@ -172,8 +164,6 @@ startGame({{
     Ok(())
 }
 
-/// The app's `src/main.rs`: the engine's native entry, whose game is the
-/// app's library `wasm` where the example's is the template.
 fn native_entry(root: &Path, name: &str, wasm: &str, pascal: &str) -> Result<String, String> {
     let template = fs::read_to_string(root.join("crates/engine_native/examples/app_native.rs"))
         .map_err(|error| format!("cannot read the native entry: {error}"))?;
@@ -183,7 +173,6 @@ fn native_entry(root: &Path, name: &str, wasm: &str, pascal: &str) -> Result<Str
             "the native entry no longer reaches the template as `{game}`"
         ));
     }
-    // The example's own header describes the example.
     let body = template
         .lines()
         .skip_while(|line| line.starts_with("//!"))

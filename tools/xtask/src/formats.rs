@@ -1,12 +1,5 @@
-//! The factory's report formats are JSON Schema (draft 2020-12, the subset
-//! its documents use: type, const, enum, pattern, minLength, maxLength,
-//! minimum, exclusiveMinimum, minItems, maxItems, items, properties,
-//! required, additionalProperties, anyOf, oneOf, $ref and date-time):
-//! reports are checked against them before they are sent.
-
 use serde_json::Value;
 
-/// What is wrong with `value` against `schema`, as `path: what`.
 pub fn problems(schema: &Value, value: &Value) -> Vec<String> {
     let mut out = Vec::new();
     check(schema, schema, value, "report", &mut out);
@@ -168,7 +161,6 @@ fn check(root: &Value, schema: &Value, value: &Value, at: &str, out: &mut Vec<St
     }
 }
 
-/// Whether `text` looks like an ISO 8601 date and time.
 fn date_time(text: &str) -> bool {
     let bytes = text.as_bytes();
     bytes.len() >= 20
@@ -182,13 +174,8 @@ fn date_time(text: &str) -> bool {
             .all(|range| bytes[range].iter().all(u8::is_ascii_digit))
 }
 
-/// A pattern's atom: the character ranges it takes, and at least and at
-/// most how many times.
 type Atom = (Vec<(char, char)>, usize, usize);
 
-/// Whether `text` matches `pattern`, a regular expression of anchors,
-/// literal characters, classes (`[a-z0-9.-]`) and counts (`{n}`, `{m,n}`),
-/// which the formats' patterns are.
 fn matches(pattern: &str, text: &str) -> bool {
     let mut atoms: Vec<Atom> = Vec::new();
     let mut chars = pattern

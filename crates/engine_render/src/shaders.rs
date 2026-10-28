@@ -1,26 +1,14 @@
-//! Every shader module the renderer creates, as the WGSL files each
-//! concatenates, and every entry point of each, which pipelines name
-//! through [`entry`]. Native builds read them too: `cargo xtask lint`
-//! validates each module with naga against the GPU layouts and binding
-//! tables, and holds [`ENTRIES`] to the modules' entry points.
-
-/// Builds each module's source from its files, and [`MODULES`] and
-/// [`FILES`] from the same table.
 macro_rules! shaders {
     ($($(#[$doc:meta])* $name:ident = [$($file:literal),+ $(,)?];)*) => {
         $($(#[$doc])* pub const $name: &str = concat!($(include_str!($file)),+);)*
 
-        /// Every module by name, with its source.
         pub const MODULES: &[(&str, &str)] = &[$((stringify!($name), $name)),*];
 
-        /// Every file of every module, with its source, in the modules'
-        /// order: files several modules list repeat.
         pub const FILES: &[(&str, &str)] = &[$($(($file, include_str!($file))),+),*];
     };
 }
 
 shaders! {
-    /// Meshes after the shared scene declarations.
     SHADER = [
         "scene.wgsl",
         "color.wgsl",
@@ -57,18 +45,14 @@ shaders! {
         "meshes/debug.wgsl",
         "meshes/terrain_debug.wgsl",
     ];
-    /// Terrain normal maps.
     TERRAIN_NORMALS_SHADER = [
         "terrain_tile.wgsl",
         "terrain_normals.wgsl",
     ];
-    /// Terrain control values from the surface's rules.
     TERRAIN_CONTROL_SHADER = [
         "terrain_tile.wgsl",
         "terrain_control.wgsl",
     ];
-    /// Terrain bounce light after the shared scene declarations: the
-    /// ground lit, its levels and the probes' gathers.
     BOUNCE_SHADER = [
         "scene.wgsl",
         "color.wgsl",
@@ -76,7 +60,6 @@ shaders! {
         "terrain_variety.wgsl",
         "terrain_bounce.wgsl",
     ];
-    /// Ground cover's growth.
     COVER_GROW_SHADER = [
         "math.wgsl",
         "terrain_variety.wgsl",
@@ -86,9 +69,6 @@ shaders! {
     DEFORMATION_SHADER = [
         "deformation.wgsl",
     ];
-    /// Water running by the shallow-water equations live around the detail
-    /// eye, pushed by turbulence's bursts, and settling for tiles' records,
-    /// after the rule those bursts are drawn by.
     WATER_SIM_SHADER = [
         "water_bursts.wgsl",
         "water_sim.wgsl",
@@ -97,19 +77,15 @@ shaders! {
         "sky_common.wgsl",
         "clouds.wgsl",
     ];
-    /// The physically based sky's sky-view table and light.
     SKY_SHADER = [
         "color.wgsl",
         "sky_common.wgsl",
         "sky.wgsl",
     ];
-    /// Placed objects' culling, after ground variety's rule for things
-    /// retiring by their size on screen.
     SCATTER_CULL_SHADER = [
         "terrain_variety.wgsl",
         "scatter_cull.wgsl",
     ];
-    /// Placed objects set on the ground as drawn, taking its colors.
     SCATTER_SNAP_SHADER = [
         "terrain_variety.wgsl",
         "terrain_ground.wgsl",
@@ -118,60 +94,48 @@ shaders! {
     OCCUPANCY_SHADER = [
         "occupancy.wgsl",
     ];
-    /// Terrain's depth drawing into the shadow clipmap's tiles: the patches
-    /// its regions take.
     TERRAIN_SHADOW_SHADER = [
         "meshes/terrain_vertex.wgsl",
         "terrain_shadow.wgsl",
     ];
-    /// Compute passes of GPU presentation.
     PRESENTATION_SHADER = [
         "math.wgsl",
         "screen_cull.wgsl",
         "presentation.wgsl",
     ];
-    /// The depth pyramid of occlusion culling.
     DEPTH_PYRAMID_SHADER = [
         "depth_pyramid.wgsl",
     ];
-    /// Cluster selection of virtual geometry.
     VIRTUAL_SHADER = [
         "screen_cull.wgsl",
         "virtual_geometry.wgsl",
     ];
-    /// Tile classification of the visibility buffer.
     VISIBILITY_SHADER = [
         "visibility.wgsl",
     ];
-    /// Temporal antialiasing resolve, after the shared effects.
     TEMPORAL_SHADER = [
         "color.wgsl",
         "fullscreen.wgsl",
         "effects.wgsl",
         "temporal.wgsl",
     ];
-    /// Mip generation of base color textures.
     MIPMAP_SHADER = [
         "mipmaps.wgsl",
     ];
-    /// Local light binning into view clusters.
     LIGHT_SHADER = [
         "lights.wgsl",
     ];
-    /// Stateless particles after the shared scene declarations.
     PARTICLE_SHADER = [
         "scene.wgsl",
         "color.wgsl",
         "math.wgsl",
         "particles.wgsl",
     ];
-    /// The composite of weighted blended transparency.
     TRANSPARENT_SHADER = [
         "color.wgsl",
         "fullscreen.wgsl",
         "transparent.wgsl",
     ];
-    /// The haze's march after the scene declarations and effects.
     HAZE_SHADER = [
         "scene.wgsl",
         "color.wgsl",
@@ -180,22 +144,17 @@ shaders! {
         "effects.wgsl",
         "haze.wgsl",
     ];
-    /// Shadow caster selection and depth drawing.
     SHADOW_SHADER = [
         "wind.wgsl",
         "shadows.wgsl",
         "impostor_frames.wgsl",
     ];
-    /// The shadow clipmap's tiles the depth buffer's pixels read, after the
-    /// scene declarations.
     SHADOW_MARKS_SHADER = [
         "scene.wgsl",
         "color.wgsl",
         "math.wgsl",
         "shadow_marks.wgsl",
     ];
-    /// Ambient occlusion, the haze's filter, bloom and the scene's levels,
-    /// and their composite.
     POST_SHADER = [
         "color.wgsl",
         "fullscreen.wgsl",
@@ -203,10 +162,6 @@ shaders! {
         "screen_points.wgsl",
         "post.wgsl",
     ];
-    /// Reflections after the scene declarations and effects: the walk of
-    /// the screen, and the world trace through the terrains' tiles and
-    /// placed objects, met as their impostors' frames show them, lit as the
-    /// main passes light.
     REFLECTIONS_SHADER = [
         "scene.wgsl",
         "color.wgsl",
@@ -219,18 +174,15 @@ shaders! {
         "impostor_frames.wgsl",
         "reflections.wgsl",
     ];
-    /// Auto exposure's meter and adaptation.
     EXPOSURE_SHADER = [
         "color.wgsl",
         "sky_common.wgsl",
         "exposure.wgsl",
     ];
-    /// The debug views' pass, showing the debug targets.
     DEBUG_VIEW_SHADER = [
         "fullscreen.wgsl",
         "debug_view.wgsl",
     ];
-    /// Environment maps after the scene declarations and the sky's light.
     ENVIRONMENT_SHADER = [
         "scene.wgsl",
         "color.wgsl",
@@ -241,7 +193,6 @@ shaders! {
     ];
 }
 
-/// The stage an entry point runs in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
     Vertex,
@@ -249,8 +200,6 @@ pub enum Stage {
     Compute,
 }
 
-/// An entry point of a shader module: the module (a constant of this
-/// module, as [`MODULES`] names it), its function and the stage it runs in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub module: &'static str,
@@ -258,7 +207,6 @@ pub struct Entry {
     pub stage: Stage,
 }
 
-/// A stage's keyword in `entry_points!` as a [`Stage`].
 macro_rules! stage {
     (vertex) => {
         Stage::Vertex
@@ -271,15 +219,10 @@ macro_rules! stage {
     };
 }
 
-/// Declares each module's entry points as constants of a module of
-/// [`entry`] named for it (`entry::meshes::vs_affine`), and [`ENTRIES`],
-/// from one list: pipelines name entry points by these alone.
 macro_rules! entry_points {
     ($($rust:ident = $module:ident {
         $($stage:ident: [$($name:ident),* $(,)?]),* $(,)?
     })*) => {
-        /// Every module's entry points, as constants named for their
-        /// functions.
         pub mod entry {
             $(
                 #[doc = concat!("The entry points of [`", stringify!($module), "`](super::", stringify!($module), ").")]
@@ -298,9 +241,6 @@ macro_rules! entry_points {
             )*
         }
 
-        /// Every entry point of every module, which `cargo xtask lint` holds
-        /// to their WGSL: each is its module's entry point of that stage, and
-        /// each of a module's entry points is here.
         pub const ENTRIES: &[Entry] = &[$($($(entry::$rust::$name,)*)*)*];
     };
 }

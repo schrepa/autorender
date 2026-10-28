@@ -1,6 +1,3 @@
-//! The erosion bake: the level's grid gathered, then what rivers and creep
-//! wear away from it, a round at a time.
-
 use std::sync::Arc;
 
 use super::{Bake, Gather};
@@ -8,13 +5,9 @@ use crate::Pyramid;
 use crate::erosion::{Erosion, ErosionLayer, Scratch, erode_round, finish};
 use crate::layers::Layers;
 
-/// What rivers and creep wear away from the layers before it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ErosionBake;
 
-/// An erosion bake in progress: its layer, its level's grid, and once
-/// gathered, the heights it started from, the rounds done and what each
-/// round keeps for the next.
 pub struct ErosionWork {
     layer: ErosionLayer,
     gather: Gather,
@@ -38,7 +31,6 @@ impl Bake for ErosionBake {
         }
     }
 
-    /// Gathers, then erodes a round per grid's worth of `budget`.
     fn advance(
         work: &mut ErosionWork,
         below: &Arc<Layers>,

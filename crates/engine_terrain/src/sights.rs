@@ -1,11 +1,3 @@
-//! What a hydrology bake's water shows those inspecting it, read here so
-//! its lake grid and river lines stay the crate's own: its largest lakes,
-//! its largest rivers with what of them was given and what derived, where
-//! its rivers carry most, run fastest against their waves and meet with
-//! the most water, how they flow, where pools stand behind what holds them
-//! back, and the courses rivers run along for worlds placing things in
-//! them. Water itself is read from tiles ([`crate::Tile::water_at`]).
-
 use engine_math::collections::HashMap;
 use engine_math::{max, min};
 use glam::Vec2;
@@ -15,9 +7,6 @@ use crate::layers::Layer;
 use crate::rivers::River;
 use crate::{Bed, Hydrology, Layers, Pool, RiverFlow, Rivers};
 
-/// A lake: its level (terrain-local meters), the area its water covers
-/// (square meters), and its middle and a sample of its shore (terrain-local
-/// x and z).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LakeSight {
     pub level: f32,
@@ -26,11 +15,6 @@ pub struct LakeSight {
     pub shore: [f32; 2],
 }
 
-/// A river point worth looking at: what makes it one (`largest`, `rapids`
-/// or `confluence`), the point (terrain-local x, surface and z), the way
-/// the river runs there (a unit vector along x and z), half its channel's
-/// width, its speed (meters a second) and its discharge (cubic meters a
-/// second).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RiverSight {
     pub kind: &'static str,
@@ -41,14 +25,6 @@ pub struct RiverSight {
     pub discharge: f32,
 }
 
-/// A river as inspection lists it: its name (a given river's, as given),
-/// the given river its courses follow (its rivers layer's index in the
-/// stack and its own in that layer; none for a course the bake traced), its
-/// courses and the meters they run, its first and last points
-/// (terrain-local x and z), the least and most of its channel's width and
-/// depth (meters) and of its bankfull flood (cubic meters a second),
-/// whether those were given rather than derived, and the share of its
-/// points where the heights already hold its channel, which nothing cuts.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RiverListing {
     pub name: Option<String>,
@@ -66,10 +42,6 @@ pub struct RiverListing {
     pub uncut: f32,
 }
 
-/// How a bake's rivers and lakes flow: how many there are, the river
-/// points holding water, the most any carries (cubic meters a second), the
-/// fastest any runs (meters a second), and the share of those points
-/// running faster than their waves.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FlowSummary {
     pub rivers: usize,
@@ -80,12 +52,6 @@ pub struct FlowSummary {
     pub rapid_share: f32,
 }
 
-/// A river's course as worlds placing things in rivers read it: its points
-/// (terrain-local x and z, from upstream) and at each half its channel's
-/// width, its bed and its channel's depth below its banks (meters), the
-/// discharge it carries (cubic meters a second), its bed's reach, grains,
-/// power and flood, where steps' crests stand, and where it falls. Its
-/// water is the tiles' to say.
 #[derive(Clone, Copy, Debug)]
 pub struct RiverCourse<'a> {
     river: &'a River,
@@ -100,8 +66,6 @@ impl RiverCourse<'_> {
         self.river.half[point]
     }
 
-    /// Its bed at `point` (terrain-local meters): beneath a fall's jet, the
-    /// line from the lip's bed to where it lands.
     pub fn bed(&self, point: usize) -> f32 {
         self.river.bed[point]
     }
@@ -114,8 +78,6 @@ impl RiverCourse<'_> {
         self.river.discharge[point]
     }
 
-    /// Its bed at `point`: its reach, grains and power, its bankfull
-    /// flood's level, and whether steps or knobs are carved there.
     pub fn bed_at(&self, point: usize) -> Bed {
         let river = self.river;
         Bed {
@@ -128,40 +90,28 @@ impl RiverCourse<'_> {
         }
     }
 
-    /// The share of the way from `point` to the next a step's crest stands
-    /// at, where one stands between them.
     pub fn crest(&self, point: usize) -> Option<f32> {
         self.river.crest[point].map(|crest| crest.share)
     }
 
-    /// Whether its water falls at `point`.
     pub fn falls_at(&self, point: usize) -> bool {
         self.river.falls_at(point) || !self.river.surface[point].is_finite()
     }
 
-    /// Whether its water starts where it starts, at a head, rather than at
-    /// a confluence or a lake's outlet, whose rivers or lake bring it.
     pub fn head(&self) -> bool {
         self.river.head
     }
 
-    /// The given river it follows: its rivers layer's index in the stack
-    /// and its own in that layer; none for a course the bake traced.
     pub fn given(&self) -> Option<[u32; 2]> {
         self.river.given.source
     }
 
-    /// Whether its channel is cut into the ground at `point`: not where the
-    /// heights already hold it.
     pub fn cut(&self, point: usize) -> bool {
         self.river.cut[point]
     }
 }
 
 impl Layers {
-    /// Its first baked hydrology's rivers as inspection lists them: each
-    /// given river whole, its courses together, and each course the bake
-    /// traced, the `count` carrying the greatest floods, largest first.
     pub fn river_listing(&self, count: usize) -> Vec<RiverListing> {
         let Some((_, hydrology)) = self.hydrology_layer() else {
             return Vec::new();
@@ -236,23 +186,18 @@ impl Layers {
     }
 }
 
-/// River `river`'s Froude number at point `index`: its speed over that of
-/// waves on water as deep as its section's mean depth, two thirds of its
-/// depth at its middle.
 fn froude(river: &River, index: usize) -> f32 {
     let mean = 2.0 / 3.0 * max(river.depth[index], 1.0e-3);
     river.speed[index] / (GRAVITY * mean).sqrt()
 }
 
 impl Rivers {
-    /// Every river's course.
     pub fn courses(&self) -> impl Iterator<Item = RiverCourse<'_>> {
         self.rivers.iter().map(|river| RiverCourse { river })
     }
 }
 
 impl Hydrology {
-    /// Its largest `count` lakes, by the area their water covers.
     pub fn lake_sights(&self, count: usize) -> Vec<LakeSight> {
         let water = &self.water;
         let mut lakes: Vec<(usize, [f64; 2], Option<usize>)> =
@@ -266,7 +211,6 @@ impl Hydrology {
             entry.0 += 1;
             entry.1[0] += x as f64;
             entry.1[1] += z as f64;
-            // A shore: a sample of the lake beside one holding none.
             let beside = [(1, 0), (0, 1)].iter().any(|&(dx, dz)| {
                 let (nx, nz) = (x + dx, z + dz);
                 nx < water.width && nz < water.height && water.depth[nz * water.width + nx] <= 0.0
@@ -300,9 +244,6 @@ impl Hydrology {
             .collect()
     }
 
-    /// Where its rivers carry most, run fastest against their waves (by
-    /// their Froude number and the square root of their discharge) and
-    /// meet with the most water.
     pub fn river_sights(&self) -> Vec<RiverSight> {
         let rivers = self.rivers.rivers();
         let key = |point: [f32; 2]| [point[0].to_bits(), point[1].to_bits()];
@@ -364,7 +305,6 @@ impl Hydrology {
         .collect()
     }
 
-    /// How its rivers and lakes flow.
     pub fn flow_summary(&self) -> FlowSummary {
         let rivers = self.rivers.rivers();
         let (mut points, mut rapid) = (0_usize, 0_usize);
@@ -392,8 +332,6 @@ impl Hydrology {
 }
 
 impl RiverFlow {
-    /// Where `pool` stands (terrain-local x and z) and how far above the
-    /// bake's water there it rises (meters).
     pub fn pool_place(&self, pool: &Pool) -> ([f32; 2], f32) {
         let river = &self.base().rivers()[pool.river as usize];
         let point = pool.point as usize;

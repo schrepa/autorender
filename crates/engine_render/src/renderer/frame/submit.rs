@@ -1,21 +1,7 @@
-//! A frame's submissions: its prelude once its features are prepared and
-//! its passes a batch at a time as they record, handed over to the queue's
-//! submission side, which finishes and submits them in that order while
-//! the frame records on; then, once all are submitted, the read-backs they
-//! ask for and the frame's presentation.
-
 use super::*;
 use crate::gpu_calls::{Handover, Recorded};
 use crate::profiling::Span;
 
-/// The batch of the frame's passes `pass` records into, in render graph
-/// order: the work before the opaque passes (GPU presentation, placed
-/// objects and their occupancy, shadow casters and maps, lights, the
-/// clouds' dome, tracks, bounce light and ground cover), then the opaque
-/// passes with the visibility buffer's, deferred terrain's and occlusion
-/// culling's between them, then the rest.
-/// Each batch is handed over once recorded, and the GPU works on it while
-/// the next records.
 pub(super) fn batch(pass: Pass) -> u8 {
     let first_opaque = Pass::Opaque { phase: Phase::One }.index();
     let last_opaque = Pass::Resolve { phase: Phase::Two }.index();
@@ -29,10 +15,6 @@ pub(super) fn batch(pass: Pass) -> u8 {
     }
 }
 
-/// Writes `end`'s end, then `begin`'s begin, those there are, into
-/// `encoder`: between consecutive work profiling captures time. Each mark
-/// takes an empty pass of its own, as a pass writing two queries resets the
-/// queries between them, which other spans may have written.
 pub(super) fn mark_between(
     encoder: &mut wgpu::CommandEncoder,
     end: Option<Span<'_>>,
@@ -47,15 +29,9 @@ pub(super) fn mark_between(
 }
 
 impl Renderer {
-    /// Hands `prelude` over, which the frame's passes read, so the GPU works
-    /// on it while they prepare and record; nothing when it holds no work.
-    /// Profiling captures time each part (but the sky's, which times its
-    /// own passes) between marks of their own: a part's begin, its work,
-    /// then its end with the next part's begin.
     pub(super) fn hand_prelude(&self, prelude: Prelude) {
         let capturing = self.profiler.capturing();
         let mut handover = Handover::default();
-        // The span of the part handed over last, until its end is marked.
         let mut open = None;
         for (span, part) in Prelude::SPANS.into_iter().zip(prelude.parts()) {
             let Some(part) = part else {
@@ -72,8 +48,6 @@ impl Renderer {
         }
     }
 
-    /// Adds to `handover` an encoder of its own marking span `end`'s end and
-    /// `begin`'s begin, those this frame records.
     fn mark_prelude(
         &self,
         handover: &mut Handover,
@@ -94,7 +68,6 @@ impl Renderer {
         handover.push(Recorded::Encoder(encoder));
     }
 
-    /// An encoder of the frame's own passes.
     pub(super) fn frame_encoder(&self) -> wgpu::CommandEncoder {
         self.device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -102,18 +75,11 @@ impl Renderer {
             })
     }
 
-    /// Hands over the batch of passes `encoder` recorded, which the
-    /// submission side finishes and submits while the frame records the
-    /// next; returns the encoder the frame records on into.
     pub(super) fn hand_batch(&self, encoder: wgpu::CommandEncoder) -> wgpu::CommandEncoder {
         self.queue.hand(Handover::from(encoder));
         self.frame_encoder()
     }
 
-    /// Hands over the frame's last batch, `encoder`'s, after the batches
-    /// before it, and waits until the submission side has submitted them
-    /// all; then the work the frame read back asks for its maps, and the
-    /// frame presents.
     pub(super) fn submit_frame(
         &mut self,
         state: &FrameState<'_>,
@@ -125,8 +91,6 @@ impl Renderer {
 
         let profile_submit = engine_profile::span("render", "submit_and_present");
         self.queue.hand(Handover::from(encoder));
-        // What follows maps what the frame's submissions copy for reading
-        // back, and presents what they draw.
         self.queue.settle();
         self.instances.pose_uploads.after_submit();
         if gpu_mode {
@@ -134,8 +98,6 @@ impl Renderer {
         }
         self.shadows.after_submit();
         self.terrain.surface.after_submit();
-        // Impostors' records read back from bakes the frame submitted, and
-        // settled water from its slots.
         self.impostors.atlas.after_submit();
         self.impostors.placed.after_submit();
         self.water_settle.after_submit();
@@ -147,8 +109,6 @@ impl Renderer {
         self.map_probe();
         self.profiler.submitted();
         frame.present(&self.queue);
-        // Native interfaces run finished work's callbacks, read-backs and
-        // staging maps among them, when polled.
         crate::platform::poll(&self.device);
         drop(profile_submit);
     }

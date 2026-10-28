@@ -1,8 +1,3 @@
-//! Packs a cluster LOD hierarchy into the `EVG1` virtual mesh format
-//! (`engine_assets::VirtualMesh`): quantized vertices and 8-bit local
-//! triangles in pages of [`PAGE_WORDS`], the pinned groups first, then the
-//! coarsest levels first.
-
 pub use engine_assets::PAGE_WORDS;
 use engine_assets::{
     CLUSTER_WORDS, DEFAULT_FALLBACK_TRIANGLES, FLAG_CLOSED, FLAG_UVS, GROUP_WORDS, HEADER_WORDS,
@@ -12,14 +7,8 @@ use engine_assets::{
 
 use crate::dag::{Dag, NodeKind, Source, is_closed};
 
-/// Triangles of the cut at the pin error at most: the pinned pages hold it
-/// and every coarser group, which renderers draw before any page streams
-/// in, and fallback meshes of up to this many triangles.
 pub const PINNED_TRIANGLES: u32 = DEFAULT_FALLBACK_TRIANGLES;
 
-/// The smallest error whose cut (every cluster whose group simplifies with
-/// more error and whose own error is at most it) has at most `triangles`
-/// triangles; cuts shrink as the error grows.
 pub fn pin_error(dag: &Dag, triangles: u32) -> f32 {
     let error = |group: u32| dag.groups[group as usize].simplified.error;
     let cut_triangles = |at: f32| -> u32 {
@@ -45,8 +34,6 @@ pub fn pin_error(dag: &Dag, triangles: u32) -> f32 {
     errors.get(index).copied().unwrap_or(f32::MAX / 2.0)
 }
 
-/// Quantization of one axis: the value of step zero and the step size over
-/// `low..=high` in 16 bits.
 fn axis(low: f32, high: f32) -> (f32, f32) {
     let step = (high - low) / 65535.0;
     (low, if step > 0.0 { step } else { 0.0 })
@@ -67,7 +54,6 @@ fn quantize(value: f32, (low, step): (f32, f32)) -> u32 {
     }
 }
 
-/// The `EVG1` words of `dag`, built from `source`.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -103,9 +89,6 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
     }
     let uvs: [(f32, f32); 2] = std::array::from_fn(|index| axis(uv_low[index], uv_high[index]));
 
-    // Pages: the pinned groups' clusters (every group simplified with more
-    // error than the pin error), then the coarsest levels first, whole
-    // clusters per page.
     let pin = pin_error(dag, PINNED_TRIANGLES);
     let pinned_group = |group: usize| dag.groups[group].simplified.error > pin;
     let mut order: Vec<usize> = (0..dag.clusters.len()).collect();
@@ -119,7 +102,6 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
         )
     });
     let mut pages: Vec<Vec<u32>> = vec![Vec::new()];
-    // Page, vertex offset and triangle offset of each cluster.
     let mut placement = vec![(0u32, 0u32, 0u32); dag.clusters.len()];
     for &index in &order {
         let cluster = &dag.clusters[index];
@@ -158,8 +140,6 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
         .max()
         .unwrap_or(1);
 
-    // Depth of the hierarchy: nodes on the longest root-to-leaf path. Roots
-    // come first; `clodBuildHierarchy` writes the other nodes bottom-up.
     let mut depth = 0u32;
     let mut stack: Vec<(u32, u32)> = (0..dag.levels).map(|root| (root, 1)).collect();
     while let Some((node, level)) = stack.pop() {
@@ -266,7 +246,6 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
         words.extend([offset, page.len() as u32]);
         offset += page.len() as u32;
     }
-    // The prefix: metadata and the pinned pages.
     words[30] = (words.len()
         + pages[..pinned_pages as usize]
             .iter()

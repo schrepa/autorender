@@ -1,8 +1,3 @@
-//! What a bind group table is made of: shader stages, the kinds of
-//! bindings and their texture, sampler and storage formats, and the
-//! constructors the tables declare their bindings with.
-
-/// Shader stages, as bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stages(pub(super) u8);
 
@@ -25,18 +20,14 @@ impl Stages {
     }
 }
 
-/// How shaders read a texture's texels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sample {
-    /// Floats, filtered by samplers.
     Float,
-    /// Floats shaders only load.
     Unfilterable,
     Depth,
     Uint,
 }
 
-/// A texture view's dimension.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
     D2,
@@ -46,7 +37,6 @@ pub enum View {
     CubeArray,
 }
 
-/// How a sampler filters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sampling {
     Filtering,
@@ -54,7 +44,6 @@ pub enum Sampling {
     Comparison,
 }
 
-/// A storage texture's texel format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     R32Float,
@@ -64,33 +53,25 @@ pub enum Format {
     Rgba16Float,
 }
 
-/// What a binding holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// A uniform buffer of at least `min_size` bytes (0 leaves it to
-    /// draws), bound at a dynamic offset when `dynamic`.
     Uniform {
         min_size: u64,
         dynamic: bool,
     },
-    /// A storage buffer shaders only read, of at least `min_size` bytes.
     Read {
         min_size: u64,
     },
-    /// A storage buffer shaders write.
     Write,
     Texture {
         sample: Sample,
         view: View,
     },
-    /// A 2D texture of this format shaders write.
     Storage(Format),
-    /// A 2D array texture of this format shaders write.
     StorageArray(Format),
     Sampler(Sampling),
 }
 
-/// One binding of a layout.
 #[derive(Clone, Copy, Debug)]
 pub struct Binding {
     pub binding: u32,
@@ -99,17 +80,12 @@ pub struct Binding {
     pub stages: Stages,
 }
 
-/// A bind group slot a table serves: group `group` of shader module
-/// `module` (`crate::shaders`).
 #[derive(Debug)]
 pub struct Serves {
     pub module: &'static str,
     pub group: u32,
 }
 
-/// A bind group layout: its label, the shader groups it serves and its
-/// bindings. Tables are declared with `tables!` alone, which registers
-/// each in [`TABLES`](super::TABLES) for the GPU check.
 #[derive(Debug)]
 pub struct Table {
     pub label: &'static str,
@@ -118,8 +94,6 @@ pub struct Table {
 }
 
 impl Table {
-    /// The binding named `name`; a name the table lacks is a programming
-    /// error.
     pub(crate) fn binding(&self, name: &str) -> &Binding {
         self.bindings
             .iter()

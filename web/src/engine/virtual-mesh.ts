@@ -1,11 +1,3 @@
-/** Streamed files as hosts load them: virtual meshes and terrain files. */
-
-/**
- * The prefix of the file at `url` whose first `headerBytes` bytes say how
- * long it is (`prefixBytes`), then that byte range; `what` names the file
- * in errors. A server ignoring ranges sends the whole file, which serves as
- * it is.
- */
 export async function fetchPrefix(url: string, headerBytes: number, prefixBytes: (header: Uint8Array) => number | undefined,
   what: string, signal?: AbortSignal) {
   const range = async (bytes: number) => {
@@ -22,7 +14,6 @@ export async function fetchPrefix(url: string, headerBytes: number, prefixBytes:
   return length <= head.length ? head.slice(0, length) : await range(length);
 }
 
-/** The prefix of the virtual mesh file at `url`. */
 export function fetchVirtualPrefix(url: string, prefixBytes: (header: Uint8Array) => number | undefined, signal?: AbortSignal) {
   return fetchPrefix(url, 128, prefixBytes, "virtual mesh", signal);
 }

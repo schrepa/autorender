@@ -1,11 +1,3 @@
-//! Grounded objects: entities standing on the terrain, as
-//! authors and generators place props by x and z alone. At extraction,
-//! before transforms refresh, a [`Grounded`] entity's translation rises or
-//! sinks to its offset above the ground under it, sampled from the finest
-//! terrain tile resident there; it samples again as finer tiles arrive,
-//! and when its x, z or offset changes. Streamed items
-//! stand on the ground the frame they spawn.
-
 use bevy_ecs::prelude::*;
 use engine_settings::settings;
 use glam::Vec2;
@@ -14,23 +6,14 @@ use serde::{Deserialize, Serialize};
 use crate::{Parent, Transform};
 
 settings! {
-    /// Stands its entity on the terrain: its translation's y is
-    /// kept `offset` meters above the ground under its x and z. Unparented
-    /// entities only; without a resident tile under it (or over a hole) the
-    /// entity keeps its translation, as walking navigation agents keep theirs:
-    /// their walks stand them, on bridges' decks too.
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct Grounded {
-        /// Meters above the ground its translation stands.
         pub offset: f32 = 0.0 => range(-10_000.0, 10_000.0),
     }
 }
 
-/// Where a grounded entity last sampled the ground: its x and z, the
-/// offset it applied, the terrains' revision then, and the level of the
-/// tile that answered (`None` while none did).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct GroundedAt {
     pub position: Vec2,
@@ -39,7 +22,6 @@ pub struct GroundedAt {
     pub level: Option<u32>,
 }
 
-/// The unparented grounded entities, which [`settle`] stands.
 pub(crate) type GroundedQuery = QueryState<
     (
         Entity,
@@ -51,9 +33,6 @@ pub(crate) type GroundedQuery = QueryState<
     Without<Parent>,
 >;
 
-/// Stands every grounded entity that moved, or whose ground may have
-/// become finer, on the [`crate::Ground`]:
-/// [`crate::WorldSyncSystems::Ground`].
 pub(crate) fn settle(world: &mut World, query: &mut GroundedQuery) {
     let Some(ground) = world.get_resource::<crate::Ground>().copied() else {
         return;

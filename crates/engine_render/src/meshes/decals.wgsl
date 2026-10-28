@@ -1,15 +1,7 @@
-// Decals: a box per decal, drawn after the opaque pass. Its
-// fragments rebuild the opaque surface under them from the depth buffer and
-// cover it with the decal's material where it lies inside the box.
 struct DecalRecord {
-    // Transposed top rows of the box's world matrix, unless `pose.x` names
-    // its displayed pose in the joint palette.
     model: array<vec4<f32>, 3>,
-    // Linear color and alpha.
     color: vec4<f32>,
-    // Fade cosine, roughness, metalness and emission.
     params: vec4<f32>,
-    // x: palette entry, or NO_DECAL_POSE.
     pose: vec4<u32>,
 }
 @group(2) @binding(13) var<storage, read> decal_records: array<DecalRecord>;
@@ -17,13 +9,9 @@ struct DecalRecord {
 
 const NO_DECAL_POSE: u32 = 0xffffffffu;
 
-// Multiplying decals scale the surface's color instead of covering it;
-// canvas pipelines encode what they write.
 override DECAL_MULTIPLY: bool = false;
 override DECAL_CANVAS: bool = false;
 
-// The unit box's twelve triangles, wound outward: culling front faces keeps
-// one layer covering the box's pixels, wherever the eye is.
 const DECAL_BOX = array<vec3<f32>, 36>(
     vec3<f32>(0.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 1.0), vec3<f32>(0.0, 1.0, 0.0),
     vec3<f32>(0.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 1.0, 1.0),
@@ -42,11 +30,9 @@ const DECAL_BOX = array<vec3<f32>, 36>(
 struct DecalOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) @interpolate(flat) decal: u32,
-    // Rows of the inverse of the box's world matrix.
     @location(1) @interpolate(flat) inverse_0: vec4<f32>,
     @location(2) @interpolate(flat) inverse_1: vec4<f32>,
     @location(3) @interpolate(flat) inverse_2: vec4<f32>,
-    // The box's +y in world space.
     @location(4) @interpolate(flat) up: vec3<f32>,
 }
 
@@ -65,12 +51,10 @@ fn vs_decal(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
     let determinant = dot(r0, cross(r1, r2));
     var output: DecalOutput;
     output.decal = instance;
-    // A flat box covers nothing.
     if !(abs(determinant) > 1.0e-12) {
         output.clip_position = vec4<f32>(0.0, 0.0, 0.0, 1.0);
         return output;
     }
-    // Mirrored boxes turn their triangles inside out: wind them back.
     var corner = vertex;
     if determinant < 0.0 {
         corner = vertex + 2u - 2u * (vertex % 3u);
@@ -78,8 +62,6 @@ fn vs_decal(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
     let local = vec4<f32>(DECAL_BOX[corner] - 0.5, 1.0);
     let world = vec3<f32>(dot(rows[0], local), dot(rows[1], local), dot(rows[2], local));
     output.clip_position = camera.view_projection * vec4<f32>(world, 1.0);
-    // The inverse's columns are the rows' cross products over the
-    // determinant; its translation moves back.
     let inverse = mat3x3<f32>(cross(r1, r2), cross(r2, r0), cross(r0, r1)) * (1.0 / determinant);
     let translation = vec3<f32>(rows[0].w, rows[1].w, rows[2].w);
     let inverse_rows = transpose(inverse);
@@ -90,9 +72,6 @@ fn vs_decal(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
     return output;
 }
 
-// The opaque surface's world position at `pixel` of depth `depth`, without
-// the jitter of temporally antialiased frames: a pixel of the frame's render
-// size, which it draws at.
 fn decal_surface(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
     let size = camera.region.xy;
     let center = vec2<f32>(pixel) + 0.5;
@@ -102,9 +81,6 @@ fn decal_surface(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
     return point.xyz / point.w;
 }
 
-// How the surface at `pixel` moves one pixel along `axis`: toward the
-// neighbor whose depth is nearer its own, so edges of other surfaces do not
-// tilt it.
 fn decal_step(pixel: vec2<i32>, depth: f32, world: vec3<f32>, axis: vec2<i32>) -> vec3<f32> {
     let last = vec2<i32>(camera.region.xy) - 1;
     let after = min(pixel + axis, last);
@@ -119,14 +95,9 @@ fn decal_step(pixel: vec2<i32>, depth: f32, world: vec3<f32>, axis: vec2<i32>) -
     return world - decal_surface(before, before_depth);
 }
 
-// The decal's point on the opaque surface under this fragment: its albedo,
-// coverage (`opacity`), normal and position. Discards pixels outside the
-// box, of the sky or of no coverage.
 fn decal_point(input: DecalOutput) -> SurfacePoint {
     let pixel = vec2<i32>(input.clip_position.xy);
     let depth = textureLoad(decal_depth, pixel, 0);
-    // The sky has no surface to cover: it keeps the cleared depth, 0 with
-    // reversed depth.
     if !(depth > 0.0) {
         discard;
     }
@@ -145,10 +116,7 @@ fn decal_point(input: DecalOutput) -> SurfacePoint {
     if dot(normal, to_eye) < 0.0 {
         normal = -normal;
     }
-    // Surfaces turning away from the box's +y fade out toward a right angle.
     let facing = saturate(dot(normal, input.up) / max(record.params.x, 1.0e-4));
-    // The material spans the box's x and z; its map's footprint follows the
-    // surface's steps, as finely as the display shows them.
     let uv = local.xz + 0.5;
     let detail = material_detail();
     let uv_dx = vec2<f32>(dot(input.inverse_0.xyz, world_dx), dot(input.inverse_2.xyz, world_dx))
@@ -187,7 +155,6 @@ fn decal_point(input: DecalOutput) -> SurfacePoint {
     return point;
 }
 
-// Graded color and alpha as the target stores them at `pixel`.
 fn decal_output(color: vec3<f32>, alpha: f32, pixel: vec2<f32>) -> vec4<f32> {
     if DECAL_CANVAS {
         return vec4<f32>(encoded(color, pixel), alpha);
@@ -200,15 +167,12 @@ fn fs_decal(input: DecalOutput) -> @location(0) vec4<f32> {
     let point = decal_point(input);
     let pixel = input.clip_position.xy;
     if DECAL_MULTIPLY {
-        // Fog hides what it covers.
         let visible = point.opacity * (1.0 - atmospheric_cover(camera.position.xyz, point.world));
         return decal_output(mix(vec3<f32>(1.0), point.albedo, visible), 1.0, pixel);
     }
-    // Covering decals are lit like any surface.
     return decal_output(finish(point, vec3<f32>(0.0)).color, point.opacity, pixel);
 }
 
-// Covering decals of frames with local lights.
 @fragment
 fn fs_decal_lit(input: DecalOutput) -> @location(0) vec4<f32> {
     let point = decal_point(input);

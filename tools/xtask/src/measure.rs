@@ -1,21 +1,3 @@
-//! `cargo xtask measure`: one measure task of the engine factory, run on the
-//! native host and written as the factory's measure report. The command
-//! runs from the commit the task's tools come from (`tools_sha`): its
-//! catalog and this code. Each workload compares two arms, each a commit
-//! (both may be the same one), its switches, and the scene, settings and
-//! generated files from that commit's own tree, so a change's scene edits
-//! and switches reach its own build only. Every commit is built the same way
-//! into its own folder, then the arms run in rounds of one base and one
-//! candidate run whose order alternates (base, candidate, candidate,
-//! base...), each run a fresh process measured as the workload says
-//! (`engine_native`'s measured runs), timed by the host and by this
-//! command's own clock from the host's marks, until the task's clean pairs
-//! (both runs settled), the deadline, or a run that never settles. A deep
-//! profile of each arm and the offline shader report follow where the task
-//! wants them. `--extend` adds rounds to an earlier report of the same task
-//! with the same builds. The runs and profiles hold the machine's heavy-run
-//! lock ([`crate::heavy`]); the checks after them take it themselves.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
@@ -29,20 +11,11 @@ use sha2::{Digest, Sha256};
 
 use crate::bench::{self, hex};
 
-/// Clean pairs a task asks for unless it says.
 const MIN_PAIRS: u64 = 8;
-/// Unsettled runs of one arm in a row after which it never settles.
 const NEVER_SETTLES: usize = 4;
-/// Frames a deep profile records: about 120 KB of summary for Metro's.
 const PROFILE_FRAMES: u32 = 60;
-/// Frames the GPU may still draw when the next is submitted, in the
-/// pipelined timing (`frame_ms_pipelined_mean`).
 const FRAMES_IN_FLIGHT: u32 = 2;
-/// Metrics this command takes from the runs' raw times, never from what a
-/// run's program computed: both arms' then come from the same code.
 const TOOLS_STATISTICS: &[&str] = &["frame_ms_p95"];
-/// What is measured, and how it is built: a profiling build, whose engine
-/// times its GPU passes and CPU spans when asked and otherwise not.
 const PACKAGE: &str = "stress-lab";
 const PROGRAM: &str = "stress-lab-native";
 const PROFILE: &str = "profiling";
@@ -108,7 +81,6 @@ pub fn git(root: &Path, arguments: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// A program's output, trimmed, run in `folder`.
 pub fn output(folder: &Path, program: &str, arguments: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
         .args(arguments)
@@ -131,11 +103,9 @@ pub fn file_hash(path: &Path) -> Result<String, String> {
     Ok(hex(&Sha256::digest(&bytes)))
 }
 
-/// The time `time` in UTC, as ISO 8601 with milliseconds.
 pub fn iso(time: SystemTime) -> String {
     let since = time.duration_since(UNIX_EPOCH).unwrap_or_default();
     let (days, seconds) = (since.as_secs() / 86_400, since.as_secs() % 86_400);
-    // Days to a civil date (Howard Hinnant's algorithm).
     let z = days as i64 + 719_468;
     let era = z.div_euclid(146_097);
     let day_of_era = z - era * 146_097;
@@ -159,8 +129,6 @@ pub fn iso(time: SystemTime) -> String {
     )
 }
 
-/// The time an ISO 8601 date and time (`2026-10-11T02:00:00Z`, with a
-/// fraction or an offset) names.
 pub fn parse_iso(text: &str) -> Option<SystemTime> {
     let number = |range: std::ops::Range<usize>| text.get(range)?.parse::<i64>().ok();
     let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
@@ -181,7 +149,6 @@ pub fn parse_iso(text: &str) -> Option<SystemTime> {
                 + rest.get(4..6)?.parse::<i64>().ok()? * 60)
         }
     };
-    // A civil date to days (Howard Hinnant's algorithm).
     let year = year - i64::from(month <= 2);
     let era = year.div_euclid(400);
     let year_of_era = year - era * 400;
@@ -192,19 +159,12 @@ pub fn parse_iso(text: &str) -> Option<SystemTime> {
     Some(UNIX_EPOCH + Duration::from_secs(u64::try_from(seconds).ok()?))
 }
 
-/// One commit built and ready to measure: the files its runs read, its
-/// program and build identity, its composed shaders' hash, and the
-/// generated files its own tree makes.
 struct Build {
     sha: String,
-    /// Where its runs read its bench files and fixtures: their working
-    /// folder.
     files: PathBuf,
     program: PathBuf,
     build: Value,
     shader_hash: String,
-    /// The folder holding the generated files (`--assets`), and their
-    /// SHA-256.
     assets: String,
     generated_hash: String,
 }
@@ -213,8 +173,6 @@ pub(crate) fn program_name() -> String {
     format!("{PROGRAM}{}", std::env::consts::EXE_SUFFIX)
 }
 
-/// Makes `sha` available, fetching it from `origin` where it is missing
-/// (through its pull request's ref, when the task names one).
 pub(crate) fn ensure_commit(root: &Path, sha: &str, pull: Option<u64>) -> Result<(), String> {
     let commit = format!("{sha}^{{commit}}");
     if git(root, &["cat-file", "-e", &commit]).is_ok() {
@@ -231,14 +189,11 @@ pub(crate) fn ensure_commit(root: &Path, sha: &str, pull: Option<u64>) -> Result
     git(root, &["cat-file", "-e", &commit]).map(drop)
 }
 
-/// `text` as a full commit id: 40 hexadecimal digits, as tasks name them.
 pub fn commit_id<'a>(text: Option<&'a str>, what: &str) -> Result<&'a str, String> {
     text.filter(|text| text.len() == 40 && text.bytes().all(|byte| byte.is_ascii_hexdigit()))
         .ok_or_else(|| format!("{what} is a full commit id (40 hexadecimal digits)"))
 }
 
-/// DXC's library (Windows): `DXC_PATH`, else `dxcompiler.dll` on the path,
-/// else the one Firefox or the newest Chrome ships.
 pub(crate) fn dxc() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("DXC_PATH").map(PathBuf::from) {
         return path.is_file().then_some(path);
@@ -268,13 +223,6 @@ pub(crate) fn dxc() -> Option<PathBuf> {
         .find(|file| file.is_file())
 }
 
-/// The commit `sha` built into `target/measure/builds/<sha>/`, beside the
-/// files its runs read (`tree/`) and the folder and SHA-256 of the
-/// generated files its own tree's `cargo xtask bench assets` makes
-/// (`generated.json`): built in the reused checkout
-/// ([`crate::checkouts::reused`]), so cargo recompiles only what changed
-/// since the commit built before, and reused while its program is
-/// unchanged.
 fn prepare_build(
     root: &Path,
     sha: &str,
@@ -320,7 +268,6 @@ fn prepare_build(
             (build, generated)
         }
     };
-    // D3D12 compiles the engine's shaders with DXC, beside the program.
     if cfg!(windows) {
         match dxc() {
             Some(library) => {
@@ -354,8 +301,6 @@ fn prepare_build(
     })
 }
 
-/// Builds the program from `source` into `folder`, with its symbols, and
-/// records the build's identity there.
 pub(crate) fn build_arm(
     root: &Path,
     source: &Path,
@@ -364,8 +309,6 @@ pub(crate) fn build_arm(
     backend: &str,
 ) -> Result<Value, String> {
     eprintln!("Building {PACKAGE} at {sha}.");
-    // One target folder for every commit, built in one checkout: cargo
-    // recompiles only the crates that changed since the commit built before.
     let target = root.join("target").join("measure").join("target");
     let features = FEATURES.join(",");
     let started = Instant::now();
@@ -386,7 +329,6 @@ pub(crate) fn build_arm(
     let program = folder.join(program_name());
     fs::copy(built.join(program_name()), &program)
         .map_err(|error| format!("cannot copy the program: {error}"))?;
-    // Windows keeps the symbols beside, which deep profiles read.
     let symbols = format!("{}.pdb", PROGRAM.replace('-', "_"));
     if built.join(&symbols).is_file() {
         fs::copy(built.join(&symbols), folder.join(&symbols))
@@ -416,22 +358,15 @@ pub(crate) fn build_arm(
     Ok(build)
 }
 
-/// What a run of the program printed.
 struct HostRun {
-    /// When each mark line arrived.
     marks: BTreeMap<String, Instant>,
-    /// The measured run's report line, or everything else it printed.
     report: Value,
-    /// What other programs did while the sampled frames ran: from the
-    /// first serialized one to the GPU finishing the last pipelined one.
     load: Load,
     stdout: String,
     stderr: String,
     success: bool,
 }
 
-/// Runs `program` with `arguments` from the repository, reading its marks
-/// as they come.
 fn run_host(
     root: &Path,
     program: &Path,
@@ -487,8 +422,6 @@ fn run_host(
     })
 }
 
-/// The machine's power state now: `ac`, `battery` or `unknown`, and its
-/// power plan's name.
 fn power() -> (&'static str, String) {
     let line = |program: &str, arguments: &[&str]| {
         Command::new(program)
@@ -513,7 +446,6 @@ fn power() -> (&'static str, String) {
             Some("Offline") => "battery",
             _ => "unknown",
         };
-        // "Power Scheme GUID: ...  (Balanced)"
         let plan = line("powercfg", &["/getactivescheme"])
             .and_then(|text| {
                 let start = text.rfind('(')?;
@@ -552,7 +484,6 @@ fn power() -> (&'static str, String) {
     }
 }
 
-/// The smallest step of the clock runs are timed with, in microseconds.
 fn timer_resolution_us() -> f64 {
     let mut smallest = Duration::MAX;
     let mut last = Instant::now();
@@ -567,8 +498,6 @@ fn timer_resolution_us() -> f64 {
     smallest.as_secs_f64() * 1e6
 }
 
-/// The frame statistics as work counters: dotted paths to numbers and
-/// booleans, lists as their lengths, what has no value left out.
 pub(crate) fn work_counters(stats: &Value) -> Map<String, Value> {
     fn flatten(value: &Value, path: String, out: &mut Map<String, Value>) {
         match value {
@@ -599,8 +528,6 @@ pub(crate) fn work_counters(stats: &Value) -> Map<String, Value> {
     out
 }
 
-/// Whether the catalog has `name` as the kind given (work, or anything
-/// else when `work` is false).
 fn catalogued(catalog: &[Value], name: &str, work: bool) -> bool {
     catalog
         .iter()
@@ -608,20 +535,15 @@ fn catalogued(catalog: &[Value], name: &str, work: bool) -> bool {
         .is_some_and(|entry| (entry["kind"] == "work") == work)
 }
 
-/// One side of a workload's comparison: `base` or `candidate`, its
-/// commit's build, and the host's arguments: the workload's, its switches',
-/// its commit's generated files'.
 struct Side<'a> {
     role: &'static str,
     build: &'a Build,
     arguments: Vec<String>,
 }
 
-/// One workload's measurement as the task gives it, with how to run it.
 struct Workload<'a> {
     name: String,
     feature: String,
-    /// The task's arms, which the report repeats.
     arms: Value,
     sides: [Side<'a>; 2],
     method: Value,
@@ -638,7 +560,6 @@ impl Workload<'_> {
     }
 }
 
-/// The commits a task's workloads build: their arms'.
 fn arm_commits(spec: &Value) -> Result<Vec<&str>, String> {
     let mut commits = Vec::new();
     for entry in spec["workloads"].as_array().into_iter().flatten() {
@@ -674,7 +595,6 @@ fn workload<'a>(
     let side = |role: &'static str, arm: &mut Value| -> Result<Side<'a>, String> {
         let sha = commit_id(arm["sha"].as_str(), "an arm's sha")?.to_owned();
         let build = &builds[&sha];
-        // The scene and settings the arm loads from its own commit's tree.
         for (folder, key, field) in [
             ("scenes", "scene", "scene_file_hash"),
             ("settings", "settings", "settings_hash"),
@@ -752,14 +672,11 @@ fn workload<'a>(
     })
 }
 
-/// What is the same for every run on this machine.
 struct Machine {
     backend: String,
     timer_resolution_us: f64,
 }
 
-/// One measured run of `side`, from its commit's checkout, its files in
-/// `folder` as `stem`.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -830,8 +747,6 @@ fn measure_run(
             eprintln!("Left out {name}: bench/metrics.json at the tools' commit lacks it.");
         }
     }
-    // The spread of the serialized frames' times, taken here from each one's
-    // time, so both arms' come from the same code.
     let frame_ms: Option<Vec<f64>> = report["frame_ms"]
         .as_array()
         .map(|times| times.iter().filter_map(Value::as_f64).collect());
@@ -913,12 +828,10 @@ fn measure_run(
     Ok((record, unavailable))
 }
 
-/// `value` to a tenth: what other programs load and clocks vary by more.
 fn round(value: f64) -> f64 {
     (value * 10.0).round() / 10.0
 }
 
-/// `text` within the 300 characters the factory's reasons hold.
 pub(crate) fn reason(text: &str) -> String {
     const MOST: usize = 300;
     if text.chars().count() <= MOST {
@@ -927,7 +840,6 @@ pub(crate) fn reason(text: &str) -> String {
     text.chars().take(MOST - 3).collect::<String>() + "..."
 }
 
-/// The environment runs take: the graphics interface the setup names.
 fn backend_environment(backend: &str) -> Vec<(&'static str, String)> {
     if backend.is_empty() {
         Vec::new()
@@ -936,7 +848,6 @@ fn backend_environment(backend: &str) -> Vec<(&'static str, String)> {
     }
 }
 
-/// A deep profile of `side` on its workload into `folder`.
 fn profile_run(side: &Side, machine: &Machine, folder: &Path) -> Value {
     let into = folder.join(format!("profile-{}", side.role));
     let mut arguments = side.arguments.clone();
@@ -947,7 +858,6 @@ fn profile_run(side: &Side, machine: &Machine, folder: &Path) -> Value {
         into.display().to_string(),
     ]);
     let mut environment = backend_environment(&machine.backend);
-    // The program's symbols are beside it, not where it was built.
     if let Some(symbols) = side.build.program.parent() {
         environment.push(("_NT_ALTERNATE_SYMBOL_PATH", symbols.display().to_string()));
     }
@@ -994,8 +904,6 @@ fn profile_run(side: &Side, machine: &Machine, folder: &Path) -> Value {
     json!({"arm": side.role, "files": files, "complete": profile["complete"] == true})
 }
 
-/// The offline shader report of the `role` commit's `build`, from its own
-/// tree's tools.
 fn shader_report(root: &Path, role: &str, build: &Build, folder: &Path) -> Value {
     let into = folder.join(format!("shaders-{role}"));
     let target = root.join("target").join("measure").join("target");
@@ -1029,8 +937,6 @@ fn shader_report(root: &Path, role: &str, build: &Build, folder: &Path) -> Value
     }
 }
 
-/// The task's spec and id: the task as the factory gives it (`id`,
-/// `spec`), or its spec alone with its `id`.
 fn spec_of(task: &Value) -> Result<(u64, &Value), String> {
     let spec = if task["spec"].is_object() {
         &task["spec"]
@@ -1048,9 +954,6 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
     measure_with(root, arguments, None)
 }
 
-/// [`measure`], the tools taken to be commit `tools` where given (the
-/// self-check's commit of the working tree, whose tools run), else this
-/// checkout's HEAD, which must be clean.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -1065,7 +968,6 @@ pub(crate) fn measure_with(
     let (task_id, spec) = spec_of(&task)?;
     let profile_start = read_json(&options.profile)?;
     let previous = options.extend.as_deref().map(read_json).transpose()?;
-    // The tools are this checkout, which must be the task's tools commit.
     let tools_sha = match tools {
         Some(tools) => tools.to_owned(),
         None if git(root, &["status", "--porcelain", "--untracked-files=no"])?.is_empty() => {
@@ -1131,8 +1033,6 @@ pub(crate) fn measure_with(
     let pairs = spec["pairs"].as_u64().unwrap_or(MIN_PAIRS);
     let want_profiles = spec["want"]["profiles"] == true;
     let catalog = bench::catalog(root)?;
-    // Every commit the task measures, built once: the report's two, and its
-    // workloads' arms (both may be the same commit, switched off against on).
     let mut builds: BTreeMap<String, Build> = BTreeMap::new();
     let mut commits = vec![base_sha, candidate_sha];
     commits.extend(arm_commits(spec)?);
@@ -1151,8 +1051,6 @@ pub(crate) fn measure_with(
             }
         }
     }
-    // The runs and profiles hold the machine's heavy-run lock: nothing else
-    // draws on its GPU meanwhile.
     let heavy = crate::heavy::HeavyRun::hold(&format!("cargo xtask measure (task {task_id})"))?;
     let machine = Machine {
         backend: backend.to_owned(),
@@ -1251,7 +1149,6 @@ pub(crate) fn measure_with(
                 }
             }
             if let Some(error) = failed {
-                // A round is one run of each arm: a lone run stays out.
                 eprintln!("{error}");
                 unavailable.push(json!({"metric": "*", "reason": reason(&error)}));
                 break;
@@ -1312,8 +1209,6 @@ pub(crate) fn measure_with(
             .as_ref()
             .and_then(|previous| previous.get("static").cloned())
     };
-    // The checks last: they build and serve the page, which measuring
-    // must not share the machine with. An extension keeps those it has.
     let checks = match previous.as_ref().map(|previous| previous["checks"].clone()) {
         Some(Value::Array(checks)) if !checks.is_empty() => checks,
         _ => {
@@ -1356,9 +1251,6 @@ pub(crate) fn measure_with(
     }
 }
 
-/// Whether `report` matches the factory's `kind` format in the `formats`
-/// file (its `/api/formats`), with its local files as the hashes the
-/// factory's command line uploads them as.
 pub fn check_format(report: &Value, formats: &Path, kind: &str) -> Result<(), String> {
     let formats = read_json(formats)?;
     let schema = if formats["schemas"].is_object() {
@@ -1386,7 +1278,6 @@ pub fn check_format(report: &Value, formats: &Path, kind: &str) -> Result<(), St
     Ok(())
 }
 
-/// The size of the first capture in `folder`, from its PNG header.
 fn measured_size(folder: &Path) -> Option<[u32; 2]> {
     let mut captures: Vec<PathBuf> = fs::read_dir(folder)
         .ok()?
@@ -1400,8 +1291,6 @@ fn measured_size(folder: &Path) -> Option<[u32; 2]> {
     Some([word(16)?, word(20)?])
 }
 
-/// The report with each local file it names as its SHA-256, as the
-/// factory's command line sends it after uploading them.
 fn with_file_hashes(report: &Value) -> Value {
     fn hashed(value: Option<&mut Value>) {
         let Some(value) = value else {
@@ -1414,7 +1303,6 @@ fn with_file_hashes(report: &Value) -> Value {
             *value = hash.into();
         }
     }
-    // Every list of files at `path` in `value`, where there is one.
     fn files<'a>(value: &'a mut Value, path: &[&str]) -> Vec<&'a mut Value> {
         let mut at = Some(value);
         for key in path {
@@ -1450,7 +1338,6 @@ fn with_file_hashes(report: &Value) -> Value {
     report
 }
 
-/// Each workload's clean pairs and its arms' medians of the frame times.
 fn print_summary(report: &Value) {
     for workload in report["workloads"].as_array().into_iter().flatten() {
         let runs = workload["runs"].as_array().cloned().unwrap_or_default();

@@ -1,7 +1,3 @@
-//! The metro as a Stress Lab world: its billboards change pictures whether
-//! or not anything moves, its glass refracts, and it is seen from the air
-//! and across the river.
-
 use engine::collections::HashMap;
 
 use engine::prelude::*;
@@ -39,7 +35,6 @@ impl StressWorld for MetroWorld {
             probes: city.probes,
             overlap_hits: Vec::with_capacity(if config.queries_per_tick > 0 { 128 } else { 0 }),
         });
-        // Glass refracts what is behind it.
         world.insert_resource(Refraction::default());
         Ok(city.moving_nodes)
     }
@@ -78,7 +73,6 @@ impl StressWorld for MetroWorld {
     }
 }
 
-/// A street-level view across the river toward the core.
 fn close_view(config: &StressConfig) -> (Vec3, Vec3) {
     let (_, _, radius) = budget(config, PER_BLOCK);
     match river_row(radius) {
@@ -90,7 +84,6 @@ fn close_view(config: &StressConfig) -> (Vec3, Vec3) {
     }
 }
 
-/// An aerial view of the whole metro.
 fn overview(config: &StressConfig) -> (Vec3, Vec3) {
     let (_, _, radius) = budget(config, PER_BLOCK);
     let reach = (radius + 2.0) * PERIOD;

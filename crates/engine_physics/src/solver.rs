@@ -1,6 +1,3 @@
-//! The solver's state: Rapier's sets, pipeline and parameters, which only
-//! this crate's modules touch.
-
 use glam::Vec3;
 use rapier3d::prelude as rp;
 
@@ -33,8 +30,6 @@ impl Default for Solver {
 }
 
 impl Solver {
-    /// Advances every body `seconds` under `gravity`, its constraints
-    /// solved over `iterations`.
     pub fn step(&mut self, seconds: f32, gravity: Vec3, iterations: u32) {
         let parameters = rp::IntegrationParameters {
             dt: seconds,
@@ -57,18 +52,15 @@ impl Solver {
         );
     }
 
-    /// Adds a fixed collider standing in the world.
     pub fn add_solid(&mut self, collider: rp::Collider) -> rp::ColliderHandle {
         self.colliders.insert(collider)
     }
 
-    /// Removes a collider, of a body or of the world.
     pub fn remove_collider(&mut self, handle: rp::ColliderHandle) {
         self.colliders
             .remove(handle, &mut self.islands, &mut self.bodies, true);
     }
 
-    /// Adds `body` with `collider`: their handles.
     pub fn add_body(
         &mut self,
         body: rp::RigidBody,
@@ -81,8 +73,6 @@ impl Solver {
         (handle, collider)
     }
 
-    /// Replaces body `handle`'s collider `old` with `collider`: the new
-    /// collider's handle. Its mass follows.
     pub fn replace_collider(
         &mut self,
         handle: rp::RigidBodyHandle,
@@ -100,7 +90,6 @@ impl Solver {
         new
     }
 
-    /// Removes a body and its collider.
     pub fn remove_body(&mut self, handle: rp::RigidBodyHandle) {
         self.bodies.remove(
             handle,
@@ -112,7 +101,6 @@ impl Solver {
         );
     }
 
-    /// Pairs of colliders touching.
     pub fn contacts(&self) -> usize {
         self.narrow
             .contact_pairs()

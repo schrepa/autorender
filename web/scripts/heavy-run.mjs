@@ -1,27 +1,3 @@
-/**
- * The machine's "one heavy run at a time" lock: anything that opens a
- * browser, a native engine window or a GPU host (smokes, measurements,
- * equivalence runs, captures) holds it while it runs, so runs never share
- * the GPU and processors with each other.
- *
- * The lock is the folder `ENGINE_HEAVY_LOCK_DIR`, else
- * `engine-heavy-run.lock` in the system's temporary folder, holding
- * `owner.json` ({pid, label, cwd, command, started}); `cargo xtask` takes
- * the same one (tools/xtask/src/heavy.rs). A lock whose owner process ended
- * is stale and taken over. Those waiting queue in the folder beside it,
- * `engine-heavy-run.lock.queue`, each as `MILLISECONDS-PID.json`, and take
- * it in the order they came: a run that releases it between steps
- * (equivalence, cell by cell) and wants it again queues behind them. After
- * taking it, a holder waits up to 15 minutes
- * while a headless Chrome of another program runs (the factory's workers do
- * not take the lock). A holder's children run with `ENGINE_HEAVY_LOCK_HELD=1`
- * and pass straight through, so runs nest.
- *
- * Smokes hold it for their process's life (`holdHeavyRun`; the harness
- * does). Run as a program, it holds the lock around a command:
- * `node web/scripts/heavy-run.mjs [--label TEXT] -- COMMAND ARGS...`, exiting
- * with the command's exit code.
- */
 // @ts-check
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -30,21 +6,17 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-/** The environment variable a holder's children see. */
 export const HELD = "ENGINE_HEAVY_LOCK_HELD";
 
 const lock = process.env.ENGINE_HEAVY_LOCK_DIR ?? join(tmpdir(), "engine-heavy-run.lock");
 const owner = join(lock, "owner.json");
 const queue = `${lock}.queue`;
-/** How long a holder waits for another program's headless Chrome. */
 const FOREIGN_CHROME_WAIT_MS = 15 * 60_000;
 
-/** Whether process `pid` runs. */
 function alive(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; }
 }
 
-/** The process ids of headless Chrome browsers running now (Windows). */
 function headlessChromes() {
   if (process.platform !== "win32") return [];
   try {
@@ -55,13 +27,10 @@ function headlessChromes() {
   } catch { return []; }
 }
 
-/** The lock's owner as its file says, or null while it is written or gone. */
 function heldBy() {
   try { return JSON.parse(readFileSync(owner, "utf8")); } catch { return null; }
 }
 
-/** The tickets in the queue in the order they came, removing those of
- * processes that ended. */
 function queued() {
   let names;
   try { names = readdirSync(queue); } catch { return []; }
@@ -76,33 +45,24 @@ function queued() {
 }
 
 let holding = false;
-/** This process's ticket in the queue while it waits.
- * @type {string | null} */
+/** @type {string | null} */
 let ticket = null;
-/** Leaves the queue. */
 function leave() {
   if (ticket) rmSync(join(queue, ticket), { force: true });
   ticket = null;
 }
 
-/** Removes the lock where this process holds it. */
 function release() {
   if (!holding) return;
   holding = false;
   if (heldBy()?.pid === process.pid) rmSync(lock, { recursive: true, force: true });
 }
 
-/** Takes the lock for this process as `label` running `command`, waiting
- * while another holds it, then while another program's headless Chrome
- * runs; it is released when the process exits. Where a parent holds it
- * (`ENGINE_HEAVY_LOCK_HELD=1`) this does nothing. Afterwards children this
- * process starts inherit `ENGINE_HEAVY_LOCK_HELD=1`. */
 export async function holdHeavyRun(label, command = process.argv.slice(1)) {
   if (process.env[HELD] === "1" || holding) return;
   let reported = 0;
   process.on("exit", leave);
   for (;;) {
-    // Its turn: first in the queue, or nobody queued before it came.
     const line = queued();
     const turn = ticket ? line[0] === ticket : line.length === 0;
     try {
@@ -115,7 +75,6 @@ export async function holdHeavyRun(label, command = process.argv.slice(1)) {
     }
     const held = heldBy();
     if (held && !alive(held.pid)) {
-      // Taken over only while the same stale owner still holds it.
       if (heldBy()?.pid === held.pid) {
         console.error(`heavy-run: taking over a stale lock from pid ${held.pid} (${held.label || held.command?.join(" ")})`);
         rmSync(lock, { recursive: true, force: true });
@@ -123,7 +82,6 @@ export async function holdHeavyRun(label, command = process.argv.slice(1)) {
       continue;
     }
     if (!held) {
-      // Owner file missing for long: a crashed acquirer between mkdir and write.
       const age = Date.now() - (statSync(lock, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
       if (age > 60_000) { rmSync(lock, { recursive: true, force: true }); continue; }
     }

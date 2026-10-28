@@ -1,6 +1,3 @@
-//! One run of a cell on one side: the native host's development session
-//! over standard input and output, settled and captured view by view.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -15,28 +12,16 @@ use super::matrix::{Capture, Cell, Workload};
 use super::sides::Side;
 use crate::measure::{self, read_json};
 
-/// The settings bundle every cell runs with: the size, the switches at
-/// their defaults, no scanned rocks, no job cache.
 pub(super) const SETTINGS: &str = "bench/settings/default.json";
 
-/// How long one command of a session may take: launching a workload and
-/// compiling its pipelines take seconds.
 const COMMAND_LIMIT: Duration = Duration::from_secs(240);
 
-/// How long a view may take to settle: the highlands stream for most of a
-/// minute.
 const SETTLE_LIMIT: Duration = Duration::from_secs(300);
 
-/// Renders in a row whose work counters hold still before a view counts as
-/// settled.
 const QUIET_RENDERS: usize = 3;
 
-/// Frames after a view settled, so time-sliced work (reflection probe
-/// faces, the sky's rows, kept shadow levels) completes its rounds.
 const TAIL_RENDERS: usize = 30;
 
-/// A development session of one side's program, over its standard input
-/// and output.
 struct Session {
     child: Child,
     input: ChildStdin,
@@ -44,8 +29,6 @@ struct Session {
 }
 
 impl Session {
-    /// Launches `side`'s program with `arguments`, writing what it prints on
-    /// standard error into `log`, and waits for its ready line.
     fn launch(side: &Side, arguments: &[String], log: &Path) -> Result<Self, String> {
         let errors = fs::File::create(log).map_err(|error| error.to_string())?;
         let mut child = Command::new(&side.program)
@@ -79,7 +62,6 @@ impl Session {
         Ok(session)
     }
 
-    /// The next reply the program printed, within the command limit.
     fn next(&mut self, log: &Path) -> Result<Value, String> {
         let deadline = Instant::now() + COMMAND_LIMIT;
         loop {
@@ -110,7 +92,6 @@ impl Session {
         }
     }
 
-    /// The program's reply to `command`.
     fn request(&mut self, command: &Value, log: &Path) -> Result<Value, String> {
         writeln!(self.input, "{command}")
             .and_then(|()| self.input.flush())
@@ -118,7 +99,6 @@ impl Session {
         self.next(log)
     }
 
-    /// The result of `command`, which must succeed.
     fn ok(&mut self, command: &Value, log: &Path) -> Result<Value, String> {
         let reply = self.request(command, log)?;
         if reply["ok"] != true {
@@ -131,7 +111,6 @@ impl Session {
         Ok(reply["result"].clone())
     }
 
-    /// Ends the session: its input closes, and the program ends with it.
     fn close(mut self) {
         drop(self.input);
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -146,8 +125,6 @@ impl Session {
     }
 }
 
-/// One capture of a run: its file and SHA-256, and its frame's work
-/// counters; or why the host could not take it.
 #[derive(Clone)]
 pub(super) enum Shot {
     Taken {
@@ -158,20 +135,14 @@ pub(super) enum Shot {
     Unavailable(String),
 }
 
-/// What one run of a cell on one side gave.
 #[derive(Default)]
 pub(super) struct Run {
     pub(super) shots: BTreeMap<String, Shot>,
-    /// The engine's state digest after each view settled, by view; null
-    /// where the host has none.
     pub(super) digests: BTreeMap<String, Value>,
-    /// Views that did not settle, with what kept changing.
     pub(super) unsettled: Vec<String>,
-    /// Why the run stopped, where it did.
     pub(super) error: Option<String>,
 }
 
-/// The program's options for `cell` on `side`, its captures into `folder`.
 fn launch_arguments(
     cell: &Cell,
     side: &Side,
@@ -198,8 +169,6 @@ fn launch_arguments(
         arguments.extend([format!("--{option}"), value]);
     }
     arguments.extend([
-        // Jobs run in the engine: no worker's timing decides when their
-        // results land.
         "--workers".into(),
         "off".into(),
         "--assets".into(),
@@ -213,9 +182,6 @@ fn launch_arguments(
     Ok(arguments)
 }
 
-/// The scene options `cell` runs with from `tree`: its bench scene's
-/// preset, configuration and view, the cell's configuration fields over the
-/// scene's.
 pub(super) fn scene_options(cell: &Cell, tree: &Path) -> Result<Map<String, Value>, String> {
     let Workload::Scene(scene) = &cell.workload else {
         return Ok(Map::new());
@@ -237,7 +203,6 @@ pub(super) fn scene_options(cell: &Cell, tree: &Path) -> Result<Map<String, Valu
     Ok(options)
 }
 
-/// Runs `cell` once on `side`, its files into `folder`.
 pub(super) fn run_cell(cell: &Cell, side: &Side, folder: &Path, gpu: &str) -> Run {
     let mut run = Run::default();
     if let Err(error) = fs::create_dir_all(folder) {
@@ -261,8 +226,6 @@ pub(super) fn run_cell(cell: &Cell, side: &Side, folder: &Path, gpu: &str) -> Ru
     run
 }
 
-/// Applies `cell`'s environment, steps it, and settles and captures each
-/// view into `run`.
 fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Result<(), String> {
     if let Some(environment) = &cell.environment {
         let mut command = json!({"op": "environment", "merge": true});
@@ -299,8 +262,6 @@ fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Resul
             let shot = shoot(session, *capture, log)?;
             run.shots.insert(key, shot);
         }
-        // The digest's own fields: its reply's result also carries the
-        // host's observation, source and frame statistics.
         let digest = session.request(&json!({"op": "digest"}), log)?;
         let result = &digest["result"];
         run.digests.insert(
@@ -320,10 +281,6 @@ fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Resul
     Ok(())
 }
 
-/// The frame a view settles with before `capture`: the kind of frame the
-/// capture draws (GPU-presented frames cull, choose levels of detail and
-/// request geometry pages on the GPU, read back a few frames late); none
-/// for display frames, which run as they are.
 fn settling_frame(capture: Capture) -> Option<Value> {
     match capture {
         Capture::Exact => Some(json!({"op": "render"})),
@@ -333,10 +290,6 @@ fn settling_frame(capture: Capture) -> Option<Value> {
     }
 }
 
-/// Draws `frame` until nothing loads or compiles, the counts GPU-culled
-/// frames read back describe frames drawn since settling began, and the
-/// work counters hold still for a few frames (more than the read-backs lag),
-/// then a few more; what kept changing where it did not settle in time.
 fn settle(session: &mut Session, frame: &Value, log: &Path) -> Result<Option<String>, String> {
     let started = Instant::now();
     let (mut previous, mut quiet): (Option<Map<String, Value>>, usize) = (None, 0);
@@ -380,7 +333,6 @@ fn settle(session: &mut Session, frame: &Value, log: &Path) -> Result<Option<Str
     Ok(None)
 }
 
-/// Takes `capture` of the settled view.
 fn shoot(session: &mut Session, capture: Capture, log: &Path) -> Result<Shot, String> {
     let result = match capture {
         Capture::Exact => session.ok(&json!({"op": "capture"}), log)?,

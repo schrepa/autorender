@@ -1,20 +1,3 @@
-//! Profiles and GPU captures of native engine games, which hosts
-//! (`engine_native`) run when their options ask:
-//!
-//! - in every build, frame-exact captures of a frame's GPU work by graphics
-//!   debuggers: PIX on D3D12 ([`Pix`]) and RenderDoc ([`RenderDoc`]), and
-//!   the deepest a thread's stack went ([`stack`]);
-//! - with the `profiling` feature, deep profiles on any machine without
-//!   privileges or setup ([`DeepCapture`]: CPU samples of the game's
-//!   threads symbolicated in process, the engine's spans, every frame's GPU
-//!   passes and draws, Firefox Profiler files and a summary with what the
-//!   machine could add), each pass's hardware counters where drivers offer
-//!   them ([`counters`]), and deep dives through the GPU vendor's tools
-//!   ([`vendor`]);
-//! - with the `load` feature, what other programs load the machine with
-//!   while a measuring tool times a run ([`load`]).
-//!
-//! Every unsafe call the native tools make is here, allowed item by item.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
@@ -24,11 +7,8 @@
 mod capabilities;
 #[cfg(all(feature = "profiling", not(target_vendor = "apple")))]
 pub mod counters;
-/// Hardware counters per pass count through Vulkan, which Apple's GPUs
-/// draw through Metal in place of: Xcode's Metal tools count there.
 #[cfg(all(feature = "profiling", target_vendor = "apple"))]
 pub mod counters {
-    /// Which counters to count.
     #[derive(Clone, Debug)]
     pub enum Selection {
         First,

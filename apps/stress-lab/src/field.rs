@@ -1,6 +1,3 @@
-//! The tower field: a grid of towers bobbing and turning in place, the
-//! original workload.
-
 use engine::collections::HashMap;
 
 use engine::prelude::*;

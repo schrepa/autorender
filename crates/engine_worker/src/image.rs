@@ -1,21 +1,10 @@
-//! Images as hosts decode them: PNG, JPEG and uncompressed RGBA8 KTX2 to
-//! RGBA8 pixels with color and alpha exactly as stored (no
-//! premultiplication, no color conversion), with the engine's decoders;
-//! which host decodes which format how is [`IMAGE_FORMATS`]'.
-
-/// Who decodes an image format on a host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImageDecoder {
-    /// The engine's decoder ([`decode_image`]): on the page's job workers,
-    /// in place without them, and natively in place.
     Engine,
-    /// The page's vendored Basis Universal transcoder, to the block-
-    /// compressed format the GPU samples.
     Transcoder,
 }
 
 impl ImageDecoder {
-    /// Its name, as the page's `IMAGE_FORMATS` names it.
     pub fn name(self) -> &'static str {
         match self {
             Self::Engine => "engine",
@@ -24,20 +13,14 @@ impl ImageDecoder {
     }
 }
 
-/// An image format a scene's files may hold, and who decodes it on each
-/// host; none where the host cannot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImageFormat {
-    /// Its name, as messages and the page's `IMAGE_FORMATS` name it.
     pub name: &'static str,
-    /// What it is.
     pub what: &'static str,
     pub page: Option<ImageDecoder>,
     pub native: Option<ImageDecoder>,
 }
 
-/// Every image format a scene's files may hold. Basis KTX2 stays the
-/// page's: native hosts have no transcoder.
 pub const IMAGE_FORMATS: &[ImageFormat] = &[
     ImageFormat {
         name: "png",
@@ -65,7 +48,6 @@ pub const IMAGE_FORMATS: &[ImageFormat] = &[
     },
 ];
 
-/// An image's RGBA8 pixels, rows from the top.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Image {
     pub width: u32,
@@ -73,8 +55,6 @@ pub struct Image {
     pub pixels: Vec<u8>,
 }
 
-/// The format of an image's `bytes`, by their first bytes: one of
-/// [`IMAGE_FORMATS`], or none.
 pub fn image_format(bytes: &[u8]) -> Option<&'static ImageFormat> {
     let name = if bytes.starts_with(&KTX2_IDENTIFIER) {
         let rgba8 =
@@ -90,9 +70,6 @@ pub fn image_format(bytes: &[u8]) -> Option<&'static ImageFormat> {
     IMAGE_FORMATS.iter().find(|format| format.name == name)
 }
 
-/// Image `uri`'s `bytes` decoded to RGBA8 with color and alpha as stored:
-/// PNG, JPEG or uncompressed RGBA8 KTX2, the formats the engine's decoder
-/// reads.
 pub fn decode_image(uri: &str, bytes: &[u8]) -> Result<Image, String> {
     match image_format(bytes).map(|format| format.name) {
         Some("png") => decode_png(bytes).map_err(|error| format!("{uri}: {error}")),
@@ -109,15 +86,12 @@ const KTX2_IDENTIFIER: [u8; 12] = [
     0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a,
 ];
 
-// Uncompressed RGBA8 formats: VK_FORMAT_R8G8B8A8_UNORM and _SRGB. Whether
-// a map decodes sRGB is the material's choice, not the file's.
 const RGBA8_FORMATS: [u32; 2] = [37, 43];
 
 fn word(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four bytes"))
 }
 
-/// The base level of an uncompressed RGBA8 KTX2 image.
 fn read_rgba8_ktx2(uri: &str, bytes: &[u8]) -> Result<Image, String> {
     let invalid = |what: &str| format!("{uri} {what}");
     if bytes.len() < 104 {
@@ -132,7 +106,6 @@ fn read_rgba8_ktx2(uri: &str, bytes: &[u8]) -> Result<Image, String> {
     {
         return Err(invalid("must be a single 2D image"));
     }
-    // The base level's entry leads the level index.
     let (offset, length) = (word(bytes, 80) as usize, word(bytes, 88) as usize);
     if word(bytes, 84) != 0
         || word(bytes, 92) != 0
@@ -150,8 +123,6 @@ fn read_rgba8_ktx2(uri: &str, bytes: &[u8]) -> Result<Image, String> {
 
 fn decode_png(bytes: &[u8]) -> Result<Image, String> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    // Palettes, low bit depths and transparency chunks expand to 8-bit
-    // channels; 16-bit channels drop to 8.
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().map_err(|error| error.to_string())?;
     let mut buffer = vec![0; reader.output_buffer_size()];

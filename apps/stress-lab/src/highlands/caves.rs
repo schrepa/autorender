@@ -1,25 +1,12 @@
-//! Caves for the highlands: a tube of rough rock around a
-//! winding centerline, its floor flattened to walk on, its walls bulging
-//! and receding by layered noise, flaring a little at its mouth, where it
-//! meets the hole cut in the slope, and widening into a chamber at its end
-//! before it closes. Its triangles face in; its material shows both sides,
-//! so where its shell rises out of the slope at the mouth it reads as an
-//! overhang.
-
 use engine::prelude::*;
 
 use crate::kit::random::noise;
 
-/// Meters between the rings along the centerline, and points around each.
 const RING_STEP: f32 = 1.5;
 const RING_POINTS: u32 = 28;
 
-/// Meters of the cave one repeat of the rock maps covers.
 const TILING: f32 = 4.0;
 
-/// The cave through world `points`, `radius` meters across and up from
-/// the centerline, roughened by `seed`'s noise, as a mesh around
-/// `points[0]`.
 pub(crate) fn cave(points: &[Vec3], radius: [f32; 2], seed: u32) -> engine::Result<Mesh> {
     let (centers, tangents) = centerline(points);
     let rings = centers.len();
@@ -41,11 +28,8 @@ pub(crate) fn cave(points: &[Vec3], radius: [f32; 2], seed: u32) -> engine::Resu
             along += center.distance(centers[index - 1]);
         }
         let share = index as f32 / (rings - 1) as f32;
-        // Flaring at the mouth, widening into the chamber, closing at the
-        // end.
         let flare = 1.0 + 0.15 * (1.0 - smooth(share / 0.08));
         let chamber = 1.0 + 0.8 * smooth((share - 0.7) / 0.2);
-        // A rounded end: the rings shrink as a sphere's do.
         let end = math::clamp((share - 0.9) / 0.1, 0.0, 1.0);
         let closing = (1.0 - end * end).sqrt();
         let size = flare * chamber * math::max(closing, 0.02);
@@ -64,7 +48,6 @@ pub(crate) fn cave(points: &[Vec3], radius: [f32; 2], seed: u32) -> engine::Resu
                 + (across * (cos * radius[0]) + up * (sin * radius[1]))
                     * size
                     * (1.0 + rough(base));
-            // A floor to walk on.
             let floor = center.y - 0.55 * radius[1] * size;
             position.y = math::max(position.y, floor);
             let u = along / TILING;
@@ -80,11 +63,9 @@ pub(crate) fn cave(points: &[Vec3], radius: [f32; 2], seed: u32) -> engine::Resu
             let b = a + 1;
             let c = a + columns;
             let d = c + 1;
-            // Wound to face the centerline.
             indices.extend_from_slice(&[a, b, c, b, d, c]);
         }
     }
-    // Normals from the faces, facing in.
     let mut normals = vec![Vec3::ZERO; vertices.len()];
     for triangle in indices.as_chunks::<3>().0 {
         let [a, b, c] = triangle.map(|index| vertices[index as usize].0);
@@ -112,9 +93,6 @@ pub(crate) fn cave(points: &[Vec3], radius: [f32; 2], seed: u32) -> engine::Resu
     Mesh::new(vertices, indices).map_err(|error| engine::Error::from(error).context("cave"))
 }
 
-/// Points every [`RING_STEP`] meters along a Catmull-Rom curve through
-/// `points` (its ends continued straight), and the curve's directions
-/// there.
 fn centerline(points: &[Vec3]) -> (Vec<Vec3>, Vec<Vec3>) {
     let count = points.len();
     if count < 2 {
@@ -155,7 +133,6 @@ fn centerline(points: &[Vec3]) -> (Vec<Vec3>, Vec<Vec3>) {
     (centers, tangents)
 }
 
-/// Hermite smoothing of `value` clamped to [0, 1].
 fn smooth(value: f32) -> f32 {
     let t = math::clamp(value, 0.0, 1.0);
     t * t * (3.0 - 2.0 * t)

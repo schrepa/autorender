@@ -1,5 +1,3 @@
-//! The metro's infrastructure and landmarks.
-
 use super::*;
 
 pub(super) fn rail_deck(b: &mut Builder) {
@@ -35,7 +33,6 @@ pub(super) fn station_frame(b: &mut Builder) {
 }
 
 pub(super) fn station_roof(b: &mut Builder) {
-    // A shallow glass vault along X.
     let steps = 6;
     let arc = |index: u32| {
         let angle = PI * (0.15 + 0.7 * index as f32 / steps as f32);
@@ -68,7 +65,6 @@ pub(super) fn bridge_deck(b: &mut Builder) {
 }
 
 pub(super) fn bridge_arch(b: &mut Builder) {
-    // A chrome arch over the deck with hangers.
     let steps = 16;
     let point = |index: u32| {
         let t = index as f32 / steps as f32;
@@ -102,7 +98,6 @@ pub(super) fn bridge_arch(b: &mut Builder) {
 }
 
 pub(super) fn bridge_leaf(b: &mut Builder) {
-    // Hinged at the origin, reaching along +X.
     b.cuboid(
         v(0.0, -0.5, -2.25),
         v(10.0, 0.15, 2.25),
@@ -123,7 +118,6 @@ pub(super) fn dock(b: &mut Builder) {
 }
 
 pub(super) fn stadium(b: &mut Builder) {
-    // An outer wall and seating stepping down to the pitch.
     let sides = 20;
     let seats = |rows: f32| Map::Rect(0.0, 0.0, 6.0, rows);
     for index in 0..sides {

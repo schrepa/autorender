@@ -1,24 +1,3 @@
-//! `cargo xtask selfcheck [measure] [checks]`: the factory's tools run
-//! against themselves, each an A/A comparison whose two sides must come out
-//! equal, on the working tree as a commit (made without touching any ref,
-//! the same content giving the same commit, so builds are reused; the
-//! clean HEAD as it is).
-//!
-//! - measure: a measure task whose two arms are that commit, its tools
-//!   that commit's (this program), on Field (`field-90k`) for
-//!   [`PAIRS`] clean pairs: it must complete, every run settled; every run
-//!   counts the same work; the arms' median frame times ([`FRAME_TIME`])
-//!   lie within [`TIME_RATIO`] of each other, judged only where other
-//!   programs used at most [`BUSY_CPU_PCT`] of the processors (else it
-//!   could not check).
-//! - checks: one check ([`CHECK`]) on that commit with its own scripts and
-//!   with the scripts of the same commit checked out again: both must hold
-//!   at their first attempt; expected to fail instead, it must not hold
-//!   after every attempt.
-//!
-//! Its files are in target/selfcheck/; it exits 3 when an A/A comparison
-//! differed, 1 when a tool could not run.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -28,19 +7,11 @@ use serde_json::{Value, json};
 use crate::Failure;
 use crate::measure::{git, read_json};
 
-/// Clean pairs the measure self-check asks for.
 const PAIRS: u64 = 2;
-/// The most the arms' median frame times may differ by, as a ratio.
 const TIME_RATIO: f64 = 1.25;
-/// The frame time compared: the tool's own clock's, from the host's marks.
 const FRAME_TIME: &str = "wall:frame_ms_mean";
-/// The most of the processors other programs may use during a run whose
-/// frame time is compared, in percent: busier, times say nothing (at up to
-/// 46% the arms came out 1.011 apart, at 48-56% 0.705 apart).
 const BUSY_CPU_PCT: f64 = 50.0;
-/// The check the checks self-check runs: quick, and needing no GPU.
 const CHECK: &str = "agent-lifecycle-smoke";
-/// What the self-checks are, in the order they run.
 pub(crate) const KINDS: [&str; 2] = ["measure", "checks"];
 
 pub fn selfcheck(root: &Path, arguments: &[String]) -> Result<(), Failure> {
@@ -89,10 +60,6 @@ pub fn selfcheck(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     )))
 }
 
-/// The working tree as a commit: HEAD when nothing changed, else a commit
-/// of every file git would add over HEAD, made through a scratch index in
-/// `folder` and given HEAD's author, committer and dates, so the same
-/// content makes the same commit. No ref moves.
 fn working_commit(root: &Path, folder: &Path) -> Result<String, String> {
     let head = git(root, &["rev-parse", "HEAD"])?;
     let index = folder.join("index");
@@ -163,9 +130,6 @@ fn working_commit(root: &Path, folder: &Path) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// The measure task of an A/A comparison of `sha` and its machine profile:
-/// this machine's discrete GPU (or its only one) through the platform's
-/// API, as the factory's setup measurement runs.
 fn measure_task(sha: &str) -> (Value, Value) {
     let api = if cfg!(windows) {
         "d3d12"
@@ -216,7 +180,6 @@ fn measure_task(sha: &str) -> (Value, Value) {
     (task, profile)
 }
 
-/// Writes `value` as JSON into `path`.
 fn write(path: &Path, value: &Value) -> Result<PathBuf, String> {
     fs::write(
         path,
@@ -226,7 +189,6 @@ fn write(path: &Path, value: &Value) -> Result<PathBuf, String> {
     Ok(path.to_path_buf())
 }
 
-/// Runs the A/A measure task of `sha` into `folder`: what differed.
 fn measure_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, String> {
     fs::create_dir_all(folder).map_err(|error| error.to_string())?;
     let (task, profile) = measure_task(sha);
@@ -264,7 +226,6 @@ fn measure_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, Stri
                 differed.push(format!("{name}: a run failed: {}", unavailable["reason"]));
             }
         }
-        // The same commit draws the same work every run.
         if let Some(first) = runs.first() {
             for run in runs.iter().skip(1) {
                 let changed: Vec<String> = first["work"]
@@ -334,7 +295,6 @@ fn measure_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, Stri
     }
 }
 
-/// Runs the A/A checks of `sha` into `folder`: what differed.
 fn checks_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, String> {
     let checks = [
         json!({"name": CHECK, "sha": sha, "expect": "pass"}),

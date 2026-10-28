@@ -8,7 +8,6 @@ description = "Settings and authored values declared once per field: defaults, r
 
 [features]
 default = []
-# The bounds each rule states in JSON schemas.
 schema = ["dep:schemars", "dep:serde_json"]
 
 [dependencies]

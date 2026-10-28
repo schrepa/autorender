@@ -1,6 +1,3 @@
-//! The metro's keyframed props: each prop's moving parts under its own root
-//! at a site, bound by a player to its model's clip.
-
 use std::f32::consts::PI;
 
 use engine::prelude::*;
@@ -13,8 +10,6 @@ use super::{
 use crate::kit::plan::compose;
 use crate::kit::random::Rng;
 
-/// The moving parts of a keyframed prop at `site`, under its own root.
-/// Every animated model turns about its build-space origin.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -58,7 +53,6 @@ pub(super) fn animated_prop(city: &mut Metro, rng: &mut Rng, prop: Prop, site: &
             )],
         ),
         Prop::Turbine => {
-            // The tower is static; its rotor turns at the nacelle.
             let tower = Model::TurbineTower;
             let height = city.size(tower).y * site.size;
             let stand = Transform {
@@ -122,7 +116,6 @@ pub(super) fn animated_prop(city: &mut Metro, rng: &mut Rng, prop: Prop, site: &
             )],
         ),
         Prop::Gondola(class) => {
-            // The clip moves the pivot up and down the face.
             let mut gondola = piece(Vec3::ZERO, look(Model::Gondola, Mat::Fixture, WHITE));
             gondola.shift = v(0.0, 0.0, 0.05);
             (Clip::Gondola(class), vec![gondola])
@@ -155,7 +148,6 @@ pub(super) fn animated_prop(city: &mut Metro, rng: &mut Rng, prop: Prop, site: &
         );
         targets.push(pivot);
     }
-    // The excavator's stick hangs from its boom, the boom from the body.
     if matches!(prop, Prop::Excavator) {
         let (body, boom, stick) = (targets[0], targets[1], targets[2]);
         reparent(city, boom, body);

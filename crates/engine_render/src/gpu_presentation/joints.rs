@@ -1,7 +1,3 @@
-//! Skinned slots' joints: each joint's node and inverse bind
-//! matrix, uploaded when the frame's joints changed, from which the palette
-//! pass composes joint palettes every frame.
-
 use engine_core::{PoseRows, RenderJoint};
 
 use super::{grow, storage};
@@ -10,14 +6,10 @@ pub(super) struct Joints {
     capacity: usize,
     pub(super) nodes: wgpu::Buffer,
     pub(super) inverse_binds: wgpu::Buffer,
-    // The joints as last uploaded.
     uploaded_nodes: Vec<u32>,
     uploaded_binds: Vec<PoseRows>,
-    // Joints this frame's palette pass writes.
     count: u32,
-    // The retained stream and joints revision the buffers hold.
     revision: Option<(u64, u64)>,
-    // Advances when joint storage is replaced.
     generation: u64,
 }
 
@@ -36,12 +28,10 @@ impl Joints {
         }
     }
 
-    /// Joints this frame's palette pass writes.
     pub(super) fn count(&self) -> u32 {
         self.count
     }
 
-    /// Advances when joint storage is replaced.
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
@@ -50,8 +40,6 @@ impl Joints {
         self.nodes.size() + self.inverse_binds.size()
     }
 
-    /// Uploads the frame's `joints` when they changed; `revision` (the
-    /// frame's retained stream and joints revision) names them.
     pub(super) fn prepare(
         &mut self,
         device: &wgpu::Device,

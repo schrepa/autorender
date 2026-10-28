@@ -1,17 +1,5 @@
-//! The features of a frame's scene that shading looks up, as `scene.wgsl`'s
-//! override constants: the pipelines shading the scene are specialized for
-//! them, so lookups of features the scene's settings switch off compile
-//! out. A feature is on whenever its settings let the frame's uniforms and
-//! bindings hold it, so specialized pipelines shade exactly as unspecialized
-//! ones. Settings alone decide, which scenes carry from their first frame:
-//! terrains and probes that come later (a cave's interior opening once its
-//! bakes are done) find their lookups compiled in, and the set changes,
-//! those pipelines being created anew with their next draws, only when the
-//! scene's settings do.
-
 use engine_core::RenderSnapshot;
 
-/// Which of the scene's features shading looks up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SceneShading(u8);
 
@@ -24,16 +12,8 @@ impl SceneShading {
     const WINDOWS: u8 = 32;
     const BOUNCE: u8 = 64;
 
-    /// Every feature, as pipelines given none of the constants look up.
     pub(crate) const ALL: Self = Self(127);
 
-    /// The features `snapshot`'s settings let its frame hold, read as the
-    /// passes filling their uniforms and bindings read them: shadows off
-    /// zero the shadow lookups' uniform; horizon maps exist for casting
-    /// terrains with shadows on, and their bounce layers with bounce light
-    /// on too; clouds give shadows while they cover the sky; covers darken
-    /// with a strength; the probe grid lists probes while they are on;
-    /// windows light room by room while their section is on.
     pub(crate) fn of(snapshot: &RenderSnapshot) -> Self {
         let environment = &snapshot.environment;
         let shadows = environment.shadows.sanitized();
@@ -64,7 +44,6 @@ impl SceneShading {
         )
     }
 
-    /// The override constants of pipelines shading the scene.
     pub(crate) fn constants(self) -> [(&'static str, f64); 7] {
         let set = |bit: u8| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
@@ -78,7 +57,6 @@ impl SceneShading {
         ]
     }
 
-    /// `constants` and then this one's.
     pub(crate) fn with(self, constants: &[(&'static str, f64)]) -> Vec<(&'static str, f64)> {
         constants.iter().copied().chain(self.constants()).collect()
     }

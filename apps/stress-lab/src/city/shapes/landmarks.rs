@@ -1,5 +1,3 @@
-//! The city's street furniture and landmarks.
-
 use super::*;
 
 pub(super) fn tv_tower(b: &mut Builder) {
@@ -157,7 +155,6 @@ pub(super) fn arch(b: &mut Builder) {
 }
 
 pub(super) fn stadium(b: &mut Builder) {
-    // Outer wall, a rim and seating sloping down to the field.
     let sides = 16;
     for index in 0..sides {
         let angle = |step: f32| TAU * (index as f32 + step) / sides as f32;

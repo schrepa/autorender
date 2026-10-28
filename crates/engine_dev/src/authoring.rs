@@ -1,6 +1,3 @@
-//! Native source authoring shared by command-line clients. Saves preserve the
-//! validated candidate bytes and replace the source only after revision checks.
-
 use engine_settings::ErrorCode;
 use std::{
     fs::{self, File, OpenOptions},
@@ -19,7 +16,6 @@ static NEXT_SAVE: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug, Serialize)]
 pub struct ValidationReport {
     pub id: String,
-    /// Decimal u64, preserving precision when tools parse the result in JS.
     pub revision: String,
     pub entities: usize,
     pub prefabs: usize,
@@ -36,7 +32,6 @@ pub struct SaveReport {
     pub persisted: bool,
 }
 
-/// Parses and validates using the same functions as runtime scene loading.
 pub fn validate_scene(source: &str) -> Result<ValidationReport, DevError> {
     let scene = SceneDocument::from_json(source)?;
     let expanded_entities = scene.expanded_entities()?.len();
@@ -50,9 +45,6 @@ pub fn validate_scene(source: &str) -> Result<ValidationReport, DevError> {
     })
 }
 
-/// Reads at most [`MAX_SOURCE_BYTES`] plus one overflow byte. This guards
-/// allocation even if a source changes size between its metadata check and the
-/// actual read.
 pub fn read_scene_source(path: &Path) -> Result<String, DevError> {
     let file = File::open(path).map_err(|error| io_error(path, error))?;
     if file
@@ -87,16 +79,6 @@ pub fn read_scene_source(path: &Path) -> Result<String, DevError> {
     })
 }
 
-/// Saves one existing scene with optimistic revision protection.
-///
-/// The source ID must match and candidate revision must be expected + 1. A
-/// same-directory exclusive sidecar lock serializes cooperating writers through
-/// read, validation, and rename. A synced temporary file replaces the target
-/// atomically; source bytes stay unchanged on validation or conflict errors.
-/// Direct editors do not participate in the lock, so stop such writers while
-/// saving. A process crash can leave `.NAME.engine-dev.lock`; remove it only
-/// after confirming no save is running. This function never removes stale locks.
-/// Existing sources are required; project creation is deliberately separate.
 pub fn save_scene(
     path: &Path,
     candidate: &str,
@@ -178,10 +160,7 @@ pub fn save_scene(
     output
         .sync_all()
         .map_err(|error| io_error(&temporary.path, error))?;
-    // Close before rename so Windows cannot retain an incompatible file handle.
     temporary.file.take();
-    // Catch noncooperating changes made during validation without presenting
-    // this best-effort check as a filesystem compare-and-swap guarantee.
     if read_scene_source(&path)? != original {
         return Err(DevError::new(
             ErrorCode::SourceChanged,

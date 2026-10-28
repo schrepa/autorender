@@ -1,12 +1,3 @@
-//! Terrain's pipelines and the terrain group: its subdivisions' leaves in
-//! the opaque passes (forward, or deferred as visibility and resolves),
-//! reflection probe faces and the shadow maps drawn every frame, the kept
-//! levels' patches, and the group binding the arrays (the tiles' error
-//! pyramids among them, which the subdivisions' passes read), tables, views,
-//! leaves, material, sky and macro color maps, deformation's map and the
-//! tiles' water's surfaces they read, with the words the live water's setup
-//! reads beside them.
-
 use super::atlas::TileAtlas;
 use super::patches::{PatchDraws, patch_layout};
 use super::tables::TerrainTables;
@@ -15,14 +6,8 @@ use super::*;
 use crate::scene_shading::SceneShading;
 use crate::shaders::entry::meshes;
 
-/// The generations of what the terrain group binds: the atlas, uniforms,
-/// hole bits, directory, material maps, sky maps, macro color maps,
-/// deformation map, the subdivisions' leaves and the water blocks' arrays.
 type GroupKey = (u64, u64, u64, u64, u64, u64, u64, u64, u64, u64);
 
-/// What the terrain group binds besides the pipelines' own: the arrays,
-/// tables, views, the subdivisions' leaves, material, sky and macro color
-/// maps, deformation's map and the tiles' water's surfaces and words.
 pub(super) struct GroupSources<'a> {
     pub(super) atlas: &'a TileAtlas,
     pub(super) tables: &'a TerrainTables,
@@ -38,20 +23,13 @@ pub(super) struct GroupSources<'a> {
 pub(crate) struct TerrainPipelines {
     pub(super) layout: crate::pipelines::GroupLayout,
     group: Cached<GroupKey, wgpu::BindGroup>,
-    // The group the subdivisions' passes bind, leaving out the leaves they
-    // write.
     surface_group: Cached<GroupKey, wgpu::BindGroup>,
     pipelines: HashMap<(Targets, bool, bool), wgpu::RenderPipeline>,
-    // Deferred shading: the visibility pipelines (by
-    // holes), the resolves (by targets and lighting) and the layout of the
-    // resolves' own group.
     pub(crate) deferred_ids: HashMap<bool, wgpu::RenderPipeline>,
     pub(crate) resolves: HashMap<(Targets, bool), wgpu::RenderPipeline>,
     pub(crate) resolve_layout: crate::pipelines::GroupLayout,
     probe_pipelines: HashMap<(bool, bool), wgpu::RenderPipeline>,
-    // The shadow clipmap's depth pipeline, of the patches its regions take.
     shadow: Option<wgpu::RenderPipeline>,
-    // The scene features the shading pipelines are specialized for.
     shading: SceneShading,
 }
 
@@ -71,8 +49,6 @@ impl TerrainPipelines {
         }
     }
 
-    /// Specializes the pipelines shading terrain for `shading`'s scene
-    /// features: those made for others are dropped, to be created anew.
     pub(crate) fn specialize(&mut self, shading: SceneShading) {
         if self.shading != shading {
             self.shading = shading;
@@ -82,18 +58,14 @@ impl TerrainPipelines {
         }
     }
 
-    /// The terrain group, once tiles arrived.
     pub(super) fn group(&self) -> Option<&wgpu::BindGroup> {
         self.group.get()
     }
 
-    /// The group the subdivisions' passes bind, once tiles arrived.
     pub(super) fn surface_group(&self) -> Option<&wgpu::BindGroup> {
         self.surface_group.get()
     }
 
-    /// Rebuilds the terrain group and the subdivisions', when what
-    /// `sources` binds was replaced.
     pub(super) fn ensure_group(&mut self, device: &wgpu::Device, sources: &GroupSources<'_>) {
         let (Some((heights, normals, control)), Some((ground_errors, water_errors))) =
             (sources.atlas.views(), sources.atlas.errors())
@@ -195,8 +167,6 @@ impl TerrainPipelines {
             };
         if self.group.stale(&key) {
             let group = build("engine/terrain-group", &maps.views, leaves);
-            // The subdivisions' passes bind a stand-in for the leaves they
-            // write.
             let surface = build(
                 "engine/terrain-surface-group",
                 &maps.views,
@@ -207,8 +177,6 @@ impl TerrainPipelines {
         }
     }
 
-    /// The opaque pipeline into `targets`, shading local lights when `lit`,
-    /// of patches with `holes` or without.
     pub(crate) fn pipeline(
         &self,
         targets: Targets,
@@ -222,16 +190,10 @@ impl TerrainPipelines {
         self.probe_pipelines.get(&(lit, holes))
     }
 
-    /// The shadow clipmap's depth pipeline, of the patches its regions
-    /// take.
     pub(crate) fn shadow_pipeline(&self) -> Option<&wgpu::RenderPipeline> {
         self.shadow.as_ref()
     }
 
-    /// Creates the opaque pipeline into `targets` (`lit` or not) unless it
-    /// exists: `camera` is terrain's first group (`bindings::CAMERA_TERRAIN`),
-    /// `lights` the lights' group, `empty` the group standing in for the
-    /// poses.
     pub(crate) fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -272,10 +234,6 @@ impl TerrainPipelines {
         );
     }
 
-    /// Creates the visibility pipeline of patches with `holes` or without
-    /// and the resolve into `targets` (`lit` or not) of deferred shading
-    /// unless they exist, over terrain's first group `camera`, both writing
-    /// depth of format `depth`; canvas and debug targets shade forward.
     fn ensure_deferred(
         &mut self,
         device: &wgpu::Device,
@@ -345,10 +303,6 @@ impl TerrainPipelines {
                 fragment,
                 constants: &self.shading.constants(),
                 targets: &color_targets,
-                // The depth of the point each pixel's view ray meets the
-                // ground's relief at replaces the mesh's the visibility
-                // pass left, nearer or farther: that pass already picked
-                // the pixels the terrain shows, so it tests none.
                 depth: Some(wgpu::DepthStencilState {
                     format: depth,
                     depth_write_enabled: Some(true),
@@ -361,8 +315,6 @@ impl TerrainPipelines {
         self.resolves.insert((targets, lit), pipeline);
     }
 
-    /// Creates the reflection probe faces' pipeline (`lit` or not) unless it
-    /// exists; faces mirror the world, so front faces turn clockwise.
     pub(crate) fn ensure_probe_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -395,7 +347,6 @@ impl TerrainPipelines {
         self.probe_pipelines.insert((lit, holes), pipeline);
     }
 
-    /// Creates the shadow clipmap's depth pipeline unless it exists.
     pub(crate) fn ensure_shadow_pipeline(&mut self, device: &wgpu::Device) {
         if self.shadow.is_some() {
             return;
@@ -419,17 +370,12 @@ impl TerrainPipelines {
                 vertex_constants: &[],
                 vertex: crate::entries::TERRAIN_SHADOW_VERTEX,
                 buffers: &[Some(patch_layout())],
-                // Both faces cast, as meshes' casters do.
                 primitive: wgpu::PrimitiveState::default(),
                 depth: Some(wgpu::DepthStencilState {
                     format: crate::shadows::SHADOW_FORMAT,
                     depth_write_enabled: Some(true),
                     depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: Default::default(),
-                    // Terrain is seen at grazing angles over texels
-                    // meters wide: its depth also slides back by its
-                    // slope, so the facets of a texel never shadow the
-                    // surface they make.
                     bias: wgpu::DepthBiasState {
                         constant: 2,
                         slope_scale: 2.5,
@@ -442,9 +388,6 @@ impl TerrainPipelines {
     }
 }
 
-/// The pipeline layout of terrain's mesh passes: terrain's first group
-/// (`bindings::CAMERA_TERRAIN`), terrain's, and for `lit` pipelines an empty
-/// group and the lights.
 fn pipeline_layout(
     device: &wgpu::Device,
     camera: &crate::pipelines::GroupLayout,
@@ -468,11 +411,6 @@ fn pipeline_layout(
     })
 }
 
-/// A pipeline drawing a subdivision's leaves, cutting holes or not,
-/// through `vertex` and `fragment`, which shades a scene of the features
-/// given (pipelines shading nothing take none); leaves read no vertex
-/// buffers, only their instance and the lattice vertex their meshlet's
-/// indices name (`surface::SurfaceDraw`).
 fn geometry(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,

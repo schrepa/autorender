@@ -1,10 +1,3 @@
-//! What other programs load the machine with while a measuring tool times a
-//! run of another process: their share of the processors, their share of
-//! the GPU engines the run uses, and the run's GPU clock. On Windows these
-//! come from the system for any GPU whose driver reports them (processor
-//! times, the `GPU Engine` performance counters, the display driver's
-//! engine clocks); other systems report none yet.
-
 #![cfg_attr(
     windows,
     expect(
@@ -13,30 +6,19 @@
     )
 )]
 
-/// What other programs did during a window of a run.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Load {
-    /// Other processes' share of every logical processor's time, in percent.
     pub foreign_cpu_pct: Option<f64>,
-    /// The largest share other processes took of a GPU engine the run had
-    /// used before the window, in percent.
     pub foreign_gpu_pct: Option<f64>,
-    /// The clock of the run's GPU's 3D engine, in MHz: the first and last
-    /// readings while it ran in the window (drivers may report none while
-    /// the engine sleeps between frames).
     pub gpu_clock_mhz: [Option<f64>; 2],
 }
 
-/// Watches a run's process and the machine around it over one window;
-/// "other processes" are all but the run's and this one.
 pub struct Monitor {
     #[cfg(windows)]
     inner: Option<windows::Monitor>,
 }
 
 impl Monitor {
-    /// Ready to watch process `pid`; opening what it reads now keeps that
-    /// out of the window.
     pub fn new(pid: u32) -> Self {
         #[cfg(not(windows))]
         let _ = pid;
@@ -46,7 +28,6 @@ impl Monitor {
         }
     }
 
-    /// The window starts.
     pub fn start(&mut self) {
         #[cfg(windows)]
         if let Some(inner) = &mut self.inner {
@@ -54,7 +35,6 @@ impl Monitor {
         }
     }
 
-    /// The window ends: what other programs did since it started.
     pub fn end(&mut self) -> Load {
         #[cfg(windows)]
         if let Some(inner) = &mut self.inner {
@@ -88,30 +68,21 @@ mod windows {
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
 
-    /// A GPU: its driver's handle, its LUID as the counters name it, and its
-    /// 3D engine's node when the driver reports that node's clock.
     struct Adapter {
         handle: u32,
         luid: String,
         node: Option<u32>,
     }
 
-    /// The machine at one moment.
     struct Snapshot {
         at: Instant,
-        /// All processors' busy and total time, in 100 ns.
         system: Option<(u64, u64)>,
-        /// The run's and this process's processor time, in 100 ns.
         processes: Option<(u64, u64)>,
-        /// Each `GPU Engine` counter instance's running time, in 100 ns.
         engines: HashMap<String, i64>,
     }
 
-    /// How often the window reads the clocks.
     const CLOCK_EVERY: Duration = Duration::from_millis(2);
 
-    /// Reads each adapter's 3D engine clock until stopped: its first and
-    /// last readings, in Hz.
     struct Clocks {
         stop: Arc<AtomicBool>,
         thread: JoinHandle<Vec<[Option<u64>; 2]>>,
@@ -197,7 +168,6 @@ mod windows {
                 }
                 _ => None,
             };
-            // The run's GPU: the adapter of the engine it had used most.
             let run = format!("pid_{}_", self.pid);
             let used: Vec<(&str, &str, i64)> = start
                 .engines
@@ -256,7 +226,6 @@ mod windows {
             // SAFETY: plain calls filling the times passed.
             let system =
                 (unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) } != 0).then(|| {
-                    // Kernel time includes idle time.
                     let total = ticks(kernel) + ticks(user);
                     (total.saturating_sub(ticks(idle)), total)
                 });
@@ -271,7 +240,6 @@ mod windows {
             }
         }
 
-        /// Each `GPU Engine` instance's running time now.
         fn engines(&self) -> HashMap<String, i64> {
             let mut engines = HashMap::default();
             if self.counter.is_null() {
@@ -313,7 +281,6 @@ mod windows {
     }
 
     impl Clocks {
-        /// Stops reading: each adapter's first and last readings.
         fn finish(self) -> Vec<[Option<u64>; 2]> {
             self.stop.store(true, Ordering::Relaxed);
             self.thread.join().unwrap_or_default()
@@ -322,7 +289,6 @@ mod windows {
 
     impl Drop for Monitor {
         fn drop(&mut self) {
-            // The clocks stop reading before their adapters close.
             if let Some((_, clocks)) = self.start.take() {
                 clocks.finish();
             }
@@ -341,16 +307,11 @@ mod windows {
         }
     }
 
-    /// `luid_..._phys_N_eng_M_engtype_T` without its `luid_`: the LUID and
-    /// the engine.
     fn engine(name: &str) -> Option<(&str, &str)> {
         let rest = name.strip_prefix("luid_").unwrap_or(name);
         rest.split_once("_phys_")
     }
 
-    /// Every GPU, with its first 3D engine node the driver answers clock
-    /// queries for (Intel's reports even the most it can run at as zero
-    /// while the engine sleeps).
     fn adapters() -> Vec<Adapter> {
         let mut list = D3DKMT_ENUMADAPTERS2::default();
         // SAFETY: the first call counts the adapters, the second opens
@@ -405,8 +366,6 @@ mod windows {
             .collect()
     }
 
-    /// The clock of `adapter`'s engine `node` now, in Hz, when the driver
-    /// reports one.
     fn clock(adapter: u32, node: u32) -> Option<u64> {
         let perf = query(
             adapter,
@@ -419,8 +378,6 @@ mod windows {
         (perf.Frequency > 0).then_some(perf.Frequency)
     }
 
-    /// The driver's answer about `adapter` of kind `kind`, asked with
-    /// `value`.
     fn query<T: Copy>(adapter: u32, kind: KMTQUERYADAPTERINFOTYPE, mut value: T) -> Option<T> {
         let mut info = D3DKMT_QUERYADAPTERINFO {
             hAdapter: adapter,
@@ -434,7 +391,6 @@ mod windows {
         (status == 0).then_some(value)
     }
 
-    /// A process's processor time, in 100 ns.
     fn cpu_time(process: HANDLE) -> Option<u64> {
         let (mut created, mut exited, mut kernel, mut user) = Default::default();
         // SAFETY: fills the times passed, or fails for a handle that is not

@@ -1,6 +1,3 @@
-//! The physics world: the solver, the bodies it holds and the world's
-//! solids near them, stepped once a fixed tick.
-
 use bevy_ecs::prelude::*;
 use engine_collision::{Collider, CollisionWorld};
 use engine_core::{
@@ -15,14 +12,9 @@ use crate::shapes::{BodyShape, body_shape};
 use crate::solver::Solver;
 use crate::statics::{Statics, groups};
 
-/// Meters about a body, and seconds of its motion ahead, within which the
-/// world's solids stand mirrored for it.
 const MARGIN: f32 = 2.0;
 const AHEAD: f32 = 0.5;
 
-/// A body the solver holds: its entity, handles, the settings, collider and
-/// scale it was built from, how water presses on it, the pose physics last
-/// wrote to its transform or took from it, and its status.
 struct Body {
     entity: Entity,
     handle: rp::RigidBodyHandle,
@@ -35,7 +27,6 @@ struct Body {
     status: BodyStatus,
 }
 
-/// A body's entity as it stands this tick.
 pub(crate) struct Wanted {
     entity: Entity,
     settings: RigidBody,
@@ -44,7 +35,6 @@ pub(crate) struct Wanted {
     root: bool,
 }
 
-/// What a body asks of the solver's body type.
 fn body_type(motion: BodyMotion) -> rp::RigidBodyType {
     match motion {
         BodyMotion::Dynamic => rp::RigidBodyType::Dynamic,
@@ -52,7 +42,6 @@ fn body_type(motion: BodyMotion) -> rp::RigidBodyType {
     }
 }
 
-/// A body's collider in the solver.
 fn solver_collider(settings: &RigidBody, collider: Collider, shape: &BodyShape) -> rp::Collider {
     rp::ColliderBuilder::new(shape.shape.clone())
         .density(settings.density)
@@ -64,7 +53,6 @@ fn solver_collider(settings: &RigidBody, collider: Collider, shape: &BodyShape) 
 }
 
 impl Body {
-    /// `wanted`'s body, joining `solver` with `shape`.
     fn join(
         solver: &mut Solver,
         wanted: &Wanted,
@@ -95,9 +83,6 @@ impl Body {
         }
     }
 
-    /// Follows `wanted`'s changes: its settings, collider and scale, and a
-    /// pose written to it since physics wrote one; true when that pose moved
-    /// it. A kinematic body moves to its transform's pose over the tick.
     fn follow(
         &mut self,
         solver: &mut Solver,
@@ -156,19 +141,15 @@ impl Body {
     }
 }
 
-/// The physics world: the solver, the bodies it holds, the world's solids
-/// near them, and what the last fixed tick did. Physics' plugin inserts it.
 #[derive(Resource, Default)]
 pub struct PhysicsWorld {
     solver: Option<Solver>,
-    // By entity, so every tick takes them in one order.
     bodies: Vec<Body>,
     problems: Vec<(Entity, BodyProblem)>,
     statics: Statics,
     stats: PhysicsStats,
 }
 
-/// The parts of a body's entity physics reads.
 pub(crate) type BodyQuery = (
     Entity,
     &'static RigidBody,
@@ -178,13 +159,10 @@ pub(crate) type BodyQuery = (
 );
 
 impl PhysicsWorld {
-    /// What physics did at the last fixed tick.
     pub fn stats(&self) -> PhysicsStats {
         self.stats
     }
 
-    /// What physics did with `entity`'s body at the last fixed tick; `None`
-    /// for an entity without one.
     pub fn status(&self, entity: Entity) -> Option<BodyStatus> {
         if let Ok(index) = self
             .bodies
@@ -201,15 +179,12 @@ impl PhysicsWorld {
             })
     }
 
-    /// Whether `entity` is a body the solver holds.
     pub(crate) fn holds(&self, entity: Entity) -> bool {
         self.bodies
             .binary_search_by_key(&entity, |body| body.entity)
             .is_ok()
     }
 
-    /// Each body as water meets it, where and as fast as the last step left
-    /// it.
     pub(crate) fn solids(&self) -> impl Iterator<Item = engine_core::WaterObstacle> + '_ {
         let solver = self.solver.as_ref();
         self.bodies.iter().filter_map(move |body| {
@@ -224,12 +199,10 @@ impl PhysicsWorld {
         })
     }
 
-    /// Whether it holds nothing to step.
     fn idle(&self) -> bool {
         self.solver.is_none() && self.problems.is_empty()
     }
 
-    /// One fixed tick of `wanted`'s bodies in `world`.
     fn tick(&mut self, world: &mut World, mut wanted: Vec<Wanted>) {
         wanted.sort_unstable_by_key(|wanted| wanted.entity);
         let settings = world
@@ -240,7 +213,6 @@ impl PhysicsWorld {
         let Some(time) = world.get_resource::<FixedTime>().copied() else {
             return;
         };
-        // Entities whose bodies all have problems hold no solver.
         let ready =
             |wanted: &Wanted| wanted.root && wanted.collider.is_some() && wanted.pose.is_some();
         if self.solver.is_none() && !wanted.iter().any(ready) {
@@ -288,7 +260,6 @@ impl PhysicsWorld {
             });
         }
         hold(&mut self.bodies, &self.statics, solver, world);
-        // Off, bodies hold where they stand: nothing pushes them.
         let samples = if settings.enabled {
             push(&mut self.bodies, solver, world, &settings, time)
         } else {
@@ -321,9 +292,6 @@ impl PhysicsWorld {
     }
 }
 
-/// Bodies join, follow and leave the solver as their entities do, each
-/// entity in `wanted` (by entity) holding one but those with a problem:
-/// the bodies that joined, and those a pose written to moved.
 fn join(
     bodies: &mut Vec<Body>,
     problems: &mut Vec<(Entity, BodyProblem)>,
@@ -378,8 +346,6 @@ fn join(
     (joined, moved)
 }
 
-/// The box about every moving body and where it is headed, within which
-/// the world's solids stand mirrored; `None` without one.
 fn reach(bodies: &[Body], solver: &Solver) -> Option<(Vec3, Vec3)> {
     bodies
         .iter()
@@ -395,8 +361,6 @@ fn reach(bodies: &[Body], solver: &Solver) -> Option<(Vec3, Vec3)> {
         .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
 }
 
-/// Dynamic bodies hold still over terrain whose solids collision does not
-/// hold yet, and move again once it does.
 fn hold(bodies: &mut [Body], statics: &Statics, solver: &mut Solver, world: &World) {
     for body in bodies {
         let Some(rigid) = solver.bodies.get_mut(body.handle) else {
@@ -413,8 +377,6 @@ fn hold(bodies: &mut [Body], statics: &Statics, solver: &mut Solver, world: &Wor
     }
 }
 
-/// The world's water and wind push each moving dynamic body: the water
-/// samples they took.
 fn push(
     bodies: &mut [Body],
     solver: &mut Solver,
@@ -455,8 +417,6 @@ fn push(
             &mut samples,
         );
         rigid.set_angular_damping(pushed.damping);
-        // Forces never keep a body awake, so bodies at rest fall asleep in
-        // still water and air; a current wakes one asleep in it.
         let sleeping = rigid.is_sleeping();
         if !sleeping || pushed.running {
             rigid.add_force(pushed.force, sleeping);
@@ -467,8 +427,6 @@ fn push(
     samples
 }
 
-/// Each dynamic body's pose to its transform, where it changed, and every
-/// body's status.
 fn write(bodies: &mut [Body], solver: &Solver, world: &mut World) {
     for body in bodies {
         let Some(rigid) = solver.bodies.get(body.handle) else {
@@ -499,10 +457,6 @@ fn write(bodies: &mut [Body], solver: &Solver, world: &mut World) {
     }
 }
 
-/// Physics' fixed tick: bodies join and leave, the world's solids near them
-/// follow the collision world, water and wind push them, the solver steps,
-/// and their poses are written. Worlds without bodies do no more than look
-/// for one.
 pub(crate) fn step(world: &mut World, query: &mut QueryState<BodyQuery>) {
     let _profile = engine_profile::span("physics", "step");
     let wanted: Vec<Wanted> = query

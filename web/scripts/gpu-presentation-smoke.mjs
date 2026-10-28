@@ -1,21 +1,12 @@
-/** GPU presentation against the exact CPU reference in real Chrome, and its
- * occlusion and sub-pixel culling settings: inspected, changed by the
- * paused environment control and observed in GPU-presented frames. */
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { artifacts, commander, devUrl, differentPixels, launch, openPaused, waitFrames } from "./harness.mjs";
 
-// Every renderable moves; hierarchy, textures and several meshes exercise
-// composition, per-group bounds and compaction across draw groups.
 const config = {
   seed: 7, renderables: 6000, moving_percent: 100, hierarchy: true, interpolation: true, colliders: 200,
   sensor_percent: 10, dense_colliders: false, queries_per_tick: 8, mesh_variety: 8, textured: true, culling: true,
 };
-// Without interpolation, moving nodes compose on the GPU from their current
-// locals instead of CPU authority rows; they must match the CPU reference too.
-// A still workload settles first: GPU frames then shadow it from the kept map,
-// CPU references from the map redrawn every frame.
 const workloads = [
   { label: "interpolated", config, fractional: true, culling: true },
   { label: "authoritative", config: { ...config, interpolation: false }, fractional: false },
@@ -31,7 +22,6 @@ async function capture(name, fields) {
   return { reply, png: bytes.toString("base64") };
 }
 
-// Counters partition candidates on both paths; this workload is below budget.
 function partition(rendering, label) {
   const { render_candidates, invalid_transforms, missing_assets, culled_instances, visible_instances, dropped_instances = 0, instances } = rendering;
   assert.equal(render_candidates, invalid_transforms + missing_assets + culled_instances + visible_instances, `${label}: counters must partition candidates`);
@@ -40,9 +30,6 @@ function partition(rendering, label) {
   return rendering;
 }
 
-// A GPU-presented frame reports the visible count read back from an earlier
-// frame; repeating the identical preview returns that frame's own count once
-// it arrived, one frame late, which a GPU falling behind delays.
 async function gpuCapture(name, alpha) {
   for (let attempt = 1; ; attempt++) {
     await command("present", { alpha, gpu: true });
@@ -60,7 +47,6 @@ async function compare(label, alpha) {
   assert.equal(cpu.reply.observation.presentation.gpu_pending, false);
   const reference = partition(cpu.reply.result.rendering, `${label} cpu`);
   const gpu = await gpuCapture(`${label}-gpu`, alpha);
-  // Tolerate edge pixels from f32 rounding differences between WGSL and glam.
   const pixels = await differentPixels(page, [cpu.png, gpu.png], { tolerance: 8 });
   assert.ok(pixels.changed <= pixels.total * 0.001, `${label}: ${pixels.changed} of ${pixels.total} pixels differ`);
   const candidates = reference.render_candidates;
@@ -70,10 +56,6 @@ async function compare(label, alpha) {
   return { label, alpha, candidates, cpu_visible: reference.visible_instances, gpu_visible: gpu.rendering.visible_instances, changed_pixels: pixels.changed, cpu: cpu.png };
 }
 
-// Occlusion and sub-pixel culling are environment sections: on by default,
-// run by GPU-presented frames (two drawing phases around the occlusion test),
-// and turned off and on again by the paused environment control without
-// changing what the frame shows.
 async function cullingSettings(label) {
   const inspect = async component => (await command("inspect", { component })).result.value;
   assert.deepEqual(await inspect("OcclusionCulling"), { enabled: true });
@@ -102,8 +84,6 @@ async function verify(workload) {
   const url = devUrl("stress.html", { config: workload.config });
   await openPaused(page, url);
   if (workload.settle) {
-    // Ordinary frames until the shadow clipmap holds every tile the pixels
-    // read and stopped redrawing.
     await command("resume");
     await waitFrames(command, 2, {
       done: ({ result }) => result.rendering.shadows.tiles_missing === 0 && result.rendering.shadows.tiles_drawn === 0,
@@ -131,13 +111,11 @@ async function verify(workload) {
   assert.equal(after.observation.tick, overview.observation.tick, "Previews must not advance simulation.");
   if (workload.culling) await cullingSettings(workload.label);
 
-  // Inspection materializes the pending GPU frame's exact CPU reference.
   const state = await command("inspect", { component: "PresentationState" });
   assert.equal(state.observation.presentation.gpu_pending, true);
   assert.equal(state.result.value.gpu_pending, false);
   assert.equal(state.result.value.mode, "interpolated");
 
-  // Ordinary frames use GPU presentation by default.
   await command("resume");
   await waitFrames(command, 3);
   const resumed = await command("pause");

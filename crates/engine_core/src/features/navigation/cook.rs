@@ -1,14 +1,5 @@
-//! Cooking navigation, while a session cooks ([`Cooking`]): for each
-//! agent's terrain and gait, every tile's portals of the walk graph, as
-//! records the host keeps for its pack, asked for row by row and dropped as
-//! they arrive. The tiles' records walks read their grounds from cook with
-//! their terrain.
-
 use super::*;
 
-/// A walk graph cooking: its terrain, as it stood when cooking began, its
-/// gait, its tiles in order, the next to ask for and the records asked for
-/// and not yet back.
 pub(super) struct CookGraph {
     terrain: WalkedTerrain,
     gait: Gait,
@@ -18,10 +9,6 @@ pub(super) struct CookGraph {
 }
 
 impl NavAgents {
-    /// Cooks the walk graph of every agent's terrain at its gait, asking
-    /// for records as `jobs` admits them; says in `cooking` how many are
-    /// left: a terrain under an agent still baking counts one, and each
-    /// tile's portals not back yet one.
     pub(super) fn cook(
         &mut self,
         terrains: &Terrains,
@@ -88,7 +75,6 @@ impl NavAgents {
         cooking.left("navigation", left);
     }
 
-    /// The jobs of the records cooking asked for and not yet back.
     pub(super) fn cooking_jobs(&self) -> impl Iterator<Item = JobId> + '_ {
         self.cook
             .iter()

@@ -1,12 +1,3 @@
-//! The Stress Lab's content as digests: each of its five scenes built as
-//! its native host builds it (the dense scene from the generated meshes it
-//! reads; the highlands without their generated ground materials, in plain
-//! colors), run for 120 fixed ticks, then digested by
-//! the development tools' `digest` query: every component's views and
-//! every asset, hashed so neither entity ids nor spawn order count. Equal
-//! digests between two builds mean the same assets, the same spawned
-//! components and the same transforms.
-
 use engine::collections::HashMap;
 use std::path::Path;
 

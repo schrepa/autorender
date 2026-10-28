@@ -1,12 +1,3 @@
-//! A game drawn into an offscreen texture, without a window: for tools,
-//! agents and measurements on machines whose GPU has no display, or where
-//! none is wanted. [`Offscreen::record`] is the one way tools draw frames
-//! and keep what they ask for: a frame-exact GPU capture of the last
-//! frame, a deep profile of them all, and the last frame's per-draw
-//! hardware counters replayed through PIX; the command line
-//! ([`crate::HostOptions`]) and development sessions' `profile` both draw
-//! through it.
-
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -18,40 +9,25 @@ use crate::files::Image;
 use crate::jobs::{JobOptions, JobPool};
 use crate::{Pix, RenderDoc, host_error};
 
-/// A game drawn offscreen.
 pub struct Offscreen<G: Game> {
-    // Tens of kilobytes: boxed, as moves would copy it through the stack.
     host: Box<GameHost<G>>,
-    // Physical pixels.
     size: (u32, u32),
     jobs: JobPool,
 }
 
-/// How many frames [`Offscreen::record`] draws: a count, or as many as
-/// fit in a time, and then one more, the last.
 #[derive(Clone, Copy, Debug)]
 pub enum Frames {
     Count(u32),
     For(Duration),
 }
 
-/// What [`Offscreen::record`] keeps of the frames it draws.
 #[derive(Clone, Debug, Default)]
 pub struct Record {
-    /// The last frame's GPU work, frame-exact, at this path (see
-    /// [`Offscreen::capture_frame`]).
     pub gpu_capture: Option<PathBuf>,
-    /// A deep profile of every frame (builds with the `profiling` feature).
     pub profile: Option<ProfileRecord>,
-    /// The last frame captured through PIX, on D3D12, and replayed for each
-    /// draw's hardware counters (builds with the `profiling` feature).
     pub pix_counters: Option<PixRecord>,
 }
 
-/// A deep profile's files: into `folder`, named after `stem`, of at most
-/// `max_events` CPU events (the engine's most, where `None`), with CPU
-/// samples of the game's threads where `cpu_samples`, and `context` (what
-/// ran) in its summary.
 #[derive(Clone, Debug)]
 pub struct ProfileRecord {
     pub folder: PathBuf,
@@ -61,38 +37,25 @@ pub struct ProfileRecord {
     pub context: Value,
 }
 
-/// PIX's per-draw hardware counters of the last frame: its capture
-/// (`frame.wpix`), event list and summary into `folder`, of the counters
-/// `counters` names (PIX's names), or of the summary's own where empty.
 #[derive(Clone, Debug)]
 pub struct PixRecord {
     pub folder: PathBuf,
     pub counters: Vec<String>,
 }
 
-/// What [`Offscreen::record`] drew and kept.
 #[derive(Debug)]
 pub struct Recorded {
     pub frames: u32,
-    /// Each frame's CPU time: its simulation, extraction and rendering.
     pub cpu_ms: Vec<f64>,
     pub elapsed_ms: f64,
-    /// The tool that captured the last frame: `pix`, `renderdoc` or
-    /// `debugger`.
     pub captured: Option<&'static str>,
-    /// Where the last frame was captured to.
     pub capture: Option<PathBuf>,
-    /// The deep profile's files, and whether it was complete.
     pub profile: Option<Value>,
-    /// The summary of PIX's replayed counters.
     pub pix_counters: Option<Value>,
-    /// The failure that stopped the frames early.
     pub failed: Option<engine::Error>,
 }
 
 impl<G: Game> Offscreen<G> {
-    /// The game `build` makes, drawn into a `size` texture on the `gpu`
-    /// preferred, its jobs run as `jobs` say.
     pub fn launch<E: Into<engine::Error>>(
         size: (u32, u32),
         gpu: GpuPreference,
@@ -102,7 +65,6 @@ impl<G: Game> Offscreen<G> {
         Self::launch_with(size, gpu, jobs.pool(false), build)
     }
 
-    /// [`Self::launch`], its jobs run by `jobs`.
     pub fn launch_with<E: Into<engine::Error>>(
         size: (u32, u32),
         gpu: GpuPreference,
@@ -110,27 +72,18 @@ impl<G: Game> Offscreen<G> {
         build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> engine::Result<Self> {
         let target = RenderTarget::Offscreen { size, gpu };
-        // The startup future holds the renderer's whole start (some 80 KB for
-        // the Stress Lab): on the heap, not the calling thread's stack.
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
             target, build,
         )))?);
-        // Offscreen frames, captures and measured runs among them, keep their
-        // size: no dynamic resolution, unless the options turn it on.
         host.set_dynamic_resolution(false);
         jobs.attach(&mut host);
         Ok(Self { host, size, jobs })
     }
 
-    /// Its size in physical pixels.
     pub fn size(&self) -> (u32, u32) {
         self.size
     }
 
-    /// Draws `frames` frames, the `n`th at the timestamp `at(n)` gives, and
-    /// keeps what `record` asks for. PIX captures need `pix`, loaded before
-    /// the game's device existed. Frames stop at the first that fails, which
-    /// the result tells; what was kept of the others is kept.
     pub fn record(
         &mut self,
         frames: Frames,
@@ -249,11 +202,6 @@ impl<G: Game> Offscreen<G> {
         })
     }
 
-    /// Starts a deep profile of the frames drawn until
-    /// [`Self::finish_profile`]: the engine's capture of at most
-    /// `max_events` CPU events and every frame's GPU spans, and with
-    /// `cpu_samples` samples of the calling thread, which draws the game,
-    /// and the job workers.
     #[cfg(feature = "profiling")]
     fn start_profile(
         &mut self,
@@ -272,8 +220,6 @@ impl<G: Game> Offscreen<G> {
             .map_err(|error| host_error("Profiling could not start", error))
     }
 
-    /// Stops the deep profile `capture` and writes its files into `folder`
-    /// as `stem`, with `context` (what ran) in its summary.
     #[cfg(feature = "profiling")]
     fn finish_profile(
         &mut self,
@@ -287,13 +233,10 @@ impl<G: Game> Offscreen<G> {
             .map_err(|error| host_error("Profiling failed", error))
     }
 
-    /// Hands workers the jobs the engine made, and the engine what workers
-    /// finished: frames do so, and hosts between them.
     pub fn exchange_jobs(&mut self) {
         self.jobs.exchange(&mut self.host);
     }
 
-    /// Its job pool.
     pub fn jobs_mut(&mut self) -> &mut JobPool {
         &mut self.jobs
     }
@@ -306,9 +249,6 @@ impl<G: Game> Offscreen<G> {
         &mut self.host
     }
 
-    /// Draws the starting state at `timestamp` milliseconds until frames
-    /// stop creating pipelines, terrains have loaded the view and game
-    /// code's records arrived, as a window does before play starts.
     pub fn prepare(&mut self, timestamp: f64) -> engine::Result<()> {
         let (width, height) = self.size;
         self.host.set_preparation(true);
@@ -319,16 +259,11 @@ impl<G: Game> Offscreen<G> {
         Ok(())
     }
 
-    /// One frame at `timestamp` milliseconds, without input, once the GPU
-    /// drew it: offscreen frames present nowhere that would pace them.
     pub fn frame(&mut self, timestamp: f64) -> engine::Result<()> {
         self.frame_in_flight(timestamp)?;
         self.host.wait_for_gpu()
     }
 
-    /// One frame at `timestamp` milliseconds, without input, submitted to
-    /// the GPU without waiting for it to draw: hosts that keep frames in
-    /// flight wait for their marks ([`GameHost::gpu_mark`]).
     pub fn frame_in_flight(&mut self, timestamp: f64) -> engine::Result<()> {
         let (width, height) = self.size;
         self.host.frame(timestamp, width, height)?;
@@ -336,12 +271,6 @@ impl<G: Game> Offscreen<G> {
         Ok(())
     }
 
-    /// One frame at `timestamp`, captured frame-exact into `path`: by PIX
-    /// where `pix` is loaded and the game draws on D3D12; else by RenderDoc
-    /// where the program runs under it (into a file named after `path`,
-    /// `_capture.rdc`); else by the graphics debugger wgpu reaches (Xcode with
-    /// `MTL_CAPTURE_ENABLED=1`), which writes its own files. Which captured
-    /// it: `pix`, `renderdoc` or `debugger` (where one is attached).
     pub fn capture_frame(
         &mut self,
         timestamp: f64,
@@ -349,7 +278,6 @@ impl<G: Game> Offscreen<G> {
         path: &Path,
     ) -> engine::Result<&'static str> {
         let pix = pix.filter(|_| self.host.adapter().backend == "Dx12");
-        // Work submitted before belongs to earlier frames.
         self.host.wait_for_gpu()?;
         if let Some(pix) = pix {
             pix.begin(path).map_err(|error| host_error("PIX", error))?;
@@ -373,7 +301,6 @@ impl<G: Game> Offscreen<G> {
         frame.map(|()| "debugger")
     }
 
-    /// The last frame's pixels, once the GPU finished it.
     pub fn image(&self) -> engine::Result<Image> {
         let (width, height, pixels) = self
             .host
@@ -386,7 +313,6 @@ impl<G: Game> Offscreen<G> {
         })
     }
 
-    /// The last frame as a PNG file at `path`.
     pub fn save_png(&self, path: &Path) -> engine::Result<()> {
         let image = self.image()?;
         let failed = |error: &dyn std::fmt::Display| {

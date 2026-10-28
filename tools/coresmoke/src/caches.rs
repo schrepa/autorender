@@ -1,14 +1,3 @@
-//! The incremental caches against fresh engines. One engine lives through
-//! seeded random edits (spawns, despawns of whole subtrees, moves,
-//! reparenting, teleports, meshes, cubes, tints, interpolation and drifting
-//! switched on and off) before and after each fixed tick, in which drifting
-//! entities move, and a frame at a random fraction after each tick. Every
-//! `CHECK_EVERY` ticks a fresh engine is built from its state before the
-//! tick, both apply the tick's edits and run it, and their world matrices,
-//! interpolated poses and render snapshots at fractions 0, 0.37 and 1 must
-//! agree to the bit: what the caches kept up incrementally is what
-//! computing from scratch gives.
-
 use engine::collections::HashMap;
 use std::fmt::Write as _;
 
@@ -23,7 +12,6 @@ use engine_core::{
 use crate::Report;
 use crate::random::Random;
 
-/// The seed of the edits, unless `--seed` names another.
 pub const SEED: u64 = 0x5eed_c0de;
 const ENTITIES: usize = 2000;
 const TICKS: u64 = 200;
@@ -32,10 +20,8 @@ const EDITS_BEFORE_TICK: usize = 24;
 const EDITS_AFTER_TICK: usize = 6;
 const FRACTIONS: [f32; 3] = [0.0, 0.37, 1.0];
 const ASPECT: f32 = 16.0 / 9.0;
-/// Mismatches a failed check lists at most.
 const SHOWN: usize = 8;
 
-/// The meshes and materials both engines hold, in the same slots.
 struct Assets {
     meshes: Vec<MeshHandle>,
     materials: Vec<MaterialHandle>,
@@ -51,7 +37,6 @@ impl Assets {
             .into_iter()
             .map(|mesh| library.insert_mesh(mesh).map_err(|error| error.to_string()))
             .collect::<Result<_, _>>()?;
-        // Two opaque materials and a transparent one.
         let materials = [
             ([0.8, 0.3, 0.2, 1.0], 1.0),
             ([0.2, 0.6, 0.9, 1.0], 1.0),
@@ -69,12 +54,9 @@ impl Assets {
     }
 }
 
-/// What an entity is authored with: everything a fresh engine needs to
-/// hold it the same way.
 #[derive(Clone, Copy, Debug)]
 struct Authored {
     transform: Transform,
-    /// Its mesh and material, by their indices in [`Assets`].
     mesh: Option<(usize, usize)>,
     cube: Option<[f32; 4]>,
     tint: Option<[f32; 4]>,
@@ -83,13 +65,9 @@ struct Authored {
     parent: Option<Entity>,
 }
 
-/// Moves its entity every fixed tick: what interpolation presents between
-/// ticks.
 #[derive(Component, Clone, Copy, Debug)]
 struct Drift {
-    /// Meters a tick.
     velocity: Vec3,
-    /// Radians a tick about the entity's own y.
     spin: f32,
 }
 
@@ -100,11 +78,9 @@ fn drift(mut drifting: Query<(&mut Transform, &Drift)>) {
     }
 }
 
-/// One edit of the world, naming the living engine's entities.
 #[derive(Clone, Copy, Debug)]
 enum Edit {
     Spawn(Authored),
-    /// The entity and its descendants.
     Despawn(Entity),
     Move(Entity, Transform),
     Parent(Entity, Option<Entity>),
@@ -176,7 +152,6 @@ fn authored(random: &mut Random, parent: Option<Entity>) -> Authored {
     }
 }
 
-/// The entities the engine holds with transforms, in its own order.
 fn entities(world: &mut World) -> Vec<Entity> {
     world
         .query_filtered::<Entity, With<Transform>>()
@@ -184,8 +159,6 @@ fn entities(world: &mut World) -> Vec<Entity> {
         .collect()
 }
 
-/// What `world` holds of `entity`, its mesh and material by their indices
-/// in `assets`, the world's own.
 fn read(world: &World, assets: &Assets, entity: Entity) -> Authored {
     let mesh = world.get::<Mesh3d>(entity).map(|mesh| {
         (
@@ -206,7 +179,6 @@ fn read(world: &World, assets: &Assets, entity: Entity) -> Authored {
     }
 }
 
-/// Where `handle` is in `handles`: an asset the smoke made.
 fn index<T: PartialEq>(handles: &[T], handle: T) -> usize {
     handles
         .iter()
@@ -214,7 +186,6 @@ fn index<T: PartialEq>(handles: &[T], handle: T) -> usize {
         .expect("entities draw the smoke's own meshes and materials")
 }
 
-/// Spawns `authored` without its parent, which callers set.
 fn spawn(world: &mut World, assets: &Assets, authored: &Authored) -> Entity {
     let mut entity = world.spawn(authored.transform);
     if let Some((mesh, material)) = authored.mesh {
@@ -238,7 +209,6 @@ fn spawn(world: &mut World, assets: &Assets, authored: &Authored) -> Entity {
     entity.id()
 }
 
-/// `entity` and its descendants, parents first.
 fn subtree(world: &mut World, entity: Entity) -> Vec<Entity> {
     let mut children: HashMap<Entity, Vec<Entity>> = HashMap::default();
     for (child, parent) in world.query::<(Entity, &Parent)>().iter(world) {
@@ -253,8 +223,6 @@ fn subtree(world: &mut World, entity: Entity) -> Vec<Entity> {
     found
 }
 
-/// Applies `edit` to `world`, its entities named through `map`; the entity
-/// a spawn made.
 fn apply(
     world: &mut World,
     assets: &Assets,
@@ -265,8 +233,6 @@ fn apply(
         Edit::Spawn(authored) => {
             let entity = spawn(world, assets, &authored);
             if let Some(parent) = authored.parent {
-                // A parent that would close a cycle, or nest too deep, is
-                // refused alike in both engines.
                 let _ = set_parent(world, entity, Some(map(parent)));
             }
             return Some(entity);
@@ -359,7 +325,6 @@ fn apply(
     None
 }
 
-/// `count` edits of the living engine's `entities`.
 fn edits(random: &mut Random, entities: &[Entity], count: usize) -> Vec<Edit> {
     let any = |random: &mut Random| entities[random.below(entities.len())];
     (0..count)
@@ -398,8 +363,6 @@ fn edits(random: &mut Random, entities: &[Entity], count: usize) -> Vec<Edit> {
         .collect()
 }
 
-/// Builds a fresh engine holding what `living` holds now; the living
-/// engine's entities mapped to the fresh one's.
 fn rebuild(
     living: &mut Engine,
     living_assets: &Assets,
@@ -427,8 +390,6 @@ fn rebuild(
     Ok((fresh, assets, map))
 }
 
-/// One engine's frame at `alpha`: each entity's world and presented
-/// matrices, and the snapshot's instances, sorted, with its counts.
 struct Frame {
     globals: HashMap<Entity, Option<[u32; 16]>>,
     presented: HashMap<Entity, Option<[u32; 16]>>,
@@ -484,7 +445,6 @@ fn frame(engine: &mut Engine, alpha: f32, snapshot: &mut RenderSnapshot) -> Resu
     })
 }
 
-/// A matrix's bits as its numbers, or that it is invalid.
 fn readable(bits: &Option<[u32; 16]>) -> String {
     bits.map_or_else(
         || "invalid".to_owned(),
@@ -492,8 +452,6 @@ fn readable(bits: &Option<[u32; 16]>) -> String {
     )
 }
 
-/// Where the living engine's `frame` and the fresh one's (its entities
-/// named through `map`) disagree.
 fn differences(
     living: &Frame,
     fresh: &Frame,
@@ -543,12 +501,8 @@ fn differences(
     found
 }
 
-/// The living engine, and the fresh one built at a check with its
-/// entities mapped from the living one's.
 type Fresh = Option<(Engine, Assets, HashMap<Entity, Entity>)>;
 
-/// Applies `edits` to the living engine and the fresh one, if any, logging
-/// each with `when`.
 fn apply_both(
     living: &mut Engine,
     assets: &Assets,
@@ -570,7 +524,6 @@ fn apply_both(
     }
 }
 
-/// A tick's edits: `count` of them, of the entities the engine holds.
 fn edits_of(random: &mut Random, engine: &mut Engine, count: usize) -> Vec<Edit> {
     let held = entities(engine.app.world_mut());
     if held.is_empty() {
@@ -609,8 +562,6 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
         } else {
             None
         };
-        // Edits before the tick, which it simulates from; then between it
-        // and the frame, which presents them.
         let before = edits_of(&mut random, &mut living, EDITS_BEFORE_TICK);
         apply_both(
             &mut living,

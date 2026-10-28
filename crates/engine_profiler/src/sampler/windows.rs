@@ -1,7 +1,3 @@
-//! Windows: the sampler suspends the thread, reads its registers and
-//! unwinds it with the system's unwind tables, then resumes it. Opening a
-//! thread of one's own process for that needs no privilege.
-
 #![expect(
     unsafe_code,
     reason = "suspends threads, reads their registers and unwinds them"
@@ -21,7 +17,6 @@ pub(super) const METHOD: Option<&str> =
 #[derive(Clone, Copy)]
 pub(super) struct Id(u32);
 
-/// A thread opened for sampling.
 pub(super) struct Open(HANDLE);
 
 impl Drop for Open {
@@ -66,8 +61,6 @@ pub(super) fn cpu_ns(Open(handle): &Open) -> Option<u64> {
     (read != 0).then(|| (cycles as f64 * nanos_per_cycle()) as u64)
 }
 
-/// Nanoseconds per cycle of the counter thread CPU time counts in, measured
-/// once against the clock while this thread spins.
 fn nanos_per_cycle() -> f64 {
     static SCALE: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
     *SCALE.get_or_init(|| {
@@ -135,8 +128,6 @@ unsafe fn unwind(context: &mut CONTEXT, (low, high): (u64, u64), frames: &mut [u
         unsafe {
             let entry = RtlLookupFunctionEntry(context.Rip, &mut base, std::ptr::null_mut());
             if entry.is_null() {
-                // A leaf function keeps its return address at the stack's
-                // top.
                 context.Rip = *(context.Rsp as *const u64);
                 context.Rsp += 8;
             } else {
@@ -158,7 +149,6 @@ unsafe fn unwind(context: &mut CONTEXT, (low, high): (u64, u64), frames: &mut [u
     depth
 }
 
-/// Windows on Arm keeps frame records: the frame pointer chain.
 #[cfg(target_arch = "aarch64")]
 unsafe fn unwind(context: &mut CONTEXT, (low, high): (u64, u64), frames: &mut [u64]) -> usize {
     // SAFETY: the register union's named view of a full context.

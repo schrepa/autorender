@@ -1,16 +1,3 @@
-//! Tiles' shading: the control values and smooth surface's gradients a
-//! terrain's tiles of level 1 and coarser shade with, level 0's averaged
-//! ([`TileShading`]), so the ground seen far away is the ground seen near,
-//! averaged: its materials, how wet it is and how its slopes turn to the
-//! light. Each sample of a level-1 tile takes the tent average of the
-//! level-0 samples within one of its spacings, weights 1, 2 and 1 along each
-//! axis, over those within the terrain: their control values as the
-//! surface's rules give the level-0 tiles' samples, from the heights and
-//! rivers those tiles' records hold, and the gradients those heights give.
-//! Each coarser level's samples take the same average of the level finer's
-//! shading. Every sum runs in a fixed order, materials' weights and wetness
-//! in whole numbers, so every host makes the same bits.
-
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -22,20 +9,11 @@ use crate::{
     Tile, TileKey,
 };
 
-/// Samples along each side of a tile's shading, its edges included, and
-/// its samples.
 const SIDE: usize = TILE_SAMPLES as usize;
 const AREA: usize = SIDE * SIDE;
 
-/// The level-0 samples along each side a level-1 tile's shading reads: its
-/// own at twice its spacing, and one past them on each side.
 const WINDOW: usize = 2 * TILE_QUADS as usize + 3;
 
-/// A tile's shading: its key, and at each of its samples (0 to 256 along x
-/// and z, rows along z) its packed control value ([`Control::packed`]) and
-/// the gradient of its smooth surface, its rise per meter along x and z as
-/// the two halves of a word, the low one along x: as the GPU packs a normal
-/// map's texel.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TileShading {
     key: TileKey,
@@ -44,20 +22,10 @@ pub struct TileShading {
 }
 
 impl TileShading {
-    /// Whether a terrain's tiles of `level` shade with their shading, level
-    /// 0's averaged: those of level 1 and coarser, but for a terrain's
-    /// surroundings (`around`), whose ground lies mostly where no level-0
-    /// tile stands and whose tiles shade with their own samples, as level-0
-    /// tiles do.
     pub fn shades(level: u8, around: bool) -> bool {
         level > 0 && !around
     }
 
-    /// The tiles of the level finer than tile `key` (of level 1 or coarser)
-    /// of `pyramid` whose samples its shading averages: the 4 × 4 around its
-    /// 2 × 2 children, as its edge samples read one sample into the tiles
-    /// around them, those within the pyramid, row by row along z. None for
-    /// a level-0 tile.
     pub fn reads(pyramid: &Pyramid, key: TileKey) -> Vec<TileKey> {
         let Some(finer) = key.level.checked_sub(1) else {
             return Vec::new();
@@ -81,45 +49,33 @@ impl TileShading {
         self.key
     }
 
-    /// Each sample's packed control value, rows along z.
     pub fn control(&self) -> &[u32] {
         &self.control
     }
 
-    /// Each sample's gradient as the two halves of a word, rows along z.
     pub fn gradients(&self) -> &[u32] {
         &self.gradients
     }
 
-    /// The control value of sample `(x, z)`, the nearest sample's past the
-    /// tile's.
     pub fn control_at(&self, x: i32, z: i32) -> Control {
         let last = SIDE as i32 - 1;
         let (x, z) = (x.clamp(0, last) as usize, z.clamp(0, last) as usize);
         Control::unpack(self.control[z * SIDE + x])
     }
 
-    /// Its control values as a tile's layers hold them: its samples with a
-    /// border of one, each border texel its nearest sample's, row by row.
     pub fn control_texels(&self) -> Box<[u32]> {
         stored(&self.control)
     }
 
-    /// Its gradients as a tile's normal maps hold them: its samples with a
-    /// border of one, each border texel its nearest sample's, row by row.
     pub fn gradient_texels(&self) -> Box<[u32]> {
         stored(&self.gradients)
     }
 
-    /// Bytes it holds in memory.
     pub fn bytes(&self) -> u64 {
         ((self.control.len() + self.gradients.len()) * 4) as u64
     }
 }
 
-/// `plane`, a value at each of a tile's samples, laid out as a tile stores
-/// its samples ([`TILE_STRIDE`] a row): each border texel its nearest
-/// sample's.
 fn stored(plane: &[u32]) -> Box<[u32]> {
     let stride = TILE_STRIDE as usize;
     (0..stride * stride)
@@ -131,11 +87,6 @@ fn stored(plane: &[u32]) -> Box<[u32]> {
         .collect()
 }
 
-/// A tile's shading travels as its key, then its control values' four
-/// bytes as planes and its gradients' two halves as planes of 16-bit
-/// values, each written as its differences from what its neighbours
-/// predict ([`codec::put_planes`]), which smooth ground and the long runs
-/// of one material leave mostly zero for the cook's compression.
 impl codec::Codec for TileShading {
     fn write(&self, out: &mut Writer) {
         out.put(&self.key);
@@ -182,16 +133,12 @@ impl codec::Codec for TileShading {
     }
 }
 
-/// The half-precision bits nearest `value`, ties to even (beyond the
-/// largest half, infinity): each half of a normal map's texel, as the GPU's
-/// `pack2x16float` writes it.
 fn half_bits(value: f32) -> u16 {
     let bits = value.to_bits();
     let sign = ((bits >> 16) & 0x8000) as u16;
     let exponent = ((bits >> 23) & 0xff) as i32;
     let mantissa = bits & 0x7f_ffff;
     if exponent == 0xff {
-        // Infinity, or a quiet NaN.
         return sign | 0x7c00 | if mantissa == 0 { 0 } else { 0x200 };
     }
     let unbiased = exponent - 127;
@@ -201,9 +148,6 @@ fn half_bits(value: f32) -> u16 {
     if unbiased < -25 {
         return sign;
     }
-    // Normal halves keep the mantissa's top ten bits under their exponent;
-    // subnormal ones (below 2^-14) shift the whole mantissa, its implicit
-    // bit with it, into units of 2^-24.
     let (full, shift, base) = if unbiased >= -14 {
         (mantissa, 13, ((unbiased + 15) as u32) << 10)
     } else {
@@ -212,40 +156,29 @@ fn half_bits(value: f32) -> u16 {
     let kept = base | (full >> shift);
     let rest = full & ((1 << shift) - 1);
     let half = 1 << (shift - 1);
-    // A carry out of the mantissa raises the exponent, as it should.
     let rounded = kept + u32::from(rest > half || (rest == half && (kept & 1) == 1));
     sign | rounded as u16
 }
 
-/// The value of half-precision `bits`, as the GPU's `unpack2x16float`
-/// reads each half of a normal map's texel.
 fn half_value(bits: u16) -> f32 {
     let sign = u32::from(bits & 0x8000) << 16;
     let exponent = u32::from(bits >> 10) & 0x1f;
     let mantissa = u32::from(bits & 0x3ff);
     match exponent {
-        // Subnormal: the mantissa's units are 2^-24, exactly.
         0 => f32::from_bits(sign | (mantissa as f32 * (1.0 / 16_777_216.0)).to_bits()),
         0x1f => f32::from_bits(sign | 0x7f80_0000 | (mantissa << 13)),
         _ => f32::from_bits(sign | ((exponent + 112) << 23) | (mantissa << 13)),
     }
 }
 
-/// The gradient `[x, z]` as a normal map's texel: its two halves.
 pub(crate) fn gradient_word([x, z]: [f32; 2]) -> u32 {
     u32::from(half_bits(x)) | u32::from(half_bits(z)) << 16
 }
 
-/// The gradient a normal map's texel `word` holds.
 fn word_gradient(word: u32) -> [f32; 2] {
     [half_value(word as u16), half_value((word >> 16) as u16)]
 }
 
-/// The samples of the level finer whose tent average gives a sample at
-/// `sample` (along an axis, counted from the terrain's first corner at its
-/// level), `last` the last sample of the level finer within the terrain,
-/// and their weights: 1, 2 and 1 over those within the terrain, or the
-/// nearest within it alone where none is; and how many there are.
 fn taps(sample: i64, last: i64) -> ([(i64, u32); 3], usize) {
     let mut taps = [(0, 0); 3];
     let mut count = 0;
@@ -262,9 +195,6 @@ fn taps(sample: i64, last: i64) -> ([(i64, u32); 3], usize) {
     (taps, count)
 }
 
-/// A sample's taps summed: each material's weight (its taps' weights times
-/// its share of each, in 255ths), the taps' weights together, their
-/// wetness times their weights, and their gradients times their weights.
 #[derive(Default)]
 struct Sums {
     materials: Vec<(u8, u32)>,
@@ -279,9 +209,6 @@ impl Sums {
         (self.total, self.wet, self.gradient) = (0, 0, [0.0; 2]);
     }
 
-    /// Adds a tap of `weight` holding `control` and `gradient`: its first
-    /// material at its weight times one less its blend, its second at its
-    /// weight times its blend.
     fn add(&mut self, control: Control, gradient: [f32; 2], weight: u32) {
         let blend = u32::from(control.blend);
         for (material, share) in [(control.a, 255 - blend), (control.b, blend)] {
@@ -307,10 +234,6 @@ impl Sums {
         ];
     }
 
-    /// What the taps average to: the two heaviest materials (ties to the
-    /// lower index, so every host picks the same), the second's share of
-    /// the two and the mean wetness, packed, each rounded to the nearest
-    /// 255th; and the mean gradient as a normal map's texel.
     fn mean(&self) -> (u32, u32) {
         let heavier = |a: (u8, u32), b: (u8, u32)| a.1 > b.1 || (a.1 == b.1 && a.0 < b.0);
         let mut first: Option<(u8, u32)> = None;
@@ -340,11 +263,6 @@ impl Sums {
     }
 }
 
-/// Tile `key`'s shading over `pyramid` from the samples of the level finer:
-/// `sample` gives each one's packed control value and gradient by its place
-/// on that level (x and z, counted from the terrain's first corner). Each
-/// sample of the tile is the tent average of those within one of its
-/// spacings ([`taps`]), summed in their order, rows along z first.
 fn averaged(
     pyramid: &Pyramid,
     key: TileKey,
@@ -385,30 +303,17 @@ fn averaged(
     }
 }
 
-/// Making a tile's shading (the job [`crate::jobs::ShadingJob`]) over a
-/// pyramid: a level-1 tile's from the level-0 tiles it reads, a coarser
-/// tile's from the shading of those of the level finer it reads.
 pub(crate) struct ShadingMaking {
     pyramid: Pyramid,
     key: TileKey,
     reads: Reads,
 }
 
-/// What a tile's shading is made from: a level-1 tile's ground, read tile by
-/// tile; or the shading of the level finer, by its place among the 4 × 4
-/// tiles around the tile's children ([`TileShading::reads`]), none where a
-/// tile lies outside the pyramid.
 enum Reads {
     Ground(Box<Ground>),
     Finer(Box<[Option<TileShading>; 16]>),
 }
 
-/// A level-1 tile's ground as its shading reads it: the stack its tiles
-/// generate from (with its bakes) and the surface's rules; the level-0
-/// tiles it reads, each with the edits reaching it, and the next to
-/// generate; the one generating, over its layers under those edits; the one
-/// whose samples it reads, a row at a time; the samples read so far; and a
-/// row's inputs to the rules, reused.
 struct Ground {
     layers: Arc<Layers>,
     rules: Arc<BiomeRules>,
@@ -420,10 +325,6 @@ struct Ground {
     inputs: SurfaceInputs,
 }
 
-/// A level-0 tile whose samples a level-1 tile reads: the tile as its record
-/// holds it, the layers it generated from, each stored column's x in their
-/// frame, the samples it gives along x and z (counted from the terrain's
-/// first corner) and the next row of them to read.
 struct Reading {
     tile: Tile,
     layers: Arc<Layers>,
@@ -433,10 +334,6 @@ struct Reading {
     next: i64,
 }
 
-/// The level-0 samples a level-1 tile's shading reads, [`WINDOW`] along x
-/// and z from its first sample's less one (counted from the terrain's first
-/// corner), row by row along z: each one's packed control value and
-/// gradient once read.
 struct Window {
     first: [i64; 2],
     control: Vec<u32>,
@@ -444,17 +341,12 @@ struct Window {
 }
 
 impl Window {
-    /// Where sample `(x, z)` lies in the window.
     fn at(&self, x: i64, z: i64) -> usize {
         (z - self.first[1]) as usize * WINDOW + (x - self.first[0]) as usize
     }
 }
 
 impl ShadingMaking {
-    /// Level-1 tile `key`'s shading over `pyramid` from the level-0 tiles
-    /// `tiles` (those it reads, [`TileShading::reads`], each with the edits
-    /// reaching it), generated from `layers` and given control values by
-    /// `rules`.
     pub(crate) fn from_ground(
         (layers, rules): (Arc<Layers>, Arc<BiomeRules>),
         pyramid: Pyramid,
@@ -487,9 +379,6 @@ impl ShadingMaking {
         }
     }
 
-    /// Tile `key`'s shading over `pyramid`, of level 2 or coarser, from the
-    /// shading of the tiles of the level finer it reads, `finer` (those of
-    /// [`TileShading::reads`], in its order).
     pub(crate) fn from_finer(pyramid: Pyramid, key: TileKey, finer: Vec<TileShading>) -> Self {
         let mut places: Box<[Option<TileShading>; 16]> = Box::default();
         let (x0, z0) = (2 * i64::from(key.x) - 1, 2 * i64::from(key.z) - 1);
@@ -507,9 +396,6 @@ impl ShadingMaking {
         }
     }
 
-    /// Works for about `budget` units (a sample generated or given its
-    /// control value each): the tile's shading once done; an error where a
-    /// tile it reads does not generate or read back.
     pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<TileShading>, String> {
         let (pyramid, key) = (self.pyramid, self.key);
         let shading = match &mut self.reads {
@@ -529,7 +415,6 @@ impl ShadingMaking {
                 let (x0, z0) = (2 * i64::from(key.x) - 1, 2 * i64::from(key.z) - 1);
                 let quads = i64::from(TILE_QUADS);
                 averaged(&pyramid, key, &|x, z| {
-                    // The tile holding the sample, the far edge's its last.
                     let (tx, tz) = ((x / quads).min(columns - 1), (z / quads).min(rows - 1));
                     let place = ((tz - z0) * 4 + (tx - x0)) as usize;
                     let Some(shading) = places.get(place).and_then(Option::as_ref) else {
@@ -545,8 +430,6 @@ impl ShadingMaking {
 }
 
 impl Ground {
-    /// Generates and reads the level-0 tiles for about `budget` units:
-    /// whether every one was read.
     fn advance(&mut self, pyramid: &Pyramid, budget: &mut u64) -> Result<bool, String> {
         loop {
             if *budget == 0 {
@@ -577,16 +460,12 @@ impl Ground {
             let layers = layers.clone();
             self.generating = None;
             self.next += 1;
-            // As its record holds it: heights at their steps of the grid.
             let tile: Tile =
                 codec::decode(&codec::encode(&made)).map_err(|error| error.to_string())?;
             self.reading = Reading::of(tile, layers, pyramid, &self.window);
         }
     }
 
-    /// Reads the next row of the samples of the tile being read: each one's
-    /// control value as the surface's rules give it and its smooth surface's
-    /// gradient, into the window; the tile done once its last row is.
     fn read_row(&mut self, budget: &mut u64) {
         let Self {
             rules,
@@ -603,7 +482,6 @@ impl Ground {
         let spacing = read.tile.spacing();
         let quads = i64::from(TILE_QUADS);
         let (first_x, first_z) = (i64::from(key.x) * quads, i64::from(key.z) * quads);
-        // Stored rows and columns hold samples -1 to 257.
         let row = (read.next - first_z + 1) as usize;
         let columns =
             (read.columns.start - first_x + 1) as usize..(read.columns.end - first_x + 1) as usize;
@@ -632,10 +510,6 @@ impl Ground {
 }
 
 impl Reading {
-    /// Level-0 tile `tile` of `pyramid`, generated from `layers`, as it
-    /// gives `window` its samples: those it holds that the window takes,
-    /// each sample of the terrain held by the tile it lies in, the far
-    /// edge's by the last; `None` where it gives none.
     fn of(tile: Tile, layers: Arc<Layers>, pyramid: &Pyramid, window: &Window) -> Option<Self> {
         let key = tile.key();
         let quads = i64::from(TILE_QUADS);

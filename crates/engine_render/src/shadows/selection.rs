@@ -1,10 +1,3 @@
-//! Caster selection: one compute pass selects each map's casters from every
-//! candidate, visible or culled, into indirect draws per caster group, from
-//! the draw arguments' template. On GPU-presented frames it also keeps
-//! each slot's stillness, marks the drawn tiles whose still casters changed
-//! and those moving casters cross, read back a few frames later with the
-//! caster totals.
-
 #![expect(clippy::expect_used, reason = "the frame binds a pose buffer")]
 
 use std::{
@@ -23,17 +16,10 @@ use crate::gpu_layouts::constants::{MOVING_PAIRS, SHADOW_TOTALS};
 use crate::profiling::{GpuProfiler, Span};
 use crate::renderer::FramePoses;
 
-// Bindings need at least one element; exceeds every record stride.
 const MIN_STORAGE_BYTES: u64 = 256;
-// Bytes of a slot's stillness: its pose key, its still-frame count, and
-// its footprint while kept.
 const STILLNESS_BYTES: u64 = 16;
-/// Capacities of the instance IDs of every map: each region's and the sky
-/// map's one, the moving map's MOVING_PAIRS.
 const ID_CAPACITIES: usize = MAPS - 1 + MOVING_PAIRS as usize;
 
-/// Where map `map`'s instance IDs start among the maps' IDs, `capacity` a
-/// map; the moving map holds MOVING_PAIRS times as many as the others.
 pub(super) fn map_start(map: usize, capacity: usize) -> usize {
     if map <= MOVING_MAP {
         map * capacity
@@ -42,7 +28,6 @@ pub(super) fn map_start(map: usize, capacity: usize) -> usize {
     }
 }
 
-/// How many IDs map `map` holds for each of a group's casters.
 pub(super) fn map_factor(map: usize) -> u32 {
     if map == MOVING_MAP { MOVING_PAIRS } else { 1 }
 }
@@ -66,9 +51,6 @@ fn storage(
     crate::buffers::storage(device, label, bytes.max(MIN_STORAGE_BYTES), extra)
 }
 
-/// What a frame read back of the selection: the masks of every level's
-/// tiles whose still casters changed and that moving casters crossed,
-/// merged since last taken, and the clipmap epoch they were recorded in.
 #[derive(Default)]
 struct MasksRead {
     epoch: u64,
@@ -77,47 +59,30 @@ struct MasksRead {
 }
 
 pub(super) struct Selection {
-    // Per slot: pose key, stillness count and footprint.
     stillness: wgpu::Buffer,
     stillness_capacity: usize,
-    // Each map's selected caster IDs (a region per group) and indirect
-    // arguments, and the arguments' template.
     pub(super) ids: wgpu::Buffer,
     pub(super) id_capacity: usize,
     pub(super) args: wgpu::Buffer,
     args_template: wgpu::Buffer,
     arg_capacity: usize,
-    // The totals and masks read back, then every group's region start, and
-    // the words of a mask and the groups it is sized for.
     counters: wgpu::Buffer,
     mask_words: usize,
     starts_capacity: usize,
-    // Stands in for presentation flags where frames have none.
     no_flags: wgpu::Buffer,
-    // Casters of CPU-prepared frames and one group record per mesh.
     listed: wgpu::Buffer,
     listed_groups: wgpu::Buffer,
     listed_capacity: usize,
-    // The level of detail each map draws each group at, as
-    // the template holds them, the mesh arena layout it was written for,
-    // and whether it must be written again.
     template_levels: Vec<u8>,
     mesh_layout: u64,
     template_stale: bool,
-    // Whether the device draws indirectly from nonzero first instances, and
-    // whether the template's first instances name the draws' ID regions.
     first_instance: bool,
     pub(super) regions_in_args: bool,
-    // Advances when this part replaces a buffer.
     generation: u64,
-    // Selection bindings, and skinned selection's, per pose buffer parity
-    // (temporal frames alternate them), and the parity this frame binds.
     select_groups: [Cached<SelectKey, wgpu::BindGroup>; 2],
     select_parity: usize,
     skinned_group: Cached<(u64, u64, u64), wgpu::BindGroup>,
     readbacks: ReadbackRing<u64>,
-    // The masks read back and not yet taken, and the latest caster totals
-    // read back: the regions', the moving map's and those it left out.
     read_back: Rc<RefCell<MasksRead>>,
     casters: Rc<Cell<Option<[u32; 3]>>>,
 }
@@ -157,7 +122,6 @@ impl Selection {
         }
     }
 
-    /// Advances when a selection buffer is replaced.
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
@@ -177,22 +141,14 @@ impl Selection {
         .sum()
     }
 
-    /// Words read back: the totals, then the masks of the dirty and the
-    /// moving tiles.
     fn readback_words(&self) -> usize {
         SHADOW_TOTALS + 2 * self.mask_words
     }
 
-    /// The latest caster totals read back: the casters the regions drew,
-    /// the moving map's draws and those it left out.
     pub(super) fn caster_counts(&self) -> Option<[u32; 3]> {
         self.casters.get()
     }
 
-    /// Takes the masks read back since the last call, recorded in epoch
-    /// `epoch` of the clipmap (others name cells that no longer hold what
-    /// they did): the tiles whose still casters changed, then those moving
-    /// casters crossed.
     pub(super) fn take_masks(&self, epoch: u64) -> (Vec<u32>, Vec<u32>) {
         let mut read = self.read_back.borrow_mut();
         let (dirty, moving) = (
@@ -206,13 +162,10 @@ impl Selection {
         }
     }
 
-    /// The template must be written again: the caster groups changed.
     pub(super) fn groups_changed(&mut self) {
         self.template_stale = true;
     }
 
-    /// Keeps the stillness of `slots` slots; returns whether it starts
-    /// over, in a new buffer.
     pub(super) fn ensure_stillness(&mut self, device: &wgpu::Device, slots: usize) -> bool {
         if self.stillness_capacity >= slots {
             return false;
@@ -228,10 +181,6 @@ impl Selection {
         true
     }
 
-    /// Sizes the selection's outputs: `casters` IDs per map and the
-    /// arguments of `groups` groups; and the counters for masks of
-    /// `mask_words` words; returns whether the counters were made anew,
-    /// dropping what they had not read back.
     pub(super) fn ensure_outputs(
         &mut self,
         device: &wgpu::Device,
@@ -241,7 +190,6 @@ impl Selection {
         let ids = (casters as usize).max(1);
         if ids > self.id_capacity {
             self.id_capacity = ids.next_power_of_two();
-            // Draw arguments name regions of the new capacity.
             self.template_stale = true;
             self.ids = storage(
                 device,
@@ -272,7 +220,6 @@ impl Selection {
         if mask_words == self.mask_words && groups <= self.starts_capacity {
             return false;
         }
-        // The totals and masks first, then every group's region start.
         self.mask_words = mask_words;
         self.starts_capacity = self.starts_capacity.max(groups.next_power_of_two());
         let words = self.readback_words() + self.starts_capacity;
@@ -288,11 +235,6 @@ impl Selection {
         true
     }
 
-    /// Writes the draw arguments' template when the groups, `levels` (each
-    /// map's level of detail per group), the storage or the
-    /// mesh arena `mesh_layout` changed, from each group's `ranges` (its
-    /// index count, first index and base vertex at each level), with the
-    /// group starts and CPU-prepared frames' casters.
     pub(super) fn update_template(
         &mut self,
         device: &wgpu::Device,
@@ -318,8 +260,6 @@ impl Selection {
                 bytemuck::cast_slice(&starts),
             );
         }
-        // Each map's draws name their ID regions as first instances
-        // where the device draws indirectly from them.
         self.regions_in_args =
             self.first_instance && u32::try_from(ID_CAPACITIES * self.id_capacity).is_ok();
         let mut template: Vec<u32> = Vec::with_capacity(MAPS * groups.len() * 5);
@@ -369,10 +309,6 @@ impl Selection {
         }
     }
 
-    /// Binds the selection of a frame of `source` over `poses` (pose buffer
-    /// `pose_index`), with GPU presentation's buffers (`presented`) and
-    /// `skinned` skinned slots on GPU-presented frames, and the table of
-    /// the clipmap's slots `tiles` of generation `tiles_key`.
     #[expect(clippy::too_many_arguments, reason = "a frame's disjoint inputs")]
     pub(super) fn bind(
         &mut self,
@@ -446,9 +382,6 @@ impl Selection {
         }
     }
 
-    /// Records caster selection of `frame` with `groups` caster groups,
-    /// timed by `profiler` (`shadow_select`), and the read-back of what it
-    /// counted and marked, tagged with the clipmap's `epoch`.
     pub(super) fn encode(
         &mut self,
         device: &wgpu::Device,
@@ -458,7 +391,6 @@ impl Selection {
         epoch: u64,
         profiler: &GpuProfiler,
     ) {
-        // Instance counts start at zero every frame.
         encoder.copy_buffer_to_buffer(
             &self.args_template,
             0,
@@ -476,7 +408,6 @@ impl Selection {
             pass.set_pipeline(&pipelines.select);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(frame.candidates.div_ceil(GROUP), 1, 1);
-            // Skinned casters by their palette bounds.
             if frame.skinned != 0
                 && let Some(skinned) = self.skinned_group.get()
             {
@@ -488,7 +419,6 @@ impl Selection {
             pass.set_pipeline(&pipelines.count);
             pass.dispatch_workgroups(1, 1, 1);
         }
-        // Unread masks stay until a read-back copies them.
         let bytes = (self.readback_words() * 4) as u64;
         if self
             .readbacks
@@ -498,7 +428,6 @@ impl Selection {
         }
     }
 
-    /// Requests maps of what the frame just submitted read back.
     pub(super) fn after_submit(&mut self) {
         let (read_back, casters) = (Rc::clone(&self.read_back), Rc::clone(&self.casters));
         let mask_words = self.mask_words;

@@ -1,13 +1,3 @@
-//! The methods every exported game has: one table, which
-//! [`crate::export_game!`] turns into the game's `#[wasm_bindgen]` methods and
-//! `runtime_typescript` into the page's `Runtime` interface, so the two
-//! cannot differ. A method returning JSON text names the type it carries
-//! (`-> String as Json<FrameStats>`), which the page reads with the
-//! generated `parseJson`. `PageHost` implements each, mostly as `GameHost`.
-
-/// Calls `$callback` with the game surface after `{ $context }`, in groups:
-/// methods taking `&mut self` or `&self`, in every build, development builds
-/// or profiling builds.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __game_surface {
@@ -15,159 +5,67 @@ macro_rules! __game_surface {
         $crate::$callback! {
             { $($context)* }
             always_mut {
-                /// Runs one frame at `timestamp` on a `width` × `height` canvas
-                /// with the input gathered since the last one.
                 fn frame(timestamp: f64, width: u32, height: u32) -> Result<(), $crate::__private::JsValue>;
-                /// A source (a keyboard key, a finger on a touch button) pressed
-                /// (`down`) or released key `code` (`KeyboardEvent.code`); whether
-                /// the game uses the key, which the page then keeps from the
-                /// browser.
                 fn key(code: &str, down: bool) -> bool;
-                /// The view turned by a drag of `dx`, `dy` CSS pixels.
                 fn look(dx: f32, dy: f32);
-                /// Nothing is held: the page took input away.
                 fn clear_input();
-                /// The animation frame at `timestamp` on a `width` × `height` canvas,
-                /// preparation's or one of play: what it did (`FRAME_PHASES`).
                 fn animation_frame(timestamp: f64, width: u32, height: u32) -> Result<u32, $crate::__private::JsValue>;
-                /// Loading while preparation waits for the GPU to compile; whether it
-                /// still waits.
                 fn work_while_compiling(width: u32, height: u32) -> bool;
-                /// Terrain loading until shortly before the next frame of play is due;
-                /// whether tiles remain.
                 fn load_between_frames() -> bool;
-                /// Whether frames prepare the starting state before play (the
-                /// default), or play at once, as development sessions start.
                 fn set_preparation(enabled: bool);
-                /// Workers the page runs jobs on.
                 fn set_job_workers(workers: u32);
-                /// Whether the page holds records (the cook's packs, a store
-                /// keeping what jobs make), and runs every job anyway to verify
-                /// them.
                 fn set_job_cache(caching: bool, verify: bool);
-                /// What the page does for the engine's jobs since the last call,
-                /// in order: what every worker holds, jobs to run and cancel on
-                /// each worker, and records to look up, keep and drop as
-                /// mismatched.
                 fn take_jobs() -> $crate::__private::js_sys::Array;
-                /// The page's records' answer for job `id`: the record's `key`,
-                /// and its `output` where a pack or the store holds it.
                 fn job_kept(id: f64, key: String, output: Option<Vec<u8>>);
-                /// Worker `worker` broke, for `error`: the engine takes back its
-                /// jobs, and the page `replaced` it or runs one fewer.
                 fn lose_job_worker(worker: u32, error: &str, replaced: bool);
-                /// The worker a task of the page's own waits least on, counted on
-                /// it until `job_task_done`; none without workers.
                 fn job_task() -> Option<u32>;
-                /// A task of the page's own on `worker` ended.
                 fn job_task_done(worker: u32);
-                /// Job `id`'s output from its worker.
                 fn complete_job(id: f64, output: Vec<u8>);
-                /// Job `id` failed on its worker.
                 fn fail_job(id: f64, error: String);
-                /// The page's records' counters.
                 fn report_job_cache(hits: f64, misses: f64, bytes: f64, mismatches: f64);
-                /// Drops suspension time and held input before the next frame.
                 fn suspend();
-                /// Puts the camera where the game starts.
                 fn reset_camera();
-                /// Replaces the authored scene with `source` and the files it
-                /// references; a scene that fails keeps the current one.
                 fn reload_scene(source: &str, files: $crate::browser::SceneFileSet) -> Result<(), $crate::__private::JsValue>;
-                /// GPU (default) or exact CPU presentation of ordinary frames.
                 fn set_gpu_presentation(enabled: bool);
-                /// Splits fixed ticks across frames around their due time (default).
                 fn set_tick_pipelining(enabled: bool);
-                /// Temporal antialiasing of GPU-presented frames, over the
-                /// world's setting in this and later engines.
                 fn set_temporal_antialiasing(enabled: bool);
-                /// Occlusion culling of GPU-presented frames, over the world's
-                /// setting in this and later engines.
                 fn set_occlusion_culling(enabled: bool);
-                /// Sub-pixel culling of GPU-presented frames, over the world's
-                /// setting in this and later engines.
                 fn set_subpixel_culling(enabled: bool);
-                /// The canvas's device pixels per CSS pixel, which the
-                /// resolution policy sizes ordinary frames by
-                /// (`engine::host::render_size`): the canvas takes its element's
-                /// whole size in device pixels, and frames draw within it.
                 fn set_pixel_ratio(ratio: f64);
-                /// The user's resolution `scale` of ordinary frames, over the
-                /// world's in this and later engines.
                 fn set_resolution_scale(scale: f64);
-                /// Dynamic resolution of ordinary frames, over the world's
-                /// setting in this and later engines.
                 fn set_dynamic_resolution(enabled: bool);
-                /// Applies the engine switches the page's URL search part
-                /// `query` names (`engine::host::SETTINGS`), in this and later
-                /// engines; a value a switch does not take fails.
                 fn apply_host_settings(query: &str) -> Result<(), $crate::__private::JsValue>;
             }
             always_ref {
-                /// The last frame's statistics, as the JSON object `FrameStats` types.
                 fn stats() -> String as Json<FrameStats>;
-                /// Whether ordinary frames are presented on the GPU.
                 fn gpu_presentation() -> bool;
-                /// Whether fixed ticks are split across frames.
                 fn tick_pipelining() -> bool;
-                /// Whether GPU-presented frames are temporally antialiased.
                 fn temporal_antialiasing() -> bool;
-                /// Whether GPU-presented frames are occlusion culled.
                 fn occlusion_culling() -> bool;
-                /// Whether GPU-presented frames are sub-pixel culled.
                 fn subpixel_culling() -> bool;
-                /// The spread of measured `values`, as the JSON object
-                /// `Distribution` types; `null` without values, or with one
-                /// that is not a finite number of at least 0.
                 fn distribution(values: Vec<f64>) -> String as Json<Option<Distribution>>;
-                /// Whether ordinary frames scale their size by dynamic
-                /// resolution.
                 fn dynamic_resolution() -> bool;
             }
             dev_mut {
-                /// Runs development request `request` (JSON) on a `width` ×
-                /// `height` canvas; `paused` says whether the page is paused.
                 fn dev_command(request: &str, width: u32, height: u32, paused: bool) -> String as Json<Reply>;
-                /// Development request `line` (JSON, as an agent sent it) on the
-                /// page `context` describes (JSON `HostContext`): the engine's
-                /// reply, or the first effect of the control it names, which the
-                /// page carries out.
                 fn dev_request(line: &str, context: &str) -> String as Json<Step>;
-                /// The request under way resumed with the `outcome` (JSON
-                /// `Outcome`) of the effect the page carried out, on the page
-                /// `context` describes: the next step.
                 fn dev_resume(outcome: &str, context: &str) -> String as Json<Step>;
-                /// The reload under way resumed with the authored scene's saved
-                /// `source` and the `files` it references, on the page `context`
-                /// describes: the next step.
                 fn dev_reloaded(source: &str, context: &str, files: Option<$crate::browser::SceneFileSet>) -> String as Json<Step>;
-                /// A refusal of `code` at `path` the page decided, with the
-                /// engine's observation.
                 fn dev_refusal(code: &str, path: &str, message: &str) -> String as Json<Reply>;
             }
             profiling_mut {
-                /// Starts a capture of at most `max_events` CPU events.
                 fn profiling_start(max_events: u32) -> Result<(), $crate::__private::JsValue>;
-                /// Stops the capture: its report, as JSON.
                 fn profiling_stop() -> Result<String, $crate::__private::JsValue>;
-                /// Collects finished GPU timings.
                 fn profiling_poll();
-                /// The capture's GPU report, as JSON.
                 fn profiling_report() -> String;
             }
             profiling_ref {
-                /// Whether a capture runs, as JSON.
                 fn profiling_status() -> String;
             }
         }
     };
 }
 
-/// Exports game `$game` to the page as `#[wasm_bindgen]` struct `$name`
-/// with every method of the game surface; the game adds its own methods,
-/// constructors included, in its own `#[wasm_bindgen] impl $name`, which
-/// start it with `$name::launch`. Profiling builds also count allocations.
-/// Expands to nothing outside the browser.
 #[macro_export]
 macro_rules! export_game {
     ($(#[$meta:meta])* $vis:vis struct $name:ident($game:ty);) => {
@@ -219,8 +117,6 @@ macro_rules! __export_game {
         }
 
         impl $name {
-            /// Starts the renderer of `canvas` and, while the browser compiles
-            /// its pipelines, the engine and game `build` makes.
             pub async fn launch<E: Into<$crate::Error>>(
                 canvas: $crate::__private::web_sys::HtmlCanvasElement,
                 build: impl FnOnce() -> Result<($crate::Engine, $game), E>,
@@ -230,12 +126,10 @@ macro_rules! __export_game {
                 })
             }
 
-            /// The engine and game the page runs.
             pub fn host(&self) -> &$crate::GameHost<$game> {
                 &self.host
             }
 
-            /// The engine and game the page runs, to change them.
             pub fn host_mut(&mut self) -> &mut $crate::GameHost<$game> {
                 &mut self.host
             }
@@ -250,8 +144,6 @@ macro_rules! __export_game {
     ($($surface:tt)*) => {};
 }
 
-/// The page's `Runtime` interface: the game surface in TypeScript, which
-/// `cargo xtask schema` writes to `web/src/generated/runtime.ts`.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn runtime_typescript() -> String {
     crate::__game_surface!(__surface_typescript {})
@@ -279,7 +171,6 @@ macro_rules! __surface_typescript {
     }};
 }
 
-/// A method of the game surface, as its table declares it.
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub struct SurfaceMethod {
@@ -288,12 +179,9 @@ pub struct SurfaceMethod {
     pub doc: &'static [&'static str],
     pub arguments: &'static [(&'static str, &'static str)],
     pub returns: Option<&'static str>,
-    /// The JSON type the method's text carries, as `Json<FrameStats>`.
     pub json: Option<&'static str>,
 }
 
-/// `methods` as the TypeScript interface `Runtime`: methods of development
-/// and profiling builds are optional.
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub fn typescript(methods: &[SurfaceMethod]) -> String {
@@ -367,9 +255,6 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
     output
 }
 
-/// The TypeScript type of the JSON text `json` (`Json<T>`, spaces removed)
-/// names: `Option<T>` is `T | null`; the payload types are the page's
-/// generated ones, which the interface's file imports.
 #[cfg(not(target_arch = "wasm32"))]
 fn json_type(json: &str) -> String {
     let payload = json
@@ -385,9 +270,6 @@ fn json_type(json: &str) -> String {
     }
 }
 
-/// The TypeScript type of Rust type `ty` (spaces removed) at the Wasm
-/// boundary; a type the table adds without a mapping here is a programming
-/// error.
 #[cfg(not(target_arch = "wasm32"))]
 fn typescript_type(ty: &str) -> String {
     let leaf = ty.rsplit("::").next().unwrap_or(ty);
@@ -400,7 +282,6 @@ fn typescript_type(ty: &str) -> String {
         "Vec<f64>" => "Float64Array",
         "Vec<u32>" => "Uint32Array",
         "Array" => "JobOrder[]",
-        // Scene files are the page's bindings' own class.
         "SceneFileSet" => "unknown",
         _ => panic!("the game surface has no TypeScript type for {ty}"),
     }

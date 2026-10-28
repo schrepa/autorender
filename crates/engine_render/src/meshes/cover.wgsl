@@ -1,16 +1,3 @@
-// Ground cover in the mesh passes: the blades and tufts a compute pass
-// grew this frame (`cover_grow.wgsl`), each a strip of its leaves curving up
-// from its root, leaning in the wind and the way its clump leans them, their
-// roots the ground's color and their tips their cover's.
-
-// One blade or tuft: its root (world); its height and its leaves' width at
-// their roots (meters, half floats, the height in the low half); its facing
-// word (`blade_facing`: its first leaf's flat side faces that way); its
-// leaves (`cover_leaf`): how many in steps of COVER_LEAF_STEPS a leaf (the
-// low byte), the last past the whole ones standing its share of one of its
-// height, and the way its clump leans them along x and z (the next bytes,
-// 8-bit fractions of -1 to 1); and its root color (RGB8) and tip color with
-// how far it sways (RGBA8).
 struct CoverBlade {
     root: vec3<f32>,
     size: u32,
@@ -20,19 +7,12 @@ struct CoverBlade {
     tip_color: u32,
 }
 
-// The frame's cover: the wind (x and z, meters per second), and the
-// presentation time now and at the previous frame (seconds); whether
-// blades keep their ground's normal (x, 1: foliage's ground blend); the
-// blades' capacity, whose last slots the straight ones fill backward (x).
 struct CoverFrame {
     wind: vec4<f32>,
     ground: vec4<f32>,
     blades: vec4<u32>,
 }
 
-// A blade's facing (radians): its word's low 16 bits, a share of a turn,
-// below its ground's normal while blades keep it (`cover_grow.wgsl`'s
-// `grounded_tilt`).
 fn blade_facing(blade: CoverBlade) -> f32 {
     return f32(blade.facing & 0xffffu) / 65535.0 * (2.0 * PI);
 }
@@ -40,18 +20,10 @@ fn blade_facing(blade: CoverBlade) -> f32 {
 @group(1) @binding(33) var<storage, read> cover_blades: array<CoverBlade>;
 @group(1) @binding(34) var<uniform> cover_frame: CoverFrame;
 
-// Segments along a leaf; its strip has two vertices at each joint.
 const COVER_SEGMENTS: u32 = 4u;
-// Joints along a leaf too short on screen to show its curve, drawn by the
-// blades' second draw (`cover_grow.wgsl`'s `finish_cover`), whose vertices
-// count from STRAIGHT_FIRST_VERTEX.
 const STRAIGHT_JOINTS: u32 = 3u;
 const STRAIGHT_FIRST_VERTEX: u32 = 1024u;
 
-// A leaf of a blade or tuft as `cover_point` draws it: its root (world),
-// its height and its width at its root (meters), its turn (radians: its
-// flat side faces that way, and it curls that way), how far it curls, its
-// clump's lean (x and z) and how far it sways.
 struct CoverLeaf {
     root: vec3<f32>,
     height: f32,
@@ -62,16 +34,8 @@ struct CoverLeaf {
     sway: f32,
 }
 
-// The golden angle (radians), by which each leaf of a tuft turns from the
-// one before, so however many it holds they face every way about evenly.
 const COVER_GOLDEN_ANGLE: f32 = 2.3999632;
 
-// Leaf `leaf` of blade `blade`: its first is the blade, curling its own
-// way; each further one turns from the one before by the golden angle,
-// splays further out, and stands from 0.85 to 1.15 times as tall, rooted
-// half its width out from the first's, so the tuft fans out from its root.
-// Those past its leaves' count stand none of its height, and the one they
-// end in its share of one.
 fn cover_leaf(blade: CoverBlade, leaf: u32) -> CoverLeaf {
     let size = unpack2x16float(blade.size);
     let steps = blade.leaves & 0xffu;
@@ -85,7 +49,6 @@ fn cover_leaf(blade: CoverBlade, leaf: u32) -> CoverLeaf {
     made.root = blade.root;
     made.height = size.x * stands;
     made.width = size.y;
-    // Each leaf's own curl, by its turn.
     made.curl = 0.25 + 0.2 * fract(made.turn * 3.1);
     if leaf > 0u {
         made.root += vec3<f32>(cos(made.turn), 0.0, sin(made.turn)) * (0.5 * size.y);
@@ -97,8 +60,6 @@ fn cover_leaf(blade: CoverBlade, leaf: u32) -> CoverLeaf {
     return made;
 }
 
-// A vertex of a strip: its blade or tuft, the leaf it lies on, and how far
-// along the leaf (0 at the root, 1 at the tip) and across it (-1 or 1).
 struct BladeVertex {
     blade: CoverBlade,
     leaf: CoverLeaf,
@@ -106,12 +67,6 @@ struct BladeVertex {
     across: f32,
 }
 
-// Vertex `vertex` of blade or tuft `instance` of its draw: whole ones fill
-// the list from its front, straight ones from its back. Its strip holds its
-// leaves one after another, two vertices at each joint, then each leaf's
-// last vertex and the next leaf's first again, so the triangles joining one
-// leaf to the next have no area and every leaf's strip starts on an even
-// vertex, facing as the first leaf's does.
 fn blade_vertex(instance: u32, vertex: u32) -> BladeVertex {
     var at: BladeVertex;
     var joints = COVER_SEGMENTS + 1u;
@@ -138,11 +93,7 @@ struct CoverOutput {
     @location(1) world: vec3<f32>,
     @location(2) normal: vec3<f32>,
     @location(3) color: vec3<f32>,
-    // From 0 at the root to 1 at the tip.
     @location(4) along: f32,
-    // While blades keep their ground's normal: its x and z as 8-bit
-    // fractions in the high half, the leaf's height (meters, half float)
-    // in the low.
     @location(5) @interpolate(flat) ground: u32,
 }
 
@@ -156,23 +107,17 @@ struct CoverTemporalOutput {
     @location(6) previous: vec3<f32>,
 }
 
-// A point of a leaf: where it lies and the leaf's normal there.
 struct CoverPoint {
     world: vec3<f32>,
     normal: vec3<f32>,
 }
 
-// Leaf `leaf`'s point `along` its length (0 to 1) and `across` its
-// width (-1 to 1) at time `time`: a quadratic curve from the root, rising
-// and leaning along the wind as gusts travel across the field, with its
-// own curl and its clump's lean the rest of the way.
 fn cover_point(leaf: CoverLeaf, along: f32, across: f32, time: f32) -> CoverPoint {
     let facing = vec3<f32>(cos(leaf.turn), 0.0, sin(leaf.turn));
     let side = vec3<f32>(-facing.z, 0.0, facing.x);
     let wind = vec3<f32>(cover_frame.wind.x, 0.0, cover_frame.wind.y);
     let speed = length(wind);
     let toward = select(facing, wind / max(speed, 1.0e-4), speed > 1.0e-4);
-    // Gusts: waves running with the wind, slower ripples within them.
     let travel = dot(leaf.root, toward);
     let gust = 0.55 + 0.3 * sin(time * 1.3 - travel * 0.12)
         + 0.15 * sin(time * 3.7 - travel * 0.6 + leaf.turn);
@@ -182,25 +127,20 @@ fn cover_point(leaf: CoverLeaf, along: f32, across: f32, time: f32) -> CoverPoin
     let bend = min(length(lean), 0.95);
     let direction = select(facing, lean / max(length(lean), 1.0e-4), length(lean) > 1.0e-4);
     let height = leaf.height;
-    // Control points: the root, straight up, and the tip leaning over
-    // while keeping the leaf's length.
     let tip = leaf.root + vec3<f32>(0.0, height * (1.0 - 0.45 * bend * bend), 0.0)
         + direction * height * bend * 0.75;
     let middle = leaf.root + vec3<f32>(0.0, height * 0.6, 0.0);
     let t = along;
     let spine = (1.0 - t) * (1.0 - t) * leaf.root + 2.0 * t * (1.0 - t) * middle + t * t * tip;
     let tangent = 2.0 * (1.0 - t) * (middle - leaf.root) + 2.0 * t * (tip - middle);
-    // Tapering to a point.
     let width = leaf.width * (1.0 - pow(along, 1.5));
     var point: CoverPoint;
     point.world = spine + side * (0.5 * across * width);
-    // The face's normal, turned across the width so the leaf reads round.
     let face = normalize(cross(side, tangent));
     point.normal = normalize(face + side * (0.45 * across));
     return point;
 }
 
-// The color along a blade: the ground's at the root, its cover's at the tip.
 fn cover_color(blade: CoverBlade, along: f32) -> vec3<f32> {
     let root = unpack4x8unorm(blade.root_color).rgb;
     let tip = unpack4x8unorm(blade.tip_color).rgb;
@@ -209,9 +149,6 @@ fn cover_color(blade: CoverBlade, along: f32) -> vec3<f32> {
     return mix(linear_root, linear_tip, smoothstep(0.0, 0.7, along));
 }
 
-// The point of vertex `at` at time `time`: on its leaf, or at the leaf's
-// root, every vertex of a leaf standing none of its height alike, so it
-// draws nothing.
 fn cover_vertex_point(at: BladeVertex, time: f32) -> CoverPoint {
     if at.leaf.height <= 0.0 {
         return CoverPoint(at.leaf.root, vec3<f32>(0.0, 1.0, 0.0));
@@ -241,8 +178,6 @@ fn vs_cover(@builtin(instance_index) instance: u32, @builtin(vertex_index) verte
     return cover_output(instance, vertex, cover_frame.wind.z);
 }
 
-// Blades move with the wind: their previous positions are last frame's
-// sway seen by last frame's camera.
 @vertex
 fn vs_cover_temporal(@builtin(instance_index) instance: u32,
         @builtin(vertex_index) vertex: u32) -> CoverTemporalOutput {
@@ -259,13 +194,6 @@ fn vs_cover_temporal(@builtin(instance_index) instance: u32,
     return temporal;
 }
 
-// The surface a blade fragment shows; darker toward the root, where blades
-// shade each other. Blades are thin and pass light through: either side
-// lights as the side facing the sun does, the far side seen
-// through the blade a little dimmer, and their normal leans most of the way
-// up, so they light much as the ground they stand on. The ground's canopy
-// shows their average where their tufts retire (`terrain_variety.wgsl`'s
-// `cover_seen`).
 fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     var face = normalize(input.normal);
     if !front {
@@ -274,8 +202,6 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     let through = dot(face, lighting.sun.xyz) < 0.0;
     let lit = select(face, -face, through);
     var normal = normalize(mix(lit, vec3<f32>(0.0, 1.0, 0.0), 0.6));
-    // With foliage's ground blend, bases take the ground's normal, so
-    // they light as the ground's canopy around them does.
     if lighting.foliage.w > 0.0 && input.ground != 0u {
         let tilt = vec2<f32>(f32((input.ground >> 16u) & 0xffu), f32(input.ground >> 24u))
             / 255.0 * 2.0 - 1.0;
@@ -287,7 +213,6 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     let albedo = input.color * select(1.0, COVER_FAR_SIDE, through);
     var point: SurfacePoint;
     point.albedo = albedo;
-    // Blades are leaf throughout, and sheets.
     point.leaf = 1.0;
     point.body = BODY_THIN;
     point.opacity = 1.0;

@@ -1,65 +1,41 @@
-//! A walk's search: its ends stood on their tiles' ground and costed to
-//! their portals, the stages after, and what it reads and waits for.
-
 use super::*;
 
-/// What a walk waits for: a tile's ground, or its portals.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Want {
     Ground(TileKey),
     Portals(TileKey),
 }
 
-/// Where a walk reads the tiles' grounds and portals of its gait that hosts
-/// handed back so far.
 pub trait WalkData {
     fn ground(&self, key: TileKey) -> Option<Arc<WalkGround>>;
     fn portals(&self, key: TileKey) -> Option<Arc<TilePortals>>;
 }
 
-/// A walk being searched: from its ends' tiles' grounds and portals, the
-/// graph's way between them, then its corridor's samples, each
-/// [`Self::step`] doing about its budget's samples of work with the data a
-/// [`WalkData`] holds and saying what more it waits for
-/// ([`Self::wants`]).
 pub struct WalkSearch {
     pub(super) pyramid: Pyramid,
     pub(super) gait: Gait,
     pub(super) spacing: f32,
     pub(super) stepper: Stepper,
     ends: [Vec2; 2],
-    // The ends' tiles; none where an end lies off the terrain.
     pub(super) tiles: Option<[TileKey; 2]>,
-    // Obstacles by the tiles of the gait's level they reach, widened by
-    // the agent's radius, and each tile's samples an agent stands on among
-    // them once made.
     obstacles: BTreeMap<TileKey, Vec<Obstacle>>,
     stands: BTreeMap<TileKey, Arc<[bool]>>,
     stage: Stage,
     pub(super) wants: Vec<Want>,
-    // The tiles whose portals it will likely read, in the order it found
-    // them, and those listed.
     ahead: Vec<TileKey>,
     listed: BTreeSet<TileKey>,
     pub(super) searched: usize,
 }
 
 pub(super) enum Stage {
-    /// Waiting for the ends' tiles, to stand the ends on their ground.
     Ends,
-    /// Flooding the ends' tiles from the ends: their portals' costs.
     Reach(Box<Reach>),
-    /// A* over the walk graph's portals.
     Graph(Box<Graph>),
-    /// A* over the corridor's samples, eight neighbors each.
     Corridor(Box<Corridor>),
-    /// Pulling the walk taut.
     Pull(Box<Pull>),
     Done,
 }
 
-/// What a stage came to: itself again, to go on another time (waiting for
-/// data or out of budget), the next stage, or the walk.
 pub(super) enum Flow {
     Stay(Stage),
     Next(Stage),
@@ -67,8 +43,6 @@ pub(super) enum Flow {
 }
 
 impl WalkSearch {
-    /// A search over a terrain of `pyramid` from terrain-local `ends.0` to
-    /// `ends.1` among `obstacles`, as `options` walk.
     pub fn new(
         pyramid: &Pyramid,
         (from, to): (Vec2, Vec2),
@@ -99,33 +73,22 @@ impl WalkSearch {
         }
     }
 
-    /// The gait it walks with.
     pub fn gait(&self) -> Gait {
         self.gait
     }
 
-    /// Samples and portals searched so far.
     pub fn searched(&self) -> usize {
         self.searched
     }
 
-    /// What its last step waited for: data it cannot go on without.
     pub fn wants(&self) -> &[Want] {
         &self.wants
     }
 
-    /// The tiles whose portals it will likely read, in the order it found
-    /// them: those along the straight line between its ends, then those
-    /// around the tiles its graph search took up. Worth asking for before
-    /// it wants them; the list only grows.
     pub fn ahead(&self) -> &[TileKey] {
         &self.ahead
     }
 
-    /// Advances the search by about `budget` samples of work over what
-    /// `data` holds, taking what it does from `budget`: the walk once it is
-    /// found (`Some(None)` where none reaches), otherwise `None` to go on
-    /// another time, waiting for [`Self::wants`] where any.
     pub fn step(&mut self, budget: &mut u64, data: &dyn WalkData) -> Option<Option<NavPath>> {
         self.wants.clear();
         loop {
@@ -172,8 +135,6 @@ impl WalkSearch {
         portals
     }
 
-    /// Lists the tiles around `key` whose portals `data` lacks among those
-    /// it will likely read.
     pub(super) fn around(&mut self, key: TileKey, data: &dyn WalkData) {
         for near in graph::neighbors(key, self.pyramid.tiles(self.gait.level)) {
             if !self.listed.contains(&near) && data.portals(near).is_none() {
@@ -183,8 +144,6 @@ impl WalkSearch {
         }
     }
 
-    /// The samples of `ground`'s tile an agent stands on among the
-    /// obstacles there, made once.
     pub(super) fn standing(&mut self, ground: &WalkGround) -> Arc<[bool]> {
         if let Some(stands) = self.stands.get(&ground.key) {
             return stands.clone();
@@ -214,8 +173,6 @@ impl WalkSearch {
         stands
     }
 
-    /// Stands the ends on their tiles' ground, once held: each on the
-    /// nearest sample there it stands on, among the obstacles.
     fn snap_ends(&mut self, data: &dyn WalkData) -> Flow {
         let Some([start, goal]) = self.tiles else {
             return Flow::Found(None);
@@ -238,8 +195,6 @@ impl WalkSearch {
         })))
     }
 
-    /// The sample of `ground`'s tile nearest `point` an agent stands on,
-    /// within [`SNAP`] samples of the nearest.
     fn snap(&mut self, ground: &WalkGround, point: Vec2) -> Option<Sample> {
         let stands = self.standing(ground);
         let first = self.pyramid.first_sample(ground.key);
@@ -264,15 +219,11 @@ impl WalkSearch {
         best.map(|(_, sample)| sample)
     }
 
-    /// `sample`'s index in tile `key`'s ground.
     fn local(&self, key: TileKey, sample: Sample) -> usize {
         let first = self.pyramid.first_sample(key);
         (sample[1] - first[1]) as usize * SIDE + (sample[0] - first[0]) as usize
     }
 
-    /// Floods each end's tile from the end, the start's first: what reaching
-    /// its portals costs (the goal's, from them), and the start's tile's
-    /// walk to the goal where both lie in it.
     fn reach(&mut self, mut reach: Box<Reach>, budget: &mut u64, data: &dyn WalkData) -> Flow {
         let Some(tiles) = self.tiles else {
             return Flow::Found(None);
@@ -323,8 +274,6 @@ impl WalkSearch {
     }
 }
 
-/// The ends stood on their tiles, and the floods costing them to the tiles'
-/// portals: the start's first.
 pub(super) struct Reach {
     pub(super) samples: [Sample; 2],
     turn: usize,
@@ -333,9 +282,6 @@ pub(super) struct Reach {
     pub(super) direct: Option<u32>,
 }
 
-/// The tiles of `pyramid`'s `level` whose portals a walk from terrain-local
-/// `from` to `to` likely reads: those the straight line between them
-/// crosses and their neighbors, at most a few hundred.
 fn line_tiles(pyramid: &Pyramid, level: u32, (from, to): (Vec2, Vec2)) -> Vec<TileKey> {
     const MOST: usize = 256;
     let size = pyramid.tile_size(level);
@@ -360,8 +306,6 @@ fn line_tiles(pyramid: &Pyramid, level: u32, (from, to): (Vec2, Vec2)) -> Vec<Ti
     tiles
 }
 
-/// `obstacles`, their radii widened by an agent's `radius`, by the tiles of
-/// `pyramid`'s `level` whose samples they reach.
 fn bin(
     obstacles: Vec<Obstacle>,
     radius: f32,
@@ -376,7 +320,6 @@ fn bin(
         if !(reach.is_finite() && obstacle.center.is_finite()) {
             continue;
         }
-        // A tile holds its far edge's samples too.
         let low = ((obstacle.center - Vec2::splat(reach + spacing)) / size).floor();
         let high = ((obstacle.center + Vec2::splat(reach)) / size).floor();
         let span = |low: f32, high: f32, count: u32| {
@@ -400,8 +343,6 @@ fn bin(
     bins
 }
 
-/// The tiles of `pyramid`'s `level` holding `sample`: the one it lies in, and
-/// those whose edges it lies on.
 pub(super) fn tiles_holding(pyramid: &Pyramid, level: u32, sample: Sample) -> Vec<TileKey> {
     let [columns, rows] = pyramid.tiles(level);
     let along = |at: i64, count: u32| -> Vec<u16> {

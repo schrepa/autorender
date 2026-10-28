@@ -1,5 +1,3 @@
-//! Deterministic stress workloads built exclusively through the public engine SDK.
-
 mod authored;
 #[cfg(target_arch = "wasm32")]
 mod browser;
@@ -20,11 +18,6 @@ mod presets;
 mod scene;
 mod world;
 
-// `SOURCE`, the hash of the Stress Lab's code and the engine it builds on,
-// which keys the records the worlds' own code makes (their generated meshes
-// and textures), which hosts keep and the cook ships, and which the scenes'
-// content names (`engine::Game::content`): their pipeline lists last while
-// this code stays the same.
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
 pub use authored::{AuthoredScene, PlayerWalk};

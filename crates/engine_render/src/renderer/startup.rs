@@ -1,18 +1,11 @@
-//! Starting a renderer: the adapter, device and limits it asks for, the
-//! callbacks recording its failures, and every pass it creates up front,
-//! while the browser compiles and validates its startup pipelines.
-
 use super::*;
 
-/// A renderer whose startup pipelines the browser may still be compiling
-/// and validating: build the world meanwhile, then [`Self::finish`].
 pub struct StartingRenderer {
     renderer: Renderer,
     validation: std::pin::Pin<Box<dyn std::future::Future<Output = Option<wgpu::Error>>>>,
 }
 
 impl StartingRenderer {
-    /// The renderer, once its startup pipelines passed validation.
     pub async fn finish(self) -> Result<Renderer, RenderError> {
         if let Some(error) = self.validation.await {
             return Err(render_error("WebGPU pipeline initialization failed", error));
@@ -22,21 +15,10 @@ impl StartingRenderer {
 }
 
 impl Renderer {
-    /// Create an engine-owned GPU context presenting to `target`: a canvas
-    /// in a secure context, or a native window.
-    ///
-    /// Returns an actionable error when no compatible WebGPU adapter exists,
-    /// device creation fails, or pipeline validation fails. Ordinary builds require
-    /// no optional GPU features; they request timestamps when supported, to time
-    /// frames, and profiling builds timestamps inside passes and pipeline
-    /// statistics too. There is deliberately no WebGL fallback in this milestone.
     pub async fn new(target: RenderTarget) -> Result<Self, RenderError> {
         Self::start(target).await?.finish().await
     }
 
-    /// [`Self::new`] without waiting for its startup pipelines: the browser
-    /// compiles and validates them while the caller builds its world, the
-    /// usual startup cost, until [`StartingRenderer::finish`].
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -57,17 +39,11 @@ impl Renderer {
             .map_err(|error| render_error("No WebGPU adapter is available. Use a WebGPU-capable browser on HTTPS or localhost", error))?;
         let adapter_info = crate::AdapterInfo::of(&adapter.get_info());
         let adapter_limits = adapter.limits();
-        // Buffers as large as the adapter allows: content, not constants,
-        // sizes them. Every pipeline layout keeps within the per-stage
-        // limits every device grants (`cargo xtask lint` checks them).
         let required = crate::pipeline_layouts::REQUIRED_LIMITS;
         let limits = wgpu::Limits {
             max_buffer_size: adapter_limits.max_buffer_size,
             max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
             max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d.min(8_192),
-            // GPU presentation's cull pass binds eight, the WebGPU default;
-            // the visibility buffer's resolve up to twelve
-            // where the adapter allows them.
             max_storage_buffers_per_shader_stage: adapter_limits
                 .max_storage_buffers_per_shader_stage
                 .max(required.storage_buffers),
@@ -79,22 +55,13 @@ impl Renderer {
             max_dynamic_uniform_buffers_per_pipeline_layout: required.dynamic_uniform_buffers,
             max_dynamic_storage_buffers_per_pipeline_layout: required.dynamic_storage_buffers,
             max_uniform_buffer_binding_size: crate::pipeline_layouts::UNIFORM_BINDING_BYTES,
-            // Terrain tiles, impostors and reflection probes
-            // take a layer each.
             max_texture_array_layers: adapter_limits.max_texture_array_layers,
             ..wgpu::Limits::downlevel_defaults()
         };
-        // Block-compressed textures in every format the
-        // adapter samples; hosts transcode to one of them.
         let compression = adapter.features()
             & (wgpu::Features::TEXTURE_COMPRESSION_BC
                 | wgpu::Features::TEXTURE_COMPRESSION_ETC2
                 | wgpu::Features::TEXTURE_COMPRESSION_ASTC);
-        // Indirect draws name their visible-ID regions as first instances
-        // where the adapter allows it, so passes bind each ID buffer once.
-        // Bloom keeps its levels in 32 bits where the device
-        // renders them. Frames time their GPU work where the device has
-        // timestamps: dynamic resolution keeps it within its budget.
         let features = compression
             | (adapter.features()
                 & (wgpu::Features::INDIRECT_FIRST_INSTANCE
@@ -140,7 +107,6 @@ impl Renderer {
                 device_limits.max_texture_array_layers,
             ),
         )?;
-        // The device keeps its pipelines by key from here on.
         let pipeline_counts = PipelineCounts::new(&device, display.format());
         let scope = crate::gpu_calls::validation_scope(&device);
         display.configure(&device);
@@ -199,7 +165,6 @@ impl Renderer {
             ),
         );
         let gpu_presentation = GpuPresentationPass::new(&device);
-        // Popping takes effect now; validation resolves once they compiled.
         let validation = Box::pin(scope.pop());
 
         let profiler = GpuProfiler::new(required_features, f64::from(queue.get_timestamp_period()));

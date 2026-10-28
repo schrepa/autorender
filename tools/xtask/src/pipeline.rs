@@ -7,8 +7,6 @@ use crate::{
     },
 };
 
-/// The Cargo profile of builds nothing is timed on: the development server,
-/// lint, agent sessions and asset tools (`Cargo.toml`).
 pub(crate) const QUICK: &str = "quick";
 
 pub fn build(root: &Path) -> Result<(), String> {
@@ -18,9 +16,6 @@ pub fn build(root: &Path) -> Result<(), String> {
     run(root, NPM, &["run", "build", "--prefix", "web"])
 }
 
-/// What the development server serves, made: the authored sources checked,
-/// the clients built with their development tools, the web dependencies
-/// installed.
 pub fn prepare_dev(root: &Path) -> Result<(), String> {
     authoring::validate_sources(root)?;
     build_wasm(root, true, QUICK)?;
@@ -51,10 +46,6 @@ pub fn dev(root: &Path, port: u16) -> Result<(), String> {
     )
 }
 
-/// The documentation of every item, private ones included, of the native
-/// workspace and of the browser façade, which fails where the workspace's
-/// rustdoc lints, all denied, find a link that does not resolve, public
-/// docs linking a private item, or malformed markup.
 pub fn docs(root: &Path) -> Result<(), String> {
     run(
         root,
@@ -68,7 +59,6 @@ pub fn docs(root: &Path) -> Result<(), String> {
             "--locked",
         ],
     )?;
-    // Browser-only façade entry points do not exist in native rustdoc output.
     run(
         root,
         "cargo",
@@ -89,9 +79,6 @@ pub fn docs(root: &Path) -> Result<(), String> {
     )
 }
 
-/// The browser clients built with Cargo profile `profile`, their bindings in
-/// `web/pkg-dev` with development tools or `web/pkg` without, beside a
-/// `build.json` naming the profile and features.
 pub(crate) fn build_wasm(
     root: &Path,
     development: bool,
@@ -121,8 +108,6 @@ pub(crate) fn build_wasm(
             "--out-name",
             name,
         ];
-        // Function names are a fifth of a module: development builds keep
-        // them for stack traces and profiles.
         if !development {
             arguments.push("--remove-name-section");
         }

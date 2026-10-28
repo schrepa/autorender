@@ -1,30 +1,3 @@
-//! Screen effects: ambient occlusion and bloom, the haze
-//! and reflections.
-//!
-//! Frames with an effect draw the scene into a color target whose alpha is the
-//! ambient share of each pixel's light, and a glow target of each pixel's
-//! exposed brightness above the bloom threshold and its reflectivity. Every
-//! effect but bloom runs at the render size, each pixel by its own depth,
-//! normal and ray. Ambient occlusion samples the depth buffer, and one
-//! filter smooths it on each surface. The haze marches the near air through
-//! the shadow clipmap, and its filter blends that over the last displayed
-//! frame's result, reprojected, which a copy keeps for the next. Reflections
-//! walk a pyramid of the depth buffer's nearest depths, meeting what the
-//! screen shows by what lies behind each pixel (the surface target's last
-//! word), rough ones reading the scene through its levels, each half the one
-//! before, which the scene target holds below it; their rays go on through
-//! the world where the screen cannot see (`world_trace`), lit as the main
-//! passes light it, over the main passes' first group as terrain binds it
-//! and a group of their own (`reflections.wgsl`). Bloom filters the glowing
-//! light down a chain of levels from half the render size and back up.
-//! Temporally antialiased frames apply them in their resolve, other frames
-//! in a composite that writes the canvas, upscaling the scene to the
-//! display.
-//!
-//! Targets are made at the display's size, or a fraction of it; frames draw
-//! their render size of them from the top-left corner, every pass within
-//! its share, and read within it.
-
 #![expect(
     clippy::expect_used,
     reason = "encoding reads the targets the frame's preparation sized"
@@ -44,27 +17,11 @@ use crate::render_graph::{Access, BLACK, Clear, FrameShape, Node, Pass, RenderGr
 use crate::screen_effects::{Effects, UniformFrame};
 use crate::targets::{FrameRegion, FrameSize, ScreenTarget, draw_within};
 
-/// Linear color with 8 perceptual bits; alpha holds the ambient share. The
-/// target's levels below the scene hold its blurred averages, which rough
-/// reflections read.
 pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-/// Glow weight and reflectivity.
 pub(crate) const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
-/// The surface reflections follow, four 16-bit words (`surface_texel`): the
-/// shading normal, octahedral, a word each coordinate; its roughness along
-/// the view and across it, a byte each; and the share of its light its
-/// mirrored environment makes up, which reflections replace, in the last
-/// word's low [`MIRRORED_BITS`](crate::gpu_layouts::constants::MIRRORED_BITS)
-/// bits, with what lies behind the surface, which their rays passing
-/// behind it meet, above them.
 pub(crate) const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
-/// The filtered occlusion's visibility, which the composite and resolve
-/// read.
 const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
-/// Occlusion before its filter, and each pixel's distance from the eye.
 const RAW_OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
-/// Bloom levels: light beyond 1 without alpha, packed in 32 bits where the
-/// device renders them (`rg11b10ufloat-renderable`).
 fn bloom_format(device: &wgpu::Device) -> wgpu::TextureFormat {
     if device
         .features()
@@ -75,64 +32,32 @@ fn bloom_format(device: &wgpu::Device) -> wgpu::TextureFormat {
         wgpu::TextureFormat::Rgba16Float
     }
 }
-/// The scene's mirrored light, from the scene and its levels, and the share
-/// of each pixel's light it replaces, both premultiplied by how surely the
-/// rays met the scene.
 const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-/// The haze's light, below zero where its drifting air is clearer than its
-/// mean or sees less of the sky than `atmospheric` counts, and each pixel's
-/// inverse distance: its march, its result filtered over time and that
-/// result's copy the next frame reprojects.
 const HAZE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// Bloom levels from half the render size; each halves the one before.
 const BLOOM_LEVELS: u32 = 6;
-/// The scene's blurred levels below it, which rough reflections read; each
-/// halves the one before, as bloom's levels do.
 const SCENE_LEVELS: u32 = 6;
 
-/// Where the haze's result filtered over time and the copy of it the next
-/// frame's filter reprojects lie among the targets' textures.
 const HAZE_TEXTURE: usize = 8;
 const HAZE_HISTORY: usize = 9;
 
 struct Targets {
-    // Scene with its levels, glow, occlusion, bloom, reflections, the
-    // haze's march, raw occlusion, surface, and the haze filtered and its
-    // history, destroyed with the targets.
     textures: [wgpu::Texture; 10],
-    // The scene alone, which the main passes draw and the composite and
-    // resolve read.
     scene: wgpu::TextureView,
     glow: wgpu::TextureView,
     surface: wgpu::TextureView,
-    // The scene with every blurred level below it, which reflections read;
-    // each blurred level alone, and group `i` reading the scene (0) or
-    // level `i - 1` to write level `i`.
     scene_levels: wgpu::TextureView,
     scene_level_views: Vec<wgpu::TextureView>,
     scene_level_groups: Vec<wgpu::BindGroup>,
-    // Filtered occlusion, which the composite and resolve read, and the raw
-    // occlusion the filter reads.
     occlusion: wgpu::TextureView,
     raw_occlusion: wgpu::TextureView,
-    // Reflections, which the composite and resolve read.
     reflections: wgpu::TextureView,
-    // The haze: this frame's march, which its filter blends over the
-    // history; the filtered result, which the composite and resolve read and
-    // the history copies for the next frame.
     marched: wgpu::TextureView,
     haze: wgpu::TextureView,
     history: wgpu::TextureView,
-    // One view per bloom level, level `i` the size of the scene's blurred
-    // level `i`.
     bloom: Vec<wgpu::TextureView>,
     bloom_first: wgpu::BindGroup,
-    // Group `i` reads level `i` (down, writing `i + 1`) or level `i + 1`
-    // (up, adding into `i`).
     bloom_down: Vec<wgpu::BindGroup>,
     bloom_up: Vec<wgpu::BindGroup>,
-    // Frames that reflect and bloom halve both chains in the same passes:
-    // the first from the scene, group `i` from scene and bloom level `i`.
     levels_first: wgpu::BindGroup,
     levels_down: Vec<wgpu::BindGroup>,
     composite: wgpu::BindGroup,
@@ -147,41 +72,25 @@ impl Drop for Targets {
 }
 
 pub(crate) struct PostPass {
-    // The layout of every post.wgsl pass and fillers for the bindings each
-    // leaves out.
     layout: crate::pipelines::GroupLayout,
     fillers: Fillers,
     occlusion: wgpu::RenderPipeline,
-    // Filters occlusion on each surface.
     effects_filter: wgpu::RenderPipeline,
-    // Reflections, over the main passes' first group as terrain binds it and
-    // their own, whose layout this is.
     reflections: wgpu::RenderPipeline,
     reflections_layout: crate::pipelines::GroupLayout,
-    // Nearest depths the reflection rays walk, created with the first frame
-    // that reflects, and what their world trace walks beside the terrain's
-    // and placed objects' own data.
     nearest: DepthPyramid,
     world_trace: crate::world_trace::WorldTrace,
-    // The haze's march, which reads the camera group of the main passes
-    // (shadow maps, lighting and terrains' bounce probes) and its own, and
-    // its filter over time.
     haze: wgpu::RenderPipeline,
     haze_layout: crate::pipelines::GroupLayout,
     haze_filter: wgpu::RenderPipeline,
-    // What the last submitted display frame left the haze's filter (none
-    // after any other frame), what this frame leaves once it is submitted,
-    // and the display frames that left one, which turn the march's jitter.
     haze_history: Option<HazeHistory>,
     haze_kept: Option<HazeHistory>,
     haze_frames: u32,
     bloom_first: wgpu::RenderPipeline,
     bloom_down: wgpu::RenderPipeline,
     bloom_up: wgpu::RenderPipeline,
-    // The scene's levels bloom leaves, halved as bloom halves its own.
     scene_down: wgpu::RenderPipeline,
     bloom_format: wgpu::TextureFormat,
-    // Both chains' levels at once, into two targets.
     levels_first: wgpu::RenderPipeline,
     levels_down: wgpu::RenderPipeline,
     composite: wgpu::RenderPipeline,
@@ -189,12 +98,7 @@ pub(crate) struct PostPass {
     written: Option<PostUniform>,
     sampler: wgpu::Sampler,
     targets: ScreenTarget<Targets>,
-    // The frame's sizes: the targets', the display's, and the part of them
-    // it draws.
     region: FrameRegion,
-    // Occlusion, filter, reflection and haze bindings over the depth buffer
-    // and targets (and reflections', the pyramid and what their world trace
-    // walks).
     occlusion_group: GroupCache<5>,
     effects_filter_group: GroupCache<2>,
     reflections_group: GroupCache<19>,
@@ -202,9 +106,6 @@ pub(crate) struct PostPass {
     haze_filter_group: GroupCache<4>,
 }
 
-/// What a display frame's haze leaves the next frame's filter: its
-/// unjittered view-projection and eye, which the next frame reprojects the
-/// filtered haze from, and the pixels of it it drew, its render size.
 #[derive(Clone, Copy)]
 struct HazeHistory {
     view_projection: Mat4,
@@ -213,9 +114,6 @@ struct HazeHistory {
 }
 
 impl PostPass {
-    /// `camera_layout` is the first group of the main passes, which the
-    /// haze's march reads, and `terrain_camera_layout` that group as
-    /// terrain binds it, which reflections read.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -233,7 +131,6 @@ impl PostPass {
             source: wgpu::ShaderSource::Wgsl(POST_SHADER.into()),
         });
         let bloom_format = bloom_format(device);
-        // Every pass of post.wgsl shares one layout.
         let layout = pipelines::layout(device, &POST);
         let pipeline_layout = crate::pipelines::pipeline_layout(
             device,
@@ -293,7 +190,6 @@ impl PostPass {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            // Blends the blurred scene levels reflections read.
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
@@ -392,9 +288,6 @@ impl PostPass {
         }
     }
 
-    /// Releases the targets while no frame uses an effect, the haze's
-    /// history and the world trace's data with them; the next such frame
-    /// recreates them.
     pub(crate) fn release_targets(&mut self) {
         self.targets.release();
         self.occlusion_group.clear();
@@ -406,12 +299,6 @@ impl PostPass {
         self.world_trace.release();
     }
 
-    /// Target bytes: per pixel, the scene (4), glow (2), surface (8), raw
-    /// and filtered occlusion (4 and 2), reflections (4) and the haze's
-    /// march, filtered result and history (8 each); the scene's blurred
-    /// levels below it (a third of the scene's 4); the bloom chain (8 bytes
-    /// per texel of its first level, half the display each way); and the
-    /// reflections' depth pyramid and world trace.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
             let pixels = u64::from(size.width) * u64::from(size.height);
@@ -420,10 +307,6 @@ impl PostPass {
             + self.world_trace.capacity_bytes()
     }
 
-    /// Sizes the targets to `region`'s display and writes this frame's
-    /// settings: the effects of `snapshot` over the depth buffer `depth`, at
-    /// the region's render size. `display` frames filter the haze over the
-    /// last display frame's ([`Self::begin_haze`]).
     pub(crate) fn begin(
         &mut self,
         device: &wgpu::Device,
@@ -437,7 +320,6 @@ impl PostPass {
         if self.targets.resizes(size) {
             let targets = self.create_targets(device, size);
             self.targets.set(size, targets);
-            // New targets hold no history of the haze.
             self.haze_history = None;
         }
         self.region = region;
@@ -450,9 +332,6 @@ impl PostPass {
         let (width, height) = (region.render.width as f32, region.render.height as f32);
         let (wide, tall) = (size.width as f32, size.height as f32);
         let view_projection = snapshot.view_projection;
-        // Row y of a perspective view-projection is the focal scale times a
-        // unit axis of the view: its length converts world units at unit
-        // distance into half the viewport height.
         let focal = view_projection.row(1).truncate().length();
         let atmosphere = snapshot.environment.atmosphere.sanitized();
         let toward_sun = atmosphere.sun_direction.normalize_or_zero();
@@ -498,15 +377,6 @@ impl PostPass {
         frame
     }
 
-    /// Readies reflections once a frame's terrain and placed objects are
-    /// prepared: their world trace brought up to `trace` in frames `frame`
-    /// reflects, and let go in others; and their group over the uniform, the
-    /// depth buffer `depth`, the glow and surface targets, the pyramid, the
-    /// scene's levels and what the world trace walks: the terrain pass's
-    /// `sources`, its own data, the placed objects' records and poses with
-    /// the generation counting their buffers (`placed`), and every layer of
-    /// the placed objects' impostor atlas with the generation counting its
-    /// arrays (`frames`).
     pub(crate) fn prepare_reflections(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -569,8 +439,6 @@ impl PostPass {
         );
     }
 
-    /// The groups of the occlusion pass (with sky occlusion's maps `sky`)
-    /// and of the filter after it, where `frame` runs them.
     fn bind_occlusion(
         &mut self,
         device: &wgpu::Device,
@@ -610,13 +478,6 @@ impl PostPass {
         }
     }
 
-    /// The groups of the haze's march and of its filter over the depth
-    /// buffer `depth`, where `frame` runs it, and what a `display` frame of
-    /// `snapshot` leaves the next one's filter, kept once it is submitted:
-    /// returns the history this frame's filter reprojects (the last display
-    /// frame's, when this one is displayed too) and the turn of its march's
-    /// jitter. Frames shown no more than once (exact ones, previews) keep no
-    /// history, read none and leave the jitter unturned.
     fn begin_haze(
         &mut self,
         device: &wgpu::Device,
@@ -655,14 +516,10 @@ impl PostPass {
         if self.haze_kept.is_none() {
             return (None, 0.0);
         }
-        // The golden ratio's fraction turns each frame's jitter far from the
-        // last few's.
         let turn = (self.haze_frames % 1024) as f32 * 0.618_034;
         (self.haze_history, turn - turn.floor())
     }
 
-    // A group of the shared layout binding `resources` by name, filled
-    // where they leave bindings out.
     fn group(
         &self,
         device: &wgpu::Device,
@@ -672,26 +529,20 @@ impl PostPass {
         filled_group(device, label, &POST, &self.layout, resources, &self.fillers)
     }
 
-    /// The scene color, glow and surface targets of the opaque pass.
     pub(crate) fn targets(&self) -> (&wgpu::TextureView, &wgpu::TextureView, &wgpu::TextureView) {
         let targets = self.targets.get().expect("sized in begin");
         (&targets.scene, &targets.glow, &targets.surface)
     }
 
-    /// The scene color's texture, which water copies before it draws over
-    /// it.
     pub(crate) fn scene_texture(&self) -> &wgpu::Texture {
         &self.targets.get().expect("sized in begin").textures[0]
     }
 
-    /// The scene color as a group binds it, for glass refracting it.
     pub(crate) fn scene(&self) -> Bound<'_> {
         let targets = self.targets.get().expect("sized in begin");
         Bound::of(targets, pipelines::view(&targets.scene))
     }
 
-    /// What the temporal resolve reads, as its group binds them: the scene,
-    /// occlusion, bloom, reflections and the haze, and the settings uniform.
     pub(crate) fn resolve_inputs(&self) -> ([Bound<'_>; 5], Bound<'_>) {
         let targets = self.targets.get().expect("sized in begin");
         let target = |view| Bound::of(targets, pipelines::view(view));
@@ -707,17 +558,6 @@ impl PostPass {
         )
     }
 
-    /// Records ambient occlusion, bloom, reflections (over the main passes'
-    /// first group as terrain binds it, `terrain_camera`), the haze (its
-    /// march over the camera group `camera` of the main passes, then its
-    /// filter) and the filter of occlusion after the opaque and transparent
-    /// passes, every one but bloom over the render size. Frames with bloom
-    /// and reflections blur the scene's levels reflections read in the
-    /// bloom's passes down. `profiler` times occlusion's samples
-    /// (`ambient_occlusion`), bloom with those scene levels (`bloom`),
-    /// reflections from their depth pyramid to their trace (`reflections`),
-    /// the haze's march and filter (`haze`) and occlusion's filter
-    /// (`effects_filter`).
     fn encode_effects(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -742,8 +582,6 @@ impl PostPass {
             pass.draw(0..3, 0..1);
         }
         let reflecting = frame.reflections && self.reflections_group.get().is_some();
-        // Bloom first: with reflections, its passes down also blur the scene
-        // for rough reflections.
         let levels_done = if frame.bloom {
             self.encode_bloom(encoder, reflecting, profiler)
         } else {
@@ -751,8 +589,6 @@ impl PostPass {
         };
         if reflecting && let Some(group) = self.reflections_group.get() {
             self.nearest.encode(encoder, profiler.span("reflections"));
-            // The scene blurred down its levels for rough reflections, past
-            // those the bloom's passes wrote.
             for (level, (view, group)) in targets
                 .scene_level_views
                 .iter()
@@ -788,7 +624,6 @@ impl PostPass {
         if frame.haze {
             self.encode_haze(encoder, camera, profiler);
         }
-        // The occlusion filtered on each surface.
         if (frame.occlusion || frame.sky)
             && let Some(group) = self.effects_filter_group.get()
         {
@@ -805,10 +640,6 @@ impl PostPass {
         }
     }
 
-    /// Records the haze: its march over the render size through the camera
-    /// group `camera` of the main passes, its filter over time, then the
-    /// filtered result copied into the history the next frame's filter
-    /// reprojects. `profiler` times the march and the filter (`haze`).
     fn encode_haze(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -861,9 +692,6 @@ impl PostPass {
         );
     }
 
-    /// Records the bloom chain down and back up. With `scene_levels` its
-    /// passes down also halve the scene into the levels rough reflections
-    /// read, as many as both chains have; returns how many they wrote.
     fn encode_bloom(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -872,7 +700,6 @@ impl PostPass {
     ) -> usize {
         let targets = self.targets.get().expect("sized in begin");
         let levels = targets.bloom.len();
-        // The first pass down begins the span, the last pass up ends it.
         let span = profiler.span("bloom");
         let timed = |first: bool, last: bool| {
             span.filter(|_| first || last)
@@ -946,12 +773,6 @@ impl PostPass {
         shared
     }
 
-    /// The texels the frame draws of level `level` of the chains below the
-    /// render size, bloom's and the scene's blurred levels: the render size
-    /// halved `level + 1` times, a texel at least, and one more, which
-    /// shaders reading within the share of the level the render size is of
-    /// the display take, however their arithmetic rounds; within the level,
-    /// the display halved as often.
     fn level_region(&self, level: u32) -> (u32, u32) {
         let FrameRegion { display, render } = self.region;
         let part = |drawn: u32, whole: u32| {
@@ -964,8 +785,6 @@ impl PostPass {
         )
     }
 
-    /// Draws the composite of a frame without temporal antialiasing into
-    /// `pass`, its node's pass over the canvas, upscaling the scene.
     fn draw_composite(&self, mut pass: wgpu::RenderPass<'_>) {
         let targets = self.targets.get().expect("sized in begin");
         pass.set_pipeline(&self.composite);
@@ -1001,8 +820,6 @@ impl PostPass {
         let levels = BLOOM_LEVELS.min(crate::gpu_data::mip_levels(half.0, half.1));
         let scene_levels = SCENE_LEVELS.min(crate::gpu_data::mip_levels(width, height) - 1);
         let textures = [
-            // Water copies the scene it refracts before it draws over it;
-            // its blurred levels lie below it.
             crate::targets::texture_2d(
                 device,
                 "engine/post-scene",
@@ -1019,8 +836,6 @@ impl PostPass {
             texture("engine/post-haze-march", size, HAZE_FORMAT, 1),
             texture("engine/post-occlusion-raw", size, RAW_OCCLUSION_FORMAT, 1),
             texture("engine/post-surface", size, SURFACE_FORMAT, 1),
-            // The filtered haze is copied into the history the next frame
-            // reads.
             haze_texture(
                 "engine/post-haze",
                 crate::targets::RENDER_TARGET | wgpu::TextureUsages::COPY_SRC,
@@ -1030,8 +845,6 @@ impl PostPass {
                 wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             ),
         ];
-        // The scene with its levels, which reflections read, and the other
-        // targets.
         let [
             scene_levels_view,
             glow,
@@ -1046,8 +859,6 @@ impl PostPass {
         ] = textures
             .each_ref()
             .map(|texture| texture.create_view(&Default::default()));
-        // A level of a chain alone: the scene, which passes draw and read,
-        // each of its blurred levels below it, and each of bloom's.
         let level_view = |texture: &wgpu::Texture, level: u32| {
             texture.create_view(&wgpu::TextureViewDescriptor {
                 base_mip_level: level,
@@ -1070,8 +881,6 @@ impl PostPass {
             texture_entry("glow", &glow),
             sampler.clone(),
         ]);
-        // Every pass down and up keeps within the texels the frame drew of
-        // the level it reads, which the settings' sizes give.
         let bloom_down = (0..bloom.len().saturating_sub(1))
             .map(|level| {
                 group(&[
@@ -1090,8 +899,6 @@ impl PostPass {
                 ])
             })
             .collect();
-        // The scene's blurred levels below it blur with the bloom's
-        // downsampling filter, the first from the scene itself.
         let scene_level_views: Vec<wgpu::TextureView> = (1..=scene_levels)
             .map(|level| level_view(&textures[0], level))
             .collect();
@@ -1159,9 +966,6 @@ impl PostPass {
     }
 }
 
-/// The reflections' pipeline (`reflections.wgsl`) over the main passes'
-/// first group as terrain binds it, whose layout is
-/// `terrain_camera_layout`, and their own group, and that group's layout.
 fn reflections_pipeline(
     device: &wgpu::Device,
     terrain_camera_layout: &crate::pipelines::GroupLayout,
@@ -1192,8 +996,6 @@ fn reflections_pipeline(
     (pipeline, layout)
 }
 
-/// An attachment of `view` that a full-screen pass writes whole: loaded,
-/// as nothing needs clearing, and stored.
 fn overwritten(view: &wgpu::TextureView) -> wgpu::RenderPassColorAttachment<'_> {
     wgpu::RenderPassColorAttachment {
         view,
@@ -1206,7 +1008,6 @@ fn overwritten(view: &wgpu::TextureView) -> wgpu::RenderPassColorAttachment<'_> 
     }
 }
 
-// A texture view bound as binding `name`.
 fn texture_entry<'a>(
     name: &'a str,
     view: &'a wgpu::TextureView,
@@ -1223,8 +1024,6 @@ pub(crate) fn inverse_or_identity(matrix: Mat4) -> Mat4 {
     }
 }
 
-/// A pass labeled `label` drawing `view`'s first `drawn` texels, from its
-/// top-left corner.
 fn fullscreen_pass<'e>(
     encoder: &'e mut wgpu::CommandEncoder,
     label: &str,
@@ -1252,7 +1051,6 @@ fn fullscreen_pass<'e>(
     pass
 }
 
-/// Which screen effects a frame applied.
 pub(crate) struct EffectStats {
     pub(crate) ambient_occlusion: Applied,
     pub(crate) bloom: Applied,
@@ -1266,10 +1064,6 @@ impl RenderFeature for PostPass {
 
     const LABELS: &'static [&'static str] = &["engine/post-", "engine/post.", "engine/haze."];
 
-    /// The effects that run read what they need into their results, the
-    /// haze into its history too, which the next frame reads; the composite
-    /// (frames drawing into the effects' targets without temporal
-    /// antialiasing) lays them with the scene over the canvas.
     fn declare(effects: &Effects, shape: &FrameShape, graph: &mut RenderGraph) {
         let targets = shape.targets;
         if targets != crate::render_graph::Targets::Canvas && effects.any() {
@@ -1303,8 +1097,6 @@ impl RenderFeature for PostPass {
             );
             self.draw_composite(pass);
         } else {
-            // Ambient occlusion, bloom, reflections and the haze, after the
-            // opaque and transparent passes.
             self.encode_effects(
                 encoder,
                 *effects,
@@ -1315,8 +1107,6 @@ impl RenderFeature for PostPass {
         0
     }
 
-    /// A submitted display frame's haze is the history the next frame's
-    /// filter reprojects; any other frame leaves none.
     fn after_submit(&mut self, frame: Option<&Effects>) {
         let kept = self.haze_kept.take();
         self.haze_history = frame.and(kept);

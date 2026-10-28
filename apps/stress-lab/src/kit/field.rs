@@ -1,7 +1,3 @@
-//! The tower field: a grid of towers bobbing and turning about their
-//! anchors, which the field stands on open ground and the highlands on
-//! their plateau; the dense world's moving objects move the same way.
-
 use engine::prelude::*;
 
 use super::random::hash;
@@ -19,9 +15,6 @@ pub(crate) struct Motion {
     pub speed: f32,
 }
 
-/// The tower field: a grid of towers `lift` above the ground, optionally
-/// grouped under parents of 32, with the first `colliders` carrying
-/// colliders. Returns the moving node count.
 pub(crate) fn field(world: &mut World, config: &StressConfig, lift: f32) -> engine::Result<u32> {
     let meshes = create_assets(&mut world.resource_mut::<AssetLibrary>(), config)?;
     let mut parent_changes = Vec::with_capacity(if config.hierarchy {
@@ -83,7 +76,6 @@ pub(crate) fn field(world: &mut World, config: &StressConfig, lift: f32) -> engi
         }
         if index < config.colliders {
             let sensor = index % 100 < config.sensor_percent;
-            // Alternate primitives exercise affine boxes and stretched spheres.
             let collider = if index % 4 == 0 {
                 Collider::sphere(0.5)
             } else {
@@ -148,7 +140,6 @@ fn create_assets(assets: &mut AssetLibrary, config: &StressConfig) -> engine::Re
             } else {
                 Mesh::cube()
             };
-            // Distinct immutable meshes make the batch/upload workload explicit.
             let mut vertices = source.vertices().to_vec();
             for vertex in &mut vertices {
                 let scale_x = 0.85 + (index % 4) as f32 * 0.05;
@@ -160,8 +151,6 @@ fn create_assets(assets: &mut AssetLibrary, config: &StressConfig) -> engine::Re
             }
             let mesh = assets.insert_mesh(Mesh::new(vertices, source.indices().to_vec())?)?;
             let color = colors[index as usize % colors.len()];
-            // Surfaces from glossy metal to matte; every
-            // fourth tower's bright stripes light up.
             let lit = config.textured && index % 4 == 1;
             let surface = Surface {
                 roughness: [0.25, 0.5, 0.8, 0.35][index as usize % 4],
@@ -213,10 +202,6 @@ pub(crate) fn animate(
     metrics.animation_ms += metrics::now_ms() - start;
 }
 
-/// Each object bobs and turns about its anchor, four objects at a time with
-/// the engine's SIMD helpers: the operations of `move_each` per lane, so
-/// the same bits (glam's rotation constructors take `sin_cos` of half the
-/// angle).
 fn move_lanes<'a, T: std::ops::DerefMut<Target = Transform>>(
     t: f32,
     objects: impl Iterator<Item = (&'a Motion, T)>,

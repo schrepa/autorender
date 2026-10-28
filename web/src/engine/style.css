@@ -1,4 +1,3 @@
-/* The engine's own page, for games whose page brings no elements of its own. */
 body.engine-page{margin:0;background:#0a101b;color:#e4eaf4;font:12px/1.5 ui-sans-serif,system-ui,sans-serif;overflow:hidden}
 .engine-page #scene{position:fixed;inset:0;width:100vw;height:100vh;display:block;outline:none;touch-action:none}
 .engine-page .engine-hud{position:fixed;top:12px;left:12px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;max-width:calc(100vw - 24px);padding:8px 12px;border-radius:6px;background:#0b1422d0}

@@ -1,6 +1,3 @@
-//! The engine's side of a game a host runs, on a page or in a native
-//! window: its app, the game, the input gathered for its frames and the
-//! development tools.
 use crate::app_host::AppHost;
 use crate::game::Game;
 use crate::host::{FrameLoop, FramePhase, InputGatherer, JobOrder, JobScheduler};
@@ -8,7 +5,6 @@ use engine_core::{ActionInput, Engine, ErrorCode, JobId};
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
 
-/// A hosted game's engine, game and development tools.
 pub struct GameHost<G: Game> {
     app: AppHost,
     game: G,
@@ -17,16 +13,11 @@ pub struct GameHost<G: Game> {
     jobs: JobScheduler,
     #[cfg(feature = "dev")]
     development: crate::dev_host::DevHost,
-    // The development request under way: what it waits for from its host.
     #[cfg(feature = "dev")]
     pub(crate) dev_pending: Option<crate::dev_host::bridge::Pending>,
 }
 
 impl<G: Game> GameHost<G> {
-    /// Starts the renderer presenting to `target` and, while the GPU
-    /// compiles its pipelines, the engine and game `build` makes. From here
-    /// on a panic stops the engine for good, on every host
-    /// ([`engine_panic`]'s hook).
     pub async fn launch<E: Into<crate::Error>>(
         target: RenderTarget,
         build: impl FnOnce() -> Result<(Engine, G), E>,
@@ -65,9 +56,6 @@ impl<G: Game> GameHost<G> {
         self.app.engine()
     }
 
-    /// The session cooks from now on: the engine asks for every record
-    /// its world's content needs ([`engine_core::Cooking`]), which the host
-    /// keeps for its pack.
     pub fn cook(&mut self) {
         self.app
             .engine_mut()
@@ -76,8 +64,6 @@ impl<G: Game> GameHost<G> {
             .insert_resource(engine_core::Cooking::default());
     }
 
-    /// What a cooking session has left, by feature; `None` unless it
-    /// cooks.
     pub fn cooking(&self) -> Option<&engine_core::Cooking> {
         self.app
             .engine()
@@ -86,8 +72,6 @@ impl<G: Game> GameHost<G> {
             .get_resource::<engine_core::Cooking>()
     }
 
-    /// The jobs the host's scheduler holds: on workers, in lookups or to
-    /// run in place.
     pub fn jobs_held(&self) -> u32 {
         self.jobs.held()
     }
@@ -104,20 +88,15 @@ impl<G: Game> GameHost<G> {
         &mut self.game
     }
 
-    /// The engine and the game, to change both.
     pub fn parts_mut(&mut self) -> (&mut Engine, &mut G) {
         (self.app.engine_mut(), &mut self.game)
     }
 
-    /// Runs `engine` from the next frame, wired to the host as the first
-    /// was and under the host's culling and antialiasing choices.
     pub fn replace_engine(&mut self, engine: Engine) {
         self.app.replace_engine(engine);
         self.suspend();
     }
 
-    /// Runs one frame at `timestamp` milliseconds on a `width` × `height`
-    /// view with the input gathered since the last one.
     pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> crate::Result<()> {
         self.prepare_pipelines();
         let input = self.input.take();
@@ -131,9 +110,6 @@ impl<G: Game> GameHost<G> {
         self.app.frame(timestamp, width, height, input.state)
     }
 
-    /// The animation frame at `timestamp` (the host's clock, milliseconds,
-    /// as [`crate::host::now_ms`] reads it) on a `width` × `height` view:
-    /// preparation's, or one of play, as the frame loop runs them.
     pub fn animation_frame(
         &mut self,
         timestamp: f64,
@@ -146,17 +122,11 @@ impl<G: Game> GameHost<G> {
         phase
     }
 
-    /// Asks for the scene's pipeline list unless asked, and creates its
-    /// pipelines once it arrived: whether it is still on its way, which
-    /// preparation waits for.
     pub fn prepare_pipelines(&mut self) -> bool {
         let game = &self.game;
         self.app.prepare_pipelines(|engine| game.content(engine))
     }
 
-    /// Loads terrain on a `width` × `height` view while preparation waits
-    /// for the GPU to compile pipelines; whether it still waits, so the
-    /// host's tasks go on.
     pub fn work_while_compiling(&mut self, width: u32, height: u32) -> bool {
         if !self.frames.preparing() || !self.frame_stats().pipelines_compiling {
             return false;
@@ -165,9 +135,6 @@ impl<G: Game> GameHost<G> {
         true
     }
 
-    /// Loads terrain until shortly before the next frame of play is due,
-    /// by the recent interval between frames; whether tiles are still to
-    /// load.
     pub fn load_between_frames(&mut self) -> bool {
         let mut frames = std::mem::take(&mut self.frames);
         let remaining = frames.between(self);
@@ -175,36 +142,26 @@ impl<G: Game> GameHost<G> {
         remaining
     }
 
-    /// Whether frames prepare the starting state before play (the
-    /// default), or play at once, as development sessions start.
     pub fn set_preparation(&mut self, enabled: bool) {
         self.frames.set_preparation(enabled);
     }
 
-    /// Whether play has yet to start.
     pub fn preparing(&self) -> bool {
         self.frames.preparing()
     }
 
-    /// Whether terrain loads between frames (the default), or within
-    /// frames alone.
     pub fn set_between_frames(&mut self, enabled: bool) {
         self.frames.set_between_frames(enabled);
     }
 
-    /// A source (a keyboard key, a finger on a touch button) pressed
-    /// (`down`) or released key `code`, a UI Events code name; whether the
-    /// game uses the key, which hosts then keep from anything else.
     pub fn key(&mut self, code: &str, down: bool) -> bool {
         self.input.key(code, down)
     }
 
-    /// The view turned by a drag of `dx`, `dy` pixels.
     pub fn look(&mut self, dx: f32, dy: f32) {
         self.input.look(dx, dy);
     }
 
-    /// Nothing is held: the host took input away.
     pub fn clear_input(&mut self) {
         self.input.clear();
     }
@@ -217,23 +174,16 @@ impl<G: Game> GameHost<G> {
         self.app.work_between_frames(milliseconds)
     }
 
-    /// Workers the host runs the engine's jobs on; without, it runs them in
-    /// place, as it takes them ([`Self::take_jobs`]).
     pub fn set_job_workers(&mut self, workers: u32) {
         self.jobs.set_workers(workers);
         self.app.set_job_workers(self.jobs.working());
     }
 
-    /// Whether the host holds records (the cook's packs, a store keeping
-    /// what jobs make), and runs every job anyway to verify them.
     pub fn set_job_cache(&mut self, caching: bool, verify: bool) {
         self.jobs.set_cache(caching, verify);
         self.app.set_job_verifying(caching && verify);
     }
 
-    /// What the host does for the engine's jobs since the last call, in
-    /// order ([`JobOrder`]); jobs no worker takes, on a host without any,
-    /// run here first.
     pub fn take_jobs(&mut self) -> Vec<JobOrder> {
         let messages = self.app.take_jobs();
         let mut finished = Vec::new();
@@ -244,37 +194,30 @@ impl<G: Game> GameHost<G> {
                 let output = self.app.run_job_here(request.kind, &request.input);
                 self.jobs.ran_here(request.id, output, &mut finished);
             }
-            // What they made, to keep.
             orders.extend(self.jobs.take(Vec::new(), &mut finished));
         }
         self.finish_jobs(finished);
         orders
     }
 
-    /// Job `id`'s output from its worker.
     pub fn complete_job(&mut self, id: JobId, output: Vec<u8>) {
         let mut finished = Vec::new();
         self.jobs.done(id, output, &mut finished);
         self.finish_jobs(finished);
     }
 
-    /// Job `id` failed on its worker, for `error`.
     pub fn fail_job(&mut self, id: JobId, error: String) {
         let mut finished = Vec::new();
         self.jobs.failed(id, error, &mut finished);
         self.finish_jobs(finished);
     }
 
-    /// The host's records' answer for job `id` ([`JobOrder::Lookup`]): the
-    /// record's key, and its bytes where a pack or the store holds it.
     pub fn job_kept(&mut self, id: JobId, key: String, output: Option<Vec<u8>>) {
         let mut finished = Vec::new();
         self.jobs.kept(id, key, output, &mut finished);
         self.finish_jobs(finished);
     }
 
-    /// Worker `worker` broke, for `error`: the engine takes back its jobs,
-    /// and the host `replaced` it or runs one fewer.
     pub fn lose_job_worker(&mut self, worker: u32, error: &str, replaced: bool) {
         let mut finished = Vec::new();
         self.jobs.lost(worker, error, replaced, &mut finished);
@@ -282,19 +225,14 @@ impl<G: Game> GameHost<G> {
         self.app.set_job_workers(self.jobs.working());
     }
 
-    /// The worker a task of the host's own waits least on, counted on it
-    /// until [`Self::job_task_done`]; none without workers.
     pub fn job_task(&mut self) -> Option<u32> {
         self.jobs.task()
     }
 
-    /// A task of the host's own on `worker` ended.
     pub fn job_task_done(&mut self, worker: u32) {
         self.jobs.task_done(worker);
     }
 
-    /// Hands the engine the jobs that ended: their outputs, or why each
-    /// failed.
     fn finish_jobs(&mut self, finished: Vec<crate::host::Finished>) {
         for (id, result) in finished {
             match result {
@@ -309,8 +247,6 @@ impl<G: Game> GameHost<G> {
         self.app.report_job_cache(hits, misses, bytes, mismatches);
     }
 
-    /// Drops suspension time and every input held or gathered before the
-    /// next frame.
     pub fn suspend(&mut self) {
         self.app.suspend();
         self.input.clear();
@@ -354,56 +290,39 @@ impl<G: Game> GameHost<G> {
         self.app.set_subpixel_culling(enabled);
     }
 
-    /// The display's physical pixels per logical one (a window's scale
-    /// factor, a page's device pixel ratio), which the resolution policy
-    /// sizes display frames by: 1 until the host says.
     pub fn set_pixel_ratio(&mut self, ratio: f64) {
         self.app.set_pixel_ratio(ratio);
     }
 
-    /// The display's refresh interval in milliseconds, where the host knows
-    /// it: what dynamic resolution keeps frames within unless its settings
-    /// give a budget.
     pub fn set_refresh_interval(&mut self, milliseconds: Option<f64>) {
         self.app.set_refresh_interval(milliseconds);
     }
 
-    /// The user's resolution scale of display frames, over the scene's, in
-    /// this and later engines.
     pub fn set_resolution_scale(&mut self, scale: f64) {
         self.app.set_resolution_scale(scale);
     }
 
-    /// Dynamic resolution of display frames, over the scene's setting, in
-    /// this and later engines: hosts turn it on for play in a window or a
-    /// page.
     pub fn set_dynamic_resolution(&mut self, enabled: bool) {
         self.app.set_dynamic_resolution(enabled);
     }
 
-    /// The debug view frames show, in this and later engines.
     pub fn set_debug_view(&mut self, view: engine_core::DebugViewMode) {
         self.app.set_debug_view(view);
     }
 
-    /// What terrain times its work by, in this and later engines.
     pub fn set_terrain_clock(&mut self, clock: crate::host::TerrainClock) {
         self.app.set_terrain_clock(clock);
     }
 
-    /// The GPU the game draws on.
     pub fn adapter(&self) -> &crate::AdapterInfo {
         self.app.renderer.adapter()
     }
 
-    /// Starts a capture in the graphics debugger the program runs under
-    /// (RenderDoc, Xcode); whether one started.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn start_debugger_capture(&mut self) -> bool {
         self.app.renderer.start_debugger_capture()
     }
 
-    /// Stops the debugger's capture once the GPU finished its work.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn stop_debugger_capture(&mut self) -> crate::Result<()> {
         self.app
@@ -412,7 +331,6 @@ impl<G: Game> GameHost<G> {
             .map_err(crate::app_host::render_failure)
     }
 
-    /// Waits until the GPU finished every frame submitted.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_gpu(&self) -> crate::Result<()> {
         self.app
@@ -421,14 +339,11 @@ impl<G: Game> GameHost<G> {
             .map_err(crate::app_host::render_failure)
     }
 
-    /// A mark after the GPU work submitted so far, for hosts that keep
-    /// frames in flight: [`Self::wait_for_mark`] waits for it.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn gpu_mark(&self) -> crate::GpuMark {
         self.app.renderer.gpu_mark()
     }
 
-    /// Waits until the GPU finished the work submitted before `mark`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_mark(&self, mark: crate::GpuMark) -> crate::Result<()> {
         self.app
@@ -437,8 +352,6 @@ impl<G: Game> GameHost<G> {
             .map_err(crate::app_host::render_failure)
     }
 
-    /// The last frame an offscreen target drew, as `(width, height, RGBA8
-    /// rows from the top)`, once the GPU finished it; `None` for a window.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn read_offscreen(&self) -> crate::Result<Option<(u32, u32, Vec<u8>)>> {
         self.app
@@ -447,12 +360,10 @@ impl<G: Game> GameHost<G> {
             .map_err(crate::app_host::render_failure)
     }
 
-    /// The last frame's statistics.
     pub fn frame_stats(&self) -> engine_core::FrameStats {
         self.app.stats()
     }
 
-    /// The last frame's statistics, as the JSON object `FrameStats` types.
     pub fn stats(&self) -> String {
         self.app.stats_json()
     }
@@ -484,19 +395,14 @@ impl<G: Game> GameHost<G> {
 
 #[cfg(feature = "dev")]
 impl<G: Game> GameHost<G> {
-    /// Loses the renderer's GPU device, as a driver reset would.
     pub(crate) fn lose_device(&mut self) {
         self.app.renderer.lose_device();
     }
 
-    /// Arms the renderer's pixel probe at `pixel`: the next two frames
-    /// keep what it reads.
     pub(crate) fn arm_probe(&mut self, pixel: (u32, u32)) {
         self.app.renderer.arm_probe(pixel);
     }
 
-    /// What the armed pixel probe found, with the entity whose slot drew
-    /// the pixel, once its read-back arrived; why it failed otherwise.
     pub(crate) fn probe_result(
         &mut self,
     ) -> Option<Result<engine_dev::results::ProbeResult, String>> {
@@ -505,7 +411,6 @@ impl<G: Game> GameHost<G> {
             Ok(probe) => probe,
             Err(error) => return Some(Err(error.to_string())),
         };
-        // Meshes, their cards and virtual geometry draw entities' slots.
         let slot = probe.object.filter(|_| {
             matches!(
                 probe.kind,
@@ -602,12 +507,10 @@ impl<G: Game> GameHost<G> {
 
 #[cfg(feature = "profiling")]
 impl<G: Game> GameHost<G> {
-    /// Starts a capture of at most `max_events` CPU events.
     pub fn profiling_start(&mut self, max_events: usize) -> Result<(), &'static str> {
         self.app.profiling_start(max_events)
     }
 
-    /// Stops the capture: its report.
     pub fn profiling_stop(&mut self) -> Result<serde_json::Value, &'static str> {
         self.app.profiling_stop()
     }

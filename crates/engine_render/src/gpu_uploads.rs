@@ -1,15 +1,8 @@
-//! Upload planning for GPU presentation inputs. Core stamps each
-//! gathered record with the gather sequence that last changed it; the renderer
-//! uploads records newer than the sequence it last uploaded, coalescing small
-//! clean gaps with the same byte/call heuristics as retained uploads.
-
 pub(crate) use crate::uploads::whole_stream;
 use crate::uploads::{UploadRange, WRITE_CALL_BYTES};
 
 const MAX_RANGES: usize = 64;
 
-/// Ranges of records whose stamp exceeds `since`. Returns false, with a single
-/// full range, when the plan is fragmented or covers at least 75% of records.
 pub(crate) fn changed_ranges(
     stamps: &[u64],
     since: u64,
@@ -46,9 +39,6 @@ pub(crate) fn changed_ranges(
     true
 }
 
-/// [`changed_ranges`] for the records listed in `nodes` (each below `len`,
-/// in any order) instead of those with newer stamps: the same ranges, from
-/// the listed records alone. `bits` is scratch, left cleared.
 pub(crate) fn listed_ranges(
     nodes: &[u32],
     len: usize,
@@ -69,8 +59,6 @@ pub(crate) fn listed_ranges(
     let gap = WRITE_CALL_BYTES.div_ceil(stride);
     let mut covered = 0;
     let mut partial = true;
-    // Runs of listed records in ascending order, merged exactly as
-    // `changed_ranges` merges records one at a time.
     'words: for (word, &value) in bits[..words].iter().enumerate() {
         let mut value = value;
         while value != 0 {

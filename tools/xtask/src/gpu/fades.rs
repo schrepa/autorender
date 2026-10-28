@@ -1,31 +1,6 @@
-//! Fades by size on screen, which `cargo xtask gpu` refuses: a shader
-//! decides how much of a pattern shows (a `smoothstep`, `step` or
-//! `saturate`, a `select` or `mix` weight, an `if`, a loop's bound or a
-//! comparison turned into a number) by a size on screen (what the detail
-//! eye's measures give, `scene.wgsl`'s `detail_distance`, `detail_across`
-//! and `detail_span`, and a pixel's derivatives) only to filter it, a
-//! pattern drawn wherever its features span about two pixels and finer
-//! ones averaged (a level of its mipmaps or of a pyramid, its mean, its
-//! variance into roughness), or to hand over between two representations
-//! with the same mean (an impostor and its mesh, blades and their canopy,
-//! occlusion's levels); never to fade it toward nothing. Every such
-//! decision lies in a function [`FILTERS`] lists, each with what stands in
-//! for the detail it decides on, or on a line marked
-//! `// filter: <what stands in>`; any other fails the build. Sizes are
-//! followed as the handover check follows the camera (`handovers::sweep`):
-//! through expressions, locals, arguments, results and calls; a direction
-//! (`normalize`'s) holds none, and what a texture gives is its texels as
-//! filtering averages them.
-
 use super::Checked;
 use super::handovers::{Watch, sweep};
 
-/// Filters and matched handovers: functions deciding by sizes on screen
-/// how a pattern is averaged, or handing it over to a representation with
-/// the same mean, each with what stands in for the detail; and the pixel's
-/// own geometry (a direction, a receiver's plane), which measures no
-/// detail. They are not followed: what they give, and what they pass the
-/// functions they call, depends on no size.
 const FILTERS: &[(&str, &str)] = &[
     (
         "bake_mask",
@@ -146,12 +121,8 @@ const FILTERS: &[(&str, &str)] = &[
     ),
 ];
 
-/// A line marked filter: its decision by a size on screen filters, or
-/// hands over to what the mark says stands in for the detail.
 const MARK: &str = "// filter:";
 
-/// Every module's fades by size on screen; returns how many filters and
-/// handovers decide by sizes: those listed and the lines marked.
 pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
     let listed = |name: &str| FILTERS.iter().any(|&(filter, _)| filter == name);
     let swept = sweep(

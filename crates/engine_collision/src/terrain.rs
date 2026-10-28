@@ -1,10 +1,3 @@
-//! Terrain collision: a heightfield per level-0 terrain tile
-//! resident around the camera and focus entities, of terrains that collide,
-//! split into triangles exactly as renderers and terrain queries split them.
-//! Rays, overlaps and shape casts test them after the colliders; hits report
-//! the terrain's entity. Terrain belongs to the default collision layers
-//! and is never a sensor.
-
 use std::cell::Cell;
 
 use bevy_ecs::prelude::Entity;
@@ -31,10 +24,6 @@ use crate::{
     ShapeCastOptions, ShapeHit,
 };
 
-/// One tile's heightfield: its terrain, key, the tile it was built from
-/// (edits replace tiles under the same key), world center
-/// (parry centers heightfields), the field (which solvers share) and
-/// world bounds.
 struct Field {
     entity: Entity,
     key: TileKey,
@@ -44,14 +33,12 @@ struct Field {
     bounds: Bounds,
 }
 
-/// The heightfields of every colliding terrain's resident level-0 tiles.
 #[derive(Default)]
 pub(crate) struct TerrainFields {
     fields: Vec<Field>,
     revision: Option<u64>,
 }
 
-/// Whether `filter` accepts terrain `entity`.
 fn accepts(filter: QueryFilter, entity: Entity) -> bool {
     filter.exclude != Some(entity)
         && filter.layers.interacts(CollisionLayers::default())
@@ -59,12 +46,10 @@ fn accepts(filter: QueryFilter, entity: Entity) -> bool {
 }
 
 impl TerrainFields {
-    /// Heightfields in use.
     pub(crate) fn len(&self) -> usize {
         self.fields.len()
     }
 
-    /// The heightfields in use, as solvers mirror them.
     pub(crate) fn solids(&self) -> impl Iterator<Item = crate::GroundSolid<'_>> {
         self.fields.iter().map(|field| crate::GroundSolid {
             terrain: field.entity,
@@ -77,12 +62,10 @@ impl TerrainFields {
         })
     }
 
-    /// The terrains' revision the heightfields were last built at.
     pub(crate) fn revision(&self) -> Option<u64> {
         self.revision
     }
 
-    /// Follows `terrains`' collision tiles; returns whether they changed.
     pub(crate) fn sync(&mut self, terrains: Option<&Terrains>) -> bool {
         let Some(terrains) = terrains else {
             let changed = !self.fields.is_empty();
@@ -92,8 +75,6 @@ impl TerrainFields {
         };
         let revision = terrains.revision();
         let wanted: Vec<_> = terrains.collision_tiles().collect();
-        // The same tiles of the same residency: nothing to build. Tiles
-        // already resident for rendering join without changing residency.
         let same = self.revision == Some(revision)
             && wanted.len() == self.fields.len()
             && wanted.iter().all(|(entity, _, tile)| {
@@ -110,8 +91,6 @@ impl TerrainFields {
         let mut kept = std::mem::take(&mut self.fields);
         for (entity, origin, tile) in wanted {
             let key = tile.key();
-            // A tile replaced over the same ground (its water made again as
-            // its rivers run now) keeps its heightfield.
             if let Some(position) = kept.iter().position(|field| {
                 field.entity == entity
                     && field.key == key
@@ -126,7 +105,6 @@ impl TerrainFields {
             }
             let samples = TILE_SAMPLES as usize;
             let spacing = tile.spacing();
-            // Column-major: rows along z, columns along x.
             let mut heights = Vec::with_capacity(samples * samples);
             for x in 0..samples as i32 {
                 for z in 0..samples as i32 {
@@ -172,7 +150,6 @@ impl TerrainFields {
         true
     }
 
-    /// The nearest terrain hit of `ray` (normalized) that `filter` accepts.
     pub(crate) fn ray(&self, ray: CollisionRay, filter: QueryFilter) -> Option<RayHit> {
         let mut nearest: Option<RayHit> = None;
         for field in &self.fields {
@@ -205,7 +182,6 @@ impl TerrainFields {
         nearest
     }
 
-    /// Every terrain hit of `ray`, one per terrain tile, into `output`.
     pub(crate) fn ray_all(&self, ray: CollisionRay, filter: QueryFilter, output: &mut Vec<RayHit>) {
         for field in &self.fields {
             if !accepts(filter, field.entity) || !field.bounds.ray(ray) {
@@ -229,7 +205,6 @@ impl TerrainFields {
         }
     }
 
-    /// Terrains whose triangles `shape` overlaps, into `output` once each.
     pub(crate) fn overlap(
         &self,
         shape: &AffineShape,
@@ -259,7 +234,6 @@ impl TerrainFields {
         Ok(())
     }
 
-    /// The first terrain triangle `shape` meets moving by `displacement`.
     pub(crate) fn cast(
         &self,
         shape: &AffineShape,
@@ -317,12 +291,10 @@ impl TerrainFields {
     }
 }
 
-/// `bounds` in a field's local frame about `center`.
 fn local_aabb(bounds: Bounds, center: Vec3) -> Aabb {
     Aabb::new(bounds.min - center, bounds.max - center)
 }
 
-/// `triangle` (local to `center`) relative to `shape`'s center.
 fn relative(triangle: &Triangle, center: Vec3, shape: &AffineShape) -> Triangle {
     let offset = center - shape.center;
     Triangle::new(
@@ -332,7 +304,6 @@ fn relative(triangle: &Triangle, center: Vec3, shape: &AffineShape) -> Triangle 
     )
 }
 
-/// GJK intersection of `shape` and `triangle`, as colliders test pairs.
 fn triangle_overlaps(
     shape: &AffineShape,
     triangle: &Triangle,
@@ -352,9 +323,6 @@ fn triangle_overlaps(
     }
 }
 
-/// When `shape` moving by `displacement` meets `triangle`: the fraction of
-/// the motion, the contact point, the triangle's outward normal and whether
-/// they started overlapping.
 fn cast_triangle(
     epa: &mut EPA,
     shape: &AffineShape,

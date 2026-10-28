@@ -1,11 +1,8 @@
-//! An optional gameplay plugin: fly-camera controls through public schedules.
 use crate::prelude::*;
 
-/// Ordering point for camera control in `Presentation`.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CameraSystems;
 
-/// Camera motion configuration. Angles use radians; look input uses pixels.
 #[derive(Resource, Debug)]
 pub struct FlyCameraController {
     yaw: f32,
@@ -34,14 +31,11 @@ impl FlyCameraController {
         }
     }
 
-    /// Align controls with an existing authored camera without moving it.
     pub fn from_camera(camera: &Camera) -> Self {
         let direction = (camera.target - camera.position).normalize_or_zero();
         Self::new((-direction.x).atan2(-direction.z), direction.y.asin())
     }
 
-    /// Align orientation after a temporary camera edit, preserving speed and
-    /// sensitivity. Vertical views remain constrained by the controller's pitch.
     pub fn align_to(&mut self, camera: &Camera) {
         let aligned = Self::from_camera(camera);
         self.yaw = aligned.yaw;
@@ -57,7 +51,6 @@ impl FlyCameraController {
     }
 }
 
-/// Registers a camera system. Insert a controller to configure it before startup.
 pub struct FlyCameraPlugin;
 
 impl Plugin for FlyCameraPlugin {

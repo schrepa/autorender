@@ -1,6 +1,3 @@
-/** Debug views and the pixel probe in the Stress Lab's metro, and terrain's
- * views and numbers and the water's views on the terrain fixture
- * (terrain-fixture.mjs), in real Chrome. */
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
@@ -18,9 +15,6 @@ const { browser, page, errors } = await launch({ timeout: 180_000 });
 
 const command = commander(page);
 
-// GPU-presented frames of the same view, until pipelines finished compiling
-// and the level of detail counts read back from frames presented here hold
-// for several frames: what each frame draws has settled.
 async function settle() {
   for (let frame = 0; frame < 600; frame++) {
     if (!(await command("present", { alpha: 0, gpu: true })).result.rendering.pipelines_compiling) break;
@@ -47,10 +41,6 @@ async function capture(name) {
   return { rendering: reply.result.rendering, png: bytes.toString("base64") };
 }
 
-// The exact CPU path's image once two captures running agree: what a view
-// switched off and the probe must leave as it was. GPU-presented frames
-// read their culling and levels back from earlier frames, so their images
-// may differ in a few pixels from frame to frame.
 async function exact(name) {
   let previous;
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -63,31 +53,23 @@ async function exact(name) {
   assert.fail(`${name}: two exact captures running agree`);
 }
 
-/** The view the DebugView section holds. */
 async function shownView() {
   return (await command("inspect", { component: "DebugView" })).result.value.view;
 }
 
 const views = ["kinds", "levels", "cards", "shadows", "casters", "overdraw", "normals"];
-// Terrain's own views, which show the terrain fixture's ground.
 const terrainViews = ["levels", "tiles", "materials", "sky", "detail"];
-// The water's views, which show the fixture's lakes and rivers wherever
-// they lie against everything else gray, unlit.
 const waterViews = ["water_depth", "water_speed", "water_froude", "water_turbulence", "water_white", "water_reach",
   "water_span", "water_eddies", "water_roughness"];
 const report = {};
-// What each drawn pixel's probe may name, and those an entity's slot draws.
 const kinds = ["mesh", "placed", "card", "placed_card", "virtual", "terrain", "cover", "water", "sea", "falls", "sky"];
 const slotted = ["mesh", "card", "virtual"];
 
 try {
   await openPaused(page, url, { timeout: 120_000 });
-  // Reflection probes capture their cubes over many frames, which would
-  // change reflections between captures taken apart.
   await command("environment", { reflection_probes: { enabled: false } });
   await command("game", { name: "view", args: { name: "overview" } });
 
-  // The setting is discoverable and off unless set.
   const listing = await command("describe");
   assert.ok(listing.result.types.some(type => type.name === "DebugView"));
   const look = await command("inspect", { component: "Environment" });
@@ -98,8 +80,6 @@ try {
   const pipelines = shaded.rendering.pipelines;
   const before = await exact("exact");
 
-  // Each view draws its frames into the debug targets with pipelines of its
-  // own, then shows them over the whole canvas.
   const shown = {};
   for (const view of views) {
     const changed = await command("environment", { debug_view: { view } });
@@ -112,13 +92,10 @@ try {
     assert.ok(pixels.changed > pixels.total / 4, `${view} shows other colors than the shaded image: ${JSON.stringify(pixels)}`);
     shown[view] = { ...frame, pixels };
   }
-  // The levels view shows the impostor cards and coarser levels the
-  // frames draw, which the kinds view colors alike.
   const levels = await differentPixels(page, [shown.kinds.png, shown.levels.png], { tolerance: 8 });
   assert.ok(levels.changed > 0, "levels differ from kinds");
   assert.ok(shown.overdraw.rendering.pipelines > pipelines, "views create their pipelines when shown");
 
-  // Off again, frames draw the shaded image as before, creating nothing.
   await command("environment", { debug_view: { view: "off" } });
   assert.equal(await shownView(), "off");
   const again = await capture("shaded-again");
@@ -127,12 +104,9 @@ try {
   const same = await differentPixels(page, [before.png, (await exact("exact-again")).png]);
   assert.equal(same.changed, 0, `the shaded image returns exactly: ${JSON.stringify(same)}`);
 
-  // Unknown views are refused, naming the field.
   const unknown = await command("environment", { debug_view: { view: "everything" } }, false);
   assert.equal(unknown.error.path.startsWith("$.debug_view"), true, JSON.stringify(unknown.error));
 
-  // The pixel probe, from GPU-presented frames: what drew points across the
-  // view's middle, among them an object an entity's slot draws.
   const { display_width: width, display_height: height } = again.rendering.resolution;
   const probes = [];
   for (const fraction of [0.3, 0.4, 0.5, 0.6, 0.7]) {
@@ -154,18 +128,14 @@ try {
     probes.push(probed);
   }
   assert.ok(probes.some(probed => slotted.includes(probed.kind)), `an entity drew one of the points: ${JSON.stringify(probes.map(probed => probed.kind))}`);
-  // The sky above the city answers too.
   const sky = (await command("probe", { x: Math.floor(width / 2), y: 2, alpha: 0, gpu: true })).result;
   assert.ok(kinds.includes(sky.kind), JSON.stringify(sky));
-  // Pixels outside the view are refused.
   const outside = await command("probe", { x: width, y: 0 }, false);
   assert.equal(outside.error.code, "out_of_range");
   assert.equal(outside.error.path, "$.x");
-  // The probe leaves the shaded image as it was.
   const after = await exact("exact-after-probe");
   assert.equal((await differentPixels(page, [before.png, after.png])).changed, 0);
 
-  // Every host takes the view as a switch: the page's debug-view parameter.
   await openPaused(page, devUrl("stress.html", { config, "debug-view": "cards" }), { timeout: 120_000 });
   assert.equal(await shownView(), "cards");
 
@@ -178,9 +148,6 @@ try {
   await browser.close();
 }
 
-// The water's views and terrain's: each shows the fixture otherwise than
-// shaded, and the probe reads the ground's tile, level, materials, sky and
-// detail, and no water there.
 const terrain = await openTerrain("debug-view-terrain");
 try {
   const shaded = await terrain.capture("terrain-shaded");
@@ -192,7 +159,6 @@ try {
     assert.ok(pixels.changed > pixels.total / 4, `${view} shows the fixture otherwise: ${JSON.stringify(pixels)}`);
     report.terrain_views[view] = pixels.changed;
   }
-  // The ground somewhere below the view's middle, where the probe finds it.
   const { display_width: width, display_height: height } = (await terrain.command("render")).result.rendering.resolution;
   let ground;
   for (const [x, y] of [[0.5, 0.75], [0.4, 0.8], [0.6, 0.8], [0.5, 0.9], [0.3, 0.7], [0.7, 0.7]]) {
@@ -212,7 +178,6 @@ try {
   assert.ok(made.sky >= 0 && made.sky <= 1, JSON.stringify(made));
   assert.ok(made.detail.detailed >= made.detail.averaged - 0.01, JSON.stringify(made.detail));
   assert.equal(ground.water, null, JSON.stringify(ground));
-  // Off pixels, and pixels not terrain's, read no ground, nor water.
   const above = (await terrain.command("probe", { x: Math.floor(width / 2), y: 1 })).result;
   assert.equal(above.terrain, null, JSON.stringify(above));
   assert.equal(above.water, null, JSON.stringify(above));

@@ -1,23 +1,12 @@
-//! Browser-first 3D engine façade. Gameplay intentionally uses Bevy ECS.
-//!
-//! The root and [`prelude`] hold what games use; [`terrain`] holds terrain
-//! authoring, [`render`] the renderer's contract, [`stats`] the frame
-//! statistics and [`host`] what hosts wire.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
 )]
 
-/// Opt-in collision geometry, filtered queries, and fixed-tick sensor events.
 pub use engine_collision as collision;
-/// Rigid bodies moving under gravity, contacts with the world's solids,
-/// and the water and wind about them.
 pub use engine_physics as physics;
-/// Optional bounded profiling scopes; calls compile away without `profiling`.
 pub use engine_profile as profiling;
-/// Authoring, validation, and explicit scene ownership.
 pub use engine_scene as scene;
-/// Settings declared once with their rules (`settings!`), as the engine's own are.
 pub use engine_settings as settings;
 pub mod camera;
 mod error;
@@ -30,23 +19,13 @@ pub use game::{Game, Inspectors};
 pub use plugins::EnginePlugins;
 #[cfg(not(target_arch = "wasm32"))]
 pub use surface::runtime_typescript;
-/// What tooling generates from Rust, for apps' `schema` binaries.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tooling;
 
-// The ECS and math the engine is built on.
-/// Hash maps and sets with a fixed hasher: the same order every run.
 pub use engine_core::collections;
 pub use engine_core::{bevy_ecs, glam};
-// Every environment section, for code listing them (`environment_sections!(callback)`).
 pub use engine_core::environment_sections;
 
-/// What games use, at the root and in the [`prelude`] alike: the engine and
-/// its schedules, time, input, transforms, objects and assets (and the
-/// records their own code makes, meshes and texture sets among them), the
-/// look's settings, the engine's features and their plugins, the ground,
-/// the stores gameplay reads and the deterministic trigonometry
-/// (`math::sin`, not `f32::sin`).
 mod games {
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, AnimatedProperty,
@@ -80,9 +59,6 @@ mod games {
 }
 pub use games::*;
 
-// Lower-level names, at the root only: asset, animation and mesh details,
-// the bounds settings and components validate against, the fallback mesh
-// size `Mesh::from_virtual` takes by default, and what hosts and tools read.
 pub use engine_core::{
     AnimationSample, DEFAULT_FALLBACK_TRIANGLES, DetailShares, DrawnKind, EnvironmentSection,
     ErrorCode, Features, HierarchyReport, InvalidSetting, LodLevel, MAX_BOUNCE_LEVELS,
@@ -95,12 +71,7 @@ pub use engine_core::{
     WaterReach, has_feature,
 };
 
-/// Terrain authoring: layer stacks, masks, stamps, bakes, placement and
-/// surfaces, which a [`Terrain`] component describes, and the tile data
-/// they make.
 pub mod terrain {
-    /// Heightfield terrain data: tile pyramids, layer stacks, tiles,
-    /// patches and the jobs that make tiles and bakes.
     pub use engine_core::terrain_data as data;
     pub use engine_core::{
         AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes,
@@ -116,8 +87,6 @@ pub mod terrain {
     };
 }
 
-/// The renderer's contract: what extraction hands it each frame, the GPU
-/// presentation's inputs and the bounds its shaders share with the CPU.
 pub mod render {
     pub use engine_core::{
         CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, CellView, DEFORMATION_GRAIN,
@@ -136,8 +105,6 @@ pub mod render {
     };
 }
 
-/// What a frame observed, by section: [`stats::FrameStats`] as hosts and
-/// agents read it.
 pub mod stats {
     pub use engine_core::{
         Applied, CellStats, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn,
@@ -150,7 +117,6 @@ pub mod stats {
 
 pub mod host;
 
-/// Optional, bounded development inspection. No inspection runs automatically.
 #[cfg(feature = "dev")]
 pub use engine_dev as dev;
 
@@ -158,22 +124,15 @@ mod app_host;
 #[cfg(feature = "dev")]
 mod dev_host;
 mod game_host;
-/// The renderer's shader modules by name, with their sources, as it
-/// composes them: what tools compile and hash.
 pub use engine_render::shaders::MODULES as SHADER_MODULES;
-/// Where hosts present, and what renderers fail with.
 pub use engine_render::{AdapterInfo, RenderError, RenderTarget};
-/// A native window hosts present to, the GPU they ask for, and how tools
-/// that must see the GPU interface's calls start its instances.
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{GpuMark, GpuPreference, NativeWindow, start_native_instances_with};
 pub use game_host::GameHost;
 
-/// The page's side of a hosted game, owned by the main thread.
 #[cfg(target_arch = "wasm32")]
 pub mod browser;
 
-/// What [`export_game!`] expands to refers to.
 #[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
 pub mod __private {
@@ -184,7 +143,6 @@ pub mod __private {
     pub use web_sys;
 }
 
-/// Its items in development builds of the engine, nothing otherwise.
 #[cfg(feature = "dev")]
 #[doc(hidden)]
 #[macro_export]
@@ -199,7 +157,6 @@ macro_rules! __if_dev {
     ($($item:item)*) => {};
 }
 
-/// Its items in profiling builds of the engine, nothing otherwise.
 #[cfg(feature = "profiling")]
 #[doc(hidden)]
 #[macro_export]
@@ -214,8 +171,6 @@ macro_rules! __if_profiling {
     ($($item:item)*) => {};
 }
 
-/// What games import: the root's gameplay names, collision, scenes, the
-/// fly camera, the parts of Bevy the engine runs and glam's types.
 pub mod prelude {
     pub use crate::camera::{CameraSystems, FlyCameraController, FlyCameraPlugin};
     pub use crate::games::*;
@@ -226,12 +181,6 @@ pub mod prelude {
     };
     pub use engine_core::glam::{Mat4, Quat, Vec2, Vec3, Vec4};
     pub use engine_physics::{BodyMotion, PhysicsPlugin, PhysicsSystems, PhysicsWorld, RigidBody};
-    // Bevy derives resolve this name in client scope when only the engine
-    // facade is a direct dependency, so expose the crate beside the parts of
-    // its prelude the engine runs: not its hierarchy (the engine's is
-    // `Parent`), message queues (which need schedules it never runs) nor
-    // `RemovedComponents` (removals between fixed ticks are lost; observers of
-    // `Remove` see each).
     pub use engine_core::bevy_ecs::{
         self,
         bundle::Bundle,

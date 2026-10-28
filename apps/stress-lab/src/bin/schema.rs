@@ -1,6 +1,3 @@
-//! The Stress Lab's generated files, printed for `cargo xtask schema`,
-//! which writes them; lint checks they are current.
-
 fn main() {
     engine::tooling::print_generated(&[
         ("web/src/generated/stress.ts", page()),
@@ -12,8 +9,6 @@ fn main() {
     ]);
 }
 
-/// The page's types (its snapshot, configuration and scenes), its
-/// configuration's limits and its catalog of choices.
 fn page() -> String {
     let snapshot = serde_json::to_value(schemars::schema_for!(stress_lab::StressSnapshot))
         .expect("schemas serialize");
@@ -49,8 +44,6 @@ fn page() -> String {
     page
 }
 
-/// The features a workload can switch, which measurements name: the
-/// Stress Lab's, and the engine switches every host takes.
 fn options() -> String {
     let mut options = serde_json::to_value(stress_lab::switches()).expect("switches serialize");
     if let Some(options) = options.as_array_mut() {
@@ -72,7 +65,6 @@ fn options() -> String {
 "
 }
 
-/// The schemas of the Stress Lab's inspectors, by name.
 fn inspectors() -> String {
     let schemas = serde_json::json!({
         "StressConfig": schemars::schema_for!(stress_lab::StressConfig),

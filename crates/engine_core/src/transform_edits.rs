@@ -1,10 +1,7 @@
-//! Immediate edits of an existing local pose.
-
 use crate::{Transform, hierarchy::same_local_bits};
 use bevy_ecs::prelude::*;
 use std::fmt;
 
-/// An edit of an entity that has no local pose to edit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransformEditError {
     MissingEntity(Entity),
@@ -24,13 +21,6 @@ impl fmt::Display for TransformEditError {
 
 impl std::error::Error for TransformEditError {}
 
-/// Immediately edits an existing local pose without advancing the simulation.
-///
-/// Writes through ordinary mutable component access, preserving the added tick
-/// without invoking Insert observers. A bit-identical result leaves the change
-/// tick untouched. Propagate transforms before querying derived globals; reset
-/// interpolation for a teleport. Systems edit poses through ordinary
-/// `Query<&mut Transform>`.
 pub fn edit_transform<R>(
     world: &mut World,
     entity: Entity,

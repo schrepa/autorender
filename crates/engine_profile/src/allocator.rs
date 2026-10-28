@@ -1,7 +1,3 @@
-//! The sole unsafe module: forwards each allocation operation unchanged to A.
-//! Counters measure requested bytes, not allocator metadata, committed Wasm
-//! pages, JS heaps or GPU memory. They include the profiler and all Rust code.
-
 #![expect(
     unsafe_code,
     reason = "implements the standard allocator's unsafe contract"
@@ -48,7 +44,6 @@ pub fn allocation_snapshot() -> AllocationSnapshot {
     }
 }
 
-/// Opt-in wrapper selected by the executable, never imposed by the engine.
 pub struct TrackingAllocator<A>(A);
 impl<A> TrackingAllocator<A> {
     pub const fn new(inner: A) -> Self {

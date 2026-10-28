@@ -5,18 +5,13 @@ use glam::Vec3;
 
 use crate::{AssetError, MeshLods};
 
-/// CPU vertex data, independent of any GPU upload layout.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MeshVertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
-    /// Texture coordinates with (0, 0) at the upper-left image corner.
-    /// Finite values outside [0, 1] are valid and use the renderer's sampler.
     pub uv: [f32; 2],
 }
 
-/// Immutable local axis-aligned bounds of every mesh vertex, including unused
-/// vertices. Finite endpoints avoid center/extent overflow for extreme meshes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Aabb {
     min: Vec3,
@@ -37,13 +32,6 @@ impl Aabb {
     }
 }
 
-/// Validated, immutable indexed triangles. Winding is counterclockwise.
-/// Optional vertex colors and second texture coordinates and
-/// skinning joints and weights follow the vertices one to one.
-/// A mesh with virtual geometry is its hierarchy's fallback
-/// cut, which renderers draw where they cannot draw its clusters. A mesh
-/// may carry its levels of detail, as the files the importer writes do;
-/// the cook makes the others'.
 #[derive(Debug)]
 pub struct Mesh {
     vertices: Box<[MeshVertex]>,
@@ -56,8 +44,6 @@ pub struct Mesh {
     lods: Option<Arc<MeshLods>>,
 }
 
-/// Up to four joints per vertex and their weights (glTF `JOINTS_0` and
-/// `WEIGHTS_0`): indices into the joints of the skin an entity binds.
 #[derive(Debug)]
 struct MeshSkin {
     joints: Box<[[u16; 4]]>,
@@ -66,8 +52,6 @@ struct MeshSkin {
 }
 
 impl Mesh {
-    /// Takes ownership, validates finite positions/UVs, nonzero normals and indices,
-    /// and discards spare vector capacity. Normals are normalized once here.
     pub fn new(mut vertices: Vec<MeshVertex>, indices: Vec<u32>) -> Result<Self, AssetError> {
         if vertices.is_empty() {
             return Err(AssetError::EmptyMesh);
@@ -90,8 +74,6 @@ impl Mesh {
                 return Err(AssetError::InvalidUv { vertex: index });
             }
             let normal = Vec3::from_array(vertex.normal);
-            // Scale first so all finite nonzero normals, including very small
-            // and very large values, can be normalized without overflow.
             let scale = normal.abs().max_element();
             if !normal.is_finite() || scale == 0.0 {
                 return Err(AssetError::InvalidNormal { vertex: index });
@@ -119,9 +101,6 @@ impl Mesh {
         })
     }
 
-    /// A mesh drawn from `geometry`'s cluster hierarchy where
-    /// renderers can, and as its fallback cut of at most `fallback_triangles`
-    /// triangles elsewhere; its bounds hold every level.
     pub fn from_virtual(
         geometry: Arc<VirtualMesh>,
         fallback_triangles: u32,
@@ -136,14 +115,10 @@ impl Mesh {
         Ok(mesh)
     }
 
-    /// The cluster hierarchy of a mesh with virtual geometry.
     pub fn virtual_geometry(&self) -> Option<&Arc<VirtualMesh>> {
         self.virtual_geometry.as_ref()
     }
 
-    /// This mesh with its levels of detail `lods`, which must suit its
-    /// indices and vertices ([`MeshLods::check`]); not for meshes with
-    /// joints or virtual geometry, which have none.
     pub fn with_lods(mut self, lods: MeshLods) -> Result<Self, AssetError> {
         if self.joint_count() != 0 || self.virtual_geometry.is_some() {
             return Err(AssetError::InvalidLevels {
@@ -155,15 +130,10 @@ impl Mesh {
         Ok(self)
     }
 
-    /// Its levels of detail, where it carries them.
     pub fn lods(&self) -> Option<&Arc<MeshLods>> {
         self.lods.as_ref()
     }
 
-    /// This mesh deformed by joints: per vertex up to four joint indices
-    /// into the skin an entity binds and their weights, which
-    /// must be finite, not negative and not all zero; they are normalized to
-    /// sum to one. Joints of zero weight are ignored and read as joint 0.
     pub fn with_skin(
         mut self,
         mut joints: Vec<[u16; 4]>,
@@ -200,8 +170,6 @@ impl Mesh {
         Ok(self)
     }
 
-    /// This mesh with linear RGBA vertex colors in `[0, 1]`, one per vertex,
-    /// multiplying its material's base color (glTF `COLOR_0`).
     pub fn with_colors(mut self, colors: Vec<[f32; 4]>) -> Result<Self, AssetError> {
         self.check_count("colors", colors.len())?;
         if let Some(vertex) = colors.iter().position(|color| {
@@ -218,8 +186,6 @@ impl Mesh {
         Ok(self)
     }
 
-    /// This mesh with finite second texture coordinates, one per vertex,
-    /// which texture maps may read (glTF `TEXCOORD_1`).
     pub fn with_uv1(mut self, uv1: Vec<[f32; 2]>) -> Result<Self, AssetError> {
         self.check_count("uv1", uv1.len())?;
         if let Some(vertex) = uv1
@@ -251,28 +217,22 @@ impl Mesh {
         &self.vertices
     }
 
-    /// Vertex colors, when the mesh has them.
     pub fn colors(&self) -> Option<&[[f32; 4]]> {
         self.colors.as_deref()
     }
 
-    /// Second texture coordinates, when the mesh has them.
     pub fn uv1(&self) -> Option<&[[f32; 2]]> {
         self.uv1.as_deref()
     }
 
-    /// Joint indices of skinned meshes, four per vertex.
     pub fn joints(&self) -> Option<&[[u16; 4]]> {
         self.skin.as_ref().map(|skin| &skin.joints[..])
     }
 
-    /// Joint weights of skinned meshes, four per vertex summing to one.
     pub fn weights(&self) -> Option<&[[f32; 4]]> {
         self.skin.as_ref().map(|skin| &skin.weights[..])
     }
 
-    /// The joints a skin must provide: one more than the largest weighted
-    /// joint index, and 0 for meshes without joints.
     pub fn joint_count(&self) -> u32 {
         self.skin.as_ref().map_or(0, |skin| skin.joint_count)
     }
@@ -281,12 +241,10 @@ impl Mesh {
         &self.indices
     }
 
-    /// Bounds computed once at construction; reading them never scans vertices.
     pub fn bounds(&self) -> Aabb {
         self.bounds
     }
 
-    /// Owned vertex/index payload bytes; excludes bounds, allocation and `Arc` metadata.
     pub fn byte_len(&self) -> usize {
         std::mem::size_of_val(self.vertices())
             + std::mem::size_of_val(self.indices())
@@ -300,7 +258,6 @@ impl Mesh {
             + self.lods().map_or(0, |lods| lods.byte_len())
     }
 
-    /// Unit cube centered at the origin, with flat face normals.
     pub fn cube() -> Self {
         let mut vertices = Vec::with_capacity(24);
         let mut indices = Vec::with_capacity(36);
@@ -338,7 +295,6 @@ impl Mesh {
         Self::new(vertices, indices).expect("built-in cube is valid")
     }
 
-    /// Unit square centered on the XZ plane; its front face points upward.
     pub fn plane() -> Self {
         let vertices = [
             [-0.5, 0.0, -0.5],
@@ -356,7 +312,6 @@ impl Mesh {
         Self::new(vertices, vec![0, 1, 2, 0, 2, 3]).expect("built-in plane is valid")
     }
 
-    /// Centered octahedron spanning one unit along each axis, with flat normals.
     pub fn octahedron() -> Self {
         let mut vertices = Vec::with_capacity(24);
         let mut indices = Vec::with_capacity(24);

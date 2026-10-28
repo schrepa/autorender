@@ -1,7 +1,3 @@
-/** Production opt-in recording. The host owns frames, lifecycle and all UI.
- * Call abort when configuration, camera, resolution, visibility or pause changes.
- * sample copies primitive values; callers still own/free any Wasm stats binding.
- */
 import type { Distribution } from "../generated/host";
 
 type RecordingJson = null | boolean | number | string | RecordingJson[] | { [key: string]: RecordingJson };
@@ -13,9 +9,7 @@ type FrameInput = {
   timestamp: number;
   simulation_ms: number; extraction_ms: number; render_ms: number;
   dropped_seconds: number;
-  /** Additional phase timers may be subsets of simulation/extraction/render. */
   phases_ms?: Record<string, number>;
-  /** Per-frame aggregate counters; retained as first/last/ranges, not summed. */
   counters?: Record<string, number | boolean>;
 };
 type Options = Required<RecordingOptions>;
@@ -76,9 +70,6 @@ function values<T extends number | boolean>(input: Record<string, T> | undefined
   return Object.fromEntries(entries);
 }
 
-/** No adapter request/device allocation: pass the runtime's existing adapter info
- * in start metadata if available. Browser hints do not prove physical GPU use.
- */
 function environment(): Record<string, RecordingJson> {
   const browser = globalThis.navigator;
   const memory = (browser as Navigator & { deviceMemory?: number } | undefined)?.deviceMemory;
@@ -92,9 +83,6 @@ function environment(): Record<string, RecordingJson> {
   };
 }
 
-/** A single bounded recording. Incomplete reports remain exportable, clearly
- * marked with the interruption reason. Starting while active throws.
- */
 export class Recorder {
   private running = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -119,15 +107,12 @@ export class Recorder {
   private counterKeys: string | undefined;
   private phaseKeys: string | undefined;
 
-  /** A recorder reporting to `onComplete`, its spreads `spread`'s: the
-   * engine's (`HostControls.distribution`), null without values. */
   constructor(private readonly spread: (values: number[]) => Distribution | null,
     private readonly onComplete: (report: RecordingReport) => void) {}
   get active(): boolean { return this.running; }
 
   start(metadata: RecordingMetadata, options: RecordingOptions = {}): void {
     if (this.running) throw new Error("a recording is already active");
-    // Validate before mutating the previous recording state.
     const configured = checkedOptions(options);
     const copied = jsonCopy(metadata, 16 * 1024);
     this.options = configured; this.metadata = copied; this.browser = environment();
@@ -182,8 +167,6 @@ export class Recorder {
         this.previousDropped = previous.dropped_seconds;
         this.processed++;
       }
-      // The final measured CPU sample belongs to the interval just completed,
-      // not the new frame whose stats arrived with this callback.
       if (this.measured >= this.options.duration_ms) { this.finish(true, "duration_complete"); return; }
       if (this.frames.length >= this.options.max_samples) { this.finish(false, "sample_limit"); return; }
       this.previous = { ...input, phases_ms: phases, counters };
@@ -192,7 +175,6 @@ export class Recorder {
     }
   }
 
-  /** At most four JSON snapshots per second, including warm-up. */
   diagnostic(timestamp: number, snapshot: unknown): void {
     if (!this.running) return;
     if (!finite(timestamp)) { this.abort("invalid_diagnostic_timestamp"); return; }

@@ -1,11 +1,5 @@
-//! Maps keyed by tile that no one walks in a hash table's order: that
-//! order differs between native and Wasm builds and follows each table's
-//! history, so what a frame does would too. A [`TileMap`] answers lookups
-//! by key and hands out its tiles in key order alone.
-
 use super::*;
 
-/// A map keyed by tile: lookups by key, and its tiles in key order alone.
 pub(super) struct TileMap<V>(HashMap<TileKey, V>);
 
 impl<V> Default for TileMap<V> {
@@ -43,14 +37,12 @@ impl<V> TileMap<V> {
         self.0.is_empty()
     }
 
-    /// Its tiles, in key order.
     pub(super) fn keys(&self) -> Vec<TileKey> {
         let mut keys: Vec<TileKey> = self.0.keys().copied().collect();
         keys.sort_unstable();
         keys
     }
 
-    /// Its tiles `wanted` holds for, in key order.
     pub(super) fn keys_where(&self, wanted: impl Fn(&TileKey, &V) -> bool) -> Vec<TileKey> {
         let mut keys: Vec<TileKey> = self
             .0
@@ -62,12 +54,10 @@ impl<V> TileMap<V> {
         keys
     }
 
-    /// Its tiles with their values, in key order.
     pub(super) fn iter(&self) -> impl Iterator<Item = (TileKey, &V)> {
         self.keys().into_iter().map(|key| (key, &self.0[&key]))
     }
 
-    /// Keeps the tiles `keep` holds for, asking in key order.
     pub(super) fn retain(&mut self, mut keep: impl FnMut(&TileKey, &mut V) -> bool) {
         for key in self.keys() {
             if let Some(value) = self.0.get_mut(&key)

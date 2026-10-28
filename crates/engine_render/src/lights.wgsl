@@ -1,33 +1,12 @@
-// Local light binning. One thread per light places it in
-// world space, from the displayed pose of its slot when it follows one, and
-// the threads of its workgroup share the view clusters their lights' spheres'
-// screen and depth bounds cover: a tile of the screen by an exponential
-// depth slice. A first pass counts each
-// cluster's lights, one workgroup turns the counts into list ranges, and a
-// second pass fills the lists, so every list is exactly as long as its
-// lights (an optional budget shortens them). Fragments shade their
-// cluster's list. Bounds are conservative, so a cluster may list a light that
-// cannot reach it; fragments test the range again.
-
 struct Clusters {
     view_projection: mat4x4<f32>,
-    // Depth along the view of point p: dot(xyz, p) + w.
     depth: vec4<f32>,
-    // x and y projection scales, clustered depth range start and end.
     projection: vec4<f32>,
-    // Tile width and height in pixels; slice = log2(depth) * z + w.
     grid: vec4<f32>,
-    // Tiles across and down, depth slices, and the per-cluster budget
-    // (0xffffffff without one).
     counts: vec4<u32>,
-    // Lights; how they shade (SHAPED_LIGHTS: from their spheres and tubes);
-    // the entries `indices` holds; and 1 when only lights without a slot or
-    // on still slots are binned (reflection probe faces).
     lights: vec4<u32>,
 }
 
-// A light as extracted: world position or slot model space, with its
-// sphere's radius and tube's length in the same units.
 struct Input {
     position: vec3<f32>,
     range: f32,
@@ -41,9 +20,6 @@ struct Input {
     region: u32,
 }
 
-// A light in world space: for lights without a cone `direction` is their
-// tube's axis, the tube running along it from `position`; the radius of
-// its sphere and its tube's length, and where it shines.
 struct Light {
     position: vec3<f32>,
     range: f32,
@@ -59,7 +35,6 @@ struct Light {
 
 const SHAPED_LIGHTS: u32 = 1u;
 
-// Transposed top three rows of an affine slot pose.
 struct Rows {
     r0: vec4<f32>,
     r1: vec4<f32>,
@@ -72,19 +47,12 @@ const NO_SLOT: u32 = 0xffffffffu;
 @group(0) @binding(1) var<storage, read> inputs: array<Input>;
 @group(0) @binding(2) var<storage, read> poses: array<Rows>;
 @group(0) @binding(3) var<storage, read_write> lights: array<Light>;
-// Per cluster: its lights while counting, then its write cursor.
 @group(0) @binding(4) var<storage, read_write> counts: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> indices: array<u32>;
-// Lights that reached a cluster, cluster entries lost to the budget or to
-// the capacity of `indices`, and the entries the lists need.
 @group(0) @binding(6) var<storage, read_write> totals: array<atomic<u32>, 3>;
-// Per cluster: the first entry of its list in `indices` and its length.
 @group(0) @binding(7) var<storage, read_write> ranges: array<vec2<u32>>;
-// Reflection probe faces: per slot, its pose fingerprint and
-// the frames in a row it displayed that pose (`presentation.wgsl`).
 @group(0) @binding(8) var<storage, read> still_frames: array<vec2<u32>>;
 
-// Frames in a row a slot must display the same pose to count as still.
 const STILL_FRAMES: u32 = 16u;
 
 fn transformed(rows: Rows, point: vec4<f32>) -> vec3<f32> {
@@ -96,8 +64,6 @@ fn slice_of(depth: f32) -> u32 {
     return u32(clamp(slice, 0.0, f32(clusters.counts.z - 1u)));
 }
 
-// Tile column (or row) range of view-space extent [low, high] (scaled by the
-// projection) between depths near and far: conservative NDC bounds.
 fn ndc_range(center: f32, radius: f32, near: f32, far: f32) -> vec2<f32> {
     let high = center + radius;
     let low = center - radius;
@@ -107,13 +73,8 @@ fn ndc_range(center: f32, radius: f32, near: f32, far: f32) -> vec2<f32> {
 }
 
 const WORKGROUP: u32 = 64u;
-// Lights per workgroup: few enough that lights near the eye, with thousands
-// of clusters, spread over many workgroups.
 const LIGHTS: u32 = 8u;
 
-// A placed light's clusters: its first tile, its columns and rows of tiles,
-// its first slice, the clusters of that box (0: none), and its sphere in
-// view space (x and y scaled like clip coordinates) with its squared radius.
 struct LightBox {
     first: vec2<u32>,
     columns: u32,
@@ -126,22 +87,16 @@ struct LightBox {
     radius2: f32,
 }
 
-// A workgroup's lights, the running total of their clusters, and whether
-// each reached one.
 var<workgroup> boxes: array<LightBox, LIGHTS>;
 var<workgroup> box_ends: array<u32, LIGHTS>;
 var<workgroup> reached_lights: array<atomic<u32>, LIGHTS>;
 
-// Places light `index` in world space (writing its binned record while
-// counting) and returns the clusters its sphere's screen and depth bounds
-// cover.
 fn place(index: u32, fill: bool) -> LightBox {
     var none: LightBox;
     none.index = index;
     let input = inputs[index];
     var position = input.position;
     var direction = input.direction;
-    // Spheres and tubes scale with the pose's y axis.
     var size = 1.0;
     if input.slot != NO_SLOT {
         let rows = poses[input.slot];
@@ -173,9 +128,6 @@ fn place(index: u32, fill: bool) -> LightBox {
     if !all(abs(position) < vec3<f32>(1.0e30)) {
         return none;
     }
-    // The sphere the light reaches: a spot cone's bounding sphere (Wronski)
-    // is smaller and centered along the cone; a tube's is centered on the
-    // tube, reaching its range past either end.
     var center = position;
     var radius = input.range;
     if (clusters.lights.y & SHAPED_LIGHTS) != 0u {
@@ -194,7 +146,6 @@ fn place(index: u32, fill: bool) -> LightBox {
     }
     let clip = clusters.view_projection * vec4<f32>(center, 1.0);
     let depth = dot(clusters.depth.xyz, center) + clusters.depth.w;
-    // Behind the eye or beyond the far plane.
     if depth + radius <= 0.0 || depth - radius > clusters.projection.w {
         return none;
     }
@@ -202,9 +153,7 @@ fn place(index: u32, fill: bool) -> LightBox {
     var first = vec2<u32>(0u);
     var last = tiles - vec2<u32>(1u);
     let near = depth - radius;
-    // A sphere reaching the eye covers the whole screen.
     if near > 1.0e-3 {
-        // Clip x and y are the projection scales times view x and y.
         let far = depth + radius;
         let x = ndc_range(clip.x, radius * clusters.projection.x, near, far);
         let y = ndc_range(clip.y, radius * clusters.projection.y, near, far);
@@ -212,7 +161,6 @@ fn place(index: u32, fill: bool) -> LightBox {
             return none;
         }
         let size = vec2<f32>(tiles);
-        // Screen rows run down while NDC y runs up.
         let low = clamp(floor(vec2<f32>(x.x * 0.5 + 0.5, 0.5 - y.y * 0.5) * size),
             vec2<f32>(0.0), size - 1.0);
         let high = clamp(floor(vec2<f32>(x.y * 0.5 + 0.5, 0.5 - y.x * 0.5) * size),
@@ -235,9 +183,6 @@ fn place(index: u32, fill: bool) -> LightBox {
     return placed;
 }
 
-// Cluster `box` (in slice, row, column order) of `light`: whether its sphere
-// reaches the cluster's view-space box, then counting it there or, with
-// `fill`, writing the light into its list.
 fn visit_cluster(light: LightBox, box: u32, fill: bool) -> bool {
     let x = light.first.x + box % light.columns;
     let y = light.first.y + (box / light.columns) % light.rows;
@@ -245,18 +190,14 @@ fn visit_cluster(light: LightBox, box: u32, fill: bool) -> bool {
     let tiles = clusters.counts.xy;
     let tile_size = 2.0 / vec2<f32>(tiles);
     let depth = light.view_center.z;
-    // Depth range of the slice, the first spanning everything nearer.
     let slice_near = select(exp2((f32(z) - clusters.grid.w) / clusters.grid.z), 0.0, z == 0u);
     let slice_far = exp2((f32(z + 1u) - clusters.grid.w) / clusters.grid.z);
     let dz = max(max(slice_near - depth, depth - slice_far), 0.0);
     if dz * dz > light.radius2 {
         return false;
     }
-    // NDC y of the row's edges: rows run down the screen.
     let top = 1.0 - f32(y) * tile_size.y;
     let bottom = top - tile_size.y;
-    // The cluster's view-space box: its NDC edges at its nearest and
-    // farthest depths.
     let left = -1.0 + f32(x) * tile_size.x;
     let right = left + tile_size.x;
     let x_low = min(left * slice_near, left * slice_far) / clusters.projection.x;
@@ -270,8 +211,6 @@ fn visit_cluster(light: LightBox, box: u32, fill: bool) -> bool {
     }
     let cluster = (z * tiles.y + y) * tiles.x + x;
     if fill {
-        // The range already excludes entries the budget or the capacity
-        // cannot hold.
         let slot = atomicAdd(&counts[cluster], 1u);
         let range = ranges[cluster];
         if slot < range.y {
@@ -283,9 +222,6 @@ fn visit_cluster(light: LightBox, box: u32, fill: bool) -> bool {
     return true;
 }
 
-// Workgroup `group`'s lights: a thread places each, then all threads share
-// every cluster the lights cover, so a light near the eye with thousands of
-// clusters takes the whole workgroup.
 fn visit(group: u32, fill: bool, lane: u32) {
     if lane < LIGHTS {
         let index = group * LIGHTS + lane;
@@ -299,7 +235,6 @@ fn visit(group: u32, fill: bool, lane: u32) {
         atomicStore(&reached_lights[lane], 0u);
     }
     workgroupBarrier();
-    // Running totals of the lights' clusters.
     for (var stride = 1u; stride < LIGHTS; stride *= 2u) {
         var earlier = 0u;
         if lane < LIGHTS && lane >= stride {
@@ -313,7 +248,6 @@ fn visit(group: u32, fill: bool, lane: u32) {
     }
     let total = box_ends[LIGHTS - 1u];
     for (var item = lane; item < total; item += WORKGROUP) {
-        // The light whose clusters hold `item`: the first total beyond it.
         var low = 0u;
         var high = LIGHTS - 1u;
         while low < high {
@@ -335,7 +269,6 @@ fn visit(group: u32, fill: bool, lane: u32) {
     }
 }
 
-// LIGHTS lights per workgroup; dispatches beyond 65,535 workgroups add rows.
 @compute @workgroup_size(64)
 fn count_lights(@builtin(workgroup_id) group: vec3<u32>,
         @builtin(local_invocation_index) lane: u32) {
@@ -351,10 +284,6 @@ fn bin_lights(@builtin(workgroup_id) group: vec3<u32>,
 const SCAN_THREADS: u32 = 256u;
 var<workgroup> partial: array<u32, 256>;
 
-// One workgroup: each thread sums a run of clusters' budgeted counts, the
-// workgroup scans the sums, and each thread gives its clusters consecutive
-// list ranges, cut at the capacity of `indices`, and zeroes their counts
-// for use as write cursors.
 @compute @workgroup_size(256)
 fn scan_clusters(@builtin(local_invocation_index) thread: u32) {
     let total = clusters.counts.x * clusters.counts.y * clusters.counts.z;

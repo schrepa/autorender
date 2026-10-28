@@ -1,5 +1,3 @@
-//! The metro's streets and their furniture.
-
 use super::*;
 
 pub(super) fn road(b: &mut Builder) {
@@ -23,7 +21,6 @@ pub(super) fn road_cross(b: &mut Builder) {
 }
 
 pub(super) fn sidewalk(b: &mut Builder) {
-    // A raised ring 1.6 wide around the block.
     let pavers = Map::Tile(2.0, 2.0);
     let (outer, inner, height) = (10.0, 8.4, 0.3);
     for (min, max) in [
@@ -75,7 +72,6 @@ pub(super) fn shelter_frame(b: &mut Builder) {
     }
     b.block(v(-2.0, 2.2, -0.8), v(2.0, 2.32, 0.8), CHROME);
     b.block(v(-1.5, 0.35, -0.5), v(1.5, 0.45, -0.2), TIMBER);
-    // An ad panel at one end, lit from inside.
     b.block(v(1.75, 0.3, -0.55), v(1.85, 2.1, 0.55), COOL);
 }
 
@@ -167,7 +163,6 @@ pub(super) fn planter(b: &mut Builder) {
 }
 
 pub(super) fn flowers(b: &mut Builder) {
-    // Clumps of blossoms in vertex colors over a matte material.
     let colors = [
         [0.95, 0.2, 0.35],
         [1.0, 0.85, 0.2],
@@ -285,7 +280,6 @@ pub(super) fn plinth(b: &mut Builder) {
 }
 
 pub(super) fn figure(b: &mut Builder) {
-    // A blocky standing figure with a raised arm.
     let metal = Map::Tile(1.0, 1.0);
     b.block(v(-0.4, 0.0, -0.25), v(-0.05, 1.3, 0.25), metal);
     b.block(v(0.05, 0.0, -0.25), v(0.4, 1.3, 0.25), metal);
@@ -296,7 +290,6 @@ pub(super) fn figure(b: &mut Builder) {
 }
 
 pub(super) fn sculpture(b: &mut Builder) {
-    // A bean of mirror metal.
     let profile: Vec<(f32, f32)> = (0..=10)
         .map(|index| {
             let angle = PI * index as f32 / 10.0;

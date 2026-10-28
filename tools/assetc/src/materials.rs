@@ -1,7 +1,3 @@
-//! glTF 2.0 metallic-roughness materials, mapped one to one onto scene
-//! materials. Images are written beside the scene
-//! unchanged, for the host to decode.
-
 use engine_scene::{
     SceneAlphaMode, SceneDocument, SceneFilter, SceneMap, SceneMaterial, SceneMipmapFilter,
     SceneSurface, SceneTexture, SceneTextureMap, SceneWrap,
@@ -11,7 +7,6 @@ use serde_json::Value;
 
 use crate::{ImportError, ImportedFile, unsupported};
 
-/// The first twelve bytes of every KTX 2.0 file.
 const KTX2_IDENTIFIER: [u8; 12] = [
     0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a,
 ];
@@ -36,8 +31,6 @@ pub(crate) fn import(
                 "only images embedded in the GLB are supported; external and data URIs are rejected",
             ));
         };
-        // KTX2 images (KHR_texture_basisu) stay supercompressed; hosts
-        // transcode them at load.
         let extension = match mime_type {
             "image/png" => "png",
             "image/jpeg" => "jpg",
@@ -78,8 +71,6 @@ pub(crate) fn import(
         let source = &json["materials"][index];
         let pbr = material.pbr_metallic_roughness();
         let [red, green, blue, alpha] = pbr.base_color_factor();
-        // Opacity is the base color factor's alpha; opaque materials ignore it.
-        // Scene opacities are positive; alpha 0 masks or blends everything.
         let opacity =
             Some(if alpha < 0.001 { 0.001 } else { alpha }).filter(|opacity| *opacity < 1.0);
         let (opacity, alpha_mode, alpha_cutoff) = match material.alpha_mode() {
@@ -128,10 +119,6 @@ pub(crate) fn import(
             .as_f64()
             .unwrap_or(1.0) as f32;
         let emissive = material.emissive_factor().map(|value| value * strength);
-        // Glass: the transmission factor, with the index of
-        // refraction and the volume's thickness factor that bend it; the
-        // thickness counts as world units and transmission textures are
-        // not read.
         let extensions = &source["extensions"];
         let factor = |value: &Value| value.as_f64().map(|value| value as f32);
         let transmission = factor(&extensions["KHR_materials_transmission"]["transmissionFactor"])
@@ -180,10 +167,6 @@ pub(crate) fn import(
     Ok(())
 }
 
-/// A texture reference of a material: glTF sampler state and
-/// `KHR_texture_transform` placement from its texture info `info`, as a
-/// plain ID when both are glTF's defaults. A `KHR_texture_basisu` image
-/// replaces the texture's own source.
 fn texture_map(
     root: &Value,
     info: &Value,

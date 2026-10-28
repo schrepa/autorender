@@ -1,6 +1,3 @@
-//! Authored materials: color, surface and opacity, and the glTF 2.0
-//! metallic-roughness texture maps.
-
 use engine_core::{
     AlphaMode, Filter, Material, Sampler, TextureHandle, TextureRef, Transmission, UvTransform,
     Wrap,
@@ -10,11 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{SceneError, SceneSurface};
 
-/// One named material; color channels are linear values in `[0, 1]` and
-/// alpha is 1. `opacity` below 1 draws it transparent unless `alpha_mode`
-/// says otherwise. glTF's texture maps, emissive color, alpha modes and
-/// double-sided surfaces complete it; `surface`
-/// roughness and metalness are glTF's roughness and metallic factors.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -29,95 +21,50 @@ pub struct SceneMaterial {
     )]
     pub id: String,
     pub color: [f32; 4],
-    /// Base color texture: its sRGB color multiplies `color`. A texture ID,
-    /// which repeats, or a map with sampler and transform settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub texture: Option<SceneMap>,
-    /// How the surface responds to light beyond its color; without it the
-    /// material is matte.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<SceneSurface>,
-    /// The fraction of light behind it the surface covers, in `(0, 1]`.
-    /// Below 1 it draws transparent, blending in any order,
-    /// writing no depth and casting no shadow. With
-    /// `alpha_mode` `mask` it is the alpha the cutoff tests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f32>,
-    /// Linear green multiplies roughness and blue metalness.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metallic_roughness_texture: Option<SceneMap>,
-    /// A tangent-space normal map (green up the image).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normal_texture: Option<SceneMap>,
-    /// Scales the normal map's deflection; default 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normal_scale: Option<f32>,
-    /// Linear red darkens indirect light.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occlusion_texture: Option<SceneMap>,
-    /// How much the occlusion map darkens, in `[0, 1]`; default 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occlusion_strength: Option<f32>,
-    /// Emitted linear color, not negative (glTF's emissive factor
-    /// times its emissive strength).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive: Option<[f32; 3]>,
-    /// SRGB color multiplying `emissive`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive_texture: Option<SceneMap>,
-    /// How alpha (opacity times base color texture alpha) is
-    /// used. Default `blend` below opacity 1, `opaque` otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpha_mode: Option<SceneAlphaMode>,
-    /// With `mask` only: alpha below it is not drawn; default 0.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpha_cutoff: Option<f32>,
-    /// Draw back faces too, lit from their own side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub double_sided: Option<bool>,
-    /// Shade as foliage whatever the alpha mode: green reads as leaf,
-    /// needle or blade, which the sun lights through and each plant tints.
-    /// Masked materials shade as foliage either way; default false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foliage: Option<bool>,
-    /// The share of light passing through the surface instead of
-    /// diffusing off it, in `[0, 1]`, tinted by its color (
-    /// glTF `KHR_materials_transmission`). Transmissive materials draw in
-    /// the transparent pass; the environment's `refraction` bends what shows
-    /// through them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transmission: Option<f32>,
-    /// With `transmission`: the index of refraction in `[1, 3]`;
-    /// default 1.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ior: Option<f32>,
-    /// With `transmission`: the depth in world units of the
-    /// volume beneath the surface that bends rays; default 0, a thin wall.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thickness: Option<f32>,
-    /// Lays the maps from the world's axes, one repeat every
-    /// this many meters, instead of by texture coordinates:
-    /// no seams and one texel density at any size, for surfaces that stay
-    /// where they are, such as rocks. In `(0, 10000]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub world_tiling: Option<f32>,
-    /// A layer settling on faces turned up, such as moss,
-    /// lichen, dust or snow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top: Option<SceneTopLayer>,
-    /// How the base of objects terrains place blends into the ground.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grounding: Option<SceneGrounding>,
-    /// Divides the material into rooms, this many across its
-    /// base color texture's width and square in its texels: while the
-    /// environment's `windows` are on, each room's light comes on at its own
-    /// time around dusk. In `[1, 4096]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub windows: Option<u32>,
 }
 
-/// States the rules the material's builders check on the authored fields
-/// they take.
 #[cfg(feature = "schema")]
 fn state_material_rules(schema: &mut schemars::Schema) {
     let part = |rule: Option<engine_settings::Rule>| rule.expect("the part declares the field");
@@ -138,10 +85,6 @@ fn state_material_rules(schema: &mut schemars::Schema) {
     }
 }
 
-/// How the base of an object standing on terrain blends into the ground:
-/// how many units of its mesh up from where it enters the ground its
-/// surface takes the ground's color, roughness and slope, from the
-/// ground's slope under it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -153,9 +96,6 @@ pub struct SceneGrounding {
     pub height: f32,
 }
 
-/// A layer settling on a material's faces turned up: its
-/// linear color, how far from straight up it reaches (0 covers nothing, 1
-/// every face turned up at all) and its roughness (default 0.85).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -170,8 +110,6 @@ pub struct SceneTopLayer {
     pub roughness: Option<f32>,
 }
 
-/// A material's use of a texture: its ID, or a map with glTF sampler and
-/// `KHR_texture_transform` settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
@@ -181,7 +119,6 @@ pub enum SceneMap {
 }
 
 impl SceneMap {
-    /// The referenced texture ID.
     pub fn id(&self) -> &str {
         match self {
             Self::Id(id) => id,
@@ -196,8 +133,6 @@ impl From<&str> for SceneMap {
     }
 }
 
-/// A texture map with its sampling and placement. Omitted settings take
-/// glTF's defaults: repeating, trilinear, untransformed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -215,20 +150,14 @@ pub struct SceneTextureMap {
     pub mag_filter: Option<SceneFilter>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_filter: Option<SceneFilter>,
-    /// Filtering between mip levels; `none` samples the full-size texture
-    /// only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mipmap_filter: Option<SceneMipmapFilter>,
-    /// Texture coordinates are scaled, rotated by `rotation` radians, then
-    /// offset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<[f32; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<[f32; 2]>,
-    /// The texture coordinates the map reads: 0, the mesh's first (the
-    /// default), or 1, its second.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tex_coord: Option<u32>,
 }
@@ -268,7 +197,6 @@ pub enum SceneAlphaMode {
     Blend,
 }
 
-/// Map fields in [`Material::maps`] order.
 const MAP_FIELDS: [&str; 5] = [
     "texture",
     "metallic_roughness_texture",
@@ -277,8 +205,6 @@ const MAP_FIELDS: [&str; 5] = [
     "emissive_texture",
 ];
 
-/// A validated material without texture handles, which exist only once its
-/// scene's textures are resident.
 pub(crate) struct PreparedMaterial {
     material: Material,
     maps: [Option<(String, Sampler, UvTransform, u32)>; 5],
@@ -287,7 +213,6 @@ pub(crate) struct PreparedMaterial {
 }
 
 impl PreparedMaterial {
-    /// The material with its maps' textures, `texture` resolving IDs.
     pub(crate) fn material(&self, texture: impl Fn(&str) -> TextureHandle) -> Material {
         let [base, packed, normal, occlusion, emissive] = self.maps.each_ref().map(|map| {
             map.as_ref().map(|(id, sampler, transform, tex_coord)| {
@@ -298,7 +223,6 @@ impl PreparedMaterial {
             })
         });
         let mut material = self.material;
-        // Transforms and parameters were validated with the material.
         let valid = "prepared material maps are valid";
         if let Some(map) = base {
             material = material.with_base_color_texture(map).expect(valid);
@@ -324,9 +248,6 @@ impl PreparedMaterial {
 }
 
 impl SceneMaterial {
-    /// `material` as a scene authors it, under ID `id`, its textures by
-    /// the IDs `texture` gives them: every setting stated, so what
-    /// draws reads back whole and copies into a scene as is.
     pub fn from_runtime(
         id: impl Into<String>,
         material: &Material,
@@ -381,7 +302,6 @@ impl SceneMaterial {
         }
     }
 
-    /// Map fields and the texture IDs they reference.
     pub(crate) fn texture_ids(&self) -> impl Iterator<Item = (&'static str, &str)> {
         self.maps()
             .into_iter()
@@ -399,7 +319,6 @@ impl SceneMaterial {
         ]
     }
 
-    /// The material at authored path `path` (`$.materials[i]`).
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -534,7 +453,6 @@ impl SceneMaterial {
                 continue;
             };
             *slot = Some(match map {
-                // Plain IDs take glTF's defaults.
                 SceneMap::Id(id) => (id.clone(), Sampler::REPEAT, UvTransform::IDENTITY, 0),
                 SceneMap::Map(map) => {
                     let transform = UvTransform {
@@ -575,8 +493,6 @@ impl SceneMaterial {
 }
 
 impl SceneTextureMap {
-    /// `map` of texture `id` with every sampling and placement setting
-    /// stated.
     pub fn from_runtime(id: String, map: &TextureRef) -> Self {
         let wrap = |wrap: Wrap| match wrap {
             Wrap::Repeat => SceneWrap::Repeat,

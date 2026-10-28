@@ -10,8 +10,6 @@ default = []
 dev = ["dep:engine_dev", "engine_core/dev", "engine_render/dev"]
 profiling = ["engine_profile/enabled", "engine_core/profiling", "engine_collision/profiling", "engine_physics/profiling", "engine_render/profiling"]
 attribution = ["engine_core/attribution", "engine_collision/attribution"]
-# JSON schemas of settings apps declare (`engine::settings`), and of the
-# types hosts share (`engine::host`), for their tooling.
 schema = ["engine_core/schema", "engine_settings/schema", "engine_panic/schema", "dep:schemars"]
 
 [dependencies]
@@ -24,7 +22,6 @@ engine_dev = { workspace = true, optional = true }
 engine_settings.workspace = true
 engine_render.workspace = true
 engine_panic.workspace = true
-# What every host's scenes load with: the engine's image decoders.
 engine_worker.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -36,7 +33,6 @@ wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 web-sys.workspace = true
 
-# The game `cargo xtask new app` starts from; lint compiles it.
 [[example]]
 name = "app_template"
 crate-type = ["cdylib", "rlib"]

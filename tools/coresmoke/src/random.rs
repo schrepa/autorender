@@ -1,6 +1,3 @@
-//! Seeded pseudo-random numbers (SplitMix64): the same seed gives the same
-//! edits on every machine.
-
 pub struct Random(u64);
 
 impl Random {
@@ -16,17 +13,14 @@ impl Random {
         z ^ (z >> 31)
     }
 
-    /// A number in `0..count` (`count` above 0).
     pub fn below(&mut self, count: usize) -> usize {
         (self.next() % count as u64) as usize
     }
 
-    /// Whether a chance of `percent` in 100 came up.
     pub fn chance(&mut self, percent: u64) -> bool {
         self.next() % 100 < percent
     }
 
-    /// A number in `low..high`.
     pub fn range(&mut self, low: f32, high: f32) -> f32 {
         let unit = (self.next() >> 40) as f32 / (1u64 << 24) as f32;
         low + (high - low) * unit

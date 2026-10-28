@@ -1,19 +1,3 @@
-//! Terrain surface materials' maps: every terrain's materials with maps
-//! share two texture arrays, base color, and data, which holds each
-//! material's normal map then its occlusion, roughness, metalness and
-//! height map, two layers a material. Every layer has the first material's
-//! size, levels and format, base color's read as sRGB and data's linear:
-//! cooked maps upload every level they carry, block-compressed where the
-//! device samples their family, and RGBA8 maps holding their base level
-//! alone have their levels rendered as they upload. The arrays rebuild
-//! only when the materials with maps or their textures change; materials
-//! whose maps differ in size, levels or format, or carry no summary, show
-//! their colors instead and count as dropped. Each layer's summaries
-//! ([`engine_core::Texture::summary`]) stand in for its maps where a whole
-//! repeat spans less than a pixel, as their mipmaps' last level would: the
-//! slopes its normal map's mean normal averages away roughen it there, and
-//! its height map's mean raises it as height blending does.
-
 use engine_core::{RenderSurfaceMaps, RenderTerrains, Texture, TextureFormat, TextureHandle};
 
 use crate::gpu_calls::Queue;
@@ -21,41 +5,25 @@ use crate::gpu_data::mip_levels;
 use crate::materials::{gpu_format, write_level};
 use crate::mipmaps::MipGenerator;
 
-/// The textures one material's layers hold, by handle: its base color,
-/// normal and metallic-roughness maps.
 type LayerKey = [Option<TextureHandle>; 3];
 
-/// What a layer holds where its material lacks a map: white, a flat
-/// normal, and full occlusion, roughness and metalness factors at middle
-/// height.
 const DEFAULTS: [[u8; 4]; 3] = [[255; 4], [128, 128, 255, 255], [255, 255, 255, 128]];
 
 pub(crate) struct TerrainMaps {
-    // The layers' textures, and every material with maps the frames
-    // listed, including those dropped, which rebuild nothing while they
-    // stand; and those the frame lists, made in place of the last frame's.
     layers: Vec<LayerKey>,
     listed: Vec<LayerKey>,
     listing: Vec<LayerKey>,
     arrays: [wgpu::Texture; 2],
-    /// The views the terrain group binds: base color and data.
     pub(crate) views: [wgpu::TextureView; 2],
-    /// Layers of materials, and the arrays' size.
     pub(crate) materials: u32,
     pub(crate) size: (u32, u32),
     pub(crate) sampler: wgpu::Sampler,
-    /// Advances whenever an array is replaced.
     pub(crate) views_generation: u64,
-    /// Materials whose maps the arrays cannot hold.
     pub(crate) dropped: u32,
     bytes: u64,
-    // Each layer's means.
     means: Vec<Means>,
 }
 
-/// A layer's mean linear base color, roughness and occlusion texels, the
-/// mean square slope at scale 1 its normal map's mean normal averages away,
-/// and its height map's mean.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Means {
     pub color: [f32; 3],
@@ -65,8 +33,6 @@ pub(crate) struct Means {
     pub height: f32,
 }
 
-/// What every layer of the arrays shares: the size, levels and format of
-/// the first material's maps, base color's and the data maps'.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Shape {
     size: (u32, u32),
@@ -75,7 +41,6 @@ struct Shape {
 }
 
 impl TerrainMaps {
-    /// One layer of defaults, until materials with maps arrive.
     pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let arrays = defaults(device, queue);
         let views = [view(&arrays[0]), view(&arrays[1])];
@@ -94,8 +59,6 @@ impl TerrainMaps {
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                // Ground seen at grazing angles stays sharp along its
-                // steep axis.
                 anisotropy_clamp: crate::gpu_layouts::constants::MATERIAL_ANISOTROPY,
                 ..Default::default()
             }),
@@ -106,7 +69,6 @@ impl TerrainMaps {
         }
     }
 
-    /// The layer holding `maps`' textures, if the arrays hold them.
     pub(crate) fn layer(&self, maps: &RenderSurfaceMaps) -> Option<u32> {
         let key = key(maps);
         self.layers
@@ -115,19 +77,14 @@ impl TerrainMaps {
             .map(|layer| layer as u32)
     }
 
-    /// Layer `layer`'s means.
     pub(crate) fn means(&self, layer: u32) -> Means {
         self.means[layer as usize]
     }
 
-    /// Bytes of the arrays with their levels.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.bytes
     }
 
-    /// Rebuilds the arrays when the materials with maps `terrains` list
-    /// change: each layer's levels upload, and maps holding their base level
-    /// alone have their levels rendered in a submission of their own.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -135,7 +92,6 @@ impl TerrainMaps {
         mips: &MipGenerator,
         terrains: &RenderTerrains,
     ) {
-        // The engine materials of every terrain's surface materials.
         let every = move || {
             terrains
                 .terrains
@@ -152,7 +108,6 @@ impl TerrainMaps {
         if self.listing == self.listed {
             return;
         }
-        // Each material listed, with the maps it was first listed with.
         let listed: Vec<(LayerKey, &RenderSurfaceMaps)> = self
             .listing
             .iter()
@@ -185,10 +140,6 @@ impl TerrainMaps {
     }
 }
 
-/// The shape `maps`' textures share, when the device samples them: one
-/// size, one level count (a full chain, or RGBA8 base levels alone), and
-/// one format for the data maps; none when any texture differs or lacks a
-/// summary.
 fn shape_of(maps: &RenderSurfaceMaps, device: &wgpu::Device) -> Option<Shape> {
     let textures = textures(maps);
     let first = textures.iter().flatten().next()?;
@@ -214,8 +165,6 @@ fn shape_of(maps: &RenderSurfaceMaps, device: &wgpu::Device) -> Option<Shape> {
         }
         formats[array] = Some(format);
     }
-    // A material without data maps or without a base color takes the
-    // other's format for its defaults.
     let fallback = formats.iter().flatten().next().copied()?;
     Some(Shape {
         size,
@@ -224,8 +173,6 @@ fn shape_of(maps: &RenderSurfaceMaps, device: &wgpu::Device) -> Option<Shape> {
     })
 }
 
-/// The two arrays holding `kept`'s maps in `shape`, every level written,
-/// and levels rendered where they hold their base alone.
 fn fill(
     device: &wgpu::Device,
     queue: &Queue,
@@ -274,7 +221,6 @@ fn fill(
     arrays
 }
 
-/// Level `level` of a texture of `size` in `format`, every texel `color`.
 fn solid_level(format: TextureFormat, size: (u32, u32), level: u32, color: [u8; 4]) -> Vec<u8> {
     let (width, height) = ((size.0 >> level).max(1), (size.1 >> level).max(1));
     match engine_textures::solid_block(format, color) {
@@ -283,7 +229,6 @@ fn solid_level(format: TextureFormat, size: (u32, u32), level: u32, color: [u8; 
     }
 }
 
-/// Bytes of the two arrays of `materials` in `shape`, every level.
 fn array_bytes(shape: Shape, materials: u32) -> u64 {
     let rendered = shape.levels == 1;
     let levels = if rendered {
@@ -303,12 +248,6 @@ fn array_bytes(shape: Shape, materials: u32) -> u64 {
     u64::from(materials) * (layer(shape.formats[0]) + 2 * layer(shape.formats[1]))
 }
 
-/// The means of `maps`' base color, decoded from sRGB, and of its
-/// metallic-roughness map's roughness and occlusion, 1 without them; the
-/// slopes its normal map's mean normal averages away (`averaged_slopes`),
-/// 0 without one; and the mean of the height its metallic-roughness map's
-/// alpha holds, the default layer's middle height without one: each map's
-/// summary.
 fn means(maps: &RenderSurfaceMaps) -> Means {
     let [base_color, normal, metallic_roughness] =
         textures(maps).map(|texture| texture.and_then(Texture::summary));
@@ -322,11 +261,6 @@ fn means(maps: &RenderSurfaceMaps) -> Means {
     }
 }
 
-/// The mean square slope, both axes summed, that a normal map whose
-/// channels' means as stored are `channels` averages away into its texels'
-/// mean normal: from that mean's shortening (`terrain_variety.wgsl`'s
-/// `spread_slopes`, Toksvig 2005), as its mipmaps' last level holds it,
-/// their texels' normals averaged unnormalized.
 fn averaged_slopes(channels: [f32; 4]) -> f32 {
     let mean = [0, 1, 2].map(|channel| 2.0 * channels[channel] - 1.0);
     let length = (mean[0] * mean[0] + mean[1] * mean[1] + mean[2] * mean[2]).sqrt();
@@ -334,7 +268,6 @@ fn averaged_slopes(channels: [f32; 4]) -> f32 {
     2.0 * (1.0 - kept) / kept
 }
 
-/// The textures `maps` names, as its layers hold them.
 fn key(maps: &RenderSurfaceMaps) -> LayerKey {
     textures_of(maps).map(|texture| texture.map(|texture| texture.handle))
 }
@@ -351,7 +284,6 @@ fn textures(maps: &RenderSurfaceMaps) -> [Option<&Texture>; 3] {
     textures_of(maps).map(|texture| texture.map(|texture| &*texture.texture))
 }
 
-/// The arrays of one layer of defaults (two in the data array), 1 × 1.
 fn defaults(device: &wgpu::Device, queue: &wgpu::Queue) -> [wgpu::Texture; 2] {
     let arrays = [0, 1].map(|array| {
         let format = gpu_format(TextureFormat::Rgba8, array == 0).0;
@@ -370,8 +302,6 @@ fn defaults(device: &wgpu::Device, queue: &wgpu::Queue) -> [wgpu::Texture; 2] {
     arrays
 }
 
-/// An array of `layers` of `size` with `levels` mip levels in `format`;
-/// `rendered` ones render their levels.
 fn array_texture(
     device: &wgpu::Device,
     size: (u32, u32),
@@ -395,7 +325,6 @@ fn array_texture(
     )
 }
 
-/// A view of every layer of `array`.
 fn view(array: &wgpu::Texture) -> wgpu::TextureView {
     array.create_view(&wgpu::TextureViewDescriptor {
         label: Some("engine/terrain-material-maps"),

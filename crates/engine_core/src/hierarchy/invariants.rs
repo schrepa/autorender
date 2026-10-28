@@ -1,14 +1,6 @@
-//! What a propagated hierarchy holds, checked after every propagation in
-//! debug builds: its node arrays have one entry per admitted node; its
-//! entity index and its sources name each other; its order is every node
-//! once, parents first; each node's cached parent, depth and children are
-//! what its source and its parent's say, and a deferred global is a leaf's
-//! over a stored one; and its report counts the invalid nodes it holds.
-
 use super::{Global, GlobalTransforms, Link, MAX_HIERARCHY_DEPTH};
 
 impl GlobalTransforms {
-    /// Panics naming the first invariant a propagation left broken.
     pub(super) fn check(&self) {
         let nodes = self.sources.len();
         for (name, len) in [
@@ -38,7 +30,6 @@ impl GlobalTransforms {
                 source.entity
             );
         }
-        // Every node once, each valid one after its parent.
         let mut position = vec![usize::MAX; nodes];
         for (at, &index) in self.order.iter().enumerate() {
             assert!(
@@ -79,8 +70,6 @@ impl GlobalTransforms {
                 "hierarchy: node {index} caches depth {}, its ancestry gives {depth}",
                 link.depth()
             );
-            // A deferred leaf composes its global from its parent's stored one
-            // (a root's from identity) on every read.
             if link.global == Global::Deferred {
                 assert!(
                     !link.has_children()

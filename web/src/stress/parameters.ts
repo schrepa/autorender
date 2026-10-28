@@ -1,5 +1,3 @@
-/** The page parameters the Stress Lab reads beside the host's, with what
- * each does; the web check holds every parameter src/stress reads to them. */
 export const STRESS_PARAMETERS: Record<string, string> = {
   source: "/scenes/NAME.scene.json: run that authored scene in place of a workload",
   without: "scene mode: comma-separated features the engine leaves out (terrain, world_streaming, navigation, ocean, animation, time_of_day, deformation, collision)",

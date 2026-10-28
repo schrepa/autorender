@@ -1,36 +1,11 @@
-// Auto exposure: a meter of the frame the scene target holds, in a
-// histogram of its light in stops, and the exposure later frames show,
-// eased toward what the meter asks.
-
 struct ExposureUniform {
-    // x: the exposure the atmosphere authors; y: seconds since the last
-    // metered frame, 0 taking what the meter asks at once (a repeated time
-    // of the same view, as exact frames are), -1 keeping the exposure (a
-    // repeated time of a moved view); z: how far exposure follows the view
-    // (0 to 1); w: stops added after.
     frame: vec4<f32>,
-    // x: the most stops the view raises exposure (none at night); y: the
-    // most it lowers it;
-    // z, w: seconds over which exposure eases toward a darker view and
-    // toward a brighter one.
     reach: vec4<f32>,
-    // x, y: the shares of the darkest and the brightest samples the
-    // average leaves out; z: how many times what the corners count the
-    // middle of the view counts; w: how much the sky counts.
     meter: vec4<f32>,
-    // The physically based sky's light at noon (0 without it), the power
-    // of its light's ratio to it that exposure rises by, and the most stops
-    // it rises by (fewer at night).
     day: vec4<f32>,
-    // The pixels of the scene the frame drew, from its top-left corner.
     drawn: vec4<f32>,
 }
 
-// The exposure the frame shows, which the lighting copies; its stops from
-// the authored exposure; the meter's last average, log2 of the light
-// before exposure; 1 once these hold a metered frame; how many stops
-// brighter the view is than its light gives a view; and the stops the time
-// of day raises exposure by.
 struct ExposureState {
     exposure: f32,
     stops: f32,
@@ -40,7 +15,6 @@ struct ExposureState {
     day: f32,
 }
 
-// The scene's lighting's leading fields (`scene.wgsl`).
 struct Lighting {
     sun: vec4<f32>,
     sun_color: vec4<f32>,
@@ -55,29 +29,16 @@ struct Lighting {
 @group(0) @binding(4) var<storage, read_write> state: ExposureState;
 @group(0) @binding(5) var<uniform> lighting: Lighting;
 
-// The histogram's bins, and the samples the meter reads across and down
-// the view.
 const EXPOSURE_BINS: u32 = 128u;
 const EXPOSURE_GRID: u32 = 128u;
-// The light the bins span, in stops: log2 of linear light before exposure.
 const LIGHT_LOW: f32 = -20.0;
 const LIGHT_HIGH: f32 = 12.0;
-// A sample's weight of one, in the bins' fixed point.
 const WEIGHT_UNIT: f32 = 1024.0;
-// The meter's average of an open view in daylight, in stops over the light
-// falling on level ground: what the authored exposure is made for.
 const VIEW_LIGHT: f32 = -3.9;
-// Views within this many stops of it keep the time of day's exposure: the
-// light falling on level ground gives a view's only roughly.
 const VIEW_SLACK: f32 = 1.0;
 
 var<workgroup> counted: array<atomic<u32>, EXPOSURE_BINS>;
 
-// One sample of a grid EXPOSURE_GRID across and down the view: its light
-// before exposure (the luminance shown, the filmic curve undone, over the
-// exposure shown), into the two bins around it in stops by how near it
-// lies to each; weighted toward the middle of the view, and by the sky's
-// weight where nothing was drawn.
 @compute @workgroup_size(16, 16)
 fn meter_exposure(
     @builtin(global_invocation_id) id: vec3<u32>,
@@ -90,11 +51,8 @@ fn meter_exposure(
     let size = max(vec2<u32>(settings.drawn.xy), vec2<u32>(1u));
     let place = (vec2<f32>(id.xy) + 0.5) / f32(EXPOSURE_GRID);
     let pixel = min(vec2<u32>(place * vec2<f32>(size)), size - 1u);
-    // Black reads as half the 8-bit target's first step: what lies below it
-    // cannot be told apart.
     let shown = clamp(luminance(textureLoad(scene_color, pixel, 0).rgb), 1.5e-4, 1.0);
     let light = unfilmic(shown) / max(state.exposure, 1.0e-6);
-    // 0 at the middle, 1 at the corners.
     let out = 2.0 * dot(place - 0.5, place - 0.5);
     var weight = mix(settings.meter.z, 1.0, out);
     if textureLoad(scene_depth, pixel, 0) <= 0.0 {
@@ -120,16 +78,6 @@ fn meter_exposure(
     }
 }
 
-// The exposure later frames show, in stops over the authored one, from two
-// parts. The time of day's: under the physically based sky, as the sky's
-// own adaptation rises toward its light at noon, but within the night's
-// limit, so dusk dims and night stays dark. The view's: the meter's average
-// (the light between the shares of the darkest and the brightest samples
-// left out, averaged in stops) against what the light falling on level
-// ground gives an open view, beyond a slack, part of the way and within its
-// limits, so a cave by day brightens and a view of the bright sky darkens.
-// Eased from the last over the seconds since, slower toward a darker view
-// than toward a brighter one.
 @compute @workgroup_size(1)
 fn adapt_exposure() {
     var total = 0.0;
@@ -156,8 +104,6 @@ fn adapt_exposure() {
     } else if !held {
         return;
     }
-    // The light falling on level ground, the sun's and the sky's, as the
-    // physically based sky's own adaptation takes it.
     let falling = luminance(lighting.sun_color.rgb) * max(lighting.sun.y, 0.0)
         + SKY_PI * luminance(0.5 * (lighting.zenith.rgb + lighting.horizon.rgb));
     let view = metered - log2(max(falling, 1.0e-12)) - VIEW_LIGHT;

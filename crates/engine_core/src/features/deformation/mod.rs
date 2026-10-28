@@ -1,17 +1,3 @@
-//! Runtime deformation: ground that remembers where things
-//! went. Each fixed tick every [`Deformer`] within its contact distance of
-//! a terrain presses a stamp into [`Tracks`], the log of every stamp: a
-//! capsule from where it pressed the tick before to where it stands. Frames
-//! carry the stamps pressed since the last into a map around the camera that
-//! renderers keep, how deep tracks sink the ground and how high their rims
-//! rise texel by texel, and terrain surface materials say how deep tracks
-//! sink them at most ([`crate::SurfaceMaterial::deform`]): snow deeply, mud
-//! less, rock never. The map follows the camera in steps of an eighth of its
-//! side; the ground it newly covers gets the log's stamps over it again, so
-//! tracks persist where the camera returns. Tracks refill over
-//! [`Deformation::refill`] seconds, a decay renderers apply to the whole
-//! map at once. Queries read the log, never the GPU.
-
 use crate::collections::HashMap;
 use std::collections::VecDeque;
 
@@ -23,29 +9,17 @@ use crate::math::{clamp, max, min};
 use crate::{Camera, FixedTime, GlobalTransforms};
 use engine_settings::settings;
 
-/// The most meters a stamp sinks the ground.
 pub const MAX_TRACK_DEPTH: f32 = 10.0;
-/// Where a stamp's rim starts and ends, in radii from its middle line: it
-/// rises from 0.9, highest at 1.25, and is gone by 1.6.
 pub const RIM_START: f32 = 0.9;
 pub const RIM_REACH: f32 = 1.6;
-/// The map's texels along a side are a multiple of this; it moves in steps
-/// of an eighth of them.
 pub const DEFORMATION_GRAIN: u32 = 128;
 const STEPS: i32 = 8;
-/// Meters on a side of the log's cells, which queries and replays look
-/// stamps up by.
 const CELL: f32 = 16.0;
-/// One deformer's stamps merge into one capsule while it keeps a heading,
-/// stamps at most this many seconds apart...
 const MERGE_SECONDS: f64 = 1.0;
-/// ...up to this many meters long.
 const MERGE_LENGTH: f32 = 32.0;
-/// Refilled shallower than this (meters), a stamp leaves the log.
 const FORGOTTEN: f32 = 5.0e-4;
 
 settings! {
-    /// Runtime deformation.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -54,30 +28,18 @@ settings! {
     )]
     #[serde(default, deny_unknown_fields)]
     pub struct Deformation {
-        /// Whether deformers press tracks.
         pub enabled: bool = true => any,
-        /// The meters of ground the map around the camera spans.
         pub extent: f32 = 64.0 => range(8.0, 1024.0),
-        /// The map's texels along a side; renderers keep fewer where the
-        /// device's buffers cannot hold them.
         pub resolution: u32 = 1024 => multiple(DEFORMATION_GRAIN, DEFORMATION_GRAIN, 8192),
-        /// The seconds tracks take to refill to about a third of their depth;
-        /// 0 never.
         pub refill: f32 = 0.0 => range(0.0, 86_400.0),
-        /// How high the ground rises beside a track for its depth.
         pub rim: f32 = 0.3 => range(0.0, 1.0),
-        /// An optional budget of stamps the log keeps, the oldest dropping
-        /// beyond it.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_stamps: Option<u32> = None => budget,
-        /// Whether the log keeps the stamps the map moves away from, so tracks
-        /// are there when the camera returns.
         pub persist: bool = true => any,
     }
 }
 
 impl Deformation {
-    /// What a world without these settings reads as: no tracks.
     pub fn off() -> Self {
         Self {
             enabled: false,
@@ -85,8 +47,6 @@ impl Deformation {
         }
     }
 
-    /// How much of a track's depth is left `age` seconds after it was
-    /// pressed.
     pub fn left(&self, age: f64) -> f32 {
         if self.refill > 0.0 {
             (-max(age as f32, 0.0) / self.refill).exp()
@@ -97,32 +57,17 @@ impl Deformation {
 }
 
 settings! {
-    /// Presses tracks into deformable ground as a scene's `deformer`
-    /// field: each fixed tick, while its entity's world position lies at most
-    /// `contact` meters above the terrain under it (or below it), it presses a
-    /// footprint from where it pressed the tick before. Put it where an object
-    /// meets the ground: a wheel's or a foot's lowest point.
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct Deformer {
-        /// Meters across the footprint it presses.
         pub radius: f32 = 0.3 => range(0.01, 50.0),
-        /// Meters it sinks ground as deformable as that along its middle,
-        /// deeper by however far it lies below the ground.
         pub depth: f32 = 0.15 => range(0.0, MAX_TRACK_DEPTH),
-        /// Meters above the terrain within which it presses.
         pub contact: f32 = 0.1 => range(0.0, 10.0),
-        /// Its footprint's shape: 0 round, deepest along its middle like a
-        /// wheel's rut; 1 flat, a foot's or a plate's level floor.
         pub flatness: f32 = 0.5 => range(0.0, 1.0),
     }
 }
 
-/// One stamp: a capsule over the ground from world `from` to `to` (x and
-/// z) of `radius` meters (0.01 to 50), sinking ground as deformable as that
-/// `depth` meters along its middle line (0 to 10), round (`flatness` 0) to
-/// flat (1), pressed at simulation time `seconds`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Track {
@@ -135,8 +80,6 @@ pub struct Track {
 }
 
 impl Track {
-    /// The track with every value in range, or `None` where one is not
-    /// finite.
     pub fn usable(self) -> Option<Self> {
         let finite = self
             .from
@@ -155,8 +98,6 @@ impl Track {
         })
     }
 
-    /// How deep the stamp sinks the ground at world `point` (x and z), and
-    /// how high its rim stands there for a rim share of 1, as pressed.
     pub fn at(&self, point: Vec2) -> (f32, f32) {
         let s = self.distance(point) / self.radius;
         (
@@ -165,7 +106,6 @@ impl Track {
         )
     }
 
-    /// Meters from world `point` to the capsule's middle line.
     fn distance(&self, point: Vec2) -> f32 {
         let from = Vec2::from(self.from);
         let along = Vec2::from(self.to) - from;
@@ -178,8 +118,6 @@ impl Track {
         point.distance(from + along * t)
     }
 
-    /// The corners of the ground the stamp and its rim reach (world x and
-    /// z).
     pub fn bounds(&self) -> (Vec2, Vec2) {
         let reach = Vec2::splat(self.radius * RIM_REACH);
         let (from, to) = (Vec2::from(self.from), Vec2::from(self.to));
@@ -187,8 +125,6 @@ impl Track {
     }
 }
 
-/// A stamp's depth `s` radii from its middle line, as a share of its depth:
-/// a sphere's cap when round, a level floor with a rounded edge when flat.
 pub fn carve_profile(s: f32, flatness: f32) -> f32 {
     if s >= 1.0 {
         return 0.0;
@@ -199,8 +135,6 @@ pub fn carve_profile(s: f32, flatness: f32) -> f32 {
     round + (flat - round) * flatness
 }
 
-/// A stamp's rim `s` radii from its middle line, as a share of its depth
-/// for a rim share of 1: a hump from [`RIM_START`] to [`RIM_REACH`].
 pub fn rim_profile(s: f32) -> f32 {
     let u = (s - RIM_START) / (RIM_REACH - RIM_START);
     if !(0.0..=1.0).contains(&u) {
@@ -210,45 +144,31 @@ pub fn rim_profile(s: f32) -> f32 {
     16.0 * hump * hump
 }
 
-/// The tracks at a point, as the log holds them: the meters the deepest
-/// sinks deformable ground (`track`) and the meters the highest rim
-/// raises it (`rim`, the rim share applied), refilled to `seconds`. Ground
-/// shows `min(track, deform)` of its surface material's
-/// [`crate::SurfaceMaterial::deform`], and a rim where no track sinks it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct TrackDepth {
     pub track: f32,
     pub rim: f32,
 }
 
-/// Where a deformer pressed last: the point, and its stamp in the log.
 #[derive(Clone, Copy, Debug)]
 struct Pressing {
     at: Vec2,
     sequence: u64,
 }
 
-/// Every stamp deformers and agents pressed, oldest first,
-/// and those pressed since the last frame. Inserted by default; frames and
-/// queries read it, [`Deformation`] bounds it.
 #[derive(Resource, Default)]
 pub struct Tracks {
     stamps: VecDeque<Track>,
-    // The sequence number of the oldest stamp; each stamp's is its place
-    // after it.
     first: u64,
-    // Each cell's stamps, by sequence number.
     cells: HashMap<(i32, i32), Vec<u64>>,
     pending: Vec<Track>,
     pressing: HashMap<Entity, Pressing>,
     dropped: u64,
     pressed: u64,
-    // Set by `clear`: the next frame starts the map over.
     cleared: bool,
 }
 
 impl Tracks {
-    /// Stamps the log holds.
     pub fn len(&self) -> usize {
         self.stamps.len()
     }
@@ -257,7 +177,6 @@ impl Tracks {
         self.stamps.is_empty()
     }
 
-    /// Stamps the budget dropped, and stamps pressed, since the start.
     pub fn dropped(&self) -> u64 {
         self.dropped
     }
@@ -266,18 +185,14 @@ impl Tracks {
         self.pressed
     }
 
-    /// The log's stamps, oldest first.
     pub fn iter(&self) -> impl Iterator<Item = &Track> {
         self.stamps.iter()
     }
 
-    /// The newest stamp, or the one the newest stamp extended.
     pub fn latest(&self) -> Option<&Track> {
         self.stamps.back()
     }
 
-    /// Presses `track`, as deformers do; `false`, changing nothing, where a
-    /// value is not finite. Values out of range clamp.
     pub fn press(&mut self, track: Track, settings: &Deformation) -> bool {
         let Some(track) = track.usable() else {
             return false;
@@ -286,7 +201,6 @@ impl Tracks {
         true
     }
 
-    /// Forgets every stamp; the next frame clears the map.
     pub fn clear(&mut self) {
         let dropped = self.dropped;
         let pressed = self.pressed;
@@ -298,8 +212,6 @@ impl Tracks {
         };
     }
 
-    /// The tracks at world `point` (x and z), refilled to simulation time
-    /// `seconds` as `settings` refill them.
     pub fn at(&self, point: Vec2, seconds: f64, settings: &Deformation) -> TrackDepth {
         let mut depth = TrackDepth::default();
         let Some(sequences) = self.cells.get(&cell(point)) else {
@@ -322,8 +234,6 @@ impl Tracks {
             .get(usize::try_from(sequence.checked_sub(self.first)?).ok()?)
     }
 
-    /// Logs `track`, pressed by `deformer` after its stamp `last` if
-    /// either, and lists it for the next frame.
     fn append(
         &mut self,
         track: Track,
@@ -348,14 +258,9 @@ impl Tracks {
         self.trim(track.seconds, settings);
     }
 
-    /// Extends the stamp `sequence` with `track` where they make one
-    /// capsule: the same footprint pressed on from its end, standing still
-    /// or keeping its heading, soon after.
     fn merge(&mut self, sequence: u64, track: &Track) -> Option<u64> {
         let index = usize::try_from(sequence.checked_sub(self.first)?).ok()?;
         let last = *self.stamps.get(index)?;
-        // Deformers below the ground press deeper as they sink: depths
-        // within a tenth or so of each other merge at the deeper.
         let same = last.radius == track.radius
             && (last.depth - track.depth).abs() <= 0.1 * max(last.depth, track.depth) + 0.005
             && last.flatness == track.flatness
@@ -364,9 +269,6 @@ impl Tracks {
         if !same {
             return None;
         }
-        // Within a degree of its heading, so curves stay within a few
-        // millimeters of their capsules; steps too short to have one, and
-        // capsules too short to, always merge.
         let along = Vec2::from(last.to) - Vec2::from(last.from);
         let step = Vec2::from(track.to) - Vec2::from(track.from);
         let turned = step.length() >= 1.0e-3
@@ -433,7 +335,6 @@ impl Tracks {
         }
     }
 
-    /// Drops the oldest stamps beyond the budget, and those refilled away.
     fn trim(&mut self, seconds: f64, settings: &Deformation) {
         if let Some(budget) = settings.max_stamps {
             while self.stamps.len() > budget as usize {
@@ -450,8 +351,6 @@ impl Tracks {
         }
     }
 
-    /// Appends the stamps reaching any of `rects` (world corners, x and z),
-    /// each once and oldest first, to `out`.
     fn within(&self, rects: &[(Vec2, Vec2)], out: &mut Vec<Track>) {
         let mut sequences = Vec::new();
         for &(low, high) in rects {
@@ -476,8 +375,6 @@ impl Tracks {
         }));
     }
 
-    /// Keeps only the stamps reaching the ground from `low` to `high`
-    /// (world x and z).
     fn retain_within(&mut self, low: Vec2, high: Vec2) {
         let mut kept = Vec::new();
         self.within(&[(low, high)], &mut kept);
@@ -501,7 +398,6 @@ impl Tracks {
     }
 }
 
-/// The log cell holding world `point`.
 fn cell(point: Vec2) -> (i32, i32) {
     (
         (point.x / CELL).floor() as i32,
@@ -509,15 +405,10 @@ fn cell(point: Vec2) -> (i32, i32) {
     )
 }
 
-/// The first and last cells of the ground from `low` to `high`.
 fn cell_range((low, high): (Vec2, Vec2)) -> ((i32, i32), (i32, i32)) {
     (cell(low), cell(high))
 }
 
-/// Each deformer within its contact distance of the ground presses a stamp
-/// from where it pressed the tick before (or where it stands, if it did
-/// not, or jumped) to where it stands, at the tick's time. Runs once the
-/// tick's transforms are final.
 pub(crate) fn press(world: &mut World, deformers: &mut QueryState<(Entity, &'static Deformer)>) {
     let settings = world
         .get_resource::<Deformation>()
@@ -571,13 +462,9 @@ pub(crate) fn press(world: &mut World, deformers: &mut QueryState<(Entity, &'sta
         }
         return;
     }
-    // Deformers that lifted off press anew where they next land: only
-    // this tick's are kept.
     let last = std::mem::take(&mut tracks.pressing);
     for (entity, at, deformer, depth) in presses {
         let previous = last.get(&entity).copied();
-        // A deformer jumping farther than it could roll in a tick starts
-        // over where it lands.
         let reach = max(5.0, 4.0 * deformer.radius);
         let from = previous
             .filter(|previous| previous.at.distance(at) <= reach)
@@ -597,10 +484,6 @@ pub(crate) fn press(world: &mut World, deformers: &mut QueryState<(Entity, &'sta
     }
 }
 
-/// Where a frame's deformation map lies: the world texel
-/// index of its first texel along x and z (texel `i` covers world meters
-/// `i * texel` to `(i + 1) * texel`), its texels' size (meters) and count
-/// along a side, and the settings renderers shade it with.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DeformationMap {
     pub first: [i32; 2],
@@ -611,8 +494,6 @@ pub struct DeformationMap {
 }
 
 impl DeformationMap {
-    /// The map `settings` lay around `eye`: an eighth of its side at a time,
-    /// the eye always within its middle quarter.
     pub fn around(eye: glam::Vec3, settings: &Deformation) -> Self {
         let resolution = settings.resolution;
         let texel = settings.extent / resolution as f32;
@@ -628,8 +509,6 @@ impl DeformationMap {
         }
     }
 
-    /// The world corners (x and z) of the texels from `low` to `high`,
-    /// world texel indices, `high` excluded.
     fn meters(&self, low: [i32; 2], high: [i32; 2]) -> (Vec2, Vec2) {
         (
             Vec2::new(low[0] as f32, low[1] as f32) * self.texel,
@@ -637,13 +516,11 @@ impl DeformationMap {
         )
     }
 
-    /// The world corners of the whole map.
     pub fn bounds(&self) -> (Vec2, Vec2) {
         let size = self.resolution as i32;
         self.meters(self.first, [self.first[0] + size, self.first[1] + size])
     }
 
-    /// The ground this map covers that `last` did not, as world corners.
     fn uncovered(&self, last: &Self) -> Vec<(Vec2, Vec2)> {
         let size = self.resolution as i32;
         let [x, z] = self.first;
@@ -656,13 +533,11 @@ impl DeformationMap {
             return vec![self.bounds()];
         }
         let mut rects = Vec::new();
-        // Columns along x the last map did not cover, every row.
         if x < lx {
             rects.push(self.meters([x, z], [lx, z + size]));
         } else if x > lx {
             rects.push(self.meters([lx + size, z], [x + size, z + size]));
         }
-        // Rows along z it did not cover, within the shared columns.
         if z < lz {
             rects.push(self.meters([overlap[0].0, z], [overlap[0].1, lz]));
         } else if z > lz {
@@ -672,12 +547,6 @@ impl DeformationMap {
     }
 }
 
-/// A frame's deformation: where the map lies (`None` while
-/// deformation is off), whether renderers clear it first (it started, its
-/// size changed or the log was cleared), and the stamps to press into it,
-/// oldest first: the log's over ground the map newly covers, then those
-/// pressed since the last frame. Also the stamps the log holds and those
-/// its budget dropped.
 #[derive(Clone, Debug, Default)]
 pub struct RenderDeformation {
     pub map: Option<DeformationMap>,
@@ -688,7 +557,6 @@ pub struct RenderDeformation {
 }
 
 impl RenderDeformation {
-    /// Becomes `other`, keeping its own allocation.
     pub(crate) fn copy_from(&mut self, other: &Self) {
         self.map = other.map;
         self.reset = other.reset;
@@ -698,16 +566,12 @@ impl RenderDeformation {
     }
 }
 
-/// The frame's deformation map around the camera and the stamps it
-/// presses, which extraction hands renderers, and the last map laid.
 #[derive(Resource, Default)]
 pub(crate) struct DeformationFrame {
     pub(crate) out: RenderDeformation,
     map: Option<DeformationMap>,
 }
 
-/// Lays the frame's deformation map around the camera and lists the stamps
-/// it presses: [`crate::ViewSyncSystems::Follow`].
 pub(crate) fn follow_camera(
     settings: Option<Res<Deformation>>,
     camera: Option<Res<Camera>>,
@@ -724,8 +588,6 @@ pub(crate) fn follow_camera(
     );
 }
 
-/// Lays the map of `settings` around `eye` into `out` with the stamps of
-/// `tracks` it presses, `last` the map laid before.
 pub(crate) fn follow(
     settings: Option<Deformation>,
     eye: Option<Vec3>,
@@ -776,7 +638,6 @@ pub(crate) fn follow(
     *last = Some(map);
 }
 
-/// Tracks deformers press into the ground: [`crate::Feature::Deformation`].
 #[derive(Default)]
 pub struct DeformationPlugin;
 

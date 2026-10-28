@@ -1,6 +1,3 @@
-//! Collision's queries, read-only spatial observations: rays, overlaps,
-//! shape casts and pages of sensor events. Cache synchronization never
-//! commits sensor events.
 use engine_core::collections::HashMap;
 use engine_settings::ErrorCode;
 
@@ -33,7 +30,6 @@ use crate::{
 };
 use engine_settings::Setting;
 
-/// Closest authoritative hit; rejects incomplete native candidate scans.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -84,7 +80,6 @@ impl EngineQuery for RaycastQuery {
     }
 }
 
-/// Complete bounded shape overlap, using a world-space rigid query pose.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -144,7 +139,6 @@ impl EngineQuery for OverlapQuery {
     }
 }
 
-/// Closest translation-only shape cast; orientation stays fixed along the ray.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -206,7 +200,6 @@ impl EngineQuery for ShapeCastQuery {
     }
 }
 
-/// Non-consuming page of the latest fixed-tick sensor transition snapshot.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -284,8 +277,6 @@ impl EngineQuery for CollisionEventsQuery {
     }
 }
 
-/// Query geometry dimensions are world units. No scale or rotation changes occur
-/// during a cast; sphere/cuboid transform admission matches native collision.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -303,9 +294,6 @@ pub enum CollisionShapeRequest {
     },
 }
 
-/// Layer matching is symmetric: query memberships intersect collider filter,
-/// and collider memberships intersect query filter. Exclusion uses a live ID
-/// in the supplied active scene; no runtime entity handle is accepted.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
@@ -345,7 +333,6 @@ pub(crate) fn world_value(value: &CollisionWorld) -> Value {
     json!(world_view(value))
 }
 
-/// The collision world as replies and its inspector show it.
 pub(crate) fn world_view(value: &CollisionWorld) -> CollisionWorldView {
     let report = value.report();
     let config = value.config();
@@ -505,8 +492,6 @@ fn ray(origin: [f64; 3], direction: [f64; 3], max_distance: f64) -> Result<Colli
     Ok(ray)
 }
 
-/// A placed object a hit names: its terrain's placement
-/// layer and asset indices.
 fn placed(part: engine_collision::PlacedPart) -> PlacedHit {
     PlacedHit {
         layer: part.layer,
@@ -608,7 +593,6 @@ impl<'a> Identities<'a> {
     fn entity(&self, world: &World, entity: Entity) -> HitEntity {
         let id = self.ids.get(&entity).copied();
         let metadata = world.get::<SceneEntity>(entity);
-        // A loaded streamed entity of the active scene.
         let streamed = id.is_none()
             && metadata.zip(self.scene).is_some_and(|(metadata, scene)| {
                 scene.streamed().is_some() && metadata.scene_id == scene.id()

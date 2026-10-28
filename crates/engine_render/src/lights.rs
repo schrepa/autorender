@@ -1,14 +1,3 @@
-//! Local lights: each frame's lights, binned into view
-//! clusters on the GPU, and the bind group lit mesh pipelines shade with.
-//!
-//! Lights upload only when their records change. Lights that follow a slot
-//! read that slot's pose from the frame's pose buffer while binning, so they
-//! move with interpolated, GPU-presented meshes at no CPU cost. Binning
-//! counts each cluster's lights, turns the counts into list ranges and fills
-//! the lists, so lists are exactly as long as their lights; the list storage
-//! grows to what a frame read back needed. Everything here is created with
-//! the first frame that has lights.
-
 #![expect(
     clippy::expect_used,
     reason = "shading reads the group this frame prepared"
@@ -22,27 +11,16 @@ use crate::gpu_layouts::constants::{
 use crate::shaders::entry::lights;
 use engine_core::{LightRegion, RenderLight, glam::Mat4};
 
-/// Screen tiles across and down, and exponential depth slices.
 pub(crate) const TILES_X: u32 = 16;
 pub(crate) const TILES_Y: u32 = 9;
 pub(crate) const SLICES: u32 = 24;
 const CLUSTERS: u64 = (TILES_X * TILES_Y * SLICES) as u64;
-// Three counters, padded.
 const TOTALS_BYTES: u64 = 16;
-/// The per-cluster budget of clusters without one.
 pub(crate) const NO_BUDGET: u32 = u32::MAX;
 
 pub(crate) use crate::gpu_layouts::lights::ClusterUniform;
 
 impl ClusterUniform {
-    /// Clusters of a `width` x `height` frame seen through the unjittered
-    /// perspective `view_projection` (reversed WebGPU depth:
-    /// near 1, far 0), up to view depth
-    /// `distance` where local light fades out, with an optional per-cluster
-    /// `budget` and list storage of `capacity` entries. Its fourth row gives
-    /// view depth, its first two rows' lengths the projection scales, and
-    /// the third row the near and far planes; a matrix without usable planes
-    /// clusters over [0.1, 1000].
     pub(crate) fn new(
         view_projection: Mat4,
         width: u32,
@@ -55,10 +33,6 @@ impl ClusterUniform {
         let depth = view_projection.row(3);
         let scale_x = view_projection.row(0).truncate().length();
         let scale_y = view_projection.row(1).truncate().length();
-        // Row 2 is P22 times the view's z row plus P23, and row 3 is minus
-        // the view's z row (of unit length): with reversed depth P22 =
-        // near / (far - near) > 0, depth -P22 + P23 / d is 1 at the near
-        // plane and 0 at the far one.
         let perspective = (depth.truncate().length_squared() - 1.0).abs() < 1.0e-3;
         let p22 = -view_projection.row(2).truncate().dot(depth.truncate());
         let p23 = view_projection.row(2).w + p22 * depth.w;
@@ -72,9 +46,7 @@ impl ClusterUniform {
         {
             (near, far) = (0.1, 1000.0);
         }
-        // Light ends at the fade distance.
         let far = engine_core::math::max(engine_core::math::min(far, distance), near * 2.0);
-        // The first slice spans everything nearer than the start.
         let start = engine_core::math::max(near, engine_core::math::min(1.0, far * 0.01));
         let slice_scale = SLICES as f32 / engine_core::math::max((far / start).log2(), 1.0e-3);
         let tile = |size: u32, tiles: u32| size.max(1).div_ceil(tiles) as f32;
@@ -96,9 +68,6 @@ impl ClusterUniform {
 
 pub(crate) use crate::gpu_layouts::lights::LightInput;
 
-/// How `snapshot`'s lights shade (the clusters' `lights.y`): from their
-/// spheres and tubes while highlights take their lights' sizes, and kept to
-/// their regions where any of them keeps to one (`regions`).
 fn shading_flags(snapshot: &engine_core::RenderSnapshot, regions: bool) -> u32 {
     let mut flags = 0;
     if snapshot.environment.highlights.enabled {
@@ -131,7 +100,6 @@ impl From<&RenderLight> for LightInput {
     }
 }
 
-/// GPU binning, wasm32 only like the renderer.
 mod gpu {
     use std::{cell::Cell, rc::Rc};
 
@@ -147,24 +115,18 @@ mod gpu {
     use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
     use crate::renderer::FramePoses;
 
-    /// A frame's binned lights.
     pub(crate) struct LightFrame {
         count: u32,
         group: usize,
-        // How its lights shade (`shading_flags`).
         flags: u32,
     }
 
-    // Binning and shading groups of each reflection probe face, and the
-    // (pose generation, pose buffer, storage generation, still-frame
-    // generation) they were built for.
     type ProbeLightGroups = (
         (u64, usize, u64, u64),
         Vec<(wgpu::BindGroup, wgpu::BindGroup)>,
     );
 
     pub(crate) struct LightPass {
-        // Counting, scanning and filling the cluster lists.
         count: wgpu::ComputePipeline,
         scan: wgpu::ComputePipeline,
         fill: wgpu::ComputePipeline,
@@ -177,31 +139,19 @@ mod gpu {
         capacity: usize,
         counts: wgpu::Buffer,
         ranges: wgpu::Buffer,
-        // The clusters' lists of lights, an entry each.
         indices: Growable,
         totals: wgpu::Buffer,
         staged: Vec<LightInput>,
-        // The retained stream and light revision the inputs hold, and
-        // whether any of those lights keeps to a region.
         uploaded_revision: Option<(u64, u64)>,
         regions: bool,
-        // Binning groups over (pose generation, pose buffer) and the storage
-        // generation of this pass's own buffers they were built with.
         compute_groups: Vec<((u64, usize, u64), wgpu::BindGroup)>,
         fragment_group: Cached<u64, wgpu::BindGroup>,
-        // Reflection probe faces: each face's clusters, their
-        // binning and shading groups over the pose, still-frame and list
-        // storage they were built for (the last used current), and the
-        // still frames main binning leaves unread.
         probe_uniforms: Vec<wgpu::Buffer>,
         probe_groups: Vec<ProbeLightGroups>,
         probe_current: usize,
         no_still: wgpu::Buffer,
         buffers_generation: u64,
         readbacks: ReadbackRing<()>,
-        // Lights that reached a cluster, cluster entries lost to the budget
-        // or the storage, and the entries the lists needed, read back a few
-        // frames late.
         totals_read: Rc<Cell<Option<[u32; 3]>>>,
     }
 
@@ -261,14 +211,10 @@ mod gpu {
             }
         }
 
-        /// Group 3 of the lit mesh pipelines.
         pub(crate) fn fragment_layout(&self) -> &crate::pipelines::GroupLayout {
             &self.fragment_layout
         }
 
-        /// Lights that reached a cluster and cluster entries lost to the
-        /// per-cluster budget or to list storage still growing, read back a
-        /// few frames late.
         pub(crate) fn totals(&self) -> Option<[u32; 2]> {
             self.totals_read
                 .get()
@@ -288,10 +234,6 @@ mod gpu {
             .sum()
         }
 
-        /// Uploads `snapshot`'s lights when their `revision` (retained stream
-        /// and light revision) changed and writes this frame's clusters for a
-        /// `size` frame; `None` when it shades no local lights. Slot lights
-        /// read `poses`.
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
@@ -322,7 +264,6 @@ mod gpu {
                 self.uploaded_revision = None;
                 self.buffers_generation += 1;
             }
-            // Unchanged lights skip staging.
             if self.uploaded_revision != Some(revision) {
                 self.staged.clear();
                 self.staged
@@ -331,10 +272,6 @@ mod gpu {
                 self.uploaded_revision = Some(revision);
                 self.regions = self.staged.iter().any(|light| light.region != 0);
             }
-            // List storage grows to what the lists needed when last read
-            // back, and to a first guess of a few dozen clusters per light,
-            // within what one storage binding holds; until then, entries
-            // beyond it are lost and counted.
             let needed = self
                 .totals_read
                 .get()
@@ -365,7 +302,6 @@ mod gpu {
             {
                 Some(index) => index,
                 None => {
-                    // Stale generations never come back.
                     self.compute_groups.retain(|((generation, _, buffers), _)| {
                         *generation == key.0 && *buffers == key.2
                     });
@@ -412,20 +348,14 @@ mod gpu {
             })
         }
 
-        /// Entries the clusters' lists hold: what binning may write.
         fn index_capacity(&self) -> u32 {
             (self.indices.size() / 4).min(u64::from(u32::MAX)) as u32
         }
 
-        /// The bindings lit mesh pipelines read at group 3.
         pub(crate) fn fragment_group(&self) -> &wgpu::BindGroup {
             self.fragment_group.get().expect("prepared this frame")
         }
 
-        /// Records this frame's binning: clears the clusters, counts every
-        /// light's clusters, gives the clusters their list ranges, fills the
-        /// lists and copies the totals for read-back.
-        /// With `span`, the binning pass is timed.
         fn encode_binning(
             &self,
             device: &wgpu::Device,
@@ -440,7 +370,6 @@ mod gpu {
                     label: Some("engine/light-binning"),
                     timestamp_writes: span.map(Span::compute),
                 });
-                // LIGHTS lights per workgroup, in rows of at most 65,535.
                 let workgroups = frame.count.div_ceil(LIGHTS);
                 let (columns, rows) = (workgroups.min(65_535), workgroups.div_ceil(65_535));
                 pass.set_bind_group(0, &self.compute_groups[frame.group].1, &[]);
@@ -455,11 +384,6 @@ mod gpu {
                 .record(device, encoder, &self.totals, TOTALS_BYTES, ());
         }
 
-        /// Records the binning of reflection probe cube face `face`,
-        /// `size` texels across, seen through `view_projection`: the
-        /// lights of `frame` without a slot or on slots `still` (storage and
-        /// generation) counts still, into the lists the frame's own shading
-        /// read before; [`Self::probe_fragment_group`] shades with them.
         #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
         pub(crate) fn encode_probe_face(
             &mut self,
@@ -510,7 +434,6 @@ mod gpu {
             {
                 self.probe_current = index;
             } else {
-                // Stale generations never come back.
                 self.probe_groups
                     .retain(|((generation, _, buffers, still), _)| {
                         (*generation, *buffers, *still) == (key.0, key.2, key.3)
@@ -572,8 +495,6 @@ mod gpu {
             pass.dispatch_workgroups(columns, rows, 1);
         }
 
-        /// The bindings lit probe pipelines read at group 3 for face `face`,
-        /// after [`Self::encode_probe_face`] recorded its binning.
         pub(crate) fn probe_fragment_group(&self, face: usize) -> &wgpu::BindGroup {
             &self.probe_groups[self.probe_current].1[face].1
         }
@@ -585,7 +506,6 @@ mod gpu {
 
         const LABELS: &'static [&'static str] = &["engine/light-", "engine/lights"];
 
-        /// Binning reads the poses lights ride on and writes their lists.
         fn declare(_frame: &LightFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
             graph
                 .add(Pass::Feature(FeaturePass::Lights))
@@ -609,7 +529,6 @@ mod gpu {
             0
         }
 
-        /// Requests maps of totals recorded in the frame just submitted.
         fn after_submit(&mut self, _frame: Option<&LightFrame>) {
             let totals = Rc::clone(&self.totals_read);
             self.readbacks.after_submit(move |words, ()| {
@@ -621,8 +540,6 @@ mod gpu {
             LightPass::capacity_bytes(self)
         }
 
-        /// Lights shaded and dropped in frames shading them, invalid ones,
-        /// and the binning's totals, read back a few frames late.
         fn stats(
             this: Option<&Self>,
             frame: Option<&LightFrame>,

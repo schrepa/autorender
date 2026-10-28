@@ -1,24 +1,14 @@
-//! Mip chains: each level the box average of the one above, as its usage
-//! reads its texels: colors in linear light (alpha linear), normals as
-//! vectors, left as short as their spread makes their mean, which shaders
-//! read as the slopes a texel averages away (Toksvig 2005), data channel by
-//! channel, each rounded to the nearest byte.
-
 use std::sync::OnceLock;
 
 use engine_assets::srgb_decoded;
 
 use crate::Usage;
 
-/// The smallest linear value encoding to each sRGB byte from 1 to 255: an
-/// encoded value is the count of these at or below it.
 fn srgb_thresholds() -> &'static [f32; 255] {
     static TABLE: OnceLock<[f32; 255]> = OnceLock::new();
     TABLE.get_or_init(|| {
         std::array::from_fn(|index| {
             let byte = index as u32 + 1;
-            // Bisection over the bits of floats in [0, 1], which order as
-            // their values do, as the encoding rises with its value.
             let (mut low, mut high) = (0_u32, 1.0_f32.to_bits());
             while low < high {
                 let middle = low + (high - low) / 2;
@@ -33,7 +23,6 @@ fn srgb_thresholds() -> &'static [f32; 255] {
     })
 }
 
-/// The sRGB transfer function of `value`, rounded to a byte.
 fn encode_exactly(value: f32) -> u8 {
     let value = engine_math::clamp(value, 0.0, 1.0);
     let encoded = if value <= 0.003_130_8 {
@@ -44,18 +33,14 @@ fn encode_exactly(value: f32) -> u8 {
     (encoded * 255.0 + 0.5) as u8
 }
 
-/// Linear `value` as the nearest sRGB byte.
 pub(crate) fn srgb_byte(value: f32) -> u8 {
     srgb_thresholds().partition_point(|&threshold| threshold <= value) as u8
 }
 
-/// `value` from 0 to 1 as the nearest byte.
 fn unorm_byte(value: f32) -> u8 {
     (engine_math::clamp(value, 0.0, 1.0) * 255.0 + 0.5) as u8
 }
 
-/// Every level of an RGBA8 image `width` × `height` reading as `usage`,
-/// from `base` down to 1 × 1.
 pub(crate) fn chain(width: u32, height: u32, base: &[u8], usage: Usage) -> Vec<Vec<u8>> {
     let mut levels = vec![base.to_vec()];
     let (mut width, mut height) = (width as usize, height as usize);
@@ -84,7 +69,6 @@ pub(crate) fn chain(width: u32, height: u32, base: &[u8], usage: Usage) -> Vec<V
     levels
 }
 
-/// The average of `texels` as `usage` reads them.
 fn average(texels: &[[u8; 4]], usage: Usage) -> [u8; 4] {
     let count = texels.len() as u32;
     let alpha = (texels.iter().map(|texel| u32::from(texel[3])).sum::<u32>() + count / 2) / count;

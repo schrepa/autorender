@@ -1,14 +1,10 @@
 use glam::{Mat4, Vec3};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// IDs belong to derived matrix values, not entities or Bevy change ticks.
-// Never recycle an ID. Exhaustion uses an explicitly uncacheable sentinel.
 static NEXT_VALUE: AtomicU64 = AtomicU64::new(1);
 const UNSTAMPED: u64 = u64::MAX;
 const BLOCK: u64 = 1024;
 
-/// Read-only authoritative local-to-world pose from [`crate::GlobalTransforms`].
-/// The full matrix preserves shear; invalid admitted poses have no matrix.
 #[derive(Clone, Copy)]
 pub struct GlobalTransform {
     matrix: Mat4,
@@ -36,7 +32,6 @@ impl std::fmt::Debug for GlobalTransform {
 }
 
 impl GlobalTransform {
-    /// `None` means propagation has not run or this node cannot be transformed.
     pub fn matrix(&self) -> Option<Mat4> {
         self.valid.then_some(self.matrix)
     }
@@ -45,7 +40,6 @@ impl GlobalTransform {
         self.matrix().map(|matrix| matrix.w_axis.truncate())
     }
 
-    /// Output revision; u64::MAX is uncacheable after stamp exhaustion.
     pub fn revision(&self) -> u64 {
         self.value
     }
@@ -59,7 +53,6 @@ impl GlobalTransform {
     }
 }
 
-/// Small batches avoid a process-wide atomic operation for every changed node.
 #[derive(Default)]
 pub(crate) struct ValueIds {
     next: u64,

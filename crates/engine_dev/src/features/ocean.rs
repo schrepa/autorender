@@ -1,6 +1,3 @@
-//! The sea's development tools: the [`Floating`] inspector and the water
-//! query.
-
 use engine_core::{Engine, Floating, Ground, Ocean, PresentedTime};
 use engine_scene::SceneInstance;
 use engine_settings::ErrorCode;
@@ -12,7 +9,6 @@ use crate::protocol::bounds::MAX_POINTS;
 use crate::results::result;
 use crate::{DevError, DevTools, InspectorDescriptor, coordinate};
 
-/// Registers the sea's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
     tools
         .register_component::<Floating>(
@@ -23,20 +19,11 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
         .expect("built-in descriptor is bounded");
 }
 
-/// Adds the schemas of the sea's inspectors.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
     schemas.insert("Floating".into(), super::schema::<Floating>());
 }
 
-/// The sea's surface over world points `[x, z]` at simulation time `seconds` (by default the time the last frame
-/// presented), as frames draw it: its height, normal, how much the waves
-/// compress it there (1 still, toward 0 on sharpening crests, where foam
-/// gathers) and the still sea's point the waves moved there, or null
-/// without a sea; the ground below where a terrain tile is resident,
-/// and the water's depth over it; and the world's water there as
-/// everything meeting it reads it (rivers, lakes or the sea at the fixed
-/// tick: kind, surface, depth, velocity and foam), or null where dry.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -62,7 +49,6 @@ impl EngineQuery for WaterQuery {
             ));
         }
         let world = engine.app.world();
-        // Frames draw the sea at the simulation time they present.
         let seconds = match self.seconds {
             Some(seconds) if seconds.is_finite() && seconds.abs() <= 1.0e9 => seconds,
             Some(_) => {
@@ -90,7 +76,6 @@ impl EngineQuery for WaterQuery {
                     .as_ref()
                     .map(|waves| waves.surface(point[0], point[1], seconds));
                 let ground = Ground::sample_in(world, x, z).map(|sample| sample.height);
-                // Millimeters and ten-thousandths keep responses small.
                 let round = |value: f64, step: f64| (value / step).round() * step;
                 let water = engine_core::WaterSources::sample_in(
                     world,
@@ -128,38 +113,25 @@ impl EngineQuery for WaterQuery {
     }
 }
 
-/// What `water_query` answers: the sea and ground under each point.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct WaterQueryResult {
-    /// The simulation time sampled.
     pub seconds: f64,
-    /// Each point's.
     pub samples: Vec<WaterSample>,
-    /// The sea's still level, where there is a sea.
     pub level: Option<f32>,
-    /// Its waves' heights summed.
     pub amplitude: Option<f32>,
-    /// Its waves, longest first.
     pub waves: Option<Vec<engine_core::OceanWave>>,
 }
 
-/// The sea and ground under one point.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct WaterSample {
-    /// The sea's surface, where there is a sea.
     pub ocean: Option<SeaSurface>,
-    /// The ground's height, where a tile is resident.
     pub ground: Option<f64>,
-    /// The water's depth, where both are.
     pub depth: Option<f64>,
-    /// The world's water there, where any stands.
     pub water: Option<WorldWater>,
 }
 
-/// The world's water over a point: its kind, surface (world meters), depth
-/// over the ground or bed, velocity (world meters a second) and foam.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct WorldWater {
@@ -170,17 +142,11 @@ pub struct WorldWater {
     pub foam: f64,
 }
 
-/// The sea's surface over a point.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct SeaSurface {
-    /// Its height, to the millimeter.
     pub height: f64,
-    /// Its normal.
     pub normal: [f64; 3],
-    /// How much its waves compress it there.
     pub compression: f64,
-    /// Where the surface point there rests on the still sea (world x
-    /// and z).
     pub still: [f64; 2],
 }

@@ -1,6 +1,3 @@
-//! The Stress Lab as a game the engine hosts: a workload or an authored
-//! scene, and the page's choices that outlive each workload's world.
-
 use engine::ErrorCode;
 use engine::collections::HashMap;
 use engine::host::TerrainDebug;
@@ -14,36 +11,21 @@ use crate::{
     create_workload_with, look, set_view, stress_reflections,
 };
 
-/// The action pinning every distance switch where the eye stands, or
-/// letting them follow it again (KeyL): each press freezes the detail eye
-/// at the camera's eye ([`TerrainDebug::freeze`]) or thaws it, so a ring
-/// where detail hands over can be walked away from and seen standing
-/// still.
 const FREEZE_DETAIL: ActionId = ActionId::new(2).expect("an action's index");
 
-/// The Stress Lab beside its engine.
 pub struct StressLab {
-    // One more each time a configuration rebuilds the workload.
     generation: u32,
-    // Files the page supplied, kept for later workloads.
     files: HashMap<String, StressFile>,
-    // The lighting preset and effect selection, kept across workloads.
     look: String,
     effects: String,
-    // Settings of the world's resources, kept across workloads, which
-    // replace the world: levels of detail and impostors and the visibility
-    // buffer.
     level_of_detail: bool,
     impostors: bool,
     visibility_buffer: bool,
-    // An authored scene in place of a workload, when the page loads one.
     authored: Option<AuthoredScene>,
-    // Whether the key freezing the detail eye was held last frame.
     freeze_held: bool,
 }
 
 impl StressLab {
-    /// The workload `config` builds from `files`.
     pub fn workload(
         config: StressConfig,
         files: HashMap<String, StressFile>,
@@ -52,7 +34,6 @@ impl StressLab {
         Ok((engine, Self::new(files, None)))
     }
 
-    /// The authored scene `source` with the `files` it references.
     pub fn authored(
         source: &str,
         files: &SceneFiles,
@@ -80,9 +61,6 @@ impl StressLab {
         self.generation
     }
 
-    /// The engine of the workload `config` builds from the files supplied so
-    /// far and `files`, for the host to run in place of the current one;
-    /// then [`Self::configured`].
     pub fn configure(
         &mut self,
         config: StressConfig,
@@ -92,8 +70,6 @@ impl StressLab {
         create_workload_with(config, &self.files)
     }
 
-    /// Applies the kept look, effects and world settings to the engine
-    /// [`Self::configure`] built, which replaced an authored scene too.
     pub fn configured(&mut self, engine: &mut Engine) -> engine::Result<()> {
         self.authored = None;
         self.generation = self.generation.saturating_add(1);
@@ -103,8 +79,6 @@ impl StressLab {
         Ok(())
     }
 
-    /// Rendering effects: `all`, `none`, or comma-separated `no-<effect>`
-    /// exclusions.
     pub fn set_effects(&mut self, engine: &mut Engine, name: &str) -> engine::Result<()> {
         let mut on = [true; EFFECTS.len()];
         match name {
@@ -151,7 +125,6 @@ impl StressLab {
         } else {
             0.0
         };
-        // Opt-in effects are removed entirely when off.
         if reflections {
             world.insert_resource(stress_reflections(scene));
         } else {
@@ -168,7 +141,6 @@ impl StressLab {
         } else {
             world.remove_resource::<Refraction>();
         }
-        // Reflection probes capture nothing where none stand.
         if probes {
             world.insert_resource(ReflectionProbeSettings::default());
         } else {
@@ -178,8 +150,6 @@ impl StressLab {
         Ok(())
     }
 
-    /// Lighting preset: `scene` (the scene's own), `golden`, `dusk`,
-    /// `night` or `day`.
     pub fn set_look(&mut self, engine: &mut Engine, name: &str) -> engine::Result<()> {
         let scene = engine.app.world().resource::<StressConfig>().scene;
         let (atmosphere, lamps) = look(scene, name)?;
@@ -196,29 +166,21 @@ impl StressLab {
         Ok(())
     }
 
-    /// Whether instances draw at levels of detail (on by default) or always
-    /// as their mesh, in this and later workloads.
     pub fn set_level_of_detail(&mut self, engine: &mut Engine, enabled: bool) {
         self.level_of_detail = enabled;
         self.apply_world_settings(engine);
     }
 
-    /// Whether draw groups draw impostors where they fit (on by default) or
-    /// only their meshes' levels, in this and later workloads.
     pub fn set_impostors(&mut self, engine: &mut Engine, enabled: bool) {
         self.impostors = enabled;
         self.apply_world_settings(engine);
     }
 
-    /// Whether virtual geometry shades through the visibility buffer or as
-    /// it draws (the default), in this and later workloads.
     pub fn set_visibility_buffer(&mut self, engine: &mut Engine, enabled: bool) {
         self.visibility_buffer = enabled;
         self.apply_world_settings(engine);
     }
 
-    /// The authored scene's ID, revision, frame, player position and asset
-    /// counts, as a JSON object (`null` for workloads).
     pub fn scene_progress(&self, engine: &Engine) -> serde_json::Value {
         self.authored
             .as_ref()
@@ -227,8 +189,6 @@ impl StressLab {
             })
     }
 
-    /// Writes the kept settings into the world's resources: each workload
-    /// builds a new world with their defaults.
     fn apply_world_settings(&self, engine: &mut Engine) {
         let world = engine.app.world_mut();
         if let Some(mut settings) = world.get_resource_mut::<LevelOfDetail>() {
@@ -247,8 +207,6 @@ impl Game for StressLab {
     fn before_frame(&mut self, engine: &mut Engine) {
         let world = engine.app.world_mut();
         world.resource_mut::<FrameMetrics>().begin_frame();
-        // The detail eye frozen where the camera's eye stands, or following
-        // it again, each press.
         let held = world.resource::<ActionInput>().pressed(FREEZE_DETAIL);
         if held && !self.freeze_held {
             let eye = world.resource::<Camera>().eye();
@@ -265,8 +223,6 @@ impl Game for StressLab {
         self.freeze_held = held;
     }
 
-    /// The workload's overview, or the authored scene's player back where
-    /// it started.
     fn reset_camera(&mut self, engine: &mut Engine) {
         match &self.authored {
             Some(authored) => authored.reset_player(engine),
@@ -278,9 +234,6 @@ impl Game for StressLab {
         self.authored.as_ref().and_then(AuthoredScene::instance)
     }
 
-    /// The Stress Lab's code, the workload's configuration or the authored
-    /// scene's ID and revision, and the page's look, effects and world
-    /// settings.
     fn content(&self, engine: &Engine) -> Option<Vec<u8>> {
         let mut content = crate::SOURCE.to_vec();
         if let Some(config) = engine.app.world().get_resource::<StressConfig>() {
@@ -321,7 +274,6 @@ impl Game for StressLab {
     }
 
     fn inspectors(inspectors: &mut Inspectors) {
-        // The types' schemas, as `cargo xtask schema` generates them.
         let schemas = include_str!("generated/inspectors.json");
         inspectors
             .resource::<StressConfig>(schemas, "StressConfig", |config| {

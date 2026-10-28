@@ -1,7 +1,3 @@
-//! What a function's statements do with what its expressions stand for:
-//! stores, calls and returns, and the decisions its statements and
-//! expressions make.
-
 use naga::{
     AddressSpace, Block, Expression, Function, GlobalVariable, Handle, MathFunction, ScalarKind,
     Span, Statement,
@@ -13,10 +9,6 @@ use super::{
 };
 
 impl Flow<'_> {
-    /// Walks `block`: its stores, calls and returns join what they write
-    /// into what the frame holds; whether anything grew. With `decide`, its
-    /// conditions are decisions, and the decisions callees' arguments reach
-    /// are this function's.
     pub(super) fn walk(&mut self, frame: &mut Frame<'_>, block: &Block, decide: bool) -> bool {
         let mut grew = false;
         for (statement, span) in block.span_iter() {
@@ -88,10 +80,6 @@ impl Flow<'_> {
         grew
     }
 
-    /// Applies the summary of `callee`, called with `arguments` at `span`:
-    /// its result, what it leaves where pointer arguments point and stores
-    /// in private variables, in terms of what this call passes; with
-    /// `decide`, the decisions what it passes reaches.
     fn call(
         &mut self,
         frame: &mut Frame<'_>,
@@ -148,8 +136,6 @@ impl Flow<'_> {
         grew
     }
 
-    /// Joins `value` into what `place` holds; whether it grew. What
-    /// indices chosen as the shader runs depend on reaches what is stored.
     fn write(&mut self, frame: &mut Frame<'_>, place: &Place, value: &Value) -> bool {
         let value = if place.index.is_empty() {
             value.clone()
@@ -166,9 +152,6 @@ impl Flow<'_> {
         }
     }
 
-    /// Joins `value` into private or workgroup variable `global` at
-    /// `steps`; whether it grew. The module holds the camera's reads alone,
-    /// which reach every function; the frame its arguments' parts too.
     fn store_global(
         &mut self,
         frame: &mut Frame<'_>,
@@ -204,9 +187,6 @@ impl Flow<'_> {
         grew
     }
 
-    /// The decisions the frame's expressions make: `select` conditions,
-    /// `smoothstep` and `step`, `mix`'s weight, comparisons turned into
-    /// numbers, and `saturate` where sizes on screen are watched.
     pub(super) fn expression_decisions(&mut self, frame: &mut Frame<'_>) {
         let function = frame.function;
         for (handle, expression) in function.expressions.iter() {
@@ -257,7 +237,6 @@ impl Flow<'_> {
         }
     }
 
-    /// A statement's decision by `condition`.
     fn condition(
         &mut self,
         frame: &mut Frame<'_>,
@@ -269,9 +248,6 @@ impl Flow<'_> {
         self.decide(frame, decision, condition.index(), span, &taint);
     }
 
-    /// Decision `decision` of the frame, at `span` and known by `key`,
-    /// reading what `taint` says: counted, and fed by what it depends on
-    /// unless its line is marked.
     fn decide(
         &mut self,
         frame: &mut Frame<'_>,
@@ -299,9 +275,6 @@ impl Flow<'_> {
         self.feed(frame, sink, taint, &[]);
     }
 
-    /// Sink `sink`, reading what `taint` says through the calls `via`: a
-    /// finding for each read of the camera, and a decision of the frame's
-    /// callers for each part of its arguments.
     fn feed(&mut self, frame: &mut Frame<'_>, sink: usize, taint: &Taint, via: &[Call]) {
         for &origin in taint {
             match origin {
@@ -322,8 +295,6 @@ impl Flow<'_> {
     }
 }
 
-/// What `taint`, in terms of the parts of the arguments of the function
-/// `summary` sums up, depends on where a call passes `passed`.
 fn substitute(summary: &Summary, passed: &[Value], taint: &Taint) -> Taint {
     let mut out = Taint::new();
     for &origin in taint {

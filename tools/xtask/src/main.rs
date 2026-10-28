@@ -1,6 +1,3 @@
-//! The repository's tasks: building, serving, checking and measuring the
-//! engine and its games (`cargo xtask help` lists them).
-
 mod ambiguities;
 mod authoring;
 mod bench;
@@ -36,16 +33,12 @@ mod verify;
 
 use std::{env, process::ExitCode};
 
-/// How a command failed, and the exit code it ends with: 1 when it could
-/// not do what it was asked, 3 when it did and found what it checks wrong
-/// (a smoke's failed assertion), as the smokes' own exit codes say.
 pub struct Failure {
     pub message: String,
     pub code: u8,
 }
 
 impl Failure {
-    /// A check that ran and found what it checks wrong: exit code 3.
     pub fn found(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -192,8 +185,6 @@ fn dev_port(arguments: &[String]) -> Result<u16, String> {
     }
 }
 
-/// Every command: its usage and what it does, as `help` prints them and
-/// `help --json` lists them.
 fn commands() -> Vec<(String, &'static str)> {
     let games = process::game_names();
     vec![

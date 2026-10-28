@@ -1,4 +1,3 @@
-/** Real Chrome collision contracts; fixtures are routed responses, never source edits. */
 // @ts-check
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
@@ -51,8 +50,6 @@ try {
   await command("render");
   await command("describe", { name: "Collider" });
   await command("describe", { name: "CollisionWorld" });
-  // The world's state inspects: the fixture's colliders, all of them valid
-  // and within the budget, in a built hierarchy.
   const world = (await command("inspect", { component: "CollisionWorld" })).result.value;
   assert.ok(world.complete && world.colliders > 0 && world.invalid_colliders === 0 && world.overflow_colliders === 0 && world.bvh_nodes > 0,
     `the collision world inspects: ${JSON.stringify(world)}`);
@@ -136,7 +133,6 @@ try {
   await command("raycast", ray);
   await command("pause");
   checks.push("queries_allowed_while_running");
-  // A workload with neither colliders nor queries leaves collision out.
   const workload = devUrl("stress.html", { config: { renderables: 100, colliders: 0, queries_per_tick: 0, mesh_variety: 1 } });
   await page.goto(workload.href);
   await developmentReady(page);

@@ -1,19 +1,3 @@
-//! GPU time of the frame's passes during profiling captures, as named
-//! spans: each frame allocates two timestamp queries for every span its
-//! passes record, a pass writes a span's begin, its end, or both, and the
-//! report names samples by span. Spans covering several passes (the opaque
-//! phases, the shadow regions, occlusion culling's pyramid and test) are the
-//! same span asked for again within the frame. Readback is bounded and
-//! never waits on the GPU: WebGPU completes maps through its event loop.
-//! Where the device times work inside passes and counts pipeline
-//! statistics (native GPU interfaces), captured frames also time each draw
-//! of the opaque passes and count its vertex shader invocations, the
-//! primitives it rasterized and its fragment shader invocations.
-//! Builds without the `profiling` feature compile a stand-in that records
-//! nothing, so passes ask for spans without conditional compilation.
-
-/// A span of GPU time this frame: the query set and its begin query (the
-/// end query follows it).
 #[derive(Clone, Copy)]
 pub(crate) struct Span<'a> {
     query_set: &'a wgpu::QuerySet,
@@ -21,18 +5,14 @@ pub(crate) struct Span<'a> {
 }
 
 impl<'a> Span<'a> {
-    /// Writes of a render pass the span covers whole.
     pub(crate) fn render(self) -> wgpu::RenderPassTimestampWrites<'a> {
         self.render_part(true, true)
     }
 
-    /// Writes of a compute pass the span covers whole.
     pub(crate) fn compute(self) -> wgpu::ComputePassTimestampWrites<'a> {
         self.compute_part(true, true)
     }
 
-    /// Writes of a render pass that begins the span (`begin`), ends it
-    /// (`end`), or both.
     pub(crate) fn render_part(self, begin: bool, end: bool) -> wgpu::RenderPassTimestampWrites<'a> {
         wgpu::RenderPassTimestampWrites {
             query_set: self.query_set,
@@ -41,8 +21,6 @@ impl<'a> Span<'a> {
         }
     }
 
-    /// Writes of a compute pass that begins the span (`begin`), ends it
-    /// (`end`), or both.
     pub(crate) fn compute_part(
         self,
         begin: bool,
@@ -55,8 +33,6 @@ impl<'a> Span<'a> {
         }
     }
 
-    /// Writes the span's begin, or its `end`, from an empty compute pass:
-    /// for work recorded elsewhere between the two.
     pub(crate) fn mark(self, encoder: &mut wgpu::CommandEncoder, end: bool) {
         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/profile-timestamp"),
@@ -65,15 +41,12 @@ impl<'a> Span<'a> {
     }
 }
 
-/// A draw a captured frame times: its index among the frame's.
 #[cfg_attr(
     not(feature = "profiling"),
     expect(dead_code, reason = "only profiling builds time draws")
 )]
 pub(crate) struct Draw(u32);
 
-/// What profiling builds ask devices for: timestamps, and inside passes
-/// with pipeline statistics where the device has them.
 #[cfg(feature = "profiling")]
 pub(crate) const FEATURES: wgpu::Features = wgpu::Features::TIMESTAMP_QUERY
     .union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
@@ -82,7 +55,6 @@ pub(crate) const FEATURES: wgpu::Features = wgpu::Features::TIMESTAMP_QUERY
 #[cfg(feature = "profiling")]
 pub(crate) use capture::GpuProfiler;
 
-/// The stand-in of builds without profiling: no frame records spans.
 #[cfg(not(feature = "profiling"))]
 pub(crate) struct GpuProfiler;
 
@@ -142,26 +114,17 @@ mod capture {
 
     const SLOTS: usize = 3;
     const SAMPLE_LIMIT: usize = 4_096;
-    /// Spans one frame records at most, a bound of the dev protocol; frames
-    /// record about sixty with their stages.
     const SPANS: usize = 128;
     const QUERIES: u32 = 2 * SPANS as u32;
     const QUERY_BYTES: u64 = QUERIES as u64 * 8;
-    /// Draws one frame times at most: two timestamps each fill a query
-    /// set's 4096 queries.
     const DRAWS: usize = 2_048;
-    /// What each draw counts, in the order queries resolve them: vertex
-    /// shader invocations, primitives out of clipping, fragment shader
-    /// invocations.
     const STATISTICS: wgpu::PipelineStatisticsTypes =
         wgpu::PipelineStatisticsTypes::VERTEX_SHADER_INVOCATIONS
             .union(wgpu::PipelineStatisticsTypes::CLIPPER_PRIMITIVES_OUT)
             .union(wgpu::PipelineStatisticsTypes::FRAGMENT_SHADER_INVOCATIONS);
-    // Where draws' timestamps and statistics resolve, after the spans'.
     const DRAW_STAMPS_AT: u64 = QUERY_BYTES;
     const DRAW_STATISTICS_AT: u64 = DRAW_STAMPS_AT + 2 * DRAWS as u64 * 8;
     const SLOT_BYTES: u64 = DRAW_STATISTICS_AT + DRAWS as u64 * 24;
-    /// The span every captured frame records: its opaque passes.
     const OPAQUE: &str = "opaque_meshes";
 
     #[derive(Clone, Copy)]
@@ -184,12 +147,7 @@ mod capture {
         readback: wgpu::Buffer,
         mapped: Rc<Cell<MapState>>,
         origin: Option<Origin>,
-        // The spans this frame recorded, in order, by name and begin query,
-        // each with the group whose first begin to last end the report
-        // also times.
         spans: RefCell<Vec<(&'static str, Option<&'static str>)>>,
-        // Draws' timestamps and statistics, where the device has them, and
-        // the draws this frame timed, by label.
         draw_stamps: Option<wgpu::QuerySet>,
         draw_statistics: Option<wgpu::QuerySet>,
         draws: RefCell<Vec<String>>,
@@ -239,59 +197,44 @@ mod capture {
         }
     }
 
-    /// What a device measures of each draw.
     #[derive(Clone, Copy)]
     struct Support {
         timestamps: bool,
         statistics: bool,
     }
 
-    /// A draw's measurements in a captured frame.
     struct DrawSample {
         label: String,
-        // From the frame's first timestamp.
         start_ms: Option<f64>,
         duration_ms: Option<f64>,
-        // Vertex shader invocations, primitives out of clipping, fragment
-        // shader invocations.
         statistics: Option<[u64; 3]>,
     }
 
-    /// A read-back frame's span timestamps, draw timestamps and draw
-    /// statistics.
     type Readback = (Vec<(u64, u64)>, Vec<(u64, u64)>, Vec<[u64; 3]>);
 
     struct Sample {
         origin: Origin,
-        // Each recorded span's duration, then the aggregates: in report order.
         spans: Vec<(&'static str, f64)>,
-        // Where each recorded span began, from the frame's first timestamp.
         starts: Vec<(&'static str, f64)>,
         draws: Vec<DrawSample>,
     }
 
-    /// Retains one capture and a small reusable ring. A new capture clears
-    /// samples, while in-flight old maps finish normally and are ignored by
-    /// capture ID.
     pub(crate) struct GpuProfiler {
         supported: bool,
         draw_support: Support,
         period_ns: f64,
         slots: Vec<Slot>,
-        // The slot this frame records into.
         current: Option<usize>,
         capture: Option<u64>,
         submission: u64,
         attempted: u64,
         submitted: u64,
         dropped: u64,
-        // Spans frames asked for beyond `SPANS`, and draws beyond `DRAWS`.
         spans_dropped: Cell<u64>,
         draws_dropped: Cell<u64>,
         errors: u64,
         sample_limit_reached: bool,
         samples: Vec<Sample>,
-        // The last read frame and its first and last GPU timestamps.
         last_span: Option<(u64, u64, u64)>,
     }
 
@@ -333,8 +276,6 @@ mod capture {
             self.errors = 0;
             self.sample_limit_reached = false;
             self.samples.clear();
-            // Allocate at the explicit capture boundary, never grow in the
-            // frame loop.
             if self.supported && self.slots.is_empty() {
                 let draws = self.draw_support;
                 self.slots = (0..SLOTS).map(|_| Slot::new(device, draws)).collect();
@@ -342,8 +283,6 @@ mod capture {
             }
         }
 
-        /// Starts a frame: while a capture runs, a free slot records its
-        /// spans.
         pub(crate) fn begin_frame(&mut self, device: &wgpu::Device) {
             self.current = None;
             self.submission = self.submission.saturating_add(1);
@@ -380,21 +319,14 @@ mod capture {
             self.current = Some(index);
         }
 
-        /// Whether this frame records spans: passes timed in parts then run
-        /// each part as its own pass.
         pub(crate) fn capturing(&self) -> bool {
             self.current.is_some()
         }
 
-        /// Span `name` of this frame, allocated the first time a pass asks
-        /// for it; `None` unless this frame is captured. Every span asked for
-        /// must have its begin and end written.
         pub(crate) fn span(&self, name: &'static str) -> Option<Span<'_>> {
             self.recorded(None, name)
         }
 
-        /// [`Self::span`] of a span in `group`: the report also times the
-        /// group, from its spans' first begin to their last end.
         pub(crate) fn span_in(&self, group: &'static str, name: &'static str) -> Option<Span<'_>> {
             self.recorded(Some(group), name)
         }
@@ -419,8 +351,6 @@ mod capture {
             })
         }
 
-        /// Begins timing the draw `label` names in `pass`, where this frame
-        /// is captured and the device measures work inside passes.
         pub(crate) fn begin_draw(
             &self,
             pass: &mut wgpu::RenderPass<'_>,
@@ -446,7 +376,6 @@ mod capture {
             Some(Draw(index))
         }
 
-        /// Ends timing `draw`.
         pub(crate) fn end_draw(&self, pass: &mut wgpu::RenderPass<'_>, draw: Option<Draw>) {
             let (Some(Draw(index)), Some(current)) = (draw, self.current) else {
                 return;
@@ -460,7 +389,6 @@ mod capture {
             }
         }
 
-        /// Resolves this frame's queries into its read-back buffer.
         pub(crate) fn end_frame(&mut self, encoder: &mut wgpu::CommandEncoder) {
             let Some(index) = self.current else {
                 return;
@@ -489,7 +417,6 @@ mod capture {
             }
         }
 
-        /// Maps the frame's read-back after its submission.
         pub(crate) fn submitted(&mut self) {
             let Some(index) = self.current.take() else {
                 return;
@@ -514,9 +441,6 @@ mod capture {
             reason = "longer than the line ceiling; it may only shrink"
         )]
         pub(crate) fn poll(&mut self) {
-            // Browser GPU maps complete asynchronously. This only consumes
-            // flags and mapped bytes; it makes no device.poll / queue-wait
-            // call.
             for index in 0..self.slots.len() {
                 if Some(index) == self.current {
                     continue;
@@ -538,7 +462,6 @@ mod capture {
                 let labels = std::mem::take(slot.draws.get_mut());
                 let (timed, counted) = (slot.draw_stamps.is_some(), slot.draw_statistics.is_some());
                 let names: Vec<&'static str> = recorded.iter().map(|&(name, _)| name).collect();
-                // Each group in the order its first span was recorded.
                 let mut groups: Vec<&'static str> = Vec::new();
                 for group in recorded.iter().filter_map(|&(_, group)| group) {
                     if !groups.contains(&group) {
@@ -580,7 +503,6 @@ mod capture {
                         .map(to_ms)
                         .filter(|value| value.is_finite())
                 };
-                // The first begin to the last end of the spans in `group`.
                 let across = |group: &str| {
                     let spans: Vec<(u64, u64)> = recorded
                         .iter()
@@ -592,7 +514,6 @@ mod capture {
                     let end = spans.iter().map(|&(_, end)| end).max()?;
                     duration((begin, end))
                 };
-                // The frame's GPU span: every query it wrote.
                 let span = stamps
                     .iter()
                     .flat_map(|&(begin, end)| [begin, end])
@@ -629,9 +550,6 @@ mod capture {
                     self.errors = self.errors.saturating_add(1);
                     continue;
                 };
-                // The opaque span first, then every other span in the order
-                // the frame recorded them, each group whole and the frame's
-                // GPU span, gap and interval.
                 let mut spans = vec![(OPAQUE, opaque)];
                 spans.extend(
                     names
@@ -645,9 +563,6 @@ mod capture {
                         .iter()
                         .filter_map(|&group| across(group).map(|whole| (group, whole))),
                 );
-                // Where the frame's GPU span goes outside the render graph's
-                // passes: before the first, after the last, and between
-                // each pass and the one before it.
                 let mut stages: Vec<(&str, u64, u64)> = names
                     .iter()
                     .zip(&stamps)
@@ -698,8 +613,6 @@ mod capture {
                         statistics: counted.then_some(statistics),
                     })
                     .collect();
-                // begin_frame() accounts for completed and pending samples
-                // together.
                 self.samples.push(Sample {
                     origin,
                     spans,

@@ -1,10 +1,3 @@
-//! The layer stack: procedural noise with erosion, imported heightmaps,
-//! stamps, what an erosion bake wears away, the channels a
-//! hydrology bake carves, relief by cause (`relief.rs`) and roads, applied
-//! in order to every sample; later layers win. Rivers layers give the
-//! hydrology bake after them its first courses and change no height
-//! themselves.
-
 use std::sync::Arc;
 
 use engine_math::{clamp, max, min};
@@ -22,9 +15,6 @@ use crate::noise::{
 use crate::path::PathSample;
 use crate::relief::{HummocksLayer, StepsLayer};
 
-/// How a layer's heights combine with the heights of the layers before it,
-/// weighted by the layer's coverage: added, the higher or lower of the two,
-/// or replacing them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -52,47 +42,26 @@ impl Blend {
 }
 
 settings! {
-    /// Procedural ground: fractal gradient noise whose fine octaves fade on
-    /// slopes (Quilez's derivative damping), optionally folded into ridges and
-    /// warped sideways, shaped toward wide valley floors, then cut by the
-    /// erosion filter's gullies running down its slopes.
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct NoiseLayer {
-        /// Picks the pattern: the same seed gives the same heights everywhere.
         pub seed: u32 = 0 => any,
-        /// Meters from the lowest to the highest ground before gullies.
         pub height: f32 = 900.0 => range(0.0, MAX_HEIGHT),
-        /// Meters added to every height of the layer.
         pub offset: f32 = 0.0 => range(-MAX_HEIGHT, MAX_HEIGHT),
-        /// Meters across the largest features.
         pub wavelength: f32 = 3000.0 => range(16.0, 1.0e6),
-        /// 0 rolls; 1 folds every octave into sharp ridges.
         pub ridges: f32 = 0.3 => range(0.0, 1.0),
-        /// How far the ground warps sideways, as a share of the wavelength.
         pub warp: f32 = 0.35 => range(0.0, 1.0),
-        /// How deep gullies cut down slopes: 0 none.
         pub erosion: f32 = 0.7 => range(0.0, 1.0),
-        /// How much fine detail fades on slopes.
         pub smoothing: f32 = 1.0 => range(0.0, 1.0),
-        /// 0 keeps the heights' spread; 1 widens valley floors and sharpens
-        /// peaks.
         pub valleys: f32 = 0.7 => range(0.0, 1.0),
-        /// How much each finer octave keeps of the coarser one's height, from
-        /// 0 (smooth slopes up close) through 0.5 (every scale alike) to 1
-        /// (rugged).
         pub roughness: f32 = 0.5 => range(0.0, 1.0),
-        /// How the layer combines with the layers below it.
         pub blend: Blend = Blend::Add => any,
     }
 }
 
-/// The most meters a layer raises, lowers or offsets the ground.
 pub const MAX_HEIGHT: f32 = 20_000.0;
 
-/// What a stamp does where it reaches: raise or lower heights by meters,
-/// level them toward a height, or cut holes in the terrain.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -102,8 +71,6 @@ pub enum StampOp {
     Flatten(
         #[cfg_attr(feature = "schema", schemars(range(min = -MAX_HEIGHT, max = MAX_HEIGHT)))] f32,
     ),
-    /// Cells whose centers lie within the radius are holes: no surface
-    /// draws or collides there.
     Hole,
 }
 
@@ -126,26 +93,19 @@ impl Setting for StampOp {
 }
 
 settings! {
-    /// A local edit: full strength within `radius` meters of `center`, fading
-    /// out over `falloff` meters beyond.
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct Stamp {
-        /// Terrain-local meters along x and z.
         pub center: [f32; 2] = [0.0; 2] => range(-Layers::MAX_COORDINATE, Layers::MAX_COORDINATE),
-        /// Meters around the center at full strength.
         pub radius: f32 = 1.0 => range(0.0, Layers::MAX_COORDINATE),
-        /// Meters beyond the radius over which it fades out.
         #[serde(default)]
         pub falloff: f32 = 0.0 => range(0.0, Layers::MAX_COORDINATE),
-        /// What it does where it reaches.
         pub op: StampOp = StampOp::Hole => any,
     }
 }
 
 impl Stamp {
-    /// The stamp's strength at terrain-local `(x, z)`, 0 to 1.
     #[inline]
     fn weight(&self, x: f32, z: f32) -> f32 {
         let dx = x - self.center[0];
@@ -154,14 +114,11 @@ impl Stamp {
         1.0 - smooth((distance - self.radius) / max(self.falloff, 1.0e-6))
     }
 
-    /// Meters from the center beyond which the stamp has no effect.
     fn reach(&self) -> f32 {
         self.radius + self.falloff
     }
 }
 
-/// 16-bit samples, row by row along z, with coarser levels for coarser
-/// terrain: an imported heightmap's heights, or a bake's image.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeightImage {
     pub(crate) width: u32,
@@ -170,9 +127,6 @@ pub struct HeightImage {
     pub(crate) levels: Vec<ImageLevel>,
 }
 
-/// A coarser level of a [`HeightImage`]: every other sample of the level
-/// before, filtered `[1, 2, 1] / 4` along each axis, so terrain levels whose
-/// samples lie further apart than the image's read it without aliasing.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ImageLevel {
     pub(crate) width: u32,
@@ -181,7 +135,6 @@ pub(crate) struct ImageLevel {
 }
 
 impl ImageLevel {
-    /// The level after one `width` by `height` holding `samples`.
     fn below(width: u32, height: u32, samples: &[f32]) -> Self {
         let half = |size: u32| (size - 1).div_ceil(2) + 1;
         let (next_width, next_height) = (half(width), half(height));
@@ -190,7 +143,6 @@ impl ImageLevel {
             let z = z.clamp(0, i64::from(height) - 1) as usize;
             samples[z * width as usize + x]
         };
-        // Along x first, then along z, each `[1, 2, 1] / 4`.
         let mut rows = vec![0.0_f32; next_width as usize * height as usize];
         for z in 0..i64::from(height) {
             for x in 0..i64::from(next_width) {
@@ -220,8 +172,6 @@ impl ImageLevel {
 }
 
 impl HeightImage {
-    /// `samples` holds `width * height` values, row by row; at least two
-    /// along each axis.
     pub fn new(width: u32, height: u32, samples: Vec<u16>) -> Option<Self> {
         if !(width >= 2 && height >= 2 && samples.len() == width as usize * height as usize) {
             return None;
@@ -245,7 +195,6 @@ impl HeightImage {
         })
     }
 
-    /// Little-endian 16-bit samples (`.r16` files), row by row.
     pub fn from_le_bytes(width: u32, height: u32, bytes: &[u8]) -> Option<Self> {
         if bytes.len() != width as usize * height as usize * 2 {
             return None;
@@ -267,18 +216,10 @@ impl HeightImage {
         self.height
     }
 
-    /// How many coarser levels follow the image's own samples.
     pub fn levels(&self) -> usize {
         self.levels.len()
     }
 
-    /// The uniform cubic B-spline of the image's samples at image
-    /// coordinates `(u, v)` in the image's own samples, 0 to 65535, edges
-    /// clamped, read from `level` (0 the image's samples, each one after
-    /// twice as far apart), as bakes' images are read: its curvature
-    /// continuous and its values never beyond its samples', it rounds off
-    /// what changes within a sample rather than printing the image's grid
-    /// into what reads it or digging pits beside sharp steps.
     #[inline]
     pub(crate) fn sample_smooth(&self, u: f32, v: f32, level: usize) -> f32 {
         let mut sample = 0.0;
@@ -286,9 +227,6 @@ impl HeightImage {
         sample
     }
 
-    /// [`Self::sample_smooth`] at `(u, v)` for each of `us` in turn, handed
-    /// to `each` with its index, to the same bits: a column of samples is
-    /// blended along `v` once for every point it serves.
     #[inline]
     pub(crate) fn sample_smooth_row(
         &self,
@@ -307,7 +245,6 @@ impl HeightImage {
                 f32::from(self.samples[z * self.width as usize + x])
             }),
             Some(coarse) => {
-                // Exact: a power of two.
                 let scale = 1.0 / (1_u32 << level) as f32;
                 smooth_row(us, v, scale, each, |x, z| {
                     let x = x.clamp(0, coarse.width as i32 - 1) as usize;
@@ -318,10 +255,6 @@ impl HeightImage {
         }
     }
 
-    /// Catmull-Rom interpolation at image coordinates `(u, v)` in the
-    /// image's own samples, 0 to 65535, edges clamped, read from `level`
-    /// (0 the image's samples, each one after twice as far apart), as
-    /// imported heightmaps are read.
     #[inline]
     pub(crate) fn sample(&self, u: f32, v: f32, level: usize) -> f32 {
         match level
@@ -334,7 +267,6 @@ impl HeightImage {
                 f32::from(self.samples[z * self.width as usize + x])
             }),
             Some(coarse) => {
-                // Exact: a power of two.
                 let scale = 1.0 / (1_u32 << level) as f32;
                 catmull_rom_2d(u * scale, v * scale, |x, z| {
                     let x = x.clamp(0, coarse.width as i32 - 1) as usize;
@@ -346,7 +278,6 @@ impl HeightImage {
     }
 }
 
-/// Catmull-Rom interpolation at `(u, v)` of the samples `texel` reads.
 #[inline(always)]
 fn catmull_rom_2d(u: f32, v: f32, texel: impl Fn(i32, i32) -> f32) -> f32 {
     let u0 = u.floor();
@@ -366,10 +297,6 @@ fn catmull_rom_2d(u: f32, v: f32, texel: impl Fn(i32, i32) -> f32) -> f32 {
     sum
 }
 
-/// The uniform cubic B-spline of the samples `texel` reads, at `(u, v)`
-/// times `scale` for each of `us` in turn, handed to `each` with its index:
-/// the four columns around a point blended along v, then across, each
-/// column blended once for the points of one cell after another.
 #[inline(always)]
 fn smooth_row(
     us: impl IntoIterator<Item = f32>,
@@ -388,7 +315,6 @@ fn smooth_row(
             + wz[2] * texel(x, z + 1)
             + wz[3] * texel(x, z + 2)
     };
-    // The cell the point before fell in, and its four columns.
     let mut cell: Option<(i32, [f32; 4])> = None;
     for (index, u) in us.into_iter().enumerate() {
         let u = u * scale;
@@ -408,7 +334,6 @@ fn smooth_row(
     }
 }
 
-/// Uniform cubic B-spline weights of the four samples around fraction `t`.
 #[inline(always)]
 fn b_spline(t: f32) -> [f32; 4] {
     let s = 1.0 - t;
@@ -422,7 +347,6 @@ fn b_spline(t: f32) -> [f32; 4] {
     ]
 }
 
-/// Catmull-Rom weights of the four samples around fraction `t`.
 #[inline(always)]
 pub(crate) fn catmull_rom(t: f32) -> [f32; 4] {
     let t2 = t * t;
@@ -435,9 +359,6 @@ pub(crate) fn catmull_rom(t: f32) -> [f32; 4] {
     ]
 }
 
-/// An imported heightmap placed over the terrain: sample values 0 to
-/// 65535 map to heights `low` to `high`, its samples span `size` meters from
-/// `min`, and it fades in over `falloff` meters inside its edges.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeightmapLayer {
     pub image: Arc<HeightImage>,
@@ -447,17 +368,12 @@ pub struct HeightmapLayer {
     pub high: f32,
     pub falloff: f32,
     pub blend: Blend,
-    /// The file the image was read from, for authoring tools.
     pub uri: Option<String>,
-    /// Where its heights came from and the credit their data requires, as
-    /// the import tool records them.
     pub source: Option<String>,
     pub attribution: Option<String>,
 }
 
 impl HeightmapLayer {
-    /// The meters between its image's samples: along whichever axis they
-    /// lie further apart.
     pub(crate) fn texel(&self) -> f32 {
         let image = &self.image;
         max(
@@ -466,10 +382,6 @@ impl HeightmapLayer {
         )
     }
 
-    /// The image level terrain samples `spacing` meters apart read: the
-    /// coarsest whose samples lie no further apart than the terrain's, so
-    /// neighboring terrain levels differ only by the detail the coarser one
-    /// leaves out.
     fn level_for(&self, spacing: f32) -> usize {
         let texel = self.texel();
         let mut level = 0;
@@ -479,8 +391,6 @@ impl HeightmapLayer {
         level
     }
 
-    /// The layer's height and coverage at terrain-local `(x, z)`, from
-    /// image level `level`.
     #[inline]
     fn at(&self, x: f32, z: f32, level: usize) -> (f32, f32) {
         let local = Vec2::new(x, z) - self.min;
@@ -503,43 +413,25 @@ impl HeightmapLayer {
     }
 }
 
-/// One layer of a [`Layers`] stack.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Layer {
     Noise(NoiseLayer),
     Heightmap(HeightmapLayer),
     Stamp(Stamp),
-    /// Rivers given to the hydrology layer after it, which runs them as its
-    /// first courses: no height of its own.
     Rivers(Arc<RiversLayer>),
-    /// Where water runs over the layers before it and the channels it
-    /// carves: nothing until baked.
     Hydrology(HydrologyStage),
-    /// What rivers and creep wear away from the layers before it:
-    /// nothing until baked.
     Erosion(ErosionStage),
-    /// A road leveling the layers before it to its profile:
-    /// nothing until baked.
     Path(PathStage),
-    /// Rock steps on the steep ground the stack's hydrology bake maps:
-    /// nothing until it is baked.
     Steps(StepsLayer),
-    /// Earth hummocks on the wet, gentle ground the stack's hydrology bake
-    /// maps: nothing until it is baked.
     Hummocks(HummocksLayer),
 }
 
-/// A path layer, and its profile once baked.
 pub type PathStage = Stage<PathBake>;
 
-/// An erosion layer, and what its bake did once baked.
 pub type ErosionStage = Stage<ErosionBake>;
 
-/// A hydrology layer, and what its bake found once baked.
 pub type HydrologyStage = Stage<HydrologyBake>;
 
-/// A layer's field breaking its rule: the layer's index, the field below
-/// the layer (its kind first, as authored: `noise.height`) and the rule.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LayerError {
     pub layer: usize,
@@ -548,7 +440,6 @@ pub struct LayerError {
 }
 
 impl LayerError {
-    /// The error of layer `layer`, of kind `kind`, breaking `invalid`.
     fn new(layer: usize, kind: &'static str, invalid: InvalidSetting) -> Self {
         let invalid = invalid.within(kind);
         Self {
@@ -571,8 +462,6 @@ impl std::fmt::Display for LayerError {
 
 impl std::error::Error for LayerError {}
 
-/// An octave's lattice: lattice coordinates `m * p + t` of terrain-local
-/// point `p`, its amplitude, wavelength in meters and seed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Octave {
     m: [f32; 4],
@@ -591,7 +480,6 @@ impl Octave {
         )
     }
 
-    /// [`Self::lattice`] of four points.
     #[inline(always)]
     fn lattice4(&self, x: Vec4, z: Vec4) -> (Vec4, Vec4) {
         (
@@ -601,7 +489,6 @@ impl Octave {
     }
 }
 
-/// A gully octave: its cell size and depth in meters, and seed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct GullyOctave {
     cell: f32,
@@ -609,29 +496,16 @@ struct GullyOctave {
     seed: u32,
 }
 
-/// The most octaves a noise layer sums; finer ones fall below any level's
-/// samples for wavelengths up to the largest allowed.
 const OCTAVES: usize = 28;
 const GULLY_OCTAVES: usize = 5;
 
-/// What a point of the coarse grid holds of a noise layer, which samples
-/// between grid points interpolate: the warp's offsets, the gullies'
-/// heights, the fractal sum and the damping's lattice slope after the
-/// coarse octaves, all smooth over the grid, then each coarse octave's
-/// noise, from which every sample sums the ridged octaves itself: their
-/// creases and weights would not interpolate. Levels so differ only by the
-/// octaves they leave out.
 pub(crate) const STATE_HEAD: usize = 6;
 pub(crate) const STATE_OCTAVE: usize = 1;
 
-/// The values a coarse state of `octaves` coarse octaves holds.
 pub(crate) const fn state_len(octaves: usize) -> usize {
     STATE_HEAD + STATE_OCTAVE * octaves
 }
 
-/// A noise layer's sums as octaves add to them: fractal noise whose
-/// octaves fade where the ground already slopes (Quilez) and Musgrave's
-/// ridged multifractal, whose octaves are weighted by the ridge below them.
 #[derive(Clone, Copy, Debug)]
 struct Sums {
     rolling: f32,
@@ -648,9 +522,6 @@ impl Sums {
         lattice_slope: [0.0; 2],
     };
 
-    /// Adds `octave`'s noise `n` with lattice gradient `(nx, nz)`;
-    /// returns the fractal octave's damped amplitude and the ridged
-    /// octave's crest times its weight, which their gradients scale by.
     #[inline(always)]
     fn add(&mut self, octave: &Octave, smoothing: f32, [n, nx, nz]: [f32; 3]) -> (f32, f32) {
         self.lattice_slope[0] += nx;
@@ -665,8 +536,6 @@ impl Sums {
         (a, self.add_ridged(octave, n))
     }
 
-    /// Adds `octave`'s ridged term alone, of noise `n`; returns its crest
-    /// times its weight.
     #[inline(always)]
     fn add_ridged(&mut self, octave: &Octave, n: f32) -> f32 {
         let crest = 1.0 - n.abs();
@@ -678,7 +547,6 @@ impl Sums {
     }
 }
 
-/// [`Sums`] of four samples, lane by lane its operations.
 struct Sums4 {
     rolling: Vec4,
     ridged: Vec4,
@@ -719,7 +587,6 @@ impl Sums4 {
     }
 }
 
-/// A noise layer with its octaves laid out.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NoiseTables {
     params: NoiseLayer,
@@ -727,31 +594,14 @@ pub(crate) struct NoiseTables {
     gullies: [GullyOctave; GULLY_OCTAVES],
 }
 
-/// Octaves at least this many samples long are interpolated from the
-/// coarse grid; shorter ones, down to [`FINEST_SAMPLES`], are evaluated at
-/// every sample. Interpolated octaves span eight grid points and more, so
-/// their noise and the fractal sum, whose damping adds up to three times
-/// their frequency, interpolate closely, and neighboring levels, whose
-/// grids lie twice as far apart, agree on the samples they share.
 pub(crate) const COARSE_SAMPLES: f32 = 32.0;
 pub(crate) const FINEST_SAMPLES: f32 = 4.0;
-/// Gully octaves whose cells span at least this many samples are cut, from
-/// the coarse grid: gully `k` follows octaves up to `k + 1`, four of its
-/// cells long, which the grid then holds.
 pub(crate) const GULLY_SAMPLES: f32 = 16.0;
-/// How far from a ridged octave's crease, in a gully octave's cells, the
-/// slope that gully runs across turns over where the ridged slope reverses:
-/// gullies bend around crests within it instead of tearing the ground
-/// there, and keep their course everywhere else.
 const CREASE: f32 = 1.0;
 
 impl NoiseTables {
     fn new(params: NoiseLayer) -> Self {
-        // Each octave doubles the frequency and turns the lattice by
-        // atan(3/4), so octaves never line up.
         let (cos, sin) = (0.8_f64, 0.6_f64);
-        // Octave amplitudes fall by `gain` and sum to one; plain products,
-        // the same bits on every target.
         let gain = 0.35 + 0.3 * f64::from(params.roughness);
         let mut amplitude = 1.0 - gain;
         let mut m = [
@@ -797,8 +647,6 @@ impl NoiseTables {
         }
     }
 
-    /// Octaves interpolated from the coarse grid and octaves evaluated per
-    /// sample at sample spacing `spacing`.
     pub(crate) fn bands(&self, spacing: f32) -> (usize, std::ops::Range<usize>, usize) {
         let coarse = self
             .octaves
@@ -818,7 +666,6 @@ impl NoiseTables {
         (coarse, coarse..fine, gullies)
     }
 
-    /// [`Self::warp`] of four points.
     #[inline]
     fn warp4(&self, x: Vec4, z: Vec4) -> [Vec4; 2] {
         let warp = self.params.warp;
@@ -836,7 +683,6 @@ impl NoiseTables {
         [reach * a, reach * b]
     }
 
-    /// How far point `(x, z)` warps sideways.
     #[inline]
     fn warp(&self, x: f32, z: f32) -> [f32; 2] {
         let warp = self.params.warp;
@@ -854,11 +700,6 @@ impl NoiseTables {
         [reach * a, reach * b]
     }
 
-    /// The coarse state at `(x, z)` into `state` ([`state_len`] of
-    /// `octaves` values): the first `octaves` octaves at the warped point,
-    /// and `gully_octaves` gully octaves, gully `k` running across the
-    /// slope of octaves 0 to `k + 1` (four of its cells long and more,
-    /// their ridged creases rounded by [`CREASE`]), whatever the level.
     pub(crate) fn coarse(
         &self,
         x: f32,
@@ -871,11 +712,7 @@ impl NoiseTables {
         let warp = self.warp(x, z);
         let (px, pz) = (x + warp[0], z + warp[1]);
         let mut sums = Sums::START;
-        // The octaves the gullies follow, per meter: the fractal octave's
-        // gradient, the ridged octave's before its sign, the noise and its
-        // squared gradient.
         let mut terms = [[0.0_f32; 6]; GULLY_OCTAVES + 1];
-        // The blended sum after octaves 1 to GULLY_OCTAVES.
         let mut blended = [0.0_f32; GULLY_OCTAVES];
         let values = state[STATE_HEAD..].iter_mut();
         for ((index, octave), value) in self.octaves[..octaves].iter().enumerate().zip(values) {
@@ -900,9 +737,6 @@ impl NoiseTables {
             .zip(blended)
             .enumerate()
         {
-            // The slope of octaves 0 to k + 1, each ridged octave's sign
-            // turning over CREASE cells about its crease (its noise over
-            // its gradient is the distance there).
             let width = CREASE * octave.cell;
             let (mut rolling, mut ridged) = ([0.0_f32; 2], [0.0_f32; 2]);
             for [rx, rz, gx, gz, n, slope] in &terms[..k + 2] {
@@ -914,7 +748,6 @@ impl NoiseTables {
             }
             let mx = blend_gradient(rolling[0], ridged[0], params.ridges);
             let mz = blend_gradient(rolling[1], ridged[1], params.ridges);
-            // The slope of the shaped octaves it follows.
             let h = clamp(mixed, 0.0, 1.0);
             let shape_slope = params.height * (1.0 + params.valleys * (2.0 * h - 1.0));
             let (gx, gz) = (shape_slope * mx, shape_slope * mz);
@@ -922,7 +755,6 @@ impl NoiseTables {
             let inverse = 1.0 / max(slope, 1.0e-6);
             let across = [-gz * inverse, gx * inverse];
             let [c, _] = gullies(px / octave.cell, pz / octave.cell, across, octave.seed);
-            // Gullies cut slopes, not flats.
             let depth = octave.depth * params.erosion * smooth((slope - 0.05) * (1.0 / 0.45));
             gully_heights += depth * c;
         }
@@ -936,9 +768,6 @@ impl NoiseTables {
         ]);
     }
 
-    /// [`Self::coarse`] at four grid points of row `z`, lane
-    /// by lane its operations: the same bits, into `out`, the four states
-    /// one after another.
     pub(crate) fn coarse4(
         &self,
         x: Vec4,
@@ -1017,10 +846,6 @@ impl NoiseTables {
         }
     }
 
-    /// The height at `(x, z)` from the coarse `state` there, interpolated:
-    /// its `octaves` coarse octaves' ridged terms, then the fine octaves
-    /// `fine`, sum exactly as at grid points, then valley floors widen and
-    /// gullies cut in.
     #[inline]
     pub(crate) fn finish(
         &self,
@@ -1048,14 +873,11 @@ impl NoiseTables {
                 gradient_noise(qx, qz, octave.seed),
             );
         }
-        // Widen valley floors.
         let h = clamp(blend(sums.rolling, sums.ridged, params.ridges), 0.0, 1.0);
         let shaped = h + params.valleys * (h * h - h);
         params.offset + params.height * shaped + state[2]
     }
 
-    /// [`Self::finish`] at four samples of row `z`, from
-    /// their states value by value in lanes: the same bits.
     #[inline]
     pub(crate) fn finish4(
         &self,
@@ -1093,45 +915,34 @@ impl NoiseTables {
     }
 }
 
-/// The fractal and ridged sums blended by `ridges`, both in about 0..1.
 #[inline(always)]
 fn blend(rolling: f32, ridged: f32, ridges: f32) -> f32 {
     0.5 + 0.8 * rolling + ridges * (ridged - 0.5 - 0.8 * rolling)
 }
 
-/// The gradients of the sums [`blend`] blends, blended alike.
 #[inline(always)]
 fn blend_gradient(rolling: f32, ridged: f32, ridges: f32) -> f32 {
     0.8 * rolling + ridges * (ridged - 0.8 * rolling)
 }
 
-/// [`blend`] of four samples.
 #[inline(always)]
 fn blend4(rolling: Vec4, ridged: Vec4, ridges: f32) -> Vec4 {
     0.5 + 0.8 * rolling + ridges * (ridged - 0.5 - 0.8 * rolling)
 }
 
-/// [`blend_gradient`] of four samples.
 #[inline(always)]
 fn blend_gradient4(rolling: Vec4, ridged: Vec4, ridges: f32) -> Vec4 {
     0.8 * rolling + ridges * (ridged - 0.8 * rolling)
 }
 
-/// A validated stack of layers, applied in order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layers {
     layers: Vec<Layer>,
     tables: Vec<Option<NoiseTables>>,
-    // As a terrain's surroundings draw them: a point reads
-    // what the stack holds `offset` meters further along x and z, and
-    // every layer but noise fades out beyond `fade`'s region.
     pub(crate) offset: Vec2,
     pub(crate) fade: Option<Fade>,
 }
 
-/// Where a stack's layers other than noise show: all of
-/// them from `low` to `high` (the stack's own ground), fading out over
-/// `blend` meters beyond.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Fade {
     pub(crate) low: Vec2,
@@ -1139,27 +950,21 @@ pub(crate) struct Fade {
     pub(crate) blend: f32,
 }
 
-/// Checks stamp layer `index`.
 fn check_stamp(index: usize, stamp: &Stamp) -> Result<(), LayerError> {
     stamp
         .validate()
         .map_err(|invalid| LayerError::new(index, "stamp", invalid))
 }
 
-/// The rules of an imported heightmap's placement: its corner,
 const HEIGHTMAP_MIN: Rule = Rule::Range(
     -Layers::MAX_COORDINATE as f64,
     Layers::MAX_COORDINATE as f64,
 );
-/// its size,
 const HEIGHTMAP_SIZE: Rule = Rule::Range(1.0e-3, Layers::MAX_COORDINATE as f64);
-/// the heights its samples span,
 const HEIGHTMAP_HEIGHT: Rule = Rule::Range(-MAX_HEIGHT as f64, MAX_HEIGHT as f64);
-/// and its falloff.
 const HEIGHTMAP_FALLOFF: Rule = Rule::Range(0.0, Layers::MAX_COORDINATE as f64);
 
 impl HeightmapLayer {
-    /// The rule of each placement field, as authored heightmaps name it.
     pub fn rule_of(field: &str) -> Option<Rule> {
         match field {
             "min" => Some(HEIGHTMAP_MIN),
@@ -1180,14 +985,8 @@ impl HeightmapLayer {
 }
 
 impl Layers {
-    /// The largest coordinate magnitude, in meters, of anything a layer
-    /// places.
     pub const MAX_COORDINATE: f32 = 1.0e7;
 
-    /// `layers` validated: each layer's fields keep their rules, every
-    /// rivers layer has a hydrology layer after it, which runs its rivers,
-    /// and every relief layer a hydrology layer in the stack, whose maps
-    /// place it.
     pub fn new(layers: Vec<Layer>) -> Result<Self, LayerError> {
         let last_hydrology = layers
             .iter()
@@ -1254,9 +1053,6 @@ impl Layers {
         &self.layers
     }
 
-    /// Whether its tiles may hold holes: it stamps one, or a road may
-    /// tunnel. Renderers prepare to draw them before any
-    /// tile does.
     pub fn may_hole(&self) -> bool {
         self.layers.iter().any(|layer| match layer {
             Layer::Stamp(stamp) => matches!(stamp.op, StampOp::Hole),
@@ -1271,21 +1067,12 @@ impl Layers {
         })
     }
 
-    /// Whether a hydrology layer gives it water once baked.
     pub fn has_hydrology(&self) -> bool {
         self.layers
             .iter()
             .any(|layer| matches!(layer, Layer::Hydrology(_)))
     }
 
-    /// These layers as a terrain's surroundings draw them:
-    /// a point reads what this stack holds `offset` meters further along x
-    /// and z, and every layer but noise (stamps, heightmaps, bakes, relief
-    /// and roads, and the masks they feed) shows from `low` to `high` of this
-    /// stack's ground, fading out over `blend` meters beyond, so the ground
-    /// meets this stack's at that region's edges and turns into its noise
-    /// away from them. Offsets keep the noise only as whole multiples of
-    /// four samples of every level drawn.
     #[must_use]
     pub fn surroundings(&self, offset: Vec2, (low, high): (Vec2, Vec2), blend: f32) -> Self {
         Self {
@@ -1299,8 +1086,6 @@ impl Layers {
         }
     }
 
-    /// How much of the layers other than noise shows at `(x, z)` of this
-    /// stack's ground: all of them without a fade.
     pub(crate) fn shown(&self, x: f32, z: f32) -> f32 {
         let Some(fade) = self.fade else {
             return 1.0;
@@ -1320,8 +1105,6 @@ impl Layers {
         1.0 - t * t * (3.0 - 2.0 * t)
     }
 
-    /// The samples `spacing` meters apart the stack's offset spans along x
-    /// and z.
     pub(crate) fn offset_samples(&self, spacing: f32) -> [i64; 2] {
         [
             (self.offset.x / spacing).round() as i64,
@@ -1329,9 +1112,6 @@ impl Layers {
         ]
     }
 
-    /// These layers with `stamps` over them: the same layers,
-    /// bakes and noise tables, and the stamps validated as [`Self::new`]
-    /// validates them.
     pub fn with_stamps(&self, stamps: &[Stamp]) -> Result<Self, LayerError> {
         let mut layers = self.layers.clone();
         let mut tables = self.tables.clone();
@@ -1348,13 +1128,6 @@ impl Layers {
         })
     }
 
-    /// These layers, as authored, with `drawn` rivers given just before
-    /// their first hydrology layer, as a terrain draws rivers over its
-    /// layers while it streams: a rivers layer of their own, precise as
-    /// drawn. The layers before that one take the bakes `baked` (the same
-    /// layers baked) holds of them, and it and those after it bake anew, so
-    /// a terrain bakes again only what drawn rivers change; without a
-    /// hydrology layer to give them to, the layers stay as they are.
     #[must_use]
     pub fn with_drawn(&self, drawn: &[GivenRiver], baked: Option<&Self>) -> Self {
         let Some(first) = self
@@ -1391,11 +1164,6 @@ impl Layers {
         }
     }
 
-    /// Where tiles generated from these layers differ from those `before`
-    /// gives, as their bakes found them: the terrain-local bounds of each
-    /// change, the rivers and roads that differ out as far as they reach;
-    /// `None` where anything else differs, which may change the ground
-    /// anywhere. Rivers layers change no height of their own.
     pub fn changes_from(&self, before: &Self) -> Option<Vec<(Vec2, Vec2)>> {
         let shown = |stack: &Self| -> Vec<Layer> {
             stack
@@ -1441,12 +1209,10 @@ impl Layers {
         Some(regions)
     }
 
-    /// Layer `index`, to set what its bake found.
     pub(crate) fn layer_mut(&mut self, index: usize) -> Option<&mut Layer> {
         self.layers.get_mut(index)
     }
 
-    /// The stack of the layers before `index`, which a bake there reads.
     #[must_use]
     pub fn below(&self, index: usize) -> Self {
         Self {
@@ -1457,12 +1223,10 @@ impl Layers {
         }
     }
 
-    /// The first baked hydrology, which masks read.
     pub fn hydrology(&self) -> Option<&Hydrology> {
         self.hydrology_layer().map(|(_, hydrology)| hydrology)
     }
 
-    /// [`Self::hydrology`] with its layer's index.
     pub(crate) fn hydrology_layer(&self) -> Option<(usize, &Hydrology)> {
         self.layers
             .iter()
@@ -1483,7 +1247,6 @@ impl Layers {
             })
     }
 
-    /// The rivers of hydrology layer `index`, once baked.
     pub(crate) fn rivers_of(&self, index: usize) -> Option<&crate::Rivers> {
         match self.layers.get(index) {
             Some(Layer::Hydrology(HydrologyStage {
@@ -1493,10 +1256,6 @@ impl Layers {
         }
     }
 
-    /// The baked road whose edge lies nearest terrain-local `(x, z)`: meters
-    /// from its line and half its width; far beyond every path's masks'
-    /// reach.
-    /// Its roads' baked profiles, in layer order.
     pub(crate) fn path_profiles(&self) -> impl Iterator<Item = &crate::path::PathProfile> {
         self.layers.iter().filter_map(|layer| match layer {
             Layer::Path(PathStage {
@@ -1547,8 +1306,6 @@ impl Layers {
         self.tables.get(index).and_then(Option::as_ref)
     }
 
-    /// Whether a hole stamp or a tunnel's portal reaches the
-    /// square from `min` to `max`.
     pub(crate) fn holes_reach(&self, min: Vec2, max: Vec2) -> bool {
         self.layers.iter().any(|layer| match layer {
             Layer::Stamp(
@@ -1574,7 +1331,6 @@ impl Layers {
         })
     }
 
-    /// Whether cell center `(x, z)` is a hole.
     pub(crate) fn hole_at(&self, x: f32, z: f32) -> bool {
         self.layers.iter().any(|layer| match layer {
             Layer::Stamp(
@@ -1602,12 +1358,6 @@ impl Layers {
         })
     }
 
-    /// Applies layer `index` other than noise to `row`, heights at
-    /// terrain-local x positions `xs` and z position `z`, samples `spacing`
-    /// meters apart; layers that reach no point between `min` and `max` are
-    /// skipped. Hydrology layers' rivers cut each sample as a tile's raster
-    /// cuts it ([`Self::cut_rivers`]); relief layers read this stack's
-    /// hydrology bake.
     pub(crate) fn apply_local(
         &self,
         index: usize,
@@ -1618,8 +1368,6 @@ impl Layers {
         spacing: f32,
     ) {
         match &self.layers[index] {
-            // Rivers given change no height: the hydrology layer after them
-            // cuts their channels.
             Layer::Noise(_) | Layer::Rivers(_) => {}
             Layer::Path(stage) => {
                 let Some(profile) = &stage.baked else {
@@ -1630,7 +1378,6 @@ impl Layers {
                     return;
                 }
                 for (height, &x) in row.iter_mut().zip(xs) {
-                    // Bridges leave the ground under them.
                     if let Some((distance, road, false)) = profile.nearest(Vec2::new(x, z)) {
                         *height += (road - *height) * profile.weight(distance) * self.shown(x, z);
                     }
@@ -1649,8 +1396,6 @@ impl Layers {
                 let Some(baked) = &stage.baked else {
                     return;
                 };
-                // Rivers cut their channels and banks, the one place they
-                // are cut, a sample at a time.
                 if baked.rivers.is_empty() {
                     return;
                 }
@@ -1690,9 +1435,6 @@ impl Layers {
         }
     }
 
-    /// Cuts the rivers of a hydrology layer, rasterized over a tile's
-    /// samples as `raster`, into its stored row `at`: `row`, heights at
-    /// terrain-local x positions `xs` and z position `z`.
     pub(crate) fn cut_rivers(
         &self,
         raster: &crate::rivers::RiverRaster,
@@ -1707,8 +1449,6 @@ impl Layers {
         }
     }
 
-    /// `height` changed to `changed` as far as the layers other than noise
-    /// show at `(x, z)`.
     fn faded(&self, height: f32, changed: f32, x: f32, z: f32) -> f32 {
         let shown = self.shown(x, z);
         if shown >= 1.0 {
@@ -1718,7 +1458,6 @@ impl Layers {
         }
     }
 
-    /// Combines noise layer `index`'s heights `values` into `row`.
     pub(crate) fn apply_noise(&self, index: usize, row: &mut [f32], values: &[f32]) {
         if let Layer::Noise(noise) = &self.layers[index] {
             let blend = noise.blend;
@@ -1729,7 +1468,6 @@ impl Layers {
     }
 }
 
-/// `layer` as authored: what its bake found, if it bakes, undone.
 fn unbaked(layer: &Layer) -> Layer {
     match layer {
         Layer::Hydrology(stage) => Layer::Hydrology(HydrologyStage {
@@ -1753,14 +1491,11 @@ fn unbaked(layer: &Layer) -> Layer {
     }
 }
 
-/// Whether the disk of `radius` about `center` reaches the square from
-/// `min` to `max`.
 fn reaches(center: [f32; 2], radius: f32, min: Vec2, max: Vec2) -> bool {
     let nearest = Vec2::from(center).clamp(min, max);
     nearest.distance_squared(Vec2::from(center)) <= radius * radius
 }
 
-// Binary encoding.
 use crate::codec::{Codec, CodecError, Reader, Writer, record, tagged};
 
 tagged!(Blend, "invalid blend" {
@@ -1837,9 +1572,6 @@ tagged!(Layer, "invalid layer" {
     8 => Hummocks(layer),
 });
 
-/// The stack's layers with their bakes, its offset and its fade; reading
-/// validates the layers as [`Layers::new`] does and rebuilds the noise
-/// tables they derive.
 impl Codec for Layers {
     fn write(&self, out: &mut Writer) {
         out.put(&self.layers).put(&self.offset).put(&self.fade);

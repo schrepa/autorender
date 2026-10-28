@@ -1,54 +1,3 @@
-//! Terrain: heightfields whose tiles stream around the camera, drawn by
-//! renderers' subdivisions of their true surface and sampled by queries
-//! and collision.
-//!
-//! An entity's [`Terrain`] describes one: where it lies, its tile pyramid,
-//! the layer stack its tiles generate from (they load as records, the
-//! cook's or made by the same jobs) and its surface: the rules
-//! choosing each sample's materials and how those look. The [`Terrains`] resource
-//! keeps every terrain's resident tiles. Each extraction streams toward the
-//! camera: the coarsest levels stay resident everywhere, so the whole
-//! terrain always draws; finer levels load nearest and ahead of the camera
-//! first, and level-0 tiles load around the camera and [`StreamingFocus`](crate::StreamingFocus)
-//! entities for collision. Past a tile budget or the device's capacity the
-//! least important tiles drop and count as dropped. Frames list each
-//! terrain's resident tiles and whether the camera draws it in
-//! [`RenderSnapshot::terrain`].
-//!
-//! Its bakes and tiles are records ([`crate::Jobs`]): the host hands each
-//! back from the cook's packs or what it kept, or runs its job on a worker
-//! (in place on a host without workers) and keeps the output. Frames share
-//! each terrain's layers with the jobs, ask for the most important missing
-//! tiles and make the records that arrive resident within their time and
-//! uploads, larger until the camera's view first loads whole than after.
-//! So are its lighting, bounce transfer and macro colors (the tint and
-//! growth its bakes give its ground), from its finest pinned level as the
-//! records of its tiles hold it, which workers generate; its tiles' water
-//! as it settled, which workers stand on them from the records of settled
-//! water; and the shading its tiles of level 1 and coarser take from level
-//! 0, averaged ([`engine_terrain::TileShading`]), which workers make from
-//! the level-0 tiles or the level finer's records and which attaches to
-//! each resident tile as it arrives. While a session cooks
-//! ([`crate::Cooking`]), every tile a camera could want is asked for, for
-//! the host's pack.
-//!
-//! Tiles load in the order the view needs them: the pinned
-//! levels; the tiles the view draws and shows, with those under focus
-//! entities; the tiles it draws out of sight, then collision's; those that
-//! only shade what it shows; where the eye is headed; the rest. Distances
-//! run to each tile's ground, so a high eye wants fine tiles only as near
-//! as their ground is. Jobs carry that order as their priority, the first
-//! tiers taking a third job per worker, which workers run first; jobs for
-//! tiles no longer kept stop at once.
-//!
-//! Queries ([`Terrains::sample`], [`Terrains::height_at`] and the rest)
-//! answer from the finest resident tile at a point, on the triangles
-//! renderers and collision use, and return `None` where no tile is
-//! resident.
-//!
-//! The [`TerrainSettings`] are inserted by default; without them, or when
-//! disabled, terrains neither stream nor draw.
-
 mod bakes;
 mod bounce;
 mod bridges;
@@ -142,10 +91,6 @@ use crate::{
 };
 use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
 
-/// Heightfield terrains streaming around the camera, with their bakes,
-/// placed objects, roads, bridges, inland water and waterfalls:
-/// [`crate::Feature::Terrain`]. It provides the [`crate::Ground`] grounded
-/// entities stand on and deformers press into.
 #[derive(Default)]
 pub struct TerrainPlugin;
 
@@ -168,15 +113,12 @@ impl bevy_app::Plugin for TerrainPlugin {
                 crate::ViewSync,
                 stream_terrains.in_set(crate::ViewSyncSystems::Stream),
             )
-            // Rivers follow what stands in them once bodies have moved.
             .add_systems(
                 crate::FixedSimulation,
                 flow::step.in_set(crate::FixedSimulationSystems::Ride),
             )
             .add_systems(
                 crate::WorldSync,
-                // Bridges spawn before waterfalls and white water; water's
-                // simulation windows follow the camera.
                 (
                     bridges::sync,
                     waterfalls::sync,
@@ -189,8 +131,6 @@ impl bevy_app::Plugin for TerrainPlugin {
     }
 }
 
-/// The terrains' ground under world `(x, z)`: their finest resident sample
-/// there, none over a hole.
 fn ground_sample(world: &World, x: f32, z: f32) -> Option<crate::GroundSample> {
     let sample = world
         .get_resource::<Terrains>()?

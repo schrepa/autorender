@@ -1,9 +1,3 @@
-/** Own one native development runtime: a game's program serving the
- * development protocol over standard input and output (`--dev`), drawing
- * offscreen, as pages serve it to browser sessions. A panic ends the
- * program after its panic hook writes the report on standard error; the
- * session then answers every request `runtime_panicked` with the report's
- * message, as a page's does. */
 // @ts-check
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -17,27 +11,17 @@ import { AgentError } from "./agent-protocol.mjs";
 import { recordReceived, recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
 
-// Sessions' captures stay under artifacts/agent/SESSION, as browser
-// sessions' do; past the most recent SESSIONS_KEPT, the oldest go.
 const SESSIONS_KEPT = 10;
 const READY_TIMEOUT_MS = 300_000;
 
-/** The program `native` names: a workspace package's native binary
- * (`NAME-native`), built with its development tools (and with `profiling`,
- * its profiling captures), or a path to one built so. ENGINE_NATIVE_PROFILE
- * names another cargo profile to build it with: `dev` keeps debug
- * assertions, the engine's checks of its invariants, on. */
 export function nativeProgram(native, { profiling = false } = {}) {
   if (!/^[a-z][a-z0-9-]*$/.test(native)) return resolve(native);
-  // Profiling builds keep line tables (the `profiling` profile) and, on
-  // Linux, frame pointers, which the in-process sampler follows there.
   const [chosen, features] = profiling ? ["profiling", "dev,profiling"] : ["release", "dev"];
   const profile = process.env.ENGINE_NATIVE_PROFILE || chosen;
   const env = profiling && process.platform === "linux"
     ? { ...process.env, RUSTFLAGS: `${process.env.RUSTFLAGS ?? ""} -Cforce-frame-pointers=yes`.trim() }
     : process.env;
   execFileSync("cargo", ["build", "-q", "-p", native, "--profile", profile, "--features", features], { cwd: workspace, env, stdio: ["ignore", "ignore", "inherit"] });
-  // Cargo builds the dev profile into target/debug.
   const folder = profile === "dev" ? "debug" : profile;
   return resolve(workspace, "target", folder, process.platform === "win32" ? `${native}-native.exe` : `${native}-native`);
 }
@@ -52,8 +36,6 @@ async function pruneSessions(root) {
   await Promise.all(sessions.slice(SESSIONS_KEPT).map(({ path }) => rm(path, { recursive: true, force: true })));
 }
 
-/** RGBA8 pixels of a PNG the native host wrote: 8-bit RGBA, not
- * interlaced, any row filters. */
 function decodePng(bytes) {
   let offset = 8, width = 0, height = 0;
   const data = [];
@@ -90,8 +72,6 @@ function paeth(a, b, c) {
   return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
 }
 
-/** How many pixels of two captures under artifacts/agent differ by more
- * than `tolerance` (0 to 255) in a color channel: `{a, b, tolerance}`. */
 async function compareCaptures(command, request) {
   if (Object.keys(command).some(key => !["op", "a", "b", "tolerance"].includes(key))) {
     throw new AgentError("unknown_field", "compare takes a, b and tolerance.", "$");
@@ -124,11 +104,7 @@ async function compareCaptures(command, request) {
   return { ...response, result: { compare: result, a: command.a, b: command.b, tolerance } };
 }
 
-/**
- * A development session of the native host `program`, started paused with
- * `args`, named `session`, which `signal` ends.
- * @param {{ program: string, args?: string[], session?: string, signal?: AbortSignal }} options
- */
+/** @param {{ program: string, args?: string[], session?: string, signal?: AbortSignal }} options */
 export async function launchNativeSession({ program, args = [], session = randomUUID(), signal }) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "Session identity must be a bounded identifier.", "session");
   const artifacts = resolve(workspace, "artifacts", "agent", session);
@@ -138,7 +114,6 @@ export async function launchNativeSession({ program, args = [], session = random
   const diagnostics = [];
   const waiting = [];
   let closing, invalidated = false, invalidationCallback, ready;
-  // The report of the runtime's panic, once its hook wrote one.
   let panic;
   const panicked = () => ({ ok: false, error: { code: "runtime_panicked", path: "$", message: panic.message } });
   function diagnostic(kind, message) {
@@ -148,7 +123,7 @@ export async function launchNativeSession({ program, args = [], session = random
   const readyLine = new Promise((resolveReady, rejectReady) => { ready = { resolve: resolveReady, reject: rejectReady }; });
   createInterface({ input: child.stderr }).on("line", line => {
     if (line.startsWith(PANIC_PREFIX)) {
-      try { panic = JSON.parse(line.slice(PANIC_PREFIX.length)); } catch { /* A torn line: the exit says the rest. */ }
+      try { panic = JSON.parse(line.slice(PANIC_PREFIX.length)); } catch {}
     }
     diagnostic("stderr", line);
   });
@@ -170,7 +145,6 @@ export async function launchNativeSession({ program, args = [], session = random
     try { invalidationCallback?.(); } finally { void close(); }
   }
   child.on("error", error => { diagnostic("spawn", String(error)); invalidate(); });
-  // Once its output is read to the end: a panic's report comes before.
   child.on("close", invalidate);
   function close() {
     if (!closing) {
@@ -178,7 +152,6 @@ export async function launchNativeSession({ program, args = [], session = random
         if (child.exitCode !== null || child.signalCode !== null) { resolveClose(); return; }
         child.once("exit", () => resolveClose());
         child.stdin.end();
-        // A runtime that does not end with its input is stopped.
         setTimeout(() => child.kill(), 5000).unref();
       });
     }

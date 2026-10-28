@@ -1,17 +1,3 @@
-//! Rivers' flow as what stands in them holds it back, over the beds their
-//! bake cut, which stay. A solid resting on a river's bed across part of its
-//! width works as a weir: water passes the gap beside it as the river's own
-//! flow would at that depth, and pours over it once it rises above its top,
-//! as over a broad-crested weir (a discharge of [`WEIR`] × width ×
-//! head^1.5). Behind it a pool fills by what flows in less what flows out,
-//! rising until as much flows out as in; meanwhile the river below carries
-//! only what leaves the pool, and once the solid is gone the pool drains
-//! back into it, the river below running higher until it has. Upstream of a
-//! pool the water stands held back against friction until the river's own
-//! flow stands higher, into the rivers flowing into it too, spreading as
-//! it rises as its channel's parabola, carried on up past its banks, holds
-//! it. Rivers nothing holds back keep their bake's water bit for bit.
-
 use std::sync::Arc;
 
 use engine_math::{max, min};
@@ -20,30 +6,14 @@ use glam::{Mat3, Vec2, Vec3};
 use crate::hydraulics::{SHALLOWEST, TRICKLE, distances, friction_slope};
 use crate::rivers::{RIVER_STEP, River, Rivers};
 
-/// The discharge coefficient of water pouring over a broad-crested weir
-/// (meters^0.5 a second).
 pub const WEIR: f32 = 1.7;
-/// The share of a point's depth above its bed a solid's underside may stand
-/// at and still rest on the bed; solids higher float over it, unless they
-/// stand on one resting there (within [`STACKED`] meters of its top).
 const RESTING: f32 = 0.35;
 const STACKED: f32 = 0.1;
-/// Meters the water must move anywhere before readers see it move: each
-/// move makes the water of the tiles it reaches again.
 const MOVED: f32 = 0.05;
-/// Rounds settling held water's level a point upstream at the depth it
-/// stands there.
 const HELD_ROUNDS: usize = 6;
-/// Meters above the river's own flow a pool no solid holds back still
-/// stands before it has drained.
 const DRAINED: f32 = 1.0e-3;
-/// The most meters above its bed a pool may rise.
 const DEEPEST: f32 = 40.0;
 
-/// A solid in a river's water: its river and point, the meters across the
-/// river it spans (from and to, from the middle line, positive to the
-/// river's right looking downstream), and its underside and top
-/// (terrain-local meters).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Block {
     pub river: u32,
@@ -54,9 +24,6 @@ pub struct Block {
     pub crest: f32,
 }
 
-/// The water held back at a river's point: its river and point, its level
-/// (terrain-local meters), and what flowed into it and out of it at the
-/// last step (cubic meters a second).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pool {
     pub river: u32,
@@ -66,8 +33,6 @@ pub struct Pool {
     pub outflow: f32,
 }
 
-/// Which river each river flows into (at its first point), the rivers
-/// flowing into each, and every river after those flowing into it.
 #[derive(Clone, Debug, Default)]
 struct Network {
     into: Vec<Option<usize>>,
@@ -118,7 +83,6 @@ impl Network {
                 }
             }
         }
-        // A loop no river leaves, which no bake makes: its rivers last.
         if order.len() < count {
             let mut placed = vec![false; count];
             for &index in &order {
@@ -134,10 +98,6 @@ impl Network {
     }
 }
 
-/// Half the width of river `line`'s water at point `point` standing at
-/// `level`: its bake's where it stands as baked, otherwise as wide as its
-/// channel's parabola holds it, from the bed up to its banks and carried
-/// on up past them.
 fn spread(line: &River, point: usize, level: f32) -> f32 {
     if level == line.surface[point] {
         return line.half[point];
@@ -146,9 +106,6 @@ fn spread(line: &River, point: usize, level: f32) -> f32 {
     line.half[point] * (max(level - line.bed[point], 0.0) / depth).sqrt()
 }
 
-/// How deep river `line`'s own flow stands at the middle of point `point`
-/// carrying `discharge`: its bake's water there, deeper or shallower as
-/// Manning's formula has it in a channel as wide.
 fn own_depth(line: &River, point: usize, discharge: f32) -> f32 {
     max(
         line.depth[point] * libm::powf(discharge / max(line.discharge[point], TRICKLE), 0.6),
@@ -156,8 +113,6 @@ fn own_depth(line: &River, point: usize, discharge: f32) -> f32 {
     )
 }
 
-/// A terrain's rivers' flow at runtime: the bake's rivers, the water as
-/// what stands in them now holds it back, and the pools behind them.
 #[derive(Clone, Debug)]
 pub struct RiverFlow {
     base: Arc<Rivers>,
@@ -166,20 +121,13 @@ pub struct RiverFlow {
     along: Vec<Vec<f32>>,
     blocks: Vec<Block>,
     pools: Vec<Pool>,
-    // The water's level at each point of each river as the last step left
-    // it, `None` where it ran as baked, and the discharge there: what each
-    // pool's tailwater reads.
     last: Vec<Option<Vec<f32>>>,
     flows: Discharges,
-    // The rivers whose water readers see differs from the bake's.
     shown: Vec<usize>,
 }
 
-/// The discharge at each point of each river pools change, `None` for those
-/// carrying the bake's.
 type Discharges = Vec<Option<Vec<f32>>>;
 
-/// River `river`'s discharge at `point` in `flows`, or the bake's `line`.
 fn carried(flows: &Discharges, river: usize, line: &River, point: usize) -> f32 {
     flows
         .get(river)
@@ -187,15 +135,10 @@ fn carried(flows: &Discharges, river: usize, line: &River, point: usize) -> f32 
         .map_or(line.discharge[point], |flows| flows[point])
 }
 
-/// Meters a pool must stand above the water just below it to hold its own:
-/// lower, the water below has drowned it, and it passes on what reaches it.
 const DROWNED: f32 = 1.0e-3;
-/// The least share of a river's width solids must block to hold a pool
-/// behind them: a lone log or stone in a wide river only parts it.
 const JAM: f32 = 0.3;
 
 impl RiverFlow {
-    /// The flow of `base`, a bake's rivers, as nothing holds it back.
     pub fn new(base: Arc<Rivers>) -> Self {
         let rivers = base.rivers();
         Self {
@@ -221,29 +164,22 @@ impl RiverFlow {
         }
     }
 
-    /// The bake's rivers.
     pub fn base(&self) -> &Arc<Rivers> {
         &self.base
     }
 
-    /// The rivers' water now: the bake's where nothing holds it back.
     pub fn current(&self) -> &Arc<Rivers> {
         &self.current
     }
 
-    /// The solids resting on the rivers' beds at the last step.
     pub fn blocks(&self) -> &[Block] {
         &self.blocks
     }
 
-    /// The water held back, by river and point.
     pub fn pools(&self) -> &[Pool] {
         &self.pools
     }
 
-    /// What holds `pool` back: the share of its river's width the solids
-    /// resting there block, the highest crest among them (terrain-local),
-    /// and the water surface the pool covers (square meters).
     pub fn holding(&self, pool: &Pool) -> (f32, Option<f32>, f32) {
         let spans = self.spans(pool.river, pool.point);
         let line = &self.base.rivers()[pool.river as usize];
@@ -257,15 +193,10 @@ impl RiverFlow {
         )
     }
 
-    /// Whether nothing holds the rivers back, nor has since they last ran
-    /// as baked.
     pub fn still(&self) -> bool {
         self.pools.is_empty() && Arc::ptr_eq(&self.base, &self.current)
     }
 
-    /// The solid about terrain-local `center` whose axes `axes` map the unit
-    /// cube (or ball, when `round`) to it, as it stands in a river: `None`
-    /// unless it reaches into a river's water across some of its width.
     pub fn block(&self, center: Vec3, axes: Mat3, round: bool) -> Option<Block> {
         let station = self.base.station(center.x, center.z)?;
         let (river, point) = (station.river as usize, station.point as usize);
@@ -290,7 +221,6 @@ impl RiverFlow {
             )
         };
         let (bottom, top) = (center.y - rise, center.y + rise);
-        // None where its water flies: there it has no surface.
         let surface = self.current.rivers()[river].surface[point];
         if !(bottom < surface && top > bed) {
             return None;
@@ -308,9 +238,6 @@ impl RiverFlow {
         })
     }
 
-    /// Advances the flow `seconds` with `blocks` standing in the rivers:
-    /// pools fill and drain and the rivers' water follows. True when the
-    /// water readers see moved.
     pub fn step(&mut self, blocks: &[Block], seconds: f32) -> bool {
         self.blocks = blocks.to_vec();
         self.blocks.sort_by(|a, b| {
@@ -318,8 +245,6 @@ impl RiverFlow {
                 .cmp(&(b.river, b.point))
                 .then(a.from.total_cmp(&b.from))
         });
-        // A pool behind every point solids hold back, rising from the
-        // river's own water there.
         for index in 0..self.blocks.len() {
             let block = self.blocks[index];
             let held = |pool: &Pool| pool.river == block.river && pool.point == block.point;
@@ -362,8 +287,6 @@ impl RiverFlow {
         self.publish(rivers)
     }
 
-    /// The river and point just below river `river`'s point `point`: its
-    /// next point, or where it joins the next river.
     fn next(&self, river: usize, point: usize) -> (usize, usize) {
         if point + 1 < self.base.rivers()[river].points.len() {
             (river, point + 1)
@@ -374,8 +297,6 @@ impl RiverFlow {
         }
     }
 
-    /// The water's level just below river `river`'s point `point` as the
-    /// last step left it; below a fall, none (negative infinity).
     fn tail(&self, river: usize, point: usize) -> f32 {
         let (river, point) = self.next(river, point);
         let level = self
@@ -392,10 +313,6 @@ impl RiverFlow {
         }
     }
 
-    /// Whether the water just below river `river`'s point `point` stands
-    /// above the river's own flow there (with the discharge the last step
-    /// carried), held back by what stands further down: a pool there stands
-    /// in the pool below, which holds its water.
     fn backed(&self, river: usize, point: usize) -> bool {
         let tail = self.tail(river, point);
         if !tail.is_finite() {
@@ -407,8 +324,6 @@ impl RiverFlow {
         tail > line.bed[point] + own_depth(line, point, discharge) + DROWNED
     }
 
-    /// Whether solids at river `river`'s point `point` block enough of it to
-    /// hold a pool behind them.
     fn jammed(&self, river: u32, point: u32) -> bool {
         let line = &self.base.rivers()[river as usize];
         let width = max(2.0 * line.half[point as usize], 0.2);
@@ -416,10 +331,6 @@ impl RiverFlow {
         blocked >= JAM * width
     }
 
-    /// What holds river `river`'s point `point` back: the meters of its
-    /// width each span of solids resting on its bed covers, with its crest,
-    /// raised by the solids stacked on them, overlapping spans merged under
-    /// the higher crest.
     fn spans(&self, river: u32, point: u32) -> Vec<(f32, f32)> {
         let here: Vec<&Block> = self
             .blocks
@@ -466,10 +377,6 @@ impl RiverFlow {
             .collect()
     }
 
-    /// What leaves a pool at `level` behind river `river`'s point `point`
-    /// with `inflow` arriving: what passes the gap beside the solids there
-    /// as the river's own flow would at that depth, and what pours over them,
-    /// never more than the river would carry at that depth without them.
     fn outflow(&self, (river, point): (u32, u32), level: f32, inflow: f32) -> f32 {
         let line = &self.base.rivers()[river as usize];
         let at = point as usize;
@@ -489,11 +396,6 @@ impl RiverFlow {
         min(gap + over, unblocked)
     }
 
-    /// The discharge at each point of each river pools change: the bake's,
-    /// less what pools upstream hold back and plus what they release, with
-    /// each pool's inflow and outflow; pools the water below has drowned
-    /// (`drowned`, by pool) pass on what reaches them. Rivers no pool's
-    /// water reaches carry the bake's.
     fn discharges(&mut self, drowned: &[bool]) -> Discharges {
         let rivers = self.base.rivers();
         let mut flows: Discharges = vec![None; rivers.len()];
@@ -542,9 +444,6 @@ impl RiverFlow {
         flows
     }
 
-    /// The water surface a pool at `level` behind river `river`'s point
-    /// `point` covers, up its river and the rivers flowing into it, as far
-    /// as a pool upstream holding its own (one of `holding`).
     fn area(&self, river: usize, point: usize, level: f32, holding: &[(u32, u32)]) -> f32 {
         let rivers = self.base.rivers();
         let mut total = 0.0;
@@ -579,10 +478,6 @@ impl RiverFlow {
         max(total, 2.0 * max(line.half[point], 0.1) * RIVER_STEP)
     }
 
-    /// Each pool rises by what flows in less what flows out over `seconds`,
-    /// never past the level at which as much flows out as in nor below the
-    /// river's own flow; pools no solid holds back drain away to it, and
-    /// pools the water below has drowned (`drowned`) stand at its level.
     fn fill(&mut self, seconds: f32, drowned: &[bool]) {
         let mut pools = std::mem::take(&mut self.pools);
         let holding: Vec<(u32, u32)> = pools
@@ -607,7 +502,6 @@ impl RiverFlow {
             let area = self.area(pool.river as usize, at, pool.level, &holding);
             let rising = pool.inflow - pool.outflow;
             let mut level = pool.level + rising / area * seconds;
-            // The level as much flows out as in at: past it the pool turns.
             let (mut low, mut high) = (bed, bed + DEEPEST);
             for _ in 0..40 {
                 let middle = 0.5 * (low + high);
@@ -629,9 +523,6 @@ impl RiverFlow {
         self.pools = pools;
     }
 
-    /// The rivers' water with `flows` running and the pools standing,
-    /// downstream first so each river meets the level of the river it joins:
-    /// each river's water, or `None` where it runs as baked.
     fn levels(&self, flows: &Discharges) -> Vec<Option<River>> {
         let rivers = self.base.rivers();
         let mut out: Vec<Option<River>> = vec![None; rivers.len()];
@@ -651,12 +542,6 @@ impl RiverFlow {
         out
     }
 
-    /// River `river`'s water at each of its points with `flows` running,
-    /// held back to `outlet` by the river it joins and by its pools; NaN
-    /// where its water flies. Held water reaches the point above while it
-    /// stands over that point's bed: there it stands higher by the friction
-    /// its bed's grains give it on the way, at the depth it stands there (a
-    /// few rounds settle it).
     fn held(&self, river: usize, outlet: Option<f32>, flows: &Discharges) -> Vec<f32> {
         let line = &self.base.rivers()[river];
         let count = line.points.len();
@@ -706,11 +591,6 @@ impl RiverFlow {
         level
     }
 
-    /// River `river` with its water standing at `level` and `flows`
-    /// running: as baked where it stands and runs as baked or flies;
-    /// elsewhere as wide as its channel's parabola holds it, as deep over
-    /// its bed as it stands, and as fast as what it carries through that
-    /// parabola's section.
     fn standing(&self, river: usize, level: Vec<f32>, flows: &Discharges) -> River {
         let line = &self.base.rivers()[river];
         let (mut half, mut depth, mut speed) =
@@ -751,8 +631,6 @@ impl RiverFlow {
         }
     }
 
-    /// Hands readers `rivers` (the bake's where `None`) once the water moved
-    /// far enough from what they read: whether it did.
     fn publish(&mut self, rivers: Vec<Option<River>>) -> bool {
         let shown = self.current.rivers();
         let held: Vec<usize> = (0..rivers.len())

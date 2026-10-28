@@ -1,17 +1,5 @@
-//! BC7: blocks of 4 × 4 texels in 16 bytes, each in one of eight modes
-//! laying its texels in one to three subsets, each subset on a line of
-//! colors between two endpoints (the Khronos Data Format Specification's
-//! BPTC). The encoder tries the modes a block's colors suit: one subset
-//! for every block, with its alpha apart (rotated) where alpha varies; two
-//! subsets over the partitions whose lines fit best; three for opaque
-//! blocks. Each subset's endpoints start at its colors' principal axis,
-//! quantized with every parity choice, and least squares refine them over
-//! the indices they pick; the block keeps the least squared error. Integer
-//! and plain `f32` arithmetic only: the same blocks on every host.
-
 use engine_math::{max, min};
 
-/// Each index precision's palette weights, out of 64, from 2 bits up.
 const WEIGHTS: [&[u32]; 3] = [
     &[0, 21, 43, 64],
     &[0, 9, 18, 27, 37, 46, 55, 64],
@@ -22,8 +10,6 @@ fn weights(bits: u32) -> &'static [u32] {
     WEIGHTS[(bits - 2) as usize]
 }
 
-/// For each index precision, the palette entry whose weight lies nearest
-/// each weight from 0 to 64.
 const NEAREST_ENTRY: [[u8; 65]; 3] = {
     let mut table = [[0_u8; 65]; 3];
     let mut precision = 0;
@@ -48,10 +34,6 @@ const NEAREST_ENTRY: [[u8; 65]; 3] = {
     table
 };
 
-/// A mode's layout: its subsets, the bits of its partition, rotation and
-/// index selection, of each endpoint's color and alpha channels, whether
-/// each endpoint has a parity bit or each subset one both share, and its
-/// two index sets' bits (0 without a second).
 #[derive(Clone, Copy)]
 struct Mode {
     subsets: usize,
@@ -154,7 +136,6 @@ const MODES: [Mode; 8] = [
     },
 ];
 
-/// The two-subset partitions: bit `i` is texel `i`'s subset.
 const PARTITIONS2: [u16; 64] = [
     0xcccc, 0x8888, 0xeeee, 0xecc8, 0xc880, 0xfeec, 0xfec8, 0xec80, 0xc800, 0xffec, 0xfe80, 0xe800,
     0xffe8, 0xff00, 0xfff0, 0xf000, 0xf710, 0x008e, 0x7100, 0x08ce, 0x008c, 0x7310, 0x3100, 0x8cce,
@@ -164,8 +145,6 @@ const PARTITIONS2: [u16; 64] = [
     0xccf0, 0x0fcc, 0x7744, 0xee22,
 ];
 
-/// The three-subset partitions: bits `2i` and `2i + 1` are texel `i`'s
-/// subset.
 const PARTITIONS3: [u32; 64] = [
     0xaa68_5050,
     0x6a5a_5040,
@@ -233,15 +212,12 @@ const PARTITIONS3: [u32; 64] = [
     0x2a4a_5254,
 ];
 
-/// The anchor texel of each two-subset partition's second subset.
 const ANCHORS2: [u8; 64] = [
     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 2, 8, 2, 2, 8, 8, 15, 2, 8,
     2, 2, 8, 8, 2, 2, 15, 15, 6, 8, 2, 8, 15, 15, 2, 8, 2, 2, 2, 15, 15, 6, 6, 2, 6, 8, 15, 15, 2,
     2, 15, 15, 15, 15, 15, 2, 2, 15,
 ];
 
-/// The anchor texels of each three-subset partition's second and third
-/// subsets.
 const ANCHORS3: [[u8; 64]; 2] = [
     [
         3, 3, 15, 15, 8, 3, 15, 15, 8, 8, 6, 6, 6, 5, 3, 3, 3, 3, 8, 15, 3, 3, 6, 10, 5, 8, 8, 6,
@@ -255,7 +231,6 @@ const ANCHORS3: [[u8; 64]; 2] = [
     ],
 ];
 
-/// Texel `texel`'s subset in partition `partition` of a mode of `subsets`.
 fn subset_of(subsets: usize, partition: usize, texel: usize) -> usize {
     match subsets {
         2 => usize::from((PARTITIONS2[partition] >> texel) & 1 == 1),
@@ -264,7 +239,6 @@ fn subset_of(subsets: usize, partition: usize, texel: usize) -> usize {
     }
 }
 
-/// Subset `subset`'s anchor texel, whose index drops its top bit.
 fn anchor_of(subsets: usize, partition: usize, subset: usize) -> usize {
     match (subsets, subset) {
         (2, 1) => usize::from(ANCHORS2[partition]),
@@ -273,15 +247,10 @@ fn anchor_of(subsets: usize, partition: usize, subset: usize) -> usize {
     }
 }
 
-/// A `bits`-bit endpoint channel widened to 8 bits, its top bits repeated
-/// below.
 fn expand(value: u32, bits: u32) -> u32 {
     (value << (8 - bits)) | (value >> (2 * bits - 8))
 }
 
-/// The `bits`-bit value, `parity` its lowest bit where given, whose
-/// widening lies nearest `target`: the value stored (without the parity
-/// bit) and its widening.
 fn quantize(target: f32, bits: u32, parity: Option<u32>) -> (u32, u32) {
     let total = bits + u32::from(parity.is_some());
     let top = (1 << bits) - 1;
@@ -303,12 +272,8 @@ fn quantize(target: f32, bits: u32, parity: Option<u32>) -> (u32, u32) {
     (best.1, best.2)
 }
 
-/// A block's texels as colors, and which mode channels each of a fit's
-/// endpoints spans.
 type Texels = [[f32; 4]; 16];
 
-/// A subset's fit: its endpoints as stored and widened, their parity bits,
-/// each of its texels' index and its squared error.
 #[derive(Clone, Copy)]
 struct Fit {
     stored: [[u32; 4]; 2],
@@ -318,15 +283,12 @@ struct Fit {
     error: u32,
 }
 
-/// The channels a fit spans: their first and their count.
 #[derive(Clone, Copy)]
 struct Span {
     first: usize,
     count: usize,
 }
 
-/// The mean of `members`' colors over `span` and their principal axis,
-/// unit length (any axis when they all agree).
 fn principal(
     texels: &Texels,
     members: &[usize],
@@ -355,7 +317,6 @@ fn principal(
             }
         }
     }
-    // Power iteration from the channel varying most.
     let mut axis = [0.0_f32; 4];
     let mut widest = 0;
     for channel in 1..span.count {
@@ -380,8 +341,6 @@ fn principal(
     (mean, axis)
 }
 
-/// The ends of `members`' projections on the line through `mean` along
-/// `axis`, clamped to the channels' range.
 fn extremes(
     texels: &Texels,
     members: &[usize],
@@ -407,9 +366,6 @@ fn extremes(
     [point(low), point(high)]
 }
 
-/// The best fit of `members` to endpoints `ends` over `span` at `bits`
-/// with `parity`, each texel picking its nearest palette entry of
-/// `index_bits`: every parity choice tried.
 fn assign(
     texels: &Texels,
     members: &[usize],
@@ -418,8 +374,6 @@ fn assign(
     (bits, parity, index_bits): (u32, Parity, u32),
     limit: u32,
 ) -> Fit {
-    // Each endpoint takes the parity bit quantizing it nearest; a shared
-    // bit, the one quantizing both nearest.
     let missed = |end: usize, bit: u32| -> f32 {
         (0..span.count)
             .map(|channel| {
@@ -469,8 +423,6 @@ fn assign(
                     >> 6;
             }
         }
-        // Each texel's entry lies at or beside the weight its projection
-        // on the line between the endpoints reaches.
         let mut along = [0_i32; 4];
         let mut length = 0;
         for (channel, step) in along.iter_mut().enumerate().take(span.count) {
@@ -520,9 +472,6 @@ fn assign(
     best
 }
 
-/// The endpoints least squares find for `members` over `span` given the
-/// palette weights `fit`'s indices pick; `None` where every texel picks
-/// the same weight.
 fn least_squares(
     texels: &Texels,
     members: &[usize],
@@ -560,8 +509,6 @@ fn least_squares(
     Some(ends)
 }
 
-/// The best fit of `members` over `span` at `bits` with `parity` and
-/// `index_bits`: from their principal axis, refined by least squares.
 fn fit(
     texels: &Texels,
     members: &[usize],
@@ -571,7 +518,6 @@ fn fit(
 ) -> Fit {
     let line = principal(texels, members, span, FITTING_ITERATIONS);
     let ends = extremes(texels, members, span, line);
-    // Refinement gains less than half: a start past twice the limit stops.
     let mut best = assign(texels, members, span, ends, layout, limit.saturating_mul(2));
     for _ in 0..2 {
         if best.error == 0 || best.error >= limit.saturating_mul(2) {
@@ -589,7 +535,6 @@ fn fit(
     best
 }
 
-/// Bits written from the least significant up.
 struct Writer {
     bits: u128,
     at: u32,
@@ -604,9 +549,6 @@ impl Writer {
     }
 }
 
-/// A block's fit in a mode: the mode, its partition, rotation and index
-/// selection, each subset's fit and alpha's apart, and the squared error
-/// over every channel.
 #[derive(Clone, Copy)]
 struct Candidate {
     number: usize,
@@ -616,8 +558,6 @@ struct Candidate {
     error: u32,
 }
 
-/// A block's fit in mode `number` with `partition`, `rotation` and index
-/// `selection`; `None` once its error reaches `bound`, a better fit's.
 fn encode_mode(
     texels: &Texels,
     number: usize,
@@ -625,8 +565,6 @@ fn encode_mode(
     bound: u32,
 ) -> Option<Candidate> {
     let mode = MODES[number];
-    // Rotation swaps alpha with a color channel before the fit; decoding
-    // swaps them back.
     let mut rotated = *texels;
     if rotation > 0 {
         for texel in &mut rotated {
@@ -654,7 +592,6 @@ fn encode_mode(
     } else {
         (mode.index_bits[0], mode.index_bits[1])
     };
-    // Modes without alpha decode it opaque.
     let mut error = if mode.alpha_bits == 0 {
         texels
             .iter()
@@ -682,7 +619,6 @@ fn encode_mode(
         }
         *fitted = Some(subset_fit);
     }
-    // Alpha apart: its own endpoints and indices.
     let alpha = separate.then(|| {
         fit(
             &rotated,
@@ -703,9 +639,6 @@ fn encode_mode(
     })
 }
 
-/// Swaps the endpoints of `fit`'s texels in `members` where the anchor's
-/// index has its top bit set, inverting their indices, so the anchor's top
-/// bit is 0 and needs no storing.
 fn anchor(fit: &mut Fit, members: impl Iterator<Item = usize> + Clone, at: usize, bits: u32) {
     let top = (1 << bits) - 1;
     if fit.indices[at] >> (bits - 1) == 0 {
@@ -719,9 +652,6 @@ fn anchor(fit: &mut Fit, members: impl Iterator<Item = usize> + Clone, at: usize
     }
 }
 
-/// The block's bits: its mode, partition, rotation and selection, each
-/// subset's endpoints channel by channel, their parity bits, then the
-/// indices, anchors one bit shorter.
 fn pack(candidate: Candidate) -> [u8; 16] {
     let Candidate {
         number,
@@ -783,8 +713,6 @@ fn pack(candidate: Candidate) -> [u8; 16] {
             Parity::None => {}
         }
     }
-    // The first index set is the colors' unless the selection says the
-    // second; alpha takes the other.
     let (first, second) = match &alpha {
         Some(alpha) if selection == 1 => (alpha.indices, fits[0].indices),
         Some(alpha) => (fits[0].indices, alpha.indices),
@@ -815,8 +743,6 @@ fn pack(candidate: Candidate) -> [u8; 16] {
     out.bits.to_le_bytes()
 }
 
-/// Partitions of `subsets` (the first `limit`), the best `keep` by how
-/// far their subsets' colors over `span` lie from their lines.
 fn ranked(texels: &Texels, subsets: usize, limit: usize, span: Span, keep: usize) -> Vec<usize> {
     let mut scored: Vec<(f32, usize)> = (0..limit)
         .map(|partition| {
@@ -853,18 +779,12 @@ fn ranked(texels: &Texels, subsets: usize, limit: usize, span: Span, keep: usize
         .collect()
 }
 
-/// Squared error per texel below which a block keeps what one subset fit.
 const GOOD_ENOUGH: u32 = 16 * 4;
-/// Power iterations finding a subset's principal axis: to rank partitions,
-/// and to fit endpoints.
 const RANKING_ITERATIONS: u32 = 2;
 const FITTING_ITERATIONS: u32 = 4;
-/// Partitions tried in full, of two and of three subsets.
 const TRIED2: usize = 4;
 const TRIED3: usize = 2;
 
-/// The block of `texels` (RGBA8, rows from the top) with the least squared
-/// error over the modes tried.
 pub(crate) fn encode_block(texels: &[[u8; 4]; 16]) -> [u8; 16] {
     let colors: Texels = texels.map(|texel| texel.map(f32::from));
     let opaque = texels.iter().all(|texel| texel[3] == 255);
@@ -879,9 +799,6 @@ pub(crate) fn encode_block(texels: &[[u8; 4]; 16]) -> [u8; 16] {
     if best.error <= GOOD_ENOUGH {
         return pack(best);
     }
-    // A channel on its own line: alpha where it varies, or a color
-    // channel rotated into its place (a normal's y, apart from its x and
-    // z).
     for rotation in u32::from(opaque)..4 {
         consider(&mut best, 5, (0, rotation, 0));
         for selection in 0..2 {
@@ -897,7 +814,6 @@ pub(crate) fn encode_block(texels: &[[u8; 4]; 16]) -> [u8; 16] {
             consider(&mut best, 1, (partition, 0, 0));
             consider(&mut best, 3, (partition, 0, 0));
         }
-        // Mode 0 takes the first 16 of mode 2's partitions.
         let three = ranked(&colors, 3, 64, rgb, 64);
         for &partition in three
             .iter()
@@ -918,7 +834,6 @@ pub(crate) fn encode_block(texels: &[[u8; 4]; 16]) -> [u8; 16] {
     pack(best)
 }
 
-/// Bits read from the least significant up.
 struct Reader {
     bits: u128,
     at: u32,
@@ -932,8 +847,6 @@ impl Reader {
     }
 }
 
-/// The texels of BC7 `block`, RGBA8 in rows from the top; reserved modes
-/// decode transparent black, as GPUs decode them.
 pub(crate) fn decode_block(block: &[u8; 16]) -> [[u8; 4]; 16] {
     let bits = u128::from_le_bytes(*block);
     let number = bits.trailing_zeros() as usize;

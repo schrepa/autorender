@@ -1,6 +1,3 @@
-//! Compiles the vendored meshoptimizer and its `clusterlod` header (native
-//! tools only; the browser never runs them).
-
 use std::path::PathBuf;
 
 fn main() {
@@ -18,12 +15,7 @@ fn main() {
         .file("src/clusterlod.cpp")
         .include(root.join("src"))
         .include(root.join("demo"))
-        // Hierarchies of large meshes take seconds even optimized.
         .opt_level(2)
-        // No fused multiply-adds: the Rust port of its simplifier
-        // (`engine_assets::simplify`) never fuses, and must give the same
-        // bits wherever both run (MSVC never contracts; Clang and GCC do on
-        // targets with FMA, such as Apple's aarch64).
         .flag_if_supported("-ffp-contract=off")
         .warnings(false);
     build.compile("meshoptimizer");

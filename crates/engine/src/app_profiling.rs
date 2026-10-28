@@ -1,9 +1,6 @@
-//! Optional capture composition. No recorder logic belongs in the frame loop.
 use super::{AppHost, now_ms};
 use serde_json::{Value, json};
 
-/// Bytes of Wasm linear memory, which grows and never shrinks; native hosts
-/// have none.
 fn linear_memory_bytes() -> Option<usize> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -39,7 +36,6 @@ impl AppHost {
         }
     }
 
-    /// Start one bounded capture for this host. Calls while capturing fail.
     pub fn profiling_start(&mut self, max_events: usize) -> Result<(), &'static str> {
         engine_profile::set_clock(now_ms);
         let id = engine_profile::start(max_events)?;
@@ -47,8 +43,6 @@ impl AppHost {
         Ok(())
     }
 
-    /// Stop CPU collection before allocating/serializing the exported capture.
-    /// GPU readbacks may still be pending; poll and retrieve their final report.
     pub fn profiling_stop(&mut self) -> Result<Value, &'static str> {
         if !engine_profile::active() {
             return Err("no profiling capture is active");

@@ -1,12 +1,3 @@
-//! The files an authored scene references, loaded as every host loads them
-//! ([`SceneLoad`]): the host reads what the load asks (files whole, and
-//! streamed files' prefixes, whose headers say how long they are) and has
-//! each image decoded as the load says ([`IMAGE_FORMATS`]: the engine's
-//! decoder, the page's on its job workers; the page's Basis transcoder),
-//! and the load holds them as the scene's files. Hosts
-//! keep their transports: fetches relative to the scene's URL, or reads
-//! beside its file.
-
 use engine_core::{ErrorCode, TextureFormat, VirtualMesh};
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 pub use engine_worker::{
@@ -15,58 +6,43 @@ pub use engine_worker::{
 
 use crate::{Error, Result};
 
-/// Bytes of a virtual mesh's header, which says how long its prefix is.
 const VIRTUAL_HEADER: usize = 128;
 
-/// Which host loads a scene's files, as [`IMAGE_FORMATS`] tells their
-/// decoders apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoadingHost {
     Page,
     Native,
 }
 
-/// A read the load asks of its host: file `uri` (relative to the scene),
-/// whole or its first `prefix` bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileRead {
     pub uri: String,
-    /// The bytes from the file's start to read; the whole file without.
     pub prefix: Option<usize>,
 }
 
-/// An image the host read, to decode as [`IMAGE_FORMATS`] says: its
-/// decoder on this host and its bytes.
 #[derive(Debug)]
 pub struct ImageRead {
     pub decoder: ImageDecoder,
     pub bytes: Vec<u8>,
 }
 
-/// Where a file stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
-    /// Asked whole, or its header: what it is is known once read.
     Asked,
-    /// A streamed file whose prefix is asked past its header.
     Prefix,
-    /// An image its host decodes.
     Decoding,
     Held,
 }
 
-/// The files of one authored scene, loading.
 #[derive(Debug)]
 pub struct SceneLoad {
     host: LoadingHost,
     files: SceneFiles,
-    // Each file, its kind and where it stands, in the scene's order.
     entries: Vec<(String, SceneFileKind, Stage)>,
     reads: Vec<FileRead>,
 }
 
 impl SceneLoad {
-    /// The load on `host` of the files scene `source` references.
     pub fn new(source: &str, host: LoadingHost) -> Result<Self> {
         let document = SceneDocument::from_json(source)?;
         let entries: Vec<(String, SceneFileKind, Stage)> = document
@@ -92,15 +68,10 @@ impl SceneLoad {
         })
     }
 
-    /// The reads the load asks for since the last call; none once every
-    /// file was read.
     pub fn take_reads(&mut self) -> Vec<FileRead> {
         std::mem::take(&mut self.reads)
     }
 
-    /// The host read `bytes` of file `uri` as [`Self::take_reads`] asked; a
-    /// streamed file streams from `url` (its URL or path). An image comes
-    /// back, to decode as [`IMAGE_FORMATS`] says on this host.
     pub fn read(&mut self, uri: &str, bytes: Vec<u8>, url: &str) -> Result<Option<ImageRead>> {
         let at = self
             .entries
@@ -148,8 +119,6 @@ impl SceneLoad {
                         format!("{url} is not a virtual mesh file of this engine version"),
                     ));
                 };
-                // A host that read past the prefix (a server ignoring
-                // ranges sends the whole file) keeps just the prefix.
                 if bytes.len() < length {
                     if stage == Stage::Prefix {
                         return Err(Error::new(
@@ -174,23 +143,18 @@ impl SceneLoad {
         }
     }
 
-    /// Image `uri` decoded, as [`decode_image`] decodes it.
     pub fn image(&mut self, uri: &str, image: Image) {
         self.files
             .add_image(uri, image.width, image.height, image.pixels);
         self.held(uri);
     }
 
-    /// Image `uri`'s `bytes` decoded in place with the engine's decoder, as
-    /// hosts without workers decode them.
     pub fn decode(&mut self, uri: &str, bytes: &[u8]) -> Result<()> {
         let image = decode_image(uri, bytes).map_err(invalid_texture)?;
         self.image(uri, image);
         Ok(())
     }
 
-    /// Image `uri` transcoded to block-compressed `format`, `width` ×
-    /// `height`, with its `levels` from the base down.
     pub fn compressed_image(
         &mut self,
         uri: &str,
@@ -204,7 +168,6 @@ impl SceneLoad {
         self.held(uri);
     }
 
-    /// The scene's files, once every one is held.
     pub fn finish(self) -> Result<SceneFiles> {
         if let Some((uri, _, _)) = self
             .entries

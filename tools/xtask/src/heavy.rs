@@ -1,22 +1,3 @@
-//! The machine's "one heavy run at a time" lock, the one the smokes take
-//! (`web/scripts/heavy-run.mjs`): anything that opens a browser, a native
-//! engine window or a GPU host (measured runs, equivalence runs, smokes)
-//! holds it while it runs, so runs never share the GPU and processors with
-//! each other.
-//!
-//! The lock is the folder `ENGINE_HEAVY_LOCK_DIR`, else
-//! `engine-heavy-run.lock` in the temporary folder Node uses, holding
-//! `owner.json` (`{pid, label, cwd, command, started}`). A lock whose owner
-//! process ended is stale and taken over. Those waiting queue in the folder
-//! beside it, `engine-heavy-run.lock.queue`, each as
-//! `MILLISECONDS-PID.json`, and take it in the order they came: a run that
-//! releases it between steps (equivalence, cell by cell) and wants it again
-//! queues behind them. After taking it, a holder waits up to 15 minutes
-//! while a headless Chrome of another program runs (the factory's workers
-//! do not take the lock). A holder's children run with
-//! `ENGINE_HEAVY_LOCK_HELD=1` ([`HELD`]) and pass straight through, so runs
-//! nest.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -24,26 +5,16 @@ use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{Value, json};
 
-/// The environment a holder's children run with: they hold the lock
-/// through it.
 pub const HELD: (&str, &str) = ("ENGINE_HEAVY_LOCK_HELD", "1");
 
-/// How long a holder waits for another program's headless Chrome.
 const FOREIGN_CHROME_WAIT: Duration = Duration::from_secs(15 * 60);
-/// How long a lock folder may lack its owner file: a holder that stopped
-/// between making the folder and writing the file.
 pub(crate) const OWNERLESS: Duration = Duration::from_secs(60);
 
-/// The lock, held until dropped: released where this process took it, left
-/// alone where a parent holds it.
 pub struct HeavyRun {
     taken: Option<PathBuf>,
 }
 
 impl HeavyRun {
-    /// Takes the lock as `label`, waiting while another process holds it,
-    /// then while another program's headless Chrome runs; nothing to take
-    /// where a parent holds it (`ENGINE_HEAVY_LOCK_HELD=1`).
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -58,7 +29,6 @@ impl HeavyRun {
         let mut ticket: Option<Ticket> = None;
         let mut reported: Option<Instant> = None;
         loop {
-            // Its turn: first in the queue, or nobody queued before it came.
             let line = queued(&queue);
             let turn = match &ticket {
                 Some(Ticket(mine)) => {
@@ -99,7 +69,6 @@ impl HeavyRun {
             let held = holder(&owner);
             match held.as_ref().and_then(|held| held["pid"].as_u64()) {
                 Some(pid) if !alive(pid) => {
-                    // Taken over only while the same stale owner holds it.
                     if holder(&owner).is_some_and(|again| again["pid"].as_u64() == Some(pid)) {
                         eprintln!(
                             "heavy-run: taking over a stale lock from pid {pid} ({})",
@@ -195,9 +164,6 @@ impl Drop for HeavyRun {
     }
 }
 
-/// The lock's folder: `ENGINE_HEAVY_LOCK_DIR`, else in the temporary folder
-/// as Node finds it (`TEMP`, then `TMP` on Windows; `TMPDIR`, `TMP`, `TEMP`
-/// elsewhere), which the scripts' lock uses.
 fn folder() -> PathBuf {
     if let Some(folder) = std::env::var_os("ENGINE_HEAVY_LOCK_DIR") {
         return PathBuf::from(folder);
@@ -214,12 +180,9 @@ fn folder() -> PathBuf {
         .join("engine-heavy-run.lock")
 }
 
-/// A place in the queue of those waiting for the lock: its file, removed
-/// when the lock is taken or the wait ends.
 struct Ticket(PathBuf);
 
 impl Ticket {
-    /// Queues this process in `queue` as `label`.
     fn take(queue: &Path, label: &str) -> Result<Self, String> {
         fs::create_dir_all(queue).map_err(|error| {
             format!(
@@ -244,15 +207,12 @@ impl Drop for Ticket {
     }
 }
 
-/// The queue beside the lock `folder`.
 fn queue_folder(folder: &Path) -> PathBuf {
     let mut name = folder.as_os_str().to_owned();
     name.push(".queue");
     PathBuf::from(name)
 }
 
-/// The tickets in `queue` in the order they came, removing those of
-/// processes that ended.
 fn queued(queue: &Path) -> Vec<String> {
     let Ok(entries) = fs::read_dir(queue) else {
         return Vec::new();
@@ -277,15 +237,12 @@ fn queued(queue: &Path) -> Vec<String> {
     line
 }
 
-/// The lock's owner as its file says, or nothing while it is written or
-/// gone.
 fn holder(owner: &Path) -> Option<Value> {
     fs::read_to_string(owner)
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
 }
 
-/// What an owner runs, as messages name it.
 fn describe(held: Option<&Value>) -> String {
     let Some(held) = held else {
         return "unknown".into();
@@ -302,8 +259,6 @@ fn describe(held: Option<&Value>) -> String {
     }
 }
 
-/// Whether process `pid` runs; a process whose state cannot be read counts
-/// as running.
 pub(crate) fn alive(pid: u64) -> bool {
     let listed = if cfg!(windows) {
         Command::new("tasklist")
@@ -327,8 +282,6 @@ pub(crate) fn alive(pid: u64) -> bool {
     }
 }
 
-/// The process ids of headless Chrome browsers running now: their main
-/// processes, not their helpers (`--type=`).
 fn headless_chromes() -> Vec<u32> {
     if cfg!(windows) {
         let output = Command::new("powershell.exe")

@@ -1,112 +1,3 @@
-//! Water's particles (`meshes/water_particles.wgsl`): what turbulence makes
-//! on terrains' water as it runs, its foam and the small waves on its
-//! surface, as particles the live flow carries around the detail eye; its
-//! waves splatted each frame into textures water's shading reads as the
-//! slopes of its surface (`meshes/water_foam.wgsl`'s `water_splatted`), its
-//! foam drawn each frame into the layers of white water and foam over each
-//! pixel, which water's shading reads as foam (`water_foam_layers`).
-//!
-//! Foam particles hold the white water and the foam the water carries:
-//! born where the water breaks and churns, by the cook's rules
-//! (`engine_terrain`'s `breaking`, `water_sim.wgsl`'s `sim_churn`), in
-//! turbulence's bursts (`water_bursts.wgsl`, the rule the live solve's
-//! turbulent pushes share), each drawn from the world point it is born at
-//! and the simulation's step index, the same on every host; carried by the
-//! current the water's surface runs at, the water's velocity turned outward
-//! in bends and dragged by the wind, read as water's shading reads it
-//! (`water_pixel`: the live solve's where it runs, the settled flow
-//! elsewhere), smooth across the lattice it is read at and integrated by
-//! the midpoint rule, so its shear draws them out into streaks and they
-//! gather where it converges and against what stops it; and draining as
-//! white water's bubbles rise out over its depth and as foam fades over the
-//! cook's foam life. Wave particles are segments of wavefronts (Yuksel,
-//! House and Keyser 2007), raised by the bursts' boils and where the water
-//! runs against what stands in it, each running at its waves' group speed
-//! plus the current, spreading and splitting in three as it spreads, dying
-//! by the water's viscosity and eddy viscosity; they stand for the eddies
-//! finer than the cells of the water they ride, whose own flow carries
-//! larger ones.
-//!
-//! Foam particles are rafts, ellipses carried by the current and by the
-//! current the boils spread over the surface, whose long axes the shear of
-//! both turns and stretches, their areas spreading with them, tearing in two
-//! once long and thin; their white water drains into the foam they float
-//! on, which drains in turn, so each goes from heaped white to lace. Each
-//! frame they draw themselves on the water's mesh into a target the size of
-//! the frame's, the layers of white water and foam over each pixel, sharp at
-//! every distance, before water draws and reads it
-//! ([`WaterParticles::draw_foam`], `vs_foam`, `fs_foam`). A burst lays its
-//! white water in rafts no smaller than a pixel seen from the detail eye
-//! where it bursts, nor than a texel of the window, as many as its white
-//! water rounds to, their mean what it lays (`particle_quanta`): far off a
-//! few large rafts, near many small ones, their count following the foam's
-//! area on the screen. Water draws no foam of its own: past the rafts' reach
-//! none shows.
-//!
-//! Rafts are born and ride over a square of their own around the detail
-//! eye, as many points of the lattice the passes read the water at along a
-//! side as [`Water::foam_points`] asks, half a settled cell apart: the
-//! default 1,024 reach 256 m from the eye over the cook's meter cells, 512 m
-//! across. It holds no fewer than the window of the waves around the detail
-//! eye with a point more each side, and no more than one of the device's
-//! storage bindings holds of the lattice ([`POINT_BYTES`] a point, the
-//! square's with [`PARTICLE_MARGIN`] more each side and one more) nor than
-//! half the items a dispatch over the scan's takes, whose other half the
-//! pools share; the points those cut are counted. It shifts by whole points
-//! as the detail eye moves, every raft in it rides on and ages, and those
-//! it leaves go. Where it newly covers water, foam is born there as the
-//! water runs on.
-//!
-//! Wave particles are born and run in a window of texels anchored in the
-//! world around the detail eye, inside that square, into which each frame
-//! they splat, by fixed-point atomic sums, which any order of the particles
-//! adds alike, their raised cosines' slopes and the current their boils
-//! spread over the surface, which the next frame's rafts ride there, none
-//! past it. Its texels split each of the water's settled cells
-//! ([`Water::simulation_cell`]) [`TEXEL_SPLIT`] ways along each side, 6.25 cm
-//! for the cook's meter cells. How many it holds follows from the screen: it
-//! shows out to where its texels span [`HANDOVER_PIXELS`] seen from the
-//! detail eye, past which water shows its own surface, the waves handing
-//! over as a pyramid's level does, so its texels along a side are the
-//! pixels a radian holds over HANDOVER_PIXELS, twice, with [`WINDOW_MARGIN`]
-//! more each side; no more than the display has pixels, nor than one of the
-//! device's storage bindings holds, and where that cuts it, its texels span
-//! more pixels at its reach. Seen through a view 60° tall, a pixel at
-//! 1920×1080 spans 1.07 mrad, which asks for 1,905 texels along a side, and
-//! the display's 1,440 hold 1,408: a window 88 m across, the waves showing
-//! out to 43 m, their texels spanning 1.36 pixels there; at 2560×1440 a
-//! pixel spans 0.80 mrad, which asks for 2,529, and the display holds 1,920:
-//! 120 m across, out to 59 m, 1.32 pixels. Its window shifts by whole texels
-//! as the detail eye moves, a world texel's texel its remainder over the
-//! texels along a side, and every wave particle in it runs on; those it
-//! leaves go.
-//!
-//! The foam pool holds a raft for every [`FOAM_PIXELS`] pixels of the
-//! display and the wave pool a particle for every [`WAVE_TEXELS`] texels of
-//! the window: 518,400 and 123,904 at 1920×1080, 921,600 and 230,400 at
-//! 2560×1440; the rafts no more than one of the device's storage bindings
-//! holds of the pools twice over beside the waves, nor than a dispatch over
-//! the scan's items takes beside the waves and the lattice's sites.
-//!
-//! Each frame runs a fixed number of dispatches, in three passes with the
-//! dispatches over the particles, which the GPU counts, copied between them
-//! (`particles_begin`, then the lattice's water `particles_gather` and what
-//! carries it `particles_currents`; each particle's step `particles_age`,
-//! the sites' births `particles_births` and the scan over both
-//! `particles_sum` and `particles_scan`; their laying `particles_place`,
-//! the splat `particles_splat`, the textures' finest level `particles_look`
-//! and their coarser levels `particles_down`), sixteen in all, and the
-//! foam's draw after them, as many rafts as live, drawn from the counts;
-//! the pools' tallies alone are read back, a few frames late. At the
-//! default square it holds 156 MB at 1920×1080 (its splat's sums 32 MB, its
-//! textures and their levels 42 MB, its pools twice over 41 MB, its lattice
-//! 34 MB and its counts 7 MB) and 254 MB at 2560×1440 (59, 79, 74, 34 and 9
-//! MB). Its passes over the window's texels cost as many as the window
-//! holds, about 2.0 and 3.7 million texels; the three over the lattice's
-//! points, and the scan and the laying over its sites, as many as the
-//! lattice holds, about 1.06 million whatever the display; those over the
-//! particles as many as live.
-
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -131,61 +22,21 @@ use crate::targets::FrameSize;
 use crate::terrain::TerrainWaterDraws;
 use crate::water_sim::LONGEST_FRAME;
 
-/// The window's texels along a side of one of the water's settled cells:
-/// sixteen, 6.25 cm for the cook's meter cells, eight along each of the
-/// half-meter cells those run live in, so the smallest boils, four texels
-/// across, are narrower than its cells.
 const TEXEL_SPLIT: u32 = 16;
-/// The pixels the window's texels span, seen from the detail eye, where
-/// water hands over from its particles' waves to its own surface
-/// (`water_splatted`): one, so no texel the waves draw is finer than a
-/// pixel spans.
 const HANDOVER_PIXELS: f32 = 1.0;
-/// The levels its textures hold coarser than its texels: down to texels 64
-/// across, past the most anisotropic filtering takes along the view at its
-/// reach; its texels along a side are a whole number of the coarsest's, so
-/// every level wraps as its texels do.
 const TEXTURE_LEVELS: u32 = 6;
-/// The texels the window keeps past its reach on each side: as many as a
-/// pixel's footprint at the reach spans along the view, at most
-/// MATERIAL_ANISOTROPY times its width, a texel over HANDOVER_PIXELS, which
-/// anisotropic filtering reads, and one more, as the window shifts by whole
-/// texels.
 const WINDOW_MARGIN: u32 = MATERIAL_ANISOTROPY as u32 / HANDOVER_PIXELS as u32 + 1;
-/// Pixels of the display each raft the foam pool holds stands for: four,
-/// so its rafts, born at least a pixel across, cover a fifth of the frame or
-/// more as they are born, more than rapids cover of it, as many as the
-/// window's texels held at 2560×1440; and texels of the window each wave
-/// particle the wave pool holds stands for: sixteen, its particles living a
-/// second or so where foam lives tens.
 const FOAM_PIXELS: u32 = 4;
 const WAVE_TEXELS: u32 = 16;
-/// Bytes a texel takes of the splat's sums: four words, how fast the waves'
-/// surface falls along x and z, and the current their boils spread over the
-/// surface along x and z.
 const SPLAT_BYTES: u64 = 16;
-/// Bytes a particle takes of each half of the pools (two words of four
-/// floats' bits), a lattice point of the lattice (its water, then what
-/// carries the foam there) and a texel of each of the textures (four half
-/// floats).
 const PARTICLE_BYTES: u64 = 32;
 const POINT_BYTES: u64 = 32;
 const TEXEL_BYTES: u64 = 8;
-/// The words of the pools' counts read back: those before the counts of
-/// the particles the pools held before the frame.
 const TALLIES: usize = PARTICLE_FOAM_BEFORE as usize;
-/// Bytes of the dispatches over the particles and over the scan's items,
-/// three words each; and where the foam's draw, four words, follows them.
 const ARGS_BYTES: u64 = 24;
 const DRAW_ARGS: u64 = 32;
 const DRAW_BYTES: u64 = 16;
 
-/// Water's particles: their passes' group layout and pipelines and the
-/// sampler water's shading reads their textures through; the window and
-/// the square they run over, when the last frame was and the simulation's
-/// step it ended in, and a count advancing whenever their textures change;
-/// and the pools' tallies' read-backs and what they last read
-/// (`PARTICLE_FOAM_LIVE` on).
 pub(crate) struct WaterParticles {
     layout: GroupLayout,
     sampler: wgpu::Sampler,
@@ -198,7 +49,6 @@ pub(crate) struct WaterParticles {
     tallies: Rc<Cell<[u32; TALLIES]>>,
 }
 
-/// The pipelines of the particles' passes.
 struct ParticlePipelines {
     begin: wgpu::ComputePipeline,
     gather: wgpu::ComputePipeline,
@@ -213,22 +63,6 @@ struct ParticlePipelines {
     down: wgpu::ComputePipeline,
 }
 
-/// The window and the square the particles run over: the window's texels
-/// along a side and the meters across each, the square's points along a
-/// side, those the device cut from what the settings ask and its lattice's
-/// points along a side, the most foam and wave particles its pools hold,
-/// the pixels the window's texels span where they hand over and the meters
-/// across the cells of the water they ride; its frame's uniform, its
-/// lattice, its pools twice over, its counts and the dispatches and the
-/// foam's draw copied from them, its splat's sums, and the textures water's
-/// shading reads (the waves' slopes and their squares; and those slopes'
-/// product), with their whole views, and its groups (the first for their
-/// finest level, which every pass but the coarser levels' takes, then each
-/// coarser level's); the window its pools' particles ran in and its
-/// textures were splatted over (none until a frame ran) and the half
-/// holding them; this frame's window and the uniform offset of the terrain
-/// whose water it runs over; and whether the frame's encoding recorded its
-/// passes.
 struct ParticleGrid {
     texels: u32,
     texel: f32,
@@ -256,10 +90,6 @@ struct ParticleGrid {
     encoded: Cell<bool>,
 }
 
-/// How the frame's camera sees terrains' water, which sizes the window and
-/// the foam pool: the detail eye every handover measures from, the angle a
-/// display pixel spans at the view's center (`crate::gpu_data::pixel_angle`)
-/// and the display's size.
 #[derive(Clone, Copy)]
 pub(crate) struct ParticleView {
     pub(crate) detail: Vec3,
@@ -267,12 +97,6 @@ pub(crate) struct ParticleView {
     pub(crate) display: FrameSize,
 }
 
-/// What water's particles report of a frame: the window's texels along a
-/// side, the square's points along a side, those the device cut from what
-/// the settings ask and the meters from the detail eye to its edges, whole
-/// (none while none run); the foam and the wave particles the pools hold,
-/// those born in a frame and those the pools had no room for, foam and
-/// waves together, as last read back.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ParticleStats {
     pub(crate) texels: u32,
@@ -296,8 +120,6 @@ impl WaterParticles {
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                // Water seen at grazing angles keeps its foam sharp across
-                // the view.
                 anisotropy_clamp: MATERIAL_ANISOTROPY,
                 ..Default::default()
             }),
@@ -311,20 +133,6 @@ impl WaterParticles {
         }
     }
 
-    /// Prepares the particles for this frame over the water of the terrain
-    /// whose uniform stands at `terrain`, seen as `seen` says, the water's
-    /// settled cells `settings` gives, riding water whose cells are `ridden`
-    /// meters across (the live water's where it runs), in the scene's wind
-    /// `wind` at simulation time `seconds`: the half the frame before laid
-    /// its particles in taken as the one they run from, and its window as
-    /// theirs; a window anew where it holds too few texels or twice as many
-    /// as it needs, or texels of another size, or a square of another size
-    /// (`Water::foam_points`), or a foam pool holding too few rafts or more
-    /// than twice as many as the display asks; its window and its square
-    /// around the detail eye; and its frame, with the simulation's steps the
-    /// frame begins and ends in, each as long as a step of the water's
-    /// settled cells (`step_seconds`), which its events are drawn by. Drops
-    /// it where no terrain's water draws.
     pub(crate) fn prepare(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -367,8 +175,6 @@ impl WaterParticles {
             return;
         };
         grid.cut = cut;
-        // Its texels span HANDOVER_PIXELS where it hands over, or more where
-        // it holds fewer than its reach asks.
         let reach = (grid.texels / 2 - WINDOW_MARGIN) as f32;
         grid.pixels = max(
             HANDOVER_PIXELS,
@@ -384,18 +190,12 @@ impl WaterParticles {
             clamp((seconds - last) as f32, 0.0, LONGEST_FRAME as f32)
         });
         self.last = Some(seconds);
-        // The simulation's steps, the frame's last and the one the frame
-        // before ended in, as an index wrapping past u32::MAX's; and the
-        // fewest a slot of events spans, the power of two holding the
-        // longest frame's.
         let tick = step_seconds(settings.simulation_cell);
         let step = (seconds / f64::from(tick)).floor() as i64 as u32;
         let begun = self.step.unwrap_or(step);
         self.step = Some(step);
         let least = ((LONGEST_FRAME / f64::from(tick)).ceil() as u32).next_power_of_two();
         let held = grid.held.unwrap_or(window);
-        // The square around the detail eye, shifting by whole points as it
-        // moves, and the lattice's first point PARTICLE_MARGIN before it.
         let spacing = f64::from(texel) * f64::from(PARTICLE_LATTICE);
         let before = i64::from(grid.square / 2 + PARTICLE_MARGIN);
         let lattice = [seen.detail.x, seen.detail.z]
@@ -426,10 +226,6 @@ impl WaterParticles {
         queue.write_buffer(&grid.frame, 0, bytemuck::bytes_of(&frame));
     }
 
-    /// Creates their passes' pipelines from the mesh module `shader`, after
-    /// water's first group's layout `camera` (`bindings::CAMERA_WATER`) and
-    /// the water's group layout `water`, unless they exist; none until a
-    /// window runs.
     pub(crate) fn ensure_pipelines(
         &mut self,
         device: &wgpu::Device,
@@ -460,15 +256,6 @@ impl WaterParticles {
         });
     }
 
-    /// Records the particles' passes over `camera`, water's first group, and
-    /// `water`, the water's group, timed by `profiler` (`water_particles`):
-    /// the particles the pools held and the lattice's water and what carries
-    /// it; each particle's step, the sites' births and the scan over them,
-    /// after the dispatch over the particles and over the scan's items are
-    /// copied from their counts; and, after the dispatch over the particles
-    /// the scan left and the foam's draw are, their laying into the other
-    /// half of the pools, their splat and the textures' levels; then a copy
-    /// of the pools' tallies to read back.
     pub(crate) fn encode(
         &self,
         device: &wgpu::Device,
@@ -549,10 +336,6 @@ impl WaterParticles {
         grid.encoded.set(true);
     }
 
-    /// Binds the particles' groups into `pass`: water's first `camera`, the
-    /// water's `water` at the terrain's uniform offset (the views' and water
-    /// trees' at their first, which the passes read none of), and `group` of
-    /// `grid`'s.
     fn bind(
         &self,
         pass: &mut wgpu::ComputePass<'_>,
@@ -565,12 +348,6 @@ impl WaterParticles {
         pass.set_bind_group(2, group, &[]);
     }
 
-    /// Records the foam particles' draw into `pass` (water's pipeline
-    /// layout, its first group `camera`, the water's group `water` and
-    /// `behind`, the group of what lies behind the water binding a
-    /// placeholder where the target the pass draws into is) through
-    /// `pipeline` (`vs_foam`, `fs_foam`): their rafts, as many as the
-    /// frame's scan left living, where this frame's passes ran.
     pub(crate) fn draw_foam(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -587,13 +364,10 @@ impl WaterParticles {
         pass.draw_indirect(&grid.args, DRAW_ARGS);
     }
 
-    /// The particles' frame and pools, which the foam's draw reads; none
-    /// while none run.
     pub(crate) fn foam_buffers(&self) -> Option<(&wgpu::Buffer, &wgpu::Buffer)> {
         self.grid.as_ref().map(|grid| (&grid.frame, &grid.pool))
     }
 
-    /// Requests the map of the tallies the frame just submitted copied.
     pub(crate) fn after_submit(&self) {
         let tallies = Rc::clone(&self.tallies);
         self.readbacks.after_submit(move |words, ()| {
@@ -601,29 +375,18 @@ impl WaterParticles {
         });
     }
 
-    /// The particles' texture of the waves' slopes and their squares as
-    /// water's shading reads it, with its levels; none while none run.
     pub(crate) fn view(&self) -> Option<&wgpu::TextureView> {
         self.grid.as_ref().map(|grid| &grid.view)
     }
 
-    /// The particles' texture of the waves' slopes' product as water's
-    /// shading reads it, with its levels; none while none run.
     pub(crate) fn spread_view(&self) -> Option<&wgpu::TextureView> {
         self.grid.as_ref().map(|grid| &grid.spread_view)
     }
 
-    /// The sampler water's shading reads the particles' textures through: it
-    /// repeats them, as their texels hold their world texels' remainders.
     pub(crate) fn sampler(&self) -> &wgpu::Sampler {
         &self.sampler
     }
 
-    /// What water's uniform holds of the particles for terrains' water
-    /// (`water.foam`): the meters across their texels (none while none run),
-    /// the meters their textures span, the pixels their texels span where
-    /// they hand over and the meters across the cells of the water they
-    /// ride.
     pub(crate) fn shading(&self) -> [f32; 4] {
         self.grid.as_ref().map_or([0.0; 4], |grid| {
             [
@@ -635,12 +398,10 @@ impl WaterParticles {
         })
     }
 
-    /// A count advancing whenever the particles' textures change.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// What the particles report: none while none run.
     pub(crate) fn stats(&self) -> ParticleStats {
         let Some(grid) = &self.grid else {
             return ParticleStats::default();
@@ -660,7 +421,6 @@ impl WaterParticles {
         }
     }
 
-    /// Bytes of the window's and the square's buffers and textures.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         let texels = |texture: &wgpu::Texture| -> u64 {
             (0..texture.mip_level_count())
@@ -685,9 +445,6 @@ impl WaterParticles {
 }
 
 impl ParticleGrid {
-    /// A window and a square as `sizes` says, the window's texels `texel`
-    /// meters across, with its passes' groups of `layout`; its pools hold
-    /// none yet.
     fn new(device: &wgpu::Device, layout: &GroupLayout, texel: f32, sizes: ParticleSizes) -> Self {
         let ParticleSizes {
             texels,
@@ -757,9 +514,6 @@ impl ParticleGrid {
         let (spread, spread_levels) = textures("engine/water-particles-spread");
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let spread_view = spread.create_view(&wgpu::TextureViewDescriptor::default());
-        // The finest level's group, which writes it, reads the next coarser
-        // in the finer one's place; each coarser level's reads the level
-        // finer than it.
         let groups = (0..=TEXTURE_LEVELS as usize)
             .map(|level| {
                 let finer = if level == 0 { 1 } else { level - 1 };
@@ -817,13 +571,6 @@ impl ParticleGrid {
     }
 }
 
-/// The texels along a side the particles' window takes as `seen` sees it:
-/// as many as reach, from the detail eye, out to where its texels span
-/// HANDOVER_PIXELS, with WINDOW_MARGIN more each side, whatever their size,
-/// in whole texels of its textures' coarsest level; no more than the display
-/// has pixels, nor than one of the device's storage bindings holds of its
-/// splat's sums, the largest of its buffers, nor than a side of its textures
-/// holds.
 fn wanted(device: &wgpu::Device, seen: ParticleView) -> u32 {
     let block = 1 << TEXTURE_LEVELS;
     let reach = 1.0 / (HANDOVER_PIXELS * max(seen.pixel_angle, 1.0e-6));
@@ -838,9 +585,6 @@ fn wanted(device: &wgpu::Device, seen: ParticleView) -> u32 {
     asked.next_multiple_of(block).min(most).max(block)
 }
 
-/// What the particles' buffers hold: the window's texels along a side, the
-/// square's points along a side, and the most foam and wave particles the
-/// pools hold.
 #[derive(Clone, Copy)]
 struct ParticleSizes {
     texels: u32,
@@ -848,19 +592,6 @@ struct ParticleSizes {
     pools: [u32; 2],
 }
 
-/// What the particles' buffers hold over a window of `texels` texels along
-/// a side and a display of `display`'s pixels on `device`, with the
-/// square's points along a side `asked` asks for (`Water::foam_points`);
-/// and how many of those the device cuts:
-/// - the square's points as many as asked, even, and no fewer than the
-///   window's with a point more each side, which its waves ride; no more
-///   than one of the device's storage bindings holds of the lattice about
-///   it (`lattice_points`), nor than half the items one dispatch over the
-///   scan's takes, whose other half the pools share;
-/// - a raft for every FOAM_PIXELS pixels of the display and a wave particle
-///   for every WAVE_TEXELS texels of the window; the rafts no more than one
-///   storage binding holds of the pools twice over beside the waves, nor
-///   than that dispatch takes beside the waves and the lattice's sites.
 fn sized(
     device: &wgpu::Device,
     (texels, display): (u32, FrameSize),
@@ -890,17 +621,10 @@ fn sized(
     (sizes, asked.saturating_sub(square))
 }
 
-/// The lattice's points along a side about a square of `square` points
-/// along a side: PARTICLE_MARGIN more each side, and the one its far edges
-/// stand at.
 fn lattice_points(square: u32) -> u32 {
     square + 2 * PARTICLE_MARGIN + 1
 }
 
-/// The uniform offset of the terrain whose water the particles run over:
-/// of those drawing tiles' water (`tiles`, `terrains` the frame's), the one
-/// whose square holds the detail eye `eye`, a terrain's own before its
-/// surroundings; none where none draws.
 pub(crate) fn particle_terrain(
     tiles: &TerrainWaterDraws<'_>,
     terrains: &[RenderTerrain],

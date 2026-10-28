@@ -1,15 +1,3 @@
-/**
- * The water's debug views over the Highlands' streams, in real Chrome: the
- * scene's torrent, rapids and meadow-river views, each shaded and in every
- * view of the water's state (depth, speed, Froude number, turbulence, white
- * water, reach, span, the eddies' turbulent Froude number and
- * roughness). The torrent view holds water; a twentieth to three
- * fifths of it reads white in the white water view, where white water is
- * born at drops and rocks rather than spread as a sheet; its turbulence
- * varies; and the pixel probe reads a torrent pixel's numbers. The water's
- * views show everything but water alike, gray with the sky dark, so water
- * is where they differ.
- */
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
@@ -20,19 +8,12 @@ const output = await artifacts("torrent-smoke");
 const { browser, page, errors } = await launch({ width: 960, height: 540, timeout: 600_000 });
 const command = commander(page, { deadline: 600_000 });
 
-/** The scene's named views of its streams. */
 const streams = ["torrent", "rapids", "meadow_river"];
-/** The water's views, each showing one of its numbers. */
 const waterViews = ["water_depth", "water_speed", "water_froude", "water_turbulence", "water_white", "water_reach",
   "water_span", "water_eddies", "water_roughness"];
-/** The reaches the probe names. */
 const reaches = ["pool", "plane", "steps", "cascade", "falls"];
-/** Frame statistics that are not work (bench.rs NOT_WORK): they change
- * from frame to frame however settled the view is. */
 const NOT_WORK = new Set(["frame", "tick", "read_back_age", "simulation_ms", "extraction_ms", "render_ms"]);
 
-/** The work counters of frame statistics `stats`: dotted paths to numbers
- * and booleans, lists as their lengths. */
 function work(stats, prefix = "", out = {}) {
   for (const [key, value] of Object.entries(stats ?? {})) {
     const path = prefix ? `${prefix}.${key}` : key;
@@ -43,9 +24,6 @@ function work(stats, prefix = "", out = {}) {
   return out;
 }
 
-/** Renders exact frames until nothing loads or compiles and the frames'
- * work counters hold for three frames, then thirty more, so work spread
- * over frames finishes its rounds: what the view draws has settled. */
 async function settle(label) {
   const until = Date.now() + 600_000;
   let previous, quiet = 0;
@@ -61,8 +39,6 @@ async function settle(label) {
   for (let frame = 0; frame < 30; frame++) await command("render");
 }
 
-/** The settled view captured into NAME.png: the capture as base64 PNG and
- * its frame's stats. */
 async function capture(name) {
   await settle(name);
   const reply = await command("capture");
@@ -70,12 +46,6 @@ async function capture(name) {
   return { png: bytes.toString("base64"), rendering: reply.result.rendering };
 }
 
-/** What the water's views show of one view, from their captures `shots`
- * (base64 PNGs, in `waterViews`' order): the pixels holding water, those
- * whose colors differ between the views; of those, the ones reading white
- * in the white water view (bright in every channel, as white water shows)
- * and those the turbulence view shows otherwise than its most common
- * color; and the water pixel nearest the view's middle. */
 function analyze(shots) {
   return page.evaluate(async ({ shots, white, turbulence }) => {
     const decoded = await Promise.all(shots.map(async png => {
@@ -91,8 +61,6 @@ function analyze(shots) {
     const { width, height } = decoded[0];
     if (decoded.some(image => image.width !== width || image.height !== height)) throw new Error("Capture dimensions changed.");
     const images = decoded.map(image => image.data);
-    // Water shows in other colors from view to view; everything else
-    // shows alike in all of them.
     const differs = (first, other, at) => [0, 1, 2].some(channel => Math.abs(first[at + channel] - other[at + channel]) > 2);
     const water = [];
     /** @type {number[] | null} */
@@ -136,8 +104,6 @@ const measurements = [];
 try {
   await openPaused(page, url, { timeout: 600_000 });
   for (const stream of streams) {
-    // The scene names the view; the shaded image first, then each of the
-    // water's views.
     await command("game", { name: "view", args: { name: stream } });
     await command("environment", { debug_view: { view: "off" } });
     const shaded = await capture(`${stream}-shaded`);
@@ -162,15 +128,11 @@ try {
     );
     if (stream !== "torrent") continue;
 
-    // The torrent: water, white where it is born but not all over, and
-    // turbulence that varies.
     assert.ok(seen.water > seen.total / 1000, `the torrent view holds water: ${JSON.stringify(seen)}`);
     assert.ok(shares.white >= 0.05 && shares.white <= 0.6,
       `between 5% and 60% of the torrent's water reads white: ${JSON.stringify(shares)}`);
     assert.ok(shares.varied >= 0.1, `the torrent's turbulence varies: ${JSON.stringify(shares)}`);
 
-    // The probe reads the water nearest the view's middle as the water's
-    // views draw it, wherever it lies.
     assert.ok(seen.nearest, "a water pixel to probe");
     await command("environment", { debug_view: { view: "water_depth" } });
     const { display_width: width, display_height: height } = shaded.rendering.resolution;

@@ -1,6 +1,3 @@
-//! The matrix of cells, `bench/equivalence.json`: what each cell runs,
-//! views and captures, and the problems lint reports in it.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -8,38 +5,25 @@ use serde_json::Value;
 
 use crate::measure::read_json;
 
-/// The matrix of cells, beside the bench files it names.
 pub(super) const MATRIX: &str = "bench/equivalence.json";
 
-/// The capture kinds a cell may name.
 const CAPTURES: &str = "exact, cpu:ALPHA, gpu:ALPHA or display:FRAMES";
 
-/// What a cell runs: a bench scene (`bench/scenes/NAME.json`), or an
-/// authored scene file, by its path in the tree.
 pub(super) enum Workload {
     Scene(String),
     Source(String),
 }
 
-/// A view a cell captures: as the workload launched (`scene`), a Stress
-/// Lab view by name, or a camera (the camera control's fields) named for
-/// reports.
 pub(super) struct View {
     pub(super) name: String,
     pub(super) camera: Option<Value>,
 }
 
-/// How a view is captured.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Capture {
-    /// The exact current state.
     Exact,
-    /// The CPU-presented fraction of the last tick.
     Cpu(f64),
-    /// The GPU-presented fraction of the last tick.
     Gpu(f64),
-    /// The last of this many ordinary display frames, at 60 Hz of
-    /// synthetic time.
     Display(u32),
 }
 
@@ -74,27 +58,20 @@ impl Capture {
     }
 }
 
-/// One cell of the matrix.
 pub(super) struct Cell {
     pub(super) name: String,
     pub(super) tier: String,
     pub(super) workload: Workload,
-    /// The program's options by name (the switches, `config`), after the
-    /// settings bundle and the scene.
     pub(super) options: Vec<(String, String)>,
-    /// Environment sections merged over the scene's before stepping.
     pub(super) environment: Option<Value>,
     pub(super) ticks: u32,
     pub(super) views: Vec<View>,
     pub(super) captures: Vec<Capture>,
-    /// The largest channel difference a pixel may show and count as equal.
     pub(super) tolerance: u8,
-    /// Captures (`VIEW CAPTURE`) that vary from run to run, with why.
     pub(super) unstable: BTreeMap<String, String>,
 }
 
 impl Cell {
-    /// Every capture's key, `VIEW CAPTURE`, in order.
     pub(super) fn keys(&self) -> Vec<String> {
         self.views
             .iter()
@@ -107,7 +84,6 @@ impl Cell {
     }
 }
 
-/// The fields a cell may hold.
 const FIELDS: &[&str] = &[
     "name",
     "tier",
@@ -123,15 +99,12 @@ const FIELDS: &[&str] = &[
     "unstable",
 ];
 
-/// What a cell's fields are checked against: the tree, the Stress Lab's
-/// views and the switches `bench/options.json` names.
 struct Known<'a> {
     root: &'a Path,
     views: Vec<String>,
     switches: Vec<Value>,
 }
 
-/// The matrix in `root`, with every problem found in it.
 pub(super) fn read_matrix(root: &Path) -> Result<(Vec<Cell>, Vec<String>), String> {
     let matrix = read_json(&root.join(MATRIX))?;
     let known = Known {
@@ -176,9 +149,6 @@ pub(super) fn read_matrix(root: &Path) -> Result<(Vec<Cell>, Vec<String>), Strin
     Ok((cells, problems))
 }
 
-/// What breaks the rule that every environment section is switched by some
-/// cell's environment, or listed under `not_toggled` with why it is not; and
-/// cells' environment naming what no scene environment holds.
 fn section_problems(matrix: &Value, cells: &[Cell]) -> Result<Vec<String>, String> {
     let schema: Value = serde_json::from_str(&engine_scene::SceneDocument::schema_json())
         .map_err(|error| format!("the scene schema is not JSON: {error}"))?;
@@ -244,7 +214,6 @@ fn section_problems(matrix: &Value, cells: &[Cell]) -> Result<Vec<String>, Strin
     Ok(problems)
 }
 
-/// The cell `entry` describes, with what is wrong with it in `problems`.
 fn cell(entry: &Value, known: &Known, problems: &mut Vec<String>) -> Cell {
     let name = entry["name"].as_str().unwrap_or_default().to_owned();
     if name.is_empty()
@@ -304,8 +273,6 @@ fn cell(entry: &Value, known: &Known, problems: &mut Vec<String>) -> Cell {
     };
     let keys = cell.keys();
     for (key, reason) in &cell.unstable {
-        // A capture, or a part of a view's digest: `VIEW digest:entities`,
-        // `VIEW digest:components.NAME` or `VIEW digest:assets.KIND`.
         let digest_part = key.split_once(" digest:").is_some_and(|(view, part)| {
             cell.views.iter().any(|known| known.name == view)
                 && (part == "entities"
@@ -331,8 +298,6 @@ fn cell(entry: &Value, known: &Known, problems: &mut Vec<String>) -> Cell {
     cell
 }
 
-/// The workload `entry` names: a bench scene that exists, or an authored
-/// scene file under `bench/` or the fixtures.
 fn workload(entry: &Value, root: &Path, problems: &mut Vec<String>) -> Workload {
     match (entry["scene"].as_str(), entry["source"].as_str()) {
         (Some(scene), None) => {
@@ -358,8 +323,6 @@ fn workload(entry: &Value, root: &Path, problems: &mut Vec<String>) -> Workload 
     }
 }
 
-/// The program's options `entry` sets: switches with one of their values,
-/// or `config`.
 fn options(entry: &Value, switches: &[Value], problems: &mut Vec<String>) -> Vec<(String, String)> {
     let mut options = Vec::new();
     for (option, value) in entry["options"].as_object().into_iter().flatten() {
@@ -390,8 +353,6 @@ fn options(entry: &Value, switches: &[Value], problems: &mut Vec<String>) -> Vec
     options
 }
 
-/// The views `entry` captures, each named once: `scene`, a Stress Lab view
-/// for bench scenes, or `{name, camera}`.
 fn views(
     entry: &Value,
     workload: &Workload,
@@ -436,7 +397,6 @@ fn views(
     views
 }
 
-/// The captures `entry` takes, each once.
 fn captures(entry: &Value, problems: &mut Vec<String>) -> Vec<Capture> {
     let mut captures = Vec::new();
     for capture in entry["captures"].as_array().into_iter().flatten() {
@@ -451,8 +411,6 @@ fn captures(entry: &Value, problems: &mut Vec<String>) -> Vec<Capture> {
     captures
 }
 
-/// The whole number `entry` holds at `field`, 0 where it holds none; what
-/// it must be, `what`, where it holds another value.
 fn number<T: TryFrom<u64> + Default>(
     entry: &Value,
     field: &str,
@@ -471,8 +429,6 @@ fn number<T: TryFrom<u64> + Default>(
     }
 }
 
-/// Checks the matrix against the bench files and the Stress Lab: what
-/// `cargo xtask lint` runs.
 pub(crate) fn check(root: &Path) -> Result<(), String> {
     let (cells, problems) = read_matrix(root)?;
     if !problems.is_empty() {

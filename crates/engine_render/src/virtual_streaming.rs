@@ -1,29 +1,9 @@
-//! Streaming of virtual geometry: which pages of the resident
-//! virtual meshes sit in the GPU's page pool, which groups can draw from
-//! them, and which pages to load, evict and place. Bookkeeping only:
-//! `virtual_geometry` owns the pool and fetches pages.
-//!
-//! A group can draw when every page holding its clusters is resident and so
-//! is every coarser group holding clusters made from it. Selection draws a
-//! coarser cluster wherever a finer group cannot, so each surface is drawn
-//! once at whatever detail is resident; the pinned pages, always resident,
-//! cover every surface. Views request the groups they would refine into;
-//! loads go coarser groups first, and pages unused for a while make room
-//! when a budget or the device's limits leave none.
-
 use engine_core::VirtualMesh;
 
-/// No page in a slot, or no slot for a page.
 pub(crate) const NO_PAGE: u32 = u32::MAX;
-/// Frames a page must go unused before it makes room for another: longer
-/// than the read-backs reporting use take.
 const EVICT_AFTER: u64 = 8;
-/// Frames a page whose load failed waits before it is requested again.
 const RETRY_AFTER: u64 = 120;
 
-/// What streaming needs of one mesh: its pages (the pinned ones first, and
-/// how many of the first its words hold), each group's error, and each
-/// cluster's group, source group and page.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MeshLinks {
     pub pages: u32,
@@ -52,8 +32,6 @@ impl MeshLinks {
     }
 }
 
-/// What a read-back frame's requests began: the pages to load, how many
-/// pages it wanted and lacked, and how many of those found no room to load.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Requests {
     pub begun: Vec<u32>,
@@ -64,7 +42,6 @@ pub(crate) struct Requests {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PageState {
     Absent,
-    /// Waiting for its words.
     Loading,
     Resident(u32),
 }
@@ -76,32 +53,22 @@ struct Page {
     held: bool,
     state: PageState,
     last_used: u64,
-    // Frame before which a failed load is not retried.
     retry_at: u64,
-    // Groups with clusters in it.
     groups: Vec<u32>,
 }
 
 struct Group {
-    // Pages holding its clusters.
     pages: Vec<u32>,
-    // Coarser groups holding clusters made from it, and the finer groups
-    // its clusters were made from.
     parents: Vec<u32>,
     children: Vec<u32>,
     resident: bool,
     error: f32,
 }
 
-/// Where a page to place goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Placement {
-    /// Into this slot, whose previous page (if any) was evicted.
     Slot(u32),
-    /// Every slot is taken and more may be added ([`Residency::add_slots`]).
     Grow,
-    /// Every slot holds a page used lately and no more may be added: the
-    /// load is dropped.
     Full,
 }
 
@@ -123,7 +90,6 @@ fn bits(words: &[u32]) -> impl Iterator<Item = u32> + '_ {
 pub(crate) struct Residency {
     pages: Vec<Page>,
     groups: Vec<Group>,
-    // Page in each slot, or NO_PAGE.
     slots: Vec<u32>,
     free: Vec<u32>,
     resident: usize,
@@ -133,9 +99,6 @@ pub(crate) struct Residency {
 }
 
 impl Residency {
-    /// Every page of `meshes` absent and every group linked; each mesh's
-    /// global groups and pages start at its `bases` entry. Slots stay as
-    /// they are, all free.
     pub(crate) fn rebuild(&mut self, meshes: &[MeshLinks], bases: &[(u32, u32)]) {
         self.pages.clear();
         self.groups.clear();
@@ -178,7 +141,6 @@ impl Residency {
                 }
             }
         }
-        // The rebuilt pool's slots follow (`add_slots`).
         self.slots.clear();
         self.free.clear();
         self.resident = 0;
@@ -191,8 +153,6 @@ impl Residency {
         self.groups.len()
     }
 
-    /// Page `page`'s mesh, index in its mesh, and whether the mesh's words
-    /// hold it.
     pub(crate) fn page(&self, page: u32) -> (u32, u32, bool) {
         let page = &self.pages[page as usize];
         (page.mesh, page.local, page.held)
@@ -202,14 +162,12 @@ impl Residency {
         self.pages[page as usize].state
     }
 
-    /// Pages that must always be resident.
     pub(crate) fn pinned(&self) -> Vec<u32> {
         (0..self.pages.len() as u32)
             .filter(|&page| self.pages[page as usize].pinned)
             .collect()
     }
 
-    /// Pages the meshes' words hold.
     pub(crate) fn held(&self) -> Vec<u32> {
         (0..self.pages.len() as u32)
             .filter(|&page| self.pages[page as usize].held)
@@ -224,7 +182,6 @@ impl Residency {
         self.loading
     }
 
-    /// Each resident page and its slot.
     pub(crate) fn resident_slots(&self) -> Vec<(u32, u32)> {
         self.slots
             .iter()
@@ -234,8 +191,6 @@ impl Residency {
             .collect()
     }
 
-    /// Marks each absent page of `pages` resident in its free slot, whose
-    /// words a rebuilt pool kept, as used at `frame`.
     pub(crate) fn restore(&mut self, pages: &[(u32, u32)], frame: u64) {
         let mut groups = Vec::new();
         for &(page, slot) in pages {
@@ -265,14 +220,12 @@ impl Residency {
         self.refresh(groups);
     }
 
-    /// Adds `count` free slots (the pool grew).
     pub(crate) fn add_slots(&mut self, count: usize) {
         let start = self.slots.len() as u32;
         self.slots.extend(std::iter::repeat_n(NO_PAGE, count));
         self.free.extend((start..start + count as u32).rev());
     }
 
-    /// Marks page `page` loading, unless it is not absent or waits to retry.
     pub(crate) fn begin(&mut self, page: u32, frame: u64) -> bool {
         let entry = &mut self.pages[page as usize];
         if entry.state != PageState::Absent || frame < entry.retry_at {
@@ -283,10 +236,6 @@ impl Residency {
         true
     }
 
-    /// Marks the groups set in `used` (a bitset of global groups) used at
-    /// `frame`, and begins loading, coarser groups first, the absent pages
-    /// of the groups set in `requested` and of every coarser group they
-    /// need, as many as have room while at most `limit` pages are resident.
     pub(crate) fn feedback(
         &mut self,
         used: &[u32],
@@ -349,9 +298,6 @@ impl Residency {
         requests
     }
 
-    /// How many more pages can load at `frame` while at most `limit` are
-    /// resident: the room under it and the pages unused long enough to
-    /// make room, less the pages already loading.
     fn room(&self, frame: u64, limit: usize) -> usize {
         let evictable = self
             .slots
@@ -364,16 +310,11 @@ impl Residency {
             .saturating_sub(self.loading)
     }
 
-    /// Whether resident page `page` may make room at `frame`.
     fn evictable(&self, page: u32, frame: u64) -> bool {
         let page = &self.pages[page as usize];
         !page.pinned && page.last_used + EVICT_AFTER < frame
     }
 
-    /// A slot for loading page `page` at `frame` while at most `limit`
-    /// pages may be resident: a free one, a new one ([`Placement::Grow`]),
-    /// or the least recently used unpinned page's, evicted. The page is
-    /// resident in it; [`Placement::Full`] drops the load.
     pub(crate) fn place(&mut self, page: u32, frame: u64, limit: usize) -> Placement {
         let slot = if self.resident < limit {
             match self.free.pop() {
@@ -414,8 +355,6 @@ impl Residency {
         Placement::Slot(slot)
     }
 
-    /// Page `page`'s load failed (or was dropped) at `frame`: it waits
-    /// `wait` frames (or the retry delay, when 0) before loading again.
     pub(crate) fn fail(&mut self, page: u32, frame: u64, wait: u64) {
         let entry = &mut self.pages[page as usize];
         if entry.state == PageState::Loading {
@@ -427,8 +366,6 @@ impl Residency {
         }
     }
 
-    /// Evicts the least recently used unpinned pages, used lately or not,
-    /// until at most `limit` are resident (pinned ones stay).
     pub(crate) fn shrink(&mut self, limit: usize) {
         while self.resident > limit {
             let victim = self
@@ -460,8 +397,6 @@ impl Residency {
         self.refresh(groups);
     }
 
-    /// Recomputes the residency of `work`'s groups and, wherever it
-    /// changes, of the finer groups depending on them.
     fn refresh(&mut self, mut work: Vec<u32>) {
         while let Some(group) = work.pop() {
             let entry = &self.groups[group as usize];
@@ -481,8 +416,6 @@ impl Residency {
         }
     }
 
-    /// The groups' residency as bits, and whether it changed since the last
-    /// call.
     pub(crate) fn take_bits(&mut self) -> Option<Vec<u32>> {
         std::mem::take(&mut self.bits_dirty).then(|| {
             let mut words = vec![0u32; self.groups.len().div_ceil(32)];
@@ -495,8 +428,6 @@ impl Residency {
         })
     }
 
-    /// Each page's slot (NO_PAGE when absent), and whether it changed since the
-    /// last call.
     pub(crate) fn take_table(&mut self) -> Option<Vec<u32>> {
         std::mem::take(&mut self.table_dirty).then(|| {
             self.pages

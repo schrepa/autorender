@@ -1,22 +1,7 @@
-//! Terrain's macro colors: each terrain's map of the tint its bakes give its
-//! ground and how lush its plants grow there
-//! ([`engine_core::RenderTerrain::macro_map`]), cooked with its mips in the
-//! family of formats the device samples, a layer each of one array the
-//! terrain group binds. Ground takes the tint over its materials' own
-//! colors as the map holds it, the same however near or far it is seen
-//! (`terrain_variety.wgsl`), and ground cover's blades take it as their
-//! ground does. A terrain's
-//! layer uploads as its map arrives and again when it changes; until then
-//! its ground shows its materials' colors.
-//! Terrains past the device's array layers, and maps of another size, level
-//! count or format than the first's, show theirs too.
-
 use std::sync::Arc;
 
 use engine_core::{RenderTerrains, Texture, TextureFormat};
 
-/// What every layer of the array shares: the first map's size, levels and
-/// format.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Shape {
     size: u32,
@@ -43,12 +28,8 @@ struct Maps {
 
 pub(crate) struct MacroMaps {
     maps: Option<Maps>,
-    // A texel leaving every ground as it is, bound while no terrain has a
-    // map.
     empty: wgpu::TextureView,
-    // The map each terrain's layer holds.
     held: Vec<Option<Arc<Texture>>>,
-    // Advances when the bound view is replaced.
     generation: u64,
 }
 
@@ -85,18 +66,14 @@ impl MacroMaps {
         }
     }
 
-    /// Advances when [`Self::view`] is another view.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// The maps, a layer per terrain, or a texel leaving the ground as it
-    /// is.
     pub(crate) fn view(&self) -> &wgpu::TextureView {
         self.maps.as_ref().map_or(&self.empty, |maps| &maps.view)
     }
 
-    /// Terrain `index`'s layer plus one once its map uploaded; 0 before.
     pub(crate) fn layer(&self, index: usize) -> u32 {
         match self.held.get(index) {
             Some(Some(_)) => index as u32 + 1,
@@ -104,12 +81,10 @@ impl MacroMaps {
         }
     }
 
-    /// Terrains whose maps are here.
     pub(crate) fn count(&self) -> u32 {
         self.held.iter().flatten().count() as u32
     }
 
-    /// Bytes of the maps with their levels.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.maps.as_ref().map_or(0, |maps| {
             let shape = maps.shape;
@@ -123,8 +98,6 @@ impl MacroMaps {
         })
     }
 
-    /// Uploads the map of every terrain whose macro colors arrived or
-    /// changed since; without any the maps are released.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -189,7 +162,6 @@ impl MacroMaps {
     }
 }
 
-/// The maps of `terrains` terrains in `shape`.
 fn maps(device: &wgpu::Device, shape: Shape, terrains: usize) -> Maps {
     let texture = crate::targets::texture_2d(
         device,

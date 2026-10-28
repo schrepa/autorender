@@ -1,5 +1,3 @@
-// The sky behind all geometry: one triangle over the viewport at the far
-// plane, drawn after the meshes so depth testing leaves only uncovered pixels.
 struct SkyOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) ndc: vec2<f32>,
@@ -9,19 +7,13 @@ struct SkyOutput {
 fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOutput {
     let ndc = vec2<f32>(f32((index << 1u) & 2u) * 2.0 - 1.0, f32(index & 2u) * 2.0 - 1.0);
     var output: SkyOutput;
-    // The far plane: depth 0 with reversed depth.
     output.clip_position = vec4<f32>(ndc, 0.0, 1.0);
     output.ndc = ndc;
     return output;
 }
 
-// The physically based sky's transmittance table, through which the sun's
-// disc and the night sky shine; the sky's other tables and the clouds'
-// domes are the first group's (`sky_light.wgsl`).
 @group(1) @binding(42) var sky_transmittance_table: texture_2d<f32>;
 
-// The sun's disc along `ray`: the physically based sky's through its air,
-// or the analytic sky's.
 fn sky_disc(ray: vec3<f32>) -> vec3<f32> {
     if physical_sky() {
         return air_disc(sky_transmittance_table, sky_table_sampler, sky_air, ray);
@@ -29,9 +21,6 @@ fn sky_disc(ray: vec3<f32>) -> vec3<f32> {
     return sun_disc(ray);
 }
 
-// The sky along `ray` with the sun's disc and the night sky's, behind its
-// clouds (`clouded`); under the sea, the water's light. While the view
-// marches its own clouds, they cover it after it draws.
 fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
     if lighting.underwater.w > 0.0 {
         return sky(ray);
@@ -43,49 +32,21 @@ fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
     return clouded(light, sky_domes.eye.xyz, ray);
 }
 
-// The night sky's stars: cells along each side of each face of the cube
-// they are hashed on, the share of cells holding one (fewer toward the
-// galaxy's poles, more along its plane), the light of the brightest, and
-// the sky's luminance above which none shows (they fade in below it, fully
-// from two fifths of it).
 const STAR_CELLS: f32 = 160.0;
 const STAR_SHARE: f32 = 0.4;
 const STAR_LIGHT: f32 = 0.25;
 const STAR_SKY: f32 = 0.1;
-// The Milky Way: the light of its brightest stretch, toward the galactic
-// centre; how many cells of its noise's coarsest octave go around the sky
-// (about 2.8 degrees each); and the galactic latitude (its sine) past
-// which it leaves no glow.
 const GALAXY_LIGHT: f32 = 0.02;
 const GALAXY_CELLS: f32 = 128.0;
 const GALAXY_REACH: f32 = 0.55;
-// The faint stars crowding the Milky Way: cells along each side of a face
-// (three times the stars'), the share of them holding one where the band is
-// brightest, and the light of the brightest of them.
 const GRAIN_CELLS: f32 = 480.0;
 const GRAIN_SHARE: f32 = 0.7;
 const GRAIN_LIGHT: f32 = 0.05;
-// The share of light a sea-level atmosphere takes away per air mass, by
-// channel (as optical depth): what the analytic sky's stars and moon lose
-// toward the horizon.
 const AIR_EXTINCTION: vec3<f32> = vec3<f32>(0.07, 0.15, 0.28);
-// The moon's usual angular radius (radians: twice its true quarter degree,
-// the size the eye reads it at), which the night sky's moon size scales,
-// and the light of its full face.
 const MOON_RADIUS: f32 = 0.0091;
 const MOON_LIGHT: f32 = 0.6;
-// The brightest the moon's face shows after the exposure: in a dark sky
-// the eye adapts to it, so its seas stay apart from its highlands rather
-// than all of it burning white.
 const MOON_SHOWN: f32 = 0.9;
-// The north celestial pole in the galaxy's frame (the J2000 equatorial
-// pole by the IAU's galactic coordinates), which the moon's north faces.
 const CELESTIAL_POLE: vec3<f32> = vec3<f32>(-0.4838350, 0.7469822, 0.4559838);
-// The moon's seas as the earth sees them: each one's centre in
-// selenographic longitude (degrees east of the near side's centre) and
-// latitude, its angular radius on the moon (degrees) and how much darker
-// than the highlands it is; Oceanus Procellarum and Mare Frigoris as
-// overlapping discs.
 const MOON_SEAS = array<vec4<f32>, 15>(
     vec4<f32>(-16.0, 33.0, 18.0, 0.45),
     vec4<f32>(17.5, 28.0, 11.0, 0.42),
@@ -103,36 +64,25 @@ const MOON_SEAS = array<vec4<f32>, 15>(
     vec4<f32>(4.0, 13.0, 5.0, 0.35),
     vec4<f32>(-28.0, 0.0, 8.0, 0.32),
 );
-// Its bright young craters: Tycho (whose rays cross the southern
-// highlands), Copernicus, Kepler and Aristarchus, each's place, angular
-// radius (degrees) and brightness above the highlands.
 const MOON_CRATERS = array<vec4<f32>, 4>(
     vec4<f32>(-11.2, -43.3, 3.0, 0.3),
     vec4<f32>(-20.0, 9.6, 3.0, 0.15),
     vec4<f32>(-38.0, 8.1, 2.5, 0.1),
     vec4<f32>(-47.5, 23.7, 2.5, 0.15),
 );
-// The moon's glow in the air around it, as shares of its face's light: a
-// narrow aureole and a wide halo (the forward lobes they fall off by).
 const MOON_AUREOLE: f32 = 0.06;
 const MOON_HALO: f32 = 0.012;
-// Cirrus: how far along a view it fades out by (world units); its height
-// and drift are the night sky's (`lighting.night_shape`).
 const CIRRUS_REACH: f32 = 90000.0;
 
-// `direction` turned by the unit quaternion `turn`.
 fn turned(turn: vec4<f32>, direction: vec3<f32>) -> vec3<f32> {
     let t = 2.0 * cross(turn.xyz, direction);
     return direction + turn.w * t + cross(turn.xyz, t);
 }
 
-// Three values in [0, 1) hashed from `cell`.
 fn sky_hash(cell: vec3<u32>) -> vec3<f32> {
     return vec3<f32>(dither_hash(cell) >> vec3<u32>(8u)) * (1.0 / 16777216.0);
 }
 
-// Smooth value noise in [0, 1] over the plane, its lattice salted by
-// `salt`.
 fn sky_noise(p: vec2<f32>, salt: u32) -> f32 {
     let cell = floor(p);
     let f = p - cell;
@@ -145,8 +95,6 @@ fn sky_noise(p: vec2<f32>, salt: u32) -> f32 {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// Two independent values of smooth value noise in [0, 1] over the plane,
-// its lattice repeating every `period` cells along x and salted by `salt`.
 fn sky_noise_pair(p: vec2<f32>, period: i32, salt: u32) -> vec2<f32> {
     let cell = floor(p);
     let f = p - cell;
@@ -162,13 +110,6 @@ fn sky_noise_pair(p: vec2<f32>, period: i32, salt: u32) -> vec2<f32> {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// The Milky Way along `galactic`, a direction in the galaxy's frame: a
-// band along its plane, brightest and widest toward the centre, where the
-// bulge rises, and bright again in the star clouds of Cygnus and Carina;
-// mottled by star clouds; threaded with dark dust, thickest in the rift
-// from Sagittarius to Cygnus and in the Coalsack; warmer toward the
-// centre. rgb its light, a how crowded with faint stars the band is there
-// (0 to 1).
 fn milky_way(galactic: vec3<f32>) -> vec4<f32> {
     if abs(galactic.z) >= GALAXY_REACH {
         return vec4<f32>(0.0);
@@ -184,8 +125,6 @@ fn milky_way(galactic: vec3<f32>) -> vec4<f32> {
     var glow = along * (exp(-0.5 * across * across) + 0.12 * exp(-across * across / 18.0));
     let bulge = vec2<f32>(longitude / 0.16, latitude / 0.12);
     glow += 0.9 * exp(-0.5 * dot(bulge, bulge));
-    // Cells of about the same angle along and across the plane, around it
-    // seamlessly, in four octaves.
     let p = vec2<f32>(longitude, latitude) * (GALAXY_CELLS / 6.2831853);
     let period = i32(GALAXY_CELLS);
     let coarse = sky_noise_pair(p, period, 21u);
@@ -194,8 +133,6 @@ fn milky_way(galactic: vec3<f32>) -> vec4<f32> {
     let finest = sky_noise_pair(p * 8.0, period * 8, 24u);
     let clumps = coarse.x * 0.45 + middle.x * 0.25 + fine.x * 0.18 + finest.x * 0.12;
     let mottle = 0.3 + 1.4 * smoothstep(0.3, 0.7, clumps);
-    // Dust in filaments (ridges of the noise) near the plane, thickest
-    // along a meandering lane through the rift from Sagittarius to Cygnus.
     let veins = coarse.y * 0.45 + middle.y * 0.3 + fine.y * 0.25;
     let filaments = smoothstep(0.6, 0.9, 1.0 - abs(2.0 * veins - 1.0));
     let lane_across = (latitude + 0.015 - 0.012 * sin(3.0 * longitude)) / 0.035;
@@ -204,7 +141,6 @@ fn milky_way(galactic: vec3<f32>) -> vec4<f32> {
     let near_plane = latitude / 0.1;
     var dust = max(lane * (0.35 + 0.45 * rift) * (0.5 + 0.5 * filaments),
         0.7 * filaments * exp(-0.5 * near_plane * near_plane));
-    // The Coalsack, at longitude 301 and latitude -1 degrees.
     let coal = vec2<f32>(longitude + 1.026, latitude + 0.017) / 0.04;
     dust = max(dust, 0.8 * exp(-0.5 * dot(coal, coal)));
     let core = vec2<f32>(longitude / 0.6, latitude / 0.2);
@@ -214,13 +150,6 @@ fn milky_way(galactic: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(tint * (GALAXY_LIGHT * shown), saturate(0.6 * shown));
 }
 
-// The light of a field of stars along `star`, a direction in the galaxy's
-// frame: a star in `share` of the cells of a cube's faces, `cells` along
-// each side (salted by `salt`), placed within its cell, its brightness a
-// power `fall` of a uniform value so faint stars outnumber bright ones, up
-// to `light`; bluish white to warm; drawn as a soft spot of `spread`
-// radians (about a pixel) around its true direction, so it neither vanishes
-// nor shimmers between pixels nor stretches toward the cube's edges.
 fn star_field(star: vec3<f32>, cells: f32, share: f32, fall: f32, light: f32, salt: u32,
         spread: f32) -> vec3<f32> {
     let a = abs(star);
@@ -257,30 +186,19 @@ fn star_field(star: vec3<f32>, cells: f32, share: f32, fall: f32, light: f32, sa
     return tint * (light * bright * spot);
 }
 
-// The stars' light along `star`, a direction in the galaxy's frame: more
-// cells hold one toward the galaxy's plane, as more of its stars lie along
-// the line of sight there.
 fn star_light(star: vec3<f32>, spread: f32) -> vec3<f32> {
     let share = STAR_SHARE * lighting.night_shape.w * (0.6 + 0.8 * exp(-6.0 * star.z * star.z));
     return star_field(star, STAR_CELLS, share, 8.0, STAR_LIGHT, 0u, spread);
 }
 
-// A place on the moon at selenographic `longitude` and `latitude`
-// (degrees) as a unit vector: x toward its east limb, y its north, z the
-// centre of its near side, which faces the earth.
 fn moon_place(longitude: f32, latitude: f32) -> vec3<f32> {
     let lon = radians(longitude);
     let lat = radians(latitude);
     return vec3<f32>(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
 }
 
-// The moon's albedo at `place` on its near side (moon_place's frame), the
-// highlands' 1: its seas darker, softly edged, with a little mottling; its
-// bright craters, Tycho's rays reaching across the south.
 fn moon_albedo(place: vec3<f32>, local: vec2<f32>) -> f32 {
     var seas = MOON_SEAS;
-    // Shores wander: the distance to each sea's centre shifts with
-    // low-frequency noise over the face, and fades over some 16 degrees.
     let wander = 0.16 * (sky_noise(place.xy * 2.5 + 11.0, 5u) - 0.5)
         + 0.08 * (sky_noise(place.xy * 6.0 + 3.0, 6u) - 0.5);
     var dark = 0.0;
@@ -298,7 +216,6 @@ fn moon_albedo(place: vec3<f32>, local: vec2<f32>) -> f32 {
         let spot = apart / radians(crater.z);
         bright += crater.w * exp(-spot * spot);
     }
-    // Tycho's rays: thin streaks around it, fading over a third of a turn.
     let tycho = moon_place(-11.2, -43.3);
     let east = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), tycho));
     let north = cross(tycho, east);
@@ -312,17 +229,11 @@ fn moon_albedo(place: vec3<f32>, local: vec2<f32>) -> f32 {
     return mottle * (1.0 - dark) + bright;
 }
 
-// The moon along `ray`, standing along `moon` and lit by the sun along
-// `sun`: its near side, its north toward the celestial pole, as a sphere
-// lit where the sun reaches it, which gives its phase; its seas and bright
-// craters where they are, and earthshine faint on the rest; rgb its light,
-// a how much of the ray its disc covers (soft at the rim).
 fn moon_disc(ray: vec3<f32>, moon: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
     let radius = MOON_RADIUS * lighting.moon.w;
     if dot(ray, moon) < cos(radius * 1.1) {
         return vec4<f32>(0.0);
     }
-    // Celestial north in the world: the galaxy's frame turned back.
     let back = vec4<f32>(-lighting.star_turn.xyz, lighting.star_turn.w);
     let pole = turned(back, CELESTIAL_POLE);
     var up = pole - moon * dot(pole, moon);
@@ -337,7 +248,6 @@ fn moon_disc(ray: vec3<f32>, moon: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
     if cover <= 0.0 {
         return vec4<f32>(0.0);
     }
-    // The near half faces the eye: its east limb on the right.
     let facing = sqrt(max(1.0 - r2, 0.0));
     let normal = local.x * right + local.y * up - facing * moon;
     let lit = saturate(dot(normal, sun) * 2.0);
@@ -347,26 +257,17 @@ fn moon_disc(ray: vec3<f32>, moon: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(light, cover);
 }
 
-// A forward-scattering lobe of anisotropy `g` (Henyey-Greenstein's), 1
-// looking straight along the light, at `cosine` from it.
 fn forward_lobe(cosine: f32, g: f32) -> f32 {
     let ahead = 1.0 - g;
     return ahead * ahead * ahead / pow(1.0 + g * g - 2.0 * g * cosine, 1.5);
 }
 
-// The moon's glow along `ray` in the air around the moon standing along
-// `moon`: its light scattered forward, a narrow aureole and a wide halo, as
-// strong as the share `lit` of its face the sun lights.
 fn moon_glow(ray: vec3<f32>, moon: vec3<f32>, lit: f32) -> vec3<f32> {
     let cosine = dot(ray, moon);
     let glow = MOON_AUREOLE * forward_lobe(cosine, 0.97) + MOON_HALO * forward_lobe(cosine, 0.75);
     return vec3<f32>(1.0, 0.96, 0.9) * (MOON_LIGHT * lit * glow);
 }
 
-// The share of light from beyond the air that reaches the eye along `ray`,
-// relative to the share straight up: through the physically based sky's
-// air, or the analytic sky's by its air mass (Kasten and Young's formula);
-// none from below the horizon.
 fn beyond_air(ray: vec3<f32>) -> vec3<f32> {
     if physical_sky() {
         let r = air_radius(sky_air);
@@ -380,9 +281,6 @@ fn beyond_air(ray: vec3<f32>) -> vec3<f32> {
     return exp(-AIR_EXTINCTION * (mass - 1.0)) * smoothstep(-0.01, 0.0, ray.y);
 }
 
-// How much cirrus covers along `ray`: fibrous noise on a layer its height
-// above the eye, stretched along x and drifting with `seconds`, over
-// `coverage` of the sky, fading toward the horizon.
 fn cirrus_cover(ray: vec3<f32>, coverage: f32, seconds: f32) -> f32 {
     if ray.y <= 0.02 {
         return 0.0;
@@ -402,10 +300,6 @@ fn cirrus_cover(ray: vec3<f32>, coverage: f32, seconds: f32) -> f32 {
     return shape * shape * fade * 0.6;
 }
 
-// The light cirrus sends along `ray`: the sun's (with the physically based
-// sky, what reaches the layer where the ray meets it, over its own place
-// on the planet, which outlasts sunset there and toward the sunset longest),
-// scattered forward toward it; the moon's, faintly; and the sky's.
 fn cirrus_light(ray: vec3<f32>) -> vec3<f32> {
     let sun = lighting.sun.xyz;
     var sunlight = lighting.sun_color.rgb;
@@ -422,18 +316,12 @@ fn cirrus_light(ray: vec3<f32>) -> vec3<f32> {
     return sunlight * (0.3 * forward) + moonlight + 0.5 * (lighting.zenith.rgb + lighting.horizon.rgb);
 }
 
-// `light`, the sky's along `ray`, with the night sky's: stars and the Milky
-// Way where the sky in front of them is dark, and the moon, all beyond the
-// air, which dims and reddens them toward the horizon; the moon's glow in
-// the dark air around it; then cirrus over all.
 fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
     let night = lighting.night;
     if all(night.xyz == vec3<f32>(0.0)) {
         return light;
     }
     var dark = 1.0 - smoothstep(0.4 * STAR_SKY, STAR_SKY, luminance(light));
-    // The physically based sky's sun is the real one: no stars while it is
-    // up, all of them once it is six degrees down.
     if physical_sky() {
         dark *= 1.0 - smoothstep(-0.1, 0.0, lighting.sun.y);
     }
@@ -442,9 +330,6 @@ fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
         let galactic = turned(lighting.star_turn, ray);
         let spread = max(0.8 * camera.options.y, 1.0e-5);
         beyond = star_light(galactic, spread) * (night.x * dark);
-        // The Milky Way needs a darker sky than the stars: under the
-        // physically based sky the sun eight degrees down, fully from
-        // fifteen; and a bright moon above the horizon washes it out.
         var deep = dark * (1.0 - 0.85 * night.w * saturate(lighting.moon.y * 4.0)
             * min(night.y, 1.0));
         if physical_sky() {
@@ -479,7 +364,6 @@ fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
     return sky;
 }
 
-// The view ray through unjittered `ndc`.
 fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
     let far = camera.inverse_view_projection * vec4<f32>(ndc, 0.0, 1.0);
     return stable_normalize(far.xyz / far.w - camera.position.xyz);
@@ -491,27 +375,15 @@ fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
         1.0);
 }
 
-// Reflection probe captures: the sky's light without the sun's disc
-// (`sky_along`), as the sky's environment map holds it (surfaces shade the
-// sun's highlights themselves).
 @fragment
 fn fs_probe_sky(input: SkyOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(sky_along(sky_domes.eye.xyz, sky_ray(input.ndc)), 1.0);
 }
 
-// The sky's surface texel (`surface_texel`): facing up, fully rough both
-// ways, mirroring nothing (it reflects nothing).
 const SKY_SURFACE = vec4<u32>(32768u, 32768u, 65535u, 0u);
 
-// Clouds in the view (`clouds.wgsl`'s `march_view`): each
-// pixel's light and the share of the scene passing, marched up to what the
-// pixel shows, over the depth buffer's pixels from its top-left corner,
-// those over the frame's render size marched.
 @group(1) @binding(46) var view_clouds: texture_2d<f32>;
 
-// The view's clouds as a layer over the scene at the pixel at `position`
-// (framebuffer): their own light, graded, times the share they cover, with
-// the share passing as alpha; none under the sea.
 fn view_cloud_layer(position: vec2<f32>) -> vec4<f32> {
     let cloud = textureLoad(view_clouds, vec2<i32>(position), 0);
     let covering = 1.0 - cloud.a;
@@ -521,8 +393,6 @@ fn view_cloud_layer(position: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(grade(cloud.rgb / covering) * covering, cloud.a);
 }
 
-// The view's clouds over the canvas, encoded as it is; pixels they leave
-// clear keep the target as it was, unblended.
 @fragment
 fn fs_view_clouds(input: SkyOutput) -> @location(0) vec4<f32> {
     let layer = view_cloud_layer(input.clip_position.xy);
@@ -533,7 +403,6 @@ fn fs_view_clouds(input: SkyOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(encoded(layer.rgb / covering, input.clip_position.xy) * covering, layer.a);
 }
 
-// The view's clouds over the screen effects' scene target.
 @fragment
 fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
     let layer = view_cloud_layer(input.clip_position.xy);
@@ -547,7 +416,6 @@ fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(stored(layer.rgb / covering, input.clip_position.xy) * covering, layer.a);
 }
 
-// Screen-effect frames: the sky has no ambient occlusion; its sun glows.
 @fragment
 fn fs_sky_post(input: SkyOutput) -> SceneTargets {
     let light = clouded_sky(sky_ray(input.ndc));
@@ -558,7 +426,6 @@ fn fs_sky_post(input: SkyOutput) -> SceneTargets {
     return targets;
 }
 
-// Temporal frames: the unjittered sky reprojects by the camera's turn alone.
 @fragment
 fn fs_sky_temporal(input: SkyOutput) -> TemporalTargets {
     let ray = sky_ray(input.ndc);

@@ -1,7 +1,3 @@
-//! A game in a native window: frames as the page draws them, one each time
-//! the display can show one, with keyboard and mouse input, and terrain
-//! loading between frames.
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,52 +14,35 @@ use crate::host_error;
 use crate::input::Input;
 use crate::jobs::{JobOptions, JobPool};
 
-/// How a game's window opens.
 #[derive(Clone, Debug)]
 pub struct Window {
     pub title: String,
-    /// Its inner size in physical pixels; 1280 × 720 logical pixels unset.
     pub size: Option<(u32, u32)>,
     pub gpu: GpuPreference,
     pub jobs: JobOptions,
-    /// Frames wait for the display's refresh (the default), or show as they
-    /// finish, for measurements.
     pub vsync: bool,
-    /// The engine switches given, as every host takes them.
     pub settings: HostSettings,
-    /// Frames to measure, after which the window closes and [`run`]
-    /// reports them; none keeps it open until closed.
     pub measure: Option<Measure>,
 }
 
-/// Frames a measured window draws: `frames` of play after `settle`.
 #[derive(Clone, Copy, Debug)]
 pub struct Measure {
     pub settle: Duration,
     pub frames: u32,
 }
 
-/// What a measured window drew.
 #[derive(Clone, Debug)]
 pub struct WindowReport {
     pub frames: u32,
-    /// From the first measured frame's start to the last's end.
     pub elapsed_ms: f64,
-    /// Each measured frame's simulation, extraction and render time.
     pub cpu_ms: Vec<f64>,
-    /// The last frame's statistics, as JSON.
     pub stats: String,
     pub adapter: engine::AdapterInfo,
-    /// The size the last frame drew at, in physical pixels: the resolution
-    /// policy's for the window ([`engine::host::render_size`]), within it,
-    /// which the frame upscaled to the window.
     pub size: (u32, u32),
-    /// The window's size, in physical pixels: its surface's.
     pub window: (u32, u32),
 }
 
 impl Window {
-    /// A window titled `title`, whose `Space` is action 0 as on the page.
     pub fn new(title: impl Into<String>) -> Self {
         Self {
             title: title.into(),
@@ -79,8 +58,6 @@ impl Window {
 
 type Build<'a, G> = Box<dyn FnOnce() -> engine::Result<(Engine, G)> + 'a>;
 
-/// Runs the game `build` makes in `window` until it closes: what it
-/// measured, where `window` measures.
 pub fn run<'a, G: Game, E: Into<engine::Error>>(
     window: Window,
     build: impl FnOnce() -> Result<(Engine, G), E> + 'a,
@@ -108,17 +85,12 @@ struct App<'a, G: Game> {
     outcome: engine::Result<Option<WindowReport>>,
 }
 
-/// The game running in its window.
 struct Running<G: Game> {
     window: Arc<winit::window::Window>,
-    // Tens of kilobytes: boxed, as moves would copy it through the stack.
     host: Box<GameHost<G>>,
-    // The window's, in physical pixels: the surface's, which frames draw
-    // within at the size the engine's resolution policy gives.
     size: (u32, u32),
     title: Title,
     jobs: JobPool,
-    // When play started, and each measured frame's start and CPU time.
     playing: Option<Instant>,
     measured: Vec<(Instant, f64)>,
 }
@@ -148,16 +120,11 @@ impl<'a, G: Game> App<'a, G> {
             gpu: self.options.gpu,
             vsync: self.options.vsync,
         };
-        // The startup future holds the renderer's whole start (some 80 KB for
-        // the Stress Lab): on the heap, not the calling thread's stack.
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
             target, build,
         )))?);
         host.set_pixel_ratio(window.scale_factor());
         host.set_refresh_interval(refresh_interval(&window));
-        // Play in a window scales its frames to keep them within their GPU
-        // budget, the display's refresh interval; measured windows keep their
-        // size. The options may say otherwise.
         host.set_dynamic_resolution(self.options.measure.is_none());
         self.options.settings.apply(&mut host);
         let mut jobs = self.options.jobs.pool(false);
@@ -199,7 +166,6 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                // A view that regains area asks for frames again.
                 let idle = running.size.0 == 0 || running.size.1 == 0;
                 running.size = (size.width, size.height);
                 if idle {
@@ -207,7 +173,6 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                 }
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                // A window moved to another display.
                 running.host.set_pixel_ratio(scale_factor);
                 running
                     .host
@@ -240,7 +205,6 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                         return;
                     }
                 };
-                // An idle view asks for no frames until it has area again.
                 if phase == FramePhase::Idle {
                     return;
                 }
@@ -259,7 +223,6 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
 }
 
 impl<G: Game> Running<G> {
-    /// The window's animation frame: what it did.
     fn redraw(&mut self) -> engine::Result<FramePhase> {
         let timestamp = engine::host::now_ms();
         let (width, height) = self.size;
@@ -267,7 +230,6 @@ impl<G: Game> Running<G> {
         self.exchange_jobs();
         if phase == FramePhase::Playing {
             self.title.frame(&self.window, timestamp, &self.host);
-            // Terrain loads until shortly before the next frame is due.
             if self.host.load_between_frames() {
                 self.exchange_jobs();
             }
@@ -279,8 +241,6 @@ impl<G: Game> Running<G> {
         self.jobs.exchange(&mut self.host);
     }
 
-    /// Counts the frame that started at `start` toward `measure` once play
-    /// settled: the report, once every frame was measured.
     fn measured(&mut self, measure: Measure, start: Instant) -> Option<WindowReport> {
         if self.host.preparing() {
             return None;
@@ -310,14 +270,11 @@ impl<G: Game> Running<G> {
     }
 }
 
-/// The refresh interval of the display `window` shows on, in milliseconds,
-/// where the windowing library knows it.
 fn refresh_interval(window: &winit::window::Window) -> Option<f64> {
     let millihertz = window.current_monitor()?.refresh_rate_millihertz()?;
     (millihertz > 0).then(|| 1_000_000.0 / f64::from(millihertz))
 }
 
-/// The window's title with its recent frame rate and CPU time per frame.
 struct Title {
     name: String,
     since: Option<f64>,

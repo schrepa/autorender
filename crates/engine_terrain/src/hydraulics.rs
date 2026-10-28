@@ -1,36 +1,3 @@
-//! Rivers' channels and their water. Every point of a river carries its
-//! bankfull flood, given or what its drained area yields, which fills its
-//! channel to its banks: the flood sizes what was not given of its channel
-//! and the slope of its reach shapes its bed (`bed.rs`). Its banks stand
-//! along the river's long profile: the ground along its line, never rising
-//! downstream, so it cuts through the rims of hollows shallower than a lake
-//! rather than pooling behind them, and falling at least the gentlest slope
-//! a channel is taken to fall, from the level of the lake it leaves or below
-//! the banks of the rivers meeting where it begins; and a share of its
-//! depth below the lower ground either side of it, so where it runs across
-//! a hillside its flood stays in it. Where an imported heightmap resolves
-//! its channel, the ground it is cut into is the finest heights' lowest
-//! across it, and where those heights already hold the channel (its banks
-//! stand over that ground by the depth its flood needs, and its water over
-//! it) its flood stands its depth over it and nothing is cut, nor any step
-//! or knob carved. Its bed lies its depth below, in the forms its reach
-//! takes: pools and riffles where it runs gently, a plane bed steeper, steps
-//! with pools behind their crests steeper still, and a cascade of steps and
-//! boulders steepest. Its water runs at the flow it carries most of the
-//! time, a `FLOODS`th of its floods', standing in its channel as deep as
-//! Manning's law has that flow stand in it, and level behind a step's crest
-//! where a step holds it back. Where its water drops steeper than water
-//! clings to, by its critical depth twice over or more, the river falls:
-//! off the drop's lip it leaves its bed as a jet on the parabola its speed
-//! and gravity give where that clears the rock, landing where the jet meets
-//! the water below, its bed running straight beneath; and the steep stretch
-//! holding the drop falls as one cascade, its water clinging to the rock
-//! and leaping off its ledges.
-//!
-//! Every step uses only IEEE arithmetic, `libm`'s functions and the
-//! engine's own cosine, so the same bake gives the same bits natively and
-//! in the browser.
-
 use engine_math::{clamp, max, min};
 use glam::{Vec2, Vec3};
 
@@ -38,70 +5,29 @@ use crate::bed::{self, Bankfull, Crest, Forms, Knob, Reach, Shares};
 use crate::hydrology::Fall;
 use crate::rivers::{Given, River, RiverLine};
 
-/// Gravity water falls and waves run under (meters a second squared).
 pub const GRAVITY: f32 = 9.81;
-/// The shallowest water a river's flow keeps (meters).
 pub(crate) const SHALLOWEST: f32 = 0.03;
-/// The least discharge a river carries (cubic meters a second).
 pub(crate) const TRICKLE: f32 = 1.0e-3;
-/// The gentlest a channel is taken to fall (meters a meter), so its water
-/// runs across flats and its bed's grains and steps stay finite there.
 const FLATTEST: f32 = 2.0e-4;
-/// Channel widths either side of a point over which its reach's slope is
-/// read: ten in all, as a reach's form holds over many widths (Montgomery
-/// and Buffington 1997).
 const REACH_WIDTHS: f32 = 5.0;
-/// How many times the flow a river carries most of the time its floods
-/// carry, which fill its channel: a channel full to its banks carries about
-/// three times a river's mean flow.
 pub(crate) const FLOODS: f32 = 3.0;
-/// The share of its depth a channel's banks stand below the lower ground
-/// either side of it at least, so the flood filling it stays in it, and the
-/// meters past its edge that ground is read at.
 const HELD_DEPTH: f32 = 0.25;
 pub(crate) const BESIDE: f32 = 1.0;
-/// Ferguson's (2007) law of flow over a bed of grains, its speed U against
-/// its shear velocity u* where its hydraulic radius stands R over the bed's
-/// D84: U/u* = a1 a2 (R/D84) / (a1² + a2² (R/D84)^5/3)^1/2, a1 for flow
-/// deep over the grains and a2 for flow shallow among them.
 const FERGUSON: [f32; 2] = [6.5, 2.5];
-/// The steepest drop (rise over run) a river's water clings to its bed
-/// down: off steeper faces at least LEAP_DEPTHS critical depths and
-/// LEAP_LEAST meters high it leaps clear as a jet (Chanson: nappe flow
-/// holds below about 0.49 critical depths a step's height at 45 degrees).
 const CLING_SLOPE: f32 = 1.2;
 const LEAP_DEPTHS: f32 = 2.0;
 const LEAP_LEAST: f32 = 1.5;
-/// A fall's jet sampled at least every this many meters of its run and of
-/// its drop, so a plunge's curve bends smoothly.
 const JET_STEP: f32 = 0.5;
-/// Stretches whose bed falls CASCADE_SLOPE or more a meter about a drop
-/// fall with it as one cascade, white water clinging to the rock; gentler
-/// stretches no more than BRIDGE widths long between them are the
-/// cascade's pools, which it runs on through.
 const CASCADE_SLOPE: f32 = 0.45;
 const BRIDGE: f32 = 2.0;
-/// The slowest water runs down a cascade (meters a second), so its seconds
-/// there stay finite.
 const SLOWEST: f32 = 0.5;
 
-/// How a bake's rivers flow: the discharge each square meter drained brings
-/// them in flood, full to their banks (cubic meters a second), and the
-/// meters between the samples of the terrain's finest level, which a step's
-/// spacing and a knob's width must span to be carved.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Flow {
     pub(crate) runoff: f32,
     pub(crate) finest: f32,
 }
 
-/// A river's line with what holds it: the ground it is cut into
-/// (terrain-local meters at terrain-local x and z, read between the samples
-/// of its bake's grid), what the finest heights give across its channel at
-/// a point running a way (a unit vector) half a width (meters) either side,
-/// where imported elevation resolves it, and the level it starts at where
-/// it leaves a lake (the lake's) or a confluence (the lowest banks of the
-/// rivers ending there).
 pub(crate) struct Course<'a> {
     pub(crate) line: &'a RiverLine,
     pub(crate) ground: &'a dyn Fn(Vec2) -> f32,
@@ -109,12 +35,6 @@ pub(crate) struct Course<'a> {
     pub(crate) start: Option<f32>,
 }
 
-/// What the finest heights give across a river's channel at a point, where
-/// an imported heightmap gives the ground there fine enough to resolve it:
-/// how far it does (0 where the channel spans one of its samples, 1 from
-/// [`bed::NARROWEST`] of them on, in proportion between), the lowest ground
-/// across the channel, the lower of the ground at its two edges, and the
-/// lower of the ground [`BESIDE`] meters past them (terrain-local meters).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Across {
     pub(crate) share: f32,
@@ -123,30 +43,21 @@ pub(crate) struct Across {
     pub(crate) beside: f32,
 }
 
-/// The slope friction takes from water `depth` deep at the middle of a
-/// parabolic channel `width` meters across at its surface carrying
-/// `discharge` over grains whose D84 is `d84` meters, by Ferguson's law
-/// ([`FERGUSON`]): its section, two thirds of its width by its depth, with
-/// a hydraulic radius of about two thirds of its depth.
 pub(crate) fn friction_slope(discharge: f32, width: f32, depth: f32, d84: f32) -> f32 {
     let radius = 2.0 / 3.0 * depth;
     let speed = discharge / (width * radius);
     let relative = radius / d84;
     let [deep, shallow] = FERGUSON.map(|coefficient| coefficient * coefficient);
-    // The square of the speed over the shear velocity, (g R S)^1/2.
     let ratio =
         deep * shallow * relative * relative / (deep + shallow * libm::powf(relative, 5.0 / 3.0));
     speed * speed / (GRAVITY * radius * ratio)
 }
 
-/// The depth (meters) at which `discharge` crosses `width` meters as fast as
-/// its waves: (q^2 / g)^1/3.
 fn critical_depth(discharge: f32, width: f32) -> f32 {
     let per_meter = discharge / width;
     libm::cbrtf(per_meter * per_meter / GRAVITY)
 }
 
-/// Where a river's points stand along its line (meters from its first).
 pub(crate) fn distances(points: &[Vec2]) -> Vec<f32> {
     let mut along = Vec::with_capacity(points.len());
     along.push(0.0);
@@ -156,9 +67,6 @@ pub(crate) fn distances(points: &[Vec2]) -> Vec<f32> {
     along
 }
 
-/// `values` at a river's points (two or more), `along` meters along its
-/// line from the first, at `place` meters along it: between the points
-/// either side, the first's or the last's beyond its ends.
 pub(crate) fn along_line(values: &[f32], along: &[f32], place: f32) -> f32 {
     let after = along
         .partition_point(|&at| at <= place)
@@ -173,12 +81,6 @@ pub(crate) fn along_line(values: &[f32], along: &[f32], place: f32) -> f32 {
     values[before] + (values[after] - values[before]) * share
 }
 
-/// The long profile of a river whose ground along its middle is `ground`
-/// (read between the samples of its grid) at
-/// points `along` meters from its first: from `start` where it starts at a
-/// level of its own, falling downstream at least [`FLATTEST`], the
-/// gentlest slope a channel is taken to fall, so its water runs across
-/// flats as its channel carries it.
 fn profile(ground: &[f32], along: &[f32], start: Option<f32>) -> Vec<f32> {
     let mut banks: Vec<f32> = Vec::with_capacity(ground.len());
     for (index, &height) in ground.iter().enumerate() {
@@ -191,10 +93,6 @@ fn profile(ground: &[f32], along: &[f32], start: Option<f32>) -> Vec<f32> {
     banks
 }
 
-/// The slope of `banks` (meters a meter, downstream) at each of its points,
-/// `along` meters from the first, as channels `widths` across read it over
-/// their reach: across REACH_WIDTHS widths either side and at least the
-/// points beside it, never gentler than FLATTEST.
 fn slopes(banks: &[f32], along: &[f32], widths: &[f32]) -> Vec<f32> {
     let count = banks.len();
     (0..count)
@@ -213,10 +111,6 @@ fn slopes(banks: &[f32], along: &[f32], widths: &[f32]) -> Vec<f32> {
         .collect()
 }
 
-/// The lower of the ground either side of each of a river's `points`, read
-/// half its channel's width (`widths`) and [`BESIDE`] meters out from its
-/// middle, square to its line's tangent, which at each point runs from the
-/// point before it to the point after it.
 fn beside(points: &[Vec2], widths: &[f32], ground: &dyn Fn(Vec2) -> f32) -> Vec<f32> {
     let last = points.len() - 1;
     (0..=last)
@@ -228,26 +122,9 @@ fn beside(points: &[Vec2], widths: &[f32], ground: &dyn Fn(Vec2) -> f32) -> Vec<
         .collect()
 }
 
-/// `course`'s channel as its floods size it, each square meter it drains
-/// bringing `runoff` in flood where its flood is not given, its points
-/// `along` meters along its line from the first: the channel carrying them
-/// full to its banks, as wide and deep as given, or else as hydraulic
-/// geometry stands it and at least [`bed::NARROWEST`] of the grid's samples
-/// wide. The ground beneath it is the grid's, or where an imported heightmap
-/// resolves its channel the finest heights' lowest across it, in proportion
-/// as it does. Its reach's slope, read along the profile of that ground over
-/// as many widths as the channel stands wide, sets its reach's form; its
-/// banks then stand along the profile of that ground, held [`HELD_DEPTH`] of
-/// the channel's depth below the lower ground either side of it
-/// ([`beside`]), so its flood stays in it; but where the finest heights
-/// already hold the channel (their ground at its edges stands over their
-/// lowest across it by its depth, wholly resolved), its depth over that
-/// lowest ground. There nothing is cut where its water, standing as its
-/// flow does, stands over that ground.
 fn channel(course: &Course<'_>, flow: &Flow, along: &[f32]) -> Bankfull {
     let line = course.line;
     let count = line.points.len();
-    // What was given at each point: width, depth and flood, NaN where not.
     let given = |index: usize, value: usize| {
         line.given
             .as_ref()
@@ -321,9 +198,6 @@ fn channel(course: &Course<'_>, flow: &Flow, along: &[f32]) -> Bankfull {
         })
         .collect();
     let banks = profile(&tops, along, course.start);
-    // Where its water, standing as the flow it carries most of the time
-    // does (the share of its depth [`river`] stands it), stands over the
-    // heights' lowest ground, they hold it.
     let share = libm::powf(1.0 / FLOODS, 6.0 / 13.0);
     let cut = (0..count)
         .map(|index| {
@@ -344,9 +218,6 @@ fn channel(course: &Course<'_>, flow: &Flow, along: &[f32]) -> Bankfull {
     }
 }
 
-/// The stretches of `levels` (the water's at each point, `along` meters
-/// from the first) dropping steeper than CLING_SLOPE by at least `least` at
-/// their first point: each its lip and its foot.
 fn drops(levels: &[f32], along: &[f32], least: &[f32]) -> Vec<(usize, usize)> {
     let steep = |index: usize| {
         levels[index] - levels[index + 1] > CLING_SLOPE * (along[index + 1] - along[index])
@@ -369,9 +240,6 @@ fn drops(levels: &[f32], along: &[f32], least: &[f32]) -> Vec<(usize, usize)> {
     found
 }
 
-/// Where the jet leaving `lip` lands: the first later point whose water the
-/// parabola from the lip's surface at `speed` meets, and the jet's path to
-/// there (terrain-local). `None` when it never leaves the drop's ground.
 fn jet(
     lip: usize,
     (points, along, targets): (&[Vec2], &[f32], &[f32]),
@@ -386,7 +254,6 @@ fn jet(
     if landing <= lip + 1 {
         return None;
     }
-    // The flight to where the parabola meets the landing's water.
     let (from, to) = (along[landing - 1] - along[lip], along[landing] - along[lip]);
     let (above, below) = (
         height(from) - targets[landing - 1],
@@ -411,8 +278,6 @@ fn jet(
     Some((landing, path))
 }
 
-/// A jet as [`jets`] finds it: its lip and the first point after where it
-/// lands, the speed it leaves at, its path and the speed it lands at.
 struct Jet {
     lip: usize,
     landing: usize,
@@ -421,11 +286,6 @@ struct Jet {
     landing_speed: f32,
 }
 
-/// The jets of a river at `points`, `along` meters from its first, its water
-/// standing at `levels` and running at `speeds`, carrying `discharges` over
-/// `widths`: off the lip of each of its `drops` beyond where the jet before
-/// lands, the water leaving at least as fast as its waves, where it flies
-/// clear of the drop's ground.
 fn jets(
     drops: &[(usize, usize)],
     (points, along): (&[Vec2], &[f32]),
@@ -454,15 +314,6 @@ fn jets(
     found
 }
 
-/// The falls of a river at `points`, `along` meters from its first, its
-/// water standing at `surface` and running at `speeds`, dropping sharply
-/// down its `drops` and leaping off their lips as `jets` do: each stretch
-/// whose bed falls CASCADE_SLOPE or more a meter (`slopes`) or drops,
-/// through its jets and the pools between, falls as one where it holds a
-/// drop: its water's path down it, clinging to the rock on its water and
-/// through the air on each jet, and the seconds it takes; and the points
-/// their sheets run over. The river is `widths` across, carries
-/// `discharges` and drains `areas`.
 fn cascades(
     (drops, jets): (&[(usize, usize)], &[Jet]),
     (points, along, slopes): (&[Vec2], &[f32], &[f32]),
@@ -482,8 +333,6 @@ fn cascades(
             first += 1;
             continue;
         }
-        // Down the stretch while it stays steep, through each jet and each
-        // of its pools.
         let mut last = first;
         let mut at = first;
         while at < count {
@@ -509,8 +358,6 @@ fn cascades(
         let mut at = first;
         while at <= last {
             if let Some(jet) = leaping(at) {
-                // Through the air, as long as its run at the speed it
-                // left at.
                 let lip = Vec3::from_array(jet.path[0]);
                 if let Some(previous) = previous {
                     time += lip.distance(previous) / max(speeds[at], SLOWEST);
@@ -544,8 +391,6 @@ fn cascades(
             landing_speed = None;
             at += 1;
         }
-        // Steep rock without a drop leaves the water running as the
-        // river's own.
         let dropping = drops.iter().any(|&(lip, _)| lip >= first && lip <= last);
         if path.len() >= 2 && dropping {
             falls.push(Fall {
@@ -568,9 +413,6 @@ fn cascades(
     (falls, sheeted)
 }
 
-/// The least each point's face must fall for a river's water to leap off
-/// it, carrying `discharges` over `widths`: its critical depth twice over,
-/// and at least LEAP_LEAST meters.
 fn leaping_heights(discharges: &[f32], widths: &[f32]) -> Vec<f32> {
     discharges
         .iter()
@@ -579,10 +421,6 @@ fn leaping_heights(discharges: &[f32], widths: &[f32]) -> Vec<f32> {
         .collect()
 }
 
-/// A river's `values` at its points `along` meters from its first (its
-/// bed's levels, its channel's depths), beneath each of `jets` straight
-/// from the lip's to the landing's, so no ground stands between the pool a
-/// fall leaves and the one it lands in.
 fn cut_beneath(values: &mut [f32], jets: &[Jet], along: &[f32]) {
     for jet in jets {
         let (high, low) = (values[jet.lip], values[jet.landing]);
@@ -593,9 +431,6 @@ fn cut_beneath(values: &mut [f32], jets: &[Jet], along: &[f32]) {
     }
 }
 
-/// `forms` where a river's channel is `cut` into the ground at each point:
-/// where the heights hold it instead, its bed is theirs, so no step or knob
-/// is carved there and its water stands behind no step's crest.
 fn uncarved(mut forms: Forms, cut: &[bool]) -> Forms {
     for (index, &carved) in cut.iter().enumerate() {
         if !carved {
@@ -615,11 +450,6 @@ fn uncarved(mut forms: Forms, cut: &[bool]) -> Forms {
     forms
 }
 
-/// What a river's bed is at each of its points: its reach, its median grain
-/// and D84 (meters), the power of its bankfull flood (watts a square meter
-/// of bed) and whether steps or knobs are carved there; at each point the
-/// crest of a step on the segment to the next, if one stands there; and the
-/// knobs on it, segment by segment.
 struct Beds {
     reach: Vec<Reach>,
     d50: Vec<f32>,
@@ -630,11 +460,6 @@ struct Beds {
     knobs: Vec<Knob>,
 }
 
-/// The bed of a river in the channel `bankfull` sizes, shaped into `forms`,
-/// where `jets` leap over it (from each point to the next where `airborne`)
-/// and falls' sheets run over its points `sheeted`: beneath a jet its bed
-/// runs straight, with neither steps nor knobs, and wherever its water
-/// falls its reach is falls.
 fn beds(
     bankfull: &Bankfull,
     forms: Forms,
@@ -693,8 +518,6 @@ fn beds(
     }
 }
 
-/// `course`'s river as `flow` sizes and runs it, and the falls where it
-/// leaves its bed.
 pub(crate) fn river(course: &Course<'_>, flow: &Flow) -> (River, Vec<Fall>) {
     let line = course.line;
     let count = line.points.len();
@@ -712,8 +535,6 @@ pub(crate) fn river(course: &Course<'_>, flow: &Flow) -> (River, Vec<Fall>) {
         bed::forms((&line.points, &along), &bankfull, flow.finest),
         &bankfull.cut,
     );
-    // Its bed lies its channel's depth below its banks, deeper in its
-    // forms.
     let mut bed: Vec<f32> = (0..count)
         .map(|index| banks[index] - depths[index] - forms.pools[index] - forms.dips[index])
         .collect();
@@ -722,10 +543,6 @@ pub(crate) fn river(course: &Course<'_>, flow: &Flow) -> (River, Vec<Fall>) {
         .zip(&bed)
         .map(|(&banks, &bed)| banks - bed)
         .collect();
-    // The water it carries most of the time. A parabolic channel carries
-    // as the 13/6th power of how deep its water stands, so a FLOODSth of its
-    // floods stands (1 / FLOODS)^(6/13) of its depth deep over its bed's
-    // treads; behind a step's crest, level with the water over the crest.
     let discharges: Vec<f32> = floods.iter().map(|&flood| flood / FLOODS).collect();
     let share = libm::powf(1.0 / FLOODS, 6.0 / 13.0);
     let over = |place: f32| {
@@ -742,8 +559,6 @@ pub(crate) fn river(course: &Course<'_>, flow: &Flow) -> (River, Vec<Fall>) {
             }
         })
         .collect();
-    // As fast as its discharge crosses the part of its channel's parabola
-    // its water fills.
     let speed_of = |index: usize, surface: f32, bed: f32, depth: f32| {
         let water = max(surface - bed, SHALLOWEST);
         let across = widths[index] * (water / max(depth, water)).sqrt();
@@ -759,8 +574,6 @@ pub(crate) fn river(course: &Course<'_>, flow: &Flow) -> (River, Vec<Fall>) {
         (&surface, &speed),
         (&discharges, widths),
     );
-    // Beneath each jet its channel runs straight from the lip to where it
-    // lands, and its water flies.
     cut_beneath(&mut bed, &jets, &along);
     cut_beneath(&mut depth, &jets, &along);
     let mut airborne = vec![false; count];

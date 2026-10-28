@@ -1,8 +1,3 @@
-//! Optional development inspection and source authoring, outside gameplay loops.
-//!
-//! Call [`DevTools::execute`] at an exclusive frame boundary. Inspectors are
-//! explicitly registered read-only projections; no reflection or serialization
-//! runs during ordinary frames. The browser host owns sessions and controls.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
@@ -40,24 +35,17 @@ pub use protocol::{
 };
 pub use reply::{Observation, Reply, SceneObservation};
 
-/// The ops of queries and controls, as requests name them, from the
-/// protocol's schema ([`schemas`], which `cargo xtask schema` runs).
 mod ops {
     include!("generated/ops.rs");
 }
 pub use ops::{CONTROL_OPS, QUERY_OPS};
 
-/// The JSON schema of [`engine_core::FrameStats`], what every reply's
-/// `rendering` holds ([`schemas`] generates it).
 pub const FRAME_STATS_SCHEMA: &str = include_str!("generated/frame_stats.schema.json");
 
 pub const MAX_INSPECTOR_BYTES: usize = 16 * 1024;
-/// Inspectors a game may register beside the engine's own.
 pub const MAX_INSPECTORS: usize = 64;
 pub const MAX_SCAN_ENTITIES: usize = 10_000;
 
-/// `value` checked against request bound `rule`: an error of code `code`
-/// at `path` stating the rule.
 pub(crate) fn bounded<T: engine_settings::Setting>(
     value: T,
     rule: engine_settings::Rule,
@@ -70,7 +58,6 @@ pub(crate) fn bounded<T: engine_settings::Setting>(
     }
 }
 
-/// World coordinate `value` of a request, at `path`, as requests bound them.
 pub(crate) fn coordinate(value: f64, path: &str) -> Result<f32, DevError> {
     bounded(
         value,

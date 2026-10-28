@@ -1,32 +1,14 @@
-//! The noise clouds are shaped from (the renderer's `clouds.wgsl`): two
-//! volumes tiling the unit cube, a byte a texel. The shapes' volume,
-//! [`SHAPE_SIZE`] texels a side, holds Perlin's billows carved by Worley's
-//! cells: rounded cumulus shapes. The detail's, [`DETAIL_SIZE`] a side,
-//! holds the wisps eroding their edges: Worley's cells from four to
-//! sixty-four across, summed as three cellular octaves of three
-//! frequencies each. Each volume comes in slabs of its layers, records of
-//! their own ([`parts`]), so workers make them side by side; a slab's
-//! texels run along x, then y, then its layers.
-//!
-//! Records hold each texel less what its neighbors before it predict
-//! (Lorenzo's predictor: the corner of the cube they span, its other six
-//! corners added and taken away in turn), modulo 256: smooth noise leaves
-//! small numbers, which packs compress well.
-
 use engine_math::{clamp, min};
 
 use crate::bytes::{Reader, Writer};
 
-/// Texels along a side of the shapes' volume and of the detail's.
 pub const SHAPE_SIZE: u32 = 128;
 pub const DETAIL_SIZE: u32 = 256;
-/// Layers of each slab of the shapes' and the detail's volumes.
 const SHAPE_LAYERS: u32 = 32;
 const DETAIL_LAYERS: u32 = 16;
 
 const TAG: &[u8; 4] = b"CLDN";
 
-/// Which volume a part belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Volume {
     Shape,
@@ -34,7 +16,6 @@ pub enum Volume {
 }
 
 impl Volume {
-    /// Texels along a side.
     pub const fn size(self) -> u32 {
         match self {
             Self::Shape => SHAPE_SIZE,
@@ -42,7 +23,6 @@ impl Volume {
         }
     }
 
-    /// Layers a slab holds: each part.
     pub const fn layers(self) -> u32 {
         match self {
             Self::Shape => SHAPE_LAYERS,
@@ -58,7 +38,6 @@ impl Volume {
     }
 }
 
-/// A slab of a volume: its layers from `first`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Part {
     pub volume: Volume,
@@ -66,7 +45,6 @@ pub struct Part {
 }
 
 impl Part {
-    /// Its job: its identity and input.
     pub fn identity(&self) -> Vec<u8> {
         let mut writer = Writer::new(TAG, 8);
         writer.u32(self.volume.code()).u32(self.first);
@@ -88,14 +66,12 @@ impl Part {
         Ok(Self { volume, first })
     }
 
-    /// Its texels.
     fn texels(&self) -> usize {
         let size = self.volume.size() as usize;
         size * size * self.volume.layers() as usize
     }
 }
 
-/// Every part of the noise, the shapes' first.
 pub fn parts() -> Vec<Part> {
     [Volume::Shape, Volume::Detail]
         .into_iter()
@@ -107,8 +83,6 @@ pub fn parts() -> Vec<Part> {
         .collect()
 }
 
-/// Both volumes whole: a byte a texel, rows along x, then y, then layers
-/// along z.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CloudNoise {
     pub shape: Vec<u8>,
@@ -116,7 +90,6 @@ pub struct CloudNoise {
 }
 
 impl CloudNoise {
-    /// Both volumes, every texel 0, for [`Self::insert`] to fill.
     pub fn empty() -> Self {
         let side = |volume: Volume| (volume.size() as usize).pow(3);
         Self {
@@ -125,7 +98,6 @@ impl CloudNoise {
         }
     }
 
-    /// Writes the slab a part's `record` holds into its volume.
     pub fn insert(&mut self, record: &[u8]) -> Result<(), String> {
         let mut reader = Reader::new(record, TAG)?;
         let identity = {
@@ -150,9 +122,6 @@ impl CloudNoise {
     }
 }
 
-/// What texel `index`'s neighbors before it, among `texels` (slabs of
-/// `size` by `size` layers), predict it to be: Lorenzo's predictor, the
-/// neighbors outside the slab reading 0.
 fn predicted(texels: &[u8], size: usize, index: usize) -> u8 {
     let (x, y, z) = (index % size, index / size % size, index / (size * size));
     let at = |dx: usize, dy: usize, dz: usize| {
@@ -171,7 +140,6 @@ fn predicted(texels: &[u8], size: usize, index: usize) -> u8 {
         .wrapping_add(at(1, 1, 1))
 }
 
-/// A part being made, a texel a work unit.
 pub(crate) struct NoisePart {
     part: Part,
     octaves: Octaves,
@@ -179,7 +147,6 @@ pub(crate) struct NoisePart {
 }
 
 impl NoisePart {
-    /// The part `identity` names, from its first texel.
     pub(crate) fn new(identity: &[u8]) -> Result<Self, String> {
         let part = Part::from_identity(identity)?;
         Ok(Self {
@@ -189,8 +156,6 @@ impl NoisePart {
         })
     }
 
-    /// Makes about `budget` texels, taking what it spends: the part's
-    /// record once done.
     pub(crate) fn advance(&mut self, budget: &mut u64) -> Option<Vec<u8>> {
         let size = self.part.volume.size() as usize;
         let total = self.part.texels();
@@ -229,7 +194,6 @@ impl NoisePart {
     }
 }
 
-/// A part's record, made whole.
 pub(crate) fn record(identity: &[u8]) -> Result<Vec<u8>, String> {
     let mut part = NoisePart::new(identity)?;
     let mut budget = u64::MAX;
@@ -237,30 +201,21 @@ pub(crate) fn record(identity: &[u8]) -> Result<Vec<u8>, String> {
         .ok_or_else(|| "a cloud noise slab stopped short".into())
 }
 
-/// The cells' feature points and the lattice's gradients a volume's noise
-/// reads, each octave's for every cell.
 struct Octaves {
-    /// Worley's octaves: 4 to 64 cells across.
     worley: Vec<Lattice>,
-    /// Perlin's octaves, the shapes' alone: periods 4 to 32.
     perlin: Vec<Lattice>,
 }
 
-/// An octave's cells across, and its vector for every cell, rows along x,
-/// then y, then z.
 struct Lattice {
     cells: i32,
     vectors: Vec<[f32; 3]>,
 }
 
 impl Lattice {
-    /// Worley's feature points of `cells` cells across: each cell's
-    /// offset within it.
     fn worley(cells: i32) -> Self {
         Self::of(cells, |cell| hash3(cell.map(|axis| axis + cells as u32)))
     }
 
-    /// Perlin's unit gradients of period `period`.
     fn perlin(period: i32) -> Self {
         Self::of(period, |cell| {
             let vector =
@@ -288,8 +243,6 @@ impl Lattice {
         Self { cells, vectors }
     }
 
-    /// The cells around `cell` along each axis, wrapped: the one before,
-    /// it, and the one after.
     fn around(&self, cell: [i32; 3]) -> [[usize; 3]; 3] {
         cell.map(|axis| [-1, 0, 1].map(|step| (axis + step).rem_euclid(self.cells) as usize))
     }
@@ -299,8 +252,6 @@ impl Lattice {
         self.vectors[(z * cells + y) * cells + x]
     }
 
-    /// Cellular noise at `p` (in the unit cube), repeating across it: 1 at
-    /// the feature points, falling to 0 a cell away.
     fn worley_at(&self, p: [f32; 3]) -> f32 {
         let scaled = p.map(|axis| axis * self.cells as f32);
         let cell = scaled.map(|axis| axis.floor() as i32);
@@ -321,8 +272,6 @@ impl Lattice {
         1.0 - clamp(nearest.sqrt(), 0.0, 1.0)
     }
 
-    /// Gradient noise at `p`, repeating across the unit cube, in about
-    /// [-1, 1].
     fn perlin_at(&self, p: [f32; 3]) -> f32 {
         let scaled = p.map(|axis| axis * self.cells as f32);
         let cell = scaled.map(|axis| axis.floor() as i32);
@@ -362,7 +311,6 @@ impl Octaves {
         }
     }
 
-    /// Perlin's billows carved by Worley's cells, at `p`.
     fn shape(&self, p: [f32; 3]) -> f32 {
         let [w4, w8, w16] = [0, 1, 2].map(|octave| self.worley[octave].worley_at(p));
         let low = w4 * 0.625 + w8 * 0.25 + w16 * 0.125;
@@ -376,8 +324,6 @@ impl Octaves {
         clamp(remap(billows, low - 1.0, 1.0, 0.0, 1.0), 0.0, 1.0)
     }
 
-    /// The wisps at `p`: three cellular octaves, of 4, 8 and 16 cells and
-    /// each twice and four times as fine, summed as one octave each.
     fn detail(&self, p: [f32; 3]) -> f32 {
         let [w4, w8, w16, w32, w64] =
             [0, 1, 2, 3, 4].map(|octave| self.worley[octave].worley_at(p));
@@ -392,7 +338,6 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-/// WGSL's `mix`.
 fn mix(a: f32, b: f32, t: f32) -> f32 {
     a * (1.0 - t) + b * t
 }
@@ -401,7 +346,6 @@ fn remap(value: f32, low: f32, high: f32, to_low: f32, to_high: f32) -> f32 {
     to_low + (value - low) * (to_high - to_low) / engine_math::max(high - low, 1.0e-5)
 }
 
-/// Three numbers in [0, 1) hashed from `p`.
 fn hash3(p: [u32; 3]) -> [f32; 3] {
     let mut v = p.map(|axis| axis.wrapping_mul(1_664_525).wrapping_add(1_013_904_223));
     let mix = |v: &mut [u32; 3]| {

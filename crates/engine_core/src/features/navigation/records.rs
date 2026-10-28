@@ -1,47 +1,28 @@
-//! The records walks read, held for every search: tiles' grounds (from the
-//! tiles' records) and their portals of each gait's walk graph, asked of
-//! the host as searches want them and kept for the searches after, the
-//! least recently read going first past a count.
-
 use super::*;
 
-/// Grounds and portals kept at most once no search reads them, beyond
-/// which the least recently read go.
 const GROUNDS_KEPT: usize = 64;
 const PORTALS_KEPT: usize = 8192;
-/// Ticks a record that failed waits before it is asked for again; searches
-/// reading it meanwhile find no walk.
 const RETRY_AFTER: u64 = 120;
-/// Tiles' records made grounds a tick at most: each is a whole tile
-/// decoded.
 const GROUNDS_PER_TICK: usize = 1;
 
-/// A record as walks hold it: asked for, here (with the count of reads
-/// when it was last read), or failed at a tick.
 enum Kept<T> {
     Asked,
     Here(Arc<T>, u64),
     Failed(u64),
 }
 
-/// A record asked for: its key, its job and what it is for: a tile's
-/// ground, made from the tile's record over its terrain's layers, or a
-/// tile's portals.
 struct Asked {
     record: RecordKey,
     id: JobId,
     ground: Option<Arc<WalkedTerrain>>,
 }
 
-/// What a search's wants came to: some held now, none yet, or one failed.
 pub(super) enum Resolved {
     Progress,
     Waiting,
     Failed,
 }
 
-/// The records walks read, by key, and how many reads and arrivals there
-/// were: the least recently read go by it, whether ticks pass or not.
 #[derive(Default)]
 pub(super) struct WalkRecords {
     grounds: BTreeMap<RecordKey, Kept<WalkGround>>,
@@ -51,14 +32,10 @@ pub(super) struct WalkRecords {
 }
 
 impl WalkRecords {
-    /// Grounds and portals held now.
     pub(super) fn held(&self) -> (u32, u32) {
         (here(&self.grounds), here(&self.portals))
     }
 
-    /// Takes what `jobs` handed back of the records asked for at tick
-    /// `tick`: every tile's portals, and tiles' records made grounds up to
-    /// [`GROUNDS_PER_TICK`]; what failed counts in `failures`.
     pub(super) fn take(&mut self, jobs: &mut Jobs, tick: u64, failures: &mut JobFailures) {
         let mut grounds = 0;
         for asked in std::mem::take(&mut self.asked) {
@@ -97,8 +74,6 @@ impl WalkRecords {
         forget(&mut self.portals, PORTALS_KEPT, tick);
     }
 
-    /// Hands `running` the records its search wants that are here, asking
-    /// `slots` for those not asked for yet, at tick `tick`.
     pub(super) fn resolve(
         &mut self,
         running: &mut Running,
@@ -151,9 +126,6 @@ impl WalkRecords {
         }
     }
 
-    /// Asks `slots` for the portals of the tiles `running`'s search likely
-    /// reads that it has not asked for yet, those neither here nor asked
-    /// for, as far as they admit.
     pub(super) fn ask_ahead(
         &mut self,
         running: &mut Running,
@@ -178,9 +150,6 @@ impl WalkRecords {
         }
     }
 
-    /// Asks `slots` for the record of `job` (its kind, input and key) at
-    /// `priority`, a ground made over `ground`'s terrain where given;
-    /// whether a slot admitted it.
     fn ask(
         &mut self,
         slots: &mut Option<JobBudget<'_>>,
@@ -204,7 +173,6 @@ impl WalkRecords {
         true
     }
 
-    /// Drops every record, the jobs still making any cancelled.
     pub(super) fn clear(&mut self, jobs: Option<&mut Jobs>) {
         if let Some(jobs) = jobs {
             for asked in &self.asked {
@@ -215,8 +183,6 @@ impl WalkRecords {
     }
 }
 
-/// What a search found of a record it wants: here (and handed over),
-/// asked for, failed a while ago, or neither.
 enum Found<T> {
     Here(T),
     Asked,
@@ -238,7 +204,6 @@ impl<T> Found<T> {
     }
 }
 
-/// How many of `records` are here.
 fn here<T>(records: &BTreeMap<RecordKey, Kept<T>>) -> u32 {
     records
         .values()
@@ -246,8 +211,6 @@ fn here<T>(records: &BTreeMap<RecordKey, Kept<T>>) -> u32 {
         .count() as u32
 }
 
-/// Record `record` of `records` as a search reads it at tick `tick`, the
-/// read counted in `reads`.
 fn read<T>(
     records: &mut BTreeMap<RecordKey, Kept<T>>,
     record: RecordKey,
@@ -265,8 +228,6 @@ fn read<T>(
     }
 }
 
-/// A record made at tick `tick` as kept: here, read last as the latest of
-/// `reads`, or failed, counted in `failures`.
 fn kept<T>(
     made: Result<T, String>,
     (tick, reads): (u64, &mut u64),
@@ -284,8 +245,6 @@ fn kept<T>(
     }
 }
 
-/// Keeps `most` of `records` here, the least recently read going first,
-/// and forgets those that failed long enough ago at tick `tick`.
 fn forget<T>(records: &mut BTreeMap<RecordKey, Kept<T>>, most: usize, tick: u64) {
     records.retain(|_, kept| !matches!(kept, Kept::Failed(at) if tick >= *at + RETRY_AFTER));
     let mut here: Vec<(u64, RecordKey)> = records

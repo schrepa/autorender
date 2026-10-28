@@ -1,23 +1,14 @@
-//! What hosts ask a renderer between frames: its GPU and capacities, what
-//! is resident, how meshes draw (levels of detail, impostors), whether
-//! pipelines still compile, and its profiling captures.
-
 use super::*;
 
 impl Renderer {
-    /// The GPU the renderer draws on.
     pub fn adapter(&self) -> &crate::AdapterInfo {
         &self.adapter
     }
 
-    /// Terrain tiles the device's texture array holds.
     pub fn terrain_tile_capacity(&self) -> u32 {
         self.display.max_layers
     }
 
-    /// What the device samples of cooked textures: BC7 where it samples
-    /// `texture-compression-bc`, else ASTC 4 × 4 where it samples
-    /// `texture-compression-astc`, else BC7's decompressed.
     pub fn texture_sampling(&self) -> engine_core::TextureSampling {
         use engine_core::{TextureFamily, TextureSampling};
         let features = self.device.features();
@@ -30,69 +21,46 @@ impl Renderer {
         }
     }
 
-    /// The display's size, in physical pixels: the size asked for, fitted
-    /// within the device's largest texture; `None` while a view without area
-    /// suspends drawing.
     pub fn view_size(&self) -> Option<(u32, u32)> {
         (!self.display.suspended).then(|| self.display.size().pixels())
     }
 
-    /// The size the last frame drew at within the display, in physical
-    /// pixels ([`Self::set_render_size`]); `None` while a view without area
-    /// suspends drawing.
     pub fn render_size(&self) -> Option<(u32, u32)> {
         (!self.display.suspended).then(|| self.display.region.render.pixels())
     }
 
-    /// Whether the device times frames' GPU work: two timestamps a frame,
-    /// read back a few frames late ([`Self::take_frame_time`]).
     pub fn times_frames(&self) -> bool {
         self.display.times_frames()
     }
 
-    /// The GPU time in milliseconds of the last frame read back since the
-    /// last call, and the render size it drew at; `None` where the device
-    /// times no work, or nothing arrived since.
     pub fn take_frame_time(&self) -> Option<(f64, (u32, u32))> {
         self.display.take_frame_time()
     }
 
-    /// Start a bounded GPU capture. Allocate its reusable storage outside frame work.
-    /// The caller supplies the matching CPU capture ID.
     #[cfg(feature = "profiling")]
     pub fn profile_begin(&mut self, capture_id: u64) {
         self.profiler.begin(&self.device, capture_id);
     }
 
-    /// Consume completed asynchronous readbacks without waiting or submitting work.
     #[cfg(feature = "profiling")]
     pub fn profile_poll(&mut self) {
         self.profiler.poll();
     }
 
-    /// Bounded metadata and completeness counters, without copying sample arrays.
     #[cfg(feature = "profiling")]
     pub fn profile_status(&self) -> serde_json::Value {
         self.profiler.status()
     }
 
-    /// Export GPU durations for the retained capture. Late maps may settle after
-    /// CPU capture stops; call again after yielding to the browser event loop.
     #[cfg(feature = "profiling")]
     pub fn profile_report(&mut self) -> serde_json::Value {
         self.profiler.report()
     }
 
-    /// Whether this immutable texture currently has uploaded GPU storage.
-    /// Skipped frames do not upload missing sources; unused handles retire even
-    /// when suspended. Device loss requires replacing this renderer.
     pub fn is_texture_resident(&self, handle: TextureHandle) -> bool {
         self.materials.is_texture_resident(handle)
     }
 
-    /// Mesh `handle` as uploaded: whether with skin joints, and its coarser
-    /// levels of detail, finest first, each one's index count and largest
-    /// deviation in mesh units. None before it uploads.
     pub fn mesh_levels(&self, handle: MeshHandle) -> Option<(bool, Vec<(u32, f32)>)> {
         let mesh = self.meshes.get(&handle)?;
         let levels = mesh
@@ -103,23 +71,14 @@ impl Renderer {
         Some((mesh.skinned, levels))
     }
 
-    /// The level of detail the slot `slot` drew at, read back a few frames
-    /// late: 0 the mesh, 1 and 2 its simplifications, 3 its impostor card.
-    /// Asking watches the slot; None until a GPU-culled frame with levels of
-    /// detail on draws it after that.
     pub fn drawn_level(&self, slot: u32) -> Option<u32> {
         self.gpu_presentation.watch(slot);
         match self.gpu_presentation.watched() {
-            // States carry their level once set; zero is undrawn.
             Some((watched, state)) if watched == slot && state & LOD_STATE != 0 => Some(state & 3),
             _ => None,
         }
     }
 
-    /// Whether an impostor card of mesh `mesh` drawn with `material` is
-    /// resident: loaded from its record or baked. None where it never
-    /// draws as one: before upload, and for skinned meshes and those of too
-    /// few triangles.
     pub fn impostor_resident(&self, mesh: MeshHandle, material: MaterialHandle) -> Option<bool> {
         let gpu = self.meshes.get(&mesh)?;
         if gpu.skinned || (gpu.index_count as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {
@@ -128,49 +87,29 @@ impl Renderer {
         Some(self.impostors.atlas.contains((mesh, Some(material))))
     }
 
-    /// Why the latest failed virtual geometry page read did, if any failed
-    /// (frame statistics' `virtual_geometry.failed_pages` counts them).
     pub fn latest_page_failure(&self) -> Option<&str> {
         self.virtual_draws.pass.page_failure()
     }
 
-    /// Whether pipelines created by earlier frames may still be compiling:
-    /// the GPU has not yet completed the last frame that created some.
     pub fn pipelines_compiling(&self) -> bool {
-        // Native interfaces report finished work, compiles among it, when
-        // polled.
         crate::platform::poll(&self.device);
         self.pipeline_counts.compiling()
     }
 
-    /// The scene's pipeline list: a record of every pipeline the renderer
-    /// created, which later sessions create up front
-    /// ([`Self::create_listed_pipelines`]).
     pub fn pipeline_list(&self) -> Vec<u8> {
         self.pipeline_counts.list()
     }
 
-    /// Creates every pipeline the pipeline list `record` names that the
-    /// device can create and has yet to, up front; from then on the
-    /// renderer counts those it creates that the list lacks
-    /// ([`Self::pipelines_listed`]). Returns how many it created.
-    ///
-    /// # Errors
-    ///
-    /// When `record` is not a pipeline list.
     pub fn create_listed_pipelines(&mut self, record: &[u8]) -> Result<u32, RenderError> {
         self.pipeline_counts
             .create_listed(record)
             .map_err(|error| render_error("The pipeline list does not read", error))
     }
 
-    /// What the scene's pipeline list did: the pipelines it created up
-    /// front, and those the renderer created that it lacked.
     pub fn pipelines_listed(&self) -> (u32, u32) {
         self.pipeline_counts.listed()
     }
 
-    /// The meshes and textures resident on the GPU.
     pub(super) fn residency(&self) -> Residency {
         let (textures, texture_bytes, _) = self.materials.texture_totals();
         Residency {
@@ -181,7 +120,6 @@ impl Renderer {
         }
     }
 
-    /// A skipped frame's stats: no work, and the current residency.
     pub(super) fn residency_stats(&self) -> RenderStats {
         let residency = self.residency();
         RenderStats {
@@ -195,7 +133,6 @@ impl Renderer {
     }
 }
 
-/// Meshes and textures resident on the GPU, and their bytes.
 pub(super) struct Residency {
     pub(super) meshes: u32,
     pub(super) mesh_bytes: u64,

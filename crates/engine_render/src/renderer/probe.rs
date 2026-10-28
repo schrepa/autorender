@@ -1,12 +1,3 @@
-//! The pixel probe of development sessions: what drew one pixel and how it
-//! looks, read back from the next two frames once armed. The first draws
-//! into the debug views' targets whatever the settings show, and keeps what
-//! drew the pixel, the fragments that covered it and its depth (water as
-//! the view shown draws it: wherever it lies in the water's views, where it
-//! covers at least half the pixel in the others); the second
-//! is shaded whatever they show, and keeps its color before screen effects
-//! and as displayed. Frames without an armed probe copy nothing.
-
 use super::frame::FrameState;
 use super::*;
 use crate::gpu_layouts::constants::{
@@ -25,68 +16,43 @@ use engine_core::{
 };
 use std::{cell::RefCell, rc::Rc};
 
-/// Where each texel lands in the read-back: copies start at multiples of
-/// 256 bytes, which every format's copies allow. The depth target comes
-/// last and whole, as depth formats copy no part of a texture, its rows
-/// [`ROW_ALIGNMENT`] bytes apart.
 const IDS: u64 = 0;
 const COUNT: u64 = 256;
 const SCENE: u64 = 512;
 const CANVAS: u64 = 768;
 const TERRAIN: u64 = 1024;
 const DEPTH: u64 = 1280;
-/// The bytes buffer copies of several rows start each row at a multiple of.
 const ROW_ALIGNMENT: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
-/// A read-back's bytes once mapped, or why the map failed, shared with
-/// its map's callback.
 type Mapped = Rc<RefCell<Option<Result<Vec<u8>, String>>>>;
 
-/// What an armed probe waits for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
-    /// A frame of the debug views' targets.
     Debug,
-    /// A shaded frame.
     Shaded,
-    /// The shaded frame's submission, after which its read-back maps.
     Submitted,
-    /// The read-back's map.
     Mapping,
 }
 
-/// A probe armed at a pixel: its read-back and what the frames copied.
 struct Armed {
     pixel: (u32, u32),
     stage: Stage,
     buffer: wgpu::Buffer,
-    /// The view's size when armed, which the debug frame's depth target
-    /// must have to fit the read-back, and the bytes of each of its rows
-    /// there.
     armed_size: (u32, u32),
     depth_row: u32,
-    /// The debug frame's size, and its view and projection, which place
-    /// its depth.
     size: (u32, u32),
     view_projection: Mat4,
-    /// Whether the shaded frame copied its scene target's texel and the
-    /// canvas's, and whether the canvas stores blue first.
     scene: bool,
     canvas: Option<bool>,
-    /// The mapped bytes, once the map finished; why it failed otherwise.
     mapped: Mapped,
 }
 
-/// The pixel probe: idle, or armed at a pixel.
 #[derive(Default)]
 pub(super) struct Probe {
     armed: Option<Armed>,
 }
 
 impl Probe {
-    /// Whether the next frame draws into the debug views' targets
-    /// (`Some(true)`), is shaded (`Some(false)`) or follows the settings
-    /// (`None`).
     pub(super) fn forces(&self) -> Option<bool> {
         match self.armed.as_ref()?.stage {
             Stage::Debug => Some(true),
@@ -97,10 +63,6 @@ impl Probe {
 }
 
 impl Renderer {
-    /// Arms the pixel probe at `pixel`, in physical pixels from the view's
-    /// top left: the next frame draws into the debug views' targets and the
-    /// one after is shaded, whatever the settings show, each keeping what
-    /// [`Self::probe_result`] then reads. Arming again starts over.
     pub fn arm_probe(&mut self, pixel: (u32, u32)) {
         let armed_size = self.display.size().pixels();
         let depth_row = (armed_size.0 * 4).next_multiple_of(ROW_ALIGNMENT);
@@ -124,9 +86,6 @@ impl Renderer {
         });
     }
 
-    /// What the armed probe found, once both its frames drew and its
-    /// read-back mapped, after which the probe is idle; `None` while it
-    /// waits. Native renderers wait for the GPU here.
     pub fn probe_result(&mut self) -> Option<Result<PixelProbe, RenderError>> {
         if self.display.probe.armed.as_ref()?.stage != Stage::Mapping {
             return None;
@@ -152,11 +111,6 @@ impl Renderer {
         )
     }
 
-    /// Copies what the armed probe keeps of this frame into its read-back:
-    /// of a debug frame what drew the pixel, its fragments, terrain's
-    /// numbers and the depth; of a
-    /// shaded one its scene target's texel and, where the canvas allows
-    /// copies, the canvas's.
     pub(super) fn encode_probe(
         &mut self,
         state: &FrameState<'_>,
@@ -174,8 +128,6 @@ impl Renderer {
         let all = wgpu::TextureAspect::All;
         match armed.stage {
             Stage::Debug => {
-                // Without the debug views (disabled), the pixel reads as
-                // drawn by nothing.
                 if state.kind.debug
                     && let Some(debug) = self.features.debug_view.get()
                 {
@@ -184,8 +136,6 @@ impl Renderer {
                     copy_texel(encoder, (count, all), pixel, (&armed.buffer, COUNT));
                     copy_texel(encoder, (terrain, all), pixel, (&armed.buffer, TERRAIN));
                 }
-                // The view resized since the probe was armed leaves the
-                // depth out.
                 if size.pixels() == armed.armed_size {
                     copy_depth(encoder, &self.depth.texture, size.pixels(), armed);
                 }
@@ -214,8 +164,6 @@ impl Renderer {
         }
     }
 
-    /// Maps the armed probe's read-back once the frame copying the last of
-    /// it is submitted.
     pub(super) fn map_probe(&mut self) {
         let Some(armed) = self.display.probe.armed.as_mut() else {
             return;
@@ -247,8 +195,6 @@ impl Renderer {
     }
 }
 
-/// One texel at `pixel` of `texture` (its `aspect`) copied to `offset` of
-/// `buffer`.
 fn copy_texel(
     encoder: &mut wgpu::CommandEncoder,
     (texture, aspect): (&wgpu::Texture, wgpu::TextureAspect),
@@ -282,8 +228,6 @@ fn copy_texel(
     );
 }
 
-/// The whole depth `texture`, `size` texels, copied to the depth rows of
-/// `armed`'s read-back.
 fn copy_depth(
     encoder: &mut wgpu::CommandEncoder,
     texture: &wgpu::Texture,
@@ -313,7 +257,6 @@ fn copy_depth(
     );
 }
 
-/// The word at byte `offset` of `bytes`.
 fn word(bytes: &[u8], offset: u64) -> u32 {
     let start = offset as usize;
     bytes.get(start..start + 4).map_or(0, |word| {
@@ -321,7 +264,6 @@ fn word(bytes: &[u8], offset: u64) -> u32 {
     })
 }
 
-/// A half float's bits as an `f32`.
 fn half(bits: u16) -> f32 {
     let sign = if bits & 0x8000 == 0 { 1.0 } else { -1.0 };
     let exponent = i32::from((bits >> 10) & 0x1f);
@@ -333,8 +275,6 @@ fn half(bits: u16) -> f32 {
     }
 }
 
-/// The unit normal packed as two signed fractions of its octahedral
-/// coordinates (`meshes/debug.wgsl`).
 fn unpacked_normal(packed: u32) -> [f32; 3] {
     let snorm = |bits: u32| max(f32::from(bits as u16 as i16) / 32767.0, -1.0);
     let (x, y) = (snorm(packed & 0xffff), snorm(packed >> 16));
@@ -346,7 +286,6 @@ fn unpacked_normal(packed: u32) -> [f32; 3] {
     [x / length, y / length, z / length]
 }
 
-/// The kind a debug target's record names.
 fn drawn_kind(kind: u32) -> Option<DrawnKind> {
     Some(match kind {
         DEBUG_KIND_MESH => DrawnKind::Mesh,
@@ -364,7 +303,6 @@ fn drawn_kind(kind: u32) -> Option<DrawnKind> {
     })
 }
 
-/// The sun's lookup a debug target's record names, with its level.
 fn sun_lookup(source: u32) -> (SunLookup, u32) {
     match source {
         DEBUG_SUN_HORIZON => (SunLookup::Horizon, 0),
@@ -376,9 +314,6 @@ fn sun_lookup(source: u32) -> (SunLookup, u32) {
     }
 }
 
-/// A terrain pixel's numbers (`meshes/terrain_debug.wgsl`): its draw's
-/// `record`, `object` and `detail` words, then the terrain target's texel in
-/// `bytes`.
 fn terrain_probe((record, object, detail): (u32, u32, u32), bytes: &[u8]) -> TerrainProbe {
     let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
     let (tiles, ids) = (word(bytes, TERRAIN), word(bytes, TERRAIN + 4));
@@ -405,8 +340,6 @@ fn terrain_probe((record, object, detail): (u32, u32, u32), bytes: &[u8]) -> Ter
     }
 }
 
-/// The reach a water pixel's top byte names: none for 0, else one more
-/// than the reach's value.
 fn water_reach(code: u32) -> Option<WaterReach> {
     [
         Reach::Pool,
@@ -420,9 +353,6 @@ fn water_reach(code: u32) -> Option<WaterReach> {
     .map(WaterReach::from)
 }
 
-/// The meters across a water body a water pixel's span byte `code` names
-/// (`meshes/debug.wgsl`'s `debug_span_code`): none for 0, else its step on a
-/// logarithmic scale from `WATER_SPAN_LEAST` (1) to `WATER_SPAN_MOST`.
 fn water_span(code: u8) -> f32 {
     if code == 0 {
         return 0.0;
@@ -431,11 +361,6 @@ fn water_span(code: u8) -> f32 {
         * (WATER_SPAN_MOST / WATER_SPAN_LEAST).powf(f32::from(code - 1) / DEBUG_SPAN_STEPS)
 }
 
-/// A water pixel's numbers (`meshes/debug.wgsl`'s `debug_water`): its
-/// draw's `object` word (its depth and speed, half floats) and `detail`
-/// word (its span's code and its roughness, a byte each), then the terrain
-/// target's texel in `bytes` (its Froude number and its eddies', half
-/// floats; its turbulence, white water and reach).
 fn water_probe((object, detail): (u32, u32), bytes: &[u8]) -> WaterProbe {
     let (froudes, state) = (word(bytes, TERRAIN), word(bytes, TERRAIN + 4));
     let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
@@ -456,7 +381,6 @@ fn water_probe((object, detail): (u32, u32), bytes: &[u8]) -> WaterProbe {
 }
 
 impl Armed {
-    /// What the read-back `bytes` hold of the pixel.
     fn result(&self, bytes: &[u8]) -> PixelProbe {
         let record = word(bytes, IDS);
         let kind = drawn_kind(record & 0xf);
@@ -464,7 +388,6 @@ impl Armed {
         let (lookup, sun_index) = sun_lookup(sun & (DEBUG_SHADOWED - 1));
         let object = word(bytes, IDS + 4);
         let detail = word(bytes, IDS + 8);
-        // The texel the debug frame's copies read: the pixel, in the view.
         let (x, y) = (
             u64::from(self.pixel.0.min(self.size.0.saturating_sub(1))),
             u64::from(self.pixel.1.min(self.size.1.saturating_sub(1))),
@@ -472,7 +395,6 @@ impl Armed {
         let depth = f32::from_bits(word(bytes, DEPTH + y * u64::from(self.depth_row) + x * 4));
         let fragments = half(word(bytes, COUNT) as u16);
         let (width, height) = (self.size.0.max(1) as f32, self.size.1.max(1) as f32);
-        // The pixel's center in clip space, at its depth.
         let clip = Vec4::new(
             (self.pixel.0 as f32 + 0.5) / width * 2.0 - 1.0,
             1.0 - (self.pixel.1 as f32 + 0.5) / height * 2.0,

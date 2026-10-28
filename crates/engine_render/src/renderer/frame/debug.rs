@@ -1,14 +1,7 @@
-//! The debug views' part of a frame: their pass and targets, what the
-//! features prepare for frames showing one, and the records their draws
-//! read.
-
 use super::*;
 use crate::debug_view::{DebugViewFrame, DebugViewPass};
 
 impl<'s> Features<'s> {
-    /// What a frame showing a debug view prepares: no lights, screen
-    /// effects, refraction, transparent surfaces or decals; the features
-    /// keep what they made.
     pub(super) fn debug(
         occlusion: Option<(u32, u32, u32)>,
         gpu_prepared: Option<GpuPrepared>,
@@ -27,9 +20,6 @@ impl<'s> Features<'s> {
 }
 
 impl Renderer {
-    /// Whether the frame of `snapshot` draws into the debug views' targets:
-    /// while its settings show a view, unless the feature is disabled; an
-    /// armed pixel probe chooses for its frames.
     pub(super) fn shows_debug_view(&self, snapshot: &RenderSnapshot) -> bool {
         let showing = snapshot.environment.debug_view.showing();
         #[cfg(feature = "dev")]
@@ -37,7 +27,6 @@ impl Renderer {
         showing && !self.features.debug_view.disabled()
     }
 
-    /// The debug view's pass and targets, in frames showing one.
     pub(super) fn prepare_debug_view(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -58,7 +47,6 @@ impl Renderer {
         )
     }
 
-    /// The debug view's records, in frames showing one.
     pub(in crate::renderer) fn debug_records(
         &self,
         state: &FrameState<'_>,

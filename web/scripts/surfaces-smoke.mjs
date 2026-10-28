@@ -1,12 +1,3 @@
-/**
- * Surfaces: a fixture with a decal, a refracting glass box, a
- * tinted box and a reflection probe. Frames draw the decal and refract;
- * the components inspect as authored; a merged environment control keeps
- * the fields it omits and answers with each section before and after; a
- * decal budget drops the farther decal; benchmarks sample; requests that
- * break their types answer with the field at fault, and the catalog of
- * error codes describes every code.
- */
 // @ts-check
 import assert from "node:assert/strict";
 import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
@@ -45,7 +36,6 @@ async function capture(name) {
   return bytes.toString("base64");
 }
 
-/** Component `component` of authored entity `entity`. */
 async function inspect(entity, component) {
   return (await command("inspect", { entity, component })).result.entity.components[component];
 }
@@ -55,7 +45,6 @@ try {
   await openPaused(page, url);
   const checks = [];
 
-  // Frames draw the decal and refract through the glass.
   const rendering = (await command("render")).result.rendering;
   assert.equal(rendering.decals.drawn, 2, `the decals draw: ${JSON.stringify(rendering.decals)}`);
   assert.equal(rendering.decals.invalid, 0);
@@ -63,7 +52,6 @@ try {
   assert.ok(Number.isInteger(rendering.frame) && Number.isInteger(rendering.tick), "stats name their frame and tick");
   checks.push({ check: "draws", decals: rendering.decals, refraction: rendering.refraction });
 
-  // The components inspect as authored.
   const decal = await inspect("mark", "Decal");
   assert.equal(decal.material, "mark");
   assert.equal(decal.material_alive, true);
@@ -75,7 +63,6 @@ try {
   assert.ok(Array.isArray(camera.position), `the camera inspects: ${JSON.stringify(camera)}`);
   checks.push({ check: "inspects", decal, probe });
 
-  // A merged control keeps what it omits and answers before and after.
   const withDecal = await capture("decal");
   const merged = (await command("environment", { merge: true, decals: { max_decals: 1 } })).result;
   assert.deepEqual(merged.environment_changed, ["decals"]);
@@ -93,11 +80,9 @@ try {
   await command("environment", { decals: { enabled: true } });
   checks.push({ check: "merged environment", pixels: changed });
 
-  // Benchmarks sample frames.
   const benchmark = (await command("benchmark", { mode: "render", warmup: 1, samples: 3 })).result.benchmark;
   assert.equal(benchmark.samples, 3, `benchmark: ${JSON.stringify(benchmark).slice(0, 300)}`);
 
-  // Requests breaking their types name the field; the catalog has every code.
   const unknown = await command("environment", { decals: { max_decal: 1 } }, false);
   assert.equal(unknown.error.code, "unknown_field", JSON.stringify(unknown.error));
   assert.equal(unknown.error.path, "$.decals.max_decal");

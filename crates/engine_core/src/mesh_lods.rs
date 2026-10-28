@@ -1,30 +1,17 @@
-//! Meshes' levels of detail, which the cook makes offline and runtimes
-//! only load: every mesh the library takes without levels of its own asks
-//! hosts for its levels' record, keyed by the code making them
-//! (`engine_lodbuild`, which no runtime links) and the mesh's content, and
-//! draws once the answer is here, with them, or with none where no pack
-//! or store holds them. A cooking session asks for each as the job making
-//! it, which the cook's host runs where its packs lack the record.
-
 use bevy_ecs::prelude::*;
 use engine_assets::{AssetLibrary, LOD_RECORD, MeshHandle, MeshLods, lod_input};
 
 use crate::{Cooking, JobId, Jobs, RecordKey, VIEW_JOBS, content_hash, job_priority};
 
-// `SOURCE` of the code making the levels' records, which keys them.
 mod maker {
     include!(concat!(env!("OUT_DIR"), "/engine_lodbuild_source.rs"));
 }
 
-/// The levels' records asked for: each mesh's, and the lookup or job under
-/// way.
 #[derive(Resource, Default)]
 pub(crate) struct MeshLevels {
     asked: Vec<(MeshHandle, JobId)>,
 }
 
-/// The key of the levels' record of the mesh whose level job's input is
-/// `input` ([`lod_input`]).
 fn lod_record(input: &[u8]) -> RecordKey {
     RecordKey::new(
         &maker::SOURCE,
@@ -33,9 +20,6 @@ fn lod_record(input: &[u8]) -> RecordKey {
     )
 }
 
-/// Each rendered frame, as the world follows the camera: asks for the
-/// levels of the meshes the library took since, and gives meshes those that
-/// came: decoded where they suit their mesh, none otherwise.
 pub(crate) fn settle(world: &mut World) {
     let cooking = world.contains_resource::<Cooking>();
     let awaiting = world.resource_mut::<AssetLibrary>().take_awaiting_lods();
@@ -63,7 +47,6 @@ pub(crate) fn settle(world: &mut World) {
                 let lods = output
                     .ok()
                     .and_then(|bytes| MeshLods::from_bytes(&bytes).ok());
-                // Levels that do not suit the mesh leave it without.
                 if assets.settle_lods(handle, lods).is_err() {
                     let _ = assets.settle_lods(handle, None);
                 }

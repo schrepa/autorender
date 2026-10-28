@@ -1,23 +1,15 @@
-//! Authored scene files in place of a workload: the page loads a scene
-//! source and the files it references, development tools save and reload
-//! it by revision, and an entity tagged `player` walks with the movement
-//! input, blocked by authored colliders, so fixtures can move something.
-
 use engine::ErrorCode;
 use engine::prelude::*;
 use engine::scene::{SceneError, SceneFiles};
 
 use crate::FrameMetrics;
 
-/// The active authored scene, owned across reloads.
 pub struct AuthoredScene {
     instance: Option<SceneInstance>,
     player: Option<Entity>,
 }
 
 impl AuthoredScene {
-    /// An engine for authored scenes with every feature but those of
-    /// `without`, with the scene loaded.
     pub fn new(
         source: &str,
         files: &SceneFiles,
@@ -28,7 +20,6 @@ impl AuthoredScene {
             .app
             .add_plugins(EnginePlugins::without(without.iter().copied()))
             .add_plugins(PlayerPlugin);
-        // Frames record the same metrics as workloads' frames.
         engine.app.init_resource::<FrameMetrics>();
         let mut scene = Self {
             instance: None,
@@ -38,9 +29,6 @@ impl AuthoredScene {
         Ok((engine, scene))
     }
 
-    /// Replaces the scene with `source`; a failed parse, validation or
-    /// asset allocation keeps the current one. `files` holds the image and
-    /// buffer files the scene references.
     pub fn reload(
         &mut self,
         engine: &mut Engine,
@@ -94,13 +82,10 @@ impl AuthoredScene {
         self.instance.as_ref().map_or("", SceneInstance::id)
     }
 
-    /// The active scene, for development tools.
     pub fn instance(&self) -> Option<&SceneInstance> {
         self.instance.as_ref()
     }
 
-    /// The scene's ID, revision and frame, the player's position and the
-    /// asset library's counts, as a JSON object.
     pub fn progress(&self, engine: &Engine) -> serde_json::Value {
         let world = engine.app.world();
         let player = self
@@ -117,7 +102,6 @@ impl AuthoredScene {
         })
     }
 
-    /// Puts the player back where the scene placed it.
     pub fn reset_player(&self, engine: &mut Engine) {
         if let Some(entity) = self.player {
             let world = engine.app.world_mut();
@@ -127,7 +111,6 @@ impl AuthoredScene {
                 if let Some(mut player) = world.get_mut::<Player>(entity) {
                     player.vertical_speed = 0.0;
                 }
-                // A teleport: the presented subtree starts over.
                 reset_interpolation(world, entity);
             }
         }
@@ -135,8 +118,6 @@ impl AuthoredScene {
     }
 }
 
-/// The authored scene's player's movement queries that failed, which stop
-/// it rather than move it through geometry.
 #[derive(Resource, Default, Clone, Copy, Debug, serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PlayerWalk {
@@ -167,8 +148,6 @@ struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        // The player walks blocked by colliders: without collision,
-        // scenes have none.
         if !app.is_plugin_added::<CollisionPlugin>() {
             return;
         }
@@ -178,11 +157,8 @@ impl Plugin for PlayerPlugin {
     }
 }
 
-/// Colliders the player stands on and walks into.
 const WORLD_LAYER: u32 = 1;
 
-/// Moves the player with the movement input and gravity, one axis at a
-/// time, as far as a shape cast against the world's colliders allows.
 fn walk(
     time: Res<FixedTime>,
     input: Res<InputState>,
@@ -226,7 +202,6 @@ fn walk(
                         player.vertical_speed = 0.0;
                     }
                 }
-                // An incomplete query never moves through geometry.
                 Err(_) => {
                     errors.collision_errors = errors.collision_errors.saturating_add(1);
                     player.vertical_speed = 0.0;

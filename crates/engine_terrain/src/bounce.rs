@@ -1,32 +1,3 @@
-//! A terrain's bounce light as transfer: what each probe over its ground
-//! sees of that ground, made once from its heights and its surface's rules
-//! (the job [`crate::jobs::BounceJob`]) and kept as a record. Nothing in it
-//! depends on the sun or the sky: renderers light the ground with them every
-//! frame, then gather through each probe's bins the light the ground sends
-//! it, as the low-order spherical harmonics shading reads.
-//!
-//! Probes stand over a grid of columns across the terrain, `probes` along
-//! each side, in two layers: [`LOW_PROBE`] and [`HIGH_PROBE`] meters above
-//! the ground. Columns pair into blocks of two by two. Where the ground
-//! around a block rises above it (valleys, hollows, the foot of slopes), so
-//! that what its probes see changes quickly from one column to the next,
-//! each of its columns holds probes of its own; elsewhere one probe at the
-//! block's middle stands for all four. A probe's view divides into [`BINS`]
-//! bins: a cap below, three bands about the horizon in [`SECTORS`]
-//! directions each, and a cap above. Each bin holds the share of it the
-//! ground fills and how far away that ground lies on average, where
-//! renderers read the ground's light.
-//!
-//! The ground's surface comes along: at every texel of a grid half as fine
-//! as the columns, its two strongest materials and their blend, as its rules
-//! choose them, and its normal. Renderers light it there in the materials'
-//! colors as they draw them.
-//!
-//! Views come from walks: along each of `AZIMUTHS` directions from a column,
-//! the ground's rise per meter seen from each layer's probe; each time the
-//! horizon walked so far rises, the sights between the old horizon and the
-//! new meet the ground there. Beyond the terrain its edge carries on.
-
 use std::f32::consts::TAU;
 
 use engine_math::{clamp, max, min, sin_cos};
@@ -36,67 +7,35 @@ use crate::gpu::control_at;
 use crate::lighting::{Ground, normalized, unorm};
 use crate::{BiomeRules, Layers, SampleShape};
 
-/// The probes' heights above the ground, in meters: the lower where the
-/// ground's own surfaces and what stands on it read their light, the upper
-/// above trees and roofs.
 pub const LOW_PROBE: f32 = 1.5;
 pub const HIGH_PROBE: f32 = 24.0;
 
-/// Layers of probes over each column.
 pub const LAYERS: usize = 2;
 
-/// Directions about a probe its bands divide into: sector `k` spans an
-/// eighth of a turn about `k` eighths from +x toward +z.
 pub const SECTORS: usize = 8;
 
-/// Bins of a probe's view: the cap below, the three bands of [`SECTORS`]
-/// each from low to high, the cap above.
 pub const BINS: usize = 2 + 3 * SECTORS;
 
-/// The sines of the elevations bounding the bands: the caps lie beyond
-/// [`STEEP`] (30 degrees) below and above, the middle band within
-/// [`LEVEL`] (8 degrees) of level.
 pub const STEEP: f32 = 0.5;
 pub const LEVEL: f32 = 0.14;
 
-/// Bytes a probe takes: for each layer and bin, the share of it the ground
-/// fills (255 whole) and the code of its distance.
 pub const PROBE_BYTES: usize = LAYERS * BINS * 2;
 
-/// A distance code `c` stands for [`NEAREST`] times 2 to the `c` over
-/// [`DISTANCE_STEPS`] meters.
 pub const NEAREST: f32 = 0.5;
 pub const DISTANCE_STEPS: f32 = 16.0;
 
-/// Planes of the ground's surface, a byte per texel each: its strongest
-/// material, the second, the second's share of the two, and its normal's x
-/// and z from 128.
 pub const GROUND_PLANES: usize = 5;
 
-/// The most probes along a terrain's side.
 pub const MAX_PROBES: u32 = 4096;
 
-/// Directions walked from each column: four to a sector.
 const AZIMUTHS: usize = 4 * SECTORS;
 
-/// Meters walks reach at most: ground farther fills too little of a view to
-/// light it.
 const REACH: f32 = 3000.0;
 
-/// The share of the sky above level the ground hides from a block's middle
-/// probe (the mean over directions of the sine of the horizon's elevation)
-/// from which its columns hold probes of their own.
 const ENCLOSED: f32 = 0.08;
 
-/// The sines bounding the bands, from below.
 const EDGES: [f32; 6] = [-1.0, -STEEP, -LEVEL, LEVEL, STEEP, 1.0];
 
-/// A terrain's bounce transfer: `probes` columns along each side, in blocks
-/// of two by two each holding probes of its own columns or one for all four
-/// (one byte per block, rows along z), every probe's bins
-/// ([`PROBE_BYTES`] each, in blocks' order, a block's own columns' in rows),
-/// and the ground's surface: [`GROUND_PLANES`] planes of `probes / 2`
-/// texels a side, all over the terrain's extent.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainBounce {
     pub probes: u32,
@@ -144,14 +83,10 @@ impl Codec for TerrainBounce {
 }
 
 impl TerrainBounce {
-    /// Texels along each side of the ground's surface: one per block.
     pub fn texels(&self) -> u32 {
         self.probes / 2
     }
 
-    /// Each block's word as the GPU takes it, rows along z: the index of its
-    /// first probe, times two, plus one where its columns hold probes of
-    /// their own (four, in rows) rather than one for all.
     pub fn block_words(&self) -> Vec<u32> {
         let mut first = 0_u32;
         self.detailed
@@ -164,26 +99,18 @@ impl TerrainBounce {
             .collect()
     }
 
-    /// Blocks whose columns hold probes of their own.
     pub fn detailed_blocks(&self) -> usize {
         self.detailed.iter().filter(|&&flag| flag != 0).count()
     }
 
-    /// Every probe's bytes, in blocks' order: [`PROBE_BYTES`] each, its
-    /// layers in order, each bin's share then its distance's code.
     pub fn probe_bytes(&self) -> &[u8] {
         &self.records
     }
 
-    /// Probes it holds.
     pub fn probe_count(&self) -> usize {
         self.records.len() / PROBE_BYTES
     }
 
-    /// The ground's surface as the GPU takes it: two layers of four bytes a
-    /// texel, rows along z: its strongest material, the second and the
-    /// second's share (red, green, blue); then its normal's x and z, from
-    /// 128 (red, green).
     pub fn ground_layers(&self) -> Vec<u8> {
         let side = self.texels() as usize;
         let area = side * side;
@@ -199,11 +126,7 @@ impl TerrainBounce {
     }
 }
 
-/// Each bin's moments over its solid angle, which renderers gather what it
-/// holds into spherical harmonics by: the integral over it of the direction
-/// (x, y and z) and its solid angle (w).
 pub fn bin_moments() -> [[f32; 4]; BINS] {
-    // The integral of the cosine of the elevation over its sine.
     let across = |sine: f32| 0.5 * (sine * (1.0 - sine * sine).sqrt() + libm::asinf(sine));
     let mut moments = [[0.0; 4]; BINS];
     for band in 0..EDGES.len() - 1 {
@@ -230,8 +153,6 @@ pub fn bin_moments() -> [[f32; 4]; BINS] {
     moments
 }
 
-/// The bin of band `band` (0 the cap below, 4 the cap above) in sector
-/// `sector`.
 const fn bin(band: usize, sector: usize) -> usize {
     match band {
         0 => 0,
@@ -240,10 +161,6 @@ const fn bin(band: usize, sector: usize) -> usize {
     }
 }
 
-/// What a probe's walks found of its view: per bin, the sines of the
-/// ground's sights there summed over the walks' directions, and those times
-/// their ground's distance; and the mean over directions of the sine of the
-/// horizon's elevation above level.
 #[derive(Clone, Copy, Default)]
 struct View {
     filled: [f32; BINS],
@@ -252,8 +169,6 @@ struct View {
 }
 
 impl View {
-    /// Adds the sights of a walk in sector `sector` whose sines run from
-    /// `from` to `to`, meeting the ground `distance` meters away.
     fn add(&mut self, sector: usize, (from, to): (f32, f32), distance: f32) {
         for band in 0..EDGES.len() - 1 {
             let overlap = min(to, EDGES[band + 1]) - max(from, EDGES[band]);
@@ -265,7 +180,6 @@ impl View {
         }
     }
 
-    /// Its bins as a probe's layer holds them, appended to `out`.
     fn encode(&self, out: &mut Vec<u8>) {
         for band in 0..EDGES.len() - 1 {
             let caps = band == 0 || band == EDGES.len() - 2;
@@ -292,8 +206,6 @@ impl View {
     }
 }
 
-/// The directions walked from each column, x and z: `AZIMUTHS` evenly
-/// around, the first four in sector 0.
 fn directions() -> [[f32; 2]; AZIMUTHS] {
     let width = TAU / AZIMUTHS as f32;
     let start = -0.5 * TAU / SECTORS as f32;
@@ -305,21 +217,15 @@ fn directions() -> [[f32; 2]; AZIMUTHS] {
     directions
 }
 
-/// What walks see of the ground around a column, read the same way from
-/// every column.
 struct Walker<'a> {
     ground: &'a Ground<'a>,
     directions: [[f32; 2]; AZIMUTHS],
-    /// The highest ground, past which nothing farther rises.
     highest: f32,
-    /// Meters to the first step, the least step and the farthest.
     first: f32,
     step: f32,
     reach: f32,
 }
 
-/// A probe on a walk: its height, and its horizon so far as the ground's
-/// rise per meter and its sine; none before the first step.
 #[derive(Clone, Copy)]
 struct Eye {
     height: f32,
@@ -328,7 +234,6 @@ struct Eye {
 }
 
 impl Walker<'_> {
-    /// The views of the probes over terrain-local `(x, z)`, one per layer.
     fn views(&self, (x, z): (f32, f32)) -> [View; LAYERS] {
         let base = self.ground.height(x, z);
         let heights = [base + LOW_PROBE, base + HIGH_PROBE];
@@ -349,8 +254,6 @@ impl Walker<'_> {
                     let tangent = match eye.tangent {
                         Some(tangent) if tangent >= rise => tangent,
                         held => {
-                            // The first step's sights meet the ground on
-                            // the way to it.
                             let reach = if held.is_none() {
                                 0.5 * distance
                             } else {
@@ -363,8 +266,6 @@ impl Walker<'_> {
                         }
                     };
                     eye.tangent = Some(tangent);
-                    // Nothing farther rises over the horizon once even the
-                    // highest ground would not.
                     done &= eye.height <= self.highest
                         && self.highest - eye.height <= tangent * distance;
                 }
@@ -382,9 +283,6 @@ impl Walker<'_> {
     }
 }
 
-/// The bounce transfer of `ground` over `extent` (meters along x and z from
-/// its first sample), `probes` columns along each side (even), its surface
-/// chosen by `surface`'s rules over its layers.
 pub fn bounce(
     ground: &Ground<'_>,
     extent: [f32; 2],
@@ -441,10 +339,6 @@ pub fn bounce(
     }
 }
 
-/// The ground's surface planes, `texels` a side over `extent`: each texel's
-/// control value as `surface`'s rules give it there, from the smooth
-/// surface through the ground's heights a texel (or a sample, whichever is
-/// wider) around it, and that surface's normal.
 fn surface_planes(
     ground: &Ground<'_>,
     extent: [f32; 2],

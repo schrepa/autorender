@@ -1,13 +1,3 @@
-//! Bridges and tunnels: what terrains' roads
-//! span instead of filling and bore instead of cutting, drawn by entities
-//! the engine spawns and despawns as terrains' bakes finish and terrains
-//! go. A bridge's deck is a [`SplineMesh`] of a deck section (a slab a
-//! road's width and a half meter more on each side, with parapets) along
-//! its centerline, and its piers are boxes standing on the ground or water
-//! bed under it; a tunnel's tube is a spline mesh of an arched section (a
-//! floor slab, walls and a vault) along its road; all are in their
-//! terrain's bridge material or a weathered stone.
-
 use crate::collections::HashMap;
 use std::sync::Arc;
 
@@ -21,30 +11,19 @@ use super::Terrains;
 use crate::terrain_data::Bridge;
 use crate::{Mesh3d, SplineMesh, Transform};
 
-/// Meters a deck's road surface stands above its road's profile, and its
-/// slab reaches below it.
 pub const DECK_RISE: f32 = 0.2;
 pub const DECK_DEPTH: f32 = 1.1;
-/// Meters of slab past each side of the road, and its parapets' height and
-/// thickness.
 pub const DECK_MARGIN: f32 = 0.5;
 const PARAPET_HEIGHT: f32 = 0.9;
 const PARAPET_THICKNESS: f32 = 0.4;
-/// Meters of deck section a copy spans along its curve.
 const SECTION_LENGTH: f32 = 4.0;
-/// A pier's side and how far it reaches into the ground.
 const PIER_SIDE: f32 = 1.8;
 const PIER_FOOTING: f32 = 1.0;
-/// Meters of clear space past each side of a tunnel's road, its walls'
-/// height before the vault springs, its shell's thickness and the vault's
-/// segments.
 const TUBE_MARGIN: f32 = 1.0;
 const TUBE_WALL: f32 = 4.0;
 const TUBE_SHELL: f32 = 0.7;
 const VAULT_SEGMENTS: usize = 10;
 
-/// The bridge entities spawned for each terrain, and the meshes and
-/// material they share.
 #[derive(Resource, Default)]
 pub(crate) struct TerrainBridges {
     spawned: HashMap<Entity, Spawned>,
@@ -54,16 +33,12 @@ pub(crate) struct TerrainBridges {
     stone: Option<MaterialHandle>,
 }
 
-/// A terrain's bridge entities: the bridges they draw, the terrain's bridge
-/// material they were made with, and the entities.
 struct Spawned {
     bridges: Arc<[Bridge]>,
     material: Option<MaterialHandle>,
     entities: Vec<Entity>,
 }
 
-/// A box from `min` to `max` into `vertices` and `indices`, its faces
-/// outward.
 fn cuboid(min: Vec3, max: Vec3, vertices: &mut Vec<MeshVertex>, indices: &mut Vec<u32>) {
     let corner = |x: bool, y: bool, z: bool| {
         Vec3::new(
@@ -72,8 +47,6 @@ fn cuboid(min: Vec3, max: Vec3, vertices: &mut Vec<MeshVertex>, indices: &mut Ve
             if z { max.z } else { min.z },
         )
     };
-    // Each face: its normal and its corners counterclockwise seen from
-    // outside.
     let faces = [
         (
             Vec3::X,
@@ -133,7 +106,6 @@ fn cuboid(min: Vec3, max: Vec3, vertices: &mut Vec<MeshVertex>, indices: &mut Ve
     for (normal, corners) in faces {
         let base = vertices.len() as u32;
         for position in corners {
-            // A repeat of texture every two meters across the face.
             let uv = if normal.x != 0.0 {
                 [position.z, position.y]
             } else if normal.y != 0.0 {
@@ -151,8 +123,6 @@ fn cuboid(min: Vec3, max: Vec3, vertices: &mut Vec<MeshVertex>, indices: &mut Ve
     }
 }
 
-/// A deck section for a road `width` meters wide: x along it, y up from the
-/// road's profile, z across.
 fn deck_section(width: f32) -> Mesh {
     let (mut vertices, mut indices) = (Vec::new(), Vec::new());
     let half = 0.5 * width;
@@ -179,13 +149,8 @@ fn deck_section(width: f32) -> Mesh {
     Mesh::new(vertices, indices).expect("deck sections are valid meshes")
 }
 
-/// A terrain, its bridges, its origin and its bridge material.
 pub(crate) type BridgeSet = (Entity, Arc<[Bridge]>, Vec3, Option<MaterialHandle>);
 
-/// A tunnel's section for a road `width` meters wide: x along it, y up
-/// from the road's profile, z across. Its shell's inner face looks in and
-/// its outer face out, its floor is a slab under the road, and rings close
-/// each end.
 fn tube_section(width: f32) -> Mesh {
     let (mut vertices, mut indices) = (Vec::new(), Vec::new());
     let inner = 0.5 * width + TUBE_MARGIN;
@@ -196,9 +161,6 @@ fn tube_section(width: f32) -> Mesh {
         &mut vertices,
         &mut indices,
     );
-    // The shell's profile across, from the right wall's foot over the vault
-    // to the left's: each point at `radius` from the axis it bends about and
-    // its outward direction.
     let profile = |radius: f32| -> Vec<(f32, f32, f32, f32)> {
         let mut points = vec![(radius, DECK_RISE, 1.0, 0.0)];
         for segment in 0..=VAULT_SEGMENTS {
@@ -210,11 +172,9 @@ fn tube_section(width: f32) -> Mesh {
         points
     };
     let (inside, outside) = (profile(inner), profile(outer));
-    // A quad from `a` to `b` along x, facing `normal`, wound to face it.
     let mut quad = |corners: [Vec3; 4], normal: Vec3, vertices: &mut Vec<MeshVertex>| {
         let base = vertices.len() as u32;
         for corner in &corners {
-            // A repeat of texture every two meters, along and around.
             vertices.push(MeshVertex {
                 position: corner.to_array(),
                 normal: normal.to_array(),
@@ -248,7 +208,6 @@ fn tube_section(width: f32) -> Mesh {
                 &mut vertices,
             );
         }
-        // The rings closing each end, between the faces.
         for (x, normal) in [(0.0, Vec3::NEG_X), (SECTION_LENGTH, Vec3::X)] {
             let (zi0, yi0, ..) = inside[pair];
             let (zi1, yi1, ..) = inside[pair + 1];
@@ -269,7 +228,6 @@ fn tube_section(width: f32) -> Mesh {
     Mesh::new(vertices, indices).expect("tunnel sections are valid meshes")
 }
 
-/// Spawns and despawns bridge entities to match terrains' bridges.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -282,7 +240,6 @@ pub(crate) fn sync(world: &mut World) {
     let mut bridges = world
         .remove_resource::<TerrainBridges>()
         .unwrap_or_default();
-    // Terrains gone, or whose bridges or bridge material changed.
     let mut stale = Vec::new();
     bridges.spawned.retain(|terrain, spawned| {
         let keep = wanted.iter().any(|(entity, wanted, _, material)| {
@@ -337,7 +294,6 @@ pub(crate) fn sync(world: &mut World) {
         };
         let mut spawns = Vec::new();
         for bridge in set.iter() {
-            // A deck for bridges, a tube for tunnels, a mesh a road width.
             let (sections, build): (_, fn(f32) -> Mesh) = if bridge.tunnel {
                 (&mut bridges.tubes, tube_section)
             } else {

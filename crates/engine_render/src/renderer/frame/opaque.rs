@@ -1,9 +1,3 @@
-//! The opaque passes: masked surfaces' depth pre-pass, then meshes,
-//! impostors' cards, virtual geometry, terrain (shaded deferred where it
-//! can be), placed objects and the sky, in one phase or two around
-//! occlusion culling's test, and the visibility buffer's triangle IDs,
-//! tiles and resolves.
-
 #![expect(
     clippy::expect_used,
     reason = "the opaque passes read what the frame built"
@@ -12,45 +6,24 @@
 use super::*;
 use crate::debug_view::{DrawKind, DrawRecord, bind_record};
 
-/// What the opaque passes draw.
 #[derive(Clone, Copy)]
 enum Opaque {
-    /// Masked surfaces' depth pre-pass: the phase's masked meshes and, in
-    /// the first phase, masked placed objects, their alpha tests alone.
     Prepass,
-    /// The meshes of the phase, impostors' cards and virtual geometry's
-    /// forward bins.
     Meshes,
-    /// Terrain's patches, shaded forward.
     Terrain,
-    /// Terrain's ground cover.
     Cover,
-    /// Objects placed on terrain.
     Scatter,
-    /// The sky over the pixels nothing covers.
     Sky,
 }
 
-/// Where an opaque contributor draws.
 #[derive(Clone, Copy)]
 enum Slot {
-    /// Every opaque phase, first.
     Early,
-    /// The first phase, after the meshes, where terrain shades forward;
-    /// deferred terrain's own passes draw it otherwise.
     Terrain,
-    /// The first phase, after terrain: in the opaque pass, or after deferred
-    /// terrain in the late pass.
     Late,
-    /// After the last opaque geometry, unless the visibility buffer resolves
-    /// after it: depth testing leaves the sky only uncovered pixels.
     Last,
 }
 
-/// The opaque passes' contributors in drawing order, each in its slot: one
-/// order for forward and deferred terrain alike. Masked surfaces' depth
-/// pre-pass comes before every color, placed objects' too where the late
-/// pass draws them after deferred terrain.
 const OPAQUE: [(Opaque, Slot); 6] = [
     (Opaque::Prepass, Slot::Early),
     (Opaque::Meshes, Slot::Early),
@@ -61,15 +34,11 @@ const OPAQUE: [(Opaque, Slot); 6] = [
 ];
 
 impl Renderer {
-    /// The sky of the frame's opaque targets, drawn after its last opaque
-    /// geometry.
     fn sky_pipeline(&self, state: &FrameState<'_>) -> &wgpu::RenderPipeline {
         self.mesh_pipelines
             .sky(SkyTargets::Frame(state.shape.targets))
     }
 
-    /// The pose buffers of this frame and the previous one, as the virtual
-    /// pose groups pick them.
     fn pose_parities(&self, state: &FrameState<'_>) -> (usize, usize) {
         match state
             .packing
@@ -83,12 +52,6 @@ impl Renderer {
         }
     }
 
-    /// The opaque pass of `phase` (two around the occlusion test), masked
-    /// surfaces' depth pre-pass first, with the sky after the last one
-    /// unless the visibility buffer resolves it; returns its draws, the
-    /// sky's aside. Where terrain shades deferred, the first phase draws the
-    /// pre-pass and the meshes alone and the deferred terrain's passes the
-    /// rest.
     pub(super) fn encode_opaque(
         &self,
         state: &FrameState<'_>,
@@ -99,19 +62,12 @@ impl Renderer {
     ) -> u32 {
         let phases = usize::from(state.shape.phases);
         let resolve_phase = state.shape.resolves[phase];
-        // The first of this phase's camera bins.
         let virtual_first = match phase {
             0 => Some(0),
             _ => self.virtual_draws.phase_two,
         }
         .filter(|_| state.virtual_frame);
-        // Terrain, the main occluder, draws in the first phase
-        // so occlusion culling's pyramid holds it; shaded deferred
-        // where it can be.
         let forward = phase > 0 || !state.shape.deferred;
-        // Profiled frames time both phases as one opaque span, which the
-        // visibility buffer's last resolve ends when it resolves this phase,
-        // or the passes after deferred terrain do.
         let (begins, ends) = (phase == 0, forward && phase + 1 == phases && !resolve_phase);
         let timestamp_writes = (begins || ends)
             .then(|| self.profiler.span("opaque_meshes"))
@@ -137,9 +93,6 @@ impl Renderer {
         )
     }
 
-    /// Draws the opaque contributors whose slot `drawn` takes, in their
-    /// order, the meshes those of `phase` from virtual geometry's bin
-    /// `virtual_first`; returns the draws, the sky's aside.
     fn draw_contributors(
         &self,
         state: &FrameState<'_>,
@@ -170,9 +123,6 @@ impl Renderer {
         draws
     }
 
-    /// Deferred terrain's visibility over the first phase's meshes and its
-    /// masked placed objects' pre-pass, writing each pixel's terrain and
-    /// depth; returns the draws.
     pub(super) fn encode_terrain_ids(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -183,9 +133,6 @@ impl Renderer {
         self.draw_terrain_ids(&mut pass)
     }
 
-    /// Each terrain's resolve, shading the pixels it holds once each and
-    /// writing their depth where its relief meets the view; returns the
-    /// draws.
     pub(super) fn encode_terrain_resolve(
         &self,
         state: &FrameState<'_>,
@@ -197,9 +144,6 @@ impl Renderer {
         self.draw_terrain_resolve(state, &mut pass)
     }
 
-    /// The first phase's rest after deferred terrain: its cover, placed
-    /// objects and, when no other phase or resolve follows, the sky, ending
-    /// the opaque span; returns the draws.
     pub(super) fn encode_opaque_late(
         &self,
         state: &FrameState<'_>,
@@ -226,7 +170,6 @@ impl Renderer {
         })
     }
 
-    /// The sky over the pixels nothing covers, after the opaque surfaces.
     fn draw_sky(&self, state: &FrameState<'_>, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(self.sky_pipeline(state));
         pass.set_bind_group(0, self.camera.group(), &[]);
@@ -234,10 +177,6 @@ impl Renderer {
         pass.draw(0..3, 0..1);
     }
 
-    /// Occlusion culling's test between the opaque phases: the
-    /// depth pyramid of phase one's depths, the test and phase two's
-    /// compaction, and virtual geometry's retest of the camera's clusters the
-    /// last frame's pyramid hid.
     pub(super) fn encode_occlusion_test(
         &mut self,
         state: &FrameState<'_>,
@@ -245,8 +184,6 @@ impl Renderer {
     ) {
         let virtual_frame = state.virtual_frame;
         let temporal_frame = &state.packing.temporal_frame;
-        // One span from the pyramid's reduction to the test's compaction or
-        // the virtual retest.
         let span = self.profiler.span("occlusion");
         if let Some(pyramid) = self.culling.pyramid.as_ref().and_then(DepthPyramid::view) {
             let odd = temporal_frame
@@ -258,9 +195,6 @@ impl Renderer {
                 .as_ref()
                 .expect("viewed above")
                 .encode(encoder, span);
-            // The camera's clusters the last frame's pyramid hid
-            // are retested against this frame's within
-            // the same span.
             self.gpu_presentation.encode_occlusion(
                 &self.device,
                 encoder,
@@ -277,13 +211,6 @@ impl Renderer {
         }
     }
 
-    /// Masked surfaces' depth pre-pass of `phase`, first in its pass: the
-    /// masked meshes the phase draws and, in the first phase, the masked
-    /// placed objects, from the lists, at the levels and with the fades
-    /// their colors draw from later, their alpha tests alone. Their colors
-    /// then draw only where its depths are theirs, so each pixel shades one
-    /// masked fragment, and phase one's depths, which the occlusion test
-    /// reads, hold them as they held their colors'. Returns the draws.
     fn draw_prepass(
         &self,
         state: &FrameState<'_>,
@@ -303,9 +230,6 @@ impl Renderer {
         meshes + placed
     }
 
-    /// The opaque meshes of `phase`, the impostors' cards,
-    /// and virtual geometry's bins the visibility buffer leaves to
-    /// forward drawing; returns the draws.
     fn draw_opaque(
         &self,
         state: &FrameState<'_>,
@@ -316,8 +240,6 @@ impl Renderer {
         let mut draws = self.draw_meshes(state, pass, phase, false);
         let debug = self.debug_records(state);
         let casts = state.shape.shadows;
-        // Impostors: every draw group's cards in one
-        // draw, over the pose and light groups the meshes bound.
         if state.kind.gpu_mode
             && let Some((targets, lit)) = state.passes.impostor_pass
             && let (Some(pipeline), Some(group)) = (
@@ -336,7 +258,6 @@ impl Renderer {
             );
             pass.draw_indirect(args, offset);
             draws += 1;
-            // Cards fading over their meshes, once.
             if phase == 0 {
                 let (cards, args, offset) = self.gpu_presentation.fading_cards();
                 pass.set_vertex_buffer(0, cards);
@@ -350,10 +271,6 @@ impl Renderer {
         draws
     }
 
-    /// The opaque meshes of `phase` (GPU-presented frames draw each level of
-    /// detail's visible slots): their colors, masked ones' where their depth
-    /// pre-pass left their depths, or with `prepass` the masked ones'
-    /// pre-pass, from the same lists and levels; returns the draws.
     fn draw_meshes(
         &self,
         state: &FrameState<'_>,
@@ -368,8 +285,6 @@ impl Renderer {
             .temporal_frame
             .as_ref()
             .zip(self.features.temporal.get());
-        // Lit frames shade with the lit pipelines and the lights' group; the
-        // pre-pass reads no lights.
         let lit = state
             .features
             .light_frame()
@@ -390,7 +305,6 @@ impl Renderer {
         if !gpu_mode {
             pass.set_vertex_buffer(1, self.instances.slots().slice(..));
         }
-        // Debug views' draws read their records.
         let debug = self.debug_records(state);
         let casts = state.shape.shadows;
         let mut draws = 0;
@@ -403,8 +317,6 @@ impl Renderer {
         for &index in order {
             let index = index as usize;
             let batch = &self.plan.batches[index];
-            // Batches drawing virtual geometry draw its clusters after the
-            // meshes, masked ones testing their own alpha.
             if self.virtual_draws.drawn.get(index) == Some(&true) {
                 continue;
             }
@@ -417,11 +329,7 @@ impl Renderer {
                 continue;
             };
             if gpu_mode {
-                // Visible slots of this group, compacted and counted
-                // on the GPU, each level of detail
-                // with its own.
                 for level in 0..lod_levels(batch, mesh, false) {
-                    // An empty level draws nothing.
                     if level > 0 && mesh.plan[level - 1].1 == 0 {
                         continue;
                     }
@@ -454,10 +362,6 @@ impl Renderer {
         draws
     }
 
-    /// Virtual geometry's bins from the `first_bin`th: each bin's selected
-    /// clusters, in phase one, then each bin's twin of clusters the retest
-    /// found visible in phase two; bins the visibility buffer resolves draw
-    /// in its resolves. Returns the draws.
     fn draw_virtual_bins(
         &self,
         state: &FrameState<'_>,
@@ -502,8 +406,6 @@ impl Renderer {
         draws
     }
 
-    /// The triangle IDs of `phase`'s camera bins the visibility buffer
-    /// resolves.
     pub(super) fn encode_visibility_ids(
         &self,
         state: &FrameState<'_>,
@@ -544,7 +446,6 @@ impl Renderer {
         }
     }
 
-    /// The tiles of each bin the visibility buffer resolves.
     pub(super) fn encode_visibility_tiles(&self, encoder: &mut wgpu::CommandEncoder) {
         self.visibility
             .buffer
@@ -553,8 +454,6 @@ impl Renderer {
             .encode_classify(encoder, self.virtual_draws.bins.len());
     }
 
-    /// Each resolved bin's pixels of `phase` shaded into the opaque targets,
-    /// and the sky after the last phase.
     pub(super) fn encode_visibility_resolve(
         &self,
         state: &FrameState<'_>,
@@ -570,12 +469,10 @@ impl Renderer {
 
         let bins = self.virtual_draws.bins.len();
         let (current, previous) = self.pose_parities(state);
-        // The last resolve ends the opaque span.
         let timestamp_writes = (phase + 1 == phases)
             .then(|| self.profiler.span("opaque_meshes"))
             .flatten()
             .map(|span| span.render_part(false, true));
-        // Read-only depth: the resolves test none and the sky tests it.
         let mut pass = self.render_pass(
             encoder,
             node,
@@ -612,9 +509,6 @@ impl Renderer {
     }
 }
 
-/// What profiling reports name a draw of `batch` by: its mesh, material,
-/// opaque phase and level of detail (`None` for exact frames' draws of
-/// every instance), and whether it is masked surfaces' depth pre-pass.
 fn draw_label(batch: &DrawBatch, (phase, level): (usize, Option<usize>), prepass: bool) -> String {
     let material = batch
         .material

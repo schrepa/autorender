@@ -1,14 +1,8 @@
-//! Buffers every pass shares the shape of: storage buffers and their
-//! whole-buffer bindings, growth by powers of two within what one binding
-//! holds, and values read back a few frames late.
-
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
 
-/// A storage buffer the queue writes, of at least `bytes` rounded up to a
-/// multiple of 16 (and at least 16), with `extra` usages.
 pub(crate) fn storage(
     device: &wgpu::Device,
     label: &str,
@@ -23,7 +17,6 @@ pub(crate) fn storage(
     })
 }
 
-/// A uniform buffer of `bytes` the queue writes.
 pub(crate) fn uniform(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
@@ -33,11 +26,6 @@ pub(crate) fn uniform(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::B
     })
 }
 
-/// A [`storage`] buffer bound whole whose content sizes it: it grows by
-/// powers of two to hold what it is asked to, but never past what one
-/// storage binding of its device holds, its room. The one way such
-/// buffers grow; what is asked past the room is the caller's to leave out
-/// and count.
 pub(crate) struct Growable {
     buffer: crate::cached::Versioned<wgpu::Buffer>,
     label: &'static str,
@@ -54,8 +42,6 @@ impl std::ops::Deref for Growable {
 }
 
 impl Growable {
-    /// A [`storage`] buffer of `bytes` labeled `label`, with `extra`
-    /// usages, on `device`.
     pub(crate) fn new(
         device: &wgpu::Device,
         label: &'static str,
@@ -63,7 +49,6 @@ impl Growable {
         extra: wgpu::BufferUsages,
     ) -> Self {
         let limits = device.limits();
-        // Sizes are whole 16-byte words.
         let room = limits
             .max_storage_buffer_binding_size
             .min(limits.max_buffer_size)
@@ -77,9 +62,6 @@ impl Growable {
         }
     }
 
-    /// Grows to hold `bytes`, to the next power of two of them within its
-    /// room, unless it holds them already, advancing its generation;
-    /// returns whether it did. The new buffer holds nothing of the old one.
     pub(crate) fn grow(&mut self, device: &wgpu::Device, bytes: u64) -> bool {
         let size = bytes.next_power_of_two().min(self.room);
         if bytes <= self.buffer.size() || size <= self.buffer.size() {
@@ -90,14 +72,11 @@ impl Growable {
         true
     }
 
-    /// The most bytes it holds: what one storage binding of its device
-    /// holds, in whole 16-byte words.
     pub(crate) fn room(&self) -> u64 {
         self.room
     }
 }
 
-/// A buffer bound whole as binding `name`.
 pub(crate) fn entry<'a>(
     name: &'a str,
     buffer: &'a wgpu::Buffer,
@@ -105,8 +84,6 @@ pub(crate) fn entry<'a>(
     (name, buffer.as_entire_binding())
 }
 
-/// Read-backs in flight at most: a frame records one while the two before
-/// it may still be mapping.
 pub(crate) const READBACKS: usize = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -122,7 +99,6 @@ struct Slot<T> {
     tag: T,
 }
 
-/// A mapped read-back's little-endian words; words past its end read 0.
 pub(crate) struct Words<'a>(&'a [u8]);
 
 impl Words<'_> {
@@ -133,14 +109,8 @@ impl Words<'_> {
     }
 }
 
-/// Copies of one GPU buffer read back a few frames late, through at most
-/// three buffers: [`Self::record`] copies into an idle one while a frame
-/// records, [`Self::after_submit`] maps those the frame just submitted, and
-/// each map hands its words and the tag recorded with them to a reader.
-/// Nothing waits on the GPU; frames finding every buffer in flight skip.
 pub(crate) struct ReadbackRing<T> {
     label: &'static str,
-    // Recorded into while a frame encodes, which borrows passes shared.
     slots: RefCell<Vec<Slot<T>>>,
 }
 
@@ -152,9 +122,6 @@ impl<T: Copy + 'static> ReadbackRing<T> {
         }
     }
 
-    /// Records a copy of the first `bytes` of `source`, tagged `tag`, into
-    /// an idle buffer, creating one of `bytes` while fewer than three exist;
-    /// returns whether it did. Clear the ring when `bytes` changes.
     pub(crate) fn record(
         &self,
         device: &wgpu::Device,
@@ -166,7 +133,6 @@ impl<T: Copy + 'static> ReadbackRing<T> {
         self.record_at(device, encoder, (source, 0), bytes, tag)
     }
 
-    /// [`Self::record`] of `bytes` from byte `offset` of `source`.
     pub(crate) fn record_at(
         &self,
         device: &wgpu::Device,
@@ -203,8 +169,6 @@ impl<T: Copy + 'static> ReadbackRing<T> {
         true
     }
 
-    /// Requests maps of the read-backs recorded in the frame just submitted;
-    /// `read` receives each one's words and tag once it is mapped.
     pub(crate) fn after_submit(&self, read: impl Fn(&Words<'_>, T) + Clone + 'static) {
         for slot in self.slots.borrow().iter() {
             if slot.state.get() != State::Recorded {
@@ -229,7 +193,6 @@ impl<T: Copy + 'static> ReadbackRing<T> {
         }
     }
 
-    /// Drops the buffers; maps in flight still complete.
     pub(crate) fn clear(&mut self) {
         self.slots.get_mut().clear();
     }

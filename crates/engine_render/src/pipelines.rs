@@ -1,23 +1,3 @@
-//! Pipeline creation. Every render and compute pipeline the renderer
-//! builds goes through these functions, which key it by what makes it: its
-//! shader module and entry points by name ([`crate::shaders`]), its
-//! pipeline layout by the declaration it was made from
-//! ([`crate::pipeline_layouts`]: a device makes one layout for each) and
-//! every state it sets. A device creates each key once, whoever asks:
-//! those asking after take the same pipeline. Creations are counted, so
-//! frames report when compiling ends: a frame that creates none compiles
-//! nothing, and hosts reveal the canvas once frames stop creating them.
-//!
-//! The keys a device created are its scene's pipeline list
-//! ([`PipelineCounts::list`]), a record hosts keep and the cook ships. A
-//! later session creates every pipeline on it up front while it prepares
-//! ([`PipelineCounts::create_listed`]): natively on several threads, in
-//! browsers all at once, so they compile while the scene loads; and counts
-//! those it then creates that the list lacks. A list names the format of
-//! the canvas it drew to, and its pipelines drawing there draw to the
-//! device's own. Lists are made on a GPU, which creates only what its
-//! limits and formats allow: they are cooked once, never compared across
-//! GPUs.
 #![expect(
     clippy::expect_used,
     reason = "keys serialize, and layouts come from pipeline_layout"
@@ -43,24 +23,18 @@ thread_local! {
     static REGISTRIES: RefCell<Vec<Registry>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Counts `created` pipelines created.
 fn count(created: u32) {
     CREATED.with(|counted| counted.set(counted.get().saturating_add(created)));
 }
 
-/// The pipelines created since the last call.
 fn take_created() -> u32 {
     CREATED.with(|created| created.replace(0))
 }
 
-/// What makes a pipeline: everything its descriptor sets, its objects by
-/// name.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Key {
     label: String,
-    /// Its pipeline layout's label (`crate::pipeline_layouts`).
     layout: String,
-    /// Its shader module's name (`crate::shaders::MODULES`).
     module: String,
     stages: KeyStages,
 }
@@ -71,7 +45,6 @@ enum KeyStages {
     Render(Box<RenderKey>),
 }
 
-/// A render pipeline's stages and states.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct RenderKey {
     vertex: String,
@@ -83,7 +56,6 @@ struct RenderKey {
     fragment: Option<FragmentKey>,
 }
 
-/// A vertex buffer's layout.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct BufferKey {
     stride: u64,
@@ -91,7 +63,6 @@ struct BufferKey {
     attributes: Vec<wgpu::VertexAttribute>,
 }
 
-/// A fragment stage.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct FragmentKey {
     entry: String,
@@ -99,7 +70,6 @@ struct FragmentKey {
     targets: Vec<Option<wgpu::ColorTargetState>>,
 }
 
-/// Pipeline constants as keys hold them.
 fn constants(constants: &[(&str, f64)]) -> Vec<(String, f64)> {
     constants
         .iter()
@@ -107,7 +77,6 @@ fn constants(constants: &[(&str, f64)]) -> Vec<(String, f64)> {
         .collect()
 }
 
-/// Pipeline constants as descriptors take them.
 fn named(constants: &[(String, f64)]) -> Vec<(&str, f64)> {
     constants
         .iter()
@@ -116,13 +85,10 @@ fn named(constants: &[(String, f64)]) -> Vec<(&str, f64)> {
 }
 
 impl Key {
-    /// Its text, which a device's pipelines and lists are kept by.
     fn text(&self) -> String {
         serde_json::to_string(self).expect("pipeline keys serialize")
     }
 
-    /// The pipeline of this key over `layout` and `module`, created and
-    /// counted.
     fn create(
         &self,
         device: &wgpu::Device,
@@ -201,9 +167,6 @@ impl Key {
         ))
     }
 
-    /// Whether `device` can create it: its layout keeps within the
-    /// device's limits, and the formats it draws to render (and blend, and
-    /// take its samples) there.
     fn creatable(&self, device: &wgpu::Device) -> bool {
         let Some(declared) = declared(&self.layout) else {
             return false;
@@ -237,8 +200,6 @@ impl Key {
                 .is_none_or(|depth| renders(depth.format, false))
     }
 
-    /// The key drawing to `canvas` where it drew to `listed`, the canvas
-    /// format its list names.
     fn retargeted(mut self, listed: wgpu::TextureFormat, canvas: wgpu::TextureFormat) -> Self {
         if let KeyStages::Render(render) = &mut self.stages
             && let Some(fragment) = &mut render.fragment
@@ -253,13 +214,11 @@ impl Key {
     }
 }
 
-/// A pipeline as created.
 enum Created {
     Render(wgpu::RenderPipeline),
     Compute(wgpu::ComputePipeline),
 }
 
-/// The layout labeled `label`, as `crate::pipeline_layouts` declares it.
 fn declared(label: &str) -> Option<&'static PipelineLayout> {
     PIPELINE_LAYOUTS
         .iter()
@@ -267,7 +226,6 @@ fn declared(label: &str) -> Option<&'static PipelineLayout> {
         .map(|&(_, declared)| declared)
 }
 
-/// Whether `limits` keep within what `device` grants.
 fn fits(limits: &StageLimits, device: &wgpu::Limits) -> bool {
     limits.bind_groups <= device.max_bind_groups
         && limits.uniform_buffers <= device.max_uniform_buffers_per_shader_stage
@@ -279,10 +237,6 @@ fn fits(limits: &StageLimits, device: &wgpu::Limits) -> bool {
         && limits.dynamic_storage_buffers <= device.max_dynamic_storage_buffers_per_pipeline_layout
 }
 
-/// A device's pipelines by key, its pipeline layouts by declaration and
-/// their labels, the shader modules its lists' pipelines were created
-/// with, and what its scene's list held: the keys it named, the pipelines
-/// created up front and those created since that it lacked.
 struct Registry {
     device: wgpu::Device,
     canvas: Option<wgpu::TextureFormat>,
@@ -312,7 +266,6 @@ impl Registry {
         }
     }
 
-    /// The label `crate::pipeline_layouts` declares `layout` by.
     fn label(&self, layout: &wgpu::PipelineLayout) -> &'static str {
         self.labels
             .get(layout)
@@ -320,14 +273,11 @@ impl Registry {
             .expect("pipeline layouts come from pipelines::pipeline_layout")
     }
 
-    /// Keeps `layout` as the device's of `label`.
     fn keep_layout(&mut self, label: &'static str, layout: wgpu::PipelineLayout) {
         self.labels.insert(layout.clone(), label);
         self.layouts.insert(label, layout);
     }
 
-    /// The device's layout labeled `label`, made from its declaration's
-    /// tables unless made.
     fn declared_layout(&mut self, label: &str) -> Option<wgpu::PipelineLayout> {
         let declared = declared(label)?;
         if let Some(layout) = self.layouts.get(declared.label) {
@@ -345,8 +295,6 @@ impl Registry {
         Some(layout)
     }
 
-    /// The module named `name` (`crate::shaders::MODULES`), created unless
-    /// it was.
     fn module(&mut self, name: &str) -> Option<wgpu::ShaderModule> {
         let &(name, source) = crate::shaders::MODULES
             .iter()
@@ -365,8 +313,6 @@ impl Registry {
         )
     }
 
-    /// A pipeline of key text `text` is being created: one the list
-    /// lacked, once there is one.
     fn creating(&mut self, text: &str) {
         if self
             .listed
@@ -377,13 +323,11 @@ impl Registry {
         }
     }
 
-    /// Its pipelines' key texts, in order.
     fn keys(&self) -> BTreeSet<&String> {
         self.render.keys().chain(self.compute.keys()).collect()
     }
 }
 
-/// `act` on `device`'s registry, made with its first use.
 fn with_registry<R>(device: &wgpu::Device, act: impl FnOnce(&mut Registry) -> R) -> R {
     REGISTRIES.with_borrow_mut(|registries| {
         let index = match registries
@@ -400,10 +344,8 @@ fn with_registry<R>(device: &wgpu::Device, act: impl FnOnce(&mut Registry) -> R)
     })
 }
 
-/// The tag of a pipeline list's record.
 const LIST: &[u8; 4] = b"PIPL";
 
-/// The canvas format and keys of the pipeline list `record` holds.
 fn read_list(record: &[u8]) -> Result<(Option<wgpu::TextureFormat>, Vec<Key>), String> {
     let mut rest = record
         .strip_prefix(LIST)
@@ -429,12 +371,8 @@ fn read_list(record: &[u8]) -> Result<(Option<wgpu::TextureFormat>, Vec<Key>), S
     Ok((canvas, keys))
 }
 
-/// A pipeline to create up front: its key text, key, layout and module.
 type Wanted = (String, Key, wgpu::PipelineLayout, wgpu::ShaderModule);
 
-/// `wanted`'s pipelines, created on as many threads as the processors
-/// allow, each in its own validation scope: those failing validation are
-/// left out, to be created as frames first draw with them.
 #[cfg(not(target_arch = "wasm32"))]
 fn create_all(device: &wgpu::Device, wanted: &[Wanted]) -> Vec<(String, Created)> {
     let threads = std::thread::available_parallelism().map_or(4, usize::from);
@@ -453,8 +391,6 @@ fn create_all(device: &wgpu::Device, wanted: &[Wanted]) -> Vec<(String, Created)
                             failed.is_none().then(|| (text.clone(), created))
                         })
                         .collect();
-                    // Counted on this thread: the frame's count is the
-                    // renderer's thread's.
                     (made, take_created())
                 })
             })
@@ -472,9 +408,6 @@ fn create_all(device: &wgpu::Device, wanted: &[Wanted]) -> Vec<(String, Created)
     made
 }
 
-/// `wanted`'s pipelines, created at once in one validation scope, so the
-/// browser compiles them side by side: what fails validation the scope
-/// reports, and the pipeline's first draw then fails as it would have.
 #[cfg(target_arch = "wasm32")]
 fn create_all(device: &wgpu::Device, wanted: &[Wanted]) -> Vec<(String, Created)> {
     let errors = crate::gpu_calls::validation_scope(device);
@@ -490,7 +423,6 @@ fn create_all(device: &wgpu::Device, wanted: &[Wanted]) -> Vec<(String, Created)
     made
 }
 
-/// Creates a render pipeline: the one way the renderer does.
 #[expect(clippy::disallowed_methods, reason = "the one way to create pipelines")]
 fn create_render(
     device: &wgpu::Device,
@@ -499,7 +431,6 @@ fn create_render(
     device.create_render_pipeline(descriptor)
 }
 
-/// Creates a compute pipeline: the one way the renderer does.
 #[expect(clippy::disallowed_methods, reason = "the one way to create pipelines")]
 fn create_compute(
     device: &wgpu::Device,
@@ -508,7 +439,6 @@ fn create_compute(
     device.create_compute_pipeline(descriptor)
 }
 
-/// Makes a pipeline layout: the one way the renderer does.
 #[expect(
     clippy::disallowed_methods,
     reason = "the one way to make pipeline layouts"
@@ -525,21 +455,15 @@ fn create_layout(
     })
 }
 
-/// The pipelines a renderer created, and whether their compiles may still
-/// run: they precede the work submitted after them, so once the GPU
-/// completes the last frame that created some, they are done. While it
-/// lives, its device keeps its pipelines by key, which go with it.
 pub(crate) struct PipelineCounts {
     device: wgpu::Device,
     created: u32,
-    // Frames that created some, and the latest of those the GPU completed.
     frames: u64,
     compiled: Arc<AtomicU64>,
 }
 
 impl Drop for PipelineCounts {
     fn drop(&mut self) {
-        // A thread ending drops its registries itself.
         let _ = REGISTRIES.try_with(|registries| {
             registries
                 .borrow_mut()
@@ -549,8 +473,6 @@ impl Drop for PipelineCounts {
 }
 
 impl PipelineCounts {
-    /// The counts of the renderer of `device`, which draws to a canvas of
-    /// `canvas`'s format.
     pub(crate) fn new(device: &wgpu::Device, canvas: wgpu::TextureFormat) -> Self {
         with_registry(device, |registry| registry.canvas = Some(canvas));
         Self {
@@ -561,8 +483,6 @@ impl PipelineCounts {
         }
     }
 
-    /// The scene's pipeline list: a record of every pipeline the device
-    /// created, by key, after the format of the canvas they drew to.
     pub(crate) fn list(&self) -> Vec<u8> {
         with_registry(&self.device, |registry| {
             let canvas = registry
@@ -578,11 +498,6 @@ impl PipelineCounts {
         })
     }
 
-    /// Creates every pipeline the pipeline list `record` names that the
-    /// device can create and has yet to (natively on several threads),
-    /// drawing to the device's canvas where the list's drew to its own;
-    /// from then on, pipelines created that the list lacks are counted
-    /// ([`Self::listed`]). Returns how many it created.
     pub(crate) fn create_listed(&self, record: &[u8]) -> Result<u32, String> {
         let (listed_canvas, keys) = read_list(record)?;
         let device = &self.device;
@@ -630,16 +545,12 @@ impl PipelineCounts {
         })
     }
 
-    /// What the scene's pipeline list did: the pipelines it created up
-    /// front, and those the session created that it lacked.
     pub(crate) fn listed(&self) -> (u32, u32) {
         with_registry(&self.device, |registry| {
             (registry.up_front, registry.unlisted)
         })
     }
 
-    /// Counts the pipelines created since the last call, after the frame
-    /// creating them was submitted to `queue`; returns how many.
     pub(crate) fn frame_submitted(&mut self, queue: &wgpu::Queue) -> u32 {
         let created = take_created();
         self.created = self.created.saturating_add(created);
@@ -653,19 +564,15 @@ impl PipelineCounts {
         created
     }
 
-    /// Pipelines created so far.
     pub(crate) fn created(&self) -> u32 {
         self.created
     }
 
-    /// Whether the GPU has not yet completed the last frame that created
-    /// pipelines.
     pub(crate) fn compiling(&self) -> bool {
         self.compiled.load(Ordering::Relaxed) < self.frames
     }
 }
 
-/// The `wgpu` binding type of `kind`.
 fn binding_type(kind: Kind) -> wgpu::BindingType {
     let buffer = |ty, min_size: u64, dynamic| wgpu::BindingType::Buffer {
         ty,
@@ -720,7 +627,6 @@ fn binding_type(kind: Kind) -> wgpu::BindingType {
     }
 }
 
-/// The `wgpu` format of `format`.
 fn texture_format(format: Format) -> wgpu::TextureFormat {
     match format {
         Format::R32Float => wgpu::TextureFormat::R32Float,
@@ -731,7 +637,6 @@ fn texture_format(format: Format) -> wgpu::TextureFormat {
     }
 }
 
-/// The `wgpu` stages of `stages`.
 fn shader_stages(stages: Stages) -> wgpu::ShaderStages {
     let mut shader = wgpu::ShaderStages::NONE;
     if stages.vertex() {
@@ -746,14 +651,6 @@ fn shader_stages(stages: Stages) -> wgpu::ShaderStages {
     shader
 }
 
-/// The bind group layout of `table` (`crate::bindings`).
-///
-/// Each distinct pipeline layout costs the browser real work: Firefox's
-/// Direct3D 12 backend builds a root signature and three indirect command
-/// signatures for it, which an integrated Intel GPU's driver compiles in
-/// about 150 ms. Passes of one family therefore share a table listing every
-/// binding any of them reads, and their bind groups fill the bindings a pass
-/// leaves alone with [`Fillers`].
 pub(crate) fn layout(device: &wgpu::Device, table: &'static Table) -> GroupLayout {
     let entries: Vec<wgpu::BindGroupLayoutEntry> = table
         .bindings
@@ -774,9 +671,6 @@ pub(crate) fn layout(device: &wgpu::Device, table: &'static Table) -> GroupLayou
     }
 }
 
-/// A bind group layout and the table (`crate::bindings`) it was made from,
-/// which [`pipeline_layout`] checks against the tables a pipeline layout
-/// declares.
 #[derive(Clone, Debug)]
 pub(crate) struct GroupLayout {
     table: &'static Table,
@@ -791,12 +685,6 @@ impl std::ops::Deref for GroupLayout {
     }
 }
 
-/// The pipeline layout `declared` names (`crate::pipeline_layouts`), over
-/// `groups`, layouts of its tables in order: the one way pipeline layouts
-/// are made, so each is one `cargo xtask lint` counted, and the device
-/// makes each once, whoever asks (layouts of one table are equivalent, so
-/// groups made with any bind with it). Groups of other tables than it
-/// declares are a programming error.
 pub(crate) fn pipeline_layout(
     device: &wgpu::Device,
     declared: &PipelineLayout,
@@ -823,16 +711,12 @@ pub(crate) fn pipeline_layout(
     })
 }
 
-/// A shared layout: its table (`crate::bindings`), group
-/// layout, and the pipeline layout of passes binding it first, then `more`.
 pub(crate) struct Family {
     group: GroupLayout,
     pub(crate) pipeline: wgpu::PipelineLayout,
 }
 
 impl Family {
-    /// The family of pipelines over `declared`: a group of its first table,
-    /// then the layouts of the rest, `more`.
     pub(crate) fn new(
         device: &wgpu::Device,
         declared: &'static crate::pipeline_layouts::PipelineLayout,
@@ -846,8 +730,6 @@ impl Family {
         Self { group, pipeline }
     }
 
-    /// A group of this layout binding `resources` by name, filled where
-    /// they leave bindings out.
     pub(crate) fn group(
         &self,
         device: &wgpu::Device,
@@ -866,31 +748,19 @@ impl Family {
     }
 }
 
-/// A texture view as a binding's resource.
 pub(crate) fn view(view: &wgpu::TextureView) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::TextureView(view)
 }
 
-/// A sampler as a binding's resource.
 pub(crate) fn sampler(sampler: &wgpu::Sampler) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::Sampler(sampler)
 }
 
-/// Written storage fillers per group: each written binding a group fills
-/// gets its own range, since written bindings of a dispatch or draw may not
-/// overlap.
 const WRITE_FILLERS: u64 = 32;
-/// Bytes of each filler buffer range (the storage offset alignment).
 const FILLER_BYTES: u64 = 256;
 
-/// Bytes of the uniform filler: as large as the largest uniform a shared
-/// layout's filled bindings may declare.
 const UNIFORM_FILLER_BYTES: u64 = 4096;
 
-/// Resources standing in for the bindings of a shared layout a pass does not
-/// read: the smallest buffers, 2D textures (of floats, unsigned integers and
-/// depths, and a depth array) and samplers. Read and written storage have
-/// separate buffers, since one buffer may not be both in a dispatch or draw.
 pub(crate) struct Fillers {
     uniform: wgpu::Buffer,
     read: wgpu::Buffer,
@@ -963,8 +833,6 @@ impl Fillers {
         }
     }
 
-    // The filler of a binding of `kind`, the `written`th written storage
-    // binding a group fills.
     fn resource(&self, kind: Kind, written: u64) -> wgpu::BindingResource<'_> {
         match kind {
             Kind::Uniform { .. } => self.uniform.as_entire_binding(),
@@ -1002,8 +870,6 @@ impl Fillers {
     }
 }
 
-/// A bind group of `layout`, built from `table`, binding `resources` by
-/// their WGSL names; every binding of the table needs one.
 pub(crate) fn group(
     device: &wgpu::Device,
     label: &str,
@@ -1028,7 +894,6 @@ pub(crate) fn group(
     bind_group(device, label, layout, &entries)
 }
 
-/// [`group`] with [`Fillers`] for the bindings `resources` leave out.
 pub(crate) fn filled_group(
     device: &wgpu::Device,
     label: &str,
@@ -1065,8 +930,6 @@ pub(crate) fn filled_group(
     bind_group(device, label, layout, &entries)
 }
 
-/// The bind group of `layout` over `entries`: the one way bind groups are
-/// made, by [`group`] and [`filled_group`] from their tables.
 #[expect(clippy::disallowed_methods, reason = "the one way to make bind groups")]
 fn bind_group(
     device: &wgpu::Device,
@@ -1081,8 +944,6 @@ fn bind_group(
     })
 }
 
-/// The compute pipeline of `module`'s `entry` over `layout`, labeled with
-/// the entry point: the device's of its key, created unless it was.
 pub(crate) fn compute_entry(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
@@ -1111,9 +972,6 @@ pub(crate) fn compute_entry(
     })
 }
 
-/// A pipeline drawing geometry: `vertex` of `module` reading `buffers`,
-/// rasterized by `primitive`, with an optional depth test and an optional
-/// fragment stage of the same module.
 pub(crate) struct Geometry<'a> {
     pub label: &'a str,
     pub layout: &'a wgpu::PipelineLayout,
@@ -1126,20 +984,16 @@ pub(crate) struct Geometry<'a> {
     pub fragment: Option<Fragment<'a>>,
 }
 
-/// A fragment stage: its entry point, pipeline constants and color targets.
 pub(crate) struct Fragment<'a> {
     pub entry: Entry,
     pub constants: &'a [(&'a str, f64)],
     pub targets: &'a [Option<wgpu::ColorTargetState>],
 }
 
-/// The pipeline of `geometry`, one sample a pixel.
 pub(crate) fn geometry(device: &wgpu::Device, geometry: &Geometry<'_>) -> wgpu::RenderPipeline {
     sampled(device, geometry, 1)
 }
 
-/// The pipeline of `geometry` taking `samples` samples a pixel: the
-/// device's of its key, created unless it was.
 pub(crate) fn sampled(
     device: &wgpu::Device,
     geometry: &Geometry<'_>,
@@ -1195,9 +1049,6 @@ pub(crate) fn sampled(
     })
 }
 
-/// A pass drawing one triangle over its whole target: no vertex buffers,
-/// entry points `vertex` and `fragment` of `module` with pipeline
-/// `constants`, color `targets` and an optional depth test.
 pub(crate) struct Fullscreen<'a> {
     pub label: &'a str,
     pub layout: &'a wgpu::PipelineLayout,
@@ -1209,10 +1060,6 @@ pub(crate) struct Fullscreen<'a> {
     pub depth: Option<wgpu::DepthStencilState>,
 }
 
-/// The vertex attributes of upload struct `$ty`'s fields
-/// (`crate::gpu_layouts`): `Type { location => field as Format, .. }`, each
-/// at its field's offset. A format whose size differs from its field's fails
-/// to compile.
 macro_rules! vertex_attributes {
     ($ty:ident { $($location:literal => $field:ident as $format:ident),+ $(,)? }) => {
         [$({
@@ -1228,7 +1075,6 @@ macro_rules! vertex_attributes {
 }
 pub(crate) use vertex_attributes;
 
-/// The pipeline of a fullscreen pass.
 pub(crate) fn fullscreen(device: &wgpu::Device, pass: &Fullscreen<'_>) -> wgpu::RenderPipeline {
     geometry(
         device,

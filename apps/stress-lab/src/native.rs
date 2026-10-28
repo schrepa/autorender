@@ -1,11 +1,3 @@
-//! The Stress Lab natively: a workload or an authored scene in a window, or
-//! drawn offscreen for a number of frames, with the page's parameters as
-//! options (`--preset metro`, `--source PATH`...) beside the native host's
-//! (`engine_native::HostOptions`), and the files the page fetches read from
-//! disk. Measurements run a bench scene (`--scene bench/scenes/NAME.json`)
-//! with a settings bundle (`--settings bench/settings/NAME.json`): option
-//! files, which hold these options by name.
-
 use engine::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -38,8 +30,6 @@ The page's parameters:
   --scene FILE         a bench scene: the options in FILE (its preset,
                        configuration and view), as --settings reads them";
 
-/// The options development sessions name as their parameters, with what
-/// each does: the page's and the switches' (the host names its own).
 #[cfg(feature = "dev")]
 fn parameters() -> Vec<(&'static str, &'static str)> {
     let mut parameters = vec![
@@ -65,8 +55,6 @@ fn parameters() -> Vec<(&'static str, &'static str)> {
     parameters
 }
 
-/// What the command line asks for: the page's parameters, and the host's
-/// options.
 struct Options {
     preset: String,
     config: Option<String>,
@@ -83,7 +71,6 @@ struct Options {
     host: HostOptions,
 }
 
-/// Runs the Stress Lab as `arguments` ask: the program's `main`.
 pub fn main(arguments: impl Iterator<Item = String>) -> ExitCode {
     let arguments: Vec<String> = arguments.collect();
     if arguments.iter().any(|argument| argument == "--help") {
@@ -112,7 +99,6 @@ impl Options {
             lod: true,
             impostors: true,
             view: None,
-            // The page's public folder, beside this crate.
             assets: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public"),
             rocks: true,
             host: HostOptions::default(),
@@ -139,8 +125,6 @@ impl Options {
                 _ => return Err(argument.unknown()),
             }
         }
-        // The cook's packs live beside the files the page fetches, which
-        // serves them too.
         if options.host.jobs.packs.is_none() {
             options.host.jobs.packs = Some(options.assets.join("cooked"));
         }
@@ -156,8 +140,6 @@ impl Options {
         self.host.run("Stress Lab", build)
     }
 
-    /// The engine and Stress Lab the options make, with the page's choices
-    /// applied as the page applies them.
     fn build(&self) -> engine::Result<(Engine, StressLab)> {
         if let Some(path) = &self.source {
             let source = std::fs::read_to_string(path).map_err(|error| {
@@ -198,7 +180,6 @@ impl Options {
         Ok((engine, lab))
     }
 
-    /// Serves the development protocol over standard input and output.
     #[cfg(feature = "dev")]
     fn run_dev(
         &self,
@@ -312,7 +293,6 @@ impl Options {
         ))
     }
 
-    /// The preset's configuration under the `--config` fields.
     fn config(&self) -> engine::Result<StressConfig> {
         let preset = preset(&self.preset).ok_or_else(|| {
             let names: Vec<&str> = presets().iter().map(|preset| preset.value).collect();
@@ -346,9 +326,6 @@ impl Options {
     }
 }
 
-/// The files workload `scene` reads from the folder `assets`, as the page
-/// fetches them (its world's), with `rocks` the highlands' optional
-/// scanned rock maps.
 pub fn stress_files(
     assets: &Path,
     scene: StressScene,

@@ -1,9 +1,3 @@
-// The depth buffer's points, which the screen effects (post.wgsl) and
-// reflections (reflections.wgsl) share; each declares the effects' uniform
-// `post` and the depth buffer `depth_texture` in a group of its own.
-
-// World position of a depth-buffer pixel; w is 0 where only sky is (the
-// cleared depth, 0 with reversed depth).
 fn world_at(pixel: vec2<i32>) -> vec4<f32> {
     let depth = textureLoad(depth_texture, pixel, 0);
     let uv = (vec2<f32>(pixel) + 0.5) * post.size.zw;
@@ -12,11 +6,6 @@ fn world_at(pixel: vec2<i32>) -> vec4<f32> {
     return vec4<f32>(world.xyz / world.w, select(0.0, 1.0, depth > 0.0));
 }
 
-// The unit normal, facing the eye, of the surface the depth buffer holds at
-// `pixel`, whose world position is `p`; none (zero) where its neighbors
-// give no direction. The nearer neighbor on each axis keeps silhouettes
-// from bending it. On the screen's edges the neighbor past the edge is the
-// pixel itself, which gives no direction: the one inside stands in.
 fn depth_normal(pixel: vec2<i32>, p: vec3<f32>) -> vec3<f32> {
     let last = vec2<i32>(post.size.xy) - 1;
     let right = world_at(min(pixel + vec2<i32>(1, 0), last)).xyz - p;

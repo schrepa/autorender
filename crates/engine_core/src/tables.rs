@@ -1,15 +1,3 @@
-//! The renderer's static tables as records ([`engine_tables`]): the noise
-//! clouds are shaped from while the scene has clouds, and the physically
-//! based sky's tables for its air. Each frame [`StaticTables`] asks for
-//! those the scene's settings want, as jobs whose records the host's packs
-//! and store hand back, and a worker (or the host, in place) makes where
-//! they lack them; frames carry the latest of each table that arrived whole
-//! to the renderer, which uploads it ([`RenderTables`]). A table wanted for
-//! something new (another air) leaves the last one showing until the new
-//! one arrives. A session that cooks makes every table its scene wants,
-//! which then cooks with it. An engine no host serves draws no frames, so
-//! asks for none.
-
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -22,29 +10,21 @@ use crate::{
     Cooking, Environment, JobBudget, JobFailures, JobId, Jobs, RecordKey, URGENT_JOBS, job_priority,
 };
 
-/// Frames after a part's job failed before it is asked for again.
 const RETRY_AFTER: u64 = 120;
 
-/// A table as frames carry it: a number no other table of the engine has,
-/// which renderers tell what they uploaded by, and the table.
 #[derive(Clone, Debug)]
 pub struct StaticTable<T> {
     pub id: u64,
     pub table: Arc<T>,
 }
 
-/// The tables a frame's renderer reads: the latest of each that arrived
-/// whole, none before the first.
 #[derive(Clone, Debug, Default)]
 pub struct RenderTables {
     pub cloud_noise: Option<StaticTable<CloudNoise>>,
     pub sky: Option<StaticTable<SkyTables>>,
 }
 
-/// What a table is assembled from: its parts' records, taken as they
-/// arrive.
 trait Assembly: Sized {
-    /// Takes `record`, one of its parts', into `assembling`.
     fn take(assembling: &mut Option<Self>, record: &[u8]) -> Result<(), String>;
 }
 
@@ -63,8 +43,6 @@ impl Assembly for SkyTables {
     }
 }
 
-/// A part of a table: its job's identity, its job while asked for, and
-/// whether its record arrived; when its job last failed, if it did.
 struct Part {
     identity: Vec<u8>,
     job: Option<JobId>,
@@ -72,8 +50,6 @@ struct Part {
     failed: Option<u64>,
 }
 
-/// One table: what it is wanted for (its parts' identities), its parts and
-/// what they assembled so far, and the latest that arrived whole.
 struct TableState<T> {
     kind: TableKind,
     wanted: Option<Vec<Vec<u8>>>,
@@ -93,9 +69,6 @@ impl<T: Assembly> TableState<T> {
         }
     }
 
-    /// Follows what the scene wants it for: each part's identity, none
-    /// while it wants none. A change drops the parts asked for, whose jobs
-    /// stop.
     fn want(&mut self, wanted: Option<Vec<Vec<u8>>>, jobs: &mut Jobs) {
         if wanted == self.wanted {
             return;
@@ -119,9 +92,6 @@ impl<T: Assembly> TableState<T> {
         self.wanted = wanted;
     }
 
-    /// Asks for the parts not yet asked for as `slots` admits them, and
-    /// takes those that arrived; once all did, the table is the latest,
-    /// numbered `next`. What failed counts in `failures`.
     fn update(
         &mut self,
         slots: &mut JobBudget<'_>,
@@ -176,13 +146,10 @@ impl<T: Assembly> TableState<T> {
         }
     }
 
-    /// Parts wanted that have yet to arrive.
     fn left(&self) -> u64 {
         self.parts.iter().filter(|part| !part.arrived).count() as u64
     }
 
-    /// Its kind's name, its parts wanted and those that arrived, and
-    /// whether one arrived whole.
     fn row(&self) -> (&'static str, u64, u64, bool) {
         let parts = self.parts.len() as u64;
         (
@@ -194,16 +161,12 @@ impl<T: Assembly> TableState<T> {
     }
 }
 
-/// The renderer's static tables: each one's records asked for as the
-/// scene's settings want them, and the latest of each that arrived whole.
 #[derive(Resource)]
 pub struct StaticTables {
     cloud_noise: TableState<CloudNoise>,
     sky: TableState<SkyTables>,
-    // What the scene's settings wanted the tables for at the last frame.
     wants: Option<Wants>,
     frame: u64,
-    // The latest table's number.
     made: u64,
     failures: JobFailures,
 }
@@ -222,32 +185,23 @@ impl Default for StaticTables {
 }
 
 impl StaticTables {
-    /// Whether a table the scene wants has yet to arrive: hosts keep
-    /// preparing meanwhile.
     pub fn loading(&self) -> bool {
         self.left() > 0
     }
 
-    /// Parts of the tables wanted that have yet to arrive.
     fn left(&self) -> u64 {
         self.cloud_noise.left() + self.sky.left()
     }
 
-    /// Each table: its kind's name, the parts the scene's settings want of
-    /// it and those that arrived, and whether one arrived whole (the
-    /// latest, which frames carry).
     pub fn tables(&self) -> [(&'static str, u64, u64, bool); 2] {
         [self.cloud_noise.row(), self.sky.row()]
     }
 
-    /// Jobs of its tables that failed, each asked for again a while later,
-    /// and the latest one's error.
     pub fn job_failures(&self) -> (u64, Option<&str>) {
         let last = self.failures.last.as_ref();
         (self.failures.count, last.map(|(_, error)| error.as_str()))
     }
 
-    /// The latest of each table, as frames carry them.
     pub fn render(&self) -> RenderTables {
         RenderTables {
             cloud_noise: self.cloud_noise.ready.clone(),
@@ -256,9 +210,6 @@ impl StaticTables {
     }
 }
 
-/// What the scene's settings want the tables for: the cloud noise while
-/// clouds cover any sky, and the sky's tables for the physically based
-/// sky's air.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Wants {
     clouds: bool,
@@ -266,7 +217,6 @@ struct Wants {
 }
 
 impl Wants {
-    /// What `environment` wants.
     fn of(environment: &Environment) -> Self {
         let (clouds, sky) = (environment.clouds, environment.sky);
         Self {
@@ -285,8 +235,6 @@ impl Wants {
         }
     }
 
-    /// Each table's parts' identities: the cloud noise's and the sky's
-    /// tables'.
     fn identities(&self) -> [Option<Vec<Vec<u8>>>; 2] {
         [
             self.clouds.then(|| {
@@ -300,8 +248,6 @@ impl Wants {
     }
 }
 
-/// Asks for the tables the scene's settings want and takes those that
-/// arrived; while the session cooks, says how many parts are left.
 pub(crate) fn update_tables(world: &mut World) {
     if !world.get_resource::<Jobs>().is_some_and(Jobs::hosted) {
         return;

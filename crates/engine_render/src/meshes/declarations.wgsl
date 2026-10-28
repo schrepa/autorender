@@ -1,15 +1,3 @@
-// Mesh drawing, after scene.wgsl: these declarations, then vertex stages
-// (vertex.wgsl), shading (shading.wgsl), forward fragments (forward.wgsl),
-// the visibility resolve (resolve.wgsl), the sky, decals and impostors.
-// Opaque entry points write the canvas, the screen effects' scene targets
-// or temporal targets; `_lit` variants add
-// clustered local lights; transparent ones accumulate
-// weighted blended transparency. Unlit entry points never
-// touch the lights' bindings.
-
-// Material maps: glTF base color, metallic-roughness, normal,
-// occlusion and emissive textures, each with its sampler, and the material's
-// map parameters. Materials without maps bind white textures.
 @group(1) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(1) @binding(1) var base_color_sampler: sampler;
 @group(1) @binding(2) var metallic_roughness_texture: texture_2d<f32>;
@@ -21,65 +9,32 @@
 @group(1) @binding(8) var emissive_texture: texture_2d<f32>;
 @group(1) @binding(9) var emissive_sampler: sampler;
 struct MaterialMaps {
-    // Rows of each map's texture coordinate transform, in map order.
     transforms: array<vec4<f32>, 10>,
-    // Linear emissive color.
     emissive: vec4<f32>,
-    // Normal scale, occlusion strength and alpha cutoff.
     params: vec4<f32>,
-    // Transmission: its share, index of refraction and
-    // thickness; w holds the material's variant bits.
     volume: vec4<f32>,
-    // The top layer: its linear color and coverage, then
-    // its roughness; then the rooms across the base color texture of a
-    // material divided into them (0 for none). The meters one repeat of
-    // world-mapped maps covers are in `emissive.w`.
     top: vec4<f32>,
     layer: vec4<f32>,
 }
 @group(1) @binding(10) var<uniform> material_maps: MaterialMaps;
 
-// The material's pipeline variant. Without MATERIAL_MAPS only
-// the base color texture is read, untransformed, and its alpha masks
-// emission alone; the other flags need it except DOUBLE_SIDED.
 override MATERIAL_MAPS: bool = false;
 override NORMAL_MAP: bool = false;
 override ALPHA_MASK: bool = false;
 override DOUBLE_SIDED: bool = false;
-// Maps the material has: absent ones read as the white texel they would
-// sample. A packed occlusion map is the metallic-roughness texture, read in
-// the same sample's red.
 override METALLIC_ROUGHNESS_MAP: bool = true;
 override OCCLUSION_MAP: bool = true;
 override EMISSIVE_MAP: bool = true;
 override PACKED_OCCLUSION: bool = false;
-// Transmissive materials shade as glass in the transparent pass.
 override TRANSMISSION: bool = false;
-// Maps laid from the world's axes rather than texture coordinates, and a
-// layer settling on faces turned up.
 override WORLD_MAPPING: bool = false;
 override TOP_LAYER: bool = false;
-// Placed objects whose bases blend into the ground: slot vertex stages
-// pass their slots (`placed_material`), whose `grounds` and poses their
-// fragments read (`grounded`).
 override GROUNDING: bool = false;
-// Placed objects fading between how the camera shows them
-// draw from lists of their own, each entry carrying its fade: see
-// `slot_index` and `slot_fade`.
 override FADE_LIST: bool = false;
-// Passes drawn rarely, reflection probe captures and impostor
-// bakes, share one pipeline per pipeline state: they read the material's
-// variant bits from its uniform instead of the map constants above.
 override UBER_MATERIALS: bool = false;
-// Foliage shading on a material that is not masked: masked ones shade
-// as foliage anyway.
 override FOLIAGE: bool = false;
-// Masked surfaces' colors after their depth pre-pass (`masked_depth`),
-// which tested their alpha: they draw only where its depth is theirs, so
-// they test none themselves and early depth testing rejects the rest.
 override PRETESTED: bool = false;
 
-// Bits of a material's variant (`gpu_data::Variant`) in the uniform.
 const VARIANT_MAPS: u32 = 1u;
 const VARIANT_NORMAL_MAP: u32 = 2u;
 const VARIANT_DOUBLE_SIDED: u32 = 8u;
@@ -91,8 +46,6 @@ const VARIANT_WORLD_MAPPING: u32 = 4096u;
 const VARIANT_TOP_LAYER: u32 = 8192u;
 const VARIANT_FOLIAGE: u32 = 65536u;
 
-// Whether the material has feature `bit` of its variant: `specialized` in
-// pipelines specialized for it, the uniform's bit in uber ones.
 fn material_flag(bit: u32, specialized: bool) -> bool {
     if UBER_MATERIALS {
         return (bitcast<u32>(material_maps.volume.w) & bit) != 0u;
@@ -100,33 +53,16 @@ fn material_flag(bit: u32, specialized: bool) -> bool {
     return specialized;
 }
 
-// What glass refracts: the frame's opaque color while
-// transparent surfaces draw with refraction, a white texel otherwise.
 @group(0) @binding(9) var refraction_source: texture_2d<f32>;
 @group(0) @binding(10) var refraction_sampler: sampler;
-// Reflection probes whose environment maps surfaces reflect,
-// found through a grid of cells over the ground plane listing the probes
-// whose boxes reach each cell. In vec4 words: [0] the grid's first corner
-// (world x and z) and cell size (bits of f32) and the probe count; [1] the
-// cells across x and z and where the cells and their lists start; then a
-// word per cell (the first entry and the length of its list); then the
-// lists, smallest boxes first, PROBE_ENTRY_WORDS words an entry: the probe's
-// center and blend distance (bits of f32); its extent (bits of f32) and cube
-// in the environment maps; and its interior's sky and sun shares (bits of
-// f32), whether it is an interior and whether it is captured.
 const PROBE_ENTRY_WORDS: u32 = 3u;
 @group(0) @binding(13) var<storage, read> probe_words: array<vec4<u32>>;
 
-// Stable engine-owned slots; three aligned rows give an exact 48-byte affine pose.
 struct AffinePose {
     row_0: vec4<f32>,
     row_1: vec4<f32>,
     row_2: vec4<f32>,
 }
-// A slot's linear color and opacity as four 16-bit fractions (red and green,
-// then blue and opacity), its packed surface
-// and flags: one more than the offset of a skinned slot's joint palette,
-// 0 for rigid slots.
 struct SlotColor {
     color: vec2<u32>,
     surface: u32,
@@ -134,33 +70,16 @@ struct SlotColor {
 }
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
 @group(2) @binding(1) var<storage, read> colors: array<SlotColor>;
-// Temporally antialiased frames: each slot's pose in the previous frame.
 @group(2) @binding(2) var<storage, read> previous_poses: array<AffinePose>;
-// Joint palettes: each joint's displayed world matrix times
-// its inverse bind matrix; temporally antialiased frames also bind the
-// previous frame's.
 @group(2) @binding(3) var<storage, read> palette: array<AffinePose>;
 @group(2) @binding(4) var<storage, read> previous_palette: array<AffinePose>;
-// What lies under placed objects (`gpu_data::GroundData`): x
-// and z of the ground's normal as two signed fractions, the meters each
-// one's base sinks, the meters up it blends into the ground (0 for none, as
-// for every retained slot) and the ground's color there as four bytes,
-// its linear channels' square roots and its roughness (0 until
-// `scatter_snap.wgsl` reads it).
 @group(2) @binding(5) var<storage, read> grounds: array<vec4<u32>>;
-// Temporal visible IDs mark moving slots; others kept their previous pose.
 const MOVED_SLOT: u32 = 0x80000000u;
 
-// An entry of a fading list: the object's slot in the low
-// 24 bits, how far its fade has come (of 127) in the seven above and, at
-// the top, whether it fades out; placed objects never move.
 const FADE_SLOT: u32 = 0x00ffffffu;
-// A vertex output's fade word: whether it fades at all, whether out, and
-// how far (of 127).
 const FADE_WORD_ON: u32 = 0x100u;
 const FADE_WORD_OUT: u32 = 0x80u;
 
-// The slot of a visible-ID or fading-list entry.
 fn slot_index(entry: u32) -> u32 {
     if FADE_LIST {
         return entry & FADE_SLOT;
@@ -168,19 +87,14 @@ fn slot_index(entry: u32) -> u32 {
     return entry & ~MOVED_SLOT;
 }
 
-// Whether an entry's slot moved since the previous frame.
 fn slot_moved(entry: u32) -> bool {
     return !FADE_LIST && (entry & MOVED_SLOT) != 0u;
 }
 
-// The fade word of an entry: 0 for entries of steady lists.
 fn slot_fade(entry: u32) -> u32 {
     return select(0u, (entry >> 24u) | FADE_WORD_ON, FADE_LIST);
 }
 
-// Whether a fading object hides the pixel at `position`: one fading in
-// shows where the threshold falls under its progress and one fading out
-// where it does not, so the two cover each pixel once between them.
 fn fade_hidden(fade: u32, position: vec2<f32>) -> bool {
     if (fade & FADE_WORD_ON) == 0u {
         return false;
@@ -189,12 +103,6 @@ fn fade_hidden(fade: u32, position: vec2<f32>) -> bool {
     return shows == ((fade & FADE_WORD_OUT) != 0u);
 }
 
-// Virtual geometry: the arena `virtual_geometry.wgsl` selects
-// clusters from. Each mesh's bases (the last where the pool's page slots
-// start) and quantization; three words per cluster (the second ends with
-// its mesh, the third holds its vertex and triangle words in its page and
-// ends with its global page); the page pool: each page's slot, then the
-// slots of VIRTUAL_PAGE_WORDS words.
 struct VirtualMeshRecord {
     bases: vec4<u32>,
     info: vec4<u32>,
@@ -207,12 +115,6 @@ struct VirtualMeshRecord {
 @group(2) @binding(8) var<storage, read> virtual_pages: array<u32>;
 const VIRTUAL_PAGE_WORDS: u32 = 32768u;
 
-// The visibility buffer: each pixel of virtual geometry
-// holds its selected cluster's entry in `visible_clusters` plus one (0: no
-// cluster) and its triangle | bin << 7; each material bin's resolve then
-// shades the pixels of its 8x8 tiles. A draw's uniform: the bin's first
-// entry this phase, the bin, where its tile list starts and the tiles
-// across the viewport.
 struct VisibilityDraw {
     visible_base: u32,
     bin: u32,
@@ -220,28 +122,18 @@ struct VisibilityDraw {
     tiles_across: u32,
 }
 @group(2) @binding(9) var<uniform> visibility_draw: VisibilityDraw;
-// Visible ID and cluster of each selected cluster, by bin.
 @group(2) @binding(10) var<storage, read> visible_clusters: array<vec2<u32>>;
 @group(2) @binding(11) var visibility_ids: texture_2d<u32>;
 @group(2) @binding(12) var<storage, read> resolve_tiles: array<u32>;
 
-// Local lights, binned into view clusters by lights.wgsl.
 struct Clusters {
     view_projection: mat4x4<f32>,
-    // Depth along the view of point p: dot(xyz, p) + w.
     depth: vec4<f32>,
-    // x and y projection scales, clustered depth range start and end.
     projection: vec4<f32>,
-    // Tile width and height in pixels; slice = log2(depth) * z + w.
     grid: vec4<f32>,
-    // Tiles across and down, depth slices, and the per-cluster budget.
     counts: vec4<u32>,
-    // Lights, how they shade, and the listed entries' capacity.
     lights: vec4<u32>,
 }
-// A binned light (`lights.wgsl`): for lights without a cone `direction` is
-// their tube's axis, the tube running along it from `position`; the radius
-// of its sphere and its tube's length, and where it shines.
 struct Light {
     position: vec3<f32>,
     range: f32,
@@ -254,22 +146,15 @@ struct Light {
     region: u32,
     pad: u32,
 }
-// How the clusters' lights shade (`clusters.lights.y`): from their spheres
-// and tubes, and kept to their regions; and the regions they keep to.
 const SHAPED_LIGHTS: u32 = 1u;
 const KEPT_REGIONS: u32 = 2u;
 const LIGHT_INTERIOR: u32 = 1u;
 const LIGHT_EXTERIOR: u32 = 2u;
 @group(3) @binding(0) var<uniform> clusters: Clusters;
 @group(3) @binding(1) var<storage, read> lights: array<Light>;
-// Per cluster: the first entry of its list in `cluster_lights` and its
-// length.
 @group(3) @binding(2) var<storage, read> cluster_ranges: array<vec2<u32>>;
 @group(3) @binding(3) var<storage, read> cluster_lights: array<u32>;
 
-// Mesh vertices, which carry octahedral normals (`octahedral_normal`) in 24
-// bytes, and the four-byte slot ID stream, the only one visibility and
-// batching reorder.
 struct AffineVertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec2<f32>,
@@ -277,23 +162,13 @@ struct AffineVertexInput {
     @location(7) uv: vec2<f32>,
 }
 
-// Four output slots: vertex outputs bound geometry throughput, so texture
-// coordinates ride in the w lanes and the material stays packed and flat.
-// Positions are invariant: masked surfaces' depth pre-pass and their colors
-// after it draw the same vertex stages in different pipelines, and their
-// colors test its depths for equality.
 struct VertexOutput {
     @invariant @builtin(position) clip_position: vec4<f32>,
-    // World normal and texture u.
     @location(0) normal_u: vec4<f32>,
-    // World position and texture v.
     @location(1) world_v: vec4<f32>,
-    // Linear color and opacity as four 16-bit fractions, the packed
-    // surface and the fade word.
     @location(2) @interpolate(flat) material: vec4<u32>,
 }
 
-// `VertexOutput` and the unjittered previous clip position: x, y and w.
 struct TemporalOutput {
     @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,
@@ -302,19 +177,12 @@ struct TemporalOutput {
     @location(3) previous: vec3<f32>,
 }
 
-// Frames with screen effects: graded linear color with the
-// ambient share of its light in alpha, the pixel's glow weight and
-// reflectivity, and the surface reflections follow (`surface_texel`): its
-// shading normal, its roughness along the view and across it, the share of
-// its light its mirrored environment makes up, and what lies behind it.
 struct SceneTargets {
     @location(0) color: vec4<f32>,
     @location(1) glow: vec2<f32>,
     @location(2) surface: vec4<u32>,
 }
 
-// The scene targets, and the offset from this pixel to the same surface
-// point in the previous frame, in texture coordinates.
 struct TemporalTargets {
     @location(0) color: vec4<f32>,
     @location(1) motion: vec2<f32>,

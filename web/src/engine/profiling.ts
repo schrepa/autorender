@@ -1,4 +1,3 @@
-/** Optional capture tooling. Imported only when profiling Wasm methods exist. */
 import type { Runtime } from "./host";
 
 type JsonObject = Record<string, unknown>;
@@ -37,7 +36,6 @@ export function supportsProfiling<T extends Runtime>(runtime: T): runtime is T &
   return [runtime.profiling_start, runtime.profiling_stop, runtime.profiling_status, runtime.profiling_poll, runtime.profiling_report].every(value => typeof value === "function");
 }
 
-/** One capture, bounded host buffers, one Rust event serialization at stop. */
 export class DetailedProfiler {
   private phase: "idle" | "capturing" | "draining" = "idle";
   private disposed = false;
@@ -138,7 +136,6 @@ export class DetailedProfiler {
       const source = entry as PerformanceEntry & Record<string, unknown>;
       const value: BrowserEntry = { entryType: entry.entryType, name: entry.name.slice(0, 256), startTime: entry.startTime, duration: entry.duration };
       for (const key of ["blockingDuration", "renderStart", "styleAndLayoutStart", "firstUIEventTimestamp"]) if (finite(source[key])) value[key] = source[key];
-      // Script/attribution lists can grow independently of the number of entries.
       for (const field of ["scripts", "attribution"]) if (Array.isArray(source[field])) {
         value[`${field}_total`] = source[field].length;
         value[field] = source[field].slice(0, 16).map(item => {
@@ -150,7 +147,6 @@ export class DetailedProfiler {
           return compact;
         });
       }
-      // Keep unusual attribution strings/lists from dominating a bounded export.
       for (const field of ["scripts", "attribution"]) {
         const parts = value[field];
         if (Array.isArray(parts)) while (parts.length && JSON.stringify(value).length > 2048) parts.pop();
@@ -182,7 +178,7 @@ export class DetailedProfiler {
         errors: [String(error).slice(0, 1000)],
       };
       this.report = failure;
-      try { this.context.changed(); this.context.completed(failure); } catch { /* Retain export even if the UI was torn down. */ }
+      try { this.context.changed(); this.context.completed(failure); } catch {}
       return this.status();
     });
     return this.finishing;

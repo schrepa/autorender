@@ -1,9 +1,3 @@
-//! The ground materials themselves: grass of tapering blades in tufts
-//! (fresh, or dry over a mat of dead blades with heather), talus of
-//! stones over gravel, bare soil, a weathered rock face, wind-packed
-//! snow, and streams' rippled sand, gravel and cobbles, each at `size`
-//! texels along each side.
-
 use std::f32::consts::TAU;
 
 use engine::prelude::math::{max, min, sin_cos};
@@ -13,9 +7,6 @@ use super::noise::{
 };
 use super::{Maps, Rgb, Texel};
 
-// Grass.
-
-/// Blade colors of fresh grass: deep, green, fresh, yellow-green, olive.
 const GREEN_BLADES: [Rgb; 5] = [
     [0.022, 0.058, 0.011],
     [0.040, 0.094, 0.016],
@@ -23,7 +14,6 @@ const GREEN_BLADES: [Rgb; 5] = [
     [0.096, 0.138, 0.030],
     [0.058, 0.076, 0.022],
 ];
-/// Blade colors of dry grass: straw, tan, pale, brown, a green remnant.
 const DRY_BLADES: [Rgb; 5] = [
     [0.270, 0.225, 0.135],
     [0.220, 0.180, 0.110],
@@ -31,23 +21,17 @@ const DRY_BLADES: [Rgb; 5] = [
     [0.165, 0.128, 0.078],
     [0.105, 0.112, 0.050],
 ];
-/// Matted dead blades under dry grass.
 const DRY_THATCH: [Rgb; 3] = [
     [0.145, 0.115, 0.072],
     [0.105, 0.084, 0.055],
     [0.180, 0.148, 0.095],
 ];
-/// Dried blades among fresh grass.
 const DEAD_BLADE: Rgb = [0.150, 0.118, 0.052];
 const SOIL: Rgb = [0.034, 0.025, 0.016];
 const THATCH: Rgb = [0.062, 0.050, 0.026];
 const HEATHER: Rgb = [0.062, 0.036, 0.040];
 const HEATHER_GREEN: Rgb = [0.040, 0.052, 0.022];
 
-/// A tapering blade of grass lying from `root` (texture coordinates) along
-/// `direction` (radians), rising from its root's height to its tip's,
-/// shaded from `shade[0]` times its color at the root to `shade[1]` at the
-/// tip.
 struct Blade {
     root: [f32; 2],
     direction: f32,
@@ -60,8 +44,6 @@ struct Blade {
 }
 
 impl Blade {
-    /// Draws the blade over `texels` (`size` along each side) wherever it
-    /// stands higher than what is there.
     fn draw(&self, texels: &mut [Texel], size: usize) {
         let scale_to = size as f32;
         let (sin, cos) = sin_cos(self.direction);
@@ -78,7 +60,6 @@ impl Blade {
                 let dx = p[0] - cos * t * length;
                 let dy = p[1] - sin * t * length;
                 let distance = (dx * dx + dy * dy).sqrt();
-                // Tapering to a point.
                 let width = half * (1.0 - 0.75 * t);
                 if distance > width {
                     continue;
@@ -92,8 +73,6 @@ impl Blade {
                 if height <= texel.height {
                     continue;
                 }
-                // Darker at the root, lighter and yellower toward the tip,
-                // brightest along the blade's middle.
                 let shade = lerp(self.shade[0], self.shade[1], t) * (0.82 + 0.18 * profile);
                 let color = scale(self.color, shade);
                 texel.albedo = [color[0] + 0.012 * t, color[1] + 0.008 * t, color[2]];
@@ -104,9 +83,6 @@ impl Blade {
     }
 }
 
-/// Grass seen from above: tufts of tapering blades over thatch and soil.
-/// Dry grass grows over a mat of dead blades, with straw-colored tufts and
-/// heather clumps.
 pub(super) fn meadow(size: usize, dry: bool) -> Maps {
     let seed = if dry { 200 } else { 100 };
     let ground = Noise::new(6, 5, 0.55, seed);
@@ -126,7 +102,6 @@ pub(super) fn meadow(size: usize, dry: bool) -> Maps {
     });
     let mut rng = Rng::new(u64::from(seed));
     if dry {
-        // The mat: short dead blades lying every which way.
         for _ in 0..9000 {
             let root_height = rng.range(0.05, 0.15);
             let pick = (rng.unit() * DRY_THATCH.len() as f32) as usize;
@@ -153,7 +128,6 @@ pub(super) fn meadow(size: usize, dry: bool) -> Maps {
         let center = [rng.unit(), rng.unit()];
         let spread = rng.range(0.004, 0.014);
         let blades = rng.range(5.0, 13.0) as usize;
-        // A tuft leans toward neighboring colors and grows to its own vigor.
         let tint = rng.unit();
         let vigor = rng.range(0.8, 1.2);
         for _ in 0..blades {
@@ -168,7 +142,6 @@ pub(super) fn meadow(size: usize, dry: bool) -> Maps {
             let root_height = rng.range(0.1, 0.3);
             Blade {
                 root: [center[0] + cos * reach, center[1] + sin * reach],
-                // Fanning out from the tuft.
                 direction: angle + rng.range(-0.7, 0.7),
                 length: rng.range(0.012, 0.03) * vigor,
                 width: rng.range(0.0028, 0.005),
@@ -183,7 +156,6 @@ pub(super) fn meadow(size: usize, dry: bool) -> Maps {
     Maps::new(size, texels, if dry { 2.0 } else { 2.5 })
 }
 
-/// Low clumps of heather among dry grass: dark leaves on cellular patches.
 fn heather(texels: &mut [Texel], size: usize, seed: u32) {
     let cells = Cells::new(8, 0.8, seed);
     let leaves = Noise::new(90, 2, 0.5, seed + 1);
@@ -213,31 +185,19 @@ fn heather(texels: &mut [Texel], size: usize, seed: u32) {
     }
 }
 
-// Stones.
-
-/// A layer of stones on cellular noise: a share of the cells each hold a
-/// stone shrunk from the cell's edges by a gap from a range (in cells),
-/// rounded or angular by its own measure within a range, standing from
-/// `base` up to `rise` higher, tilted and folded along a crest of its own.
 struct Stones {
     cells: Cells,
     share: f32,
     gap: [f32; 2],
-    /// How rounded its stones are, from the first to the second: 0
-    /// angular, 1 rounded.
     round: [f32; 2],
     base: f32,
     rise: f32,
-    /// Rise per cell of each stone's tilt, at most, and of an angular
-    /// stone's crest.
     tilt: f32,
     crest: f32,
     outline: Noise,
     seed: u32,
 }
 
-/// A stone under a texel: its height, its cell and how far in from its
-/// edge the texel lies (0 at the edge, 1 past its shoulder).
 struct Stone {
     height: f32,
     id: u32,
@@ -256,8 +216,6 @@ impl Stones {
         if inside <= 0.0 {
             return None;
         }
-        // Rounded stones have wide shoulders and domes; angular ones narrow
-        // shoulders, a crest and flat faces.
         let round = lerp(self.round[0], self.round[1], random(16));
         let shoulder = lerp(0.07, 0.3, round);
         let profile = saturate(inside / shoulder);
@@ -276,16 +234,12 @@ impl Stones {
         })
     }
 
-    /// A desaturated color for stone `id` between `dark` and `light` grays,
-    /// a little warmer or cooler than neutral.
     fn color(&self, id: u32, dark: f32, light: f32) -> Rgb {
         let value = lerp(dark, light, unit(hash(id, 14, self.seed)));
         let warmth = (unit(hash(id, 15, self.seed)) - 0.5) * 0.12;
         [value * (1.0 + warmth), value, value * (1.0 - warmth)]
     }
 
-    /// A water-worn stone `id`'s color: its gray ([`Self::color`]) tinted as
-    /// one of the rocks streams carry ([`RIVER_ROCKS`]).
     fn worn(&self, id: u32, dark: f32, light: f32) -> Rgb {
         let pick = (unit(hash(id, 17, self.seed)) * RIVER_ROCKS.len() as f32) as usize;
         let rock = RIVER_ROCKS[pick.min(RIVER_ROCKS.len() - 1)];
@@ -297,16 +251,11 @@ impl Stones {
 const GRIT: Rgb = [0.058, 0.054, 0.050];
 const SCREE_DIRT: Rgb = [0.085, 0.074, 0.062];
 
-/// Talus: loose angular and rounded stones of strongly varied sizes, many
-/// small and few large, the larger lying on the smaller, with gravel and
-/// dirt between them.
 pub(super) fn scree(size: usize) -> Maps {
     let seed = 400;
     let grit = Noise::new(140, 2, 0.5, seed);
     let mottle = Noise::new(64, 3, 0.5, seed + 1);
     let dirt = Noise::new(6, 3, 0.5, seed + 2);
-    // Cells across the texture, the share holding stones, their gaps, feet
-    // and rise: at 4 meters a repeat, stones from about 25 cm down to 2 cm.
     let layer = |count: usize, share: f32, gap: [f32; 2], base: f32, rise: f32, salt: u32| Stones {
         cells: Cells::new(count, 0.9, seed + salt),
         share,
@@ -350,7 +299,6 @@ pub(super) fn scree(size: usize) -> Maps {
                 roughness: 0.72 + 0.12 * speckle,
             };
         }
-        // Dirt settled among the low stones.
         let settled = smoothstep(0.45, 0.75, dirt.unit(u + 0.37, v + 0.11))
             * (1.0 - saturate(texel.height * 3.0));
         texel.albedo = mix(texel.albedo, SCREE_DIRT, 0.6 * settled);
@@ -359,14 +307,10 @@ pub(super) fn scree(size: usize) -> Maps {
     Maps::new(size, texels, 3.0)
 }
 
-// Dirt.
-
 const SOIL_BROWN: Rgb = [0.118, 0.092, 0.068];
 const SOIL_DARK: Rgb = [0.070, 0.058, 0.046];
 const SOIL_GRAY: Rgb = [0.110, 0.100, 0.088];
 
-/// Bare soil: granular crumbs and soft clods, faint drying cracks in
-/// places, scattered angular pebbles.
 pub(super) fn dirt(size: usize) -> Maps {
     let seed = 300;
     let soil = Noise::new(5, 5, 0.55, seed);
@@ -399,7 +343,6 @@ pub(super) fn dirt(size: usize) -> Maps {
         let wet = smoothstep(0.45, 0.7, damp.unit(u, v));
         let fine = grain.unit(u, v);
         let crumb = crumbs.unit(u, v);
-        // Crumbs: tiny lumps, each its own shade, darker between.
         let lump = grains.sample(u, v);
         let lumpy = smoothstep(0.0, 0.25, lump.edge);
         let shade = 0.82 + 0.36 * unit(hash(lump.id, 0, seed));
@@ -408,7 +351,6 @@ pub(super) fn dirt(size: usize) -> Maps {
             u + 0.02 * warp.fbm(u, v),
             v + 0.02 * warp.fbm(v + 0.31, u + 0.67),
         );
-        // Cracks only where the soil dried, fading along their length.
         let crack = (1.0 - smoothstep(0.0, 0.02, cracks.sample(wu, wv).edge))
             * smoothstep(0.55, 0.75, crack_mask.unit(u, v))
             * (1.0 - wet);
@@ -451,20 +393,12 @@ pub(super) fn dirt(size: usize) -> Maps {
     Maps::new(size, texels, 1.2)
 }
 
-// Rock.
-
 const ROCK_GRAY: Rgb = [0.180, 0.178, 0.172];
 const ROCK_WARM: Rgb = [0.198, 0.184, 0.166];
 const ROCK_COOL: Rgb = [0.160, 0.166, 0.172];
 const LICHEN_PALE: Rgb = [0.250, 0.262, 0.225];
 const LICHEN_YELLOW: Rgb = [0.215, 0.215, 0.120];
 
-/// A weathered rock face as seen from the side (image up is up): blocks
-/// twice as wide as tall, each a tilted plane at its own depth and chipped
-/// into smaller tilted facets, stepped into ledges along the contours of
-/// broad warped forms, with a few meandering cracks along the bedding,
-/// varied grays with faint warm and cool patches, and pale lichen on the
-/// ledges.
 pub(super) fn rock(size: usize) -> Maps {
     let seed = 500;
     let warp = [Noise::new(2, 4, 0.5, seed), Noise::new(2, 4, 0.5, seed + 1)];
@@ -478,7 +412,6 @@ pub(super) fn rock(size: usize) -> Maps {
     let tint = Noise::new(5, 3, 0.5, seed + 9);
     let lichen = Noise::new(16, 4, 0.55, seed + 10);
     let specks = Noise::new(128, 2, 0.5, seed + 11);
-    // Ledges across the broad forms' range.
     let steps = 8.0;
     let texels = texture(size, |u, v| {
         let wu = u + 0.05 * warp[0].fbm(u, v);
@@ -492,12 +425,10 @@ pub(super) fn rock(size: usize) -> Maps {
         let ledge = (step + riser) / steps;
         let chip = chips.ridged(wu, wv);
         let fine = grain.unit(u, v);
-        // A few cracks along the bedding, open only in stretches.
         let along = 1.0 - bedding.fbm(wu, wv * 6.0).abs();
         let crack = smoothstep(0.94, 0.985, along) * smoothstep(0.55, 0.75, openings.unit(u, v));
         let height =
             0.5 * block + 0.2 * facet + 0.18 * ledge + 0.02 * chip + 0.003 * fine - 0.08 * crack;
-        // Grays by block and patch, darker on risers and in cracks.
         let patch = tint.fbm(u, v);
         let mut albedo = mix(ROCK_GRAY, ROCK_WARM, saturate(patch * 1.5));
         albedo = mix(albedo, ROCK_COOL, saturate(-patch * 1.5));
@@ -510,7 +441,6 @@ pub(super) fn rock(size: usize) -> Maps {
                 * (0.9 + 0.2 * fine)
                 * (0.9 + 0.2 * chip),
         );
-        // Pale lichen on the ledges, in crusty specks.
         let growth = smoothstep(0.55, 0.66, lichen.unit(u, v))
             * (1.0 - riser)
             * smoothstep(0.35, 0.6, specks.unit(u, v));
@@ -528,13 +458,9 @@ pub(super) fn rock(size: usize) -> Maps {
     Maps::new(size, texels, 2.0)
 }
 
-// Snow.
-
 const SNOW: Rgb = [0.860, 0.875, 0.905];
 const SNOW_SHADE: Rgb = [0.640, 0.725, 0.870];
 
-/// Wind-packed snow: soft ripples running across the wind, broad swells,
-/// faint sparkle and bluish hollows.
 pub(super) fn snow(size: usize) -> Maps {
     let seed = 600;
     let warp = Noise::new(3, 3, 0.5, seed);
@@ -543,7 +469,6 @@ pub(super) fn snow(size: usize) -> Maps {
     let grain = Noise::new(128, 2, 0.5, seed + 3);
     let texels = texture(size, |u, v| {
         let shift = warp.fbm(u, v) * 0.1;
-        // Crests along u: the noise changes three times faster along v.
         let ripple = ripples.ridged(u + shift, (v + shift) * 3.0);
         let fine = grain.unit(u, v);
         let height = 0.35 * ripple * ripple + 0.5 * swell.unit(u, v) + 0.03 * fine;
@@ -556,7 +481,6 @@ pub(super) fn snow(size: usize) -> Maps {
         }
     });
     let mut maps = Maps::new(size, texels, 0.6);
-    // Hollows bluish: wherever the snow lies below its surroundings.
     let around = blur(&maps.height, size, usize::max(1, size / 48));
     for ((albedo, height), around) in maps.albedo.iter_mut().zip(&maps.height).zip(&around) {
         let hollow = saturate((around - height) * 8.0);
@@ -565,11 +489,6 @@ pub(super) fn snow(size: usize) -> Maps {
     maps
 }
 
-// Stream beds.
-
-/// The rocks streams carry down, as tints of a stone's gray: granite and
-/// gneiss most, then sandstone, dark basalt and greywacke, pale quartzite
-/// and green schist.
 const RIVER_ROCKS: [Rgb; 8] = [
     [1.0, 1.0, 1.0],
     [1.0, 1.0, 1.0],
@@ -585,16 +504,8 @@ const SAND: Rgb = [0.25, 0.226, 0.188];
 const SAND_PALE: Rgb = [0.36, 0.34, 0.3];
 const SAND_DARK: Rgb = [0.11, 0.104, 0.096];
 
-/// Ripples across the sand's texture: at two meters a repeat, crests 13
-/// centimeters apart, about a thousand of its fine grains, as current
-/// ripples stand (Yalin 1964).
 const RIPPLES: f32 = 15.0;
 
-/// Streams' sand at two meters a repeat: fine pale grains with dark and
-/// paler ones among them, rippled by the water into sinuous crests
-/// ([`RIPPLES`]), each a gentle rise to a sharp crest and a steep lee,
-/// fading out in patches, the dark grains gathered in the troughs; a few
-/// pebbles lie on it.
 pub(super) fn sand(size: usize) -> Maps {
     let seed = 900;
     let warp = Noise::new(3, 3, 0.5, seed);
@@ -614,11 +525,8 @@ pub(super) fn sand(size: usize) -> Maps {
         seed: seed + 4,
     };
     let texels = texture(size, |u, v| {
-        // Crests along u, bent where the warp shifts them.
         let phase = (v + 0.05 * warp.fbm(u, v)) * RIPPLES;
         let along = phase - phase.floor();
-        // A gentle rise over seven tenths of each ripple, then its lee:
-        // sharp at the crest, rounded in the trough.
         let rise = if along < 0.7 {
             along / 0.7
         } else {
@@ -638,7 +546,6 @@ pub(super) fn sand(size: usize) -> Maps {
         let mut texel = Texel {
             albedo: scale(mix(base, SAND_DARK, 0.4 * (1.0 - rise) * strength), speck),
             height: 0.5 * rise * rise * strength + 0.2 * swell.unit(u, v) + 0.02 * grain,
-            // Flakes of mica glint among the grains.
             roughness: if grain > 0.985 { 0.4 } else { 0.84 },
         };
         if let Some(stone) = pebbles
@@ -659,16 +566,11 @@ pub(super) fn sand(size: usize) -> Maps {
 const GRAVEL_GRIT: Rgb = [0.07, 0.065, 0.058];
 const GRAVEL_SAND: Rgb = [0.13, 0.118, 0.1];
 
-/// Streams' gravel at a meter and a half a repeat: dense water-worn stones
-/// from 2 to 6 centimeters, subrounded to rounded and of the rocks streams
-/// carry, the larger lying on the smaller, coarse sand between them.
 pub(super) fn gravel(size: usize) -> Maps {
     let seed = 700;
     let grit = Noise::new(200, 2, 0.5, seed);
     let mottle = Noise::new(96, 3, 0.5, seed + 1);
     let matrix = Noise::new(8, 3, 0.5, seed + 2);
-    // Cells across the texture, the share holding stones, their gaps, feet
-    // and rise: stones from about 2 cm up to 6 cm.
     let layer = |count: usize, share: f32, gap: [f32; 2], base: f32, rise: f32, salt: u32| Stones {
         cells: Cells::new(count, 0.9, seed + salt),
         share,
@@ -721,23 +623,14 @@ pub(super) fn gravel(size: usize) -> Maps {
 
 const COBBLE_GAP: Rgb = [0.016, 0.015, 0.013];
 const COBBLE_SILT: Rgb = [0.05, 0.045, 0.038];
-/// The brown-olive film of algae and silt on stones lying in running
-/// water.
 const BIOFILM: Rgb = [0.07, 0.066, 0.032];
 
-/// Streams' cobbles at four meters a repeat: rounded water-worn stones
-/// from 6 to 25 centimeters packed against each other, the larger lying on
-/// the smaller, with dark gaps between them holding silt and pebbles; the
-/// stones of the rocks streams carry, some filmed brown-olive on top.
 pub(super) fn cobble(size: usize) -> Maps {
     let seed = 800;
     let silt = Noise::new(10, 3, 0.5, seed);
     let grit = Noise::new(160, 2, 0.5, seed + 1);
     let mottle = Noise::new(48, 3, 0.5, seed + 2);
     let film = Noise::new(12, 3, 0.5, seed + 3);
-    // Cells across the texture, the share holding stones, their gaps, feet
-    // and rise: pebbles of about 6 cm down in the gaps, cobbles of about
-    // 10, 16 and 25 cm over them.
     let layer = |count: usize, share: f32, gap: [f32; 2], base: f32, rise: f32, salt: u32| Stones {
         cells: Cells::new(count, 0.85, seed + salt),
         share,
@@ -778,7 +671,6 @@ pub(super) fn cobble(size: usize) -> Maps {
                 continue;
             }
             let speckle = mottle.unit(u, v);
-            // The film settles on the stone's top, clear of its rim.
             let filmed = 0.45 * smoothstep(0.5, 0.75, film.unit(u, v)) * stone.profile;
             let worn = scale(
                 layer.worn(stone.id, 0.11, 0.25),

@@ -1,18 +1,7 @@
-// The resolve of the visibility buffer: each material bin
-// draws its tiles, and each of their pixels that bin's triangle covers
-// shades as a forward-drawn fragment of that triangle would. The triangle's
-// corners are posed as `vs_virtual` poses them, and its attributes
-// interpolated at the pixel center with perspective-correct barycentric
-// weights. Neighboring pixels may show other triangles, so derivatives come
-// from the same triangle's weights at the pixel's partner in its 2x2 quad,
-// across and down, as fine derivatives of forward fragments take them.
-
 struct ResolveOutput {
     @builtin(position) clip_position: vec4<f32>,
 }
 
-// Corner `vertex` of two triangles over tile `instance` of the bin, among
-// the tiles of the frame's render size, which it draws at.
 @vertex
 fn vs_resolve(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32)
         -> ResolveOutput {
@@ -28,19 +17,11 @@ fn vs_resolve(@builtin(vertex_index) vertex: u32, @builtin(instance_index) insta
     return output;
 }
 
-// Perspective-correct barycentric weights at normalized device point
-// `point` (x, y, 1) of the triangle whose edge functions are `a`, `b` and
-// `c` (Olano and Greer's homogeneous rasterization: corners stay in clip
-// space, so triangles crossing the eye plane resolve too).
 fn barycentric(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, point: vec3<f32>) -> vec3<f32> {
     let edges = vec3<f32>(dot(a, point), dot(b, point), dot(c, point));
     return edges / (edges.x + edges.y + edges.z);
 }
 
-// A pixel's triangle: its fragment, how its world position, texture
-// coordinates and interpolated normal change per pixel across and down,
-// which way its quad partners lie (1 or -1, across and down), whether it
-// faces the camera, and the point's previous clip x, y and w.
 struct Resolved {
     fragment: Fragment,
     world_dx: vec3<f32>,
@@ -54,8 +35,6 @@ struct Resolved {
     previous: vec3<f32>,
 }
 
-// The triangle of this draw's bin covering the pixel at `position`;
-// discards pixels of other bins and of nothing.
 fn resolve_pixel(position: vec4<f32>) -> Resolved {
     let ids = textureLoad(visibility_ids, vec2<i32>(position.xy), 0).xy;
     if ids.x == 0u || (ids.y >> 7u) != visibility_draw.bin {
@@ -84,7 +63,6 @@ fn resolve_pixel(position: vec4<f32>) -> Resolved {
     let size = camera.region.xy;
     let point = vec3<f32>(position.x / size.x * 2.0 - 1.0, 1.0 - position.y / size.y * 2.0, 1.0);
     let weights = barycentric(ea, eb, ec, point);
-    // Even pixels' partners follow them, odd ones' precede them.
     let partner = select(vec2<f32>(1.0), vec2<f32>(-1.0),
         (vec2<u32>(position.xy) & vec2<u32>(1u)) == vec2<u32>(1u));
     let across = (barycentric(ea, eb, ec, point + vec3<f32>(partner.x * 2.0 / size.x, 0.0, 0.0))
@@ -112,9 +90,7 @@ fn resolve_pixel(position: vec4<f32>) -> Resolved {
     resolved.normal_dx = normal_across.xyz;
     resolved.normal_dy = normal_down.xyz;
     resolved.partner = partner;
-    // Counterclockwise in normalized device coordinates faces the camera.
     resolved.front = dot(pa, ea) > 0.0;
-    // Only moving slots read their previous pose, as `vs_virtual_temporal`.
     var previous_world = resolved.fragment.world;
     if (entry.x & MOVED_SLOT) != 0u {
         let pose = previous_poses[slot];
@@ -127,9 +103,6 @@ fn resolve_pixel(position: vec4<f32>) -> Resolved {
     return resolved;
 }
 
-// The shading normal at a quad partner: the interpolated normal changed by
-// `normal_step`, the world position by `world_step` and the texture
-// coordinates by `uv_step`, sampling the normal map there.
 fn stepped_normal(resolved: Resolved, texels: MaterialTexels, normal_step: vec3<f32>,
         world_step: vec3<f32>, uv_step: vec2<f32>, ripples: f32) -> vec3<f32> {
     let input = resolved.fragment;
@@ -145,11 +118,6 @@ fn stepped_normal(resolved: Resolved, texels: MaterialTexels, normal_step: vec3<
         texels.normal_dx, texels.normal_dy, ripples);
 }
 
-// `surface_point` of a resolved pixel: explicit derivatives, and the shading
-// normal's turn toward its quad partners across and down, as forward
-// fragments' derivatives take it. Maps sample as finely as the display shows
-// them: their derivatives scaled by the render size's share of it, as the
-// mip bias of forward fragments' samples.
 fn resolved_point(resolved: Resolved) -> SurfacePoint {
     let input = resolved.fragment;
     let detail = material_detail();
@@ -169,8 +137,6 @@ fn resolved_point(resolved: Resolved) -> SurfacePoint {
     let x = resolved.partner.x;
     let y = resolved.partner.y;
     if material_flag(VARIANT_WORLD_MAPPING, WORLD_MAPPING) {
-        // World-mapped maps turn toward the partners with
-        // the interpolated normal alone.
         let across = stable_normalize(point.normal + resolved.normal_dx * x);
         let down = stable_normalize(point.normal + resolved.normal_dy * y);
         return widened(point, across - point.normal, down - point.normal);

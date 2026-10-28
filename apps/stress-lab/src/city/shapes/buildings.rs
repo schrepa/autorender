@@ -1,5 +1,3 @@
-//! The city's buildings, their roofs and its industry.
-
 use super::*;
 
 pub(super) fn tower(b: &mut Builder) {
@@ -324,7 +322,6 @@ pub(super) fn chimney(b: &mut Builder) {
     );
 }
 
-// Roofs along X: one ridge, or steep teeth repeating along Z.
 pub(super) fn wedge(b: &mut Builder) {
     b.ridge(-0.5, 0.5, [(-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)], Uv::FULL);
 }

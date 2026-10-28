@@ -1,6 +1,3 @@
-//! Tiles: their samples, bounds and holes, sampling within them, and their
-//! generation from a layer stack, a step at a time.
-
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -24,24 +21,13 @@ mod beds;
 
 pub(crate) use beds::RiverInputs;
 
-/// Cells with a hole bit: those starting at samples 0..=256, so tiles agree
-/// on the cells along their shared edges.
 const HOLE_CELLS: usize = TILE_SAMPLES as usize;
 const HOLE_WORDS: usize = (HOLE_CELLS * HOLE_CELLS).div_ceil(64);
 
-/// A tile holds each sample's meters to the nearest river's edge, and the
-/// height of the bankfull flood of the river holding it above its ground,
-/// as steps of `RIVER_EDGE_STEP` meters counted from `RIVER_EDGE_ZERO`, the
-/// edge and the ground; `RIVER_EDGE_FAR` stands for no river within reach,
-/// and for no river's bed. Its surface masks, placement and the GPU's
-/// control values all read these steps.
 pub const RIVER_EDGE_STEP: f32 = 0.0625;
 pub const RIVER_EDGE_ZERO: u16 = 32_768;
 pub const RIVER_EDGE_FAR: u16 = u16::MAX;
 
-/// The step of a tile's river values ([`RIVER_EDGE_STEP`]) nearest
-/// `meters`, within those short of [`RIVER_EDGE_FAR`]; that one at
-/// [`RIVER_FAR`] and beyond, where no river reaches.
 pub(crate) fn river_step(meters: f32) -> u16 {
     if meters >= RIVER_FAR {
         return RIVER_EDGE_FAR;
@@ -50,8 +36,6 @@ pub(crate) fn river_step(meters: f32) -> u16 {
     clamp(step, 0.0, f32::from(RIVER_EDGE_FAR - 1)) as u16
 }
 
-/// [`river_step`] undone: meters from the nearest river's edge, negative
-/// in its channel; [`RIVER_FAR`] where no river reaches.
 pub(crate) fn river_meters(step: u16) -> f32 {
     if step == RIVER_EDGE_FAR {
         RIVER_FAR
@@ -60,16 +44,6 @@ pub(crate) fn river_meters(step: u16) -> f32 {
     }
 }
 
-/// A tile's samples: heights in meters above the terrain's origin of
-/// samples -1 to 257 along x and z (its samples and a border of one), row
-/// by row along z, with their bounds, where a stamp cut them holes, and
-/// with a surface each sample's control value; each sample's meters to the
-/// nearest river's edge where rivers reach it, and the bed of the river
-/// holding it where it lies in one; what culling knows of each of its
-/// patches, made with it; its water's mesh ([`WaterMesh`]) and the error
-/// pyramids of its ground and of that mesh ([`ErrorPyramid`]), made with
-/// them; and for a terrain's tiles of level 1 and coarser, once it arrived,
-/// the shading they take from a record of their own, level 0's averaged.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tile {
     key: TileKey,
@@ -81,11 +55,7 @@ pub struct Tile {
     river_beds: Option<Box<[u16]>>,
     placed: Option<Arc<[crate::Placed]>>,
     placing: Option<Placing>,
-    // The water standing on it, the world's one water there.
     water: Option<TileWater>,
-    // Its water's mesh and the error pyramids of its ground and of that
-    // mesh, never encoded: they are made again wherever its heights or
-    // water are.
     water_mesh: Option<Arc<WaterMesh>>,
     ground_errors: Arc<ErrorPyramid>,
     water_errors: Option<Arc<ErrorPyramid>>,
@@ -96,13 +66,6 @@ pub struct Tile {
     patch_culling: Box<[PatchCulling]>,
 }
 
-/// What culling knows of a patch, made with its tile: the disk holding the
-/// slopes (rise per meter along x and z) of all its triangles, which says
-/// where a view sees none of their fronts; and the lowest ground of each of
-/// its quarters (rows along z), which hides what lies below sight over it.
-/// Slopes are in 256ths, the disk's radius rounded up over its center's
-/// rounding; floors in 255ths of the patch's heights up from its lowest,
-/// rounded down: neither tells more than the ground holds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct PatchCulling {
     slope: [i16; 2],
@@ -116,11 +79,8 @@ crate::codec::record!(PatchCulling {
     floors,
 });
 
-/// Slopes' steps: 256 a unit of rise per meter.
 const SLOPE_STEPS: f32 = 256.0;
 
-/// The surface at a point: its height on its triangle, the normal of the
-/// smooth surface there ([`SampleShape`]) and whether its cell is a hole.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TileSample {
     pub height: f32,
@@ -129,11 +89,6 @@ pub struct TileSample {
 }
 
 impl Tile {
-    /// A tile of `key` at sample spacing `spacing` from its
-    /// [`TILE_STRIDE`]-squared `heights` and optional hole bits (one per
-    /// cell starting at samples 0..=256, row by row), with what culling
-    /// knows of its patches. `None` when the sizes do not match or a height
-    /// is not finite.
     pub fn new(
         key: TileKey,
         spacing: f32,
@@ -147,9 +102,6 @@ impl Tile {
         Some(tile)
     }
 
-    /// [`Self::new`] but for what culling knows of its patches, which a
-    /// tile read back holds already: its bounds and its ground's error
-    /// pyramid made from its heights.
     fn shaped(
         key: TileKey,
         spacing: f32,
@@ -216,9 +168,6 @@ impl Tile {
         Some(tile)
     }
 
-    /// What culling knows of patch `(x, z)`: the disk around its triangles'
-    /// slopes, each cell split from its (x, z+1) corner to its (x+1, z) one,
-    /// and its quarters' lowest ground.
     fn cull(&self, x: u32, z: u32) -> PatchCulling {
         let patch = PATCH_QUADS as i32;
         let (first_x, first_z) = (x as i32 * patch, z as i32 * patch);
@@ -274,7 +223,6 @@ impl Tile {
                     lowest = min(lowest, self.height(sx, sz));
                 }
             }
-            // A step lower still, past what rounding could add back.
             *floor = if range > 0.0 {
                 (clamp(((lowest - patch_low) / range * 255.0).floor(), 0.0, 255.0) as u8)
                     .saturating_sub(1)
@@ -289,8 +237,6 @@ impl Tile {
         }
     }
 
-    /// The tile with `control`: one packed [`Control`] per sample, the
-    /// layout of its heights. `None` when the size does not match.
     pub fn with_control(mut self, control: Box<[u32]>) -> Option<Self> {
         let stride = TILE_STRIDE as usize;
         (control.len() == stride * stride).then(|| {
@@ -299,18 +245,10 @@ impl Tile {
         })
     }
 
-    /// Every sample's meters to the nearest river's edge as steps of
-    /// [`RIVER_EDGE_STEP`] from [`RIVER_EDGE_ZERO`] ([`RIVER_EDGE_FAR`]
-    /// beyond every river's reach), the border included, row by row: the
-    /// layout of its heights. `None` where no river reaches the tile.
     pub fn river_edges(&self) -> Option<&[u16]> {
         self.river_edges.as_deref()
     }
 
-    /// The tile with the water its samples' `surface` and words `info`
-    /// ([`TileWater::info`]) stand at, `solids` standing in it: none where
-    /// no sample's surface stands over its ground or the sizes do not
-    /// match.
     #[must_use]
     pub(crate) fn with_water(
         mut self,
@@ -324,8 +262,6 @@ impl Tile {
         self
     }
 
-    /// Holds `water` as the water standing on it, with its mesh and that
-    /// mesh's error pyramid.
     fn hold(&mut self, water: Option<TileWater>) {
         let mesh = water.as_ref().map(|water| water.mesh(&self.heights));
         self.water_errors = mesh
@@ -335,26 +271,18 @@ impl Tile {
         self.water = water;
     }
 
-    /// The water standing on the tile, if any does.
     pub fn water(&self) -> Option<&TileWater> {
         self.water.as_ref()
     }
 
-    /// The error pyramid of its ground: the most the triangles of a
-    /// subdivision standing on its samples stray from them, by cell.
     pub fn ground_errors(&self) -> &ErrorPyramid {
         &self.ground_errors
     }
 
-    /// Its water as its mesh draws it ([`WaterMesh`]), if any water stands
-    /// on it.
     pub fn water_mesh(&self) -> Option<&WaterMesh> {
         self.water_mesh.as_deref()
     }
 
-    /// The error pyramid of its water's mesh, over the levels it stands at
-    /// ([`WaterMesh::level`]); [`ErrorPyramid::dry`] where no water stands
-    /// on it.
     pub fn water_errors(&self) -> &ErrorPyramid {
         match &self.water_errors {
             Some(errors) => errors,
@@ -362,10 +290,6 @@ impl Tile {
         }
     }
 
-    /// The tile holding `water` in place of its own: water made over its
-    /// samples as its record holds them, as a job of its settled water
-    /// makes it ([`Tile::steadied`], [`Tile::flowing`]), with its error
-    /// pyramid. Its ground, objects and shading stay as they are.
     #[must_use]
     pub fn holding(&self, water: Option<TileWater>) -> Self {
         let mut tile = Self {
@@ -392,15 +316,10 @@ impl Tile {
         tile
     }
 
-    /// The shading the tile shades with, once its record arrived: level 0's
-    /// averaged, which a terrain's tiles of level 1 and coarser take from
-    /// it ([`TileShading::shades`]); `None` before, and for other tiles.
     pub fn shading(&self) -> Option<&Arc<TileShading>> {
         self.shading.as_ref()
     }
 
-    /// The tile shading with `shading` in place of what it held, as its
-    /// record arrives. Its ground, water and objects stay as they are.
     #[must_use]
     pub fn shaded(&self, shading: Option<Arc<TileShading>>) -> Self {
         Self {
@@ -413,31 +332,22 @@ impl Tile {
         self.key
     }
 
-    /// Meters between samples.
     pub fn spacing(&self) -> f32 {
         self.spacing
     }
 
-    /// Every sample's packed control value, the border included, row by
-    /// row: the layout GPU tiles upload. `None` without a surface, and for
-    /// tiles the GPU or their shading gives theirs.
     pub fn control(&self) -> Option<&[u32]> {
         self.control.as_deref()
     }
 
-    /// The objects the surface's placement layers of this tile's level
-    /// stand on it.
     pub fn placed(&self) -> &[crate::Placed] {
         self.placed.as_deref().unwrap_or(&[])
     }
 
-    /// Which of its level's objects the tile holds, all of them or
-    /// those of one distance: `None` before any were placed.
     pub fn placing(&self) -> Option<Placing> {
         self.placing
     }
 
-    /// The tile with `placed` standing on it: the objects `placing` places.
     #[must_use]
     pub fn with_placed(mut self, placed: Vec<crate::Placed>, placing: Placing) -> Self {
         self.placed = (!placed.is_empty()).then(|| Arc::from(placed));
@@ -445,7 +355,6 @@ impl Tile {
         self
     }
 
-    /// The tile with none of its objects.
     #[must_use]
     pub fn without_placed(mut self) -> Self {
         self.placed = None;
@@ -453,7 +362,6 @@ impl Tile {
         self
     }
 
-    /// The control value of sample `(x, z)`, -1 to 257 along each axis.
     pub fn control_at(&self, x: i32, z: i32) -> Option<Control> {
         let stride = TILE_STRIDE as i32;
         let x = x.clamp(-1, stride - 2);
@@ -463,18 +371,12 @@ impl Tile {
             .map(|control| Control::unpack(control[((z + 1) * stride + x + 1) as usize]))
     }
 
-    /// Height of sample `(x, z)`, -1 to 257 along each axis.
     #[inline]
     pub fn height(&self, x: i32, z: i32) -> f32 {
         let stride = TILE_STRIDE as i32;
         self.heights[((z + 1) * stride + x + 1) as usize]
     }
 
-    /// The largest difference, in meters, between this tile's heights and
-    /// those of `parent`, the tile of the next coarser level holding it,
-    /// between its samples: what this level's patches move by as they
-    /// morph into the parent level's. Every third sample along each axis
-    /// is compared, alternately on and between the parent's.
     pub fn morph_error(&self, parent: &Tile) -> f32 {
         let offset = [
             i32::from(self.key.x % 2) * 128,
@@ -483,7 +385,6 @@ impl Tile {
         let mut largest = 0.0_f32;
         for z in (0..=TILE_QUADS as i32).step_by(3) {
             for x in (0..=TILE_QUADS as i32).step_by(3) {
-                // The parent's samples around this one, half as far apart.
                 let (px, pz) = (offset[0] * 2 + x, offset[1] * 2 + z);
                 let (x0, z0) = (px.div_euclid(2), pz.div_euclid(2));
                 let (fx, fz) = ((px % 2) as f32 * 0.5, (pz % 2) as f32 * 0.5);
@@ -498,25 +399,18 @@ impl Tile {
         largest
     }
 
-    /// Every sample, the border included, row by row: the layout GPU tiles
-    /// upload.
     pub fn heights(&self) -> &[f32] {
         &self.heights
     }
 
-    /// Lowest and highest height of samples 0 to 256.
     pub fn bounds(&self) -> [f32; 2] {
         self.bounds
     }
 
-    /// Lowest and highest height of patch `(x, z)`'s samples.
     pub fn patch_bounds(&self, x: u32, z: u32) -> [f32; 2] {
         self.patch_bounds[(z * PATCHES_PER_TILE + x) as usize]
     }
 
-    /// The disk holding patch `(x, z)`'s triangles' slopes (rise per meter
-    /// along x and z): its center and its radius, never smaller than they
-    /// need.
     pub fn patch_slopes(&self, x: u32, z: u32) -> [f32; 3] {
         let cull = self.patch_culling[(z * PATCHES_PER_TILE + x) as usize];
         [
@@ -526,8 +420,6 @@ impl Tile {
         ]
     }
 
-    /// The lowest ground of each quarter of patch `(x, z)`, rows along z,
-    /// never above it.
     pub fn patch_floors(&self, x: u32, z: u32) -> [f32; 4] {
         let index = (z * PATCHES_PER_TILE + x) as usize;
         let [low, high] = self.patch_bounds[index];
@@ -536,19 +428,15 @@ impl Tile {
             .map(|floor| min(low + (high - low) * (f32::from(floor) / 255.0), high))
     }
 
-    /// Whether any cell of patch `(x, z)` is a hole.
     pub fn patch_has_holes(&self, x: u32, z: u32) -> bool {
         let index = (z * PATCHES_PER_TILE + x) as usize;
         self.patch_holes[index / 64] & (1 << (index % 64)) != 0
     }
 
-    /// Hole bits of cells starting at samples 0..=256, row by row; `None`
-    /// without holes.
     pub fn hole_bits(&self) -> Option<&[u64]> {
         self.holes.as_deref()
     }
 
-    /// Whether the cell starting at sample `(x, z)` is a hole.
     pub fn is_hole(&self, x: u32, z: u32) -> bool {
         let Some(bits) = &self.holes else {
             return false;
@@ -560,9 +448,6 @@ impl Tile {
         bits[index / 64] & (1 << (index % 64)) != 0
     }
 
-    /// The cell holding `local`, meters from the tile's first corner: its
-    /// first sample's column and row and where in it `local` lies, `fu` and
-    /// `fv`; `None` outside the tile.
     fn cell(&self, local: Vec2) -> Option<(i32, i32, f32, f32)> {
         let size = TILE_QUADS as f32;
         let u = local.x / self.spacing;
@@ -575,11 +460,6 @@ impl Tile {
         Some((i, j, u - i as f32, v - j as f32))
     }
 
-    /// The surface at `local`, meters from the tile's first corner: its
-    /// height on the triangles every consumer splits cells into, and the
-    /// normal of the smooth surface there, the gradients at the cell's four
-    /// samples blended across it as renderers shade the ground; `None`
-    /// outside the tile.
     pub fn sample(&self, local: Vec2) -> Option<TileSample> {
         let (i, j, fu, fv) = self.cell(local)?;
         let corners = [
@@ -588,8 +468,6 @@ impl Tile {
             self.height(i, j + 1),
             self.height(i + 1, j + 1),
         ];
-        // The 4 × 4 samples around the cell, each of its corners' gradients
-        // from the 3 × 3 around that corner.
         let around: [[f32; 4]; 4] =
             [-1, 0, 1, 2].map(|dz| [-1, 0, 1, 2].map(|dx| self.height(i + dx, j + dz)));
         let gradient = |x: usize, z: usize| {
@@ -613,18 +491,11 @@ impl Tile {
         })
     }
 
-    /// The water at `local`, meters from the tile's first corner, on the
-    /// triangles [`Self::sample`] reads the ground on: its surface, its
-    /// depth over that ground, its flow, span, kind and state
-    /// (its kind and reach the first corner's); `None` where no water
-    /// reaches the triangle's corners or its surface stands at or below the
-    /// ground.
     pub fn water_at(&self, local: Vec2) -> Option<WaterPoint> {
         let water = self.water.as_ref()?;
         let (i, j, fu, fv) = self.cell(local)?;
         let at = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)];
         let surfaces = at.map(|(x, z)| water.surface(x, z));
-        // The corners of the triangle holding it.
         let corners = if fu + fv <= 1.0 { [0, 1, 2] } else { [3, 2, 1] };
         if corners.iter().any(|&corner| !surfaces[corner].is_finite()) {
             return None;
@@ -654,10 +525,6 @@ impl Tile {
         })
     }
 
-    /// What the bed holds under the water at `local`, meters from the
-    /// tile's first corner, as the water's sample nearest it holds it: its
-    /// reach's code beside its span's (`TileWater::bed_word`); none outside
-    /// the tile or where it holds no water.
     pub fn bed_word(&self, local: Vec2) -> u32 {
         let (Some(water), Some((i, j, fu, fv))) = (self.water.as_ref(), self.cell(local)) else {
             return 0;
@@ -666,9 +533,6 @@ impl Tile {
     }
 }
 
-/// The value at `(fu, fv)` in a cell whose corners, from its first, hold
-/// `[v00, v10, v01, v11]`, on the triangle holding it: the cell's diagonal
-/// runs from its (x, z+1) corner to its (x+1, z) corner.
 #[inline]
 pub(crate) fn on_triangle([v00, v10, v01, v11]: [f32; 4], fu: f32, fv: f32) -> f32 {
     if fu + fv <= 1.0 {
@@ -678,18 +542,12 @@ pub(crate) fn on_triangle([v00, v10, v01, v11]: [f32; 4], fu: f32, fv: f32) -> f
     }
 }
 
-/// Coarse grid points along each axis: every fourth sample from sample -8
-/// to 264, enough for Catmull-Rom interpolation at samples -1 to 257.
 const GRID: usize = 69;
 const GRID_FIRST: i64 = -2;
 const GRID_STEP: i64 = 4;
-/// Work units of a coarse grid point and of a noise layer's sample,
-/// against one per sample of other layers: about their time.
 const COARSE_COST: u64 = 24;
 const NOISE_SAMPLE_COST: u64 = 4;
 
-/// Four coarse states `taps` combined with Catmull-Rom `weights` into
-/// `out`, value by value, in one order wherever states are interpolated.
 #[inline(always)]
 fn interpolate(out: &mut [f32], weights: [f32; 4], taps: [&[f32]; 4]) {
     let [a, b, c, d] = taps;
@@ -698,7 +556,6 @@ fn interpolate(out: &mut [f32], weights: [f32; 4], taps: [&[f32]; 4]) {
     }
 }
 
-/// Catmull-Rom weights at quarter steps, exact in `f32`.
 const QUARTER_WEIGHTS: [[f32; 4]; 4] = [
     [0.0, 1.0, 0.0, 0.0],
     [-0.070_312_5, 0.867_187_5, 0.226_562_5, -0.023_437_5],
@@ -706,7 +563,6 @@ const QUARTER_WEIGHTS: [[f32; 4]; 4] = [
     [-0.023_437_5, 0.226_562_5, 0.867_187_5, -0.070_312_5],
 ];
 
-/// [`QUARTER_WEIGHTS`] by tap, a coarse cell's four samples in lanes.
 const LANE_WEIGHTS: [Vec4; 4] = {
     let w = QUARTER_WEIGHTS;
     [
@@ -717,8 +573,6 @@ const LANE_WEIGHTS: [Vec4; 4] = {
     ]
 };
 
-/// [`interpolate`] for the four samples of a coarse cell at once,
-/// sample `k` in lane `k` with [`QUARTER_WEIGHTS`]`[k]`.
 #[inline(always)]
 fn interpolate4(out: &mut [Vec4], taps: [&[f32]; 4]) {
     let [a, b, c, d] = taps;
@@ -741,19 +595,12 @@ enum Stage {
     Failed,
 }
 
-/// Generates one tile from a layer stack in steps, which workers run a
-/// slice at a time between their messages. Every sample is a pure function
-/// of its position
-/// and level: noise octaves at least 32 samples long are evaluated on a
-/// grid of every fourth sample and interpolated, shorter ones down to four
-/// samples at every sample, so neighboring tiles agree on shared samples.
 pub struct Generator {
     layers: Arc<Layers>,
     key: TileKey,
     spacing: f32,
     first: [i64; 2],
     bands: Vec<Option<(usize, Range<usize>, usize)>>,
-    // Each noise layer's coarse states, grid point by grid point.
     grids: Vec<Option<Box<[f32]>>>,
     stage: Stage,
     heights: Box<[f32]>,
@@ -761,38 +608,24 @@ pub struct Generator {
     xs: Box<[f32]>,
     row: Box<[f32]>,
     values: Box<[f32]>,
-    // A row's coarse states interpolated along z, grid column by column,
-    // and one sample's, and a coarse cell's four samples' in lanes.
     column: Box<[f32]>,
     state: Box<[f32]>,
     lanes: Box<[Vec4]>,
     min: Vec2,
     max: Vec2,
-    // The surface whose control values the tile gets, and their samples.
     surface: Option<Arc<BiomeRules>>,
     control: Option<Box<[u32]>>,
-    // The finished tile while its objects are placed, a row
-    // of candidate squares at a time, and the objects placed so far.
     tile: Option<Tile>,
     placed: Vec<crate::Placed>,
-    // Each hydrology layer's rivers rasterized over the tile's samples
-    // once, by layer, until its water is made; the first baked one's meters
-    // to rivers' edges and, over the tile's heights, its rivers' beds, which
-    // the tile keeps; its stored rows' z; a row's inputs to the surface's
-    // masks.
     rasters: Vec<Option<RiverRaster>>,
     river_edges: Option<Box<[u16]>>,
     river_beds: Option<Box<[u16]>>,
     zs: Box<[f32]>,
     inputs: SurfaceInputs,
     places: crate::placement::PlaceScratch,
-    // Whether it gives its tile control values; the GPU, or its shading,
-    // gives them where not.
     materials: bool,
 }
 
-/// A row's inputs to a surface's masks, and scratch space for evaluating
-/// them and for one sample's material weights, reused row after row.
 #[derive(Default)]
 pub(crate) struct SurfaceInputs {
     zs: Vec<f32>,
@@ -807,8 +640,6 @@ pub(crate) struct SurfaceInputs {
 }
 
 impl SurfaceInputs {
-    /// Readies the rows for `len` samples: empty, but for what erosion
-    /// changed at each, 0 until read.
     fn clear(&mut self, len: usize) {
         for row in [&mut self.height, &mut self.curvature] {
             row.clear();
@@ -823,17 +654,6 @@ impl SurfaceInputs {
     }
 }
 
-/// The control values `rules` over `layers` give a tile's stored row `row`
-/// (0 to 258, samples -1 to 257) at its stored `columns`, into `out`, one a
-/// column: from the smooth surface through the tile's stored `heights`
-/// around each sample ([`SampleShape`]), border samples reading their
-/// nearest neighbors inside, from each sample's meters to the nearest
-/// river's edge and its bed the tile holds (`rivers`, its edges' steps and
-/// its beds' planes), and from what the stack's erosions changed there;
-/// `xs` holds each stored column's x and `z` is the row's, in the layers'
-/// frame, its samples `spacing` meters apart. What the rules give a tile's
-/// samples on the CPU, for generators to give their tiles and for tiles'
-/// shading to average.
 pub(crate) fn control_row(
     (rules, layers): (&BiomeRules, &Layers),
     (heights, rivers): (&[f32], beds::RiverRows<'_>),
@@ -842,11 +662,8 @@ pub(crate) fn control_row(
     (out, inputs): (&mut [u32], &mut SurfaceInputs),
 ) {
     let stride = TILE_STRIDE as usize;
-    // Inputs the masks never read are left unread.
     let reads = rules.reads();
     let (up, down) = (row.saturating_sub(1), (row + 1).min(stride - 1));
-    // The row's inputs, then its control values all at once; what the
-    // erosions changed is read along the whole row at once.
     inputs.clear(columns.len());
     if reads.erosion {
         erosion_row(
@@ -867,8 +684,6 @@ pub(crate) fn control_row(
             spacing,
         );
         let x = xs[column];
-        // Surroundings lose the masks of the bakes and
-        // roads they fade out.
         let shown = layers.shown(x, z);
         let water = match layers.hydrology() {
             Some(water) if shown > 0.0 && reads.water => held.with_maps(water, [x, z], spacing),
@@ -910,8 +725,6 @@ impl Generator {
     pub fn new(layers: Arc<Layers>, pyramid: &Pyramid, key: TileKey) -> Self {
         let level = u32::from(key.level);
         let spacing = pyramid.spacing(level);
-        // Surroundings read their stack where their samples
-        // lie in the ground it was drawn for.
         let [x, z] = pyramid.first_sample(key);
         let [dx, dz] = layers.offset_samples(spacing);
         let first = [x + dx, z + dz];
@@ -976,21 +789,14 @@ impl Generator {
         }
     }
 
-    /// The generator leaving its tile without control values (where
-    /// `materials` is false), which the GPU, or the tile's shading, gives to
-    /// rendering and the rules to gameplay at the samples it asks for; it
-    /// still places objects.
     #[must_use]
     pub fn with_materials(mut self, materials: bool) -> Self {
         self.materials = materials;
         self
     }
 
-    /// The sample rows it samples heights of: every row, -1 to 257.
     const HEIGHT_ROWS: (i32, i32) = (-1, TILE_SAMPLES as i32 + 1);
 
-    /// The coarse grid rows its height rows read: each sample row reads
-    /// four from the one after its grid point's.
     fn grid_rows() -> (usize, usize) {
         let (first, end) = Self::HEIGHT_ROWS;
         let low = i64::from(first).div_euclid(GRID_STEP) - GRID_FIRST - 1;
@@ -998,7 +804,6 @@ impl Generator {
         (low as usize, std::cmp::min(high as usize, GRID))
     }
 
-    /// The generator giving its tile `surface`'s control values.
     #[must_use]
     pub fn with_surface(mut self, surface: Arc<BiomeRules>) -> Self {
         self.surface = Some(surface);
@@ -1009,14 +814,10 @@ impl Generator {
         self.key
     }
 
-    /// Whether generation stopped without a tile: its heights or control
-    /// values were invalid.
     pub fn failed(&self) -> bool {
         matches!(self.stage, Stage::Failed)
     }
 
-    /// The stage after the samples and holes: the surface's control values
-    /// unless the GPU gives them, else done.
     fn after_holes(&self) -> Stage {
         match &self.surface {
             Some(_) if self.materials => Stage::Biomes { row: 0 },
@@ -1024,9 +825,6 @@ impl Generator {
         }
     }
 
-    /// Control values of stored row `row` (0 to 258, samples -1 to 257), as
-    /// the rules give a tile's samples ([`control_row`]), each sample's
-    /// meters to the nearest river's edge and its bed those the tile keeps.
     fn surface_row(&mut self, row: usize) {
         let stride = TILE_STRIDE as usize;
         let Some(surface) = self.surface.clone() else {
@@ -1051,10 +849,6 @@ impl Generator {
         );
     }
 
-    /// Generates until the tile is done or `budget` work units run out
-    /// (about one per sample), returning the tile once done. A step that
-    /// starts always finishes, so a budget can go slightly negative in
-    /// effect; callers pass what is left.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -1086,8 +880,6 @@ impl Generator {
                     let x = |column: usize| {
                         (first + (GRID_FIRST + column as i64) * GRID_STEP) as f32 * spacing
                     };
-                    // Four columns at once, the rest one by
-                    // one, to the same bits.
                     let mut column = 0;
                     while column < GRID {
                         let at = (row * GRID + column) * len;
@@ -1172,8 +964,6 @@ impl Generator {
                         None => tile,
                     };
                     self.stage = Stage::Done;
-                    // Objects stand on the tiles of their layers' levels,
-                    // placed in the stage after.
                     match &self.surface {
                         Some(surface) if surface.places(self.key.level, Placing::All) => {
                             self.tile = Some(tile);
@@ -1198,8 +988,6 @@ impl Generator {
                     match next {
                         Some((layer, row)) => self.stage = Stage::Place { layer, row },
                         None => {
-                            // Then what authors stand on it,
-                            // with its own level's objects.
                             *budget = budget
                                 .saturating_sub(surface.place_authored(tile, &mut self.placed));
                             let tile = self.tile.take()?;
@@ -1212,13 +1000,6 @@ impl Generator {
         }
     }
 
-    /// Rasterizes layer `layer`'s rivers, if it holds any, over the tile's
-    /// samples within `budget` (samples' worth), for the tile's rows, water
-    /// and masks to read. Returns the stage after: this layer's again until
-    /// its rivers are stamped, then the next layer's, and once every
-    /// layer's are, the samples', the rasters no river reaches let go and
-    /// the first baked hydrology layer's meters to rivers' edges kept for
-    /// the tile.
     fn rasterize(&mut self, layer: usize, budget: &mut u64) -> Stage {
         if layer >= self.layers.layers().len() {
             for raster in &mut self.rasters {
@@ -1250,11 +1031,6 @@ impl Generator {
         }
     }
 
-    /// The water of every stored row (0 to 258) as the stack's hydrology
-    /// bake holds its lakes and rivers over them
-    /// ([`crate::tile_water::water_rows`]), its rivers' from their raster,
-    /// which it then lets go: their samples' surfaces and words, row by
-    /// row; `None` without the bake.
     fn water_rows(&mut self, budget: &mut u64) -> Option<(Vec<f32>, Vec<[u32; 2]>)> {
         let stride = TILE_STRIDE as usize;
         let rasters = std::mem::take(&mut self.rasters);
@@ -1274,8 +1050,6 @@ impl Generator {
         Some((surface, info))
     }
 
-    /// Heights of sample row `row` (-1 to 257), every layer applied in
-    /// order.
     fn sample_row(&mut self, row: i32) {
         let z = (self.first[1] + i64::from(row)) as f32 * self.spacing;
         self.row.fill(0.0);
@@ -1283,8 +1057,6 @@ impl Generator {
         let vertical = QUARTER_WEIGHTS[i64::from(row).rem_euclid(GRID_STEP) as usize];
         for layer in 0..self.layers.layers().len() {
             let Some(tables) = self.layers.noise(layer) else {
-                // Hydrology layers cut the rivers reaching the tile from its
-                // raster.
                 if matches!(self.layers.layers()[layer], Layer::Hydrology(_)) {
                     if let Some(raster) = self.rasters.get(layer).and_then(Option::as_ref) {
                         let at = (row + 1) as usize;
@@ -1306,7 +1078,6 @@ impl Generator {
             let (octaves, fine, _) = self.bands[layer].clone().unwrap_or_default();
             let len = state_len(octaves);
             let grid = self.grids[layer].as_ref().expect("noise layers have grids");
-            // The coarse state along z first, for every grid column.
             let base = (coarse_row - 1 - GRID_FIRST) as usize;
             let tap = |row: usize, column: usize| {
                 let at = ((base + row) * GRID + column) * len;
@@ -1316,9 +1087,6 @@ impl Generator {
                 let taps = [0, 1, 2, 3].map(|row| tap(row, column));
                 interpolate(sum, vertical, taps);
             }
-            // Then along x for every sample, which sums every octave: the
-            // four samples of a coarse cell at once, the
-            // rest one by one, to the same bits.
             let sum = &mut self.state[..len];
             let lanes = &mut self.lanes[..len];
             let samples = self.values.len();
@@ -1355,8 +1123,6 @@ impl Generator {
 }
 
 impl Layers {
-    /// Work units of one [`Self::sample_height`], against one per sample of
-    /// a layer: sixteen coarse grid points and a sample per noise layer.
     pub(crate) fn height_cost(&self) -> u64 {
         (0..self.layers().len())
             .map(|layer| {
@@ -1369,9 +1135,6 @@ impl Layers {
             .sum()
     }
 
-    /// The height of global sample `sample` (x and z, counted from the
-    /// terrain's first corner) at `level`, exactly as a generated tile holds
-    /// it: the same coarse grid points, interpolation and layer order.
     pub fn sample_height(&self, pyramid: &Pyramid, level: u32, sample: [i64; 2]) -> f32 {
         let spacing = pyramid.spacing(level);
         let [dx, dz] = self.offset_samples(spacing);
@@ -1389,10 +1152,7 @@ impl Layers {
                 continue;
             };
             let (octaves, fine, gullies) = tables.bands(spacing);
-            // The coarse state along z first for each column, then along x,
-            // as tiles interpolate it.
             let len = state_len(octaves);
-            // The sixteen grid points' states, column by column.
             let mut points = vec![0.0_f32; 16 * len];
             for (index, point) in points.chunks_exact_mut(len).enumerate() {
                 let column = (cx - 1 + (index / 4) as i64) * GRID_STEP;
@@ -1425,9 +1185,6 @@ impl Layers {
         height[0]
     }
 
-    /// The height at terrain-local `point` on level 0's triangles, as
-    /// generated tiles, renderers and collision hold it: four samples of
-    /// [`Self::sample_height`].
     pub fn height_at(&self, pyramid: &Pyramid, point: Vec2) -> f32 {
         let spacing = pyramid.spacing(0);
         let u = point.x / spacing;
@@ -1446,15 +1203,6 @@ impl Layers {
     }
 }
 
-/// A tile's key, spacing, samples, holes, control values, meters to
-/// rivers' edges and their beds, placed objects and which of them, and its
-/// water as its own record holds it ([`TileWater`]'s); reading rebuilds its
-/// bounds and its error pyramids as [`Tile::new`] and its water make them.
-/// Its shading is a record of its own ([`TileShading`]), which a tile read
-/// back holds none of.
-/// Tiles travel with their heights and water surfaces at their nearest
-/// steps of the height grid ([`crate::codec::HEIGHT_STEP`]): a tile read
-/// back is the record every host shows.
 impl crate::codec::Codec for Tile {
     fn write(&self, out: &mut crate::codec::Writer) {
         let stride = TILE_STRIDE as usize;
@@ -1486,7 +1234,6 @@ impl crate::codec::Codec for Tile {
         let holes = input.get()?;
         let culling: Box<[PatchCulling]> = input.get()?;
         let control: Option<Box<[u32]>> = input.get()?;
-        // Meters to rivers' edges, then their beds.
         let mut rivers = [None, None];
         for planes in &mut rivers {
             let held: bool = input.get()?;

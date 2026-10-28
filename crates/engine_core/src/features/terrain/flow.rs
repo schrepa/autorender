@@ -1,9 +1,3 @@
-//! Terrains' rivers as the solids standing in them hold them back
-//! ([`crate::WaterObstacles`]), each fixed tick: a terrain whose rivers a
-//! solid rests in, or whose pools have yet to drain, steps its rivers'
-//! [`RiverFlow`], whose water the world's water reads and renderers draw.
-//! Terrains nothing stands in keep their bake's rivers and do no work.
-
 use std::sync::Arc;
 
 use bevy_ecs::prelude::{DetectChangesMut, Res, ResMut};
@@ -13,16 +7,9 @@ use glam::Vec2;
 use super::Terrains;
 use crate::{FixedTime, WaterObstacles};
 
-/// Meters beyond its rivers' reach an obstacle's center may stand and still
-/// be looked for in them.
 const NEAR: f32 = 16.0;
-/// Fixed ticks between the rivers' steps: water rises and falls by
-/// centimeters a second, so they follow at ten a second at the engine's
-/// sixty ticks.
 const EVERY: u64 = 6;
 
-/// Steps each terrain's rivers' flow every [`EVERY`] ticks, over those
-/// ticks, with the tick's obstacles.
 pub(crate) fn step(
     terrains: Option<ResMut<Terrains>>,
     obstacles: Option<Res<WaterObstacles>>,
@@ -44,8 +31,6 @@ pub(crate) fn step(
         return;
     }
     let _profile = engine_profile::span("terrain", "river_flow");
-    // Rivers' water is read, not watched: stepping it changes nothing
-    // terrains' observers wait on.
     let terrains = terrains.bypass_change_detection();
     for state in &mut terrains.entries {
         if state.around.is_some() {
@@ -59,7 +44,6 @@ pub(crate) fn step(
             state.hydrology.flow = None;
             continue;
         }
-        // Edited layers hold the same rivers as baked; others flow anew.
         if state
             .hydrology
             .flow

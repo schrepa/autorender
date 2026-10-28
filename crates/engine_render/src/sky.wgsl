@@ -1,34 +1,16 @@
-// The physically based sky's sky-view table and light (`sky.rs`), after
-// `sky_common.wgsl`, from the transmittance and multiple scattering tables
-// the scene's static tables hold for its air (`engine_tables::sky`). Every
-// pass binds one group: the sky's uniform, the tables to read (a blank
-// texel in place of the one a pass writes), the table it writes and the
-// light it derives.
-
 @group(0) @binding(0) var<uniform> air: SkyUniform;
 @group(0) @binding(1) var transmittance_table: texture_2d<f32>;
 @group(0) @binding(2) var multiple_table: texture_2d<f32>;
 @group(0) @binding(3) var view_table: texture_2d<f32>;
 @group(0) @binding(4) var table_sampler: sampler;
 @group(0) @binding(5) var table_out: texture_storage_2d<rgba16float, write>;
-// The scene's light the sky gives (`sky.rs` `DERIVED`): the sun's color,
-// the zenith's, the horizon's, the ground's, the air's away from the sun,
-// and the sun's glow in it (x).
 @group(0) @binding(6) var<storage, read_write> derived: array<vec4<f32>, 7>;
 
 const VIEW_STEPS: u32 = 30u;
-// Starlight and the glow of the night sky (at unit intensity), which keep
-// nights from black.
 const NIGHT: vec3<f32> = vec3<f32>(0.004, 0.006, 0.012);
-// What the full moon high overhead adds to the night's light (at unit
-// intensity).
 const MOON_NIGHT: vec3<f32> = vec3<f32>(0.006, 0.008, 0.014);
-// The light falling at noon exposure adapts toward, a multiple of the
-// sun's intensity, and the share of the adaptation setting that is the
-// power of the light's ratio exposure rises by.
 const NOON_LIGHT: f32 = 1.1;
 const ADAPTATION_POWER: f32 = 0.75;
-// The most exposure rises by, as a multiple.
 const ADAPTATION_MOST: f32 = 16.0;
 
 struct Medium {
@@ -38,12 +20,10 @@ struct Medium {
     mie: vec3<f32>,
 }
 
-/// The air at `height` km above the ground.
 fn medium_at(height: f32) -> Medium {
     let above = max(height, 0.0);
     let rayleigh_density = exp(-above / air.rayleigh.w);
     let mie_density = exp(-above / air.mie.z);
-    // Ozone: a tent 30 km wide, densest 25 km up.
     let ozone_density = max(0.0, 1.0 - abs(height - 25.0) / 15.0);
     var medium: Medium;
     medium.rayleigh = air.rayleigh.xyz * rayleigh_density;
@@ -59,21 +39,16 @@ fn rayleigh_phase(cosine: f32) -> f32 {
     return 3.0 / (16.0 * SKY_PI) * (1.0 + cosine * cosine);
 }
 
-/// Cornette-Shanks.
 fn mie_phase(cosine: f32) -> f32 {
     let g = air.mie.w;
     let k = 3.0 / (8.0 * SKY_PI) * (1.0 - g * g) / (2.0 + g * g);
     return k * (1.0 + cosine * cosine) / pow(max(1.0 + g * g - 2.0 * g * cosine, 1e-4), 1.5);
 }
 
-/// The share of light through the air from radius `r` along zenith cosine
-/// `mu`, from the transmittance table.
 fn sun_transmittance(r: f32, mu: f32) -> vec3<f32> {
     return air_transmittance(transmittance_table, table_sampler, air, r, mu);
 }
 
-/// Multiple scattering's isotropic light at radius `r` with the sun at
-/// zenith cosine `mu`.
 fn multiple_light(r: f32, mu: f32) -> vec3<f32> {
     let height = (r - air.radii.x) / max(air.radii.y - air.radii.x, 1e-6);
     let uv = vec2<f32>(
@@ -83,11 +58,6 @@ fn multiple_light(r: f32, mu: f32) -> vec3<f32> {
     return textureSampleLevel(multiple_table, table_sampler, uv, 0.0).rgb;
 }
 
-/// The light the air scatters toward `origin` along `direction` (unit)
-/// from the sun along `sun` with unit illuminance, `steps` samples to the
-/// top of the atmosphere or the ground: single scattering plus multiple
-/// scattering's table, and where the view meets the planet its ground's
-/// reflection.
 fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32) -> vec3<f32> {
     var light = vec3<f32>(0.0);
     let bottom = air.radii.x;
@@ -116,24 +86,15 @@ fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32
         let sample_transmittance = exp(-medium.extinction * dt);
         let sun_cos = dot(sun, up);
         let toward_sun = sun_transmittance(r, sun_cos);
-        // The planet's shadow.
         let shadowed = sphere_hit(point, sun, bottom) >= 0.0;
         let phased = medium.rayleigh * rayleigh + medium.mie * mie;
         let source = select(toward_sun, vec3<f32>(0.0), shadowed) * phased
             + multiple_light(r, sun_cos) * medium.scattering;
         let extinction = max(medium.extinction, vec3<f32>(1e-6));
-        // The light scattered over the step, integrated exactly for a
-        // constant medium across it.
         let integrated = (source - source * sample_transmittance) / extinction;
         light += throughput * integrated;
         throughput *= sample_transmittance;
     }
-    // The ground's reflection of the sun, where views meet the planet
-    // beyond the world. The point lies on the ground exactly: its radius
-    // in 32-bit floats rounds decimeters above or below it, which turned
-    // the planet's own shadow on and off from texel to texel. The sun
-    // reaches the ground wherever it stands above its horizon, through the
-    // air the table's bottom row holds.
     if ground_hit >= 0.0 {
         let up = normalize(origin + direction * span);
         let sun_cos = dot(sun, up);
@@ -157,7 +118,6 @@ fn build_sky_view(@builtin(global_invocation_id) id: vec3<u32>) {
     let parameters = sky_view_parameters(air, uv, r);
     let view_cos = parameters.x;
     let light_cos = parameters.y;
-    // The sun in the view's plane of azimuth zero, at its zenith angle.
     let sun_cos = clamp(normalize(air.sun.xyz).y, -1.0, 1.0);
     let sun = vec3<f32>(sqrt(max(1.0 - sun_cos * sun_cos, 0.0)), sun_cos, 0.0);
     let view_sin = sqrt(max(1.0 - view_cos * view_cos, 0.0));
@@ -170,13 +130,10 @@ fn build_sky_view(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(table_out, id.xy, vec4<f32>((light + NIGHT) * air.ozone.w, 1.0));
 }
 
-/// The sky's light looking along `direction` from the camera, without the
-/// sun's disc.
 fn view_light(direction: vec3<f32>) -> vec3<f32> {
     return air_sky(view_table, table_sampler, air, direction);
 }
 
-/// A direction `elevation` radians above the horizon, `azimuth` around it.
 fn around(azimuth: f32, elevation: f32) -> vec3<f32> {
     return vec3<f32>(cos(azimuth) * cos(elevation), sin(elevation), sin(azimuth) * cos(elevation));
 }
@@ -195,20 +152,15 @@ fn derive_light() {
     let azimuth = atan2(sun.z, sun.x);
     let toward = view_light(around(azimuth, 0.035));
     let away = view_light(around(azimuth + SKY_PI, 0.035));
-    // The night's light, lifted by the moon's while it is up.
     let night = (NIGHT + MOON_NIGHT * (air.moon.w * max(air.moon.y, 0.0))) * air.ozone.w;
     let ground = air.ground.rgb
         * (sun_color * max(sun.y, 0.0) / SKY_PI + 0.5 * (zenith + horizon)) + night * 0.3;
     let glow = max(luminance(toward - away), 0.0) / max(luminance(sun_color), 1e-4);
-    // Exposure adapts toward the light falling on level ground at noon,
-    // part of the way, by at most 16 times.
     let falling = luminance(sun_color) * max(sun.y, 0.0)
         + SKY_PI * luminance(0.5 * (zenith + horizon));
     let noon = air.ozone.w * NOON_LIGHT;
     let adapted = clamp(pow(noon / max(falling, 1e-5), air.radii.z * ADAPTATION_POWER), 1.0,
         ADAPTATION_MOST);
-    // Exposure eases toward its target over about a second,
-    // from where it stood last frame, as eyes adapt.
     let wanted = air.sun.w * adapted;
     let previous = derived[6].x;
     var exposure = wanted;

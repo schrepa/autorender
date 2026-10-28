@@ -1,13 +1,3 @@
-//! Decals: materials projected onto the opaque surfaces inside
-//! an entity's box, drawn after the opaque pass from the depth buffer.
-//!
-//! Extraction reads one record per decal each frame; decals keep no GPU
-//! state of their own, so frames without decals pay nothing.
-//!
-//! The [`DecalSettings`] are inserted by default; without them, or when
-//! disabled, frames draw no decals. Beyond `max_decals` the decals nearest
-//! the camera win and the rest count as dropped.
-
 use std::sync::Arc;
 
 use bevy_ecs::{
@@ -25,42 +15,22 @@ use crate::{
 };
 use engine_settings::{InvalidSetting, Rule, Setting, settings};
 
-/// How a decal combines with the surface it lies on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum DecalBlend {
-    /// Covering the surface by its alpha with its own color, lit by the sun,
-    /// sky and local lights like any surface: paint, posters, road markings.
     #[default]
     Alpha,
-    /// Multiplying the surface's color by its own, by its alpha: dirt,
-    /// cracks, stains and scorch marks keep the surface's lighting.
     Multiply,
 }
 
-/// Projects a material onto the opaque surfaces inside its entity's box.
-///
-/// The box is the entity's local `[-0.5, 0.5]` cube placed by its world
-/// pose: scale the entity to size the decal. The material's base color and
-/// its map span the box's local x (u) and z (v), projected down its local y
-/// onto surfaces facing its +y; surfaces turning away fade out from
-/// `fade_angle` to a right angle. Its alpha is the material's opacity, times
-/// its base color texture's alpha and `opacity`. Every opaque surface in the
-/// box receives it, moving or not; transparent surfaces, particles and the
-/// sky do not. Decals read the material's color, base color map, roughness,
-/// metalness and emission.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Decal {
     pub material: MaterialHandle,
     pub blend: DecalBlend,
-    /// Multiplies the decal's alpha, in `[0, 1]`: fade decals in and out.
     pub opacity: f32,
-    /// Radians between a surface's normal and the box's +y beyond which the
-    /// decal starts to fade, in `[0, π/2]`.
     pub fade_angle: f32,
 }
 
 impl Decal {
-    /// An alpha decal of `material` at full opacity, fading from 60 degrees.
     pub fn new(material: MaterialHandle) -> Self {
         Self {
             material,
@@ -88,13 +58,9 @@ impl Decal {
         self
     }
 
-    /// The rule of [`Self::opacity`].
     pub const OPACITY: Rule = Rule::Range(0.0, 1.0);
-    /// The widest [`Self::fade_angle`], in degrees: a right angle.
     pub const MAX_FADE_DEGREES: f32 = 90.0;
 
-    /// The first value breaking its rule, if any: frames draw only valid
-    /// decals and count the others.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         self.opacity.check("opacity", Self::OPACITY)?;
         self.fade_angle.check(
@@ -105,7 +71,6 @@ impl Decal {
 }
 
 settings! {
-    /// Decal settings.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -114,17 +79,13 @@ settings! {
     )]
     #[serde(default, deny_unknown_fields)]
     pub struct DecalSettings {
-        /// Whether frames draw decals.
         pub enabled: bool = true => any,
-        /// An optional budget of decals a frame draws; beyond it the decals
-        /// nearest the camera win. Omitted, every decal draws.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_decals: Option<u32> = None => budget,
     }
 }
 
 impl DecalSettings {
-    /// What a world without these settings reads as: no decals.
     pub fn off() -> Self {
         Self {
             enabled: false,
@@ -133,56 +94,31 @@ impl DecalSettings {
     }
 }
 
-/// One decal of a frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderDecal {
-    /// World matrix of the decal's box: its prepared pose, or its
-    /// authoritative pose on GPU-presented frames.
     pub model: Mat4,
-    /// The decal's entry in [`RenderSnapshot::joints`], whose palette holds
-    /// its displayed pose (GPU-presented frames compose it as they do
-    /// slots'); `None` draws `model`.
     pub joint: Option<u32>,
-    /// Its material when it has maps, listed in
-    /// [`RenderDecals::materials`]; `None` draws from `color` alone.
     pub material: Option<MaterialHandle>,
-    /// Linear color and alpha: the material's, alpha times the decal's
-    /// opacity.
     pub color: [f32; 4],
-    /// The material's surface, which covering decals shade with.
     pub surface: Surface,
     pub blend: DecalBlend,
-    /// Cosine of the fade angle: surfaces whose normals turn further from
-    /// the box's +y fade.
     pub fade: f32,
 }
 
-/// A frame's decals ([`RenderSnapshot::decals`]) and what they draw with,
-/// filled in place.
 #[derive(Clone, Debug, Default)]
 pub struct RenderDecals {
-    /// Its decals, within the settings' budget.
     pub list: Vec<RenderDecal>,
-    /// Materials with maps the decals draw with, each once, and their
-    /// textures; they may repeat [`RenderSnapshot::materials`] and
-    /// [`RenderSnapshot::textures`].
     pub materials: Vec<RenderMaterial>,
     pub textures: Vec<RenderTexture>,
-    /// Usable decals beyond the budget.
     pub dropped: usize,
-    /// Decals breaking their rules, which no frame draws.
     pub invalid: usize,
 }
 
-/// Decal records of each frame.
 pub(crate) struct DecalExtraction {
     query: QueryState<(Entity, &'static Decal)>,
     hints: Vec<TransformIndex>,
-    // This frame's usable decals: squared distance to the eye, world pose,
-    // presentation node (GPU frames) and component.
     candidates: Vec<(f32, Mat4, u32, Decal)>,
     nearest: Nearest,
-    // The joints the last extraction listed.
     joints: Vec<RenderJoint>,
 }
 
@@ -197,10 +133,6 @@ impl DecalExtraction {
         }
     }
 
-    /// Fills the snapshot's decals and their materials and textures, and
-    /// appends their poses to the joints: prepared matrices, or on `gpu`
-    /// frames the nodes the GPU composes. Beyond a budget the nearest win.
-    /// Returns whether the joints they listed changed since the last call.
     pub(crate) fn extract(
         &mut self,
         world: &World,
@@ -219,7 +151,6 @@ impl DecalExtraction {
     }
 
     fn list(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
-        // Extracted sanitized with the environment, before this.
         let settings = snapshot.environment.decals;
         snapshot.decals.list.clear();
         snapshot.decals.materials.clear();
@@ -231,7 +162,6 @@ impl DecalExtraction {
         }
         let poses = Poses::of(world, gpu);
         let assets = world.resource::<AssetLibrary>();
-        // The budget's cut follows the detail eye, as every handover does.
         let eye = snapshot.detail_eye;
         self.candidates.clear();
         for (position, (entity, decal)) in self.query.iter(world).enumerate() {
@@ -254,7 +184,6 @@ impl DecalExtraction {
             .max_decals
             .map_or(usize::MAX, |budget| budget as usize);
         snapshot.decals.dropped = self.candidates.len().saturating_sub(kept);
-        // Beyond the budget the nearest win; kept decals blend in their order.
         let candidates = &self.candidates;
         for position in self
             .nearest
@@ -265,8 +194,6 @@ impl DecalExtraction {
                 snapshot.missing_assets += 1;
                 continue;
             };
-            // Materials with maps bind their own group: list them and their
-            // textures once.
             let mapped = material.has_maps();
             if mapped {
                 if material

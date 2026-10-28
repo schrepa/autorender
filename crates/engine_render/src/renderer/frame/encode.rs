@@ -1,15 +1,9 @@
-//! A frame's passes encoded in its render graph's order: each kept pass's
-//! work, the attachments the graph derived operations for, and every pass
-//! but the opaque ones (`opaque`).
-
 #![expect(clippy::expect_used, reason = "passes read what their frames created")]
 
 use super::*;
 use crate::render_features::{AttachmentViews, Encode, MeshDraws};
 
 impl Renderer {
-    /// Encodes `node`, a pass the frame's render graph kept,
-    /// into `encoder`; `view` is the canvas's.
     pub(super) fn encode_pass(
         &mut self,
         node: &Node,
@@ -47,8 +41,6 @@ impl Renderer {
             ),
             Pass::Opaque { phase } => {
                 let draws = self.encode_opaque(state, encoder, view, node, phase.index());
-                // Phase two issues phase one's draws again for
-                // the instances its test revealed: count each once.
                 if phase == Phase::One {
                     report.draws += draws;
                 }
@@ -74,8 +66,6 @@ impl Renderer {
         }
     }
 
-    /// The view of attachment `resource` this frame, `canvas` being the
-    /// canvas's.
     fn attachment_view<'a>(
         &'a self,
         resource: Resource,
@@ -163,9 +153,6 @@ impl Renderer {
         }
     }
 
-    /// Begins `node`'s render pass, labeled `label`, over its attachments
-    /// (`canvas` is the canvas's view), timed by `timestamp_writes`: as
-    /// features' passes begin (`render_features::render_pass`).
     pub(super) fn render_pass<'e>(
         &self,
         encoder: &'e mut wgpu::CommandEncoder,
@@ -182,8 +169,6 @@ impl Renderer {
         crate::render_features::render_pass(encoder, node, &views, label, timestamp_writes)
     }
 
-    /// `node`, a feature's pass `pass`, encoded by its feature; returns
-    /// the draws it adds to the frame's draw calls.
     fn encode_feature(
         &self,
         pass: FeaturePass,
@@ -192,7 +177,6 @@ impl Renderer {
         view: &wgpu::TextureView,
         node: &Node,
     ) -> u32 {
-        // The history temporal antialiasing's resolve writes this frame.
         let history = state
             .features
             .frames
@@ -236,13 +220,11 @@ impl Renderer {
             .encode(pass, &state.features.frames, node, &encode, encoder)
     }
 
-    /// GPU presentation's blending, composition, culling and compaction.
     fn encode_presentation(&mut self, encoder: &mut wgpu::CommandEncoder) {
         self.gpu_presentation
             .encode(&self.device, encoder, &self.profiler);
     }
 
-    /// Shadow caster selection.
     fn encode_shadow_selection(
         &mut self,
         state: &FrameState<'_>,
@@ -257,8 +239,6 @@ impl Renderer {
             .encode_selection(&self.device, encoder, shadow_frame, &self.profiler);
     }
 
-    /// Virtual geometry's cluster selection for the camera
-    /// and the shadow maps.
     fn encode_cluster_selection(&mut self, encoder: &mut wgpu::CommandEncoder) {
         let span = self.profiler.span("virtual_selection");
         if let Some(span) = span {
@@ -270,8 +250,6 @@ impl Renderer {
         }
     }
 
-    /// The marks of the shadow clipmap's tiles the frame's pixels read,
-    /// from the depth buffer its opaque phases drew at its render size.
     fn encode_shadow_marks(&mut self, encoder: &mut wgpu::CommandEncoder) {
         self.shadows.encode_marks(
             &self.device,
@@ -282,8 +260,6 @@ impl Renderer {
         );
     }
 
-    /// The shadow clipmap's regions, atlas and sky map, with the clusters
-    /// virtual geometry selected for the regions.
     fn encode_shadow_maps(
         &mut self,
         state: &FrameState<'_>,
@@ -321,7 +297,6 @@ impl Renderer {
                             )
                         })
                 },
-                // Terrain: its ground laid out for this region.
                 terrain_draw: &|pass, map| {
                     if terrain_frame {
                         terrain.draw_shadow(pass, map)
@@ -329,7 +304,6 @@ impl Renderer {
                         0
                     }
                 },
-                // Placed objects culled for this region.
                 scatter_draw: &|pass, map, casters, cards| {
                     if state.scatter {
                         self.draw_scatter_shadow(pass, map, casters, cards)
@@ -342,8 +316,6 @@ impl Renderer {
         );
     }
 
-    /// The format of the scene's color for frames drawing into `targets`,
-    /// and whether that is the canvas.
     pub(super) fn cloud_target(&self, targets: Targets) -> (wgpu::TextureFormat, bool) {
         if targets == Targets::Canvas {
             (self.display.format(), true)
@@ -352,8 +324,6 @@ impl Renderer {
         }
     }
 
-    /// Reflection probe captures after the frame's own
-    /// drawing, once their slots stand still.
     fn encode_probes(&mut self, state: &FrameState<'_>, encoder: &mut wgpu::CommandEncoder) {
         let snapshot = state.snapshot;
         let temporal_frame = &state.packing.temporal_frame;
@@ -377,7 +347,6 @@ impl Renderer {
     }
 }
 
-/// A frame's own mesh draws, which features' passes take in.
 struct FrameMeshes<'a> {
     renderer: &'a Renderer,
     state: &'a FrameState<'a>,
@@ -396,7 +365,6 @@ impl MeshDraws for FrameMeshes<'_> {
         }
         let features = &state.features;
         let lit = features.light_frame().zip(renderer.features.lights.get());
-        // Glass reads the opaque color the pass draws over.
         let camera_group = match renderer.camera.refraction_group() {
             Some(group) if features.refraction && features.post_frame().is_some() => group,
             _ => renderer.camera.group(),
@@ -443,9 +411,6 @@ impl MeshDraws for FrameMeshes<'_> {
     }
 }
 
-/// A frame's attachments: the renderer's targets, the canvas's view
-/// `canvas`, and the history temporal antialiasing resolves into, in
-/// frames resolving it.
 struct FrameViews<'a> {
     renderer: &'a Renderer,
     canvas: &'a wgpu::TextureView,
@@ -460,9 +425,6 @@ impl AttachmentViews for FrameViews<'_> {
         }
     }
 
-    /// The canvas and the history are the display's, which passes drawing
-    /// them cover whole; every other screen-sized target is drawn at the
-    /// frame's render size.
     fn region(&self, node: &Node) -> Option<(u32, u32)> {
         let whole = node
             .colors()

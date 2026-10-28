@@ -1,9 +1,3 @@
-//! The shadow clipmap's textures and what the main passes bind to look it
-//! up: the atlas of drawn tiles, one slot a tile with an apron around it;
-//! the layers of the regions of tiles a frame redraws, which tiles are
-//! composed from; the table of each level's slots; the lookup uniform and
-//! the samplers, with placeholders while shadows are off.
-
 use crate::cached::{Bound, Versioned};
 use crate::gpu_data::ShadowUniform;
 use crate::gpu_layouts::constants::{SHADOW_APRON, SHADOW_REGIONS};
@@ -11,14 +5,8 @@ use crate::pipelines::{sampler, view};
 use crate::shadow_fit::{LEVEL_TEXELS, region_tiles};
 
 pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
-/// The table's texels: each cell's slots, one more than each, in two
-/// halves.
 const TABLE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
-/// How the atlas lays out its slots: their texels a side (a tile's and its
-/// apron), slots along a row and rows, the slots holding still casters'
-/// tiles and those past them holding this frame's moving tiles, and its
-/// width and height in texels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AtlasLayout {
     pub(crate) slot: u32,
@@ -29,10 +17,6 @@ pub(crate) struct AtlasLayout {
 }
 
 impl AtlasLayout {
-    /// The layout holding `still` slots of still casters' tiles and
-    /// `moving` of moving tiles, of tiles `tile_texels` a side, within
-    /// textures `limit` texels a side: still slots first, then moving ones,
-    /// as many as fit.
     fn new(tile_texels: u32, (still, moving): (u32, u32), limit: u32) -> Self {
         let slot = tile_texels + 2 * SHADOW_APRON;
         let most = (limit / slot).max(1);
@@ -50,12 +34,10 @@ impl AtlasLayout {
         }
     }
 
-    /// Width and height in texels.
     pub(crate) fn size(&self) -> (u32, u32) {
         (self.per_row * self.slot, self.rows * self.slot)
     }
 
-    /// The texels of slot `slot`: its first x and y, then past its last.
     pub(crate) fn texels(&self, slot: u32) -> [f32; 4] {
         let x = (slot % self.per_row * self.slot) as f32;
         let y = (slot / self.per_row * self.slot) as f32;
@@ -63,8 +45,6 @@ impl AtlasLayout {
     }
 }
 
-/// What the textures are made for: the atlas's layout, tiles' texels a
-/// side, the clipmap's levels and its windows' tiles a side.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TexturesKey {
     atlas: AtlasLayout,
@@ -73,13 +53,11 @@ struct TexturesKey {
     side: u32,
 }
 
-/// The textures of one key.
 pub(super) struct MapTextures {
     key: TexturesKey,
     atlas: wgpu::Texture,
     pub(super) atlas_view: wgpu::TextureView,
     regions: wgpu::Texture,
-    // The regions' layers as one array (composing) and each (drawing).
     regions_array: wgpu::TextureView,
     pub(super) region_layers: Vec<wgpu::TextureView>,
     table: wgpu::Texture,
@@ -88,8 +66,6 @@ pub(super) struct MapTextures {
 
 impl Drop for MapTextures {
     fn drop(&mut self) {
-        // Browsers otherwise keep the memory until garbage collection;
-        // submitted work that still reads them completes first.
         for texture in [&self.atlas, &self.regions, &self.table] {
             texture.destroy();
         }
@@ -156,16 +132,11 @@ impl MapTextures {
 }
 
 pub(super) struct ShadowMaps {
-    // The textures, replaced (or released) as a whole: bindings of the main
-    // passes follow.
     textures: Versioned<Option<MapTextures>>,
     uniform: wgpu::Buffer,
     written: Option<ShadowUniform>,
     sampler: wgpu::Sampler,
-    // Reads the four texels around a receiver-plane lookup.
     texel_sampler: wgpu::Sampler,
-    // Stand in for the atlas, the regions' layers and the table while
-    // there are none.
     _placeholders: [wgpu::Texture; 3],
     placeholder_atlas: wgpu::TextureView,
     placeholder_regions: wgpu::TextureView,
@@ -179,7 +150,6 @@ impl ShadowMaps {
             "engine/shadow-uniform",
             size_of::<ShadowUniform>() as u64,
         );
-        // Comparisons filter four texels, which a slot's apron holds.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/shadow-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -228,14 +198,10 @@ impl ShadowMaps {
         }
     }
 
-    /// The textures, once shadows ran.
     pub(super) fn textures(&self) -> Option<&MapTextures> {
         Option::as_ref(&self.textures)
     }
 
-    /// Bindings of the main passes' first group (`bindings::CAMERA`): the
-    /// lookup uniform, the atlas, the table of slots, the comparison
-    /// sampler and the texel sampler of receiver planes.
     pub(super) fn entries(&self) -> [(&'static str, Bound<'_>); 5] {
         let (atlas, table) = match &*self.textures {
             Some(maps) => (&maps.atlas_view, &maps.table_view),
@@ -251,13 +217,10 @@ impl ShadowMaps {
         ]
     }
 
-    /// The lookup uniform, which the clipmap's marks read too.
     pub(super) fn uniform(&self) -> &wgpu::Buffer {
         &self.uniform
     }
 
-    /// The table of slots as the caster selection binds it, and a key
-    /// changing whenever it is another texture.
     pub(super) fn table(&self) -> (&wgpu::TextureView, u64) {
         let table = self
             .textures()
@@ -265,7 +228,6 @@ impl ShadowMaps {
         (table, self.textures.generation())
     }
 
-    /// Bytes of the textures.
     pub(super) fn capacity_bytes(&self) -> u64 {
         self.textures().map_or(0, |maps| {
             let (width, height) = maps.key.atlas.size();
@@ -276,9 +238,6 @@ impl ShadowMaps {
         })
     }
 
-    /// Makes the textures for `settings`' clipmap of `levels` levels unless
-    /// they exist, within textures `limit` texels a side; returns the
-    /// atlas's layout and whether they were made (new ones hold nothing).
     pub(super) fn ensure(
         &mut self,
         device: &wgpu::Device,
@@ -302,27 +261,21 @@ impl ShadowMaps {
         (key.atlas, true)
     }
 
-    /// The regions' layers as composing binds them, while the textures
-    /// exist.
     pub(super) fn regions_bound(&self) -> Option<Bound<'_>> {
         let maps = self.textures()?;
         Some(Bound::of(&self.textures, view(&maps.regions_array)))
     }
 
-    /// What depth passes bind in place of the regions' layers: they may
-    /// draw into them.
     pub(super) fn regions_placeholder(&self) -> Bound<'_> {
         Bound::fixed(view(&self.placeholder_regions))
     }
 
-    /// Releases the textures while shadows are off.
     pub(super) fn release(&mut self) {
         if self.textures.is_some() {
             self.textures.replace(None);
         }
     }
 
-    /// Writes the lookup uniform when it changed.
     pub(super) fn write_uniform(&mut self, queue: &wgpu::Queue, uniform: ShadowUniform) {
         if self.written != Some(uniform) {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
@@ -330,8 +283,6 @@ impl ShadowMaps {
         }
     }
 
-    /// Sets the written uniform's count of terrain horizon records
-    /// (`level_state.w`) where it changed.
     pub(super) fn write_horizon_records(&mut self, queue: &wgpu::Queue, count: f32) {
         if let Some(written) = &mut self.written
             && written.level_state[3] != count
@@ -342,8 +293,6 @@ impl ShadowMaps {
         }
     }
 
-    /// Writes the blocks of levels `changed` of the table `table`, which
-    /// holds `side` rows of `side` cells a level.
     pub(super) fn write_table(&self, queue: &wgpu::Queue, table: &[u32], changed: &[usize]) {
         let Some(maps) = self.textures() else {
             return;
@@ -381,7 +330,6 @@ impl ShadowMaps {
     }
 }
 
-/// A depth pass into `view`, loading or clearing it as `load` says.
 pub(super) fn map_pass<'e>(
     encoder: &'e mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,

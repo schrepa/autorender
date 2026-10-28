@@ -1,15 +1,3 @@
-//! The engine factory's checks: smoke scripts (`web/scripts/NAME.mjs`) run
-//! against a development server of one commit, with the scripts of the
-//! same or another commit, every attempt kept. The scripts build, run and
-//! write in the served commit's checkout (`ENGINE_WORKSPACE`), so another
-//! commit's checks test this one's programs and files; the checkout holds
-//! the files its pages read that git does not (`cargo xtask bench assets`),
-//! as a measured commit's does. A check holds when its
-//! first attempt does what it must (exit 0, or 3 for an assertion where it
-//! must fail); one that does not runs again, up to `ATTEMPTS` in all, so a
-//! failure followed by a pass shows as flaky. `cargo xtask checks` runs a
-//! check task; measure tasks run theirs after their workloads.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
@@ -25,12 +13,9 @@ use crate::checkouts::checkout;
 use crate::measure::{commit_id, git, iso, output, read_json};
 use crate::serve::{Server, free_port};
 
-/// Attempts a check gets in all.
 const ATTEMPTS: usize = 3;
-/// How long a development server may take to build and start.
 const SERVER_START: Duration = Duration::from_secs(30 * 60);
 
-/// What a check must do: exit 0, or 3 (a failed assertion).
 fn holds(expect: &str, exit_code: i32) -> bool {
     match expect {
         "fail" => exit_code == 3,
@@ -38,14 +23,11 @@ fn holds(expect: &str, exit_code: i32) -> bool {
     }
 }
 
-/// A development server of one commit, and what it serves.
 struct Served {
     server: Server,
     build: Value,
 }
 
-/// Starts `cargo xtask dev` in `source` on a free port and waits until it
-/// serves: its build of the page logged into `log`.
 fn start_server(source: &Path, sha: &str, log: &Path) -> Result<Served, String> {
     let port = free_port()?;
     let mut command = Command::new("cargo");
@@ -58,10 +40,6 @@ fn start_server(source: &Path, sha: &str, log: &Path) -> Result<Served, String> 
     Ok(Served { server, build })
 }
 
-/// What a development server serves: the commit's page and its Wasm
-/// clients with their development tools, built with the profile and
-/// features its `web/pkg-dev/build.json` names (release and the development
-/// tools for commits from before it was written).
 fn web_build(source: &Path, sha: &str, took: Duration) -> Result<Value, String> {
     let identity = read_json(&source.join("web/pkg-dev/build.json")).unwrap_or_default();
     let profile = identity["profile"].as_str().unwrap_or("release");
@@ -104,9 +82,6 @@ fn web_build(source: &Path, sha: &str, took: Duration) -> Result<Value, String> 
     }))
 }
 
-/// A build that did not finish: its commit, the profile its development
-/// server builds with (release before the quick profile existed), and as
-/// its artifact the log that says why.
 fn failed_build(source: &Path, sha: &str, log: &Path) -> Result<Value, String> {
     let quick = fs::read_to_string(source.join("Cargo.toml"))
         .is_ok_and(|manifest| manifest.contains("[profile.quick]"));
@@ -125,8 +100,6 @@ fn failed_build(source: &Path, sha: &str, log: &Path) -> Result<Value, String> {
     }))
 }
 
-/// The web folder whose scripts run: `scripts_sha`'s, its dependencies
-/// installed, or the served commit's own.
 fn scripts_folder(
     root: &Path,
     source: &Path,
@@ -140,9 +113,6 @@ fn scripts_folder(
     Ok(scripts.join("web"))
 }
 
-/// Runs `checks` (the task's: name, sha, scripts_sha, expect), each
-/// commit's server started once, into `folder`; stops adding attempts at
-/// `deadline`. The checks' entries, and whether the deadline cut any short.
 pub fn run(
     root: &Path,
     checks: &[Value],
@@ -161,8 +131,6 @@ pub fn run(
     let (mut entries, mut incomplete) = (Vec::new(), false);
     for (sha, checks) in by_commit {
         let source = checkout(root, sha, None)?;
-        // Its pages read the files git does not hold, which a measured
-        // commit's checkout has too; without them they fail to load.
         if let Err(error) = crate::bench::generated(root, &source, sha) {
             eprintln!("The files {sha}'s pages read are missing: {error}");
         }
@@ -216,7 +184,6 @@ pub fn run(
                     "log": attempt_log.display().to_string(),
                     "measurements": measurements,
                 }));
-                // Nothing to run again without a server.
                 if holds(expect, exit_code) || server.is_err() {
                     break;
                 }
@@ -236,9 +203,6 @@ pub fn run(
     Ok((entries, incomplete))
 }
 
-/// One attempt of check `name` from `web` against `url`, a server of the
-/// checkout `workspace`, which the scripts build, run and write in: its exit
-/// code and what it measured, its output into `log`.
 fn attempt(
     web: &Path,
     workspace: &Path,
@@ -278,10 +242,6 @@ fn attempt(
     Ok((status.code().unwrap_or(-1), measurements(&stdout)))
 }
 
-/// What a check measured about the image or the engine: the `measurements`
-/// of the last line it printed, when that line is a JSON object, each
-/// `{name, value, unit, note?}`; entries of another shape are left out.
-/// Numbers for the user to read, never a limit the check passes or fails.
 fn measurements(stdout: &str) -> Vec<Value> {
     let last = stdout
         .lines()
@@ -315,8 +275,6 @@ fn measurements(stdout: &str) -> Vec<Value> {
         .collect()
 }
 
-/// `cargo xtask checks`: a check task (its pull request merged into main,
-/// `sha`, and main, `main_sha`) as the factory's check report.
 pub fn check_task(root: &Path, arguments: &[String]) -> Result<(), String> {
     let usage = "usage: cargo xtask checks --task TASK.json --profile PROFILE.json --out REPORT.json [--formats FORMATS.json]";
     let mut found: BTreeMap<&str, PathBuf> = BTreeMap::new();

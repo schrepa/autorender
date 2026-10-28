@@ -1,5 +1,3 @@
-// The implementation of meshoptimizer's clusterlod header, whose C API
-// `ffi.rs` mirrors.
 #include <assert.h>
 
 #include "meshoptimizer.h"

@@ -1,14 +1,3 @@
-//! Impostors' records: a layer of an atlas, as hosts keep it and the cook
-//! ships it. A record holds its header (its magic, then its format's tag,
-//! frames a side, texels a frame, whether over the hemisphere and levels,
-//! little-endian u32 each) and its four kinds' levels, first level first,
-//! in its format's rows (of BC7 or ASTC blocks, or of RGBA8 texels).
-//! Loading one writes it into a new layer. A bake's layer is read back as
-//! RGBA8 texels and made a record: compressed atlases' encoded in their
-//! family by the cook's own encoder (`engine_textures::compress`), the one
-//! every texture record is made with. Hosts keep it, and it loads as any
-//! record does.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -16,12 +5,8 @@ use super::*;
 
 const RECORD_MAGIC: &[u8; 4] = b"EIMP";
 const RECORD_HEADER: usize = 24;
-/// Rows of copies between buffers and textures start this many bytes
-/// apart.
 const ROW: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
-/// The identity of the record of an impostor held at `shape` as
-/// `format`, of the mesh and the material whose contents are `content`.
 pub(super) fn identity(shape: AtlasShape, format: AtlasFormat, content: (u128, u128)) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(48);
     for word in [
@@ -37,7 +22,6 @@ pub(super) fn identity(shape: AtlasShape, format: AtlasFormat, content: (u128, u
     bytes
 }
 
-/// The header of a record of a layer held at `shape` as `format`.
 fn record_header(shape: AtlasShape, format: AtlasFormat) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(RECORD_HEADER);
     bytes.extend_from_slice(RECORD_MAGIC);
@@ -53,8 +37,6 @@ fn record_header(shape: AtlasShape, format: AtlasFormat) -> Vec<u8> {
     bytes
 }
 
-/// Bytes of a record of a layer held at `shape` as `format`: its header
-/// and its four kinds' levels.
 fn record_bytes(shape: AtlasShape, format: AtlasFormat) -> usize {
     RECORD_HEADER
         + 4 * (0..shape.levels())
@@ -62,8 +44,6 @@ fn record_bytes(shape: AtlasShape, format: AtlasFormat) -> usize {
             .sum::<usize>()
 }
 
-/// Where a level's RGBA8 rows lie in a buffer: its offset, its rows, the
-/// bytes from one row's start to the next's, and those each row holds.
 #[derive(Clone, Copy)]
 struct Region {
     offset: u64,
@@ -72,17 +52,11 @@ struct Region {
     row: u32,
 }
 
-/// Level `level` of an RGBA8 texture of `shape` in a buffer: its rows, the
-/// bytes from one row's start to the next's (padded to [`ROW`]), and those
-/// each row holds.
 fn level_rows(shape: AtlasShape, level: u32) -> (u32, u32, u32) {
     let (row, rows) = AtlasFormat::Rgba8.rows(shape.size() >> level);
     (rows, row.next_multiple_of(ROW), row)
 }
 
-/// The regions of the RGBA8 levels of four textures of `shape`, each row
-/// padded to [`ROW`], the first texture's levels first, and the bytes they
-/// take.
 fn level_regions(shape: AtlasShape) -> (Vec<Region>, u64) {
     let mut regions = Vec::with_capacity(4 * shape.levels() as usize);
     let mut bytes = 0_u64;
@@ -101,8 +75,6 @@ fn level_regions(shape: AtlasShape) -> (Vec<Region>, u64) {
     (regions, bytes)
 }
 
-/// The bytes a bake's layer at `shape` reads back into: [`level_regions`]'
-/// total.
 pub(super) fn readback_bytes(shape: AtlasShape) -> u64 {
     4 * (0..shape.levels())
         .map(|level| {
@@ -112,8 +84,6 @@ pub(super) fn readback_bytes(shape: AtlasShape) -> u64 {
         .sum::<u64>()
 }
 
-/// Where a read back stands: recorded into a frame not yet submitted,
-/// mapping, read, or failed.
 enum Mapped {
     Recorded,
     Mapping,
@@ -121,8 +91,6 @@ enum Mapped {
     Failed,
 }
 
-/// A bake's layer read back: the key of the record it makes, the buffer
-/// mapped with its levels' regions, and where its map stands.
 pub(super) struct Readback {
     record: RecordKey,
     buffer: wgpu::Buffer,
@@ -131,9 +99,6 @@ pub(super) struct Readback {
 }
 
 impl ImpostorAtlas {
-    /// Uploads the record `bytes` of `key`, drawing `source`, into a new
-    /// layer with `gpu`'s queue; whether they were a record of the atlas's
-    /// shape and format and found a layer within `budget`.
     pub(super) fn load(
         &mut self,
         gpu: &mut BakeGpu<'_>,
@@ -189,9 +154,6 @@ impl ImpostorAtlas {
         true
     }
 
-    /// Reads back the layer the bake just drew, at the atlas's shape with
-    /// its levels, into a buffer: the record of the mesh and the material
-    /// whose contents are `content` once it maps ([`Self::take_made`]).
     pub(super) fn read_back(
         &mut self,
         device: &wgpu::Device,
@@ -242,10 +204,6 @@ impl ImpostorAtlas {
         });
     }
 
-    /// Records it made since the last call, for hosts to keep: the read
-    /// backs mapped since, each made a record (encoded in the family of
-    /// compressed atlases), which also answers the supply waiting for it,
-    /// so it loads into a layer as any record does.
     pub(crate) fn take_made(&mut self, out: &mut Vec<(RecordKey, Vec<u8>)>) {
         let mut kept = Vec::with_capacity(self.readbacks.len());
         for readback in std::mem::take(&mut self.readbacks) {
@@ -259,7 +217,6 @@ impl ImpostorAtlas {
                     out.push((readback.record, bytes.clone()));
                     self.answer(readback.record, Some(bytes));
                 }
-                // A layer that never read back bakes again.
                 Some(None) => self.answer(readback.record, None),
                 None => kept.push(readback),
             }
@@ -267,9 +224,6 @@ impl ImpostorAtlas {
         self.readbacks = kept;
     }
 
-    /// Maps the read backs the frame just submitted recorded, whose bytes
-    /// come with a later frame; the next frame uploads within a new budget,
-    /// the answers it held back first.
     pub(crate) fn after_submit(&mut self) {
         self.loaded = 0;
         if std::mem::take(&mut self.deferred) {
@@ -302,9 +256,6 @@ impl ImpostorAtlas {
         }
     }
 
-    /// A record's bytes from a read back's mapped `bytes`, its levels at
-    /// `regions`: its header, then each level's RGBA8 rows less their
-    /// padding, or for compressed atlases each level's blocks.
     fn assemble(&self, regions: &[Region], bytes: &[u8]) -> Vec<u8> {
         let mut out = record_header(self.shape, self.format);
         let levels = self.shape.levels() as usize;

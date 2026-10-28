@@ -1,29 +1,3 @@
-//! Tiles' water on the GPU: each resident tile's water where it stands over
-//! the ground or continues under its banks at its level, a patch at a time,
-//! in two texture arrays of blocks as many samples wide as a patch's grid
-//! and a sample more past each of its edges: their surfaces as water's pass
-//! draws them beside their tile's ground, and their words, their packed
-//! flow, whitewater and kind and their state
-//! (`engine_core::terrain_data::TileWater::info`), the third the level the
-//! water's mesh stands at over the sample
-//! (`engine_core::terrain_data::WaterMesh`) and the fourth the roughness of
-//! the bed under it as the shallow-water scheme reads it
-//! (`engine_core::terrain_data::shallow_water::roughness`), which the live
-//! water's setup takes (`meshes/water_setup.wgsl`); each sample past the
-//! patch's edges the tile's beside them (its border past its own), so the
-//! smooth surface water's pass reads through them (`meshes/water.wgsl`'s
-//! `water_level`) meets itself across tiles and patches. A tile's blocks
-//! upload as it arrives and free as it leaves or changes, following the
-//! tiles the atlas held anew; a patch whose samples hold no surface
-//! (`TileWater::patch_holds_water`) takes none, the water's mesh standing on
-//! its ground there. Water's directory
-//! lists, for each layer of the height array, the blocks of its tile's
-//! patches, laid out again as tiles or their water change, in the terrain's
-//! directory buffer after the directory's own words: shaders
-//! read a tile's water at any point through it, water's pass
-//! (`crate::water`) and the ground's fragments, which wet the ground at its
-//! waterline and bind no more storage buffers than they did.
-
 #![expect(
     clippy::expect_used,
     reason = "the arrays are allocated before blocks upload"
@@ -41,19 +15,14 @@ use engine_core::glam::Vec2;
 use engine_core::terrain_data::shallow_water::roughness;
 use engine_core::terrain_data::{PATCH_QUADS, PATCHES_PER_TILE, Tile, TileWater, WaterMesh};
 
-/// Blocks a layer holds, and its texels along a side.
 const PER_LAYER: u32 = SIDE * SIDE;
 const LAYER_TEXELS: u32 = BLOCK * SIDE;
-/// The surface and info arrays' formats, and the bytes of each one's
-/// texels: shaders unpack the info's words themselves.
 const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
 const INFO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
 const SURFACE_BYTES: u32 = 8;
 const INFO_BYTES: u32 = 16;
-/// Texels of a block.
 const BLOCK_TEXELS: usize = (BLOCK * BLOCK) as usize;
 
-/// The arrays and their layers.
 struct Arrays {
     surface: wgpu::Texture,
     surface_view: wgpu::TextureView,
@@ -62,17 +31,11 @@ struct Arrays {
     layers: u32,
 }
 
-/// A tile's blocks: the tile whose water they hold, and each patch's block
-/// (`NO_WATER_BLOCK` where none of its samples holds a surface, or no layer
-/// held it).
 struct TileBlocks {
     tile: Arc<Tile>,
     blocks: Box<[u32]>,
 }
 
-/// A block's texels: each sample's surface beside its ground, and its words
-/// with the level the water's mesh stands at over it and its bed's
-/// roughness.
 struct Texels {
     surfaces: Vec<[f32; 2]>,
     info: Vec<[u32; 4]>,
@@ -86,7 +49,6 @@ impl Texels {
         }
     }
 
-    /// Whether it holds the same texels as `other`, bit for bit.
     fn same(&self, other: &Self) -> bool {
         bytemuck::cast_slice::<[f32; 2], u32>(&self.surfaces)
             == bytemuck::cast_slice::<[f32; 2], u32>(&other.surfaces)
@@ -94,22 +56,6 @@ impl Texels {
     }
 }
 
-/// What water's pass draws tiles' water with: the height array, the views'
-/// and terrains' uniforms, the terrain's directory with water's in it, this
-/// frame's leaves of the subdivisions and their trees' uniforms and the
-/// water blocks' arrays, with generations advancing when any of them is
-/// another texture or buffer; each frame terrain whose water subdivides,
-/// its id, its uniform's offset, its water's tree's and that tree's draw of
-/// its leaves; the pixels the drawn ground (x) and water's mesh (y) may stray
-/// from their surfaces seen from the detail eye;
-/// the blocks resident and dropped this frame for want of layers; the
-/// leaves the water's subdivisions drew and the splits their room refused,
-/// as last read back; the terrain group as the subdivisions' passes bind
-/// it, with its layout, once made, through which the live water's setup
-/// reads the ground, its materials and the tiles' water
-/// (`meshes/water_setup.wgsl`); and the tiles the GPU holds, by terrain and
-/// key, each with its water's blocks, which the live water's blocks run
-/// over once theirs are there.
 pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) heights: &'a wgpu::TextureView,
     pub(crate) views: &'a wgpu::Buffer,
@@ -130,27 +76,18 @@ pub(crate) struct TerrainWaterDraws<'a> {
 
 pub(crate) struct WaterBlocks {
     arrays: Option<Arrays>,
-    /// Advances whenever the arrays are replaced.
     pub(crate) generation: u64,
     tiles: HashMap<(u64, TileKey), TileBlocks>,
     free: Vec<u32>,
     next: u32,
-    /// Blocks uploaded this frame, and dropped for want of layers.
     pub(crate) uploads: u32,
     pub(crate) dropped: u32,
-    // Water's directory: the words the terrain's directory buffer holds of
-    // it and those they replaced, kept for the next layout; the height
-    // array's layers it was laid out for, and where it was written (the
-    // word it starts at and the buffer's generation); whether tiles changed
-    // since; and the terrains holding water.
     directory_written: Vec<u32>,
     directory_spare: Vec<u32>,
     directory_layers: Option<u32>,
     directory_at: Option<(u32, u64)>,
     directory_stale: bool,
     holding: BTreeSet<u64>,
-    // The surfaces' and words' arrays the terrain group binds before a
-    // block uploads, while water's directory names none: a texel each.
     stand_in: [wgpu::TextureView; 2],
 }
 
@@ -197,43 +134,32 @@ impl WaterBlocks {
         }
     }
 
-    /// The surface and info arrays' views, once a block uploaded.
     pub(crate) fn views(&self) -> Option<(&wgpu::TextureView, &wgpu::TextureView)> {
         self.arrays
             .as_ref()
             .map(|arrays| (&arrays.surface_view, &arrays.info_view))
     }
 
-    /// The surface array's view the terrain group binds, whose surfaces
-    /// beside their ground the ground's fragments wet it by at its
-    /// waterline: a stand-in before a block uploads.
     pub(super) fn surface_view(&self) -> &wgpu::TextureView {
         self.arrays
             .as_ref()
             .map_or(&self.stand_in[0], |arrays| &arrays.surface_view)
     }
 
-    /// The info array's view the terrain group binds, whose words the live
-    /// water's setup reads beside the surfaces: a stand-in before a block
-    /// uploads.
     pub(super) fn info_view(&self) -> &wgpu::TextureView {
         self.arrays
             .as_ref()
             .map_or(&self.stand_in[1], |arrays| &arrays.info_view)
     }
 
-    /// Blocks resident.
     pub(crate) fn resident(&self) -> u32 {
         self.next - self.free.len() as u32
     }
 
-    /// Whether terrain `id`'s resident tiles hold water, as the directory
-    /// was last laid out.
     pub(super) fn holds(&self, id: u64) -> bool {
         self.holding.contains(&id)
     }
 
-    /// Bytes of the arrays.
     pub(super) fn capacity_bytes(&self) -> u64 {
         self.arrays.as_ref().map_or(0, |arrays| {
             u64::from(arrays.layers)
@@ -242,9 +168,6 @@ impl WaterBlocks {
         })
     }
 
-    /// What water's pass draws tiles' water with this frame, of `pass`'s
-    /// parts and `terrains`; `None` before tiles and their water arrive, or
-    /// the leaves of the subdivisions.
     pub(super) fn draws<'a>(
         &'a self,
         pass: &'a TerrainPass,
@@ -290,13 +213,6 @@ impl WaterBlocks {
         })
     }
 
-    /// Uploads the blocks of the tiles `atlas` holds (by terrain and key)
-    /// that arrived or changed, and frees those of tiles gone, looking only
-    /// at the keys whose held tile changed since the last sync; a tile
-    /// replaced under its key keeps the blocks whose texels stay the same
-    /// (its water made again where its rivers run otherwise). Layers grow up
-    /// to `max_layers`. Where any tile changed, water's directory is laid
-    /// out again as it is next written ([`Self::write_directory`]).
     pub(super) fn sync(
         &mut self,
         device: &wgpu::Device,
@@ -329,7 +245,6 @@ impl WaterBlocks {
                 (None, None) => {}
             }
         }
-        // Lower blocks first, so the arrays stay as small as they can.
         self.free.sort_unstable_by(|a, b| b.cmp(a));
         for (slot, before, tile) in replaced {
             let blocks = self.upload(device, queue, tile, Some(before), max_layers);
@@ -344,8 +259,6 @@ impl WaterBlocks {
         }
     }
 
-    /// Whether it holds blocks for exactly the tiles `held` holds, each of
-    /// that tile, which debug builds check.
     #[cfg(debug_assertions)]
     pub(super) fn follows(&self, held: &HashMap<(u64, TileKey), Arc<Tile>>) -> bool {
         self.tiles.len() == held.len()
@@ -355,10 +268,6 @@ impl WaterBlocks {
             })
     }
 
-    /// `tile`'s blocks, its patches holding a surface uploaded: in place of
-    /// `before`'s, the tile it replaces under its key, whose blocks it keeps
-    /// where their texels stay the same and frees where its patches hold
-    /// none.
     fn upload(
         &mut self,
         device: &wgpu::Device,
@@ -427,8 +336,6 @@ impl WaterBlocks {
         TileBlocks { tile, blocks }
     }
 
-    /// A free block, the arrays grown to hold it; `None` beyond
-    /// `max_layers`.
     fn allocate(&mut self, device: &wgpu::Device, queue: &Queue, max_layers: u32) -> Option<u32> {
         if let Some(block) = self.free.pop() {
             return Some(block);
@@ -443,8 +350,6 @@ impl WaterBlocks {
         Some(block)
     }
 
-    /// Grows the arrays to hold `needed` layers, doubling, keeping the
-    /// blocks uploaded.
     fn ensure_arrays(
         &mut self,
         device: &wgpu::Device,
@@ -510,7 +415,6 @@ impl WaterBlocks {
         self.generation += 1;
     }
 
-    /// Writes block `block`'s texels.
     fn write(&self, queue: &Queue, block: u32, texels: &Texels) {
         let arrays = self.arrays.as_ref().expect("a block allocates its arrays");
         let index = block % PER_LAYER;
@@ -550,13 +454,6 @@ impl WaterBlocks {
         }
     }
 
-    /// Lays water's directory out for the layers `atlas` holds where tiles
-    /// changed since, or the layers did, and writes the words that changed
-    /// into the terrain's directory buffer `directory` from its word `base`,
-    /// all of them into a new buffer (another `generation`) or at another
-    /// place: each resident tile's patches' blocks; and notes the terrains
-    /// whose tiles hold any. Words past what the buffer holds, which it
-    /// could not grow to, are left out.
     #[expect(
         clippy::iter_over_hash_type,
         reason = "terrains gather and words land by tile and layer, in any order"
@@ -607,14 +504,6 @@ impl WaterBlocks {
     }
 }
 
-/// Writes into `texels` the block of patch `(px, pz)` of `tile`, whose
-/// water is `water` and its mesh `mesh`: of each of its samples and those a
-/// sample past its edges, the tile's beside it (its border past its own),
-/// the surface water's pass draws (`NO_WATER_SURFACE` where none is) beside
-/// the tile's ground, and its words, the third the bits of the level the
-/// water's mesh stands at over it and the fourth those of the roughness of
-/// the tile's bed under it (`roughness`: the ground's outside rivers'
-/// channels, and past the tile's own samples).
 fn block_texels(
     tile: &Tile,
     water: &TileWater,
@@ -628,9 +517,6 @@ fn block_texels(
     let (heights, words, spacing) = (tile.heights(), water.info(), tile.spacing());
     for z in 0..side {
         for x in 0..side {
-            // The sample in the tile's layout, which holds a border of one,
-            // the block's first a sample before the patch's, and its place
-            // in meters from the tile's first corner.
             let (column, row) = (px * quads + x, pz * quads + z);
             let at = row * stride + column;
             let local = Vec2::new(column as f32 - 1.0, row as f32 - 1.0) * spacing;

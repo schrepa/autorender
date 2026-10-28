@@ -1,46 +1,26 @@
-//! Draw groups of GPU presentation: the plan's candidates in
-//! draw-group order and in slot order, each batch's record, skinned slots,
-//! and where each compaction writes its draws. They upload
-//! only when the candidate structure, the node space or what batch records
-//! carry changed.
-
 use crate::batches::DrawBatch;
 use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES, LOD_LEVELS, SkinnedData};
 use crate::mesh_arena::Ids;
 
 use super::{BatchMeta, PresentationInputs, RecordsKey, SCAN_GROUP, grow, storage};
 
-/// The compactions writing draws: drawing phase one (the only phase
-/// without occlusion culling), phase two, and reflection
-/// probe faces.
 pub(super) const PHASE_ONE: usize = 0;
 pub(super) const PHASE_TWO: usize = 1;
 pub(super) const PROBE_FACES: usize = 2;
 
-// The frame identity, structure and source revisions and gather identity
-// the groups were built for, and what batch records carry.
 type GroupsKey = (u64, u64, u64, u64, RecordsKey);
 
 pub(super) struct DrawGroups {
     capacity: usize,
     pub(super) candidates: wgpu::Buffer,
-    // The same candidates in slot order, for culling.
     pub(super) slot_candidates: wgpu::Buffer,
-    // Candidate flags, then the compactions' group sums and totals.
     pub(super) scan: wgpu::Buffer,
     batch_capacity: usize,
     pub(super) batches: wgpu::Buffer,
-    // Each batch's visible count before it, per level of detail.
     pub(super) batch_bases: wgpu::Buffer,
-    // Each compaction's draw arguments (per level of detail and batch, then
-    // the impostors') and visible IDs (a plane per level of detail).
     pub(super) draws: [wgpu::Buffer; 3],
     pub(super) visible_ids: [wgpu::Buffer; 3],
-    // Each drawing phase's impostor instances; probe faces
-    // write phase one's once the frame drew them.
     pub(super) impostor_ids: [wgpu::Buffer; 2],
-    // Skinned slots among the candidates and their world
-    // bounds from this frame's palettes, with each batch's joint count.
     skinned_capacity: usize,
     pub(super) skinned: wgpu::Buffer,
     pub(super) skin_bounds: wgpu::Buffer,
@@ -49,16 +29,12 @@ pub(super) struct DrawGroups {
     count: u32,
     batch_count: u32,
     key: Option<GroupsKey>,
-    // Whether draws' arguments name their visible-ID regions as first
-    // instances (`indirect-first-instance`).
     first_instance: bool,
     candidate_staging: Vec<CandidateData>,
     slot_staging: Vec<CandidateData>,
-    // Per slot: its candidate's draw-group position (`u32::MAX`: none).
     slot_positions: Vec<u32>,
     batch_staging: Vec<BatchData>,
     skinned_staging: Vec<SkinnedData>,
-    // Advances when any of this storage is replaced.
     generation: u64,
 }
 
@@ -109,27 +85,22 @@ impl DrawGroups {
         }
     }
 
-    /// Candidates of the groups last built.
     pub(super) fn count(&self) -> u32 {
         self.count
     }
 
-    /// Plan batches of the groups last built.
     pub(super) fn batch_count(&self) -> u32 {
         self.batch_count
     }
 
-    /// Skinned slots among the candidates.
     pub(super) fn skinned_count(&self) -> u32 {
         self.skinned_count
     }
 
-    /// Candidates the storage holds: the size of each visible-ID plane.
     pub(super) fn capacity(&self) -> usize {
         self.capacity
     }
 
-    /// Advances when any of this storage is replaced.
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
@@ -150,7 +121,6 @@ impl DrawGroups {
         .sum()
     }
 
-    /// Sizes storage for `candidates` candidates in `batches` batches.
     pub(super) fn ensure(&mut self, device: &wgpu::Device, candidates: usize, batches: usize) {
         if candidates > self.capacity {
             self.capacity = grow(candidates);
@@ -168,14 +138,12 @@ impl DrawGroups {
                 capacity * size_of::<CandidateData>() as u64,
                 wgpu::BufferUsages::empty(),
             );
-            // Flags, four sums per group (one per level of detail), four totals and their sum.
             self.scan = storage(
                 device,
                 "engine/presentation-scan",
                 (capacity + 4 * (groups + 1) + 1) * 4,
                 wgpu::BufferUsages::COPY_SRC,
             );
-            // A plane of visible IDs per level of detail.
             let planes = LOD_LEVELS as u64;
             self.visible_ids = [
                 "engine/presentation-visible-ids",
@@ -190,7 +158,6 @@ impl DrawGroups {
                     wgpu::BufferUsages::VERTEX,
                 )
             });
-            // Impostor instances: two words each.
             self.impostor_ids = [
                 "engine/presentation-impostor-ids",
                 "engine/presentation-impostor-ids2",
@@ -214,8 +181,6 @@ impl DrawGroups {
                 capacity * 16,
                 wgpu::BufferUsages::empty(),
             );
-            // Draw arguments per level of detail and batch, then the
-            // impostors'.
             let args = (LOD_LEVELS as u64 * capacity + 1) * DRAW_ARGS_BYTES;
             self.draws = [
                 "engine/presentation-draws",
@@ -228,8 +193,6 @@ impl DrawGroups {
         }
     }
 
-    /// Rebuilds the groups of `inputs`' plan when its candidate structure,
-    /// node space or record choices changed; returns the bytes uploaded.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -248,8 +211,6 @@ impl DrawGroups {
             records,
             ..
         } = inputs;
-        // Listed materials replaced in place change the structure revision,
-        // not the plan's draws.
         let key = (
             frame.identity(),
             plan.generation(),
@@ -288,7 +249,6 @@ impl DrawGroups {
                     },
                 ));
         }
-        // The same candidates in slot order, placed by slot in linear time.
         let slots = self
             .candidate_staging
             .iter()
@@ -310,7 +270,6 @@ impl DrawGroups {
                 *position = u32::MAX;
             }
         }
-        // Skinned slots, in slot order.
         self.skinned_staging.clear();
         self.skinned_staging
             .extend(self.slot_staging.iter().filter_map(|candidate| {
@@ -331,7 +290,6 @@ impl DrawGroups {
                 capacity * size_of::<SkinnedData>() as u64,
                 wgpu::BufferUsages::empty(),
             );
-            // A minimum and a maximum per skinned slot.
             self.skin_bounds = storage(
                 device,
                 "engine/presentation-skin-bounds",
@@ -373,20 +331,14 @@ impl DrawGroups {
         )
     }
 
-    /// Byte offset of the compaction's visible total over every level of
-    /// detail in the scan buffer, after the per-level totals.
     pub(super) fn total_offset(&self) -> u64 {
         self.level_offset() + 16
     }
 
-    /// Byte offset of the compaction's totals per level of detail in the
-    /// scan buffer, after the flags and per-level group sums.
     pub(super) fn level_offset(&self) -> u64 {
         u64::from(self.count + 4 * self.count.div_ceil(SCAN_GROUP)) * 4
     }
 
-    /// Visible IDs and indirect arguments of plan batch `index` in
-    /// compaction `compaction` at level of detail `level`.
     pub(super) fn draw_source<'a>(
         &'a self,
         batch: &DrawBatch,
@@ -402,8 +354,6 @@ impl DrawGroups {
         )
     }
 
-    /// The impostor instances compaction `compaction` writes: probe faces
-    /// write phase one's, which the frame drew already.
     pub(super) fn impostor_ids_of(&self, compaction: usize) -> &wgpu::Buffer {
         &self.impostor_ids[if compaction == PHASE_TWO {
             PHASE_TWO
@@ -412,8 +362,6 @@ impl DrawGroups {
         }]
     }
 
-    /// Drawing phase `phase`'s impostor instances and the
-    /// arguments of the non-indexed draw of their cards.
     pub(super) fn impostor_source(&self, phase: usize) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
         let args = LOD_LEVELS as u64 * u64::from(self.batch_count);
         (
@@ -423,9 +371,6 @@ impl DrawGroups {
         )
     }
 
-    /// A batch's visible IDs at level of detail `level` in `ids`: the whole
-    /// buffer where its draw arguments' first instance names its region,
-    /// otherwise the region in the level's plane.
     fn ids<'a>(&self, ids: &'a wgpu::Buffer, batch: &DrawBatch, level: usize) -> Ids<'a> {
         if self.first_instance {
             Ids::Whole(ids)
@@ -438,9 +383,6 @@ impl DrawGroups {
     }
 }
 
-/// The record of `batch`, described by `meta`, whose draw arguments name
-/// its visible-ID regions in planes of `capacity` IDs as first instances
-/// when `first_instance`.
 fn batch_record(
     batch: &DrawBatch,
     meta: &BatchMeta,
@@ -474,9 +416,6 @@ fn batch_record(
             .min()
             .extend(if skinned { 1.0 } else { 0.0 })
             .to_array(),
-        // Transparent groups are never occluded, nor are
-        // instances drawing virtual geometry (2): their
-        // clusters draw in phase one.
         bounds_max: meta
             .bounds
             .max()

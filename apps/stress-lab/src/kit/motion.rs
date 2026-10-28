@@ -1,7 +1,3 @@
-//! What moves the worlds' moving objects: the movers the city and the
-//! metro run (pure functions of simulated time, so both layouts agree),
-//! and the set every world's motion runs in.
-
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::ops::DerefMut;
 
@@ -9,15 +5,11 @@ use engine::prelude::*;
 
 use crate::{FrameMetrics, metrics};
 
-/// The systems moving the worlds' objects; the workload's queries run
-/// after them.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Animation;
 
 const INV_TAU: f32 = 1.0 / TAU;
 
-/// Around a rectangle in the XZ plane: counterclockwise seen from above for
-/// a positive speed (units per second), clockwise for a negative one.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Travel {
     pub(crate) center: Vec3,
@@ -26,9 +18,6 @@ pub(crate) struct Travel {
     pub(crate) phase: f32,
 }
 
-/// Around a horizontal circle (angle `a`: `center + radius (cos a, 0, -sin a)`,
-/// as `Quat::from_rotation_y(a)` moves +X), bobbing by `bob sin 2a`, turned
-/// by its own facing angle about Y.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Orbit {
     pub(crate) center: Vec3,
@@ -40,7 +29,6 @@ pub(crate) struct Orbit {
     pub(crate) facing_phase: f32,
 }
 
-/// Around the circle `center + u cos a + v sin a`, keeping its rotation.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Wheel {
     pub(crate) center: Vec3,
@@ -50,7 +38,6 @@ pub(crate) struct Wheel {
     pub(crate) phase: f32,
 }
 
-/// `base` then a turn about local Y (or Z), in place.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Spin {
     pub(crate) base: Quat,
@@ -59,7 +46,6 @@ pub(crate) struct Spin {
     pub(crate) phase: f32,
 }
 
-/// Along `axis` from `anchor` by `amplitude sin a`.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Slide {
     pub(crate) anchor: Vec3,
@@ -78,7 +64,6 @@ pub(crate) enum Motion {
     Slide(Slide),
 }
 
-/// `x` reduced to `[0, TAU)`, keeping trigonometry on its fast path.
 fn wrap(x: f32) -> f32 {
     x - (x * INV_TAU).floor() * TAU
 }
@@ -164,7 +149,6 @@ impl Slide {
 }
 
 impl Motion {
-    /// The transform this motion gives `rest` at time `t`.
     pub(crate) fn apply(&self, rest: Transform, t: f32) -> Transform {
         let mut transform = rest;
         match self {
@@ -183,9 +167,6 @@ impl Motion {
 fn simulated(time: &FixedTime) -> f32 {
     (time.elapsed_seconds % 10_000.0) as f32
 }
-
-// Four movers at a time: the scalar functions above, lane by lane, with the
-// same bits (`sin_cos4` matches `sin_cos`).
 
 fn orbit_lanes<'a, T: DerefMut<Target = Transform>>(
     t: f32,
@@ -255,7 +236,6 @@ fn slide_lanes<'a, T: DerefMut<Target = Transform>>(
     });
 }
 
-/// Moves every mover to its pose at the tick's simulated time.
 #[expect(clippy::type_complexity, reason = "a query per mover kind")]
 fn animate(
     time: Res<FixedTime>,
@@ -280,7 +260,6 @@ fn animate(
     metrics.animation_ms += metrics::now_ms() - start;
 }
 
-/// Registers the movers' system.
 pub(crate) fn add_systems(app: &mut App) {
     app.add_systems(FixedSimulation, animate.in_set(Animation));
 }

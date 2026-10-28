@@ -1,10 +1,3 @@
-//! The visibility buffer: the camera's virtual geometry
-//! clusters rasterize which triangle covers each pixel
-//! (`meshes/vertex.wgsl`'s `vs_visibility`) into an ID target; compute lists the
-//! 8x8 tiles holding each material bin's pixels (`visibility.wgsl`); and
-//! each bin's resolve (`fs_resolve*`) shades its pixels once, however many
-//! triangles overlapped them or however small they were.
-
 #![expect(
     clippy::expect_used,
     reason = "drawing reads the targets its preparation sized"
@@ -19,33 +12,20 @@ use crate::gpu_layouts::constants::VISIBILITY_TILE as TILE;
 use crate::shaders::entry::visibility;
 use crate::targets::{FrameRegion, FrameSize, ScreenTarget};
 
-/// Each pixel's visible entry plus one (0: none) and its triangle | bin << 7.
 pub(crate) const ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
-/// Bytes between draws' uniforms: the uniform offset alignment every device
-/// supports.
 pub(crate) const DRAW_STRIDE: u64 = 256;
 
-/// The ID target, the tile lists and each draw's uniform, sized to the
-/// display and the frame's bins; frames classify the tiles of the pixels
-/// they draw.
 pub(crate) struct VisibilityBuffer {
     layout: crate::pipelines::GroupLayout,
     classify: wgpu::ComputePipeline,
     args: wgpu::ComputePipeline,
-    // The ID target, at the display's size.
     ids: ScreenTarget<wgpu::TextureView>,
-    // Tiles across and down the pixels the frame draws.
     tiles: (u32, u32),
-    // The classification's uniform, each bin's tile count, the tile lists
-    // (each bin's from `bin * capacity`, room for each tile of the
-    // display), each bin's resolve arguments, and the draws' uniforms (phase
-    // one's bins, then phase two's).
     params: wgpu::Buffer,
     counts: Versioned<wgpu::Buffer>,
     lists: Versioned<wgpu::Buffer>,
     draw_args: Versioned<wgpu::Buffer>,
     draws: Versioned<wgpu::Buffer>,
-    // The bins and the display's tile grid the buffers hold.
     held: (usize, (u32, u32)),
     group: GroupCache<5>,
 }
@@ -99,12 +79,6 @@ impl VisibilityBuffer {
         }
     }
 
-    /// Readies the target and buffers for `region`, its display's size, and
-    /// the bins whose first selected cluster in each phase `visible_bases`
-    /// holds (phase one's, then phase two's), and writes the draws' uniforms
-    /// for the tiles of its render size. False when the tile lists would
-    /// exceed the device's storage binding size: the frame draws its bins
-    /// forward instead.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -119,7 +93,6 @@ impl VisibilityBuffer {
         let (width, height) = (region.render.width.max(1), region.render.height.max(1));
         let bins = visible_bases[0].len();
         self.tiles = (width.div_ceil(TILE), height.div_ceil(TILE));
-        // Lists hold every tile of the display, whatever size frames draw at.
         let room = (target.width.div_ceil(TILE), target.height.div_ceil(TILE));
         let capacity = u64::from(room.0) * u64::from(room.1);
         let limits = device.limits();
@@ -198,8 +171,6 @@ impl VisibilityBuffer {
         true
     }
 
-    /// Records the tile lists of the first `bins` bins from the ID target,
-    /// and their resolve arguments.
     pub(crate) fn encode_classify(&self, encoder: &mut wgpu::CommandEncoder, bins: usize) {
         let Some(group) = self.group.get() else {
             return;
@@ -216,18 +187,14 @@ impl VisibilityBuffer {
         pass.dispatch_workgroups((bins as u32).div_ceil(RESOLVE_ARGS_GROUP).max(1), 1, 1);
     }
 
-    /// The dynamic offset of the uniform of bin `bin`'s draws in phase
-    /// `phase` of `bins` bins.
     pub(crate) fn draw_offset(phase: usize, bins: usize, bin: usize) -> u32 {
         ((phase * bins + bin) as u64 * DRAW_STRIDE) as u32
     }
 
-    /// The ID target, once prepared.
     pub(crate) fn ids_view(&self) -> &Versioned<wgpu::TextureView> {
         self.ids.get().expect("prepared before drawing")
     }
 
-    /// The draws' uniforms, the tile lists and the resolve arguments.
     pub(crate) fn buffers(
         &self,
     ) -> (

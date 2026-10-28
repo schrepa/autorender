@@ -1,18 +1,3 @@
-//! GPU presentation: uploads gathered interpolation inputs and
-//! candidate draw groups, then records compute passes that blend, compose,
-//! validate and cull displayed poses and compact visible slots per group for
-//! indirect draws. Per-frame CPU work is a uniform write and a few dispatches;
-//! inputs upload only when core's gather sequence advanced (normally once per
-//! fixed tick) and groups only when the candidate structure changed. After a
-//! quiet tick only current poses upload: a small pass first copies the last
-//! current poses into the previous half of the pose buffer.
-//!
-//! Its state lives in parts that own their storage and advance a generation
-//! whenever they replace it: node inputs (`inputs`), draw groups and where
-//! compactions write (`groups`), skinned slots' joints (`joints`), still
-//! frames and reflection probe faces (`probes`), and the totals read back
-//! (`totals`). Bind groups are kept by the generations of what they bind.
-
 mod fades;
 mod groups;
 mod inputs;
@@ -48,9 +33,6 @@ use layouts::Shaders;
 use probes::{ProbeFaces, Stillness};
 use totals::Totals;
 
-/// The stages of a frame's compute pass, which profiling captures time as
-/// separate passes: parent composition, culling, scanning (group sums and
-/// draw arguments) and the scatter of visible slots.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Stage {
     Compose,
@@ -60,7 +42,6 @@ enum Stage {
 }
 
 impl Stage {
-    /// The profiler's span of the stage.
     fn span(self) -> &'static str {
         match self {
             Self::Compose => "presentation_compose",
@@ -71,10 +52,8 @@ impl Stage {
     }
 }
 
-// Bindings need at least one element; exceeds every record stride.
 const MIN_STORAGE_BYTES: u64 = 256;
 
-/// Per-frame outcome for profiling counters and stats.
 #[derive(Default)]
 pub(crate) struct GpuPrepared {
     pub candidates: u32,
@@ -83,19 +62,12 @@ pub(crate) struct GpuPrepared {
     pub full_node_upload: bool,
     pub staged: bool,
     pub parent_levels: usize,
-    /// This frame copied current poses into previous slots on the GPU.
     pub shifted: bool,
-    /// Blending is suspended after a missed copy until the next applied one.
     pub blend: bool,
-    /// Current poses were copied from a buffer staged ahead of this frame.
     pub prestaged: bool,
-    /// Inputs gathered ahead of their due frame were held, not applied.
     pub held: bool,
 }
 
-/// What GPU presentation needs of a plan batch: its mesh's index count,
-/// first index and base vertex in the mesh arena, bounds and joint count,
-/// its shadow group, and whether it draws virtual geometry.
 pub(crate) struct BatchMeta {
     pub index_count: u32,
     pub first_index: u32,
@@ -104,30 +76,17 @@ pub(crate) struct BatchMeta {
     pub group: u32,
     pub joints: u32,
     pub virtual_geometry: bool,
-    /// Coarser levels of detail the camera may draw instead:
-    /// each one's first index, index count and geometric error in
-    /// mesh units, finest first.
     pub lods: Vec<(u32, u32, f32)>,
-    /// The error of its impostor in mesh units, 0 without
-    /// one.
     pub impostor: f32,
 }
 
-/// What batch records carry beyond the plan, by the generations of those
-/// choices: draw groups rebuild when it changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RecordsKey {
-    /// Whether records carry shadow groups.
     pub shadow_groups: bool,
-    /// The mesh arena layout and which batches draw virtual geometry.
     pub meshes: u64,
-    /// The impostors records name, 0 without them.
     pub impostors: u64,
 }
 
-/// What a frame presents: the retained frame and its gather, the plan and
-/// what each of its batches' records holds, and the pose storage culling
-/// writes displayed poses and skinned slots' palettes into.
 pub(crate) struct PresentationInputs<'a> {
     pub frame: &'a RenderFrame<'a>,
     pub gpu: &'a GpuPresentation<'a>,
@@ -137,47 +96,24 @@ pub(crate) struct PresentationInputs<'a> {
     pub poses: FramePoses<'a>,
 }
 
-/// How a frame culls: the projection it rasterizes, the eye its levels of
-/// detail measure from and the viewport's width and height, and what
-/// culling does where culling runs without an instance budget.
 pub(crate) struct CullingView {
     pub view_projection: glam::Mat4,
-    /// The detail eye
-    /// ([`RenderSnapshot::detail_eye`](engine_core::RenderSnapshot::detail_eye)),
-    /// which levels of detail and the fades of their cards follow the
-    /// distance to; culling tests the projection's planes.
     pub eye: glam::Vec3,
     pub viewport: (u32, u32),
-    /// Visible IDs of moving slots carry `MOVED_SLOT`.
     pub motion: bool,
-    /// The depth pyramid's levels when frames may draw in two phases around
-    /// the occlusion test.
     pub occlusion: Option<u32>,
-    /// Candidates covering no pixel center stay undrawn.
     pub subpixel: bool,
-    /// The pixel error levels of detail keep within, 0 for
-    /// the meshes themselves.
     pub lod_error: f32,
-    /// Coarse instances draw as impostors.
     pub impostors: bool,
-    /// Whether reflection probes need slots' still frames,
-    /// and whether this frame counts them (while captures wait).
     pub stillness: Option<bool>,
-    /// The share of a switch between a mesh and its card this frame fades:
-    /// 1 or more switches at once.
     pub fade: f32,
 }
 
-// Groups over node inputs alone: the previous-pose shift and parent
-// composition.
 struct NodeGroups {
     shift_previous: wgpu::BindGroup,
     compose_parents: wgpu::BindGroup,
 }
 
-// Groups binding one pose buffer: culling, skinned slots' palettes and
-// bounds, and the still frame count of reflection probes
-// while still frames are kept.
 struct PoseGroups {
     cull: wgpu::BindGroup,
     fades: wgpu::BindGroup,
@@ -186,19 +122,12 @@ struct PoseGroups {
     count_still: Option<wgpu::BindGroup>,
 }
 
-// Node, draw group, joint, still frame and fade storage generations, the
-// pose storage generation that one pose buffer's groups bind, and whether
-// candidates include skinned slots.
 type PoseKey = (u64, u64, u64, u64, u64, u64, bool);
 
-// The occlusion test group's pose buffer index, depth pyramid generation,
-// draw group generation and pose storage generation.
 type OcclusionKey = (usize, u64, u64, u64);
 
 pub(crate) struct GpuPresentationPass {
     shaders: Shaders,
-    // This frame's uniform, phase two's, and the uniform last
-    // written, which reflection probe faces start from.
     frame: wgpu::Buffer,
     frame_phase2: wgpu::Buffer,
     frame_uniform: Option<PresentationFrame>,
@@ -209,24 +138,13 @@ pub(crate) struct GpuPresentationPass {
     fades: Fades,
     probes: ProbeFaces,
     totals: Totals,
-    // The slot whose level of detail state the totals carry, for
-    // development tools.
     watched: std::cell::Cell<Option<u32>>,
-    // Each frame's hidden and sub-pixel counts.
     occlusion_counts: wgpu::Buffer,
-    // This frame draws in two phases around the occlusion test, and leaves
-    // candidates covering no pixel center undrawn.
     occlusion: bool,
     subpixel: bool,
-    // The pose buffer this frame's culling writes and its storage
-    // generation.
     poses: (usize, u64),
-    // Groups over node inputs, the two drawing phases' compactions (by the
-    // draw group generation), the occlusion test's, and those of each pose
-    // buffer (temporally antialiased frames alternate two).
     node_groups: Cached<u64, NodeGroups>,
     compact_groups: Cached<u64, [wgpu::BindGroup; 2]>,
-    // Per pose buffer (temporal frames alternate them).
     occlusion_groups: [Cached<OcclusionKey, wgpu::BindGroup>; 2],
     pose_groups: [Cached<PoseKey, PoseGroups>; 2],
 }
@@ -284,54 +202,38 @@ impl GpuPresentationPass {
         self.nodes.capacity_bytes() + self.groups.capacity_bytes() + self.joints.capacity_bytes()
     }
 
-    /// Latest visible instance count read back from the GPU, a few frames old.
     pub(crate) fn visible(&self) -> Option<u32> {
         self.totals.last().map(|totals| totals.visible)
     }
 
-    /// Latest count of visible instances occlusion culling left undrawn,
-    /// read back with [`Self::visible`].
     pub(crate) fn occluded(&self) -> Option<u32> {
         self.totals.last().map(|totals| totals.occluded)
     }
 
-    /// Visible instances left undrawn because their bounds cover no pixel
-    /// center, read back with [`Self::visible`].
     pub(crate) fn subpixel(&self) -> Option<u32> {
         self.totals.last().map(|totals| totals.subpixel)
     }
 
-    /// Triangles the camera's mesh draws submitted, levels of detail and
-    /// impostors included, read back with [`Self::visible`].
     pub(crate) fn triangles(&self) -> Option<u32> {
         self.totals.last().map(|totals| totals.triangles)
     }
 
-    /// Instances drawn at each level of detail, read back
-    /// with [`Self::visible`]: the mesh, its two simplifications, then
-    /// impostors.
     pub(crate) fn lod_instances(&self) -> Option<[u32; 4]> {
         self.totals.last().map(|totals| totals.levels)
     }
 
-    /// GPU-presented frames submitted since the one [`Self::visible`] and
-    /// the other totals come from.
     pub(crate) fn read_back_age(&self) -> Option<u64> {
         self.totals.age()
     }
 
-    /// Watches `slot`: later frames' totals carry its level of detail state.
     pub(crate) fn watch(&self, slot: u32) {
         self.watched.set(Some(slot));
     }
 
-    /// The watched slot and its level of detail state, a few frames old.
     pub(crate) fn watched(&self) -> Option<(u32, u32)> {
         self.totals.last().and_then(|totals| totals.watched)
     }
 
-    /// Copies the watched slot's level of detail state into the totals:
-    /// the slot, while the states cover it.
     fn copy_watched(&self, encoder: &mut wgpu::CommandEncoder) -> Option<u32> {
         let slot = self.watched.get()?;
         let offset = u64::from(slot) * 4;
@@ -348,19 +250,14 @@ impl GpuPresentationPass {
         Some(slot)
     }
 
-    /// Whether this frame draws in two phases around the occlusion test.
     pub(crate) fn occlusion(&self) -> bool {
         self.occlusion
     }
 
-    /// Whether this frame leaves candidates covering no pixel center
-    /// undrawn.
     pub(crate) fn culls_subpixel(&self) -> bool {
         self.subpixel
     }
 
-    /// This frame's candidates in slot order, draw groups and candidate
-    /// flags, for shadow caster selection after culling.
     pub(crate) fn shadow_inputs(&self) -> crate::shadows::Presented<'_> {
         crate::shadows::Presented {
             candidates: &self.groups.slot_candidates,
@@ -374,17 +271,10 @@ impl GpuPresentationPass {
         }
     }
 
-    /// Holds current poses staged between frames for the next gather to copy.
     pub(crate) fn prestage(&mut self, prestaged: Prestaged, version: (u64, u64)) {
         self.nodes.prestage(prestaged, version);
     }
 
-    /// Uploads changed inputs and groups, binds `inputs`' pose storage and
-    /// writes the frame uniform. Large node uploads record copies into
-    /// `staging`'s encoder, submitted before the frame. Culling writes
-    /// displayed poses into the frame's pose buffer and tests them against
-    /// `view`. Profiling captures time a shift of previous poses
-    /// (`presentation_shift`).
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -423,7 +313,6 @@ impl GpuPresentationPass {
             .ensure(device, poses.current(), self.groups.capacity());
         self.poses = (poses.parity, poses.generation());
 
-        // Node inputs: records newer than the last uploaded gather.
         if let Some(gather) = self.nodes.gather(gpu, held) {
             prepared.full_node_upload = gather.since.is_none();
             if gather.shift {
@@ -438,7 +327,6 @@ impl GpuPresentationPass {
         prepared.parent_levels = self.nodes.level_ranges().len();
         prepared.blend = self.nodes.blend();
 
-        // Candidate groups: rebuilt with the candidate structure or node space.
         if let Some(bytes) = self.groups.rebuild(device, queue, inputs) {
             prepared.group_upload_bytes = bytes;
         }
@@ -448,10 +336,6 @@ impl GpuPresentationPass {
         prepared
     }
 
-    /// Copies the last current poses into previous slots, submitted at once,
-    /// ahead of the frame's prelude, which follows once the frame's features
-    /// are prepared: queued writes and staged copies of this gather take
-    /// effect at the next submission, after it.
     fn submit_shift(&mut self, device: &wgpu::Device, queue: &Queue, profiler: &GpuProfiler) {
         let groups = self
             .node_groups
@@ -468,15 +352,11 @@ impl GpuPresentationPass {
             });
             pass.set_pipeline(&self.shaders.pipelines.shift_previous);
             pass.set_bind_group(0, &groups.shift_previous, &[]);
-            // One invocation per node; the pass copies only nodes the last
-            // applied gather made active.
             pass.dispatch_workgroups((self.nodes.capacity() as u32).div_ceil(GROUP), 1, 1);
         }
         queue.submit_now([encoder.finish()]);
     }
 
-    /// Builds the groups this frame binds that storage replaced since, or
-    /// that `poses` has not bound yet.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -612,10 +492,6 @@ impl GpuPresentationPass {
         });
     }
 
-    /// Writes this frame's uniform, and phase two's when it draws two
-    /// phases: occlusion culling, sub-pixel culling and levels of detail run
-    /// as `view` asks only where culling runs without an instance budget,
-    /// which keeps the first visible instances of one submission order.
     fn write_frame_uniform(
         &mut self,
         queue: &wgpu::Queue,
@@ -623,7 +499,6 @@ impl GpuPresentationPass {
         alpha: f32,
         view: &CullingView,
     ) {
-        // A view-projection the CPU frustum rejects disables culling there too.
         let (planes, absolute) = frustum_uniform(view.view_projection);
         let bounded = absolute.iter().flatten().all(|value| {
             value.is_finite() && *value <= engine_core::presentation_bounds::MAX_COEFFICIENT
@@ -632,8 +507,6 @@ impl GpuPresentationPass {
         let candidates = self.groups.count();
         let unbudgeted = culling && frame.instance_budget() >= candidates as usize;
         self.occlusion = view.occlusion.is_some() && unbudgeted && candidates != 0;
-        // Sub-pixel culling measures pixels of the viewport occlusion culling
-        // sizes.
         self.subpixel = view.subpixel && unbudgeted && candidates != 0;
         let (width, height) = view.viewport;
         let mut uniform = PresentationFrame {
@@ -681,8 +554,6 @@ impl GpuPresentationPass {
         }
     }
 
-    /// Records blending, composition, culling and compaction in one compute
-    /// pass; profiling captures time each stage in its own pass instead.
     pub(crate) fn encode(
         &mut self,
         device: &wgpu::Device,
@@ -704,11 +575,9 @@ impl GpuPresentationPass {
         let lod = self
             .frame_uniform
             .is_some_and(|uniform| uniform.lod_error > 0.0);
-        // Hidden and sub-pixel counts start at zero every frame.
         if candidates != 0 {
             encoder.clear_buffer(&self.occlusion_counts, 0, None);
         }
-        // Dispatches of each stage, in order.
         let record = |pass: &mut wgpu::ComputePass<'_>, stage: Stage| match stage {
             Stage::Compose => {
                 pass.set_pipeline(&pipelines.compose_parents);
@@ -721,20 +590,16 @@ impl GpuPresentationPass {
                 }
             }
             Stage::Cull => {
-                // Skinned slots' palettes, from the composed parents.
                 if joints != 0 {
                     pass.set_pipeline(shaders.skin_palette(device));
                     pass.set_bind_group(0, &posed.skin, &[]);
-                    // The shared layout's level group, which palettes ignore.
                     pass.set_bind_group(1, self.nodes.level_group(0), &[]);
                     pass.dispatch_workgroups(joints.div_ceil(JOINT_GROUP), 1, 1);
                 }
-                // Flags in slot order, then their sums in draw-group order.
                 let workgroups = candidates.div_ceil(GROUP);
                 pass.set_pipeline(&pipelines.cull);
                 pass.set_bind_group(0, &posed.cull, &[]);
                 pass.dispatch_workgroups(workgroups, 1, 1);
-                // Still frames for reflection probes.
                 if let Some(group) = posed
                     .count_still
                     .as_ref()
@@ -744,13 +609,11 @@ impl GpuPresentationPass {
                     pass.set_bind_group(0, group, &[]);
                     pass.dispatch_workgroups(workgroups, 1, 1);
                 }
-                // Skinned slots' bounds from their palettes, culled.
                 if let Some(group) = posed.skin_bounds.as_ref().filter(|_| skinned != 0) {
                     pass.set_pipeline(shaders.skin_bounds(device));
                     pass.set_bind_group(0, group, &[]);
                     pass.dispatch_workgroups(skinned.div_ceil(SKINNED_GROUP), 1, 1);
                 }
-                // Levels kept and faded, on frames with them.
                 if lod {
                     pass.set_pipeline(&pipelines.fade_levels);
                     pass.set_bind_group(0, &posed.fades, &[]);
@@ -803,13 +666,10 @@ impl GpuPresentationPass {
             }
         }
         if candidates != 0 {
-            // The (phase one) visible total; frames without occlusion
-            // culling read it back now, without waiting for it.
             let (scan, totals) = (&self.groups.scan, &self.totals.buffer);
             encoder.clear_buffer(totals, 0, None);
             encoder.copy_buffer_to_buffer(scan, self.groups.total_offset(), totals, 0, 4);
             encoder.copy_buffer_to_buffer(scan, self.groups.level_offset(), totals, 16, 16);
-            // Phase one's group sums counted sub-pixel candidates.
             encoder.copy_buffer_to_buffer(&self.occlusion_counts, 4, totals, 12, 4);
             if !self.occlusion {
                 encoder.copy_buffer_to_buffer(&self.occlusion_counts, 8, totals, 48, 4);
@@ -819,11 +679,6 @@ impl GpuPresentationPass {
         }
     }
 
-    /// Occlusion culling after phase one drew and `pyramid`
-    /// (its view and generation) holds its depths: tests every
-    /// frustum-visible candidate, then compacts phase two's draws, and reads
-    /// back both phases' totals and the hidden count. With `span`, the pass
-    /// ends it.
     pub(crate) fn encode_occlusion(
         &mut self,
         device: &wgpu::Device,
@@ -865,7 +720,6 @@ impl GpuPresentationPass {
             pass.set_pipeline(&self.shaders.pipelines.occlusion_test);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(groups.count().div_ceil(GROUP), 1, 1);
-            // Phase two's compaction over its own mask and outputs.
             self.dispatch_compaction(&mut pass, &compact[PHASE_TWO]);
         }
         let (scan, totals) = (&self.groups.scan, &self.totals.buffer);
@@ -877,8 +731,6 @@ impl GpuPresentationPass {
         self.totals.read_back(device, encoder, watched);
     }
 
-    /// Records a compaction over `group`: group sums, their scan, draw
-    /// arguments and the scatter of visible slots.
     fn dispatch_compaction(&self, pass: &mut wgpu::ComputePass<'_>, group: &wgpu::BindGroup) {
         let pipelines = &self.shaders.pipelines;
         let scan_workgroups = self.groups.count().div_ceil(SCAN_GROUP);
@@ -893,14 +745,10 @@ impl GpuPresentationPass {
         pass.dispatch_workgroups(scan_workgroups, 1, 1);
     }
 
-    /// Requests maps of read-backs recorded in the frame just submitted.
     pub(crate) fn after_submit(&mut self) {
         self.totals.after_submit();
     }
 
-    /// The visible IDs and indirect arguments of phase one's compaction and
-    /// the generation of their storage, which virtual geometry selection
-    /// reads.
     pub(crate) fn visible_sources(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
         (
             &self.groups.visible_ids[PHASE_ONE],
@@ -909,8 +757,6 @@ impl GpuPresentationPass {
         )
     }
 
-    /// Visible IDs and indirect arguments of plan batch `index` in drawing
-    /// phase `phase` (1 only after the occlusion test).
     pub(crate) fn draw_source<'a>(
         &'a self,
         batch: &DrawBatch,
@@ -921,14 +767,10 @@ impl GpuPresentationPass {
         self.groups.draw_source(batch, index, phase, level)
     }
 
-    /// Phase `phase`'s impostor instances and the arguments
-    /// of the non-indexed draw of their cards.
     pub(crate) fn impostor_source(&self, phase: usize) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
         self.groups.impostor_source(phase)
     }
 
-    /// The cards fading over their meshes this frame: their
-    /// instances and the arguments of their non-indexed draw.
     pub(crate) fn fading_cards(&self) -> (wgpu::BufferSlice<'_>, &wgpu::Buffer, u64) {
         self.fades.source()
     }
@@ -967,9 +809,6 @@ fn node_groups(
     }
 }
 
-/// A compaction's group: its uniform `frame`, the draw groups, the hidden
-/// and sub-pixel `counts`, and compaction `compaction`'s draw arguments,
-/// visible IDs and impostor instances.
 fn compact_group(
     device: &wgpu::Device,
     shaders: &Shaders,

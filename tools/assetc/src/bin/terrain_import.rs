@@ -1,54 +1,3 @@
-//! Imports elevation data into a terrain: real ground from
-//! GeoTIFF elevation models (Copernicus DEM, USGS 3DEP and the like;
-//! geographic or projected in meters, 16- or 32-bit samples, tiled or in
-//! strips, compressed or not) and heightmaps from other tools (16-bit
-//! grayscale PNG, or little-endian 16-bit RAW). Geographic inputs mosaic
-//! into one surface projected onto a transverse Mercator plane centered on
-//! the terrain; every input resamples to the heightmap's spacing (its
-//! inputs' finest by default; averaging the samples a heightmap sample
-//! covers, bilinear between them), gaps fill
-//! from their neighbors, and heights quantize to 16 bits over their range.
-//!
-//! ```text
-//! cargo run -p engine_assetc --release --bin terrain_import -- \
-//!     --out DIR --id NAME [--center A,B] [--size METERS] [--spacing METERS]
-//!     [--extent W,H] [--range LOW,HIGH] [--detail METERS] [--materials DIR]
-//!     [--attribution TEXT] [--sea LEVEL] [--rivers GEOJSON]
-//!     [--river-precision METERS] [--river-attribution TEXT] INPUT...
-//! ```
-//!
-//! It writes `DIR/NAME/height.r16`, the report `DIR/NAME/import.json` and a
-//! scene `DIR/NAME.scene.json` (for `stress.html?source=`, with a player
-//! box at its middle): a terrain `--size` meters across
-//! (a multiple of 256, 16384 by default) whose first layer is the import,
-//! with `--detail` meters of noise (8 by default, 0 for none) and the
-//! import's rivers (a hydrology bake) on top, running first the rivers of
-//! `--rivers` where given: a GeoJSON file's LineStrings and
-//! MultiLineStrings (OpenStreetMap waterways, a national hydrography
-//! dataset), longitude and latitude for geographic inputs, the inputs' own
-//! x and y otherwise, each feature's `name`, `width`, `depth` and
-//! `discharge` properties (numbers, or text starting with one, such as
-//! OpenStreetMap's tags; meters, and cubic meters a second of its bankfull
-//! flood) where present, as a rivers layer before the hydrology layer. Its
-//! lines may stand `--river-precision` meters off the rivers' true middles
-//! (the heightmap's spacing by default), which the bake moves them toward
-//! the lowest ground at most; data whose licence requires credit needs
-//! `--river-attribution`.
-//! an alpine surface (textured with the KTX2 maps copied from
-//! `--materials`, each material's `NAME_albedo`, `NAME_normal` and
-//! `NAME_orm`, plain colors without), and a camera facing the highest
-//! summit. `--center` is the terrain's center: latitude and longitude for
-//! geographic inputs, the inputs' own x and y otherwise (their middle by
-//! default). PNG and RAW inputs span `--extent` meters with samples 0 and
-//! 65535 at `--range` meters. Data whose licence requires credit needs
-//! `--attribution`, which the layer and report carry.
-//!
-//! With `--sea`, the sea stands at `LEVEL` meters: ground at
-//! or within half a meter above it that joins the import's edges becomes
-//! seabed, falling away from the shore toward a shelf 60 meters down (most
-//! elevation models hold the sea as a flat surface), and the scene's sea
-//! draws there, its shores sandy and its summits free of snow.
-
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -70,7 +19,6 @@ const USAGE: &str = "usage: terrain_import --out DIR --id NAME [--center A,B] [-
      [--attribution TEXT] [--sea LEVEL] [--rivers GEOJSON] [--river-precision METERS] \
      [--river-attribution TEXT] INPUT...";
 
-/// What the command line asks for.
 struct Options {
     inputs: Vec<PathBuf>,
     out: PathBuf,
@@ -210,10 +158,6 @@ fn options() -> Result<Options, String> {
     Ok(options)
 }
 
-/// An input's samples and where they lie: `width` by `height` samples, row
-/// by row from the top, NaN where missing, sample (i, j)'s center at model
-/// coordinates `origin + (i * scale.x, -j * scale.y)`: longitude and
-/// latitude in degrees for geographic inputs, meters otherwise.
 struct Raster {
     width: usize,
     height: usize,
@@ -225,8 +169,6 @@ struct Raster {
 }
 
 impl Raster {
-    /// The height at model `(x, y)`, bilinear between the samples around
-    /// it that hold heights; none outside or where all four are missing.
     fn sample(&self, x: f64, y: f64) -> Option<f64> {
         let u = (x - self.origin[0]) / self.scale[0];
         let v = (self.origin[1] - y) / self.scale[1];
@@ -254,7 +196,6 @@ impl Raster {
         (weight > 1.0e-9).then(|| sum / weight)
     }
 
-    /// Meters between samples along x and y near latitude `latitude`.
     fn resolution(&self, latitude: f64) -> [f64; 2] {
         if self.geographic {
             [
@@ -266,7 +207,6 @@ impl Raster {
         }
     }
 
-    /// The model coordinates of its middle.
     fn middle(&self) -> [f64; 2] {
         [
             self.origin[0] + 0.5 * (self.width - 1) as f64 * self.scale[0],
@@ -275,10 +215,8 @@ impl Raster {
     }
 }
 
-/// Meters along a meridian per degree, near enough for spacings.
 const METERS_PER_DEGREE: f64 = 111_320.0;
 
-/// Reads a GeoTIFF elevation model.
 fn read_geotiff(path: &Path) -> Result<Raster, String> {
     let name = path.display().to_string();
     let fail = |error: tiff::TiffError| format!("{name}: {error}");
@@ -302,9 +240,6 @@ fn read_geotiff(path: &Path) -> Result<Raster, String> {
     if scale.len() < 2 || tie.len() < 6 || !(scale[0] > 0.0 && scale[1] > 0.0) {
         return Err(format!("{name}: unusable georeference"));
     }
-    // GeoKeys: the model type (1 projected, 2 geographic), the raster type
-    // (1 samples cover areas, 2 samples are points) and the coordinate
-    // system's EPSG code.
     let keys = match decoder.find_tag(Tag::GeoKeyDirectoryTag).map_err(fail)? {
         Some(value) => value.into_u16_vec().map_err(fail)?,
         None => Vec::new(),
@@ -356,8 +291,6 @@ fn read_geotiff(path: &Path) -> Result<Raster, String> {
             if missing { f32::NAN } else { value }
         })
         .collect();
-    // Area samples' tie points name their corners; their centers lie half a
-    // sample in.
     let half = if point { 0.0 } else { 0.5 };
     let origin = [
         tie[3] + (half - tie[0]) * scale[0],
@@ -374,8 +307,6 @@ fn read_geotiff(path: &Path) -> Result<Raster, String> {
     })
 }
 
-/// Reads a 16-bit grayscale PNG or a little-endian 16-bit RAW heightmap
-/// spanning `extent` meters, samples 0 and 65535 at heights `range`.
 fn read_heightmap(path: &Path, extent: [f64; 2], range: [f64; 2]) -> Result<Raster, String> {
     let name = path.display().to_string();
     let png = path
@@ -442,14 +373,9 @@ fn read_heightmap(path: &Path, extent: [f64; 2], range: [f64; 2]) -> Result<Rast
     })
 }
 
-/// The WGS 84 ellipsoid's semi-major axis and flattening.
 const WGS84_A: f64 = 6_378_137.0;
 const WGS84_F: f64 = 1.0 / 298.257_223_563;
 
-/// A transverse Mercator projection centered on a latitude and longitude
-/// (scale 1 along its central meridian), inverted with Snyder's series
-/// (USGS Professional Paper 1395, 1987, equations 8-17 to 8-25): within
-/// millimeters across a few hundred kilometers.
 struct TransverseMercator {
     latitude: f64,
     longitude: f64,
@@ -472,7 +398,6 @@ impl TransverseMercator {
         projection
     }
 
-    /// Meters along the central meridian from the equator to `phi`.
     fn meridian(&self, phi: f64) -> f64 {
         let e2 = self.e2;
         let (e4, e6) = (e2 * e2, e2 * e2 * e2);
@@ -483,8 +408,6 @@ impl TransverseMercator {
                 - (35.0 * e6 / 3072.0) * (6.0 * phi).sin())
     }
 
-    /// The latitude and longitude (degrees) of the point `east` and
-    /// `north` meters from the center.
     fn inverse(&self, east: f64, north: f64) -> [f64; 2] {
         let (e2, e_prime2) = (self.e2, self.e_prime2);
         let (e4, e6) = (e2 * e2, e2 * e2 * e2);
@@ -524,9 +447,6 @@ impl TransverseMercator {
         [latitude.to_degrees(), longitude.to_degrees()]
     }
 
-    /// The meters east and north of the center of the point at `latitude`
-    /// and `longitude` (degrees), by Snyder's series (equations 8-9 to
-    /// 8-15).
     fn forward(&self, latitude: f64, longitude: f64) -> [f64; 2] {
         let (e2, e_prime2) = (self.e2, self.e_prime2);
         let phi = latitude.to_radians();
@@ -548,10 +468,6 @@ impl TransverseMercator {
     }
 }
 
-/// What a GeoJSON feature's property `value` gives a river: a number above
-/// zero and at most `most`, or text starting with one (as OpenStreetMap's
-/// tags, "12" or "12 m"), for the whole line; a list of `count` of them,
-/// one for each point; nothing otherwise.
 fn given_values(value: &Value, count: usize, most: f32) -> Vec<f32> {
     let number = |value: &Value| -> Option<f32> {
         let number: f64 = match value {
@@ -578,12 +494,6 @@ fn given_values(value: &Value, count: usize, most: f32) -> Vec<f32> {
     }
 }
 
-/// The rivers of the GeoJSON file at `path`: each LineString's, and each
-/// line of a MultiLineString's, coordinates as `place` puts them on the
-/// terrain (terrain-local meters), with its feature's `name`, `width`,
-/// `depth` and `discharge` where present; lines none of whose points lies
-/// on the terrain `size` meters across left out, and lines of more points
-/// than a river runs through split end to end.
 fn read_rivers(
     path: &Path,
     place: &dyn Fn(f64, f64) -> [f64; 2],
@@ -718,8 +628,6 @@ fn run() -> Result<(), String> {
         None => rasters[0].middle(),
     };
     let size = options.size;
-    // Model coordinates of the point `east` and `north` meters from the
-    // terrain's center.
     let projection = geographic.then(|| TransverseMercator::new(center[0], center[1]));
     let model = |east: f64, north: f64| match &projection {
         Some(projection) => {
@@ -732,13 +640,9 @@ fn run() -> Result<(), String> {
         .iter()
         .flat_map(|raster| raster.resolution(if geographic { center[0] } else { 0.0 }))
         .fold(f64::INFINITY, f64::min);
-    // Samples as close as the inputs' finest by default, so sharp summits
-    // keep their heights, spanning the size.
     let wanted = options.spacing.unwrap_or(resolution);
     let samples = ((size / wanted).ceil() as usize + 1).clamp(2, 16_384);
     let spacing = size / (samples - 1) as f64;
-    // Each sample averages the input over its cell, a sub-sample per input
-    // sample or so.
     let sub = ((spacing / resolution).ceil() as usize).clamp(1, 16);
     println!(
         "{} input(s), {samples} by {samples} samples {spacing:.2} m apart, {sub} by {sub} reads each",
@@ -765,7 +669,6 @@ fn run() -> Result<(), String> {
             }
         }
     }
-    // Gaps fill from their neighbors, ring by ring.
     let missing = heights.iter().filter(|height| height.is_nan()).count();
     if missing == heights.len() {
         return Err("no input covers the terrain: check --center and --size".into());
@@ -845,9 +748,6 @@ fn run() -> Result<(), String> {
             "terrain_import: warning: no --attribution; elevation data licences usually require one"
         );
     }
-    // The rivers given, where the terrain's square holds them: GeoJSON's
-    // longitude and latitude through the projection, the inputs' own x and
-    // y otherwise, then terrain-local as the heightmap's samples lie.
     let rivers = match &options.rivers {
         Some(path) => {
             let place = |first: f64, second: f64| -> [f64; 2] {
@@ -907,7 +807,6 @@ fn run() -> Result<(), String> {
                             .collect(),
                     ),
                     lines,
-                    // As precise as the heightmap's samples by default.
                     precision: options
                         .river_precision
                         .unwrap_or(spacing)
@@ -923,7 +822,6 @@ fn run() -> Result<(), String> {
         }
         None => None,
     };
-    // The terrain's materials: the maps beside the scene where given.
     let maps = match &options.materials {
         Some(directory) => {
             for look in LOOKS {
@@ -993,19 +891,11 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// Meters below the sea its seabed falls toward, and the meters from the
-/// shore over which it falls most of the way.
 const SHELF_DEPTH: f64 = 60.0;
 const SHELF_REACH: f64 = 250.0;
 
-/// Turns the ground at or within half a meter above sea `level` that joins
-/// the edges of the `samples` by `samples` heights `spacing` meters apart
-/// into seabed, falling from half a meter below the sea at the shore toward
-/// [`SHELF_DEPTH`] with the distance to the nearest land; returns the
-/// seabed's samples.
 fn seabed(heights: &mut [f64], samples: usize, spacing: f64, level: f64) -> usize {
     let wet = |height: f64| height <= level + 0.5;
-    // The sea: wet ground the edges reach through wet ground.
     let mut sea = vec![false; heights.len()];
     let mut queue = std::collections::VecDeque::new();
     for index in 0..samples {
@@ -1036,7 +926,6 @@ fn seabed(heights: &mut [f64], samples: usize, spacing: f64, level: f64) -> usiz
             }
         }
     }
-    // Samples from the nearest land: a two-pass chamfer transform.
     let mut distance: Vec<f64> = sea
         .iter()
         .map(|&sea| if sea { f64::INFINITY } else { 0.0 })
@@ -1087,10 +976,6 @@ fn seabed(heights: &mut [f64], samples: usize, spacing: f64, level: f64) -> usiz
     count
 }
 
-/// How one surface material looks: its name and the maps it uses, its
-/// color without maps and the tint its maps' colors take, its roughness,
-/// the meters its maps repeat over, how sharply its heights win where it
-/// blends, whether it wraps steep ground, and the grass growing on it.
 struct Look {
     name: &'static str,
     maps: &'static str,
@@ -1205,9 +1090,6 @@ const LOOKS: [Look; 9] = [
     },
 ];
 
-/// The scene: the terrain, its alpine surface over the import's heights
-/// from `low` to `high`, its `rivers` where given, and a camera facing its
-/// highest summit.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -1224,8 +1106,6 @@ fn scene(
     let size = options.size;
     let id = &options.id;
     let half = 0.5 * size;
-    // The highest summit, and the ground the camera stands above, 4.5 km
-    // from it toward the terrain's middle.
     let (peak, &summit) = heights
         .iter()
         .enumerate()
@@ -1255,13 +1135,10 @@ fn scene(
         heights[row * samples + column]
     };
     let camera_height = (ground + 350.0).max(summit - 1500.0);
-    // Heights relative to the range for masks: tree line, grass line and
-    // snow line, where the range reaches them; seaside imports hold none.
     let snow = match options.sea {
         Some(_) => high + 1000.0,
         None => high.min(2900.0).max(low + 0.7 * (high - low)),
     };
-    // Sand along the sea's shores and over its bed.
     let shore = options.sea.map_or(low - 1000.0, |level| level + 3.0);
     let middle = heights[(samples / 2) * samples + samples / 2];
     let (mut textures, mut materials) = (
@@ -1346,12 +1223,8 @@ fn scene(
     let tiles = (size / 256.0) as u32;
     let mut layers = vec![json!({"heightmap": heightmap})];
     if options.detail > 0.0 {
-        // Detail below the import's samples: a few meters of noise with
-        // gullies.
         layers.push(json!({"noise": {"seed": 7, "height": options.detail, "offset": -0.5 * options.detail, "wavelength": 260.0, "ridges": 0.35, "warp": 0.25, "erosion": 0.6, "smoothing": 0.7, "valleys": 0.0, "roughness": 0.55, "blend": "add"}}));
     }
-    // The rivers its data gives, which its hydrology runs first, then its
-    // streams and rivers, carved and filled.
     if let Some(rivers) = rivers {
         layers.push(json!({ "rivers": rivers }));
     }
@@ -1370,7 +1243,6 @@ fn scene(
         "materials": materials,
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "entities": [{
-            // The player: a box on the ground at the middle, which walks.
             "id": "player",
             "mesh": "box",
             "material": "plain",

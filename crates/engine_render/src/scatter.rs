@@ -1,22 +1,3 @@
-//! Placed objects: what terrains' placement layers stand on
-//! their tiles, drawn through the mesh pipelines as instances of their own.
-//! Objects hold slots of a pool whose poses and colors are laid out as
-//! slots' are, so the mesh and depth shaders read them unchanged; each
-//! tile's objects upload when it arrives. Each frame a compute pass first
-//! sets every object on its terrain's finest resident heights, giving
-//! those blending into the ground the ground's color under them
-//! (`scatter_snap.wgsl`), then culls it against each view (the camera,
-//! then the regions of shadow tiles redrawn this frame) and picks its level
-//! of detail from the detail eye, retiring objects of placement layers too
-//! small on screen for their ranks (`scatter_cull.wgsl`), appending it to
-//! its draw group's list for that view and level, and to its parts'
-//! groups', or to the view's impostor cards; each group and level then
-//! draws indirectly, and each view's cards. Objects draw in the first
-//! opaque phase and cast into every region as seen from afar: their
-//! impostor cards facing the sun where its texels are no finer than an
-//! impostor's, else their group's shadow proxy where it has one, else the
-//! coarsest level its texel hides. They are never occlusion culled.
-
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -47,9 +28,6 @@ use crate::gpu_layouts::scatter::FrameUniform;
 
 pub(crate) const STATE_FRESH: u32 = SHOWN_NONE | SHOWN_NONE << 3 | FADED << 6;
 
-/// The share of its distance past a switch the eye goes before the camera
-/// switches an object back, so objects near a switch's
-/// distance do not flicker between two ways as the eye wavers.
 const FADE_MARGIN: f32 = 0.1;
 
 use crate::gpu_layouts::scatter::ViewData;
@@ -61,11 +39,6 @@ pub(crate) use crate::gpu_layouts::scatter::Record;
 
 pub(crate) use crate::gpu_layouts::scatter::TerrainInfo;
 
-/// What setting objects on the terrain reads: the terrain pass's resident
-/// heights and control values, its directory, the terrains' palette and
-/// macro colors, the generations of the tiles' arrays, the directory and
-/// the macro colors, a revision advancing whenever resident tiles change,
-/// and each terrain's place.
 pub(crate) struct SnapSources<'a> {
     pub heights: &'a wgpu::TextureView,
     pub control: &'a wgpu::TextureView,
@@ -79,21 +52,10 @@ pub(crate) struct SnapSources<'a> {
 
 use crate::gpu_layouts::scatter::GroupData;
 
-/// What setting objects on the terrain binds: the generations of the
-/// objects' buffers, the terrains' places and the terrain pass's tiles,
-/// directory and macro colors.
 type SnapKey = (u64, u64, (u64, u64, u64));
 
 use crate::gpu_layouts::scatter::DrawArgs;
 
-/// One draw group as the renderer lays it out: each level's index count,
-/// first index and base vertex, and those of the triangles shadow maps
-/// draw of it a level each (its shadow proxy's alone where it has one,
-/// none where its objects cast nothing), the levels the camera draws, the
-/// coarser levels' errors, its impostor's error (mesh units; 0 without one)
-/// and record, the groups after it drawing its objects' parts, and whether
-/// it draws a part of a group's before it, whose objects it draws and
-/// which casts for it.
 pub(crate) struct GroupLayout {
     pub levels: Vec<(u32, u32, i32)>,
     pub casters: Vec<(u32, u32, i32)>,
@@ -104,8 +66,6 @@ pub(crate) struct GroupLayout {
     pub part: bool,
 }
 
-/// Where a draw group's lists lie in each view's: its first ID, and its
-/// objects.
 #[derive(Clone, Copy, Default)]
 struct GroupLists {
     ids: u32,
@@ -114,23 +74,15 @@ struct GroupLists {
 
 pub(crate) struct ScatterPass {
     layout: crate::pipelines::GroupLayout,
-    // The mesh pipelines' pose layouts, plain and temporal, and the depth
-    // passes', which equal descriptors make interchangeable with theirs.
     pose_layouts: [crate::pipelines::GroupLayout; 2],
     shadow_layout: crate::pipelines::GroupLayout,
     pipeline: Option<wgpu::ComputePipeline>,
-    // Setting objects on the terrain: its layout and pipeline, its uniform,
-    // the terrains' places, its group (by the buffers' and terrain
-    // sources' generations), and whether this frame runs it.
     snap_layout: crate::pipelines::GroupLayout,
     snap_pipeline: Option<wgpu::ComputePipeline>,
     snap: wgpu::Buffer,
     terrains: Growable,
     snap_group: Cached<SnapKey, wgpu::BindGroup>,
     snapping: bool,
-    // What objects were last set on: the group's key, the resident tiles'
-    // revision, the terrains' places and the eye the ground was seen from,
-    // and whether slots were written since, undoing it.
     snapped: Option<(SnapKey, u64, Vec<TerrainInfo>, [f32; 4])>,
     slots_written: bool,
     frame: wgpu::Buffer,
@@ -142,48 +94,29 @@ pub(crate) struct ScatterPass {
     poses: Growable,
     colors: Growable,
     palette: wgpu::Buffer,
-    // What lies under each object.
     grounds: Growable,
-    // Each view's impostor cards (each one's slot and impostor record, as
-    // many as objects a view) and their draws.
     cards: Growable,
     card_args: Growable,
-    // Advances when buffers are replaced.
     generation: u64,
     cull_group: Cached<u64, wgpu::BindGroup>,
-    // The pose groups of plain and temporal mesh pipelines, and of depth
-    // passes, whose binding of the shadow regions' layers takes a
-    // placeholder: the depth passes drawing into a layer must not bind it.
     pose_groups: Cached<u64, [wgpu::BindGroup; 2]>,
     shadow_group: Cached<u64, wgpu::BindGroup>,
     regions_placeholder: RegionsPlaceholder,
-    // Each draw's arguments with no instances, and every view's, rewritten
-    // every frame.
     args: DrawArgsLists,
     objects: u32,
     group_count: u32,
     lists: ListLayout,
-    // The frame's views: the shadow map each one after the camera's draws
-    // into, what culling reads of each, and their card arguments.
     frame_views: FrameViews,
-    // Advances when the terrains' buffer is replaced.
     terrains_generation: u64,
-    // What the device's storage bindings leave out of the objects.
     left_out: LeftOut,
-    /// Objects resident.
     pub(crate) resident: u32,
 }
 
-/// What depth passes bind in place of the shadow regions' layers, which
-/// they may draw into: a texel of depth, and its view as an array.
 struct RegionsPlaceholder {
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
 }
 
-/// Where each view's lists lie, alike in every view: each draw group's,
-/// the IDs a view's lists take, and the view whose lists hold the camera's
-/// fading objects, the one after the last.
 #[derive(Default)]
 struct ListLayout {
     groups: Vec<GroupLists>,
@@ -191,9 +124,6 @@ struct ListLayout {
     fading_view: usize,
 }
 
-/// A frame's views: the shadow region each one after the camera's draws
-/// into, what culling reads of each, and their card arguments, then the
-/// count of entries lists left out; kept from frame to frame.
 #[derive(Default)]
 struct FrameViews {
     maps: Vec<usize>,
@@ -201,8 +131,6 @@ struct FrameViews {
     card_args: Vec<[u32; 4]>,
 }
 
-/// Each draw's arguments with no instances, the camera's and the shadow
-/// maps', and every list's, rewritten every frame.
 #[derive(Default)]
 struct DrawArgsLists {
     template: Vec<DrawArgs>,
@@ -210,10 +138,6 @@ struct DrawArgsLists {
     lists: Vec<DrawArgs>,
 }
 
-/// What the device's storage bindings leave out of placed objects: those
-/// past what the objects' buffers hold, and, while the views' lists may
-/// reach past what theirs hold, the entries culling left out, read back a
-/// few frames late.
 struct LeftOut {
     objects: u32,
     lists: bool,
@@ -316,9 +240,6 @@ impl ScatterPass {
         }
     }
 
-    /// Placed objects the device's storage bindings left out: those past
-    /// what the objects' buffers hold, and the entries the views' lists left
-    /// out, each once a view and level, read back a few frames late.
     pub(crate) fn left_out(&self) -> u32 {
         let entries = if self.left_out.lists {
             self.left_out.entries.get()
@@ -328,7 +249,6 @@ impl ScatterPass {
         self.left_out.objects.saturating_add(entries)
     }
 
-    /// Bytes of the objects' buffers.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         [
             &self.views,
@@ -345,10 +265,6 @@ impl ScatterPass {
         .sum()
     }
 
-    /// Lays out the draw groups `groups` holding `counts` live objects
-    /// (a part's group those of the group whose objects it draws): each
-    /// group's lists, a level each in every view, and the draws' templates,
-    /// the camera's and the shadow maps'.
     pub(crate) fn set_groups(
         &mut self,
         device: &wgpu::Device,
@@ -401,7 +317,6 @@ impl ScatterPass {
         }
         self.group_count = groups.len() as u32;
         self.lists.ids_per_view = ids;
-        // Parts' groups draw objects their own groups count.
         self.resident = counts
             .iter()
             .zip(groups)
@@ -410,9 +325,6 @@ impl ScatterPass {
             .sum();
     }
 
-    /// Writes slots `dirty` of `poses`, `colors`, `records` and `grounds`,
-    /// every slot when the buffers grow to hold them all; returns the slots
-    /// written.
     pub(crate) fn write_slots(
         &mut self,
         device: &wgpu::Device,
@@ -420,8 +332,6 @@ impl ScatterPass {
         (poses, colors, records, grounds): (&[PoseData], &[ColorData], &[Record], &[GroundData]),
         dirty: Option<std::ops::Range<u32>>,
     ) -> Option<std::ops::Range<u32>> {
-        // Objects past what one storage binding of any of their buffers
-        // holds are left out, counted.
         let room = [
             (&self.poses, size_of::<PoseData>()),
             (&self.colors, size_of::<ColorData>()),
@@ -496,8 +406,6 @@ impl ScatterPass {
         written
     }
 
-    /// Creates the pipelines objects are set on the ground and culled with
-    /// unless they exist.
     pub(crate) fn warm(&mut self, device: &wgpu::Device) {
         self.pipeline
             .get_or_insert_with(|| pipeline(device, &self.layout));
@@ -505,21 +413,6 @@ impl ScatterPass {
             .get_or_insert_with(|| snap_pipeline(device, &self.snap_layout));
     }
 
-    /// Plans this frame's culling: the camera's view, from its
-    /// `view_projection` (world) and the detail eye, which every switch
-    /// measures from, and those of the regions of shadow tiles redrawn
-    /// this frame (`regions`, each with the map it reads its lists as),
-    /// where objects smaller than half a texel cast nothing. Objects of
-    /// placement layers retire where their bounding spheres span too few
-    /// pixels of a viewport `height` pixels tall for their ranks. Levels
-    /// are picked within `pixel_error` pixels of the viewport (no error:
-    /// finest levels only); regions cast each object's shadow proxy where
-    /// its group has one, else the coarsest level half their texel hides.
-    /// With `impostors`, the camera draws impostor cards where objects'
-    /// bounding spheres span fewer pixels of the viewport than it, which
-    /// regions cast wherever their texels are no finer than an impostor's.
-    /// The camera's switches fade `fade` of their way this frame, or stand
-    /// still where it is negative. Returns whether any object draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -533,11 +426,8 @@ impl ScatterPass {
             return false;
         }
         let y_row = view_projection.row(1).truncate().length();
-        // Pixels a world unit spans at unit distance.
         let spanned = y_row * height * 0.5;
         let pixels = pixel_error.map_or(0.0, |error| spanned / error);
-        // How many times its radius away an object's bounding sphere spans
-        // the impostors' pixels.
         let cards = impostors.map_or(0.0, |size| y_row * height / size);
         let mut views = std::mem::take(&mut self.frame_views.data);
         views.clear();
@@ -545,8 +435,6 @@ impl ScatterPass {
             planes: crate::ground_cover::planes(view_projection),
             limits: [0.0; 4],
         });
-        // Regions keep what is drawn into them: their texels' world size
-        // bounds what casts and where cards do.
         for &(map, region) in regions {
             views.push(ViewData {
                 planes: region.planes,
@@ -556,7 +444,6 @@ impl ScatterPass {
         }
         let view_count = views.len() as u32;
         let draws_per_view = self.group_count * LEVELS;
-        // The camera's fading objects list after the last view's.
         self.lists.fading_view = views.len();
         let lists = view_count + 1;
         self.grow_views(device, view_count);
@@ -585,8 +472,6 @@ impl ScatterPass {
         self.frame_views.data = views;
         self.args.lists.clear();
         for list in 0..lists {
-            // The regions' views, after the camera's and before its fading
-            // objects', draw their caster triangles.
             let shadow = list > 0 && list < view_count;
             self.args.lists.extend_from_slice(if shadow {
                 &self.args.casters
@@ -620,10 +505,6 @@ impl ScatterPass {
         true
     }
 
-    /// Builds the pose groups of plain and temporal mesh pipelines and of
-    /// depth passes over the objects' poses (their previous poses being the
-    /// same: objects stand still) when buffers changed; depth passes bind a
-    /// placeholder for the shadow regions' layers, which they draw into.
     fn build_pose_groups(&mut self, device: &wgpu::Device) {
         let [retained, temporal] = &self.pose_layouts;
         self.pose_groups.get_or_insert_with(self.generation, || {
@@ -675,10 +556,6 @@ impl ScatterPass {
         });
     }
 
-    /// Plans setting objects on the terrain this frame from `sources`, on
-    /// the ground as drawn seen from `eye`: when slots were written, the
-    /// resident heights or terrains changed or the eye moved since they
-    /// last were; never while the terrain pass holds no heights.
     pub(crate) fn prepare_snap(
         &mut self,
         device: &wgpu::Device,
@@ -718,7 +595,6 @@ impl ScatterPass {
                 *snapped == key && *revision == sources.revision && terrains == sources.terrains
             });
         if unchanged && !self.slots_written {
-            // The eye moving only changes the ground's tint under objects.
             match &mut self.snapped {
                 Some((.., seen)) if *seen != view => *seen = view,
                 _ => return,
@@ -751,34 +627,26 @@ impl ScatterPass {
         self.snapping = true;
     }
 
-    /// Slots the culling spans, live or dead.
     pub(crate) fn objects(&self) -> u32 {
         self.objects
     }
 
-    /// The objects' records and poses, and a generation advancing when the
-    /// buffers are replaced.
     pub(crate) fn slot_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
         (&self.records, &self.poses, self.generation)
     }
 
-    /// The pose groups of plain and temporal mesh pipelines.
     pub(crate) fn pose_groups(&self) -> Option<&[wgpu::BindGroup; 2]> {
         self.pose_groups.get()
     }
 
-    /// The pose group of depth passes.
     pub(crate) fn shadow_group(&self) -> Option<&wgpu::BindGroup> {
         self.shadow_group.get()
     }
 
-    /// The view whose lists hold the camera's fading objects this frame.
     pub(crate) fn fading_view(&self) -> usize {
         self.lists.fading_view
     }
 
-    /// The view the shadow region of map `map` reads its lists from this
-    /// frame, if it draws objects.
     pub(crate) fn map_view(&self, map: usize) -> Option<usize> {
         self.frame_views
             .maps
@@ -787,11 +655,6 @@ impl ScatterPass {
             .map(|index| index + 1)
     }
 
-    /// Grows the buffers culling writes to hold `view_count` views' lists
-    /// (the camera's fading objects' after them), cards and card arguments
-    /// (then the count of entries lists left out), and notes whether the
-    /// lists may reach past what their bindings hold, which leaves entries
-    /// out that culling counts and frames read back.
     fn grow_views(&mut self, device: &wgpu::Device, view_count: u32) {
         let lists = u64::from(view_count) + 1;
         let ids = u64::from(self.lists.ids_per_view) * lists * 4;
@@ -815,9 +678,6 @@ impl ScatterPass {
         }
     }
 
-    /// Records this frame's culling on `device`, timed by `profiler`
-    /// (`scatter`), and the read-back of the entries its lists left out
-    /// while they may.
     fn encode_culling(
         &self,
         device: &wgpu::Device,
@@ -856,10 +716,6 @@ impl ScatterPass {
         }
     }
 
-    /// `view`'s impostor cards (0 the camera's), each one's slot and
-    /// impostor record as instance attributes: the slice to bind and the
-    /// indirect buffer and offset of their draw; none where they start past
-    /// what the cards' binding holds, which culling left them out of.
     pub(crate) fn card_source(
         &self,
         view: usize,
@@ -869,13 +725,6 @@ impl ScatterPass {
         (start < self.cards.size()).then(|| (self.cards.slice(start..), args, view as u64 * 16))
     }
 
-    /// Group `group`'s list of level `level` in `view` (0 the camera's) and
-    /// its draw's arguments: the visible-ID slice to bind and the indirect
-    /// buffer and offset. A shadow map's view lists a group's objects at
-    /// the levels it casts at, its shadow proxy alone as its first where it
-    /// has one. None where the list starts past what the IDs' binding
-    /// holds, which culling left it out of (a list reaching past it draws
-    /// no instances).
     pub(crate) fn draw_source(
         &self,
         view: usize,
@@ -883,8 +732,6 @@ impl ScatterPass {
         level: usize,
     ) -> Option<(wgpu::BufferSlice<'_>, &wgpu::Buffer, u64)> {
         let lists = self.lists.groups.get(group)?;
-        // Every view's lists lie as the camera's, its fading objects' after
-        // the last view's.
         let start = (view as u64 * u64::from(self.lists.ids_per_view)
             + u64::from(lists.ids + level as u32 * lists.count))
             * 4;
@@ -942,22 +789,18 @@ fn pipeline(
     )
 }
 
-/// A frame that draws placed objects.
 pub(crate) struct ScatterFrame;
 
 impl RenderFeature for ScatterPass {
     type Frame = ScatterFrame;
     type Stats = ();
 
-    /// Culling writes the placed objects' lists and draws.
     fn declare(_frame: &ScatterFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
         graph
             .add(Pass::Feature(FeaturePass::Scatter))
             .write(Resource::Placed);
     }
 
-    /// Placed objects cull before the shadow maps and the first opaque
-    /// phase draw them.
     fn encode(
         &self,
         _frame: &ScatterFrame,
@@ -969,8 +812,6 @@ impl RenderFeature for ScatterPass {
         0
     }
 
-    /// Requests the map of the entries this frame's lists left out, where
-    /// it read them back.
     fn after_submit(&mut self, _frame: Option<&ScatterFrame>) {
         let entries = Rc::clone(&self.left_out.entries);
         self.left_out

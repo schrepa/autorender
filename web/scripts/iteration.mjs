@@ -1,4 +1,3 @@
-/** Own the edit/build/browser loop; runtime frames never participate in watching. */
 // @ts-check
 import { randomUUID } from "node:crypto";
 import { createReadStream, readFileSync } from "node:fs";
@@ -11,8 +10,6 @@ import { IterationController } from "./iteration-controller.mjs";
 import { runBuild } from "./iteration-process.mjs";
 import { workspace } from "./workspace.mjs";
 
-// The browser clients and their games' pages, generated from xtask
-// (`cargo xtask schema`).
 const clients = JSON.parse(readFileSync(new URL("../src/generated/clients.json", import.meta.url), "utf8"));
 const gamePages = Object.fromEntries(clients.filter(client => client.game).map(client => [client.game, client.page]));
 const wasmNames = clients.map(client => client.wasm);
@@ -24,7 +21,6 @@ function port(value, fallback) {
   return Number(text);
 }
 
-/** One foreground process owns Vite, a bridge, one build, and at most two browsers. */
 export async function startIteration(values) {
   for (const key of Object.keys(values)) if (!["web-port", "port", "game", "browser"].includes(key)) throw new AgentError("invalid_arguments", `Unknown option --${key}.`);
   const webPort = port(values["web-port"], 5174);
@@ -37,8 +33,6 @@ export async function startIteration(values) {
   const outputRoot = resolve(workspace, "web/pkg-iterations");
   await mkdir(outputRoot, { recursive: true });
   if (relative(outputRoot, await realpath(outputRoot)) !== "") throw new AgentError("unsafe_output_path", "Generated output must not resolve through a symlink.", outputRoot);
-  // The dedicated Cargo target directory is shared. One supervisor per working copy
-  // prevents cross-supervisor compiler/artifact races; other copies are independent.
   const lockPath = resolve(outputRoot, ".watch.lock");
   const watch = randomUUID();
   let lock;
@@ -81,7 +75,6 @@ export async function startIteration(values) {
       cancellation.abort();
       stopWatching?.();
       bridge?.markUnavailable();
-      // Await acquisitions already in flight so no server can appear after cleanup.
       await startupFinished;
       const cleanupErrors = [];
       const clean = async operation => { try { await operation(); } catch (error) { cleanupErrors.push(error); } };

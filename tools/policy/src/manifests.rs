@@ -1,7 +1,3 @@
-//! Manifest rules: one lint table for every crate, package keys and
-//! dependencies inherited from the workspace, registry dependencies pinned
-//! exactly, an exact toolchain and exact web dependency versions.
-
 use std::fs;
 use std::path::Path;
 
@@ -9,10 +5,8 @@ use toml_edit::{Document, Item, TableLike};
 
 use crate::Problems;
 
-/// The dependency tables of a manifest (each also under `[target.*]`).
 const DEPENDENCY_TABLES: &[&str] = &["dependencies", "dev-dependencies", "build-dependencies"];
 
-/// The web manifests' dependency tables.
 const PACKAGE_JSON_TABLES: &[&str] = &[
     "dependencies",
     "devDependencies",
@@ -37,9 +31,6 @@ fn inherited(item: &Item) -> bool {
         == Some(true)
 }
 
-/// Checks the workspace manifest, every member's, the toolchain file and
-/// the web manifests in `package_jsons`; the workspace's lints, as
-/// attributes name them (`unsafe_code`, `clippy::todo`).
 pub fn check(
     root: &Path,
     package_jsons: &[String],
@@ -112,8 +103,6 @@ pub fn check(
     Ok(lints)
 }
 
-/// The workspace's members, `dir/*` patterns expanded to the folders under
-/// `dir` holding a Cargo.toml.
 fn members(root: &Path, workspace: &Item) -> Result<Vec<String>, String> {
     let mut members = Vec::new();
     let patterns = workspace
@@ -240,7 +229,6 @@ fn check_package_json(root: &Path, path: &str, problems: &mut Problems) -> Resul
     Ok(())
 }
 
-/// Whether `version` is one exact version: `1.2.3`, a pre-release allowed.
 fn exact_version(version: &str) -> bool {
     let (release, pre) = version.split_once('-').unwrap_or((version, ""));
     let parts: Vec<&str> = release.split('.').collect();

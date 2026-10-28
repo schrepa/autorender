@@ -1,22 +1,3 @@
-//! Highlands: an 8 km terrain the engine generates from a
-//! layer stack (eroded mountains, then hand-placed stamps: a plateau
-//! leveled for a hamlet, a flat valley floor and a cave mouth cut as a
-//! hole), streamed around the camera, with the scene's renderables standing
-//! on the plateau as the tower field does. Its ground is
-//! meadow, dry grass, dirt, snow and, wherever it is steep, rock, its
-//! streams' beds sand, gravel, cobbles or boulders as coarse as their
-//! floods leave them, each textured by maps its `ground` module generates,
-//! which load as cooked texture records; its streams wet their banks up
-//! to their floods' line, and higher where they spray.
-//! Boulders lie on its meadows and in its steep streams, stones on its
-//! scree and its cobble beds, outcrops on its rock, and spruce forests
-//! cover the lower slopes.
-//! Gravel roads wind from the plateau down to the crater
-//! lake, west over a river on a stone bridge and east
-//! through a ridge in a tunnel. Lanterns line the road to
-//! the lake, streamed: they exist only near the camera. A
-//! hiker walks the road's first stretch and back.
-
 mod bodies;
 mod caves;
 mod ground;
@@ -37,11 +18,6 @@ use crate::kit::{StressConfig, StressFile};
 use looks::{LOOKS, Look};
 pub(crate) use world::HighlandsWorld;
 
-/// Scanned rock maps the page supplies when present, from `stress/rocks/`
-/// (kept locally, never committed): the base color, normal, and
-/// occlusion, roughness, metalness and height of a boulder's scan and of a
-/// rock face's, which the cave's rock wears. Without them rocks wear the
-/// terrain rock's maps.
 pub const ROCK_FILES: [&str; 6] = [
     "boulder_albedo.ktx2",
     "boulder_normal.ktx2",
@@ -51,32 +27,17 @@ pub const ROCK_FILES: [&str; 6] = [
     "cliff_orm.ktx2",
 ];
 
-/// Meters one repeat of the scanned boulder and cave rock maps covers: the
-/// boulder scan's own size, and the rock face's a little larger, so its
-/// repeats show less across the cave's walls.
 const BOULDER_SCAN_TILING: f32 = 1.8;
 const WALL_SCAN_TILING: f32 = 2.5;
 
-/// Level-0 tiles along each axis, and their sample spacing: 8,192 meters.
 const TILES: u32 = 32;
 const SPACING: f32 = 1.0;
 const SIZE: f32 = TILES as f32 * 256.0 * SPACING;
-/// Meters the terrain's surroundings reach past its edges:
-/// the farthest whose tiles still align with it, 65 km across in all.
 const SURROUNDINGS: f32 = 28_672.0;
-/// The plateau's center, where the hamlet stands.
 const PLATEAU: [f32; 2] = [0.0, 0.0];
 
-/// The road east from the plateau's rim (world meters): straight on a
-/// highway's grade, over the valley beyond on a viaduct and
-/// through the ridge after it in a tunnel.
 const EAST_ROAD: [[f32; 2]; 3] = [[150.0, 55.0], [376.0, 137.0], [1128.0, 410.0]];
 
-/// The road west from the plateau's rim into the western valleys,
-/// terrain-local: the route `terrain_route` found over the
-/// default seed's ground from world (-130, 40) to (-1500, 400) with its
-/// default costs, 2.1 kilometers. It crosses a river four meters deep,
-/// which it bridges.
 const WEST_ROAD: [[f32; 2]; 181] = [
     [3968.0, 4136.0],
     [4015.7, 4265.48],
@@ -261,12 +222,6 @@ const WEST_ROAD: [[f32; 2]; 181] = [
     [2600.0, 4496.0],
 ];
 
-/// The road from the plateau's rim down to the lake in the valley,
-/// terrain-local: the route `terrain_route` found over the default
-/// seed's ground from world (113, -98) toward the valley's center (1500,
-/// -1300) with a grade cost of 100, up to where it reaches the lake's
-/// shore and a few meters into the water: 1.8 kilometers with a hairpin,
-/// every grade within 12% but its hairpin's.
 const ROAD: [[f32; 2]; 74] = [
     [4208.0, 4000.0],
     [4216.21, 3975.38],
@@ -344,12 +299,9 @@ const ROAD: [[f32; 2]; 74] = [
     [4663.09, 3107.03],
 ];
 
-/// The height the hamlet's plateau is leveled to.
 #[derive(Resource, Clone, Copy)]
 pub(crate) struct Plateau(pub f32);
 
-/// Spawns the terrain, its materials' maps read from `files` where the page
-/// supplied them; returns the height the hamlet stands at.
 pub(crate) fn populate(
     world: &mut World,
     config: &StressConfig,
@@ -357,7 +309,6 @@ pub(crate) fn populate(
     files: &HashMap<String, StressFile>,
 ) -> engine::Result<f32> {
     let half = SIZE * 0.5;
-    // Terrain-local: the terrain's first corner is at -half.
     let local = |point: [f32; 2]| [point[0] + half, point[1] + half];
     let plateau = local(PLATEAU);
     let pyramid = Pyramid::new([TILES, TILES], SPACING)?;
@@ -373,20 +324,14 @@ pub(crate) fn populate(
         roughness: 0.3,
         ..NoiseLayer::default()
     });
-    // Leveled where the mountains already stand there.
     let level = Layers::new(vec![mountains.clone()])?.height_at(&pyramid, Vec2::from(plateau));
     world.insert_resource(Plateau(level));
-    // The hamlet's plateau, wide enough for the field's grid: leveled before
-    // erosion wears around it, and before the water runs over it again.
     let plateau_stamp = Layer::Stamp(Stamp {
         center: plateau,
         radius: hamlet,
         falloff: 220.0,
         op: StampOp::Flatten(level),
     });
-    // The cave's mouth: the hillside nearest a thirty degree
-    // slope within reach of the plateau, as the mountains and the plateau
-    // shape it before the bakes wear it a little.
     let cave_mouth = {
         let shaped = Layers::new(vec![mountains.clone(), plateau_stamp.clone()])?;
         steepest_hillside(&shaped, &pyramid, Vec2::from(plateau), hamlet)
@@ -394,9 +339,6 @@ pub(crate) fn populate(
     let layers = Layers::new(vec![
         mountains,
         plateau_stamp.clone(),
-        // Rivers wear valleys into the mountains, debris flows gully their
-        // steep slopes and slopes creep toward them, baked over the
-        // eight-meter tiles, so most basins drain.
         Layer::Erosion(ErosionStage {
             layer: ErosionLayer {
                 level: 3,
@@ -407,7 +349,6 @@ pub(crate) fn populate(
             },
             baked: None,
         }),
-        // A wide valley floor to the north-east, leveled low.
         Layer::Stamp(Stamp {
             center: local([1500.0, -1300.0]),
             radius: 520.0,
@@ -415,12 +356,6 @@ pub(crate) fn populate(
             op: StampOp::Flatten(60.0),
         }),
         plateau_stamp,
-        // Streams and rivers traced where water gathers off the mountains
-        // over the meter tiles it runs on, the water's own cells. Channels
-        // begin where they span two meters, and each runs as wide and deep
-        // as its floods must to carry what it drains: an alpine 3.2 cubic
-        // meters a second a square kilometer, which makes the largest river
-        // some sixteen meters across and two deep.
         Layer::Hydrology(HydrologyStage {
             layer: HydrologyLayer {
                 level: 0,
@@ -428,8 +363,6 @@ pub(crate) fn populate(
             },
             baked: None,
         }),
-        // The road down into the valley, leveled to its own
-        // profile across six meters, its shoulders easing into the ground.
         Layer::Path(PathStage {
             layer: Arc::new(PathLayer {
                 points: ROAD.to_vec(),
@@ -441,22 +374,17 @@ pub(crate) fn populate(
             }),
             baked: None,
         }),
-        // The road east, straight through the ridge beyond the plateau in a
-        // tunnel.
         Layer::Path(PathStage {
             layer: Arc::new(PathLayer {
                 points: EAST_ROAD.map(local).to_vec(),
                 width: 6.0,
                 shoulder: 6.0,
-                // A highway's grade: viaducts over the valleys, the tunnel
-                // through the ridge.
                 smoothing: 600.0,
                 bridge_fill: 4.0,
                 tunnel_cut: 25.0,
             }),
             baked: None,
         }),
-        // The road west, bridging the river it crosses.
         Layer::Path(PathStage {
             layer: Arc::new(PathLayer {
                 points: WEST_ROAD.to_vec(),
@@ -468,8 +396,6 @@ pub(crate) fn populate(
             }),
             baked: None,
         }),
-        // A cave's mouth in the slope beyond the plateau,
-        // the cave behind it opened once the bakes are done.
         Layer::Stamp(Stamp {
             center: cave_mouth,
             radius: CAVE_MOUTH,
@@ -481,17 +407,12 @@ pub(crate) fn populate(
         cave_mouth[0] - half,
         cave_mouth[1] - half,
     )));
-    // A ring of megaliths authors stood round the hamlet just inside
-    // its plateau's edge, open where the roads come through.
     let roads = [
         ROAD.to_vec(),
         WEST_ROAD.to_vec(),
         EAST_ROAD.map(local).to_vec(),
     ];
     let surface = surface(world, files, plateau_ring(plateau, hamlet - 8.0, &roads))?;
-    // Mountains go on past the edges to the horizon, the
-    // bakes easing into them over a few hundred meters, so channels running
-    // off the edges end soon after.
     world.spawn(
         Terrain::generated(Vec3::new(-half, 0.0, -half), pyramid, layers)
             .with_surface(surface)
@@ -506,7 +427,6 @@ pub(crate) fn populate(
     Ok(level)
 }
 
-/// Moss settling on boulders' tops, and lichen on the cave's rock.
 const MOSS: TopLayer = TopLayer {
     color: [0.055, 0.07, 0.03],
     coverage: 0.36,
@@ -518,20 +438,13 @@ const LICHEN: TopLayer = TopLayer {
     roughness: 0.85,
 };
 
-/// How far up boulders' bases and spruces' trunks blend into the ground
-/// where the terrain places them: a few centimeters up a meter-wide
-/// boulder, a quarter meter up a trunk.
 const SOIL: Grounding = Grounding { height: 0.12 };
 const ROOTS: Grounding = Grounding { height: 0.25 };
 
-/// Meters between lanterns along a road, and from its middle line to them.
 const LANTERN_SPACING: f32 = 40.0;
 const LANTERN_SIDE: f32 = 5.0;
-/// A lantern's warm light: its color, intensity and range (meters).
 const LANTERN_LIGHT: ([f32; 3], f32, f32) = ([1.0, 0.66, 0.34], 14.0, 12.0);
 
-/// A lantern by a road: a post with a glowing lamp and its
-/// light on top, standing on the ground wherever its cell loads it.
 struct Lantern {
     position: Vec3,
     yaw: f32,
@@ -594,9 +507,6 @@ impl Streamed for Lantern {
     }
 }
 
-/// Registers lanterns along `road` (terrain-local, the terrain's corner at
-/// `-half`) as streamed items, every
-/// [`LANTERN_SPACING`] meters on its left.
 fn lanterns(world: &mut World, road: &[[f32; 2]], half: f32) -> engine::Result<()> {
     let mut assets = world.resource_mut::<AssetLibrary>();
     let cube = assets.insert_mesh(Mesh::cube())?;
@@ -640,9 +550,6 @@ fn lanterns(world: &mut World, road: &[[f32; 2]], half: f32) -> engine::Result<(
     Ok(())
 }
 
-/// Stones authors stand round `center` (terrain-local) `radius` meters out:
-/// a large boulder every seven meters, turned along the ring and varied in
-/// size, none within twelve meters of a road in `roads`.
 fn plateau_ring(center: [f32; 2], radius: f32, roads: &[Vec<[f32; 2]>]) -> Vec<AuthoredPlacement> {
     let distance = |point: Vec2, from: Vec2, to: Vec2| {
         let along = to - from;
@@ -676,24 +583,14 @@ fn plateau_ring(center: [f32; 2], radius: f32, roads: &[Vec<[f32; 2]>]) -> Vec<A
         .collect()
 }
 
-/// The highlands' surface: its rules over [`LOOKS`], each material textured
-/// by its ground material's maps, and the objects authors stand on it.
 fn surface(
     world: &mut World,
     files: &HashMap<String, StressFile>,
     authored: Vec<AuthoredPlacement>,
 ) -> engine::Result<TerrainSurface> {
-    // The shapes and the bark atlas are records: their handles now, their
-    // content once hosts hand it back or it is built in place. Boulders
-    // come at one detail, their coarser levels their meshes' own; spruces
-    // at each of their levels, and as the solid crowns shadow maps draw in
-    // their place.
     let boulders = (0..BOULDERS as u32)
         .map(|seed| rocks::boulder_record(world, seed))
         .collect::<engine::Result<Vec<_>>>()?;
-    // Spruces of a few shapes over one bark and needle atlas, their needles
-    // cut out by its alpha and their trunks blending into the forest
-    // floor.
     let atlas = trees::atlas_record(world)?;
     let needles = {
         let material = trees::material(atlas)?.with_grounding(ROOTS)?;
@@ -727,10 +624,6 @@ fn surface(
     let terrain_rock = materials[4]
         .material
         .and_then(|rock| assets.material(rock).copied());
-    // Boulders of a few shapes in their scanned maps where present
-    // (`ROCK_FILES`), otherwise in the terrain rock's maps a repeat every
-    // three meters: lighter than the cave's rock and gentler in relief, as
-    // weathered stones are, and mossed on top.
     let boulder_scan = scanned(&mut assets, files, "boulder", BOULDER_SCAN_TILING, MOSS)?;
     let material = match (boulder_scan, terrain_rock) {
         (Some(scan), _) => scan,
@@ -751,7 +644,6 @@ fn surface(
         .and_then(|material| assets.insert_material(material))?;
     let mut placed = Vec::with_capacity(BOULDERS + SPRUCES);
     for &mesh in &boulders {
-        // Boulders collide as spheres a little inside their faces.
         placed.push(PlacementAsset {
             mesh,
             material: rock,
@@ -766,9 +658,6 @@ fn surface(
         });
     }
     for spruce in spruces {
-        // Spruces bend in the wind: a third of a meter at ten
-        // meters up in full wind.
-        // Their trunks collide, up to where the lowest whorls spread.
         placed.push(PlacementAsset {
             sway: 0.35,
             collider: Some(PlacedCollider::new(
@@ -780,12 +669,6 @@ fn surface(
             ..spruce
         });
     }
-    // The rock the cave is hewn in, which the boulders framing its mouth
-    // wear too: the scanned rock face where present, its color pulled
-    // toward the terrain rock's when converted; otherwise the terrain
-    // rock's maps and tint, darker than the boulders, laid as the terrain's
-    // rock lies, a repeat every four meters, lichen on its faces turned up.
-    // Its walls show both sides.
     let wall_scan = scanned(&mut assets, files, "cliff", WALL_SCAN_TILING, LICHEN)?;
     let wall_rock = match (wall_scan, terrain_rock) {
         (Some(scan), _) => assets.insert_material(scan)?,
@@ -806,7 +689,6 @@ fn surface(
         material: wall_rock,
         wall,
     });
-    // Bridges are built of the boulders' weathered stone.
     TerrainSurface::new(
         &Biomes {
             placed: authored,
@@ -822,14 +704,10 @@ fn surface(
     .map_err(engine::Error::from)
 }
 
-/// The cave's mouth: the world point at its center, and the
-/// meters around it its hole reaches.
 #[derive(Resource)]
 struct CaveMouth(Vec2);
 const CAVE_MOUTH: f32 = 3.5;
 
-/// The rock the cave is hewn in: the boulders' shapes, which frame its
-/// mouth, the rock they wear there, and its walls'.
 #[derive(Resource, Clone)]
 struct CaveRock {
     boulders: Vec<MeshHandle>,
@@ -837,20 +715,13 @@ struct CaveRock {
     wall: MaterialHandle,
 }
 
-/// Marks the cave opened.
 #[derive(Resource)]
 struct CaveOpened;
 
-/// The cave's half width and half height (meters).
 const CAVE_RADIUS: [f32; 2] = [6.0, 4.5];
 
-/// How far the cave's interior reaches past its walls (meters): the
-/// distance it fades in over toward its faces.
 const CAVE_MARGIN: f32 = 1.5;
 
-/// Terrain-local point of the hillside around `center`, from `inner + 150`
-/// to `inner + 600` meters out, whose slope across forty meters comes
-/// nearest thirty degrees.
 fn steepest_hillside(layers: &Layers, pyramid: &Pyramid, center: Vec2, inner: f32) -> [f32; 2] {
     let height = |point: Vec2| layers.height_at(pyramid, point);
     let mut best = (f32::INFINITY, center + Vec2::X * (inner + 210.0));
@@ -871,23 +742,17 @@ fn steepest_hillside(layers: &Layers, pyramid: &Pyramid, center: Vec2, inner: f3
     best.1.to_array()
 }
 
-/// The highlands' systems: the cave opening once the terrain is baked, and
-/// a sled and a walker making tracks in the snow.
 pub(crate) fn add_systems(app: &mut App) {
     app.add_systems(Presentation, (open_cave, place_track_makers, bodies::place))
         .add_systems(FixedSimulation, make_tracks)
         .add_systems(FixedSimulation, hiker::hike.after(NavSystems::Walk));
 }
 
-/// Marks the snow searched for the sled and the walker, and
-/// counts the frames searched so far.
 #[derive(Resource)]
 struct Snowfield;
 #[derive(Resource, Default)]
 struct SnowSearch(u32);
 
-/// Circles `center` at `radius` meters, `speed` meters a second, on two
-/// runners that press ruts.
 #[derive(Component)]
 struct Sled {
     center: Vec2,
@@ -895,8 +760,6 @@ struct Sled {
     speed: f32,
 }
 
-/// Walks the other way around `center` at `radius` meters, `speed` meters a
-/// second, a footprint every stride, the feet taking turns.
 #[derive(Component)]
 struct Walker {
     center: Vec2,
@@ -905,17 +768,10 @@ struct Walker {
     steps: u32,
 }
 
-/// Meters between a walker's footprints.
 const STRIDE: f32 = 0.75;
-/// Frames the search for snow waits for its tiles before giving up, and
-/// frames between its tries.
 const SNOW_SEARCH_FRAMES: u32 = 600;
 const SNOW_SEARCH_EVERY: u32 = 60;
 
-/// Sets a sled and a walker making tracks on the snow
-/// nearest the plateau, once the terrain's bakes are done: the first level
-/// snow within four kilometers mostly snowy and gently sloping for twenty
-/// meters around.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -936,7 +792,6 @@ fn place_track_makers(world: &mut World) {
     if layers.hydrology().is_none() {
         return;
     }
-    // A try reads tens of thousands of points: once in a while.
     let tries = world.get_resource_or_insert_with(SnowSearch::default).0;
     if !tries.is_multiple_of(SNOW_SEARCH_EVERY) {
         world.resource_mut::<SnowSearch>().0 += 1;
@@ -964,8 +819,6 @@ fn place_track_makers(world: &mut World) {
             .length()
                 / 20.0
         };
-        // Of eight points each twelve and twenty meters out, at least
-        // twelve snowy and none steeper than one in three.
         let around = |point: Vec2| {
             let mut snow = 0;
             for radius in [12.0, 20.0] {
@@ -990,7 +843,6 @@ fn place_track_makers(world: &mut World) {
         })
     };
     let Some(center) = found else {
-        // Tiles may not hold the snow yet: look again a while.
         let mut search = world.get_resource_or_insert_with(SnowSearch::default);
         search.0 += 1;
         if search.0 >= SNOW_SEARCH_FRAMES {
@@ -1039,11 +891,7 @@ fn place_track_makers(world: &mut World) {
             .id();
         (root, part)
     };
-    // The sled: a red box on two runners, which press ruts as wide as
-    // themselves, deeper than footprints.
     let (sled, hull) = spawn(world, 10.0, (Vec3::Y * 0.3, Vec3::new(0.9, 0.35, 1.9), red));
-    // No terrain focus: far from the camera they ride the coarse tiles
-    // resident there, and settle onto the finest once the camera nears.
     world.entity_mut(sled).insert(Sled {
         center,
         radius: 10.0,
@@ -1068,7 +916,6 @@ fn place_track_makers(world: &mut World) {
                 .id()
         })
         .collect();
-    // The walker: a dark figure, pressing its footprints itself.
     let (walker, figure) = spawn(
         world,
         16.0,
@@ -1085,9 +932,6 @@ fn place_track_makers(world: &mut World) {
     let _ = set_parents(world, &parents);
 }
 
-/// The sled and the walker each tick: around their circles
-/// over the ground, facing where they go; the walker presses a footprint
-/// each stride, beside its path, the feet taking turns.
 fn make_tracks(
     time: Res<FixedTime>,
     terrains: Res<Terrains>,
@@ -1116,7 +960,6 @@ fn make_tracks(
     }
     let settings = settings.map_or_else(Deformation::default, |settings| *settings);
     for (mut transform, mut walker) in &mut walkers {
-        // The other way around.
         let walked = seconds * f64::from(walker.speed);
         let angle = -((walked / f64::from(walker.radius)) % std::f64::consts::TAU) as f32;
         let (point, heading) = around(walker.center, walker.radius, angle);
@@ -1143,20 +986,6 @@ fn make_tracks(
     }
 }
 
-/// Opens the cave once its terrain's bakes are done, from
-/// the ground they leave:
-/// - its tube from just below the mouth cut in the slope up into the hill,
-///   descending as steeply as it must to stay under two meters of rock
-///   or more, winding and ending in a chamber;
-/// - a warm light in the chamber;
-/// - an interior over it, the region its lamp keeps to; it lets in all of
-///   the sky and the sun, as the cave's own walls, hiding the sky (sky
-///   occlusion), darken it;
-/// - boulders framing its mouth.
-///
-/// Its tube's mesh is a record of the ground the bakes leave
-/// ([`Terrains::bake_record`]) and the mouth: the cave spawns once it is
-/// here.
 fn open_cave(world: &mut World) {
     if world.contains_resource::<CaveOpened>() {
         return;
@@ -1190,8 +1019,6 @@ fn open_cave(world: &mut World) {
                 Vec2::new(point.x - terrain.origin.x, point.y - terrain.origin.z),
             )
     };
-    // Uphill from the mouth, and how steeply, across the hillside rather
-    // than the finest ground's bumps.
     let gradient = Vec2::new(
         height(mouth + Vec2::X * 20.0) - height(mouth - Vec2::X * 20.0),
         height(mouth + Vec2::Y * 20.0) - height(mouth - Vec2::Y * 20.0),
@@ -1203,11 +1030,6 @@ fn open_cave(world: &mut World) {
         Vec2::X
     };
     let side = Vec2::new(-uphill.y, uphill.x);
-    // The floor starts just below the ground outside the mouth; the tube
-    // falls as steeply as staying two meters under the rising ground
-    // twelve meters in takes, then half as steeply.
-    // The tube starts a meter past the hole's downhill edge, so its floor
-    // covers the whole cut.
     let start = mouth - uphill * (CAVE_MOUTH + 1.0);
     let center = height(start) - 0.5 + 0.55 * CAVE_RADIUS[1] * 1.15;
     let fall = math::max(0.75 - slope, 0.25);
@@ -1222,9 +1044,6 @@ fn open_cave(world: &mut World) {
         at(44.0, -5.0, fall * 18.0 + fall * 16.0),
         at(58.0, 0.0, fall * 18.0 + fall * 22.0),
     ];
-    // Boulders over and beside the mouth, turned down the slope: one over
-    // the tube's shell where it leaves the slope, overhanging the mouth,
-    // and one either side, sunk in the hillside.
     let facing = Quat::from_rotation_y((-uphill.x).atan2(-uphill.y));
     let framing: Vec<(Transform, MeshHandle)> = [
         (4.0, 0.0, 1.5, 10.0, 0),
@@ -1268,10 +1087,6 @@ fn open_cave(world: &mut World) {
     }
 }
 
-/// The cave through `points` (going `inward` from the first) of `mesh`,
-/// its handle and its built mesh, hewn in `rock` and framed by the
-/// boulders of `framing`: its walls, its chamber's light, its interior and
-/// the boulders.
 fn spawn_cave(
     world: &mut World,
     (mesh, built): (MeshHandle, &Mesh),
@@ -1290,8 +1105,6 @@ fn spawn_cave(
             material: rock.wall,
         },
     ));
-    // The chamber's light, warm and short, an interior lamp: it lights the
-    // cave alone, not the hillside through the rock.
     let chamber = points[4] - inward * 6.0 + Vec3::Y * 2.0;
     world.spawn((
         Transform {
@@ -1320,10 +1133,6 @@ fn spawn_cave(
     }
 }
 
-/// The box of the cave `mesh`'s interior, around its walls from its first
-/// bend in (`points[1]`, `inward` from `points[0]`) and CAVE_MARGIN wider on
-/// every side, the distance it fades in over, so it holds the walls whole;
-/// the mouth's walls and the boulders framing it stand in the open.
 fn cave_interior(mesh: &Mesh, points: &[Vec3], inward: Vec3) -> (Vec3, Vec3) {
     let bend = (points[1] - points[0]).dot(inward);
     let (low, high) = mesh
@@ -1341,15 +1150,9 @@ fn cave_interior(mesh: &Mesh, points: &[Vec3], inward: Vec3) -> (Vec3, Vec3) {
     )
 }
 
-/// Boulder and spruce shapes the placement layers choose from.
 const BOULDERS: usize = 5;
 const SPRUCES: usize = 3;
 
-/// `look`'s ground material's maps ([`ground::sources`]) as an engine
-/// material tinted by its tint: base color, normal, and occlusion (red),
-/// roughness (green), metalness (blue) and height (alpha) in one, texture
-/// records asked of `records`. Looks borrowing the same maps share their
-/// textures through `loaded`.
 fn maps(
     (records, assets): (&mut Records, &mut AssetLibrary),
     look: &Look,
@@ -1390,11 +1193,6 @@ fn maps(
         .map_err(engine::Error::from)
 }
 
-/// The scanned rock set `name`'s material from `files` (`ROCK_FILES`,
-/// under `rocks/`), when the page supplied all three of its maps: laid
-/// from the world's axes, one repeat every `tiling` meters, its roughness,
-/// metalness and occlusion from its packed map, with `top` settling on its
-/// faces turned up. Its colors stand as scanned.
 fn scanned(
     assets: &mut AssetLibrary,
     files: &HashMap<String, StressFile>,
@@ -1432,10 +1230,6 @@ fn scanned(
         .map_err(engine::Error::from)
 }
 
-/// A rock material of linear `color` and `roughness` in the maps of the
-/// terrain's rock material `terrain_rock`, its normals at four fifths:
-/// laid from the world's axes, one repeat every `tiling` meters, with `top`
-/// settling on its faces turned up.
 fn in_terrain_rock(
     terrain_rock: Material,
     (color, roughness): ([f32; 3], f32),
@@ -1466,22 +1260,11 @@ fn in_terrain_rock(
         .map_err(engine::Error::from)
 }
 
-/// Where each material lies: meadow everywhere, dry grass in broad patches
-/// with ragged edges, bare dirt in smaller ones, needle litter under the
-/// forests, lush grass where water gathers, beds along streams and rivers
-/// of the grains their floods leave ([`stream_beds`]), gravel on the roads
-/// and snow on the peaks; rock over all of them wherever the ground is
-/// steep; silt on the bars and banks floods still build; the ground damp
-/// in hollows and wet in torrents' spray ([`wetness`]); and the
-/// boulders, stones and spruces placed over them.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
 fn rules() -> Biomes {
-    // Where spruces stand in broad stands below the tree line on gentle
-    // ground, thinning at their edges and kept out of stream beds; their
-    // needles litter the ground there.
     let forest = || {
         Mask::Multiply(vec![
             remap(
@@ -1495,8 +1278,6 @@ fn rules() -> Biomes {
             Mask::Invert(Box::new(Mask::Height([560.0, 640.0]))),
             Mask::Invert(Box::new(Mask::Slope([24.0, 34.0]))),
             Mask::Invert(Box::new(Mask::Flow([4.95, 5.15]))),
-            // Nor where lakes stand, nor on roads and their
-            // verges.
             Mask::Invert(Box::new(Mask::Lake([0.1, 0.6]))),
             Mask::Invert(Box::new(Mask::Path([10.0, 4.0]))),
         ])
@@ -1506,12 +1287,6 @@ fn rules() -> Biomes {
             .map(|index| format!("boulder{index}"))
             .chain((0..SPRUCES).map(|index| format!("spruce{index}")))
             .collect(),
-        // Boulders in clumps over the meadows, resting on the lowest ground
-        // under them, stones strewn on scree, outcrops on
-        // rock, and spruce forests in broad stands below the tree line on
-        // gentle ground, thinning at their edges: placed on two-kilometer
-        // tiles, which stay resident farther away; and boulders and stones
-        // in the streams ([`stream_rocks`]).
         placed: Vec::new(),
         placements: [
             PlacementLayer {
@@ -1537,8 +1312,6 @@ fn rules() -> Biomes {
                 sink: 0.3,
                 bed: 0.0,
                 level: 3,
-                // Every one stands on the pinned four-kilometer tiles too, so
-                // forests reach the horizon.
                 far: Some(FarPlacement { level: 4 }),
             },
             PlacementLayer {
@@ -1557,9 +1330,6 @@ fn rules() -> Biomes {
                 sink: 0.1,
                 bed: 0.45,
                 level: 0,
-                // They stand on the kilometer tiles too, so boulders reach
-                // on toward the horizon instead of ending where the finest
-                // tiles do.
                 far: Some(FarPlacement { level: 2 }),
             },
             PlacementLayer {
@@ -1575,10 +1345,6 @@ fn rules() -> Biomes {
                 sink: 0.08,
                 bed: 0.0,
                 level: 0,
-                // Stones retire as they shrink under a pixel on screen, the
-                // largest only some one and a half kilometers away at
-                // 1080p, past where the finest tiles end (346 meters
-                // there), so they stand on the kilometer tiles too.
                 far: Some(FarPlacement { level: 2 }),
             },
             PlacementLayer {
@@ -1618,7 +1384,6 @@ fn rules() -> Biomes {
                         0.72,
                     ),
                 ),
-                // Bare dirt in patches where the grass thins.
                 layer(
                     "dirt",
                     remap(
@@ -1631,7 +1396,6 @@ fn rules() -> Biomes {
                     ),
                 ),
                 layer("forest_floor", remap(forest(), 0.12, 0.42)),
-                // Lush grass in wet hollows and along streams.
                 layer(
                     "wet_grass",
                     remap(
@@ -1644,10 +1408,6 @@ fn rules() -> Biomes {
                         0.6,
                     ),
                 ),
-                // Silt where erosion laid ground down beside streams and
-                // rivers whose floods still reach it, bare on the bars and
-                // banks they keep building; ground built up farther out is
-                // old, deep soil, grassed long ago.
                 layer(
                     "silt",
                     remap(
@@ -1664,8 +1424,6 @@ fn rules() -> Biomes {
             .into_iter()
             .chain(stream_beds())
             .chain([
-                // Roads, their edges soft over a meter and a
-                // half and ragged where the gravel's stones win.
                 layer("road", Mask::Path([1.0, -0.5])),
                 layer(
                     "snow",
@@ -1683,54 +1441,23 @@ fn rules() -> Biomes {
             .collect(),
             wetness: Some(wetness()),
         }],
-        // Rock over everything steeper than soil rests at, 35 degrees, all
-        // of it from 40: the ground's own form decides where, at every
-        // point of it.
         steep: Some(engine::terrain::data::SteepLayer {
             material: "rock".into(),
             slope: [35.0, 40.0],
         }),
-        // The engine's macro colors, their sun's side +z, south.
         macro_colors: engine::terrain::data::MacroCauses::default(),
     }
 }
 
-/// The median grains (meters) at which a bed's gravel, cobbles and
-/// boulders begin, finer beds being sand (Wentworth 1922).
 const GRAINS: [f32; 3] = [0.002, 0.064, 0.256];
-/// The share of each of [`GRAINS`] either side of it over which beds blend
-/// from one grain to the next, as the bake blends its reaches' beds.
 const GRAIN_BLEND: f32 = 0.2;
-/// The stream power (watts a square meter of bed in flood) over which beds
-/// begin to hold boulders and hold them fully, as step-pools and cascades
-/// do (Montgomery and Buffington 1997).
 const BOULDER_POWER: [f32; 2] = [150.0, 400.0];
-/// The stream power over which a stream's spray wets its banks higher,
-/// from not at all to as high as its bed reaches.
 const SPRAY_POWER: [f32; 2] = [200.0, 2000.0];
-/// The bake's wetness index, ln(a / tan b), over which the soil of hollows
-/// saturates as water gathers in it, from none of them to all: past where
-/// lush grass begins, as saturated areas spread from the wettest ground
-/// (TOPMODEL, Beven and Kirkby 1979).
 const SATURATED: [f32; 2] = [11.5, 14.0];
-/// How wet saturated soil stands: damp, its pores full of water but none
-/// standing over it.
 const DAMP: f32 = 0.5;
-/// Meters erosion laid down over which silt lies bare where floods still
-/// reach it: a bar or bank built up faster than grass grows up through it,
-/// from half a meter, wholly at two.
 const LAID: [f32; 2] = [0.5, 2.0];
-/// Meters from a stream's water within which its floods still lay silt
-/// bare, wholly within a meter of its edge and none past six: overbank
-/// deposits thin fast away from the channel (Pizzuto 1987).
 const FLOODED: [f32; 2] = [6.0, 1.0];
 
-/// Streams' and rivers' beds, with a meter and a half of their banks and
-/// ragged edges, of the grains their floods leave ([`GRAINS`]): sand,
-/// gravel, cobbles, and boulders, which wear the rock. Each grain paints
-/// over the finer one before it as the bed's median grain passes their
-/// boundary, and the finer one stops once the coarser covers the bed, so
-/// a bed meets its banks in one grain.
 fn stream_beds() -> [BiomeLayer; 4] {
     let bed = || {
         remap(
@@ -1742,8 +1469,6 @@ fn stream_beds() -> [BiomeLayer; 4] {
             0.75,
         )
     };
-    // 1 until the bed's median grain passes `grain` by the blend toward it,
-    // where the coarser grain covers the bed, then 0 within as much again.
     let short_of = |grain: f32| {
         Mask::Invert(Box::new(Mask::Grain([
             grain * (1.0 + GRAIN_BLEND),
@@ -1765,18 +1490,10 @@ fn stream_beds() -> [BiomeLayer; 4] {
     ]
 }
 
-/// Where a bed's median grain is coarser than `grain` meters, blending
-/// over [`GRAIN_BLEND`] of it either side; 0 beyond the streams' beds.
 fn coarser_than(grain: f32) -> Mask {
     Mask::Grain([grain * (1.0 - GRAIN_BLEND), grain * (1.0 + GRAIN_BLEND)])
 }
 
-/// How wet the ground stands where its water leaves it dry, 0 to 1 (the
-/// water the tiles hold soaks the ground under it and wets it over the
-/// capillary fringe above it itself): damp in the hollows whose soil
-/// saturates ([`SATURATED`], [`DAMP`]), raggedly, and wet further up the
-/// banks of streams spending more power ([`SPRAY_POWER`]), whose spray wets
-/// them.
 fn wetness() -> Mask {
     Mask::Max(vec![
         scaled(
@@ -1804,11 +1521,6 @@ fn wetness() -> Mask {
     ])
 }
 
-/// Boulders and stones in streams: boulders where floods spend the power
-/// of beds that hold them ([`BOULDER_POWER`]), breaking the white water
-/// running down them; and stones from a third of a meter to a meter across
-/// over cobble and boulder beds, so shallow water has something to break
-/// over.
 fn stream_rocks() -> [PlacementLayer; 2] {
     [
         PlacementLayer {
@@ -1828,9 +1540,6 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             sink: 0.3,
             bed: 0.3,
             level: 0,
-            // Every one still spans pixels enough to show where the finest
-            // tiles end, so all stand on the kilometer tiles too and retire
-            // by their size beyond.
             far: Some(FarPlacement { level: 2 }),
         },
         PlacementLayer {
@@ -1850,14 +1559,11 @@ fn stream_rocks() -> [PlacementLayer; 2] {
             sink: 0.1,
             bed: 0.3,
             level: 0,
-            // As the channel's boulders, nearly every one still shows where
-            // the finest tiles end.
             far: Some(FarPlacement { level: 2 }),
         },
     ]
 }
 
-/// Each of the boulder shapes as a placement layer's choice, all as likely.
 fn boulder_choices() -> Vec<PlacementChoice> {
     (0..BOULDERS)
         .map(|index| PlacementChoice {
@@ -1867,8 +1573,6 @@ fn boulder_choices() -> Vec<PlacementChoice> {
         .collect()
 }
 
-/// Gradient noise from 0 to 1 of `octaves` from `wavelength` meters, its
-/// pattern picked by `seed`.
 fn noise(wavelength: f32, seed: u32, octaves: u32) -> Mask {
     Mask::Noise(NoiseMask {
         wavelength,
@@ -1877,12 +1581,10 @@ fn noise(wavelength: f32, seed: u32, octaves: u32) -> Mask {
     })
 }
 
-/// `mask` times `by`.
 fn scaled(mask: Mask, by: f32) -> Mask {
     Mask::Multiply(vec![mask, Mask::Constant(by)])
 }
 
-/// `mask` remapped: 0 up to `from`, 1 from `to`.
 fn remap(mask: Mask, from: f32, to: f32) -> Mask {
     Mask::Remap(Remap {
         mask: Box::new(mask),
@@ -1891,7 +1593,6 @@ fn remap(mask: Mask, from: f32, to: f32) -> Mask {
     })
 }
 
-/// A biome layer painting `material` wholly wherever `mask` says.
 fn layer(material: &str, mask: Mask) -> BiomeLayer {
     BiomeLayer {
         material: material.into(),

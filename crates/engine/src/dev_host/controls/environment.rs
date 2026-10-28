@@ -1,7 +1,3 @@
-//! The environment control: sections of a scene environment, named ones
-//! replacing their resources, merged over their current values with
-//! `merge`.
-
 use serde_json::Value;
 
 use super::rendered;
@@ -9,16 +5,12 @@ use crate::app_host::AppHost;
 use engine_dev::results::{EnvironmentResult, result};
 use engine_dev::{DevError, EnvironmentControl};
 
-/// Applies `control`, sent as `source`, then renders: the sections before
-/// and after.
 pub(super) fn set(
     app: &mut AppHost,
     source: &str,
     control: EnvironmentControl,
     (width, height): (u32, u32),
 ) -> Result<Value, DevError> {
-    // The sections of a scene environment, validated alike; the
-    // named ones replace their resources, the others stay.
     let current = |app: &AppHost| {
         serde_json::to_value(engine_scene::SceneEnvironment::current(
             app.engine.app.world(),
@@ -27,7 +19,6 @@ pub(super) fn set(
     };
     let before = current(app);
     let environment = if control.merge {
-        // Each named section over its current values.
         let mut request: Value = serde_json::from_str(source).expect("the control parsed as JSON");
         let mut merged = serde_json::Map::new();
         for (key, value) in request.as_object_mut().into_iter().flatten() {
@@ -64,7 +55,6 @@ pub(super) fn set(
     }))
 }
 
-/// `patch`'s fields over `base`'s, objects merged field by field.
 fn overlay(base: &mut Value, patch: Value) {
     match (base, patch) {
         (Value::Object(base), Value::Object(patch)) => {

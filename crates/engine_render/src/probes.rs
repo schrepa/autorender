@@ -1,8 +1,3 @@
-//! Reflection probes: the probes nearest the camera hold
-//! cubes of the environment maps after the sky's, captured face by face
-//! after frames draw and blurred like the sky's; a grid over the ground plane
-//! lists which probes surfaces in each of its cells read.
-
 use engine_core::{
     RenderReflectionProbe,
     glam::{Mat4, Vec3, Vec4},
@@ -15,45 +10,27 @@ use crate::gpu_layouts::constants::PROBE_ENTRY_WORDS;
 use crate::render_features::{Encode, RenderFeature};
 use crate::render_graph::{FrameShape, Node, RenderGraph};
 
-/// Cube faces, in the order WebGPU samples them: +X, -X, +Y, -Y, +Z, -Z.
 pub(crate) const FACES: usize = 6;
-/// Near and far planes of captures, in world units: probes stand close to
-/// what they reflect and see the whole city.
 const CAPTURE_NEAR: f32 = 0.05;
 const CAPTURE_FAR: f32 = 4_000.0;
-/// Grid cells across the probes' ground span at most: finer cells list fewer
-/// probes each.
 const GRID_CELLS: f32 = 64.0;
 
 struct Slot {
     probe: RenderReflectionProbe,
-    // All six faces captured and blurred.
     ready: bool,
-    // Captured before the sky last changed: reflected until recaptured.
     stale: bool,
-    // Frames since the probe took its cube, up to STILL_FRAMES: objects
-    // appearing with it count as still only after as many frames.
     age: u32,
 }
 
-/// Which probe holds each environment cube after the sky's, and the capture
-/// in progress.
 #[derive(Default)]
 pub(crate) struct ProbeSlots {
     slots: Vec<Option<Slot>>,
-    // The slot being captured and the faces drawn.
     capturing: Option<(usize, usize)>,
-    // The ready probes changed since the grid was last built.
     changed: bool,
-    // The sky changed while the capture in progress drew.
     changed_during: bool,
 }
 
 impl ProbeSlots {
-    /// Assigns the first `capacity` of `probes` (nearest first) to cubes:
-    /// probes leaving free theirs, arrivals take free ones and wait for
-    /// capture. `lost` discards every capture (the maps were replaced); after
-    /// a sky change captures stay reflected until recaptured.
     pub(crate) fn plan(
         &mut self,
         probes: &[RenderReflectionProbe],
@@ -99,8 +76,6 @@ impl ProbeSlots {
                 if sky_changed {
                     slot.stale = true;
                 }
-                // A new blend distance or interior needs no
-                // capture, only the grid.
                 if let Some(probe) = wanted.iter().find(|probe| probe.key == slot.probe.key)
                     && (probe.blend != slot.probe.blend || probe.interior != slot.probe.interior)
                 {
@@ -126,30 +101,20 @@ impl ProbeSlots {
                     stale: false,
                     age: 0,
                 });
-                // Interiors light surfaces before their first capture.
                 self.changed |= probe.interior.is_some();
             }
         }
-        // A capture the sky changed under carries on, and stays stale once
-        // done: starting over on every change starved
-        // probes of captures.
         if sky_changed && self.capturing.is_some() {
             self.changed_during = true;
         }
     }
 
-    /// Ages every probe holding a cube by a frame in which culling counted
-    /// still slots.
     pub(crate) fn tick(&mut self) {
         for slot in self.slots.iter_mut().flatten() {
             slot.age = (slot.age + 1).min(STILL_FRAMES);
         }
     }
 
-    /// The next face to capture: its environment cube, face and probe. The
-    /// nearest probe waiting (never captured, or captured before the sky
-    /// last changed) that held its cube for STILL_FRAMES frames starts when
-    /// none is in progress.
     pub(crate) fn next_face(
         &mut self,
         probes: &[RenderReflectionProbe],
@@ -171,9 +136,6 @@ impl ProbeSlots {
         Some((slot as u32 + 1, face, probe))
     }
 
-    /// Records that the face [`Self::next_face`] returned was drawn; returns
-    /// whether it was the last, so the probe's cube is to be blurred and
-    /// becomes ready.
     pub(crate) fn face_drawn(&mut self) -> bool {
         let Some((slot, face)) = self.capturing else {
             return false;
@@ -192,8 +154,6 @@ impl ProbeSlots {
         true
     }
 
-    /// Whether a probe holding a cube waits for its capture (never
-    /// captured, captured before the sky last changed, or in progress).
     pub(crate) fn waiting(&self) -> bool {
         self.capturing.is_some()
             || self
@@ -203,7 +163,6 @@ impl ProbeSlots {
                 .any(|slot| !slot.ready || slot.stale)
     }
 
-    /// Probes whose captures surfaces read.
     pub(crate) fn ready(&self) -> u32 {
         self.slots
             .iter()
@@ -212,8 +171,6 @@ impl ProbeSlots {
             .count() as u32
     }
 
-    // The ready probes and their cubes, and interiors not
-    // captured yet with none (0), once per change.
     fn changed_ready(&mut self) -> Option<Vec<(RenderReflectionProbe, u32)>> {
         if !std::mem::take(&mut self.changed) {
             return None;
@@ -234,15 +191,10 @@ impl ProbeSlots {
 
 pub(crate) struct ProbePass {
     pub(crate) slots: ProbeSlots,
-    // The camera of each face being captured.
     cameras: [wgpu::Buffer; FACES],
-    // Depth of the face being captured, and its size.
     depth: Cached<u32, wgpu::TextureView>,
-    // The grid words surfaces read (`meshes/declarations.wgsl`'s `probe_words`).
     words: crate::buffers::Growable,
     staging: Vec<[u32; 4]>,
-    /// Faces the frame captured, and the probes past the GPU's arrays or
-    /// the frame's list.
     pub(crate) faces: u32,
     pub(crate) dropped: u32,
 }
@@ -271,17 +223,14 @@ impl ProbePass {
         }
     }
 
-    /// The camera uniform buffer of face `face`.
     pub(crate) fn camera(&self, face: usize) -> &wgpu::Buffer {
         &self.cameras[face]
     }
 
-    /// The grid words surfaces read, as a group binds them.
     pub(crate) fn words(&self) -> Bound<'_> {
         self.words.bound()
     }
 
-    /// The `format` depth target of a face `size` texels across.
     pub(crate) fn depth(
         &mut self,
         device: &wgpu::Device,
@@ -302,7 +251,6 @@ impl ProbePass {
         })
     }
 
-    /// Uploads the grid of the ready probes when they changed.
     pub(crate) fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let Some(ready) = self.slots.changed_ready() else {
             return;
@@ -324,11 +272,7 @@ impl ProbePass {
 
 const GRID_LABEL: &str = "engine/probe-grid";
 
-/// The view-projection of cube face `face` (in WebGPU's sampling order and
-/// orientation) seen from `center`, with reversed depth. Cube
-/// faces mirror the world, so it flips triangle winding.
 pub(crate) fn face_view_projection(center: Vec3, face: usize) -> Mat4 {
-    // Each face's image axes and its backward direction (view z).
     let (right, up, back) = match face {
         0 => (Vec3::NEG_Z, Vec3::Y, Vec3::NEG_X),
         1 => (Vec3::Z, Vec3::Y, Vec3::X),
@@ -342,9 +286,6 @@ pub(crate) fn face_view_projection(center: Vec3, face: usize) -> Mat4 {
     Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, CAPTURE_FAR, CAPTURE_NEAR) * view
 }
 
-/// Fills `words` with the grid of `probes` (each with its environment cube,
-/// or 0 for an interior not captured yet) that `meshes/shading.wgsl`'s
-/// `environment_light` walks.
 fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>) {
     words.clear();
     if probes.is_empty() {
@@ -362,7 +303,6 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
     let cell = math::max(smallest * 0.5, math::max(span.x, span.z) / GRID_CELLS);
     let across = |length: f32| ((length / cell).ceil() as u32).max(1);
     let (columns, rows) = (across(span.x), across(span.z));
-    // Each cell's probes, the smallest boxes first.
     let volume = |index: usize| {
         let extent = probes[index].0.extent;
         extent.x * extent.y * extent.z
@@ -386,8 +326,6 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
     let entries_at = cells_at + columns * rows;
     words.push([low.x.to_bits(), low.z.to_bits(), cell.to_bits(), count]);
     words.push([columns, rows, cells_at, entries_at]);
-    // Each cell's list, and how many of its probes are interiors,
-    // which surfaces elsewhere skip.
     let mut start = 0;
     for list in &lists {
         let interiors = list
@@ -397,7 +335,6 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
         words.push([start, list.len() as u32, interiors, 0]);
         start += list.len() as u32;
     }
-    // Each entry holds its probe's record: surfaces read no index first.
     for &index in lists.iter().flatten() {
         let (probe, cube) = probes[index as usize];
         let interior = probe.interior;
@@ -425,9 +362,6 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
     }
 }
 
-/// Reflection probes are planned before the frame, in its prelude, and
-/// captured by the renderer's own probe-captures pass after it, which draws
-/// the scene's parts into each face: they declare no nodes of their own.
 impl RenderFeature for ProbePass {
     type Frame = ();
     type Stats = engine_core::ProbeStats;
@@ -448,8 +382,6 @@ impl RenderFeature for ProbePass {
         ProbePass::capacity_bytes(self)
     }
 
-    /// The probes ready, the faces this frame captured and the probes past
-    /// the GPU's arrays or the frame's list.
     fn stats(
         this: Option<&Self>,
         _frame: Option<&()>,

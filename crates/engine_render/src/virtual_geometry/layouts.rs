@@ -1,8 +1,3 @@
-//! The selection's compute pipelines over their shared layouts
-//! (`crate::bindings`), each listing every binding its passes read within the
-//! eight storage buffers per stage WebGPU guarantees. And the depth-only
-//! pipeline drawing shadow views' bins.
-
 use super::VISIBLE_BYTES;
 use crate::bindings::VIRTUAL_SHADOW;
 use crate::pipeline_layouts::{
@@ -61,8 +56,6 @@ impl Pipelines {
         }
     }
 
-    /// A group of `family`'s layout binding `resources` by name, filled
-    /// where they leave bindings out.
     pub(super) fn group(
         &self,
         device: &wgpu::Device,
@@ -73,8 +66,6 @@ impl Pipelines {
     }
 }
 
-/// Depth-only drawing of shadow views' bins (`vs_shadow`) and its layout:
-/// the arena, the frame's poses and the shadow maps' views.
 pub(super) struct ShadowDrawing {
     pub(super) layout: crate::pipelines::GroupLayout,
     pub(super) pipeline: wgpu::RenderPipeline,
@@ -102,9 +93,7 @@ impl ShadowDrawing {
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &attributes,
                 })],
-                // Both faces cast, as the shadow maps' other casters.
                 primitive: wgpu::PrimitiveState::default(),
-                // The shadow maps' constant unit of bias.
                 depth: Some(wgpu::DepthStencilState {
                     format: SHADOW_FORMAT,
                     depth_write_enabled: Some(true),

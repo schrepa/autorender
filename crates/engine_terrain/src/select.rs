@@ -1,31 +1,16 @@
-//! Which tiles a view needs: each level's tiles stream within a range of
-//! the eye where its samples span the settings' pixel error, finer levels
-//! nearer, so the ground renderers subdivide over the resident tiles holds
-//! the detail its pixels ask for; where a finer tile is not resident yet,
-//! its coarser ancestor's ground stands in.
-
 use engine_math::{max, sin_cos};
 use glam::{Vec2, Vec3};
 
 use crate::{Pyramid, TileKey};
 
-/// How far each level's tiles stream: level `L`'s within `range(L)` meters
-/// of the eye, finer levels nearer. Ranges double per level, as the spacing
-/// does.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LodRanges {
     ranges: Vec<f32>,
 }
 
 impl LodRanges {
-    /// The shortest range of a level in its sample spacings: six of its
-    /// patches' sides (96), so views of any size keep each level's tiles
-    /// around the eye.
     pub const MIN_SPACINGS: f32 = 96.0;
 
-    /// Ranges at which a level's samples lie `pixel_error` pixels apart on
-    /// a viewport `viewport_height` pixels tall with vertical field of view
-    /// `vertical_fov` radians. Ranges never go below [`Self::MIN_SPACINGS`].
     pub fn new(
         pyramid: &Pyramid,
         pixel_error: f32,
@@ -50,7 +35,6 @@ impl LodRanges {
         }
     }
 
-    /// Meters from the eye within which `level`'s tiles stream.
     pub fn range(&self, level: u32) -> f32 {
         self.ranges[level as usize]
     }
@@ -60,25 +44,14 @@ impl LodRanges {
     }
 }
 
-/// How far below and above the eye ground of unknown height is taken to
-/// reach: any ground at all.
 const UNKNOWN_GROUND: f32 = 1.0e6;
 
-/// Whether the square from `low` to `high` lies within `cutout`, the
-/// ground a terrain's surroundings leave to it.
 fn cut_out(cutout: Option<(Vec2, Vec2)>, low: Vec2, high: Vec2) -> bool {
     cutout.is_some_and(|(first, last)| {
         low.x >= first.x && low.y >= first.y && high.x <= last.x && high.y <= last.y
     })
 }
 
-/// A tile a view wants resident, with its importance: the
-/// pinned levels' first, coarser first; then by the distance to the eye in
-/// units of its level's range, ahead of the eye before behind, so the
-/// tiles that show the most of the view's detail load first whatever their
-/// level, a tile's parent (twice as far in range, half as far in its
-/// units) before it. And whether the view draws it, within its level's
-/// range, and whether its ground shows in the view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WantedTile {
     pub key: TileKey,
@@ -87,10 +60,6 @@ pub struct WantedTile {
     pub seen: bool,
 }
 
-/// How a view sees a terrain: its eye (terrain-local) and
-/// horizontal view direction, the lowest and highest ground a tile can
-/// hold (`None` where unknown), and whether a terrain-local box shows in
-/// the view.
 pub struct WantedView<'a> {
     pub eye: Vec3,
     pub forward: Vec2,
@@ -98,12 +67,6 @@ pub struct WantedView<'a> {
     pub seen: &'a dyn Fn(Vec3, Vec3) -> bool,
 }
 
-/// Appends the tiles of every level within `reach` times its range of
-/// `view`'s eye, and every tile of the coarsest `pinned` levels, to `out`,
-/// most important first; none wholly within `cutout`.
-/// Distances run to a tile's ground: a high eye wants fine
-/// tiles only as far as it is from their ground, as the ground shades by
-/// those distances.
 pub fn wanted_tiles(
     pyramid: &Pyramid,
     ranges: &LodRanges,
@@ -148,7 +111,6 @@ pub fn wanted_tiles(
                 let key = TileKey::new(level as u8, x as u16, z as u16);
                 let nearest = eye2.clamp(low, high);
                 let ground = (view.ground)(key);
-                // Above or below its ground, the eye is that much farther.
                 let rise = ground.map_or(0.0, |[bottom, top]| {
                     max(max(bottom - eye.y, eye.y - top), 0.0)
                 });
@@ -161,7 +123,6 @@ pub fn wanted_tiles(
                     .try_normalize()
                     .unwrap_or(forward);
                 let behind = 1.0 - forward.dot(toward);
-                // Pinned tiles come first, whatever their distance.
                 let score = if everywhere {
                     -1.0
                 } else {

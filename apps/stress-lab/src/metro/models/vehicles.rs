@@ -1,5 +1,3 @@
-//! The metro's vehicles and machines.
-
 use super::*;
 
 pub(super) fn bus(b: &mut Builder) {
@@ -53,7 +51,6 @@ pub(super) fn train(b: &mut Builder, model: Model) {
     b.block(v(-2.5, 0.3, -0.85), v(front, 2.1, 0.85), TRIM);
     b.block(v(-2.3, 1.2, -0.86), v(front - 0.2, 1.8, 0.86), WINDOW);
     if model == Model::Locomotive {
-        // A raked nose: a low block and a slope up to the roof.
         b.cuboid(v(2.2, 0.3, -0.85), v(2.8, 1.3, 0.85), TRIM, TRIM, true);
         b.quad(
             [
@@ -185,7 +182,6 @@ pub(super) fn excavator_body(b: &mut Builder) {
 }
 
 pub(super) fn excavator_boom(b: &mut Builder) {
-    // From its pivot at the origin up and out along +X.
     b.block(v(0.0, -0.25, -0.2), v(3.6, 0.25, 0.2), PAINT);
     b.block(v(3.2, -0.25, -0.2), v(3.8, 1.6, 0.2), PAINT);
 }
@@ -200,7 +196,6 @@ pub(super) fn crane_mast(b: &mut Builder) {
 }
 
 pub(super) fn crane_jib(b: &mut Builder) {
-    // A lattice arm along +X, a counter-arm, a cab and weights.
     let lattice = |length: f32| Map::Rect(0.0, 0.0, length / 2.0, 1.0);
     let (low, high) = (-0.45, 0.45);
     for (y0, y1, z) in [(low, high, 0.45), (low, high, -0.45)] {
@@ -246,7 +241,6 @@ pub(super) fn crane_jib(b: &mut Builder) {
 }
 
 pub(super) fn ferris_rim(b: &mut Builder) {
-    // A wheel in the XY plane: two rims, spokes and a hub.
     let segments = 24;
     for z in [-0.6, 0.6] {
         for segment in 0..segments {
@@ -262,7 +256,6 @@ pub(super) fn ferris_rim(b: &mut Builder) {
         let start = b.mark();
         b.block(v(0.0, -0.05, -0.05), v(6.3, 0.05, 0.05), STEEL);
         b.place(start, Mat4::from_rotation_z(TAU * spoke as f32 / 12.0));
-        // Lights along the rim.
         let start = b.mark();
         b.block(v(6.45, -0.12, 0.62), v(6.6, 0.12, 0.72), WARM);
         b.place(
@@ -298,7 +291,6 @@ pub(super) fn carousel_base(b: &mut Builder) {
 }
 
 pub(super) fn carousel_top(b: &mut Builder) {
-    // Canopy, poles and horses, turning together.
     b.lathe(
         &[(3.3, 2.8), (3.3, 3.1), (0.0, 4.2)],
         16,
@@ -328,7 +320,6 @@ pub(super) fn turbine_tower(b: &mut Builder) {
 }
 
 pub(super) fn turbine_rotor(b: &mut Builder) {
-    // A nose along +X and three blades in the YZ plane.
     let start = b.mark();
     b.lathe(
         &[(0.0, -0.6), (0.4, -0.3), (0.4, 0.3)],
@@ -360,7 +351,6 @@ pub(super) fn beacon(b: &mut Builder) {
     );
 }
 
-/// Wheels at `xs` along each side `z` from the center, of `radius`.
 fn wheels(b: &mut Builder, xs: &[f32], z: f32, radius: f32) {
     for &x in xs {
         for side in [-z, z] {
@@ -374,7 +364,6 @@ fn wheels(b: &mut Builder, xs: &[f32], z: f32, radius: f32) {
     }
 }
 
-/// Headlights at the front `x` and taillights at the back, at `y`, `z` apart.
 fn lights(b: &mut Builder, x: f32, y: f32, z: f32) {
     for side in [-z, z] {
         b.block(
@@ -391,7 +380,6 @@ fn lights(b: &mut Builder, x: f32, y: f32, z: f32) {
 }
 
 pub(super) fn car(b: &mut Builder, kind: Car) {
-    // Body length, width, body height, cabin extent and height.
     let (length, width, body, cabin, roof) = match kind {
         Car::Sedan | Car::Taxi | Car::Police => (2.1, 0.95, 0.55, (-0.55, 0.45), 0.95),
         Car::Hatch => (1.8, 0.9, 0.55, (-0.75, 0.35), 0.98),
@@ -402,8 +390,6 @@ pub(super) fn car(b: &mut Builder, kind: Car) {
     };
     let (half, side) = (length * 0.5, width * 0.5);
     b.block(v(-half, 0.22, -side), v(half, body, side), PAINT);
-    // The glass stops below the roof panel's top and the grille behind the
-    // headlights' fronts: faces sharing a plane fight in the depth buffer.
     b.block(
         v(cabin.0, body, -side * 0.88),
         v(cabin.1, roof - 0.02, side * 0.88),
@@ -437,8 +423,6 @@ pub(super) fn car(b: &mut Builder, kind: Car) {
     }
 }
 
-/// A hull `length` long and `width` wide with a pointed bow toward +X, its
-/// deck `height` up.
 fn hull(b: &mut Builder, length: f32, width: f32, height: f32) {
     let (half, side) = (length * 0.5, width * 0.5);
     let bow = half * 0.6;
@@ -465,7 +449,6 @@ fn hull(b: &mut Builder, length: f32, width: f32, height: f32) {
     );
 }
 
-/// A square lattice column `width` wide and `height` tall.
 fn lattice_column(b: &mut Builder, width: f32, height: f32) {
     let half = width * 0.5;
     let map = Map::Rect(0.0, 0.0, 1.0, height / width);

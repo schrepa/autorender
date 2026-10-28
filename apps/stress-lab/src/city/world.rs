@@ -1,6 +1,3 @@
-//! The wild city as a Stress Lab world: its traffic and machines move while
-//! anything moves, under golden hour, seen across the river.
-
 use engine::collections::HashMap;
 
 use engine::prelude::*;
@@ -49,7 +46,6 @@ impl StressWorld for CityWorld {
     }
 
     fn camera(&self, _world: &World, config: &StressConfig, view: &str) -> Option<Camera> {
-        // Across the river toward the city's core.
         (view == "close").then(|| {
             let (position, target) = close_view(config);
             Camera {
@@ -62,8 +58,6 @@ impl StressWorld for CityWorld {
     }
 }
 
-/// A street-level view across the river toward the core, or from an
-/// avenue when the city has no river.
 fn close_view(config: &StressConfig) -> (Vec3, Vec3) {
     let (_, _, radius) = budget(config, PER_BLOCK);
     match river_row(radius) {

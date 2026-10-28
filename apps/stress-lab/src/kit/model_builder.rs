@@ -1,27 +1,16 @@
-//! Flat-shaded mesh building for the metro. Faces take texture coordinates
-//! in texture repeats (`Map::Tile`), so tiling materials keep their scale on
-//! meshes built at their nominal world size; vertices can carry colors, a
-//! second coordinate set and skin weights.
-
 use std::f32::consts::TAU;
 
 use engine::prelude::*;
 
 use super::shape_builder::{fan, polygon_normal};
 
-/// How a face's texture coordinates follow its size.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Map {
-    /// One repeat per `u` × `v` world units. Upright faces run `u` along
-    /// their bottom edge and `v` down from the builder's reference height
-    /// (or their own top); flat faces use world x and z.
     Tile(f32, f32),
-    /// A fixed rectangle `(u0, v0, u1, v1)` stretched across each face.
     Rect(f32, f32, f32, f32),
 }
 
 impl Map {
-    /// A patch so small that the face shows one texel region's color.
     pub(crate) const fn patch(u: f32, v: f32) -> Self {
         Map::Rect(u, v, u + 0.004, v + 0.004)
     }
@@ -34,9 +23,6 @@ impl Map {
     }
 }
 
-/// The second coordinates a mesh derives at the end: none, or its height
-/// fraction (0 at the top) and position around its footprint, for maps
-/// spanning a whole building such as grime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Uv1 {
     None,
@@ -48,11 +34,8 @@ pub(crate) struct Builder {
     indices: Vec<u32>,
     colors: Vec<[f32; 4]>,
     skin: Vec<([u16; 4], [f32; 4])>,
-    /// Color of the vertices added next.
     pub color: [f32; 4],
-    /// Joints and weights of the vertices added next.
     pub bind: ([u16; 4], [f32; 4]),
-    /// Height `Map::Tile` counts `v` down from; the face's own top when unset.
     pub top: Option<f32>,
     pub uv1: Uv1,
     colored: bool,
@@ -77,14 +60,11 @@ impl Default for Builder {
 }
 
 impl Builder {
-    /// Sets the color of the vertices added next; any color but white makes
-    /// the mesh carry vertex colors.
     pub(crate) fn paint(&mut self, color: [f32; 3]) {
         self.color = [color[0], color[1], color[2], 1.0];
         self.colored |= color != [1.0; 3];
     }
 
-    /// Binds the vertices added next to one joint.
     pub(crate) fn joint(&mut self, joint: u16) {
         self.bind = ([joint, 0, 0, 0], [1.0, 0.0, 0.0, 0.0]);
         self.skinned = true;
@@ -94,7 +74,6 @@ impl Builder {
         self.vertices.len()
     }
 
-    /// A flat convex polygon fanned from its first corner, facing `outward`.
     pub(crate) fn face(&mut self, corners: &[Vec3], uvs: &[[f32; 2]], outward: Vec3) {
         let Some((normal, flip)) = polygon_normal(corners, outward) else {
             return;
@@ -112,11 +91,9 @@ impl Builder {
         fan(&mut self.indices, base, corners.len() as u32, flip);
     }
 
-    /// Texture coordinates of a polygon under `map`.
     fn coordinates(&self, corners: &[Vec3], map: Map, outward: Vec3) -> Vec<[f32; 2]> {
         match map {
             Map::Rect(..) => {
-                // Stretched over the polygon's own extent in its plane.
                 let (u_axis, v_axis) = plane_axes(outward);
                 let us: Vec<f32> = corners.iter().map(|corner| corner.dot(u_axis)).collect();
                 let vs: Vec<f32> = corners.iter().map(|corner| corner.dot(v_axis)).collect();
@@ -162,14 +139,11 @@ impl Builder {
         }
     }
 
-    /// A polygon mapped by `map`.
     pub(crate) fn poly(&mut self, corners: &[Vec3], map: Map, outward: Vec3) {
         let uvs = self.coordinates(corners, map, outward);
         self.face(corners, &uvs, outward);
     }
 
-    /// A quad through its bottom-left, bottom-right, top-right and top-left
-    /// corners as seen from outside.
     pub(crate) fn quad(&mut self, corners: [Vec3; 4], map: Map, outward: Vec3) {
         match map {
             Map::Rect(..) => {
@@ -185,8 +159,6 @@ impl Builder {
         }
     }
 
-    /// An axis-aligned box: sides map `side`, the top `cap`, the bottom `cap`
-    /// when `bottom`.
     pub(crate) fn cuboid(&mut self, min: Vec3, max: Vec3, side: Map, cap: Map, bottom: bool) {
         let [x0, y0, z0] = min.to_array();
         let [x1, y1, z1] = max.to_array();
@@ -226,15 +198,10 @@ impl Builder {
         }
     }
 
-    /// A box with every face mapped by `map`.
     pub(crate) fn block(&mut self, min: Vec3, max: Vec3, map: Map) {
         self.cuboid(min, max, map, map, true);
     }
 
-    /// A surface of revolution about Y through `profile` points (radius,
-    /// height) from bottom to top, with `sides` faces from `angle`. Rings of
-    /// radius zero close to a point; other ends get flat caps (the bottom one
-    /// only when `bottom`).
     pub(crate) fn lathe(
         &mut self,
         profile: &[(f32, f32)],
@@ -256,7 +223,6 @@ impl Builder {
                 let outward = Vec3::new(cos, 0.0, sin) * (y1 - y0) - Vec3::Y * (r1 - r0);
                 let (b0, b1) = (point((r0, y0), index), point((r0, y0), index + 1));
                 let (t0, t1) = (point((r1, y1), index), point((r1, y1), index + 1));
-                // Coordinates around the ring and down from the top.
                 let (u0, u1, v0, v1) = match side {
                     Map::Tile(scale_u, scale_v) => {
                         let arc = |radius: f32| TAU * radius / sides as f32 / scale_u;
@@ -276,7 +242,6 @@ impl Builder {
                         (a[0], b[0], a[1], b[1])
                     }
                 };
-                // Angles increase leftward seen from outside.
                 if r1 == 0.0 {
                     self.face(
                         &[b1, b0, t0],
@@ -311,7 +276,6 @@ impl Builder {
         }
     }
 
-    /// A round bar from `a` to `b`, closed at both ends.
     pub(crate) fn bar(&mut self, a: Vec3, b: Vec3, radius: f32, sides: u32, map: Map) {
         let axis = b - a;
         let length = axis.length();
@@ -333,8 +297,6 @@ impl Builder {
         self.place(start, Mat4::from_rotation_translation(rotation, a));
     }
 
-    /// A prism along X from `x0` to `x1` over a triangle `section` of (z, y)
-    /// points whose first two lie on the base, which stays open.
     pub(crate) fn ridge(
         &mut self,
         x0: f32,
@@ -360,8 +322,6 @@ impl Builder {
         }
     }
 
-    /// Two crossed upright quads of `width` × `height` from `base`, turned
-    /// by `yaw`: leaf and frond cards, drawn from both sides.
     pub(crate) fn cards(&mut self, base: Vec3, width: f32, height: f32, yaw: f32, map: Map) {
         for turn in [0.0, std::f32::consts::FRAC_PI_2] {
             let (sin, cos) = math::sin_cos(yaw + turn);
@@ -381,7 +341,6 @@ impl Builder {
         }
     }
 
-    /// Moves the vertices added since `start` rigidly by `matrix`.
     pub(crate) fn place(&mut self, start: usize, matrix: Mat4) {
         for vertex in &mut self.vertices[start..] {
             vertex.position = matrix
@@ -393,9 +352,6 @@ impl Builder {
         }
     }
 
-    /// The mesh, moved so its bounds center on the origin when `center`
-    /// (renderables are placed by their centers) and with the attributes the
-    /// build used, and the build-space point that became its origin.
     pub(crate) fn finish(mut self, center: bool) -> engine::Result<(Mesh, Vec3)> {
         let (min, max) = self.vertices.iter().fold(
             (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
@@ -448,8 +404,6 @@ impl Builder {
     }
 }
 
-/// Two axes spanning the plane facing `outward`: `u` runs horizontally to
-/// the right seen from outside (along X for flat faces), `v` up the plane.
 fn plane_axes(outward: Vec3) -> (Vec3, Vec3) {
     let normal = outward.normalize_or_zero();
     if normal.y.abs() > 0.99 {

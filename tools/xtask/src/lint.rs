@@ -1,8 +1,3 @@
-//! `cargo xtask lint`: every check that needs no GPU, as a table of stages
-//! run cheapest first. Every stage runs whatever failed before it, unless a
-//! stage it needs did not pass; the run ends with each stage's result and
-//! time, and fails if any stage did not pass.
-
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -15,24 +10,12 @@ use crate::{
     structure,
 };
 
-/// One step of a run: its name, the stages that must have passed for it to
-/// run (it is skipped otherwise), and what it does.
 pub(crate) struct Stage {
     pub name: &'static str,
     pub needs: &'static [&'static str],
     pub run: fn(&Path) -> Result<(), String>,
 }
 
-/// What `cargo xtask lint` runs, in order: the repository policy,
-/// formatting, the web host's text checks, the drift checks (scene sources,
-/// generated files, bench/ and its equivalence matrix, smoke coverage, each
-/// smoke's opening description, the path map `cargo xtask verify` selects
-/// checks by, feature layering, the schedules' ordering of conflicting
-/// systems, the facade's exports), the structure ratchet (file
-/// lengths, struct widths), the Stress Lab's content locality, shaders against their Rust layouts, the pure
-/// checks' corpora, Clippy (the workspace, the native host's tools, the
-/// browser clients, the app template), rustdoc, the browser clients the web
-/// host imports, and TypeScript.
 pub(crate) const LINT: &[Stage] = &[
     Stage {
         name: "policy",
@@ -134,8 +117,6 @@ pub(crate) const LINT: &[Stage] = &[
         needs: &[],
         run: |root| clippy(root, &["--workspace", "--all-targets"]),
     },
-    // The native host with its development tools, and with its profiler,
-    // as agents build native games (the app template's entry included).
     Stage {
         name: "clippy native dev",
         needs: &[],
@@ -151,8 +132,6 @@ pub(crate) const LINT: &[Stage] = &[
             )
         },
     },
-    // The clients for the browser, without and with their development
-    // tools.
     Stage {
         name: "clippy wasm",
         needs: &[],
@@ -163,7 +142,6 @@ pub(crate) const LINT: &[Stage] = &[
         needs: &[],
         run: |root| clippy_wasm(root, true),
     },
-    // The app template, as new apps start from it.
     Stage {
         name: "clippy app template",
         needs: &[],
@@ -182,16 +160,11 @@ pub(crate) const LINT: &[Stage] = &[
             )
         },
     },
-    // Every item's documentation, natively and in the browser façade.
     Stage {
         name: "docs",
         needs: &[],
         run: crate::pipeline::docs,
     },
-    // The host imports generated declarations, including on a clean
-    // checkout; their types do not depend on the profile. `cargo xtask
-    // build` replaces these bindings with release ones before it bundles
-    // them.
     Stage {
         name: "wasm",
         needs: &[],
@@ -214,15 +187,8 @@ pub(crate) const LINT: &[Stage] = &[
     },
 ];
 
-/// Paths one rustfmt command line takes: a few hundred stay well within
-/// the longest command line Windows accepts.
 const RUSTFMT_BATCH: usize = 200;
 
-/// Formatting: cargo fmt's check over every crate's module tree, then
-/// rustfmt's over every Rust source git would commit, which reaches the
-/// modules a macro declares too (rustfmt expands no macros, so cargo fmt
-/// never finds them). Vendored and generated sources keep their tools'
-/// layout.
 fn fmt(root: &Path) -> Result<(), String> {
     run(root, "cargo", &["fmt", "--all", "--", "--check"])?;
     let edition = edition(root)?;
@@ -250,7 +216,6 @@ fn fmt(root: &Path) -> Result<(), String> {
                 .lines()
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
-                // Windows' verbatim prefix, which rustfmt's paths carry.
                 .map(|line| line.trim_start_matches(r"\\?\").to_owned()),
         );
         if !output.status.success() && unformatted.len() == before {
@@ -275,8 +240,6 @@ fn fmt(root: &Path) -> Result<(), String> {
     ))
 }
 
-/// The Rust edition of the workspace's `[workspace.package]`, which every
-/// crate inherits.
 fn edition(root: &Path) -> Result<String, String> {
     let manifest = fs::read_to_string(root.join("Cargo.toml"))
         .map_err(|error| format!("cannot read Cargo.toml: {error}"))?;
@@ -292,7 +255,6 @@ fn edition(root: &Path) -> Result<String, String> {
         .ok_or_else(|| "Cargo.toml's [workspace.package] declares no edition".to_owned())
 }
 
-/// Clippy over `selection`, every warning an error.
 fn clippy(root: &Path, selection: &[&str]) -> Result<(), String> {
     let mut arguments = vec!["clippy"];
     arguments.extend(selection);
@@ -300,8 +262,6 @@ fn clippy(root: &Path, selection: &[&str]) -> Result<(), String> {
     run(root, "cargo", &arguments)
 }
 
-/// Clippy over the native host, its profiler and the Stress Lab, every
-/// target, with `features`.
 fn clippy_native(root: &Path, features: &str) -> Result<(), String> {
     clippy(
         root,
@@ -319,8 +279,6 @@ fn clippy_native(root: &Path, features: &str) -> Result<(), String> {
     )
 }
 
-/// Clippy over the browser clients, with their development tools or
-/// without.
 fn clippy_wasm(root: &Path, development: bool) -> Result<(), String> {
     let mut selection: Vec<&str> = client_packages().collect();
     if development {
@@ -330,22 +288,16 @@ fn clippy_wasm(root: &Path, development: bool) -> Result<(), String> {
     clippy(root, &selection)
 }
 
-/// The web host's text check `script` (in web/scripts), run with Node.
 fn web_check(root: &Path, script: &str) -> Result<(), String> {
     run(&root.join("web"), "node", &[&format!("scripts/{script}")])
 }
 
-/// How a stage ended.
 enum Outcome {
     Passed,
     Failed(String),
-    /// Not run: the stages it needs that did not pass.
     Skipped(String),
 }
 
-/// Runs `stages` in order, each unless a stage it needs did not pass, then
-/// prints each one's result and time; an error naming every stage that
-/// failed or was skipped, if any.
 pub(crate) fn run_stages(root: &Path, stages: &[Stage]) -> Result<(), String> {
     let mut results: Vec<(&str, Outcome, Duration)> = Vec::with_capacity(stages.len());
     for stage in stages {

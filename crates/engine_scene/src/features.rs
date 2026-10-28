@@ -1,14 +1,9 @@
-//! What a document needs of the engine's features: the plugins whose
-//! components and sections it authors.
-
 use engine_core::bevy_ecs::prelude::World;
 use engine_core::{EnvironmentSection, Feature, has_feature};
 use engine_settings::ErrorCode;
 
 use crate::{SceneDocument, SceneEnvironment, SceneError, SceneObject, SectionVisitor};
 
-/// This module's part of `entity_components!`: the features an object
-/// needs for the components listed, before its animation's.
 macro_rules! object_features {
     ($(
         $(#[$doc:meta])*
@@ -20,7 +15,6 @@ macro_rules! object_features {
         },
     )*) => {
         impl SceneObject {
-            /// The features this object authors, by field.
             fn features(&self) -> impl Iterator<Item = (&'static str, Feature)> {
                 [
                     $((
@@ -42,7 +36,6 @@ macro_rules! object_features {
 
 crate::components::entity_components!(object_features);
 
-/// The error of `path` authoring `feature`, whose plugin the engine lacks.
 fn missing(feature: Feature, path: String) -> SceneError {
     SceneError::new(
         ErrorCode::MissingPlugin,
@@ -55,8 +48,6 @@ fn missing(feature: Feature, path: String) -> SceneError {
 }
 
 impl SceneDocument {
-    /// Fails at the first component, streamed list or environment section
-    /// the document authors whose feature `world`'s engine lacks.
     pub(crate) fn check_features(&self, world: &World) -> Result<(), SceneError> {
         let lists =
             [("$.entities".to_owned(), &self.entities)]
@@ -86,8 +77,6 @@ impl SceneDocument {
 }
 
 impl SceneEnvironment {
-    /// Fails at the first section it names, under `path`, whose feature
-    /// `world`'s engine lacks.
     pub fn check_features(&self, world: &World, path: &str) -> Result<(), SceneError> {
         struct Lacking<'w>(&'w World, Option<(&'static str, Feature)>);
         impl SectionVisitor for Lacking<'_> {

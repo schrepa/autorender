@@ -1,10 +1,3 @@
-//! A compact binary encoding of terrain data: what engines
-//! hand workers and workers hand back. Floats travel as their bits, so a
-//! tile a worker generates is the tile the engine would have generated.
-//! Lengths are checked against the bytes left before anything allocates,
-//! and readers refuse bytes left over.
-// Bytes come back from workers and caches: every narrowing cast is
-// checked.
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -15,7 +8,6 @@ use std::sync::Arc;
 
 use glam::{Vec2, Vec3};
 
-/// Why bytes could not be read back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CodecError(pub &'static str);
 
@@ -27,7 +19,6 @@ impl std::fmt::Display for CodecError {
 
 impl std::error::Error for CodecError {}
 
-/// Bytes being written.
 #[derive(Default)]
 pub struct Writer {
     bytes: Vec<u8>,
@@ -38,7 +29,6 @@ impl Writer {
         Self::default()
     }
 
-    /// Writes `value`.
     pub fn put<T: Codec>(&mut self, value: &T) -> &mut Self {
         value.write(self);
         self
@@ -53,7 +43,6 @@ impl Writer {
     }
 }
 
-/// Bytes being read.
 pub struct Reader<'a> {
     bytes: &'a [u8],
 }
@@ -63,12 +52,10 @@ impl<'a> Reader<'a> {
         Self { bytes }
     }
 
-    /// Reads a value.
     pub fn get<T: Codec>(&mut self) -> Result<T, CodecError> {
         T::read(self)
     }
 
-    /// Whether every byte was read.
     pub fn finish(self) -> Result<(), CodecError> {
         if self.bytes.is_empty() {
             Ok(())
@@ -77,7 +64,6 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// The bytes not read yet.
     pub fn left(&self) -> usize {
         self.bytes.len()
     }
@@ -91,8 +77,6 @@ impl<'a> Reader<'a> {
         Ok(*head)
     }
 
-    /// A count of items that take at least a byte each: no more than the
-    /// bytes left.
     fn count(&mut self) -> Result<usize, CodecError> {
         let count = usize::try_from(u64::from_le_bytes(self.take()?))
             .map_err(|_| CodecError("count out of range"))?;
@@ -103,19 +87,9 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Meters between the heights tiles travel at: a tile's heights and water
-/// surfaces are written as whole steps of this grid, which `f32` holds
-/// exactly within 65,536 m of the terrain's origin, so what reads back is
-/// each value at its nearest step, and writing that again gives the same
-/// bytes.
 pub const HEIGHT_STEP: f32 = 1.0 / STEPS_PER_METER;
 const STEPS_PER_METER: f32 = 256.0;
 
-/// Writes `values` at their nearest steps of the height grid, rows of
-/// `stride`: each value's steps from what its written neighbours predict
-/// (left plus up less their corner, or the one there is), zigzagged into
-/// variable-length bytes one more than the step, a zero byte for NaN.
-/// Smooth ground costs about a byte a sample.
 pub(crate) fn put_grid(out: &mut Writer, values: &[f32], stride: usize) {
     out.put(&(values.len() as u64));
     for at in 0..values.len() {
@@ -138,7 +112,6 @@ pub(crate) fn put_grid(out: &mut Writer, values: &[f32], stride: usize) {
     }
 }
 
-/// Reads a grid [`put_grid`] wrote, rows of `stride`.
 pub(crate) fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32]>, CodecError> {
     let count = input.count()?;
     let mut steps: Vec<Option<i64>> = Vec::with_capacity(count);
@@ -173,11 +146,6 @@ pub(crate) fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32
         .collect())
 }
 
-/// Writes `planes`, square planes of bytes `side` texels a side one after
-/// another, each byte as its difference (wrapping) from what its written
-/// neighbours predict (left plus up less their corner, as `put_grid`
-/// predicts), which smooth maps leave mostly small for the cook's
-/// compression.
 pub fn put_planes(out: &mut Writer, planes: &[u8], side: usize) {
     out.put(&(planes.len() as u64));
     let area = side * side;
@@ -191,7 +159,6 @@ pub fn put_planes(out: &mut Writer, planes: &[u8], side: usize) {
     out.raw(&residuals);
 }
 
-/// Reads planes [`put_planes`] wrote, `side` texels a side.
 pub fn get_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u8]>, CodecError> {
     let count = input.count()?;
     let area = side * side;
@@ -210,9 +177,6 @@ pub fn get_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u8]>, Code
     Ok(planes.into_boxed_slice())
 }
 
-/// Writes `planes`, square planes of 16-bit values `side` texels a side, as
-/// [`put_planes`] writes bytes: each as its difference from what its
-/// neighbours predict, little-endian.
 pub(crate) fn put_wide_planes(out: &mut Writer, planes: &[u16], side: usize) {
     out.put(&(planes.len() as u64));
     let area = side * side;
@@ -226,7 +190,6 @@ pub(crate) fn put_wide_planes(out: &mut Writer, planes: &[u16], side: usize) {
     out.raw(&residuals);
 }
 
-/// Reads planes [`put_wide_planes`] wrote, `side` texels a side.
 pub(crate) fn get_wide_planes(
     input: &mut Reader<'_>,
     side: usize,
@@ -254,11 +217,6 @@ pub(crate) fn get_wide_planes(
     Ok(planes.into_boxed_slice())
 }
 
-/// Writes `values`, records of `stride` bytes one after another, a place of
-/// the records at a time: each record's byte there as its difference
-/// (wrapping) from the record's before, which records changing little from
-/// one to the next, as neighbours' do, leave mostly small for the cook's
-/// compression. `values` holds whole records.
 pub(crate) fn put_records(out: &mut Writer, values: &[u8], stride: usize) {
     out.put(&(values.len() as u64));
     let count = values.len().checked_div(stride).unwrap_or(0);
@@ -274,7 +232,6 @@ pub(crate) fn put_records(out: &mut Writer, values: &[u8], stride: usize) {
     out.raw(&residuals);
 }
 
-/// Reads records [`put_records`] wrote, `stride` bytes each.
 pub(crate) fn get_records(input: &mut Reader<'_>, stride: usize) -> Result<Box<[u8]>, CodecError> {
     let count = input.count()?;
     if stride == 0 || !count.is_multiple_of(stride) {
@@ -296,8 +253,6 @@ pub(crate) fn get_records(input: &mut Reader<'_>, stride: usize) -> Result<Box<[
     Ok(values.into_boxed_slice())
 }
 
-/// What value `at`'s written neighbours (rows of `side`) predict it,
-/// wrapping, as [`predict_byte`] predicts bytes.
 fn predict_wide(at: usize, side: usize, value: impl Fn(usize) -> u16) -> u16 {
     let (x, z) = (at % side, at / side);
     match (x > 0, z > 0) {
@@ -310,9 +265,6 @@ fn predict_wide(at: usize, side: usize, value: impl Fn(usize) -> u16) -> u16 {
     }
 }
 
-/// What byte `at`'s written neighbours (rows of `side`) predict it, wrapping:
-/// left plus up less their corner where all three are written, else left,
-/// else up, else zero.
 fn predict_byte(at: usize, side: usize, byte: impl Fn(usize) -> u8) -> u8 {
     let (x, z) = (at % side, at / side);
     match (x > 0, z > 0) {
@@ -325,13 +277,10 @@ fn predict_byte(at: usize, side: usize, byte: impl Fn(usize) -> u8) -> u8 {
     }
 }
 
-/// `value` at its nearest step of the height grid, as [`get_grid`] reads
-/// back what [`put_grid`] wrote of it: NaN stays NaN.
 pub(crate) fn on_grid(value: f32) -> f32 {
     steps(value).map_or(f32::NAN, |steps| steps as f32 / STEPS_PER_METER)
 }
 
-/// The nearest whole step of the height grid to `value`; none for NaN.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "a tile's heights are whole steps far within i64"
@@ -340,9 +289,6 @@ fn steps(value: f32) -> Option<i64> {
     (!value.is_nan()).then_some((value * STEPS_PER_METER).round() as i64)
 }
 
-/// What sample `at`'s written neighbours (rows of `stride`) predict it:
-/// left plus up less their corner where all three are numbers, else left,
-/// else up, else nothing.
 fn predict(at: usize, stride: usize, steps: impl Fn(usize) -> Option<i64>) -> i64 {
     let (x, z) = (at % stride, at / stride);
     let left = (x > 0).then(|| steps(at - 1)).flatten();
@@ -356,7 +302,6 @@ fn predict(at: usize, stride: usize, steps: impl Fn(usize) -> Option<i64>) -> i6
     }
 }
 
-/// Reads one value from all of `bytes`.
 pub fn decode<T: Codec>(bytes: &[u8]) -> Result<T, CodecError> {
     let mut reader = Reader::new(bytes);
     let value = reader.get()?;
@@ -364,14 +309,12 @@ pub fn decode<T: Codec>(bytes: &[u8]) -> Result<T, CodecError> {
     Ok(value)
 }
 
-/// Writes `value` alone.
 pub fn encode<T: Codec>(value: &T) -> Vec<u8> {
     let mut writer = Writer::new();
     writer.put(value);
     writer.into_bytes()
 }
 
-/// A value written as bytes and read back exactly.
 pub trait Codec: Sized {
     fn write(&self, out: &mut Writer);
     fn read(input: &mut Reader<'_>) -> Result<Self, CodecError>;
@@ -562,8 +505,6 @@ impl Codec for Vec3 {
     }
 }
 
-/// Implements [`Codec`] for a struct by its fields, in order: within the
-/// struct's own module, so private fields travel too.
 macro_rules! record {
     ($type:ident { $($field:ident),* $(,)? }) => {
         impl $crate::codec::Codec for $type {
@@ -582,10 +523,6 @@ macro_rules! record {
 
 pub(crate) use record;
 
-/// Implements [`Codec`] for an enum as a tag byte then its variant's field,
-/// from one table of each variant with its tag: writing matches every
-/// variant, so one without a tag does not compile, and reading refuses an
-/// unknown tag with `$invalid`.
 macro_rules! tagged {
     ($type:ident, $invalid:literal { $($tag:literal => $variant:ident $(($field:ident))?,)* }) => {
         impl $crate::codec::Codec for $type {

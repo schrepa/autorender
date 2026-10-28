@@ -1,20 +1,3 @@
-//! Handovers by the camera, which `cargo xtask gpu` refuses: no shader
-//! decides detail (a `smoothstep` or `step`, a `select` or `mix` weight, an
-//! `if`, a loop's bound or a comparison turned into a number) by where the
-//! camera stands or how it looks at a surface, but through the measures of
-//! the detail eye or in optics. Reads of the camera (its eye,
-//! `camera.position`; the detail eye, `camera.detail`, and a pixel's angle,
-//! `camera.options.y`, outside the measures; a camera matrix's eye or axes)
-//! and positions relative to the eye (named `relative`) are followed
-//! through expressions, locals, arguments, results and calls. What the
-//! measures give (`scene.wgsl`'s `detail_distance`, `detail_across` and
-//! `detail_span`) and an eye-relative position turned back into a world
-//! position (`eye_world`) depend on the camera no more; neither do the
-//! optics [`OPTICS`] lists, nor a line marked `// optics: <why>`. What a
-//! decision does with the sizes the measures give is the size check's
-//! (`fades`), which follows sizes on screen through the same flow
-//! ([`sweep`]).
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use naga::Span;
@@ -26,18 +9,10 @@ mod flow;
 pub(super) use flow::Watch;
 use flow::{Call, Decision, Flow, Read, Source};
 
-/// Where the shader files lie, from the repository's root.
 const SHADERS: &str = "crates/engine_render/src/";
 
-/// The one way from an eye-relative position back to a world position:
-/// what it gives depends on where the camera stands no more, as what the
-/// detail eye's measures (`flow::SIZES`) give does.
 const EYE_WORLD: &str = "eye_world";
 
-/// Optics: functions depending on where the camera stands or how it looks
-/// as light and sight do, each with what it is. They are not followed:
-/// what they give, and what they pass the functions they call, depends on
-/// nothing.
 const OPTICS: &[(&str, &str)] = &[
     ("air_light", "the air's light toward the eye"),
     ("air_sky", "the sky's air along a view"),
@@ -135,16 +110,11 @@ const OPTICS: &[(&str, &str)] = &[
     ),
 ];
 
-/// A line marked optics: its dependence on the camera is legitimate.
 const MARK: &str = "// optics:";
 
-/// The sources a report shows for each decision, and the calls for each.
 const SHOWN: usize = 4;
 const CALLS_SHOWN: usize = 3;
 
-/// A shader module's source as the files it concatenates (each file's
-/// start in the module, its path and its lines' starts within it) and the
-/// lines carrying a check's mark (their starts and ends in the module).
 struct Layout {
     module: &'static str,
     files: Vec<File>,
@@ -158,7 +128,6 @@ struct File {
 }
 
 impl Layout {
-    /// The file and line (from 1) holding the start of `span`.
     fn at(&self, span: Span) -> (String, usize) {
         let Some(range) = span.to_range() else {
             return (self.module.to_owned(), 0);
@@ -175,7 +144,6 @@ impl Layout {
         }
     }
 
-    /// Whether `span` touches a marked line.
     fn marked(&self, span: Span) -> bool {
         let Some(range) = span.to_range() else {
             return false;
@@ -190,17 +158,12 @@ impl Layout {
     }
 }
 
-/// Every shader module's layout with the lines carrying a mark, the marked
-/// lines by file and line, and those saying nothing after the mark.
 struct Layouts {
     layouts: Vec<Layout>,
     lines: BTreeSet<(&'static str, usize)>,
     unexplained: Vec<String>,
 }
 
-/// Every shader module's layout, from the files `engine_render::shaders`
-/// lists in the modules' order, with the lines carrying `mark`, of which
-/// those saying nothing after it, which should say `says`, are problems.
 fn layouts(mark: &str, says: &str) -> Layouts {
     let mut lines = BTreeSet::new();
     let mut unexplained = Vec::new();
@@ -252,23 +215,12 @@ fn layouts(mark: &str, says: &str) -> Layouts {
     }
 }
 
-/// Whether the function `name` is trusted to read the camera besides the
-/// measures the flow trusts (`flow::SIZES`): the way back to the world, or
-/// an optics.
 fn trusted(name: &str) -> bool {
     name == EYE_WORLD || OPTICS.iter().any(|&(optics, _)| optics == name)
 }
 
-/// A decision reading what a flow watches: its file, line, function and
-/// kind, and what feeds it, in every module holding it.
 type Found = BTreeMap<(String, usize, String, Decision), BTreeSet<String>>;
 
-/// What following a watch through every module found: each decision it
-/// reaches outside the trusted functions and the marked lines, as reports
-/// show it (its file, line, function and kind, and what feeds it); the
-/// problems besides (marks saying nothing, listed functions no shader
-/// declares, flows that never settled); how many decisions the followed
-/// functions make; and how many lines carry the mark.
 pub(super) struct Swept {
     pub found: Vec<String>,
     pub problems: Vec<String>,
@@ -276,10 +228,6 @@ pub(super) struct Swept {
     pub marks: usize,
 }
 
-/// Follows `watch` through every module of `modules`: the functions
-/// `trusted` names are not followed, each function `listed` (in `list`) is
-/// one some shader declares, and the lines carrying `mark`, which should
-/// say `says`, decide nothing.
 pub(super) fn sweep(
     modules: &[Checked],
     watch: Watch,
@@ -352,8 +300,6 @@ pub(super) fn sweep(
     }
 }
 
-/// Every module's handovers by the camera; returns how many decisions the
-/// shaders make.
 pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
     let swept = sweep(
         modules,
@@ -383,8 +329,6 @@ pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
     }
 }
 
-/// Adds the module's decisions by what its flow watches to `found`: each
-/// decision, where it lies, and what reads feed it.
 fn report(layout: &Layout, flow: &Flow<'_>, found: &mut Found) {
     for (&(sink, source), via) in &flow.findings {
         let site = &flow.sinks[sink];
@@ -396,7 +340,6 @@ fn report(layout: &Layout, flow: &Flow<'_>, found: &mut Found) {
     }
 }
 
-/// A read feeding a decision through the calls `via`.
 fn fed(layout: &Layout, source: &Source, via: &[Call]) -> String {
     let (path, line) = layout.at(source.span);
     let mut text = format!(
@@ -422,7 +365,6 @@ fn fed(layout: &Layout, source: &Source, via: &[Call]) -> String {
     text
 }
 
-/// What a flow watching `watch` follows, as reports name it.
 fn watched(watch: Watch) -> &'static str {
     match watch {
         Watch::Camera => "the camera",

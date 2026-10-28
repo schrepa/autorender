@@ -1,14 +1,5 @@
-//! What a machine can tell a profile beyond what every machine gives
-//! without setup: its operating system, CPU and GPU, and the deeper layers
-//! (system-wide CPU sampling, exact instruction counts, GPU per-shader-line
-//! costs and hardware counters) with whether their tools are installed and
-//! how to set them up. None of these run by default; profiles recommend
-//! them, the GPU vendor's tools and hardware counters highly.
-
 use serde_json::{Value, json};
 
-/// The machine: operating system, architecture, CPU, logical processors
-/// and the GPU the game drew on.
 pub(crate) fn machine(adapter: &engine::AdapterInfo) -> Value {
     json!({
         "os": std::env::consts::OS,
@@ -26,7 +17,6 @@ pub(crate) fn machine(adapter: &engine::AdapterInfo) -> Value {
     })
 }
 
-/// The GPU's vendor, by its PCI vendor ID or name, as every host names it.
 fn vendor(adapter: &engine::AdapterInfo) -> &'static str {
     match engine::host::vendor(adapter) {
         "" => "other",
@@ -64,8 +54,6 @@ fn perf_event_paranoid() -> Option<i32> {
         .ok()
 }
 
-/// A program found on the path, or at one of `paths` (Windows install
-/// folders, where `*` matches a version folder).
 pub(crate) fn installed(program: &str, paths: &[&str]) -> Option<String> {
     let executable = if cfg!(windows) {
         format!("{program}.exe")
@@ -85,7 +73,6 @@ pub(crate) fn installed(program: &str, paths: &[&str]) -> Option<String> {
             let file = std::path::Path::new(pattern);
             return file.is_file().then(|| file.display().to_string());
         };
-        // The folder holding the version folders, and their names' prefix.
         let split = head.rfind(['/', '\\'])?;
         let (folder, prefix) = (&head[..split], &head[split + 1..]);
         let mut versions: Vec<_> = std::fs::read_dir(folder)
@@ -100,8 +87,6 @@ pub(crate) fn installed(program: &str, paths: &[&str]) -> Option<String> {
     })
 }
 
-/// One recommended layer: what it adds, the tool, whether it is installed
-/// here, and how to set it up.
 fn layer(what: &str, tool: &str, found: Option<String>, setup: &str, adds: &str) -> Value {
     json!({
         "layer": what,
@@ -113,16 +98,11 @@ fn layer(what: &str, tool: &str, found: Option<String>, setup: &str, adds: &str)
     })
 }
 
-/// `layer`, highly recommended: what this GPU's own counters and tools
-/// tell.
 fn highly(mut layer: Value) -> Value {
     layer["priority"] = "highly recommended".into();
     layer
 }
 
-/// The deeper layers this machine could add, beyond the default profile's,
-/// each with its tool and setup; the ones its GPU and operating system
-/// support.
 pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -> Vec<Value> {
     let mut layers = Vec::new();
     let os = std::env::consts::OS;
@@ -170,7 +150,6 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
         "run a short offscreen capture under the tool; 20 to 50 times slower, so only a few frames",
         "every instruction executed and every cache miss, deterministic",
     ));
-    // Vulkan's performance queries: Intel's drivers, and Mesa's on Linux.
     let counted = match vendor(adapter) {
         "intel" => os == "windows" || os == "linux",
         "amd" | "qualcomm" => os == "linux",

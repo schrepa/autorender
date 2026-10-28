@@ -1,9 +1,3 @@
-//! The size a view draws at, on every host: a resolution budget that keeps
-//! fill cost independent of how large and dense the display is, the user's
-//! scale of it, and dynamic resolution's, which keeps frames within a GPU
-//! time budget. Hosts hand the engine the display's whole size; frames draw
-//! at this size inside it and upscale to it.
-
 use engine_core::DynamicResolution;
 
 use super::policy::{
@@ -11,12 +5,6 @@ use super::policy::{
     DYNAMIC_STEP, DYNAMIC_UNDER, MAX_PIXEL_RATIO, MAX_VIEW_HEIGHT, MAX_VIEW_WIDTH,
 };
 
-/// The physical size a view `width` × `height` logical pixels across draws
-/// at, on a display of `pixel_ratio` physical pixels per logical one, at
-/// the user's resolution `scale`: [`MAX_PIXEL_RATIO`] physical pixels per
-/// logical one at most, times `scale`, and no more than [`MAX_VIEW_WIDTH`]
-/// × [`MAX_VIEW_HEIGHT`], at the view's aspect. `None` for a view with no
-/// area; an unknown ratio or scale counts as 1.
 pub fn view_size(width: f64, height: f64, pixel_ratio: f64, scale: f64) -> Option<(u32, u32)> {
     if !(width > 0.0 && height > 0.0 && width.is_finite() && height.is_finite()) {
         return None;
@@ -28,7 +16,6 @@ pub fn view_size(width: f64, height: f64, pixel_ratio: f64, scale: f64) -> Optio
     Some((physical(width), physical(height)))
 }
 
-/// `value`, where it is a finite positive number; 1 otherwise.
 fn known(value: f64) -> f64 {
     if value.is_finite() && value > 0.0 {
         value
@@ -37,11 +24,6 @@ fn known(value: f64) -> f64 {
     }
 }
 
-/// The size display frames draw at on a display `width` × `height` physical
-/// pixels of `pixel_ratio` physical pixels per logical one: the view's size
-/// by the resolution policy ([`view_size`]) at the user's resolution
-/// `scale`, within the display, times dynamic resolution's `dynamic` scale;
-/// a pixel at least each way. `None` for a display with no area.
 pub fn render_size(
     (width, height): (u32, u32),
     pixel_ratio: f64,
@@ -65,11 +47,6 @@ pub fn render_size(
     Some((scaled(wide, width), scaled(tall, height)))
 }
 
-/// Dynamic resolution's scale of the size frames draw at: lowered at once
-/// toward what keeps frames within their budget after [`DYNAMIC_LOWER_FRAMES`]
-/// frames in a row over it, raised a [`DYNAMIC_STEP`] after frames in a row
-/// under it, held between; on the step's multiples within the settings'
-/// bounds.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DynamicScale {
     scale: f64,
@@ -88,7 +65,6 @@ impl Default for DynamicScale {
 }
 
 impl DynamicScale {
-    /// The scale frames draw at under `settings`: 1 while they are off.
     pub(crate) fn scale(&self, settings: &DynamicResolution) -> f64 {
         if settings.enabled {
             self.scale
@@ -98,17 +74,10 @@ impl DynamicScale {
         }
     }
 
-    /// Starts over at the most scale with no frames counted: after a pause,
-    /// or with dynamic resolution off.
     pub(crate) fn reset(&mut self) {
         *self = Self::default();
     }
 
-    /// Counts a frame that took `ms` of its `budget` milliseconds under
-    /// `settings`: its GPU work where the device `timed` it, else the time
-    /// since the frame before, which cannot tell how far under the budget a
-    /// frame waiting for the display ran, so the scale rises only after
-    /// [`DYNAMIC_PROBE_FRAMES`] frames within it.
     pub(crate) fn frame(
         &mut self,
         settings: &DynamicResolution,
@@ -127,7 +96,6 @@ impl DynamicScale {
             self.over += 1;
             self.under = 0;
             if self.over >= DYNAMIC_LOWER_FRAMES {
-                // A frame's GPU work goes with its pixels, the scale's square.
                 let aimed = scale * (budget * DYNAMIC_AIM / ms).sqrt();
                 let stepped =
                     ((aimed / DYNAMIC_STEP).floor() * DYNAMIC_STEP).min(scale - DYNAMIC_STEP);

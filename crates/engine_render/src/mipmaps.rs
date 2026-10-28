@@ -1,16 +1,8 @@
-//! Mip chains of material textures, generated on the GPU when a texture
-//! becomes resident: one small render pass per level, each averaging the
-//! level above. Uploads stay the base level's texels; the chain adds at most a
-//! third of them in GPU memory and costs no CPU work beyond command encoding.
-//! Color textures average in linear light through their sRGB format; data
-//! textures average their stored values.
-
 use crate::bindings::MIPMAPS;
 use crate::gpu_data::MIPMAP_SHADER;
 use crate::shaders::entry::mipmaps;
 
 pub(crate) struct MipGenerator {
-    // sRGB color and linear data targets.
     pipelines: [wgpu::RenderPipeline; 2],
     layout: crate::pipelines::GroupLayout,
     sampler: wgpu::Sampler,
@@ -62,9 +54,6 @@ impl MipGenerator {
         }
     }
 
-    /// Records passes that fill every level of `texture` after the first from
-    /// the one above; returns how many levels it fills. Record after the
-    /// queue write of level 0 and submit before sampling the texture.
     pub(crate) fn record(
         &self,
         device: &wgpu::Device,
@@ -74,8 +63,6 @@ impl MipGenerator {
         self.record_views(device, encoder, texture, None)
     }
 
-    /// [`Self::record`] for layer `layer` of an array texture: terrain
-    /// materials', after their first level is written.
     pub(crate) fn record_layer(
         &self,
         device: &wgpu::Device,
@@ -124,7 +111,6 @@ impl MipGenerator {
                     view: &pair[1],
                     depth_slice: None,
                     resolve_target: None,
-                    // The triangle covers every texel of the level.
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,

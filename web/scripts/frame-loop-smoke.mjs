@@ -1,10 +1,3 @@
-/**
- * The page's frames run through the engine's frame loop: a session that
- * starts as players' do prepares behind a hidden canvas, then plays; a
- * canvas without area goes idle, so no frame runs and its ticks stand
- * still, and frames run again from where they stopped once it has area,
- * without catching up the time it spent idle.
- */
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
@@ -12,7 +5,6 @@ import { commander, developmentReady, devUrl, launch, waitFrames } from "./harne
 
 const { browser, page, errors } = await launch({ width: 800, height: 600 });
 try {
-  // ?prepare=1: the development session starts as an ordinary one.
   await page.goto(String(devUrl("stress.html", { preset: "visual", prepare: "1" })), { waitUntil: "domcontentloaded" });
   await developmentReady(page, { timeout: 120_000 });
   const command = commander(page, { deadline: 120_000 });
@@ -20,7 +12,6 @@ try {
   assert.equal(await page.locator("#scene").evaluate(canvas => canvas.style.visibility), "", "play shows the canvas preparation hid");
   await waitFrames(command, 10);
 
-  // A canvas without area: no frame runs and ticks stand still.
   const resize = (/** @type {string} */ size) => page.locator("#scene").evaluate((canvas, size) => {
     canvas.style.width = size; canvas.style.height = size;
   }, size);
@@ -31,8 +22,6 @@ try {
   const still = (await command("status")).observation;
   assert.deepEqual([still.frame, still.tick], [idle.frame, idle.tick], `an idle view runs no frames: ${JSON.stringify({ idle, still })}`);
 
-  // Area again: frames run on, without catching up the idle time: the
-  // ticks they ran fit the time since, not the idle half second too.
   const tickSeconds = (await command("status")).result.fixed_delta_seconds;
   const resumed = Date.now();
   await resize("");

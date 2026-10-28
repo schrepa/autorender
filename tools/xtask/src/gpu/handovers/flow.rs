@@ -1,15 +1,3 @@
-//! How what a flow watches ([`Watch`]) runs through a shader module: which
-//! values depend on where the camera stands or how it looks, or on a size
-//! on screen, and which decisions they reach. Each function is followed
-//! once, callees before callers, into a summary of what its result, the
-//! variables its pointers reach and the module's private variables depend
-//! on in terms of its arguments' parts, and of the decisions its arguments
-//! feed; a call applies its callee's summary to what it passes. A local or
-//! variable holds every value stored into it, in any order, so a function
-//! is followed until nothing it holds grows. Stages are followed apart:
-//! what a vertex stage writes reaches no fragment stage, but positions
-//! named `relative`, which are relative to the eye.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
@@ -22,56 +10,30 @@ use naga::{
 mod evaluate;
 mod walk;
 
-/// The member name of eye-relative positions, which every shader here gives
-/// them, between stages and within them.
 const RELATIVE: &str = "relative";
-/// Struct members nested deeper than this are followed as one.
 const DEPTH: usize = 8;
-/// Rounds a function is followed before it counts as unsettled, and passes
-/// over a module while its private variables grow.
 const ROUNDS: usize = 256;
 const PASSES: usize = 16;
 
-/// The detail eye's measures (`scene.wgsl`'s): what each gives depends on
-/// where the camera stands no more, and is a distance or a size on screen
-/// seen from the detail eye.
 const SIZES: [&str; 3] = ["detail_distance", "detail_across", "detail_span"];
 
-/// What a flow follows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::gpu) enum Watch {
-    /// Where the camera stands and how it looks: its eye, the detail eye
-    /// and a pixel's angle read outside the measures, a camera matrix's eye
-    /// or axes, and positions relative to the eye.
     Camera,
-    /// Sizes on screen: what the detail eye's measures ([`SIZES`]) give, and
-    /// a pixel's derivatives. A direction (`normalize`'s) holds none, and
-    /// what a texture gives is its texels as filtering averages them,
-    /// wherever a size moves the read; `saturate` decides, as the ramp a
-    /// fade takes.
     Sizes,
 }
 
-/// What a value read from the camera, or a size on screen, is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Read {
-    /// The camera's eye, `camera.position.xyz`.
     Eye,
-    /// The detail eye read outside the measures, `camera.detail.xyz`.
     Detail,
-    /// A pixel's angle read outside the measures, `camera.options.y`.
     PixelAngle,
-    /// A part of a camera matrix: the view's eye or an axis.
     ViewAxis,
-    /// A position relative to the eye: a value named `relative`.
     Relative,
-    /// What one of the detail eye's measures ([`SIZES`]) gives.
     Measure,
-    /// A pixel's derivatives: `dpdx`, `dpdy` or `fwidth`.
     Derivative,
 }
 
-/// A decision a value reaches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Decision {
     Smoothstep,
@@ -83,36 +45,27 @@ pub(super) enum Decision {
     BreakIf,
     Switch,
     Number,
-    /// `saturate`, a decision where sizes on screen are watched.
     Saturate,
 }
 
-/// Where a function reads what the flow watches: what it reads, and the
-/// earliest place it does.
 pub(super) struct Source {
     pub read: Read,
     pub function: String,
     pub span: Span,
 }
 
-/// A decision a function makes by what the flow watches.
 pub(super) struct Sink {
     pub decision: Decision,
     pub function: String,
     pub span: Span,
 }
 
-/// A call a dependence on what the flow watches passed through: the
-/// caller, and where it calls.
 #[derive(Clone, Debug)]
 pub(super) struct Call {
     pub function: String,
     pub span: Span,
 }
 
-/// Where a dependence comes from: a read of the camera (an index into
-/// [`Flow::sources`]) or a part of an argument of the function followed (an
-/// index into its parts).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Origin {
     Source(usize),
@@ -121,25 +74,17 @@ enum Origin {
 
 type Taint = BTreeSet<Origin>;
 
-/// Adds `more` to `taint`; whether it grew.
 fn extend(taint: &mut Taint, more: &Taint) -> bool {
     let before = taint.len();
     taint.extend(more.iter().copied());
     taint.len() != before
 }
 
-/// What a value depends on, part by part where its type has parts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Value {
-    /// One dependence for all of it: scalars, arrays, and values whose
-    /// parts are not told apart.
     Whole(Taint),
-    /// A vector's lanes.
     Lanes(Vec<Taint>),
-    /// A struct's members.
     Members(Vec<Value>),
-    /// A camera matrix: nothing while it transforms whole, its dependence
-    /// where a part of it is read.
     Matrix(Taint),
 }
 
@@ -148,8 +93,6 @@ impl Value {
         Value::Whole(Taint::new())
     }
 
-    /// Everything it depends on, all its parts together; a camera matrix
-    /// used whole as a transform depends on nothing.
     fn collapse(&self) -> Taint {
         let mut all = Taint::new();
         self.gather(&mut all);
@@ -173,8 +116,6 @@ impl Value {
         }
     }
 
-    /// What lane or element `index` depends on: a vector's lane, a camera
-    /// matrix's part, or the whole of anything else.
     fn lane(&self, index: usize) -> Taint {
         match self {
             Value::Lanes(lanes) => lanes.get(index).cloned().unwrap_or_else(|| self.collapse()),
@@ -183,7 +124,6 @@ impl Value {
         }
     }
 
-    /// Its part at `path` of struct members and vector lanes.
     fn at(&self, path: &[u32]) -> Value {
         let Some((&step, rest)) = path.split_first() else {
             return self.clone();
@@ -196,7 +136,6 @@ impl Value {
         }
     }
 
-    /// Its part the steps of a place reach.
     fn at_steps(&self, steps: &[Step]) -> Value {
         let Some((&step, rest)) = steps.split_first() else {
             return self.clone();
@@ -214,7 +153,6 @@ impl Value {
         }
     }
 
-    /// Joins `other` into it; whether it changed.
     fn join(&mut self, other: &Value) -> bool {
         match (&mut *self, other) {
             (Value::Whole(mine), Value::Whole(theirs))
@@ -250,7 +188,6 @@ impl Value {
                 grew
             }
             (Value::Whole(mine), Value::Lanes(_) | Value::Members(_)) => {
-                // It takes the other's shape, what it held in every part.
                 let mut shaped = other.clone();
                 shaped.join(&Value::Whole(mine.clone()));
                 let changed = shaped != *self;
@@ -278,7 +215,6 @@ impl Value {
         }
     }
 
-    /// Joins `other` into its part at `steps`; whether it changed.
     fn join_at(&mut self, steps: &[Step], other: &Value) -> bool {
         let Some((&step, rest)) = steps.split_first() else {
             return self.join(other);
@@ -296,7 +232,6 @@ impl Value {
         }
     }
 
-    /// It with each part's dependence mapped by `map`.
     fn map(&self, map: &mut impl FnMut(&Taint) -> Taint) -> Value {
         match self {
             Value::Whole(taint) => Value::Whole(map(taint)),
@@ -308,20 +243,15 @@ impl Value {
         }
     }
 
-    /// It with `more` added to every part.
     fn with(&self, more: &Taint) -> Value {
         self.map(&mut |taint| taint.union(more).copied().collect())
     }
 
-    /// It depending on nothing, its shape kept.
     fn cleared(&self) -> Value {
         self.map(&mut |_| Taint::new())
     }
 }
 
-/// A value of type `ty` whose parts (struct members and vector lanes, at
-/// `path`) take what `leaf` says they depend on; a pointer's, what it points
-/// at.
 fn shaped(
     module: &Module,
     ty: Handle<Type>,
@@ -356,12 +286,10 @@ fn shaped(
     }
 }
 
-/// A value of type `ty` depending on nothing.
 fn clean(module: &Module, ty: Handle<Type>) -> Value {
     shaped(module, ty, &mut Vec::new(), &mut |_| Taint::new())
 }
 
-/// The lanes of a vector type; none for anything else.
 fn lanes_of(inner: &TypeInner) -> Option<usize> {
     match inner {
         TypeInner::Vector { size, .. } => Some(usize::from(u8::from(*size))),
@@ -369,7 +297,6 @@ fn lanes_of(inner: &TypeInner) -> Option<usize> {
     }
 }
 
-/// The type of expression `handle` of the function `info` describes.
 fn type_of<'t>(
     info: &'t FunctionInfo,
     module: &'t Module,
@@ -378,18 +305,12 @@ fn type_of<'t>(
     info[handle].ty.inner_with(&module.types)
 }
 
-/// A step from a place into a part of it: a member, lane, column or
-/// element, or one chosen as the shader runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Step {
     Index(u32),
     Any,
 }
 
-/// What a pointer points at: a local, a module variable or what a pointer
-/// argument points at, and the steps into it; `relative` where a step names
-/// a member `relative`, and what the indices chosen as the shader runs
-/// depend on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Place {
     root: Root,
@@ -427,14 +348,12 @@ impl Place {
     }
 }
 
-/// What an expression stands for: a value, or a place for pointers.
 #[derive(Clone, Debug)]
 enum Slot {
     Value(Value),
     Place(Place),
 }
 
-/// What the camera's members are.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Member {
     Eye,
@@ -444,19 +363,12 @@ enum Member {
     Other,
 }
 
-/// A function or an entry point of the module.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Of {
     Function(usize),
     Entry(usize),
 }
 
-/// What calling a function does, in terms of its arguments' parts
-/// (`parts`, which `Origin::Part` names: an argument and a path into it,
-/// into what it points at for pointers): what its result depends on, what
-/// it leaves where its pointer arguments point, what it stores in the
-/// module's private variables, and the decisions its arguments reach, with
-/// the calls they came in through.
 struct Summary {
     parts: Vec<(usize, Vec<u32>)>,
     result: Value,
@@ -466,9 +378,6 @@ struct Summary {
 }
 
 impl Summary {
-    /// A function trusted to depend on what the flow watches only as it
-    /// should (the camera's measures and optics, the filters of sizes on
-    /// screen): what it gives depends on nothing.
     fn trusted(arguments: usize) -> Summary {
         Summary {
             parts: Vec::new(),
@@ -480,10 +389,6 @@ impl Summary {
     }
 }
 
-/// A function being followed: what its arguments, expressions, locals and
-/// pointer arguments' targets hold so far, which expressions are constant
-/// and which lie on marked lines, what its calls returned, and what it
-/// returns, stores in private variables and feeds into decisions.
 struct Frame<'f> {
     of: Of,
     name: String,
@@ -522,10 +427,6 @@ impl Frame<'_> {
     }
 }
 
-/// A shader module followed: where its functions read what the flow
-/// watches, the decisions those reads reach (by sink and source, with the
-/// calls the dependence came in through, innermost first), how many
-/// decisions its functions make, and those whose flow never settled.
 pub(super) struct Flow<'a> {
     module: &'a Module,
     watch: Watch,
@@ -543,12 +444,6 @@ pub(super) struct Flow<'a> {
     pub unsettled: Vec<String>,
 }
 
-/// Follows what `watch` names through every function and entry point of
-/// `module`, which `info` describes. Functions `trusted` names are not
-/// followed and give values depending on nothing, nor are the detail eye's
-/// measures ([`SIZES`]), whose calls give sizes on screen where sizes are
-/// watched; expressions on spans `marked` (the lines the check's mark
-/// explains) depend on nothing too, and decisions there are not counted.
 pub(super) fn follow<'a>(
     module: &'a Module,
     info: &'a ModuleInfo,
@@ -575,8 +470,6 @@ pub(super) fn follow<'a>(
         findings: BTreeMap::new(),
         unsettled: Vec::new(),
     };
-    // Functions call only those before them; what a later function stores in
-    // a private variable reaches earlier ones on the next pass.
     for _ in 0..PASSES {
         let before = flow.globals.clone();
         for (handle, function) in module.functions.iter() {
@@ -604,7 +497,6 @@ pub(super) fn follow<'a>(
     flow
 }
 
-/// The camera's uniform (`scene.wgsl`'s `camera`), and what its members are.
 fn camera(module: &Module) -> Option<(Handle<GlobalVariable>, Vec<Member>)> {
     let (handle, global) = module.global_variables.iter().find(|(_, global)| {
         global.name.as_deref() == Some("camera") && global.space == AddressSpace::Uniform
@@ -628,16 +520,10 @@ fn camera(module: &Module) -> Option<(Handle<GlobalVariable>, Vec<Member>)> {
 }
 
 impl Flow<'_> {
-    /// How many decisions the module's followed functions make.
     pub(super) fn decisions(&self) -> usize {
         self.decided.len()
     }
 
-    /// Follows `function` until what it holds settles, then gathers the
-    /// decisions it makes, into its summary. Entry points read their inputs
-    /// named `relative` as eye-relative where the camera is watched, and the
-    /// rest as depending on nothing; other functions read their arguments'
-    /// parts.
     fn function(
         &mut self,
         of: Of,
@@ -750,12 +636,9 @@ impl Flow<'_> {
         }
     }
 
-    /// A read of the camera of kind `read` in the function `of`, named
-    /// `name`, at `span`: what it gives depends on that read.
     fn source(&mut self, read: Read, of: Of, name: &str, span: Span) -> Taint {
         let start = |span: Span| span.to_range().map_or(usize::MAX, |range| range.start);
         let id = if let Some(&id) = self.source_ids.get(&(read, of)) {
-            // Reports name the earliest place the function reads it.
             if start(span) < start(self.sources[id].span) {
                 self.sources[id].span = span;
             }
@@ -773,7 +656,6 @@ impl Flow<'_> {
     }
 }
 
-/// Where argument `index` of `function` is first read.
 fn argument_span(function: &Function, index: usize) -> Span {
     function
         .expressions
@@ -789,8 +671,6 @@ fn argument_span(function: &Function, index: usize) -> Span {
         })
 }
 
-/// Whether an `if` with branches `accept` and `reject` is a loop's
-/// condition: one branch empty, the other leaving the loop.
 fn bounds_loop(accept: &Block, reject: &Block) -> bool {
     let accept: &[Statement] = accept;
     let reject: &[Statement] = reject;

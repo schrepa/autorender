@@ -1,18 +1,3 @@
-/**
- * Worker jobs: the Stress Lab's highlands load with their
- * bakes and tiles as records, and the portals of the walk graph their
- * hiker walks, read from the cook's packs the page serves where they hold
- * them and made on the page's job workers where not, every job's output
- * the engine's own.
- * Heights, normals, holes, the tile levels answering and what the bakes and
- * roads give at points across the view match a session without workers or
- * records (?workers=off&jobcache=off), which runs its jobs in place, bit
- * for bit, as do the
- * tiles, patches, water and objects placed on them an exact frame of the
- * same view draws. Screenshots of both views are kept to compare by eye:
- * the sky, wind and water move with time, which the sessions spend
- * differently.
- */
 // @ts-check
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
@@ -21,27 +6,21 @@ import { artifacts, commander, devUrl, developmentReady, launch } from "./harnes
 
 const output = await artifacts("jobs-smoke");
 const { browser, page, errors } = await launch({ width: 960, height: 540, timeout: 600_000 });
-// What an exact frame draws of the terrain, which time leaves alone.
 const drawn = ({ terrain, water }) => ({
   tiles: terrain.tiles, leaves: terrain.leaves, triangles: terrain.triangles, shadow_patches: terrain.shadow_patches,
   placed_objects: terrain.placed_objects, placed_far_objects: terrain.placed_far_objects, water_patches: water.patches,
 });
 const command = commander(page, { deadline: 600_000 });
 const view = { position: [-120, 0, 260], target: [380, 0, -340], vertical_fov_radians: 1.0, near: 0.2, far: 40000 };
-// Points across the view, world x and z.
 const points = [];
 for (let row = 0; row < 16; row++) {
   for (let column = 0; column < 16; column++) points.push([-160 + column * 40, 300 - row * 45]);
 }
 
-/** Inspects resource `component`. */
 async function inspect(component) {
   return (await command("inspect", { component })).result.value;
 }
 
-/** Renders until every wanted tile has been resident for a few frames,
- * no job runs and the frames draw the same: job outputs, placement's
- * included, arrive between commands, later while the job cache is cold. */
 async function settle(label) {
   let terrains;
   let quiet = 0;
@@ -57,21 +36,16 @@ async function settle(label) {
     if (!settled) await delay(50);
   }
   assert.ok(quiet >= 3, `${label}: the terrain settles: ${JSON.stringify(terrains)}`);
-  // However its tiles arrived, each holds the objects its level places.
   assert.equal(terrains.failed_jobs, 0, `${label}: no terrain job failed: ${terrains.latest_job_failure}`);
   return terrains;
 }
 
-/** One session of the highlands with `query`: what it reports and samples;
- * with `walk`, once the hiker's first walk was found. */
 async function session(name, query, walk) {
   const opened = Date.now();
   await page.goto(String(devUrl("stress.html", { preset: "highlands", prepare: "1", ...query })), { waitUntil: "domcontentloaded" });
   await developmentReady(page, { timeout: 600_000 });
   await page.waitForFunction(() => document.querySelector("canvas")?.style.visibility !== "hidden", null, { timeout: 600_000, polling: 100 });
   const shown = (Date.now() - opened) / 1000;
-  // The hiker's first walk is searched over ticks while the view loads,
-  // from its tiles' portals and records, which workers make.
   let agents;
   for (let attempt = 0; walk && attempt < 400; attempt++) {
     agents = await inspect("NavAgents");
@@ -88,7 +62,6 @@ async function session(name, query, walk) {
   const camera = { ...view, position: [view.position[0], ground.height + 30, view.position[2]], target: [view.target[0], ground.height - 60, view.target[2]] };
   await command("camera", camera);
   const terrains = await settle(name);
-  // Replies hold at most 64 KiB: sixty-four points at a time.
   const samples = [];
   for (let first = 0; first < points.length; first += 64) {
     samples.push(...(await command("terrain_height", { points: points.slice(first, first + 64) })).result.samples);
@@ -99,9 +72,6 @@ async function session(name, query, walk) {
   return { shown, terrains, samples, drawn: drawn(rendering), jobs, agents };
 }
 
-/** Waits until the job cache's index in the origin's file system lists
- * exactly the outputs the cache's folder holds: the page writes it a little
- * after its last change, and the next session keeps only what it lists. */
 async function cacheIndexWritten() {
   for (let attempt = 0; ; attempt++) {
     const { listed, held } = await page.evaluate(async () => {
@@ -129,7 +99,6 @@ try {
   assert.ok(workers.jobs.completed > 0 && workers.jobs.failed === 0, `the bakes and tiles ran there: ${JSON.stringify(workers.jobs)}`);
   assert.ok(workers.jobs.shares > 0 && workers.jobs.shared_bytes > 0, `the terrain's layers are shared with them: ${JSON.stringify(workers.jobs)}`);
   assert.equal(workers.jobs.in_place, 0, `with workers no job runs in place: ${JSON.stringify(workers.jobs)}`);
-  // Without workers or records, every job runs in place.
   const page_ = await session("page", { workers: "off", jobcache: "off" }, false);
   assert.equal(page_.jobs.workers, 0, `?workers=off runs none: ${JSON.stringify(page_.jobs)}`);
   assert.ok(page_.jobs.in_place > 0 && page_.jobs.failed === 0, `without workers the page runs its jobs in place: ${JSON.stringify(page_.jobs)}`);
@@ -139,17 +108,11 @@ try {
   assert.deepEqual(workers.samples, page_.samples, "heights, normals, holes, levels, bakes and roads match bit for bit");
   assert.ok(workers.drawn.placed_objects > 0, `objects stand on the tiles: ${JSON.stringify(workers.drawn)}`);
   assert.deepEqual(workers.drawn, page_.drawn, "an exact frame draws the same tiles, water and placed objects");
-  // The first session kept its jobs' outputs; a session
-  // verifying them takes them from the cache, runs every job anyway and
-  // finds the same bytes, and samples and draws as the first did.
   const kept = await session("kept", { jobcache: "verify" }, true);
   assert.ok(kept.jobs.cache_hits > 0, `outputs come from the cache: ${JSON.stringify(kept.jobs)}`);
   assert.equal(kept.jobs.cache_mismatches, 0, `kept outputs match fresh runs: ${JSON.stringify(kept.jobs)}`);
   assert.deepEqual(kept.samples, workers.samples, "kept outputs sample as fresh ones");
   assert.deepEqual(kept.drawn, workers.drawn, "kept outputs draw as fresh ones");
-  // A workload switched while the highlands load replaces the engine with
-  // jobs on the workers: the scheduler drops the earlier engine's, and holds
-  // none once the new one's ended.
   await page.goto(String(devUrl("stress.html", { preset: "highlands", prepare: "1", jobcache: "off" })), { waitUntil: "domcontentloaded" });
   await developmentReady(page, { timeout: 600_000 });
   let loading;
@@ -159,7 +122,6 @@ try {
     await delay(20);
   }
   assert.ok(loading.held > 0, `jobs are on the workers mid-load: ${JSON.stringify(loading)}`);
-  // Game controls run paused; the workers go on meanwhile.
   await command("pause");
   await command("game", { name: "workload", args: { preset: "visual" } });
   await command("resume");

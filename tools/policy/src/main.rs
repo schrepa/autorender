@@ -1,5 +1,3 @@
-//! Checks the repository's policy (tools/policy) and prints each problem.
-
 use std::process::ExitCode;
 
 fn main() -> ExitCode {

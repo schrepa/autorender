@@ -1,77 +1,43 @@
-//! What a frame wants of each terrain, decided without changing anything:
-//! from the view, the tile budget and the focus points, the tiles it loads
-//! in order (the urgent first) and those it keeps, collision's tiles, what
-//! is missing with its jobs' priorities and what waits, and the tiles
-//! places games name want in memory, in the order the terrain's
-//! documentation gives.
-
 use super::*;
 
-/// What a frame plans one terrain's tiles from.
 pub(super) struct PlanInput<'a> {
     pub(super) settings: &'a TerrainSettings,
     pub(super) pyramid: Pyramid,
-    /// Where the terrain lies.
     pub(super) origin: Vec3,
     pub(super) ranges: &'a LodRanges,
-    /// The eye and where it is headed, in the world.
     pub(super) eye: Vec3,
     pub(super) ahead: Vec3,
-    /// The view's horizontal direction and its planes.
     pub(super) forward: Vec2,
     pub(super) planes: &'a ViewPlanes,
-    /// The ground surroundings leave to the terrain they surround.
     pub(super) cutout: Option<(Vec2, Vec2)>,
-    /// Points collision's tiles load around (the eye first, then focus
-    /// entities), and places games name with their reach.
     pub(super) focus: &'a [Vec3],
     pub(super) places: &'a [(Vec3, f32)],
-    /// Whether the terrain collides, and a list collision's tiles fill
-    /// (the last frame's, to reuse).
     pub(super) collides: bool,
     pub(super) collision: Vec<TileKey>,
-    /// Tiles the frame's budget leaves the terrain.
     pub(super) remaining: usize,
-    /// The finest levels waiting at the eye's speed, and whether it has yet
-    /// to settle.
     pub(super) waiting: u32,
     pub(super) unsettled: bool,
-    /// Its tiles: the ground they hold, and which still load.
     pub(super) store: &'a TileStore,
 }
 
-/// What a frame wants of one terrain.
 pub(super) struct Plan {
-    /// The level-0 tiles collision keeps.
     pub(super) collision: Vec<TileKey>,
-    /// How many tiles the view wants, over the budget or not.
     pub(super) ordered: usize,
-    /// Every tile it loads, and every tile it keeps.
     pub(super) target: HashSet<TileKey>,
     pub(super) keep: HashSet<TileKey>,
-    /// What still loads, most important first, with its jobs' priorities,
-    /// and how many tiles wait for the eye to slow down.
     pub(super) missing: Vec<(TileKey, u32)>,
     pub(super) waiting: u32,
-    /// Tiles the view draws (within their level's range, or pinned) that it
-    /// loads and the store does not hold resident yet: coarser tiles' ground
-    /// stands in for theirs.
     pub(super) fallback: u32,
-    /// The tiles places games name want.
     pub(super) named: Vec<WantedTile>,
 }
 
-/// The tiles each reach of the view wants.
 struct Wanted {
-    /// The camera's within the loading reach, where it is headed and within
-    /// the keeping reach, and what places games name want.
     load: Vec<WantedTile>,
     headed: Vec<WantedTile>,
     held: Vec<WantedTile>,
     named: Vec<WantedTile>,
 }
 
-/// What a frame wants of the terrain `input` describes.
 pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
     let mut collision = std::mem::take(&mut input.collision);
     let (loading, under) = collision_tiles(&input, &mut collision);
@@ -85,11 +51,6 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
             .filter(move |tile| pick(tile))
             .map(|tile| tile.key)
     };
-    // What to load, most important first, each tile after its ancestors:
-    // the pinned levels; the tiles the view draws and shows, then those
-    // under focus entities, which jobs take up first; the tiles it draws
-    // out of sight, then collision's; those only shading what it shows;
-    // where the eye is headed; the rest.
     let mut order: Vec<TileKey> = Vec::with_capacity(wanted.load.len() + loading.len());
     let mut pushed: HashSet<TileKey> =
         HashSet::with_capacity_and_hasher(order.capacity(), Default::default());
@@ -108,8 +69,6 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
     {
         push_with_ancestors(pyramid, key, &mut order, &mut pushed);
     }
-    // Over a tile budget, the pinned levels and collision's tiles stay
-    // first, then the rest in order.
     let target: HashSet<TileKey> = if order.len() <= input.remaining {
         order.iter().copied().collect()
     } else {
@@ -125,7 +84,6 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
             .take(input.remaining)
             .collect()
     };
-    // What to keep: everything within a wider reach, unless over budget.
     let keep: HashSet<TileKey> = wanted
         .held
         .iter()
@@ -133,9 +91,6 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
         .chain(collision.iter().copied())
         .chain(target.iter().copied())
         .collect();
-    // While the eye moves fast, the finest levels' tiles wait, and until it
-    // settles those it does not show; the pinned levels, collision's tiles
-    // and those under focus entities, with their ancestors, never wait.
     let (waiting, unsettled) = (input.waiting, input.unsettled);
     let mut never = HashSet::default();
     let mut shown = HashSet::default();
@@ -159,9 +114,6 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
             && !never.contains(key)
             && (u32::from(key.level) < waiting || (unsettled && !shown.contains(key)))
     };
-    // What still loads, most important first; disabled terrains load
-    // nothing. Tiles under edits since they loaded regenerate in their turn
-    // and draw until they do.
     let store = input.store;
     let waiting_tiles = order
         .iter()
@@ -197,11 +149,6 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
     }
 }
 
-/// Collision's tiles around `input`'s focus points: those it keeps, in
-/// `collision`, then those it loads and the level-0 tiles under the
-/// points. They load within its radius of the camera and focus entities
-/// and stay, colliding, a quarter farther, as the camera's tiles do: focus
-/// moving to and fro across a tile's edge must not regenerate it each time.
 fn collision_tiles(
     input: &PlanInput<'_>,
     collision: &mut Vec<TileKey>,
@@ -225,9 +172,6 @@ fn collision_tiles(
     (loading, under)
 }
 
-/// What the view wants: the camera's tiles within their reach of the eye
-/// and where it is headed, what it keeps within a wider reach, and what
-/// places games name want; distances run to each tile's ground.
 fn wanted(input: &PlanInput<'_>) -> Wanted {
     let (pyramid, origin, store) = (&input.pyramid, input.origin, input.store);
     let ground = |key: TileKey| ground_bounds(store, pyramid, key);
@@ -260,7 +204,6 @@ fn wanted(input: &PlanInput<'_>) -> Wanted {
             want(input.ahead - origin, LOAD_REACH)
         },
         held: want(local_eye, KEEP_REACH),
-        // What places games name want, each frame.
         named: input
             .places
             .iter()
@@ -269,13 +212,6 @@ fn wanted(input: &PlanInput<'_>) -> Wanted {
     }
 }
 
-/// The lowest and highest ground tile `key` can hold,
-/// terrain-local, as distances to it take them: a resident tile's own,
-/// widened by how far its level measured from the next coarser, which
-/// stands in for it where it leaves; else its nearest resident ancestor's over
-/// its ground, widened by how far the levels between measured apart and by
-/// four of the ancestor's spacings, as finer levels add detail. `None`
-/// without either.
 fn ground_bounds(store: &TileStore, pyramid: &Pyramid, key: TileKey) -> Option<[f32; 2]> {
     let errors = store.errors();
     let error = |level: u8| errors.get(usize::from(level)).copied().unwrap_or(0.0);
@@ -320,12 +256,9 @@ fn ground_bounds(store: &TileStore, pyramid: &Pyramid, key: TileKey) -> Option<[
     None
 }
 
-/// The view's side planes and near plane, inward, in world space:
-/// which boxes show in it, however far away.
 pub(super) struct ViewPlanes(Option<[Vec4; 5]>);
 
 impl ViewPlanes {
-    /// `camera`'s view from `eye` (its own, unless frozen) on `viewport`.
     pub(super) fn new(camera: &Camera, eye: Vec3, viewport: Viewport) -> Self {
         let aspect = viewport.width as f32 / viewport.height.max(1) as f32;
         let from = Camera {
@@ -339,7 +272,6 @@ impl ViewPlanes {
             rows.w_axis - rows.x_axis,
             rows.w_axis + rows.y_axis,
             rows.w_axis - rows.y_axis,
-            // Reversed depth: the near plane is depth 1.
             rows.w_axis - rows.z_axis,
         ];
         Self(
@@ -350,8 +282,6 @@ impl ViewPlanes {
         )
     }
 
-    /// Whether any of the box from `low` to `high` lies inside every plane;
-    /// always without planes.
     pub(super) fn sees(&self, low: Vec3, high: Vec3) -> bool {
         let Some(planes) = &self.0 else {
             return true;
@@ -367,8 +297,6 @@ impl ViewPlanes {
     }
 }
 
-/// Appends the level-0 tiles within `radius` of terrain-local `point` to
-/// `out`.
 fn collision_keys(pyramid: &Pyramid, point: Vec3, radius: f32, out: &mut Vec<TileKey>) {
     let size = pyramid.tile_size(0);
     let [tiles_x, tiles_z] = pyramid.tiles(0);
@@ -392,10 +320,6 @@ fn collision_keys(pyramid: &Pyramid, point: Vec3, radius: f32, out: &mut Vec<Til
     }
 }
 
-/// Pushes `key` onto `order` after those of its ancestors not yet there,
-/// coarsest first: a tile draws only within its parent, so a
-/// finer one loaded first would wait unused, while what stands on the
-/// ground (blades, placed objects) already followed its finer heights.
 pub(super) fn push_with_ancestors(
     pyramid: &engine_terrain::Pyramid,
     key: TileKey,

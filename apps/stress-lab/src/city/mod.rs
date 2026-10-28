@@ -1,18 +1,3 @@
-//! The wild city: a deterministic procedural city of diverse low-poly shapes,
-//! built through the public SDK from the same configuration as the tower
-//! field.
-//!
-//! Static renderables fill 20-unit blocks between 4-unit streets outward from
-//! the center: a skyscraper core, midtown, low-rise residential streets and
-//! industrial outskirts, with parks, plazas, construction sites, stadiums, a
-//! river with bridges, an elevated rail ring and a landmark tower. Moving
-//! renderables are traffic (cars, buses, trains, boats), drones and
-//! helicopters, crane jibs with their loads, Ferris wheels, rooftop beacons
-//! and façade elevators. With `hierarchy`, each block's parts are children of
-//! a transform-only block node, and moving assemblies hang from moving pivot
-//! nodes; without it, every part is a root whose motion reproduces the same
-//! poses. Both layouts display the same city.
-
 mod shapes;
 mod traffic;
 mod world;
@@ -31,7 +16,6 @@ use traffic::traffic;
 pub(crate) use world::CityWorld;
 
 const ROAD_TOP: f32 = 0.15;
-/// Static renderables of an average block, for sizing districts.
 const PER_BLOCK: f32 = 80.0;
 const RAIL_HEIGHT: f32 = 9.5;
 const WATER_TOP: f32 = -0.2;
@@ -96,7 +80,6 @@ const ASPHALT: [f32; 3] = [0.6, 0.6, 0.66];
 const CRANE: [f32; 3] = [1.0, 0.72, 0.1];
 const DIRT: [f32; 3] = [0.55, 0.42, 0.3];
 
-/// A renderable's shape and material.
 #[derive(Clone, Copy, Debug)]
 struct Look {
     shape: Shape,
@@ -119,8 +102,6 @@ struct Node {
     moving: bool,
 }
 
-/// Where parts attach: a transform-only node (with `hierarchy`) or the world,
-/// through `frame`, which is never scaled.
 #[derive(Clone, Copy)]
 struct Anchor {
     node: Option<u32>,
@@ -135,8 +116,6 @@ pub(crate) fn turned(translation: Vec3, yaw: f32, scale: Vec3) -> Transform {
     }
 }
 
-/// A roof moving parts can use: its block anchor, the building's base
-/// center in that frame, its height and half width.
 #[derive(Clone, Copy)]
 struct Rooftop {
     anchor: Anchor,
@@ -167,13 +146,10 @@ struct City {
     river: Option<(i32, f32)>,
     rail: Option<i32>,
     radius: f32,
-    /// Skyline centers in block units: position, reach and peak intensity.
     centers: Vec<(Vec2, f32, f32)>,
 }
 
 impl City {
-    /// How tall the block at (`bx`, `bz`) builds, in `[0, 1]`: highest at
-    /// the core and the secondary centers.
     fn skyline(&self, bx: i32, bz: i32) -> f32 {
         let at = Vec2::new(bx as f32, bz as f32);
         self.centers
@@ -202,7 +178,6 @@ impl City {
         }
     }
 
-    /// A static part; false once the static budget is spent.
     fn part(&mut self, anchor: &Anchor, local: Transform, look: Look) -> bool {
         if self.static_left == 0 {
             return false;
@@ -222,8 +197,6 @@ impl City {
         true
     }
 
-    /// A moving part with its motion as a child of `anchor` (`nested`, in
-    /// the anchor's frame) and as a root (`flat`, in world space).
     fn mover(
         &mut self,
         anchor: &Anchor,
@@ -257,8 +230,6 @@ impl City {
         true
     }
 
-    /// A transform-only moving pivot for an assembly, when hierarchies are
-    /// on and nodes remain.
     fn pivot(&mut self, frame: Transform, motion: Motion) -> Option<Anchor> {
         let anchor = self.anchor(frame);
         let node = anchor.node?;
@@ -274,14 +245,12 @@ impl City {
     }
 }
 
-/// Transform nodes the city may add beyond its renderables.
 fn node_room(renderables: u32) -> u32 {
     (engine::MAX_TRANSFORM_NODES as u32).saturating_sub(renderables)
 }
 
 fn plan(config: &StressConfig) -> City {
     let (moving, static_total, radius) = budget(config, PER_BLOCK);
-    // The core, and a few secondary downtowns in the outer half.
     let mut centers = vec![(Vec2::ZERO, radius * 0.32, 1.0)];
     let mut rng = Rng::new(config.seed ^ 0x5c1, 0, 0);
     if radius >= 6.0 {
@@ -314,8 +283,6 @@ fn plan(config: &StressConfig) -> City {
     }
 }
 
-/// Builds the city's nodes: dense collider crates, blocks outward from the
-/// center until the static budget is spent, then every moving renderable.
 fn build(config: &StressConfig) -> City {
     let mut city = plan(config);
     if config.dense_colliders {
@@ -374,8 +341,6 @@ fn block(city: &mut City, bx: i32, bz: i32, rho: f32) {
     );
     let anchor = city.anchor(part_at(center, Vec3::ONE));
     let river = city.river.is_some_and(|(row, _)| row == bz);
-    // Streets on the block's west and north sides and their corner, in the
-    // block frame; the west street bridges the river.
     let west = Vec3::new(-HALF_BLOCK - 2.0, 0.0, 0.0);
     let north = Vec3::new(0.0, 0.0, -HALF_BLOCK - 2.0);
     if river {
@@ -427,7 +392,6 @@ fn block(city: &mut City, bx: i32, bz: i32, rho: f32) {
     }
     city.blocks.push((bx, bz, rho));
     let skyline = city.skyline(bx, bz);
-    // The block's ground.
     let ground = if rho < 0.55 || skyline > 0.0 {
         Tex::Paving
     } else {
@@ -472,7 +436,6 @@ fn block(city: &mut City, bx: i32, bz: i32, rho: f32) {
     } else {
         industrial(city, &anchor, &mut rng);
     }
-    // Street lamps at two corners.
     for (x, z) in [
         (-HALF_BLOCK + 0.6, -HALF_BLOCK + 0.6),
         (HALF_BLOCK - 0.6, -HALF_BLOCK + 0.6),
@@ -524,8 +487,6 @@ fn rail(city: &mut City, anchor: &Anchor, bx: i32, bz: i32, ring: i32) {
     }
 }
 
-/// A building of `shape` standing at `base` (its ground center), `size`
-/// wide and deep and `height` tall, turned by `yaw`.
 fn building(
     city: &mut City,
     anchor: &Anchor,
@@ -584,8 +545,6 @@ fn tower_look(rng: &mut Rng) -> Look {
     look(shape, tex, color)
 }
 
-/// A tall building with a crown and, sometimes, a helipad; its roof is
-/// offered to moving parts.
 fn skyscraper(
     city: &mut City,
     anchor: &Anchor,
@@ -607,7 +566,6 @@ fn skyscraper(
         return;
     }
     let top = base + Vec3::Y * height;
-    // Tiers narrow toward the top: crowns sit on the top tier.
     let crown = match body.shape {
         Shape::Setback | Shape::Setback4 | Shape::Ziggurat | Shape::Pagoda | Shape::Crowned => {
             width * 0.25
@@ -662,14 +620,12 @@ fn skyscraper(
     });
 }
 
-/// Four skyscrapers per block, `scale` (0.3 to 1) setting their heights.
 fn downtown(city: &mut City, anchor: &Anchor, rng: &mut Rng, scale: f32) {
     for (x, z) in [(-6.0, -6.0), (6.0, -6.0), (-6.0, 6.0), (6.0, 6.0)] {
         let height = (45.0 + 95.0 * scale) * rng.range(0.55, 1.1);
         let width = rng.range(5.6, 7.4);
         skyscraper(city, anchor, rng, Vec3::new(x, 0.1, z), width, height);
     }
-    // The cross between the towers: a small tower, trees and a kiosk.
     let height = rng.range(10.0, 26.0);
     let body = look(
         rng.pick(&[Shape::Hex, Shape::Midrise, Shape::Octa, Shape::Tapered]),
@@ -690,7 +646,6 @@ fn downtown(city: &mut City, anchor: &Anchor, rng: &mut Rng, scale: f32) {
     }
 }
 
-/// Nine buildings per block, `scale` (0 to 1) setting their heights.
 fn midtown(city: &mut City, anchor: &Anchor, rng: &mut Rng, scale: f32) {
     for row in 0..3 {
         for column in 0..3 {
@@ -732,7 +687,6 @@ fn midtown(city: &mut City, anchor: &Anchor, rng: &mut Rng, scale: f32) {
                 return;
             }
             let top = base + Vec3::Y * height;
-            // Rooftop clutter.
             for _ in 0..rng.below(3) {
                 let at = top + Vec3::new(rng.range(-1.4, 1.4), 0.5, rng.range(-1.4, 1.4));
                 city.part(
@@ -953,7 +907,6 @@ fn park_block(city: &mut City, anchor: &Anchor, rng: &mut Rng) {
         tree(city, anchor, rng, at, 1.0);
     }
     if wheel {
-        // A Ferris wheel's supports; the wheel itself moves.
         let (size, yaw) = (rng.range(12.0, 16.0), rng.range(0.0, PI));
         let hub = size * 0.5 + 1.0;
         for side in [-1.0, 1.0] {
@@ -1046,7 +999,6 @@ fn construction_block(city: &mut City, anchor: &Anchor, rng: &mut Rng) {
         0.0,
         look(Shape::Midrise, Tex::Metal, [0.75, 0.75, 0.78]),
     );
-    // The crane's mast; its jib moves.
     let mast = height + rng.range(8.0, 16.0);
     let at = Vec3::new(5.5, 0.1, 5.5);
     if building(
@@ -1116,7 +1068,6 @@ fn landmark(city: &mut City, anchor: &Anchor, rng: &mut Rng) {
 fn vehicle(city: &mut City, rng: &mut Rng, bus: bool) {
     let (center, half) = street_loop(&city.blocks, city.radius, rng);
     let direction = rng.sign();
-    // Counterclockwise traffic keeps to the outer lane, clockwise to the inner.
     let lane = direction * 1.1;
     let half = half + Vec2::splat(lane);
     let (size, shape, color) = if bus {
@@ -1314,7 +1265,6 @@ fn crane(city: &mut City, rng: &mut Rng, site: &Site) {
                 scale: jib_size,
             };
             city.mover(&world, rest, jib, None, Some(Motion::Spin(spin)));
-            // The load circles the mast at the jib's angle: yaw + turn.
             let orbit = Orbit {
                 center: top - Vec3::Y * drop,
                 radius: reach,
@@ -1377,7 +1327,6 @@ fn ferris(city: &mut City, rng: &mut Rng, site: &Site) {
         let size = Vec3::new(1.4, 1.4, 1.2);
         match pivot {
             Some(pivot) => {
-                // Turned back as the wheel turns: cabins stay upright.
                 let upright = Spin {
                     base: Quat::IDENTITY,
                     axis_z: true,
@@ -1411,8 +1360,6 @@ fn ferris(city: &mut City, rng: &mut Rng, site: &Site) {
     }
 }
 
-/// A street lamp's warm light: a wide cone down from the lamp head, in the
-/// lamp's local space (its unit mesh is 5.2 units tall once placed).
 fn street_light() -> LocalLight {
     LocalLight::spot(
         Vec3::new(1.0, 0.72, 0.42),
@@ -1425,7 +1372,6 @@ fn street_light() -> LocalLight {
     .with_offset(Vec3::new(0.4, 0.32, 0.0))
 }
 
-/// Smoke rising from a chimney top and drifting with the wind.
 fn chimney_smoke(seed: u32) -> ParticleEmitter {
     ParticleEmitter {
         rate: 5.0,
@@ -1445,7 +1391,6 @@ fn chimney_smoke(seed: u32) -> ParticleEmitter {
     }
 }
 
-/// Water thrown up from a fountain and falling back.
 fn fountain_spray(seed: u32) -> ParticleEmitter {
     ParticleEmitter {
         rate: 70.0,
@@ -1465,7 +1410,6 @@ fn fountain_spray(seed: u32) -> ParticleEmitter {
     }
 }
 
-/// The spawned city, for the workload's observations.
 pub(crate) struct Spawned {
     pub transform_nodes: u32,
     pub moving_nodes: u32,
@@ -1473,7 +1417,6 @@ pub(crate) struct Spawned {
     pub probes: Vec<Entity>,
 }
 
-/// Builds and spawns the city of `config` into `world`.
 pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Result<Spawned> {
     let city = build(config);
     let mut library = Library::new(world, config.mesh_variety, config.textured)?;
@@ -1517,8 +1460,6 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Resu
         }
         if let (Some(mesh), Some(look)) = (mesh, node.look) {
             entity.insert(mesh);
-            // Engine lights and particles on
-            // the parts that carry them; the renderables stay the same.
             match look.shape {
                 Shape::Lamp => {
                     entity.insert(street_light());
@@ -1532,8 +1473,6 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Resu
                 _ => {}
             }
             moving_nodes += u32::from(node.moving);
-            // Colliders spread evenly over the renderables, or on the dense
-            // crates that lead them.
             let collider = if dense > 0 {
                 leaf < dense
             } else {

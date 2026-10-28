@@ -2,27 +2,13 @@ use bevy_ecs::prelude::Resource;
 
 use crate::AssetBudget;
 
-/// Bounds gameplay work and render extraction independently.
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
-    /// Simulation frequency; finite values clamp to 1–1000 Hz. Invalid values
-    /// use 60 Hz. This makes the fixed delta representable as `f32`.
     pub fixed_hz: f64,
-    /// Maximum fixed ticks per frame, clamped to 1–1000.
     pub max_fixed_steps: u32,
-    /// Maximum visible instances copied per snapshot; beyond it the rest are
-    /// dropped and counted. `usize::MAX`, the default, sets no budget (the
-    /// GPU's buffers bound it). Zero emits no instances; counters and
-    /// retention of culled sources still run.
     pub max_render_instances: usize,
-    /// Admission limits of the engine's asset library; the default admits
-    /// everything.
     pub asset_budget: AssetBudget,
-    /// Transformed entities propagation admits ([`crate::TransformNodeLimit`]);
-    /// the default sets no budget.
     pub max_transform_nodes: usize,
-    /// Conservatively omit boxes outside the camera frustum during extraction.
-    /// Disable for repeatable comparisons against unculled extraction.
     pub frustum_culling: bool,
 }
 
@@ -39,7 +25,6 @@ impl Default for EngineConfig {
     }
 }
 
-/// Simulation time, advanced immediately before each fixed schedule run.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct FixedTime {
     pub delta_seconds: f32,
@@ -47,33 +32,22 @@ pub struct FixedTime {
     pub tick: u64,
 }
 
-/// Presentation time, updated once before a frame's fixed and presentation work.
-/// Elapsed time sums the bounded deltas, excluding dropped wall-clock time.
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct FrameTime {
-    /// Valid nonnegative input delta, capped at 0.25 seconds.
     pub delta_seconds: f32,
     pub elapsed_seconds: f64,
     pub frame: u64,
 }
 
-/// The simulation time the last extracted frame presents:
-/// the fixed clock where its poses stand, between ticks for interpolated
-/// frames. What moves with time and must line up with simulated objects,
-/// such as the sea's waves, follows it.
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct PresentedTime {
     pub seconds: f64,
 }
 
-/// Work performed by one call to `Engine::advance`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameReport {
     pub fixed_steps: u32,
-    /// Whole fixed-step time discarded to enforce the catch-up bound.
     pub dropped_seconds: f64,
-    /// Fraction remaining until the next fixed tick, in the range [0, 1).
-    /// Pass to `PresentationMode::Interpolated` for opted-in local transforms.
     pub interpolation: f32,
 }
 
@@ -109,7 +83,6 @@ impl FixedClock {
         self.step_seconds
     }
 
-    /// Unconsumed time since the last due tick, in `[0, step)`.
     pub(crate) fn accumulator_seconds(&self) -> f64 {
         self.accumulator_seconds
     }
@@ -120,8 +93,6 @@ impl FixedClock {
 
     pub(crate) fn advance(&mut self, delta_seconds: f64) -> FrameReport {
         let previous_remainder = self.accumulator_seconds;
-        // Split off whole ticks first so even a huge finite host delta cannot
-        // overflow the accumulator or erase its existing fractional remainder.
         let incoming_steps = delta_seconds / self.step_seconds;
         let fractional_seconds = if incoming_steps.is_finite() {
             incoming_steps.fract() * self.step_seconds
@@ -140,7 +111,6 @@ impl FixedClock {
         } else {
             0.0
         };
-        // A fraction just below one can round up when converted to f32.
         let interpolation = (self.accumulator_seconds / self.step_seconds) as f32;
         FrameReport {
             fixed_steps,

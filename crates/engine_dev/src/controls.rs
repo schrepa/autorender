@@ -8,13 +8,8 @@ use engine_settings::ErrorCode;
 use serde_json::Value;
 
 impl BrowserControl {
-    /// `source`, a request naming control `op`, as hosts take it on a host
-    /// `paused` or not: parsed, checked ([`Self::validate`]) and refused
-    /// where it needs the host paused and it is not.
     pub fn parse(source: &str, op: &str, paused: bool) -> Result<Self, DevError> {
         if op == "environment" {
-            // Its sections parse as a scene environment's, whose errors
-            // keep their whole path (a tagged request's lose it).
             let mut request: serde_json::Value = engine_scene::parse_json(source)?;
             if let Some(fields) = request.as_object_mut() {
                 for key in ["op", "version", "merge"] {
@@ -35,11 +30,6 @@ impl BrowserControl {
         Ok(control)
     }
 
-    /// Checks what deserialization does not: the ranges and revision
-    /// strings of the controls the browser host runs (benchmark, frames,
-    /// capture and reload), which it receives back validated with their
-    /// defaults. Controls the engine runs check their values where they
-    /// apply.
     pub fn validate(&self) -> Result<(), DevError> {
         match self {
             Self::Benchmark {
@@ -118,7 +108,6 @@ impl BrowserControl {
                     }
                 }
             }
-            // Their handlers check what the rest carry.
             Self::Present { .. }
             | Self::Culling { .. }
             | Self::Environment(_)
@@ -146,8 +135,6 @@ impl BrowserControl {
     }
 }
 
-/// Validates a temporary render fraction without mutating clocks or gameplay.
-/// Fractions include both fixed-tick endpoints; no clamping hides bad requests.
 pub fn validated_presentation_alpha(alpha: f64) -> Result<f32, DevError> {
     bounded(
         alpha,
@@ -158,9 +145,6 @@ pub fn validated_presentation_alpha(alpha: f64) -> Result<f32, DevError> {
     .map(|alpha| alpha as f32)
 }
 
-/// Validates a temporary camera without invoking fallback behavior or mutating
-/// gameplay: the camera's rules, which scenes author too. Shared by browser
-/// controls and native contract checks.
 pub fn validated_camera(
     position: [f32; 3],
     target: [f32; 3],
@@ -192,8 +176,6 @@ pub fn validated_camera(
     Ok(camera)
 }
 
-/// The `debug_missing_asset` control: removes the mesh the scene's entity
-/// `entity` draws from the asset library.
 pub(crate) struct MissingAsset {
     pub(crate) entity: String,
 }

@@ -11,16 +11,13 @@ import {
 import { STRESS_PARAMETERS } from "./parameters";
 import "./stress.css";
 
-/** The scanned rock maps under public/stress/rocks (vite.config.ts). */
 declare const __STRESS_ROCKS__: readonly string[];
 
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const choice = (id: string) => el<HTMLSelectElement>(id);
 const number = (id: string) => Number(el<HTMLInputElement>(id).value);
 const checked = (id: string) => el<HTMLInputElement>(id).checked;
-/** The values select `id` offers. */
 const options = (id: string) => [...choice(id).options].map(option => option.value);
-/** Fills select `id` with `choices`, which the generated catalog holds. */
 function offer(id: string, choices: readonly { value: string | number; label?: string }[]) {
   choice(id).replaceChildren(...choices.map(({ value, label }) => new Option(label ?? String(value), String(value))));
 }
@@ -30,7 +27,6 @@ offer("look", STRESS_CATALOG.looks);
 offer("effects", STRESS_CATALOG.effects);
 offer("view", STRESS_CATALOG.views);
 offer("meshes", STRESS_CATALOG.mesh_varieties.map(value => ({ value })));
-// Number inputs take the bounds validation keeps.
 for (const [id, field] of [["colliders", "colliders"], ["bodies", "bodies"], ["sensors", "sensor_percent"], ["seed", "seed"]] as const) {
   const limits = STRESS_CONFIG_LIMITS[field];
   el<HTMLInputElement>(id).min = String(limits.minimum);
@@ -40,8 +36,6 @@ const scenes: StressScene[] = STRESS_CATALOG.scenes.map(scene => scene.value);
 const format = (value: number) => value.toLocaleString("en-US");
 const ms = (value: number) => `${value.toFixed(2)} ms`;
 const bytes = (value: number) => `${(value / 1048576).toFixed(2)} MiB`;
-// The presets the Stress Lab declares, the first the default; native hosts
-// offer the same.
 const presets: Record<string, { title: string; note: string; config: StressConfig }> = Object.fromEntries(
   STRESS_CATALOG.presets.map(({ value, title, note, config }) => [value, { title, note, config: { ...config } }]));
 const baseline: StressConfig = { ...STRESS_CATALOG.presets[0].config };
@@ -51,16 +45,12 @@ let latest: StressSnapshot | undefined, report: RecordingReport | undefined;
 let previousTimestamp: number | undefined, recordStarted = 0;
 let profiler: DetailedProfiler | undefined, detailedReport: DetailedProfileReport | undefined;
 let wasmMemory: WebAssembly.Memory | undefined;
-// The dense scene's virtual meshes, fetched once: the game
-// keeps them for later workloads.
 let filesClass: typeof StressFiles | undefined, denseSupplied = false;
 let prefixBytes: ((header: Uint8Array) => number | undefined) | undefined;
 async function denseFiles(): Promise<StressFiles | undefined> {
   if (denseSupplied || !filesClass || !prefixBytes) return undefined;
   const files = new filesClass();
   try {
-    // Each file's prefix, fetched together: the renderer streams the other
-    // pages from its URL.
     const names = JSON.parse(filesClass.dense_names()) as string[];
     const urls = names.map(name => new URL(`${import.meta.env.BASE_URL}stress/dense/${name}`, location.href).href);
     const prefix = prefixBytes;
@@ -73,10 +63,6 @@ async function denseFiles(): Promise<StressFiles | undefined> {
   denseSupplied = true;
   return files;
 }
-// The highlands' scanned rock maps, kept locally and optional, fetched
-// once: the game keeps them for later workloads. Without them rocks wear
-// the terrain rock's maps; only those the server found are requested. The
-// ground's maps load as cooked texture records.
 let highlandsSupplied = false;
 async function highlandsFiles(): Promise<StressFiles | undefined> {
   if (highlandsSupplied || !filesClass) return undefined;
@@ -86,12 +72,11 @@ async function highlandsFiles(): Promise<StressFiles | undefined> {
     try {
       const response = await fetch(new URL(`${import.meta.env.BASE_URL}stress/rocks/${name}`, location.href));
       if (response.ok) files.add_encoded_image(`rocks/${name}`, new Uint8Array(await response.arrayBuffer()));
-    } catch { /* Absent or unreadable: the terrain rock's maps stand in. */ }
+    } catch {}
   }));
   highlandsSupplied = true;
   return files;
 }
-/** The files `config`'s scene reads that the game lacks. */
 async function sceneFiles(config: StressConfig): Promise<StressFiles | undefined> {
   if (config.scene === "dense") return denseFiles();
   if (config.scene === "highlands") return highlandsFiles();
@@ -104,7 +89,6 @@ const listenerOptions = { signal: listeners.signal };
 const intervals: number[] = [], chart: [number, number, number][] = [];
 
 function snapshot(runtime: StressGame): StressSnapshot { return JSON.parse(runtime.stress_stats()) as StressSnapshot; }
-/** What a recording or a detailed profile notes about the run it measures, on a `canvas` sized canvas. */
 function runMetadata(data: StressSnapshot, canvas: [number, number]) {
   return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
     culling: data.config.culling, resolution_scale: number("resolution"), canvas,
@@ -115,7 +99,6 @@ function runMetadata(data: StressSnapshot, canvas: [number, number]) {
     build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
     start_frame: data.frame, start_tick: data.tick, workload: activeTitle, wasm: wasmIdentity, scroll: [scrollX, scrollY] };
 }
-/** Offers JSON `text` as the download `name`. */
 function download(text: string, name: string) {
   const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = name;
@@ -171,10 +154,6 @@ function readConfig(): StressConfig {
     interpolation: checked("interpolation"), textured: checked("textures"), dense_colliders: checked("dense"), culling: checked("culling"),
     scene: choice("scene-select").value as StressScene };
 }
-/** One fingerprint of the module, taken in the background at startup,
- * outside measurement windows: exports made before it ends carry none.
- * Production filenames and managed generation URLs are immutable; do not
- * rebuild during a run. */
 async function fingerprintWasm() {
   const wasmUrl = performance.getEntriesByType("resource").map(entry => entry.name)
     .find(name => name.includes("stress_lab") && new URL(name).pathname.endsWith(".wasm"));
@@ -190,7 +169,7 @@ async function fingerprintWasm() {
         wasmIdentity.sha256 = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
       }
     }
-  } catch { /* A missing optional fingerprint remains explicit in the export. */ }
+  } catch {}
 }
 async function apply(config: StressConfig, title: string) {
   if (!controls) return;
@@ -260,12 +239,10 @@ function poll(runtime: StressGame) {
   if (profiler?.active) el("profile-status").textContent = `Capturing CPU, collision, allocator and browser events · ${((Number(profiler.status().elapsed_ms) || 0) / 1000).toFixed(1)} / 5 seconds · camera locked`;
 }
 
-// The page's parameters, which STRESS_PARAMETERS describes.
 const params = new URLSearchParams(location.search);
 const visibility = params.get("visibility") === "on" ? "on" : "off";
 const lod = params.get("lod") === "off" ? "off" : "on";
 const impostors = params.get("impostors") === "off" ? "off" : "on";
-// The engine refuses unknown looks and effects: the page fails with why.
 const initialLook = params.get("look") ?? "scene";
 const initialEffects = params.get("effects") ?? "all";
 if (params.has("config")) {
@@ -273,8 +250,6 @@ if (params.has("config")) {
     const source = params.get("config")!;
     if (source.length > 2000) throw new Error("Workload link is too large.");
     const parsed = JSON.parse(source) as Partial<StressConfig>;
-    // Links from before scenes existed build the tower field, and before
-    // rigid bodies, with none.
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       parsed.scene ??= "field";
       parsed.bodies ??= 0;
@@ -300,7 +275,6 @@ el("preset-note").textContent = presets[choice("preset").value].note;
 
 startGame({
   parameters: STRESS_PARAMETERS,
-  // What agents change through the game control; each refreshes the image.
   controls: {
     workload: {
       description: "Runs preset {preset: NAME} or configuration {config: {...}} (fields over the current one) in place of the workload",
@@ -328,7 +302,6 @@ startGame({
     },
   },
   async create(canvas) {
-    // Job workers start while the game's module loads.
     jobPool();
     const { default: init, StressGame, StressFiles: files, virtual_prefix_bytes } = await stressBindings();
     filesClass = files;
@@ -346,8 +319,6 @@ startGame({
     runtime.set_look(initialLook);
     choice("look").value = initialLook;
     runtime.set_effects(initialEffects);
-    // Combinations without an option of their own keep the select on the
-    // closest single choice; recordings report the actual setting.
     if ([...choice("effects").options].some(option => option.value === initialEffects)) choice("effects").value = initialEffects;
     lock();
     el("active-preset").textContent = activeTitle;
@@ -396,7 +367,6 @@ startGame({
     }
     previousTimestamp = timestamp;
     if (!recorder.active) return;
-    // The workload's numbers without its full snapshot, read every 250 ms.
     const stats = readStats(runtime);
     const values = runtime.frame_sample();
     const sample = Object.fromEntries(STRESS_CATALOG.sample.map((field, index) => [field, values[index]])) as Record<StressSampleField, number>;

@@ -1,11 +1,7 @@
-//! Materials: glTF 2.0 metallic-roughness factors and texture maps
-//! with the engine's surface extensions.
-
 use engine_settings::{InvalidSetting, Rule, Setting, settings};
 
 use crate::{AssetError, TextureHandle};
 
-/// The error of material part `part`'s field breaking its rule.
 fn invalid_part(part: Option<&'static str>, invalid: InvalidSetting) -> AssetError {
     AssetError::InvalidSurface {
         field: match part {
@@ -17,31 +13,16 @@ fn invalid_part(part: Option<&'static str>, invalid: InvalidSetting) -> AssetErr
 
 settings! {
     unauthored;
-    /// How a surface responds to light beyond its color.
-    ///
-    /// `roughness` and `metalness` are glTF's `roughnessFactor` and
-    /// `metallicFactor`: a metallic-roughness texture multiplies them.
-    /// [`Material::with_surface`] checks the rules. Renderers quantize each
-    /// value to 8 bits.
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct Surface {
-        /// Microsurface roughness: 0 is a mirror, 1 spreads highlights and sky
-        /// reflections widest.
         pub roughness: f32 = Surface::MATTE.roughness => range(0.0, 1.0),
-        /// Metals reflect in their own color and diffuse no light.
         pub metalness: f32 = Surface::MATTE.metalness => range(0.0, 1.0),
-        /// Emitted light as a multiple of the surface color. Base color
-        /// texture alpha masks it per texel. glTF's emissive color is
-        /// [`Material::with_emissive`].
         pub emission: f32 = Surface::MATTE.emission => range(0.0, Surface::MAX_EMISSION),
-        /// Animated ripples of liquid surfaces: wave normals that move with
-        /// presentation time. 0 keeps the mesh normals.
         pub ripples: f32 = Surface::MATTE.ripples => range(0.0, 1.0),
     }
 }
 
 impl Surface {
-    /// Broad, dim highlights and no emission: the default.
     pub const MATTE: Self = Self {
         roughness: 0.8,
         metalness: 0.0,
@@ -49,82 +30,48 @@ impl Surface {
         ripples: 0.0,
     };
 
-    /// The largest accepted emission multiple.
     pub const MAX_EMISSION: f32 = 16.0;
 }
 
 settings! {
     unauthored;
-    /// A layer settling on a material's faces turned up: moss,
-    /// lichen, dust or snow. It covers faces whose normals point up by more
-    /// than one less its `coverage`, broken by noise and gathering in the
-    /// darker hollows of the material's color, in its own linear `color` and
-    /// `roughness`. [`Material::with_top_layer`] checks the rules.
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct TopLayer {
-        /// Linear color.
         pub color: [f32; 3] = [0.5; 3] => range(0.0, 1.0),
-        /// How far from straight up it reaches: 0 covers nothing, 1 every
-        /// face turned up at all.
         pub coverage: f32 = 0.5 => range(0.0, 1.0),
-        /// Its roughness.
         pub roughness: f32 = 0.85 => range(0.0, 1.0),
     }
 }
 
-/// The meters one repeat of a world-mapped material's maps may cover at
-/// most.
 pub const MAX_WORLD_TILING: f32 = 10_000.0;
 
 settings! {
     unauthored;
-    /// How an object standing on terrain meets the ground: where it enters
-    /// the ground its surface takes the ground's color, roughness and
-    /// slope there, blending back into its own `height` units of its mesh
-    /// higher (so it scales with the object), measured from the ground's
-    /// own slope under it, so no seam shows where the two meet. Objects
-    /// terrains place stand on terrain; others never blend.
-    /// [`Material::with_grounding`] checks the rules.
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct Grounding {
-        /// How far up the blend reaches, in mesh units.
         pub height: f32 = 1.0 => above_to(0.0, MAX_GROUNDING_HEIGHT),
     }
 }
 
-/// The mesh units the ground's blend may reach up at most.
 pub const MAX_GROUNDING_HEIGHT: f32 = 10_000.0;
 
 settings! {
     unauthored;
-    /// Light passing through a surface instead of diffusing off it:
-    /// glTF's `KHR_materials_transmission`, `KHR_materials_ior` and the
-    /// thickness of `KHR_materials_volume`. [`Material::with_transmission`]
-    /// checks the rules.
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct Transmission {
-        /// The share of light passing through, tinted by the base color; 0 is
-        /// an ordinary surface.
         pub factor: f32 = Transmission::NONE.factor => range(0.0, 1.0),
-        /// Index of refraction: how far rays bend entering the surface (1.5
-        /// for glass, 1.33 for water).
         pub ior: f32 = Transmission::NONE.ior => range(1.0, 3.0),
-        /// Depth of the volume beneath the surface, in world units: how far a
-        /// bent ray travels before it leaves. 0 is a thin wall, which does not
-        /// bend what shows through it.
         pub thickness: f32 = Transmission::NONE.thickness => at_least(0.0),
     }
 }
 
 impl Transmission {
-    /// No light passes through: the default.
     pub const NONE: Self = Self {
         factor: 0.0,
         ior: 1.5,
         thickness: 0.0,
     };
 
-    /// Thin, clear glass: all light passes through, tinted by the color.
     pub const GLASS: Self = Self {
         factor: 1.0,
         ior: 1.5,
@@ -132,20 +79,14 @@ impl Transmission {
     };
 }
 
-/// How a texture continues outside `[0, 1]` along one axis (glTF sampler wrap
-/// modes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Wrap {
-    /// Tiles: glTF's default.
     #[default]
     Repeat,
-    /// Tiles, mirroring every other repetition.
     MirroredRepeat,
-    /// Stretches the edge texels.
     ClampToEdge,
 }
 
-/// Texel filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Filter {
     Nearest,
@@ -153,9 +94,6 @@ pub enum Filter {
     Linear,
 }
 
-/// How a material samples a texture (a glTF sampler). Renderers keep a full
-/// mip chain of every texture; `mipmap_filter` `None` samples its base level
-/// only, like glTF's `NEAREST` and `LINEAR` minification filters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Sampler {
     pub wrap_u: Wrap,
@@ -166,7 +104,6 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    /// Repeating and trilinear: glTF's default sampler.
     pub const REPEAT: Self = Self {
         wrap_u: Wrap::Repeat,
         wrap_v: Wrap::Repeat,
@@ -175,8 +112,6 @@ impl Sampler {
         mipmap_filter: Some(Filter::Linear),
     };
 
-    /// Clamped at the edges and trilinear: how [`Material::textured`]
-    /// samples.
     pub const CLAMP: Self = Self {
         wrap_u: Wrap::ClampToEdge,
         wrap_v: Wrap::ClampToEdge,
@@ -190,9 +125,6 @@ impl Default for Sampler {
     }
 }
 
-/// Where a texture lies on a mesh's texture coordinates (glTF
-/// `KHR_texture_transform`): coordinates are scaled, rotated by `rotation`
-/// radians and offset, in that order.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UvTransform {
     pub offset: [f32; 2],
@@ -207,7 +139,6 @@ impl UvTransform {
         scale: [1.0; 2],
     };
 
-    /// `scale` repetitions of the texture across texture coordinates.
     pub const fn repeat(scale: [f32; 2]) -> Self {
         Self {
             scale,
@@ -230,22 +161,15 @@ impl Default for UvTransform {
     }
 }
 
-/// A material's use of a texture: which texture, how it is sampled and where
-/// it lies on the mesh's texture coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextureRef {
     pub texture: TextureHandle,
     pub sampler: Sampler,
     pub transform: UvTransform,
-    /// The texture coordinates it reads (glTF `texCoord`): 0, the mesh's
-    /// first, or 1, its second ([`crate::Mesh::with_uv1`]; meshes without
-    /// them read their first).
     pub tex_coord: u32,
 }
 
 impl TextureRef {
-    /// `texture` with glTF's default sampler (repeating, trilinear), no
-    /// transform, reading the first texture coordinates.
     pub const fn new(texture: TextureHandle) -> Self {
         Self {
             texture,
@@ -274,28 +198,14 @@ impl TextureRef {
     }
 }
 
-/// How a material uses its alpha, the color's alpha times the base color
-/// texture's (glTF `alphaMode`).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum AlphaMode {
-    /// Alpha is ignored; base color texture alpha masks the emission
-    /// extension ([`Surface::emission`]).
     #[default]
     Opaque,
-    /// Surfaces with alpha below `cutoff` are not drawn; the rest are opaque.
     Mask { cutoff: f32 },
-    /// Drawn transparent: alpha is the fraction of light behind
-    /// the surface it covers.
     Blend,
 }
 
-/// A glTF 2.0 metallic-roughness material: a linear base color
-/// factor, [`Surface`] factors and extensions, and optional texture maps.
-///
-/// Materials are opaque unless given an opacity below 1
-/// ([`Material::with_opacity`]) or another [`AlphaMode`]; the
-/// color's alpha is that opacity. Renderers draw materials without maps
-/// ([`Material::has_maps`]) from their color and surface alone.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Material {
     color: [f32; 4],
@@ -319,22 +229,13 @@ pub struct Material {
 }
 
 impl Material {
-    /// The rules of the material's own values, which its builders check and
-    /// authored materials' schemas state: each color channel,
     pub const COLOR: Rule = Rule::range(0.0, 1.0);
-    /// the opacity,
     pub const OPACITY: Rule = Rule::above_to(0.0, 1.0);
-    /// a mask's alpha cutoff,
     pub const ALPHA_CUTOFF: Rule = Rule::at_least(0.0);
-    /// the normal map's scale,
     pub const NORMAL_SCALE: Rule = Rule::finite();
-    /// the occlusion map's strength,
     pub const OCCLUSION_STRENGTH: Rule = Rule::range(0.0, 1.0);
-    /// each emissive channel,
     pub const EMISSIVE: Rule = Rule::at_least(0.0);
-    /// the meters one repeat of world-mapped maps covers,
     pub const WORLD_TILING: Rule = Rule::above_to(0.0, MAX_WORLD_TILING as f64);
-    /// and the rooms across a window material's base color texture.
     pub const WINDOWS: Rule = Rule::range(1.0, 4096.0);
 
     pub fn new(color: [f32; 4]) -> Result<Self, AssetError> {
@@ -368,10 +269,6 @@ impl Material {
         })
     }
 
-    /// This material with alpha `opacity` in `(0, 1]`: the
-    /// fraction of light behind it that it covers. Below 1, an opaque
-    /// material becomes [`AlphaMode::Blend`]. Transparent surfaces blend in
-    /// any order, write no depth and cast no shadow.
     pub fn with_opacity(mut self, opacity: f32) -> Result<Self, AssetError> {
         if opacity.check("opacity", Self::OPACITY).is_err() {
             return Err(AssetError::InvalidOpacity);
@@ -383,8 +280,6 @@ impl Material {
         Ok(self)
     }
 
-    /// This material with `mode`. [`AlphaMode::Opaque`] resets the opacity
-    /// to 1; a mask cutoff must be finite and not negative.
     pub fn with_alpha_mode(mut self, mode: AlphaMode) -> Result<Self, AssetError> {
         match mode {
             AlphaMode::Opaque => self.color[3] = 1.0,
@@ -401,7 +296,6 @@ impl Material {
         Ok(self)
     }
 
-    /// The color's alpha: 1 for opaque materials.
     pub fn opacity(&self) -> f32 {
         self.color[3]
     }
@@ -410,16 +304,10 @@ impl Material {
         self.alpha_mode
     }
 
-    /// Whether this material draws in the transparent pass: it blends, or
-    /// light passes through it.
     pub fn is_transparent(&self) -> bool {
         self.alpha_mode == AlphaMode::Blend || self.transmission.factor > 0.0
     }
 
-    /// This material letting light through. Transmissive
-    /// materials draw in the transparent pass; with the `Refraction`
-    /// resource they show the opaque scene behind them, bent and blurred,
-    /// and without it they blend as plain transparency.
     pub fn with_transmission(mut self, transmission: Transmission) -> Result<Self, AssetError> {
         transmission
             .validate()
@@ -432,14 +320,6 @@ impl Material {
         self.transmission
     }
 
-    /// This material with its maps laid from the world's axes, one repeat
-    /// every `tiling` meters, rather than by texture coordinates:
-    /// each map blends its projections along the axes the surface
-    /// faces most, so meshes need no coordinates, show no seams and keep
-    /// one texel density at any size. Map transforms still apply. For
-    /// surfaces that stay where they are, such as rocks and cliffs: maps
-    /// slide over moving ones. `tiling` is finite, positive and at most
-    /// [`MAX_WORLD_TILING`].
     pub fn with_world_mapping(mut self, tiling: f32) -> Result<Self, AssetError> {
         if tiling.check("world_tiling", Self::WORLD_TILING).is_err() {
             return Err(AssetError::InvalidSurface {
@@ -450,15 +330,10 @@ impl Material {
         Ok(self)
     }
 
-    /// The meters one repeat of world-mapped maps covers, if laid so.
     pub fn world_tiling(&self) -> Option<f32> {
         self.world_tiling
     }
 
-    /// This material divided into rooms, `rooms` across its base color
-    /// texture's width and square in its texels: while the environment's
-    /// windows switch on, each room's light comes on at its own time
-    /// around dusk. `rooms` is from 1 to [`Self::WINDOWS`]' maximum.
     pub fn with_windows(mut self, rooms: u32) -> Result<Self, AssetError> {
         if (rooms as f32).check("windows", Self::WINDOWS).is_err() {
             return Err(AssetError::InvalidSurface {
@@ -469,13 +344,10 @@ impl Material {
         Ok(self)
     }
 
-    /// The rooms across the base color texture of a material divided into
-    /// them.
     pub fn windows(&self) -> Option<u32> {
         self.windows
     }
 
-    /// This material with `top` settling on its faces turned up.
     pub fn with_top_layer(mut self, top: TopLayer) -> Result<Self, AssetError> {
         top.validate()
             .map_err(|invalid| invalid_part(Some("top"), invalid))?;
@@ -487,8 +359,6 @@ impl Material {
         self.top
     }
 
-    /// This material with its base blending into the ground where it
-    /// stands on terrain.
     pub fn with_grounding(mut self, grounding: Grounding) -> Result<Self, AssetError> {
         grounding
             .validate()
@@ -501,7 +371,6 @@ impl Material {
         self.grounding
     }
 
-    /// This material with `surface`, whose values must lie in their ranges.
     pub fn with_surface(mut self, surface: Surface) -> Result<Self, AssetError> {
         surface
             .validate()
@@ -510,24 +379,17 @@ impl Material {
         Ok(self)
     }
 
-    /// Multiplies an opaque texture's decoded linear color by this color
-    /// factor, clamped at its edges ([`Sampler::CLAMP`]). The library checks
-    /// the texture handle when this material is inserted.
     pub fn textured(color: [f32; 4], texture: TextureHandle) -> Result<Self, AssetError> {
         let mut material = Self::new(color)?;
         material.base_color = Some(TextureRef::new(texture).with_sampler(Sampler::CLAMP));
         Ok(material)
     }
 
-    /// This material with a base color texture: sRGB color multiplying the
-    /// color factor, and alpha multiplying its alpha.
     pub fn with_base_color_texture(mut self, texture: TextureRef) -> Result<Self, AssetError> {
         self.base_color = Some(checked(texture)?);
         Ok(self)
     }
 
-    /// This material with a metallic-roughness texture: linear green
-    /// multiplies roughness and blue metalness.
     pub fn with_metallic_roughness_texture(
         mut self,
         texture: TextureRef,
@@ -536,8 +398,6 @@ impl Material {
         Ok(self)
     }
 
-    /// This material with a tangent-space normal texture whose X and Y
-    /// deflections scale by the finite `scale`.
     pub fn with_normal_texture(
         mut self,
         texture: TextureRef,
@@ -553,8 +413,6 @@ impl Material {
         Ok(self)
     }
 
-    /// This material with an occlusion texture whose linear red darkens
-    /// indirect light, by `strength` in `[0, 1]`.
     pub fn with_occlusion_texture(
         mut self,
         texture: TextureRef,
@@ -573,8 +431,6 @@ impl Material {
         Ok(self)
     }
 
-    /// This material emitting linear `color` (glTF's emissive factor times
-    /// its emissive strength): finite and not negative.
     pub fn with_emissive(mut self, color: [f32; 3]) -> Result<Self, AssetError> {
         if color.check("emissive", Self::EMISSIVE).is_err() {
             return Err(AssetError::InvalidMaterialMap { field: "emissive" });
@@ -583,25 +439,17 @@ impl Material {
         Ok(self)
     }
 
-    /// This material with an emissive texture: sRGB color multiplying the
-    /// emissive color.
     pub fn with_emissive_texture(mut self, texture: TextureRef) -> Result<Self, AssetError> {
         self.emissive_texture = Some(checked(texture)?);
         Ok(self)
     }
 
-    /// This material drawn from both sides, back faces lit with the normal
-    /// flipped.
     #[must_use]
     pub fn with_double_sided(mut self, double_sided: bool) -> Self {
         self.double_sided = double_sided;
         self
     }
 
-    /// This material shaded as foliage (`foliage`): its green read as leaf,
-    /// needle or blade, which the sun lights through, crowns let light
-    /// into and each plant tints, whatever its alpha mode. Masked materials
-    /// shade as foliage either way.
     #[must_use]
     pub fn with_foliage(mut self, foliage: bool) -> Self {
         self.foliage = foliage;
@@ -612,7 +460,6 @@ impl Material {
         self.color
     }
 
-    /// The base color texture's handle.
     pub fn texture(&self) -> Option<TextureHandle> {
         self.base_color.map(|texture| texture.texture)
     }
@@ -657,13 +504,10 @@ impl Material {
         self.double_sided
     }
 
-    /// Whether this material shades as foliage ([`Material::with_foliage`]).
     pub fn is_foliage(&self) -> bool {
         self.foliage
     }
 
-    /// Every texture map, in the order base color, metallic-roughness,
-    /// normal, occlusion and emissive.
     pub fn maps(&self) -> [Option<TextureRef>; 5] {
         [
             self.base_color,
@@ -674,15 +518,10 @@ impl Material {
         ]
     }
 
-    /// The textures this material reads.
     pub fn textures(&self) -> impl Iterator<Item = TextureHandle> + '_ {
         self.maps().into_iter().flatten().map(|map| map.texture)
     }
 
-    /// Whether renderers bind this material's own maps and parameters: it
-    /// has a texture, an emissive color, two sides, an alpha mask, blends
-    /// with full alpha or transmits light. Other materials draw from color
-    /// and surface alone.
     pub fn has_maps(&self) -> bool {
         self.maps().iter().any(Option::is_some)
             || self.emissive != [0.0; 3]
@@ -692,9 +531,6 @@ impl Material {
             || self.transmission.factor > 0.0
     }
 
-    /// What renderers bind for a material with maps: everything but its
-    /// color and surface, which they read per object. Materials with equal
-    /// bindings draw together whatever their colors.
     pub fn binding(&self) -> Option<MaterialBinding> {
         self.has_maps().then(|| MaterialBinding {
             maps: self.maps().map(|map| {
@@ -738,14 +574,8 @@ impl Material {
     }
 }
 
-/// One map of a binding: its texture, sampler, transform bits and
-/// coordinate set.
 type BoundMap = (TextureHandle, Sampler, [u32; 5], u32);
 
-/// A material's maps and map parameters ([`Material::binding`]): its
-/// textures with their samplers and transforms, normal scale, occlusion
-/// strength, emissive color, alpha mode, transmission, sides and whether
-/// it shades as foliage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MaterialBinding {
     maps: [Option<BoundMap>; 5],

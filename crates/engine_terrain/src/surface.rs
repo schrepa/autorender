@@ -1,18 +1,3 @@
-//! Terrain surfaces: which materials the ground is made of,
-//! where, and how wet it is. A surface names its materials and lists
-//! biomes; each biome has a fitness mask saying where it applies, layers of
-//! materials, each painted over the layers before it by its own mask, and
-//! may have a wetness rule; and one material may cover its steep ground
-//! over every biome. Every tile sample gets its control value: the two
-//! materials weighing most there, their blend and how wet the ground is, a
-//! pure function of the sample's position, height and the shape of the
-//! smooth surface through the samples around it at its level
-//! ([`SampleShape`]), so neighboring tiles agree on the samples they share.
-//! A terrain's coarser tiles shade with level 0's control values averaged
-//! ([`crate::TileShading`]). Renderers decide the steep material again at
-//! every point of the ground level-0 samples shade, from the smooth
-//! surface's slope there.
-
 use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
 use serde::{Deserialize, Serialize};
@@ -21,154 +6,69 @@ use crate::layers::{Layer, Layers};
 use crate::noise::{gradient_value, gradient_values, smooth};
 use crate::{Erosion, PathSample};
 
-/// Materials a surface can name: control values hold 8-bit indices.
 pub const MAX_SURFACE_MATERIALS: usize = 255;
-/// Biomes a surface can list: control values hold 8-bit indices.
 pub const MAX_BIOMES: usize = 255;
-/// Validity guards: how deep masks nest, how many one list combines, how
-/// many octaves one noise sums, and how many layers a biome paints.
 const MAX_MASK_DEPTH: usize = 8;
 const MAX_MASK_LIST: usize = 16;
 const MAX_NOISE_OCTAVES: u32 = 8;
 const MAX_BIOME_LAYERS: usize = 64;
 
-/// A value from 0 to 1 at every sample, from the sample's height, slope,
-/// the way it faces, curvature and position, and what the terrain's bakes
-/// and roads hold there: where a biome applies, where a material covers
-/// its biome's ground, or how wet a biome's ground is. Ramps run from 0 at
-/// their first value to 1 at their second, smoothly, falling when the first
-/// is the larger.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum Mask {
-    /// The same value everywhere.
     Constant(f32),
-    /// A ramp over meters above the terrain's origin.
     Height([f32; 2]),
-    /// A ramp over the ground's slope, in degrees from level: the smooth
-    /// surface's through its samples ([`SampleShape`]).
     Slope(
         #[cfg_attr(feature = "schema", schemars(inner(range(min = 0.0, max = MAX_SLOPE_DEGREES))))]
         [f32; 2],
     ),
-    /// A ramp over the ground's curvature: how fast its slope grows per
-    /// meter, positive in hollows and valleys, negative on ridges (the
-    /// smooth surface's Laplacian, [`SampleShape`]).
     Curvature([f32; 2]),
-    /// A ramp over how far the ground tilts toward a compass heading, on
-    /// the smooth surface through its samples ([`Facing`]).
     Facing(Facing),
-    /// A ramp over the meters the terrain's erosions wore the ground down
-    /// there, summed over its erosion stages, smooth between their samples:
-    /// positive, 0 where they laid ground down or left it, and without
-    /// erosion. `[0, 4]` rises over the first four meters valleys and
-    /// gullies cut.
     Worn([f32; 2]),
-    /// A ramp over the meters the terrain's erosions laid down there,
-    /// summed over its erosion stages, smooth between their samples:
-    /// positive, 0 where they wore ground away or left it, and without
-    /// erosion. `[0, 2]` rises over the first two meters of sediment on
-    /// valley floors and fans.
     Deposit([f32; 2]),
-    /// A ramp over the base-10 logarithm of the area draining through the
-    /// ground, in square meters, as the terrain's hydrology bake found it:
-    /// channels begin near its channel area. 0 without one.
     Flow([f32; 2]),
-    /// A ramp over the bake's wetness index, ln(a / tan b): about 5 on
-    /// steep ground, 10 and more in hollows and along streams.
     Wetness([f32; 2]),
-    /// A ramp over how deep water would stand in a filled pit, in meters.
     Lake([f32; 2]),
-    /// A ramp over meters from the nearest river's edge,
-    /// negative in its water: `[2, 0]` covers river beds with two meters of
-    /// banks. Beyond every river's reach (sixteen meters past its edge),
-    /// and without rivers, it reads 1e9.
     River([f32; 2]),
-    /// A ramp over the median size of the grains (the d50) of the bed of
-    /// the river holding the ground, in meters: `[0.002, 0.064]` rises from
-    /// sand through gravel to cobbles. Outside every river's bed (which
-    /// reaches a meter past its banks), and without rivers, it reads 0, as
-    /// fine as any grain: a ramp falling toward fine grains covers that
-    /// ground too unless a `river` or `flood` mask keeps it to the beds.
     Grain([f32; 2]),
-    /// A ramp over the stream power of the river holding the ground at its
-    /// bankfull flood, in watts per square meter of its bed: `[150, 400]`
-    /// covers the beds of torrents strong enough to roll boulders. Outside
-    /// every river's bed (which reaches a meter past its banks), and without
-    /// rivers, it reads 0.
     Power([f32; 2]),
-    /// A ramp over meters the ground stands above the bankfull flood level
-    /// of the river holding it, negative below it: `[0.5, 0]` covers the
-    /// ground that river's floods reach, fading out over half a meter above
-    /// them. Outside every river's bed (which reaches a meter past its
-    /// banks), and without rivers, it reads 1e9.
     Flood([f32; 2]),
-    /// A ramp over meters from the nearest road's edge,
-    /// negative on roads: `[1, 0]` covers roads with a meter of soft edge.
-    /// It averages the ramp across each sample's footprint, so roads
-    /// narrower than coarse levels' samples fade there instead of breaking
-    /// into dashes. Further than 32 meters beyond every road's shoulders,
-    /// and without roads, it reads 1e9.
     Path([f32; 2]),
-    /// Gradient noise from 0 to 1.
     Noise(NoiseMask),
-    /// The product of masks.
     Multiply(Vec<Mask>),
-    /// The sum of masks.
     Add(Vec<Mask>),
-    /// The smallest of masks.
     Min(Vec<Mask>),
-    /// The largest of masks.
     Max(Vec<Mask>),
-    /// One minus a mask.
     Invert(Box<Mask>),
-    /// A mask remapped by a ramp: 0 up to `from`, 1 from `to`.
     Remap(Remap),
 }
 
-/// The steepest slope a mask names, in degrees: a wall.
 pub const MAX_SLOPE_DEGREES: f32 = 90.0;
 
-/// The tangent of a slope of `degrees` from level, which masks compare
-/// gradients with, 90 degrees standing in for a vertical wall.
 fn tangent(degrees: f32) -> f32 {
     let (sin, cos) = sin_cos(min(degrees, 89.9).to_radians());
     sin / cos
 }
 
 settings! {
-    /// How far the ground tilts toward a compass heading: the slope's
-    /// tangent times the cosine of the angle between the ground's downhill
-    /// direction and the heading, 0 on level ground, positive on slopes
-    /// facing the heading and negative on slopes facing away. A ramp of
-    /// `[-0.3, 0.3]` covers slopes of about 17 degrees facing away through to
-    /// slopes of about 17 degrees facing toward it.
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct Facing {
-        /// The heading, in degrees from -z toward +x, as views give yaw: 180
-        /// faces +z, south where north lies at -z.
         pub heading: f32 = 180.0 => range(-360.0, 360.0),
-        /// The tilts toward the heading its ramp runs between.
         pub ramp: [f32; 2] = [-0.3, 0.3] => finite,
     }
 }
 
 settings! {
-    /// Gradient noise from 0 to 1, summed over octaves each half as long and
-    /// half as strong.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct NoiseMask {
-        /// Meters across its largest features.
         pub wavelength: f32 = 100.0 => range(0.01, 1.0e6),
-        /// Picks the pattern.
         #[serde(default)]
         pub seed: u32 = 0 => any,
-        /// Octaves summed.
         #[serde(default = "one_octave")]
         pub octaves: u32 = one_octave() => range(1, MAX_NOISE_OCTAVES),
     }
@@ -178,7 +78,6 @@ fn one_octave() -> u32 {
     1
 }
 
-/// A mask remapped: 0 up to `from`, 1 from `to`, smooth between.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -189,7 +88,6 @@ pub struct Remap {
 }
 
 impl Mask {
-    /// 1 everywhere.
     pub fn one() -> Self {
         Self::Constant(1.0)
     }
@@ -208,27 +106,18 @@ fn is_unit(value: &f32) -> bool {
 }
 
 settings! {
-    /// One layer of a biome's ground. A biome's first layer covers its whole
-    /// ground.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct BiomeLayer {
-        /// The material painted, an ID of the surface's materials.
         pub material: String = String::new() => any,
-        /// Where it paints over the layers before it.
         #[serde(default = "Mask::one", skip_serializing_if = "is_one")]
         pub mask: Mask = Mask::one() => any,
-        /// The most it covers.
         #[serde(default = "one", skip_serializing_if = "is_unit")]
         pub opacity: f32 = one() => range(0.0, 1.0),
     }
 }
 
-/// A biome: where it applies (`fitness`, everywhere when omitted), the
-/// layers of its ground and how wet its ground is (`wetness`, dry when
-/// omitted). Later biomes paint over earlier ones where they fit; the first
-/// covers wherever none of the others do.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -237,38 +126,22 @@ pub struct Biome {
     #[serde(default = "Mask::one", skip_serializing_if = "is_one")]
     pub fitness: Mask,
     pub layers: Vec<BiomeLayer>,
-    /// How wet its ground is, from 0, dry, to 1, soaked: darker and glossier
-    /// as water fills its pores and films it, the more so the rougher it
-    /// is. The ground takes the wetness of each biome as far as that biome
-    /// applies; the steep layer painted over them leaves it as they make it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wetness: Option<Mask>,
 }
 
 settings! {
     extra_rules;
-    /// The material covering a surface's steep ground, painted over every
-    /// biome and layer: none of it where the ground's slope is the first of
-    /// `slope`'s degrees from level, all of it from the second, smoothly
-    /// between, on the smooth surface through the ground's samples
-    /// ([`SampleShape`]). Samples hold it as they hold their other materials;
-    /// renderers decide it again at every point of the ground level-0 samples
-    /// shade from the slope there, so its edges follow the ground's form, not
-    /// its samples, and farther away show it as level 0's samples hold it,
-    /// averaged.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct SteepLayer {
-        /// The material covering it, an ID of the surface's materials.
         pub material: String = String::new() => any,
-        /// The slopes its share rises between, in degrees from level.
         pub slope: [f32; 2] = [28.0, 35.0] => range(0.0, MAX_SLOPE_DEGREES),
     }
 }
 
 impl ExtraRules for SteepLayer {
-    /// Its share rises with the slope.
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if self.slope[0] < self.slope[1] {
             Ok(())
@@ -281,9 +154,6 @@ impl ExtraRules for SteepLayer {
     }
 }
 
-/// A surface's steep layer as renderers decide it: the index of its
-/// material and the tangents of the slopes its share rises between
-/// ([`SteepLayer`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Steep {
     pub material: u8,
@@ -291,66 +161,24 @@ pub struct Steep {
 }
 
 settings! {
-    /// How strongly each cause tints a surface's macro colors
-    /// ([`crate::macro_colors`]): the share of its brightness the ground
-    /// gains or loses where the cause is whole, in the cause's own hue; 0
-    /// turns the cause off. Plants grow lusher as far as the causes darken
-    /// the ground and drier as far as they pale it. The causes the bakes and
-    /// the ground's shape find move it by 15 percent and more, past the
-    /// light's spread within a patch, so they read from afar; the noise's
-    /// patches stay faint, as strong noise reads as camouflage.
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct MacroCauses {
-        /// Wet ground, where water gathers and runs as the hydrology bake
-        /// found it and along lakes' shores, darkens as water fills its pores
-        /// (Lagarde 2013): porous ground soaked keeps a fifth of its albedo,
-        /// the damp ground of hollows and banks about seven tenths.
         pub wet: f32 = 0.3 => range(0.0, 1.0),
-        /// Ground erosion laid down holds deep soil, built up over the bakes'
-        /// whole span: darker and browner with humus, its plants lusher, as
-        /// floodplains and the feet of slopes are. Lakes' shores show paler,
-        /// sandier grains the waves keep washed.
         pub deposit: f32 = 0.2 => range(0.0, 1.0),
-        /// Ground erosion wore away shows the paler, grayer subsoil and rock
-        /// under the humus-dark topsoil it lost.
         pub worn: f32 = 0.2 => range(0.0, 1.0),
-        /// Slopes from 30 degrees to 50 hold thin soil over rock, which
-        /// shows through it paler and grayer.
         pub steep: f32 = 0.15 => range(0.0, 1.0),
-        /// Ridges, wind-scoured and thin-soiled, weather paler and lichened;
-        /// hollows hold shade and deep soil, darker and browner.
         pub relief: f32 = 0.15 => range(0.0, 1.0),
-        /// Dust settles paler and warmer within six meters of roads.
         pub dust: f32 = 0.2 => range(0.0, 1.0),
-        /// Slopes turned to the sun's side ([`Self::heading`]) dry out paler
-        /// and warmer, and those turned from it stay damp, darker and
-        /// mossier, as far as the direct sun they take differs from level
-        /// ground's.
         pub aspect: f32 = 0.2 => range(0.0, 1.0),
-        /// The sun's side, toward the midday sun: degrees from -z toward +x,
-        /// as views give yaw. 180, +z, keeps north at -z, as views assume:
-        /// the midday sun stands south of the northern mid-latitudes; 0
-        /// turns it north for the southern ones.
         pub heading: f32 = 180.0 => range(-360.0, 360.0),
-        /// The noise's broad patches, a few hundred meters across, lighter
-        /// and darker.
         pub broad: f32 = 0.06 => range(0.0, 1.0),
-        /// The noise's finer patches, some 45 meters across, lighter and
-        /// darker.
         pub patchy: f32 = 0.03 => range(0.0, 1.0),
-        /// The noise's widest patches, some 600 meters across, warmer and
-        /// cooler: the share red gains or loses, blue moving the other way.
         pub warmth: f32 = 0.04 => range(0.0, 1.0),
     }
 }
 
-/// A surface as authored: its materials' IDs, in the order control values
-/// index them, its biomes, the material covering its steep ground, the IDs
-/// of the assets its placement layers stand on it, in the order placements
-/// index them, and how strongly each cause tints its terrain's macro
-/// colors.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Biomes {
     pub materials: Vec<String>,
@@ -358,15 +186,10 @@ pub struct Biomes {
     pub steep: Option<SteepLayer>,
     pub assets: Vec<String>,
     pub placements: Vec<crate::PlacementLayer>,
-    /// Objects authors stand on it.
     pub placed: Vec<crate::AuthoredPlacement>,
-    /// How strongly each cause tints its terrain's macro colors, which the
-    /// terrain's recipe carries with the rest of the surface to their job:
-    /// a change makes the colors anew.
     pub macro_colors: MacroCauses,
 }
 
-/// What a surface refused: the path of the offending value and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BiomeError {
     pub path: String,
@@ -381,10 +204,6 @@ impl std::fmt::Display for BiomeError {
 
 impl std::error::Error for BiomeError {}
 
-/// Which of a sample's inputs masks read: its water (flow,
-/// wetness, lakes, rivers and their beds), its roads and what erosion
-/// changed. Inputs no mask reads are not sampled, which leaves every mask's
-/// value as it was.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Reads {
     pub(crate) water: bool,
@@ -402,10 +221,6 @@ impl Reads {
     }
 }
 
-/// A row of samples as masks read it: each sample's x and
-/// z, height, gradient (rise per meter along x and z), curvature, water,
-/// the meters erosion changed it by and road, at a level whose samples lie
-/// `spacing` meters apart.
 pub(crate) struct RowInputs<'a> {
     pub(crate) xs: &'a [f32],
     pub(crate) zs: &'a [f32],
@@ -418,7 +233,6 @@ pub(crate) struct RowInputs<'a> {
     pub(crate) path: &'a [PathSample],
 }
 
-/// Rows a row's masks evaluate their parts into, reused.
 #[derive(Default)]
 pub(crate) struct RowScratch {
     rows: Vec<Vec<f32>>,
@@ -436,17 +250,12 @@ impl RowScratch {
     }
 }
 
-/// A mask ready to evaluate: slopes as gradients, headings as what they
-/// weigh the gradient by, noise as frequencies.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Compiled {
     Constant(f32),
     Height([f32; 2]),
     Gradient([f32; 2]),
     Curvature([f32; 2]),
-    /// The ramp `ends` over the gradient weighed by `toward` along x and z:
-    /// the heading's direction turned back, `[-sin, cos]` of the heading,
-    /// since ground falling toward the heading rises away from it.
     Facing {
         toward: [f32; 2],
         ends: [f32; 2],
@@ -474,12 +283,6 @@ pub(crate) enum Compiled {
     Remap(Box<Compiled>, [f32; 2]),
 }
 
-/// The ground's shape at a sample, as masks, normals and renderers read
-/// it: the gradient (rise per meter along x and z) and the Laplacian (per
-/// meter) at the sample of the smooth surface through the samples, the
-/// uniform cubic B-spline whose control points are their heights. The
-/// ground's normal anywhere blends these gradients across its cell
-/// ([`crate::Tile::sample`]), as renderers shade it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SampleShape {
     pub gradient: [f32; 2],
@@ -487,9 +290,6 @@ pub struct SampleShape {
 }
 
 impl SampleShape {
-    /// The shape at the middle of `around`, the heights of the 3 × 3
-    /// samples centered on it, `spacing` meters apart: rows along z from
-    /// the least, each along x from the least.
     pub fn of(around: [[f32; 3]; 3], spacing: f32) -> Self {
         let [[a, b, c], [d, e, f], [g, h, i]] = around;
         Self {
@@ -499,8 +299,6 @@ impl SampleShape {
     }
 }
 
-/// [`SampleShape::of`]'s gradient alone: the spline's central differences,
-/// weighted 1, 4 and 1 across them.
 pub(crate) fn smooth_gradient(around: [[f32; 3]; 3], spacing: f32) -> [f32; 2] {
     let [[a, b, c], [d, _, f], [g, h, i]] = around;
     let across = 12.0 * spacing;
@@ -510,12 +308,6 @@ pub(crate) fn smooth_gradient(around: [[f32; 3]; 3], spacing: f32) -> [f32; 2] {
     ]
 }
 
-/// What a sample's masks read: its terrain-local position in meters, its
-/// height above the terrain's origin, the gradient (rise per meter along x
-/// and z) and the curvature per meter of the smooth surface there
-/// ([`SampleShape`]), and the meters between samples at its level, below
-/// twice which noise fades to its mean, so coarse levels show the same
-/// patches as fine ones, filtered.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SampleInputs {
     pub x: f32,
@@ -524,19 +316,11 @@ pub struct SampleInputs {
     pub gradient: [f32; 2],
     pub curvature: f32,
     pub spacing: f32,
-    /// What the terrain's hydrology bake found there; zeros
-    /// without one.
     pub water: crate::HydrologySample,
-    /// The meters the terrain's erosions changed the ground by there,
-    /// summed over its erosion stages, negative where they wore it away;
-    /// 0 without erosion.
     pub erosion: f32,
-    /// The nearest road, as [`crate::Layers::path_at`]
-    /// reads it.
     pub path: PathSample,
 }
 
-/// 0 at `ends[0]`, 1 at `ends[1]`, smooth between; a step where they meet.
 #[inline]
 fn ramp(value: f32, ends: [f32; 2]) -> f32 {
     if ends[0] == ends[1] {
@@ -545,29 +329,22 @@ fn ramp(value: f32, ends: [f32; 2]) -> f32 {
     smooth((value - ends[0]) / (ends[1] - ends[0]))
 }
 
-/// Each of `values` ramped between `ends`, into `out`.
 fn ramps(out: &mut [f32], values: impl IntoIterator<Item = f32>, ends: [f32; 2]) {
     for (value, input) in out.iter_mut().zip(values) {
         *value = ramp(input, ends);
     }
 }
 
-/// The slope's tangent of ground whose gradient (rise per meter along x and
-/// z) is `[x, z]`: the gradient's length.
 #[inline]
 fn slope_of([x, z]: [f32; 2]) -> f32 {
     (x * x + z * z).sqrt()
 }
 
-/// How far ground whose gradient is `[x, z]` tilts toward a heading that
-/// weighs the gradient by `toward` ([`Compiled::Facing`]).
 #[inline]
 fn facing(toward: [f32; 2], [x, z]: [f32; 2]) -> f32 {
     toward[0] * x + toward[1] * z
 }
 
-/// The meters worn down, and those laid down, of ground erosion changed by
-/// `change` meters: each 0 where it changed the ground the other way.
 #[inline]
 fn worn(change: f32) -> f32 {
     max(-change, 0.0)
@@ -578,7 +355,6 @@ fn deposit(change: f32) -> f32 {
     max(change, 0.0)
 }
 
-/// The stack's baked erosion stages, in its order.
 pub(crate) fn erosions(layers: &Layers) -> impl Iterator<Item = &Erosion> {
     layers.layers().iter().filter_map(|layer| match layer {
         Layer::Erosion(stage) => stage.baked.as_deref(),
@@ -593,11 +369,6 @@ pub(crate) fn erosions(layers: &Layers) -> impl Iterator<Item = &Erosion> {
     })
 }
 
-/// The meters the stack's erosions changed the ground by at each of `xs`
-/// at `z`, in its frame, as samples `spacing` meters apart see it, into
-/// `out`: each stage's change ([`Erosion::change_row`], smooth across its
-/// grid however much coarser) summed from 0 in the stack's order, as the
-/// macro colors sum them.
 pub(crate) fn erosion_row(layers: &Layers, xs: &[f32], z: f32, spacing: f32, out: &mut [f32]) {
     out.fill(0.0);
     for erosion in erosions(layers) {
@@ -607,8 +378,6 @@ pub(crate) fn erosion_row(layers: &Layers, xs: &[f32], z: f32, spacing: f32, out
     }
 }
 
-/// `masks` folded over `row` into `out` with `op`, from `start`, in the
-/// masks' order.
 fn fold(
     masks: &[Compiled],
     row: &RowInputs<'_>,
@@ -638,7 +407,6 @@ impl Compiled {
             return Err(fail("masks nest at most 8 deep"));
         }
         let finite = |values: &[f32]| values.iter().all(|value| value.is_finite());
-        // A ramp over one of the sample's inputs, its ends finite.
         let ramped = |ends: &[f32; 2], what: &str, input: fn([f32; 2]) -> Self| {
             if finite(ends) {
                 Ok(input(*ends))
@@ -672,7 +440,6 @@ impl Compiled {
                 {
                     return Err(fail(&invalid.rule));
                 }
-                // As gradients: the tangent of each slope.
                 Self::Gradient(ends.map(tangent))
             }
             Mask::Curvature(ends) => ramped(ends, "curvatures", Self::Curvature)?,
@@ -683,7 +450,6 @@ impl Compiled {
                         rule: invalid.rule.into_owned(),
                     });
                 }
-                // The heading's direction is (sin, -cos) along x and z.
                 let (sin, cos) = sin_cos(facing.heading.to_radians());
                 Self::Facing {
                     toward: [-sin, cos],
@@ -738,7 +504,6 @@ impl Compiled {
         })
     }
 
-    /// Which of a sample's inputs the mask reads.
     pub(crate) fn reads(&self) -> Reads {
         match self {
             Self::Flow(_)
@@ -772,7 +537,6 @@ impl Compiled {
         }
     }
 
-    /// Work units of one evaluation, against one per sample of a layer.
     pub(crate) fn cost(&self) -> u64 {
         match self {
             Self::Constant(_) => 0,
@@ -798,9 +562,6 @@ impl Compiled {
         }
     }
 
-    /// [`Self::evaluate`] for each sample of `row`, into
-    /// `out`: every node over the whole row at once, each sample's value
-    /// computed as one evaluation computes it, so the same bits.
     pub(crate) fn evaluate_row(
         &self,
         row: &RowInputs<'_>,
@@ -843,8 +604,6 @@ impl Compiled {
                 seed,
                 octaves,
             } => {
-                // Each sample's sum over the octaves, in their order; the
-                // octaves' shifts, fades and amplitudes are the row's.
                 out.fill(0.0);
                 let mut values = scratch.take(out.len());
                 let mut at_x = scratch.take(out.len());
@@ -884,9 +643,6 @@ impl Compiled {
                 scratch.give(at_x);
                 scratch.give(at_z);
             }
-            // The folds `product`, `sum` and the evaluation's own take: from
-            // 1, -0 (the standard library's), +infinity and -infinity, in the
-            // masks' order.
             Self::Multiply(masks) => fold(masks, row, out, scratch, 1.0, |a, b| a * b),
             Self::Add(masks) => fold(masks, row, out, scratch, -0.0, |a, b| a + b),
             Self::Min(masks) => fold(masks, row, out, scratch, f32::INFINITY, min),
@@ -906,8 +662,6 @@ impl Compiled {
         }
     }
 
-    /// Its code for the GPU interpreter, in postfix order,
-    /// onto `out`: the most values the interpreter's stack then holds.
     pub(crate) fn emit(&self, out: &mut Vec<u32>) -> u32 {
         use crate::gpu::op;
         let ramp = |out: &mut Vec<u32>, code: u32, ends: &[f32; 2]| {
@@ -987,8 +741,6 @@ impl Compiled {
             Self::Power(ends) => ramp(inputs.water.power, *ends),
             Self::Flood(ends) => ramp(inputs.water.flood, *ends),
             Self::Path(ends) => {
-                // The ramp at four points across the sample's footprint,
-                // across the road.
                 let PathSample { distance, half } = inputs.path;
                 [-0.375, -0.125, 0.125, 0.375]
                     .iter()
@@ -1003,13 +755,8 @@ impl Compiled {
             } => {
                 let (mut sum, mut weight, mut amplitude, mut scale) = (0.0, 0.0, 1.0, *frequency);
                 for octave in 0..*octaves {
-                    // Each octave shifted, so their lattices never line up;
-                    // octaves fewer than four samples across fade out by
-                    // two, as a filtered image's would.
                     let shift = octave as f32 * 17.13;
                     let fade = clamp(0.5 / (scale * inputs.spacing) - 1.0, 0.0, 1.0);
-                    // Octaves faded out add nothing: zero
-                    // times the noise's finite value.
                     if fade > 0.0 {
                         sum += amplitude
                             * fade
@@ -1055,10 +802,6 @@ struct CompiledBiome {
     wetness: Option<Compiled>,
 }
 
-/// A validated surface, ready to evaluate per sample: its biomes, then its
-/// steep layer as one more painted over them, fit as steep as the ground
-/// is, of its one material; and the biomes the ground's wetness walks, the
-/// authored ones where any has a wetness rule, none where none has.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BiomeRules {
     authored: Biomes,
@@ -1071,11 +814,6 @@ pub struct BiomeRules {
     placed: Vec<crate::placement::CompiledAuthored>,
 }
 
-/// A sample's control value: the material weighing most (`a`), the one
-/// weighing second (`b`, `a` again when none), `b`'s share of the two from
-/// 0 to 255, and how wet the ground is from 0, dry, to 255, soaked: each
-/// biome's wetness rule as far as that biome applies, as if no steep layer
-/// were painted over them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Control {
     pub a: u8,
@@ -1085,8 +823,6 @@ pub struct Control {
 }
 
 impl Control {
-    /// Packed as `a | b << 8 | blend << 16 | wet << 24`, the layout
-    /// renderers read.
     pub fn packed(self) -> u32 {
         u32::from(self.a)
             | u32::from(self.b) << 8
@@ -1105,10 +841,6 @@ impl Control {
 }
 
 impl Biomes {
-    /// Validates and prepares the surface: 1 to 255 materials with unique
-    /// IDs, 1 to 255 biomes with unique IDs, each with 1 to 64 layers
-    /// naming its materials, a steep layer naming one, and its macro colors'
-    /// causes within their rules.
     pub fn compile(&self) -> Result<BiomeRules, BiomeError> {
         let fail = |path: String, rule: &str| BiomeError {
             path,
@@ -1184,8 +916,6 @@ impl Biomes {
                     material: material as u8,
                     gradient: layer.slope.map(tangent),
                 };
-                // Painted over every biome, as steep as the ground is,
-                // leaving their wetness as they make it.
                 biomes.push(CompiledBiome {
                     fitness: Compiled::Gradient(steep.gradient),
                     layers: vec![CompiledLayer {
@@ -1240,30 +970,22 @@ impl Biomes {
 }
 
 impl BiomeRules {
-    /// The biomes as authored.
     pub fn authored(&self) -> &Biomes {
         &self.authored
     }
 
-    /// The steep layer, which renderers decide at every point of the
-    /// ground; `None` without one.
     pub fn steep(&self) -> Option<Steep> {
         self.steep
     }
 
-    /// Which of a sample's inputs the biomes' masks read.
     pub(crate) fn reads(&self) -> Reads {
         self.reads
     }
 
-    /// The biomes the ground's wetness walks: the authored ones where any
-    /// has a wetness rule, none where none has.
     pub(crate) fn wet_biomes(&self) -> usize {
         self.wet_biomes
     }
 
-    /// These rules choosing materials alone, placing no objects: what a
-    /// terrain's surroundings follow.
     #[must_use]
     pub fn without_placements(&self) -> Self {
         let mut rules = self.clone();
@@ -1275,7 +997,6 @@ impl BiomeRules {
         rules
     }
 
-    /// Whether `placing`'s objects stand on tiles of `level`.
     pub fn places(&self, level: u8, placing: crate::Placing) -> bool {
         let near = self.placements.iter().any(|layer| layer.level == level)
             || self.placed.iter().any(|object| object.level == level);
@@ -1287,17 +1008,10 @@ impl BiomeRules {
         }
     }
 
-    /// The authored objects standing on `tile`, appended to
-    /// `out`; returns the work it took.
     pub fn place_authored(&self, tile: &crate::Tile, out: &mut Vec<crate::Placed>) -> u64 {
         crate::placement::place_authored(&self.placed, tile, out)
     }
 
-    /// The objects row `row` of placement layer `layer`'s candidate squares
-    /// stand on `tile`, appended to `out`: layers of other
-    /// levels than `tile`'s hold none, nor layers `placing` leaves out.
-    /// Returns the work it took (samples' worth) and the
-    /// next row, none after the last layer's last.
     pub(crate) fn place_row(
         &self,
         tile: &crate::Tile,
@@ -1319,17 +1033,10 @@ impl BiomeRules {
         )
     }
 
-    /// Work units of one sample's control value, against one per sample
-    /// of a layer.
     pub fn cost(&self) -> u64 {
         self.cost
     }
 
-    /// Its program for the GPU interpreter, onto `words`
-    /// (where it starts at their length), laid out as
-    /// [`crate::gpu::header::PROGRAM`] describes: the most values the
-    /// interpreter's stack holds, its biomes, and the materials its control
-    /// values index.
     pub(crate) fn program(&self, words: &mut Vec<u32>) -> (u32, u32, u32) {
         use crate::gpu::{BIOME_WORDS, op};
         let (table, entry) = (words.len(), BIOME_WORDS as usize);
@@ -1343,8 +1050,6 @@ impl BiomeRules {
         };
         for (index, biome) in self.biomes.iter().enumerate() {
             let at = table + entry * index;
-            // The first biome and each biome's first layer take no mask;
-            // biomes without a wetness rule hold none.
             words[at] = if index == 0 {
                 u32::MAX
             } else {
@@ -1373,8 +1078,6 @@ impl BiomeRules {
         (stack, self.biomes.len() as u32, materials)
     }
 
-    /// The control value at a sample with `inputs`. `weights` is scratch
-    /// space, reused across samples.
     pub fn control(&self, inputs: &SampleInputs, weights: &mut Vec<(u8, f32)>) -> Control {
         self.control_with(
             |biome| self.biomes[biome].fitness.evaluate(inputs),
@@ -1384,10 +1087,6 @@ impl BiomeRules {
         )
     }
 
-    /// [`Self::control`] packed for each sample of `row`,
-    /// into `out`: every biome's fitness and layer's mask evaluated over the
-    /// row at once, each sample's control value then taken as one sample's
-    /// is, from the same values.
     pub(crate) fn control_row(
         &self,
         row: &RowInputs<'_>,
@@ -1398,8 +1097,6 @@ impl BiomeRules {
         let mut values: Vec<Vec<Vec<f32>>> = Vec::with_capacity(self.biomes.len());
         for (index, biome) in self.biomes.iter().enumerate() {
             let mut rows = Vec::with_capacity(biome.layers.len() + 2);
-            // The first biome and layers take no mask; biomes without a
-            // wetness rule, none after their layers.
             let mut fitness = scratch.take(if index == 0 { 0 } else { len });
             if index > 0 {
                 biome.fitness.evaluate_row(row, &mut fitness, scratch);
@@ -1436,10 +1133,6 @@ impl BiomeRules {
         }
     }
 
-    /// The control value of a sample whose biomes' fitnesses, layers' masks
-    /// and wetness rules (by biome, by biome and layer, and by biome)
-    /// `fitness`, `mask` and `wetness` give, asked for only where the walk
-    /// reaches them.
     fn control_with(
         &self,
         fitness: impl Fn(usize) -> f32,
@@ -1448,10 +1141,6 @@ impl BiomeRules {
         weights: &mut Vec<(u8, f32)>,
     ) -> Control {
         weights.clear();
-        // Later biomes and layers paint over earlier ones: walk them from the
-        // last, each taking what the later ones left, until nothing is left.
-        // The ground's wetness walks the biomes alone, each taking what the
-        // later ones left of it, the steep layer painted over them none.
         let mut remaining = 1.0_f32;
         let mut soaking = if self.wet_biomes > 0 { 1.0_f32 } else { 0.0 };
         let mut wet = 0.0_f32;
@@ -1520,7 +1209,6 @@ impl BiomeRules {
     }
 }
 
-// Binary encoding.
 use crate::codec::{record, tagged};
 
 tagged!(Mask, "invalid mask" {

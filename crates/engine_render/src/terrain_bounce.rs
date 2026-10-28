@@ -1,35 +1,3 @@
-//! Terrain bounce light: each terrain's bounce transfer
-//! ([`engine_core::TerrainBounce`]) relit every frame
-//! (`terrain_bounce.wgsl`). First its ground's light: every texel of a map
-//! over the terrain lit as terrain shades its own ground, the sun through
-//! the horizon maps and the clouds' shadows, the sky through its sky map, in
-//! its materials' colors as the palette holds them; then the map's levels,
-//! each texel the mean of the four below it. Then its probes, in nested
-//! levels around the detail eye: the finest a window of the cooked columns,
-//! each coarser one twice their spacing and reach, the coarsest holding the
-//! whole terrain. A probe gathers through its bins the light the ground
-//! sends it, each bin's ground read at its distance from the level its
-//! spread spans, into the low-order spherical harmonics of the light
-//! reaching it and of the sky it sees; a coarser probe over four of the
-//! finer level's is their mean instead, so a coarser level shows what the
-//! finer one does where both reach, and the probes of the third level on
-//! gather elsewhere through the means of the cooked probes they stand for.
-//! Each level's window takes a region of the horizon maps' bounce layers,
-//! which hold them for shading (`scene.wgsl`'s `bounce_light`). Nothing of
-//! the sun or the sky is cooked: the hour moves and the light follows in the
-//! next frame.
-//!
-//! Each terrain bounce light relights (none of surroundings, ground seen
-//! from afar) holds a slot: its bounce layers of the horizon maps and its
-//! layers of the ground's maps, while the horizon maps' array layers hold
-//! them after every casting terrain's own (`terrain_horizons::room`). Its
-//! ground takes the tint of its macro colors as terrain's own ground does
-//! from afar. A terrain's ground, probes and their means upload as its
-//! transfer arrives and again when it changes; the pipelines are made with
-//! the first frame relighting, and in a cooking session as soon as a
-//! terrain holds a slot, so the scene's pipeline list holds them wherever
-//! the cook's camera stands.
-
 use std::sync::Arc;
 
 use bytemuck::Zeroable;
@@ -49,41 +17,19 @@ use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
 use crate::terrain_sky::SkyMaps;
 
-/// Layers of the horizon maps each terrain's bounce light takes: per layer
-/// of probes, the light's mean (red, green, blue) and the sky's share
-/// (alpha), then their gradients along x, y and z; each level's window in a
-/// region of them.
 pub(crate) const BOUNCE_LAYERS: usize = 4 * engine_core::terrain_data::bounce::LAYERS;
 
-/// Most levels of probes a terrain relights: as many as its horizon record
-/// holds windows of.
 pub(crate) const MOST_LEVELS: usize = MAX_BOUNCE_LEVELS as usize;
 
-/// Columns of a level's window that its alignment and lookups give up
-/// either way of the eye's: the window starts on an even column, the eye
-/// stands anywhere in its own, and a lookup reads the next column too. A
-/// window holds every point within its half side less these of the eye.
 const WINDOW_MARGIN: f32 = 2.5;
 
-/// Bytes a probe's light takes in the scratch: both layers' four vectors.
 const SCRATCH_PROBE_BYTES: u64 = (BOUNCE_LAYERS * 16) as u64;
 
-/// The ground's light: radiance, filtered and written.
 const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// The ground's surface: control values and normals, loaded.
 const GROUND_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Uint;
-/// Layers of the ground's surface each terrain takes.
 const GROUND_LAYERS: u32 = 2;
-/// Bindings of the bounce group (`bindings::BOUNCE`).
 const BINDINGS: usize = 19;
 
-/// Where a terrain's probes relight this frame: its slot, its finest
-/// level's probe columns along a side, the columns along a side of each
-/// level's window, its levels, the finest level relit (finer ones reach no
-/// point of the terrain), each level's window's first column (x and z,
-/// even), the meters around the eye within which the finest level's window
-/// holds every point (each coarser one's twice as far), and the levels'
-/// regions a row of the bounce layers holds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BounceLevels {
     pub(crate) slot: u32,
@@ -97,14 +43,10 @@ pub(crate) struct BounceLevels {
 }
 
 impl BounceLevels {
-    /// Level `level`'s window's columns along a side: all of the level's
-    /// where they are fewer than the windows'.
     fn window(&self, level: u32) -> u32 {
         self.columns.min(self.probes >> level)
     }
 
-    /// The first texel (x and y) of level `level`'s region of the bounce
-    /// layers: regions of the windows' columns a side, in rows.
     fn region(&self, level: u32) -> [u32; 2] {
         [
             level % self.row * self.columns,
@@ -112,7 +54,6 @@ impl BounceLevels {
         ]
     }
 
-    /// Bytes the scratch holds of every level's probes.
     fn scratch_bytes(&self) -> u64 {
         (0..self.levels)
             .map(|level| u64::from(self.window(level)).pow(2) * SCRATCH_PROBE_BYTES)
@@ -120,17 +61,12 @@ impl BounceLevels {
     }
 }
 
-/// What bounce light reads of the scene's first group: the lighting
-/// uniform, the shadow lookups' uniform (the horizon records' count) and
-/// the clouds' shadows.
 pub(crate) struct SceneSources<'a> {
     pub(crate) lighting: &'a wgpu::Buffer,
     pub(crate) shadow: (&'static str, Bound<'a>),
     pub(crate) cloud_shadows: &'a wgpu::Buffer,
 }
 
-/// What bounce light reads of the terrain pass: its horizon, sky and macro
-/// color maps, and its palette.
 pub(crate) struct TerrainSources<'a> {
     pub(crate) horizons: &'a Horizons,
     pub(crate) sky: &'a SkyMaps,
@@ -138,9 +74,6 @@ pub(crate) struct TerrainSources<'a> {
     pub(crate) palette: &'a wgpu::Buffer,
 }
 
-/// Every slot's ground: its surface, two layers each, and its light, a
-/// layer each, with every level and a view of each, `side` texels a side
-/// (each terrain's in its first texels).
 struct Maps {
     ground: wgpu::Texture,
     ground_view: wgpu::TextureView,
@@ -154,25 +87,15 @@ pub(crate) struct Bounce {
     layout: crate::pipelines::GroupLayout,
     pipelines: Option<[wgpu::ComputePipeline; 3]>,
     frame: wgpu::Buffer,
-    // Each level's records, one per slot, which its gathers read; the
-    // ground and its light's levels read the finest's.
     terrains: Vec<Growable>,
     blocks: Growable,
     probes: Growable,
-    // Each level's probes this frame, which the next coarser one averages.
     scratch: Growable,
     maps: Option<Maps>,
-    // Advances when the maps are made anew.
     maps_generation: u64,
-    // Stand-ins for the light read and written where a pass writes or reads
-    // the light itself, and the light's sampler.
     light_stand_in: wgpu::TextureView,
     out_stand_in: wgpu::TextureView,
     sampler: wgpu::Sampler,
-    // Each listed terrain's slot, by terrain index; this frame's levels, by
-    // terrain index; and by slot, the transfer held and its probes' means,
-    // where its blocks' words, probes and means start; and by level, each
-    // slot's record.
     slots: Vec<Option<u32>>,
     windows: Vec<Option<BounceLevels>>,
     held: Vec<Option<Arc<TerrainBounce>>>,
@@ -182,12 +105,7 @@ pub(crate) struct Bounce {
     ground_group: GroupCache<BINDINGS>,
     level_groups: Vec<GroupCache<BINDINGS>>,
     gather_groups: Vec<GroupCache<BINDINGS>>,
-    // Each level's widest gather this frame, in invocations along a side
-    // (the finest level's a block each); 0 where none relights.
     widest: [u32; MOST_LEVELS],
-    /// Terrains relighting this frame, the probes they relight, the most
-    /// levels a terrain relights, and the terrains the bounce layers or the
-    /// buffers could not hold.
     pub(crate) relit: u32,
     pub(crate) relit_probes: u32,
     pub(crate) levels: u32,
@@ -262,20 +180,15 @@ impl Bounce {
         }
     }
 
-    /// Whether probes relight this frame.
     pub(crate) fn relights(&self) -> bool {
         self.widest.iter().any(|&widest| widest > 0)
     }
 
-    /// This frame's levels, by terrain index: where each terrain's probes
-    /// relight, none where they do not; and the slots, which the horizon
-    /// maps hold bounce layers for.
     pub(crate) fn windows(&self) -> (&[Option<BounceLevels>], u32) {
         let slots = self.slots.iter().flatten().count();
         (&self.windows, slots as u32)
     }
 
-    /// Relights nothing this frame: no terrain is listed.
     pub(crate) fn rest(&mut self) {
         self.slots.clear();
         self.windows.clear();
@@ -286,25 +199,15 @@ impl Bounce {
         self.dropped = 0;
     }
 
-    /// Bytes of the ground's maps and the probes' buffers.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         let maps = self.maps.as_ref().map_or(0, |maps| {
             let area = u64::from(maps.side) * u64::from(maps.side) * maps.slots as u64;
-            // The surface's two layers of four bytes; the light's eight bytes
-            // with a third more for its levels.
             area * 4 * u64::from(GROUND_LAYERS) + area * 8 * 4 / 3
         });
         let records: u64 = self.terrains.iter().map(|records| records.size()).sum();
         maps + records + self.blocks.size() + self.probes.size() + self.scratch.size()
     }
 
-    /// Gives each terrain of `terrains` bounce light relights its slot, in
-    /// order, with `settings` asking for bounce light: every one but
-    /// surroundings among the first `casting`, while the horizon maps' layers
-    /// hold `slots` of them. Places this frame's levels around the detail
-    /// eye `eye`: for each terrain with a slot whose transfer is here, as
-    /// many as the bounce layers and the probes' buffers hold in order; the
-    /// others are dropped.
     pub(crate) fn place(
         &mut self,
         terrains: &RenderTerrains,
@@ -349,11 +252,6 @@ impl Bounce {
         }
     }
 
-    /// Uploads the ground, probes and means of every terrain with levels
-    /// whose transfer arrived or changed since, and writes each level's
-    /// records: each slot's terrain's, relighting the levels it relights
-    /// where its horizon map is, as the horizon maps' bounce layers hold
-    /// them.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -367,8 +265,6 @@ impl Bounce {
         self.relit_probes = 0;
         self.levels = 0;
         let count = self.slots.iter().flatten().count();
-        // A cooking session's pipeline list holds bounce light's pipelines
-        // wherever its camera stands.
         if cooking && count > 0 && self.pipelines.is_none() {
             self.pipelines = Some(pipelines(device, &self.layout));
         }
@@ -411,8 +307,6 @@ impl Bounce {
                     *held = Some(bounce.clone());
                     changed = true;
                 }
-                // A transfer whose levels are gone keeps its ground, probes
-                // and means until another replaces it.
                 (None, Some(_)) if terrain.bounce.is_some() => {}
                 (None, current) => {
                     changed |= current.is_some();
@@ -431,7 +325,6 @@ impl Bounce {
             records.clear();
             records.resize(count, BounceTerrain::zeroed());
         }
-        // Where each relit level's probes start in the scratch.
         let mut scratch = 0_u32;
         let listed = terrains.terrains.iter().zip(&self.windows).enumerate();
         for (index, (terrain, window)) in listed {
@@ -457,8 +350,6 @@ impl Bounce {
                     palette.get(index).copied().unwrap_or(0),
                 ),
             );
-            // The finer level relit: its window's first column, its columns
-            // along a side and where its probes start in the scratch.
             let mut finer = [0; 4];
             for level in 0..window.levels {
                 let mut record = shared;
@@ -475,8 +366,6 @@ impl Bounce {
                     finer = [x, z, columns, scratch];
                     scratch += columns * columns;
                     self.relit_probes += columns * columns;
-                    // The finest level gathers a block of two by two
-                    // columns at a time.
                     let invocations = if level == 0 { columns / 2 } else { columns };
                     let widest = &mut self.widest[level as usize];
                     *widest = (*widest).max(invocations);
@@ -493,9 +382,6 @@ impl Bounce {
             .grow(device, u64::from(scratch) * SCRATCH_PROBE_BYTES);
     }
 
-    /// Writes every held transfer's blocks' words, probes and their means
-    /// into their buffers, one after another in slots' order, noting where
-    /// each slot's start.
     fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let mut words: Vec<u32> = Vec::new();
         let mut probes: Vec<u8> = Vec::new();
@@ -521,9 +407,6 @@ impl Bounce {
         }
     }
 
-    /// Relights the probes of this frame's levels: the ground's light, its
-    /// levels, then each level's gathers, the finest first, into the horizon
-    /// maps' bounce layers, timed by `profiler` (`bounce`).
     pub(crate) fn encode(
         &mut self,
         device: &wgpu::Device,
@@ -573,8 +456,6 @@ impl Bounce {
         let level =
             |index: usize| Bound::counted(generation, crate::pipelines::view(&maps.levels[index]));
         let (layout, label) = ((&BOUNCE, &self.layout), "engine/terrain-bounce");
-        // The ground and its light's levels read the finest level's records,
-        // which every level's repeat the ground in.
         let finest = self.terrains[0].bound();
         let ground = self.ground_group.bind(
             device,
@@ -628,7 +509,6 @@ impl Bounce {
             pass.set_bind_group(0, *group, &[]);
             pass.dispatch_workgroups(groups(side), groups(side), layers);
         }
-        // Each level after the finer ones, whose probes it averages.
         pass.set_pipeline(&pipelines[2]);
         for (group, &widest) in gathers.iter().zip(&self.widest) {
             if widest == 0 {
@@ -640,11 +520,6 @@ impl Bounce {
     }
 }
 
-/// What every bounce group binds alike: the bins' moments, the terrains'
-/// blocks, probes and the scratch, their ground, sky and macro color maps,
-/// the palette and the light's sampler; the horizon maps' own layers with
-/// their records and sampler, and their bounce layers written; the scene's
-/// lighting, shadow lookups' uniform and clouds' shadows.
 struct Shared<'a> {
     frame: Bound<'a>,
     blocks: Bound<'a>,
@@ -661,8 +536,6 @@ struct Shared<'a> {
 }
 
 impl<'a> Shared<'a> {
-    /// A group's entries, reading the records of a level as `terrains`,
-    /// the light as `light_in` and writing it as `light_out`.
     fn entries(
         &self,
         terrains: Bound<'a>,
@@ -695,11 +568,6 @@ impl<'a> Shared<'a> {
     }
 }
 
-/// Terrain `index`'s record of `bounce`, at a level its `window` places,
-/// relighting none until given the level: its place, its ground in its
-/// slot's layers lit with its sky map's and macro colors' layers plus one
-/// (0 without them) and its palette's first material, its blocks' words,
-/// probes and means from `bases`.
 fn terrain_record(
     terrain: &RenderTerrain,
     bounce: &TerrainBounce,
@@ -720,15 +588,6 @@ fn terrain_record(
     }
 }
 
-/// `terrain`'s levels of `bounce`'s probes around `eye` in its `slot`, as
-/// `settings` ask for them: the windows' columns along a side (the
-/// settings', more where the most levels would leave the coarsest short of
-/// its level's columns, at most the finest level's), as many levels as it
-/// takes for the coarsest to hold every column of its own, each level's
-/// window around the eye's column (starting on an even one, held within the
-/// terrain), and the finest relit, the first whose reach meets the terrain.
-/// None where the levels' regions do not fit the bounce layers, the horizon
-/// maps' texels a side.
 fn levels(
     terrain: &RenderTerrain,
     (bounce, slot): (&TerrainBounce, u32),
@@ -759,7 +618,6 @@ fn levels(
         engine_core::math::clamp(local.y, 0.0, extent.y),
     );
     let away = local.distance(nearest);
-    // The finer of the columns' spacings along x and z.
     let spacing = engine_core::math::min(extent.x, extent.y) / probes as f32;
     let reach = (columns as f32 * 0.5 - WINDOW_MARGIN) * spacing;
     let finest = (0..levels)
@@ -788,15 +646,10 @@ fn levels(
     })
 }
 
-/// The first of level `level`'s means (from the third level on) among a
-/// terrain's means of `probes` columns along a side: after every finer
-/// level's.
 fn mean_offset(probes: u32, level: u32) -> u32 {
     (2..level).map(|finer| (probes >> finer).pow(2)).sum()
 }
 
-/// Bytes of the means of a terrain's probes of `probes` columns along a
-/// side: a record for each probe of each level from the third on.
 fn mean_bytes(probes: u32) -> usize {
     let levels = (2..u32::BITS).take_while(|&level| probes >> level > 0);
     levels
@@ -805,10 +658,6 @@ fn mean_bytes(probes: u32) -> usize {
         * PROBE_BYTES
 }
 
-/// The means of `bounce`'s probes from its third level on, each level's
-/// probes in rows along z after the finer level's: each one the mean of the
-/// four under it of the level below; the second level's, which they start
-/// from, each block's probe, or its four probes' mean.
 fn means(bounce: &TerrainBounce) -> Vec<u8> {
     let records = bounce.probe_bytes();
     let record = |index: usize| &records[index * PROBE_BYTES..(index + 1) * PROBE_BYTES];
@@ -853,9 +702,6 @@ fn means(bounce: &TerrainBounce) -> Vec<u8> {
     out
 }
 
-/// The mean of four probes' records: each bin's share of the ground the
-/// mean of theirs, and the code of its distance the mean of theirs by how
-/// much ground each fills there.
 fn mean_of(four: [&[u8]; 4]) -> [u8; PROBE_BYTES] {
     let mut mean = [0_u8; PROBE_BYTES];
     for bin in 0..PROBE_BYTES / 2 {
@@ -871,7 +717,6 @@ fn mean_of(four: [&[u8]; 4]) -> [u8; PROBE_BYTES] {
     mean
 }
 
-/// Writes slot `index`'s ground surface layers of `ground` from `bounce`.
 fn write_ground(queue: &wgpu::Queue, ground: &wgpu::Texture, index: usize, bounce: &TerrainBounce) {
     let side = bounce.texels();
     queue.write_texture(
@@ -899,7 +744,6 @@ fn write_ground(queue: &wgpu::Queue, ground: &wgpu::Texture, index: usize, bounc
     );
 }
 
-/// The ground's maps of `slots` slots, `side` texels a side.
 fn maps(device: &wgpu::Device, side: u32, slots: usize) -> Maps {
     let layers = slots.max(1) as u32;
     let ground = crate::targets::texture_2d(

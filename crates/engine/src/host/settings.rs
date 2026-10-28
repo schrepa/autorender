@@ -1,27 +1,14 @@
-//! The engine switches every host takes, declared once ([`SETTINGS`]):
-//! each one's name, which a page parameter and a native option share, the
-//! values it takes, its default first, and what it does. Hosts read them
-//! into [`HostSettings`] with [`HostSettings::set`], the one parser, and
-//! apply them to the game they run; the page's parameters, the native
-//! usage text and `bench/options.json` list them from the table.
-
 use super::TerrainClock;
 use crate::{Game, GameHost};
 
-/// An engine switch hosts take.
 #[derive(Clone, Copy, Debug)]
 pub struct Setting {
-    /// The page parameter's and the native option's name.
     pub name: &'static str,
-    /// The values it takes, its default first.
     pub values: &'static [&'static str],
-    /// What it does.
     pub what: &'static str,
 }
 
 impl Setting {
-    /// Its values and what it does, as the page and the native host
-    /// describe it: `gpu (default) or cpu: how...`.
     pub fn described(&self) -> String {
         let mut values: Vec<String> = self.values.iter().map(|&value| value.into()).collect();
         if let Some(default) = values.first_mut() {
@@ -36,9 +23,6 @@ impl Setting {
     }
 }
 
-/// A setting's values, its default first: words, each with the value it
-/// sets (`None` keeping what the game chose), or `(named Type)`, the names
-/// of a type with `NAMES` and `named`, each setting the value it names.
 macro_rules! words {
     ([$($word:literal => $value:expr),+ $(,)?]) => {
         &[$($word),+]
@@ -48,8 +32,6 @@ macro_rules! words {
     };
 }
 
-/// The value `value`, one of a setting's values (`words!`), sets; `None`
-/// when it is none of them.
 macro_rules! parse {
     ($value:ident, [$($word:literal => $set:expr),+ $(,)?]) => {
         match $value {
@@ -62,20 +44,15 @@ macro_rules! parse {
     };
 }
 
-/// Declares the settings: [`HostSettings`]' fields, [`SETTINGS`], the
-/// parser and what applying them calls on a game's host.
 macro_rules! settings {
     ($(
         $field:ident: $ty:ty = $name:literal, $what:literal, $values:tt => $apply:ident;
     )*) => {
-        /// The engine switches a host was given; one not given keeps what
-        /// the game and its scene chose.
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
         pub struct HostSettings {
             $(#[doc = $what] pub $field: Option<$ty>,)*
         }
 
-        /// Every engine switch hosts take.
         pub const SETTINGS: &[Setting] = &[$(Setting {
             name: $name,
             values: words!($values),
@@ -83,8 +60,6 @@ macro_rules! settings {
         }),*];
 
         impl HostSettings {
-            /// Sets the switch `name` to `value`; whether `name` is one. A
-            /// value it does not take fails, naming those it does.
             pub fn set(&mut self, name: &str, value: &str) -> Result<bool, String> {
                 match name {
                     $($name => {
@@ -99,8 +74,6 @@ macro_rules! settings {
                 }
             }
 
-            /// Applies the switches given to `host`, in this and later
-            /// engines.
             pub fn apply<G: Game>(&self, host: &mut GameHost<G>) {
                 $(if let Some(value) = self.$field {
                     host.$apply(value);
@@ -141,7 +114,6 @@ settings! {
 }
 
 impl HostSettings {
-    /// Whether `name` is an engine switch.
     pub fn takes(name: &str) -> bool {
         SETTINGS.iter().any(|setting| setting.name == name)
     }

@@ -1,19 +1,3 @@
-//! Conifers for the highlands, the scene's own content: a tapering trunk
-//! and whorls of drooping branches, each a flat card of needles across it
-//! and a hanging card through it, over one atlas whose left half is bark
-//! and right half a needle spray, drawn with one masked material shaded as
-//! foliage. A card's normal is mostly its branch's, leaning out from the
-//! trunk so the crown lights as one volume, and partly its face's own:
-//! cards carry each face with vertices of its own, and vertex colors darken
-//! the crown toward its trunk and its lower whorls. Coarser levels keep
-//! every card's size and drop whole branches in the order their whorls
-//! rank them: the lower whorls thin first, then about every other branch
-//! of each whorl goes, and the crown's top and each whorl's longest
-//! branches, the tips of its outline, stay longest. Every level's cards are
-//! cut to the needles' alpha ([`trim_cards`]). Shadow maps draw each tree
-//! as a closed solid crown within its cards' outline: its trunk and
-//! drooping cone tiers.
-
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::sync::OnceLock;
 
@@ -23,11 +7,6 @@ use engine::terrain::{PlacementAsset, PlacementLod};
 use crate::kit::random::{golden_hash, unit};
 use crate::kit::records;
 
-/// Spruce `seed` as a placement asset drawn with `material` ([`material`]):
-/// its levels, finest first, switching at [`CONIFER_ERRORS`], and its
-/// shadow proxy, each a record ([`records::mesh`]) whose handle is reserved
-/// until the record is here. It stands rigid and collides with nothing:
-/// the scene sets its sway and collider.
 pub(crate) fn spruce(
     world: &mut World,
     seed: u32,
@@ -53,8 +32,6 @@ pub(crate) fn spruce(
     })
 }
 
-/// Conifer `seed` at `detail` as a record ([`records::mesh`]): its handle,
-/// reserved until the record is here.
 fn conifer_record(world: &mut World, seed: u32, detail: usize) -> engine::Result<MeshHandle> {
     let mut identity = seed.to_le_bytes().to_vec();
     identity.extend_from_slice(&(detail as u32).to_le_bytes());
@@ -63,8 +40,6 @@ fn conifer_record(world: &mut World, seed: u32, detail: usize) -> engine::Result
     })
 }
 
-/// Conifer `seed`'s shadow proxy as a record ([`records::mesh`]): its
-/// handle, reserved until the record is here.
 fn shadow_record(world: &mut World, seed: u32) -> engine::Result<MeshHandle> {
     records::mesh(
         world,
@@ -74,9 +49,6 @@ fn shadow_record(world: &mut World, seed: u32) -> engine::Result<MeshHandle> {
     )
 }
 
-/// The bark and needle atlas as a texture record ([`records::textures`]),
-/// cooked as every generated texture is: its handle, which materials name
-/// at once.
 pub(crate) fn atlas_record(world: &mut World) -> engine::Result<TextureHandle> {
     let handles = world.resource_scope(|world, mut stored: Mut<Records>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
@@ -97,9 +69,6 @@ pub(crate) fn atlas_record(world: &mut World) -> engine::Result<TextureHandle> {
     Ok(handles[0])
 }
 
-/// The material conifers draw with over their atlas `atlas`: matte,
-/// colored by the atlas and their vertices, cut out by the atlas's alpha
-/// at [`CUTOFF`] and shaded as foliage.
 pub(crate) fn material(atlas: TextureHandle) -> Result<Material, AssetError> {
     Material::new([1.0; 4])?
         .with_surface(Surface {
@@ -111,64 +80,33 @@ pub(crate) fn material(atlas: TextureHandle) -> Result<Material, AssetError> {
         .map(|material| material.with_foliage(true))
 }
 
-/// The atlas's texels ([`atlas`]), drawn once: what its texture record
-/// cooks, and what every level's cards are cut to.
 fn texels() -> &'static [u8] {
     static TEXELS: OnceLock<Vec<u8>> = OnceLock::new();
     TEXELS.get_or_init(atlas)
 }
 
-/// The atlas's side in texels.
 const ATLAS: u32 = 512;
 
-/// The alpha below which the atlas's texels are cut out: the material's
-/// mask, and the needles every level's cards are cut to.
 const CUTOFF: f32 = 0.5;
 
-/// Bark texture coordinates span this much of the atlas's width: its left
-/// half less a margin, so filtering never reaches the needles.
 const BARK: [f32; 2] = [0.01, 0.49];
-/// Texture coordinates amid the bark, which covers the atlas there
-/// throughout: those of every vertex of a shadow proxy.
 const BARK_MIDDLE: [f32; 2] = [0.5 * (BARK[0] + BARK[1]), 0.5];
-/// The needle spray's horizontal center and half width in the atlas, and
-/// its vertical span (base at the bottom).
 const SPRAY: [f32; 2] = [0.75, 0.235];
 const SPRAY_SPAN: [f32; 2] = [0.99, 0.01];
 
-/// How much of a card's normal is its branch's, leaning out from the trunk
-/// and [`LEAN`] up, rather than its face's own: the crown lights as one
-/// volume, each card still by the way it faces.
 const CROWN_NORMAL: f32 = 0.7;
 const LEAN: f32 = 0.55;
 
-/// A card segment's corners as its triangles, its first two vertices
-/// across its base and the next two across its tip: its front's, then its
-/// back's.
 const FRONT: [u32; 6] = [0, 1, 2, 1, 3, 2];
 const BACK: [u32; 6] = [0, 2, 1, 1, 2, 3];
 
-/// The meters between whorls, each spacing varying about it.
 const SPACING: f32 = 0.42;
 
-/// A shadow proxy's tiers: the whorls each spans, the sides of their rims,
-/// and how far out a tier's rim lies along its lowest whorl's branches, as
-/// a share of the length they vary about: within their needles.
 const TIER: usize = 2;
 const RIM_SIDES: u32 = 8;
 const RIM: f32 = 0.8;
-/// A shadow proxy's trunk's radius at its foot against the trunk's: its
-/// corners within the faces of the finer levels' trunks.
 const SPIKE: f32 = 0.7;
 
-/// How finely a level is built: its trunk's sides and segments (each
-/// mapping the bark once), its cards' segments, and the share of each
-/// whorl's branches it keeps, at the crown's foot and at its top (between
-/// them by the whorl's height), two at least. It drops the rest whole, the
-/// last its whorl ranks ([`rank`]), and every card keeps its size: coarser
-/// levels thin the lower whorls first, whose long branches overlap the
-/// most, then keep about every other branch of each whorl, the crown's top
-/// and each whorl's longest branches staying longest.
 struct Detail {
     sides: u32,
     segments: u32,
@@ -176,7 +114,6 @@ struct Detail {
     keep: [f32; 2],
 }
 
-/// The full tree, then each coarser level.
 const DETAILS: [Detail; 4] = [
     Detail {
         sides: 7,
@@ -204,20 +141,13 @@ const DETAILS: [Detail; 4] = [
     },
 ];
 
-/// The errors, in meters, the coarser levels show: chosen so a tree drops
-/// branches where the gaps they leave blur into its crown rather than by
-/// geometric deviation, which cards make meaningless.
 const CONIFER_ERRORS: [f32; 3] = [0.04, 0.09, 0.16];
 
-/// Conifer `seed` built at `detail` (0 the full tree, up to 3): 13 to 17
-/// meters tall before placement scales it, its base half a meter into the
-/// ground, its cards cut to the needles' alpha.
 fn conifer(seed: u32, detail: usize) -> engine::Result<Mesh> {
     let build = &DETAILS[detail];
     let shape = Shape::of(seed);
     let mut builder = Builder::default();
     builder.trunk(&shape, (build.sides, build.segments));
-    // Each whorl's best ranked branches, as many as its share keeps.
     for whorl in &shape.whorls {
         let count = whorl.branches.len();
         let share = build.keep[0] + (build.keep[1] - build.keep[0]) * whorl.rise;
@@ -240,14 +170,6 @@ fn conifer(seed: u32, detail: usize) -> engine::Result<Mesh> {
         })
 }
 
-/// Conifer `seed`'s shadow proxy, which shadow maps draw in place of its
-/// levels: a closed solid crown within its cards' outline, a few hundred
-/// triangles. Its trunk is a four-sided spike from its foot below the
-/// ground to the top; its crown a drooping cone tier for every [`TIER`]
-/// whorls, from the stem at the tier's highest whorl (the top, for the
-/// highest tier) down and out to a rim along its lowest whorl's branches,
-/// and back in under them. Its vertices carry the streams its levels' do,
-/// white and amid the bark.
 fn shadow_proxy(seed: u32) -> engine::Result<Mesh> {
     let shape = Shape::of(seed);
     let mut builder = Builder::default();
@@ -276,18 +198,12 @@ fn shadow_proxy(seed: u32) -> engine::Result<Mesh> {
     })
 }
 
-/// A conifer's shape, which every level and its shadow proxy keep: its
-/// height, its trunk's base radius and its whorls from the lowest up.
 struct Shape {
     height: f32,
     base_radius: f32,
     whorls: Vec<Whorl>,
 }
 
-/// A whorl: its height on the stem, the length its branches vary about,
-/// the sine and cosine of their droop, the turn about the stem they start
-/// from, how far up the crown it stands (0 at its foot, toward 1 at its
-/// top), and its branches in order round the stem.
 struct Whorl {
     y: f32,
     length: f32,
@@ -297,11 +213,6 @@ struct Whorl {
     branches: Vec<Branch>,
 }
 
-/// A branch: where it leaves the stem, the way it points out from it, that
-/// way dipped by its whorl's droop, its length and its shade; where it
-/// stands round the stem, in spacings between its whorl's branches; the
-/// draw that set its length (toward 1 the longest); and its rank, how many
-/// of its whorl's branches coarser levels keep before it.
 struct Branch {
     start: Vec3,
     outward: Vec3,
@@ -314,24 +225,16 @@ struct Branch {
 }
 
 impl Branch {
-    /// The point `t` of its length out (1 its tip).
     fn at(&self, t: f32) -> Vec3 {
         point_along(self.start, self.direction, self.length, t)
     }
 }
 
-/// The point `t` of the way along a branch from `start` pointing
-/// `direction`, `length` meters long, bending further down toward its tip.
 fn point_along(start: Vec3, direction: Vec3, length: f32, t: f32) -> Vec3 {
     start + direction * (length * t) - Vec3::Y * (0.18 * length * t * t)
 }
 
 impl Shape {
-    /// The shape of seed `seed`: 13 to 17 meters tall, with whorls of six
-    /// to eight branches every [`SPACING`] meters or so up the stem from
-    /// about two meters, shorter toward the top, the upper ones reaching up
-    /// a little and the lower ones drooping and darker, each whorl's
-    /// branches ranked ([`rank`]).
     fn of(seed: u32) -> Self {
         let random = |index: u32| unit(golden_hash(seed.wrapping_mul(0x9e37_79b9) ^ index));
         let height = 13.0 + 4.0 * random(1);
@@ -386,17 +289,11 @@ impl Shape {
         }
     }
 
-    /// Its trunk's radius `y` meters up, narrowing to a point at the top.
     fn radius(&self, y: f32) -> f32 {
         self.base_radius * math::pow(math::max(1.0 - y / self.height, 0.0), 0.85) + 0.012
     }
 }
 
-/// Ranks one whorl's `branches` by how long coarser levels keep them: its
-/// longest first, then each time the one farthest round the stem from
-/// those ranked, the longer of two about as far. A level keeping any number
-/// spreads them round the stem, and drops the shorter, inner ones crowded
-/// between others first.
 fn rank(branches: &mut [Branch]) {
     let count = branches.len() as f32;
     let mut ranked: Vec<usize> = Vec::with_capacity(branches.len());
@@ -406,7 +303,6 @@ fn rank(branches: &mut [Branch]) {
             if ranked.contains(&index) {
                 continue;
             }
-            // Its room: the spacings round the stem to the nearest ranked.
             let room = ranked.iter().fold(count, |room, &other| {
                 let gap = (branch.slot - branches[other].slot).abs();
                 math::min(room, math::min(gap, count - gap))
@@ -422,7 +318,6 @@ fn rank(branches: &mut [Branch]) {
     }
 }
 
-/// A mesh being built: its vertices, their colors and its triangles.
 #[derive(Default)]
 struct Builder {
     vertices: Vec<MeshVertex>,
@@ -431,7 +326,6 @@ struct Builder {
 }
 
 impl Builder {
-    /// Adds a vertex; returns its index.
     fn push(&mut self, position: Vec3, normal: Vec3, uv: [f32; 2], color: [f32; 3]) -> u32 {
         self.vertices.push(MeshVertex {
             position: position.to_array(),
@@ -443,7 +337,6 @@ impl Builder {
         self.vertices.len() as u32 - 1
     }
 
-    /// The mesh built.
     fn mesh(self) -> Result<Mesh, AssetError> {
         let Self {
             vertices,
@@ -453,9 +346,6 @@ impl Builder {
         Mesh::new(vertices, indices).and_then(|mesh| mesh.with_colors(colors))
     }
 
-    /// The trunk, narrowing to a point at the top, of `sides` sides and
-    /// `segments` segments, each mapping the bark once; darker toward its
-    /// foot.
     fn trunk(&mut self, shape: &Shape, (sides, segments): (u32, u32)) {
         for segment in 0..segments {
             let [low, high] = [segment, segment + 1]
@@ -483,9 +373,6 @@ impl Builder {
         }
     }
 
-    /// `branch`'s cards along it in `bends` segments, bending further down
-    /// toward its tip: a flat one across it and a hanging one through it,
-    /// lit as its normal leaning out from the stem.
     fn branch(&mut self, branch: &Branch, bends: usize) {
         let spine: Vec<Vec3> = (0..=bends)
             .map(|step| branch.at(step as f32 / bends as f32))
@@ -497,8 +384,6 @@ impl Builder {
         self.card(&spine, hanging * (0.3 * branch.length), crown, branch.color);
     }
 
-    /// The leader: two crossed upright cards topping the stem, lit as the
-    /// crown's top.
     fn leader(&mut self, height: f32) {
         for turn in [0.0, FRAC_PI_2] {
             let (sin, cos) = math::sin_cos(turn);
@@ -514,11 +399,6 @@ impl Builder {
         }
     }
 
-    /// A card along `spine` (its base first), reaching `half` to each side
-    /// and mapping the spray from its base to its tip; its base, nearest
-    /// the stem, is darkest. Each face has vertices of its own, lit as
-    /// [`CROWN_NORMAL`] of `crown` (a unit normal) and the rest of the
-    /// face's own normal.
     fn card(&mut self, spine: &[Vec3], half: Vec3, crown: Vec3, color: [f32; 3]) {
         let last = spine.len() - 1;
         for (facing, corners) in [(1.0_f32, FRONT), (-1.0, BACK)] {
@@ -528,7 +408,6 @@ impl Builder {
                 let v = SPRAY_SPAN[0] + (SPRAY_SPAN[1] - SPRAY_SPAN[0]) * t;
                 let inner = 0.5 + 0.5 * t;
                 let shade = color.map(|channel| channel * inner);
-                // The face's own normal, across the spine's way here.
                 let way = spine[(step + 1).min(last)] - spine[step.saturating_sub(1)];
                 let face = half.cross(way).normalize_or(crown) * facing;
                 let normal = crown * CROWN_NORMAL + face * (1.0 - CROWN_NORMAL);
@@ -548,10 +427,6 @@ impl Builder {
         }
     }
 
-    /// A shadow proxy's tier, closed: from the stem at `top` down and out
-    /// to a rim [`RIM`] of the way along the branches of `whorl`, its
-    /// lowest, and back in under them to the stem a whorl's spacing below
-    /// `whorl`.
     fn tier(&mut self, whorl: &Whorl, top: f32) {
         let apex = self.push(Vec3::new(0.0, top, 0.0), Vec3::Y, BARK_MIDDLE, [1.0; 3]);
         let below = Vec3::new(0.0, whorl.y - SPACING, 0.0);
@@ -574,18 +449,12 @@ impl Builder {
     }
 }
 
-/// The atlas's RGBA8 texels, sRGB color with alpha coverage: bark furrowed
-/// along its height on the left half, a needle spray on the right, its
-/// main twig rising from the bottom edge with side shoots, every twig
-/// fringed with needles. Uncovered texels keep the needles' mean color, so
-/// filtering never darkens their edges.
 fn atlas() -> Vec<u8> {
     let size = ATLAS as usize;
     let half = size / 2;
     let needle = [0.06, 0.13, 0.06];
     let mut color = vec![needle; size * size];
     let mut alpha = vec![0.0_f32; size * size];
-    // Bark: furrows along the height, broken by knots.
     for y in 0..size {
         for x in 0..half {
             let point = Vec2::new(x as f32 / 9.0, y as f32 / 70.0);
@@ -604,7 +473,6 @@ fn atlas() -> Vec<u8> {
     let center = (half + half / 2) as f32;
     let (base, tip) = (size as f32 - 6.0, 10.0);
     let twig = [0.24, 0.17, 0.11];
-    // Side shoots alternate up the main twig, longest at the base.
     let mut shoots = Vec::new();
     let mut along = 0.06;
     let mut side = 1.0;
@@ -665,7 +533,6 @@ fn atlas() -> Vec<u8> {
     texels
 }
 
-/// The needle spray being drawn: linear colors and coverage of the atlas.
 struct Spray<'a> {
     color: &'a mut [[f32; 3]],
     alpha: &'a mut [f32],
@@ -673,8 +540,6 @@ struct Spray<'a> {
 }
 
 impl Spray<'_> {
-    /// A stroke from `a` to `b`, `radius` texels thick with antialiased
-    /// edges, of linear color `tint`, laid over what is drawn.
     fn capsule(&mut self, a: Vec2, b: Vec2, radius: f32, tint: [f32; 3]) {
         let min = a.min(b) - Vec2::splat(radius + 1.0);
         let max = a.max(b) + Vec2::splat(radius + 1.0);
@@ -707,7 +572,6 @@ impl Spray<'_> {
     }
 }
 
-/// Linear `value` as an sRGB byte.
 fn srgb(value: f32) -> u8 {
     let value = math::clamp(value, 0.0, 1.0);
     let encoded = if value <= 0.003_130_8 {
@@ -718,7 +582,6 @@ fn srgb(value: f32) -> u8 {
     (encoded * 255.0).round() as u8
 }
 
-/// Value noise from 0 to 1 at `point`, smooth between lattice points.
 fn noise(point: Vec2) -> f32 {
     let cell = point.floor();
     let f = point - cell;

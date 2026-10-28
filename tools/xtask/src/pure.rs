@@ -1,13 +1,3 @@
-//! `cargo xtask pure`: deterministic checks of engine code over tracked
-//! fixtures, without a GPU or a browser. Each corpus runs the code its
-//! fixtures exercise, checks the promises that code makes (a tile
-//! generated in bands is the tile generated whole, a job worker's output
-//! is the engine's own) and observes what it made: hashes and a few
-//! readable numbers, which must equal the corpus's goldens in
-//! tools/xtask/pure/goldens.json. An intended change shows as a reviewed
-//! diff of that file, which `--bless` rewrites from a run whose promises
-//! hold.
-
 mod caches;
 mod gltf;
 mod import;
@@ -28,16 +18,13 @@ use sha2::{Digest, Sha256};
 
 use crate::Failure;
 
-/// The goldens every corpus's observations must equal, by corpus.
 const GOLDENS: &str = "tools/xtask/pure/goldens.json";
 
-/// A set of checks over tracked fixtures: its name and what it runs.
 pub(crate) struct Corpus {
     pub name: &'static str,
     pub run: fn(&Path, &mut Observations) -> Result<(), String>,
 }
 
-/// Every corpus, in the order `cargo xtask pure` runs them.
 pub(crate) const CORPORA: &[Corpus] = &[
     Corpus {
         name: "terrain",
@@ -77,15 +64,12 @@ pub(crate) const CORPORA: &[Corpus] = &[
     },
 ];
 
-/// The corpora whose jobs `--wasm` replays in the browser worker's Wasm
-/// module, each with the file of jobs it ran.
 const REPLAYED: &[(&str, &str)] = &[
     ("terrain", terrain::JOBS),
     ("tables", tables::JOBS),
     ("textures", textures::JOBS),
 ];
 
-/// What a corpus observed, by name, and the promises it found broken.
 #[derive(Default)]
 pub(crate) struct Observations {
     values: BTreeMap<String, Value>,
@@ -93,17 +77,14 @@ pub(crate) struct Observations {
 }
 
 impl Observations {
-    /// Observes `value` as `name`.
     pub fn record(&mut self, name: impl Into<String>, value: impl Into<Value>) {
         self.values.insert(name.into(), value.into());
     }
 
-    /// Observes `bytes` as `name` by their hash.
     pub fn hash(&mut self, name: impl Into<String>, bytes: &[u8]) {
         self.record(name, hash(bytes));
     }
 
-    /// Notes the promise `what` broken unless it `holds`.
     pub fn check(&mut self, holds: bool, what: impl FnOnce() -> String) {
         if !holds {
             self.broken.push(what());
@@ -111,8 +92,6 @@ impl Observations {
     }
 }
 
-/// The first 16 hexadecimal digits of `bytes`' SHA-256: enough to tell any
-/// change in a corpus's outputs.
 pub(crate) fn hash(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -121,10 +100,6 @@ pub(crate) fn hash(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// `cargo xtask pure [--bless] [CORPUS...]`: runs the corpora named, or
-/// every one, and fails (exit 3) when a promise broke or an observation
-/// differs from its golden; `--bless` writes the run's observations as the
-/// goldens instead, unless a promise broke.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -216,8 +191,6 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
             }
         }
     }
-    // The corpora's jobs again in the browser worker's Wasm module: the
-    // same bits as natively.
     for &(name, jobs) in REPLAYED {
         if !(wasm && chosen.iter().any(|corpus| corpus.name == name)) {
             continue;
@@ -259,9 +232,6 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
     )))
 }
 
-/// Replays a corpus's `jobs` ([`REPLAYED`]) in the browser worker's Wasm
-/// module, built first as lint builds it, with Node
-/// (web/scripts/pure-wasm.mjs): its report.
 fn replay_in_wasm(root: &Path, jobs: &str) -> Result<Value, Failure> {
     crate::pipeline::build_wasm(root, true, crate::pipeline::QUICK)?;
     let jobs = root.join(jobs).display().to_string();

@@ -1,7 +1,6 @@
 [workspace]
 members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_textures", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_physics", "crates/engine_profile", "crates/engine_terrain", "crates/engine_tables", "crates/engine_sources", "crates/engine_worker", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "apps/*", "tools/xtask", "tools/assetc", "tools/vgbuild", "tools/lodbuild", "tools/policy", "tools/coresmoke"]
 resolver = "3"
-# The vendored glam copy is patched in below, not a workspace member.
 exclude = ["vendor"]
 
 [workspace.package]
@@ -18,17 +17,13 @@ engine_settings = { path = "crates/engine_settings" }
 engine_profile = { path = "crates/engine_profile" }
 engine_collision = { path = "crates/engine_collision" }
 engine_physics = { path = "crates/engine_physics" }
-# Rigid-body dynamics, sharing parry3d (below) with collision queries.
 rapier3d = { version = "=0.32.0", default-features = false, features = ["dim3", "f32"] }
 engine_terrain = { path = "crates/engine_terrain" }
-# The renderer's static tables, made the same on every host as records.
 engine_tables = { path = "crates/engine_tables" }
-# The hash of the code generating records, which keys them (build scripts).
 engine_sources = { path = "crates/engine_sources" }
 parry3d = { version = "=0.26.1", default-features = false, features = ["required-features", "std", "alloc"] }
 engine_render = { path = "crates/engine_render" }
 engine_assets = { path = "crates/engine_assets" }
-# The cook's textures: mip chains, summaries, BC7 and ASTC blocks, records.
 engine_textures = { path = "crates/engine_textures" }
 engine_scene = { path = "crates/engine_scene" }
 engine_dev = { path = "crates/engine_dev" }
@@ -38,28 +33,19 @@ engine_worker = { path = "crates/engine_worker" }
 engine_panic = { path = "crates/engine_panic" }
 engine_assetc = { path = "tools/assetc" }
 engine_vgbuild = { path = "tools/vgbuild" }
-# Mesh levels of detail, made offline (the cook and the importer).
 engine_lodbuild = { path = "tools/lodbuild" }
 policy = { path = "tools/policy" }
 stress-lab = { path = "apps/stress-lab" }
 base64 = "=0.22.1"
 gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "allow_empty_texture", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
 png = "=0.17.16"
-# An independent decoder of BC7 and ASTC blocks, the textures corpus's
-# reference (xtask).
 texture2ddecoder = "=0.1.2"
 tiff = { version = "=0.11.3", default-features = false, features = ["deflate", "lzw"] }
 sha2 = "=0.10.9"
-# Packs' records, decompressed on every host (pure Rust, so pages too).
 ruzstd = { version = "=0.9.1", default-features = false, features = ["std"] }
-# Packs' records, compressed by the cook (natively, at its best ratio).
 zstd = { version = "=0.14.3", default-features = false }
 serde = { version = "=1.0.229", features = ["derive"] }
-# Numbers parse exactly, the same in every build: a scene or request reads
-# as the page's JSON.parse reads it, and an extended report keeps its earlier
-# runs as they were measured.
 serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
-# Where in a JSON request or scene a value breaks its type.
 serde_path_to_error = "=0.1.20"
 schemars = "=1.2.2"
 bevy_app = { version = "=0.19.1", default-features = false, features = ["std"] }
@@ -70,67 +56,43 @@ foldhash = { version = "=0.2.0", default-features = false }
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 cc = "=1.5.1"
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "webgpu"] }
-# wgpu's own types with `serde`, which the renderer's pipeline keys take.
 wgpu-types = { version = "=30.0.1", default-features = false, features = ["serde"] }
 wasm-bindgen = "=0.2.127"
 js-sys = "=0.3.104"
 wasm-bindgen-futures = "=0.4.77"
 web-sys = { version = "=0.3.104", features = ["HtmlCanvasElement", "Window", "Performance", "console", "Headers", "Request", "RequestInit", "Response", "UrlSearchParams"] }
-# Native hosts: windows, blocking on GPU startup, JPEG images.
 winit = "=0.30.13"
 pollster = "=0.4.0"
 zune-jpeg = "=0.5.15"
-# Native profiles: symbols, x86 disassembly, the Firefox Profiler's format,
-# and the operating systems' thread APIs the CPU sampler uses.
 backtrace = "=0.3.76"
 iced-x86 = { version = "=1.21.0", default-features = false, features = ["std", "decoder", "intel"] }
 fxprof-processed-profile = "=0.8.1"
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_WindowsProgramming"] }
 libc = "=0.2.189"
 mach2 = "=0.7.0"
-# Hardware counters per pass: Vulkan, as wgpu reaches it.
 ash = { version = "=0.38.0", default-features = false, features = ["loaded", "std"] }
-# Shader checks and reports (xtask).
 naga = "=30.0.1"
-# Manifests read by the policy check (tools/policy).
 toml_edit = { version = "=0.25.15", default-features = false, features = ["parse"] }
 
-# Every crate takes these and declares no lints of its own (tools/policy
-# checks both). Unsafe code is denied; the few files that need it allow it
-# and are listed, each with its reason, in tools/policy/src/sources.rs.
 [workspace.lints.rust]
 unsafe_code = "deny"
-# Crate roots export their modules with `pub use module::*`: two modules
-# exporting one name, or a private name hiding an exported one, fail.
 ambiguous_glob_reexports = "deny"
 hidden_glob_reexports = "deny"
 
 [workspace.lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
-# A builder whose result is dropped did nothing.
 return_self_not_must_use = "deny"
-# A panic names the invariant it guards (`expect`), unfinished code does
-# not build, and an error is handled, not turned into nothing.
 unwrap_used = "deny"
 unimplemented = "deny"
 unused_result_ok = "deny"
-# Every unsafe block and impl says why it is sound (tools/policy checks the
-# files Clippy does not build on the platform at hand).
 undocumented_unsafe_blocks = "deny"
-# A function longer than clippy.toml's threshold fails; today's longer ones
-# carry an #[expect], which fails once they shrink below it.
 too_many_lines = "deny"
-# A lint is expected where it fires, with the reason: an expectation that
-# no longer holds fails, so a stale one goes.
 allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
-# An assertion says what it guards when it fails.
 missing_assert_message = "deny"
 
 [workspace.lints.rustdoc]
-# Every rustdoc lint: every crate opens by saying what it is, every link
-# resolves, public docs link public items alone, and markup is well formed.
 all = "deny"
 
 [profile.release]
@@ -145,11 +107,6 @@ opt-level = 1
 inherits = "release"
 debug = 1
 
-# Builds nothing is timed on (the development server and its checks, lint,
-# agent sessions, asset tools): release's optimizations without link-time
-# optimization, in parallel units and incrementally, so an engine edit
-# rebuilds the page in seconds, not minutes. Timed and shipped builds use
-# release and profiling.
 [profile.quick]
 inherits = "release"
 lto = false
@@ -159,8 +116,6 @@ incremental = true
 [profile.dev.package."*"]
 opt-level = 2
 
-# glam 0.30.9 with f32 sine/cosine routed to engine_math: vendor/glam/VENDORED.md.
-# wgpu-hal 30.0.1 keeping DXC's output on disk: vendor/wgpu-hal/VENDORED.md.
 [patch.crates-io]
 glam = { path = "vendor/glam" }
 wgpu-hal = { path = "vendor/wgpu-hal" }

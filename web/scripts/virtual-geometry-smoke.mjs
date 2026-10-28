@@ -1,4 +1,3 @@
-/** Virtual geometry in the Stress Lab's dense scene, in real Chrome. */
 // @ts-check
 import assert from "node:assert/strict";
 import { access, readFile, stat } from "node:fs/promises";
@@ -18,8 +17,6 @@ const config = {
   sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 8, textured: true, culling: true,
   scene: "dense",
 };
-// A street-level view across the boulders, and one along the ground where
-// nearer boulders hide farther ones.
 const cameras = [
   { label: "street", position: [6, 2.2, 14], target: [-4, 1.4, -6] },
   { label: "ground", position: [-20, 1.2, -30], target: [40, 0.5, -80] },
@@ -27,8 +24,6 @@ const cameras = [
 const url = devUrl("stress.html", { config });
 const output = await artifacts("virtual-geometry-smoke");
 const { browser, page, errors } = await launch({ timeout: 180_000 });
-// Bytes of virtual mesh files fetched: prefixes at load, pages as views
-// stream them.
 let fetchedBytes = 0;
 const responses = [];
 page.on("response", response => {
@@ -42,12 +37,6 @@ for (const name of manifest.meshes) fileBytes += (await stat(new URL(name, pathT
 
 const command = commander(page);
 
-// Frames of `gpu` presentation until streaming settles, and the last one's
-// rendering counters. Counts are read back a few frames late, so they must
-// hold for several frames running: a selection, nothing loading, and the
-// read-back frame lacking no page it wanted; under a budget, which leaves
-// pages missing, the resident pages must stay put for longer than unused
-// pages take to make room.
 async function settle(gpu, budget = false) {
   let rendering, previous, quiet = 0;
   for (let frame = 0; quiet < (budget ? 24 : 8); frame++) {
@@ -74,12 +63,10 @@ async function capture(name, gpu, budget = false) {
 try {
   await openPaused(page, url, { timeout: 120_000 });
 
-  // The page loaded only the files' prefixes; views stream the rest.
   const loadedBytes = await fetched();
   assert.ok(loadedBytes > 0 && loadedBytes < fileBytes / 4,
     `loading fetched ${loadedBytes} bytes of ${fileBytes}`);
 
-  // The settings are discoverable and read as their scene section.
   const listing = await command("describe");
   assert.ok(listing.result.types.some(type => type.name === "VirtualGeometry"));
   const look = await command("inspect", { component: "Environment" });
@@ -88,14 +75,10 @@ try {
   const cases = [];
   for (const camera of cameras) {
     await command("camera", { position: camera.position, target: camera.target, vertical_fov_radians: 0.96, near: 0.1, far: 5000 });
-    // GPU-presented frames cull occluded and sub-pixel clusters; CPU
-    // references draw every selected cluster: both show the same pixels.
     const cpu = await capture(`${camera.label}-cpu`, false);
     const gpu = await capture(`${camera.label}-gpu`, true);
     const pixels = await differentPixels(page, [cpu.png, gpu.png], { tolerance: 8 });
     assert.ok(pixels.changed <= pixels.total * 0.001, `${camera.label}: ${pixels.changed} of ${pixels.total} pixels differ`);
-    // Both shade clusters as they draw; resolving them through the
-    // visibility buffer instead shows the same surfaces.
     assert.ok(!cpu.rendering.virtual_geometry.visibility_buffer && !gpu.rendering.virtual_geometry.visibility_buffer, `${camera.label}: forward shading`);
     await command("environment", { virtual_geometry: { visibility_buffer: true } });
     const resolved = await capture(`${camera.label}-visibility`, true);
@@ -117,14 +100,9 @@ try {
       occluded_clusters: rendering.virtual_geometry.occluded_clusters, resident_pages: rendering.virtual_geometry.resident_pages,
     });
   }
-  // Views streamed pages beyond the pinned ones.
   const streamed = { resident_pages: cases.at(-1).resident_pages, fetched_bytes: await fetched() - loadedBytes };
   assert.ok(streamed.resident_pages > 4 && streamed.fetched_bytes > 0, JSON.stringify(streamed));
 
-  // CPU-prepared frames plan only what they see: looking down at bare
-  // ground retires the other meshes and rebuilds the arena, and looking back
-  // rebuilds it again. Meshes that stayed keep their streamed pages, the
-  // pool never overruns, and the view looks as it did.
   const last = cameras[cameras.length - 1];
   const reference = await capture(`${last.label}-reference`, false);
   await command("camera", { position: [0.5, 0.6, 0.5], target: [0.5, -10, 0.52], vertical_fov_radians: 0.3, near: 0.05, far: 5000 });
@@ -137,8 +115,6 @@ try {
   assert.ok(rebuiltPixels.changed <= rebuiltPixels.total * 0.001, `rebuilt arena: ${rebuiltPixels.changed} pixels differ`);
   streamed.rebuilt = { resident_pages: rebuilt.rendering.virtual_geometry.resident_pages, changed_pixels: rebuiltPixels.changed };
 
-  // A budget keeps that many pages resident (the pinned ones always) and
-  // drops loads beyond it; captures of both paths still match.
   await command("environment", { virtual_geometry: { max_resident_pages: 8 } });
   const budgetCpu = await capture("budget-cpu", false, true);
   const budgetGpu = await capture("budget-gpu", true, true);
@@ -153,8 +129,6 @@ try {
   };
   await command("environment", { virtual_geometry: { enabled: true, pixel_error: 1.5 } });
 
-  // A larger pixel error draws fewer triangles; disabled, the fallback cuts
-  // draw instead of clusters. The control changes nothing in source.
   const fine = await settle(true);
   const coarse = await command("environment", { virtual_geometry: { pixel_error: 6 } });
   assert.deepEqual(coarse.result.environment_changed, ["virtual_geometry"]);

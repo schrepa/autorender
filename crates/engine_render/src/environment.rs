@@ -1,13 +1,3 @@
-//! Environment maps: cubes surfaces read their reflections
-//! from at their roughness, each level blurred by the GGX lobe of its
-//! roughness from a radiance cube with its levels averaged down. The first
-//! cube holds the sky, drawn into the radiance cube whenever the atmosphere
-//! changes; the others hold reflection probes, whose captures draw into the
-//! same radiance cube face by face. Screen-space reflections
-//! fall back to them; a surface whose lobe is narrower than the sky map's
-//! texels mirrors the sky's own light instead, the map taking over as the
-//! lobe widens past them (`meshes/shading.wgsl`'s `mirrored_sky`).
-
 use crate::bindings::{ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY};
 use crate::cached::{Bound, Versioned};
 use crate::gpu_data::{ENVIRONMENT_SHADER, LightingUniform, mip_levels};
@@ -16,38 +6,23 @@ use crate::render_features::{Encode, RenderFeature};
 use crate::render_graph::{FrameShape, Node, RenderGraph};
 use crate::shaders::entry::environment;
 
-/// Linear radiance: the sky and what reflects it exceed 1.
 pub(crate) const ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// Faces each pass draws: three 8-byte targets fit the 32 bytes a sample
-/// every device renders.
 const FACES_PER_PASS: usize = 3;
 
-// The textures of one face size and cube count, and their views. Replaced
-// maps are dropped, not destroyed: growing the array copies from them in the
-// frame that replaces them.
 struct Maps {
     size: u32,
     levels: u32,
     cubes: u32,
-    // The radiance cube (kept alive beside its views): one render target per
-    // face of each level, and the groups reading level `i` to average level
-    // `i + 1` down.
     _radiance: wgpu::Texture,
     radiance_targets: Vec<Vec<wgpu::TextureView>>,
     down_groups: Vec<wgpu::BindGroup>,
-    // Reads every radiance level for the blur.
     prefilter_group: wgpu::BindGroup,
-    // The environment maps, sampled as a cube array through a view each
-    // replacement makes anew.
     maps: wgpu::Texture,
     maps_view: Versioned<wgpu::TextureView>,
-    // Each cube's render targets, a face of a level each (level by level),
-    // made when it is first blurred.
     cube_targets: Vec<Option<Vec<wgpu::TextureView>>>,
 }
 
-// The sky, level and prefilter passes' group layouts.
 struct Layouts {
     sky: crate::pipelines::GroupLayout,
     down: crate::pipelines::GroupLayout,
@@ -62,8 +37,6 @@ pub(crate) struct Environment {
     layouts: Layouts,
     sky_group: wgpu::BindGroup,
     sampler: wgpu::Sampler,
-    // The lighting uniform the sky reads, the clouds' dome its group binds,
-    // and the physically based sky's.
     lighting: wgpu::Buffer,
     clouds: (u64, [u8; 2], bool),
     air: (
@@ -72,14 +45,10 @@ pub(crate) struct Environment {
         wgpu::TextureView,
         wgpu::Sampler,
     ),
-    // The atmosphere, clouds and sky values the sky map was drawn with.
     drawn: Option<[[f32; 4]; 7]>,
 }
 
 impl Environment {
-    /// Maps of `size` texels a face holding the sky, drawn with the
-    /// atmosphere of the uniform buffer `lighting` behind the clouds' domes
-    /// `clouds`.
     pub(crate) fn new(
         device: &wgpu::Device,
         lighting: &wgpu::Buffer,
@@ -91,8 +60,6 @@ impl Environment {
             label: Some("engine/environment.wgsl"),
             source: wgpu::ShaderSource::Wgsl(ENVIRONMENT_SHADER.into()),
         });
-        // The sky reads the lighting uniform; each level down reads the
-        // level above it, and the prefilter every level.
         let layouts = Layouts {
             sky: crate::pipelines::layout(device, &ENVIRONMENT_SKY),
             down: crate::pipelines::layout(device, &ENVIRONMENT_DOWN),
@@ -169,8 +136,6 @@ impl Environment {
         }
     }
 
-    /// Binds the clouds' domes `clouds` to the sky's group
-    /// unless they already are.
     pub(crate) fn set_clouds(
         &mut self,
         device: &wgpu::Device,
@@ -183,8 +148,6 @@ impl Environment {
         }
     }
 
-    /// The environment maps as a cube array and the sampler surfaces read
-    /// them with, for the main passes' first group.
     pub(crate) fn binding(&self) -> (Bound<'_>, Bound<'_>) {
         (
             self.maps.maps_view.bound(),
@@ -192,20 +155,14 @@ impl Environment {
         )
     }
 
-    /// Texels across each face.
     pub(crate) fn size(&self) -> u32 {
         self.maps.size
     }
 
-    /// Cubes the maps hold, the sky's first.
     pub(crate) fn cubes(&self) -> u32 {
         self.maps.cubes
     }
 
-    /// Replaces the maps with ones of `size` texels a face holding `cubes`
-    /// cubes, unless they already are: at a new size every cube is lost (the
-    /// sky redraws), while more cubes of the same size copy those held.
-    /// Returns whether the cubes held were lost.
     pub(crate) fn ensure(
         &mut self,
         device: &wgpu::Device,
@@ -248,9 +205,6 @@ impl Environment {
         !kept
     }
 
-    /// Whether [`Self::ensure`] with `size` and `cubes` or
-    /// [`Self::encode_sky`] with `lighting` and `clouds` would record
-    /// commands.
     pub(crate) fn needs_encoding(
         &self,
         size: u32,
@@ -263,10 +217,6 @@ impl Environment {
             || self.drawn != Some(sky(lighting, clouds, air))
     }
 
-    /// Records the sky map's redraw when `lighting`'s sky or the clouds'
-    /// key `clouds` differ from those it holds; returns
-    /// whether it did and whether more than the clouds changed, which
-    /// reflection probes recapture for.
     pub(crate) fn encode_sky(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -277,7 +227,6 @@ impl Environment {
         if self.drawn == Some(sky) {
             return (false, false);
         }
-        // The clouds' key is the sky key's sixth part.
         let beyond_clouds = self.drawn.is_none_or(|drawn| {
             drawn
                 .iter()
@@ -299,14 +248,10 @@ impl Environment {
         (true, beyond_clouds)
     }
 
-    /// The radiance cube's first level face `face`, which a probe's capture
-    /// draws into before [`Self::finish`].
     pub(crate) fn radiance_face(&self, face: usize) -> &wgpu::TextureView {
         &self.maps.radiance_targets[0][face]
     }
 
-    /// Records the radiance cube's levels averaged down from its first and
-    /// every level of cube `cube` of the maps blurred from them.
     pub(crate) fn finish(&mut self, encoder: &mut wgpu::CommandEncoder, cube: u32) {
         let maps = &mut self.maps;
         for level in 1..maps.levels as usize {
@@ -351,10 +296,8 @@ impl Environment {
         }
     }
 
-    /// Bytes of the radiance cube and the maps with their levels.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         let face = u64::from(self.maps.size) * u64::from(self.maps.size) * 8;
-        // Six faces a cube, each with a third more for its levels.
         (1 + u64::from(self.maps.cubes)) * 6 * face * 4 / 3
     }
 }
@@ -382,7 +325,6 @@ fn create_maps(
         6,
         wgpu::TextureUsages::empty(),
     );
-    // Growing the array copies the cubes held into the next one.
     let maps = cube(
         "engine/environment-maps",
         cubes * 6,
@@ -461,8 +403,6 @@ fn create_maps(
     }
 }
 
-// Draws item `item` (a first face, plus 6 per level) of `pipeline` over
-// `targets`, that face's and the next two's.
 fn faces_pass(
     encoder: &mut wgpu::CommandEncoder,
     targets: &[wgpu::TextureView],
@@ -494,8 +434,6 @@ fn faces_pass(
     pass.draw(0..3, item..item + 1);
 }
 
-/// The parts of `lighting` the sky map draws from, and the clouds' and the
-/// physically based sky's keys.
 fn sky(lighting: &LightingUniform, clouds: [f32; 4], air: [f32; 4]) -> [[f32; 4]; 7] {
     [
         lighting.sun,
@@ -508,9 +446,6 @@ fn sky(lighting: &LightingUniform, clouds: [f32; 4], air: [f32; 4]) -> [[f32; 4]
     ]
 }
 
-/// The sky's group: the lighting uniform, the physically based sky's `air`
-/// (its uniform, sky-view table and their sampler) and the clouds' domes,
-/// what the sky's light along a view reads (`sky_light.wgsl`).
 fn sky_group(
     device: &wgpu::Device,
     layout: &crate::pipelines::GroupLayout,
@@ -539,9 +474,6 @@ fn sky_group(
     )
 }
 
-/// The environment maps redraw before the frame, in its prelude
-/// ([`Environment::encode_sky`]), and take the reflection probes' captures
-/// after it: they declare no nodes, so the graph encodes none of theirs.
 impl RenderFeature for Environment {
     type Frame = ();
     type Stats = ();

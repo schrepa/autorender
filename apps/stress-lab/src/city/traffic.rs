@@ -1,5 +1,3 @@
-//! What moves in the city, placed once its blocks stand.
-
 use std::f32::consts::TAU;
 
 use engine::prelude::*;
@@ -13,8 +11,6 @@ use crate::kit::motion::{Motion, Slide, Spin, Travel};
 use crate::kit::plan::{PERIOD, compose, part_at};
 use crate::kit::random::{Rng, hash};
 
-/// Every moving renderable: assemblies at the sites the blocks offered, then
-/// trains, boats, aircraft, rooftop parts, buses and cars for the rest.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -23,7 +19,6 @@ pub(super) fn traffic(city: &mut City, config: &StressConfig) {
     let total = city.moving_left;
     let mut rng = Rng::new(config.seed ^ 0x7a11, 0, 0);
     let share = |percent: u32| total / 100 * percent + (total % 100) * percent / 100;
-    // Cranes: a jib and its load.
     let cranes = std::mem::take(&mut city.cranes);
     for site in cranes.iter().take((share(3) / 2) as usize) {
         crane(city, &mut rng, site);

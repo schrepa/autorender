@@ -1,12 +1,3 @@
-//! Four local matrices from component-major lanes, bit-identical to
-//! [`crate::Transform::matrix`] for the same component values.
-//!
-//! Every lane performs exactly the scalar builder's sequence of IEEE additions
-//! and multiplications (no fused operations or reordering), including the
-//! signed zero `0 * scale` in each basis column's w lane. Transposes restore
-//! ordinary matrices for parent-first composition. Callers whose poses are
-//! already in lanes avoid assembling each column from scalars.
-
 use glam::{Mat4, Vec4};
 
 #[inline(always)]

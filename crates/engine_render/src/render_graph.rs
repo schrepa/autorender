@@ -1,18 +1,3 @@
-//! The frame as a render graph: the passes a frame runs, in
-//! order, each declaring the resources it reads and writes and how it draws
-//! into its attachments. Compiling the graph culls passes whose results no
-//! later pass uses, derives every attachment's load and store operations,
-//! and checks that each pass reads only what an earlier pass wrote or the
-//! frame started with.
-//!
-//! WebGPU orders and synchronizes passes itself and has no memory aliasing,
-//! so the graph holds no GPU objects: compiling puts the declared passes in
-//! the frame order of the passes' table, whatever order they were declared
-//! in, and the renderer encodes each kept pass by its [`Pass`] with the
-//! derived operations. [`plan`] declares the renderer's frame from its
-//! [`FrameShape`], and each feature (`crate::render_features`) its own
-//! passes.
-
 #![expect(
     clippy::expect_used,
     reason = "a node holds at most four color attachments"
@@ -21,21 +6,16 @@
 pub(crate) use crate::render_features::FeaturePass;
 pub(crate) use crate::screen_effects::Effects;
 
-/// Builds [`Resource`], the list of every resource and each one's
-/// [`Lifetime`] from one table: `Name: Lifetime`.
 macro_rules! resources {
     ($($(#[$doc:meta])* $resource:ident: $lifetime:ident,)*) => {
-        /// A resource the frame's passes share.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub(crate) enum Resource {
             $($(#[$doc])* $resource,)*
         }
 
-        /// Every resource, by its bit in a [`Set`].
         const RESOURCES: &[Resource] = &[$(Resource::$resource,)*];
 
         impl Resource {
-            /// How long its contents live.
             pub(crate) fn lifetime(self) -> Lifetime {
                 match self {
                     $(Self::$resource => Lifetime::$lifetime,)*
@@ -46,80 +26,43 @@ macro_rules! resources {
 }
 
 resources! {
-    /// The canvas texture the frame presents.
     Canvas: Output,
-    /// The depth buffer (reversed).
     Depth: Frame,
-    /// The screen effects' scene color, glow and surface targets.
     Scene: Frame,
     Glow: Frame,
     Surface: Frame,
-    /// Temporal antialiasing's motion target and history.
     Motion: Frame,
     History: Kept,
-    /// The visibility buffer's triangle IDs and per-bin tile lists.
     Ids: Frame,
     Tiles: Frame,
-    /// Transparent surfaces' accumulated color and revealage.
     Accumulated: Frame,
     Revealed: Frame,
-    /// Retained slots' poses and colors.
     Poses: Kept,
-    /// GPU presentation's visible IDs and indirect draws, which the next
-    /// frame's first phase starts from.
     Visible: Kept,
-    /// Placed objects' lists and draws for the camera and the shadow maps.
     Placed: Frame,
-    /// What placed objects cover around the camera, kept between its draws.
     Occupancy: Kept,
-    /// Shadow casters each region of tiles draws, and the shadow clipmap's
-    /// atlas, table and sky maps, kept between frames.
     Casters: Frame,
     ShadowMaps: Kept,
-    /// The marks of the clipmap's tiles the frame's pixels read, read back
-    /// later.
     ShadowMarks: Kept,
-    /// Virtual geometry's selected clusters and the pages they request.
     Clusters: Kept,
-    /// Local lights binned into view clusters.
     Lights: Frame,
-    /// The depth pyramid occlusion culling tests against, which the next
-    /// frame's cluster selection retests with.
     Pyramid: Kept,
-    /// Ambient occlusion, bloom, reflections and the haze.
     Effects: Frame,
-    /// The haze filtered over time, which the next frame's filter
-    /// reprojects.
     Haze: Kept,
-    /// Auto exposure's histogram and state: the exposure later frames show.
     Exposure: Kept,
-    /// Environment maps and reflection probes' cubes.
     Probes: Kept,
-    /// The view's marched clouds.
     CloudView: Frame,
-    /// The clouds' dome, which the sky and its environment map show, and
-    /// the grid of their shadows.
     CloudDome: Kept,
-    /// Runtime deformation's map of tracks.
     Tracks: Kept,
-    /// Terrains' bounce light in levels around the detail eye, relit every
-    /// frame, and their ground's light it gathers.
     Bounce: Kept,
-    /// Terrains' subdivisions: each one's tree, which the next frame starts
-    /// from, and the leaves the frame draws.
     Leaves: Kept,
-    /// Ground cover's blades and their counts, read back later.
     Cover: Kept,
-    /// Terrain's visibility target: each pixel's terrain and depth.
     TerrainIds: Frame,
-    /// Debug views' targets: what drew each pixel, the fragments that
-    /// passed the depth test there, and terrain's tiles and materials.
     DebugIds: Frame,
     DebugCount: Frame,
     DebugTerrain: Frame,
 }
 
-// A set holds every resource as a bit of a u64.
 const _: () = assert!(RESOURCES.len() <= 64, "a resource set is a u64");
 
 impl Resource {
@@ -128,21 +71,13 @@ impl Resource {
     }
 }
 
-/// How long a resource's contents live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Lifetime {
-    /// Within a frame: undefined until a pass writes it, and not stored
-    /// after its last reader.
     Frame,
-    /// Between frames (histories, caches, state the next frame starts
-    /// from): defined when the frame starts, and every write is stored.
     Kept,
-    /// The frame's output: undefined when the frame starts, and every write
-    /// is stored.
     Output,
 }
 
-/// A set of resources.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Set(u64);
 
@@ -167,44 +102,32 @@ impl Set {
     }
 }
 
-/// A clear value.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Clear {
     Color([f64; 4]),
     Depth(f32),
 }
 
-/// How a pass draws into an attachment.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Access {
-    /// Overwrites it: clears it, whatever earlier passes drew.
     Clear(Clear),
-    /// Draws over what earlier passes drew, or over the clear value when
-    /// no earlier pass drew it.
     Draw(Clear),
-    /// Draws over what earlier passes drew, which must exist.
     Load,
-    /// Tests depth against it without writing.
     ReadOnly,
 }
 
-/// How a pass begins with an attachment.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Load {
     Clear(Clear),
     Load,
 }
 
-/// An attachment's derived operations: how the pass begins with it and
-/// whether it stores what it drew. Read-only attachments have none.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Ops {
     pub(crate) load: Load,
     pub(crate) store: bool,
 }
 
-/// An opaque phase: frames with occlusion culling draw a second, of what
-/// the test after the first finds visible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
     One,
@@ -212,12 +135,10 @@ pub(crate) enum Phase {
 }
 
 impl Phase {
-    /// The first `count` phases (one or two), in order.
     fn first(count: u8) -> impl Iterator<Item = Self> {
         [Self::One, Self::Two].into_iter().take(usize::from(count))
     }
 
-    /// Its place among the phases: 0, then 1.
     pub(crate) fn index(self) -> usize {
         match self {
             Self::One => 0,
@@ -226,42 +147,21 @@ impl Phase {
     }
 }
 
-/// The renderer's passes, each encoded by the renderer's method of the same
-/// purpose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Pass {
-    /// GPU presentation's blending, composition, culling and compaction.
     Presentation,
-    /// Terrains' subdivisions: each one's leaves listed for the frame, then
-    /// split or merged by the error they draw with.
     Subdivision,
-    /// Shadow caster selection.
     ShadowSelect,
-    /// Virtual geometry's cluster selection.
     VirtualSelect,
-    /// The shadow clipmap's regions, atlas and sky map.
     ShadowMaps,
-    /// Tracks pressed into the deformation map.
     Deformation,
-    /// Terrains' ground lit by the sun, its shadows and the sky as they
-    /// stand, and the probes around the camera gathering its light.
     Bounce,
-    /// The opaque pass of `phase`, masked surfaces' depth pre-pass first:
-    /// the phase's masked meshes and, in the first, masked placed objects,
-    /// whose colors then draw where it left their depths.
     Opaque {
         phase: Phase,
     },
-    /// Terrain shaded deferred in the first phase, after the meshes: its
-    /// visibility, writing each pixel's terrain and depth; each terrain's
-    /// resolve, shading its pixels once and writing the depth of the point
-    /// its relief meets the view at there; then its cover, placed objects
-    /// and the sky.
     TerrainIds,
     TerrainResolve,
     OpaqueLate,
-    /// The visibility buffer's triangle IDs, tile lists and resolve of
-    /// `phase`.
     VisibilityIds {
         phase: Phase,
     },
@@ -271,41 +171,25 @@ pub(crate) enum Pass {
     Resolve {
         phase: Phase,
     },
-    /// The depth pyramid and occlusion test between the opaque phases.
     OcclusionTest,
-    /// The marks of the shadow clipmap's tiles the frame's pixels read,
-    /// from the depth the opaque phases drew.
     ShadowMarks,
-    /// A feature's pass, which the feature declares and encodes.
     Feature(FeaturePass),
-    /// Reflection probe faces captured after the frame.
     ProbeCaptures,
 }
 
-/// Builds the frame order from one table: every pass, in the order frames
-/// run them, under the name reports give it, a feature's passes as
-/// `Feature(FeaturePass::..)`. Each row gives its pass's [`Pass::index`],
-/// its place in the order and its bit in the masks frames report, and the
-/// span profiling captures time it whole as, `stage_<name>`. A pass without
-/// a row, two rows of one pass or two of one name do not compile.
 macro_rules! passes {
     ($($name:ident: $variant:ident $({ phase: $phase:path })? $(($feature:path))?,)*) => {
-        /// Every pass's row in the frame order, named as reports name it.
         #[expect(non_camel_case_types, reason = "rows go by their passes' report names")]
         #[derive(Clone, Copy)]
         enum Row {
             $($name,)*
         }
 
-        /// Every pass's name in reports, by its row.
         const PASS_NAMES: &[&str] = &[$(stringify!($name),)*];
 
-        /// The span profiling captures time each pass whole as, by its row.
         const PASS_STAGES: &[&str] = &[$(concat!("stage_", stringify!($name)),)*];
 
         impl Pass {
-            /// The pass's row: its place in the frame order, and its bit in
-            /// the masks frames report.
             pub(crate) const fn index(self) -> usize {
                 match self {
                     $(Pass::$variant $({ phase: $phase })? $(($feature))? => Row::$name as usize,)*
@@ -355,16 +239,13 @@ passes! {
     probe_captures: ProbeCaptures,
 }
 
-// A mask holds every pass as a bit of a u64.
 const _: () = assert!(PASS_NAMES.len() <= 64, "a pass mask is a u64");
 
 impl Pass {
-    /// The pass's name in reports.
     pub(crate) fn name(self) -> &'static str {
         PASS_NAMES[self.index()]
     }
 
-    /// The span profiling captures time the whole pass as.
     pub(crate) fn stage(self) -> &'static str {
         PASS_STAGES[self.index()]
     }
@@ -374,8 +255,6 @@ impl Pass {
     }
 }
 
-/// The passes in `mask`, such as a frame's [`RenderGraph::kept`], as the
-/// stats report them: by name, in frame order.
 pub(crate) fn render_passes(mask: u64) -> engine_core::Names {
     engine_core::Names {
         bits: mask,
@@ -383,11 +262,8 @@ pub(crate) fn render_passes(mask: u64) -> engine_core::Names {
     }
 }
 
-/// Color attachments a pass may draw into.
 const MAX_COLORS: usize = 4;
 
-/// A declared pass and, once compiled, whether it runs and its attachments'
-/// operations.
 #[derive(Clone, Debug)]
 pub(crate) struct Node {
     pass: Pass,
@@ -405,7 +281,6 @@ impl Node {
         self.pass
     }
 
-    /// The color attachments in target order, with their operations.
     pub(crate) fn colors(&self) -> impl Iterator<Item = (Resource, Ops)> + '_ {
         self.colors
             .iter()
@@ -413,13 +288,10 @@ impl Node {
             .filter_map(|(color, ops)| Some((color.as_ref()?.0, (*ops)?)))
     }
 
-    /// The depth attachment with its operations, `None` when read-only.
     pub(crate) fn depth(&self) -> Option<(Resource, Option<Ops>)> {
         self.depth.map(|(resource, _)| (resource, self.depth_ops))
     }
 
-    /// Resources whose earlier contents the pass reads where they exist,
-    /// attachments it draws over included.
     fn inputs(&self) -> Set {
         let mut inputs = self.reads;
         for (resource, access) in self.attachments() {
@@ -430,8 +302,6 @@ impl Node {
         inputs
     }
 
-    /// Resources whose earlier contents must exist: its reads, and the
-    /// attachments it loads or tests.
     fn required(&self) -> Set {
         let mut required = self.reads;
         for (resource, access) in self.attachments() {
@@ -442,7 +312,6 @@ impl Node {
         required
     }
 
-    /// Resources the pass writes, its attachments included.
     fn outputs(&self) -> Set {
         let mut outputs = self.writes;
         for (resource, access) in self.attachments() {
@@ -458,30 +327,25 @@ impl Node {
     }
 }
 
-/// Declares a node's resources.
 pub(crate) struct NodeBuilder<'g> {
     node: &'g mut Node,
 }
 
 impl NodeBuilder<'_> {
-    /// Reads `resource` as a texture or buffer.
     pub(crate) fn read(self, resource: Resource) -> Self {
         self.node.reads.insert(resource);
         self
     }
 
-    /// Reads `resource` when `condition` holds.
     pub(crate) fn read_if(self, condition: bool, resource: Resource) -> Self {
         if condition { self.read(resource) } else { self }
     }
 
-    /// Writes `resource` as a storage buffer or texture.
     pub(crate) fn write(self, resource: Resource) -> Self {
         self.node.writes.insert(resource);
         self
     }
 
-    /// Writes `resource` when `condition` holds.
     pub(crate) fn write_if(self, condition: bool, resource: Resource) -> Self {
         if condition {
             self.write(resource)
@@ -490,7 +354,6 @@ impl NodeBuilder<'_> {
         }
     }
 
-    /// Draws into the next color attachment.
     pub(crate) fn color(self, resource: Resource, access: Access) -> Self {
         let slot = self
             .node
@@ -502,19 +365,15 @@ impl NodeBuilder<'_> {
         self
     }
 
-    /// Tests against (and unless `ReadOnly`, writes) the depth attachment.
     pub(crate) fn depth(self, resource: Resource, access: Access) -> Self {
         self.node.depth = Some((resource, access));
         self
     }
 }
 
-/// What compiling found wrong.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Invalid {
-    /// A pass declared twice.
     Twice(Pass),
-    /// A pass reading what no earlier pass wrote.
     Unwritten { pass: Pass, resource: Resource },
 }
 
@@ -535,20 +394,16 @@ impl std::fmt::Display for Invalid {
     }
 }
 
-/// A frame's passes. The renderer keeps one and declares each frame into it.
 #[derive(Debug, Default)]
 pub(crate) struct RenderGraph {
     nodes: Vec<Node>,
 }
 
 impl RenderGraph {
-    /// Forgets the last frame's passes.
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
     }
 
-    /// Declares `pass`, which runs in its place in the frame order whatever
-    /// was declared before it.
     pub(crate) fn add(&mut self, pass: Pass) -> NodeBuilder<'_> {
         self.nodes.push(Node {
             pass,
@@ -565,14 +420,7 @@ impl RenderGraph {
         }
     }
 
-    /// Puts the declared passes in frame order, culls those whose results
-    /// no later pass uses (passes writing kept or output resources always
-    /// run), derives the kept passes' attachment operations and checks
-    /// their reads. Attachments clear where nothing was drawn before and
-    /// store what a later pass reads. A pass declared twice fails.
     pub(crate) fn compile(&mut self) -> Result<(), Invalid> {
-        // In place: rows are unique, so the order is the same every frame
-        // however the passes were declared.
         self.nodes.sort_unstable_by_key(|node| node.pass.index());
         if let Some(twice) = self
             .nodes
@@ -581,7 +429,6 @@ impl RenderGraph {
         {
             return Err(Invalid::Twice(twice[0].pass));
         }
-        // Backwards: what later kept passes read of each resource.
         let mut needed = Set::default();
         for &resource in RESOURCES {
             if resource.lifetime() != Lifetime::Frame {
@@ -604,7 +451,6 @@ impl RenderGraph {
             node.depth_ops = node
                 .depth
                 .and_then(|(resource, access)| store_ops(access, needed.contains(resource)));
-            // Earlier contents matter only to what this pass reads.
             for resource in outputs.iter() {
                 if resource.lifetime() == Lifetime::Frame {
                     needed.remove(resource);
@@ -612,7 +458,6 @@ impl RenderGraph {
             }
             needed.0 |= node.inputs().0;
         }
-        // Forwards: what earlier kept passes wrote.
         let mut written = Set::default();
         for &resource in RESOURCES {
             if resource.lifetime() == Lifetime::Kept {
@@ -644,20 +489,16 @@ impl RenderGraph {
         Ok(())
     }
 
-    /// The passes that run, in order.
     pub(crate) fn kept_passes(&self) -> impl Iterator<Item = &Node> {
         self.nodes.iter().filter(|node| node.kept)
     }
 
-    /// The passes that run, as a mask [`render_passes`] reads.
     pub(crate) fn kept(&self) -> u64 {
         self.kept_passes()
             .fold(0, |mask, node| mask | node.pass.bit())
     }
 }
 
-/// An attachment's operations before its load is known: stored when `read`
-/// later, none when read-only.
 fn store_ops(access: Access, read: bool) -> Option<Ops> {
     (access != Access::ReadOnly).then_some(Ops {
         load: Load::Load,
@@ -665,8 +506,6 @@ fn store_ops(access: Access, read: bool) -> Option<Ops> {
     })
 }
 
-/// How a pass of `access` begins with an attachment earlier passes
-/// `written` (or not).
 fn load_op(access: Access, written: bool) -> Load {
     match access {
         Access::Clear(clear) => Load::Clear(clear),
@@ -675,57 +514,36 @@ fn load_op(access: Access, written: bool) -> Load {
     }
 }
 
-/// Where a frame's main passes draw.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Targets {
-    /// Straight into the canvas.
     Canvas,
-    /// Into the screen effects' targets, composited into the canvas.
     Post,
-    /// Into the screen effects' and motion targets, resolved with the
-    /// history into the canvas.
     Temporal,
-    /// Into the debug views' targets, which their pass shows in the canvas.
     Debug,
 }
 
-/// What a frame runs, from which [`plan`] declares its passes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FrameShape {
-    /// Presented on the GPU.
     pub(crate) gpu: bool,
     pub(crate) targets: Targets,
-    /// The canvas's clear color, which depends on whether it is sRGB.
     pub(crate) canvas_clear: [f64; 4],
-    /// Opaque phases: two around the occlusion test.
     pub(crate) phases: u8,
     pub(crate) shadows: bool,
-    /// Work before the passes reading it: tracks press into the
-    /// deformation map and terrains' bounce light relights.
     pub(crate) deformation: bool,
     pub(crate) bounce: bool,
-    /// Terrain draws: its subdivisions list their leaves first.
     pub(crate) subdivision: bool,
-    /// Terrain draws deferred in the first opaque phase.
     pub(crate) deferred: bool,
-    /// Placed objects draw.
     pub(crate) scatter: bool,
-    /// Virtual geometry selects clusters, the shadow maps
-    /// draw some, and the visibility buffer resolves them in each phase.
     pub(crate) clusters: bool,
     pub(crate) shadow_clusters: bool,
     pub(crate) resolves: [bool; 2],
     pub(crate) lights: bool,
-    /// Glass reads the opaque scene.
     pub(crate) refraction: bool,
     pub(crate) effects: Effects,
-    /// Reflection probes capture faces after the frame.
     pub(crate) probes: bool,
 }
 
 impl FrameShape {
-    /// The main passes' color: the canvas, the effects' scene target, or
-    /// what drew each pixel.
     pub(crate) fn scene(&self) -> Resource {
         match self.targets {
             Targets::Canvas => Resource::Canvas,
@@ -734,7 +552,6 @@ impl FrameShape {
         }
     }
 
-    /// The main passes' color targets, in pipeline target order.
     pub(crate) fn main_targets(&self) -> &'static [Resource] {
         match self.targets {
             Targets::Canvas => &[Resource::Canvas],
@@ -754,18 +571,12 @@ impl FrameShape {
     }
 }
 
-/// The opaque scene's clear color in the effects' linear targets: the
-/// canvas's in linear light.
 pub(crate) const SCENE_CLEAR: [f64; 4] = [0.009, 0.015, 0.025, 1.0];
 pub(crate) const TRANSPARENT: [f64; 4] = [0.0, 0.0, 0.0, 0.0];
 pub(crate) const WHITE: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 pub(crate) const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
-/// The far plane's depth (reversed): `gpu_data::FAR_DEPTH`.
 const FAR: f32 = 0.0;
 
-/// Declares the work a frame of `shape` does before its opaque passes into
-/// `graph`: GPU presentation, terrains' subdivisions, shadow casters and
-/// tiles, cluster selection, tracks and terrains' bounce light.
 fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
     use Resource::*;
     let gpu = shape.gpu;
@@ -775,8 +586,6 @@ fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
     if shape.subdivision {
         graph.add(Pass::Subdivision).write(Leaves);
     }
-    // Shadow casters first: virtual geometry selects the clusters of the
-    // virtual ones with the camera's, then the tiles draw.
     if shape.shadows {
         graph
             .add(Pass::ShadowSelect)
@@ -803,26 +612,19 @@ fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
             .read_if(shape.subdivision, Leaves)
             .write(ShadowMaps);
     }
-    // What the first opaque phase draws and shades with: the clouds' dome
-    // (the sky) and their shadows, tracks and ground cover, grown over the
-    // tracks.
     if shape.deformation {
         graph.add(Pass::Deformation).write(Tracks);
     }
-    // After the clouds' dome, whose shadows the ground's sun passes.
     if shape.bounce {
         graph.add(Pass::Bounce).read(CloudDome).write(Bounce);
     }
 }
 
-/// Declares the passes of a frame of `shape` into `graph`, but for the
-/// features' (`crate::render_features`), which declare their own.
 pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     use Resource::*;
     graph.clear();
     plan_before_opaque(graph, shape);
     let gpu = shape.gpu;
-    // The main passes' color targets, in pipeline target order.
     let targets: &[(Resource, Clear)] = match shape.targets {
         Targets::Canvas => &[(Canvas, Clear::Color(shape.canvas_clear))],
         Targets::Post => &[
@@ -853,9 +655,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
                 .write(Visible)
                 .write_if(shape.clusters, Clusters);
         }
-        // Terrain, its cover and placed objects draw in the first phase,
-        // after the meshes where terrain shades deferred; masked placed
-        // objects' depth pre-pass draws first in it either way.
         let first = phase == Phase::One;
         let forward = first && !shape.deferred;
         let mut opaque = graph
@@ -904,7 +703,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             resolve.depth(Depth, Access::ReadOnly);
         }
     }
-    // The tiles the frame's pixels read, once every opaque phase drew.
     if shape.shadows {
         graph.add(Pass::ShadowMarks).read(Depth).write(ShadowMarks);
     }
@@ -918,12 +716,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     }
 }
 
-/// Declares terrain shaded deferred after the first phase's meshes, drawing
-/// into the frame's `targets`: its visibility over their depths and those
-/// masked placed objects' pre-pass left, each terrain's resolve of the
-/// pixels it holds, which writes their depth where its relief meets the view
-/// for every later pass, and its cover, placed objects and the sky over
-/// them.
 fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Resource, Clear)]) {
     use Resource::*;
     graph

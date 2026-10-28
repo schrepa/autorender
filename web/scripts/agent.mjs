@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/** Machine-readable local agent client and development browser owner. */
 // @ts-check
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -8,15 +7,11 @@ import { AgentError, VERSION, MAX_BYTES, createBridge, failure } from "./agent-p
 import { launchBrowserSession } from "./agent-browser.mjs";
 import { launchNativeSession, nativeProgram } from "./agent-native.mjs";
 
-// The engine's queries and controls, generated from it (`cargo xtask
-// schema`), and the bridge's own verbs.
 const protocol = JSON.parse(readFileSync(new URL("../src/generated/protocol.json", import.meta.url), "utf8"));
 const bridgeQueries = ["diagnostics", "compare"];
 const bridgeControls = ["profile", "close"];
 const queries = new Set([...protocol.queries, ...bridgeQueries]);
 const verbs = new Set([...queries, ...protocol.controls, ...bridgeControls]);
-// The client's own verbs: their options and what they do, which `help`
-// lists and option checks hold them to.
 const commands = {
   watch: { options: ["web-port", "port", "game", "browser"], summary: "Watch Rust, build, and replace identified browser sessions (cargo xtask agent watch)" },
   serve: { options: ["url", "port", "browser", "native", "args", "profiling"], summary: "Open one browser session on a running dev server, or with --native PACKAGE|PROGRAM [--args \"name=value ...\"] [--profiling on] one native session drawing offscreen, and bridge requests to it" },
@@ -26,8 +21,6 @@ const commands = {
   request: { options: ["port", "session", "file", "json", "id"], summary: "Send a whole request, or a command, from --file or --json" },
   help: { options: [], summary: "This list, as JSON" },
 };
-// Options of a query or control verb: the command's fields come from
-// --json or --file.
 const commandOptions = ["port", "session", "file", "json", "id"];
 
 function options(args) {
@@ -90,8 +83,6 @@ async function serve(values) {
     if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", "A native session takes no --url or --browser.");
     if ((values.args || values.profiling) && !values.native) throw new AgentError("invalid_arguments", "--args and --profiling on are for a --native program.");
     owned = values.native
-      // Options as name=value pairs, which values starting with -- cannot
-      // pass here: --args "preset=metro gpu=integrated".
       ? await launchNativeSession({ program: nativeProgram(values.native, { profiling: values.profiling === "on" }), args: values.args?.split(" ").filter(Boolean).map(option => `--${option}`) ?? [] })
       : await launchBrowserSession({
         url: values.url ?? "http://127.0.0.1:5173/stress.html", browserPath: values.browser,

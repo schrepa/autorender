@@ -1,6 +1,3 @@
-//! World streaming's development tools: the inspectors of streamed cells,
-//! the changes to them and streamed entities' IDs.
-
 use engine_core::{Engine, Feature};
 use engine_scene::SceneInstance;
 use engine_settings::ErrorCode;
@@ -12,7 +9,6 @@ use crate::protocol::bounds;
 use crate::results::result;
 use crate::{DevError, DevTools, InspectorDescriptor};
 
-/// Registers world streaming's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
     tools
         .register_resource::<engine_core::WorldCells>(
@@ -79,7 +75,6 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
         .expect("built-in descriptor is bounded");
 }
 
-/// Adds the schemas of world streaming's inspectors.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
     schemas.insert(
@@ -96,11 +91,6 @@ pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
     );
 }
 
-/// Remove streamed items for good, or restore them, by
-/// ID (`scene/root` for scenes), and render while
-/// paused: `clear` restores every item first. Loaded cells despawn and
-/// spawn them at once. Not a source change: WorldChanges keeps them,
-/// as a game's save would. Returns how many items are removed.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -125,9 +115,6 @@ impl EngineControl for WorldChangesControl {
     }
 }
 
-/// Removes and restores streamed items: `remove` and
-/// `restore` name item IDs (at most 256 each, each 1 to 192 bytes);
-/// `clear` restores every item first.
 fn change_world(
     engine: &mut Engine,
     remove: &[String],
@@ -165,16 +152,11 @@ fn change_world(
     }))
 }
 
-/// What `world_changes` answers: what it changed and what stays removed.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct WorldChangesResult {
-    /// Controls change the session's world, not the scene's source.
     pub temporary: bool,
-    /// Items it removed that were not.
     pub newly_removed: usize,
-    /// Items it restored.
     pub restored: usize,
-    /// Items removed now.
     pub removed: usize,
 }

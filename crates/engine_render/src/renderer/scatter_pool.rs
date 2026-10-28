@@ -1,10 +1,3 @@
-//! Placed objects' slots: every resident tile's objects hold
-//! a range of slots of their own, written when the tile arrives and marked
-//! dead when it leaves, so streaming tiles uploads only theirs. Freed ranges
-//! are reused first fit; the pool starts over when its assets change or
-//! freed slots outnumber live ones. Reflections' world trace grids each
-//! tile's objects from its slots (`world_trace`).
-
 use engine_core::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
@@ -15,42 +8,27 @@ use engine_core::{Tile, TileKey};
 use crate::gpu_data::{ColorData, GroundData, PoseData};
 use crate::scatter::{DEAD, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, Record, STATE_ADOPT, STATE_FRESH};
 
-/// A tile's objects as the pool takes them: poses, colors, records and
-/// grounds.
 pub(super) type TileObjects = (Vec<PoseData>, Vec<ColorData>, Vec<Record>, Vec<GroundData>);
 
 #[derive(Default)]
 pub(super) struct ScatterPool {
-    /// Every slot's pose, color, record and ground, dead ones' records
-    /// marked.
     pub(super) poses: Vec<PoseData>,
     pub(super) colors: Vec<ColorData>,
     pub(super) records: Vec<Record>,
     pub(super) grounds: Vec<GroundData>,
-    /// Live objects of each draw group, and of those standing far away.
     pub(super) counts: Vec<u32>,
     pub(super) far: u32,
-    // Each resident tile, held so no other tile takes its address while
-    // the pool tells tiles apart by it, and its slots, by terrain and key.
     tiles: HashMap<(u64, TileKey), (Arc<Tile>, Range<u32>)>,
-    // Free slot ranges, in order, none adjacent.
     free: Vec<Range<u32>>,
-    // The tiles revision of each terrain last synchronized.
     revisions: HashMap<u64, u64>,
-    // Slots written since the last upload, whether counts changed, and the
-    // world bounds of each tile's objects that came or went since.
     dirty: Option<Range<u32>>,
     counts_changed: bool,
     moved: Vec<(Vec3, Vec3)>,
-    // Whether the pool was emptied since its last upload: the objects it
-    // takes again show at once instead of fading in.
     refilling: bool,
-    // Advances whenever tiles take or leave slots, or the pool empties.
     revision: u64,
 }
 
 impl ScatterPool {
-    /// Empties the pool for `groups` draw groups.
     pub(super) fn clear(&mut self, groups: usize) {
         *self = Self {
             counts: vec![0; groups],
@@ -61,9 +39,6 @@ impl ScatterPool {
         };
     }
 
-    /// Every resident tile holding slots, by terrain and key in key order,
-    /// with its slots and its objects' identity (their list's address),
-    /// which a tile replaced under its key with other objects changes.
     pub(super) fn tiles(&self) -> Vec<((u64, TileKey), Range<u32>, usize)> {
         let mut tiles: Vec<_> = self
             .tiles
@@ -74,19 +49,14 @@ impl ScatterPool {
         tiles
     }
 
-    /// Advances whenever tiles take or leave slots, or the pool empties.
     pub(super) fn revision(&self) -> u64 {
         self.revision
     }
 
-    /// Whether terrain `id`'s tiles changed since revision `revision` was
-    /// last synchronized, recording it.
     pub(super) fn tiles_changed(&mut self, id: u64, revision: u64) -> bool {
         self.revisions.insert(id, revision) != Some(revision)
     }
 
-    /// Frees the tiles of terrain `id` that `keep` refuses, given each
-    /// one's key and the tile.
     pub(super) fn retain(&mut self, id: u64, keep: impl Fn(TileKey, &Arc<Tile>) -> bool) {
         let mut freed = Vec::new();
         self.tiles.retain(|&(terrain, key), (tile, slots)| {
@@ -104,12 +74,10 @@ impl ScatterPool {
         }
     }
 
-    /// Whether terrain `id`'s tile `key` holds slots.
     pub(super) fn contains(&self, id: u64, key: TileKey) -> bool {
         self.tiles.contains_key(&(id, key))
     }
 
-    /// Gives terrain `id`'s tile `key`, `tile`, slots for `objects`.
     pub(super) fn insert(
         &mut self,
         (id, key): (u64, TileKey),
@@ -127,8 +95,6 @@ impl ScatterPool {
         self.colors[range.clone()].copy_from_slice(&colors);
         self.grounds[range.clone()].copy_from_slice(&grounds);
         self.records[range.clone()].copy_from_slice(&records);
-        // A tile arriving fades its objects in; one taken again after the
-        // pool emptied shows them as they were.
         let state = if self.refilling {
             STATE_ADOPT
         } else {
@@ -148,15 +114,10 @@ impl ScatterPool {
         self.revision += 1;
     }
 
-    /// Slots written since the last call, and whether group counts changed.
     pub(super) fn take_changes(&mut self) -> (Option<Range<u32>>, bool) {
         (self.dirty.take(), std::mem::take(&mut self.counts_changed))
     }
 
-    /// Marks `slots`, just uploaded, as shown however the camera shows them
-    /// should they upload again: written again beside slots
-    /// that changed, objects keep what the GPU made of them but for a fade
-    /// under way.
     pub(super) fn uploaded(&mut self, slots: Range<u32>) {
         for record in &mut self.records[slots.start as usize..slots.end as usize] {
             record.state = STATE_ADOPT;
@@ -164,19 +125,15 @@ impl ScatterPool {
         self.refilling = false;
     }
 
-    /// The world bounds of each tile's objects that came or went since the
-    /// last call.
     pub(super) fn take_moved(&mut self) -> Vec<(Vec3, Vec3)> {
         std::mem::take(&mut self.moved)
     }
 
-    /// Whether freed slots outnumber live ones enough to start over.
     pub(super) fn fragmented(&self) -> bool {
         let freed: u32 = self.free.iter().map(|range| range.end - range.start).sum();
         freed > 4096 && freed as usize * 2 > self.records.len()
     }
 
-    /// `count` slots: the first free range holding them, or new ones.
     fn allocate(&mut self, count: u32) -> Range<u32> {
         if let Some(index) = self
             .free
@@ -206,7 +163,6 @@ impl ScatterPool {
         start..start + count
     }
 
-    /// Marks `slots` dead and free.
     fn free_slots(&mut self, slots: Range<u32>) {
         for record in &mut self.records[slots.start as usize..slots.end as usize] {
             self.counts[record.group as usize] -= 1;
@@ -217,7 +173,6 @@ impl ScatterPool {
         self.mark(slots.clone());
         let at = self.free.partition_point(|range| range.start < slots.start);
         self.free.insert(at, slots);
-        // Merge with the neighbors it touches.
         if at + 1 < self.free.len() && self.free[at].end == self.free[at + 1].start {
             self.free[at].end = self.free[at + 1].end;
             self.free.remove(at + 1);
@@ -236,8 +191,6 @@ impl ScatterPool {
     }
 }
 
-/// The world bounds of `records`' live objects, a radius taller: the
-/// terrain sets their bases on finer heights than placed them.
 fn bounds(records: &[Record]) -> Option<(Vec3, Vec3)> {
     records
         .iter()
@@ -250,12 +203,10 @@ fn bounds(records: &[Record]) -> Option<(Vec3, Vec3)> {
         .reduce(|(low, high), (min, max)| (low.min(min), high.max(max)))
 }
 
-/// Whether `record`'s object stands far away.
 fn stands_far(record: &Record) -> bool {
     record.group != DEAD && (record.terrain >> NEAR_LEVEL_SHIFT) & NEAR_LEVEL_MASK != 0
 }
 
-/// The record of a dead slot, which culling skips.
 fn dead() -> Record {
     Record {
         center: [0.0; 3],

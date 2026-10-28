@@ -1,20 +1,11 @@
-// Debug views: each pixel of the debug targets (`meshes/debug.wgsl`) shown
-// as the view says. Colors are the canvas's stored values: they need no
-// encoding.
-
 struct DebugViewUniform {
-    // x: the view (DEBUG_VIEW_*); y: whether colors darken where surfaces
-    // turn from the sun.
     view: vec4<u32>,
-    // Toward the sun.
     sun: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> debug_view: DebugViewUniform;
 @group(0) @binding(1) var debug_ids: texture_2d<u32>;
 @group(0) @binding(2) var debug_count: texture_2d<f32>;
-// Terrain's tiles and materials (`meshes/terrain_debug.wgsl`), and water's
-// numbers (`meshes/debug.wgsl`'s `debug_water`).
 @group(0) @binding(3) var debug_terrain: texture_2d<u32>;
 
 const DEBUG_VIEW_KINDS: u32 = 1u;
@@ -38,8 +29,6 @@ const DEBUG_VIEW_WATER_SPAN: u32 = 19u;
 const DEBUG_VIEW_WATER_EDDIES: u32 = 20u;
 const DEBUG_VIEW_WATER_ROUGHNESS: u32 = 21u;
 
-// What drew a pixel (`meshes/debug.wgsl`): its kind, level and flags, and
-// the sun's lookup above DEBUG_SOURCE_SHIFT.
 const DEBUG_KIND_MESH: u32 = 1u;
 const DEBUG_KIND_PLACED: u32 = 2u;
 const DEBUG_KIND_CARD: u32 = 3u;
@@ -53,7 +42,6 @@ const DEBUG_KIND_FALLS: u32 = 10u;
 const DEBUG_KIND_SKY: u32 = 11u;
 const DEBUG_LEVEL_SHIFT: u32 = 4u;
 const DEBUG_FADING: u32 = 0x100u;
-// The draw casts sun shadows.
 const DEBUG_CASTS: u32 = 0x200u;
 const DEBUG_SOURCE_SHIFT: u32 = 16u;
 const DEBUG_SUN_NONE: u32 = 0u;
@@ -61,29 +49,21 @@ const DEBUG_SUN_LEVEL: u32 = 1u;
 const DEBUG_SUN_HORIZON: u32 = 21u;
 const DEBUG_SUN_BEYOND: u32 = 22u;
 const DEBUG_SHADOWED: u32 = 0x80u;
-// Terrain pixels: on a tile's edge, on a patch's, in their record, with the
-// patch within its tile above DEBUG_PATCH_SHIFT; a material slot holding
-// none.
 const DEBUG_TILE_EDGE: u32 = 0x800u;
 const DEBUG_PATCH_EDGE: u32 = 0x1000u;
 const DEBUG_PATCH_SHIFT: u32 = 24u;
 const DEBUG_NO_MATERIAL: u32 = 0xffu;
 
-// What neither a view's subject nor the sky is shown as.
 const DEBUG_OTHER = vec3<f32>(0.4, 0.4, 0.42);
 const DEBUG_SKY = vec3<f32>(0.12, 0.13, 0.16);
 const DEBUG_CARDS = vec3<f32>(0.95, 0.25, 0.85);
 
-// Levels of detail from the finest: red, orange, yellow, green, cyan, blue,
-// violet, gray.
 const DEBUG_LEVELS = array<vec3<f32>, 8>(
     vec3<f32>(0.9, 0.2, 0.2), vec3<f32>(0.95, 0.6, 0.15), vec3<f32>(0.9, 0.9, 0.2),
     vec3<f32>(0.3, 0.85, 0.3), vec3<f32>(0.2, 0.75, 0.9), vec3<f32>(0.3, 0.4, 0.95),
     vec3<f32>(0.7, 0.35, 0.95), vec3<f32>(0.85, 0.85, 0.85),
 );
 
-// Fragments per pixel, none to ten or more: dark blue through green and
-// yellow to red, pink and white.
 const DEBUG_HEAT = array<vec3<f32>, 11>(
     vec3<f32>(0.0, 0.0, 0.0), vec3<f32>(0.05, 0.1, 0.35), vec3<f32>(0.1, 0.25, 0.7),
     vec3<f32>(0.1, 0.55, 0.75), vec3<f32>(0.15, 0.75, 0.35), vec3<f32>(0.6, 0.85, 0.15),
@@ -91,61 +71,37 @@ const DEBUG_HEAT = array<vec3<f32>, 11>(
     vec3<f32>(0.8, 0.3, 0.7), vec3<f32>(1.0, 1.0, 1.0),
 );
 
-// The water's views: the meters of depth, the meters a second and the
-// Froude number at the tops of their ramps, past which they keep their top
-// colors; and how far either side of 1 the Froude view marks water running
-// at its waves' speed.
 const DEBUG_WATER_DEEPEST: f32 = 2.0;
 const DEBUG_WATER_FASTEST: f32 = 6.0;
 const DEBUG_WATER_FROUDE_TOP: f32 = 3.0;
 const DEBUG_WATER_CRITICAL: f32 = 0.04;
-// Depth, by its square root so centimeters read apart: pale, blue (half a
-// meter), navy.
 const DEBUG_WATER_DEPTHS = array<vec3<f32>, 3>(
     vec3<f32>(0.88, 0.96, 0.88), vec3<f32>(0.2, 0.62, 0.88), vec3<f32>(0.04, 0.09, 0.4),
 );
-// Speed: dark violet, crimson, yellow.
 const DEBUG_WATER_SPEEDS = array<vec3<f32>, 3>(
     vec3<f32>(0.08, 0.03, 0.25), vec3<f32>(0.8, 0.15, 0.3), vec3<f32>(1.0, 0.92, 0.35),
 );
-// Turbulence: dark teal, green, lime.
 const DEBUG_WATER_TURBULENCE = array<vec3<f32>, 3>(
     vec3<f32>(0.02, 0.2, 0.22), vec3<f32>(0.1, 0.6, 0.45), vec3<f32>(0.85, 1.0, 0.4),
 );
-// Water without white water, which turns white as white water is born:
-// its red is the white water's share.
 const DEBUG_WATER_CLEAR = vec3<f32>(0.0, 0.12, 0.35);
-// How far across its water body is, by its logarithm from the narrowest
-// span the words tell apart to the widest (`engine_terrain`'s
-// `WATER_SPAN_LEAST`, `WATER_SPAN_MOST`), its byte's DEBUG_SPAN_STEPS steps
-// past none (`meshes/debug.wgsl`'s `debug_span_code`): violet, teal (32
-// meters), pale yellow.
 const DEBUG_SPAN_STEPS: f32 = 254.0;
 const DEBUG_WATER_SPANS = array<vec3<f32>, 3>(
     vec3<f32>(0.3, 0.05, 0.45), vec3<f32>(0.1, 0.62, 0.58), vec3<f32>(0.98, 0.95, 0.6),
 );
-// The eddies' turbulent Froude number: dark (calm), orange where they start
-// breaking the water's surface white (`engine_terrain::BREAK_ONSET`), white
-// where they break it white all over (`BREAK_FULL`).
 const DEBUG_BREAK_ONSET: f32 = 0.6;
 const DEBUG_BREAK_FULL: f32 = 1.2;
 const DEBUG_WATER_EDDIES = array<vec3<f32>, 3>(
     vec3<f32>(0.04, 0.05, 0.12), vec3<f32>(0.95, 0.5, 0.1), vec3<f32>(1.0, 1.0, 0.95),
 );
-// The roughness water shades with, 0 to 1: black (a mirror), copper,
-// white.
 const DEBUG_WATER_ROUGHNESS = array<vec3<f32>, 3>(
     vec3<f32>(0.0, 0.0, 0.0), vec3<f32>(0.75, 0.42, 0.22), vec3<f32>(1.0, 1.0, 1.0),
 );
-// Reaches, by one more than `engine_terrain::Reach`: none violet, pools
-// blue, plane beds cyan, steps and pools green, cascades orange, falls red.
 const DEBUG_REACHES = array<vec3<f32>, 6>(
     vec3<f32>(0.5, 0.35, 0.65), vec3<f32>(0.15, 0.35, 0.95), vec3<f32>(0.1, 0.8, 0.85),
     vec3<f32>(0.45, 0.85, 0.2), vec3<f32>(0.98, 0.6, 0.1), vec3<f32>(0.9, 0.12, 0.2),
 );
 
-// The unit normal packed as two signed fractions of its octahedral
-// coordinates.
 fn debug_normal(packed: u32) -> vec3<f32> {
     let encoded = unpack2x16snorm(packed);
     let z = 1.0 - abs(encoded.x) - abs(encoded.y);
@@ -156,7 +112,6 @@ fn debug_normal(packed: u32) -> vec3<f32> {
     return normal / max(length(normal), 1.0e-6);
 }
 
-// A color of its own for each value: clusters.
 fn debug_hashed(value: u32) -> vec3<f32> {
     var h = value * 0x9e3779b9u;
     h = (h ^ (h >> 16u)) * 0x7feb352du;
@@ -203,8 +158,6 @@ fn debug_kind_color(kind: u32) -> vec3<f32> {
     }
 }
 
-// Levels of meshes, placed objects and terrain; impostor cards; virtual
-// geometry's clusters (`cluster`).
 fn debug_level_color(record: u32, cluster: u32) -> vec3<f32> {
     let level = min((record >> DEBUG_LEVEL_SHIFT) & 0xfu, 7u);
     switch record & 0xfu {
@@ -226,7 +179,6 @@ fn debug_level_color(record: u32, cluster: u32) -> vec3<f32> {
     }
 }
 
-// Impostor cards, fading ones lighter, against everything else.
 fn debug_card_color(record: u32) -> vec3<f32> {
     switch record & 0xfu {
         case DEBUG_KIND_CARD, DEBUG_KIND_PLACED_CARD: {
@@ -241,14 +193,10 @@ fn debug_card_color(record: u32) -> vec3<f32> {
     }
 }
 
-// The sun's lookup (`meshes/debug.wgsl`'s `debug_sun`), darker where it
-// leaves the point in shadow.
 fn debug_sun_color(sun: u32) -> vec3<f32> {
     let source = sun & (DEBUG_SHADOWED - 1u);
     var color = vec3<f32>(0.0);
     if source >= DEBUG_SUN_LEVEL && source < DEBUG_SUN_HORIZON {
-        // Green through cyan to blue from the finest level, a step every
-        // level.
         let level = f32(source - DEBUG_SUN_LEVEL)
             / f32(DEBUG_SUN_HORIZON - DEBUG_SUN_LEVEL - 1u);
         let green_to_cyan = mix(vec3<f32>(0.3, 1.0, 0.3), vec3<f32>(0.2, 0.9, 0.95),
@@ -264,15 +212,12 @@ fn debug_sun_color(sun: u32) -> vec3<f32> {
     return select(color, color * 0.45, (sun & DEBUG_SHADOWED) != 0u);
 }
 
-// A distinct color for terrain's surface material `material`.
 fn debug_material_color(material: u32) -> vec3<f32> {
     let hue = fract(f32(material) * 0.618034 + 0.13);
     let k = (vec3<f32>(0.0, 2.0, 4.0) / 6.0 + hue) * 6.0;
     return 0.15 + 0.7 * saturate(abs(k % 6.0 - 3.0) - 1.0);
 }
 
-// Terrain's surface materials (`materials`, a byte each) in their shares
-// (`shares`, a byte each).
 fn debug_materials_color(materials: u32, shares: vec4<f32>) -> vec3<f32> {
     var color = vec3<f32>(0.0);
     for (var slot = 0u; slot < 4u; slot++) {
@@ -284,11 +229,6 @@ fn debug_materials_color(materials: u32, shares: vec4<f32>) -> vec3<f32> {
     return color;
 }
 
-// How terrain's ground shows its materials' maps, from its shares (showing
-// their detail, of their slopes averaged, canopy): green where their detail
-// shows, filtered over the pixel, yellow as that filtering averages their
-// normal maps' slopes into roughness, red where a whole repeat spans less
-// than a pixel and their means stand in, blue toward its cover's canopy.
 fn debug_detail_color(made: vec4<f32>) -> vec3<f32> {
     let color = vec3<f32>(0.1, 0.65, 0.15) * max(made.y - made.z, 0.0)
         + vec3<f32>(0.85, 0.75, 0.1) * made.z
@@ -296,8 +236,6 @@ fn debug_detail_color(made: vec4<f32>) -> vec3<f32> {
     return mix(color, vec3<f32>(0.15, 0.3, 0.9), made.w);
 }
 
-// Terrain's tiles and patches as drawn, from its record: tile edges red,
-// patch edges dark, the ground between gray.
 fn debug_tiles_color(record: u32) -> vec3<f32> {
     if (record & DEBUG_TILE_EDGE) != 0u {
         return vec3<f32>(0.95, 0.15, 0.1);
@@ -308,7 +246,6 @@ fn debug_tiles_color(record: u32) -> vec3<f32> {
     return vec3<f32>(0.6);
 }
 
-// How a pixel's draw casts sun shadows.
 fn debug_caster_color(record: u32) -> vec3<f32> {
     let kind = record & 0xfu;
     if kind == DEBUG_KIND_SKY {
@@ -339,8 +276,6 @@ fn debug_caster_color(record: u32) -> vec3<f32> {
     }
 }
 
-// The ramp through `stops` at `t`, 0 to 1 (clamped), its middle stop at a
-// half.
 fn debug_ramp(stops: array<vec3<f32>, 3>, t: f32) -> vec3<f32> {
     let along = saturate(t) * 2.0;
     if along < 1.0 {
@@ -349,9 +284,6 @@ fn debug_ramp(stops: array<vec3<f32>, 3>, t: f32) -> vec3<f32> {
     return mix(stops[1], stops[2], along - 1.0);
 }
 
-// Water at Froude number `froude`: calm water from deep blue (0) to pale
-// cyan, shooting water from yellow to red (DEBUG_WATER_FROUDE_TOP), water
-// running at its waves' speed black.
 fn debug_froude_color(froude: f32) -> vec3<f32> {
     if abs(froude - 1.0) < DEBUG_WATER_CRITICAL {
         return vec3<f32>(0.0);
@@ -363,22 +295,12 @@ fn debug_froude_color(froude: f32) -> vec3<f32> {
         saturate((froude - 1.0) / (DEBUG_WATER_FROUDE_TOP - 1.0)));
 }
 
-// Water's eddies at turbulent Froude number `froude`: up the ramp's first
-// half to where they start breaking the water's surface white
-// (DEBUG_BREAK_ONSET), up its second to where they break it white all over
-// (DEBUG_BREAK_FULL).
 fn debug_eddies_color(froude: f32) -> vec3<f32> {
     let calm = saturate(froude / DEBUG_BREAK_ONSET);
     let breaking = saturate((froude - DEBUG_BREAK_ONSET) / (DEBUG_BREAK_FULL - DEBUG_BREAK_ONSET));
     return debug_ramp(DEBUG_WATER_EDDIES, 0.5 * (calm + breaking));
 }
 
-// Water's numbers (`meshes/debug.wgsl`'s `debug_water`) as the water's view
-// `view` shows them: its depth and speed (`ids`' object word), and its
-// Froude number and its eddies' (`numbers.x`), each pair half floats; its
-// span's step and roughness, a byte each (its detail word); its
-// turbulence and white water, a byte each, and its reach in the top byte
-// (`numbers.y`).
 fn debug_water_color(view: u32, ids: vec4<u32>, numbers: vec2<u32>) -> vec3<f32> {
     let motion = unpack2x16float(ids.y);
     let body = unpack4x8unorm(ids.z);
@@ -453,8 +375,6 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
         case DEBUG_VIEW_WATER_DEPTH, DEBUG_VIEW_WATER_SPEED, DEBUG_VIEW_WATER_FROUDE,
             DEBUG_VIEW_WATER_TURBULENCE, DEBUG_VIEW_WATER_WHITE, DEBUG_VIEW_WATER_REACH,
             DEBUG_VIEW_WATER_SPAN, DEBUG_VIEW_WATER_EDDIES, DEBUG_VIEW_WATER_ROUGHNESS: {
-            // The water's views: terrains' water, live or settled, against
-            // everything else, unlit.
             color = select(DEBUG_OTHER, DEBUG_SKY, kind == DEBUG_KIND_SKY);
             if kind == DEBUG_KIND_WATER {
                 color = debug_water_color(debug_view.view.x, ids,
@@ -463,7 +383,6 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
             surface = false;
         }
         default: {
-            // Terrain's views: its ground against everything else.
             let view = debug_view.view.x;
             let made = unpack4x8unorm(ids.y);
             if kind != DEBUG_KIND_TERRAIN {
@@ -478,7 +397,6 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
             } else if view == DEBUG_VIEW_DETAIL {
                 color = debug_detail_color(made);
             }
-            // The sky view shows the share unlit.
             surface = surface && view != DEBUG_VIEW_SKY;
         }
     }

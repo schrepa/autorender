@@ -1,8 +1,3 @@
-//! The dense scene: boulders and fluted columns strewn over
-//! terrain tiles, every mesh a virtual mesh of hundreds of thousands of
-//! triangles built offline (`cargo run -p engine_vgbuild --release --bin
-//! dense_assets`) and fetched by the page.
-
 use engine::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
@@ -20,21 +15,15 @@ use crate::kit::motion::Animation;
 use crate::kit::random::hash;
 use crate::kit::{StressConfig, StressFile, StressWorld, Workload};
 
-/// The files the page fetches for this scene, from `stress/dense/`: the ones
-/// `tools/vgbuild`'s `dense_assets` writes (it lists them again, with their
-/// generators, and never depends on this game).
 pub const FILES: [&str; 4] = [
     "boulder-a.evg",
     "boulder-b.evg",
     "column.evg",
     "terrain.evg",
 ];
-/// Units each terrain tile spans.
 const TILE: f32 = 64.0;
-/// Ground each object stands on, on average.
 const AREA_PER_OBJECT: f32 = 36.0;
 
-/// Builds the scene from `files`, returning its moving nodes.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -55,7 +44,6 @@ pub(crate) fn populate(
                 ),
             )
         })?;
-        // A prefix streams its other pages from the file's URL.
         let geometry = VirtualMesh::decode(&file.bytes)
             .map_err(|error| engine::Error::from(error).context(name))?;
         let geometry = Arc::new(match &file.url {
@@ -117,7 +105,6 @@ pub(crate) fn populate(
         let spread =
             |shift: u32| ((hash(random ^ shift) % 10_000) as f32 / 10_000.0 - 0.5) * half * 1.9;
         let (x, z) = (spread(0x9e37), spread(0x7f4a));
-        // One in five is a column, the rest boulders from pebbles to crags.
         let columnar = random.is_multiple_of(5);
         let turn = Quat::from_rotation_y((random % 628) as f32 * 0.01);
         let transform = if columnar {
@@ -202,13 +189,11 @@ impl StressWorld for DenseWorld {
     }
 
     fn add_systems(&self, app: &mut App, moving_nodes: u32) {
-        // Its moving objects bob and turn as the tower field's do.
         if moving_nodes > 0 {
             app.add_systems(FixedSimulation, animate.in_set(Animation));
         }
     }
 
-    /// Its virtual meshes' prefixes, streamed from their files.
     #[cfg(not(target_arch = "wasm32"))]
     fn files(&self, assets: &Path, _rocks: bool) -> engine::Result<HashMap<String, StressFile>> {
         let mut found = HashMap::default();

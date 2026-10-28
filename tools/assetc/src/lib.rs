@@ -1,8 +1,3 @@
-//! Native conversion of GLB models with glTF 2.0 metallic-roughness
-//! materials, animations and skins into scenes and the files beside them.
-//! No filesystem access, runtime imports, or
-//! external resource resolution.
-
 mod animation;
 mod geometry;
 mod materials;
@@ -14,20 +9,12 @@ use engine_scene::{SceneCamera, SceneDocument, SceneError, ScenePrefab};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-/// Largest source container: the GLB length field's range.
 pub const MAX_INPUT_BYTES: usize = u32::MAX as usize;
-/// Changes whenever import behavior or supported settings change.
 pub const IMPORTER_VERSION: &str = "gltf-pbr-10";
-/// Triangles from which an opaque primitive imports as virtual geometry
-/// unless [`ImportOptions`] say otherwise.
 pub const DEFAULT_VIRTUAL_TRIANGLES: u32 = 512;
 
-/// How a model imports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportOptions {
-    /// Primitives of at least this many triangles, opaque and without vertex
-    /// colors, second texture coordinates or joints, import as virtual
-    /// meshes (`EVG1` files); `None` imports none.
     pub virtual_triangles: Option<u32>,
 }
 
@@ -39,7 +26,6 @@ impl Default for ImportOptions {
     }
 }
 
-/// A file the imported scene references, at `uri` relative to the scene.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedFile {
     pub uri: String,
@@ -47,8 +33,6 @@ pub struct ImportedFile {
 }
 
 impl ImportedFile {
-    /// `ID/NAME.HASH.EXTENSION`: named by content, so a new import never
-    /// overwrites a file an existing scene reads.
     pub(crate) fn named(id: &str, name: &str, extension: &str, bytes: Vec<u8>) -> Self {
         let hash = format!("{:x}", Sha256::digest(&bytes));
         Self {
@@ -58,17 +42,13 @@ impl ImportedFile {
     }
 }
 
-/// An imported scene document and the image and mesh-buffer files it
-/// references, which the caller writes beside the scene.
 #[derive(Debug, Clone)]
 pub struct Imported {
     pub document: SceneDocument,
     pub files: Vec<ImportedFile>,
-    /// Optional glTF extensions the source uses that the import ignores.
     pub ignored_extensions: Vec<String>,
 }
 
-/// Machine-readable failure; paths address the source glTF JSON where possible.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ImportError {
     pub code: &'static str,
@@ -104,25 +84,14 @@ impl From<SceneError> for ImportError {
     }
 }
 
-/// SHA-256 of the exact source bytes, for build provenance (not authentication).
 pub fn source_sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-/// Imports one GLB scene, preserving primitive material mapping. Static
-/// models bake node transforms into their vertices; models with animations
-/// or skins keep their nodes as entities (`ID.node<N>`) below a root
-/// (`ID.root`) that plays the first animation (`ID.anim<N>`), with skins
-/// `ID.skin<N>`. IDs derive from source indices and the caller's namespace;
-/// files are named `ID/image<N>.<HASH>.png|jpg`, `ID/node<N>.p<M>.<HASH>.bin`
-/// (`.evg` for virtual meshes) and `ID/anim<N>.<HASH>.bin`. The resulting
-/// document is validated with the runtime's scene validation before being
-/// returned. Nothing is written. Imports with the default [`ImportOptions`].
 pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
     import_glb_with(bytes, id, &ImportOptions::default())
 }
 
-/// [`import_glb`] with `options`.
 pub fn import_glb_with(
     bytes: &[u8],
     id: &str,
@@ -166,7 +135,6 @@ pub fn import_glb_with(
     let mut files = Vec::new();
     materials::import(&gltf.document, &json, binary, id, &mut scene, &mut files)?;
     geometry::import(&gltf.document, binary, id, options, &mut scene, &mut files)?;
-    // These cooked artifacts use the exact authoring representation games load.
     scene.to_json()?;
     Ok(Imported {
         document: scene,
@@ -175,16 +143,10 @@ pub fn import_glb_with(
     })
 }
 
-/// Imports a reusable prefab definition and its shared global assets, without
-/// placing an instance in the scene. Source transforms are baked or kept just
-/// as in [`import_glb`]. Template IDs, and the animation targets and skin
-/// joints naming them, omit the namespace, so placement roots can qualify
-/// them independently without duplicating mesh, texture or clip data.
 pub fn import_glb_prefab(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
     import_glb_prefab_with(bytes, id, &ImportOptions::default())
 }
 
-/// [`import_glb_prefab`] with `options`.
 pub fn import_glb_prefab_with(
     bytes: &[u8],
     id: &str,

@@ -1,33 +1,8 @@
-//! Heightfield terrain data: tile pyramids, the layer stack
-//! that generates heights, tiles with their samples, height queries, the
-//! patches a view draws, the shading coarser tiles take from level 0 and
-//! the jobs that make tiles and bakes.
-//!
-//! A terrain is a square grid of level-0 tiles, each [`TILE_QUADS`] quads of
-//! its sample spacing across; every coarser level halves the tiles along
-//! each axis and doubles the spacing, up to a level of one tile. Tiles store
-//! their samples with a border of one sample, so normals at their edges
-//! match their neighbors'. Heights are `f32` meters above the terrain's
-//! origin, identical bits on native targets and in browsers.
-//!
-//! Heights come from a [`Layers`] stack (procedural noise with erosion,
-//! imported heightmaps and stamps, later layers winning) evaluated tile by
-//! tile; rivers layers give its hydrology bake the rivers someone drew or
-//! imported. Each tile is a pure function of its key, so tiles stream in any
-//! order and neighbors agree on shared samples. A terrain's tiles of level 1
-//! and coarser shade with level 0's materials and normals averaged
-//! ([`TileShading`]), records of their own made from the level finer.
-//!
-//! Cells split into two triangles along the diagonal from their (x, z+1)
-//! corner to their (x+1, z) corner, as `parry3d` heightfields split them;
-//! renderers, collision and [`Layers::height_at`] use the same split.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
 )]
 
-// `SOURCE`, which keys the records terrain jobs make: hosts keep them, and
-// the cook ships them, while this code stays the same.
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
 mod bake;
@@ -114,18 +89,10 @@ pub use tile_water::{
     WaterPoint, WaterState, pack as pack_water, unpack as unpack_water,
 };
 
-/// The finest-to-coarsest pyramid level any layer, bake, walk graph, route
-/// or placement names at most.
 pub const MAX_LEVEL: u32 = 15;
 
-/// Quads along each side of a tile.
 pub const TILE_QUADS: u32 = 256;
-/// Samples along each side of a tile, its edges included.
 pub const TILE_SAMPLES: u32 = TILE_QUADS + 1;
-/// Samples along each side of a stored tile: its samples and a border of
-/// one sample around them.
 pub const TILE_STRIDE: u32 = TILE_SAMPLES + 2;
-/// Quads along each side of a patch, the unit views draw; a tile holds
-/// [`PATCHES_PER_TILE`] of them along each side.
 pub const PATCH_QUADS: u32 = 16;
 pub const PATCHES_PER_TILE: u32 = TILE_QUADS / PATCH_QUADS;

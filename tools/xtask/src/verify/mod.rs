@@ -1,28 +1,3 @@
-//! `cargo xtask verify`: the checks a change calls for, chosen by the
-//! paths it touches ([`map::MAP`]), at one of three levels:
-//!
-//! - `quick` (under 2 minutes): formatting, the drift checks, the shaders
-//!   where a rule calls for them, Clippy over the changed packages, and the
-//!   pure corpora the rules call for;
-//! - `pr` (under 10 minutes, the default): all of lint, the smoke checks the
-//!   rules call for against a server of this checkout, the terrain corpus's
-//!   jobs in Wasm where called for, equivalence's smoke tier and the cells
-//!   the rules name, natively, where any rule calls for equivalence, and
-//!   the factory tools' self-checks where called for;
-//! - `merge` (about 30-45 minutes): all of lint, every smoke check, the
-//!   native smoke again with its program built in the dev profile (where
-//!   debug assertions check the engine's invariants, such as the terrain
-//!   store's), the terrain corpus's jobs in Wasm, equivalence's full tier
-//!   natively and, where a rule calls for it, its browser leg, and the
-//!   self-checks called for.
-//!
-//! The change is the working tree, untracked files included, against the
-//! base: its merge-base with origin/main, or with `--base REV`, which
-//! equivalence compares with too. A changed file no rule covers calls for
-//! everything. `--plan` prints the steps without running them. Every step
-//! runs whatever failed before it; the run ends with each step's result and
-//! time, and exits 3 when a step found a fault, 1 when one could not check.
-
 mod map;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,8 +11,6 @@ use map::Check;
 
 const USAGE: &str = "usage: cargo xtask verify [--level quick|pr|merge] [--base REV] [--plan]";
 
-/// The lint stages `quick` runs: the policy, the web host's text checks and
-/// the drift checks, all of them seconds.
 const QUICK_STAGES: &[&str] = &[
     "policy",
     "fmt",
@@ -58,7 +31,6 @@ const QUICK_STAGES: &[&str] = &[
     "content locality",
 ];
 
-/// How much a run checks.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Level {
     Quick,
@@ -66,7 +38,6 @@ enum Level {
     Merge,
 }
 
-/// What the changed files call for, gathered from the rules they match.
 #[derive(Default)]
 struct Selection {
     everything: bool,
@@ -78,16 +49,12 @@ struct Selection {
     cells: BTreeSet<&'static str>,
     equivalence: bool,
     browser: bool,
-    /// The self-checks of the factory's tools called for.
     self_checks: BTreeSet<&'static str>,
-    /// The Cargo packages holding changed files, for Clippy.
     packages: BTreeSet<String>,
-    /// Changed files no rule covers: they call for everything.
     unmapped: Vec<String>,
 }
 
 impl Selection {
-    /// Adds what `path`'s change calls for.
     fn add(&mut self, root: &Path, path: &str) {
         let Some(checks) = map::checks_of(path) else {
             self.unmapped.push(path.to_owned());
@@ -127,8 +94,6 @@ impl Selection {
     }
 }
 
-/// The Cargo package whose folder holds `path`: the nearest folder above it
-/// with a manifest naming a package.
 fn package_of(root: &Path, path: &str) -> Option<String> {
     let mut folder = Path::new(path).parent();
     while let Some(at) = folder {
@@ -145,7 +110,6 @@ fn package_of(root: &Path, path: &str) -> Option<String> {
     None
 }
 
-/// One step of a run: its name and what it does.
 struct Step<'a> {
     name: String,
     run: Box<dyn Fn() -> Result<(), Failure> + 'a>,
@@ -180,7 +144,6 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
             _ => return Err(format!("unknown option {argument}\n{USAGE}").into()),
         }
     }
-    // The change is what this checkout did since it parted from the base.
     let base = git(
         root,
         &[
@@ -227,8 +190,6 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     run_steps(&steps)
 }
 
-/// The steps of `level` for what `selection` calls for, comparing with
-/// `base`.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -303,8 +264,6 @@ fn steps<'a>(
             move || crate::smoke::smoke(root, &options),
         ));
     }
-    // The engine's debug assertions run nowhere else with a GPU: the
-    // native smoke's program built in the dev profile.
     if level == Level::Merge {
         let options = vec![
             "--native-profile".to_owned(),
@@ -384,9 +343,6 @@ fn steps<'a>(
     Ok(steps)
 }
 
-/// Runs every step, each whatever failed before it, then lists each
-/// result and time: fails with 3 where a step found a fault, else 1 where
-/// one could not check.
 fn run_steps(steps: &[Step]) -> Result<(), Failure> {
     let mut results: Vec<(&str, Option<u8>, Duration)> = Vec::new();
     for step in steps {
@@ -431,10 +387,6 @@ fn run_steps(steps: &[Step]) -> Result<(), Failure> {
     }
 }
 
-/// Fails unless every tracked file matches a rule of the path map, and
-/// every smoke check, equivalence cell and pure corpus the rules name
-/// exists and every smoke check and cell beyond equivalence's smoke tier
-/// is named by some rule: a file or a check nobody placed.
 pub(crate) fn check(root: &Path) -> Result<(), String> {
     let mut problems = Vec::new();
     let tracked = git(root, &["ls-files"])?;

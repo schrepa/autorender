@@ -1,9 +1,3 @@
-//! The storage of each frame's selection: batches of both ID
-//! sources, the bins of selected clusters and their regions, the node and
-//! group queues, the retest list, counters, and dispatch and draw
-//! arguments, grown to what frames read back needed, and the uniform of
-//! views and the camera's tests.
-
 use bytemuck::Zeroable;
 
 use crate::buffers::storage;
@@ -14,21 +8,17 @@ use super::{
     VirtualBatch, VirtualView,
 };
 
-/// Starting capacities, grown from read-back counts.
 const START_QUEUE: u64 = 1 << 16;
 const START_BIN: u64 = 1 << 14;
 const START_RETEST: u64 = 1 << 14;
 
 pub(super) struct SelectionStorage {
     pub(super) uniform: wgpu::Buffer,
-    // Batches of each ID source, their capacities and counts, and the most
-    // instances any of them has.
     pub(super) batches: [wgpu::Buffer; 2],
     batch_capacity: [u64; 2],
     batch_counts: [u32; 2],
     max_instances: [u32; 2],
     pub(super) bins: wgpu::Buffer,
-    // Each bin's base and capacity, as uploaded.
     bin_regions: Vec<(u64, u64)>,
     bin_capacity: u64,
     pub(super) queues: [wgpu::Buffer; 2],
@@ -37,18 +27,13 @@ pub(super) struct SelectionStorage {
     pub(super) visible: wgpu::Buffer,
     visible_capacity: u64,
     pub(super) counters: wgpu::Buffer,
-    // Counters and bins; the used and requested group bits follow, this
-    // many words each.
     counter_capacity: u64,
     feedback_words: u64,
     pub(super) dispatch: wgpu::Buffer,
     pub(super) draw_args: wgpu::Buffer,
-    // Clusters waiting for this frame's depth pyramid, and whether this
-    // frame retests them.
     pub(super) retest: wgpu::Buffer,
     retest_capacity: u64,
     retesting: bool,
-    // Advances whenever these buffers are replaced.
     generation: u64,
 }
 
@@ -111,7 +96,6 @@ impl SelectionStorage {
         }
     }
 
-    /// Advances whenever these buffers are replaced.
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
@@ -125,36 +109,26 @@ impl SelectionStorage {
             + self.retest.size()
     }
 
-    /// Each source's batches this frame, and the most instances one has.
     pub(super) fn batches(&self) -> ([u32; 2], [u32; 2]) {
         (self.batch_counts, self.max_instances)
     }
 
-    /// Bins this frame selects into.
     pub(super) fn bin_count(&self) -> usize {
         self.bin_regions.len()
     }
 
-    /// Whether this frame retests the camera's waiting clusters.
     pub(super) fn retesting(&self) -> bool {
         self.retesting
     }
 
-    /// The retest list's room, in clusters.
     pub(super) fn retest_capacity(&self) -> u32 {
         self.retest_capacity as u32
     }
 
-    /// Where the used and requested group bits start in the counters, and
-    /// their words each.
     pub(super) fn feedback(&self) -> (usize, usize) {
         (self.counter_capacity as usize, self.feedback_words as usize)
     }
 
-    /// Grows what a frame read back lacked room for, `drops`: the queues
-    /// (dropped node or group entries), bins' regions of this frame's
-    /// `bins` bins (dropped clusters) and the retest list (overflowed),
-    /// while a binding still holds them.
     pub(super) fn grow(&mut self, device: &wgpu::Device, drops: [u32; 4], bins: usize) {
         let [queue_drops, work_drops, cluster_drops, overflow] = drops;
         let binding = device.limits().max_storage_buffer_binding_size;
@@ -198,9 +172,6 @@ impl SelectionStorage {
         }
     }
 
-    /// Gives `bins` bins equal shares of the visible storage and room in
-    /// the counters, followed by `feedback_words` words of each feedback
-    /// bitset; returns whether the counters were replaced.
     pub(super) fn size_bins(
         &mut self,
         device: &wgpu::Device,
@@ -262,8 +233,6 @@ impl SelectionStorage {
         replaced
     }
 
-    /// Uploads both sources' `batches`, of which the largest of each has
-    /// `max_instances` instances.
     pub(super) fn upload_batches(
         &mut self,
         device: &wgpu::Device,
@@ -309,9 +278,6 @@ impl SelectionStorage {
         }
     }
 
-    /// Writes the uniform: counts of `bins` bins and `views` views, the
-    /// camera's `tests`, where selection marks used and requested groups and
-    /// where the groups' residency bits start (`bits_base`), then the views.
     pub(super) fn write_uniform(
         &mut self,
         queue: &wgpu::Queue,
@@ -345,8 +311,6 @@ impl SelectionStorage {
                 self.retest_capacity as u32,
                 0,
             ],
-            // Where selection marks used and requested groups, and where the
-            // groups' residency bits start.
             feedback: [
                 self.counter_capacity as u32,
                 (self.counter_capacity + self.feedback_words) as u32,
@@ -370,15 +334,12 @@ impl SelectionStorage {
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
     }
 
-    /// Bin `bin`'s first entry of the visible storage.
     pub(super) fn bin_base(&self, bin: usize) -> u32 {
         self.bin_regions
             .get(bin)
             .map_or(0, |&(base, _)| base as u32)
     }
 
-    /// The selected clusters of bin `bin` (an instance-stepped vertex stream
-    /// of visible ID and cluster) and its indirect draw arguments.
     pub(super) fn bin_source(&self, bin: usize) -> (wgpu::BufferSlice<'_>, &wgpu::Buffer, u64) {
         let (base, capacity) = self.bin_regions[bin];
         (

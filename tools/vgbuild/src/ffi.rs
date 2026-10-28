@@ -1,8 +1,3 @@
-//! `#[repr(C)]` mirrors of `vendor/meshoptimizer/demo/clusterlod.h` and the
-//! meshoptimizer bounds API, behind safe wrappers: the only unsafe code of
-//! the crate. Field order and types match the headers exactly; review them
-//! on every meshoptimizer upgrade (`vendor/meshoptimizer/VENDORED.md`).
-
 #![expect(unsafe_code, reason = "calls the vendored C++ meshoptimizer")]
 
 use std::ffi::{c_int, c_uint, c_void};
@@ -167,7 +162,6 @@ unsafe extern "C" {
     ) -> usize;
 }
 
-/// `clodDefaultConfig`: clusters of up to `max_triangles` (4 to 256).
 pub(crate) fn default_config(max_triangles: usize) -> ClodConfig {
     assert!(
         (4..=256).contains(&max_triangles),
@@ -177,17 +171,11 @@ pub(crate) fn default_config(max_triangles: usize) -> ClodConfig {
     unsafe { clodDefaultConfig(max_triangles) }
 }
 
-/// One cluster `clodBuild` reports: the group that refined into it (or -1)
-/// and its indices into the source vertices.
 pub(crate) struct ClusterView<'a> {
     pub refined: c_int,
     pub indices: &'a [u32],
 }
 
-/// The mesh `clodBuild` reads: positions, per-vertex attributes of
-/// `attribute_stride` floats (the first `weights.len()` weighted, those of
-/// `protect_mask` kept at discontinuities) and triangle indices, all checked
-/// by the caller (indices in range, whole triangles).
 pub(crate) struct MeshInput<'a> {
     pub positions: &'a [[f32; 3]],
     pub attributes: &'a [f32],
@@ -195,7 +183,6 @@ pub(crate) struct MeshInput<'a> {
     pub weights: &'a [f32],
     pub protect_mask: u32,
     pub indices: &'a [u32],
-    /// `meshopt_SimplifyVertex_*` flags per vertex.
     pub locks: &'a [u8],
 }
 
@@ -231,7 +218,6 @@ extern "C" fn trampoline(
             indices: unsafe { std::slice::from_raw_parts(cluster.indices, cluster.index_count) },
         })
         .collect();
-    // Panics must not unwind into C++.
     match catch_unwind(AssertUnwindSafe(|| (context.output)(group, &views))) {
         Ok(value) => value,
         Err(_) => {
@@ -241,9 +227,6 @@ extern "C" fn trampoline(
     }
 }
 
-/// `clodBuild`: calls `output` with each group and its clusters in order;
-/// its result becomes `refined` of the clusters that group's simplification
-/// makes. Returns false when `output` panicked.
 pub(crate) fn build(
     config: ClodConfig,
     input: &MeshInput<'_>,
@@ -299,8 +282,6 @@ pub(crate) fn build(
     !context.failed
 }
 
-/// `clodLocalIndices`: a cluster's vertices (indices into the source) and its
-/// local triangle indices.
 pub(crate) fn local_indices(indices: &[u32]) -> (Vec<u32>, Vec<u8>) {
     let mut vertices = vec![0; indices.len()];
     let mut triangles = vec![0; indices.len()];
@@ -318,7 +299,6 @@ pub(crate) fn local_indices(indices: &[u32]) -> (Vec<u32>, Vec<u8>) {
     (vertices, triangles)
 }
 
-/// `meshopt_computeClusterBounds` of triangles `indices` over `positions`.
 pub(crate) fn cluster_bounds(indices: &[u32], positions: &[[f32; 3]]) -> MeshoptBounds {
     assert!(
         indices
@@ -338,8 +318,6 @@ pub(crate) fn cluster_bounds(indices: &[u32], positions: &[[f32; 3]]) -> Meshopt
     }
 }
 
-/// `clodBuildHierarchy`: one tree per level over `groups`, `node_width`
-/// children per node.
 pub(crate) fn build_hierarchy(
     groups: &[ClodGroup],
     node_width: usize,
@@ -366,10 +344,6 @@ pub(crate) fn build_hierarchy(
     nodes
 }
 
-/// What `meshopt_simplify` and `meshopt_simplifyWithAttributes` read: positions,
-/// triangle indices, and optionally per-vertex attributes of
-/// `attribute_stride` floats (the first `weights.len()` weighted) and
-/// `meshopt_SimplifyVertex_*` flags per vertex.
 pub struct SimplifyInput<'a> {
     pub positions: &'a [[f32; 3]],
     pub indices: &'a [u32],
@@ -377,15 +351,6 @@ pub struct SimplifyInput<'a> {
     pub locks: Option<&'a [u8]>,
 }
 
-/// meshoptimizer's own simplification of `input` toward `target_index_count`
-/// indices within `target_error`, with `meshopt_Simplify*` `options`:
-/// `meshopt_simplify` without attributes and flags, otherwise
-/// `meshopt_simplifyWithAttributes`. Its indices and result error.
-///
-/// # Panics
-///
-/// Where `input` is not whole triangles of its vertices or its attributes
-/// or flags do not cover every vertex, which the C++ would only assert.
 pub fn simplify(
     input: &SimplifyInput<'_>,
     target_index_count: usize,

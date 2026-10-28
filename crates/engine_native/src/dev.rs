@@ -1,24 +1,3 @@
-//! The development protocol natively, over standard input and output: one
-//! JSON command a line in, one JSON reply a line out, run between frames as
-//! the page runs them (`web/src/engine/dev.ts`). The engine's development
-//! bridge answers each command and carries out the control it names step
-//! by step (`engine::dev::Step`); the session does what only it can
-//! (`engine::dev::Effect`): pausing its frames, waiting for the GPU,
-//! running frames at timestamps of their own, writing the last one drawn
-//! as a PNG file, the game's own controls and reading the authored scene
-//! again. Profiling builds also take the agent's `profile`: a deep profile
-//! of the frames run meanwhile (`engine_profiler`'s), CPU samples of every
-//! thread included unless `cpu_samples` is false, each pass's hardware
-//! counters where the session counts them (`--counters`), and with
-//! `vendor: "pix"` the last frame's per-draw counters replayed through PIX
-//! where the session loaded it (`--vendor pix`), written as files. Sessions
-//! draw offscreen and start paused, as the page's development sessions do;
-//! a first line says the session is ready. Each step's GPU work finishes
-//! before the next, so frames read back what earlier frames drew in order,
-//! however fast the GPU drew. A panic ends the session's process
-//! (`engine_panic`'s hook writes its report on standard error), and the
-//! program driving the session answers what follows.
-
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -36,30 +15,21 @@ use crate::files;
 use crate::{Frames, PixRecord, ProfileRecord, Record};
 use crate::{Offscreen, Pix};
 
-// The interval of frames while the session runs.
 const FRAME: Duration = Duration::from_micros(16_667);
-// What a benchmark's frame intervals include here.
 const TIMING: &str = "CPU timings exclude JSON/stats collection; frame intervals include host work and the GPU's work, waited for after each frame offscreen";
 
-/// A control a game registers for the `game` command: what it does, and
-/// how, on the host and the command's `args`.
 pub struct GameControl<G: Game> {
     pub description: String,
     #[expect(clippy::type_complexity, reason = "a stored control callback")]
     pub run: Box<dyn FnMut(&mut GameHost<G>, &Map<String, Value>) -> Result<Value, String>>,
 }
 
-/// A development session of a game drawn offscreen.
 pub struct DevSession<G: Game> {
     game: Offscreen<G>,
     controls: BTreeMap<String, GameControl<G>>,
     parameters: BTreeMap<String, String>,
-    // The authored scene's file, which reloads read again.
     source: Option<PathBuf>,
-    // Where captures go.
     artifacts: PathBuf,
-    // PIX's capturer, loaded before the game's device, for profiles asking
-    // for its counters.
     pix: Option<Pix>,
     captures: u32,
     paused: bool,
@@ -68,9 +38,7 @@ pub struct DevSession<G: Game> {
 }
 
 impl<G: Game> DevSession<G> {
-    /// A session of `game`, writing captures into `artifacts`.
     pub fn new(game: Offscreen<G>, artifacts: PathBuf) -> Self {
-        // Distinct per session: the time and the process.
         let mut hash = Sha256::new();
         hash.update(format!(
             "{:?} {}",
@@ -95,7 +63,6 @@ impl<G: Game> DevSession<G> {
         }
     }
 
-    /// The session with the game's control `name`.
     #[must_use]
     pub fn control(
         mut self,
@@ -113,8 +80,6 @@ impl<G: Game> DevSession<G> {
         self
     }
 
-    /// The session with more of the options the program read, with what
-    /// each does.
     #[must_use]
     pub fn parameters(
         mut self,
@@ -128,23 +93,18 @@ impl<G: Game> DevSession<G> {
         self
     }
 
-    /// The session with PIX's capturer, loaded before the game's device,
-    /// for profiles asking for its counters.
     #[must_use]
     pub fn pix(mut self, pix: Option<Pix>) -> Self {
         self.pix = pix;
         self
     }
 
-    /// The session of the authored scene at `path`, which reloads read
-    /// again.
     #[must_use]
     pub fn source(mut self, path: &Path) -> Self {
         self.source = Some(path.to_owned());
         self
     }
 
-    /// Serves commands from standard input until it closes.
     pub fn run(mut self) -> engine::Result<()> {
         let lines = read_lines();
         let size = self.game.size();
@@ -197,11 +157,6 @@ impl<G: Game> DevSession<G> {
         let _ = out.flush();
     }
 
-    /// The reply to the command line `line`: the engine's bridge runs it,
-    /// the session carrying out each effect it hands back once the GPU
-    /// finished what the step before submitted, so what frames read back
-    /// never depends on how fast the GPU drew. Profiles are the session's
-    /// own.
     fn request(&mut self, line: &str) -> Value {
         if line.len() <= engine::dev::MAX_REQUEST_BYTES
             && let Ok(Value::Object(command)) = serde_json::from_str::<Value>(line)
@@ -222,7 +177,6 @@ impl<G: Game> DevSession<G> {
         }
     }
 
-    /// Carries out `effect` for the request under way: its next step.
     fn carry(&mut self, effect: Effect) -> Step {
         let failed = |message: String| Outcome {
             failed: Some(message),
@@ -233,7 +187,6 @@ impl<G: Game> DevSession<G> {
                 self.paused = paused;
                 Outcome::default()
             }
-            // The GPU finished the frame before: `request` waited for it.
             Effect::Wait { .. } => Outcome {
                 now: Some(engine::host::now_ms()),
                 ..Outcome::default()
@@ -281,8 +234,6 @@ impl<G: Game> DevSession<G> {
         self.game.host_mut().dev_resume(outcome, &context)
     }
 
-    /// The session's side of each call to the bridge: its view, whether it
-    /// is paused, and what it is.
     fn context(&self) -> HostContext {
         let (width, height) = self.game.size();
         HostContext {
@@ -296,8 +247,6 @@ impl<G: Game> DevSession<G> {
         }
     }
 
-    /// The authored scene read again with the files it references; none
-    /// without one.
     fn read_source(&self) -> Result<Option<(String, SceneFiles)>, String> {
         let Some(path) = &self.source else {
             return Ok(None);
@@ -308,7 +257,6 @@ impl<G: Game> DevSession<G> {
         Ok(Some((source, files)))
     }
 
-    /// The last frame drawn, written as a PNG file.
     fn keep_frame(&mut self) -> Result<Artifact, String> {
         self.captures += 1;
         let path = self
@@ -330,12 +278,10 @@ impl<G: Game> DevSession<G> {
         })
     }
 
-    /// A refusal of `code` at `path`, with the engine's observation.
     fn error(&mut self, code: ErrorCode, path: &str, message: &str) -> Value {
         self.game.host_mut().dev_refusal(code, path, message)
     }
 
-    /// The engine's status reply.
     #[cfg(feature = "profiling")]
     fn status(&mut self) -> Value {
         let context = self.context();
@@ -349,12 +295,6 @@ impl<G: Game> DevSession<G> {
         }
     }
 
-    /// Runs frames back to back for `duration_ms` (100 to 5000, 5000 by
-    /// default), so the GPU's clocks stay up as under load, while a capture
-    /// of at most `max_events` CPU events and every frame's GPU spans runs
-    /// (and the counters where the session counts them), then pauses and
-    /// writes the report as files; with `vendor: "pix"`, the last frame is
-    /// also captured through PIX and replayed for each draw's counters.
     #[cfg(feature = "profiling")]
     fn profile(&mut self, command: &Map<String, Value>) -> Value {
         let options = ["op", "duration_ms", "max_events", "cpu_samples", "vendor"];
@@ -471,13 +411,10 @@ impl<G: Game> DevSession<G> {
     }
 }
 
-/// The GPU `host` draws on, as every host's status names it.
 fn adapter<G: Game>(host: &GameHost<G>) -> Value {
     json!(engine::host::AdapterStatus::of(host.adapter()))
 }
 
-/// Standard input's lines, read on a thread of their own so frames run
-/// while none arrives.
 fn read_lines() -> Receiver<String> {
     let (send, lines) = channel();
     std::thread::Builder::new()
@@ -494,7 +431,6 @@ fn read_lines() -> Receiver<String> {
     lines
 }
 
-/// Whether the session counts each pass's hardware counters.
 fn counting() -> bool {
     #[cfg(feature = "profiling")]
     return engine_profiler::counters::enabled();

@@ -1,6 +1,3 @@
-//! Navigation's development tools: the inspectors of agents and of their
-//! walks, sending agents and the query of walks.
-
 use engine_core::bevy_ecs::prelude::Entity;
 use engine_core::bevy_ecs::world::Mut;
 use engine_core::{
@@ -18,7 +15,6 @@ use crate::inspect::Inspector;
 use crate::results::result;
 use crate::{DevError, DevTools, InspectorDescriptor, InspectorKind, coordinate};
 
-/// Registers navigation's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
     tools
         .insert(Inspector {
@@ -112,7 +108,6 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
         .expect("built-in descriptor is bounded");
 }
 
-/// Adds the schemas of navigation's inspectors.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
     schemas.insert(
@@ -125,10 +120,6 @@ pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
     );
 }
 
-/// Send navigation agent `entity` (authored ID) walking to world
-/// `destination` `[x, z]`, or stop it with null, and
-/// render while paused; steps then walk it. Not a source change.
-/// Returns its status.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -148,8 +139,6 @@ impl EngineControl for NavGoControl {
     }
 }
 
-/// Sends navigation agent `id` in `scene` to `destination` (world x and
-/// z), or stops it.
 fn nav_go(
     engine: &mut Engine,
     scene: Option<&SceneInstance>,
@@ -191,59 +180,31 @@ fn nav_go(
     }))
 }
 
-/// What `nav_go` answers: where the agent now walks.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct NavGoResult {
-    /// Controls change the session's world, not the scene's source.
     pub temporary: bool,
-    /// Where it walks (world x and z); null where it stopped.
     pub destination: Option<[f32; 2]>,
 }
 
-/// What `nav_path` answers: the walk found, if one reaches, or that its
-/// search goes on.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct NavPathResult {
-    /// The terrain walked.
     pub terrain: TerrainKey,
-    /// How the walk weighed the ground.
     pub options: engine_core::terrain_data::NavOptions,
-    /// Whether its search waits for records the host has yet to hand back,
-    /// or the terrain's bakes: ask again (after a render or a step) for the
-    /// same walk.
     pub searching: bool,
-    /// The walk; null where none reaches, or while searching.
     pub walk: Option<WalkResult>,
 }
 
-/// A walk over the terrain.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct WalkResult {
-    /// Its points, world space, rounded to centimeters.
     pub points: Vec<[f64; 3]>,
-    /// Its length, meters.
     pub length: f32,
-    /// The pyramid level walked.
     pub level: u32,
-    /// Samples and walk graph portals searched.
     pub searched: usize,
 }
 
-/// The cheapest walk over the terrain under world `from` and `to`
-/// `[x, z]`: across ground an agent stands on (no holes,
-/// no water deeper than `max_water`, no closer than `radius` to placed
-/// objects that collide on resident tiles), each step no steeper than
-/// `max_slope` (rise per meter) and costing its run and rise, over pyramid
-/// `level` (0 by default): first over the terrain's walk graph of tiles'
-/// portals, then the samples of the tiles that crosses; pulled taut and
-/// following the ground. Its search reads records the host hands back
-/// (the cook's packs, its store, or jobs making them): while it waits for
-/// them, `searching` is true; ask again for the same walk. Returns its
-/// points (world, rounded to centimeters), length, the level walked and
-/// samples and portals searched, or a null walk where none reaches.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -260,7 +221,6 @@ impl EngineQuery for NavPathQuery {
     }
 }
 
-/// A navigation walk from `from` to `to` over the terrain under them.
 fn walk(
     engine: &mut Engine,
     from: [f64; 2],

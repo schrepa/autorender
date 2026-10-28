@@ -1,14 +1,3 @@
-//! `cargo xtask gpu --report DIR`: what every shader entry point costs,
-//! offline, on any machine, no GPU needed. Everywhere: naga's counts of the
-//! work each entry point does (expressions, texture samples and loads,
-//! derivatives, loops, calls, barriers, atomics) and its SPIR-V. Where Radeon
-//! GPU Analyzer runs (Windows and Linux; downloaded once into
-//! `target/tools`, pinned and checked against its SHA-256): the AMD machine
-//! code each entry point compiles to on RDNA 3, 3.5 (integrated) and 4,
-//! the architectures its offline compiler knows, with its vector and scalar
-//! registers, local memory and scratch. The report is
-//! `DIR/report.json`; SPIR-V and machine code sit beside it.
-
 use engine_core::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -17,8 +6,6 @@ use serde_json::{Value, json};
 
 use crate::gpu::{Checked, modules};
 
-/// The Radeon GPU Analyzer release the report uses, per operating system:
-/// archive URL and its SHA-256.
 const RGA_VERSION: &str = "2.14.2";
 #[cfg(windows)]
 const RGA_ARCHIVE: Option<(&str, &str)> = Some((
@@ -33,11 +20,8 @@ const RGA_ARCHIVE: Option<(&str, &str)> = Some((
 #[cfg(not(any(windows, target_os = "linux")))]
 const RGA_ARCHIVE: Option<(&str, &str)> = None;
 
-/// The AMD architectures compiled for: RDNA 3, RDNA 3.5 (integrated) and
-/// RDNA 4.
 const TARGETS: [&str; 3] = ["gfx1100", "gfx1150", "gfx1201"];
 
-/// Runs `gpu --report DIR [--no-rga]`.
 pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
     let (folder, rga) = match options {
         [flag, folder] if flag == "--report" => (PathBuf::from(folder), true),
@@ -49,7 +33,6 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
     let modules = modules()?;
     let rga = if rga { rga_program(root)? } else { None };
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    // Entry points compile independently: across the processors.
     let work: Vec<(&Checked, &naga::EntryPoint)> = modules
         .iter()
         .flat_map(|checked| {
@@ -111,8 +94,6 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// The report of `entry` in `checked`: naga's counts, its SPIR-V, and with
-/// `rga` its AMD machine code per target.
 fn entry_report(
     checked: &Checked,
     entry: &naga::EntryPoint,
@@ -131,8 +112,6 @@ fn entry_report(
         shader_stage: entry.stage,
         entry_point: entry.name.clone(),
     };
-    // Pipeline-overridable constants at their defaults, as pipelines that
-    // set none compile them.
     let words = naga::back::pipeline_constants::process_overrides(
         module,
         &checked.info,
@@ -180,7 +159,6 @@ fn entry_report(
     }))
 }
 
-/// What an entry point's functions do, as naga's IR says.
 #[derive(Default)]
 struct Counts {
     functions: u32,
@@ -196,7 +174,6 @@ struct Counts {
 }
 
 impl Counts {
-    /// Counts `function` and, once each, the functions it calls.
     fn function(
         &mut self,
         module: &naga::Module,
@@ -276,8 +253,6 @@ impl Counts {
     }
 }
 
-/// `spirv` (an entry point of `stage`) compiled for each AMD target: its
-/// machine code's instructions and resources, or the compiler's failure.
 fn amd_report(program: &Path, spirv: &Path, stage: &str, folder: &Path, stem: &str) -> Value {
     let flag = match stage {
         "vertex" => "--vert",
@@ -300,7 +275,6 @@ fn amd_report(program: &Path, spirv: &Path, stage: &str, folder: &Path, stem: &s
             .output();
         let result = match output {
             Ok(output) => {
-                // RGA names its outputs after the target and stage.
                 let isa_file = produced(&out, &isa, target);
                 let analysis_file = produced(&out, &analysis, target);
                 match (isa_file, analysis_file) {
@@ -326,9 +300,6 @@ fn amd_report(program: &Path, spirv: &Path, stage: &str, folder: &Path, stem: &s
     Value::Object(targets)
 }
 
-/// The file RGA wrote for `requested` (it prefixes the target and suffixes
-/// the stage): the first in `folder` whose name starts with the target and
-/// contains the requested stem.
 fn produced(folder: &Path, requested: &Path, target: &str) -> Option<PathBuf> {
     if requested.is_file() {
         return Some(requested.to_owned());
@@ -351,7 +322,6 @@ fn produced(folder: &Path, requested: &Path, target: &str) -> Option<PathBuf> {
         })
 }
 
-/// An analysis CSV's resources and the ISA's instruction count.
 fn resources(isa: &Path, analysis: &Path) -> Value {
     let instructions = std::fs::read_to_string(isa).map_or(0, |text| {
         text.lines()
@@ -390,8 +360,6 @@ fn resources(isa: &Path, analysis: &Path) -> Value {
     })
 }
 
-/// Radeon GPU Analyzer: on the path, or the pinned release in
-/// `target/tools`, downloaded and checked once; `None` where it does not run.
 fn rga_program(root: &Path) -> Result<Option<PathBuf>, String> {
     let executable = if cfg!(windows) { "rga.exe" } else { "rga" };
     if let Some(found) = std::env::var_os("PATH").and_then(|path| {
@@ -434,7 +402,6 @@ fn rga_program(root: &Path) -> Result<Option<PathBuf>, String> {
             "{url} has SHA-256 {digest}, not the pinned {sha256}"
         ));
     }
-    // Windows's own tar reads zip archives.
     let tar = if cfg!(windows) {
         std::env::var_os("SystemRoot").map_or_else(
             || PathBuf::from("tar"),
@@ -459,7 +426,6 @@ fn rga_program(root: &Path) -> Result<Option<PathBuf>, String> {
         .ok_or_else(|| format!("{} holds no {executable}", folder.display()))
 }
 
-/// `name` in `folder` or one or two folders down.
 fn find(folder: &Path, name: &str) -> Option<PathBuf> {
     let direct = folder.join(name);
     if direct.is_file() {
@@ -478,8 +444,6 @@ fn find(folder: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
-/// The entry points costing most: by AMD vector registers where measured,
-/// else by naga's expressions.
 fn print_summary(report: &Value) {
     let Some(entries) = report["entries"].as_array() else {
         return;

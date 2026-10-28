@@ -1,20 +1,11 @@
-//! What only native renderers do: graphics debugger captures, waiting for
-//! the GPU's work or a mark in it, and reading offscreen frames back.
-
 #![expect(unsafe_code, reason = "starts and stops a graphics debugger's capture")]
 
 use super::*;
 
-/// A point in the GPU work a native renderer submitted
-/// ([`Renderer::gpu_mark`]), for hosts that keep frames in flight.
 #[derive(Clone, Debug)]
 pub struct GpuMark(wgpu::SubmissionIndex);
 
 impl Renderer {
-    /// Starts capturing the GPU work submitted from now in the graphics
-    /// debugger the program runs under: RenderDoc (Vulkan, D3D12) or Xcode
-    /// (Metal, with `MTL_CAPTURE_ENABLED=1`); nothing without one. Whether
-    /// a capture started: none while another runs.
     pub fn start_debugger_capture(&mut self) -> bool {
         if self.debugger_capture {
             return false;
@@ -28,8 +19,6 @@ impl Renderer {
         true
     }
 
-    /// Stops the capture [`Self::start_debugger_capture`] started, once the
-    /// GPU finished its work.
     pub fn stop_debugger_capture(&mut self) -> Result<(), RenderError> {
         if !self.debugger_capture {
             return Ok(());
@@ -43,7 +32,6 @@ impl Renderer {
         Ok(())
     }
 
-    /// Waits until the GPU finished every frame submitted.
     pub fn wait_for_gpu(&self) -> Result<(), RenderError> {
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
@@ -51,14 +39,10 @@ impl Renderer {
             .map_err(|error| render_error("The GPU failed", error))
     }
 
-    /// A mark after the GPU work submitted so far, which
-    /// [`Self::wait_for_mark`] waits for: an empty submission, which the
-    /// queue finishes after every earlier one.
     pub fn gpu_mark(&self) -> GpuMark {
         GpuMark(self.queue.submit([]))
     }
 
-    /// Waits until the GPU finished the work submitted before `mark`.
     pub fn wait_for_mark(&self, mark: GpuMark) -> Result<(), RenderError> {
         self.device
             .poll(wgpu::PollType::Wait {
@@ -69,15 +53,11 @@ impl Renderer {
             .map_err(|error| render_error("The GPU failed", error))
     }
 
-    /// The last frame drawn offscreen, as `(width, height, RGBA8 rows from
-    /// the top)`, once the GPU finished it; `None` without an offscreen
-    /// target. Native renderers wait for the GPU here.
     pub fn read_offscreen(&self) -> Result<Option<(u32, u32, Vec<u8>)>, RenderError> {
         let Some(texture) = self.display.offscreen() else {
             return Ok(None);
         };
         let (width, height) = (texture.width(), texture.height());
-        // Rows of a texture copy align to 256 bytes.
         let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("engine/offscreen-readback"),
@@ -125,7 +105,6 @@ impl Renderer {
             .get_mapped_range()
             .map_err(|error| render_error("Could not read the offscreen frame", error))?;
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-        // The texture holds BGRA texels: read back as RGBA.
         for rows in view.chunks_exact(row as usize) {
             for texel in rows[..(width * 4) as usize].as_chunks::<4>().0 {
                 let [blue, green, red, alpha] = *texel;

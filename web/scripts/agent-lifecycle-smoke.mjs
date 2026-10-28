@@ -1,4 +1,3 @@
-/** Browser-backed session lifetime checks; no game or GPU rendering is required. */
 // @ts-check
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";

@@ -7,21 +7,16 @@ publish.workspace = true
 description = "Owned WebGPU resources and instanced 3D rendering for the browser engine"
 
 [features]
-# Development sessions' fault injection into lazily created features.
 dev = []
 profiling = ["engine_profile/enabled", "engine_core/profiling"]
 
 [dependencies]
 engine_core.workspace = true
 engine_profile.workspace = true
-# The cook's texture encoder: the blocks of terrain material layers lacking
-# a map, and impostors' layers in BC7.
 engine_textures.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
 libm.workspace = true
-# Pipelines' keys, which the scene's pipeline list holds: wgpu's states
-# serialize with wgpu-types' `serde`.
 serde.workspace = true
 serde_json.workspace = true
 wgpu-types.workspace = true
@@ -35,13 +30,10 @@ wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 web-sys.workspace = true
 
-# Native renderers run on the platform's own GPU interfaces.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.wgpu]
 workspace = true
 features = ["dx12", "vulkan", "metal"]
 
-# `SOURCE`, the hash of the code making the records the renderer makes:
-# impostors' layers and the scene's pipeline list.
 [build-dependencies]
 engine_sources.workspace = true
 

@@ -1,7 +1,3 @@
-//! Terrain's queries: heights at points, a sweep comparing what terrain
-//! queries, collision rays and generated terrains' layers say the ground
-//! is, and routes for paths.
-
 use engine_collision::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
 use engine_core::{
     Engine, Feature, RouteOptions, Terrain, Terrains, WaterKind,
@@ -24,23 +20,16 @@ use crate::protocol::bounds::{self, MAX_POINTS};
 use crate::results::result;
 use crate::{DevError, bounded, coordinate};
 
-/// Hits a sweep ray may meet: placed objects above the
-/// ground, and the ground itself.
 const PLACED_RAY_HITS: usize = 16;
 
-/// A terrain as replies name it: its authored ID, or its entity's bits
-/// outside scenes.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum TerrainKey {
-    /// Its authored ID.
     Authored(String),
-    /// Its entity's bits, outside scenes.
     Entity(u64),
 }
 
-/// The terrain `entity` as replies name it.
 pub(crate) fn terrain_key(
     world: &World,
     entity: engine_core::bevy_ecs::prelude::Entity,
@@ -51,11 +40,6 @@ pub(crate) fn terrain_key(
     )
 }
 
-/// Terrain surfaces under world points `[x, z]`: each one's terrain, height, normal, hole and the level of the
-/// resident tile answering, what its hydrology bake found there and the
-/// water standing there, and the meters from the
-/// nearest road's edge (negative on roads, null beyond
-/// their masks' reach), or null where no tile is resident.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -70,10 +54,6 @@ impl EngineQuery for TerrainHeightQuery {
     }
 }
 
-/// Compares, over `samples` by `samples` points across `half_extent`
-/// meters of world `center` `[x, z]`, what terrain queries (the tiles
-/// renderers draw), collision rays and generated terrains' layers say
-/// the ground is: the largest differences and where.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -120,19 +100,6 @@ fn default_sweep_samples() -> u32 {
     16
 }
 
-/// The cheapest route over the generated terrain under world `from`
-/// `[x, z]` to world `to`, over its layers with their
-/// bakes, as a path layer would follow it: walking between the samples
-/// of pyramid `level`, each step's cost growing by `grade_cost` times
-/// its squared grade and by `water_cost` where water stands, each turn
-/// costing `turn_cost` meters per unit of one less its angle's cosine,
-/// refusing grades steeper than `max_grade` (rise per meter).
-/// Returns the terrain's origin `[x, z]` and the route's points
-/// terrain-local (a path layer's `points`; add the origin for world
-/// points), its length, its steepest grade within the limit and the
-/// turning steps of its hairpins crossing steeper ground (up to 45
-/// degrees), or a null route where none keeps within the limits. Its
-/// work grows with the square of the ends' distance.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -209,8 +176,6 @@ impl EngineQuery for TerrainRouteQuery {
             terrain: terrain_key(world, sample.terrain),
             options,
             origin: origin.to_array(),
-            // Centimeters are plenty, and keep long routes within the
-            // response limit.
             route: route.map(|route| RouteFound {
                 points: route
                     .points
@@ -225,8 +190,6 @@ impl EngineQuery for TerrainRouteQuery {
     }
 }
 
-/// The schema transform stating route option `field`'s rule on the request
-/// field of that name.
 #[cfg(not(target_arch = "wasm32"))]
 fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
     let state =
@@ -240,7 +203,6 @@ fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
     }
 }
 
-/// What the resident tiles say of the ground at `points`.
 fn heights(engine: &mut Engine, points: &[[f64; 2]]) -> Result<Value, DevError> {
     if points.is_empty() || points.len() > MAX_POINTS {
         return Err(DevError::new(
@@ -258,16 +220,12 @@ fn heights(engine: &mut Engine, points: &[[f64; 2]]) -> Result<Value, DevError> 
             let x = coordinate(point[0], &format!("$.points[{index}][0]"))?;
             let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
             Ok(terrains.sample(x, z).map(|sample| {
-                // What its hydrology bake found there, as the finest level
-                // sees it.
                 let found = terrains.layers(sample.terrain).and_then(|layers| {
                     let terrain = terrains.terrain(sample.terrain)?;
                     let water = layers.hydrology()?;
                     let local = (x - terrain.origin.x, z - terrain.origin.z);
                     Some(water.at(local.0, local.1, terrain.pyramid.spacing(0)))
                 });
-                // The water standing there as the tiles hold it, over the
-                // ground they hold: its surface (world height) and depth.
                 let standing = terrains
                     .water_at(Vec3::new(x, sample.height, z))
                     .filter(|water| water.kind != WaterKind::Fall)
@@ -275,8 +233,6 @@ fn heights(engine: &mut Engine, points: &[[f64; 2]]) -> Result<Value, DevError> 
                         surface: water.surface,
                         depth: water.depth,
                     });
-                // Meters from the nearest road's edge,
-                // where a path's masks reach.
                 let path = terrains.layers(sample.terrain).and_then(|layers| {
                     let terrain = terrains.terrain(sample.terrain)?;
                     let road = layers.path_at(x - terrain.origin.x, z - terrain.origin.z);
@@ -301,9 +257,6 @@ fn heights(engine: &mut Engine, points: &[[f64; 2]]) -> Result<Value, DevError> 
     }))
 }
 
-/// The ground under a grid of `samples` by `samples` points across
-/// `half_extent` meters of `center`, by terrain queries (the resident
-/// tiles renderers draw), collision rays and generated terrains' layers.
 fn sweep(
     engine: &mut Engine,
     center: Vec2,
@@ -340,9 +293,6 @@ fn sweep(
             if sample.level != 0 {
                 continue;
             }
-            // Collision holds level-0 tiles around focus points only. Rays
-            // meeting placed objects first count, and the
-            // ground beneath them compares.
             if collision {
                 let mut hits = Vec::new();
                 world
@@ -368,7 +318,6 @@ fn sweep(
                     None => ray_misses += 1,
                 }
             }
-            // The layers tiles generate from, their hydrology baked.
             if let Some(terrain) = world.get::<Terrain>(sample.terrain)
                 && let Some(stack) = terrains.layers(sample.terrain)
             {

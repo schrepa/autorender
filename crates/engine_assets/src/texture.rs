@@ -2,29 +2,17 @@ use std::sync::OnceLock;
 
 use crate::AssetError;
 
-/// Maximum admitted width or height: the largest 2D texture every WebGPU
-/// device holds.
 pub const MAX_TEXTURE_DIMENSION: u32 = 8192;
 
-/// How a texture's texels are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextureFormat {
-    /// Four bytes per texel, red, green, blue and alpha.
     Rgba8,
-    /// BC7 blocks of 4 × 4 texels in 16 bytes, for devices
-    /// with WebGPU's `texture-compression-bc`.
     Bc7,
-    /// ETC2 RGBA8 (EAC alpha) blocks of 4 × 4 texels in 16 bytes, for
-    /// devices with `texture-compression-etc2`.
     Etc2Rgba8,
-    /// ASTC blocks of 4 × 4 texels in 16 bytes, for devices with
-    /// `texture-compression-astc`.
     Astc4x4,
 }
 
 impl TextureFormat {
-    /// Bytes of one level `width` × `height`: whole blocks for compressed
-    /// formats.
     pub fn level_bytes(self, width: u32, height: u32) -> usize {
         match self {
             Self::Rgba8 => width as usize * height as usize * 4,
@@ -34,19 +22,11 @@ impl TextureFormat {
         }
     }
 
-    /// Whether texels are stored in blocks of 4 × 4.
     pub fn is_compressed(self) -> bool {
         self != Self::Rgba8
     }
 }
 
-/// What a texture's texels average to, which renderers stand in for its
-/// texels where they repeat too small on screen to show: the mean of its
-/// red, green and blue decoded from sRGB, the mean of each channel as
-/// stored (0 to 1), the mean square of the slopes its texels make read
-/// as a tangent-space normal map, each normal at most about 76 degrees
-/// from flat, and the standard deviation of each channel as stored (0 to
-/// 1), how far its texels spread about their mean.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextureSummary {
     pub color: [f32; 3],
@@ -56,8 +36,6 @@ pub struct TextureSummary {
 }
 
 impl TextureSummary {
-    /// The summary of `pixels`, RGBA8 texels: what every texture made from
-    /// those texels summarizes to, whatever its format.
     pub fn of_rgba8(pixels: &[u8]) -> Self {
         let texels = pixels.as_chunks::<4>().0;
         let count = texels.len().max(1) as f64;
@@ -75,7 +53,6 @@ impl TextureSummary {
                 *sum += u64::from(value);
                 *square += u64::from(value) * u64::from(value);
             }
-            // At most about 76 degrees from flat.
             let (x, y, z) = (unit(texel[0]), unit(texel[1]), unit(texel[2]).max(0.25));
             slopes += (x * x + y * y) / (z * z);
         }
@@ -94,7 +71,6 @@ impl TextureSummary {
     }
 }
 
-/// Each 8-bit sRGB value decoded to linear light.
 pub fn srgb_decoded() -> &'static [f32; 256] {
     static TABLE: OnceLock<[f32; 256]> = OnceLock::new();
     TABLE.get_or_init(|| {
@@ -109,16 +85,6 @@ pub fn srgb_decoded() -> &'static [f32; 256] {
     })
 }
 
-/// Immutable texels in tightly packed row-major RGBA8 order, or
-/// block-compressed, with their mip levels where the texture carries them.
-///
-/// Rows run from top to bottom, matching UV origin (0, 0) at the upper left.
-/// A texture holds its base level and, where it was cooked, every level
-/// below it; renderers generate the levels of RGBA8 textures holding their
-/// base level alone. Decoding and transcoding happen before admission;
-/// there are no asynchronous loading states in this type. Surfaces are
-/// opaque: alpha is the linear mask of a material's emission, 255 where it
-/// emits fully.
 #[derive(Debug)]
 pub struct Texture {
     width: u32,
@@ -130,8 +96,6 @@ pub struct Texture {
 }
 
 impl Texture {
-    /// Takes ownership of exactly `width * height * 4` bytes. Dimensions must be
-    /// nonzero and at most [`MAX_TEXTURE_DIMENSION`]; every alpha byte must be 255.
     pub fn new(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, AssetError> {
         let texture = Self::from_rgba(width, height, rgba8)?;
         if let Some(pixel) = texture
@@ -146,19 +110,10 @@ impl Texture {
         Ok(texture)
     }
 
-    /// [`Self::new`] with any alpha: coverage for masked and blended
-    /// materials; for opaque ones it masks the emission, from
-    /// 0 (none) to 255 (the material's full emission).
     pub fn from_rgba(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, AssetError> {
         Self::from_levels(TextureFormat::Rgba8, width, height, vec![rgba8])
     }
 
-    /// The levels of a `width` × `height` texture in `format`: the base
-    /// level first, each next level half as large (rounding down, at least
-    /// 1), at most down to 1 × 1, each exactly its texels or, compressed,
-    /// its whole blocks. Compressed dimensions are multiples of 4, as WebGPU
-    /// requires. Alpha is kept, as [`Self::from_rgba`] keeps it; compressed
-    /// textures may mask emission anywhere.
     pub fn from_levels(
         format: TextureFormat,
         width: u32,
@@ -183,7 +138,6 @@ impl Texture {
         if levels.is_empty() || levels.len() > full_chain(width, height) as usize {
             return invalid("a texture has from one level to a full mip chain");
         }
-        // The dimension limit bounds every product below usize::MAX on Wasm32.
         for (level, bytes) in levels.iter().enumerate() {
             let expected = format.level_bytes((width >> level).max(1), (height >> level).max(1));
             if bytes.len() != expected {
@@ -193,7 +147,6 @@ impl Texture {
                 });
             }
         }
-        // One pass records whether any texel limits emission.
         let masked = !format.is_compressed()
             && levels[0]
                 .as_chunks::<4>()
@@ -210,16 +163,12 @@ impl Texture {
         })
     }
 
-    /// This texture whose texels summarize to `summary`, as the cook
-    /// measured them on its source.
     #[must_use]
     pub fn with_summary(self, summary: TextureSummary) -> Self {
         let summary = OnceLock::from(summary);
         Self { summary, ..self }
     }
 
-    /// This texture with `masked` saying whether any texel's alpha limits
-    /// emission, as the cook found on its source.
     #[must_use]
     pub fn with_emission_mask(self, masked: bool) -> Self {
         Self { masked, ..self }
@@ -233,7 +182,6 @@ impl Texture {
         self.height
     }
 
-    /// The base level: RGBA8 pixels, or blocks of compressed formats.
     pub fn pixels(&self) -> &[u8] {
         &self.levels[0]
     }
@@ -242,19 +190,14 @@ impl Texture {
         self.format
     }
 
-    /// Every stored level from the base down.
     pub fn levels(&self) -> &[Box<[u8]>] {
         &self.levels
     }
 
-    /// Whether it holds every level down to 1 × 1.
     pub fn has_mips(&self) -> bool {
         self.levels.len() == full_chain(self.width, self.height) as usize
     }
 
-    /// What its texels average to: as cooked, or measured on its RGBA8
-    /// base level once asked; `None` for compressed textures not cooked
-    /// with one.
     pub fn summary(&self) -> Option<TextureSummary> {
         if let Some(summary) = self.summary.get() {
             return Some(*summary);
@@ -266,20 +209,15 @@ impl Texture {
         })
     }
 
-    /// Whether any texel's alpha may be below 255, limiting emission there;
-    /// compressed textures always may, unless cooked from texels that do
-    /// not.
     pub fn has_emission_mask(&self) -> bool {
         self.masked
     }
 
-    /// Owned pixel payload bytes; excludes allocation and `Arc` metadata.
     pub fn byte_len(&self) -> usize {
         self.levels.iter().map(|level| level.len()).sum()
     }
 }
 
-/// Levels of a full mip chain of a `width` × `height` texture.
 pub fn full_chain(width: u32, height: u32) -> u32 {
     32 - width.max(height).leading_zeros()
 }

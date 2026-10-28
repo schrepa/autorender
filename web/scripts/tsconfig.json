@@ -1,8 +1,4 @@
 {
-  // The scripts' types: tsc checks each script that opens with
-  // `// @ts-check` (checkJs stays off for the rest), with Node's and the
-  // page's declarations. Untyped parameters and caught errors stay `any`,
-  // as plain JavaScript has them; everything else is strict.
   "compilerOptions": {
     "target": "ES2023",
     "module": "NodeNext",

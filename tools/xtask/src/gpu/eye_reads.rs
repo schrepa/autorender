@@ -1,13 +1,5 @@
-//! Reads of the camera's eye on the CPU, which `cargo xtask gpu` holds to a
-//! list: every decision of detail by distance (windows, levels, thinning,
-//! tiers and budgets' cuts) reads the render snapshot's `detail_eye`, and
-//! only the files [`ALLOWED`] lists read its `camera_position`, for
-//! transforms, culling, optics, sky and fog.
-
 use std::path::{Path, PathBuf};
 
-/// The files reading the render snapshot's `camera_position`, each with
-/// what it reads it for.
 const ALLOWED: &[(&str, &str)] = &[
     (
         "crates/engine_core/src/retained_render.rs",
@@ -35,14 +27,10 @@ const ALLOWED: &[(&str, &str)] = &[
     ),
 ];
 
-/// The folders whose Rust files are read.
 const FOLDERS: [&str; 2] = ["crates", "apps"];
 
-/// The snapshot's field of the camera's eye.
 const FIELD: &str = "camera_position";
 
-/// Every read of `camera_position` outside [`ALLOWED`], and every listed
-/// file that reads it no more; returns how many files read it.
 pub(super) fn check(root: &Path) -> Result<usize, String> {
     let mut files = Vec::new();
     for folder in FOLDERS {
@@ -90,9 +78,6 @@ pub(super) fn check(root: &Path) -> Result<usize, String> {
     }
 }
 
-/// The lines (from 1) of Rust `text` that read `camera_position`: the word
-/// in code, but where a field declares or initializes it (`camera_position:`)
-/// or an assignment writes it (`camera_position =`).
 fn reads(text: &str) -> Vec<usize> {
     let word = |c: char| c.is_alphanumeric() || c == '_';
     let mut lines = Vec::new();
@@ -114,7 +99,6 @@ fn reads(text: &str) -> Vec<usize> {
     lines
 }
 
-/// The Rust files under `folder`, but build output.
 fn walk(folder: &Path, files: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {
         let path = entry.path();

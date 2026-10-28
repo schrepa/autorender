@@ -1,8 +1,3 @@
-//! Materials of the metro over the generated texture sets, and the library that
-//! admits meshes, textures, materials and clips into a workload's asset
-//! library. Each texture set loads as texture records (`kit::records`),
-//! generated and cooked only where no pack or store holds them.
-
 use engine::collections::HashMap;
 
 use engine::prelude::*;
@@ -11,10 +6,8 @@ use super::models::Model;
 use super::people;
 use super::textures::{self, Image, Set};
 
-/// Every material. Colors come from per-object tints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Mat {
-    // Façades: lit windows, grime over the whole building.
     Glass,
     Office,
     Brick,
@@ -44,9 +37,7 @@ pub(crate) enum Mat {
     Canvas,
     Lattice,
     Fence,
-    /// Neon in one of six colors.
     Neon(u8),
-    /// Advertisement board `slot`, cycling through the ads.
     Ad(u8),
     Fixture,
     Vehicle,
@@ -55,15 +46,11 @@ pub(crate) enum Mat {
     Rails,
     Person,
     Flora,
-    /// Clear glass that bends what is behind it.
     ClearGlass,
-    /// Frosted, tinted glass.
     FrostedGlass,
-    /// A plainly blended translucent pane.
     Pane,
 }
 
-/// Board slots the city's billboards share; each shows one ad at a time.
 pub(crate) const AD_SLOTS: u8 = 3;
 pub(crate) const NEON_COLORS: [[f32; 3]; 6] = [
     [1.0, 0.15, 0.55],
@@ -74,7 +61,6 @@ pub(crate) const NEON_COLORS: [[f32; 3]; 6] = [
     [1.0, 0.95, 0.4],
 ];
 
-/// Which map of a set a texture holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Slot {
     Base,
@@ -84,8 +70,6 @@ enum Slot {
 }
 
 impl Slot {
-    /// The maps `set` has, in the order its records list them: each one's
-    /// slot, name and how its texels read.
     fn of(set: Set) -> Vec<(Slot, &'static str, TextureUsage)> {
         let mut slots = vec![(Slot::Base, "base", TextureUsage::Color)];
         if set.has_mr() {
@@ -101,7 +85,6 @@ impl Slot {
     }
 }
 
-/// `slot`'s map of `maps`, when the set has one.
 fn slot_image(maps: &textures::Maps, slot: Slot) -> Option<&Image> {
     match slot {
         Slot::Base => Some(&maps.base),
@@ -111,7 +94,6 @@ fn slot_image(maps: &textures::Maps, slot: Slot) -> Option<&Image> {
     }
 }
 
-/// The sources of `set`'s maps in `slots`, generated.
 fn sources(set: Set, slots: &[Slot]) -> Result<Vec<TextureSource>, String> {
     let maps = textures::generate(set);
     slots
@@ -137,7 +119,6 @@ fn sources(set: Set, slots: &[Slot]) -> Result<Vec<TextureSource>, String> {
 }
 
 impl Mat {
-    /// The texture set this material samples, if any.
     fn set(self) -> Option<Set> {
         Some(match self {
             Mat::Glass => Set::Glass,
@@ -187,7 +168,6 @@ impl Mat {
         )
     }
 
-    /// Factors when a workload draws without textures.
     fn untextured(self) -> Surface {
         let surface = |roughness, metalness| Surface {
             roughness,
@@ -213,7 +193,6 @@ impl Mat {
         }
     }
 
-    /// Color factor and factors (multiplying maps where textured).
     fn plain(self) -> ([f32; 4], Surface) {
         let surface = |roughness, metalness| Surface {
             roughness,
@@ -241,7 +220,6 @@ impl Mat {
     }
 }
 
-/// Clips of the city's animated models.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Clip {
     Walk,
@@ -255,18 +233,14 @@ pub(crate) enum Clip {
     Excavator,
     Carousel,
     Ring,
-    /// A window washer's platform riding a tower of height class `n`.
     Gondola(u8),
 }
 
-/// A workload's meshes, materials, textures and clips, admitted on first
-/// use.
 pub(crate) struct Library {
     variety: u32,
     textured: bool,
     meshes: HashMap<Model, (MeshHandle, Vec3)>,
     materials: HashMap<Mat, MaterialHandle>,
-    // Each set asked for: its maps' textures by slot.
     textures: HashMap<Set, Vec<(Slot, TextureHandle)>>,
     clips: HashMap<Clip, ClipHandle>,
 }
@@ -283,7 +257,6 @@ impl Library {
         }
     }
 
-    /// The mesh drawing `model` and its size.
     pub(crate) fn mesh(
         &mut self,
         assets: &mut AssetLibrary,
@@ -301,8 +274,6 @@ impl Library {
         Ok(entry)
     }
 
-    /// `set`'s `slot` map, when the set has one: the set's textures asked
-    /// of `records` the first time any of them is.
     fn texture(
         &mut self,
         (records, assets): (&mut Records, &mut AssetLibrary),
@@ -341,7 +312,6 @@ impl Library {
         })
     }
 
-    /// The asset material of `mat`; ads start on their own slot's picture.
     pub(crate) fn material(
         &mut self,
         (records, assets): (&mut Records, &mut AssetLibrary),
@@ -356,7 +326,6 @@ impl Library {
         Ok(handle)
     }
 
-    /// Board slot `slot` showing advertisement `ad` (a set of its own).
     pub(crate) fn advert(
         &mut self,
         stores: (&mut Records, &mut AssetLibrary),
@@ -404,7 +373,6 @@ impl Library {
             _ => material,
         };
         let Some(set) = set else {
-            // Untextured workloads keep plain factors; neon and ads glow.
             return match mat {
                 Mat::Neon(color) => material
                     .with_emissive(NEON_COLORS[color as usize % NEON_COLORS.len()].map(|c| c * 2.0))
@@ -426,7 +394,6 @@ impl Library {
             material = material.with_normal_texture(normal, scale)?;
         }
         if mat.facade() {
-            // Grime spans each building through its second coordinates.
             if let Some(grime) =
                 self.texture((&mut *records, &mut *assets), Set::Grime, Slot::Mr)?
             {
@@ -436,7 +403,6 @@ impl Library {
             mat,
             Mat::Concrete | Mat::Plaza | Mat::Pavers | Mat::Tiles | Mat::Container
         ) {
-            // Occlusion packed in the metallic-roughness texture's red.
             if let Some(mr) = self.texture((&mut *records, &mut *assets), set, Slot::Mr)? {
                 material = material.with_occlusion_texture(mr, 1.0)?;
             }
@@ -454,7 +420,6 @@ impl Library {
                 .with_emissive(factor)?
                 .with_emissive_texture(glow)?;
         }
-        // Façades' cells are rooms, eight across.
         if mat.facade() {
             material = material.with_windows(8)?;
         }

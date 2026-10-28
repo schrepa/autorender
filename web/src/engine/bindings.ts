@@ -1,6 +1,3 @@
-// (module (func (drop (v128.const i32x4 0 0 0 0))))
-// Validate one standard SIMD instruction before importing/instantiating a game.
-// No memory, imports, exports or execution are needed for this capability check.
 const simdProbe = new Uint8Array([
   0, 97, 115, 109, 1, 0, 0, 0,
   1, 4, 1, 96, 0, 0,
@@ -25,16 +22,12 @@ export function requireWasmSimd(): void {
   }
 }
 
-/** Game `wasm`'s bindings, once SIMD is known to work: the build a watched
- * browser is pinned to, else those `load` imports from the game's package,
- * which the development server serves from its development build. */
 export async function loadGame<T>(wasm: string, load: () => Promise<T>): Promise<T> {
   requireWasmSimd();
   const pinned = generationModule(wasm);
   return pinned ? import(/* @vite-ignore */ pinned) as Promise<T> : load();
 }
 
-/** Pin a watched browser to one complete immutable Rust build. */
 export function generationModule(name: string): string | undefined {
   if (!import.meta.env.DEV) return;
   const generation = new URLSearchParams(location.search).get("engine_build");
@@ -43,8 +36,6 @@ export function generationModule(name: string): string | undefined {
   return `/_engine/builds/${generation}/${name}.js`;
 }
 
-/** The job worker module of the build a watched browser is
- * pinned to, for workers to import; none outside watched builds. */
 export function engineWorkerModule(): string | undefined {
   return generationModule("engine_worker");
 }

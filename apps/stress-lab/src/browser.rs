@@ -5,9 +5,6 @@ use engine::collections::HashMap;
 
 use crate::{StressConfig, StressFile, StressLab, set_view, stress_observation};
 
-/// Files workloads read, by name: the dense scene's virtual meshes,
-/// whose prefixes the page fetches, and the highlands' optional scanned
-/// rock maps, which it decodes.
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct StressFiles {
@@ -21,8 +18,6 @@ impl StressFiles {
         Self::default()
     }
 
-    /// Adds virtual mesh `name`'s prefix and the URL renderers stream its
-    /// other pages from.
     pub fn add_streamed(&mut self, name: &str, bytes: Vec<u8>, url: String) {
         self.files.insert(
             name.to_owned(),
@@ -34,8 +29,6 @@ impl StressFiles {
         );
     }
 
-    /// Adds image `name`: `width` by `height` RGBA8 pixels, rows from the
-    /// top.
     pub fn add_image(&mut self, name: &str, width: u32, height: u32, pixels: Vec<u8>) {
         self.files.insert(
             name.to_owned(),
@@ -47,8 +40,6 @@ impl StressFiles {
         );
     }
 
-    /// Adds image `name` from its file's `bytes`, an uncompressed RGBA8
-    /// KTX2 image, as every host reads them.
     pub fn add_encoded_image(&mut self, name: &str, bytes: &[u8]) -> Result<(), JsValue> {
         if engine::host::image_format(bytes).map(|format| format.name) != Some("ktx2-rgba8") {
             return Err(JsValue::from_str(&format!(
@@ -61,27 +52,21 @@ impl StressFiles {
         Ok(())
     }
 
-    /// The files the dense scene reads, as a JSON array of names.
     pub fn dense_names() -> String {
         serde_json::to_string(&crate::DENSE_FILES).unwrap_or_else(|_| "[]".into())
     }
 
-    /// The scanned rock maps the highlands read when present, as a JSON
-    /// array of names under `stress/rocks/`; the page adds each found as
-    /// `rocks/NAME`.
     pub fn rock_names() -> String {
         serde_json::to_string(&crate::ROCK_FILES).unwrap_or_else(|_| "[]".into())
     }
 }
 
 engine::export_game!(
-    /// The Stress Lab: a deterministic workload or an authored scene.
     pub struct StressGame(StressLab);
 );
 
 #[wasm_bindgen]
 impl StressGame {
-    /// The workload `config_json` configures, with the `files` it reads.
     pub async fn create(
         canvas: web_sys::HtmlCanvasElement,
         config_json: &str,
@@ -92,9 +77,6 @@ impl StressGame {
         Self::launch(canvas, move || StressLab::workload(config, files)).await
     }
 
-    /// The authored scene `source` in place of a workload, with the image
-    /// and buffer `files` it references, on an engine with every feature but
-    /// the comma-separated ones `without` names (`terrain`, `navigation`...).
     pub async fn create_scene(
         canvas: web_sys::HtmlCanvasElement,
         source: &str,
@@ -115,15 +97,11 @@ impl StressGame {
         .await
     }
 
-    /// The authored scene's ID, revision, frame, player position and asset
-    /// counts, as a JSON object (`null` for workloads).
     pub fn scene_progress(&self) -> String {
         let host = self.host();
         host.game().scene_progress(host.engine()).to_string()
     }
 
-    /// Builds the workload `config_json` configures, then runs it in place
-    /// of the current one at a frame boundary.
     pub fn configure(
         &mut self,
         config_json: &str,
@@ -138,28 +116,22 @@ impl StressGame {
         lab.configured(engine).map_err(js_error)
     }
 
-    /// Rendering effects: `all`, `none`, or comma-separated `no-<effect>`
-    /// exclusions.
     pub fn set_effects(&mut self, name: &str) -> Result<(), JsValue> {
         let (engine, lab) = self.host_mut().parts_mut();
         lab.set_effects(engine, name).map_err(js_error)
     }
 
-    /// Lighting preset: `scene` (the scene's own), `golden`, `dusk`,
-    /// `night` or `day`.
     pub fn set_look(&mut self, name: &str) -> Result<(), JsValue> {
         let (engine, lab) = self.host_mut().parts_mut();
         lab.set_look(engine, name).map_err(js_error)
     }
 
-    /// The workload's snapshot, as JSON.
     pub fn stress_stats(&self) -> String {
         let host = self.host();
         serde_json::to_string(&stress_observation(host.engine(), host.game().generation()))
             .expect("snapshots serialize")
     }
 
-    /// [`crate::stress_sample`]: a recording's per-frame workload numbers.
     pub fn frame_sample(&self) -> Vec<f64> {
         crate::stress_sample(self.host().engine()).values()
     }
@@ -176,30 +148,22 @@ impl StressGame {
         }
     }
 
-    /// Whether instances draw at levels of detail (on by default) or always
-    /// as their mesh, in this and later workloads.
     pub fn set_level_of_detail(&mut self, enabled: bool) {
         let (engine, lab) = self.host_mut().parts_mut();
         lab.set_level_of_detail(engine, enabled);
     }
 
-    /// Whether draw groups draw impostors where they fit (on by default) or
-    /// only their meshes' levels, in this and later workloads.
     pub fn set_impostors(&mut self, enabled: bool) {
         let (engine, lab) = self.host_mut().parts_mut();
         lab.set_impostors(engine, enabled);
     }
 
-    /// Whether virtual geometry shades through the visibility buffer or as
-    /// it draws (the default), in this and later workloads.
     pub fn set_visibility_buffer(&mut self, enabled: bool) {
         let (engine, lab) = self.host_mut().parts_mut();
         lab.set_visibility_buffer(engine, enabled);
     }
 }
 
-/// What the page receives of a refusal: the engine's error, with its code
-/// and path.
 fn js_error(error: engine::Error) -> JsValue {
     error.into()
 }

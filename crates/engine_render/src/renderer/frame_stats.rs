@@ -1,5 +1,3 @@
-//! A frame's [`RenderStats`] and, while profiling, its counters.
-
 use super::frame::{EncodeReport, FrameKind, FrameState};
 use super::*;
 use crate::clouds::CloudPass;
@@ -15,15 +13,11 @@ use engine_core::{
     TerrainRenderStats, VirtualGeometryStats,
 };
 
-/// Records every number and flag of `stats` as the counter `render.<path>`,
-/// its path in the JSON hosts read: no list to keep. Fields reading `null`
-/// record nothing.
 #[cfg(feature = "profiling")]
 #[expect(clippy::expect_used, reason = "render stats always serialize")]
 fn stat_counters(stats: &RenderStats) {
     use engine_core::collections::HashMap;
     thread_local! {
-        // Counter names live as long as the profiler: one per stats field.
         static NAMES: std::cell::RefCell<HashMap<String, &'static str>> =
             std::cell::RefCell::new(HashMap::default());
     }
@@ -62,8 +56,6 @@ fn stat_counters(stats: &RenderStats) {
 fn stat_counters(_: &RenderStats) {}
 
 impl Renderer {
-    /// The frame's stats, after submission (read-backs arrive a few frames
-    /// late), and its profile counters while a capture runs.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -104,14 +96,10 @@ impl Renderer {
         } else {
             None
         };
-        // Read back a few frames late.
         let virtual_stats = virtual_frame
             .then(|| self.virtual_draws.pass.stats())
             .flatten();
-        // Pipelines compile before the work submitted after them runs: this
-        // frame's completion ends their compiles.
         let pipelines_created = self.pipeline_counts.frame_submitted(&self.queue);
-        // Read back a few frames late, like the visible count.
         let lod_instances = if gpu_mode && snapshot.environment.level_of_detail.enabled {
             self.gpu_presentation.lod_instances()
         } else {
@@ -122,7 +110,6 @@ impl Renderer {
             .as_ref()
             .map(crate::shadows::ShadowFrame::tiles)
             .unwrap_or_default();
-        // Read back a few frames late.
         let surface = self.terrain.surface.stats();
         let residency = self.residency();
         let stats = RenderStats {
@@ -131,8 +118,6 @@ impl Renderer {
                 + instance_upload_bytes
                 + mesh_upload_bytes
                 + texture_upload_bytes,
-            // GPU-culled frames report the latest read-back visible count
-            // within the budget the GPU applied.
             instances: match gpu_visible {
                 Some(visible) if gpu_mode => {
                     visible.min(frame.instance_budget().min(u32::MAX as usize) as u32)
@@ -144,8 +129,6 @@ impl Renderer {
             triangles: if gpu_mode {
                 self.gpu_presentation.triangles()
             } else {
-                // CPU-prepared frames draw every planned instance as its
-                // mesh, but virtual geometry as its clusters.
                 let triangles: u64 = self
                     .plan
                     .batches
@@ -339,14 +322,11 @@ impl Renderer {
                 snapshot,
             ),
         };
-        // Counted every frame, recorded while a capture runs.
         let immediate = self.queue.take_immediate();
         self.profile_counters(state, &stats, gpu_visible, immediate);
         stats
     }
 
-    /// The frame's profile counters while a capture runs, with the
-    /// submissions made at once since the last frame, `immediate`.
     fn profile_counters(
         &self,
         state: &FrameState<'_>,
@@ -366,7 +346,6 @@ impl Renderer {
         self.memory_counters(stats);
     }
 
-    /// What the frame wrote and repacked, and which passes it ran.
     fn upload_counters(&self, state: &FrameState<'_>) {
         let FrameKind {
             gpu_mode,
@@ -418,7 +397,6 @@ impl Renderer {
         engine_profile::counter("render.colors_repacked", packing.colors_repacked as f64);
     }
 
-    /// The renderer's GPU and CPU storage, by part.
     fn memory_counters(&self, stats: &RenderStats) {
         engine_profile::counter(
             "memory.gpu_shadow_bytes",
@@ -538,7 +516,6 @@ impl Renderer {
     }
 }
 
-/// What GPU presentation gathered and uploaded for the frame.
 fn gpu_counters(prepared: &GpuPrepared, gpu_visible: Option<u32>) {
     engine_profile::counter("render.gpu_candidates", f64::from(prepared.candidates));
     engine_profile::counter(

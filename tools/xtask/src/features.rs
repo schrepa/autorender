@@ -1,19 +1,9 @@
-//! The engine's features stay composable: each feature's folder in
-//! engine_core (engine_core/src/features/NAME, named as `engine_features!`
-//! names the feature) uses the core and the features it declares needing,
-//! never another feature's types; the core uses none, but for extraction,
-//! which hands the renderer what each feature drew, and the crate root,
-//! which exports them. Folders and features match one to one, but for the
-//! features in crates of their own.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use engine::Feature;
 
-/// The crate of `feature` when it is not engine_core, whose features each
-/// have a folder.
 fn own_crate(feature: Feature) -> Option<&'static str> {
     match feature {
         Feature::Collision => Some("engine_collision"),
@@ -28,9 +18,6 @@ fn own_crate(feature: Feature) -> Option<&'static str> {
     }
 }
 
-/// Core modules that may name features' types: the crate root exporting
-/// them, the sections list, and extraction handing renderers what each
-/// feature draws.
 const BRIDGES: &[&str] = &[
     "lib",
     "features",
@@ -41,10 +28,6 @@ const BRIDGES: &[&str] = &[
     "extraction",
 ];
 
-/// engine_core's modules: each top-level module's name and its source text,
-/// directories' files joined, comments and strings left out. Each folder of
-/// features/ is a module of its own, `features/NAME`; the rest of features/
-/// is the `features` module.
 fn sources(root: &Path) -> Result<BTreeMap<String, String>, String> {
     let source = root.join("crates/engine_core/src");
     let mut modules = BTreeMap::new();
@@ -65,8 +48,6 @@ fn sources(root: &Path) -> Result<BTreeMap<String, String>, String> {
     Ok(modules)
 }
 
-/// The entries of `directory`: each one's name without its extension, and
-/// its path.
 fn entries(directory: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     let mut entries = Vec::new();
     for entry in fs::read_dir(directory)
@@ -83,7 +64,6 @@ fn entries(directory: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     Ok(entries)
 }
 
-/// Adds the code of `path` (a file, or a directory's files) to `module`'s.
 fn add_source(
     modules: &mut BTreeMap<String, String>,
     module: String,
@@ -107,7 +87,6 @@ fn add_source(
     Ok(())
 }
 
-/// `source` without comments and string literals.
 fn code(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     for line in source.lines() {
@@ -132,14 +111,12 @@ fn code(source: &str) -> String {
     out
 }
 
-/// The identifiers of `code`.
 fn identifiers(code: &str) -> BTreeSet<&str> {
     code.split(|c: char| !(c.is_alphanumeric() || c == '_'))
         .filter(|word| word.starts_with(|c: char| c.is_ascii_uppercase()))
         .collect()
 }
 
-/// The types `code` declares visible to the crate.
 fn declared(code: &str) -> BTreeSet<String> {
     let mut types = BTreeSet::new();
     for line in code.lines() {
@@ -165,9 +142,6 @@ fn declared(code: &str) -> BTreeSet<String> {
     types
 }
 
-/// Fails at the first module using a feature it may not, at a folder of
-/// features/ that names no feature, at a feature of engine_core without a
-/// folder, and at what [`listed`] finds outside its list.
 pub fn check(root: &Path) -> Result<(), String> {
     let sources = sources(root)?;
     let owner = |module: &str| {
@@ -244,15 +218,6 @@ pub fn check(root: &Path) -> Result<(), String> {
     ))
 }
 
-/// Adds to `violations` each development file of a feature that
-/// `dev_features!` (engine_dev/src/features/mod.rs) does not list, whose
-/// inspectors and schemas nothing would register, each query a feature
-/// answers (`impl EngineQuery for T`) or control it applies (`impl
-/// EngineControl for T`) that no `DevRequest` or `BrowserControl` variant
-/// holds, which no request would reach, and each scene component (`impl
-/// SceneComponent for T`) that `entity_components!`
-/// (engine_scene/src/components.rs) does not list, which no scene would
-/// author.
 fn listed(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
     let folder = root.join("crates/engine_dev/src/features");
     let read = |path: &Path| {
@@ -286,8 +251,6 @@ fn listed(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
                 continue;
             }
             let text = read(&file)?;
-            // `impl EngineQuery for T` and `impl EngineControl for T`, their
-            // trait's path written or not: a protocol variant holds T.
             for (kind, request) in [("query", "DevRequest"), ("control", "BrowserControl")] {
                 let pattern = if kind == "query" {
                     "EngineQuery for "
@@ -317,9 +280,7 @@ fn listed(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
         .and_then(|(_, rest)| rest.split_once("$then!"))
         .map(|(_, rest)| rest)
         .ok_or("engine_scene/src/components.rs declares no entity_components! list")?;
-    // A type as entries and impls name it: its path's last segment.
     let last = |path: &str| path.rsplit("::").next().unwrap_or(path).trim().to_owned();
-    // Each entry's type, `field: Type {`.
     let listed: Vec<String> = list
         .lines()
         .filter_map(|line| line.trim().split_once(": "))

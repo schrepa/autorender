@@ -1,16 +1,3 @@
-// A job worker: runs in a Web Worker the page's pool starts,
-// holds what the engine shares with its workers and runs the jobs it hands
-// out with the engine's own code (the engine_worker module); and decodes
-// images (with the engine's decoder) and KTX2 textures at load boundaries,
-// and the records the page reads from packs, off the page's thread.
-// Messages take effect in the order they came, so shares come before the
-// jobs reading them. The module runs its most urgent job a slice at a
-// time; between slices the worker reads its messages, and a job the engine
-// cancelled stops there. The engine's code panicking
-// here (or its module trapping) stops the engine: the worker says so with
-// the panic's report and runs no more. A worker that breaks otherwise says
-// so, and the pool replaces it.
-
 import type { JobWorker } from "../../pkg/engine_worker";
 import { type TranscodedImage, transcodeWith, workerTranscoder } from "./ktx2";
 import { fatal, panicReport } from "./panic";
@@ -26,7 +13,6 @@ type Request =
   | { type: "image"; task: number; uri: string; bytes: Uint8Array }
   | { type: "unpack"; task: number; bytes: Uint8Array; raw: number };
 
-/** What a slice came to (`engine_worker::Report`), as the pool reads it. */
 type Report = { type: "done"; id: number; output: Uint8Array } | { type: "failed"; id: number; error: string };
 
 const scope = self as unknown as {
@@ -43,22 +29,18 @@ scope.onmessage = (event) => {
   queue = queue.then(() => handle(event.data)).catch(error => fatal(error) ? stopped(error) : fail(error));
 };
 
-/** Says the module is unusable once. */
 function fail(error: unknown) {
   if (broken) return;
   broken = true;
   scope.postMessage({ type: "broken", error: String(error) });
 }
 
-/** Says once that the engine's module stopped here: its panic's report,
- * or the trap. */
 function stopped(error: unknown) {
   if (broken) return;
   broken = true;
   scope.postMessage({ type: "panicked", report: panicReport(error) ?? null, error: String(error) });
 }
 
-// Yields to messages between slices, without timers' clamping.
 const channel = new MessageChannel();
 const yielded: (() => void)[] = [];
 channel.port1.onmessage = () => yielded.shift()?.();
@@ -69,8 +51,6 @@ function yieldToMessages(): Promise<void> {
   });
 }
 
-/** Runs the jobs held a slice at a time until none is left, reading
- * messages between slices. */
 async function work() {
   if (running) return;
   running = true;
@@ -90,7 +70,6 @@ async function work() {
   }
 }
 
-/** Starts the module, from the page's compilation of it where given. */
 async function start(bindings?: string, compiled?: WebAssembly.Module) {
   const module = (bindings
     ? await import(/* @vite-ignore */ bindings)
@@ -105,12 +84,10 @@ async function handle(request: Request) {
       await start(request.bindings, request.module);
       return;
     case "clear":
-      // An earlier engine's jobs are no one's.
       worker?.clear();
       return;
     case "share": {
       const bytes = new Uint8Array(await request.blob.arrayBuffer());
-      // A share the module refuses fails the jobs that read it.
       try { worker?.share(request.key, bytes); } catch (error) { console.warn(`Share ${request.key} refused: ${String(error)}`); }
       return;
     }

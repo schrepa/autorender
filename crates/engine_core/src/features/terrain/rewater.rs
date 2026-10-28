@@ -1,19 +1,8 @@
-//! Tiles' water as their terrain's rivers run now. Tiles generate their
-//! water from their bake's rivers; once what stands in the rivers holds
-//! them back ([`super::flow`]), a resident tile whose water was made from
-//! other rivers than run now is made again where the two differ
-//! ([`Tile::rewatered`]), finest levels first within the frame's work, so
-//! drawing, queries and walks read the rivers as they run.
-
 use super::*;
 use engine_terrain::{RiverFlow, Rivers};
 
-/// Samples past their widest half rivers' water reaches at a level: rivers
-/// widen to most of a sample and their water a sample and a half past
-/// their edge.
 const REACH_SAMPLES: f32 = 2.25;
 
-/// Whether `a` and `b` are the same rivers.
 fn same(a: &Watered, b: &Watered) -> bool {
     match (a, b) {
         (None, None) => true,
@@ -22,9 +11,6 @@ fn same(a: &Watered, b: &Watered) -> bool {
     }
 }
 
-/// Makes the water of `state`'s resident tiles again where it was made
-/// from other rivers than run now, within `work`'s time from slices of
-/// `budget`: the tiles whose water it made again, and those left waiting.
 pub(super) fn rewater(state: &mut TerrainState, work: &Work, budget: &mut u64) -> [u32; 2] {
     let Some(layers) = state.baked.clone() else {
         return [0, 0];
@@ -33,7 +19,6 @@ pub(super) fn rewater(state: &mut TerrainState, work: &Work, budget: &mut u64) -
         return [0, 0];
     };
     let baked = hydrology.rivers();
-    // The bake's rivers unless something holds them back.
     let running: Watered = state
         .hydrology
         .flow
@@ -50,8 +35,6 @@ pub(super) fn rewater(state: &mut TerrainState, work: &Work, budget: &mut u64) -
     stale.sort_unstable_by_key(|key| (key.level, key.x, key.z));
     let to: &Rivers = running.as_deref().unwrap_or(baked);
     let pyramid = state.terrain.pyramid;
-    // Where the rivers running now differ from those each tile's water was
-    // made from, by those rivers.
     let mut regions: Vec<(Watered, Vec<(Vec2, Vec2)>)> = Vec::new();
     let [mut made, mut waiting] = [0, 0];
     for key in stale {
@@ -66,7 +49,6 @@ pub(super) fn rewater(state: &mut TerrainState, work: &Work, budget: &mut u64) -
                 regions.len() - 1
             }
         };
-        // Rivers running alike everywhere leave its water as it is.
         if regions[seen].1.is_empty() {
             state.store.rewater(&key, None, running.clone());
             continue;

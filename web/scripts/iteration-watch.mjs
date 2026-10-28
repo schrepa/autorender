@@ -1,8 +1,3 @@
-/** Bounded source fingerprinting for the native development supervisor.
- * Polling reads O(total input bytes), outside the browser and gameplay loop.
- * Content hashes deliberately do not trust timestamps, editor rename behavior,
- * or platform-specific recursive filesystem notifications.
- */
 // @ts-check
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
@@ -15,8 +10,6 @@ const MAX_BYTES = 128 * 1024 * 1024;
 const MAX_ENTRIES = 40_000;
 const MAX_DEPTH = 64;
 const CHUNK_BYTES = 64 * 1024;
-// The patched glam (vendor/glam) compiles into every Wasm build; development
-// schemas are generated from crate sources at build time.
 const TREES = ["crates", "apps", ".cargo", "vendor/glam"];
 const FILES = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 const IGNORED = new Set(["target", "pkg", "pkg-dev", "dist", ".git", "node_modules", ".tools"]);
@@ -60,11 +53,6 @@ function sameFile(left, right) {
     && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
 }
 
-/** Hash browser build inputs, including new/deleted files and unchanged mtimes.
- * Limits can be lowered for callers/tests but cannot exceed the hard budgets.
- * Native tool sources and editable scene files are intentionally not inputs:
- * tool changes require supervisor restart; scene files use their reload API.
- */
 export async function fingerprintSources(root, options = {}) {
   const maxFiles = limit(options.maxFiles ?? MAX_FILES, MAX_FILES, "maxFiles");
   const maxBytes = limit(options.maxBytes ?? MAX_BYTES, MAX_BYTES, "maxBytes");
@@ -85,8 +73,6 @@ export async function fingerprintSources(root, options = {}) {
     files.push({ path, stat });
   }
 
-  // Whether every ancestor directory of `path` exists, refusing symlinked or
-  // non-directory ancestors.
   async function ancestorsPresent(path) {
     const parts = path.split("/");
     for (let count = 1; count < parts.length; count++) {
@@ -106,8 +92,6 @@ export async function fingerprintSources(root, options = {}) {
     const pending = [{ path: tree, depth: 1 }];
     while (pending.length) {
       const current = /** @type {{ path: string, depth: number }} */ (pending.pop());
-      // Recheck queued directories so an editor cannot silently replace one
-      // with a symlink between discovery and traversal.
       const directoryStat = /** @type {import("node:fs").BigIntStats} */ (await statPath(root, current.path));
       if (!directoryStat.isDirectory()) throw changed(current.path);
       let directory;
@@ -139,8 +123,6 @@ export async function fingerprintSources(root, options = {}) {
   for (const file of files) {
     let handle;
     try {
-      // O_NOFOLLOW is supported by POSIX. Windows still receives the lstat
-      // checks before/after reading and the handle identity check below.
       await statPath(root, file.path);
       handle = await open(join(root, file.path), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       const before = await handle.stat({ bigint: true });
@@ -148,8 +130,6 @@ export async function fingerprintSources(root, options = {}) {
       const content = createHash("sha256");
       let fileBytes = 0;
       for (;;) {
-        // Read at most one byte beyond the remaining allowance to detect a
-        // file growing during this scan without an unbounded allocation/read.
         const length = Math.min(CHUNK_BYTES, maxBytes - actualBytes + 1);
         const { bytesRead } = await handle.read(buffer, 0, length, null);
         if (!bytesRead) break;
@@ -171,13 +151,6 @@ export async function fingerprintSources(root, options = {}) {
   return { fingerprint: fingerprint.digest("hex"), files: files.length };
 }
 
-/** Start one serial polling scan at a time and retain only the newest candidate.
- * onChange is a notification: launch/coordinate builds outside this callback.
- * The initial successful scan notifies immediately; later fingerprints must
- * remain unchanged for debounceMs. Recovery from a published scan error also
- * notifies when source is unchanged. Ordinary concurrent-edit races retry
- * silently. Stop/abort prevents all later callbacks.
- */
 /** @param {{ root: string, onChange: (snapshot: any) => void, onError?: (error: any) => void, intervalMs?: number, debounceMs?: number, signal?: AbortSignal }} options */
 export function watchSources({ root, onChange, onError = () => {}, intervalMs = 500, debounceMs = 200, signal }) {
   if (typeof onChange !== "function" || typeof onError !== "function") throw new TypeError("Source callbacks must be functions.");
@@ -192,7 +165,6 @@ export function watchSources({ root, onChange, onError = () => {}, intervalMs = 
 
   function report(error) {
     if (stopped) return;
-    // Error reporters cannot create unhandled promise rejections themselves.
     try { Promise.resolve(onError(error)).catch(() => {}); } catch {}
   }
 
@@ -226,10 +198,6 @@ export function watchSources({ root, onChange, onError = () => {}, intervalMs = 
       }
     } catch (error) {
       candidate = undefined;
-      // Atomic editor saves and writes overlapping a scan are ordinary
-      // transient conditions. Keep polling without publishing a fatal-looking
-      // watcher error for them. A prior persistent error stays pending until
-      // a successful observation reports recovery, even for unchanged bytes.
       if (error?.code !== "source_changed") {
         recoveryPending = true;
         report(error);

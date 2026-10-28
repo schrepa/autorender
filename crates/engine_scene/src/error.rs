@@ -3,10 +3,6 @@ use std::{error::Error, fmt};
 use engine_settings::ErrorCode;
 use serde::Serialize;
 
-/// Actionable load failure. `code` is stable; `message` is intended for people.
-///
-/// `path` uses JSON paths such as `$.entities[2].mesh`. JSON syntax failures
-/// include their line and column in `message` and use `$` for the path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SceneError {
     pub code: ErrorCode,
@@ -40,8 +36,6 @@ impl fmt::Display for SceneError {
 
 impl Error for SceneError {}
 
-/// The error of a value at authored path `path` breaking its field's rule:
-/// code `code`, the field's own path, and the rule.
 pub(crate) fn broken_rule(
     code: ErrorCode,
     path: &str,

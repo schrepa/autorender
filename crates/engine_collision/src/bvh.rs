@@ -9,18 +9,13 @@ struct Node {
 }
 const NONE: usize = usize::MAX;
 
-/// Balanced flat BVH. Rebuilds only after collider snapshot changes. Median
-/// partitions reuse one index vector; traversal uses a fixed stack.
 #[derive(Default)]
 pub(crate) struct Bvh {
     nodes: Vec<Node>,
     indices: Vec<usize>,
-    // Summed internal surface area when last built.
     built_area: f32,
 }
 
-/// Moved leaves refit while the summed internal surface area stays within
-/// this factor of the last build; beyond it they rebuild, bounding traversal.
 const REFIT_LIMIT: f32 = 1.5;
 impl Bvh {
     pub fn rebuild(&mut self, bounds: &[Bounds]) {
@@ -42,12 +37,6 @@ impl Bvh {
             .sum();
     }
 
-    /// Updates the tree for moved leaves. With `same_leaves` (the same
-    /// entries in the same order as the last update) it refits every node's
-    /// bounds bottom-up instead of rebuilding. Internal bounds stay exact
-    /// unions of their children, so traversal visits the same leaves as a
-    /// rebuilt tree would; only its internal order differs, which queries
-    /// already make irrelevant by sorting or identity tie-breaks.
     pub fn update(&mut self, bounds: &[Bounds], same_leaves: bool) {
         if !same_leaves || bounds.is_empty() || self.nodes.len() != bounds.len() * 2 - 1 {
             self.rebuild(bounds);
@@ -55,7 +44,6 @@ impl Bvh {
         }
         let _profile = engine_profile::span("collision", "bvh_refit");
         let mut area = 0.0;
-        // Pre-order storage puts children after their parent.
         for index in (0..self.nodes.len()).rev() {
             let node = self.nodes[index];
             self.nodes[index].bounds = if node.left == NONE {
@@ -68,7 +56,6 @@ impl Bvh {
                 merged
             };
         }
-        // A degraded (or NaN) refit rebuilds instead.
         if area <= self.built_area * REFIT_LIMIT {
             return;
         }

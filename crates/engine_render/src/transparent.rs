@@ -1,12 +1,3 @@
-//! Weighted blended order-independent transparency.
-//!
-//! Transparent surfaces and alpha particles add their weighted color and
-//! coverage into an accumulation target and multiply what they let through
-//! into a revealage target, in any order; a composite then blends their
-//! weighted average over the frame's color. Targets exist only while frames
-//! draw something transparent. With the particles, transparency is a
-//! feature of the renderer (`crate::render_features`).
-
 #![expect(
     clippy::expect_used,
     reason = "the composite reads the targets and pipelines its frame made"
@@ -26,14 +17,9 @@ use crate::render_graph::{
 use crate::shaders::entry::transparent;
 use crate::targets::{FrameRegion, FrameSize, ScreenTarget};
 
-/// Weighted premultiplied color and coverage, added.
 pub(crate) const ACCUMULATED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// The fraction of the opaque color still visible, multiplied, and the
-/// fraction particles leave visible, which temporal antialiasing's resolve
-/// reads.
 pub(crate) const REVEALED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
 
-/// The accumulation pass's color targets and their blending.
 pub(crate) fn accumulation_targets() -> [Option<wgpu::ColorTargetState>; 2] {
     let add = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
@@ -84,8 +70,6 @@ struct TransparentPass {
     layout: crate::pipelines::GroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
     module: wgpu::ShaderModule,
-    // Composites into the canvas and into the scene target (leaving glow),
-    // then the same dithering their 8-bit writes.
     composite: [Option<wgpu::RenderPipeline>; 4],
     surface_format: wgpu::TextureFormat,
     depth_format: wgpu::TextureFormat,
@@ -119,7 +103,6 @@ impl TransparentPass {
         }
     }
 
-    /// Sizes the accumulation targets to `size`.
     fn begin(&mut self, device: &wgpu::Device, size: FrameSize) {
         if !self.targets.resizes(size) {
             return;
@@ -163,27 +146,21 @@ impl TransparentPass {
         );
     }
 
-    /// Releases the targets while frames draw nothing transparent.
     fn release_targets(&mut self) {
         self.targets.release();
     }
 
-    /// Target bytes: 8 accumulated and 2 revealed per pixel.
     fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
             u64::from(size.width) * u64::from(size.height) * 10
         })
     }
 
-    /// The accumulation pass's targets, accumulated color and revealage,
-    /// which it clears to nothing added and everything revealed.
     fn views(&self) -> [&wgpu::TextureView; 2] {
         let targets = self.targets.get().expect("sized in begin");
         [&targets.accumulated, &targets.revealed]
     }
 
-    /// Creates the composite into the canvas or, with `post`, the scene
-    /// target beside the glow target, dithering its writes with `dither`.
     fn ensure_composite(&mut self, device: &wgpu::Device, post: bool, dither: bool) {
         let index = composite_index(post, dither);
         if self.composite[index].is_some() {
@@ -195,7 +172,6 @@ impl TransparentPass {
                 dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
                 operation: wgpu::BlendOperation::Add,
             },
-            // The opaque share of the ambient light alpha stays.
             alpha: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::Zero,
                 dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
@@ -244,7 +220,6 @@ impl TransparentPass {
         ));
     }
 
-    /// Draws the composite; call [`Self::ensure_composite`] first.
     fn composite(&self, pass: &mut wgpu::RenderPass<'_>, post: bool, dither: bool) {
         let targets = self.targets.get().expect("sized in begin");
         pass.set_pipeline(
@@ -257,23 +232,16 @@ impl TransparentPass {
     }
 }
 
-/// The composite pipeline of frames into the scene target (`post`) or the
-/// canvas, dithering or not.
 fn composite_index(post: bool, dither: bool) -> usize {
     usize::from(post) + 2 * usize::from(dither)
 }
 
-/// Transparent surfaces and particles: the accumulation targets and their
-/// composite, created with the first frame drawing something transparent,
-/// and the particles' pipelines, with the first frame that has emitters.
 #[derive(Default)]
 pub(crate) struct Transparency {
     surfaces: Option<TransparentPass>,
     particles: Option<ParticlePass>,
 }
 
-/// What a frame draws transparent: whether the renderer's transparent mesh
-/// batches draw, and its particles; and whether its composite dithers.
 pub(crate) struct TransparencyFrame {
     meshes: bool,
     particles: Option<ParticleFrame>,
@@ -281,14 +249,6 @@ pub(crate) struct TransparencyFrame {
 }
 
 impl Transparency {
-    /// Prepares a frame's transparency: its transparent mesh batches when
-    /// `meshes`, and `snapshot`'s particles when they change (`emitters`:
-    /// the render stream identity and its emitters revision), soft against
-    /// the depth buffer `depth`; its targets at `region`'s display size,
-    /// drawn at its render size, composited into the canvas or, with `post`,
-    /// the effects' targets. `camera` is the main passes' first group
-    /// layout, `formats` the canvas's and the depth buffer's. `None` when
-    /// nothing transparent draws, whose frames release the targets.
     #[expect(clippy::too_many_arguments, reason = "the frame's inputs, typed")]
     pub(crate) fn prepare(
         &mut self,
@@ -303,7 +263,6 @@ impl Transparency {
         ),
         (meshes, post): (bool, bool),
     ) -> Option<TransparencyFrame> {
-        // Particles sample the depth buffer for their soft edges.
         let particles =
             if snapshot.environment.particles.enabled && !snapshot.particles.list.is_empty() {
                 let particles = self.particles.get_or_insert_with(|| {
@@ -343,20 +302,16 @@ impl Transparency {
         })
     }
 
-    /// The surfaces, which every frame drawing something transparent has.
     fn surfaces(&self) -> &TransparentPass {
         self.surfaces
             .as_ref()
             .expect("frames drawing something transparent create the surfaces")
     }
 
-    /// The accumulation pass's targets, accumulated color and revealage.
     pub(crate) fn views(&self) -> [&wgpu::TextureView; 2] {
         self.surfaces().views()
     }
 
-    /// The revealage, whose second channel holds what particles leave
-    /// visible, while frames draw something transparent.
     pub(crate) fn revealed(&self) -> Option<Bound<'_>> {
         let targets = self.surfaces.as_ref()?.targets.get()?;
         Some(Bound::of(
@@ -370,10 +325,6 @@ impl RenderFeature for Transparency {
     type Frame = TransparencyFrame;
     type Stats = Drawn;
 
-    /// Transparent surfaces and alpha particles accumulate over read-only
-    /// depth, with the frame's shadows, lights and probes, and glass the
-    /// opaque color it refracts; their composite, then additive particles,
-    /// draw over the main color (and the glow target, which they leave).
     fn declare(_frame: &TransparencyFrame, shape: &FrameShape, graph: &mut RenderGraph) {
         graph
             .add(Pass::Feature(FeaturePass::Transparent))
@@ -411,8 +362,6 @@ impl RenderFeature for Transparency {
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
         if node.pass() == Pass::Feature(FeaturePass::TransparentComposite) {
-            // The accumulated surfaces over the frame's color, then
-            // additive particles.
             let post = encode.targets != crate::render_graph::Targets::Canvas;
             let mut pass = encode.render_pass(
                 encoder,
@@ -429,8 +378,6 @@ impl RenderFeature for Transparency {
             }
             return 0;
         }
-        // Read-only depth: surfaces behind the opaque ones stay hidden, and
-        // particles sample it.
         let mut pass = encode.render_pass(
             encoder,
             node,
@@ -458,8 +405,6 @@ impl RenderFeature for Transparency {
                 .map_or(0, ParticlePass::capacity_bytes)
     }
 
-    /// Particles drawn, invalid ones, and those left out: the snapshot's and
-    /// those beyond the GPU's bindings.
     fn stats(
         _this: Option<&Self>,
         frame: Option<&TransparencyFrame>,

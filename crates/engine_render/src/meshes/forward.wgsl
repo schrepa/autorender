@@ -1,13 +1,3 @@
-// Forward fragment stages of meshes: opaque passes into the canvas, the
-// screen effects' targets and temporal targets, transparent accumulation
-// and reflection probe captures, unlit and lit, for meshes with and without
-// a second vertex stream; and masked surfaces' depth pre-pass.
-
-// Masked surfaces' depth pre-pass, first in each opaque pass: no color,
-// only their fades and alpha tests (`masked_depth`), for meshes without a
-// second vertex stream (temporal frames' outputs begin as theirs), with one
-// (and debug views' outputs, which carry one for every mesh), and with one
-// in temporal frames, whose outputs carry it after the previous position.
 @fragment
 fn fs_masked_depth(input: VertexOutput) {
     masked_depth(fragment(input));
@@ -35,7 +25,6 @@ fn fs_main_lit(input: VertexOutput, @builtin(front_facing) front: bool)
         1.0);
 }
 
-// The scene target is sRGB: it stores linear color with output encoding.
 @fragment
 fn fs_post(input: VertexOutput, @builtin(front_facing) front: bool) -> SceneTargets {
     return scene_targets(shade(fragment(input), front), input.clip_position.xy);
@@ -75,8 +64,6 @@ fn fs_transparent_lit(input: VertexOutput, @builtin(front_facing) front: bool)
     return transparent_targets(finish(point, local_light(point, values.pixel)), point, values);
 }
 
-// Reflection probe captures: the linear light before the
-// grade, which the environment maps hold.
 @fragment
 fn fs_probe(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     return vec4<f32>(shade(fragment(input), front).linear, 1.0);
@@ -88,7 +75,6 @@ fn fs_probe_lit(input: VertexOutput, @builtin(front_facing) front: bool)
     return vec4<f32>(shade_lit(fragment(input), front).linear, 1.0);
 }
 
-// The same passes for meshes with a second vertex stream.
 @fragment
 fn fs_main_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {

@@ -1,24 +1,4 @@
-// Terrain surface materials on the GPU: a tile's control
-// values from its heights, once when it uploads, into the same layer of the
-// control array, for level-0 tiles and surroundings' tiles (a terrain's
-// coarser tiles upload theirs from their shading, level 0's averaged).
-// Each sample's inputs are read as the CPU reads them for a
-// tile's rows (height, and the gradient and curvature of the smooth surface
-// through the heights around it, `terrain_tile.wgsl`'s `tile_shape`;
-// the hydrology bake's flow, wetness and lakes; the meters the erosion
-// bakes changed the ground by; the meters to the nearest river's edge and
-// the bed of the river holding it the tile holds; the nearest road), and
-// the surface's rules run as a program for this interpreter
-// (`engine_terrain::gpu`), in the order the CPU evaluates them: the
-// materials and how wet the ground is. Values match the CPU's but where
-// rounding moves one across a rule's threshold; gameplay reads the CPU's.
-
 struct Job {
-    // The layer, the tile's first sample (x and z, from the terrain's
-    // first, with surroundings' offset), its sample spacing, the
-    // hydrology image level its masks read, and 1 where the layer of the
-    // river array holds the tile's meters to rivers' edges and their beds
-    // (0 where no river reaches it).
     layer: u32,
     level: u32,
     first: vec2<i32>,
@@ -39,15 +19,10 @@ const MAX_STACK: u32 = 16u;
 const MAX_MATERIALS: u32 = 64u;
 const RIVER_FAR: f32 = 1.0e9;
 const PATH_FAR: f32 = 1.0e9;
-// A tile's meters to rivers' edges, and heights of their floods above its
-// ground, as its steps (`engine_terrain::RIVER_EDGE_STEP`): meters a step,
-// the step at the edge and the ground, and the step for no river within
-// reach, or no bed.
 const RIVER_EDGE_STEP: f32 = 0.0625;
 const RIVER_EDGE_ZERO: u32 = 32768u;
 const RIVER_EDGE_FAR: u32 = 65535u;
 
-// The header's words (`engine_terrain::gpu::header`).
 const H_PROGRAM: u32 = 0u;
 const H_BIOMES: u32 = 2u;
 const H_READS: u32 = 4u;
@@ -56,12 +31,8 @@ const H_PATHS: u32 = 6u;
 const H_FADE: u32 = 7u;
 const H_WET_BIOMES: u32 = 8u;
 const H_EROSION: u32 = 9u;
-// Words of each biome's entry in the program's table
-// (`engine_terrain::gpu::BIOME_WORDS`): its fitness mask, its layer list
-// and its wetness rule.
 const BIOME_WORDS: u32 = 3u;
 
-// Opcodes (`engine_terrain::gpu::op`).
 const OP_CONSTANT: u32 = 0u;
 const OP_HEIGHT: u32 = 1u;
 const OP_GRADIENT: u32 = 2u;
@@ -90,8 +61,6 @@ fn real(at: u32) -> f32 {
     return bitcast<f32>(data[at]);
 }
 
-// The engine's lane rules for the smaller and larger of two values
-// (`engine_math::min` and `max`), and clamping between them.
 fn pmin(a: f32, b: f32) -> f32 {
     return select(a, b, b < a);
 }
@@ -109,15 +78,12 @@ fn smooth_unit(t: f32) -> f32 {
     return c * c * (3.0 - 2.0 * c);
 }
 
-// 0 at `low`, 1 at `high`, smooth between; a step where they meet.
 fn ramp(value: f32, low: f32, high: f32) -> f32 {
     if low == high {
         return select(0.0, 1.0, value >= low);
     }
     return smooth_unit((value - low) / (high - low));
 }
-
-// ---------------------------------------------------------------- noise
 
 fn mix_bits(value: u32) -> u32 {
     var h = value;
@@ -132,7 +98,6 @@ fn lattice_hash(x: i32, z: i32, seed: u32) -> u32 {
     return mix_bits(mix_bits(seed ^ bitcast<u32>(x)) + bitcast<u32>(z));
 }
 
-// Unit gradients 22.5 degrees apart, turned half a step off the axes.
 fn gradient_at(x: i32, z: i32, seed: u32) -> vec2<f32> {
     var gradients = array<vec2<f32>, 16>(
         vec2<f32>(0.9807853, 0.19509032), vec2<f32>(0.8314696, 0.5555702),
@@ -150,7 +115,6 @@ fn quintic(t: f32) -> f32 {
     return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
 }
 
-// Gradient noise's value at lattice coordinates (x, z), about -1 to 1.
 fn gradient_value(x: f32, z: f32, seed: u32) -> f32 {
     let x0 = floor(x);
     let z0 = floor(z);
@@ -192,21 +156,16 @@ fn noise_mask(x: f32, z: f32, spacing: f32, frequency: f32, seed: u32, octaves: 
     return clamp_rule(0.5 + 0.5 * sum / weight, 0.0, 1.0);
 }
 
-// ---------------------------------------------------------------- inputs
-
 struct Inputs {
     x: f32,
     z: f32,
     height: f32,
-    // Rise per meter along x and z.
     gradient: vec2<f32>,
     curvature: f32,
     spacing: f32,
     flow: f32,
     wetness: f32,
     lake: f32,
-    // Meters the erosions changed the ground by, negative where they wore
-    // it away.
     erosion: f32,
     river: f32,
     grain: f32,
@@ -216,8 +175,6 @@ struct Inputs {
     path_half: f32,
 }
 
-// Uniform cubic B-spline weights of the four image samples around
-// fraction t, as the CPU computes them.
 fn image_weights(t: f32) -> vec4<f32> {
     let s = 1.0 - t;
     let t2 = t * t;
@@ -229,8 +186,6 @@ fn image_weights(t: f32) -> vec4<f32> {
         t3 * (1.0 / 6.0));
 }
 
-// Texel (x, z) of one of an image's levels, edges clamped: `level` points
-// at its width, height and first sample.
 fn image_texel(level: u32, x: i32, z: i32) -> f32 {
     let width = i32(data[level]);
     let height = i32(data[level + 1u]);
@@ -239,10 +194,6 @@ fn image_texel(level: u32, x: i32, z: i32) -> f32 {
     return real(data[level + 2u] + u32(cz * width + cx));
 }
 
-// The uniform cubic B-spline of the image whose table starts at `table` at
-// image coordinates (u, v), read from level `level` (the image's own where
-// it has no such level): the four columns around the point blended along
-// v, then across, as the CPU blends them.
 fn image_sample(table: u32, u: f32, v: f32, level: u32) -> f32 {
     let levels = data[table];
     var entry = table + 1u;
@@ -273,7 +224,6 @@ fn decode(sample: f32, low: f32, high: f32) -> f32 {
     return low + (high - low) * sample * (1.0 / 65535.0);
 }
 
-// The tables of the hydrology section's three images.
 fn image_table(section: u32, image: u32) -> u32 {
     var table = section + 7u;
     for (var index = 0u; index < image; index++) {
@@ -282,10 +232,6 @@ fn image_table(section: u32, image: u32) -> u32 {
     return table;
 }
 
-// The level of an image whose samples lie `image_spacing` meters apart,
-// with `levels` coarser levels, that samples `spacing` meters apart read:
-// the coarsest whose samples lie no further apart, as the CPU picks it
-// (`engine_terrain::hydrology::image_level`).
 fn image_level(image_spacing: f32, levels: u32, spacing: f32) -> u32 {
     var level = 0u;
     while level < levels && image_spacing * f32(2u << level) <= spacing * 1.0001 {
@@ -294,11 +240,6 @@ fn image_level(image_spacing: f32, levels: u32, spacing: f32) -> u32 {
     return level;
 }
 
-// The meters the stack's erosions changed the ground by at `point`, as
-// samples `spacing` meters apart see it (`engine_terrain::Erosion`'s
-// `change_row`): each stage's change image through its uniform cubic
-// B-spline at the level those samples read, smooth across its grid however
-// much coarser, summed from 0 in the stack's order, as the CPU sums them.
 fn erosion_change(point: vec2<f32>, spacing: f32) -> f32 {
     let section = data[H_EROSION];
     var change = 0.0;
@@ -308,8 +249,6 @@ fn erosion_change(point: vec2<f32>, spacing: f32) -> f32 {
     let stages = data[section];
     for (var index = 0u; index < stages; index++) {
         let stage = data[section + 1u + index];
-        // A point's place in the image: times the inverse of the meters
-        // between its samples, as the CPU scales it.
         let scale = real(stage);
         let table = stage + 4u;
         let level = image_level(real(stage + 1u), data[table] - 1u, spacing);
@@ -319,14 +258,6 @@ fn erosion_change(point: vec2<f32>, spacing: f32) -> f32 {
     return change;
 }
 
-// What the tile holds of the rivers at texel (`column`, `row`) of its
-// layer (`engine_terrain::Tile::river_texels`), as the CPU reads it: meters
-// from the nearest river's edge, RIVER_FAR beyond every river's reach; and
-// of the bed of the river holding it, the median size of its grains
-// (meters) and the stream power at its bankfull flood (watts per square
-// meter), each the high half of its float, 0 outside every river's bed, and
-// meters the ground stands above that flood's level, RIVER_FAR outside
-// every river's bed.
 fn river_sample(column: u32, row: u32) -> vec4<f32> {
     var sample = vec4<f32>(RIVER_FAR, 0.0, 0.0, RIVER_FAR);
     if job.rivers == 0u {
@@ -344,8 +275,6 @@ fn river_sample(column: u32, row: u32) -> vec4<f32> {
     return sample;
 }
 
-// The nearest road as the point sees it (distance from its line and half
-// its width), the first of the stack's roads whose edge lies nearest.
 fn path_at(point: vec2<f32>) -> vec2<f32> {
     let section = data[H_PATHS];
     var nearest = vec2<f32>(PATH_FAR, 0.0);
@@ -416,8 +345,6 @@ fn path_at(point: vec2<f32>) -> vec2<f32> {
     return nearest;
 }
 
-// How much of the stack's bakes and roads surroundings show:
-// 1 within the region they were drawn for, fading out beyond.
 fn shown(point: vec2<f32>) -> f32 {
     let section = data[H_FADE];
     if section == NONE {
@@ -485,16 +412,12 @@ fn sample_inputs(column: u32, row: u32) -> Inputs {
     return inputs;
 }
 
-// ---------------------------------------------------------------- program
-
 fn input_ramp(code: u32, inputs: Inputs, low: f32, high: f32) -> f32 {
     let g = inputs.gradient;
     switch code {
         case OP_HEIGHT: { return ramp(inputs.height, low, high); }
         case OP_GRADIENT: { return ramp(sqrt(g.x * g.x + g.y * g.y), low, high); }
         case OP_CURVATURE: { return ramp(inputs.curvature, low, high); }
-        // The meters worn down and those laid down: each 0 where erosion
-        // changed the ground the other way.
         case OP_WORN: { return ramp(pmax(-inputs.erosion, 0.0), low, high); }
         case OP_DEPOSIT: { return ramp(pmax(inputs.erosion, 0.0), low, high); }
         case OP_FLOW: { return ramp(inputs.flow, low, high); }
@@ -505,8 +428,6 @@ fn input_ramp(code: u32, inputs: Inputs, low: f32, high: f32) -> f32 {
         case OP_POWER: { return ramp(inputs.power, low, high); }
         case OP_FLOOD: { return ramp(inputs.flood, low, high); }
         default: {
-            // A road's ramp at four points across the sample's footprint,
-            // across the road.
             let d = inputs.path_distance;
             let s = inputs.spacing;
             let h = inputs.path_half;
@@ -517,7 +438,6 @@ fn input_ramp(code: u32, inputs: Inputs, low: f32, high: f32) -> f32 {
     }
 }
 
-// The mask whose code starts at `start`.
 fn evaluate(start: u32, inputs: Inputs) -> f32 {
     var stack: array<f32, MAX_STACK>;
     var top = 0u;
@@ -540,8 +460,6 @@ fn evaluate(start: u32, inputs: Inputs) -> f32 {
                 pc += 3u;
             }
             case OP_FACING: {
-                // How far the ground tilts toward the heading: the gradient
-                // weighed as the CPU weighs it.
                 let tilt = real(pc + 1u) * inputs.gradient.x + real(pc + 2u) * inputs.gradient.y;
                 stack[top] = ramp(tilt, real(pc + 3u), real(pc + 4u));
                 top += 1u;
@@ -554,10 +472,6 @@ fn evaluate(start: u32, inputs: Inputs) -> f32 {
                 pc += 4u;
             }
             case OP_MULTIPLY, OP_ADD, OP_MIN, OP_MAX: {
-                // Lists fold from their first value, which folding it into
-                // the CPU's identity gives back; an empty list gives the
-                // identity, the largest finite values standing in for
-                // infinities, which constants may not hold.
                 let count = data[pc + 1u];
                 var value = 1.0;
                 if code == OP_ADD {
@@ -612,11 +526,6 @@ fn tile_control(@builtin(global_invocation_id) id: vec3<u32>) {
     let program = data[H_PROGRAM];
     let biomes = data[H_BIOMES];
     let wet_biomes = data[H_WET_BIOMES];
-    // Later biomes and layers paint over earlier ones: walk them from the
-    // last, each taking what the later ones left, until nothing is left;
-    // materials' weights in the order they first weigh. The ground's
-    // wetness walks the biomes alone, each taking what the later ones left
-    // of it, the steep layer painted over them none.
     var materials: array<u32, MAX_MATERIALS>;
     var weights: array<f32, MAX_MATERIALS>;
     var count = 0u;
@@ -678,7 +587,6 @@ fn tile_control(@builtin(global_invocation_id) id: vec3<u32>) {
             break;
         }
     }
-    // The two materials weighing most, the first to weigh on ties.
     var first = 0u;
     var first_weight = -1.0;
     var second = 0u;

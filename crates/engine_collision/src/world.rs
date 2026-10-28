@@ -17,9 +17,6 @@ use crate::{
 
 type ColliderData = (Entity, &'static Collider, Option<&'static Transform>);
 
-/// Scheduled synchronization reads collider/local components and the canonical
-/// global store, and writes only collision cache state. Engine boundaries have
-/// already propagated the authoritative transforms.
 #[derive(SystemParam)]
 pub(crate) struct CollisionSync<'w, 's> {
     colliders: Query<'w, 's, ColliderData>,
@@ -33,11 +30,9 @@ pub(crate) struct CollisionSync<'w, 's> {
 
 impl CollisionSync<'_, '_> {
     fn refresh(&mut self) -> CollisionReport {
-        // Terrain heightfields follow the resident tiles.
         if self.collisions.terrain.sync(self.terrains.as_deref()) {
             self.collisions.report.terrain_tiles = self.collisions.terrain.len();
         }
-        // Placed objects within the same radius.
         if self.collisions.placed.sync(self.terrains.as_deref()) {
             self.collisions.report.placed_colliders = self.collisions.placed.len();
         }
@@ -51,9 +46,6 @@ impl CollisionSync<'_, '_> {
     }
 }
 
-/// Cached query/access metadata for the explicit World API, initialized lazily.
-/// It owns no collider snapshot and may outlive replacement of CollisionWorld;
-/// each use fetches the current resources and updates matching archetypes.
 #[derive(Resource)]
 struct DirectSyncState(SystemState<CollisionSync<'static, 'static>>);
 
@@ -67,19 +59,12 @@ impl FromWorld for DirectSyncState {
 struct Input {
     entity: Entity,
     collider: Collider,
-    // Authoritative output revision of this pose (None without a local
-    // Transform or admitted entry). Equal revisions certify equal matrix bits
-    // and validity; the exhausted u64::MAX stamp never counts as unchanged.
     revision: Option<u64>,
-    // Validated store index hint, never an identity.
     hint: TransformIndex,
     status: ColliderStatus,
-    // Its entry's index while active (u32::MAX otherwise).
     entry: u32,
 }
 
-/// The collider's authoritative pose and output revision, read through a
-/// validated hint instead of a hash lookup by entity.
 fn read_pose(
     globals: &GlobalTransforms,
     entity: Entity,
@@ -102,15 +87,12 @@ struct Entry {
     affine: AffineShape,
 }
 
-/// Owned authoritative collision snapshot. Queries never scan ECS or update events.
 #[derive(Resource)]
 pub struct CollisionWorld {
     config: CollisionConfig,
     inputs: Vec<Input>,
     statuses: HashMap<Entity, ColliderStatus>,
     entries: Vec<Entry>,
-    // The entries of the rebuild before, whose unchanged colliders keep
-    // their shapes.
     previous_entries: Vec<Entry>,
     bounds: Vec<Bounds>,
     bvh: Bvh,
@@ -141,8 +123,6 @@ impl FromWorld for CollisionWorld {
 }
 
 impl CollisionWorld {
-    /// The admitted colliders whose bounds meet `bounds`: each one's
-    /// entity, collider and shape.
     pub(crate) fn entries_in(
         &self,
         bounds: Bounds,
@@ -163,7 +143,6 @@ impl CollisionWorld {
     pub fn last_error(&self) -> Option<CollisionError> {
         self.last_error
     }
-    /// None includes entities outside the admitted cache capacity.
     pub fn collider_status(&self, entity: Entity) -> Option<ColliderStatus> {
         self.statuses.get(&entity).copied()
     }
@@ -190,8 +169,6 @@ impl CollisionWorld {
         self.report.tick = tick;
         let limit = config.colliders();
         let admitted = count.min(limit);
-        // Collider shape, identity and pose revision determine every cached
-        // value. Revisions change whenever matrix bits or validity change.
         let unchanged = self.report.revision != 0
             && config == self.config
             && count == self.report.colliders
@@ -209,8 +186,6 @@ impl CollisionWorld {
             return self.report;
         }
         let _rebuild = engine_profile::span("collision", "cache_rebuild");
-        // Under the same configuration, colliders whose shape and pose
-        // revision stand keep their entries' shapes.
         let reuse = self.report.revision != 0 && config == self.config;
         self.config = config;
         self.report.revision = self.report.revision.saturating_add(1);
@@ -220,8 +195,6 @@ impl CollisionWorld {
         std::mem::swap(&mut self.entries, &mut self.previous_entries);
         self.entries.clear();
         self.bounds.clear();
-        // Inputs are rewritten in place so unchanged membership and statuses
-        // can keep the status map instead of reinserting every collider.
         let mut statuses_changed = self.inputs.len() != admitted;
         self.inputs.truncate(admitted);
         self.inputs
@@ -237,7 +210,6 @@ impl CollisionWorld {
                 .filter(|old| old.entity == entity);
             let mut hint = previous.map_or_else(TransformIndex::default, |old| old.hint);
             let (matrix, revision) = read_pose(globals, entity, local.is_some(), &mut hint);
-            // Equal revisions certify equal matrix bits: the same shape.
             let kept = previous
                 .filter(|old| {
                     reuse
@@ -292,7 +264,6 @@ impl CollisionWorld {
             self.statuses
                 .extend(self.inputs.iter().map(|input| (input.entity, input.status)));
         }
-        // Unchanged membership keeps every entry's index: refit the tree.
         self.bvh.update(&self.bounds, !statuses_changed);
         self.report.active_colliders = self.entries.len();
         self.report.bvh_nodes = self.bvh.len();
@@ -359,7 +330,6 @@ impl CollisionWorld {
         Ok(nearest)
     }
 
-    /// Sorted by distance then generational entity identity. Errors clear output.
     pub fn raycast_all(
         &self,
         ray: CollisionRay,
@@ -417,8 +387,6 @@ impl CollisionWorld {
         result
     }
 
-    /// Geometric narrow-phase overlaps within finite tolerance; sorted entity IDs.
-    /// Result/candidate exhaustion returns an error and clears output.
     pub fn overlap(
         &self,
         shape: ColliderShape,
@@ -614,9 +582,6 @@ impl CollisionWorld {
     }
 }
 
-/// The entries a query visits: those of the tree whose bounds pass `test`,
-/// in tree order, that `filter` accepts. Visiting more than `limit`
-/// candidates, filtered ones included, is an error.
 fn candidates<'a>(
     (bvh, entries): (&'a Bvh, &'a [Entry]),
     limit: usize,
@@ -644,8 +609,6 @@ fn candidate(count: &mut usize, limit: usize) -> Result<(), CollisionError> {
     Ok(())
 }
 
-/// Last attempted fixed-tick sensor batch, retained until the next fixed tick.
-/// Failed attempts preserve pairs from the last complete tick and expose no events.
 #[derive(Resource, Default)]
 pub struct SensorEvents {
     events: Vec<SensorEvent>,
@@ -684,8 +647,6 @@ impl SensorEvents {
     }
 }
 
-/// Refreshes authoritative matrices and the query snapshot only. Sensor event
-/// history, presented matrices and clocks remain unchanged. No plugin is an error.
 pub fn refresh_collision_world(world: &mut World) -> Result<CollisionReport, CollisionError> {
     if !world.contains_resource::<CollisionWorld>() {
         return Err(CollisionError::MissingPlugin);

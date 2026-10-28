@@ -1,53 +1,28 @@
-//! The path map: which checks a change of each tracked path calls for.
-//! Every tracked file matches some rule (one that calls for no check says
-//! so with an empty list), and every smoke check and equivalence cell is
-//! called for by some rule, so lint (`cargo xtask lint`'s path map stage)
-//! fails on a file or a check nobody placed.
-
 use Check::{
     AllSmokes, Browser, Cells, Equivalence, Everything, ItsSmoke, Pure, PureWasm, Shaders, Smoke,
     Tools,
 };
 
-/// What a change calls for, beyond what its level always runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Check {
-    /// Everything the level runs: the toolchain, the workspace or a
-    /// dependency changed.
     Everything,
-    /// A corpus of `cargo xtask pure`.
     Pure(&'static str),
-    /// The terrain, tables and textures corpora's jobs replayed in the
-    /// browser worker's Wasm (`cargo xtask pure --wasm`), at the merge
-    /// level.
     PureWasm,
-    /// The shaders against their Rust layouts (`cargo xtask gpu`).
     Shaders,
-    /// A smoke check, by name.
     Smoke(&'static str),
-    /// The smoke check the changed script is (`web/scripts/NAME-smoke.mjs`).
     ItsSmoke,
-    /// Every smoke check: what they share changed.
     AllSmokes,
-    /// Equivalence cells by name, beyond the smoke tier.
     Cells(&'static [&'static str]),
-    /// Equivalence's smoke tier, natively.
     Equivalence,
-    /// Equivalence's browser leg, at the merge level.
     Browser,
-    /// A self-check of the factory's tools (`cargo xtask selfcheck KIND`):
-    /// `measure` or `checks`.
     Tools(&'static str),
 }
 
-/// One rule: the paths it covers, as globs (`*` within a segment, `**`
-/// across any number of them), and what their changes call for.
 pub(crate) struct Rule {
     pub paths: &'static [&'static str],
     pub checks: &'static [Check],
 }
 
-/// The terrain smokes, which a terrain change calls for.
 const TERRAIN_SMOKES: [Check; 4] = [
     Smoke("terrain"),
     Smoke("terrain-surface"),
@@ -55,10 +30,7 @@ const TERRAIN_SMOKES: [Check; 4] = [
     Smoke("terrain-files"),
 ];
 
-/// Every rule; a path's checks are those of every rule it matches.
 pub(crate) const MAP: &[Rule] = &[
-    // What every build reads: the toolchain, the workspace, its
-    // dependencies and their vendored sources.
     Rule {
         paths: &[
             "Cargo.toml",
@@ -69,7 +41,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Everything],
     },
-    // Repository settings and scripts lint alone checks, or nothing does.
     Rule {
         paths: &[
             ".gitignore",
@@ -79,13 +50,10 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[],
     },
-    // Shaders, wherever they are.
     Rule {
         paths: &["**/*.wgsl"],
         checks: &[Shaders, Equivalence, Browser],
     },
-    // bench/: the matrix, and the workloads, settings and catalogs measuring
-    // and equivalence read.
     Rule {
         paths: &["bench/equivalence.json"],
         checks: &[Equivalence],
@@ -100,25 +68,18 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Equivalence, Tools("measure")],
     },
-    // The budgets measure reports are judged against, which lint's bench
-    // check holds to the scenes and the catalog.
     Rule {
         paths: &["bench/budgets.json"],
         checks: &[],
     },
-    // The ladders `cargo xtask ladder` captures, a check of our own that no
-    // build or check runs.
     Rule {
         paths: &["bench/ladders/**"],
         checks: &[],
     },
-    // The math everything computes with.
     Rule {
         paths: &["crates/engine_math/**"],
         checks: &[Everything],
     },
-    // The runtime: its caches and scenes, the smoke tier, and what each part
-    // draws or does.
     Rule {
         paths: &["crates/engine_core/**", "crates/engine/**"],
         checks: &[
@@ -237,8 +198,6 @@ pub(crate) const MAP: &[Rule] = &[
             ]),
         ],
     },
-    // Water's state, cooked and drawn, as the water's views show it on the
-    // Highlands' streams.
     Rule {
         paths: &[
             "crates/engine_core/src/**/*water*",
@@ -292,7 +251,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Smoke("virtual-geometry")],
     },
-    // The dense workload's virtual meshes come from vgbuild.
     Rule {
         paths: &["tools/vgbuild/**"],
         checks: &[
@@ -309,8 +267,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Smoke("jobs"), PureWasm, Pure("terrain")],
     },
-    // The hash of the code making records, which keys every record, and
-    // the records game code makes itself.
     Rule {
         paths: &[
             "crates/engine_sources/**",
@@ -318,7 +274,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Pure("terrain"), Pure("caches"), Smoke("jobs")],
     },
-    // The renderer's static tables, which jobs make.
     Rule {
         paths: &[
             "crates/engine_core/src/**/tables*",
@@ -349,7 +304,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Smoke("streaming")],
     },
-    // Debug views and the pixel probe.
     Rule {
         paths: &[
             "crates/engine_core/src/**/debug_view*",
@@ -445,8 +399,6 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &["crates/engine_render/src/**/transparent*"],
         checks: &[Cells(&["metro-no-refraction", "garden-refraction"])],
     },
-    // The renderer: shaders against layouts, the smoke tier in both hosts,
-    // and each pass's own checks.
     Rule {
         paths: &["crates/engine_render/**"],
         checks: &[Shaders, Equivalence, Browser],
@@ -497,8 +449,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Smoke("texture"), Smoke("surfaces"), Cells(&["metro-views"])],
     },
-    // The cook's textures and the records game code makes, textures among
-    // them.
     Rule {
         paths: &[
             "crates/engine_textures/**",
@@ -512,7 +462,6 @@ pub(crate) const MAP: &[Rule] = &[
             Cells(&["metro-views", "highlands", "city-views"]),
         ],
     },
-    // Assets: meshes, materials, glTF, simplification.
     Rule {
         paths: &["crates/engine_assets/**"],
         checks: &[
@@ -563,7 +512,6 @@ pub(crate) const MAP: &[Rule] = &[
             Equivalence,
         ],
     },
-    // The development tools and the hosts.
     Rule {
         paths: &["crates/engine_dev/**"],
         checks: &[
@@ -583,7 +531,6 @@ pub(crate) const MAP: &[Rule] = &[
             Equivalence,
         ],
     },
-    // The native host's measured runs and the load monitor measure uses.
     Rule {
         paths: &[
             "crates/engine_native/src/**/measure*",
@@ -592,7 +539,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Smoke("native"), Tools("measure")],
     },
-    // The Stress Lab: every workload's cells and its content digests.
     Rule {
         paths: &["apps/stress-lab/**"],
         checks: &[Pure("caches"), Equivalence],
@@ -613,7 +559,6 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &["apps/stress-lab/src/city/**"],
         checks: &[Cells(&["city-views"])],
     },
-    // The content kit every world builds with.
     Rule {
         paths: &["apps/stress-lab/src/kit/**"],
         checks: &[Cells(&[
@@ -655,7 +600,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Smoke("native"), Tools("measure")],
     },
-    // The tools.
     Rule {
         paths: &["tools/assetc/**"],
         checks: &[Smoke("terrain-files"), Pure("import")],
@@ -735,7 +679,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Browser],
     },
-    // The factory's tools, which check themselves.
     Rule {
         paths: &[
             "tools/xtask/src/measure.rs",
@@ -756,7 +699,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Tools("checks")],
     },
-    // The smoke runner, its server and lock: one quick check through them.
     Rule {
         paths: &[
             "tools/xtask/src/smoke.rs",
@@ -770,7 +712,6 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &["tools/xtask/src/importing.rs"],
         checks: &[Pure("gltf"), Smoke("virtual-geometry")],
     },
-    // The smokes and what they share.
     Rule {
         paths: &["web/scripts/*-smoke.mjs"],
         checks: &[ItsSmoke],
@@ -831,8 +772,6 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &["web/scripts/pure-wasm.mjs"],
         checks: &[PureWasm],
     },
-    // Lint's own checks of the web host and its scripts (their types too),
-    // the iteration loop's scripts, and generated files lint compares.
     Rule {
         paths: &[
             "web/scripts/check-*.mjs",
@@ -844,7 +783,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[],
     },
-    // The web host.
     Rule {
         paths: &["web/src/**", "web/stress.html"],
         checks: &[
@@ -854,7 +792,6 @@ pub(crate) const MAP: &[Rule] = &[
             Browser,
         ],
     },
-    // The frame loop every host runs.
     Rule {
         paths: &[
             "crates/engine/src/host/frame_loop*",
@@ -863,7 +800,6 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Smoke("frame-loop"), Smoke("streaming"), Smoke("terrain")],
     },
-    // The input every host gathers and frames take.
     Rule {
         paths: &[
             "crates/engine/src/host/input*",
@@ -896,16 +832,12 @@ pub(crate) const MAP: &[Rule] = &[
     },
 ];
 
-/// Whether `path` (`/`-separated) matches `pattern`: `**` matches any
-/// number of segments, none included, and `*` any run of characters
-/// within one.
 pub(crate) fn matches(pattern: &str, path: &str) -> bool {
     let pattern: Vec<&str> = pattern.split('/').collect();
     let path: Vec<&str> = path.split('/').collect();
     segments(&pattern, &path)
 }
 
-/// Whether the segments `path` match the segments `pattern`.
 fn segments(pattern: &[&str], path: &[&str]) -> bool {
     match pattern.split_first() {
         None => path.is_empty(),
@@ -916,8 +848,6 @@ fn segments(pattern: &[&str], path: &[&str]) -> bool {
     }
 }
 
-/// Whether one segment `text` matches `pattern`, whose `*` match any run
-/// of characters.
 fn segment_matches(pattern: &str, text: &str) -> bool {
     match pattern.split_once('*') {
         None => pattern == text,
@@ -932,8 +862,6 @@ fn segment_matches(pattern: &str, text: &str) -> bool {
     }
 }
 
-/// Every check a change of `path` calls for: those of each rule it
-/// matches; none when it matches no rule.
 pub(crate) fn checks_of(path: &str) -> Option<Vec<Check>> {
     let mut found = None;
     for rule in MAP {

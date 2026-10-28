@@ -1,7 +1,3 @@
-//! GPU materials: textures uploaded in the color space their
-//! maps read them in, cached samplers, and one bind group per material with
-//! maps. Materials without maps share a default group of white textures.
-
 #![expect(
     clippy::expect_used,
     reason = "extraction validated every material's textures"
@@ -20,14 +16,11 @@ use crate::bindings::MATERIAL;
 use crate::gpu_data::{MaterialUniform, Variant, mip_chain_bytes, mip_levels};
 use crate::mipmaps::MipGenerator;
 
-/// Color maps (base color and emissive) decode sRGB; data maps read linear.
 const COLOR_MAPS: [bool; 5] = [true, false, false, false, true];
 
 pub(crate) struct GpuTexture {
-    // Keep texture ownership explicit alongside its reusable view.
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
-    // The asset's levels' bytes, and the generated levels' bytes.
     pub byte_len: u64,
     pub mip_bytes: u64,
 }
@@ -36,12 +29,9 @@ pub(crate) struct GpuMaterial {
     group: wgpu::BindGroup,
     _uniform: wgpu::Buffer,
     variant: Variant,
-    // The library version the group holds: a replaced
-    // material builds its group again.
     version: u64,
 }
 
-/// Default map textures: white in both color spaces and a flat normal.
 struct Defaults {
     _textures: [wgpu::Texture; 3],
     white_srgb: wgpu::TextureView,
@@ -54,11 +44,8 @@ struct Defaults {
 pub(crate) struct MaterialStore {
     layout: crate::pipelines::GroupLayout,
     samplers: HashMap<Sampler, wgpu::Sampler>,
-    // Keyed by handle and whether the view decodes sRGB: a texture read as
-    // both color and data uploads once per color space.
     textures: BTreeMap<(TextureHandle, bool), GpuTexture>,
     materials: BTreeMap<MaterialHandle, GpuMaterial>,
-    // Advances whenever a material's group is built or dropped.
     generation: u64,
     defaults: Defaults,
     mips: MipGenerator,
@@ -123,13 +110,10 @@ impl MaterialStore {
         }
     }
 
-    /// Group 1 of every mesh pipeline.
     pub(crate) fn layout(&self) -> &crate::pipelines::GroupLayout {
         &self.layout
     }
 
-    /// Drops materials and textures `plan`'s snapshot no longer supplies,
-    /// keeping its decals' and its terrains' placed objects'.
     pub(crate) fn retain(&mut self, plan: &BatchPlan, snapshot: &RenderSnapshot) {
         let extra_material = |handle: &MaterialHandle| {
             snapshot
@@ -157,13 +141,6 @@ impl MaterialStore {
             .retain(|(handle, _), _| plan.contains_texture(*handle) || extra_texture(handle));
     }
 
-    /// Uploads the textures and builds the bind groups of `plan`'s used
-    /// materials and of `extra` listed ones (masked shadow casters), the
-    /// snapshot's decal materials and its terrains' placed
-    /// objects'. New
-    /// textures' mip levels render from their base level in commands
-    /// recorded into `encoder`, created when needed. Returns the uploaded
-    /// bytes and generated levels.
     pub(crate) fn upload(
         &mut self,
         device: &wgpu::Device,
@@ -271,25 +248,20 @@ impl MaterialStore {
         }
     }
 
-    /// Advances whenever a material's group or variant may have changed.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// The mip generator textures and impostors share.
     pub(crate) fn mips(&self) -> &MipGenerator {
         &self.mips
     }
 
-    /// The bind group of `material`, when uploaded.
     pub(crate) fn group(&self, material: MaterialHandle) -> Option<&wgpu::BindGroup> {
         self.materials
             .get(&material)
             .map(|material| &material.group)
     }
 
-    /// The bind group and pipeline variant of `material` (the default group
-    /// without one). Call after [`Self::upload`] for the plan's materials.
     pub(crate) fn binding(&self, material: Option<MaterialHandle>) -> (&wgpu::BindGroup, Variant) {
         match material {
             Some(handle) => {
@@ -300,7 +272,6 @@ impl MaterialStore {
         }
     }
 
-    /// Whether `handle` has uploaded GPU storage in either color space.
     pub(crate) fn is_texture_resident(&self, handle: TextureHandle) -> bool {
         self.textures
             .range((handle, false)..=(handle, true))
@@ -308,7 +279,6 @@ impl MaterialStore {
             .is_some()
     }
 
-    /// Resident textures, their base level bytes and their mip bytes.
     pub(crate) fn texture_totals(&self) -> (u32, u64, u64) {
         self.textures
             .values()
@@ -322,7 +292,6 @@ impl MaterialStore {
     }
 }
 
-/// The materials of `snapshot`'s terrains' placed objects and their parts.
 fn placed_materials(snapshot: &RenderSnapshot) -> impl Iterator<Item = &RenderMaterial> {
     snapshot
         .terrain
@@ -332,7 +301,6 @@ fn placed_materials(snapshot: &RenderSnapshot) -> impl Iterator<Item = &RenderMa
         .flat_map(engine_core::RenderPlacementAsset::materials)
 }
 
-/// Those materials' textures.
 fn placed_textures(snapshot: &RenderSnapshot) -> impl Iterator<Item = &engine_core::RenderTexture> {
     snapshot
         .terrain
@@ -370,14 +338,11 @@ fn sampler<'a>(
                 Some(Filter::Nearest) | None => wgpu::MipmapFilterMode::Nearest,
                 Some(Filter::Linear) => wgpu::MipmapFilterMode::Linear,
             },
-            // Without mip filtering, only the base level.
             lod_max_clamp: if key.mipmap_filter.is_some() {
                 32.0
             } else {
                 0.0
             },
-            // Anisotropic filtering keeps surfaces seen at grazing angles
-            // sharp along their steep axis; it needs linear filters.
             anisotropy_clamp: if trilinear { 16 } else { 1 },
             ..Default::default()
         })
@@ -393,8 +358,6 @@ fn uniform_buffer(device: &wgpu::Device, uniform: &MaterialUniform) -> wgpu::Buf
     })
 }
 
-/// The texture and sampler bindings of a material's maps, in the order of
-/// `Material::maps` (`bindings::MATERIAL`).
 const MAP_BINDINGS: [(&str, &str); 5] = [
     ("base_color_texture", "base_color_sampler"),
     ("metallic_roughness_texture", "metallic_roughness_sampler"),
@@ -427,8 +390,6 @@ fn bind_group(
     )
 }
 
-/// The GPU format of `format` read as sRGB or linear, and the device
-/// feature sampling it (none for RGBA8).
 pub(crate) fn gpu_format(
     format: TextureFormat,
     srgb: bool,
@@ -473,9 +434,6 @@ pub(crate) fn gpu_format(
     }
 }
 
-/// Writes `bytes`, level `level` of a `width` × `height` texture in
-/// `format`, into layer `layer` of `texture`: whole blocks for compressed
-/// formats, including those past the edge of small levels.
 pub(crate) fn write_level(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
@@ -516,10 +474,6 @@ pub(crate) fn write_level(
     );
 }
 
-/// Uploads `source` as an sRGB or linear texture with every level it
-/// holds; an RGBA8 texture holding its base level alone gets a full mip
-/// chain, recorded into `encoder` from that level. A device without the
-/// source's format samples a white texel instead.
 fn create_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -547,7 +501,6 @@ fn create_texture(
         };
     }
     let (width, height) = (source.width(), source.height());
-    // Cooked textures carry their levels; others' render from their base.
     let generate = !source.format().is_compressed() && source.levels().len() == 1;
     let levels = if generate {
         mip_levels(width, height)

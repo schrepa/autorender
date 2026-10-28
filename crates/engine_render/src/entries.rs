@@ -1,14 +1,7 @@
-//! The mesh shader's entry points (`gpu_data::SHADER`) by what they draw:
-//! a pipeline names its vertex and fragment stages here, by exhaustive
-//! matches over the entry points `crate::shaders::entry` declares.
-
 use crate::render_graph::Targets;
 use crate::shaders::Entry;
 use crate::shaders::entry::{meshes, terrain_shadow};
 
-/// A mesh pass: opaque into the frame's targets, transparent surfaces
-/// accumulated, or a reflection probe face (
-/// linear light, drawn mirrored).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum MeshPass {
     Opaque(Targets),
@@ -16,24 +9,18 @@ pub(crate) enum MeshPass {
     Probe,
 }
 
-/// What a mesh pipeline draws: its pass and whether it shades local lights.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PassKind {
     pub pass: MeshPass,
     pub lit: bool,
 }
 
-/// Where a mesh pipeline's slots are posed: as the frame poses them, or
-/// in temporal frames also as the previous frame did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Slots {
     Retained,
     Temporal,
 }
 
-/// The vertex streams a mesh draws from beyond positions, normals and
-/// coordinates: none, a second one of colors and second coordinates,
-/// or that and a skin stream of joints and weights.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Streams {
     Basic,
@@ -63,7 +50,6 @@ impl PassKind {
         }
     }
 
-    /// The targets of an opaque pass; `None` for the others.
     pub(crate) fn targets(self) -> Option<Targets> {
         match self.pass {
             MeshPass::Opaque(targets) => Some(targets),
@@ -71,7 +57,6 @@ impl PassKind {
         }
     }
 
-    /// How this pass poses its slots.
     pub(crate) fn slots(self) -> Slots {
         if self.targets() == Some(Targets::Temporal) {
             Slots::Temporal
@@ -80,7 +65,6 @@ impl PassKind {
         }
     }
 
-    /// The vertex stage drawing meshes of `streams` in this pass.
     pub(crate) fn vertex_entry(self, streams: Streams) -> Entry {
         if self.targets() == Some(Targets::Debug) {
             return match streams {
@@ -99,8 +83,6 @@ impl PassKind {
         }
     }
 
-    /// The fragment stage of this pass for meshes with a second vertex
-    /// stream (`extended`) or without.
     pub(crate) fn fragment_entry(self, extended: bool) -> Entry {
         match (self.pass, self.lit, extended) {
             (MeshPass::Opaque(Targets::Canvas), false, false) => meshes::fs_main,
@@ -127,10 +109,6 @@ impl PassKind {
         }
     }
 
-    /// The fragment stage of masked surfaces' depth pre-pass in this opaque
-    /// pass, for meshes with a second vertex stream (`extended`) or
-    /// without: debug views' vertex stages pass a second stream's values for
-    /// every mesh, temporal frames' theirs after the previous position.
     pub(crate) fn prepass_entry(self, extended: bool) -> Entry {
         match (self.targets(), extended) {
             (Some(Targets::Debug), _) | (Some(Targets::Canvas | Targets::Post) | None, true) => {
@@ -144,11 +122,8 @@ impl PassKind {
     }
 }
 
-/// The sky: one triangle at the far plane (`meshes/sky.wgsl`).
 pub(crate) const SKY_VERTEX: Entry = meshes::vs_sky;
 
-/// The sky's fragment stage into `targets`, or a reflection probe face's
-/// (`None`).
 pub(crate) fn sky_fragment(targets: Option<Targets>) -> Entry {
     match targets {
         Some(Targets::Canvas) => meshes::fs_sky,
@@ -159,8 +134,6 @@ pub(crate) fn sky_fragment(targets: Option<Targets>) -> Entry {
     }
 }
 
-/// The vertex stage of virtual geometry's clusters drawn
-/// into `targets`; their fragments are the opaque passes'.
 pub(crate) fn virtual_vertex(targets: Targets) -> Entry {
     match targets {
         Targets::Canvas | Targets::Post => meshes::vs_virtual,
@@ -169,15 +142,10 @@ pub(crate) fn virtual_vertex(targets: Targets) -> Entry {
     }
 }
 
-/// The visibility pass's stages.
 pub(crate) const VISIBILITY_VERTEX: Entry = meshes::vs_visibility;
 pub(crate) const VISIBILITY_FRAGMENT: Entry = meshes::fs_visibility;
-/// The vertex stage of the visibility buffer's resolve, over each bin's
-/// tiles.
 pub(crate) const RESOLVE_VERTEX: Entry = meshes::vs_resolve;
 
-/// The resolve's fragment stage into `targets`, `lit` or not; debug views
-/// draw every cluster forward and resolve none.
 pub(crate) fn resolve_fragment(targets: Targets, lit: bool) -> Entry {
     match (targets, lit) {
         (Targets::Canvas | Targets::Debug, false) => meshes::fs_resolve,
@@ -189,7 +157,6 @@ pub(crate) fn resolve_fragment(targets: Targets, lit: bool) -> Entry {
     }
 }
 
-/// The vertex stage of impostor cards drawn into `targets`.
 pub(crate) fn impostor_vertex(targets: Targets) -> Entry {
     match targets {
         Targets::Canvas | Targets::Post => meshes::vs_impostor,
@@ -198,7 +165,6 @@ pub(crate) fn impostor_vertex(targets: Targets) -> Entry {
     }
 }
 
-/// The fragment stage of impostor cards into `targets`, `lit` or not.
 pub(crate) fn impostor_fragment(targets: Targets, lit: bool) -> Entry {
     match (targets, lit) {
         (Targets::Canvas, false) => meshes::fs_impostor,
@@ -211,9 +177,6 @@ pub(crate) fn impostor_fragment(targets: Targets, lit: bool) -> Entry {
     }
 }
 
-/// The vertex and fragment stages baking impostors of meshes with a second
-/// vertex stream (`extended`) or without: their colors, or with `shade`
-/// their frames' nearest depths.
 pub(crate) fn impostor_bake(extended: bool, shade: bool) -> (Entry, Entry) {
     match (extended, shade) {
         (false, false) => (meshes::vs_impostor_bake, meshes::fs_impostor_bake),
@@ -229,8 +192,6 @@ pub(crate) fn impostor_bake(extended: bool, shade: bool) -> (Entry, Entry) {
     }
 }
 
-/// Terrain's vertex and fragment stages into `targets`, or
-/// a reflection probe face's (`None`), `lit` or not.
 pub(crate) fn terrain(targets: Option<Targets>, lit: bool) -> (Entry, Entry) {
     match (targets, lit) {
         (Some(Targets::Canvas), false) => (meshes::vs_terrain, meshes::fs_terrain),
@@ -249,7 +210,6 @@ pub(crate) fn terrain(targets: Option<Targets>, lit: bool) -> (Entry, Entry) {
     }
 }
 
-/// Water's vertex and fragment stages into `targets`.
 pub(crate) fn water(targets: Targets) -> (Entry, Entry) {
     match targets {
         Targets::Canvas => (meshes::vs_water, meshes::fs_water),
@@ -259,7 +219,6 @@ pub(crate) fn water(targets: Targets) -> (Entry, Entry) {
     }
 }
 
-/// The sea's vertex and fragment stages into `targets`.
 pub(crate) fn ocean(targets: Targets) -> (Entry, Entry) {
     match targets {
         Targets::Canvas => (meshes::vs_ocean, meshes::fs_ocean),
@@ -269,7 +228,6 @@ pub(crate) fn ocean(targets: Targets) -> (Entry, Entry) {
     }
 }
 
-/// Falls' sheets' vertex and fragment stages into `targets`.
 pub(crate) fn falls(targets: Targets) -> (Entry, Entry) {
     match targets {
         Targets::Canvas => (meshes::vs_fall, meshes::fs_fall),
@@ -279,8 +237,6 @@ pub(crate) fn falls(targets: Targets) -> (Entry, Entry) {
     }
 }
 
-/// Ground cover's vertex and fragment stages into
-/// `targets`, `lit` or not.
 pub(crate) fn cover(targets: Targets, lit: bool) -> (Entry, Entry) {
     match (targets, lit) {
         (Targets::Canvas, false) => (meshes::vs_cover, meshes::fs_cover),
@@ -293,13 +249,10 @@ pub(crate) fn cover(targets: Targets, lit: bool) -> (Entry, Entry) {
     }
 }
 
-/// Terrain's depth stage in shadow maps (`terrain_shadow.wgsl`).
 pub(crate) const TERRAIN_SHADOW_VERTEX: Entry = terrain_shadow::vs_terrain_shadow;
 
-/// Decals' boxes.
 pub(crate) const DECAL_VERTEX: Entry = meshes::vs_decal;
 
-/// Decals' fragment stage, `lit` or not.
 pub(crate) fn decal_fragment(lit: bool) -> Entry {
     if lit {
         meshes::fs_decal_lit

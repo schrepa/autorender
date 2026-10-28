@@ -1,10 +1,3 @@
-//! Files a scene references by relative path: images and
-//! binary mesh buffers beside the scene. The host reads them and decodes
-//! images with the platform's own decoder before a scene loads, so the
-//! runtime carries no image decoder and scene sources stay small. KTX2
-//! images the host transcodes to a block-compressed format its GPU samples.
-// Files come from wherever a scene points: every narrowing cast is
-// checked.
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -18,39 +11,26 @@ use engine_core::{MeshLods, MeshVertex, Texture, TextureFormat, VirtualMesh};
 
 use crate::SceneError;
 
-/// What a referenced file holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SceneFileKind {
-    /// An image (PNG, JPEG or KTX2: `engine::host::IMAGE_FORMATS`),
-    /// supplied decoded to RGBA8 or transcoded.
     Image,
-    /// An engine buffer, supplied as bytes: a mesh (`EMB1`, `EMB2`) or an
-    /// animation (`EAN1`).
     Buffer,
-    /// A virtual mesh (`EVG1`): hosts supply its prefix
-    /// (`VirtualMesh::prefix_bytes` long; the whole file works too) and its
-    /// URL, from which renderers stream the other pages.
     VirtualMesh,
 }
 
-/// A file a scene references, by its path relative to the scene.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SceneFile {
     pub uri: String,
     pub kind: SceneFileKind,
 }
 
-/// Format, width, height and levels of a transcoded image.
 type CompressedImage = (TextureFormat, u32, u32, Vec<Vec<u8>>);
 
-/// Contents of a scene's referenced files, supplied by the host.
 #[derive(Clone, Debug, Default)]
 pub struct SceneFiles {
-    // Width, height and RGBA8 pixels of each decoded image.
     images: BTreeMap<String, (u32, u32, Vec<u8>)>,
     compressed: BTreeMap<String, CompressedImage>,
     buffers: BTreeMap<String, Vec<u8>>,
-    // Each virtual mesh's prefix (or whole file) and its URL.
     virtual_meshes: BTreeMap<String, (Vec<u8>, Option<String>)>,
 }
 
@@ -59,15 +39,10 @@ impl SceneFiles {
         Self::default()
     }
 
-    /// Adds image `uri`, decoded: `width` × `height` RGBA8 sRGB pixels, rows
-    /// top to bottom. Validated when a scene uses it.
     pub fn add_image(&mut self, uri: &str, width: u32, height: u32, pixels: Vec<u8>) {
         self.images.insert(uri.to_owned(), (width, height, pixels));
     }
 
-    /// Adds image `uri` transcoded to block-compressed `format`:
-    /// `width` × `height`, its levels from the base down. Validated
-    /// when a scene uses it.
     pub fn add_compressed_image(
         &mut self,
         uri: &str,
@@ -80,19 +55,15 @@ impl SceneFiles {
             .insert(uri.to_owned(), (format, width, height, levels));
     }
 
-    /// Adds buffer `uri`'s bytes.
     pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
         self.buffers.insert(uri.to_owned(), bytes);
     }
 
-    /// Adds virtual mesh `uri`: its prefix or whole file, and
-    /// the URL renderers fetch the pages a prefix lacks from.
     pub fn add_virtual_mesh(&mut self, uri: &str, bytes: Vec<u8>, url: Option<&str>) {
         self.virtual_meshes
             .insert(uri.to_owned(), (bytes, url.map(str::to_owned)));
     }
 
-    /// Buffer `uri`'s bytes.
     pub(crate) fn buffer(&self, uri: &str, path: &str) -> Result<&[u8], SceneError> {
         self.buffers
             .get(uri)
@@ -100,7 +71,6 @@ impl SceneFiles {
             .ok_or_else(|| missing(uri, path))
     }
 
-    /// Image `uri` as a texture, validated, its alpha channel kept.
     pub(crate) fn texture(&self, uri: &str, path: &str) -> Result<Texture, SceneError> {
         if let Some((format, width, height, levels)) = self.compressed.get(uri) {
             return Texture::from_levels(*format, *width, *height, levels.clone()).map_err(
@@ -112,14 +82,11 @@ impl SceneFiles {
             .map_err(|error| SceneError::new(ErrorCode::InvalidTexture, path, error.to_string()))
     }
 
-    /// Buffer `uri` decoded as a mesh buffer.
     pub(crate) fn mesh(&self, uri: &str, path: &str) -> Result<MeshBuffer, SceneError> {
         let bytes = self.buffers.get(uri).ok_or_else(|| missing(uri, path))?;
         mesh_buffer(bytes, path)
     }
 
-    /// Virtual mesh `uri`, validated: supplied as one, or a
-    /// whole file supplied as a buffer.
     pub(crate) fn virtual_mesh(&self, uri: &str, path: &str) -> Result<VirtualMesh, SceneError> {
         let (bytes, url) = match self.virtual_meshes.get(uri) {
             Some((bytes, url)) => (bytes, url.as_deref()),
@@ -136,7 +103,6 @@ impl SceneFiles {
         })
     }
 
-    /// Buffer `uri` decoded as an animation buffer's channels.
     pub(crate) fn animation(
         &self,
         uri: &str,
@@ -147,10 +113,6 @@ impl SceneFiles {
     }
 }
 
-/// `length` as the little-endian u32 count a buffer stores.
-///
-/// # Panics
-/// Panics at 2^32 or more, which no buffer holds.
 fn count(length: usize) -> [u8; 4] {
     u32::try_from(length)
         .expect("a buffer counts fewer than 2^32 items")
@@ -165,7 +127,6 @@ fn missing(uri: &str, path: &str) -> SceneError {
     )
 }
 
-/// Checks that `uri` is a relative path inside the scene's folder.
 pub(crate) fn valid_uri(uri: &str, path: &str) -> Result<(), SceneError> {
     let valid = !uri.is_empty()
         && uri.len() <= 256
@@ -187,23 +148,13 @@ pub(crate) fn valid_uri(uri: &str, path: &str) -> Result<(), SceneError> {
     }
 }
 
-/// Magic of an engine mesh buffer.
 pub const MESH_BUFFER_MAGIC: [u8; 4] = *b"EMB1";
-/// Magic of an engine mesh buffer with optional streams.
 pub const MESH_BUFFER_EXTRAS_MAGIC: [u8; 4] = *b"EMB2";
 
-/// An engine mesh buffer: `EMB1`, the vertex and index counts (little-endian
-/// u32), each vertex's position, normal and UV (eight little-endian f32),
-/// then the u32 indices. Takes runtime or authored ([`crate::SceneVertex`])
-/// vertices.
 pub fn encode_mesh_buffer<V: Copy + Into<MeshVertex>>(vertices: &[V], indices: &[u32]) -> Vec<u8> {
     encode_mesh_buffer_with(vertices, indices, MeshStreams::default())
 }
 
-/// Optional per-vertex streams of a mesh buffer, one entry per vertex each:
-/// vertex colors and second texture coordinates, skinning
-/// joints and weights (both or neither); and the mesh's levels of detail,
-/// which the importer makes offline.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MeshStreams<'a> {
     pub colors: Option<&'a [[f32; 4]]>,
@@ -213,16 +164,6 @@ pub struct MeshStreams<'a> {
     pub lods: Option<&'a MeshLods>,
 }
 
-/// [`encode_mesh_buffer`] with optional streams. With any, the buffer is
-/// `EMB2`: after the counts a u32 of flags (1 colors, 2 second
-/// coordinates, 4 joints and weights, 8 levels of detail), then the
-/// vertices, the colors (four f32 each), the second coordinates (two f32
-/// each), the joints (four u16 each), the weights (four f32 each), the
-/// indices and the levels of detail ([`MeshLods::to_bytes`]).
-///
-/// # Panics
-/// Panics when only one of joints and weights is given, or with 2^32 or
-/// more vertices or indices.
 pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     vertices: &[V],
     indices: &[u32],
@@ -295,17 +236,12 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     bytes
 }
 
-/// The mesh an engine mesh buffer holds ([`encode_mesh_buffer_with`]),
-/// with its optional streams and levels: what scenes' buffer files and the
-/// records keeping game code's meshes decode to.
 pub fn decode_mesh_buffer(bytes: &[u8]) -> Result<engine_core::Mesh, SceneError> {
     mesh_buffer(bytes, "$")?.mesh("$")
 }
 
-/// Joints and weights of skinned vertices.
 pub(crate) type SkinStreams = (Vec<[u16; 4]>, Vec<[f32; 4]>);
 
-/// A decoded mesh buffer.
 pub(crate) struct MeshBuffer {
     pub vertices: Vec<MeshVertex>,
     pub indices: Vec<u32>,
@@ -316,7 +252,6 @@ pub(crate) struct MeshBuffer {
 }
 
 impl MeshBuffer {
-    /// The mesh it holds, with its streams and levels, errors at `path`.
     pub(crate) fn mesh(self, path: &str) -> Result<engine_core::Mesh, SceneError> {
         let mesh = crate::document::with_extras(
             engine_core::Mesh::new(self.vertices, self.indices),
@@ -363,8 +298,6 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
     };
     let header = if extras { 16 } else { 12 };
     let (vertex_count, index_count) = (vertex_count as usize, index_count as usize);
-    // Words per vertex: eight, four more with colors, two more with second
-    // coordinates, six more with joints (two) and weights (four).
     let floats = 8
         + if flags & 1 != 0 { 4 } else { 0 }
         + if flags & 2 != 0 { 2 } else { 0 }
@@ -373,7 +306,6 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
         .checked_mul(floats * 4)
         .and_then(|vertices| vertices.checked_add(index_count.checked_mul(4)?))
         .and_then(|payload| payload.checked_add(header));
-    // Levels of detail follow the indices, counting themselves.
     let fits = expected.is_some_and(|expected| {
         expected == bytes.len() || (flags & 8 != 0 && expected < bytes.len())
     });
@@ -459,17 +391,8 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
     })
 }
 
-/// Magic of an engine animation buffer.
 pub const ANIMATION_BUFFER_MAGIC: [u8; 4] = *b"EAN1";
 
-/// An engine animation buffer: `EAN1` and the channel count (little-endian
-/// u32), then per channel its target (u32), property (u8: 0 translation, 1
-/// rotation, 2 scale), interpolation (u8: 0 step, 1 linear, 2 cubic spline),
-/// two zero bytes, the key count and value count (u32), the key times (f32)
-/// and the values (three f32 each, four for rotations).
-///
-/// # Panics
-/// Panics with 2^32 or more channels, keys or values in a channel.
 pub fn encode_animation_buffer(channels: &[engine_core::AnimationChannel]) -> Vec<u8> {
     use engine_core::{AnimatedProperty, KeyInterpolation, Keyframes};
     let mut bytes = ANIMATION_BUFFER_MAGIC.to_vec();
@@ -509,7 +432,6 @@ pub fn encode_animation_buffer(channels: &[engine_core::AnimationChannel]) -> Ve
     bytes
 }
 
-/// The channels of an `EAN1` buffer, validated as clips require.
 pub(crate) fn animation_buffer(
     bytes: &[u8],
     path: &str,

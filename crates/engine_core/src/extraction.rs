@@ -1,7 +1,3 @@
-//! The per-feature extractions, each filling its feature's part of a
-//! frame, in one order ([`Extractions`]), and what they share: where a
-//! frame reads world poses, and their nearest-wins budgets.
-
 use bevy_ecs::prelude::{Entity, World};
 use glam::Mat4;
 
@@ -11,10 +7,6 @@ use crate::{
     lights, particles, probes,
 };
 
-/// What each feature's extraction keeps between frames, its fields in the
-/// order [`Self::extract`] runs them: local lights and particle emitters,
-/// skins' joint palettes, then decals, whose poses the joints list after
-/// the skins', then reflection probes.
 pub(crate) struct Extractions {
     lights: lights::LightExtraction,
     particles: particles::ParticleExtraction,
@@ -34,11 +26,6 @@ impl Extractions {
         }
     }
 
-    /// Fills each feature's part of `retained`'s frame, after its
-    /// instances, from `world` seen at `aspect`: deformation's, then this
-    /// struct's in their order, then terrains', world streaming's and the
-    /// static tables', which keep nothing between frames. `gpu` frames
-    /// leave poses to the GPU.
     pub(crate) fn extract(
         &mut self,
         retained: &mut RetainedRender,
@@ -65,9 +52,6 @@ impl Extractions {
     }
 }
 
-/// Where an extraction reads entities' world matrices: the poses prepared
-/// for the frame or, on GPU-presented frames, which prepare none, the
-/// authoritative ones.
 #[derive(Clone, Copy)]
 pub(crate) enum Poses<'w> {
     Prepared(&'w PresentedTransforms),
@@ -83,7 +67,6 @@ impl<'w> Poses<'w> {
         }
     }
 
-    /// `entity`'s valid world matrix.
     pub(crate) fn model(self, entity: Entity) -> Option<Mat4> {
         match self {
             Self::Prepared(poses) => poses.get(entity)?.matrix(),
@@ -91,7 +74,6 @@ impl<'w> Poses<'w> {
         }
     }
 
-    /// [`Self::model`], found through the store hint `hint`.
     pub(crate) fn model_indexed(self, entity: Entity, hint: &mut TransformIndex) -> Option<Mat4> {
         match self {
             Self::Prepared(poses) => poses.get_indexed(entity, hint)?.matrix(),
@@ -100,21 +82,14 @@ impl<'w> Poses<'w> {
     }
 }
 
-/// Ranks candidates for a nearest-wins budget: by distance, equally near
-/// ones in their order.
 #[derive(Default)]
 pub(crate) struct Nearest {
-    // Each candidate's distance, ordered as `f32::total_cmp` orders it, in
-    // the high bits and its position in the low ones: sorting eight-byte
-    // keys, not the candidates.
     keys: Vec<u64>,
 }
 
 const POSITION: u64 = u32::MAX as u64;
 
 impl Nearest {
-    /// The positions of the `kept` candidates nearest by `distances` (every
-    /// one when fewer), nearest first.
     pub(crate) fn nearest_first(
         &mut self,
         distances: impl IntoIterator<Item = f32>,
@@ -125,8 +100,6 @@ impl Nearest {
         self.positions()
     }
 
-    /// [`Self::nearest_first`]'s positions in the candidates' order; every
-    /// candidate, without ranking, when the budget keeps them all.
     pub(crate) fn kept_in_order(
         &mut self,
         distances: impl ExactSizeIterator<Item = f32>,
@@ -163,7 +136,6 @@ impl Nearest {
     }
 }
 
-/// `value`'s bits ordered as [`f32::total_cmp`] orders values.
 fn total_order(value: f32) -> u32 {
     let bits = value.to_bits();
     if bits >> 31 == 1 {

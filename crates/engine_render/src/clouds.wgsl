@@ -1,50 +1,15 @@
-// Clouds: a layer of cumulus marched into a dome of the sky in two layers:
-// from the camera, and from its mirror point under the surface below it,
-// which reflections see the clouds from (`clouds.rs`'s `Origins`). The
-// dome's texel (u, v) looks toward azimuth 2 pi u and up by the elevation
-// mix(-asin(HORIZON), pi / 2, v), every row as many degrees (`scene.wgsl`'s
-// `cloud_dome_uv`); each holds the light the clouds scatter toward the point
-// its layer marched from (linear, as the sky's) and the share of the sky
-// behind them that passes. Two tiling volumes of noise, the
-// scene's static tables (`engine_tables::clouds` makes them), shape the
-// clouds: Perlin-Worley shapes, and the finer wisps of Worley's cells at
-// five frequencies eroding their edges, read through their mipmaps as wide
-// as the cone of the ray a dome texel or a pixel of the view marches spans
-// there, so the wisps finer than it average to their mean at every
-// distance.
-
 struct CloudUniform {
-    // The camera (world); w: 1 with the physically based sky, whose sun
-    // lights each cloud where it stands.
     eye: vec4<f32>,
-    // The mirror point the dome's MIRROR_LAYER marches from (world); w
-    // unused.
     mirror: vec4<f32>,
-    // The layer's base and top (world meters), its coverage and density.
     layer: vec4<f32>,
-    // The wind's drift so far (meters, x and z), the meters across the
-    // noise volume's repeat, and the seed's offset (meters).
     drift: vec4<f32>,
-    // The dome's texels along u and v, the first row this dispatch marches
-    // and how many rows from it.
     dome: vec4<u32>,
-    // Toward the sun, and its light.
     sun: vec4<f32>,
     sun_color: vec4<f32>,
-    // The sky's light from above and at the horizon, and the haze far
-    // clouds fade into.
     zenith: vec4<f32>,
     horizon: vec4<f32>,
-    // The shadows' grid: its first cell (world cell indices
-    // along x and z), meters a cell and cells along a side, each cell kept
-    // in the slot of its index modulo the cells; then the first row of
-    // slots this dispatch marches and the rows between those it marches.
     shadow: vec4<f32>,
     shadow_rows: vec4<u32>,
-    // The light map: its first column's corner in the clouds' own frame
-    // (meters, x and z), meters a column, and 1 while it holds this sun and
-    // layer whole; then the first of its rows this dispatch builds and how
-    // many.
     light: vec4<f32>,
     light_rows: vec4<u32>,
 }
@@ -54,79 +19,44 @@ struct CloudUniform {
 @group(0) @binding(2) var noise_sampler: sampler;
 @group(0) @binding(4) var noise_detail: texture_3d<f32>;
 @group(0) @binding(3) var dome: texture_storage_2d_array<rgba16float, write>;
-// The shadows' grid: the sunlight passing the layer up from each cell of
-// its base, two cells (along x) a word in half floats.
 @group(0) @binding(5) var<storage, read_write> shadow_cells: array<u32>;
 
-// Clouds in the view: its unjittered inverse view-projection; and the
-// pixels the frame draws, its render size, from the depth buffer's top-left
-// corner (xy), a ray each, and whether rays seeing the sky march (1) or
-// leave it to the dome (0) (z).
 struct CloudView {
     inverse_view_projection: mat4x4<f32>,
     pixels: vec4<u32>,
 }
 @group(0) @binding(6) var<uniform> cloud_view: CloudView;
-// The view's depth buffer (reversed: 0 at the far plane), and each pixel's
-// clouds: their light and the share of what lies behind that passes.
 @group(0) @binding(7) var view_depth: texture_depth_2d;
 @group(0) @binding(8) var view_out: texture_storage_2d<rgba16float, write>;
-// The composite's indirect draw: its vertices, set to its triangle's once
-// any pixel's ray meets a cloud, so views without any draw nothing.
 @group(0) @binding(10) var<storage, read_write> composite_draw: array<atomic<u32>, 4>;
-// The physically based sky (`sky_common.wgsl`): its uniform, transmittance
-// table and their sampler, through which its sun lights the clouds.
 @group(0) @binding(11) var<uniform> cloud_air: SkyUniform;
 @group(0) @binding(12) var cloud_transmittance: texture_2d<f32>;
 @group(0) @binding(13) var cloud_table_sampler: sampler;
-// The light map: the far part of each light march, marched once for
-// LIGHT_TEXELS by LIGHT_TEXELS columns of the clouds' own frame, which the
-// wind does not move, at LIGHT_HEIGHTS heights through the layer; each
-// column holds its neighbouring heights in pairs of half floats, a word a
-// pair, so one word gives both heights a point between them reads.
 @group(0) @binding(14) var<storage, read_write> light_cells: array<u32>;
 
-// Rays below the horizon by this much (sine of their elevation) see no
-// clouds (`scene.wgsl`'s `CLOUD_HORIZON`).
 const HORIZON: f32 = 0.05;
-// The dome's layer marched from the mirror point, which reflections read;
-// the other is marched from the eye (`sky_light.wgsl`).
 const MIRROR_LAYER: u32 = 1u;
 const TAU: f32 = 6.2831853;
-// Steps along each ray through the layer (one per STEP_LENGTH meters,
-// between the fewest and the most), toward the sun from each step, and the
-// farthest clouds marched (meters).
 const FEWEST_STEPS: f32 = 24.0;
 const MOST_STEPS: f32 = 64.0;
 const STEP_LENGTH: f32 = 150.0;
-// Near a ray's origin (an eye inside the layer) steps start this many
-// meters long and grow with the distance, by this share of it, up to the
-// ray's even step; no ray takes more than this many.
 const NEAREST_STEP: f32 = 25.0;
 const STEP_SHARE: f32 = 0.1;
 const MOST_STEPS_IN_ALL: u32 = 128u;
 const LIGHT_STEPS: u32 = 5u;
-// Of the light march's steps, the first ones, which find the sunlit edges
-// close to each point, march for every point; the rest the light map
-// holds where it covers.
 const LIGHT_NEAR_STEPS: u32 = 2u;
 const LIGHT_TEXELS: u32 = 384u;
 const LIGHT_HEIGHTS: u32 = 16u;
 const LIGHT_WORDS: u32 = LIGHT_HEIGHTS - 1u;
-// Columns over which the map hands over to marching toward its edge.
 const LIGHT_EDGE: f32 = 16.0;
 const REACH: f32 = 60000.0;
-// The detail's volume repeats over this share of the shapes'
-// (`clouds.drift.z`).
 const DETAIL_REPEAT: f32 = 0.13;
-// Extinction per meter of fully dense cloud at density 1.
 const EXTINCTION: f32 = 0.08;
 
 fn remap(value: f32, low: f32, high: f32, to_low: f32, to_high: f32) -> f32 {
     return to_low + (value - low) * (to_high - to_low) / max(high - low, 1.0e-5);
 }
 
-// The direction the dome's texel at `uv` looks.
 fn dome_direction(uv: vec2<f32>) -> vec3<f32> {
     let elevation = mix(-asin(HORIZON), 0.25 * TAU, uv.y);
     let up = sin(elevation);
@@ -135,37 +65,24 @@ fn dome_direction(uv: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(cos(angle) * around, up, sin(angle) * around);
 }
 
-// Where the clouds' own frame (the noise's, which the wind and the seed
-// shift) stands from the world's, along x and z.
 fn cloud_offset() -> vec2<f32> {
     return vec2<f32>(clouds.drift.x + clouds.drift.w, clouds.drift.y - clouds.drift.w);
 }
 
-// The level of the detail's mipmaps a cone `footprint` meters wide reads:
-// the one whose texels span that, its base level's texels spanning its
-// repeat, and from where the cone spans the whole repeat its last, its one
-// texel the volume's mean.
 fn detail_lod(footprint: f32) -> f32 {
     let texel = clouds.drift.z * DETAIL_REPEAT / f32(textureDimensions(noise_detail).x);
     return log2(max(footprint / max(texel, 1.0e-6), 1.0));
 }
 
-// How dense the clouds are at world point `p` (0 to 1): their shapes and,
-// where `eroded`, their fine detail eroding their edges as a cone
-// `footprint` meters wide there averages it (`detail_lod`).
 fn cloud_density(p: vec3<f32>, eroded: bool, footprint: f32) -> f32 {
     let height = (p.y - clouds.layer.x) / (clouds.layer.y - clouds.layer.x);
     if height <= 0.0 || height >= 1.0 {
         return 0.0;
     }
-    // Rounded below and thinning toward the top, as cumulus are.
     let profile = saturate(height * 7.0) * saturate((1.0 - height) * 2.0);
     let offset = cloud_offset();
     let moved = p + vec3<f32>(offset.x, 0.0, offset.y);
     let repeat = clouds.drift.z;
-    // Where clouds gather and where the sky stays clear, broadly; coverage
-    // sets the shapes' threshold around their average. Where no shape could
-    // reach it at this height, the shapes are not read.
     let gather = textureSampleLevel(noise_shape, noise_sampler,
         vec3<f32>(moved.x / (repeat * 4.3), 0.37, moved.z / (repeat * 4.3)), 0.0).r;
     let local = saturate(clouds.layer.z * (0.4 + 1.2 * smoothstep(0.3, 0.7, gather)));
@@ -173,22 +90,17 @@ fn cloud_density(p: vec3<f32>, eroded: bool, footprint: f32) -> f32 {
     if profile <= threshold {
         return 0.0;
     }
-    // Perlin-Worley shapes, about two thirds on average.
     let rounded = textureSampleLevel(noise_shape, noise_sampler, moved / repeat, 0.0).r;
     var cloud = saturate(remap(rounded * profile, threshold, 1.0, 0.0, 1.0));
     if eroded && cloud > 0.0 {
         let wisps = textureSampleLevel(noise_detail, noise_sampler,
             moved / (repeat * DETAIL_REPEAT), detail_lod(footprint)).r;
-        // Wispy below, billowing above.
         let erode = mix(wisps, 1.0 - wisps, saturate(height * 3.0)) * 0.4;
         cloud = saturate(remap(cloud, erode, 1.0, 0.0, 1.0));
     }
     return cloud;
 }
 
-// The cloud along the sun's ray from `p` over the light march's steps
-// from `first` to before `last` (60 m long, each next 1.8 times as long,
-// sampled at their middles), in meters of full density.
 fn sun_depth_steps(p: vec3<f32>, first: u32, last: u32) -> f32 {
     var depth = 0.0;
     var along = 0.0;
@@ -203,10 +115,6 @@ fn sun_depth_steps(p: vec3<f32>, first: u32, last: u32) -> f32 {
     return depth;
 }
 
-// The far part of the light march from `p` (its steps from
-// LIGHT_NEAR_STEPS) as the light map holds it: bilinear across its columns,
-// linear between its heights; and how much to take it (0 outside the map
-// or without one, rising over LIGHT_EDGE columns in from its edge).
 fn mapped_far_depth(p: vec3<f32>) -> vec2<f32> {
     if clouds.light.w < 0.5 {
         return vec2<f32>(0.0);
@@ -233,8 +141,6 @@ fn mapped_far_depth(p: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(mix(heights.x, heights.y, up), saturate(inside / LIGHT_EDGE));
 }
 
-// The cloud along the sun's ray from `p`, in meters of full density: the
-// near steps marched, the rest from the light map where it covers.
 fn sun_depth(p: vec3<f32>) -> f32 {
     let near = sun_depth_steps(p, 0u, LIGHT_NEAR_STEPS);
     let mapped = mapped_far_depth(p);
@@ -245,10 +151,6 @@ fn sun_depth(p: vec3<f32>) -> f32 {
     return near + far;
 }
 
-// The sunlight at world point `p`: the eye's, or with the physically based
-// sky what passes its air to the point's own place over the planet, so
-// cloud tops keep the low sun's light after the ground has lost it and the
-// planet's shadow rises through the layer.
 fn sunlight_at(p: vec3<f32>) -> vec3<f32> {
     if clouds.eye.w < 0.5 {
         return clouds.sun_color.rgb;
@@ -258,24 +160,17 @@ fn sunlight_at(p: vec3<f32>) -> vec3<f32> {
         (p.xz - clouds.eye.xz) * 0.001, height, clouds.sun.xyz);
 }
 
-// Henyey-Greenstein's phase function.
 fn henyey_greenstein(cosine: f32, g: f32) -> f32 {
     let g2 = g * g;
     return (1.0 - g2) / (2.0 * TAU * pow(1.0 + g2 - 2.0 * g * cosine, 1.5));
 }
 
-// The clouds seen from `origin` along `direction` up to `limit` meters, by
-// a ray whose cone spans `cone` radians: the light they scatter toward
-// `origin` and the share of what lies behind that passes, the detail the
-// ray meets averaged over the cone's width where it meets it
-// (`cloud_density`).
 fn march(origin: vec3<f32>, direction: vec3<f32>, texel: vec2<u32>, limit: f32,
         cone: f32) -> vec4<f32> {
     let base = clouds.layer.x;
     let top = clouds.layer.y;
     let reach = min(REACH, limit);
     let clear = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    // Where the ray runs within the layer.
     var near = 0.0;
     var far = reach;
     if abs(direction.y) > 1.0e-5 {
@@ -289,13 +184,6 @@ fn march(origin: vec3<f32>, direction: vec3<f32>, texel: vec2<u32>, limit: f32,
     if far <= near {
         return clear;
     }
-    // A step every few hundred meters, longer on the longest rays, and
-    // near the origin a few tens of meters, growing with the distance as the
-    // clouds' detail on screen shrinks; each ray starts its steps at its
-    // own offset, which hides their banding: interleaved gradient noise
-    // (Jimenez 2014) over the dome's texels or the view's pixels, whose
-    // offsets every 3x3 of them spread evenly, so the sky's filtered
-    // lookups of the dome average them out.
     let even = (far - near) / clamp((far - near) / STEP_LENGTH, FEWEST_STEPS, MOST_STEPS);
     let jitter = fract(52.9829189 * fract(dot(vec2<f32>(texel), vec2<f32>(0.06711056, 0.00583715))));
     let cosine = dot(direction, clouds.sun.xyz);
@@ -315,15 +203,10 @@ fn march(origin: vec3<f32>, direction: vec3<f32>, texel: vec2<u32>, limit: f32,
         }
         let sigma = density * extinction;
         let toward_sun = sun_depth(p) * extinction;
-        // Beer's law over two octaves of light scattered more than once,
-        // darkened at the edges facing the sun (powder); deep inside, light
-        // scattered many times still lights the cloud dimly.
         let direct = exp(-toward_sun) + 0.5 * exp(-toward_sun * 0.5)
             + 0.25 * exp(-toward_sun * 0.25);
         let powder = 1.0 - 0.6 * exp(-2.0 * sigma * 120.0);
         let height = saturate((p.y - base) / (top - base));
-        // The sky's light from above and the ground's from below, grayed as
-        // clouds scatter every color alike.
         let sky = mix(clouds.horizon.rgb, clouds.zenith.rgb, 0.5 + 0.5 * height);
         let gray = vec3<f32>(dot(sky, vec3<f32>(0.2126, 0.7152, 0.0722)));
         let ambient = mix(sky, gray, 0.6) * (0.5 + 0.7 * height);
@@ -337,13 +220,11 @@ fn march(origin: vec3<f32>, direction: vec3<f32>, texel: vec2<u32>, limit: f32,
             break;
         }
     }
-    // Far clouds fade into the haze toward the horizon.
     let fade = exp(-near / 30000.0);
     light = mix(clouds.horizon.rgb * (1.0 - passing), light, fade);
     return vec4<f32>(light, passing);
 }
 
-// The share of sunlight passing the layer up from `start` on its base.
 fn sun_passing(start: vec3<f32>) -> f32 {
     let sun = clouds.sun.xyz;
     if sun.y <= 0.01 {
@@ -359,8 +240,6 @@ fn sun_passing(start: vec3<f32>) -> f32 {
     return exp(-depth * EXTINCTION * clouds.layer.w);
 }
 
-// Two cells of the shadows' grid, side by side along x, on a slice of its
-// rows: from `clouds.shadow_rows.x`, every `clouds.shadow_rows.y`th.
 @compute @workgroup_size(8, 8)
 fn shadow_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     let cells = u32(clouds.shadow.w);
@@ -372,8 +251,6 @@ fn shadow_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = i32(cells);
     let first = vec2<i32>(i32(clouds.shadow.x), i32(clouds.shadow.y));
     for (var half = 0u; half < 2u; half++) {
-        // The world cell the slot holds: the one of the grid's cells whose
-        // index modulo the cells is the slot's.
         let slot = vec2<i32>(i32(id.x * 2u + half), i32(row));
         let cell = first + (((slot - first) % size) + size) % size;
         let start = vec3<f32>((f32(cell.x) + 0.5) * clouds.shadow.z, clouds.layer.x,
@@ -383,9 +260,6 @@ fn shadow_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     shadow_cells[row * (cells / 2u) + id.x] = pack2x16float(pair);
 }
 
-// A slice of the light map's rows, `clouds.light_rows.y` from
-// `clouds.light_rows.x`: each column's far light march from each of its
-// heights, the column standing where the clouds' own frame now puts it.
 @compute @workgroup_size(8, 8)
 fn light_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     let row = clouds.light_rows.x + id.y;
@@ -408,10 +282,6 @@ fn light_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// A band of the dome's rows in its layer `id.z`: `clouds.dome.w` from
-// `clouds.dome.z`, marched from the mirror point in MIRROR_LAYER and from the
-// eye in the other, each texel's ray as wide as the dome's texels: the wider
-// of a column's turn around the horizon and a row's rise.
 @compute @workgroup_size(8, 8)
 fn march_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     let row = clouds.dome.z + id.y;
@@ -425,22 +295,13 @@ fn march_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
         march(origin, dome_direction(uv), vec2<u32>(id.x, row), REACH, cone));
 }
 
-// The direction from the eye through the view's normalized device point
-// `ndc`, on the far plane of its reversed depth.
 fn view_direction(ndc: vec2<f32>) -> vec3<f32> {
     let far = cloud_view.inverse_view_projection * vec4<f32>(ndc, 0.0, 1.0);
     return normalize(far.xyz / far.w - clouds.eye.xyz);
 }
 
-// Whether any pixel of a workgroup met a cloud, which one of its
-// invocations then passes on to the composite's draw.
 var<workgroup> view_clouded: atomic<u32>;
 
-// The view's clouds: each pixel's ray, through its center, as wide as the
-// pixel (the wider of its turns to the pixels beside and below it),
-// marched up to what the pixel shows; pixels seeing the sky march to the
-// clouds' reach, or leave them to the dome while the camera is under the
-// layer.
 @compute @workgroup_size(8, 8)
 fn march_view(@builtin(global_invocation_id) id: vec3<u32>,
         @builtin(local_invocation_index) lane: u32) {

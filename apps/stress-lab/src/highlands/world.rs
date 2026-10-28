@@ -1,7 +1,3 @@
-//! The highlands as a Stress Lab world: the tower field on a plateau of a
-//! streamed terrain under golden hour, wind and clouds, framed from where
-//! the valleys open out, and views of its water near and far.
-
 use engine::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
@@ -45,15 +41,6 @@ impl StressWorld for HighlandsWorld {
     }
 
     fn environment(&self, world: &mut World) {
-        // A light breeze, 2.5 meters a second along the highlands' heading,
-        // gusting as it did: the wind's friction raises capillary ripples
-        // only past about 2.7 meters a second, and viscosity stills a
-        // lighter wind's short waves, so the lakes lie calm and mirror their
-        // shores, as WoW Forever's still lakes do and as the calm water
-        // planned for the highlands asks, while gusts sweep cat's paws over
-        // them. The grass and spruces sway less than in a brisk wind; their
-        // blades and far trees, thinner than pixels, resolve over frames.
-        // Clouds drive over in the faster wind aloft.
         world.insert_resource(TemporalAntialiasing {
             enabled: true,
             ..TemporalAntialiasing::default()
@@ -70,30 +57,7 @@ impl StressWorld for HighlandsWorld {
             shadows: 0.6,
             ..Clouds::default()
         });
-        // The eye adapts: the cave brightens by day, the night keeps dark.
         world.insert_resource(AutoExposure::default());
-        // Rivers settle in meter cells, the ground's own samples, which its
-        // rivers are traced along: the cook settles every watered tile at
-        // that size, and around the eye the same water runs live in those
-        // cells, handing back to the settled water where its cells blur
-        // under a few pixels.
-        //
-        // The water runs clear, as streams fed by springs and snowmelt do:
-        // deep, it sends back only the little light the water itself
-        // scatters, in the blue and green it takes least, a dark teal. Light
-        // halves over 4.5 meters in it, as in a clear lake, whose water
-        // takes about 0.33, 0.11 and 0.06 a meter of red, green and blue,
-        // 0.153 a meter weighted by luminance, and ln 2 / 0.153 ≈ 4.5. Its
-        // color shares that out, the channels it holds least going first:
-        // about 0.47, 0.070 and 0.059 a meter, blue slowest, red eight times
-        // as fast and green a fifth faster, so the bed seen through it tints
-        // teal. A trace of fine silt scatters 0.01 a meter on top, a
-        // fifteenth of what the water takes: its paler grains lighten the
-        // body by about two fifths, hardly turning its teal. Seen 30 degrees
-        // down through 30 centimeters, the light runs about 0.9 meters in
-        // the water: about 0.87 of it reaches the stones under it and comes
-        // back, so most of the bed shows through a body an eighth of the way
-        // to its dark teal.
         world.insert_resource(Water {
             color: [0.003, 0.02, 0.024],
             clarity: 4.5,
@@ -105,7 +69,6 @@ impl StressWorld for HighlandsWorld {
     }
 
     fn reflections(&self) -> Reflections {
-        // The lakes mirror shores kilometers away.
         Reflections {
             distance: 4000.0,
             ..Reflections::default()
@@ -113,8 +76,6 @@ impl StressWorld for HighlandsWorld {
     }
 
     fn add_systems(&self, app: &mut App, moving_nodes: u32) {
-        // The cave opens once the terrain's bakes are done; the tower
-        // field's objects move as the field's do.
         add_systems(app);
         if moving_nodes > 0 {
             app.add_systems(FixedSimulation, animate.in_set(Animation));
@@ -161,12 +122,9 @@ impl StressWorld for HighlandsWorld {
     }
 
     fn camera_speed(&self, _span: f32) -> f32 {
-        // The camera crosses kilometers.
         160.0
     }
 
-    /// With `rocks`, the optional scanned rock maps: the ground's maps load
-    /// as texture records.
     #[cfg(not(target_arch = "wasm32"))]
     fn files(&self, assets: &Path, rocks: bool) -> engine::Result<HashMap<String, StressFile>> {
         let mut found = HashMap::default();
@@ -195,8 +153,6 @@ impl StressWorld for HighlandsWorld {
                 },
             );
         };
-        // Scanned rock maps, kept locally and optional: without them
-        // rocks wear the terrain rock's maps.
         for name in ROCK_FILES.iter().filter(|_| rocks) {
             if let Ok(Some(decoded)) = image(&assets.join("stress/rocks").join(name)) {
                 add(format!("rocks/{name}"), decoded);
@@ -206,15 +162,11 @@ impl StressWorld for HighlandsWorld {
     }
 }
 
-/// The plateau's radius for the hamlet of `config`'s renderables, the tower
-/// field's grid with a margin.
 fn hamlet_radius(config: &StressConfig) -> f32 {
     let side = (config.renderables as f32).sqrt().ceil() * SPACING;
     side * 0.75 + 30.0
 }
 
-/// The ground's world height under world `(x, z)` of `world`'s terrain,
-/// from its layers wherever tiles are resident or not.
 fn ground(world: &World, x: f32, z: f32) -> f32 {
     let mut terrains = world
         .try_query::<&Terrain>()
@@ -232,7 +184,6 @@ fn ground(world: &World, x: f32, z: f32) -> f32 {
         .unwrap_or_else(|| world.resource::<Plateau>().0)
 }
 
-/// Horizontal unit directions around the plateau, every 45 degrees.
 fn directions() -> impl Iterator<Item = Vec2> {
     (0..8).map(|step| {
         let (sin, cos) = math::sin_cos(step as f32 * std::f32::consts::FRAC_PI_4);
@@ -240,8 +191,6 @@ fn directions() -> impl Iterator<Item = Vec2> {
     })
 }
 
-/// The direction from the plateau whose ground `reach` meters out is
-/// lowest: the widest view over the valleys.
 fn lowest(world: &World, reach: f32) -> Vec2 {
     directions()
         .map(|direction| {
@@ -252,9 +201,6 @@ fn lowest(world: &World, reach: f32) -> Vec2 {
         .map_or(Vec2::Y, |(_, direction)| direction)
 }
 
-/// A camera `distance` meters from `target` along horizontal `direction`,
-/// `rise` meters up per meter out, raised until its line of sight clears
-/// the ground by 30 meters.
 fn clear_view(world: &World, target: Vec3, direction: Vec2, distance: f32, rise: f32) -> Vec3 {
     let mut height = distance * rise;
     for step in 1..=24 {
@@ -267,8 +213,6 @@ fn clear_view(world: &World, target: Vec3, direction: Vec2, distance: f32, rise:
     Vec3::new(point.x, target.y + height, point.y)
 }
 
-/// The overview: high over the plateau from its lowest side, looking back
-/// across the hamlet into the mountains.
 fn overview(world: &World, config: &StressConfig) -> (Vec3, Vec3) {
     let target = Vec3::new(0.0, world.resource::<Plateau>().0, 0.0);
     let direction = lowest(world, 1200.0);
@@ -276,7 +220,6 @@ fn overview(world: &World, config: &StressConfig) -> (Vec3, Vec3) {
     (clear_view(world, target, direction, distance, 0.45), target)
 }
 
-/// Inside the plateau's edge, looking out over the lowest valley beyond it.
 fn close_view(world: &World, config: &StressConfig) -> (Vec3, Vec3) {
     let direction = lowest(world, 1500.0);
     let edge = direction * hamlet_radius(config) * 0.85;
@@ -287,11 +230,6 @@ fn close_view(world: &World, config: &StressConfig) -> (Vec3, Vec3) {
     )
 }
 
-/// The views of the water: down onto running water (`torrent`, `rapids`,
-/// `meadow_river`), far over water, which shows whether its waves band at a
-/// distance (`band`), and close along a stream (`close_stream`); each one's
-/// name, the camera's world position, and the yaw (degrees from -z toward
-/// +x) and pitch (degrees from level, negative down) it looks along.
 const WATER_VIEWS: [(&str, [f32; 3], f32, f32); 5] = [
     ("torrent", [-1584.0, 675.0, -2973.0], 0.0, -34.0),
     ("rapids", [-3008.0, 228.0, -168.0], 0.0, -30.0),
@@ -300,9 +238,6 @@ const WATER_VIEWS: [(&str, [f32; 3], f32, f32); 5] = [
     ("close_stream", [1474.5, 605.9, 743.3], 112.0, -18.0),
 ];
 
-/// A camera at world `position` looking along `yaw` and `pitch` (degrees,
-/// as [`WATER_VIEWS`] gives them), its near plane a fifth of a meter out and
-/// its field of view 60 degrees high.
 fn water_view(position: [f32; 3], yaw: f32, pitch: f32) -> Camera {
     let (yaw_sin, yaw_cos) = math::sin_cos(yaw.to_radians());
     let (pitch_sin, pitch_cos) = math::sin_cos(pitch.to_radians());
@@ -316,7 +251,6 @@ fn water_view(position: [f32; 3], yaw: f32, pitch: f32) -> Camera {
     }
 }
 
-/// From high above the plateau across the whole terrain to the north.
 fn away_view(world: &World) -> (Vec3, Vec3) {
     let height = ground(world, 0.0, 0.0) + 700.0;
     (

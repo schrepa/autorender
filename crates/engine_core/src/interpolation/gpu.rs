@@ -1,78 +1,30 @@
-//! Interpolation inputs for GPU presentation.
-//!
-//! Ordinary interpolated browser frames blend and compose displayed poses on
-//! the GPU. This gathers exactly the inputs the CPU presentation pass reads —
-//! current and previous local poses, effective blend and snap decisions, parent
-//! links, and authoritative matrices of nodes whose display does not depend on
-//! the fraction — in upload layout, stamping each record that changed. It runs
-//! only after hierarchy or interpolation state changed (normally once per fixed
-//! tick), never merely because another frame is displayed. The CPU pass stays
-//! the exact reference for captures, previews and inspection.
-//!
-//! Previous poses are usually not sent: after exactly one fixed tick with no
-//! other local change since the last gather, every previous pose equals the
-//! current pose that gather published, so the consumer copies its current
-//! poses into their previous slots on the GPU (`GpuPresentation::shift`) and
-//! only current poses upload. Other gathers publish explicit previous poses.
-
 use super::*;
 use crate::hierarchy::Link;
 use crate::retained_render::{PoseRows, pose_rows};
 
-/// Local pose of one node, 40 bytes:
-/// `[t.x, t.y, t.z, s.x, r.x, r.y, r.z, r.w, s.y, s.z]`.
 pub type NodePose = [f32; 10];
 
-/// Parent node index (`NO_PARENT` for roots) and `NODE_*` flags.
 pub type NodeInfo = [u32; 2];
 
-/// Parent index of roots in [`NodeInfo`].
 pub const NO_PARENT: u32 = u32::MAX;
-/// Admitted topology and a valid authoritative world pose.
 pub const NODE_VALID: u32 = 1;
-/// Blends its previous and current local pose by the frame fraction.
 pub const NODE_BLEND: u32 = 2;
-/// Its displayed pose depends on the fraction: blended here or inherited
-/// from an active parent. Inactive valid nodes display their authority rows.
 pub const NODE_ACTIVE: u32 = 4;
-/// Composes with the parent's GPU-composed pose instead of its authority rows.
 pub const NODE_PARENT_ACTIVE: u32 = 8;
 
-// Per-node traversal bits of the gather's parent-first pass, and whether the
-// node's authority revision may hold a written revision (otherwise it is
-// `u64::MAX`), so active nodes skip reading it.
 const SNAP: u8 = 1;
 const ACTIVE: u8 = 2;
 const AUTHORITY: u8 = 4;
-// Epoch (low 32 bits) of a pose never published.
 const NEVER: u32 = u32::MAX;
 
 static NEXT_INPUT_STREAM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-/// Borrowed GPU presentation inputs of the latest GPU-prepared frame.
-///
-/// Node arrays share the hierarchy's index space (`RenderFrame::slot_nodes`
-/// maps render slots into it). A record is current when its stamp is at most
-/// `sequence`; consumers upload records whose stamp is newer than the sequence
-/// they last uploaded, and everything after an `identity` change (topology
-/// rebuilds reassign node indices). When `shift` is set, a consumer that
-/// applied the gather just before this one first copies every current pose
-/// into its previous slot, then applies this gather's stamped records. A
-/// consumer that missed that copy must not blend until a later shift it applies.
-/// `current` is the hierarchy's cached local of every node, stamped for
-/// `NODE_ACTIVE` nodes when it changes; previous poses are maintained for
-/// `NODE_BLEND` nodes and authority rows for valid inactive nodes.
 #[derive(Clone, Copy)]
 pub struct GpuPresentation<'a> {
-    /// Fraction of the latest fixed interval to display, in `0..=1`.
     pub alpha: f32,
     pub identity: u64,
     pub sequence: u64,
-    /// Copy current poses into previous slots before applying this gather.
     pub shift: bool,
-    /// Sequence of the latest gather that set `shift`. A held gather that a
-    /// later gather superseded before any view presented it does not count:
-    /// the later gather then sends explicit previous poses instead.
     pub shift_sequence: u64,
     pub current: &'a [NodePose],
     pub current_stamps: &'a [u64],
@@ -82,43 +34,18 @@ pub struct GpuPresentation<'a> {
     pub info_stamps: &'a [u64],
     pub authority: &'a [PoseRows],
     pub authority_stamps: &'a [u64],
-    /// Active nodes with children, ordered by depth; compose these first.
     pub parents: &'a [u32],
-    /// End offset in `parents` of each depth level, shallowest first.
     pub levels: &'a [u32],
-    /// Records stamped with `sequence` in the current, previous, info and
-    /// authority streams. A consumer that applied the gather just before this
-    /// one can skip a stream with no stamped records and copy a mostly stamped
-    /// stream whole instead of scanning its stamps.
     pub stamped: [usize; 4],
-    /// Per stream, the node of every record stamped with `sequence`, in no
-    /// particular order, when the gather listed them all (at most a quarter
-    /// of the nodes). A consumer one gather behind can upload these records
-    /// without scanning stamps.
     pub stamped_nodes: [Option<&'a [u32]>; 4],
-    /// Topology and hierarchy revision whose locals `current` holds: equal
-    /// versions certify equal current poses (see `Engine::gpu_current`).
     pub current_version: (u64, u64),
-    /// This gather describes a tick completed ahead of its due frame: keep
-    /// presenting the inputs applied last, at `alpha`, and apply this gather
-    /// at the first view without `hold`. A consumer that applied nothing yet
-    /// in this `identity` applies it now instead.
     pub hold: bool,
 }
 
-/// GPU presentation's current poses between frames (see
-/// `Engine::gpu_current`), for a renderer to stage before the frame that
-/// uploads them.
 #[derive(Clone, Copy)]
 pub struct GpuCurrent<'a> {
-    /// The hierarchy's cached local of every node, in upload layout.
     pub poses: &'a [NodePose],
-    /// [`GpuPresentation::current_version`] of `poses`: equal versions
-    /// certify equal poses.
     pub version: (u64, u64),
-    /// Current poses the latest gather stamped when it has `version`, and
-    /// every pose otherwise. A gather stamping most of them uploads the
-    /// whole stream; other gathers upload only the stamped records.
     pub stamped: usize,
 }
 
@@ -127,56 +54,37 @@ pub(crate) struct GpuInputs {
     identity: u64,
     sequence: u64,
     alpha: f32,
-    // Revisions of the state the last gather read; any change regathers.
     gathered: Option<(u64, u64, u64)>,
     current_stamps: Vec<u64>,
     previous: Vec<NodePose>,
     previous_stamps: Vec<u64>,
-    // Per node: epochs (low 32 bits) at which the published current pose was
-    // last confirmed, and for which the consumer's previous pose is valid.
     epochs: Vec<[u32; 2]>,
     info: Vec<NodeInfo>,
     info_stamps: Vec<u64>,
     authority: Vec<PoseRows>,
     authority_stamps: Vec<u64>,
-    // Hierarchy output revision each authority row was written from.
     authority_revisions: Vec<u64>,
     parents: Vec<u32>,
     levels: Vec<u32>,
-    // Parent-first traversal state and a depth-bucket scratch for `parents`.
     state: Vec<u8>,
     depth_counts: Vec<u32>,
     parent_scratch: Vec<(u8, u32)>,
-    // Interpolation epoch and hierarchy revision of the last gather, and the
-    // hierarchy revision when the latest fixed tick began.
     last_epoch: Option<u64>,
     last_revision: u64,
     tick_begin_revision: Option<u64>,
     shift: bool,
     shift_sequence: u64,
-    // Records the latest gather stamped in each stream, and their nodes while
-    // the lists stay within their bound.
     stamped: [usize; 4],
     stamped_lists: [Vec<u32>; 4],
     current_version: (u64, u64),
-    // Views hold consumers at their last applied gather (see
-    // `GpuPresentation::hold`).
     hold: bool,
-    // Set while the latest gather was made ahead and no view without `hold`
-    // presented it yet: the shift sequence before it, restored if a later
-    // gather supersedes it before consumers apply it.
     unpresented: Option<u64>,
-    // Nodes the last gather made `NODE_ACTIVE`, when it listed every one
-    // (`active_listed`): a sparse gather revisits them all.
     active: Vec<u32>,
     next_active: Vec<u32>,
     active_listed: bool,
-    // Sparse gathers: per-node queue marks (a node is queued when its mark
-    // equals the generation) and one queue per depth.
     queued: Vec<u32>,
     queue_generation: u32,
     buckets: Vec<Vec<u32>>,
-    // Nodes the latest gather visited.
     visited: usize,
 }
 
@@ -222,7 +130,6 @@ impl Default for GpuInputs {
     }
 }
 
-/// Marks a node's published poses as not maintained, writing only on change.
 #[inline]
 fn forget_published(epochs: &mut [u32; 2]) {
     if *epochs != [NEVER; 2] {
@@ -236,7 +143,6 @@ fn bit<T: Default>(on: bool, value: T) -> T {
 }
 
 impl GpuInputs {
-    /// Current poses are the hierarchy's cached locals.
     pub(crate) fn view<'a>(&'a self, hierarchy: &'a HierarchyScratch) -> GpuPresentation<'a> {
         GpuPresentation {
             alpha: self.alpha,
@@ -296,13 +202,10 @@ impl GpuInputs {
             + self.parent_scratch.capacity() * size_of::<(u8, u32)>()
     }
 
-    /// Records the hierarchy revision at the start of a fixed tick.
     pub(super) fn begin_tick(&mut self, hierarchy_revision: Option<u64>) {
         self.tick_begin_revision = hierarchy_revision;
     }
 
-    /// Displays another fraction of the gathered inputs without regathering,
-    /// or, with `hold`, of the inputs consumers applied before them.
     pub(super) fn set_alpha(&mut self, alpha: f32, hold: bool) {
         self.alpha = alpha;
         self.hold = hold;
@@ -311,13 +214,10 @@ impl GpuInputs {
         }
     }
 
-    /// A view without `hold` presents the latest gather to consumers.
     pub(super) fn presented(&mut self) {
         self.unpresented = None;
     }
 
-    /// Marks the latest gather as made ahead of its due frame; `prior` is the
-    /// shift sequence before it.
     pub(super) fn gathered_ahead(&mut self, prior: u64) {
         self.unpresented = Some(prior);
     }
@@ -334,7 +234,6 @@ impl GpuInputs {
         self.alpha
     }
 
-    /// Resets per-node storage for a new node index space.
     fn reindex(&mut self, nodes: usize) {
         self.identity = NEXT_INPUT_STREAM.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         fn reset<T: Copy>(values: &mut Vec<T>, nodes: usize, value: T) {
@@ -349,7 +248,6 @@ impl GpuInputs {
         reset(&mut self.authority_revisions, nodes, u64::MAX);
         reset(&mut self.previous, nodes, [0.0; 10]);
         reset(&mut self.epochs, nodes, [NEVER; 2]);
-        // Never matches a gathered record, so every node is stamped once.
         reset(&mut self.info, nodes, [u32::MAX; 2]);
         reset(&mut self.authority, nodes, [[0.0; 4]; 3]);
         reset(&mut self.state, nodes, 0);
@@ -358,19 +256,15 @@ impl GpuInputs {
         self.buckets.resize_with(MAX_HIERARCHY_DEPTH + 1, Vec::new);
         self.active.clear();
         self.active_listed = false;
-        // The new stream starts without previous poses to shift.
         self.last_epoch = None;
     }
 }
 
 impl InterpolationState {
-    /// Whether GPU presentation has gathered inputs.
     pub(crate) fn gathers_gpu(&self) -> bool {
         self.gpu.gathered.is_some()
     }
 
-    /// Current poses now, with the latest gather's stamp count when it
-    /// gathered them; `None` before GPU presentation first gathered.
     pub(crate) fn gpu_current<'a>(
         &self,
         hierarchy: &'a HierarchyScratch,
@@ -391,7 +285,6 @@ impl InterpolationState {
         })
     }
 
-    /// Whether the last gather used the hierarchy's current node space.
     pub(super) fn gathered_topology(&self, hierarchy: &HierarchyScratch) -> bool {
         self.gpu
             .gathered
@@ -399,7 +292,6 @@ impl InterpolationState {
             && self.gpu.info.len() == hierarchy.links().len()
     }
 
-    /// Whether the last gather still describes the current inputs.
     pub(super) fn gathered_current(&self, hierarchy: &HierarchyScratch) -> bool {
         self.gpu.gathered
             == Some((
@@ -409,11 +301,6 @@ impl InterpolationState {
             ))
     }
 
-    /// Gathers GPU inputs for displaying `alpha` of the latest fixed interval.
-    /// Mirrors the dense CPU pass's decisions in parent-first order; the GPU
-    /// applies the fraction. Skipped when nothing it reads changed. Drains the
-    /// hierarchy's change log: when few nodes changed, only the nodes whose
-    /// inputs can differ are visited (see [`walk`]).
     pub(super) fn gather_gpu(&mut self, hierarchy: &mut HierarchyScratch, alpha: f32) {
         self.gpu.alpha = alpha;
         self.gpu.hold = false;
@@ -453,13 +340,6 @@ impl InterpolationState {
         let sequence = self.gpu.sequence;
         let epoch = self.epoch;
         let first_of_epoch = self.gpu.last_epoch != Some(epoch);
-        // Exactly one tick since the last gather, and no boundary changed a
-        // local between that gather and the tick: every interval's previous
-        // pose is the current pose the last gather published.
-        // A gather made ahead and superseded before any view presented it
-        // never reached consumers: they still hold the gather before it, so
-        // this one sends explicit previous poses and the skipped gather's
-        // shift does not count as one they missed.
         let superseded = self.gpu.unpresented.take();
         let shift = superseded.is_none()
             && first_of_epoch
@@ -478,7 +358,6 @@ impl InterpolationState {
             sequence,
             epoch,
             active_tick: self.active,
-            // Epoch comparisons use the low 32 bits; a wrap needs 2^32 fixed ticks.
             this_epoch: epoch as u32,
             shift,
             last_revision: self.gpu.last_revision,
@@ -489,10 +368,6 @@ impl InterpolationState {
             previous: &self.previous,
             indices: &self.indices,
         };
-        // Sparse when the nodes it must visit are a small share of all nodes
-        // (the walk counts them: the active, changed and recorded nodes
-        // largely coincide); a new node space, an overflowed log or an
-        // unlisted active set walks every node.
         let sparse = changes.filter(|changes| {
             !reindexed
                 && self.gpu.active_listed
@@ -508,7 +383,6 @@ impl InterpolationState {
         gpu.last_epoch = Some(epoch);
         gpu.last_revision = hierarchy.revision();
         gpu.stamped = changed;
-        // Active parents by depth: every level composes after its ancestors.
         gpu.depth_counts.clear();
         for &(depth, _) in &gpu.parent_scratch {
             let depth = usize::from(depth);
@@ -543,11 +417,8 @@ impl InterpolationState {
     }
 }
 
-/// A sparse gather visits at most this share of the nodes (one in N): more
-/// visits cost about as much as streaming every node in parent-first order.
 const SPARSE_SHARE: usize = 3;
 
-/// Decisions one gather shares across every node.
 #[derive(Clone, Copy)]
 struct Pass {
     sequence: u64,
@@ -558,7 +429,6 @@ struct Pass {
     last_revision: u64,
 }
 
-/// Interpolation records a gather reads.
 struct Records<'a> {
     history_nodes: &'a [u32],
     intervals: &'a [Interval],
@@ -566,8 +436,6 @@ struct Records<'a> {
     indices: &'a EntityIndices,
 }
 
-/// Split borrow of the per-node arrays a gather reads and writes, each viewed
-/// at the node count so one checked access covers the others.
 struct Walk<'a> {
     pass: Pass,
     hierarchy: &'a HierarchyScratch,
@@ -590,15 +458,12 @@ struct Walk<'a> {
     authority_revisions: &'a mut [u64],
     state: &'a mut [u8],
     parent_scratch: &'a mut Vec<(u8, u32)>,
-    // Records stamped per stream: current, previous, info, authority; and
-    // their nodes up to `list_limit` each.
     changed: [usize; 4],
     lists: &'a mut [Vec<u32>; 4],
     list_limit: usize,
 }
 
 impl Walk<'_> {
-    /// Counts a record stamped in `stream`, and lists it within the bound.
     #[inline(always)]
     fn stamp(&mut self, stream: usize, index: usize) {
         self.changed[stream] += 1;
@@ -608,19 +473,12 @@ impl Walk<'_> {
         }
     }
 
-    /// Gathers one node after its parent, returning its traversal bits before
-    /// and after. A node's inputs are its topology, validity, cached local
-    /// and output revisions, its interpolation record and its parent's bits.
     #[inline(always)]
     fn node(&mut self, index: usize) -> (u8, u8) {
         let pass = self.pass;
         let link = &self.links[index];
-        // The node's state before this gather: its authority bit is current
-        // for the rest of the gather.
         let before = self.state[index];
         if !link.topology_valid() {
-            // Invalid ancestry never renders or composes; children are
-            // invalid too, so their inherited state is never read.
             let after = before & AUTHORITY;
             self.state[index] = after;
             forget_published(&mut self.epochs[index]);
@@ -662,9 +520,6 @@ impl Walk<'_> {
         let snap = own_snap || inherited & SNAP != 0;
         let parent_active = valid && inherited & ACTIVE != 0;
         let blend = valid && blends && !snap;
-        // A node whose local changed since the last gather also composes
-        // on the GPU, from its current local without blending: uploading
-        // that local beats composing and uploading its authority rows.
         let moved = self.local_revisions[index] > pass.last_revision;
         let active = valid && (blend || parent_active || moved);
         let flags = bit(valid, NODE_VALID)
@@ -681,7 +536,6 @@ impl Walk<'_> {
         if active {
             let [published, mut previous_valid] = self.epochs[index];
             let published_last = published != NEVER && published == pass.this_epoch.wrapping_sub(1);
-            // The consumer's shift made the last published pose previous.
             if pass.shift && published_last {
                 previous_valid = pass.this_epoch;
             }
@@ -697,16 +551,11 @@ impl Walk<'_> {
                 previous_valid = pass.this_epoch;
                 self.stamp(1, index);
             }
-            // The consumer holds this node's local as of the last gather
-            // unless the node was not maintained then; upload it when it
-            // changed since, without reading the pose itself.
             if published == NEVER || moved {
                 self.current_stamps[index] = pass.sequence;
                 self.stamp(0, index);
             }
             self.epochs[index] = [pass.this_epoch, previous_valid];
-            // Active authority rows are never read; rewrite them when the
-            // node next becomes inactive.
             if authority_bit != 0 {
                 self.authority_revisions[index] = u64::MAX;
                 authority_bit = 0;
@@ -715,7 +564,6 @@ impl Walk<'_> {
                 self.parent_scratch.push((link.depth(), index as u32));
             }
         } else {
-            // Inactive poses are not maintained, so none stays published.
             forget_published(&mut self.epochs[index]);
             if valid {
                 let revision = self.hierarchy.revision_at(index);
@@ -738,16 +586,6 @@ impl Walk<'_> {
     }
 }
 
-/// Gathers every node in parent-first order, or with `sparse` (the nodes
-/// whose local or output changed since the last gather) only the nodes whose
-/// inputs can differ from the last gather, by depth: the nodes active then,
-/// every interpolation record's node (blend decisions follow the tick), the
-/// changed nodes, and the children of every visited node whose snap or active
-/// bit changed. Any other node has unchanged inputs and outputs: it was not
-/// active, has no record, and its parent's bits are unchanged, so it stays
-/// inactive with unchanged authority rows. A sparse gather whose distinct
-/// seeds exceed its bound walks every node instead. Returns the stamps per
-/// stream.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -833,8 +671,6 @@ fn walk(
     let generation = *queue_generation;
     let links = &hierarchy.links()[..nodes];
     let queued = &mut queued[..nodes];
-    // Each node is queued once, in the bucket of its depth: parents always
-    // precede their children, which sit one level deeper.
     let mut enqueue = |buckets: &mut [Vec<u32>], index: usize| {
         if queued[index] != generation {
             queued[index] = generation;
@@ -849,7 +685,6 @@ fn walk(
         seeds += usize::from(enqueue(&mut buckets[..], index as usize));
     }
     for &index in records.history_nodes {
-        // Records beyond the node budget have no node.
         if (index as usize) < nodes {
             seeds += usize::from(enqueue(&mut buckets[..], index as usize));
         }
@@ -893,7 +728,6 @@ fn walk(
     gather.changed
 }
 
-/// Gathers every node in parent-first order, listing the active ones.
 fn walk_all(
     gather: &mut Walk<'_>,
     hierarchy: &HierarchyScratch,
@@ -902,8 +736,6 @@ fn walk_all(
     active_listed: &mut bool,
     visited: &mut usize,
 ) -> [usize; 4] {
-    // A later sparse gather needs the complete active set; beyond its bound
-    // none can be sparse, so stop listing.
     let nodes = hierarchy.links().len();
     let limit = nodes / SPARSE_SHARE;
     let mut listed = true;

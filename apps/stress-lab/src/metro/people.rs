@@ -1,17 +1,10 @@
-//! Skinned pedestrians: a low-poly figure of boxes bound to
-//! eleven joints, outfits in vertex colors, and walk and idle clips
-//! that turn the joints. Built in meters, facing +X, feet on
-//! the origin; the city scales each person's root.
-
 use std::f32::consts::TAU;
 
 use engine::prelude::*;
 
 use crate::kit::model_builder::{Builder, Map};
 
-/// Outfits the city draws people in.
 pub(crate) const VARIANTS: u8 = 8;
-/// Joints of every person, parents before children.
 pub(crate) const JOINTS: usize = 11;
 
 const HIPS: u16 = 0;
@@ -26,7 +19,6 @@ const FOREARM_L: u16 = 8;
 const ARM_R: u16 = 9;
 const FOREARM_R: u16 = 10;
 
-/// Each joint's parent and rest translation from it (the root for `None`).
 pub(crate) const SKELETON: [(Option<usize>, [f32; 3]); JOINTS] = [
     (None, [0.0, 0.95, 0.0]),
     (Some(0), [0.0, 0.08, 0.0]),
@@ -41,7 +33,6 @@ pub(crate) const SKELETON: [(Option<usize>, [f32; 3]); JOINTS] = [
     (Some(9), [0.0, -0.3, 0.0]),
 ];
 
-/// Joint positions at rest, in the person's space.
 fn rest_positions() -> [Vec3; JOINTS] {
     let mut positions = [Vec3::ZERO; JOINTS];
     for (index, (parent, offset)) in SKELETON.iter().enumerate() {
@@ -51,7 +42,6 @@ fn rest_positions() -> [Vec3; JOINTS] {
     positions
 }
 
-/// Inverse bind matrices: from the person's space into each joint's.
 pub(crate) fn inverse_binds() -> Vec<Mat4> {
     rest_positions()
         .iter()
@@ -59,7 +49,6 @@ pub(crate) fn inverse_binds() -> Vec<Mat4> {
         .collect()
 }
 
-/// Skin, hair, top, bottom and shoe colors of `variant`.
 fn outfit(variant: u8) -> [[f32; 3]; 5] {
     let skins = [
         [0.95, 0.76, 0.62],
@@ -99,7 +88,6 @@ fn outfit(variant: u8) -> [[f32; 3]; 5] {
     ]
 }
 
-/// The skinned mesh of outfit `variant`, in bind space.
 pub(crate) fn mesh(variant: u8) -> engine::Result<Mesh> {
     let [skin, hair, top, bottom, shoes] = outfit(variant);
     let mut b = Builder::default();
@@ -110,7 +98,6 @@ pub(crate) fn mesh(variant: u8) -> engine::Result<Mesh> {
         b.paint(color);
         b.block(min, max, map);
     };
-    // Legs and feet (the figure faces +X; left is +Z).
     for (side, thigh, shin) in [(0.1, THIGH_L, SHIN_L), (-0.1, THIGH_R, SHIN_R)] {
         part(
             &mut b,
@@ -134,7 +121,6 @@ pub(crate) fn mesh(variant: u8) -> engine::Result<Mesh> {
             v(0.16, 0.09, side + 0.06),
         );
     }
-    // Hips, torso, neck, head and hair.
     part(
         &mut b,
         HIPS,
@@ -158,7 +144,6 @@ pub(crate) fn mesh(variant: u8) -> engine::Result<Mesh> {
         v(0.11, 1.78, 0.09),
     );
     part(&mut b, HEAD, hair, v(-0.12, 1.72, -0.1), v(0.08, 1.82, 0.1));
-    // Arms and hands.
     for (side, arm, forearm) in [(0.26, ARM_L, FOREARM_L), (-0.26, ARM_R, FOREARM_R)] {
         part(
             &mut b,
@@ -185,9 +170,6 @@ pub(crate) fn mesh(variant: u8) -> engine::Result<Mesh> {
     b.finish(false).map(|(mesh, _)| mesh)
 }
 
-/// A looping clip of `duration` seconds keyed at `keys` + 1 evenly spaced
-/// times, each joint turning about Z by `angle(joint, phase)` (phase in
-/// turns), and the hips at `hips(phase)`.
 fn clip(
     duration: f32,
     keys: u32,
@@ -230,8 +212,6 @@ fn clip(
     AnimationClip::new(channels).map_err(engine::Error::from)
 }
 
-/// One stride cycle a second: legs swing, knees bend on the way forward,
-/// arms swing against the legs and the hips bob twice.
 pub(crate) fn walk() -> engine::Result<AnimationClip> {
     let rest = Vec3::from(SKELETON[0].1);
     clip(
@@ -257,7 +237,6 @@ pub(crate) fn walk() -> engine::Result<AnimationClip> {
     )
 }
 
-/// Standing: a slow sway, breathing and a glance around.
 pub(crate) fn idle() -> engine::Result<AnimationClip> {
     let rest = Vec3::from(SKELETON[0].1);
     clip(

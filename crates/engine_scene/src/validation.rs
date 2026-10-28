@@ -18,9 +18,7 @@ use crate::{
 };
 
 pub(crate) struct PreparedScene {
-    /// Validated.
     pub environment: Option<crate::SceneEnvironment>,
-    /// The components of each expanded entity, parallel to `entities`.
     pub components: Vec<PreparedEntity>,
     pub meshes: Vec<Mesh>,
     pub materials: Vec<PreparedMaterial>,
@@ -29,13 +27,9 @@ pub(crate) struct PreparedScene {
     pub entities: Vec<ExpandedObject>,
     pub clips: Vec<AnimationClip>,
     pub skin_binds: Vec<Arc<[Mat4]>>,
-    /// Streamed entities.
     pub streamed: PreparedStreamed,
 }
 
-/// A document's streamed entities, expanded: their
-/// transforms, components and parents (indices into this list), and the
-/// items they form.
 #[derive(Default)]
 pub(crate) struct PreparedStreamed {
     pub entities: Vec<ExpandedObject>,
@@ -45,37 +39,26 @@ pub(crate) struct PreparedStreamed {
     pub items: Vec<PreparedItem>,
 }
 
-/// A streamed root with its descendants: their indices,
-/// the root first and the rest in expanded order; where the root stands;
-/// and the meters its content reaches from there.
 pub(crate) struct PreparedItem {
     pub entities: Vec<usize>,
     pub position: Vec3,
     pub reach: f32,
 }
 
-/// An expanded entity's validated components besides its transform, mesh
-/// and material.
 pub(crate) struct PreparedEntity {
-    /// The listed ones, prepared with the scene's files.
     pub components: PreparedComponents,
     pub player: Option<PreparedPlayer>,
     pub skin: Option<PreparedSkin>,
 }
 
-/// Resolves an ID a clip target or skin joint names, from an entity's
-/// placement first, to an expanded entity index.
 type Resolve<'a> = dyn Fn(&ExpandedObject, &str) -> Option<usize> + 'a;
 
-/// A document's animation and skin IDs, and each skin's inverse bind
-/// matrices.
 struct Rigs<'a> {
     animation_ids: BTreeSet<&'a str>,
     skin_ids: BTreeSet<&'a str>,
     skin_binds: Vec<Arc<[Mat4]>>,
 }
 
-/// A document's CPU assets, in source order.
 struct CpuAssets {
     textures: Vec<Texture>,
     meshes: Vec<Mesh>,
@@ -83,22 +66,14 @@ struct CpuAssets {
 }
 
 impl SceneDocument {
-    /// Validates a document assembled through Rust or an authoring editor.
-    ///
-    /// Validation is independent of a world and may allocate temporary CPU
-    /// geometry. Asset residency budgets are checked during instantiation.
-    /// Referenced files are checked only by [`Self::validate_with`].
     pub fn validate(&self) -> Result<(), SceneError> {
         self.prepare(None).map(|_| ())
     }
 
-    /// Validates the document and the contents of the files it references.
     pub fn validate_with(&self, files: &SceneFiles) -> Result<(), SceneError> {
         self.prepare(Some(files)).map(|_| ())
     }
 
-    /// The files this document references, each once, in
-    /// authored order: the host supplies them as [`SceneFiles`].
     pub fn files(&self) -> Vec<SceneFile> {
         let mut files: Vec<SceneFile> = Vec::new();
         let mut add = |uri: &String, kind| {
@@ -129,7 +104,6 @@ impl SceneDocument {
                 add(uri, SceneFileKind::Buffer);
             }
         }
-        // Terrains: heightmaps as buffers.
         let entities = self
             .entities
             .iter()
@@ -144,8 +118,6 @@ impl SceneDocument {
         files
     }
 
-    /// `files`: `None` validates structure only, reading referenced files as
-    /// placeholders.
     pub(crate) fn prepare(&self, files: Option<&SceneFiles>) -> Result<PreparedScene, SceneError> {
         identifier(&self.id, "$.id")?;
         self.validate_camera()?;
@@ -175,8 +147,6 @@ impl SceneDocument {
             .enumerate()
             .map(|(index, entity)| (entity.source.id.as_str(), index))
             .collect();
-        // Targets and joints name local IDs of the entity's placement first,
-        // then scene IDs.
         let resolve = |entity: &ExpandedObject, id: &str| {
             entity
                 .prefab_instance
@@ -224,9 +194,6 @@ impl SceneDocument {
         })
     }
 
-    /// The components of the streamed entities, whose
-    /// animation targets and skin joints resolve within their item, but
-    /// those only the document's entities may author.
     fn prepare_streamed(
         &self,
         streamed: &ExpandedScene,
@@ -260,9 +227,6 @@ impl SceneDocument {
             .collect()
     }
 
-    /// The streamed entities' items: each root with its
-    /// descendants, standing at the root's position and reaching as far as
-    /// their meshes, lights, emitters, decals, probes and splines do.
     fn streamed_items(
         &self,
         streamed: ExpandedScene,
@@ -287,7 +251,6 @@ impl SceneDocument {
             })
             .collect();
         let roots = item_roots(&streamed.entities, &indices);
-        // World matrices, parents first.
         let mut worlds: Vec<Option<Mat4>> = vec![None; streamed.entities.len()];
         let mut chain = Vec::new();
         for start in 0..worlds.len() {
@@ -355,7 +318,6 @@ impl SceneDocument {
                 items[item].reach = engine_core::math::max(items[item].reach, reach);
             }
         }
-        // Each item's root first.
         for item in &mut items {
             item.entities
                 .sort_by_key(|&index| (parents[index].is_some(), index));
@@ -369,9 +331,6 @@ impl SceneDocument {
         }
     }
 
-    /// Animation and skin sources: their unique IDs,
-    /// names, targets and joints, the clips and skins prefab definitions
-    /// name, and each skin's inverse bind matrices.
     fn prepare_rigs(&self) -> Result<Rigs<'_>, SceneError> {
         let animation_ids = unique_ids(
             self.animations
@@ -397,7 +356,6 @@ impl SceneDocument {
                 skin.inverse_binds(&format!("$.skins[{index}]"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // Prefab definitions reference clips and skins even when unplaced.
         for (prefab, definition) in self.prefabs.iter().enumerate() {
             for (index, entity) in definition.entities.iter().enumerate() {
                 let path = format!("$.prefabs[{prefab}].entities[{index}]");
@@ -420,9 +378,6 @@ impl SceneDocument {
         })
     }
 
-    /// Every CPU texture, mesh and material, built before a world resource
-    /// is borrowed: an invalid late asset cannot leave earlier ones
-    /// resident. `files` as for [`Self::prepare`].
     fn prepare_assets(&self, files: Option<&SceneFiles>) -> Result<CpuAssets, SceneError> {
         for (mesh_index, mesh) in self.meshes.iter().enumerate() {
             if let MeshSource::Inline { vertices, .. } = &mesh.source {
@@ -464,7 +419,6 @@ impl SceneDocument {
         })
     }
 
-    /// Refuses a skin with fewer joints than its entity's mesh names.
     fn check_skin_joints(
         &self,
         entities: &[ExpandedObject],
@@ -496,8 +450,6 @@ impl SceneDocument {
         Ok(())
     }
 
-    /// The components of expanded entity `entity`, validated, with clip
-    /// targets and skin joints resolved by `resolve`.
     fn prepare_entity(
         &self,
         entity: &ExpandedObject,
@@ -506,7 +458,6 @@ impl SceneDocument {
         files: Option<&SceneFiles>,
     ) -> Result<PreparedEntity, SceneError> {
         let (source, path) = (&entity.source, &entity.path);
-        // The components' rules are checked with the entity's.
         Ok(PreparedEntity {
             player: self.prepare_player(entity, resolve, &rigs.animation_ids)?,
             skin: self.prepare_skin(entity, resolve, &rigs.skin_ids)?,
@@ -514,7 +465,6 @@ impl SceneDocument {
         })
     }
 
-    /// The animation player of `entity`, its targets resolved by `resolve`.
     fn prepare_player(
         &self,
         entity: &ExpandedObject,
@@ -575,7 +525,6 @@ impl SceneDocument {
         }))
     }
 
-    /// The skin of `entity`, its joints resolved by `resolve`.
     fn prepare_skin(
         &self,
         entity: &ExpandedObject,
@@ -624,8 +573,6 @@ impl SceneDocument {
     }
 }
 
-/// The root of each expanded entity's tree, by index; `indices` maps IDs
-/// to indices. The graph is validated: parents exist and form no cycle.
 fn item_roots(entities: &[ExpandedObject], indices: &BTreeMap<&str, usize>) -> Vec<usize> {
     let parent = |index: usize| {
         entities[index]
@@ -644,8 +591,6 @@ fn item_roots(entities: &[ExpandedObject], indices: &BTreeMap<&str, usize>) -> V
         .collect()
 }
 
-/// Checks authored ID `id` at `path`: engine_settings' ID rule, which every
-/// ID's schema states.
 pub(crate) fn identifier(id: &str, path: &str) -> Result<(), SceneError> {
     if engine_settings::is_id(id) {
         return Ok(());
@@ -657,11 +602,8 @@ pub(crate) fn identifier(id: &str, path: &str) -> Result<(), SceneError> {
     ))
 }
 
-/// Bytes of an authored display name at most.
 pub(crate) const MAX_NAME_BYTES: usize = 128;
 
-/// Checks display name `name` at `path`: at most [`MAX_NAME_BYTES`] UTF-8
-/// bytes, without control characters.
 pub(crate) fn display_name(name: &str, path: &str) -> Result<(), SceneError> {
     if name.len() > MAX_NAME_BYTES || name.chars().any(char::is_control) {
         return Err(SceneError::new(

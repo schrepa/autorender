@@ -1,14 +1,7 @@
-// Tile classification of the visibility buffer: which 8x8
-// tiles hold pixels of each material bin, so each bin's resolve draws only
-// those. A tile lists a bin once, by its first pixel of that bin.
-
 struct Classify {
-    // The size in pixels the frame draws at, the tiles across it and each
-    // bin's room for tiles (every tile of the display).
     size: vec2<u32>,
     tiles_across: u32,
     capacity: u32,
-    // Bins drawn this phase.
     bins: u32,
     pad0: u32,
     pad1: u32,
@@ -16,12 +9,9 @@ struct Classify {
 }
 
 @group(0) @binding(0) var<uniform> classify: Classify;
-// Each pixel's visible entry plus one (0: none) and triangle | bin << 7.
 @group(0) @binding(1) var ids: texture_2d<u32>;
-// Each bin's tiles, then its tile list from `bin * capacity`.
 @group(0) @binding(2) var<storage, read_write> counts: array<atomic<u32>>;
 @group(0) @binding(3) var<storage, read_write> tiles: array<u32>;
-// Per bin: vertices, instances, first vertex, first instance.
 @group(0) @binding(4) var<storage, read_write> draw_args: array<u32>;
 
 const NONE: u32 = 0xffffffffu;
@@ -56,7 +46,6 @@ fn classify_tiles(@builtin(workgroup_id) tile: vec3<u32>,
     }
 }
 
-// Each bin's draw: two triangles per listed tile.
 @compute @workgroup_size(64)
 fn resolve_args(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= classify.bins {

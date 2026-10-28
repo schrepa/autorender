@@ -1,30 +1,3 @@
-//! Terrain jobs: terrain work engines hand workers, as bytes
-//! in and bytes out: a tile generated whole, a tile's portals of a walk
-//! graph, a stack baked, a terrain's lighting, bounce transfer and macro
-//! colors, a tile's part of the water settling over the regions reaching it
-//! (which the renderer settles on the GPU), a tile's water as settled water
-//! stands it, and a coarser tile's shading (level 0's averaged). Workers
-//! hold once what many jobs read, shared by key: layer stacks with their
-//! bakes, the recipes generating a terrain's tiles from one, the records of
-//! settled water tiles' water reads, whole or their heads, and the records
-//! of shading coarser tiles' shading reads. Jobs run the same code wherever
-//! they run (a worker, a host without workers, the cook), so their results
-//! are the same bits, and every job's output but a water's part is a
-//! record hosts keep and the cook ships: every field of a job is something
-//! its output depends on.
-//!
-//! A tile's job, and its portals', carries the edits reaching its ground
-//! alone, its recipe's stack none: an edit leaves every other tile's jobs,
-//! and their records, as they were. A terrain's lighting and its bounce
-//! transfer read a level's heights, each tile generated as its record holds
-//! it under the edits reaching it (the bounce transfer with its recipe's
-//! surface), and hosts keep them by the keys of those tiles' records; its
-//! macro colors read its recipe, without edits; a tile's water reads its
-//! tile and the records of settled water around it, kept by their keys; a
-//! level-1 tile's shading reads the level-0 tiles under it and around it,
-//! each under the edits reaching it, and a coarser tile's the records of
-//! the level finer's shading, named by their keys.
-
 use engine_math::collections::HashMap;
 use std::sync::Arc;
 
@@ -42,12 +15,6 @@ use crate::{
     WaterPart,
 };
 
-/// The kinds of terrain jobs, which hosts carry by name: a tile of a
-/// shared recipe, a tile's portals over a shared stack, a stack's bakes, a
-/// terrain's lighting, its bounce transfer and its macro colors, a tile's
-/// part of the water settling over the regions reaching it, a tile's water
-/// as settled water stands it, and a coarser tile's shading. Workers match
-/// every kind, so a kind added without its work fails to build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
     Tile,
@@ -62,7 +29,6 @@ pub enum JobKind {
 }
 
 impl JobKind {
-    /// Every kind.
     pub const ALL: [Self; 9] = [
         Self::Tile,
         Self::Portals,
@@ -75,7 +41,6 @@ impl JobKind {
         Self::Shading,
     ];
 
-    /// Its name, as hosts carry it and key the records they keep by.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Tile => "terrain_tile",
@@ -90,7 +55,6 @@ impl JobKind {
         }
     }
 
-    /// The kind named `name`.
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
@@ -102,8 +66,6 @@ codec::tagged!(Placing, "invalid placing" {
     2 => Far,
 });
 
-/// How a terrain's surroundings see a stack: as
-/// [`Layers::surroundings`] takes them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StackView {
     pub offset: Vec2,
@@ -119,19 +81,12 @@ record!(StackView {
     blend,
 });
 
-/// How a terrain's tiles generate: from the stack shared as `stack`, seen
-/// through `view` for surroundings, over `pyramid`, with `surface`'s
-/// control values and placed objects.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainRecipe {
     pub stack: String,
     pub view: Option<StackView>,
     pub pyramid: Pyramid,
     pub surface: Biomes,
-    /// Whether the tiles shading with their own samples (level-0 tiles,
-    /// and every tile of surroundings) hold control values; without, the
-    /// GPU gives them. A terrain's coarser tiles hold none either way:
-    /// their shading gives theirs ([`TileShading::shades`]).
     pub materials: bool,
 }
 
@@ -143,32 +98,24 @@ record!(TerrainRecipe {
     materials,
 });
 
-/// What shared bytes hold: a stack, a recipe naming one, a record of
-/// settled water whole, such a record's head ([`SteadyWater::head`]), or a
-/// record of a tile's shading.
 const STACK: u8 = 0;
 const RECIPE: u8 = 1;
 const SETTLED: u8 = 2;
 const SUMMARY: u8 = 3;
 const SHADING: u8 = 4;
 
-/// `layers` (with their bakes) as workers share it.
 pub fn share_stack(layers: &Layers) -> Vec<u8> {
     let mut writer = Writer::new();
     writer.put(&STACK).put(layers);
     writer.into_bytes()
 }
 
-/// `recipe` as workers share it: after the stack it names.
 pub fn share_recipe(recipe: &TerrainRecipe) -> Vec<u8> {
     let mut writer = Writer::new();
     writer.put(&RECIPE).put(recipe);
     writer.into_bytes()
 }
 
-/// The record of settled water `record` (its bytes) as workers share it
-/// whole, for level-0 tiles' water to read ([`SteadiedJob`]), as
-/// [`settled_key`].
 pub fn share_settled(record: &[u8]) -> Vec<u8> {
     let mut shared = Vec::with_capacity(record.len() + 1);
     shared.push(SETTLED);
@@ -176,9 +123,6 @@ pub fn share_settled(record: &[u8]) -> Vec<u8> {
     shared
 }
 
-/// A record of settled water's head (`head`, its bytes:
-/// [`SteadyWater::head`]) as workers share it, for coarser tiles' water to
-/// read its summary ([`SteadiedJob`]), as [`summary_key`].
 pub fn share_summary(head: &[u8]) -> Vec<u8> {
     let mut shared = Vec::with_capacity(head.len() + 1);
     shared.push(SUMMARY);
@@ -186,21 +130,14 @@ pub fn share_summary(head: &[u8]) -> Vec<u8> {
     shared
 }
 
-/// The key the record of settled water whose key's bytes are `record` is
-/// shared whole as.
 pub fn settled_key(record: &[u8; 32]) -> String {
     format!("settled-{}", hex(record))
 }
 
-/// The key the head of the record of settled water whose key's bytes are
-/// `record` is shared as.
 pub fn summary_key(record: &[u8; 32]) -> String {
     format!("summary-{}", hex(record))
 }
 
-/// The record of a tile's shading `record` (its bytes) as workers share
-/// it, for the shading of the tiles of the next coarser level around it to
-/// read ([`ShadingJob`]), as [`shading_key`].
 pub fn share_shading(record: &[u8]) -> Vec<u8> {
     let mut shared = Vec::with_capacity(record.len() + 1);
     shared.push(SHADING);
@@ -208,21 +145,14 @@ pub fn share_shading(record: &[u8]) -> Vec<u8> {
     shared
 }
 
-/// The key the record of a tile's shading whose key's bytes are `record` is
-/// shared as.
 pub fn shading_key(record: &[u8; 32]) -> String {
     format!("shading-{}", hex(record))
 }
 
-/// `bytes` as lowercase hexadecimal digits.
 fn hex(bytes: &[u8; 32]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// A [`JobKind::Tile`]: tile `key` of the recipe shared as `recipe`, whole,
-/// with every object its level places, under `stamps`, the terrain's edits
-/// reaching its ground, in order. Like every terrain job, it is its own
-/// identity and its own input.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TileJob {
     pub recipe: String,
@@ -239,22 +169,15 @@ record!(TileJob {
 impl TileJob {
     pub const KIND: JobKind = JobKind::Tile;
 
-    /// What its output is kept by, and its input: the job.
     pub fn identity(&self) -> Vec<u8> {
         codec::encode(self)
     }
 }
 
-/// A [`JobKind::Tile`]'s output: the tile.
 pub fn tile_output(bytes: &[u8]) -> Result<Tile, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`JobKind::Portals`]: tile `key`'s portals of the walk graph of `gait`
-/// over `pyramid` ([`TilePortals`]), its ground generated from the stack
-/// shared as `stack` under `stamps`, the terrain's edits reaching its
-/// ground, in order, as its tile's record holds it. Like every terrain job,
-/// it is its own identity and its own input.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PortalsJob {
     pub stack: String,
@@ -275,20 +198,15 @@ record!(PortalsJob {
 impl PortalsJob {
     pub const KIND: JobKind = JobKind::Portals;
 
-    /// What its output is kept by, and its input: the job.
     pub fn identity(&self) -> Vec<u8> {
         codec::encode(self)
     }
 }
 
-/// A [`JobKind::Portals`]'s output: the tile's portals.
 pub fn portals_output(bytes: &[u8]) -> Result<TilePortals, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`JobKind::Bake`]: every bake of `layers` over `pyramid`. Its input is the
-/// job; as its layers can hold whole heightmaps, hosts keep its output by
-/// that input's content hash, which engines compute.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BakeJob {
     pub layers: Layers,
@@ -300,27 +218,15 @@ record!(BakeJob { layers, pyramid });
 impl BakeJob {
     pub const KIND: JobKind = JobKind::Bake;
 
-    /// Its input: the job.
     pub fn input(&self) -> Vec<u8> {
         codec::encode(self)
     }
 }
 
-/// A [`JobKind::Bake`]'s output: the layers with every bake done.
 pub fn bake_output(bytes: &[u8]) -> Result<Layers, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`JobKind::Lighting`]: the lighting ([`crate::lighting`]) of the
-/// terrain the recipe shared as `recipe` generates, from its `level`'s
-/// heights over the whole terrain (its finest pinned level, at the steps
-/// tiles travel at), with a sky map `sky` and a horizon map `horizons`
-/// texels a side. Each of the level's tiles, row by row, takes its heights
-/// from the tile `tiles` names for it, generated under the edits named with
-/// it as its record holds it: itself, or an ancestor standing in, read
-/// between its samples, where surroundings leave its ground to their
-/// terrain. Its input is the job; hosts keep its output by the keys of
-/// those tiles' records, which engines find without its heights.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LightingJob {
     pub recipe: String,
@@ -341,35 +247,22 @@ record!(LightingJob {
 impl LightingJob {
     pub const KIND: JobKind = JobKind::Lighting;
 
-    /// Its input: the job.
     pub fn input(&self) -> Vec<u8> {
         codec::encode(self)
     }
 
-    /// Whether its maps hold a texel to the most a side.
     fn valid(&self) -> bool {
         (1..=MAX_LIGHTING_TEXELS).contains(&self.sky)
             && (1..=MAX_LIGHTING_TEXELS).contains(&self.horizons)
     }
 }
 
-/// The most texels along a lighting map's side.
 pub const MAX_LIGHTING_TEXELS: u32 = 4096;
 
-/// A [`JobKind::Lighting`]'s output: the terrain's lighting.
 pub fn lighting_output(bytes: &[u8]) -> Result<TerrainLighting, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`JobKind::Water`]: level-0 tile `key`'s part of the water settling
-/// over the regions reaching it ([`WaterPart`]), its ground generated and
-/// its objects placed from the recipe shared as `recipe` (its stack with
-/// its bakes) under `stamps`, the terrain's edits reaching its ground, in
-/// order, its objects standing as `solids` (by its surface's asset; none
-/// for an asset whose objects stand as none), on the terrain's lattice of
-/// cells `cell` meters across. Its input is the job; its output is no
-/// record: the regions it is part of settle on the GPU, and their tiles'
-/// water is.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterJob {
     pub recipe: String,
@@ -390,14 +283,11 @@ record!(WaterJob {
 impl WaterJob {
     pub const KIND: JobKind = JobKind::Water;
 
-    /// Its input: the job.
     pub fn input(&self) -> Vec<u8> {
         codec::encode(self)
     }
 }
 
-/// A [`JobKind::Water`]'s output: the tile's part, its arrays holding its
-/// corners and cells.
 pub fn water_output(bytes: &[u8]) -> Result<WaterPart, CodecError> {
     let part: WaterPart = codec::decode(bytes)?;
     if !part.valid() {
@@ -406,17 +296,6 @@ pub fn water_output(bytes: &[u8]) -> Result<WaterPart, CodecError> {
     Ok(part)
 }
 
-/// A [`JobKind::Steadied`]: the water settled water stands at tile
-/// `tile.key`'s samples, the tile as its record (`tile`) holds it, its
-/// objects aside, on the terrain's lattice of cells `cell` meters across.
-/// A level-0 tile's stands as the records of settled water `settled` names
-/// say ([`Tile::steadied`]): its own and those of the level-0 tiles around
-/// it holding water, each by its tile and its key's bytes, shared whole
-/// ([`settled_key`]). A coarser tile's runs as their summaries say
-/// ([`Tile::flowing`]): those of the level-0 tiles under it and around it,
-/// each shared as its record's head ([`summary_key`]). Its input is the job;
-/// hosts keep its output by the keys of its tile's record and of what it
-/// reads, which engines find.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SteadiedJob {
     pub tile: TileJob,
@@ -433,24 +312,15 @@ record!(SteadiedJob {
 impl SteadiedJob {
     pub const KIND: JobKind = JobKind::Steadied;
 
-    /// Its input: the job.
     pub fn input(&self) -> Vec<u8> {
         codec::encode(self)
     }
 }
 
-/// A [`JobKind::Steadied`]'s output: the tile's water, none where none
-/// stands on it.
 pub fn steadied_output(bytes: &[u8]) -> Result<Option<TileWater>, CodecError> {
     codec::decode(bytes)
 }
 
-/// What a tile's shading reads ([`ShadingJob`]), the tiles of the level
-/// finer under it and around it ([`TileShading::reads`]), in their order: a
-/// level-1 tile's, the level-0 tiles, each with the edits reaching its
-/// ground in order, generated as their records hold them; a coarser tile's,
-/// the records of their shading, each by its tile and its key's bytes,
-/// shared ([`shading_key`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum ShadingReads {
     Tiles(Vec<(TileKey, Vec<Stamp>)>),
@@ -462,12 +332,6 @@ codec::tagged!(ShadingReads, "invalid shading reads" {
     1 => Shadings(shadings),
 });
 
-/// A [`JobKind::Shading`]: the shading ([`TileShading`]) of tile `key`, of
-/// level 1 or coarser, of the terrain the recipe shared as `recipe`
-/// generates, its level 0's averaged, from what `reads` names: a level-1
-/// tile's from the level-0 tiles' heights and rivers by the recipe's
-/// surface, a coarser tile's from the level finer's shading. Like every
-/// terrain job, it is its own identity and its own input.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShadingJob {
     pub recipe: String,
@@ -480,24 +344,15 @@ record!(ShadingJob { recipe, key, reads });
 impl ShadingJob {
     pub const KIND: JobKind = JobKind::Shading;
 
-    /// What its output is kept by, and its input: the job.
     pub fn identity(&self) -> Vec<u8> {
         codec::encode(self)
     }
 }
 
-/// A [`JobKind::Shading`]'s output: the tile's shading.
 pub fn shading_output(bytes: &[u8]) -> Result<TileShading, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`JobKind::Bounce`]: the bounce transfer ([`crate::bounce`]) of the
-/// terrain the recipe shared as `recipe` generates, from the heights its
-/// lighting reads (its `level`'s, each tile from the one `tiles` names for
-/// it, as a [`LightingJob`] reads them), with `probes` columns along each
-/// side, its surface chosen by the recipe's rules and layers. Its input is
-/// the job; hosts keep its output by the keys of those tiles' records, which
-/// engines find.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BounceJob {
     pub recipe: String,
@@ -516,29 +371,19 @@ record!(BounceJob {
 impl BounceJob {
     pub const KIND: JobKind = JobKind::Bounce;
 
-    /// Its input: the job.
     pub fn input(&self) -> Vec<u8> {
         codec::encode(self)
     }
 
-    /// Whether its probes are an even count from 2 to the most.
     fn valid(&self) -> bool {
         (2..=MAX_PROBES).contains(&self.probes) && self.probes.is_multiple_of(2)
     }
 }
 
-/// A [`JobKind::Bounce`]'s output: the terrain's bounce transfer.
 pub fn bounce_output(bytes: &[u8]) -> Result<TerrainBounce, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`JobKind::Macro`]: the macro colors ([`crate::macro_colors`]) of the
-/// terrain the recipe shared as `recipe` generates, each cause as strong as
-/// the recipe's surface says ([`Biomes::macro_colors`]), `size` texels a
-/// side, its shape read from the heights of its `level`'s tiles (its finest
-/// pinned level, which its lighting reads too). Like a tile's job it is its
-/// own identity and its own input. Its output is the map's RGBA8 texels,
-/// rows along z.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MacroJob {
     pub recipe: String,
@@ -555,23 +400,16 @@ record!(MacroJob {
 impl MacroJob {
     pub const KIND: JobKind = JobKind::Macro;
 
-    /// What its output is kept by, and its input: the job.
     pub fn identity(&self) -> Vec<u8> {
         codec::encode(self)
     }
 
-    /// Whether its map's sides are whole blocks, at most
-    /// [`MAX_MACRO_TEXELS`].
     fn valid(&self) -> bool {
         (MACRO_BLOCK..=MAX_MACRO_TEXELS).contains(&self.size)
             && self.size.is_multiple_of(MACRO_BLOCK)
     }
 }
 
-/// A shared recipe as a worker holds it: its layers seen as its terrain
-/// sees them, its pyramid, its compiled surface, whether its tiles shading
-/// with their own samples hold control values, and whether its terrain is
-/// a terrain's surroundings.
 struct Recipe {
     layers: Arc<Layers>,
     pyramid: Pyramid,
@@ -581,13 +419,11 @@ struct Recipe {
 }
 
 impl Recipe {
-    /// Its layers under `stamps`, edits in order.
     fn stamped(&self, stamps: &[Stamp]) -> Result<Arc<Layers>, String> {
         stamped(&self.layers, stamps)
     }
 }
 
-/// `layers` under `stamps`, edits in order.
 pub(crate) fn stamped(layers: &Arc<Layers>, stamps: &[Stamp]) -> Result<Arc<Layers>, String> {
     if stamps.is_empty() {
         return Ok(layers.clone());
@@ -598,13 +434,6 @@ pub(crate) fn stamped(layers: &Arc<Layers>, stamps: &[Stamp]) -> Result<Arc<Laye
         .map_err(|error| error.to_string())
 }
 
-/// A level's heights over a whole terrain in the making, as its lighting
-/// and its bounce transfer read them ([`Ground`]): from a recipe's layers
-/// over its pyramid, each of the level's tiles, row by row, filled from the
-/// tile standing in for it (itself, or an ancestor read between its
-/// samples), generated under the edits reaching it a slice at a time, each
-/// once, and read back as its record holds it; `samples` along x and z,
-/// `spacing` meters apart, row by row along z.
 struct GroundMaking {
     layers: Arc<Layers>,
     pyramid: Pyramid,
@@ -618,10 +447,6 @@ struct GroundMaking {
 }
 
 impl GroundMaking {
-    /// The heights of `recipe`'s `level`, each of its tiles, row by row,
-    /// from the one `tiles` names for it with the edits reaching that one's
-    /// ground; an error where the level is not the pyramid's or a tile named
-    /// stands in for no tile of the level.
     fn new(recipe: &Recipe, level: u32, tiles: Vec<(TileKey, Vec<Stamp>)>) -> Result<Self, String> {
         let pyramid = recipe.pyramid;
         if level >= pyramid.levels() {
@@ -657,9 +482,6 @@ impl GroundMaking {
         })
     }
 
-    /// Works for about `budget` units (a sample generated each): whether
-    /// every tile of the level is filled; an error where a tile standing in
-    /// does not generate or read back.
     fn advance(&mut self, budget: &mut u64) -> Result<bool, String> {
         let columns = self.pyramid.tiles(self.level)[0] as usize;
         while let Some(&(held, _)) = self.tiles.get(self.next) {
@@ -694,7 +516,6 @@ impl GroundMaking {
                 return Ok(false);
             };
             self.generator = None;
-            // As its record holds it: heights at their steps of the grid.
             let tile: Tile =
                 codec::decode(&codec::encode(&made)).map_err(|error| error.to_string())?;
             self.made.push((held, tile));
@@ -702,7 +523,6 @@ impl GroundMaking {
         Ok(true)
     }
 
-    /// The heights filled.
     fn ground(&self) -> Ground<'_> {
         Ground {
             samples: self.samples,
@@ -711,15 +531,11 @@ impl GroundMaking {
         }
     }
 
-    /// The terrain's extent along x and z.
     fn extent(&self) -> [f32; 2] {
         self.pyramid.extent().to_array()
     }
 }
 
-/// Fills level-`level` tile `key`'s samples of `heights` (`columns` a
-/// row) from `tile`, the tile standing in for it: its own samples, or an
-/// ancestor's heights between its samples.
 fn fill((heights, columns): (&mut [f32], usize), (key, level): (TileKey, u32), tile: &Tile) {
     let quads = TILE_QUADS as usize;
     let first = [usize::from(key.x) * quads, usize::from(key.z) * quads];
@@ -746,8 +562,6 @@ fn fill((heights, columns): (&mut [f32], usize), (key, level): (TileKey, u32), t
     }
 }
 
-/// `tile`'s height at its fractional sample `(x, z)`, between the samples
-/// around it.
 fn between(tile: &Tile, x: f32, z: f32) -> f32 {
     let (x0, z0) = (x.floor(), z.floor());
     let (tx, tz) = (x - x0, z - z0);
@@ -761,7 +575,6 @@ fn between(tile: &Tile, x: f32, z: f32) -> f32 {
     near + (far - near) * tz
 }
 
-/// A job a worker started, to step until done.
 enum Running {
     Tile(Box<Generator>),
     Portals(Box<(Arc<Layers>, Pyramid, TileKey, Gait)>),
@@ -774,9 +587,6 @@ enum Running {
     Shading(Box<ShadingMaking>),
 }
 
-/// What a worker holds of terrains, and runs their jobs over: stacks,
-/// recipes, and records of settled water (whole or their heads) and of
-/// tiles' shading as shared.
 #[derive(Default)]
 pub struct TerrainWorker {
     stacks: HashMap<String, Arc<Layers>>,
@@ -790,10 +600,6 @@ impl TerrainWorker {
         Self::default()
     }
 
-    /// Holds the shared `bytes` as `key`: a stack, a recipe whose stack it
-    /// already holds, or a record of settled water whole or its head or of a
-    /// tile's shading, which it holds as shared until the jobs reading them
-    /// start.
     pub fn share(&mut self, key: &str, bytes: impl Into<Arc<[u8]>>) -> Result<(), String> {
         let bytes: Arc<[u8]> = bytes.into();
         let (&tag, rest) = bytes.split_first().ok_or("empty share")?;
@@ -838,14 +644,12 @@ impl TerrainWorker {
         Ok(())
     }
 
-    /// Drops what was shared as `key`.
     pub fn unshare(&mut self, key: &str) {
         self.stacks.remove(key);
         self.recipes.remove(key);
         self.records.remove(key);
     }
 
-    /// Runs job `kind` on `input` whole; its output.
     pub fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         const WHOLE: u64 = u64::MAX;
         self.start(WHOLE, kind, input)?;
@@ -856,9 +660,6 @@ impl TerrainWorker {
         }
     }
 
-    /// Starts job `id` of `kind` on `input`, to
-    /// [`Self::step`] until done; another of the same id stops. A tile's
-    /// water reads the records it names as they are shared now.
     pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
         let invalid = |error: CodecError| error.to_string();
         let kind = JobKind::from_name(kind).ok_or_else(|| format!("unknown job kind {kind}"))?;
@@ -875,7 +676,6 @@ impl TerrainWorker {
                 if !recipe.pyramid.contains(key) {
                     return Err("tile outside its pyramid".into());
                 }
-                // Tiles shading with their shading take its control values.
                 let materials = recipe.materials && !TileShading::shades(key.level, recipe.around);
                 Running::Tile(Box::new(
                     Generator::new(recipe.stamped(&stamps)?, &recipe.pyramid, key)
@@ -984,11 +784,6 @@ impl TerrainWorker {
         Ok(())
     }
 
-    /// Works on job `id` for about `budget` work units (about one per
-    /// sample; portals, bakes and macro colors run whole, as do lighting and
-    /// bounce transfers and level-1 tiles' shading once their tiles are
-    /// generated, and coarser tiles' shading): its output once done, `None`
-    /// while work is left. A job that failed or finished is gone.
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
         let Some(running) = self.running.get_mut(&id) else {
             return Err("no such job".into());
@@ -1059,7 +854,6 @@ impl TerrainWorker {
         output.map(Some)
     }
 
-    /// Stops job `id`, if it runs.
     pub fn cancel(&mut self, id: u64) {
         self.running.remove(&id);
     }
@@ -1070,8 +864,6 @@ impl TerrainWorker {
             .ok_or_else(|| format!("unknown recipe {key}"))
     }
 
-    /// The making of `job`'s water, reading what it names as shared now:
-    /// the shares may go once it started.
     fn steadying(&self, job: &SteadiedJob) -> Result<Steadying, String> {
         let recipe = self.recipe(&job.tile.recipe)?;
         let (key, cell) = (job.tile.key, job.cell);
@@ -1101,9 +893,6 @@ impl TerrainWorker {
         ))
     }
 
-    /// The record of settled water shared whole for the key whose bytes are
-    /// `record` ([`settled_key`]): level-0 tile `key`'s, of cells `cell`
-    /// meters across.
     fn settled(&self, record: &[u8; 32], key: TileKey, cell: f32) -> Result<SteadyWater, String> {
         let name = settled_key(record);
         let water: SteadyWater = match self.records.get(&name).map(|bytes| bytes.split_first()) {
@@ -1118,9 +907,6 @@ impl TerrainWorker {
         Ok(water)
     }
 
-    /// The summary of the record of settled water whose head is shared for
-    /// the key whose bytes are `record` ([`summary_key`]): level-0 tile
-    /// `key`'s, of cells `cell` meters across.
     fn summary(&self, record: &[u8; 32], key: TileKey, cell: f32) -> Result<SteadySummary, String> {
         let name = summary_key(record);
         let (head, _) = match self.records.get(&name).map(|bytes| bytes.split_first()) {
@@ -1135,11 +921,6 @@ impl TerrainWorker {
         Ok(head.summary)
     }
 
-    /// The making of `job`'s shading, reading what it names as shared now
-    /// (the shares may go once it started): a level-1 tile's from the
-    /// level-0 tiles under it and around it, a coarser tile's from the
-    /// records of the level finer's shading there, each the tiles
-    /// [`TileShading::reads`] names, in its order.
     fn shading(&self, job: ShadingJob) -> Result<ShadingMaking, String> {
         let recipe = self.recipe(&job.recipe)?;
         let (pyramid, key) = (recipe.pyramid, job.key);
@@ -1169,8 +950,6 @@ impl TerrainWorker {
         }
     }
 
-    /// The record of tile `key`'s shading shared for the key whose bytes
-    /// are `record` ([`shading_key`]).
     fn shared_shading(&self, record: &[u8; 32], key: TileKey) -> Result<TileShading, String> {
         let name = shading_key(record);
         let shading: TileShading = match self.records.get(&name).map(|bytes| bytes.split_first()) {
@@ -1186,7 +965,6 @@ impl TerrainWorker {
     }
 }
 
-/// Whether `named` are the tiles of `reads`, in their order.
 fn names(named: impl Iterator<Item = TileKey>, reads: &[TileKey]) -> bool {
     named.eq(reads.iter().copied())
 }

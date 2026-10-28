@@ -1,6 +1,3 @@
-# Engine trigonometry, minimum, maximum and clamping are branch-free and give
-# the same bits on native targets and in browsers; the standard functions
-# mispredict in Wasm.
 disallowed-methods = [
     { path = "f32::sin", reason = "use engine::math::sin" },
     { path = "f32::cos", reason = "use engine::math::cos" },
@@ -8,16 +5,10 @@ disallowed-methods = [
     { path = "f32::min", reason = "use engine::math::min: browsers compile f32::min to a branch" },
     { path = "f32::max", reason = "use engine::math::max: browsers compile f32::max to a branch" },
     { path = "f32::clamp", reason = "use engine::math::clamp: browsers compile f32::clamp to branches" },
-    # A fused multiply-add rounds once where a multiply and an add round
-    # twice: records made on hosts with and without FMA would differ.
     { path = "f32::mul_add", reason = "write a * b + c: a fused multiply-add rounds once, so records would differ between hosts" },
     { path = "f64::mul_add", reason = "write a * b + c: a fused multiply-add rounds once, so records would differ between hosts" },
-    # A panic is fatal to the engine on every host: builds abort, Wasm cannot
-    # unwind, and a half-changed world is not safe to keep running.
     { path = "std::panic::catch_unwind", reason = "a panic stops the engine for good (engine_panic); return an error instead" },
     { path = "std::panic::set_hook", reason = "engine_panic::install is the engine's one panic hook" },
-    # The renderer makes these GPU calls through one function each, which
-    # holds every caller to the rule beside it.
     { path = "wgpu::Device::create_pipeline_layout", reason = "use engine_render's pipelines::pipeline_layout: each layout is a pipeline_layouts! row, which lint holds to the device limits" },
     { path = "wgpu::Device::create_bind_group", reason = "use engine_render's pipelines::group or filled_group: they bind a bindings table's entries by name" },
     { path = "wgpu::Device::create_render_pipeline", reason = "use engine_render's pipelines::geometry, sampled or fullscreen: they key every pipeline, which the scene's pipeline list records" },
@@ -26,9 +17,6 @@ disallowed-methods = [
     { path = "wgpu::Device::push_error_scope", reason = "use engine_render's gpu_calls::validation_scope: scopes cover creation, never a frame's work" },
 ]
 
-# Hash maps and sets iterate in the same order every run: the standard
-# library's seed SipHash at random. Removal queues lose what fixed ticks
-# skip.
 disallowed-types = [
     { path = "std::collections::HashMap", reason = "use engine_math::collections::HashMap (engine_core::collections, engine::collections): a fixed hasher, the same order every run" },
     { path = "std::collections::HashSet", reason = "use engine_math::collections::HashSet (engine_core::collections, engine::collections): a fixed hasher, the same order every run" },
@@ -36,5 +24,4 @@ disallowed-types = [
     { path = "bevy_ecs::lifecycle::RemovedComponents", reason = "removals between the fixed ticks that read them are lost: observe Remove (or Despawn) instead" },
 ]
 
-# Functions longer than this fail (Cargo.toml's too_many_lines).
 too-many-lines-threshold = 120

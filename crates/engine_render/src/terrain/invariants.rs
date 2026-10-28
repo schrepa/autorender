@@ -1,30 +1,6 @@
-//! What the terrain pass holds true after every preparation, checked in
-//! builds with debug assertions:
-//!
-//! - T1 slots: every resident tile's slot holds that tile, and only
-//!   resident tiles have arrival or surface times or shade with their
-//!   shading;
-//! - T2 layers: each layer holds at most one tile, every layer handed out
-//!   is resident or free, never both, and none lies past the arrays;
-//! - T3 holes: each tile with hole bits has its own run of them past the
-//!   layers' fades and within the buffer, and only such tiles do;
-//! - T4 ranges: each frame terrain's kept patches lie within the records
-//!   laid out, without overlapping, its uniform within the buffer, and
-//!   every record names a resident layer and a hole run or none;
-//! - T5 directory: every terrain's directory names the layers its
-//!   resident tiles hold and nothing else;
-//! - T6 listing: every resident tile is the one its terrain lists, every
-//!   listed tile holds a layer or waits for one and only listed tiles do,
-//!   and the tiles noted with holes are the resident tiles with holes;
-//! - T7 fades: each layer's fades are what its tile's arrival and surface
-//!   materials give now (none where no tile holds it);
-//! - T8 water: tiles' water holds blocks for every resident tile, of that
-//!   tile, and for no other.
-
 use super::*;
 
 impl TerrainPass {
-    /// Asserts T1 to T8 over `terrains`, just prepared.
     #[expect(clippy::too_many_lines, reason = "one assertion pass over every table")]
     #[expect(
         clippy::iter_over_hash_type,
@@ -33,7 +9,6 @@ impl TerrainPass {
     pub(super) fn check(&self, terrains: &RenderTerrains) {
         let atlas = &self.atlas;
         let tables = &self.tables;
-        // T1 slots.
         for key in atlas.slots.keys() {
             debug_assert!(
                 atlas.held.contains_key(key),
@@ -53,7 +28,6 @@ impl TerrainPass {
                 "T1: {key:?} has a time or its shading but no slot"
             );
         }
-        // T2 layers.
         let mut owners = vec![0_u8; atlas.next_layer as usize];
         for (key, &layer) in &atlas.slots {
             debug_assert!(
@@ -87,7 +61,6 @@ impl TerrainPass {
             atlas.next_layer,
             atlas.layers()
         );
-        // T3 holes.
         let words = (tables.holes.size() / 4) as u32;
         let mut runs: Vec<u32> = tables.hole_offsets.values().copied().collect();
         runs.sort_unstable();
@@ -119,7 +92,6 @@ impl TerrainPass {
                 "T3: resident {key:?} has holes but no run"
             );
         }
-        // T4 ranges.
         let records = self.patches.records();
         let mut ranges: Vec<Range<u32>> = Vec::new();
         for terrain in &self.patches.frame.terrains {
@@ -161,7 +133,6 @@ impl TerrainPass {
                 record.holes
             );
         }
-        // T6 listing.
         let mut listed = 0;
         for terrain in &terrains.terrains {
             for tile in terrain.tiles.iter() {
@@ -202,7 +173,6 @@ impl TerrainPass {
             "T6: {} tiles noted with holes, {holed} resident with holes",
             atlas.holed.len()
         );
-        // T7 fades.
         if let Some((fades, _)) = atlas.faded_with {
             let mut words = vec![0_u32; atlas.fades.len()];
             for (key, &layer) in &atlas.slots {
@@ -216,12 +186,10 @@ impl TerrainPass {
                 "T7: the layers' fades differ from what their tiles give"
             );
         }
-        // T8 water.
         debug_assert!(
             self.water.follows(&atlas.held),
             "T8: tiles' water holds blocks for other tiles than those resident"
         );
-        // T5 directory.
         debug_assert!(
             tables.directory_bases.len() == terrains.terrains.len()
                 && tables.palette_bases.len() == terrains.terrains.len(),

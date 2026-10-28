@@ -1,10 +1,3 @@
-//! Settings and authored values declared once per field. [`settings!`] takes
-//! each field's default and the [`Rule`] its values keep, and from that one
-//! declaration gives the type its `Default`, `validate` (the first field
-//! breaking its rule, then [`ExtraRules::check_extra`]), `sanitized` (every
-//! field made to keep its rule, then [`ExtraRules::sanitize_extra`]) and the
-//! bounds its JSON schema states. Every field names a rule, `any` where none
-//! applies, so none goes unchecked by omission.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
@@ -17,11 +10,8 @@ use glam::Vec3;
 mod codes;
 pub use codes::ErrorCode;
 
-/// A field outside its valid values: its name and the rule it breaks, such
-/// as `must be in [0, 1]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvalidSetting {
-    /// The field's name, with its parents' (`motion_detail.speed`).
     pub field: Cow<'static, str>,
     pub rule: Cow<'static, str>,
 }
@@ -34,7 +24,6 @@ impl InvalidSetting {
         }
     }
 
-    /// The error of a field nested in `parent`.
     #[must_use]
     pub fn within(self, parent: &'static str) -> Self {
         Self {
@@ -52,15 +41,10 @@ impl std::fmt::Display for InvalidSetting {
 
 impl std::error::Error for InvalidSetting {}
 
-/// Bytes an authored ID holds at most ([`Rule::Id`]).
 pub const MAX_ID_BYTES: usize = 64;
 
-/// The characters authored IDs consist of, as a JSON schema pattern
-/// ([`Rule::Id`]).
 pub const ID_PATTERN: &str = "^[A-Za-z0-9_.-]+$";
 
-/// Whether `text` is an authored ID: 1 to [`MAX_ID_BYTES`] ASCII letters,
-/// digits, underscores, hyphens or periods.
 pub fn is_id(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= MAX_ID_BYTES
@@ -69,35 +53,18 @@ pub fn is_id(text: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
-/// What values a setting accepts.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Rule {
-    /// Any value of its type: flags, names, seeds, and parts that keep rules
-    /// of their own.
     Any,
-    /// Any finite value.
     Finite,
-    /// From the first bound to the second, both included.
     Range(f64, f64),
-    /// Above the first bound and at most the second.
     AboveTo(f64, f64),
-    /// Above the bound.
     Above(f64),
-    /// At least the bound.
     AtLeast(f64),
-    /// An optional budget: omitted for none, otherwise at least 1.
     Budget,
-    /// A power of two from the first bound to the second; sanitizing rounds
-    /// up to one.
     PowerOfTwo(f64, f64),
-    /// A multiple of the first value from the second to the third;
-    /// sanitizing rounds down to one.
     Multiple(f64, f64, f64),
-    /// An authored ID ([`is_id`]): strings.
     Id,
-    /// A list of the first bound to the second values, both included:
-    /// lists, whose values keep their own types' rules; sanitizing keeps
-    /// the first values up to the second bound.
     Count(f64, f64),
 }
 
@@ -146,7 +113,6 @@ impl Rule {
         Self::Count(min, max)
     }
 
-    /// The rule as an error states it.
     pub fn describe(self) -> String {
         match self {
             Self::Any => "may be anything".to_owned(),
@@ -168,8 +134,6 @@ impl Rule {
         }
     }
 
-    /// The JSON schema keywords stating the rule, its bounds whole numbers
-    /// for `whole` values.
     #[cfg(feature = "schema")]
     fn keywords(self, whole: bool) -> serde_json::Map<String, serde_json::Value> {
         use serde_json::{Value, json};
@@ -229,13 +193,9 @@ impl Rule {
     }
 }
 
-/// The rules as declarations name them: `range(min, max)` and the like,
-/// their bounds any number, and `same(...)` for the rule another type
-/// declares for a field it mirrors.
 pub mod rule {
     use super::Rule;
 
-    /// A rule's bound: any number.
     pub trait Bound: Copy {
         fn bound(self) -> f64;
     }
@@ -252,7 +212,6 @@ pub mod rule {
 
     bounds!(f64, i32, u8, u16, u32, u64, usize);
 
-    /// Through its shortest decimal form, so 0.1 states 0.1.
     impl Bound for f32 {
         fn bound(self) -> f64 {
             self.to_string().parse().unwrap_or(f64::from(self))
@@ -295,27 +254,19 @@ pub mod rule {
         Rule::Multiple(step.bound(), min.bound(), max.bound())
     }
 
-    /// The rule another type declares for a field this one mirrors, from
-    /// its `rule_of`.
     pub fn same(rule: Option<Rule>) -> Rule {
         rule.expect("the mirrored type declares the field")
     }
 
-    /// An authored ID ([`Rule::Id`]).
     pub fn id() -> Rule {
         Rule::Id
     }
 
-    /// A list of `min` to `max` values ([`Rule::Count`]).
     pub fn count(min: impl Bound, max: impl Bound) -> Rule {
         Rule::Count(min.bound(), max.bound())
     }
 }
 
-/// States `rule` in the schema of `field`, a property of `schema`: an ID's
-/// on the string and a count's on the list; any other on each number of an
-/// array (of arrays), otherwise on the value. A rule on a value of another
-/// kind fails the schema's build.
 #[cfg(feature = "schema")]
 pub fn state(schema: &mut schemars::Schema, field: &str, rule: Rule) {
     use serde_json::{Map, Value};
@@ -352,7 +303,6 @@ pub fn state(schema: &mut schemars::Schema, field: &str, rule: Rule) {
         panic!("settings field {field} has no schema property");
     };
     let target = match rule {
-        // An ID bounds the string, a count the list, themselves.
         Rule::Id => {
             assert!(
                 has_type(property, "string"),
@@ -381,8 +331,6 @@ pub fn state(schema: &mut schemars::Schema, field: &str, rule: Rule) {
     target.extend(rule.keywords(whole));
 }
 
-/// States `rule` on `schema` itself, such as a request field's: a
-/// transform `stated(rule)` for `#[schemars(transform = ...)]`.
 #[cfg(feature = "schema")]
 pub fn stated(rule: Rule) -> impl Fn(&mut schemars::Schema) {
     move |schema| {
@@ -401,41 +349,29 @@ pub fn stated(rule: Rule) -> impl Fn(&mut schemars::Schema) {
     }
 }
 
-/// What a declared type checks beyond each field's own rule: rules relating
-/// fields, and what a [`Rule`] cannot state. Every type says, if only with an
-/// empty `impl`.
 pub trait ExtraRules: Sized {
-    /// Ok when the extra rules hold; runs after every field kept its rule.
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         Ok(())
     }
 
-    /// The value made to keep the extra rules, after every field was made to
-    /// keep its own.
     #[must_use]
     fn sanitize_extra(self) -> Self {
         self
     }
 }
 
-/// A field type rules apply to. Types with nothing to check (flags, names,
-/// enums) implement it empty and take `any`; [`settings!`] implements it for
-/// the types it declares, which then nest.
 pub trait Setting: Clone {
-    /// Ok when the value keeps `rule`; otherwise the error names `field`.
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
         assert_eq!(rule, Rule::Any, "{field}: this type takes no rule but any");
         Ok(())
     }
 
-    /// The value made to keep `rule`, `default` where it is unusable.
     #[must_use]
     fn kept(self, rule: Rule, default: Self) -> Self {
         let _ = (rule, default);
         self
     }
 
-    /// Whether the value can keep a rule by clamping: not NaN or infinite.
     fn usable(&self) -> bool {
         true
     }
@@ -495,7 +431,6 @@ impl Setting for f32 {
     }
 }
 
-/// Integer rules, in `u64`.
 fn whole_keeps(value: u64, rule: Rule) -> bool {
     let within = |min: f64, max: f64| (min as u64..=max as u64).contains(&value);
     match rule {
@@ -590,7 +525,6 @@ impl Setting for f64 {
 
 impl Setting for bool {}
 
-/// An authored ID keeps [`Rule::Id`]; other text takes `any`.
 impl Setting for String {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
         match rule {
@@ -609,10 +543,8 @@ impl Setting for String {
         }
     }
 }
-/// A world box, which its type's extra rules check (`any` here).
 impl Setting for (Vec3, Vec3) {}
 
-/// Omitted, or keeping the rule; an unusable value reads as the default.
 impl<T: Setting> Setting for Option<T> {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
         self.as_ref()
@@ -633,7 +565,6 @@ impl<T: Setting> Setting for Option<T> {
     }
 }
 
-/// Each value of an array keeps the rule.
 impl<T: Setting, const N: usize> Setting for [T; N] {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
         if self.iter().all(|value| value.check(field, rule).is_ok()) {
@@ -659,8 +590,6 @@ impl<T: Setting, const N: usize> Setting for [T; N] {
     }
 }
 
-/// A count bounds the list; any other rule each value of it, an error
-/// naming the value by index.
 impl<T: Setting> Setting for Vec<T> {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
         if let Rule::Count(min, max) = rule {
@@ -699,7 +628,6 @@ impl<T: Setting> Setting for Vec<T> {
     }
 }
 
-/// Each channel of a vector keeps the rule.
 impl Setting for Vec3 {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
         self.to_array().check(field, rule)
@@ -714,21 +642,6 @@ impl Setting for Vec3 {
     }
 }
 
-/// Declares a type once per field: `pub name: Type = default => rule(...)`,
-/// where the rule is one of [`rule`]'s (`any`, `finite`, `range(min, max)`,
-/// `above_to(min, max)`, `above(min)`, `at_least(min)`, `budget`,
-/// `power_of_two(min, max)`, `multiple(step, min, max)`, `id` for an
-/// authored ID, `count(min, max)` for a list's length, or
-/// `same(Other::rule_of("field"))` for a field mirroring another type's). The
-/// caller derives what the type needs (the JSON schema included, which states
-/// the rules when the caller's `schema` feature is on). A type with rules
-/// across its fields starts with `extra_rules;` and implements
-/// [`ExtraRules`] itself; the others keep none. A declared type nests in
-/// others as a field of rule `any`, checked by its own rules.
-///
-/// A type with no JSON schema of its own, such as a runtime type an authored
-/// one mirrors, starts with `unauthored;`; its mirror's schema states the
-/// same rules with `#[schemars(transform = Type::state_rules)]`.
 #[macro_export]
 macro_rules! settings {
     (
@@ -758,9 +671,6 @@ macro_rules! settings {
         $crate::settings!(@rules $rules $name);
 
         impl $name {
-            /// Ok when every field keeps its rule, as the schema states it,
-            /// and the type's extra rules hold; otherwise the first field
-            /// breaking one.
             pub fn validate(&self) -> Result<(), $crate::InvalidSetting> {
                 $($crate::Setting::check(
                     &self.$field,
@@ -770,8 +680,6 @@ macro_rules! settings {
                 $crate::ExtraRules::check_extra(self)
             }
 
-            /// The value with every field made to keep its rule (clamped,
-            /// or its default where unusable), then the type's extra rules.
             pub fn sanitized(self) -> Self {
                 let defaults = Self::default();
                 $crate::ExtraRules::sanitize_extra(Self {
@@ -783,8 +691,6 @@ macro_rules! settings {
                 })
             }
 
-            /// The rule of field `field`, for authored types mirroring this
-            /// one under other names.
             pub fn rule_of(field: &str) -> Option<$crate::Rule> {
                 match field {
                     $(stringify!($field) => Some($crate::rule::$rule($($($arg),*)?)),)*
@@ -792,8 +698,6 @@ macro_rules! settings {
                 }
             }
 
-            /// States each field's rule in the JSON schema of the type, or
-            /// of an authored type mirroring it field for field.
             #[cfg(feature = "schema")]
             pub fn state_rules(schema: &mut schemars::Schema) {
                 $($crate::state(
@@ -804,7 +708,6 @@ macro_rules! settings {
             }
         }
 
-        /// Nested in another declared type, it keeps its own rules.
         impl $crate::Setting for $name {
             fn check(
                 &self,
@@ -819,8 +722,6 @@ macro_rules! settings {
             }
         }
     };
-    // Types without rules across fields keep none; `extra_rules;` types
-    // implement `ExtraRules` themselves.
     (@rules fields $name:ident) => {
         impl $crate::ExtraRules for $name {}
     };

@@ -1,10 +1,5 @@
-//! Searches over a level's samples: what a step costs, the queue they take
-//! samples up from, and the flood of a tile's ground from one sample.
-
 use super::*;
 
-/// What steps cost as a gait walks a level: the most a straight and a
-/// diagonal step rise (meters), and the 256ths of the spacing in a meter.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Stepper {
     straight: f32,
@@ -21,9 +16,6 @@ impl Stepper {
         }
     }
 
-    /// A step's cost from a sample `from` meters high to a neighbor `to`
-    /// meters high, `diagonal` or straight: its run and its rise; `None`
-    /// where it is steeper than the gait climbs.
     pub(super) fn cost(&self, from: f32, to: f32, diagonal: bool) -> Option<u32> {
         let rise = (to - from).abs();
         let (most, run) = if diagonal {
@@ -35,22 +27,14 @@ impl Stepper {
     }
 }
 
-/// The least a walk between samples `a` and `b` costs: its steps over level
-/// ground, never cheaper than a walk's.
 pub(super) fn octile(a: Sample, b: Sample) -> u64 {
     let (x, z) = ((a[0] - b[0]).unsigned_abs(), (a[1] - b[1]).unsigned_abs());
     let (long, short) = if x > z { (x, z) } else { (z, x) };
     u64::from(STRAIGHT) * (long - short) + u64::from(DIAGONAL) * short
 }
 
-/// Keys searches' costs grow by at most between a sample and the next they
-/// take up: the steepest step (a diagonal at ten in one), twice for A*'s
-/// estimates.
 const WINDOW: usize = 1 << 13;
 
-/// Items queued by key, lowest first, for searches whose keys grow by at
-/// most [`WINDOW`] at a time: a ring of lists, the last pushed of a key
-/// first.
 pub(super) struct Buckets {
     lists: Vec<Vec<u32>>,
     at: u64,
@@ -68,7 +52,6 @@ impl Default for Buckets {
 }
 
 impl Buckets {
-    /// Empties it for keys from `first` on.
     pub(super) fn restart(&mut self, first: u64) {
         for list in &mut self.lists {
             list.clear();
@@ -77,8 +60,6 @@ impl Buckets {
         self.at = first;
     }
 
-    /// Queues `item` by `key`, no lower than the last popped (or the first
-    /// it restarted from) and within [`WINDOW`] of it.
     pub(super) fn push(&mut self, key: u64, item: u32) {
         debug_assert!(
             key >= self.at && key - self.at < WINDOW as u64,
@@ -102,9 +83,6 @@ impl Buckets {
     }
 }
 
-/// A Dijkstra search over a tile's ground from one sample: every sample's
-/// cost from it, walking the tile's samples alone, until each of its targets
-/// is settled or nothing is left open.
 #[derive(Default)]
 pub(super) struct Flood {
     pub(super) cost: Vec<u32>,
@@ -114,7 +92,6 @@ pub(super) struct Flood {
 }
 
 impl Flood {
-    /// Starts over from sample `start` toward `targets`.
     pub(super) fn start(&mut self, start: usize, targets: &[usize]) {
         self.cost.clear();
         self.cost.resize(SIDE * SIDE, UNREACHED);
@@ -132,9 +109,6 @@ impl Flood {
         self.queue.push(0, start as u32);
     }
 
-    /// Floods `ground`, whose samples `stands` an agent stands on, as
-    /// `stepper` costs steps, within `budget` (counting what it expands into
-    /// `searched`); whether it is done.
     pub(super) fn step(
         &mut self,
         ground: &WalkGround,

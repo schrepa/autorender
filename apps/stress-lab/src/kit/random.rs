@@ -1,11 +1,5 @@
-//! Deterministic randomness the worlds draw from: two integer hashes
-//! (different functions, each world keeping the one its content was made
-//! with), draws in [0, 1), value noise and a seeded sequence.
-
 use engine::prelude::*;
 
-/// `value` with its bits mixed: the tower field, the city, the metro and
-/// the dense world's hash.
 pub(crate) fn hash(mut value: u32) -> u32 {
     value ^= value >> 16;
     value = value.wrapping_mul(0x7feb_352d);
@@ -14,8 +8,6 @@ pub(crate) fn hash(mut value: u32) -> u32 {
     value ^ (value >> 16)
 }
 
-/// [`hash`] of `value` times the golden ratio: the highlands' rocks,
-/// trees and cave.
 pub(crate) fn golden_hash(value: u32) -> u32 {
     let mut h = value.wrapping_mul(0x9e37_79b1);
     h = (h ^ (h >> 16)).wrapping_mul(0x7feb_352d);
@@ -23,12 +15,10 @@ pub(crate) fn golden_hash(value: u32) -> u32 {
     h ^ (h >> 16)
 }
 
-/// A draw in [0, 1) from `value`'s top 24 bits.
 pub(crate) fn unit(value: u32) -> f32 {
     (value >> 8) as f32 / 16_777_216.0
 }
 
-/// Value noise from 0 to 1 at `point`, smooth between lattice points.
 pub(crate) fn noise(point: Vec3) -> f32 {
     let cell = point.floor();
     let f = point - cell;
@@ -47,7 +37,6 @@ pub(crate) fn noise(point: Vec3) -> f32 {
     lerp(lerp(x00, x10, u.y), lerp(x01, x11, u.y), u.z)
 }
 
-/// Deterministic draws from a seed.
 pub(crate) struct Rng(u32);
 
 impl Rng {

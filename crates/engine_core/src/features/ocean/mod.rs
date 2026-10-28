@@ -1,20 +1,3 @@
-//! The sea: an endless water surface at a still level that
-//! waves raise, the same on the CPU and the GPU. The waves are Gerstner
-//! waves, deep-water waves whose surface points circle so crests sharpen,
-//! drawn from the spectrum of a sea the wind has fully raised and seeded.
-//! Queries find the surface's height and normal over any point at any
-//! time, as frames draw it: frames draw it from a grid around the camera
-//! whose cells widen with distance, the waves shorter than a cell left to
-//! the shading. Its look is its color and its clarity: light passing
-//! through the sea fades toward its scattered color over the distance to the
-//! ground behind it. Foam gathers on crests as strongly as its waves
-//! compress them, and along shores, with no setting of its own; sunlight
-//! glows through crests seen against it.
-//!
-//! Frames draw the waves at the simulation time they present
-//! ([`crate::PresentedTime`]), so entities [`Floating`] on the sea, which ride
-//! it each fixed tick, rise and fall with the waves drawn around them.
-
 use bevy_ecs::prelude::*;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -27,12 +10,10 @@ use engine_settings::{ExtraRules, settings};
 
 pub mod wind_waves;
 
-/// Most waves a sea holds ([`Ocean::waves`]).
 pub const MAX_OCEAN_WAVES: usize = 16;
 
 settings! {
     extra_rules;
-    /// The sea.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -41,31 +22,19 @@ settings! {
     )]
     #[serde(default, deny_unknown_fields)]
     pub struct Ocean {
-        /// Whether the sea draws.
         pub enabled: bool = false => any,
-        /// The height of the still sea, world meters.
         pub level: f32 = 0.0 => range(-10_000.0, 10_000.0),
-        /// The wind that raised it, meters per second along x and z: its speed,
-        /// from 0.5 to 30, sets the waves' height and length and its direction
-        /// heads them.
         pub wind: [f32; 2] = [6.0, 2.0] => range(-30.0, 30.0),
-        /// How sharply crests stand: 0 round swells, 1 nearly breaking.
         pub choppiness: f32 = 0.7 => range(0.0, 1.0),
-        /// The waves the sea holds.
         pub waves: u32 = 12 => range(1, MAX_OCEAN_WAVES),
-        /// The seed of their headings and phases.
         pub seed: u32 = 1 => any,
-        /// The color deep water scatters back, linear.
         pub color: [f32; 3] = [0.004, 0.032, 0.055] => range(0.0, 1.0),
-        /// The meters of water through which half the light passes.
         pub clarity: f32 = 8.0 => range(0.1, 100.0),
-        /// The meters from the camera the sea draws.
         pub reach: f32 = 20_000.0 => range(100.0, 100_000.0),
     }
 }
 
 impl ExtraRules for Ocean {
-    /// The wind's speed lies from 0.5 to 30 meters per second.
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         let [x, z] = self.wind;
         let speed = (x * x + z * z).sqrt();
@@ -79,8 +48,6 @@ impl ExtraRules for Ocean {
         }
     }
 
-    /// The wind rescaled to a speed from 0.5 to 30, the default without a
-    /// heading.
     fn sanitize_extra(self) -> Self {
         let [x, z] = self.wind;
         let speed = (x * x + z * z).sqrt();
@@ -94,10 +61,6 @@ impl ExtraRules for Ocean {
     }
 }
 
-/// One Gerstner wave: its wave vector (radians per meter along x and z,
-/// pointing where it runs), its height above the still sea (meters), how
-/// far its surface points move along it (meters), its angular frequency
-/// (radians per second) and its phase at time zero at the origin.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct OceanWave {
@@ -109,19 +72,16 @@ pub struct OceanWave {
 }
 
 impl OceanWave {
-    /// Meters from crest to crest.
     pub fn length(&self) -> f32 {
         std::f32::consts::TAU / self.number()
     }
 
-    /// Radians per meter.
     fn number(&self) -> f32 {
         let [x, z] = self.vector;
         max((x * x + z * z).sqrt(), 1.0e-6)
     }
 }
 
-/// A sea's waves, longest first, over its still level.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OceanWaves {
     pub level: f32,
@@ -129,11 +89,6 @@ pub struct OceanWaves {
     pub waves: [OceanWave; MAX_OCEAN_WAVES],
 }
 
-/// Where the waves move a point of the still sea: its displacement
-/// (meters), the surface's normal there, and how the waves stretch the
-/// surface across x and z (the derivatives of the moved point's x and z
-/// along x, along z and across: `[dx/dx, dx/dz, dz/dz]`), whose
-/// determinant falls from 1 toward 0 where crests sharpen.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OceanPoint {
     pub displacement: Vec3,
@@ -142,17 +97,12 @@ pub struct OceanPoint {
 }
 
 impl OceanPoint {
-    /// How much the waves compress the surface here: 1 on still water,
-    /// toward 0 on sharpening crests, where foam gathers.
     pub fn compression(&self) -> f32 {
         let [xx, xz, zz] = self.stretch;
         xx * zz - xz * xz
     }
 }
 
-/// The sea's surface over a world point at a time: its height (world
-/// meters), normal, compression ([`OceanPoint::compression`]) and the
-/// point of the still sea that moved there (world x and z).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct OceanSurface {
     pub height: f32,
@@ -162,7 +112,6 @@ pub struct OceanSurface {
 }
 
 impl Ocean {
-    /// What a world without these settings reads as: no sea.
     pub fn off() -> Self {
         Self {
             enabled: false,
@@ -170,26 +119,12 @@ impl Ocean {
         }
     }
 
-    /// The sea's waves: [`Ocean::waves`] of them from the spectrum of a sea
-    /// the wind has fully raised (the wind's sea over unlimited fetch and
-    /// deep water, [`wind_waves::WindSea`]), from three quarters of its peak
-    /// frequency to three and a half times it, each as high as its share of
-    /// the spectrum: none past its viscous end, so wind too light to raise
-    /// them leaves the sea still. Each heads off the wind by a seeded draw
-    /// from the spread measured seas hold at its frequency over the peak's
-    /// (Donelan, Hamilton and Hui 1985; Banner 1990:
-    /// [`engine_tables::waves::spread_turn`]), narrowest at the peak and
-    /// wider above it, alternately to either side. Their phases are seeded,
-    /// and every wave's points circle by the same share of its height, sized
-    /// so the surface's crests sharpen by [`Ocean::choppiness`] without
-    /// folding over.
     pub fn spectrum(&self) -> OceanWaves {
         let settings = self.sanitized();
         let [x, z] = settings.wind;
         let speed = (x * x + z * z).sqrt();
         let heading = [x / speed, z / speed];
         let sea = wind_waves::WindSea::new(speed, f32::INFINITY, f32::INFINITY);
-        // The angular frequency of its peak, deep water's √(g k_p).
         let peak = (GRAVITY * sea.peak).sqrt();
         let count = settings.waves as usize;
         let (low, high) = (0.75 * peak, 3.5 * peak);
@@ -220,15 +155,9 @@ impl Ocean {
             } else {
                 (peak, 0.5 * peak)
             };
-            // The variance of its heights, a²/2 for a wave a high: the
-            // variance of the slopes the sea holds over its band, twice as
-            // wide in the logarithm of the wave number as in the frequency's
-            // (deep water's k = ω²/g), over the square of its wave number.
             let number = frequency * frequency / GRAVITY;
             let variance = sea.slopes(number, 2.0 * width / frequency) / (number * number);
             let amplitude = (2.0 * variance).sqrt();
-            // Its turn off the wind: drawn from the spread at its frequency
-            // over the peak's, alternately to either side.
             let side = if index % 2 == 0 { 1.0 } else { -1.0 };
             let turn = engine_tables::waves::spread_turn(
                 f64::from(frequency / peak),
@@ -248,8 +177,6 @@ impl Ocean {
             };
             slopes += number * amplitude;
         }
-        // Points circle by the same share of each wave's height: the
-        // surface's stretch falls to 1 - choppiness on the sharpest crests.
         let circling = if slopes > 1.0e-6 {
             min(settings.choppiness / slopes, 3.0)
         } else {
@@ -267,9 +194,6 @@ impl Ocean {
 }
 
 settings! {
-    /// Rides the sea: each fixed tick the entity rises and falls with the sea's
-    /// surface under it and leans about its own heading. Unparented entities
-    /// only; nothing moves without an enabled sea.
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -278,23 +202,16 @@ settings! {
     )]
     #[serde(default, deny_unknown_fields)]
     pub struct Floating {
-        /// Meters of it below the surface.
         pub draft: f32 = 0.0 => range(-100.0, 100.0),
-        /// How far it leans: 0 upright, 1 with the surface's normal.
         pub tilt: f32 = 1.0 => range(0.0, 1.0),
     }
 }
 
-/// The sea's systems.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OceanSystems {
-    /// [`Floating`] entities ride the sea at the tick's time, in
-    /// [`crate::FixedSimulation`]; gameplay moving them across it runs
-    /// before.
     Float,
 }
 
-/// Floating entities ride the sea at the fixed tick's time.
 pub(crate) fn float(
     ocean: Option<Res<Ocean>>,
     time: Res<FixedTime>,
@@ -321,26 +238,20 @@ pub(crate) fn float(
     }
 }
 
-/// `angle` radians wrapped into [-pi, pi].
 fn wrapped(angle: f64) -> f32 {
     let turns = (angle / std::f64::consts::TAU).round();
     (angle - turns * std::f64::consts::TAU) as f32
 }
 
 impl OceanWaves {
-    /// The waves held.
     pub fn waves(&self) -> &[OceanWave] {
         &self.waves[..self.count]
     }
 
-    /// The most the surface rises above or falls below the still sea.
     pub fn amplitude(&self) -> f32 {
         self.waves().iter().map(|wave| wave.amplitude).sum()
     }
 
-    /// Each wave's phase at world point (`x`, `z`), `seconds` in, wrapped
-    /// into [-pi, pi]: frames take them at the eye, and their vertices
-    /// add the wave vector's product with their offset from it.
     pub fn phases(&self, x: f64, z: f64, seconds: f64) -> [f32; MAX_OCEAN_WAVES] {
         let mut phases = [0.0; MAX_OCEAN_WAVES];
         for (phase, wave) in phases.iter_mut().zip(self.waves()) {
@@ -353,8 +264,6 @@ impl OceanWaves {
         phases
     }
 
-    /// Where the waves move the still sea's point (`x`, `z`) (world
-    /// meters), `seconds` in.
     pub fn moved(&self, x: f64, z: f64, seconds: f64) -> OceanPoint {
         let phases = self.phases(x, z, seconds);
         let mut displacement = Vec3::ZERO;
@@ -376,8 +285,6 @@ impl OceanWaves {
             xz -= wave.reach * dx * kz * sin;
             zz -= wave.reach * dz * kz * sin;
         }
-        // The moved surface's tangents along x and z; their cross product
-        // faces up.
         let along_x = Vec3::new(xx, rise_x, xz);
         let along_z = Vec3::new(xz, rise_z, zz);
         OceanPoint {
@@ -387,9 +294,6 @@ impl OceanWaves {
         }
     }
 
-    /// The surface over world point (`x`, `z`), `seconds` in: the still
-    /// sea's point the waves move there (found by Newton's method on the
-    /// waves' stretch), and the surface at it.
     pub fn surface(&self, x: f64, z: f64, seconds: f64) -> OceanSurface {
         let mut still = [x, z];
         let mut point = self.moved(x, z, seconds);
@@ -423,15 +327,9 @@ impl OceanWaves {
     }
 }
 
-/// Seconds either side of a moment the sea's water velocity is taken over.
 const VELOCITY_STEP: f64 = 0.05;
-/// Meters of water a sample over ground nothing has loaded stands in.
 const OPEN_SEA: f32 = 1000.0;
 
-/// The sea at world `point` as the world's water reads it, at the fixed
-/// tick's time: its surface, the water over the ground, how fast the waves
-/// move it and the whitecaps where they compress it: the source the ocean
-/// plugin registers.
 pub(crate) fn sea_water(world: &World, point: Vec3) -> Option<crate::WaterSample> {
     let ocean = world
         .get_resource::<Ocean>()
@@ -455,7 +353,6 @@ pub(crate) fn sea_water(world: &World, point: Vec3) -> Option<crate::WaterSample
     })
 }
 
-/// The sea and the entities riding it: [`crate::Feature::Ocean`].
 #[derive(Default)]
 pub struct OceanPlugin;
 

@@ -3,17 +3,12 @@ use glam::{Mat4, Vec3, Vec3A, Vec4};
 
 use crate::presentation_bounds::{MAX_COEFFICIENT, MAX_PRODUCT_BOUND, ROUNDING_MARGIN};
 
-// The interior test evaluates doubled distances, so it doubles this margin too.
 const INTERIOR_MARGIN: f32 = 2.0 * ROUNDING_MARGIN;
 
-/// Result of one conservative visibility test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Classification {
-    /// Proven strictly inside every plane by the cheap world-box test.
     Interior,
-    /// Kept by the transformed-plane support test: intersecting or unproven.
     Retained,
-    /// Proven outside one plane by the transformed-plane support test.
     Outside,
 }
 
@@ -23,8 +18,6 @@ impl Classification {
     }
 }
 
-/// Four planes in component-major lanes for the interior test. Absolute
-/// coefficients weight the product bound; `doubled_w` matches doubled centers.
 #[derive(Clone, Copy)]
 struct PlaneLanes {
     x: Vec4,
@@ -44,7 +37,6 @@ impl PlaneLanes {
             x: lane(0),
             y: lane(1),
             z: lane(2),
-            // Plane coefficients are bounded by 2e15, so doubling is exact.
             doubled_w: lane(3) * 2.0,
             abs_x: lane(0).abs(),
             abs_y: lane(1).abs(),
@@ -54,12 +46,9 @@ impl PlaneLanes {
     }
 }
 
-/// Inward clip planes with WebGPU's -w <= x,y <= w and 0 <= z <= w.
-/// No normalization is needed because the support test preserves plane scale.
 pub(crate) struct Frustum {
     planes: [Vec4; 6],
     absolute_view_projection: Mat4,
-    // The six planes plus two neutral (0, 0, 0, 1) lanes that always pass.
     interior: [PlaneLanes; 2],
 }
 
@@ -91,11 +80,6 @@ impl Frustum {
         })
     }
 
-    /// Most boxes in a wide view are wholly inside. Accepting those with the
-    /// cheap interior test is sound: it proves every point of the box strictly
-    /// inside every plane, while the support test below rejects only boxes
-    /// proven outside one plane. Everything else takes the support test, so
-    /// the result always equals `support_outside` alone.
     #[inline]
     pub(crate) fn classify(&self, model: Mat4, bounds: Aabb) -> Classification {
         if self.contains(model, bounds) {
@@ -107,29 +91,6 @@ impl Frustum {
         }
     }
 
-    /// Returns true only when the whole box is proven strictly inside all six
-    /// planes (exact arithmetic on these f32 inputs). False means "not proven";
-    /// it never means outside. Non-affine, extreme and nonfinite inputs return
-    /// false. One world-space box around the transformed local box replaces
-    /// transforming each plane into local space.
-    ///
-    /// Proof sketch, with u = EPSILON / 2 and gamma(k) = k*u / (1 - k*u).
-    /// Mesh bounds satisfy lo <= hi. Doubled center c = fl(lo + hi) and extent
-    /// e = fl(hi - lo) need no inexact halving; m = max(|lo|, |hi|) is exact,
-    /// and |c| + e <= 2(1 + u)m. For affine M = [L | t], plane (n, w) and box
-    /// point x, 2f(x) = n.(Lc + 2t) + 2w + n.L(2x - c), with
-    /// |2x - c| <= e + 4u*m, so 2*min f >= A - 4u*B, where
-    /// A = n.(Lc + 2t) + 2w - |n|.|L|e and B = |n|.(|L|m + |t|) + |w|.
-    /// The computed world center/extent are 4- and 3-term sums of products,
-    /// followed by 4- and 3-term plane dot products and one subtraction, so
-    /// |D - A| <= (2 gamma(4) + u + O(u^2)) * 2(1 + u)B < 18.1u*B. The computed
-    /// bound (nonnegative terms) is at least (1 - gamma(4))^2 * B. Acceptance
-    /// requires D > 2 * ROUNDING_MARGIN * max(bound, 1) = 128u * max(bound, 1),
-    /// leaving 2*min f > 105u * max(bound, 1) > 0. The floor absorbs absolute
-    /// subnormal product errors (below 1e-28 here). The coefficient and product
-    /// guards keep every intermediate below f32::MAX; any overflow or NaN makes
-    /// a comparison fail. Unlike rejection, acceptance needs no shader-rounding
-    /// margin: a false acceptance could only draw extra geometry.
     #[inline]
     fn contains(&self, model: Mat4, bounds: Aabb) -> bool {
         if model.x_axis.w != 0.0
@@ -180,9 +141,6 @@ impl Frustum {
         })
     }
 
-    /// Reject only boxes proven outside one plane. Transforming the plane into
-    /// local space tests the transformed box directly, including shear and
-    /// reflections. Vertices, strings and heap allocations are not involved.
     fn support_outside(&self, model: Mat4, bounds: Aabb) -> bool {
         let min = bounds.min();
         let max = bounds.max();
@@ -191,9 +149,6 @@ impl Frustum {
         if maximum.max_element() > MAX_COEFFICIENT || !bounded_matrix(absolute_model) {
             return false;
         }
-        // Bounds on sums of absolute products, including cancellation, provide
-        // the scale for a conservative floating-point margin. They also avoid
-        // declaring visibility from intermediate overflow or ambiguous infinities.
         let world_bound = absolute_model * maximum.extend(1.0);
         let clip_bound = self.absolute_view_projection * world_bound;
         if !world_bound.is_finite()
@@ -223,8 +178,6 @@ impl Frustum {
             if !local.is_finite() || !distance.is_finite() {
                 return false;
             }
-            // Covers CPU plane/support rounding and shader model/VP rounding.
-            // The floor also covers subnormal flushing within MAX_COEFFICIENT.
             if distance < -ROUNDING_MARGIN * crate::math::max(bound, 1.0) {
                 return true;
             }

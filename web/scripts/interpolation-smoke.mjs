@@ -1,4 +1,3 @@
-/** Real Chrome interpolation contracts. The disposable scene exists only in routed responses. */
 // @ts-check
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -28,8 +27,6 @@ page.on("response", response => {
 });
 let suiteTimer;
 
-// The page has stalled in native WebGPU on some runs: a command that does
-// not answer within ten seconds fails rather than hangs the suite.
 const command = commander(page, { deadline: 10_000 });
 
 async function inspect(id, component) {
@@ -110,15 +107,10 @@ try {
     canvas.style.cssText = "position:fixed;left:-10000px;top:0;width:320px;height:240px";
     document.body.append(canvas);
     let game;
-    // What it sends the game, which the check records outside.
     const sent = [];
     try {
-      // The fixture references no files.
       game = await StressGame.create_scene(canvas, JSON.stringify(fixture), new SceneFileSet(), "");
-      // Development commands between these frames would complete a pipelined
-      // tick early; this check covers interpolation alone.
       game.set_tick_pipelining(false);
-      // No frame loop runs: the game is paused for every command.
       const request = command => {
         sent.push(command);
         const reply = JSON.parse(game.dev_command(JSON.stringify({ version: protocolVersion, ...command }), 320, 240, true));
@@ -129,7 +121,6 @@ try {
       const state = () => ({ observation: request({ op: "status" }).observation,
         player: inspect("player", "GlobalTransform"), child: inspect("accessory", "GlobalTransform"),
         presentedPlayer: inspect("player", "PresentedTransform"), presentedChild: inspect("accessory", "PresentedTransform") });
-      // Each frame moves forward: W held (again after a suspension drops it).
       const frame = timestamp => { game.key("KeyW", true); game.frame(timestamp, 320, 240); };
       frame(0);
       const before = state();
@@ -142,7 +133,6 @@ try {
       const resumed = state();
       return { before, afterTick, halfTick, resumed, sent };
     } catch (error) {
-      // A failed command is the check's failure, asserted outside.
       if (error.reply) return { failed: error.reply, sent };
       throw error;
     } finally { game?.free(); canvas.remove(); }

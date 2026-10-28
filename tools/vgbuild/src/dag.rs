@@ -1,26 +1,16 @@
-//! Cluster LOD hierarchies from meshoptimizer's `clusterlod`:
-//! the groups of clusters each level simplifies into the next, every cluster
-//! with the group it belongs to and the finer group it came from, and a
-//! bounding volume hierarchy over the groups of each level.
-
 use std::ffi::c_int;
 use std::ops::Range;
 
 use crate::ffi;
 
-/// Triangles per cluster at most: vertex shaders draw 3 vertices of each.
 pub const CLUSTER_TRIANGLES: usize = 128;
-/// Vertices per cluster at most, addressed by 8-bit local indices.
 pub const CLUSTER_VERTICES: usize = 255;
-/// Children per hierarchy node.
 pub const NODE_WIDTH: usize = 8;
 
-/// A sphere in mesh space and the simplification error it bounds.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Bounds {
     pub center: [f32; 3],
     pub radius: f32,
-    /// Mesh-space error; `f32::MAX` for groups never simplified further.
     pub error: f32,
 }
 
@@ -44,40 +34,23 @@ impl From<Bounds> for ffi::ClodBounds {
     }
 }
 
-/// Up to [`CLUSTER_TRIANGLES`] triangles over up to [`CLUSTER_VERTICES`]
-/// vertices.
 #[derive(Clone, Debug)]
 pub struct Cluster {
-    /// The group it belongs to: when that group's simplification is precise
-    /// enough, a coarser cluster replaces it.
     pub group: u32,
-    /// The finer group whose simplification made it (its own error), or
-    /// `None` for original geometry.
     pub refined: Option<u32>,
-    /// Culling sphere (its error is not monotonic across the hierarchy).
     pub bounds: Bounds,
-    /// Normal cone: axis and cutoff (cosine of half its angle) as 8-bit snorm;
-    /// a cutoff of 127 disables it.
     pub cone: [i8; 4],
-    /// Source vertex of each local vertex.
     pub vertices: Vec<u32>,
-    /// Local vertex indices, three per triangle.
     pub triangles: Vec<u8>,
 }
 
-/// Clusters simplified together into the next level's clusters.
 #[derive(Clone, Debug)]
 pub struct Group {
-    /// Level of the hierarchy (0 holds the original geometry).
     pub depth: u32,
-    /// Bounds and error of its simplification: the error of the clusters it
-    /// made, and of every cluster in it when drawn instead of those.
     pub simplified: Bounds,
-    /// Its clusters in [`Dag::clusters`].
     pub clusters: Range<u32>,
 }
 
-/// A node of the bounding volume hierarchy over one level's groups.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NodeKind {
     Group(u32),
@@ -86,22 +59,18 @@ pub enum NodeKind {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Node {
-    /// Bounds of its subtree, with the largest simplified error in it.
     pub bounds: Bounds,
     pub kind: NodeKind,
 }
 
-/// A mesh's cluster LOD hierarchy.
 #[derive(Clone, Debug)]
 pub struct Dag {
     pub clusters: Vec<Cluster>,
     pub groups: Vec<Group>,
-    /// Nodes `0..levels` are the roots of each level's tree.
     pub nodes: Vec<Node>,
     pub levels: u32,
 }
 
-/// Triangles with per-vertex normals and optional texture coordinates.
 pub struct Source<'a> {
     pub positions: &'a [[f32; 3]],
     pub normals: &'a [[f32; 3]],
@@ -109,9 +78,6 @@ pub struct Source<'a> {
     pub indices: &'a [u32],
 }
 
-/// Builds the cluster LOD hierarchy of `source`: whole triangles, a normal
-/// (and texture coordinates, if any) per vertex, finite positions, indices in
-/// range.
 pub fn build(source: &Source<'_>) -> Result<Dag, String> {
     let count = source.positions.len();
     if source.indices.len() < 3 || !source.indices.len().is_multiple_of(3) {
@@ -131,7 +97,6 @@ pub fn build(source: &Source<'_>) -> Result<Dag, String> {
     {
         return Err("positions must be finite".into());
     }
-    // Normals steer simplification; texture seams stay where they are.
     let attributes: Vec<f32> = (0..count)
         .flat_map(|vertex| {
             let [nx, ny, nz] = source.normals[vertex];
@@ -169,7 +134,6 @@ pub fn build(source: &Source<'_>) -> Result<Dag, String> {
             clusters.push(Cluster {
                 group: index,
                 refined: u32::try_from(view.refined).ok(),
-                // Tight culling spheres; `clusterlod`'s are its LOD spheres.
                 bounds: Bounds {
                     center: bounds.center,
                     radius: bounds.radius,
@@ -219,12 +183,6 @@ pub fn build(source: &Source<'_>) -> Result<Dag, String> {
     })
 }
 
-/// `meshopt_SimplifyVertex_Lock` on every vertex of an open border: an edge
-/// of one triangle, compared by position so texture seams are not borders.
-/// Borders then stay put at every level, and separately placed meshes that
-/// meet there (terrain tiles) never crack apart.
-/// Each vertex's first vertex at the same position, and how many triangles
-/// use each edge between such positions.
 fn edge_uses(
     source: &Source<'_>,
 ) -> (Vec<u32>, engine_math::collections::HashMap<(u32, u32), u32>) {
@@ -250,8 +208,6 @@ fn edge_uses(
     (remap, edges)
 }
 
-/// Whether `source` is closed: every edge between positions joins exactly
-/// two triangles, so its surfaces facing a direction hide those facing away.
 pub fn is_closed(source: &Source<'_>) -> bool {
     edge_uses(source).1.values().all(|&uses| uses == 2)
 }
@@ -271,9 +227,6 @@ fn border_locks(source: &Source<'_>) -> Vec<u8> {
         .collect()
 }
 
-/// A viewpoint for selecting clusters: its position in mesh space, `cot(fovy
-/// / 2)`, the near plane distance and the largest error, as a fraction of the
-/// screen height, a drawn cluster may have.
 #[derive(Clone, Copy, Debug)]
 pub struct View {
     pub eye: [f32; 3],
@@ -283,8 +236,6 @@ pub struct View {
 }
 
 impl View {
-    /// `bounds.error` projected at the sphere's nearest point, as a fraction
-    /// of the screen height; monotonic in nested spheres and errors.
     pub fn error(&self, bounds: &Bounds) -> f32 {
         let [x, y, z] = bounds.center;
         let [ex, ey, ez] = self.eye;
@@ -300,9 +251,6 @@ impl View {
 }
 
 impl Dag {
-    /// The clusters `view` draws: the least detailed of each part of the
-    /// surface whose error is at most the threshold (the reference the GPU
-    /// selection follows).
     pub fn select(&self, view: &View) -> Vec<u32> {
         let mut selected = Vec::new();
         let mut stack: Vec<u32> = (0..self.levels).collect();

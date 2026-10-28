@@ -1,21 +1,3 @@
-//! Paths: roads and tracks along the ground. A path is a
-//! line through terrain-local points with a width, shoulders and a
-//! smoothing distance. Its bake reads the ground the layers below it give
-//! along the line every [`PROFILE_STEP`] meters or so and averages it over
-//! the smoothing distance into the road's own gentle grade; the layer then
-//! levels the ground across the road to that profile, easing back into the
-//! ground over the shoulders, and the `path` mask reads how far a sample
-//! lies from the nearest road's edge. Where a road would fill too high
-//! over the ground or cross standing water it bridges instead:
-//! its deck runs straight between the points where it meets the
-//! ground, climbing to clear water, and the ground and water under it stay
-//! as they are. Where it would cut too deep it tunnels: it
-//! runs straight between its portals, the ground above stays, and the
-//! terrain opens at the portals. A route finder lays paths for agents and
-//! games: the
-//! cheapest way between two points over the ground, steep grades and water
-//! costing more, the steepest grades refused.
-
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
@@ -30,17 +12,11 @@ use crate::layers::Layers;
 use crate::noise::smooth;
 use crate::{Generator, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
 
-/// Meters between the points of a path's profile, at most.
 pub const PROFILE_STEP: f32 = 4.0;
-/// Most points a path may name.
 pub const MAX_PATH_POINTS: usize = 4096;
-/// Meters beyond a path's shoulders within which `path` masks see it.
 pub const MASK_MARGIN: f32 = 32.0;
-/// What `path` masks read further from every path, and without paths.
 pub const PATH_FAR: f32 = 1.0e9;
 
-/// The road nearest a point (by its edge): meters from its line, and half
-/// its width; [`PATH_FAR`] meters away beyond every path's masks' reach.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PathSample {
     pub distance: f32,
@@ -53,7 +29,6 @@ impl PathSample {
         half: 0.0,
     };
 
-    /// Meters from the road's edge, negative on it.
     #[inline]
     pub fn edge(&self) -> f32 {
         self.distance - self.half
@@ -62,39 +37,27 @@ impl PathSample {
 
 settings! {
     extra_rules;
-    /// A road or track along the ground.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct PathLayer {
-        /// Terrain-local meters along x and z the road runs through.
         #[cfg_attr(feature = "schema", schemars(length(min = 2, max = MAX_PATH_POINTS)))]
         pub points: Vec<[f32; 2]> = Vec::new()
             => range(-crate::Layers::MAX_COORDINATE, crate::Layers::MAX_COORDINATE),
-        /// Meters of level road across.
         #[serde(default = "default_width")]
         pub width: f32 = default_width() => range(0.5, 200.0),
-        /// Meters on each side over which the road eases back into the
-        /// ground.
         #[serde(default = "default_shoulder")]
         pub shoulder: f32 = default_shoulder() => range(0.0, 500.0),
-        /// Meters along the road over which its height averages the ground's:
-        /// longer is gentler, cutting deeper and filling higher.
         #[serde(default = "default_smoothing")]
         pub smoothing: f32 = default_smoothing() => range(0.0, 5000.0),
-        /// Meters the road would fill above the ground beyond which it bridges
-        /// instead, as it does over rivers and lakes; 0 never bridges.
         #[serde(default = "default_bridge_fill")]
         pub bridge_fill: f32 = default_bridge_fill() => range(0.0, 1000.0),
-        /// Meters the road would cut into the ground beyond which it tunnels
-        /// instead; 0 never tunnels.
         #[serde(default = "default_tunnel_cut")]
         pub tunnel_cut: f32 = default_tunnel_cut() => range(0.0, 2000.0),
     }
 }
 
 impl ExtraRules for PathLayer {
-    /// It runs through at least two points and at most [`MAX_PATH_POINTS`].
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if (2..=MAX_PATH_POINTS).contains(&self.points.len()) {
             Ok(())
@@ -127,38 +90,18 @@ fn default_tunnel_cut() -> f32 {
     25.0
 }
 
-/// Meters a tunnel's span reaches past where its road cuts less than this
-/// into the ground: its portals.
 const PORTAL_CUT: f32 = 3.0;
-/// Meters above a tunnel's road within which the ground opens at its
-/// portals.
 pub const PORTAL_HEIGHT: f32 = 8.0;
-/// Meters past a tunnel road's edges its portals open.
 const PORTAL_MARGIN: f32 = 1.5;
 
-/// Meters a bridge's span reaches past where its road fills less than this
-/// over the ground: where it meets the ground.
 const ABUTMENT: f32 = 0.5;
-/// Meters between bridged stretches below which they join into one span.
 const SPAN_GAP: f32 = 12.0;
-/// Meters of water the hydrology bake's grid holds under a road beyond
-/// which it bridges.
 pub(crate) const RIVER_DEPTH: f32 = 0.25;
-/// Meters a deck clears the water under it by, and the steepest it climbs
-/// from its ends toward that (rise per meter).
 const CLEARANCE: f32 = 2.0;
 const DECK_GRADE: f32 = 0.08;
-/// Meters between a bridge's piers, at most, and the depth below its deck
-/// the ground must fall to for one to stand there.
 const PIER_SPACING: f32 = 24.0;
 const PIER_DEPTH: f32 = 3.0;
 
-/// A bridge, or a tunnel: its road's
-/// centerline from one end to the other (terrain-local x and z, the road's
-/// height as y) every few meters, its road's width, its piers (where each
-/// stands on its centerline, terrain-local at the deck's height, and the
-/// ground or water bed there; tunnels have none), and whether it tunnels
-/// through the ground rather than spanning over it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bridge {
     pub deck: Vec<Vec3>,
@@ -168,8 +111,6 @@ pub struct Bridge {
 }
 
 impl PathLayer {
-    /// The points the bake reads the ground at, evenly along the line no
-    /// more than [`PROFILE_STEP`] apart, and the meters between them.
     pub(crate) fn profile_points(&self) -> (Vec<Vec2>, f32) {
         let line: Vec<Vec2> = self.points.iter().copied().map(Vec2::from).collect();
         let length: f32 = line.windows(2).map(|pair| pair[0].distance(pair[1])).sum();
@@ -179,7 +120,6 @@ impl PathLayer {
         let (mut segment, mut start) = (0, 0.0);
         for index in 0..=count {
             let along = index as f32 * step;
-            // The segment holding `along`, the last for the end.
             while segment + 2 < line.len()
                 && start + line[segment].distance(line[segment + 1]) < along
             {
@@ -199,11 +139,6 @@ impl PathLayer {
     }
 }
 
-/// What a path's bake found: meters along it, the points its profile read
-/// the ground at, its steepest grade (rise per meter), the most it cuts
-/// into and fills over the ground along its line off its bridges and
-/// tunnels (meters), its bridges and the meters they span, and its tunnels
-/// and the meters they run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct PathStats {
     pub length: f32,
@@ -217,10 +152,6 @@ pub struct PathStats {
     pub tunneled: f32,
 }
 
-/// A path's profile: its line, the meters along it at each point, the
-/// road's height and the ground's every `step` meters along it, the
-/// stretches it bridges and tunnels (meters along it) and the square its
-/// tunnels lie in, and a grid of the segments near each cell.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PathProfile {
     pub(crate) line: Vec<Vec2>,
@@ -233,8 +164,6 @@ pub struct PathProfile {
     tunnel_box: Option<(Vec2, Vec2)>,
     pub(crate) half: f32,
     shoulder: f32,
-    // Square cells `cell` meters wide from `min`, `columns` across, each
-    // listing the segments within `radius` of its points.
     pub(crate) radius: f32,
     pub(crate) cell: f32,
     pub(crate) min: Vec2,
@@ -246,15 +175,11 @@ pub struct PathProfile {
 }
 
 impl PathProfile {
-    /// The profile of `layer` from the ground `raw` read at its profile
-    /// points, `step` meters apart, and the surface of any water standing
-    /// there.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
     pub(crate) fn new(layer: &PathLayer, step: f32, raw: &[f32], water: &[Option<f32>]) -> Self {
-        // Averaged over the smoothing distance, twice: a tent along the road.
         let radius = if step > 0.0 {
             (layer.smoothing / (2.0 * step)).round() as usize
         } else {
@@ -308,7 +233,6 @@ impl PathProfile {
             along.push(length);
         }
         stats.length = length;
-        // The square the tunnels lie in, past their roads' edges.
         let tunnel_box = tunnels
             .iter()
             .fold(None, |bounds: Option<(Vec2, Vec2)>, &[start, end]| {
@@ -329,8 +253,6 @@ impl PathProfile {
                 let margin = Vec2::splat(0.5 * layer.width + PORTAL_MARGIN + 1.0);
                 (low - margin, high + margin)
             });
-        // The segments within reach of each cell's points: within the reach
-        // of its center plus half its diagonal.
         let half = 0.5 * layer.width;
         let reach = half + layer.shoulder + MASK_MARGIN;
         let cell = max(reach, 16.0);
@@ -388,7 +310,6 @@ impl PathProfile {
         }
     }
 
-    /// The square holding every point within its masks' reach.
     pub(crate) fn bounds(&self) -> (Vec2, Vec2) {
         (
             self.min,
@@ -396,7 +317,6 @@ impl PathProfile {
         )
     }
 
-    /// The road's height `along` meters along it.
     #[inline]
     fn height_along(&self, along: f32) -> f32 {
         if self.step <= 0.0 {
@@ -409,8 +329,6 @@ impl PathProfile {
         self.heights[index] + (self.heights[next] - self.heights[index]) * t
     }
 
-    /// Whether `along` meters along the road lies on a bridge or in a
-    /// tunnel, which leave the ground as it is.
     #[inline]
     fn bridged(&self, along: f32) -> bool {
         self.spans
@@ -419,15 +337,10 @@ impl PathProfile {
             .any(|&[start, end]| along > start && along < end)
     }
 
-    /// The road's line `along` meters along it.
     fn point_along(&self, along: f32) -> Vec2 {
         point_on(&self.line, &self.along, along)
     }
 
-    /// Whether its tunnels' portals open the ground at terrain-local
-    /// `point`: within the road's width and
-    /// [`PORTAL_MARGIN`] of a tunnel's line, where the ground stands less
-    /// than [`PORTAL_HEIGHT`] above the road.
     pub(crate) fn portal_hole(&self, point: Vec2) -> bool {
         let Some((low, high)) = self.tunnel_box else {
             return false;
@@ -446,13 +359,10 @@ impl PathProfile {
             && self.ground_along(along) - self.height_along(along) < PORTAL_HEIGHT
     }
 
-    /// The square its tunnels' portals may open the ground in.
     pub(crate) fn portal_bounds(&self) -> Option<(Vec2, Vec2)> {
         self.tunnel_box
     }
 
-    /// The ground's height `along` meters along the road, as the bake read
-    /// it.
     fn ground_along(&self, along: f32) -> f32 {
         if self.step <= 0.0 {
             return self.ground[0];
@@ -464,10 +374,6 @@ impl PathProfile {
         self.ground[index] + (self.ground[next] - self.ground[index]) * t
     }
 
-    /// Its bridges and tunnels: each road's
-    /// centerline every few meters, and bridges' piers no more than
-    /// `PIER_SPACING` apart wherever the ground falls `PIER_DEPTH` below
-    /// the deck.
     pub fn bridges(&self) -> Vec<Bridge> {
         let tunnels = self.tunnels.iter().map(|&span| (span, true));
         self.spans
@@ -509,16 +415,11 @@ impl PathProfile {
             .collect()
     }
 
-    /// The distance from the line to `point`, the road's height at the
-    /// line's nearest point and whether a bridge carries it there, within
-    /// masks' reach.
     pub(crate) fn nearest(&self, point: Vec2) -> Option<(f32, f32, bool)> {
         let (distance, along) = self.locate(point)?;
         Some((distance, self.height_along(along), self.bridged(along)))
     }
 
-    /// The distance from the line to `point` and the meters along the line
-    /// at its nearest point, within masks' reach.
     fn locate(&self, point: Vec2) -> Option<(f32, f32)> {
         let cell = ((point - self.min) / self.cell).floor();
         if !(cell.x >= 0.0 && cell.y >= 0.0) {
@@ -543,16 +444,11 @@ impl PathProfile {
         Some((distance, along))
     }
 
-    /// How much the road levels the ground `distance` meters from its line:
-    /// fully within half its width, easing out across its shoulder.
     #[inline]
     pub(crate) fn weight(&self, distance: f32) -> f32 {
         1.0 - smooth((distance - self.half) / max(self.shoulder, 1.0e-6))
     }
 
-    /// The road as `point` sees it: meters from its line and half its
-    /// width; far beyond masks' reach and under bridges, whose ground the
-    /// road leaves alone.
     #[inline]
     pub fn sample(&self, point: Vec2) -> PathSample {
         match self.nearest(point) {
@@ -565,8 +461,6 @@ impl PathProfile {
     }
 }
 
-/// The point of the line through `line` (meters along it at each, `along`)
-/// `distance` meters along it.
 fn point_on(line: &[Vec2], along: &[f32], distance: f32) -> Vec2 {
     let segment = along
         .partition_point(|&value| value <= distance)
@@ -581,9 +475,6 @@ fn point_on(line: &[Vec2], along: &[f32], distance: f32) -> Vec2 {
     line[segment] + (line[segment + 1] - line[segment]) * t
 }
 
-/// Finds where `layer`'s road, of heights `heights` over the ground `raw`
-/// (`step` meters apart), tunnels, and lays its tunnels' straight roads
-/// into `heights`; returns the tunneled stretches, meters along it.
 fn tunnel(layer: &PathLayer, step: f32, raw: &[f32], heights: &mut [f32]) -> Vec<[f32; 2]> {
     if layer.tunnel_cut <= 0.0 || step <= 0.0 || heights.len() < 3 {
         return Vec::new();
@@ -597,7 +488,6 @@ fn tunnel(layer: &PathLayer, step: f32, raw: &[f32], heights: &mut [f32]) -> Vec
             index += 1;
             continue;
         }
-        // Out to its portals, where the road cuts little.
         let mut first = index;
         while first > 0 && cut(heights, first - 1) > PORTAL_CUT {
             first -= 1;
@@ -619,7 +509,6 @@ fn tunnel(layer: &PathLayer, step: f32, raw: &[f32], heights: &mut [f32]) -> Vec
         if last <= first {
             continue;
         }
-        // A straight road between its portals.
         let (from, to) = (heights[first], heights[last]);
         for (index, height) in heights.iter_mut().enumerate().take(last + 1).skip(first) {
             *height = from + (to - from) * (index - first) as f32 / (last - first) as f32;
@@ -629,10 +518,6 @@ fn tunnel(layer: &PathLayer, step: f32, raw: &[f32], heights: &mut [f32]) -> Vec
     spans
 }
 
-/// Finds where `layer`'s road, of heights `heights` over the ground `raw`
-/// (`step` meters apart, water standing at `water`), bridges outside its
-/// `tunnels`, and lays its decks into `heights`; returns the bridged
-/// stretches, meters along it.
 fn bridge(
     layer: &PathLayer,
     step: f32,
@@ -665,8 +550,6 @@ fn bridge(
             heights[index] - raw[index]
         }
     };
-    // Stretches filling too high or crossing water, reaching out to where
-    // the road meets the ground.
     let mut runs: Vec<[usize; 2]> = Vec::new();
     let mut index = 0;
     while index < count {
@@ -686,7 +569,6 @@ fn bridge(
         while last + 1 < count && (fill(last + 1) > ABUTMENT || wet(last + 1).is_some()) {
             last += 1;
         }
-        // Reaching the ends of the road, it starts or ends on the bridge.
         match runs.last_mut() {
             Some(previous) if (first as f32 - previous[1] as f32) * step < SPAN_GAP => {
                 previous[1] = last;
@@ -700,8 +582,6 @@ fn bridge(
         if last <= first {
             continue;
         }
-        // A straight deck between its ends, climbing from each at no more
-        // than its grade toward a level that clears the water under it.
         let (from, to) = (heights[first], heights[last]);
         let line =
             |index: usize| from + (to - from) * (index - first) as f32 / (last - first) as f32;
@@ -720,8 +600,6 @@ fn bridge(
     spans
 }
 
-/// The distance from `point` to the segment from `a` to `b`, and how far
-/// along it (0 to 1) its nearest point lies.
 #[inline]
 pub(crate) fn distance_to_segment(point: Vec2, a: Vec2, b: Vec2) -> (f32, f32) {
     let along = b - a;
@@ -734,9 +612,6 @@ pub(crate) fn distance_to_segment(point: Vec2, a: Vec2, b: Vec2) -> (f32, f32) {
     (point.distance(a + along * t), t)
 }
 
-/// Heights of a rectangle of one pyramid level's samples, as generated
-/// tiles hold them: `width` by `height` samples from global sample
-/// `first`, `spacing` meters apart.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeightGrid {
     pub first: [i64; 2],
@@ -747,9 +622,6 @@ pub struct HeightGrid {
 }
 
 impl Layers {
-    /// The heights of `level`'s samples from terrain-local `low` to `high`
-    /// (clamped to the terrain), generated tile by tile at once: its work
-    /// grows with the rectangle.
     pub fn height_grid(&self, pyramid: &Pyramid, level: u32, low: Vec2, high: Vec2) -> HeightGrid {
         let level = level.min(pyramid.levels() - 1);
         let spacing = pyramid.spacing(level);
@@ -806,30 +678,18 @@ impl Layers {
 }
 
 settings! {
-    /// How a route finder weighs the ground.
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct RouteOptions {
-        /// The pyramid level whose samples it walks between.
         pub level: u32 = 3 => range(0, MAX_LEVEL),
-        /// The steepest grade it climbs: rise per meter.
         pub max_grade: f32 = 0.12 => range(0.001, 10.0),
-        /// How much a meter's cost grows per squared grade.
         pub grade_cost: f32 = 100.0 => range(0.0, 1.0e6),
-        /// The meters a meter through standing water costs on top.
         pub water_cost: f32 = 50.0 => range(0.0, 1.0e6),
-        /// The meters a turn costs per unit of one less the cosine of its
-        /// angle: a right angle costs it once, turning back twice, so
-        /// switchbacks run long legs.
         pub turn_cost: f32 = 40.0 => range(0.0, 1.0e6),
     }
 }
 
-/// A route found: its terrain-local points, corners rounded, the meters
-/// along its walk between samples, the steepest grade of its steps within
-/// the limit, and how many of its turning steps cross steeper ground, as
-/// hairpins do.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Route {
     pub points: Vec<[f32; 2]>,
@@ -838,9 +698,6 @@ pub struct Route {
     pub hairpin_steps: usize,
 }
 
-/// Steps from a sample to the samples up to three away along each axis in
-/// every direction they lie in alone, in turning order: 32 of them, 7 to 18
-/// degrees apart, so routes follow contours closely.
 const STEPS: [(i64, i64); 32] = [
     (1, 0),
     (3, 1),
@@ -876,26 +733,9 @@ const STEPS: [(i64, i64); 32] = [
     (3, -1),
 ];
 
-/// Steps a route may take after each step: those within four of it in
-/// [`STEPS`], turning 45 degrees or so at most.
 const TURNS: i64 = 4;
-/// The steepest ground (rise per meter) a step turning two or more steps of
-/// [`STEPS`] from the one before may cross, whatever the grade limit:
-/// hairpins cross the fall line, and the path's profile and shoulders build
-/// them as platforms.
 const HAIRPIN_GRADE: f32 = 1.0;
 
-/// The cheapest route from `from` to `to` (terrain-local) over the heights
-/// `layers` give on `pyramid`, as `options` weigh them: walking between the
-/// samples of their level within a rectangle around both ends, half their
-/// distance (at least 256 meters) wider on each side, each step costing its
-/// length times one plus the grade cost times its squared grade plus the
-/// water cost where water stands, and its turn from the step before, which
-/// it turns from by 45 degrees or so at most; steps steeper than the limit
-/// are refused, but for turning steps, which hairpins may take across ground
-/// as steep as `HAIRPIN_GRADE`. It searches samples and the way the step
-/// reaching each ran together (A*), 32 states a sample. `None` when no route
-/// keeps within the limits.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -930,8 +770,6 @@ pub fn route(
     };
     let index = |sample: (i64, i64)| (sample.1 * width + sample.0) as usize;
     let sample_of = |index: usize| (index as i64 % width, index as i64 / width);
-    // Where water stands, as the terrain's hydrology bake found it: lakes
-    // and rivers.
     let water = layers.hydrology();
     let wet: Vec<bool> = (0..grid.heights.len())
         .map(|at| {
@@ -947,12 +785,8 @@ pub fn route(
     let distance = |a: (i64, i64), b: (i64, i64)| {
         (((a.0 - b.0) * (a.0 - b.0) + (a.1 - b.1) * (a.1 - b.1)) as f32).sqrt() * spacing
     };
-    // Each step's way, and what turning from one step to another costs.
     let ways = STEPS.map(|(dx, dz)| Vec2::new(dx as f32, dz as f32).normalize());
     let directions = STEPS.len();
-    // States: a sample and the step reaching it, `sample * 32 + step`; the
-    // start's states hold every step at no cost, so the first step turns
-    // freely.
     let mut cost = vec![f32::INFINITY; grid.heights.len() * directions];
     let mut came = vec![u32::MAX; grid.heights.len() * directions];
     let mut open = BinaryHeap::new();
@@ -968,7 +802,6 @@ pub fn route(
         let current = sample_of(at);
         let here = cost[state];
         if estimate > here + distance(current, goal) {
-            // A cheaper way to this state was found after this entry.
             continue;
         }
         if current == goal {
@@ -1043,8 +876,6 @@ pub fn route(
         previous = Some(way);
     }
     let points: Vec<Vec2> = walk.iter().map(|&sample| local(sample)).collect();
-    // Straight runs collapse to their ends, within half a sample of the
-    // walk, and corners round within two samples.
     let points = round_corners(&simplify(&points, 0.5 * spacing), 2.0 * spacing, 3);
     Some(Route {
         points: points.iter().map(Vec2::to_array).collect(),
@@ -1054,8 +885,6 @@ pub fn route(
     })
 }
 
-/// `points` without those within `tolerance` of the line between the
-/// points kept around them (Douglas and Peucker).
 fn simplify(points: &[Vec2], tolerance: f32) -> Vec<Vec2> {
     if points.len() < 3 {
         return points.to_vec();
@@ -1086,9 +915,6 @@ fn simplify(points: &[Vec2], tolerance: f32) -> Vec<Vec2> {
         .collect()
 }
 
-/// `points` with each corner turning more than about 8 degrees cut
-/// `rounds` times (Chaikin), the first cut at most `cut` meters and a
-/// quarter of each side from the corner, each later one half as far.
 fn round_corners(points: &[Vec2], cut: f32, rounds: usize) -> Vec<Vec2> {
     let mut points = points.to_vec();
     let mut cut = cut;
@@ -1115,7 +941,6 @@ fn round_corners(points: &[Vec2], cut: f32, rounds: usize) -> Vec<Vec2> {
     points
 }
 
-/// A cost ordered totally, lowest first in the route finder's queue.
 #[derive(Clone, Copy, PartialEq)]
 struct Ordered(f32);
 

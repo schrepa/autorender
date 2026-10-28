@@ -1,22 +1,3 @@
-//! Deep profiles, the default native profile on any machine without
-//! privileges or setup: the engine's capture (its CPU spans and every
-//! frame's GPU passes and opaque draws) together with CPU samples of the
-//! game's threads, symbolicated in process to functions, inlined
-//! functions, source lines and instructions. One capture writes three
-//! files:
-//!
-//! - the engine's report, as JSON;
-//! - a Firefox Profiler profile (open it at profiler.firefox.com, or in
-//!   Perfetto at ui.perfetto.dev): call trees and flame graphs per thread,
-//!   the engine's spans as markers and as a flame graph of their own, the
-//!   GPU's passes and draws on GPU tracks placed at their frame's
-//!   submission, and memory counters;
-//! - a summary for agents and people: each thread's hottest functions,
-//!   the hottest source lines and annotated instructions, GPU pass and draw
-//!   costs, each pass's hardware counters where they were enabled
-//!   ([`crate::counters`]), what was captured, and the deeper layers
-//!   recommended to set up.
-
 use engine::collections::HashMap;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -33,15 +14,12 @@ use serde_json::{Value, json};
 
 use crate::sampler::{SampledThread, Sampler, Samples};
 
-/// How often threads are sampled.
 const INTERVAL: Duration = Duration::from_millis(1);
 
-/// A deep profile running.
 pub struct DeepCapture {
     sampler: Option<Sampler>,
 }
 
-/// The files a deep profile wrote.
 pub struct ProfileFiles {
     pub report: PathBuf,
     pub firefox: PathBuf,
@@ -50,8 +28,6 @@ pub struct ProfileFiles {
 }
 
 impl DeepCapture {
-    /// Starts the engine's capture of at most `max_events` CPU events and
-    /// every frame's GPU spans, and samples of `threads`.
     pub fn start<G: Game>(
         host: &mut GameHost<G>,
         threads: Vec<SampledThread>,
@@ -65,9 +41,6 @@ impl DeepCapture {
         Ok(Self { sampler })
     }
 
-    /// Stops capturing and writes the files into `folder` as `stem` with
-    /// their extensions; `context` (what ran, on what) goes into the
-    /// summary.
     pub fn finish<G: Game>(
         self,
         host: &mut GameHost<G>,
@@ -77,7 +50,6 @@ impl DeepCapture {
     ) -> Result<ProfileFiles, String> {
         let samples = self.sampler.map(Sampler::finish);
         let mut report = host.profiling_stop().map_err(String::from)?;
-        // GPU read-backs of the last frames finish once the GPU did.
         host.wait_for_gpu().map_err(|error| error.to_string())?;
         host.profiling_poll();
         report["gpu"] = host.profiling_report();
@@ -115,7 +87,6 @@ impl DeepCapture {
     }
 }
 
-/// JSON writing of the two value kinds the files hold.
 mod erased {
     pub(super) trait Write {
         fn write(&self, out: &mut dyn std::io::Write) -> serde_json::Result<()>;
@@ -134,12 +105,9 @@ mod erased {
     }
 }
 
-/// A code address's function and source line; inlined functions first
-/// (innermost first), then the function it was inlined into.
 #[derive(Clone, Default)]
 struct Resolved {
     frames: Vec<SymbolFrame>,
-    // The outermost function's start address.
     start: Option<u64>,
 }
 
@@ -150,8 +118,6 @@ struct SymbolFrame {
     line: Option<u32>,
 }
 
-/// Every sampled address's symbols, resolved in process from the program's
-/// and libraries' debug information.
 struct Symbols(HashMap<u64, Resolved>);
 
 impl Symbols {
@@ -160,7 +126,6 @@ impl Symbols {
         for thread in samples.into_iter().flat_map(|samples| &samples.threads) {
             for sample in &thread.samples {
                 for (index, &address) in sample.stack.iter().enumerate() {
-                    // Return addresses point after their call.
                     let lookup = if index == 0 {
                         address
                     } else {
@@ -202,8 +167,6 @@ fn resolve(address: u64) -> Resolved {
     resolved
 }
 
-/// The functions of `stack` (leaf first) from the root down, inlined
-/// functions expanded; unknown code as its address.
 fn functions(stack: &[u64], symbols: &Symbols) -> Vec<String> {
     let mut names = Vec::with_capacity(stack.len() * 2);
     for (index, &address) in stack.iter().enumerate().rev() {
@@ -223,7 +186,6 @@ fn functions(stack: &[u64], symbols: &Symbols) -> Vec<String> {
     names
 }
 
-/// The engine's spans and the GPU's passes and draws as markers.
 struct SpanMarker {
     name: StringHandle,
     kind: StringHandle,
@@ -262,7 +224,6 @@ fn at(ms: f64) -> Timestamp {
     Timestamp::from_millis_since_reference(ms.max(0.0))
 }
 
-/// The Firefox Profiler profile of `report` and `samples`.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -273,7 +234,6 @@ fn firefox_profile(
     symbols: &Symbols,
     adapter: &engine::AdapterInfo,
 ) -> Profile {
-    // The host's clock counts from an instant this subtracts from now.
     let now = engine::host::now_ms();
     let epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -295,7 +255,6 @@ fn firefox_profile(
     let native = profile.add_category("Native code", CategoryColor::Blue);
     let engine_category = profile.add_category("Engine spans", CategoryColor::Green);
     let gpu_category = profile.add_category("GPU", CategoryColor::Orange);
-    // CPU samples, a thread each; the first draws the game.
     let mut main = None;
     for (index, thread) in samples
         .into_iter()
@@ -327,9 +286,6 @@ fn firefox_profile(
             profile.add_sample(handle, at(sample.time_ms), stack, cpu, 1);
         }
     }
-    // The engine's spans: markers on the thread that drew the game, beside
-    // its samples, and a flame graph of their nesting on a track of its own,
-    // sampled at the same interval.
     let events: Vec<&Value> = report["cpu"]["events"]
         .as_array()
         .map(|events| {
@@ -395,9 +351,6 @@ fn firefox_profile(
         }
         time += step;
     }
-    // The GPU's passes and draws, each frame's at its submission: GPU
-    // clocks are not the CPU's, so frames sit where they were submitted and
-    // their spans at their offsets within the frame.
     let submissions: HashMap<String, f64> = events
         .iter()
         .filter(|event| event["name"] == "submit_and_present")
@@ -448,8 +401,6 @@ fn firefox_profile(
             );
         }
     }
-    // The program's allocations, as the engine counted them; its other
-    // counters are per-frame tallies the report keeps.
     let mut counters: BTreeMap<String, Vec<(f64, f64)>> = BTreeMap::new();
     for event in report["cpu"]["events"].as_array().into_iter().flatten() {
         if event["kind"] == "counter"
@@ -479,8 +430,6 @@ fn firefox_profile(
     profile
 }
 
-/// Counts of names, most first, with their share of `total`, at most
-/// `limit`.
 fn ranked(counts: HashMap<String, u64>, total: u64, limit: usize) -> Vec<Value> {
     let mut counts: Vec<(String, u64)> = counts.into_iter().collect();
     counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -493,11 +442,8 @@ fn ranked(counts: HashMap<String, u64>, total: u64, limit: usize) -> Vec<Value> 
         .collect()
 }
 
-/// A hot function's samples, and its sampled instructions' samples by
-/// address.
 type Hot = (u64, BTreeMap<u64, u64>);
 
-/// The summary of a capture.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -528,7 +474,6 @@ fn summary(
             }
         }
         let total = thread.samples.len() as u64;
-        // Frames in every sample are the thread's roots: no information.
         inclusive.retain(|_, samples| *samples < total);
         threads.push(json!({
             "name": thread.name,
@@ -538,8 +483,6 @@ fn summary(
             "total": ranked(inclusive, total, 25),
         }));
     }
-    // The main thread's hottest source lines and instructions: where its
-    // samples were, inlined code at its own line.
     let main = samples.and_then(|samples| samples.threads.first());
     let mut lines: HashMap<String, u64> = HashMap::default();
     let mut hot: HashMap<u64, Hot> = HashMap::default();
@@ -555,7 +498,6 @@ fn summary(
             };
             *lines.entry(line).or_default() += 1;
         }
-        // Instructions of the program's own functions, which have sources.
         let sourced = resolved
             .and_then(|resolved| resolved.frames.first())
             .is_some_and(|frame| frame.file.is_some());
@@ -576,7 +518,6 @@ fn summary(
         .take(3)
         .map(|(start, (count, addresses))| annotated(*start, *count, addresses, symbols))
         .collect();
-    // GPU passes and draws: each name's median over the captured frames.
     let gpu = &report["gpu"];
     let mut passes: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for sample in gpu["samples"].as_array().into_iter().flatten() {
@@ -648,9 +589,6 @@ fn summary(
     })
 }
 
-/// A hot function's instructions from its start to past its last sampled
-/// one, each with its samples and the sampled ones' source lines; on x86
-/// disassembled, elsewhere as addresses.
 fn annotated(start: u64, count: u64, addresses: &BTreeMap<u64, u64>, symbols: &Symbols) -> Value {
     let function = resolve(start)
         .frames
@@ -680,7 +618,6 @@ fn disassemble(
     line_of: &dyn Fn(u64) -> Option<String>,
 ) -> Vec<Value> {
     use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
-    // Through the last sampled instruction, at most 256 KiB of a function.
     let length = ((last.saturating_sub(start)) as usize + 16).min(1 << 18);
     let code = crate::sampler::code(start, length);
     let mut decoder = Decoder::with_ip(64, &code, start, DecoderOptions::NONE);
@@ -688,7 +625,6 @@ fn disassemble(
     let decoded: Vec<_> = std::iter::from_fn(|| decoder.can_decode().then(|| decoder.decode()))
         .take_while(|instruction| instruction.ip() <= last)
         .collect();
-    // The sampled instructions with the four before and after each.
     let near = |index: usize| {
         decoded[index.saturating_sub(4)..(index + 5).min(decoded.len())]
             .iter()

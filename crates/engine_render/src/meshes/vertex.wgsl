@@ -1,17 +1,8 @@
-// Mesh vertex stages: poses and skinning, virtual geometry's clusters and
-// the visibility pass, and the vertex entry
-// points of slots and temporal frames.
-
 fn pose_matrix(pose: AffinePose) -> mat4x4<f32> {
     return transpose(mat4x4<f32>(pose.row_0, pose.row_1, pose.row_2,
         vec4<f32>(0.0, 0.0, 0.0, 1.0)));
 }
 
-// The origin key of a slot standing at `origin`, in a word's high 16 bits:
-// a hash of where it stands across the ground (not its height, which
-// follows the ground as drawn). Meshes' fade words carry all of it and
-// cards' frame words its top byte, which foliage's tints read
-// (`plant_tint`).
 fn origin_key(origin: vec3<f32>) -> u32 {
     let cell = bitcast<vec2<u32>>(vec2<i32>(floor(origin.xz * 4.0)));
     var h = (cell.x * 0x8da6b343u) ^ (cell.y * 0xd8163841u);
@@ -20,13 +11,10 @@ fn origin_key(origin: vec3<f32>) -> u32 {
     return (h ^ (h >> 16u)) & 0xffff0000u;
 }
 
-// Linear color and opacity of a vertex output's packed material.
 fn output_color(material: vec4<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16unorm(material.x), unpack2x16unorm(material.y));
 }
 
-// A normal of `gpu_data::octahedral`: unfolded from the octahedron, not unit
-// length (the transform normalizes).
 fn octahedral_normal(encoded: vec2<f32>) -> vec3<f32> {
     let z = 1.0 - abs(encoded.x) - abs(encoded.y);
     let fold = max(-z, 0.0);
@@ -36,7 +24,6 @@ fn octahedral_normal(encoded: vec2<f32>) -> vec3<f32> {
 }
 
 fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
-    // Transparent draws of temporal frames see moving slots' marks.
     let index = slot_index(input.slot);
     let model = pose_matrix(poses[index]);
     let slot = colors[index];
@@ -56,19 +43,10 @@ fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
     return output;
 }
 
-// The material word of a placed object blending into the ground
-// (`GROUNDING`), from its word `material`: its linear color and opacity as
-// four bytes, its slot `slot`, whose ground and pose its fragments read,
-// then its packed surface and fade word.
 fn placed_material(material: vec4<u32>, slot: u32) -> vec4<u32> {
     return vec4<u32>(pack4x8unorm(output_color(material)), slot, material.zw);
 }
 
-// The offset the wind gives the vertex at mesh point `position`, placed at
-// `world`, of a slot posed by `model` that sways `sway`, at time `time`:
-// every layer of `wind_sway`, its shaking sized on screen at the slot's
-// root seen from the detail eye (`detail_across`), which shadow casters and
-// depth passes displace their vertices by alike.
 fn vertex_wind(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, sway: f32,
         time: f32) -> vec3<f32> {
     let root = model[3].xyz;
@@ -76,23 +54,16 @@ fn vertex_wind(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, sway: 
         root, world.y - root.y, position, sway);
 }
 
-// The offset the wind gives the point at `world` of a slot posed by
-// `model` that sways `sway`, at time `time`, as one piece: its trunk's bend
-// alone, as on the slot's vertical axis, which impostor cards sway by, as
-// they have no branches.
 fn slot_wind(model: mat4x4<f32>, world: vec3<f32>, sway: f32, time: f32) -> vec3<f32> {
     return vertex_wind(model, vec3<f32>(0.0), world, sway, time);
 }
 
-// A selected cluster of a slot: 384 vertices, three per
-// triangle of the largest cluster; those past its triangles collapse.
 struct VirtualInput {
     @builtin(vertex_index) vertex: u32,
     @location(2) slot: u32,
     @location(13) cluster: u32,
 }
 
-// A cluster corner in mesh space; `valid` is false past its triangles.
 struct VirtualCorner {
     position: vec3<f32>,
     normal: vec2<f32>,
@@ -100,14 +71,10 @@ struct VirtualCorner {
     valid: bool,
 }
 
-// The low 16 bits as a signed normalized value.
 fn snorm16(bits: u32) -> f32 {
     return max(f32(bitcast<i32>(bits << 16u) >> 16u) / 32767.0, -1.0);
 }
 
-// Corner `vertex` of cluster `cluster`: its local index, then the stored
-// vertex of 16-bit position steps, octahedral normal and texture
-// coordinates, dequantized with its mesh's steps.
 fn virtual_corner(cluster: u32, vertex: u32) -> VirtualCorner {
     let record = virtual_clusters[cluster * 3u + 1u];
     let words = virtual_clusters[cluster * 3u + 2u];
@@ -131,7 +98,6 @@ fn virtual_corner(cluster: u32, vertex: u32) -> VirtualCorner {
     return corner;
 }
 
-// Where collapsed corners go: one point outside the view.
 const COLLAPSED = vec4<f32>(2.0, 2.0, 0.5, 1.0);
 
 fn vertex_virtual(input: VirtualInput) -> VertexOutput {
@@ -161,7 +127,6 @@ fn vs_virtual_temporal(input: VirtualInput) -> TemporalOutput {
         material.surface, corner.uv, model);
     let point = vec4<f32>(corner.position, 1.0);
     var world = model * point;
-    // Only moving slots read their previous pose, as `vertex_affine_temporal`.
     if slot_moved(input.slot) {
         let pose = previous_poses[slot];
         world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
@@ -177,9 +142,6 @@ fn vs_virtual_temporal(input: VirtualInput) -> TemporalOutput {
     return output;
 }
 
-// The visibility pass: a selected cluster's triangles, posed
-// and projected as `vs_virtual` does, write which triangle covers each
-// pixel. Its entry is the bin's first this phase plus the instance.
 struct VisibilityOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) @interpolate(flat) ids: vec2<u32>,
@@ -213,15 +175,11 @@ fn vs_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     return vertex_affine_temporal(input);
 }
 
-// Meshes with vertex colors or second texture coordinates
-// read them from a second vertex stream, and their outputs carry both, at
-// invariant positions as `VertexOutput`'s.
 struct ExtendedOutput {
     @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,
-    // Linear vertex color and opacity, and second texture coordinates.
     @location(3) color: vec4<f32>,
     @location(4) uv1: vec2<f32>,
 }
@@ -268,8 +226,6 @@ fn vs_affine_temporal_extended(input: AffineVertexInput, @location(9) color: vec
     return output;
 }
 
-// Linear blend skinning: the joints' palette matrices
-// weighted by the vertex's renormalized 16-bit weights.
 fn blend_poses(a: AffinePose, b: AffinePose, c: AffinePose, d: AffinePose,
         weights: vec4<f32>) -> mat4x4<f32> {
     let w = weights / max(dot(weights, vec4<f32>(1.0)), 1.0e-6);
@@ -280,8 +236,6 @@ fn blend_poses(a: AffinePose, b: AffinePose, c: AffinePose, d: AffinePose,
     ));
 }
 
-// A skinned slot's matrix for a vertex: `flags` is one more than the slot's
-// palette offset.
 fn skin_matrix(flags: u32, joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
     let base = flags - 1u;
     return blend_poses(palette[base + joints.x], palette[base + joints.y],
@@ -294,8 +248,6 @@ fn previous_skin_matrix(flags: u32, joints: vec4<u32>, weights: vec4<f32>) -> ma
         previous_palette[base + joints.z], previous_palette[base + joints.w], weights);
 }
 
-// Meshes with joints drawn through retained slots: skinned slots move each
-// vertex by their palette, rigid slots drawing the same mesh by their pose.
 fn vertex_affine_skinned(input: AffineVertexInput, joints: vec4<u32>,
         weights: vec4<f32>) -> VertexOutput {
     let index = slot_index(input.slot);
@@ -315,8 +267,6 @@ fn vs_affine_skinned(input: AffineVertexInput, @location(9) color: vec4<f32>,
     return extended_output(vertex_affine_skinned(input, joints, weights), color, uv1);
 }
 
-// Skinned slots' previous positions come from the previous palette, which
-// is this frame's when motion is invalid.
 @vertex
 fn vs_affine_temporal_skinned(input: AffineVertexInput, @location(9) color: vec4<f32>,
         @location(10) uv1: vec2<f32>, @location(11) joints: vec4<u32>,
@@ -355,14 +305,11 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     vertex.material.w = slot_fade(input.slot) | origin_key(model[3].xyz);
     let point = vec4<f32>(input.position, 1.0);
     var world = model * point;
-    // Reading previous poses costs more than the rest of the motion: only
-    // moving slots do.
     if slot_moved(input.slot) {
         let pose = previous_poses[slot];
         world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
             dot(pose.row_2, point), 1.0);
     }
-    // Swaying slots move with the wind, last frame's at its time.
     let sway = slot_sway(material.flags);
     if sway > 0.0 {
         let current = vertex.world_v.xyz
@@ -388,18 +335,12 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
 fn transform_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, color: vec2<u32>,
         surface: u32, uv: vec2<f32>, model: mat4x4<f32>) -> VertexOutput {
     let world_position = model * vec4<f32>(position, 1.0);
-    // A common positive basis scale cancels out of normalized normals.
-    // Rescaling to a largest component of 1 keeps the cofactors within
-    // [-2, 2] for large or small admitted world transforms, and the final
-    // normalization handles their magnitude. CPU admission separately bounds
-    // normal-matrix conditioning.
     let inverse_scale = 1.0 / max(maximum_abs(model[0].xyz),
         max(maximum_abs(model[1].xyz), maximum_abs(model[2].xyz)));
     let x = model[0].xyz * inverse_scale;
     let y = model[1].xyz * inverse_scale;
     let z = model[2].xyz * inverse_scale;
     let normal = octahedral_normal(encoded_normal);
-    // Cofactor columns times the normal: its inverse-transpose direction.
     let yz = cross(y, z);
     let transformed = yz * normal.x + cross(z, x) * normal.y + cross(x, y) * normal.z;
     var output: VertexOutput;

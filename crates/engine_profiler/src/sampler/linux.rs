@@ -1,10 +1,3 @@
-//! Linux (and other Unix systems with POSIX threads, Apple's aside): the
-//! sampler interrupts the thread with `SIGPROF`, whose handler reads the
-//! interrupted registers and follows the frame pointer chain into a shared
-//! slot, which the sampler then copies. Signalling a thread of one's own
-//! process needs no privilege, unlike `perf_event_open` under Ubuntu's or
-//! Debian's defaults.
-
 #![expect(unsafe_code, reason = "signals threads and reads their registers")]
 
 use std::sync::OnceLock;
@@ -25,8 +18,6 @@ pub(super) struct Open(libc::pthread_t);
 
 const MAX: usize = super::MAX_FRAMES;
 
-// The slot one sample at a time goes through: requested by the sampler,
-// written by the handler, read back by the sampler.
 const IDLE: u32 = 0;
 const REQUESTED: u32 = 1;
 const WRITING: u32 = 2;
@@ -85,8 +76,6 @@ pub(super) fn sample(Open(thread): &Open, (low, high): (u64, u64), frames: &mut 
         match STATE.load(Ordering::Acquire) {
             WRITTEN => break,
             REQUESTED if start.elapsed() > Duration::from_millis(20) => {
-                // The thread did not run its handler in time: withdraw the
-                // request, unless the handler took it meanwhile.
                 if STATE
                     .compare_exchange(REQUESTED, IDLE, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
@@ -105,7 +94,6 @@ pub(super) fn sample(Open(thread): &Open, (low, high): (u64, u64), frames: &mut 
     depth
 }
 
-/// Installs the `SIGPROF` handler once; `None` if it could not be.
 fn install() -> Option<()> {
     static INSTALLED: OnceLock<bool> = OnceLock::new();
     INSTALLED
@@ -164,7 +152,6 @@ unsafe fn registers(context: *const libc::ucontext_t) -> (u64, u64) {
     }
 }
 
-/// Other Unix systems: no stack, the sample is the thread's absence.
 #[cfg(not(all(
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")

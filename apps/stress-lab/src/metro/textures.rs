@@ -1,10 +1,3 @@
-//! Procedural texture sets of the metro: base color (sRGB, alpha for masked
-//! sets), metallic-roughness (linear: red occlusion, green roughness, blue
-//! metalness), tangent-space normal and emissive maps.
-//! Tiling sets repeat seamlessly; atlases hold uniform regions that meshes
-//! map into. Generation depends on nothing but the set, so one build serves
-//! every workload.
-
 use std::f32::consts::TAU;
 use std::sync::OnceLock;
 
@@ -12,19 +5,15 @@ use engine::prelude::*;
 
 use crate::kit::random::{hash, unit};
 
-/// Pixels of one generated map.
 #[derive(Clone)]
 pub(crate) struct Image {
     pub width: u32,
     pub height: u32,
-    /// RGBA8, rows top to bottom.
     pub pixels: Vec<u8>,
-    /// Color data (base color, emissive) rather than linear data.
     pub srgb: bool,
     pub normal: bool,
 }
 
-/// The maps of one set; base color always exists.
 #[derive(Clone)]
 pub(crate) struct Maps {
     pub base: Image,
@@ -33,7 +22,6 @@ pub(crate) struct Maps {
     pub emissive: Option<Image>,
 }
 
-/// Every texture set. Façades repeat every 8 bays by 8 floors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Set {
     Glass,
@@ -74,7 +62,6 @@ pub(crate) enum Set {
     Grime,
 }
 
-/// Billboard advertisements the ad boards cycle through.
 pub(crate) const ADS: u8 = 6;
 
 impl Set {
@@ -131,7 +118,6 @@ impl Set {
         }
     }
 
-    /// Height-to-normal strength; 0 omits the normal map.
     fn relief(self) -> f32 {
         match self {
             Set::Glass | Set::Panel => 3.0,
@@ -160,17 +146,14 @@ impl Set {
         }
     }
 
-    /// Whether it has a metallic-roughness map.
     pub(crate) fn has_mr(self) -> bool {
         !matches!(self, Set::Ad(_) | Set::Neon)
     }
 
-    /// Whether it has a normal map.
     pub(crate) fn has_normal(self) -> bool {
         self.relief() > 0.0
     }
 
-    /// Whether it has an emissive map.
     pub(crate) fn emits(self) -> bool {
         matches!(
             self,
@@ -187,13 +170,11 @@ impl Set {
         )
     }
 
-    /// Whether base color alpha carries coverage (masked sets).
     pub(crate) fn masked(self) -> bool {
         matches!(self, Set::Leaves | Set::Fronds | Set::Lattice | Set::Fence)
     }
 }
 
-/// One texel's material description, colors linear.
 #[derive(Clone, Copy)]
 struct Texel {
     color: [f32; 3],
@@ -227,8 +208,6 @@ impl Texel {
     }
 }
 
-// Tileable value noise: lattice values repeat every `period` cells.
-
 fn lattice(x: i32, y: i32, period_x: i32, period_y: i32, seed: u32) -> f32 {
     let (x, y) = (x.rem_euclid(period_x) as u32, y.rem_euclid(period_y) as u32);
     (hash(seed ^ hash(x.wrapping_mul(0x8da6_b343) ^ y.wrapping_mul(0xd816_3841))) >> 8) as f32
@@ -239,7 +218,6 @@ fn smooth(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Noise at `(u, v)` in texture units with `period_x` × `period_y` cells.
 fn noise(u: f32, v: f32, period_x: i32, period_y: i32, seed: u32) -> f32 {
     let (x, y) = (u * period_x as f32, v * period_y as f32);
     let (x0, y0) = (x.floor(), y.floor());
@@ -251,7 +229,6 @@ fn noise(u: f32, v: f32, period_x: i32, period_y: i32, seed: u32) -> f32 {
     top + (bottom - top) * ty
 }
 
-/// Fractal noise in `[0, 1]` from `period` cells, doubling per octave.
 fn fbm(u: f32, v: f32, period: i32, octaves: u32, seed: u32) -> f32 {
     let (mut sum, mut weight, mut total) = (0.0, 1.0, 0.0);
     for octave in 0..octaves {
@@ -283,15 +260,11 @@ fn ramp(low: f32, high: f32, x: f32) -> f32 {
     smooth(math::clamp((x - low) / (high - low), 0.0, 1.0))
 }
 
-/// sRGB bytes of a linear value, as [`encode_with_powf`] rounds them: the
-/// count of byte thresholds at or below it (none for NaN), eight
-/// comparisons instead of a `powf` per channel.
 fn encode(value: f32) -> u8 {
     let value = math::clamp(value, 0.0, 1.0);
     srgb_thresholds().partition_point(|&threshold| threshold <= value) as u8
 }
 
-/// The sRGB transfer function, rounded to a byte.
 fn encode_with_powf(value: f32) -> u8 {
     let value = math::clamp(value, 0.0, 1.0);
     let srgb = if value <= 0.003_130_8 {
@@ -302,9 +275,6 @@ fn encode_with_powf(value: f32) -> u8 {
     (srgb * 255.0 + 0.5) as u8
 }
 
-/// The smallest value [`encode_with_powf`] rounds to each byte from 1 to
-/// 255: bisections over the bits of floats in [0, 1], which order like
-/// their values, as the encoding rises with its value.
 fn srgb_thresholds() -> &'static [f32; 255] {
     static THRESHOLDS: OnceLock<[f32; 255]> = OnceLock::new();
     THRESHOLDS.get_or_init(|| {
@@ -328,13 +298,10 @@ fn byte(value: f32) -> u8 {
     (math::clamp(value, 0.0, 1.0) * 255.0 + 0.5) as u8
 }
 
-/// A window of a façade cell: whether texel `(cx, cy)` lies inside the
-/// rectangle `[x0, x1) × [y0, y1)`.
 fn inside(cx: u32, cy: u32, x0: u32, x1: u32, y0: u32, y1: u32) -> bool {
     (x0..x1).contains(&cx) && (y0..y1).contains(&cy)
 }
 
-/// Light behind a lit window: warm or cool, brighter under the ceiling.
 fn window_light(random: u32, cy: u32, top: u32, bottom: u32) -> [f32; 3] {
     let depth = (cy.saturating_sub(top)) as f32 / math::max((bottom - top) as f32, 1.0);
     let base = match random % 5 {
@@ -346,7 +313,6 @@ fn window_light(random: u32, cy: u32, top: u32, bottom: u32) -> [f32; 3] {
     times(base, 1.0 - depth * 0.45)
 }
 
-/// One texel of a façade: 8 × 8 cells of 64 texels, one bay by one floor.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -358,8 +324,6 @@ fn facade(set: Set, seed: u32, x: u32, y: u32) -> Texel {
     let random = cell(bay, floor, seed.wrapping_mul(7_919) + 3);
     let grain = fbm(u, v, 16, 4, 11) - 0.5;
     let lit = |share: u32| random % 100 < share;
-    // A matte patch in the corner of every repeat: roofs and ledges map
-    // here (models::WALL).
     if x < 4 && y < 4 {
         return Texel::new([0.34, 0.34, 0.35], 0.9, 0.0);
     }
@@ -408,7 +372,6 @@ fn facade(set: Set, seed: u32, x: u32, y: u32) -> Texel {
             }
             if window {
                 let mut texel = Texel::new([0.07, 0.09, 0.11], 0.08, 0.6).at(0.3);
-                // A mullion down the middle.
                 if cx == 31 || cx == 32 {
                     return Texel::new([0.16, 0.17, 0.18], 0.4, 0.6).at(0.4);
                 }
@@ -417,7 +380,6 @@ fn facade(set: Set, seed: u32, x: u32, y: u32) -> Texel {
                 }
                 return texel;
             }
-            // Floor band and wall.
             let band = cy >= 58;
             Texel::new(
                 if band { times(stone, 0.88) } else { stone },
@@ -443,7 +405,6 @@ fn facade(set: Set, seed: u32, x: u32, y: u32) -> Texel {
                 }
                 let mut texel = Texel::new([0.06, 0.07, 0.08], 0.1, 0.4).at(0.3);
                 if random % 4 == 1 {
-                    // Curtains.
                     texel.color = times([0.8, 0.6, 0.45], 0.5 + unit(random >> 3) * 0.4);
                     texel.metal = 0.0;
                     texel.rough = 0.8;
@@ -453,7 +414,6 @@ fn facade(set: Set, seed: u32, x: u32, y: u32) -> Texel {
                 }
                 return texel;
             }
-            // Running bond: 16 × 8 texel bricks, courses offset by half.
             let course = y / 8;
             let shift = if course.is_multiple_of(2) { 0 } else { 8 };
             let (bx, by) = ((x + shift) % 16, y % 8);
@@ -495,7 +455,6 @@ fn facade(set: Set, seed: u32, x: u32, y: u32) -> Texel {
             let pier = !(14..50).contains(&cx);
             let ornament = !pier && cy >= 44;
             if pier {
-                // Fluted stone piers.
                 let flute = math::sin((cx as f32 / 14.0) * TAU * 2.0) * 0.5 + 0.5;
                 return Texel::new(
                     mix([0.8, 0.76, 0.66], [0.9, 0.86, 0.78], grain + 0.5),
@@ -505,7 +464,6 @@ fn facade(set: Set, seed: u32, x: u32, y: u32) -> Texel {
                 .at(0.8 + flute * 0.15);
             }
             if ornament {
-                // Gold chevrons.
                 let chevron = ((cx as i32 - 32).unsigned_abs() + cy) % 8 < 3;
                 return Texel::new(
                     if chevron {
@@ -528,7 +486,6 @@ fn facade(set: Set, seed: u32, x: u32, y: u32) -> Texel {
             texel
         }
         _ => {
-            // Corrugated siding with a clerestory strip.
             let strip = inside(cx, cy, 4, 60, 6, 16);
             if strip {
                 let mut texel = Texel::new([0.55, 0.6, 0.58], 0.3, 0.0).at(0.4);
@@ -552,7 +509,6 @@ fn facade(set: Set, seed: u32, x: u32, y: u32) -> Texel {
     }
 }
 
-/// A texel of a uniform atlas region with a little grain.
 fn region(color: [f32; 3], rough: f32, metal: f32, glow: [f32; 3], grain: f32) -> Texel {
     Texel::new(times(color, 1.0 + grain * 0.15), rough, metal).lit(glow)
 }
@@ -615,7 +571,6 @@ fn texel(set: Set, seed: u32, x: u32, y: u32, width: u32, height: u32) -> Texel 
             };
             match set {
                 Set::Road => {
-                    // 8 units along by 4 across: edge lines and a dashed center.
                     let across = v;
                     if (0.05..0.075).contains(&across) || (0.925..0.95).contains(&across) {
                         paint(&mut texel, [0.8, 0.8, 0.78]);
@@ -803,7 +758,6 @@ fn texel(set: Set, seed: u32, x: u32, y: u32, width: u32, height: u32) -> Texel 
             .at(0.5 + weave * 0.2)
         }
         Set::Lattice => {
-            // A truss panel: chords, posts and crossed diagonals.
             let (lx, ly) = (x as f32, y as f32);
             let chord = !(14..242).contains(&y) || !(14..242).contains(&x);
             let diagonal = (lx - ly).abs() < 9.0 || (lx + ly - 255.0).abs() < 9.0;
@@ -854,7 +808,6 @@ fn texel(set: Set, seed: u32, x: u32, y: u32, width: u32, height: u32) -> Texel 
             Texel::new(if line { [0.9, 0.92, 0.9] } else { grass }, 0.9, 0.0)
         }
         Set::Rails => {
-            // Along u: sleepers across, two rails along, ballast between.
             let sleeper = x % 64 < 20 && (40..216).contains(&y);
             let rail = (60..74).contains(&y) || (182..196).contains(&y);
             let pebble = unit(cell(x / 4, y / 4, 127));
@@ -868,8 +821,6 @@ fn texel(set: Set, seed: u32, x: u32, y: u32, width: u32, height: u32) -> Texel 
             }
         }
         Set::Grime => {
-            // Occlusion over a whole building (read through its second
-            // coordinates): dark at the foot, streaks running down.
             let foot = ramp(0.8, 1.0, v);
             let lip = 1.0 - ramp(0.0, 0.04, v);
             let streak = ramp(0.6, 0.85, noise(u, 0.0, 16, 1, 131)) * ramp(0.1, 0.9, v);
@@ -881,8 +832,6 @@ fn texel(set: Set, seed: u32, x: u32, y: u32, width: u32, height: u32) -> Texel 
     }
 }
 
-/// Neon tubes on a dark backing: rings, bars and zigzags that glow white
-/// (materials color them with their emissive factor).
 fn neon(x: u32, y: u32) -> Texel {
     let (px, py) = (x as f32 % 128.0 - 64.0, y as f32 % 128.0 - 64.0);
     let tile = (x / 128) + (y / 128) * 2;
@@ -907,7 +856,6 @@ fn neon(x: u32, y: u32) -> Texel {
     texel
 }
 
-/// A billboard advertisement: a gradient, a shape and bars of "text".
 fn advert(ad: u8, u: f32, v: f32) -> Texel {
     let palettes = [
         ([0.9, 0.2, 0.35], [1.0, 0.75, 0.2], [1.0, 1.0, 1.0]),
@@ -943,8 +891,6 @@ fn advert(ad: u8, u: f32, v: f32) -> Texel {
     Texel::new(color, 0.3, 0.0).lit(if border { [0.0; 3] } else { times(color, 0.9) })
 }
 
-/// The street furniture atlas: 4 × 4 uniform regions of 64 texels (see
-/// `Region`).
 fn fixture(x: u32, y: u32, grain: f32) -> Texel {
     let none = [0.0; 3];
     match (x / 64, y / 64) {
@@ -980,8 +926,6 @@ fn fixture(x: u32, y: u32, grain: f32) -> Texel {
     }
 }
 
-/// The vehicle atlas: paint (white, tinted per vehicle), glass, trim,
-/// lights, rubber and grille regions of 64 texels.
 fn vehicle(x: u32, y: u32, grain: f32) -> Texel {
     let none = [0.0; 3];
     match (x / 64, y / 64) {
@@ -1009,8 +953,6 @@ fn vehicle(x: u32, y: u32, grain: f32) -> Texel {
     }
 }
 
-/// Paints leaves (or palm leaflets) into a canopy card: coverage in alpha,
-/// a dome per leaf in height.
 fn foliage(set: Set, width: u32, height: u32) -> Vec<Texel> {
     let mut texels = vec![
         {
@@ -1047,7 +989,6 @@ fn foliage(set: Set, width: u32, height: u32) -> Vec<Texel> {
         };
     let (w, h) = (width as f32, height as f32);
     if set == Set::Leaves {
-        // A rounded mass of leaves, darker inside.
         for index in 0..900u32 {
             let random = cell(index, 1, 139);
             let angle = unit(random) * TAU;
@@ -1067,7 +1008,6 @@ fn foliage(set: Set, width: u32, height: u32) -> Vec<Texel> {
             paint(cx, cy, 9.0, 4.5, unit(random >> 17) * TAU, color, depth);
         }
     } else {
-        // Two fronds: a stem and leaflets along it.
         for frond in 0..2 {
             let x0 = w * (0.25 + frond as f32 * 0.5);
             for step in 0..56 {
@@ -1090,8 +1030,6 @@ fn foliage(set: Set, width: u32, height: u32) -> Vec<Texel> {
             }
         }
     }
-    // Bark below the leaves (which end above 0.78), for trunks drawn with
-    // the same material, after a transparent gap (see the models' CANOPY).
     for y in height * 27 / 32..height {
         for x in 0..width {
             let (u, v) = (x as f32 / w, y as f32 / h);
@@ -1103,7 +1041,6 @@ fn foliage(set: Set, width: u32, height: u32) -> Vec<Texel> {
     texels
 }
 
-/// Generates every map of `set`.
 pub(crate) fn generate(set: Set) -> Maps {
     let (width, height) = set.size();
     let seed = Set::all()
@@ -1150,7 +1087,6 @@ pub(crate) fn generate(set: Set) -> Maps {
             .flat_map(|(x, y)| {
                 let dx = (at(x + 1, y) - at(x - 1, y)) * 0.5 * relief;
                 let dy = (at(x, y + 1) - at(x, y - 1)) * 0.5 * relief;
-                // Green points up the image (glTF), which is -y here.
                 let normal = Vec3::new(-dx, dy, 1.0).normalize();
                 [
                     byte(normal.x * 0.5 + 0.5),

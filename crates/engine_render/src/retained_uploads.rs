@@ -1,8 +1,3 @@
-//! Revision-driven uploads of retained frames' slot poses and colors.
-//!
-//! Poses need no packing here: core keeps every slot's pose in the upload
-//! layout (`RenderFrame::pose_rows`) and this cache only selects changed slots.
-
 use engine_core::RenderFrame;
 use engine_core::RenderInstance;
 
@@ -93,7 +88,6 @@ pub(crate) struct PreparedRetained {
 }
 
 impl RetainedUploads {
-    /// A new buffer, layout, or non-retained submission invalidates GPU contents.
     pub fn invalidate(&mut self) {
         self.committed = None;
         self.pending = None;
@@ -117,9 +111,6 @@ impl RetainedUploads {
         )
     }
 
-    /// Selects changed slots of both channels. `instances` supplies slot
-    /// colors, which are packed here; changed pose slots upload directly from
-    /// the frame's pose rows, so poses are never read or repacked.
     fn prepare_records(
         &mut self,
         instances: &[RenderInstance],
@@ -150,9 +141,6 @@ impl RetainedUploads {
             prepared.poses_repacked = instances.len();
             prepared.colors_repacked = instances.len();
         } else {
-            // Buffer capacity can outlive shrinking or expanding populations.
-            // Existing slots retain GPU contents; only appended slots need both
-            // channels initialized when the GPU allocation itself still fits.
             colors.truncate(instances.len());
             self.stamps.truncate(instances.len());
             self.stamps
@@ -205,7 +193,6 @@ impl RetainedUploads {
         self.colors.ranges()
     }
 
-    /// Commit only after every selected pose and color range reaches the queue.
     pub fn commit(&mut self) {
         self.committed = self.pending.take();
     }

@@ -1,6 +1,3 @@
-//! The two sides compared: each built, a commit in a reused checkout with
-//! its build kept by commit, the working tree in place.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,8 +9,6 @@ use super::FOLDER;
 use crate::bench;
 use crate::measure::{self, git, read_json};
 
-/// What runs: the Stress Lab natively, with its development tools, built
-/// as builds nothing is timed on are.
 const PACKAGE: &str = "stress-lab";
 
 const PROGRAM: &str = "stress-lab-native";
@@ -22,25 +17,16 @@ const PROFILE: &str = "quick";
 
 const FEATURES: &str = "dev";
 
-/// Run folders kept.
 const KEEP_RUNS: usize = 6;
 
-/// One side of the comparison, built and ready to run.
 pub(super) struct Side {
-    /// The commit, or the working tree, as reports name it.
     pub(super) label: String,
-    /// The commit, for a build kept by commit.
     pub(super) sha: Option<String>,
     pub(super) program: PathBuf,
-    /// Where its bench files and fixtures are read.
     pub(super) tree: PathBuf,
-    /// The generated files its workloads read (`--assets`).
     pub(super) assets: PathBuf,
 }
 
-/// Builds the program with `cargo` in `tree` (into `target`, or the tree's
-/// own target folder) and copies it, with DXC's library where there is
-/// one, into `into`: the copy's path.
 fn build_program(
     tree: &Path,
     target: Option<&Path>,
@@ -81,8 +67,6 @@ fn build_program(
     let program = into.join(measure::program_name());
     fs::copy(&built, &program)
         .map_err(|error| format!("cannot copy {}: {error}", built.display()))?;
-    // D3D12 compiles shaders with DXC beside the program: both sides draw
-    // through the same interface.
     if let Some(library) = measure::dxc() {
         let beside = into.join("dxcompiler.dll");
         if measure::file_hash(&beside).ok() != measure::file_hash(&library).ok() {
@@ -93,8 +77,6 @@ fn build_program(
     Ok(program)
 }
 
-/// The working tree as the candidate: built in place, uncommitted changes
-/// included.
 pub(super) fn working_tree(root: &Path) -> Result<Side, String> {
     let (_, commit) = crate::process::engine_commit();
     eprintln!("Building the working tree ({commit}).");
@@ -109,10 +91,6 @@ pub(super) fn working_tree(root: &Path) -> Result<Side, String> {
     })
 }
 
-/// The commit `rev` names as `role`: built in the reused checkout
-/// `target/equivalence/tree`, its program, bench files and fixtures kept in
-/// `target/equivalence/builds/SHA/` and reused while its program is
-/// unchanged.
 pub(super) fn commit_side(root: &Path, role: &str, rev: &str) -> Result<Side, String> {
     let sha = git(
         root,
@@ -132,7 +110,6 @@ pub(super) fn commit_side(root: &Path, role: &str, rev: &str) -> Result<Side, St
     let label = sha[..12].to_owned();
     if let Some(build) = kept {
         eprintln!("Reusing the build of {label} ({role}).");
-        // The last use orders what the prune keeps.
         fs::write(cache.join("used"), measure::iso(SystemTime::now()))
             .map_err(|error| error.to_string())?;
         return Ok(Side {
@@ -182,8 +159,6 @@ pub(super) fn commit_side(root: &Path, role: &str, rev: &str) -> Result<Side, St
     })
 }
 
-/// The reused checkout `target/equivalence/NAME` at commit `sha`, made the
-/// first time.
 pub(super) fn checkout_tree(root: &Path, name: &str, sha: &str) -> Result<PathBuf, String> {
     measure::ensure_commit(root, sha, None)?;
     let tree = root.join(FOLDER).join(name);
@@ -191,8 +166,6 @@ pub(super) fn checkout_tree(root: &Path, name: &str, sha: &str) -> Result<PathBu
     Ok(tree)
 }
 
-/// Removes kept builds past the `keep` used last (but those of `using`),
-/// and run folders past the last few.
 pub(super) fn prune(root: &Path, keep: usize, using: &[&str]) {
     let used = |folder: &Path| {
         fs::metadata(folder.join("used"))

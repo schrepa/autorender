@@ -1,12 +1,3 @@
-/**
- * Meshes as inspected: a fixture's inline two-joint ribbon with
- * its skin and a clip bending its upper joint, and a dense ball near and
- * far. The skin, mesh and player inspect as authored (IDs, the inline
- * source, joints, inverse binds, the clip's targets and channels), the
- * renderer reports the ribbon skinned and the ball's levels of detail, the
- * running page draws the far ball coarser than the near one, and the clip at
- * its end draws the ribbon bent where its start draws it straight.
- */
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
@@ -14,7 +5,6 @@ import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, ro
 
 const url = sceneUrl();
 const output = await artifacts("meshes-smoke");
-/** A unit ball of `rings` by `segments` quads. */
 function ball(rings, segments) {
   const vertices = [], indices = [];
   for (let ring = 0; ring <= rings; ring++) {
@@ -33,15 +23,12 @@ function ball(rings, segments) {
   }
   return { kind: "inline", vertices, indices };
 }
-// Rows of two vertices at heights 0, 1 and 2: the lowest moves with the
-// root joint, the highest with the tip joint, the middle with both.
 /** @type {[number, number[]][]} */
 const rows = [[0, [1, 0, 0, 0]], [1, [0.5, 0.5, 0, 0]], [2, [0, 1, 0, 0]]];
 const vertices = rows.flatMap(([y, weights]) => [-0.3, 0.3].map(x => ({
   position: [x, y, 0], normal: [0, 0, 1], uv: [x + 0.3, y / 2], joints: [0, 1, 0, 0], weights,
 })));
 const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-// The tip joint stands one unit up: its inverse bind moves one unit down.
 const tipBind = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1];
 const fixture = {
   id: "skin-fixture", revision: 1,
@@ -67,7 +54,6 @@ const { browser, page, errors } = await launch({ width: 960, height: 720 });
 const command = commander(page);
 const scene = routedScene(page, fixture);
 
-/** Component `component` of authored entity `entity`. */
 async function inspect(entity, component) {
   return (await command("inspect", { entity, component })).result.entity.components[component];
 }
@@ -84,7 +70,6 @@ try {
   await openPaused(page, url);
   const checks = [];
 
-  // The skin, its mesh and the player inspect as authored.
   const skin = await inspect("limb", "Skin");
   assert.deepEqual(skin, { skin: "rig", joints: ["root-bone", "tip-bone"], inverse_binds: 2 }, JSON.stringify(skin));
   await command("render");
@@ -99,8 +84,6 @@ try {
   assert.deepEqual(player.clip, { id: "bend", name: "", targets: ["tip-bone"], channels: 1, uri: null, duration: 1 }, JSON.stringify(player.clip));
   checks.push({ check: "inspects", skin, mesh: drawn.mesh });
 
-  // The ball's levels of detail, and the level the running page draws each
-  // ball at: inspecting watches it, displayed frames read it back.
   const near = await inspect("near-ball", "Mesh3d");
   assert.ok(near.mesh.rendered?.levels.length > 0, `the ball has coarser levels: ${JSON.stringify(near.mesh.rendered)}`);
   assert.equal(near.mesh.rendered.skinned, false);
@@ -108,7 +91,6 @@ try {
     await inspect(entity, "Mesh3d");
     await command("resume");
     try {
-      // Inspection, a query, answers while frames run.
       for (let attempt = 0; attempt < 100; attempt++) {
         await delay(100);
         const level = (await inspect(entity, "Mesh3d")).drawn_level;
@@ -125,7 +107,6 @@ try {
   assert.ok(farLevel > nearLevel, `the far ball draws coarser: ${farLevel} than ${nearLevel}`);
   checks.push({ check: "levels", levels: near.mesh.rendered.levels, near: nearLevel, far: farLevel });
 
-  // The clip's end bends the ribbon's upper half.
   const straight = await capture("straight");
   await command("animation", { entity: "root-bone", time: 1, speed: 0 });
   await command("step", { ticks: 1 });

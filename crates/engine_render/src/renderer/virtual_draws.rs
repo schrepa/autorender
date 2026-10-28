@@ -1,7 +1,3 @@
-//! Virtual geometry draws: the frame's camera bins and shadow
-//! views, the selection's bindings, and the pipelines and pose groups
-//! drawing the selected clusters.
-
 #![expect(
     clippy::expect_used,
     reason = "virtual geometry's frames create what they draw with"
@@ -12,14 +8,6 @@ use crate::bindings::VIRTUAL_POSES;
 use crate::cached::GroupCache;
 use crate::entries;
 
-/// Virtual geometry's draws: the arena and cluster
-/// selection; pipelines per pass kind and material variant over their
-/// layouts (unlit, lit) and pose groups (poses, colors, previous poses,
-/// grounds and the arena); this frame's camera bins (material and
-/// variant), the plan batches whose clusters draw instead of their
-/// fallback meshes, each shadow map's bin and view offset, and the first
-/// of the camera bins' phase-two twins; the depth pyramid generation and
-/// projection of the last frame that drew two phases.
 pub(super) struct VirtualDraws {
     pub(super) pass: VirtualGeometryPass,
     pub(super) pipelines: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
@@ -35,8 +23,6 @@ pub(super) struct VirtualDraws {
 
 impl VirtualDraws {
     pub(super) fn new(device: &wgpu::Device) -> Self {
-        // Poses, colors, previous poses, grounds and the arena's meshes,
-        // clusters and pages.
         let pose_layout = crate::pipelines::layout(device, &VIRTUAL_POSES);
         Self {
             pass: VirtualGeometryPass::new(device),
@@ -54,14 +40,6 @@ impl VirtualDraws {
 }
 
 impl Renderer {
-    /// Plans this frame's virtual geometry: the camera's
-    /// batches of virtual meshes and their bins, each shadow map's virtual
-    /// casters and bin, the views, the camera's occlusion and sub-pixel
-    /// tests (with `rasterized`, the projection the frame rasterizes, and
-    /// the depth pyramid's levels when occlusion culling runs), and the
-    /// bindings selection reads (this frame's poses, GPU-compacted visible
-    /// IDs or CPU-prepared slots, the shadow maps' casters and the depth
-    /// pyramid). Returns whether any batch draws clusters.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -80,8 +58,6 @@ impl Renderer {
             .resize(self.plan.batches.len(), false);
         self.virtual_draws.shadow_bins.clear();
         self.virtual_draws.phase_two = None;
-        // Frames drawing two phases retest the camera's
-        // clusters the last such frame's pyramid hid, if it is this one's.
         let two_phases = gpu_mode && self.gpu_presentation.occlusion();
         let pyramid = self
             .culling
@@ -144,23 +120,16 @@ impl Renderer {
         let view_projection = snapshot.view_projection;
         let mut camera_planes = [[0.0, 0.0, 0.0, 1.0]; crate::shadows::VIRTUAL_SHADOW_PLANES];
         camera_planes[..6].copy_from_slice(&crate::virtual_geometry::planes(view_projection));
-        // Levels measure from the detail eye, which shadow views inherit;
-        // normal cones are tested from the camera's eye.
         let camera = VirtualView {
             planes: camera_planes,
             eye: snapshot.detail_eye,
             min_distance: VIRTUAL_NEAREST,
-            // The projection's y scale: its second row's length.
             projection: view_projection.row(1).truncate().length() * 0.5,
             threshold: snapshot.environment.virtual_geometry.pixel_error
                 / self.display.size().height.max(1) as f32,
             unseen_error: 0.0,
             cone: Cone::From(snapshot.camera_position),
         };
-        // Each region of shadow tiles redrawn selects its virtual casters'
-        // clusters within its world error whatever the camera sees, into a
-        // bin each. Closed meshes cast the clusters facing the sun, which
-        // hide the rest; others cast both faces.
         let mut views = vec![camera];
         let mut shadow_batches = Vec::new();
         let mut shadow_instances = 0;
@@ -199,8 +168,6 @@ impl Renderer {
                     bin,
                     shadow_view.view_offset,
                 ));
-                // Errors project from beyond any distance: within the
-                // region's error everywhere, whatever the camera sees.
                 views.push(VirtualView {
                     planes: shadow_view.planes,
                     min_distance: REGION_DISTANCE,
@@ -211,13 +178,11 @@ impl Renderer {
                 });
             }
         }
-        // Phase two's twins of the camera's bins follow the shadow maps'.
         let mut bins = self.virtual_draws.bins.len() + self.virtual_draws.shadow_bins.len();
         if pyramid.is_some() {
             self.virtual_draws.phase_two = Some(bins);
             bins += self.virtual_draws.bins.len();
         }
-        // Clusters' tests measure the pixels the frame draws.
         let render = self.display.region.render;
         let tests = CameraTests {
             view_projection: rasterized,
@@ -266,9 +231,6 @@ impl Renderer {
         true
     }
 
-    /// Pose groups of virtual geometry pipelines: each pair
-    /// of this frame's and the previous frame's pose buffers, with the
-    /// colors, the grounds none of the slots stand on and the arena.
     pub(super) fn ensure_virtual_pose_groups(&mut self) {
         let Some(([meshes, clusters, pages], arena)) = self.virtual_draws.pass.arena() else {
             return;
@@ -276,7 +238,6 @@ impl Renderer {
         let buffers = self.instances.pose_bounds();
         let colors = self.instances.colors().bound();
         let grounds = Bound::fixed(self.instances.grounds().as_entire_binding());
-        // The arena counts its buffers' replacements itself.
         let arena = [meshes, clusters, pages]
             .map(|buffer| Bound::counted(arena, buffer.as_entire_binding()));
         for (index, group) in self.virtual_draws.pose_groups.iter_mut().enumerate() {
@@ -299,8 +260,6 @@ impl Renderer {
         }
     }
 
-    /// The virtual geometry pipelines of `kind` for this
-    /// frame's bins' material variants.
     pub(super) fn ensure_virtual_pipelines(&mut self, kind: PassKind) {
         let lit = kind.lit;
         if self.virtual_draws.layouts[usize::from(lit)].is_none() {
@@ -338,8 +297,6 @@ impl Renderer {
         }
     }
 
-    /// A virtual geometry pipeline: `vs_virtual` (or its
-    /// temporal twin) with `kind`'s fragment stage and targets.
     pub(super) fn create_virtual(
         &self,
         kind: PassKind,
@@ -361,7 +318,6 @@ impl Renderer {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &VIRTUAL_ATTRIBUTES,
         })];
-        // Debug views read the draw's record.
         if kind.targets() == Some(Targets::Debug) {
             buffers = crate::debug_view::with_record(&buffers);
         }
@@ -395,9 +351,6 @@ impl Renderer {
         )
     }
 
-    /// The stages of `kind`'s virtual geometry pipelines for material
-    /// `variant`: forward or resolving the visibility buffer,
-    /// with the targets and constants of `kind`.
     pub(super) fn virtual_stages(
         &self,
         kind: PassKind,
@@ -425,7 +378,6 @@ impl Renderer {
     }
 }
 
-/// A virtual geometry pipeline's entry points, color targets and constants.
 pub(super) struct VirtualStages {
     pub(super) vertex: crate::shaders::Entry,
     pub(super) fragment: crate::shaders::Entry,
@@ -433,14 +385,8 @@ pub(super) struct VirtualStages {
     pub(super) constants: Vec<(&'static str, f64)>,
 }
 
-/// The smallest distance virtual geometry's errors project from:
-/// a guard for the eye's own position.
 pub(super) const VIRTUAL_NEAREST: f32 = 0.05;
-/// The distance a shadow region's view projects every error from, beyond
-/// any scene's: errors then compare in world units.
 const REGION_DISTANCE: f32 = 1.0e7;
 
-/// Selected clusters of virtual geometry: visible ID and
-/// cluster, one entry per instance.
 pub(super) const VIRTUAL_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![2 => Uint32, 13 => Uint32];

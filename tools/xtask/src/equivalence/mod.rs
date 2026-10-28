@@ -1,35 +1,3 @@
-//! `cargo xtask equivalence`: whether a change leaves what the engine draws
-//! and does as it was, on the native host. A base (the merge-base with
-//! origin/main unless `--base` names a commit) and a candidate (the working
-//! tree, uncommitted changes included, unless `--candidate` names a commit)
-//! each build the Stress Lab's native host with its development tools; then
-//! every cell of `bench/equivalence.json` of the tier asked for runs on
-//! both, one after the other, in one invocation on this machine. A cell
-//! launches its workload (a bench scene) or authored scene with its
-//! switches, scene settings and generated files from each side's own tree,
-//! applies its environment, steps its ticks, and for each view sets it,
-//! renders until it settles (nothing loading or compiling, the work
-//! counters unchanged frame to frame) and a few frames more, so time-sliced
-//! work completes its rounds, then captures it as the cell says: the exact
-//! state, a CPU or GPU-presented fraction of a tick, or ordinary display
-//! frames, with each frame's work counters and the engine's state digest
-//! where the host answers it. `--browser` runs the same cells in headless
-//! Chrome against each side's development server instead, `--both` runs
-//! both legs, and `--hosts` then measures how the candidate's native and
-//! Chrome images differ (reported, not judged). Each cell holds the
-//! machine's heavy-run lock while it runs.
-//!
-//! Captures compare by SHA-256, then pixel by pixel within the cell's
-//! tolerance (0 unless it says). Work counters whose rule in
-//! `bench/metrics.json` is `equal`, `not-above` or `false` fail on a change;
-//! `shown` ones, and counters the base lacks, are listed. An unstable capture carries its reason in the
-//! matrix and passes when a candidate run matches one of the base's over
-//! `--repeat` runs, or lies no farther from the nearest than the base's own
-//! images lie from each other; its work counters fail only where they fail
-//! against every base run. `--aa` runs the base against itself to find
-//! them.
-//! Exit 0: equal; 3: different; 1: could not check.
-
 mod browser;
 mod judge;
 mod matrix;
@@ -56,34 +24,25 @@ use sides::{Side, commit_side, prune, working_tree};
 pub(crate) use judge::decode;
 pub(crate) use matrix::check;
 
-/// The folders under which builds, the base's checkout and runs go.
 const FOLDER: &str = "target/equivalence";
 
-/// Runs of each side for a cell with unstable captures, unless `--repeat`.
 const REPEAT: usize = 3;
 
-/// Builds of commits kept, unless `--keep`.
 const KEEP: usize = 4;
 
 const USAGE: &str = "usage: cargo xtask equivalence [--base REV] [--candidate REV] [--tier smoke|full] [--cells NAME,...] [--aa] [--repeat N] [--keep N] [--gpu discrete|integrated] [--browser | --both [--hosts]]";
 
-/// What the command line asks for.
 struct Options {
     base: Option<String>,
     candidate: Option<String>,
     tier: String,
     cells: Option<Vec<String>>,
     aa: bool,
-    /// Runs of each side for a cell with unstable captures; with `--aa`,
-    /// pairs of base runs (one unless given).
     repeat: Option<usize>,
     keep: usize,
     gpu: String,
-    /// The legs to run: the native host's, Chrome's, or both.
     native: bool,
     browser: bool,
-    /// With both legs, measure how the candidate's native and Chrome images
-    /// differ.
     hosts: bool,
 }
 
@@ -162,8 +121,6 @@ fn options(arguments: &[String]) -> Result<Options, String> {
     Ok(options)
 }
 
-/// Every cell of the matrix, as read, and its tier: what `cargo xtask
-/// verify` selects from (the matrix's own check reports its problems).
 pub(crate) fn tiers(root: &Path) -> Result<Vec<(String, String)>, String> {
     let (cells, _) = matrix::read_matrix(root)?;
     Ok(cells
@@ -172,7 +129,6 @@ pub(crate) fn tiers(root: &Path) -> Result<Vec<(String, String)>, String> {
         .collect())
 }
 
-/// The merge-base of `rev` with origin/main: the default base.
 fn default_base(root: &Path, rev: &str) -> Result<String, String> {
     git(root, &["merge-base", rev, "origin/main"]).map_err(|error| {
         format!("no merge-base of {rev} with origin/main ({error}): name one with --base")
@@ -293,8 +249,6 @@ pub fn equivalence(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     outcome(&all)
 }
 
-/// How a leg runs a cell: the native host's sessions, or Chrome's pages
-/// of each side served from `root`'s trees at `size`.
 enum Leg<'a> {
     Native,
     Browser {
@@ -305,8 +259,6 @@ enum Leg<'a> {
     },
 }
 
-/// The candidate's native image and its Chrome image of each capture both
-/// legs took, and how they differ: measurements, not verdicts.
 fn hosts(legs: &[(&str, Vec<Judged>)]) -> Vec<Value> {
     let leg = |name: &str| {
         legs.iter()
@@ -344,7 +296,6 @@ fn hosts(legs: &[(&str, Vec<Judged>)]) -> Vec<Value> {
     measured
 }
 
-/// Prints how the candidate's native and Chrome images differ.
 fn print_hosts(hosts: &[Value]) {
     if hosts.is_empty() {
         return;
@@ -369,8 +320,6 @@ fn print_hosts(hosts: &[Value]) {
     }
 }
 
-/// The cells the options select, from a valid matrix: those `--cells`
-/// names, else the tier's.
 fn selected(root: &Path, options: &Options) -> Result<Vec<Cell>, String> {
     let (cells, problems) = read_matrix(root)?;
     if !problems.is_empty() {
@@ -399,16 +348,11 @@ fn selected(root: &Path, options: &Options) -> Result<Vec<Cell>, String> {
     }
 }
 
-/// The side runs alternate with the base's: the candidate, or with `--aa`
-/// the base again, and what reports and folders call it.
 struct Second<'a> {
     side: &'a Side,
     role: &'static str,
 }
 
-/// `cell` run on the base and the second side in rounds of one run each
-/// (more for unstable captures, and once more where one matched no base
-/// image), and judged.
 fn judged<'a>(
     cell: &'a Cell,
     base: &Side,
@@ -418,8 +362,6 @@ fn judged<'a>(
     folder: &Path,
     leg: &Leg,
 ) -> Judged<'a> {
-    // Each cell holds the machine's heavy-run lock while it runs: other
-    // runs wait for a cell, not for the whole matrix.
     let _heavy = match HeavyRun::hold(&format!("cargo xtask equivalence: {}", cell.name)) {
         Ok(held) => held,
         Err(error) => return Judged::failed(cell, error),
@@ -464,9 +406,6 @@ fn judged<'a>(
     };
     run_rounds(&mut base_runs, &mut second_runs);
     let (mut verdicts, mut changed) = judge(cell, &base_runs, &second_runs, catalog, &folder);
-    // An unstable capture that matched none of the base's images may have
-    // missed the base's less frequent ones: one more round of runs before it
-    // counts as different.
     let unmatched = verdicts.iter().any(|(key, verdict)| {
         cell.unstable.contains_key(key) && matches!(verdict, Verdict::Different(_))
     });
@@ -488,8 +427,6 @@ fn judged<'a>(
     }
 }
 
-/// The run as JSON: the sides, each capture's verdict and hashes, the
-/// counters that changed, and the digests.
 fn report(
     options: &Options,
     base: &Side,
@@ -524,7 +461,6 @@ fn report(
     })
 }
 
-/// One judged cell as JSON.
 fn cell_report(judged: &Judged) -> Value {
     let cell = judged.cell;
     let captures: Vec<Value> = judged
@@ -606,7 +542,6 @@ fn cell_report(judged: &Judged) -> Value {
     })
 }
 
-/// Prints each capture's verdict, then the work counters that changed.
 fn print_summary(options: &Options, results: &[Judged]) {
     println!("\n{:22} {:12} {:12} result", "cell", "view", "capture");
     for Judged { cell, verdicts, .. } in results {
@@ -665,8 +600,6 @@ fn print_summary(options: &Options, results: &[Judged]) {
     }
 }
 
-/// The comparison's exit: 0 when every capture, judged counter and digest
-/// is equal; 3 when one differs; 1 when one could not be checked.
 fn outcome(results: &[&Judged]) -> Result<(), Failure> {
     let (mut different, mut unchecked) = (0, 0);
     for Judged {
@@ -701,9 +634,6 @@ fn outcome(results: &[&Judged]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// The A/A run's exit: 0 when every capture the matrix calls stable gave
-/// the same image each run; 3 naming those that varied, which need a fix
-/// or a reason in the matrix.
 fn aa_outcome(results: &[&Judged]) -> Result<(), Failure> {
     let mut varied = Vec::new();
     let mut steady = Vec::new();
@@ -737,7 +667,6 @@ fn aa_outcome(results: &[&Judged]) -> Result<(), Failure> {
                 _ => {}
             }
         }
-        // Digest parts that differ between any two runs of the base.
         let runs: Vec<&session::Run> = base.iter().chain(candidate).collect();
         let views: BTreeSet<&String> = runs.iter().flat_map(|run| run.digests.keys()).collect();
         for view in views {

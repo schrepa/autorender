@@ -8,18 +8,13 @@ publish.workspace = true
 [dependencies]
 engine_scene = { workspace = true, features = ["schema"] }
 engine_dev.workspace = true
-# The pure checks' corpora run engine code directly, and meshoptimizer;
-# the terrain corpus's jobs replay in Wasm from base64.
 base64.workspace = true
 engine_assets.workspace = true
-# The textures corpus cooks images and reads them back with an independent
-# decoder.
 engine_textures.workspace = true
 texture2ddecoder.workspace = true
 engine_lodbuild.workspace = true
 engine_core.workspace = true
 engine_terrain.workspace = true
-# The terrain corpus packs its records as the cook does.
 engine_worker.workspace = true
 engine_sources.workspace = true
 zstd.workspace = true
@@ -31,17 +26,11 @@ png.workspace = true
 tiff.workspace = true
 engine_render.workspace = true
 naga = { workspace = true, features = ["wgsl-in", "spv-out"] }
-# The shader report checks the analyzer it downloads.
 sha2.workspace = true
 engine_assetc.workspace = true
-# What other programs did while a measured run was timed.
 engine_profiler = { workspace = true, features = ["load"] }
-# The game surface's types, the types hosts share and the TypeScript
-# generator.
 engine = { workspace = true, features = ["schema"] }
-# The repository policy lint checks first.
 policy.workspace = true
-# Systems' and components' names, which schedule ambiguities report.
 bevy_ecs = { workspace = true, features = ["debug"] }
 serde_json.workspace = true
 

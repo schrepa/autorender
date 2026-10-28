@@ -1,23 +1,3 @@
-//! The shallow-water scheme's passes (`water_sim.wgsl`) and the buffers
-//! they run over: slots side by side, each a pool of blocks of cells
-//! ([`StoredBlocks`]) with its table, and the blocks' ground, cells, faces'
-//! depths (between steps, the pushes of turbulence's bursts), fluxes,
-//! sources, waves, outflow's shares, seconds, its steps' count and sums. One
-//! scheme runs every slot, on the live cells over the same bed, the bursts
-//! of turbulence pushing its water before each step of the same seconds
-//! wherever they stir it: the square running live around the detail eye
-//! (`water_sim.rs`) is one slot storing every block of it, with a ring past
-//! its edges, which the GPU sets up (`meshes/water_setup.wgsl`), its blocks
-//! waiting for their data standing as the settled water does, as the ring
-//! stands, the solids standing in its water, which push it before each
-//! step, and its cells' looks in place of sums: the settled water at each,
-//! which its rim is pulled back to, and the water as water's pass draws it;
-//! regions settling for their tiles' records (`water_settle.rs`) fill as
-//! many as fit, each storing the blocks its water can reach, their cells
-//! stepping by their own seconds until their water settles and then stirred
-//! as the live square is for their last looks, and no solid touches them.
-//! What sets them apart is each slot's flags ([`SimSlot`]).
-
 use bytemuck::Zeroable;
 use engine_core::terrain_data::shallow_water::CELL_MEANS;
 use engine_core::terrain_data::{BLOCK_CELLS, BLOCK_GROUND, StoredBlocks};
@@ -29,18 +9,13 @@ use crate::gpu_layouts::constants::{
 use crate::gpu_layouts::water::{SimFrame, SimSlot, SimSlots, SimTouches};
 use crate::shaders::entry::water_sim;
 
-/// Workgroups along x a dispatch takes at most, as every device allows
-/// them: a pool of more blocks dispatches rows of them.
 const DISPATCH_ROW: u32 = 65_535;
 
-/// The scheme's passes: its group's layout and, once created, its
-/// pipelines.
 pub(crate) struct Kernels {
     pub(crate) layout: crate::pipelines::GroupLayout,
     pipelines: Option<Pipelines>,
 }
 
-/// The pipelines of the scheme's passes.
 pub(crate) struct Pipelines {
     exchange: wgpu::ComputePipeline,
     waves: wgpu::ComputePipeline,
@@ -66,7 +41,6 @@ impl Kernels {
         }
     }
 
-    /// Its pipelines, created the first time they are asked for.
     pub(crate) fn pipelines(&mut self, device: &wgpu::Device) -> &Pipelines {
         let layout = &self.layout;
         self.pipelines.get_or_insert_with(|| {
@@ -100,21 +74,15 @@ impl Kernels {
         })
     }
 
-    /// Its pipelines, if created.
     pub(crate) fn created(&self) -> Option<&Pipelines> {
         self.pipelines.as_ref()
     }
 }
 
-/// Workgroups along x and z dispatching `groups` of them, in rows.
 pub(crate) fn grid(groups: u32) -> [u32; 2] {
     [groups.min(DISPATCH_ROW), groups.div_ceil(DISPATCH_ROW)]
 }
 
-/// What each slot of the scheme's buffers holds at most: the blocks of its
-/// pool, the blocks its table maps (its rectangle's), the faces along its
-/// rectangle's west and south edges (its cells along x and z), and the
-/// cells its rivers bring water to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Capacity {
     pub(crate) blocks: u32,
@@ -124,8 +92,6 @@ pub(crate) struct Capacity {
 }
 
 impl Capacity {
-    /// What a slot holding `stored` blocks, with `sources` cells its rivers
-    /// bring water to, takes.
     pub(crate) fn of(stored: &StoredBlocks, sources: usize) -> Self {
         Self {
             blocks: stored.stored() as u32,
@@ -135,7 +101,6 @@ impl Capacity {
         }
     }
 
-    /// The least capacity holding both it and `other`.
     pub(crate) fn max(self, other: Self) -> Self {
         Self {
             blocks: self.blocks.max(other.blocks),
@@ -145,16 +110,11 @@ impl Capacity {
         }
     }
 
-    /// Whether it holds `other`.
     pub(crate) fn holds(self, other: Self) -> bool {
         self.max(other) == self
     }
 }
 
-/// The entries a slot of `capacity` takes in each buffer: its cells, its
-/// ground, its faces, its table, its steps (with the count of the steps its
-/// frame has run), its sums (the live square's looks) and, where it has
-/// one, its ring.
 struct Entries {
     cells: u64,
     ground: u64,
@@ -165,7 +125,6 @@ struct Entries {
     ring: u64,
 }
 
-/// The entries a slot of `capacity` takes, the live square's where `live`.
 fn entries(capacity: Capacity, live: bool) -> Entries {
     let blocks = u64::from(capacity.blocks);
     let cells = blocks * BLOCK_CELLS as u64;
@@ -184,9 +143,6 @@ fn entries(capacity: Capacity, live: bool) -> Entries {
     }
 }
 
-/// Bytes a slot of `capacity` takes in every buffer but the ring's, the
-/// live square's where `live`: about 214 a cell its pool holds settling and
-/// 133 live, and 4 for each block its table maps.
 fn bytes(capacity: Capacity, live: bool) -> u64 {
     let entries = entries(capacity, live);
     entries.ground * 4
@@ -199,10 +155,6 @@ fn bytes(capacity: Capacity, live: bool) -> u64 {
         + entries.averages * 16
 }
 
-/// The most bytes a slot of `capacity` takes in one buffer, the live
-/// square's where `live`: its cells' two states', its fluxes', its sums'
-/// (about 113 a cell its pool holds settling, 32 live), its table's, its
-/// ground's or its sources'.
 fn largest(capacity: Capacity, live: bool) -> u64 {
     let entries = entries(capacity, live);
     [
@@ -218,29 +170,18 @@ fn largest(capacity: Capacity, live: bool) -> u64 {
     .unwrap_or(0)
 }
 
-/// Bytes a settling slot of `capacity` takes in every buffer.
 pub(crate) fn slot_bytes(capacity: Capacity) -> u64 {
     bytes(capacity, false)
 }
 
-/// The most bytes a settling slot of `capacity` takes in one buffer.
 pub(crate) fn slot_largest_bytes(capacity: Capacity) -> u64 {
     largest(capacity, false)
 }
 
-/// The most bytes the live square's slot of `capacity` takes in one
-/// buffer.
 pub(crate) fn live_largest_bytes(capacity: Capacity) -> u64 {
     largest(capacity, true)
 }
 
-/// The scheme's buffers: `slots` slots of `capacity`, the live square's
-/// one with a ring past its rectangle's edges and its cells' looks; the
-/// uniforms of the slots' rectangles, of each stage's frame and of the
-/// solids standing in the live square's water; the groups binding them for
-/// each stage; and the workgroups along x and z the touch pass dispatches
-/// each step, a block's each of the blocks those solids reach (none without
-/// any).
 pub(crate) struct SlotBuffers {
     pub(crate) capacity: Capacity,
     pub(crate) slots: u32,
@@ -261,7 +202,6 @@ pub(crate) struct SlotBuffers {
 }
 
 impl SlotBuffers {
-    /// `slots` slots of `capacity`, the live square's one where `live`.
     pub(crate) fn new(
         device: &wgpu::Device,
         layout: &crate::pipelines::GroupLayout,
@@ -274,7 +214,6 @@ impl SlotBuffers {
             crate::buffers::storage(device, label, bytes, extra)
         };
         let none = wgpu::BufferUsages::empty();
-        // Settling reads its regions' ground back as its GPU raised it.
         let ground = storage(
             "engine/water-sim-ground",
             all * entries.ground * 4,
@@ -321,7 +260,6 @@ impl SlotBuffers {
         buffers
     }
 
-    /// Binds its buffers into each stage's group, the stage's frame first.
     fn bind(&mut self, device: &wgpu::Device, layout: &crate::pipelines::GroupLayout) {
         self.groups = self
             .frames
@@ -350,11 +288,6 @@ impl SlotBuffers {
             .collect();
     }
 
-    /// Holds `sources` cells rivers bring water to a slot: where it holds
-    /// fewer, its inputs grow to the next power of two of them and its
-    /// groups bind them, its other buffers keeping what they hold; grown,
-    /// they hold nothing, so each slot's sources and ring are written anew.
-    /// Whether they grew.
     pub(crate) fn hold_sources(
         &mut self,
         device: &wgpu::Device,
@@ -370,11 +303,6 @@ impl SlotBuffers {
         true
     }
 
-    /// Writes each stage's frame: the stage, the slots' count, the blocks
-    /// a slot's pool holds and those its table maps, and the cells rivers
-    /// bring water to and the faces along its west and south edges a slot
-    /// holds; each slot's count of the steps its frame has run starts at
-    /// none.
     pub(crate) fn write_frames(&self, queue: &wgpu::Queue) {
         let capacity = self.capacity;
         for (stage, buffer) in self.frames.iter().enumerate() {
@@ -391,7 +319,6 @@ impl SlotBuffers {
         }
     }
 
-    /// Writes the slots' squares.
     pub(crate) fn write_squares(&self, queue: &wgpu::Queue, squares: &[SimSlot]) {
         let mut all = SimSlots {
             slot: [SimSlot::zeroed(); SIM_SLOTS],
@@ -402,9 +329,6 @@ impl SlotBuffers {
         queue.write_buffer(&self.squares, 0, bytemuck::bytes_of(&all));
     }
 
-    /// Writes the solids standing in the live square's water this frame,
-    /// which push it before each step its frame runs; none touch it where
-    /// `touches` holds none, its uniform then holding none.
     pub(crate) fn write_touches(&mut self, queue: &wgpu::Queue, touches: Option<&SimTouches>) {
         self.touched = touches.map(|touches| [touches.blocks[2], touches.blocks[3]]);
         let none = SimTouches::zeroed();
@@ -415,7 +339,6 @@ impl SlotBuffers {
         );
     }
 
-    /// Writes `stored`, the blocks slot `slot` stores, into its table.
     pub(crate) fn write_table(&self, queue: &wgpu::Queue, slot: u32, stored: &StoredBlocks) {
         let at = self.table_at(slot);
         let places = at + u64::from(self.capacity.mapped);
@@ -427,9 +350,6 @@ impl SlotBuffers {
         );
     }
 
-    /// Where slot `slot`'s entries start in each buffer, as the shader
-    /// finds them: its cells' states, its ground, its sources, its ring,
-    /// its table, its waves, seconds and blocks, and its sums.
     pub(crate) fn cells_at(&self, slot: u32) -> u64 {
         u64::from(slot) * 2 * self.held()
     }
@@ -459,12 +379,10 @@ impl SlotBuffers {
         u64::from(slot) * entries(self.capacity, self.live).averages
     }
 
-    /// Cells a slot's pool holds at most.
     pub(crate) fn held(&self) -> u64 {
         entries(self.capacity, self.live).cells
     }
 
-    /// Bytes of its buffers.
     pub(crate) fn bytes(&self) -> u64 {
         [
             &self.ground,
@@ -482,8 +400,6 @@ impl SlotBuffers {
     }
 }
 
-/// The inputs of `slots` slots of `capacity`: each one's sources, then, the
-/// live square's (where `live`), its ring.
 fn inputs(device: &wgpu::Device, (capacity, slots): (Capacity, u32), live: bool) -> wgpu::Buffer {
     let all = u64::from(slots);
     let rings = if live {
@@ -499,18 +415,6 @@ fn inputs(device: &wgpu::Device, (capacity, slots): (Capacity, u32), live: bool)
     )
 }
 
-/// Encodes `steps` steps of every slot of `buffers` into `pass`, with
-/// `pipelines`, over the `blocks` the pool of the slot stepping storing the
-/// most holds, whose rivers bring water to up to `sourced` cells a slot:
-/// each step, where slots burst (`bursting`), the bursts of turbulence drawn
-/// and pushing their water, then the solids standing in the live square's
-/// water pushing it where any do; where slots settle (`settling`: sparse,
-/// some stepping by their cells' own seconds, summing their water), the
-/// blocks that step; the two stages (each finding the faces' fluxes, the
-/// share of its outflow each cell can give and updating the cells, each
-/// slot stepping locally finding its cells' seconds from the first's
-/// waves), what rivers bring and the step's end; and, where slots settle,
-/// each cell's water into its sums.
 pub(crate) fn encode_steps(
     pass: &mut wgpu::ComputePass<'_>,
     pipelines: &Pipelines,
@@ -567,9 +471,6 @@ pub(crate) fn encode_steps(
     }
 }
 
-/// Encodes a look at the slots of `buffers` whose rectangles look this
-/// dispatch into `pass`, with `pipelines`, over the `blocks` the pool of
-/// the one storing the most holds.
 pub(crate) fn encode_look(
     pass: &mut wgpu::ComputePass<'_>,
     pipelines: &Pipelines,
@@ -582,9 +483,6 @@ pub(crate) fn encode_look(
     pass.dispatch_workgroups(groups_x, groups_z, buffers.slots);
 }
 
-/// Encodes the live square's cells' water as water's pass draws it into
-/// their looks (`sim_drawn`) into `pass`, with `pipelines`, over the
-/// `blocks` of the live slot's pool of `buffers`.
 pub(crate) fn encode_drawn(
     pass: &mut wgpu::ComputePass<'_>,
     pipelines: &Pipelines,

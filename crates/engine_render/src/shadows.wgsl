@@ -1,61 +1,20 @@
-// Sun shadows: caster selection and depth-only drawing into the clipmap's
-// tiles (`shadows/mod.rs`).
-//
-// `select_casters` visits every candidate once. It transforms the candidate's
-// mesh bounds into light space and appends its slot to the instance IDs of
-// each map it casts into: each region of tiles redrawn this frame, which
-// takes still casters, and the moving map, which takes moving casters once
-// for each tile moving casters draw over this frame that they cross, the
-// tile in the ID's top eight bits beside the slot. GPU-presented frames
-// track how many frames each slot's pose stayed the same: still slots are
-// kept in the tiles they were drawn into, and leave the moving tiles a
-// little later, once the regions surely redrew theirs. A kept slot that
-// moves marks the drawn tiles it was kept in dirty, and one coming to rest
-// the drawn tiles under it, in every level; moving casters mark the drawn
-// tiles they cross, which then draw them over the still casters; all read
-// back a few frames later. CPU-prepared frames track no stillness: they
-// keep the casters with virtual geometry, whose clusters the regions'
-// views select and alone draw, and every other caster moves. Still casters
-// (on CPU-prepared frames every caster) also go to the sky map redrawn this
-// frame, looking down from one of sky occlusion's directions instead of
-// from the sun.
-
 struct Cull {
-    // World to light space: the sun's right, up and away-from-sun axes.
     light: array<vec4<f32>, 3>,
-    // Each region of tiles redrawn this frame: its light-space rectangle
-    // (minimum x and y, maximum x and y), and (x) the farthest receiver
-    // depth its casters darken.
     regions: array<vec4<f32>, REGIONS>,
     region_depths: array<vec4<f32>, REGIONS>,
-    // Each level's window: light-space x and y of its first tile's corner,
-    // and its tiles' width.
     windows: array<vec4<f32>, SHADOW_LEVELS>,
     candidates: u32,
     groups: u32,
-    // Instance IDs of each region's map and of the sky map; the moving map
-    // holds MOVING_PAIRS times as many.
     capacity: u32,
-    // STILLNESS | SKY_REFRESH.
     mode: u32,
-    // Regions redrawn this frame, levels in use, skinned slots of
-    // GPU-presented frames, and tiles along a side of a level's window.
     counts: vec4<u32>,
-    // The counters' words: those of a mask of every level's tiles, a bit a
-    // cell (cell c of level l at bit l * side * side + c), and where the
-    // dirty tiles' mask, the moving tiles' and the draw groups' starts lie.
     words: vec4<u32>,
-    // The slot of the first moving tile, past the still casters' slots.
     moving: vec4<u32>,
-    // The sky map redrawn this frame (SKY_REFRESH): world to its space (its
-    // right, up and away-from-the-sky axes), its rectangle there, and (x)
-    // the depth beyond which casters hide no sky from its receivers.
     sky: array<vec4<f32>, 3>,
     sky_rect: vec4<f32>,
     sky_depths: vec4<f32>,
 }
 
-// Regions a frame redraws at most, and levels the uniforms hold.
 const REGIONS: u32 = 7u;
 const SHADOW_LEVELS: u32 = 20u;
 
@@ -66,9 +25,6 @@ struct Candidate {
     position: u32,
 }
 
-// A draw group (the presentation record, whose padding holds the group;
-// `bounds_min.w` is 1 for meshes with joints, `bounds_max.w` 2 for those
-// virtual geometry draws).
 struct Batch {
     start: u32,
     count: u32,
@@ -76,9 +32,6 @@ struct Batch {
     group: u32,
     bounds_min: vec4<f32>,
     bounds_max: vec4<f32>,
-    // The mesh's first index and base vertex in the mesh arena, and the
-    // first instance of its draws (unused here), then its levels of detail
-    // (unused here).
     first_index: u32,
     base_vertex: i32,
     first_instance: u32,
@@ -105,27 +58,15 @@ struct DrawArgs {
 @group(0) @binding(1) var<storage, read> candidates: array<Candidate>;
 @group(0) @binding(2) var<storage, read> batches: array<Batch>;
 @group(0) @binding(3) var<storage, read> poses: array<Rows>;
-// GPU-presented frames: presentation's per-candidate flags (VALID marks a
-// candidate whose pose this frame's culling wrote).
 @group(0) @binding(4) var<storage, read> flags: array<u32>;
-// Per slot: its pose key, its still-frame count with LEVELED and RESTLESS,
-// and its light-space footprint while kept.
 @group(0) @binding(5) var<storage, read_write> stillness: array<vec4<u32>>;
 @group(0) @binding(6) var<storage, read_write> ids: array<u32>;
 @group(0) @binding(7) var<storage, read_write> args: array<DrawArgs>;
-// Counters read back: this frame's casters of the regions, the moving
-// map's draws and those it left out (TOTALS); then the words of the dirty
-// tiles' and the moving tiles' masks, and the start of each draw group's ID
-// region within a map. Sharing one binding keeps the selection within
-// eight storage buffers.
 struct Counters {
     totals: array<atomic<u32>, TOTALS>,
     words: array<atomic<u32>>,
 }
 @group(0) @binding(8) var<storage, read_write> counters: Counters;
-// GPU-presented frames: skinned slots, each with its
-// candidate position, draw group and joint count, and their world bounds
-// from their palettes (minimum, then maximum).
 struct Skinned {
     slot: u32,
     position: u32,
@@ -134,37 +75,19 @@ struct Skinned {
 }
 @group(0) @binding(10) var<storage, read> skinned: array<Skinned>;
 @group(0) @binding(11) var<storage, read> skin_bounds: array<vec4<f32>>;
-// The slots of each level's tiles as lookups read them (`scene.wgsl`'s
-// `shadow_tiles`): the drawn tile's in the low half and the moving tile's
-// in the high half, each one more than the slot.
 @group(0) @binding(12) var tile_slots: texture_2d<u32>;
 
 const STILLNESS: u32 = 1u;
 const SKY_REFRESH: u32 = 2u;
-// Exact hex literal: browsers reject decimal spellings above f32::MAX.
 const F32_MAX: f32 = 0x1.fffffep+127f;
-// Presentation's candidate flag of a valid pose.
 const VALID: u32 = 4u;
-// Frames a pose must stay unchanged before its slot is kept, and until it
-// leaves the moving tiles: long enough for the dirty tiles to be read back
-// and redrawn.
 const KEEP_AFTER: u32 = 8u;
 const MOVING_UNTIL: u32 = 64u;
-// A kept slot that moves again becomes restless: it waits this much longer
-// before it is kept again, so props that pause and vehicles that stop stay
-// over the moving tiles instead of redrawing kept tiles at every pause.
 const KEEP_AFTER_RESTLESS: u32 = 180u;
 const MOVING_UNTIL_RESTLESS: u32 = 236u;
-// Stillness state bits: the count in the low byte; LEVELED while the slot
-// is kept, whose footprint the state's last two words hold; and RESTLESS.
 const LEVELED: u32 = 0x2000000u;
 const RESTLESS: u32 = 0x80000000u;
-// World units of footprints: light-space corners rounded outward to them,
-// as signed 16-bit pairs.
 const FOOTPRINT_UNIT: f32 = 4.0;
-// The regions' maps come first, then the moving map and the sky map
-// redrawn this frame; the moving map holds MOVING_PAIRS IDs for each of a
-// group's casters, over at most MOVING_TILES tiles.
 const MOVING_MAP: u32 = 7u;
 const SKY_MAP: u32 = 8u;
 const MOVING_PAIRS: u32 = 8u;
@@ -176,7 +99,6 @@ fn mix_key(key: u32, value: u32) -> u32 {
     return x ^ (x >> 15u);
 }
 
-// A 32-bit fingerprint of a pose and its draw group.
 fn pose_key(pose: Rows, group: u32) -> u32 {
     var key = mix_key(0x2545f491u, group);
     for (var row = 0u; row < 3u; row++) {
@@ -200,8 +122,6 @@ fn group_start(group: u32) -> u32 {
     return atomicLoad(&counters.words[cull.words.w + group]);
 }
 
-// Where draw group `group`'s ID region ends within a map of
-// `cull.capacity` IDs.
 fn group_end(group: u32) -> u32 {
     if group + 1u < cull.groups {
         return group_start(group + 1u);
@@ -209,8 +129,6 @@ fn group_end(group: u32) -> u32 {
     return cull.capacity;
 }
 
-// Where map `map`'s instance IDs start: each region's map and the sky map
-// hold `cull.capacity`, the moving map MOVING_PAIRS times as many.
 fn map_start(map: u32) -> u32 {
     if map <= MOVING_MAP {
         return map * cull.capacity;
@@ -223,8 +141,6 @@ fn append(map: u32, group: u32, slot: u32) {
     ids[map_start(map) + group_start(group) + offset] = slot;
 }
 
-// Appends caster `slot` of draw group `group` to the moving map for moving
-// tile `tile`; past the group's room there, counts it instead.
 fn append_moving(group: u32, slot: u32, tile: u32) {
     let draw = MOVING_MAP * cull.groups + group;
     let offset = atomicAdd(&args[draw].instance_count, 1u);
@@ -237,10 +153,6 @@ fn append_moving(group: u32, slot: u32, tile: u32) {
     ids[map_start(MOVING_MAP) + MOVING_PAIRS * start + offset] = slot | (tile << 24u);
 }
 
-// Marks in the mask of the counters' words from `mask` the drawn tiles of
-// every level under light-space `low` to `high`, those of each window; and
-// where `moving`, appends caster `slot` of draw group `group` to the moving
-// map for each of those tiles moving casters draw over this frame.
 fn mark_tiles(mask: u32, low: vec2<f32>, high: vec2<f32>, moving: bool, group: u32,
         slot: u32) {
     if !(all(abs(low) < vec2<f32>(1.0e9)) && all(abs(high) < vec2<f32>(1.0e9))) {
@@ -276,7 +188,6 @@ fn mark_tiles(mask: u32, low: vec2<f32>, high: vec2<f32>, moving: bool, group: u
     }
 }
 
-// Signed 16-bit halves of a footprint word.
 fn footprint_word(value: vec2<i32>) -> u32 {
     return (u32(value.x) & 0xffffu) | (u32(value.y) << 16u);
 }
@@ -285,8 +196,6 @@ fn footprint_corner(word: u32) -> vec2<f32> {
     return vec2<f32>(f32(i32(word << 16u) >> 16u), f32(i32(word) >> 16u)) * FOOTPRINT_UNIT;
 }
 
-// The light-space box of the world box `center` +- `half`: its least
-// corner, then its greatest.
 fn light_box(center: vec3<f32>, half: vec3<f32>) -> array<vec3<f32>, 2> {
     let light_center = vec3<f32>(dot(cull.light[0].xyz, center),
         dot(cull.light[1].xyz, center), dot(cull.light[2].xyz, center));
@@ -295,8 +204,6 @@ fn light_box(center: vec3<f32>, half: vec3<f32>) -> array<vec3<f32>, 2> {
     return array<vec3<f32>, 2>(light_center - light_half, light_center + light_half);
 }
 
-// Skinned slots of GPU-presented frames: each moves, drawn over the moving
-// tiles its palette bounds cross, and never kept.
 @compute @workgroup_size(64)
 fn select_skinned(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= cull.counts.z {
@@ -328,17 +235,12 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let pose = poses[candidate.slot];
     let batch = batches[candidate.batch];
-    // Batches without a group (transparent ones) cast no shadow.
     if batch.group >= cull.groups {
         return;
     }
-    // Joints place meshes with joints: GPU-presented frames select them by
-    // their palette bounds (`select_skinned`), others by their mesh's
-    // bounds where their slot stands.
     if batch.bounds_min.w != 0.0 && classify {
         return;
     }
-    // World bounds of the posed mesh bounds, then their light-space box.
     let center = (batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5;
     let half = (batch.bounds_max.xyz - batch.bounds_min.xyz) * 0.5;
     let world_center = vec3<f32>(dot(pose.r0.xyz, center) + pose.r0.w,
@@ -348,10 +250,6 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     let bounds = light_box(world_center, world_half);
     let low = bounds[0];
     let high = bounds[1];
-    // Non-finite bounds fail every comparison and cast nothing. Frames
-    // tracking no stillness keep the casters with virtual geometry, whose
-    // clusters the regions alone draw, and no other: each of those moves,
-    // drawn over the moving tiles it crosses.
     let clustered = batch.bounds_max.w != 0.0;
     var moving = !clustered;
     var kept = clustered;
@@ -366,8 +264,6 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
         if state.x == key {
             count = min(count + 1u, 255u);
         } else {
-            // A kept slot that moved leaves its shadow in the tiles it was
-            // kept in: redraw them, and keep it moving longer next time.
             if count >= keep_after && leveled != 0u {
                 mark_tiles(cull.words.y, footprint_corner(footprint.x),
                     footprint_corner(footprint.y), false, 0u, 0u);
@@ -378,7 +274,6 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
             leveled = 0u;
         }
         if count == keep_after {
-            // Newly still: the tiles under it must be drawn with it.
             mark_tiles(cull.words.y, low.xy, high.xy, false, 0u, 0u);
         }
         moving = count < select(MOVING_UNTIL, MOVING_UNTIL_RESTLESS, restless != 0u);
@@ -404,7 +299,6 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     if moving {
         mark_tiles(cull.words.z, low.xy, high.xy, true, batch.group, candidate.slot);
     }
-    // Sky occlusion's map, which keeps what stays: its box seen from the sky.
     if (cull.mode & SKY_REFRESH) != 0u && (kept || !classify) {
         let sky_center = vec3<f32>(dot(cull.sky[0].xyz, world_center),
             dot(cull.sky[1].xyz, world_center), dot(cull.sky[2].xyz, world_center));
@@ -417,9 +311,6 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// Totals of this frame's casters of the regions together and of the
-// moving map, read back with the masks for the frame stats: each of a
-// workgroup's lanes sums some draws.
 const COUNT_LANES: u32 = 256u;
 var<workgroup> cast_totals: array<atomic<u32>, 2>;
 
@@ -429,8 +320,6 @@ fn count_casters(@builtin(local_invocation_index) lane: u32) {
         atomicStore(&cast_totals[lane], 0u);
     }
     workgroupBarrier();
-    // Every lane sums every 256th draw of the regions' maps and the moving
-    // map, those before the sky map, which shadows do not count.
     var totals = vec2<u32>(0u);
     let draws = SKY_MAP * cull.groups;
     for (var draw = lane; draw < draws; draw += COUNT_LANES) {
@@ -448,32 +337,13 @@ fn count_casters(@builtin(local_invocation_index) lane: u32) {
     }
 }
 
-// Depth-only drawing into the clipmap: a region's layer through its view,
-// the atlas's slots of the tiles composed from the regions and of the
-// moving tiles through their routes, and the sky map.
-
 struct View {
-    // World to this view's clip space; the compose view's first column holds
-    // two over the atlas's width and height (x and y).
     clip: mat4x4<f32>,
-    // The wind: its velocity (x and z), gust strength and the
-    // presentation time, which placed objects sway in as `wind.wgsl`'s
-    // `wind_sway` has them.
     wind: vec4<f32>,
-    // The detail eye, whose distance sizes the wind's shaking on screen as
-    // meshes see it, and (w) the pixels a radian spans at the view's center,
-    // one over a pixel's angle. Views without one (w 0), the regions', cast
-    // placed objects by their trunks' mean bend alone, in their wind without
-    // gusts at time zero.
     eye: vec4<f32>,
 }
 
-// Its own binding: the selection pass above owns binding 0.
 @group(0) @binding(9) var<uniform> view: View;
-// The routes of this frame's moving tiles: each tile's world to the atlas's
-// clip space, mapping the tile onto its slot, and its slot's texels (first
-// x and y, then past the last); and two over the atlas's width and height
-// (x and y). More than a uniform binding holds on every device.
 struct Routes {
     clips: array<mat4x4<f32>, MOVING_TILES>,
     slots: array<vec4<f32>, MOVING_TILES>,
@@ -481,12 +351,8 @@ struct Routes {
 }
 @group(0) @binding(13) var<storage, read> routes: Routes;
 @group(1) @binding(0) var<storage, read> slot_poses: array<Rows>;
-// Joint palettes of skinned slots, as meshes.wgsl reads them.
 @group(1) @binding(2) var<storage, read> slot_palette: array<Rows>;
 
-// Casters between the sun and the near plane of `clip`, world to a clip
-// space of depths from 0 on, still darken its receivers: flattened onto
-// it.
 fn flattened(clip: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(clip.xy, max(clip.z, 0.0), clip.w);
 }
@@ -495,22 +361,15 @@ fn project(world: vec3<f32>) -> vec4<f32> {
     return flattened(view.clip * vec4<f32>(world, 1.0));
 }
 
-// `world` through moving tile `tile`'s route onto its slot of the atlas.
 fn route(world: vec3<f32>, tile: u32) -> vec4<f32> {
     return flattened(routes.clips[tile] * vec4<f32>(world, 1.0));
 }
 
-// Whether the atlas texel at `position` (a fragment's) lies outside moving
-// tile `tile`'s slot: what its casters draw past their tile stays out of
-// the slots around.
 fn outside_slot(position: vec2<f32>, tile: u32) -> bool {
     let slot = routes.slots[tile];
     return any(position < slot.xy) || any(position >= slot.zw);
 }
 
-// Slot `slot`'s world position of mesh point `position`, swayed by the
-// wind where its flags carry a sway (skinned slots' palette
-// offsets read as none), as the meshes' vertices sway.
 fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
     let pose = slot_poses[slot];
     let point = vec4<f32>(position, 1.0);
@@ -520,8 +379,6 @@ fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
         return world;
     }
     let root = vec3<f32>(pose.r0.w, pose.r1.w, pose.r2.w);
-    // The pixels a meter at the root spans on screen seen from the detail
-    // eye, as `detail_across` measures it for meshes; none without an eye.
     let pixels = view.eye.w / max(length(root - view.eye.xyz), 1.0e-6);
     return world + wind_sway(view.wind, pixels, root, world.y - root.y, position, sway);
 }
@@ -531,11 +388,8 @@ fn vs_affine(@location(0) position: vec3<f32>, @location(2) slot: u32) -> @built
     return project(slot_world(slot, position));
 }
 
-// A moving caster's slot: its instance ID's low 24 bits.
 const MOVING_SLOT: u32 = 0xffffffu;
 
-// A moving caster drawn over the moving tile its instance ID's top eight
-// bits name.
 struct MovingOutput {
     @builtin(position) clip: vec4<f32>,
     @location(0) @interpolate(flat) tile: u32,
@@ -549,7 +403,6 @@ fn vs_moving(@location(0) position: vec3<f32>, @location(2) pair: u32) -> Moving
     return output;
 }
 
-// Its depth within its tile's slot alone.
 @fragment
 fn fs_moving(input: MovingOutput) {
     if outside_slot(input.clip.xy, input.tile) {
@@ -557,8 +410,6 @@ fn fs_moving(input: MovingOutput) {
     }
 }
 
-// The slots of this frame's moving tiles (the instance's) cleared to the
-// far depth: two triangles over its texels.
 @vertex
 fn vs_clear_moving(@builtin(vertex_index) vertex: u32,
         @builtin(instance_index) tile: u32) -> @builtin(position) vec4<f32> {
@@ -567,22 +418,13 @@ fn vs_clear_moving(@builtin(vertex_index) vertex: u32,
     return vec4<f32>(texel.x * routes.atlas.x - 1.0, 1.0 - texel.y * routes.atlas.y, 1.0, 1.0);
 }
 
-// The regions of tiles redrawn this frame, a layer each (`shadows/mod.rs`),
-// which the tiles composed from them read; depth passes drawing into them
-// bind a placeholder. A region's layer holds its square's tiles side by
-// side from its first, rows running down, and an apron around them.
 @group(1) @binding(3) var shadow_regions: texture_depth_2d_array;
 
 struct ComposeOutput {
     @builtin(position) clip: vec4<f32>,
-    // The region's layer, and what to add to an atlas texel of the slot for
-    // the region's texel holding it (y and z).
     @location(0) @interpolate(flat) source: vec3<i32>,
 }
 
-// A tile composed from its region into its slot of the atlas: two
-// triangles over the slot's texels (`place`: first x and y, then past the
-// last), carrying its region's layer and offset (`source`).
 @vertex
 fn vs_compose(@builtin(vertex_index) vertex: u32, @location(3) place: vec4<f32>,
         @location(4) source: vec4<i32>) -> ComposeOutput {
@@ -594,24 +436,18 @@ fn vs_compose(@builtin(vertex_index) vertex: u32, @location(3) place: vec4<f32>,
     return output;
 }
 
-// The slot's depth at its texel: the region's at the same light-space
-// texel.
 @fragment
 fn fs_compose(input: ComposeOutput) -> @builtin(frag_depth) f32 {
     let texel = vec2<i32>(input.clip.xy) + input.source.yz;
     return textureLoad(shadow_regions, texel, input.source.x, 0);
 }
 
-// Alpha-masked casters: the base color texture's alpha times
-// the object's color alpha, tested against the material's cutoff.
 struct SlotColor {
     color: vec2<u32>,
     surface: u32,
     flags: u32,
 }
 @group(1) @binding(1) var<storage, read> slot_colors: array<SlotColor>;
-// The material group of meshes.wgsl: base color texture and sampler, and
-// the maps' transforms and parameters.
 @group(2) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(2) @binding(1) var base_color_sampler: sampler;
 struct MaterialMaps {
@@ -623,7 +459,6 @@ struct MaterialMaps {
 
 struct MaskedOutput {
     @builtin(position) clip: vec4<f32>,
-    // Mesh texture coordinates, and the object's color alpha.
     @location(0) uv_alpha: vec3<f32>,
 }
 
@@ -640,7 +475,6 @@ fn vs_affine_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>
     return masked_output(project(slot_world(slot, position)), uv, slot_colors[slot].color);
 }
 
-// A masked moving caster drawn over the moving tile its instance ID names.
 struct MovingMaskedOutput {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv_alpha: vec3<f32>,
@@ -664,9 +498,6 @@ fn vs_moving_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>
         slot_colors[slot].color), tile);
 }
 
-// A slot's world position of a vertex with joints and weights:
-// its palette blend when skinned (flags one more than the palette
-// offset), else its pose.
 fn skinned_world(slot: u32, position: vec3<f32>, joints: vec4<u32>,
         weights: vec4<f32>) -> vec3<f32> {
     let point = vec4<f32>(position, 1.0);
@@ -723,24 +554,16 @@ fn vs_moving_masked_skinned(@location(0) position: vec3<f32>, @location(7) uv: v
         slot_colors[slot].color), tile);
 }
 
-// Placed objects' impostor cards: objects the camera draws
-// as impostors cast a card through their sphere's center facing the
-// frame nearest the sun, covered as that frame covers it. The impostors'
-// group of meshes.wgsl: records, the albedo and coverage array and its
-// sampler.
 @group(2) @binding(11) var<storage, read> impostor_records: array<ImpostorRecord>;
 @group(2) @binding(12) var impostor_albedo: texture_2d_array<f32>;
 @group(2) @binding(16) var impostor_sampler: sampler;
 
 struct CardOutput {
     @builtin(position) clip: vec4<f32>,
-    // Layer coordinates of the card point in its frame.
     @location(0) uv: vec2<f32>,
-    // The layer, the frame's column and row, and the frames a side.
     @location(1) @interpolate(flat) frame: vec4<u32>,
 }
 
-// Two triangles of a card, corners in its right and up.
 const CARD = array<vec2<f32>, 6>(
     vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
     vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0),
@@ -751,8 +574,6 @@ fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
         @location(3) index: u32) -> CardOutput {
     let pose = slot_poses[slot];
     let record = impostor_records[impostor_index(index)];
-    // The mesh-space direction toward the sun: depth grows away from it.
-    // Cofactor columns map it as the inverse would, but for scale.
     let toward = -vec3<f32>(view.clip[0].z, view.clip[1].z, view.clip[2].z);
     let x = vec3<f32>(pose.r0.x, pose.r1.x, pose.r2.x);
     let y = vec3<f32>(pose.r0.y, pose.r1.y, pose.r2.y);
@@ -761,7 +582,6 @@ fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
     let orientation = sign(dot(x, yz));
     let sun = normalize(vec3<f32>(dot(yz, toward), dot(cross(z, x), toward),
         dot(cross(x, y), toward)) * orientation);
-    // The frame nearest it, whose image the card shows.
     let hemisphere = (record.flags & IMPOSTOR_HEMISPHERE) != 0u;
     let frames = impostor_frames(record.flags);
     let grid = (impostor_grid(sun, hemisphere) * 0.5 + 0.5) * f32(frames - 1u);
@@ -779,8 +599,6 @@ fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
     return output;
 }
 
-// The frame's coverage where texels match the map's, scaled up on coarser
-// levels as the impostors' own tests are; samples stay within the frame.
 @fragment
 fn fs_impostor_card(input: CardOutput) {
     let size = f32(textureDimensions(impostor_albedo).x);
@@ -800,11 +618,6 @@ fn fs_impostor_card(input: CardOutput) {
     }
 }
 
-// Whether a masked caster's texel at mesh coordinates `uv_alpha.xy`, of the
-// object's color alpha `uv_alpha.z`, is cut out. Material bindings are
-// fragment-visible: the base color map's transform applies here. Alpha
-// averaged down the mip chain keeps its coverage, as meshes.wgsl's masked
-// tests scale it: a quarter more per level below the base.
 fn masked_cut(uv_alpha: vec3<f32>) -> bool {
     let point = vec3<f32>(uv_alpha.xy, 1.0);
     let uv = vec2<f32>(dot(material_maps.transforms[0].xyz, point),
@@ -824,7 +637,6 @@ fn fs_masked(input: MaskedOutput) {
     }
 }
 
-// A masked moving caster's texel within its tile's slot alone.
 @fragment
 fn fs_moving_masked(input: MovingMaskedOutput) {
     let cut = masked_cut(input.uv_alpha);

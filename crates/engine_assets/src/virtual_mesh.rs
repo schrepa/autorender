@@ -1,27 +1,3 @@
-//! Virtual geometry: a mesh as a cluster level-of-detail
-//! hierarchy in a GPU-ready layout.
-//!
-//! An `EVG1` file is little-endian 32-bit words: a header, the bounding
-//! volume hierarchy's nodes, the hierarchy's groups of clusters, the
-//! clusters, a page table and the pages holding the clusters' vertices and
-//! triangles. Renderers upload the sections as they are; decoding only
-//! validates them. Offline tools build the hierarchy (`tools/vgbuild`).
-//!
-//! The first pages are pinned: they hold every group simplified with more
-//! error than the pin error, which covers every surface coarsely. A file's
-//! prefix, its metadata and pinned pages, decodes on its own; renderers
-//! stream the other pages from the file as views need them, each validated
-//! as it arrives ([`VirtualMesh::validate_page`]).
-//!
-//! A cluster holds up to [`CLUSTER_TRIANGLES`] triangles over up to
-//! [`CLUSTER_VERTICES`] vertices. Groups of clusters were simplified together
-//! into the next level's clusters; each cluster records the group it belongs
-//! to (whose simplification error decides when a coarser cluster replaces it)
-//! and the finer group it came from (its own error). A view draws a cluster
-//! when its group's error projects above the view's threshold and its own at
-//! or below it ([`VirtualMesh::cut`] in mesh space).
-// A file comes from wherever a scene points: every narrowing cast is
-// checked.
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -32,34 +8,18 @@ use glam::Vec3;
 
 use crate::{AssetError, Mesh, MeshVertex, mesh::Aabb};
 
-/// Magic of virtual mesh files.
 pub const VIRTUAL_MESH_MAGIC: [u8; 4] = *b"EVG1";
-/// Format version this build reads and writes.
 pub const VIRTUAL_MESH_VERSION: u32 = 2;
-/// Triangles per cluster at most: vertex shaders draw three vertices of each.
 pub const CLUSTER_TRIANGLES: u32 = 128;
-/// Vertices per cluster at most, addressed by 8-bit local indices.
 pub const CLUSTER_VERTICES: u32 = 255;
-/// Words of the header.
 pub const HEADER_WORDS: usize = 32;
-/// Words a page holds at most: 128 KiB, the unit renderers stream.
 pub const PAGE_WORDS: usize = 32 * 1024;
-/// Words of a hierarchy node: bounding sphere, largest error in its
-/// subtree, and its group or children.
 pub const NODE_WORDS: usize = 8;
-/// Words of a group: its simplification's sphere and error, its clusters
-/// and its level.
 pub const GROUP_WORDS: usize = 8;
-/// Words of a cluster record.
 pub const CLUSTER_WORDS: usize = 12;
-/// Words of a stored vertex: 16-bit position steps, an octahedral normal
-/// and 16-bit texture coordinates.
 pub const VERTEX_WORDS: usize = 4;
-/// Marks internal hierarchy nodes, clusters of original geometry and groups
-/// never simplified further.
 pub const NONE: u32 = u32::MAX;
 
-/// Header word offsets, which builders write and [`VirtualMesh`] reads.
 pub mod header {
     pub const MAGIC: usize = 0;
     pub const VERSION: usize = 1;
@@ -83,25 +43,17 @@ pub mod header {
     pub const PREFIX_WORDS: usize = 30;
 }
 
-/// Flag: stored vertices carry texture coordinates.
 pub const FLAG_UVS: u32 = 1;
-/// Triangles of a virtual mesh's fallback cut ([`Mesh::from_virtual`]) when
-/// its source names none.
 pub const DEFAULT_FALLBACK_TRIANGLES: u32 = 4096;
-/// Flag: the mesh is closed, every edge joining two triangles, so its
-/// surfaces facing a direction hide those facing away.
 pub const FLAG_CLOSED: u32 = 2;
 
-/// A sphere and the mesh-space simplification error it bounds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ErrorSphere {
     pub center: Vec3,
     pub radius: f32,
-    /// `f32::MAX` for groups never simplified further.
     pub error: f32,
 }
 
-/// Word offsets of each section in the file.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Layout {
     nodes: usize,
@@ -112,25 +64,18 @@ struct Layout {
     end: usize,
 }
 
-/// A validated virtual mesh: the words of the file or of its prefix, where
-/// its sections start, and where to fetch its other pages from.
 pub struct VirtualMesh {
     words: Box<[u32]>,
     layout: Layout,
     bounds: Aabb,
-    // Pages `words` holds: every page, or the pinned ones of a prefix.
     available_pages: usize,
     source: Option<String>,
 }
 
-/// A cluster's record, decoded.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClusterInfo {
     pub sphere: ErrorSphere,
-    /// Normal cone axis and cutoff as 8-bit snorm (cutoff 127: no cone).
     pub cone: [i8; 4],
-    /// The finer group whose simplification made it, or `None` for
-    /// original geometry.
     pub refined: Option<u32>,
     pub group: u32,
     pub page: u32,
@@ -166,9 +111,6 @@ fn vec3(words: &[u32]) -> Vec3 {
 }
 
 impl VirtualMesh {
-    /// Bytes of the prefix of the file whose first [`HEADER_WORDS`] words
-    /// are `header` (metadata and pinned pages), for hosts fetching it
-    /// first; `None` when it is not an `EVG1` header of this version.
     pub fn prefix_bytes(header: &[u8]) -> Option<usize> {
         let word = |index: usize| {
             header
@@ -181,11 +123,6 @@ impl VirtualMesh {
             .flatten()
     }
 
-    /// Validates `bytes` as an `EVG1` file or its prefix: every section in
-    /// range, every reference to a node, group, cluster or page in bounds,
-    /// finite geometry, counts within the cluster limits, pinned groups in
-    /// the pinned pages, errors growing toward coarser groups, and the
-    /// triangles of every page held.
     pub fn decode(bytes: &[u8]) -> Result<Self, AssetError> {
         if !bytes.len().is_multiple_of(4) || bytes.len() < HEADER_WORDS * 4 {
             return Err(invalid("length is not a whole header of words"));
@@ -199,7 +136,6 @@ impl VirtualMesh {
         Self::from_words(words)
     }
 
-    /// Validates `words` as [`Self::decode`] does.
     pub fn from_words(words: Box<[u32]>) -> Result<Self, AssetError> {
         if words.len() < HEADER_WORDS {
             return Err(invalid("shorter than a header"));
@@ -271,8 +207,6 @@ impl VirtualMesh {
         {
             return Err(invalid("bounds are inverted or beyond 1e6"));
         }
-        // Pages: consecutive and at most PAGE_WORDS each, together the rest
-        // of the file; the pinned ones end the prefix.
         let mut expected = 0usize;
         let mut pinned_words = 0usize;
         for page in 0..pages {
@@ -310,36 +244,28 @@ impl VirtualMesh {
         Ok(mesh)
     }
 
-    /// This mesh, fetching the pages its prefix lacks from `url` (the whole
-    /// file, by byte ranges: [`Self::page_bytes`]).
     #[must_use]
     pub fn with_source(mut self, url: impl Into<String>) -> Self {
         self.source = Some(url.into());
         self
     }
 
-    /// Where the pages this mesh lacks come from.
     pub fn source(&self) -> Option<&str> {
         self.source.as_deref()
     }
 
-    /// Pages whose words this mesh holds: every page, or the pinned ones.
     pub fn available_pages(&self) -> usize {
         self.available_pages
     }
 
-    /// The first pages, holding every group simplified with more error than
-    /// [`Self::pin_error`].
     pub fn pinned_pages(&self) -> usize {
         self.words[header::PINNED_PAGES] as usize
     }
 
-    /// Groups simplified with more error than this lie in the pinned pages.
     pub fn pin_error(&self) -> f32 {
         float(self.words[header::PIN_ERROR])
     }
 
-    /// Byte range of page `page` in the file.
     pub fn page_bytes(&self, page: usize) -> Option<std::ops::Range<u64>> {
         (page < self.page_count()).then(|| {
             let entry = self.layout.page_table + page * 2;
@@ -348,8 +274,6 @@ impl VirtualMesh {
         })
     }
 
-    /// Validates `words`, fetched separately, as page `page`: its size, and
-    /// the local triangle indices of every cluster it holds.
     pub fn validate_page(&self, page: usize, words: &[u32]) -> Result<(), AssetError> {
         let size = self
             .page_bytes(page)
@@ -367,8 +291,6 @@ impl VirtualMesh {
         Ok(())
     }
 
-    /// Whether every local triangle index of `info` stays within its
-    /// vertices, reading `page`'s words.
     fn validate_triangles(info: &ClusterInfo, page: &[u32]) -> Result<(), AssetError> {
         let triangle_words = (info.triangle_count as usize * 3).div_ceil(4);
         let start = info.triangle_offset as usize;
@@ -422,8 +344,6 @@ impl VirtualMesh {
                 }
             }
         }
-        // Walk down from the roots: every node has at most one parent, so the
-        // hierarchy is a forest and traversals end.
         let mut visited = vec![false; node_count];
         let mut stack: Vec<(usize, u32)> = (0..levels).map(|root| (root, 1)).collect();
         let mut depth = 0u32;
@@ -481,8 +401,6 @@ impl VirtualMesh {
             {
                 return Err(invalid("a cluster's refined group is out of range"));
             }
-            // Cuts cover each surface once only while errors grow toward
-            // coarser groups; the prefix alone draws every surface.
             let error = self.group_sphere(info.group as usize).error;
             if info
                 .refined
@@ -548,17 +466,14 @@ impl VirtualMesh {
         }
     }
 
-    /// A node's bounds with the largest error of its subtree.
     pub fn node_sphere(&self, node: usize) -> ErrorSphere {
         Self::sphere(self.node_words(node))
     }
 
-    /// A group's simplification: its sphere and error.
     pub fn group_sphere(&self, group: usize) -> ErrorSphere {
         Self::sphere(self.group_words(group))
     }
 
-    /// A cluster's record.
     pub fn cluster(&self, cluster: usize) -> ClusterInfo {
         let words = self.cluster_words(cluster);
         let [x, y, z, cutoff] = words[4].to_le_bytes().map(u8::cast_signed);
@@ -579,7 +494,6 @@ impl VirtualMesh {
         }
     }
 
-    /// Words of page `page`, when this mesh holds them.
     pub fn page(&self, page: usize) -> Option<&[u32]> {
         (page < self.available_pages).then(|| {
             let entry = self.layout.page_table + page * 2;
@@ -592,7 +506,6 @@ impl VirtualMesh {
         self.words[header::LEVELS]
     }
 
-    /// Nodes on the longest path from a level's root to a leaf.
     pub fn depth(&self) -> u32 {
         self.words[header::DEPTH]
     }
@@ -613,48 +526,38 @@ impl VirtualMesh {
         self.words[header::PAGES] as usize
     }
 
-    /// Triangles of every cluster at every level.
     pub fn triangle_count(&self) -> u32 {
         self.words[header::TRIANGLES]
     }
 
-    /// Whether the mesh is closed ([`FLAG_CLOSED`]).
     pub fn closed(&self) -> bool {
         self.words[header::FLAGS] & FLAG_CLOSED != 0
     }
 
-    /// Bounds of every level's geometry.
     pub fn bounds(&self) -> Aabb {
         self.bounds
     }
 
-    /// Node words, [`NODE_WORDS`] per node.
     pub fn node_section(&self) -> &[u32] {
         &self.words[self.layout.nodes..self.layout.groups]
     }
 
-    /// Group words, [`GROUP_WORDS`] per group.
     pub fn group_section(&self) -> &[u32] {
         &self.words[self.layout.groups..self.layout.clusters]
     }
 
-    /// Cluster words, [`CLUSTER_WORDS`] per cluster.
     pub fn cluster_section(&self) -> &[u32] {
         &self.words[self.layout.clusters..self.layout.page_table]
     }
 
-    /// The page table: each page's word offset in [`Self::page_section`]
-    /// and its words.
     pub fn page_table(&self) -> &[u32] {
         &self.words[self.layout.page_table..self.layout.pages]
     }
 
-    /// The words of every page held, consecutively.
     pub fn page_section(&self) -> &[u32] {
         &self.words[self.layout.pages..self.layout.end]
     }
 
-    /// The words held: the whole file, or its prefix.
     pub fn words(&self) -> &[u32] {
         &self.words
     }
@@ -663,8 +566,6 @@ impl VirtualMesh {
         self.words.len() * 4
     }
 
-    /// Quantization: position of step zero and step size per axis, texture
-    /// coordinates of step zero and step size.
     pub fn quantization(&self) -> ([f32; 3], [f32; 3], [f32; 2], [f32; 2]) {
         let floats = |start: usize, count: usize| -> Vec<f32> {
             self.words[start..start + count]
@@ -686,8 +587,6 @@ impl VirtualMesh {
         )
     }
 
-    /// Cluster `cluster`'s vertices and local triangle indices, decoded; its
-    /// page must be held ([`Self::available_pages`]).
     pub fn cluster_geometry(&self, cluster: usize) -> (Vec<MeshVertex>, Vec<u8>) {
         let info = self.cluster(cluster);
         let page = self.page(info.page as usize).expect("a held page");
@@ -702,7 +601,6 @@ impl VirtualMesh {
                 let position: [f32; 3] = std::array::from_fn(|axis| {
                     position_min[axis] + steps[axis] as f32 * position_step[axis]
                 });
-                // The normal's halves: the high half of word 1, the low of word 2.
                 let [_, _, x0, x1] = words[1].to_le_bytes();
                 let [y0, y1, _, _] = words[2].to_le_bytes();
                 let normal =
@@ -728,10 +626,6 @@ impl VirtualMesh {
         (vertices, triangles)
     }
 
-    /// The clusters of the cut at mesh-space error `error`: every cluster
-    /// whose group simplifies with more error and whose own error is at most
-    /// it. Errors are monotonic up the hierarchy, so every cut covers the
-    /// surface once.
     pub fn cut(&self, error: f32) -> Vec<u32> {
         (0..self.words[header::CLUSTERS])
             .filter(|&cluster| {
@@ -744,7 +638,6 @@ impl VirtualMesh {
             .collect()
     }
 
-    /// Triangles of clusters `clusters`.
     pub fn triangles_of(&self, clusters: &[u32]) -> u32 {
         clusters
             .iter()
@@ -752,11 +645,7 @@ impl VirtualMesh {
             .sum()
     }
 
-    /// The most detailed cut within the pinned pages with at most
-    /// `triangles` triangles (the coarsest when none is that small), as an
-    /// ordinary mesh: what renderers draw where they cannot draw clusters.
     pub fn fallback(&self, triangles: u32) -> Result<Mesh, AssetError> {
-        // Cuts at the pin error or above use pinned groups alone.
         let pin = self.pin_error();
         let mut errors: Vec<f32> = (0..self.group_count())
             .map(|group| self.group_sphere(group).error)
@@ -765,7 +654,6 @@ impl VirtualMesh {
         errors.push(pin);
         errors.sort_by(f32::total_cmp);
         errors.dedup();
-        // Cut sizes shrink as the error grows: the first small enough.
         let fits = |error: f32| self.triangles_of(&self.cut(error)) <= triangles;
         let index = errors.partition_point(|&error| !fits(error));
         let error = errors.get(index).copied().unwrap_or(f32::MAX / 2.0);
@@ -781,8 +669,6 @@ impl VirtualMesh {
     }
 }
 
-/// Octahedral snorm16 coordinates of a unit normal, as renderers encode
-/// them.
 #[expect(clippy::cast_possible_truncation, reason = "clamped to i16's range")]
 pub fn octahedral_encode(normal: [f32; 3]) -> [i16; 2] {
     let [x, y, z] = normal;
@@ -801,8 +687,6 @@ pub fn octahedral_encode(normal: [f32; 3]) -> [i16; 2] {
     [u, v].map(|value| (engine_math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16)
 }
 
-/// The unit normal of octahedral snorm16 coordinates, as renderers decode
-/// them.
 pub fn octahedral_normal(x: i16, y: i16) -> Vec3 {
     let x = engine_math::clamp(f32::from(x) / 32767.0, -1.0, 1.0);
     let y = engine_math::clamp(f32::from(y) / 32767.0, -1.0, 1.0);

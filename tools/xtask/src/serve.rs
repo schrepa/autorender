@@ -1,21 +1,11 @@
-//! Development servers tools start for themselves: a commit's own
-//! `cargo xtask dev` (checks), or this checkout's page served by Vite
-//! (`cargo xtask smoke --serve`), each on a free loopback port, never the
-//! ports people's own servers use, and stopped with every process it
-//! started.
-
 use std::fs;
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// The ports people's own development servers use (Vite's default and the
-/// next two), which tools never take.
 const PEOPLES_PORTS: std::ops::RangeInclusive<u16> = 5173..=5175;
 
-/// A free port on this machine, which the operating system picks, never
-/// one of [`PEOPLES_PORTS`].
 pub fn free_port() -> Result<u16, String> {
     for _ in 0..16 {
         let port = TcpListener::bind("127.0.0.1:0")
@@ -29,7 +19,6 @@ pub fn free_port() -> Result<u16, String> {
     Err("no free port outside 5173-5175".into())
 }
 
-/// A running development server, stopped with its processes when dropped.
 pub struct Server {
     child: Child,
     pub url: String,
@@ -38,8 +27,6 @@ pub struct Server {
 impl Drop for Server {
     fn drop(&mut self) {
         let pid = self.child.id().to_string();
-        // Cargo starts npm, which starts Vite, which starts esbuild: the
-        // whole tree.
         if cfg!(windows) {
             let _ = Command::new("taskkill")
                 .args(["/T", "/F", "/PID", &pid])
@@ -55,9 +42,6 @@ impl Drop for Server {
 }
 
 impl Server {
-    /// Starts `command`, a server of `what` that listens on loopback `port`,
-    /// its output into `log`, and waits until it accepts connections, at
-    /// most `limit`.
     pub fn start(
         mut command: Command,
         port: u16,
@@ -102,8 +86,6 @@ impl Server {
         }
     }
 
-    /// This checkout's page with its development tools, as `cargo xtask
-    /// dev` serves it, its output into `log`: its clients built first.
     pub fn page(root: &Path, log: &Path) -> Result<Self, String> {
         crate::pipeline::prepare_dev(root)?;
         let port = free_port()?;

@@ -7,12 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-# The engine's development tools, as games build them: development
-# sessions over standard input and output (`--dev`).
 dev = ["engine/dev"]
-# Deep profiles, hardware counters and vendor deep dives
-# (`engine_profiler`'s), which `--profile`, `--counters` and `--vendor` run
-# and development sessions take as `profile`.
 profiling = ["engine/profiling", "engine_profiler/profiling"]
 
 [dependencies]
@@ -24,14 +19,10 @@ sha2.workspace = true
 serde_json.workspace = true
 winit.workspace = true
 pollster.workspace = true
-# The cook's packs, compressed at zstd's best ratio (`--cook`).
 zstd.workspace = true
 
-# A new game's native entry, as `cargo xtask new app` writes it; lint
-# compiles it with the app template.
 [[example]]
 name = "app_native"
 
-# No unsafe code: the native tools' unsafe calls are `engine_profiler`'s.
 [lints]
 workspace = true

@@ -1,21 +1,3 @@
-//! Reflection probes: boxes whose surroundings the renderer
-//! captures into environment maps, which surfaces inside them reflect in
-//! place of the sky's.
-//!
-//! Extraction lists the usable probes nearest the camera each frame; the
-//! renderer keeps what it captured of each until the probe changes or the
-//! sky does.
-//!
-//! The [`ReflectionProbeSettings`] are inserted by default; without them,
-//! or when disabled, frames capture and reflect no probes. Beyond
-//! `max_probes` the probes nearest the camera win and the rest count as
-//! dropped; without a budget, as many stay as the GPU's texture arrays hold.
-//!
-//! A probe may hold an interior: a cave or a hall whose box
-//! lets in only shares of the sky's light and the sun's, so surfaces inside
-//! it darken as the rock or walls around them would make them, and reflect
-//! what the probe captured inside.
-
 use bevy_ecs::{
     prelude::{Component, Entity, Resource, World},
     query::QueryState,
@@ -27,43 +9,24 @@ use crate::extraction::Nearest;
 use crate::{GlobalTransforms, RenderSnapshot, TransformIndex};
 use engine_settings::{InvalidSetting, settings};
 
-/// Captures its surroundings from its entity's world position into an
-/// environment map, which surfaces inside its box reflect.
-///
-/// The box is axis-aligned in world space, centered on the entity's world
-/// position, reaching `extent` from it along each axis. Reflections inside it
-/// land on its walls (parallax correction), so walls, ground and objects near
-/// them line up with what they reflect; toward its faces the probe fades out
-/// over `blend` into the probes around it or the sky. Probes capture still
-/// objects and still lights only: moving ones reflect through screen-space
-/// reflections alone.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ReflectionProbe {
-    /// Half the box's size along each world axis, in world units.
     pub extent: Vec3,
-    /// World distance inside the box's faces over which the probe fades out.
     pub blend: f32,
-    /// What the box lets in, when it is an interior.
     pub interior: Option<Interior>,
 }
 
 settings! {
-    /// An interior's light, blending in over the probe's blend distance inside
-    /// its faces.
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
     pub struct Interior {
-        /// The share of the sky's light that reaches surfaces inside the box.
         pub sky: f32 = 1.0 => range(0.0, 1.0),
-        /// The share of the sun's light that reaches surfaces inside the box.
         pub sun: f32 = 1.0 => range(0.0, 1.0),
     }
 }
 
 impl ReflectionProbe {
-    /// A probe covering the box `extent` from its entity along each axis,
-    /// fading over its outer world unit.
     pub fn new(extent: Vec3) -> Self {
         Self {
             extent,
@@ -78,15 +41,12 @@ impl ReflectionProbe {
         self
     }
 
-    /// The probe as an interior letting in `interior`'s light.
     #[must_use]
     pub fn with_interior(mut self, interior: Interior) -> Self {
         self.interior = Some(interior);
         self
     }
 
-    /// The first value breaking its rule, if any: renderers capture and
-    /// reflect only valid probes.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         if !(self.extent.is_finite() && self.extent.cmpgt(Vec3::ZERO).all()) {
             return Err(InvalidSetting::new("extent", "must be finite and above 0"));
@@ -107,7 +67,6 @@ impl ReflectionProbe {
 }
 
 settings! {
-    /// Reflection probe settings.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -116,24 +75,15 @@ settings! {
     )]
     #[serde(default, deny_unknown_fields)]
     pub struct ReflectionProbeSettings {
-        /// Whether surfaces reflect probes.
         pub enabled: bool = true => any,
-        /// Texels across each face of every environment map, the sky's
-        /// included.
         pub resolution: u32 = 128 => power_of_two(16, 1024),
-        /// An optional budget of probes kept captured; beyond it the probes
-        /// nearest the camera win. Omitted, as many as the GPU's texture arrays
-        /// hold.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_probes: Option<u32> = None => budget,
-        /// Cube faces captured per frame while probes wait: more fill new places
-        /// sooner, fewer keep those frames lighter.
         pub faces_per_frame: u32 = 1 => at_least(1),
     }
 }
 
 impl ReflectionProbeSettings {
-    /// What a world without these settings reads as: no reflection probes.
     pub fn off() -> Self {
         Self {
             enabled: false,
@@ -142,36 +92,24 @@ impl ReflectionProbeSettings {
     }
 }
 
-/// One reflection probe of a frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderReflectionProbe {
-    /// The probe's identity across frames (its entity's bits).
     pub key: u64,
-    /// The world position it captures from: the center of its box.
     pub center: Vec3,
     pub extent: Vec3,
     pub blend: f32,
-    /// What its box lets in, when it is an interior.
     pub interior: Option<Interior>,
 }
 
-/// A frame's reflection probes ([`RenderSnapshot::reflection_probes`]),
-/// filled in place.
 #[derive(Clone, Debug, Default)]
 pub struct RenderReflectionProbes {
-    /// Its usable probes, nearest the camera first, within the settings'
-    /// budget.
     pub list: Vec<RenderReflectionProbe>,
-    /// Usable probes beyond the budget.
     pub dropped: usize,
 }
 
-/// Reflection probe records of each frame.
 pub(crate) struct ProbeExtraction {
     query: QueryState<(Entity, &'static ReflectionProbe)>,
     hints: Vec<TransformIndex>,
-    // This frame's usable probes and their squared distances from the eye to
-    // their boxes.
     candidates: Vec<(f32, RenderReflectionProbe)>,
     nearest: Nearest,
 }
@@ -186,10 +124,7 @@ impl ProbeExtraction {
         }
     }
 
-    /// Fills the snapshot's probes, nearest the camera first, from their
-    /// entities' authoritative poses; beyond a budget the nearest win.
     pub(crate) fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
-        // Extracted sanitized with the environment, before this.
         let settings = snapshot.environment.reflection_probes;
         snapshot.reflection_probes.list.clear();
         snapshot.reflection_probes.dropped = 0;
@@ -197,7 +132,6 @@ impl ProbeExtraction {
             return;
         }
         let globals = world.resource::<GlobalTransforms>();
-        // The budget's cut follows the detail eye, as every handover does.
         let eye = snapshot.detail_eye;
         self.candidates.clear();
         for (position, (entity, probe)) in self.query.iter(world).enumerate() {
@@ -227,7 +161,6 @@ impl ProbeExtraction {
                 },
             ));
         }
-        // Nearest first; equally near probes keep their order.
         let kept = settings
             .max_probes
             .map_or(usize::MAX, |budget| budget as usize);

@@ -1,11 +1,3 @@
-/**
- * The page's input reaches the engine as every host gathers it: on the
- * Stress Lab's page, holding W moves the camera forward while frames run,
- * a drag with the left button turns it, a key the game does not use stays
- * the page's, and losing focus releases what was held, so the camera stops.
- * The engine keeps the holds and look deltas; the page only forwards its
- * keyboard and pointer events (`Runtime.key`, `Runtime.look`).
- */
 // @ts-check
 import assert from "node:assert/strict";
 import { commander, devUrl, launch, openPaused, waitFrames } from "./harness.mjs";
@@ -29,7 +21,6 @@ try {
   await command("resume");
   const start = await camera();
 
-  // W held moves the camera along its view.
   await page.keyboard.down("KeyW");
   await waitFrames(command, 20);
   await page.keyboard.up("KeyW");
@@ -38,12 +29,10 @@ try {
   const along = step.reduce((sum, value, axis) => sum + value * direction(start)[axis], 0);
   assert.ok(along > 0.5, `W moved the camera forward: ${JSON.stringify({ start, forward })}`);
 
-  // Released, it stays where it is.
   await waitFrames(command, 10);
   const still = await camera();
   assert.ok(moved(forward.position, still.position) < 1e-3, `released, the camera stops: ${JSON.stringify({ forward, still })}`);
 
-  // A drag with the left button turns the view.
   const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
   await page.mouse.move(x, y);
   await page.mouse.down();
@@ -55,7 +44,6 @@ try {
   const turn = Math.acos(Math.min(1, before.reduce((sum, value, axis) => sum + value * after[axis], 0)));
   assert.ok(turn > 0.05, `the drag turned the view by ${turn} radians`);
 
-  // A key the game does not use stays the page's; one it uses does not.
   const kept = await page.evaluate(() => {
     const target = document.querySelector("canvas");
     if (!target) throw new Error("no canvas");
@@ -69,7 +57,6 @@ try {
   });
   assert.deepEqual(kept, { used: true, unused: false });
 
-  // Losing focus releases a held key: the camera stops though W stays down.
   await canvas.focus();
   await page.keyboard.down("KeyW");
   await waitFrames(command, 5);

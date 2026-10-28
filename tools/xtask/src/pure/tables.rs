@@ -1,11 +1,3 @@
-//! The tables corpus: the renderer's static tables (`engine_tables`) for
-//! the default settings. The physically based sky's tables for its default
-//! (Earth's) air, and a slab of each of the cloud noise's volumes. Each job
-//! runs as hosts run it in place and as workers run it, a slice at a time,
-//! which must be the same bits, and each record must read back. Every job
-//! and its output's hash go into a file `cargo xtask pure --wasm` replays
-//! in the browser worker's Wasm module.
-
 use std::path::Path;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -15,11 +7,7 @@ use serde_json::json;
 
 use super::{Observations, hash};
 
-/// Every job the corpus ran, each output by its hash: what `cargo xtask
-/// pure --wasm` replays.
 pub const JOBS: &str = "target/pure/tables-jobs.json";
-/// Work units each slice of a job gets: few enough that a slab of noise
-/// takes many slices, as workers slice them.
 const SLICE: u64 = 4096;
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
@@ -40,7 +28,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     };
     let tables = worker.both(TableKind::SkyTables, &air.identity(), observed)?;
     observed.hash("sky tables", &tables);
-    // Light passes the air only partly, all of it at most.
     let passing = sky::decode(&tables)?
         .transmittance
         .iter()
@@ -51,7 +38,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
 
     let mut noise = clouds::CloudNoise::empty();
     for part in clouds::parts().iter().filter(|part| part.first == 0) {
-        // The detail slab is the shape's code at another size: once whole.
         let record = if part.volume == clouds::Volume::Shape {
             worker.both(TableKind::CloudNoise, &part.identity(), observed)?
         } else {
@@ -71,14 +57,11 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     worker.write(root)
 }
 
-/// Texels of a slab of `volume`.
 fn slab(volume: clouds::Volume) -> usize {
     let side = volume.size() as usize;
     side * side * volume.layers() as usize
 }
 
-/// Runs jobs as hosts and workers run them, recording every job (with its
-/// output's hash) for the replay in Wasm.
 #[derive(Default)]
 struct Worker {
     worker: TableWorker,
@@ -87,8 +70,6 @@ struct Worker {
 }
 
 impl Worker {
-    /// Job `kind` on `input` run in place and a slice at a time, which must
-    /// be the same bits: its record.
     fn both(
         &mut self,
         kind: TableKind,
@@ -106,7 +87,6 @@ impl Worker {
         Ok(whole)
     }
 
-    /// Job `kind` on `input`, run in place as hosts run it.
     fn run(&mut self, kind: TableKind, input: &[u8]) -> Result<Vec<u8>, String> {
         let output = engine_core::table_data::run(kind.name(), input)
             .ok_or("a table job's kind names no table")??;
@@ -118,7 +98,6 @@ impl Worker {
         Ok(output)
     }
 
-    /// Job `kind` on `input`, run a slice at a time as workers run it.
     fn sliced(&mut self, kind: TableKind, input: &[u8]) -> Result<Vec<u8>, String> {
         self.next += 1;
         self.worker.start(self.next, kind.name(), input)?;
@@ -135,7 +114,6 @@ impl Worker {
         }
     }
 
-    /// Writes what it ran to [`JOBS`].
     fn write(&self, root: &Path) -> Result<(), String> {
         let path = root.join(JOBS);
         if let Some(folder) = path.parent() {

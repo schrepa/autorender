@@ -1,25 +1,3 @@
-//! Hardware counters per pass, in process: what the GPU's own counters say
-//! each pass of a frame did (its shader cores' activity, stalls and
-//! occupancy, its samplers', memory traffic, depth-test rejects, pixels
-//! written), where the driver offers them through Vulkan's performance
-//! queries: Intel's on Windows and Linux, and Mesa's for AMD, Intel and
-//! Qualcomm GPUs on Linux. NVIDIA's drivers offer none (Nsight's GPU Trace
-//! counts), nor AMD's on Windows (Radeon GPU Profiler does). Opt-in, as
-//! counting perturbs timings and the game then draws on Vulkan; where it
-//! works it needs no privileges.
-//!
-//! Native renderers start their Vulkan instance through this module's
-//! loader entry, which sees the calls wgpu makes: each outermost debug
-//! group a command buffer records outside a render pass becomes one query
-//! of the counters chosen, those one run of the work can count together,
-//! from a query pool of the command buffer's own. wgpu records each pass
-//! into a command buffer of its own, inside the debug group the renderer
-//! names the pass's graph node by: queries are named by the groups open on
-//! the recording thread, and summed into the graph node's. Pools are reset in a submission of their own
-//! before the command buffers using them, as Vulkan requires, and read once
-//! the GPU finished them. Unsafe code, as `pix.rs` holds: the Vulkan calls
-//! and the entry points wgpu calls.
-
 #![expect(unsafe_code, reason = "Vulkan's layer entry points and calls")]
 
 use engine::collections::HashMap;
@@ -32,46 +10,27 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use ash::vk;
 use serde_json::{Value, json};
 
-/// Query pools: for the command buffers of frames in flight, one per pass.
 const POOLS: usize = 256;
-/// Queries in a pool: a command buffer's passes.
 const PASSES: u32 = 16;
-/// Reset submissions in flight.
 const RESETS: usize = 8;
 
-/// Which counters to count.
 #[derive(Clone, Debug)]
 pub enum Selection {
-    /// The first the driver lists that one run can count together: on
-    /// Intel's drivers, their basic render set.
     First,
-    /// Those named, as the driver names them, that one run can count
-    /// together.
     Named(Vec<String>),
 }
 
 static SELECTION: OnceLock<Selection> = OnceLock::new();
-/// The Vulkan loader, kept loaded.
 static LOADER: OnceLock<ash::Entry> = OnceLock::new();
-/// The instance started, with the loader's own functions.
 static INSTANCE: OnceLock<ash::Instance> = OnceLock::new();
-/// The device counting.
 static COUNTING: OnceLock<Counting> = OnceLock::new();
-/// Why passes are not counted, where they are not.
 static UNAVAILABLE: Mutex<Option<String>> = Mutex::new(None);
-/// Whether passes are counted now, between [`begin`] and [`end`].
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
-    /// The debug groups open on the recording thread, outermost first,
-    /// across the command buffers wgpu records one encoder into; and how
-    /// many outermost groups it opened.
     static GROUPS: RefCell<(Vec<String>, u64)> = const { RefCell::new((Vec::new(), 0)) };
 }
 
-/// Counts each pass's hardware counters in profiles from now on: native
-/// renderers start their GPU instances on Vulkan through this module.
-/// Before the first renderer starts.
 pub fn enable(selection: Selection) -> Result<(), String> {
     SELECTION
         .set(selection)
@@ -83,14 +42,10 @@ pub fn enable(selection: Selection) -> Result<(), String> {
     }
 }
 
-/// Whether counters are enabled: profiles count passes where the GPU's
-/// driver can.
 pub fn enabled() -> bool {
     SELECTION.get().is_some()
 }
 
-/// Starts counting the passes drawn from now on, where counters are
-/// enabled.
 pub(crate) fn begin() {
     if let Some(counting) = COUNTING.get() {
         let mut state = counting.state();
@@ -100,9 +55,6 @@ pub(crate) fn begin() {
     }
 }
 
-/// Stops counting once the GPU finished the frames counted: each pass's
-/// counters, their median over the pass's instances; `None` where counters
-/// are not enabled.
 pub(crate) fn end() -> Option<Value> {
     SELECTION.get()?;
     ACTIVE.store(false, Ordering::Release);
@@ -125,8 +77,6 @@ fn unavailable(reason: String) {
     lock(&UNAVAILABLE).get_or_insert(reason);
 }
 
-/// A GPU instance on Vulkan, whatever `descriptor` asks: counters exist on
-/// Vulkan only. wgpu's own start where Vulkan cannot start.
 fn start(descriptor: wgpu::InstanceDescriptor) -> wgpu::Instance {
     match start_vulkan(&descriptor) {
         Ok(instance) => instance,
@@ -137,7 +87,6 @@ fn start(descriptor: wgpu::InstanceDescriptor) -> wgpu::Instance {
     }
 }
 
-/// The function `function` as Vulkan returns functions.
 macro_rules! void {
     ($function:expr, $kind:ty) => {
         // SAFETY: Vulkan's callers cast the pointer back to `$kind`, the
@@ -159,8 +108,6 @@ fn start_vulkan(descriptor: &wgpu::InstanceDescriptor) -> Result<wgpu::Instance,
             LOADER.get_or_init(|| loaded)
         }
     };
-    // The loader's entry, but this module's functions for those wgpu's
-    // command recording reaches.
     // SAFETY: `get_instance_proc_addr` is Vulkan's signature and forwards
     // every other name to the loader.
     let entry = unsafe {
@@ -175,12 +122,10 @@ fn start_vulkan(descriptor: &wgpu::InstanceDescriptor) -> Result<wgpu::Instance,
     if version < vk::API_VERSION_1_1 {
         return Err("Vulkan 1.1 or later is needed".into());
     }
-    // Debug groups name the passes counted.
     let flags = descriptor.flags | wgpu::InstanceFlags::DEBUG;
     let extensions = wgpu::hal::vulkan::Instance::desired_extensions(&entry, version, flags)
         .map_err(|error| error.to_string())?;
     let names: Vec<*const c_char> = extensions.iter().map(|name| name.as_ptr()).collect();
-    // wgpu's own instance asks for Vulkan 1.3 at most.
     let application = vk::ApplicationInfo::default()
         .application_name(c"engine")
         .engine_name(c"wgpu-hal")
@@ -223,8 +168,6 @@ fn start_vulkan(descriptor: &wgpu::InstanceDescriptor) -> Result<wgpu::Instance,
     Ok(unsafe { wgpu::Instance::from_hal::<wgpu::hal::api::Vulkan>(hal) })
 }
 
-/// Vulkan's `vkGetInstanceProcAddr`: the loader's, but this module's
-/// device creation and device function lookup.
 unsafe extern "system" fn get_instance_proc_addr(
     instance: vk::Instance,
     name: *const c_char,
@@ -246,9 +189,6 @@ unsafe extern "system" fn get_instance_proc_addr(
     }
 }
 
-/// Vulkan's `vkGetDeviceProcAddr`: the driver's functions, but this
-/// module's for those that record and submit the counted device's command
-/// buffers.
 unsafe extern "system" fn get_device_proc_addr(
     device: vk::Device,
     name: *const c_char,
@@ -280,8 +220,6 @@ unsafe extern "system" fn get_device_proc_addr(
     unsafe { (instance.fp_v1_0().get_device_proc_addr)(device, name) }
 }
 
-/// Vulkan's `vkCreateDevice`: the driver's, with performance queries
-/// enabled where the device has them, and its counting set up.
 unsafe extern "system" fn create_device(
     physical: vk::PhysicalDevice,
     info: *const vk::DeviceCreateInfo<'_>,
@@ -304,7 +242,6 @@ unsafe extern "system" fn create_device(
             return unsafe { create(physical, info, allocator, device) };
         }
     };
-    // The extension and its feature, ahead of the caller's.
     // SAFETY: as above, `enabled_extension_count` names.
     let mut names: Vec<*const c_char> = unsafe {
         slice(
@@ -344,11 +281,6 @@ unsafe extern "system" fn create_device(
     result
 }
 
-/// `count` items at `items`, none where null.
-///
-/// # Safety
-///
-/// `items` points at `count` items, or is null.
 unsafe fn slice<'a, T>(items: *const T, count: u32) -> &'a [T] {
     if items.is_null() || count == 0 {
         return &[];
@@ -357,13 +289,10 @@ unsafe fn slice<'a, T>(items: *const T, count: u32) -> &'a [T] {
     unsafe { std::slice::from_raw_parts(items, count as usize) }
 }
 
-/// The counters to count on a device, before it exists.
 struct Plan {
     indices: Vec<u32>,
     counters: Vec<Counter>,
-    // Named or listed counters one run cannot count with those chosen.
     dropped: Vec<String>,
-    // Names the driver does not list.
     unknown: Vec<String>,
     available: usize,
 }
@@ -376,8 +305,6 @@ struct Counter {
     storage: vk::PerformanceCounterStorageKHR,
 }
 
-/// The counters the selection asks for that `physical`'s queue `family`
-/// can count in one run; why none, where none.
 fn plan(
     instance: &ash::Instance,
     physical: vk::PhysicalDevice,
@@ -436,7 +363,6 @@ fn plan(
         .map(|description| text(description.name_as_c_str()))
         .collect();
     let mut unknown = Vec::new();
-    // Counters of a whole command buffer cannot count a pass.
     let per_pass = |index: &u32| {
         counters[*index as usize].scope != vk::PerformanceCounterScopeKHR::COMMAND_BUFFER
     };
@@ -456,7 +382,6 @@ fn plan(
             .filter(per_pass)
             .collect(),
     };
-    // Those one run counts together, in order.
     let runs = |indices: &[u32]| {
         let info = vk::QueryPoolPerformanceCreateInfoKHR::default()
             .queue_family_index(family)
@@ -472,7 +397,6 @@ fn plan(
         indices.push(candidate);
         if runs(&indices) > 1 {
             indices.pop();
-            // Listing every counter the driver has is no use; those named are.
             if matches!(selection, Selection::Named(_)) {
                 dropped.push(names[candidate as usize].clone());
             }
@@ -503,9 +427,7 @@ fn plan(
     })
 }
 
-/// A device counting its passes.
 struct Counting {
-    // The driver's functions.
     device: ash::Device,
     labels: ash::ext::debug_utils::Device,
     queries: ash::khr::performance_query::Device,
@@ -518,31 +440,21 @@ struct Counting {
 struct State {
     recording: HashMap<vk::CommandBuffer, Recording>,
     pools: Vec<Pool>,
-    // Pools submitted, in submission order.
     submitted: VecDeque<usize>,
     command_pool: vk::CommandPool,
     resets: Vec<(vk::CommandBuffer, vk::Fence)>,
     next_reset: usize,
-    // Each pass instance counted, and its counters.
     results: Vec<(Pass, Vec<f64>)>,
-    // Passes not counted: no pool or query free.
     skipped: u64,
     destroyed: bool,
 }
 
-/// The queries of one command buffer's passes, from the first: results
-/// are read from a pool's first query on, as some drivers (Intel's on
-/// Windows) write a query's results at its index's offset whatever query
-/// a read starts at.
 struct Pool {
     raw: vk::QueryPool,
-    // Its queries' passes, in order.
     passes: Vec<Pass>,
     use_: Use,
 }
 
-/// What a query counted: the debug groups open, outermost (the graph
-/// node's) first, and which time the outermost was open.
 #[derive(Clone)]
 struct Pass {
     groups: Vec<String>,
@@ -556,7 +468,6 @@ enum Use {
     Submitted,
 }
 
-/// A command buffer being recorded.
 #[derive(Default)]
 struct Recording {
     depth: u32,
@@ -566,13 +477,6 @@ struct Recording {
 }
 
 impl Counting {
-    /// Counting on `device`, just created from `physical` with performance
-    /// queries enabled.
-    ///
-    /// # Safety
-    ///
-    /// `device` was created from `physical` with the extension and feature
-    /// enabled, and is not in use yet.
     unsafe fn new(
         instance: &ash::Instance,
         physical: vk::PhysicalDevice,
@@ -616,12 +520,6 @@ impl Counting {
         })
     }
 
-    /// The query pools of the plan's counters, and the command pool and
-    /// buffers that reset their queries, into `state`.
-    ///
-    /// # Safety
-    ///
-    /// `device` holds the profiling lock.
     unsafe fn objects(
         device: &ash::Device,
         family: u32,
@@ -667,11 +565,6 @@ impl Counting {
         Ok(())
     }
 
-    /// Destroys this module's objects in `state`.
-    ///
-    /// # Safety
-    ///
-    /// The GPU finished with them.
     unsafe fn destroy(device: &ash::Device, state: &mut State) {
         // SAFETY: as the caller promises; Vulkan ignores null handles.
         unsafe {
@@ -689,9 +582,6 @@ impl Counting {
         lock(&self.state)
     }
 
-    /// The counters of the `count` first queries of `pool`, once the GPU
-    /// finished them; waiting for them where `wait`. `None` while not
-    /// finished, or where the driver failed to tell.
     fn read(&self, pool: vk::QueryPool, count: usize, wait: bool) -> Option<Vec<Vec<f64>>> {
         let counters = self.plan.counters.len();
         let mut data = vec![vk::PerformanceCounterResultKHR::default(); counters * count];
@@ -741,8 +631,6 @@ impl Counting {
         })
     }
 
-    /// Reads the submitted pools the GPU finished, oldest first; all of
-    /// them where `wait`.
     fn collect(&self, state: &mut State, wait: bool) {
         while let Some(&index) = state.submitted.front() {
             let pool = &state.pools[index];
@@ -750,7 +638,6 @@ impl Counting {
             if read.is_none() && !wait {
                 break;
             }
-            // Read, or lost where the GPU never finished it.
             let pool = &mut state.pools[index];
             for (pass, values) in pool.passes.drain(..).zip(read.into_iter().flatten()) {
                 state.results.push((pass, values));
@@ -760,8 +647,6 @@ impl Counting {
         }
     }
 
-    /// The query of the pass that `buffer` begins, from the buffer's pool:
-    /// the first free one where it has none yet.
     fn take(
         &self,
         state: &mut State,
@@ -789,8 +674,6 @@ impl Counting {
         Some((pool.raw, query))
     }
 
-    /// Resets the queries of `pools` on `queue` in a submission of its own,
-    /// ahead of the command buffers using them.
     fn reset(
         &self,
         state: &mut State,
@@ -820,10 +703,6 @@ impl Counting {
         }
     }
 
-    /// Each graph node's counters, its passes' summed (and its percentages
-    /// and rates weighted by time), with each pass's: medians over the
-    /// node's instances (once a frame, for the renderer's nodes), the
-    /// costliest first where a counter is a time.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -850,7 +729,6 @@ impl Counting {
                 )
             })
             .collect();
-        // Values combined: summed, or weighted by time.
         let combine = |parts: &[&Vec<f64>]| -> Vec<f64> {
             let weights: Vec<f64> = parts
                 .iter()
@@ -884,7 +762,6 @@ impl Counting {
                 })
                 .collect()
         };
-        // Each node's instances, and each of its passes' per instance.
         let mut nodes: BTreeMap<&str, Instances> = BTreeMap::new();
         let mut parts: BTreeMap<&str, BTreeMap<String, Instances>> = BTreeMap::new();
         for (pass, values) in &state.results {
@@ -970,11 +847,8 @@ impl Counting {
     }
 }
 
-/// Counted values by the instance of their graph node they were counted
-/// in.
 type Instances<'a> = BTreeMap<u64, Vec<&'a Vec<f64>>>;
 
-/// The device counting, which hooked functions are only of.
 fn counting() -> &'static Counting {
     COUNTING
         .get()
@@ -990,7 +864,6 @@ unsafe extern "system" fn begin_command_buffer(
     let result = unsafe { (counting.device.fp_v1_0().begin_command_buffer)(buffer, info) };
     if result == vk::Result::SUCCESS {
         let mut state = counting.state();
-        // A pool the buffer recorded into before, never submitted.
         if let Some(index) = state
             .recording
             .insert(buffer, Recording::default())
@@ -1006,7 +879,6 @@ unsafe extern "system" fn begin_command_buffer(
     result
 }
 
-/// The pool and query `buffer` has open, which it closes.
 fn close(state: &mut State, buffer: vk::CommandBuffer) -> Option<(vk::QueryPool, u32)> {
     let recording = state.recording.get_mut(&buffer)?;
     let query = recording.open.take()?;

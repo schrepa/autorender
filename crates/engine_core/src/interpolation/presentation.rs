@@ -1,17 +1,10 @@
-//! Presentation reuses cached hierarchy indices. Broad motion blends directly
-//! in parent-first order; sparse motion walks affected child links. Both paths
-//! share composition into the canonical presented store; no ECS output mirrors.
-
 use super::*;
 
 const NO_LOCAL: u32 = u32::MAX;
 
-/// Per-node traversal flags beside the canonical presented matrix/revision.
 #[derive(Clone, Copy)]
 pub(super) struct Display {
-    // Sparse preparation indexes blended_locals; dense work reads source hints.
     local: u32,
-    // Validity of the published matrix; kept until the next commit.
     valid: bool,
     changed: bool,
     snap_branch: bool,
@@ -56,9 +49,6 @@ impl Display {
 
     #[inline]
     pub(super) fn reset(&mut self) {
-        // Processed gates dependency traversal, not public pose reads. Keep the
-        // canonical matrix/revision until this preparation commits its next
-        // value; resetting traversal flags must not overwrite the last pose.
         self.local = NO_LOCAL;
         self.changed = false;
         self.snap_branch = false;
@@ -87,7 +77,6 @@ fn touch<'a>(
 }
 
 impl InterpolationState {
-    /// The displayed value a child inherits once this node was processed.
     #[inline]
     fn inherited(&self, index: usize) -> Option<Inherited> {
         let display = &self.display[index];
@@ -108,14 +97,10 @@ impl InterpolationState {
         let preparation = engine_profile::span("interpolation", "prepare_blended_branches");
         let nodes = hierarchy.links().len();
         let histories = self.history.len();
-        // This policy limits full-order visits to twice the opt-in count.
         let dense = histories >= nodes.div_ceil(2);
         if dense {
-            // The ordered pass initializes each slot immediately before use.
-            // No separate reset/scatter pass or dense touched-index list.
             self.touched_display.clear();
         } else if self.dense_display {
-            // Sparse preparation will not revisit every previously dense slot.
             for display in &mut self.display {
                 display.reset();
             }
@@ -133,7 +118,6 @@ impl InterpolationState {
         self.blended_locals.clear();
         self.display_work.clear();
         if !dense {
-            // Touches remain bounded even when one root affects every descendant.
             if self.touched_display.capacity() < nodes {
                 self.touched_display.reserve_exact(nodes);
             }
@@ -158,9 +142,6 @@ impl InterpolationState {
         engine_profile::counter("interpolation.history_index_reused", index_reused as f64);
         engine_profile::counter("interpolation.evaluated_nodes", evaluated as f64);
         if !dense {
-            // Sparse branches already committed directly. Remaining rows use the
-            // authoritative current value, preserving the last prepared snapshot
-            // independently from future authoritative propagation.
             for index in 0..self.display.len() {
                 if !self.display[index].processed {
                     self.written_presented +=
@@ -235,16 +216,10 @@ impl InterpolationState {
         index_reused
     }
 
-    /// Stream parent-first; only active branches compose matrices. Snap flags
-    /// also flow through inactive ancestors so a descendant cannot start a blend
-    /// below a reset. Invalid topology never enters either traversal path.
     fn prepare_dense(&mut self, hierarchy: &HierarchyScratch, alpha: f32) -> (usize, usize) {
         let mut evaluated = 0;
         let mut index_reused = 0;
         let mut blocks = 0;
-        // Gather only one fixed-size numeric block at a time. There is no second
-        // full-pose array or per-frame AoS/SoA repacking pass. Lanes that are not
-        // eligible keep stale finite poses whose results are never consumed.
         let mut previous = [Transform::default(); 4];
         let mut current = [Transform::default(); 4];
         for indices in hierarchy.order().chunks(4) {
@@ -291,8 +266,6 @@ impl InterpolationState {
                 blocks += 1;
                 super::block::blend_block_matrices(&previous, &current, alpha)
             });
-            // A parent's display value/reset/fallback must be committed before
-            // any child consumes it, including dependencies inside this block.
             for (lane, &index) in indices.iter().enumerate() {
                 let link = &hierarchy.links()[index];
                 if !link.topology_valid() {
@@ -328,8 +301,6 @@ impl InterpolationState {
             if self.display[root].processed {
                 continue;
             }
-            // Parent candidates own their descendant traversal. A reset above
-            // this candidate suppresses interpolation for its entire branch.
             let mut ancestor = Some(root);
             let mut covered = false;
             for _ in 0..=MAX_HIERARCHY_DEPTH {
@@ -369,7 +340,6 @@ impl InterpolationState {
         evaluated
     }
 
-    /// `local` is the blended local matrix when this node interpolates.
     #[inline]
     fn compose_display(
         &mut self,
@@ -396,8 +366,6 @@ impl InterpolationState {
             };
             let matrix = parent_global.unwrap_or(Mat4::IDENTITY) * local;
             if valid_global_matrix(matrix) {
-                // Only linked children read `changed`, so leaves skip comparing
-                // with the authoritative matrix.
                 changed = link.has_children() && Some(matrix) != hierarchy.global(index);
                 Some(matrix)
             } else {
@@ -407,8 +375,6 @@ impl InterpolationState {
         } else {
             hierarchy.global(index)
         };
-        // Commit once. The common blended case no longer copies the current
-        // matrix into scratch only to overwrite it with the interpolated one.
         let display = &mut self.display[index];
         display.snap_branch |= parent_display.is_some_and(|parent| parent.snap_branch);
         display.fallback = fallback;

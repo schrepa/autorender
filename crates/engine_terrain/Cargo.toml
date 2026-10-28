@@ -7,7 +7,6 @@ publish.workspace = true
 
 [features]
 default = []
-# JSON schemas of the authored terrain types, for scene schemas.
 schema = ["dep:schemars", "engine_settings/schema"]
 
 [dependencies]
@@ -18,7 +17,6 @@ glam.workspace = true
 serde.workspace = true
 schemars = { workspace = true, optional = true }
 
-# `SOURCE`, the hash of the code generating terrain records.
 [build-dependencies]
 engine_sources.workspace = true
 

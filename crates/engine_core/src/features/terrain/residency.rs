@@ -1,33 +1,17 @@
-//! Each terrain's resident tiles and what streaming keeps for it, and the
-//! Terrains resource holding them.
-
 use super::*;
 
-/// Frames a failed record waits before it is asked for again.
 pub(super) const RETRY_AFTER: u64 = 120;
 
-/// Ranges, as multiples of each level's, within which tiles load and stay:
-/// beyond its range a level's tiles still shade the ground (their normals)
-/// and hold its true surface, so they load further than their samples span
-/// the pixel error.
 pub(super) const LOAD_REACH: f32 = 2.0;
 
 pub(super) const KEEP_REACH: f32 = 2.5;
 
-/// Tiles also load around where the eye is headed: its
-/// velocity carried this many seconds on, at most this many meters; the
-/// eye moving farther in a frame jumped there.
 pub(super) const AHEAD_SECONDS: f32 = 2.0;
 
 pub(super) const AHEAD_MAX: f32 = 1000.0;
 
 pub(super) const JUMP: f32 = 100.0;
 
-/// What a terrain's last hydrology bake found, its rivers' flow once a
-/// solid stood in them (their water as what stands there now holds it
-/// back) and the square around the detail eye its water runs live over. A
-/// new bake's rivers flow anew, and its live water starts over from their
-/// water as it settles.
 #[derive(Default)]
 pub(super) struct HydrologyState {
     pub(super) stats: Option<HydrologyStats>,
@@ -36,7 +20,6 @@ pub(super) struct HydrologyState {
 }
 
 impl HydrologyState {
-    /// A bake's, which found `stats`.
     pub(super) fn baked(stats: HydrologyStats) -> Self {
         Self {
             stats: Some(stats),
@@ -45,84 +28,41 @@ impl HydrologyState {
     }
 }
 
-/// One terrain's streaming state.
 pub(super) struct TerrainState {
     pub(super) entity: Entity,
     pub(super) terrain: Terrain,
-    /// Its resident tiles, and those kept in memory.
     pub(super) store: TileStore,
     pub(super) failed: TileMap<u64>,
-    /// Whether the camera draws it: terrain drawing is on, its tiles are
-    /// resident and, for surroundings, the settings show them.
     pub(super) drawn: bool,
-    /// Level-0 tiles collision wants.
     pub(super) collision: Vec<TileKey>,
-    /// Advances whenever what stands on its tiles changes: the placement
-    /// assets, the bridge material, and the bridges and falls its bakes
-    /// found ([`Self::revision`] adds the tiles' own).
     pub(super) standing: u64,
-    /// The solids its surface's assets' objects stand as, by asset
-    /// ([`PlacementAsset::solid`]), which its settled water flows around.
     pub(super) solids: Arc<[Option<Solid>]>,
-    /// What raises its settled water's bed, hashed: its surface materials'
-    /// relief and the height maps that relief reads, which its settled
-    /// water's records are keyed by.
     pub(super) relief: u128,
-    /// The ranges its levels' tiles streamed by at the last update.
     pub(super) ranges: Vec<f32>,
-    /// The layers tiles generate from once its bakes are done, the rivers
-    /// drawn over the layers they hold, and what the last hydrology and
-    /// erosion bakes found.
     pub(super) baked: Option<Arc<Layers>>,
     pub(super) baked_rivers: Arc<[TerrainRiver]>,
     pub(super) hydrology: HydrologyState,
     pub(super) erosion: Option<ErosionStats>,
-    /// Its roads' bridges, terrain-local, once every bake
-    /// is done, and its rivers' waterfalls.
     pub(super) bridges: Arc<[Bridge]>,
     pub(super) falls: Arc<[Fall]>,
-    /// The layers its tiles generate from with its edits over them,
-    /// and the baked layers they were made over.
     pub(super) edited: Option<(Arc<Layers>, Arc<Layers>)>,
-    /// For a terrain's surroundings, what they were drawn
-    /// from.
     pub(super) around: Option<Around>,
-    /// The tiles the last frame found missing, most important first with
-    /// their jobs' priorities, every tile it loads and every
-    /// tile it keeps: what loads between frames.
     pub(super) missing: Vec<(TileKey, u32)>,
     pub(super) target: HashSet<TileKey>,
     pub(super) keep: HashSet<TileKey>,
-    /// The recipe its tiles' jobs generate from, the records of its tiles
-    /// asked for (each one's job, the generation it was asked for under
-    /// and its priority), its bakes' record while asked for and the frame
-    /// it last failed at, and its jobs that failed.
     pub(super) recipe: Option<SharedRecipe>,
     pub(super) dispatched: TileMap<(JobId, Generation, u32)>,
     pub(super) bake: BakeRecord,
     pub(super) failures: JobFailures,
-    /// Records of tiles places games name, loading into memory: each one's
-    /// job and the generation it was asked for under.
     pub(super) prefetched: TileMap<(JobId, Generation)>,
-    /// Its tiles cooking, while a session cooks, its settled water and its
-    /// tiles' shading: what its resident tiles take, and while a session
-    /// cooks every watered tile's water and every coarser tile's shading.
     pub(super) cook: Option<CookTiles>,
     pub(super) settled: Settled,
     pub(super) shading: Shadings,
-    /// What it makes over its whole extent, and its asking for it.
     pub(super) whole: Whole,
-    /// The layers its tiles generate from and its surface's data for the
-    /// GPU from them, `None` where the program needs more
-    /// than the GPU's interpreter holds; and whether its tiles hold control
-    /// values, as without GPU materials.
     pub(super) surface: Option<(Arc<Layers>, Option<Arc<engine_terrain::gpu::SurfaceData>>)>,
     pub(super) materials: bool,
 }
 
-/// A terrain's bakes as one record: the job asked for while under way,
-/// the frame it last failed at, the record's key once asked for, and the
-/// rivers drawn over the layers it bakes.
 #[derive(Default)]
 pub(super) struct BakeRecord {
     pub(super) job: Option<JobId>,
@@ -131,13 +71,8 @@ pub(super) struct BakeRecord {
     pub(super) drawn: Option<Arc<[TerrainRiver]>>,
 }
 
-/// Bytes of one of a tile's arrays on the GPU, heights or control values:
-/// what a tile arriving uploads, once or twice.
 pub(super) const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
 
-/// What a terrain's surroundings were drawn from: the layers
-/// its tiles generate from and its settings for them; and the rectangle of
-/// their own ground (local) the terrain covers.
 pub(super) struct Around {
     pub(super) base: Arc<Layers>,
     pub(super) surroundings: Surroundings,
@@ -182,10 +117,6 @@ impl TerrainState {
         }
     }
 
-    /// Whether its tiles hold control values, as `gpu` (the settings' GPU
-    /// materials) and its surface allow: generated terrains
-    /// whose surface the GPU's interpreter holds leave them to the GPU.
-    /// Tiles resident when that changes regenerate, drawn until they do.
     pub(super) fn update_materials(&mut self, gpu: bool) {
         let layers = self
             .baked
@@ -216,9 +147,6 @@ impl TerrainState {
         }
     }
 
-    /// Its jobs, shares (its recipe's, its settled water's and its
-    /// shading's) and macro colors' textures, for the next frame to drop
-    /// once the state is gone.
     pub(super) fn retire(&self, retired: &mut Retired) {
         retired
             .jobs
@@ -246,14 +174,10 @@ impl TerrainState {
         retired.shares.extend(self.shading.shares());
     }
 
-    /// The id renderers key its tiles by: its entity's bits, the top bit
-    /// flipped for surroundings.
     pub(super) fn render_id(&self) -> u64 {
         self.entity.to_bits() ^ (u64::from(self.around.is_some()) << 63)
     }
 
-    /// Whether terrain-local `local` lies in the ground surroundings
-    /// leave to the terrain they surround.
     fn cut_out(&self, local: Vec2) -> bool {
         self.around.as_ref().is_some_and(|around| {
             let (low, high) = around.cutout;
@@ -261,9 +185,6 @@ impl TerrainState {
         })
     }
 
-    /// Takes `edits` in place of its own: the resident tiles
-    /// any edit added or taken away reaches regenerate, drawn as they were
-    /// until then.
     pub(super) fn edit(&mut self, edits: Arc<[TerrainEdit]>) {
         let changed: Vec<Stamp> = edits
             .iter()
@@ -283,15 +204,10 @@ impl TerrainState {
         }
         let pyramid = self.terrain.pyramid;
         let under = |key: &TileKey| changed.iter().any(|stamp| reaches(stamp, &pyramid, *key));
-        // Tiles kept in memory under the edits are no longer the ground.
         let generation = Generation::of(&self.terrain.edits, &self.baked_rivers, self.materials);
         self.store.invalidate(generation, under);
     }
 
-    /// The layers its bakes run toward: its baked layers where they hold
-    /// the rivers drawn over it now; otherwise its `authored` layers with
-    /// those rivers given before its hydrology ([`Layers::with_drawn`]),
-    /// over the bakes before its hydrology its baked layers hold.
     pub(super) fn bake_source(&self, authored: &Arc<Layers>) -> Arc<Layers> {
         let base = self.baked.clone().unwrap_or_else(|| authored.clone());
         if *self.baked_rivers == *self.terrain.rivers || !authored.has_hydrology() {
@@ -306,11 +222,6 @@ impl TerrainState {
         Arc::new(authored.with_drawn(&drawn, self.baked.as_deref()))
     }
 
-    /// Takes its baked layers, holding the rivers `drawn` over them, in
-    /// place of `before`, which its resident tiles were made from: the
-    /// resident tiles where the two differ ([`Layers::changes_from`]), all
-    /// of them where they differ but in rivers and roads, regenerate, drawn
-    /// as they were until then.
     pub(super) fn redrawn(&mut self, drawn: Arc<[TerrainRiver]>, before: Option<&Layers>) {
         self.baked_rivers = drawn;
         let changed = match (before, self.baked.as_deref()) {
@@ -327,9 +238,6 @@ impl TerrainState {
         self.store.invalidate(generation, under);
     }
 
-    /// Tile `key`'s job over the recipe shared as `recipe`, carrying the
-    /// edits reaching its ground in their order, and the key of its
-    /// record.
     pub(super) fn tile_record(&self, recipe: &str, key: TileKey) -> (TileJob, RecordKey) {
         let pyramid = self.terrain.pyramid;
         let job = TileJob {
@@ -351,8 +259,6 @@ impl TerrainState {
         (job, record)
     }
 
-    /// The layers its tiles generate from: `base`, its layers
-    /// with their bakes, with its edits over them.
     pub(super) fn generation(&mut self, base: Arc<Layers>) -> Arc<Layers> {
         if self.terrain.edits.is_empty() {
             return base;
@@ -369,19 +275,14 @@ impl TerrainState {
                 self.edited = Some((base, edited.clone()));
                 edited
             }
-            // Edits are validated as they are made.
             Err(_) => base,
         }
     }
 
-    /// Whether `key` still loads: not resident, or resident under edits
-    /// since.
     pub(super) fn loads(&self, key: &TileKey) -> bool {
         self.store.loads(key)
     }
 
-    /// Takes tile `key` out of residency at frame `frame`, keeping it in
-    /// memory where it is of the generation tiles are made from now.
     pub(super) fn leave(&mut self, key: &TileKey, frame: u64) {
         if let Some(left) = self.store.leave(key)
             && left.current
@@ -390,14 +291,10 @@ impl TerrainState {
         }
     }
 
-    /// Advances whenever its resident tiles, or what stands on them, change.
     pub(super) fn revision(&self) -> u64 {
         self.store.revision().wrapping_add(self.standing)
     }
 
-    /// Checks the residency invariants, the store's (R1, R2 and R5) and
-    /// R3: every tile record asked for is for a tile still loading. Panics
-    /// naming the first broken.
     #[cfg(debug_assertions)]
     pub(super) fn check(&self) {
         self.store.check();
@@ -409,8 +306,6 @@ impl TerrainState {
         }
     }
 
-    /// The finest resident tile holding terrain-local `local`, and its
-    /// sample there.
     pub(super) fn sample(&self, local: Vec2) -> Option<(u32, TileSample)> {
         if self.cut_out(local) {
             return None;
@@ -424,9 +319,6 @@ impl TerrainState {
         })
     }
 
-    /// The water at terrain-local `local` as the tile [`Self::sample`] reads
-    /// the ground of holds it: its surface, its depth over that ground, its
-    /// flow and whitewater; `None` where it holds none, or over a hole.
     pub(super) fn water(&self, local: Vec2) -> Option<WaterPoint> {
         if self.cut_out(local) {
             return None;
@@ -443,9 +335,6 @@ impl TerrainState {
             .flatten()
     }
 
-    /// The meters tracks sink the ground at terrain-local `local` at most:
-    /// its nearest sample's materials' blend, from the
-    /// finest resident tile (its shading's, for a tile shading with one).
     pub(super) fn deform(&self, local: Vec2) -> Option<f32> {
         if self.cut_out(local) {
             return None;
@@ -456,9 +345,6 @@ impl TerrainState {
             let tile = self.store.get(&key)?;
             let at = (local - pyramid.tile_origin(key)) / tile.spacing();
             let (x, z) = (at.x.round() as i32, at.y.round() as i32);
-            // Tiles shading with their shading: level 0's averaged there;
-            // those whose materials the GPU gives: the rules' at the
-            // sample.
             let control = match (tile.control_at(x, z), tile.shading(), &self.surface) {
                 (Some(control), _, _) => control,
                 (None, Some(shading), _) => shading.control_at(x, z),
@@ -485,48 +371,27 @@ impl TerrainState {
     }
 }
 
-/// Every terrain's resident tiles, streaming state and queries.
-/// Inserted by default; terrains stream during extraction.
 #[derive(Resource, Default)]
 pub struct Terrains {
     pub(super) entries: Vec<TerrainState>,
     pub(super) device_tiles: Option<u32>,
     pub(super) frame: u64,
     pub(super) stats: TerrainStats,
-    /// Milliseconds now, from the host; without one, a
-    /// frame works a slice.
     pub(super) clock: Option<fn() -> f64>,
-    /// The eye last streamed toward and its velocity, the
-    /// last frame's seconds, and the seconds since the eye last moved faster
-    /// than the settings' motion detail speed, `None` when
-    /// it has not since they asked for it.
     pub(super) last_eye: Option<Vec3>,
     pub(super) velocity: Vec3,
     pub(super) seconds: f32,
     pub(super) fast_ago: Option<f32>,
-    /// Whether the camera's view has loaded whole since terrains arrived.
     pub(super) loaded: bool,
-    /// Jobs' share: the stacks shared with them and their keys, and the
-    /// jobs and shares of terrains gone, to drop.
     pub(super) stacks: Vec<(Arc<Layers>, String)>,
     pub(super) retired: Retired,
-    /// Tiles returned from memory since terrains started;
-    /// and bytes of the frame's upload budget left for work between
-    /// frames, and spent there since the last frame.
     pub(super) restored: u64,
     pub(super) upload_left: u64,
     pub(super) between: u64,
-    /// The textures of macro colors replaced or gone with their terrains,
-    /// which leave the asset library once filled.
     pub(super) colors_gone: Vec<engine_assets::TextureHandle>,
-    /// Water settling on the GPU, which every terrain's settled water
-    /// shares.
     pub(super) settling: SettleQueue,
 }
 
-/// What a terrain makes over its whole extent once its finest pinned level
-/// is resident, each a record: its lighting, its bounce transfer and its
-/// macro colors, with its asking for each.
 #[derive(Default)]
 pub(super) struct Whole {
     pub(super) lighting: Lighting,
@@ -534,8 +399,6 @@ pub(super) struct Whole {
     pub(super) colors: MacroColors,
 }
 
-/// The workers' jobs and the keys shared with them of terrains gone (their
-/// recipes and their settled water's), and their macro colors' textures.
 #[derive(Default)]
 pub(super) struct Retired {
     pub(super) jobs: Vec<JobId>,
@@ -543,17 +406,12 @@ pub(super) struct Retired {
     pub(super) textures: Vec<engine_assets::TextureHandle>,
 }
 
-/// Whether `stamp` reaches tile `key`'s ground, or its samples' two beyond
-/// (its border and the normals there).
 pub(super) fn reaches(stamp: &Stamp, pyramid: &Pyramid, key: TileKey) -> bool {
     let center = Vec2::from(stamp.center);
     let radius = Vec2::splat(stamp.radius + stamp.falloff);
     covers((center - radius, center + radius), pyramid, key)
 }
 
-/// Whether the terrain-local bounds from `low` to `high` reach tile
-/// `key`'s ground, or its samples' two beyond (its border and the normals
-/// there).
 pub(super) fn covers((low, high): (Vec2, Vec2), pyramid: &Pyramid, key: TileKey) -> bool {
     let spacing = pyramid.spacing(u32::from(key.level));
     let size = TILE_QUADS as f32 * spacing;

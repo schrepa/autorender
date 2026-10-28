@@ -1,15 +1,9 @@
-//! The cook's pack writer: every record a cooking session read or made,
-//! each key once in the order it first came, compressed and written as one
-//! pack ([`engine_worker::pack_bytes`]).
-
 use std::path::Path;
 
 use engine::collections::HashSet;
 
-/// zstd's level for packs' records: compressed once, read by every player.
 const LEVEL: i32 = 19;
 
-/// The records a cooking session read or made.
 #[derive(Default)]
 pub(crate) struct PackWriter {
     records: Vec<([u8; 32], Vec<u8>)>,
@@ -17,7 +11,6 @@ pub(crate) struct PackWriter {
 }
 
 impl PackWriter {
-    /// Takes the record `key` (64 hexadecimal digits), unless it has it.
     pub(crate) fn take(&mut self, key: &str, bytes: &[u8]) {
         let Some(key) = engine_worker::key_from_hex(key) else {
             return;
@@ -27,13 +20,10 @@ impl PackWriter {
         }
     }
 
-    /// Its records.
     pub(crate) fn len(&self) -> usize {
         self.records.len()
     }
 
-    /// Writes its records as a pack at `path`, compressed on every core:
-    /// written whole beside it before it takes the path's name. Its bytes.
     pub(crate) fn write(&self, path: &Path) -> Result<u64, String> {
         let cores = std::thread::available_parallelism().map_or(4, usize::from);
         let chunk = self.records.len().div_ceil(cores).max(1);

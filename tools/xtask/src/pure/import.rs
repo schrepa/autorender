@@ -1,12 +1,3 @@
-//! The import corpus: `terrain_import` over the same heights in its three
-//! heightmap formats: the terrain fixture's 65 by 65 dome
-//! (web/scripts/fixtures/terrain-smoke/dome.r16) as that little-endian
-//! 16-bit RAW file, as a 16-bit grayscale PNG, and as a projected GeoTIFF
-//! of point samples in meters (32-bit floats, the heights the RAW and PNG
-//! samples map to over 0 to 200 m), each 128 m across. The three must write
-//! byte-identical `height.r16`, which is held to the goldens with the
-//! import's numbers.
-
 use std::io::Cursor;
 use std::path::Path;
 use std::process::Command;
@@ -18,11 +9,8 @@ use tiff::tags::Tag;
 use super::Observations;
 
 const DOME: &str = "web/scripts/fixtures/terrain-smoke/dome.r16";
-/// The folder the inputs and imports go to.
 const FOLDER: &str = "target/pure/import";
 const SIDE: u32 = 65;
-/// Meters across the dome, and the heights its samples 0 and 65535 stand
-/// for.
 const EXTENT: f64 = 128.0;
 const RANGE: [f64; 2] = [0.0, 200.0];
 
@@ -117,7 +105,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     Ok(())
 }
 
-/// `samples` as a 16-bit grayscale PNG.
 fn png(samples: &[u16]) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     let mut encoder = png::Encoder::new(&mut bytes, SIDE, SIDE);
@@ -135,9 +122,6 @@ fn png(samples: &[u16]) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-/// `samples` as a projected GeoTIFF of point samples: each one's height in
-/// meters as the RAW and PNG imports read it, a 32-bit float, two meters
-/// apart, the first at model (0, 128).
 fn geotiff(samples: &[u16]) -> Result<Vec<u8>, String> {
     let heights: Vec<f32> = samples
         .iter()
@@ -161,8 +145,6 @@ fn geotiff(samples: &[u16]) -> Result<Vec<u8>, String> {
             &[0.0, 0.0, 0.0, 0.0, EXTENT, 0.0][..],
         )
         .map_err(fail)?;
-    // GeoKeys: version 1.1.0, two keys: a projected model (1024 = 1) of
-    // point samples (1025 = 2).
     image
         .encoder()
         .write_tag(

@@ -1,21 +1,3 @@
-//! Virtual geometry: resident virtual meshes' hierarchies,
-//! clusters and pages in one arena, and each frame's selection of the
-//! clusters every view draws (`virtual_geometry.wgsl`). The camera's
-//! clusters go to per-material bins the opaque pass draws 128 triangles a
-//! cluster from (`meshes/vertex.wgsl`'s `vs_virtual`); each shadow map drawn every
-//! frame selects its casters' clusters into a bin of its own,
-//! drawn into the map by `vs_shadow`.
-//!
-//! Frames culling occluded instances retest the camera's
-//! clusters the last frame's depth pyramid hid against this frame's, after
-//! phase one, and draw those it does not hide in phase two from twin bins.
-//!
-//! Selection runs on the GPU only, for all views in one pass; each bin's
-//! region, the retest list and the node and group queues grow to what
-//! frames read back. Its parts: the arena and its page streaming (`arena`),
-//! each frame's selection storage and uniform (`selection`), the counts and
-//! group feedback read back (`feedback`), and the pipelines (`layouts`).
-
 #![expect(clippy::expect_used, reason = "bound groups build their buffers")]
 
 mod arena;
@@ -46,22 +28,14 @@ use feedback::Readbacks;
 use layouts::{Pipelines, ShadowDrawing};
 use selection::SelectionStorage;
 
-/// Counters before the bins' (`virtual_geometry.wgsl`).
 const COUNTERS: usize = 12;
-/// Bytes of an entry of the selected clusters: visible ID and cluster.
 pub(crate) const VISIBLE_BYTES: u64 = 8;
-/// ID sources of batches: the camera's, and the shadow maps' casters.
 const CAMERA: usize = 0;
 const SHADOWS: usize = 1;
 
-/// A batch of instances of a virtual mesh in one view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct VirtualBatch {
-    /// Start of its IDs: visible IDs (GPU-presented frames) or slot IDs
-    /// (CPU-prepared ones) for the camera, a map's casters for shadows.
     pub start: u32,
-    /// Instances, when known; otherwise the instance count of draw
-    /// arguments `draw` (GPU presentation's, or the shadow maps').
     pub count: Option<u32>,
     pub draw: u32,
     pub mesh: u32,
@@ -70,41 +44,23 @@ pub(crate) struct VirtualBatch {
     pub view: u32,
 }
 
-/// How a view tests clusters' normal cones.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Cone {
-    /// From the camera's eye at a point (perspective views).
     From(Vec3),
-    /// Along a direction the view looks (orthographic views).
     Along(Vec3),
 }
 
-/// A view clusters are selected for.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct VirtualView {
-    /// Inward planes, normalized; unused ones hold everything.
     pub planes: [[f32; 4]; PLANES],
-    /// The detail eye
-    /// ([`RenderSnapshot::detail_eye`](engine_core::RenderSnapshot::detail_eye)),
-    /// which errors project from.
     pub eye: Vec3,
-    /// The smallest distance errors project from.
     pub min_distance: f32,
-    /// cot(fovy / 2) / 2 of the camera.
     pub projection: f32,
-    /// The largest projected error drawn, as a fraction of the viewport
-    /// height.
     pub threshold: f32,
-    /// The world error a shadow view accepts where the camera sees nothing
-    /// (0 for the camera's own view).
     pub unseen_error: f32,
     pub cone: Cone,
 }
 
-/// Counts a frame read back: clusters and triangles the camera and the
-/// shadow views selected, the camera's clusters occlusion culling left
-/// undrawn, and entries dropped for want of room; and this frame's pages:
-/// resident, loading, and loads dropped for want of room.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct VirtualStats {
     pub clusters: u32,
@@ -120,11 +76,6 @@ pub(crate) struct VirtualStats {
     pub failed_pages: u32,
 }
 
-/// The camera's cluster tests of a frame: the
-/// projection it rasterizes, the viewport and depth pyramid levels, the
-/// projection the last frame rasterized when its pyramid is this frame's
-/// to reuse, the first phase-two bin when occlusion culling draws two
-/// phases, and whether clusters covering no pixel center stay undrawn.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CameraTests {
     pub view_projection: Mat4,
@@ -134,8 +85,6 @@ pub(crate) struct CameraTests {
     pub subpixel: bool,
 }
 
-/// The buffers one source of batches reads: IDs and draw arguments, with a
-/// key that changes when either does.
 #[derive(Clone, Copy)]
 pub(crate) struct IdBuffers<'a> {
     pub ids: &'a wgpu::Buffer,
@@ -143,13 +92,6 @@ pub(crate) struct IdBuffers<'a> {
     pub key: u64,
 }
 
-/// What a frame's selection reads: the batches of the camera's and the
-/// shadow maps' ID sources, the bins they select into, the views, the
-/// camera's tests and the budget of resident pages; this frame's poses, the
-/// IDs and draw arguments of both sources (the shadow maps' only while
-/// shadow views select), the most instances a batch of each source has,
-/// the shadow maps' view matrices shadow bins are drawn with, and
-/// occlusion culling's depth pyramid with its generation.
 pub(crate) struct SelectionFrame<'a> {
     pub batches: [&'a [VirtualBatch]; 2],
     pub bins: usize,
@@ -164,46 +106,29 @@ pub(crate) struct SelectionFrame<'a> {
     pub pyramid: Option<(&'a wgpu::TextureView, u64)>,
 }
 
-/// One pose buffer's selection groups.
 struct Groups {
-    // Per ID source; shadows' only while shadow views select.
     seed: [Option<wgpu::BindGroup>; 2],
-    // Every pass writing dispatch arguments: each level's, the work's and
-    // the retest's.
     args: wgpu::BindGroup,
-    // Both parities of the traversal.
     traverse: wgpu::BindGroup,
     select: wgpu::BindGroup,
     bin_args: wgpu::BindGroup,
     retest: wgpu::BindGroup,
 }
 
-/// Generations of the arena, selection storage, poses, camera IDs, shadow
-/// IDs and the depth pyramid bind groups were built for.
 type GroupsKey = (u64, u64, u64, u64, Option<u64>, Option<u64>);
-/// The arena generation, the poses' key and the shadow views' buffer a
-/// shadow drawing group binds.
 type ShadowGroupKey = (u64, u64, wgpu::Buffer);
 
 pub(crate) struct VirtualGeometryPass {
     arena: VirtualArena,
     storage: SelectionStorage,
     readbacks: Readbacks,
-    // Built with the first arena: scenes without virtual
-    // meshes compile none of them.
     module: Option<wgpu::ShaderModule>,
     pipelines: Option<Pipelines>,
-    // Bindings per pose buffer parity (temporal frames alternate them), and
-    // this frame's parity.
     groups: [Cached<GroupsKey, Groups>; 2],
     parity: usize,
-    // This frame's poses and their key, for shadow drawing.
     poses: Option<(wgpu::Buffer, u64)>,
-    // Depth-only drawing of shadow bins, once shadow views select, and its
-    // groups per pose buffer parity.
     shadow_drawing: Option<ShadowDrawing>,
     shadow_groups: [Cached<ShadowGroupKey, wgpu::BindGroup>; 2],
-    // Stands in for the depth pyramid on frames without one.
     _no_pyramid: wgpu::Texture,
     no_pyramid: wgpu::TextureView,
 }
@@ -236,38 +161,28 @@ impl VirtualGeometryPass {
         }
     }
 
-    /// Makes `geometry` resident as mesh `handle`'s, once.
     pub(crate) fn insert(&mut self, handle: MeshHandle, geometry: &Arc<VirtualMesh>) {
         self.arena.insert(handle, geometry);
     }
 
-    /// Releases every resident mesh `keep` rejects.
     pub(crate) fn retain(&mut self, keep: impl Fn(MeshHandle) -> bool) {
         self.arena.retain(keep);
     }
 
-    /// The arena index of mesh `handle`'s geometry, once uploaded.
     pub(crate) fn mesh_index(&self, handle: MeshHandle) -> Option<u32> {
         self.arena.mesh_index(handle)
     }
 
-    /// Whether resident mesh `index` is closed (`VirtualMesh::closed`).
     pub(crate) fn closed(&self, index: u32) -> bool {
         self.arena.closed(index)
     }
 
-    /// Rebuilds the arena when resident meshes changed: every record
-    /// rebased to absolute indices, and a new page pool holding the pinned
-    /// pages (and, without `budget`, every page the meshes' words hold).
     pub(crate) fn upload(&mut self, device: &wgpu::Device, queue: &Queue, budget: Option<u32>) {
         if self.arena.upload(device, queue, budget) {
-            // Groups of the old arena hold its buffers.
             self.groups = Default::default();
         }
     }
 
-    /// The arena buffers vertex shaders read (meshes, clusters, pages) and
-    /// their generation.
     pub(crate) fn arena(&self) -> Option<([&wgpu::Buffer; 3], u64)> {
         self.arena.vertex_buffers()
     }
@@ -276,10 +191,6 @@ impl VirtualGeometryPass {
         self.arena.capacity_bytes() + self.storage.capacity_bytes()
     }
 
-    /// Prepares `frame`'s selection: streams pages for the groups the last
-    /// read-back frame used and requested (keeping at most the budget
-    /// resident), grows what it lacked room for, uploads the batches, bins,
-    /// views and the camera's tests, and binds the frame's inputs.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -316,8 +227,6 @@ impl VirtualGeometryPass {
         self.bind(device, frame);
     }
 
-    /// Binds this frame's slot poses, the IDs and draw arguments of both
-    /// sources, the shadow maps' views and the depth pyramid.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -466,10 +375,6 @@ impl VirtualGeometryPass {
         });
     }
 
-    /// Records this frame's selection: seeds of both ID sources, one
-    /// traversal per hierarchy level, the groups' clusters and each bin's
-    /// draw arguments, then the counters' copy for read-back. Nothing
-    /// without bound batches.
     pub(crate) fn encode(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         let Some(groups) = self.groups[self.parity].get() else {
             return;
@@ -519,14 +424,11 @@ impl VirtualGeometryPass {
             pass.set_bind_group(0, &groups.bin_args, &[]);
             pass.dispatch_workgroups((storage.bin_count() as u32).div_ceil(GROUP).max(1), 1, 1);
         }
-        // Frames retesting read their counters back after the retest.
         if !storage.retesting() {
             self.read_counters(device, encoder);
         }
     }
 
-    /// Records a copy of this frame's counters for read-back, when a
-    /// read-back buffer is free.
     fn read_counters(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         let (frame, _) = self.arena.frames();
         self.readbacks.record(
@@ -538,10 +440,6 @@ impl VirtualGeometryPass {
         );
     }
 
-    /// Records the retest after phase one and this frame's depth pyramid:
-    /// the waiting clusters it does not hide go to phase
-    /// two's bins, whose draw arguments follow. Nothing on frames drawing
-    /// one phase.
     pub(crate) fn encode_retest(
         &mut self,
         device: &wgpu::Device,
@@ -577,26 +475,18 @@ impl VirtualGeometryPass {
         self.read_counters(device, encoder);
     }
 
-    /// Every bin's selected clusters (visible ID and cluster), and a
-    /// generation that advances when the buffer is replaced.
     pub(crate) fn visible(&self) -> (&wgpu::Buffer, u64) {
         (&self.storage.visible, self.storage.generation())
     }
 
-    /// Bin `bin`'s first entry of [`Self::visible`].
     pub(crate) fn bin_base(&self, bin: usize) -> u32 {
         self.storage.bin_base(bin)
     }
 
-    /// The selected clusters of bin `bin` (an instance-stepped vertex stream
-    /// of visible ID and cluster) and its indirect draw arguments.
     pub(crate) fn bin_source(&self, bin: usize) -> (wgpu::BufferSlice<'_>, &wgpu::Buffer, u64) {
         self.storage.bin_source(bin)
     }
 
-    /// Draws shadow bin `bin` into the map of view matrix `view_offset`
-    /// (an offset into the shadow maps' views). Returns whether it drew;
-    /// the pass's pipeline and first group are this drawing's afterwards.
     pub(crate) fn draw_shadow(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -620,13 +510,10 @@ impl VirtualGeometryPass {
         true
     }
 
-    /// Why the latest failed page read did, if any failed.
     pub(crate) fn page_failure(&self) -> Option<&str> {
         self.arena.page_failure()
     }
 
-    /// Counts the last read-back frame selected (none before the first
-    /// read-back), and this frame's pages.
     pub(crate) fn stats(&self) -> Option<VirtualStats> {
         self.arena.buffers().map(|_| {
             let [
@@ -647,13 +534,11 @@ impl VirtualGeometryPass {
         })
     }
 
-    /// Requests maps of counters recorded in the frame just submitted.
     pub(crate) fn after_submit(&mut self) {
         self.readbacks.after_submit(self.storage.retest_capacity());
     }
 }
 
-/// Normalized inward planes of `view_projection`'s frustum (WebGPU depth).
 pub(crate) fn planes(view_projection: engine_core::glam::Mat4) -> [[f32; 4]; 6] {
     let (planes, _) = crate::gpu_data::frustum_uniform(view_projection);
     planes.map(|plane| {

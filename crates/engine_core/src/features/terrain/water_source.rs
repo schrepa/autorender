@@ -1,8 +1,3 @@
-//! Terrains' water as the world's water reads it ([`crate::WaterSources`]):
-//! the water their tiles hold, lakes and rivers alike, as deep as its surface
-//! stands over the ground the same tiles hold, and their waterfalls' jets as
-//! their bake solved them.
-
 use bevy_ecs::prelude::World;
 use glam::{Vec2, Vec3};
 
@@ -12,18 +7,13 @@ use crate::terrain_data::hydraulics::GRAVITY;
 use crate::terrain_data::{Fall, Layers};
 use crate::{WaterKind, WaterSample};
 
-/// Meters thick a fall's sheet of water stands about its jet's path.
 const SHEET: f32 = 1.0;
 
-/// The world's water at `point` that terrains hold: the source the terrain
-/// plugin registers.
 pub(crate) fn terrain_water(world: &World, point: Vec3) -> Option<WaterSample> {
     world.get_resource::<Terrains>()?.water_at(point)
 }
 
 impl Terrains {
-    /// Each terrain whose hydrology bake is done: its entity, origin and
-    /// baked layers (whose hydrology holds its rivers, lakes and falls).
     pub fn waters(&self) -> impl Iterator<Item = (bevy_ecs::entity::Entity, Vec3, &Layers)> {
         self.entries
             .iter()
@@ -36,8 +26,6 @@ impl Terrains {
             })
     }
 
-    /// The flow of terrain `entity`'s rivers once a solid stood in them:
-    /// what stands in them now and the pools behind it.
     pub fn river_flow(
         &self,
         entity: bevy_ecs::entity::Entity,
@@ -50,11 +38,6 @@ impl Terrains {
             .as_ref()
     }
 
-    /// The water terrains hold over world `point`: what their tiles hold
-    /// there, lake or river, its foam the white water born in it, where the
-    /// foam's rafts are born, or a waterfall's jet, whichever stands
-    /// highest; `None` where none does or no tile holding the point is
-    /// resident.
     pub fn water_at(&self, point: Vec3) -> Option<WaterSample> {
         self.entries
             .iter()
@@ -87,9 +70,6 @@ impl Terrains {
     }
 }
 
-/// The jet of a waterfall at terrain-local `point`: within half the river's
-/// width of a fall's path and [`SHEET`] of its height there, falling along
-/// it at the speed its drop has given it.
 fn fall(falls: &[Fall], point: Vec3) -> Option<WaterSample> {
     let at = Vec2::new(point.x, point.z);
     falls.iter().find_map(|fall| {
@@ -113,7 +93,6 @@ fn fall(falls: &[Fall], point: Vec3) -> Option<WaterSample> {
             {
                 return None;
             }
-            // The jet keeps the lip's speed across and gains its drop's.
             let across = Vec2::new(fall.bottom[0] - fall.top[0], fall.bottom[2] - fall.top[2]);
             let drop = max(top.y - fall.bottom[1], 0.1);
             let horizontal = across.length() * (GRAVITY / (2.0 * drop)).sqrt();

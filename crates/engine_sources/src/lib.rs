@@ -1,30 +1,3 @@
-//! The hash of the source code a crate builds from, for the crates whose
-//! code generates records hosts keep and the cook ships (terrain tiles,
-//! their bakes): a build script calls [`emit`], and the crate includes
-//! `source.rs` from its build's output folder, which declares
-//! `pub const SOURCE: [u8; 32]`. Records keyed by it stay valid across
-//! builds that leave that code alone, and none outlives a change to it:
-//! nobody bumps a version.
-//!
-//! The hash covers every file of the crate and of the crates of this
-//! repository it depends on, transitively (its `dependencies` tables, as
-//! the workspace declares their paths), the sources the workspace patches in
-//! for registry crates any of them depends on, the lockfile's entries of
-//! the crates it builds with (each registry crate's version) and the
-//! toolchain file. Line endings are hashed as git holds them, so every
-//! checkout hashes the same; the target never is, as records are the same
-//! bits on every host.
-//!
-//! A crate whose records come from parts of its code keys each kind by the
-//! code making it alone ([`emit_sets`]): a [`Set`] of its top modules, the
-//! modules they use followed through its code, so a change elsewhere in the
-//! crate leaves those records as they were.
-//!
-//! A crate keying records whose code it does not link (records only a
-//! tool makes, such as the cook's levels of detail, which runtimes load)
-//! hashes that code's crate instead ([`emit_of`]).
-//!
-//! [`record_key`] is the key records are kept by, from that hash.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
@@ -36,9 +9,6 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-/// The key hosts keep a record by, in their stores and the cook's packs:
-/// SHA-256 over `source`, the hash of the code making it, its `kind` and
-/// its `identity`, everything its bytes depend on.
 pub fn record_key(source: &[u8; 32], kind: &str, identity: &[u8]) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(source);
@@ -48,25 +18,6 @@ pub fn record_key(source: &[u8; 32], kind: &str, identity: &[u8]) -> [u8; 32] {
     hash.finalize().into()
 }
 
-/// A kind of a crate's records keyed by the code making it alone
-/// ([`emit_sets`]): `sources::NAME`, the hash of the crate's top modules
-/// `roots`, the modules of the crate they use, followed through its code
-/// but for those of `stop` (shared plumbing whose changes leave the
-/// records' bytes alone, neither hashed nor followed), `files` (paths
-/// within the crate's folder; one ending in `/` names every file under
-/// it), the crate's manifest, build script and root file, and the
-/// workspace crates `crates` names (`None`: every one it depends on, as
-/// [`emit`] hashes), with the lockfile's entries and the toolchain file.
-///
-/// A module uses what its code reaches through the crate's root, as code
-/// of this edition must name it: each name written after `crate::` or
-/// `super::` (a top module's `super` is the root) and each first name of a
-/// group after them (`use crate::{a, b::c}`: `a` and `b`), a top module or
-/// an item the root re-exports from one (every module the root re-exports
-/// whole, for an item it does not name): its code with comments and
-/// strings left out, a name that only might be another module's followed
-/// too. A module's files are its own file, everything under its folder and
-/// the files it includes (`include_str!` and the like, by literal path).
 #[derive(Clone, Copy, Debug)]
 pub struct Set<'a> {
     pub name: &'a str,
@@ -76,18 +27,10 @@ pub struct Set<'a> {
     pub crates: Option<&'a [&'a str]>,
 }
 
-/// Hashes the calling crate's sources and writes `source.rs` into the
-/// build's output folder, telling Cargo to run the build script again when
-/// any file hashed changes. Panics, failing the build, where a manifest or
-/// a file cannot be read.
 pub fn emit() {
     emit_sets(&[]);
 }
 
-/// [`emit`], and in `source.rs` a module `sources` declaring each of
-/// `sets`' hashes by its name ([`Set`]), which the crate's records of that
-/// kind are keyed by. Panics, failing the build, where a set names a
-/// module the crate's root does not declare.
 pub fn emit_sets(sets: &[Set<'_>]) {
     let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
     let mut source = source_declaration(&manifest, "this crate");
@@ -117,11 +60,6 @@ pub fn emit_sets(sets: &[Set<'_>]) {
     write_out("source.rs", &source);
 }
 
-/// [`emit`] for the workspace's crate `name` rather than the calling one,
-/// for a crate keying records `name`'s code makes without linking it:
-/// writes `{name}_source.rs`, declaring `SOURCE` as `name`'s own build
-/// would. Panics, failing the build, where the workspace names no such
-/// crate.
 pub fn emit_of(name: &str) {
     let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
     let root = workspace_root(&manifest);
@@ -135,10 +73,6 @@ pub fn emit_of(name: &str) {
     write_out(&format!("{name}_source.rs"), &source);
 }
 
-/// `SOURCE`'s declaration for the crate in `manifest` (its folder), its
-/// doc naming the crate as `crate_name`: the hash of its files, those of
-/// the workspace crates it depends on and the patched sources they build
-/// with, its lockfile entries and the toolchain file.
 fn source_declaration(manifest: &Path, crate_name: &str) -> String {
     let root = workspace_root(manifest);
     let mut files = Vec::new();
@@ -156,8 +90,6 @@ fn source_declaration(manifest: &Path, crate_name: &str) -> String {
     )
 }
 
-/// The hash of `set` of the crate in `manifest`, whose modules are
-/// `modules` ([`Set`]).
 fn set_digest(manifest: &Path, modules: &Modules, set: &Set<'_>) -> [u8; 32] {
     let root = workspace_root(manifest);
     let mut files = Vec::new();
@@ -187,10 +119,6 @@ fn set_digest(manifest: &Path, modules: &Modules, set: &Set<'_>) -> [u8; 32] {
     digest(&root, manifest, files)
 }
 
-/// SHA-256 over `files` (each by its path within the workspace at `root`,
-/// once, in order of those paths), the lockfile's entries of the crate in
-/// `manifest` and the toolchain file, the build asked to run again when
-/// either changes.
 fn digest(root: &Path, manifest: &Path, files: Vec<PathBuf>) -> [u8; 32] {
     let mut named: BTreeMap<String, PathBuf> = files
         .into_iter()
@@ -223,10 +151,6 @@ fn digest(root: &Path, manifest: &Path, files: Vec<PathBuf>) -> [u8; 32] {
     hash.finalize().into()
 }
 
-/// The folders of the crate in `manifest` and of the workspace crates it
-/// depends on, transitively, or of those `only` names (with the crate's
-/// own), and the sources the workspace patches in for registry crates any
-/// of them depends on.
 fn crate_folders(root: &Path, manifest: &Path, only: Option<&[&str]>) -> BTreeSet<PathBuf> {
     let workspace = read(&root.join("Cargo.toml"));
     let paths = table_paths(&workspace, "workspace.dependencies");
@@ -251,9 +175,6 @@ fn crate_folders(root: &Path, manifest: &Path, only: Option<&[&str]>) -> BTreeSe
     folders
 }
 
-/// The `[[package]]` entries of `lock` (a lockfile) of `package` and of
-/// every crate it builds with, transitively, in the lockfile's order: whole
-/// where it holds no entry of that name.
 fn lock_entries(lock: &str, package: &str) -> String {
     let entries: Vec<LockEntry> = lock
         .split("[[package]]")
@@ -292,9 +213,6 @@ fn lock_entries(lock: &str, package: &str) -> String {
         .join("[[package]]")
 }
 
-/// A lockfile's `[[package]]` entry: its text, name, version and the
-/// crates it depends on (`name` or `name version`, as the lockfile writes
-/// them).
 struct LockEntry {
     text: String,
     name: String,
@@ -335,7 +253,6 @@ impl LockEntry {
     }
 }
 
-/// The name a crate's manifest gives its package.
 fn package_name(manifest: &str) -> String {
     let mut inside = false;
     for line in manifest.lines() {
@@ -354,10 +271,6 @@ fn package_name(manifest: &str) -> String {
     String::new()
 }
 
-/// A crate's top modules, as its root file declares them: each one's
-/// files and the names its code reaches through the root; the items the
-/// root re-exports, by name, with the modules each comes from, and the
-/// modules it re-exports whole.
 struct Modules {
     lib: PathBuf,
     files: BTreeMap<String, Vec<PathBuf>>,
@@ -367,8 +280,6 @@ struct Modules {
 }
 
 impl Modules {
-    /// The top modules of the crate in `manifest` (its folder), declared in
-    /// `src/lib.rs`, or `src/main.rs` for a binary.
     fn of(manifest: &Path) -> Self {
         let source = manifest.join("src");
         let lib = ["lib.rs", "main.rs"]
@@ -431,7 +342,6 @@ impl Modules {
         modules
     }
 
-    /// The modules `name`'s code uses ([`Set`]).
     fn uses(&self, name: &str) -> BTreeSet<String> {
         let mut used = BTreeSet::new();
         for reached in &self.names[name] {
@@ -452,8 +362,6 @@ impl Modules {
         used
     }
 
-    /// `roots` and the modules they use, followed, but for `stop`. Panics
-    /// where a root names no module.
     fn closure(&self, roots: &[&str], stop: &[&str]) -> BTreeSet<String> {
         let mut found = BTreeSet::new();
         let mut queue: Vec<String> = roots.iter().map(|root| (*root).to_owned()).collect();
@@ -471,13 +379,10 @@ impl Modules {
     }
 }
 
-/// Whether `path` is a Rust file.
 fn is_rust(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension == "rs")
 }
 
-/// The modules `root` (a crate root's code) declares from files
-/// (`mod name;`, whatever its visibility).
 fn declared_modules(root: &str) -> Vec<String> {
     let tokens = tokens(root);
     let mut names = Vec::new();
@@ -489,9 +394,6 @@ fn declared_modules(root: &str) -> Vec<String> {
     names
 }
 
-/// The modules `root` (a crate root's code) re-exports from (`pub use
-/// module::...;`), each with the items it re-exports, `None` for the
-/// whole module (`*`).
 fn reexports(root: &str) -> Vec<(String, Option<Vec<String>>)> {
     let tokens = tokens(root);
     let mut found = Vec::new();
@@ -526,8 +428,6 @@ fn reexports(root: &str) -> Vec<(String, Option<Vec<String>>)> {
     found
 }
 
-/// The names `text` (code without comments and strings) reaches through
-/// its crate's root ([`Set`]).
 fn names(text: &str) -> BTreeSet<String> {
     let tokens = tokens(text);
     let mut found = BTreeSet::new();
@@ -540,7 +440,6 @@ fn names(text: &str) -> BTreeSet<String> {
         }
         let next = &tokens[at + 2];
         if next == "{" {
-            // A group's first names, at its own depth.
             let (mut depth, mut first) = (0_u32, true);
             let mut inside = at + 2;
             while let Some(token) = tokens.get(inside) {
@@ -566,7 +465,6 @@ fn names(text: &str) -> BTreeSet<String> {
             }
             at = inside;
         } else {
-            // A glob (`use super::*`) reaches whatever the root holds.
             if is_identifier(next) || next == "*" {
                 found.insert(next.clone());
             }
@@ -576,8 +474,6 @@ fn names(text: &str) -> BTreeSet<String> {
     found
 }
 
-/// `text` split into identifiers, `::` and single other characters,
-/// whitespace dropped.
 fn tokens(text: &str) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut tokens = Vec::new();
@@ -610,8 +506,6 @@ fn is_identifier(token: &str) -> bool {
         .is_some_and(|first| first.is_alphabetic() || first == '_')
 }
 
-/// The files `text` (a Rust file) includes by literal path
-/// (`include_str!("...")`, `include_bytes!` and `include!`), as written.
 fn includes(text: &str) -> Vec<String> {
     let mut found = Vec::new();
     for macro_name in ["include_str!(", "include_bytes!(", "include!("] {
@@ -629,8 +523,6 @@ fn includes(text: &str) -> Vec<String> {
     found
 }
 
-/// `text` (Rust) without its comments and the contents of its string and
-/// character literals, each replaced by a space.
 fn code(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
@@ -696,8 +588,6 @@ fn code(text: &str) -> String {
     out
 }
 
-/// Whether the `r` at `at` starts a raw string (`r"`, `r#"`), not an
-/// identifier ending in `r` or starting with it.
 fn raw_string(chars: &[char], at: usize) -> bool {
     let before = at.checked_sub(1).map(|before| chars[before]);
     if before.is_some_and(|before| before.is_alphanumeric() || before == '_') {
@@ -710,8 +600,6 @@ fn raw_string(chars: &[char], at: usize) -> bool {
     chars.get(after) == Some(&'"')
 }
 
-/// Whether the `'` at `at` opens a character literal rather than a
-/// lifetime or a label.
 fn char_literal(chars: &[char], at: usize) -> bool {
     match chars.get(at + 1) {
         Some('\\') => true,
@@ -720,7 +608,6 @@ fn char_literal(chars: &[char], at: usize) -> bool {
     }
 }
 
-/// `digest`'s bytes as a Rust array's items.
 fn bytes(digest: &[u8]) -> String {
     digest
         .iter()
@@ -729,7 +616,6 @@ fn bytes(digest: &[u8]) -> String {
         .join(", ")
 }
 
-/// Writes `source` into the build's output folder as `file`.
 fn write_out(file: &str, source: &str) {
     let out = PathBuf::from(var("OUT_DIR")).join(file);
     fs::write(&out, source)
@@ -745,8 +631,6 @@ fn read(path: &Path) -> String {
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
 }
 
-/// The folder holding the workspace's manifest: the nearest above
-/// `manifest` declaring `[workspace]`.
 fn workspace_root(manifest: &Path) -> PathBuf {
     manifest
         .ancestors()
@@ -758,8 +642,6 @@ fn workspace_root(manifest: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-/// The paths a manifest's `table` gives its entries (`name = { path = "..." }`),
-/// by name.
 fn table_paths(manifest: &str, table: &str) -> BTreeMap<String, String> {
     let mut paths = BTreeMap::new();
     let mut inside = false;
@@ -782,10 +664,6 @@ fn table_paths(manifest: &str, table: &str) -> BTreeMap<String, String> {
     paths
 }
 
-/// The names of the dependencies a crate's manifest declares in its
-/// `[dependencies]` tables, its targets' included: the policy has every
-/// one inherited from the workspace (`name.workspace = true` or
-/// `name = { workspace = true, ... }`).
 fn dependency_names(manifest: &str) -> Vec<String> {
     let mut names = Vec::new();
     let mut inside = false;
@@ -812,7 +690,6 @@ fn dependency_names(manifest: &str) -> Vec<String> {
     names
 }
 
-/// The quoted string `value` gives `key` (`key = "..."`).
 fn quoted_after(value: &str, key: &str) -> Option<String> {
     let at = value.find(key)?;
     let rest = value[at + key.len()..].trim_start().strip_prefix('=')?;
@@ -820,8 +697,6 @@ fn quoted_after(value: &str, key: &str) -> Option<String> {
     rest.split_once('"').map(|(path, _)| path.to_owned())
 }
 
-/// Every file under `folder` a checkout holds: not build outputs, hidden
-/// files or editors' scratch files, which differ between machines.
 fn list(folder: &Path, files: &mut Vec<PathBuf>) {
     let entries = fs::read_dir(folder)
         .unwrap_or_else(|error| panic!("cannot list {}: {error}", folder.display()));
@@ -851,7 +726,6 @@ fn list(folder: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-/// `bytes` with Windows line endings as Unix ones.
 fn normalized(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     for (index, &byte) in bytes.iter().enumerate() {

@@ -1,30 +1,8 @@
-//! The cook's textures: an RGBA8 image cooked into what devices sample.
-//! Its mip chain averages as its usage reads it (colors in linear light,
-//! normals as vectors, as short as their spread leaves their mean, data
-//! channel by channel); its summary is its base level's
-//! ([`engine_assets::TextureSummary`]); every level is
-//! compressed for a device family, BC7 for desktops and ASTC 4 × 4 for
-//! phones and Apple's GPUs. A cooked texture travels as a record: a small
-//! header (format, size, levels, whether alpha masks emission, the
-//! summary), then its levels, which [`decode`] reads back into a texture.
-//! Devices sampling neither family decompress the BC7 record into RGBA8
-//! levels ([`decompress`]), the texels BC7 devices see. Every function
-//! gives the same bits on every host: integer and plain `f32` arithmetic,
-//! `libm` for powers, levels split among threads only by whole rows of
-//! blocks.
-//!
-//! Cooking runs on the engine's workers too, as the job [`COOK_JOB`]: its
-//! input an image and a family ([`cook_input`]), its output the texture's
-//! record ([`cook_job`]), which hosts keep as engines key it. Workers run it
-//! through [`TextureWorker`], whole at its first step, and hosts without
-//! workers through [`run`], the same code.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
 )]
 
-// `SOURCE`, the hash of the code cooking textures, which keys the records
-// of the jobs cooking them.
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
 mod astc;
@@ -33,15 +11,10 @@ mod mips;
 
 use engine_assets::{AssetError, Texture, TextureFormat, TextureSummary};
 
-/// The job kind cooking an image for a family where the engine's workers
-/// run it ([`cook_job`]), and where hosts without workers run it in place.
 pub const COOK_JOB: &str = "texture_cook";
 
-/// Bytes before a [`COOK_JOB`]'s texels: the image's width and height, its
-/// usage and the family.
 const COOK_HEADER: usize = 10;
 
-/// The input of a [`COOK_JOB`] cooking `source` for `family`.
 pub fn cook_input(source: &Source, family: Family) -> Vec<u8> {
     let mut input = Vec::with_capacity(COOK_HEADER + source.pixels.len());
     input.extend_from_slice(&source.width.to_le_bytes());
@@ -59,8 +32,6 @@ pub fn cook_input(source: &Source, family: Family) -> Vec<u8> {
     input
 }
 
-/// A [`COOK_JOB`]'s output from its `input` ([`cook_input`]): the record
-/// ([`record`]) of its image cooked for its family ([`cook`]).
 pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, String> {
     let header = input
         .get(..COOK_HEADER)
@@ -90,14 +61,10 @@ pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, String> {
         .map_err(|error| error.to_string())
 }
 
-/// The output of texture job `kind` on `input`, made whole; `None` where
-/// `kind` names no texture job.
 pub fn run(kind: &str, input: &[u8]) -> Option<Result<Vec<u8>, String>> {
     TextureWorker::runs(kind).then(|| cook_job(input))
 }
 
-/// The texture jobs a worker started, by id, with their inputs: each cooks
-/// whole at its first step.
 #[derive(Default)]
 pub struct TextureWorker {
     running: Vec<(u64, Vec<u8>)>,
@@ -108,18 +75,14 @@ impl TextureWorker {
         Self::default()
     }
 
-    /// Whether `kind` names a texture job.
     pub fn runs(kind: &str) -> bool {
         kind == COOK_JOB
     }
 
-    /// Whether it started job `id`, which has yet to finish.
     pub fn holds(&self, id: u64) -> bool {
         self.running.iter().any(|(running, _)| *running == id)
     }
 
-    /// Starts job `id` of `kind` on `input`, to [`Self::step`] until done;
-    /// another of the same id stops.
     pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
         if !Self::runs(kind) {
             return Err(format!("unknown job kind {kind}"));
@@ -129,9 +92,6 @@ impl TextureWorker {
         Ok(())
     }
 
-    /// Works on job `id`: its record at its first step, whatever the
-    /// budget, as a texture cooks whole. A job that failed or finished is
-    /// gone.
     pub fn step(&mut self, id: u64, _budget: u64) -> Result<Option<Vec<u8>>, String> {
         let at = self
             .running
@@ -142,41 +102,27 @@ impl TextureWorker {
         cook_job(&input).map(Some)
     }
 
-    /// Stops job `id`, if it runs.
     pub fn cancel(&mut self, id: u64) {
         self.running.retain(|(running, _)| *running != id);
     }
 }
 
-/// How a texture's texels read, which its levels average by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Usage {
-    /// sRGB colors, alpha linear: base color and emissive maps.
     Color,
-    /// Linear values, each channel apart: occlusion, roughness,
-    /// metalness and height.
     Data,
-    /// Tangent-space normals in red, green and blue (x along the image's
-    /// right, y up it, z out), alpha linear.
     Normal,
 }
 
-/// The block-compressed formats devices sample: one family of records
-/// each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Family {
-    /// BC7, which desktops sample (`texture-compression-bc`).
     Bc7,
-    /// ASTC 4 × 4, which phones and Apple's GPUs sample
-    /// (`texture-compression-astc`).
     Astc,
 }
 
 impl Family {
-    /// Every family, in the order cooks make them.
     pub const ALL: [Family; 2] = [Family::Bc7, Family::Astc];
 
-    /// The format of its textures.
     pub fn format(self) -> TextureFormat {
         match self {
             Self::Bc7 => TextureFormat::Bc7,
@@ -184,7 +130,6 @@ impl Family {
         }
     }
 
-    /// Its name, as record identities name it.
     pub fn name(self) -> &'static str {
         match self {
             Self::Bc7 => "bc7",
@@ -193,8 +138,6 @@ impl Family {
     }
 }
 
-/// An image to cook: `width` × `height` RGBA8 texels, rows from the top,
-/// read as `usage`. Compressed families take sides of multiples of 4.
 #[derive(Clone, Debug)]
 pub struct Source {
     pub width: u32,
@@ -203,14 +146,10 @@ pub struct Source {
     pub usage: Usage,
 }
 
-/// The RGBA8 levels of `source`'s mip chain, from its base down to 1 × 1:
-/// what [`cook`] compresses.
 pub fn levels(source: &Source) -> Vec<Vec<u8>> {
     mips::chain(source.width, source.height, &source.pixels, source.usage)
 }
 
-/// `source` cooked for `family`: every level of its mip chain compressed,
-/// its summary, and whether any texel's alpha limits emission.
 pub fn cook(source: &Source, family: Family) -> Result<Texture, AssetError> {
     let expected = TextureFormat::Rgba8.level_bytes(source.width, source.height);
     if source.pixels.len() != expected {
@@ -242,10 +181,6 @@ pub fn cook(source: &Source, family: Family) -> Result<Texture, AssetError> {
     )
 }
 
-/// The blocks of an RGBA8 level `width` × `height` in `family`'s format,
-/// row by row: texels past a small level's edge repeat its last row and
-/// column. What [`cook`] makes of each level, and what levels made
-/// elsewhere (impostors' layers, which the renderer bakes) compress by.
 pub fn compress(width: u32, height: u32, pixels: &[u8], family: Family) -> Vec<u8> {
     let (columns, rows) = (width.div_ceil(4) as usize, height.div_ceil(4) as usize);
     let block_row = |row: usize| -> Vec<u8> {
@@ -267,8 +202,6 @@ pub fn compress(width: u32, height: u32, pixels: &[u8], family: Family) -> Vec<u
     rows_in_parallel(rows, block_row).concat()
 }
 
-/// `make` of every row from 0 to `rows`, in order: split among the
-/// machine's threads where it has them.
 fn rows_in_parallel<T: Send>(rows: usize, make: impl Fn(usize) -> T + Sync) -> Vec<T> {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -300,9 +233,6 @@ fn rows_in_parallel<T: Send>(rows: usize, make: impl Fn(usize) -> T + Sync) -> V
     (0..rows).map(make).collect()
 }
 
-/// A block of `format` every texel of which reads `color`, as nearly as
-/// the format holds it (ASTC exactly): what an array's layers hold where a
-/// material lacks a map. `None` for formats the cook does not write.
 pub fn solid_block(format: TextureFormat, color: [u8; 4]) -> Option<[u8; 16]> {
     match format {
         TextureFormat::Bc7 => Some(bc7::encode_block(&[color; 16])),
@@ -311,9 +241,6 @@ pub fn solid_block(format: TextureFormat, color: [u8; 4]) -> Option<[u8; 16]> {
     }
 }
 
-/// `texture`'s levels decoded to RGBA8, with its summary and emission
-/// mask: what devices sampling no compressed format show of a BC7 texture.
-/// Other formats are refused.
 pub fn decompress(texture: &Texture) -> Result<Texture, AssetError> {
     if texture.format() != TextureFormat::Bc7 {
         return Err(AssetError::InvalidCompressedTexture {
@@ -355,14 +282,9 @@ pub fn decompress(texture: &Texture) -> Result<Texture, AssetError> {
     })
 }
 
-/// A record's first bytes.
 const MAGIC: &[u8; 4] = b"ETEX";
-/// Bytes of a record's header: magic, format, emission mask, levels, a
-/// spare zero, width, height and the summary's twelve values.
 const HEADER: usize = 4 + 4 + 8 + 48;
 
-/// `texture` as a record's bytes: its header, then its levels from the
-/// base down. Textures without a summary write their base level's.
 pub fn record(texture: &Texture) -> Vec<u8> {
     let summary = texture.summary().unwrap_or(TextureSummary {
         color: [1.0; 3],
@@ -398,7 +320,6 @@ pub fn record(texture: &Texture) -> Vec<u8> {
     out
 }
 
-/// The texture a record's `bytes` hold, or why they hold none.
 pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
     let header = bytes
         .get(..HEADER)

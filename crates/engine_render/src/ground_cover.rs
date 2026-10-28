@@ -1,22 +1,3 @@
-//! Ground cover: the blades of every terrain's surface
-//! materials' covers around the detail eye, grown each frame by a compute
-//! pass (`cover_grow.wgsl`) into one buffer and drawn with one indirect draw
-//! of strips in the opaque pass (`meshes/cover.wgsl`). Blades grow at the
-//! density their covers name wherever one spans a pixel or more across the
-//! view, in cells of level-0 samples; past that tiers of cells twice as wide
-//! each reach on while any tuft still stands: as blades shrink under a
-//! pixel they thin, each one left standing as a tuft of the leaves of those
-//! it replaces, as wide in all, so each tuft spans a pixel, its leaves
-//! keeping a leaf's shape; once tufts hold all the leaves they can they
-//! narrow under a pixel as they recede and retire in their ranks' order,
-//! and the ground shows the leaves they leave as its canopy, by one law
-//! ([`CoverLaw`]). Blades and tufts past the buffer's capacity (the most
-//! the tiers and densities can grow on the lushest ground across the share
-//! of a turn the view spans, or the settings' budget) drop and count; cells
-//! grow in order outward from the eye's corner of each grid, so the
-//! farthest tend to drop first. Nothing here exists until a frame has cover
-//! to grow.
-
 use crate::shaders::entry::cover_grow;
 use engine_core::collections::HashMap;
 use std::cell::Cell;
@@ -36,40 +17,26 @@ use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
 use crate::scene_shading::SceneShading;
 use crate::terrain::TerrainPass;
 
-/// Uniform offset alignment between terrains' growth.
 const SLOT: u64 = 512;
-/// Bytes of the growth's uniform (`Grow`).
 pub(crate) const GROW_BYTES: u64 = size_of::<GrowUniform>() as u64;
 
 use crate::gpu_layouts::ground_cover::GrowUniform;
 
 use crate::gpu_layouts::ground_cover::FrameUniform;
 
-/// Bytes of one of the blades' indirect draws: whole blades', then
-/// straight ones'.
 const DRAW_ARGS: u64 = size_of::<wgpu::util::DrawIndirectArgs>() as u64;
 
-/// One tier of one terrain's growth this frame: its uniform's offset and
-/// its grid's cells along each side.
 struct Growth {
     offset: u32,
     cells: u32,
 }
 
-/// Tiers a terrain's cover grows in at most: the first's, out to where its
-/// blades span a pixel, and doublings past it. A validity bound, not a
-/// budget: their doublings reach 128 times as far as the first, past its
-/// law's reach (`CoverLaw::reach`).
 const MAX_TIERS: usize = 8;
 
 pub(crate) struct GroundCoverPass {
     grow_layout: crate::pipelines::GroupLayout,
     draw_layout: crate::pipelines::GroupLayout,
-    // The growth's and the finish's pipelines, created with the first
-    // frame that has cover.
     compute: Option<(wgpu::ComputePipeline, wgpu::ComputePipeline)>,
-    // The blades' pipelines, and the scene features they are specialized
-    // for.
     pipelines: HashMap<(Targets, bool), wgpu::RenderPipeline>,
     shading: SceneShading,
     blades: crate::buffers::Growable,
@@ -82,16 +49,11 @@ pub(crate) struct GroundCoverPass {
     grow_group: Cached<(u64, u64, u64, u64, u64), wgpu::BindGroup>,
     draw_group: Cached<u64, wgpu::BindGroup>,
     growths: Vec<Growth>,
-    // The growths' uniforms, and their bytes as written, each at its slot,
-    // kept from frame to frame.
     grow_uniforms: Vec<GrowUniform>,
     grow_bytes: Vec<u8>,
-    // Last frame's presentation time, which blades swayed at then.
     previous_time: Option<f32>,
     readbacks: ReadbackRing<u32>,
-    // Blades grown and those past capacity, read back a few frames late.
     totals: Rc<Cell<Option<[u32; 2]>>>,
-    // This frame's farthest reach (meters) and most tiers.
     reach: f32,
     tiers: u32,
 }
@@ -143,26 +105,18 @@ impl GroundCoverPass {
         }
     }
 
-    /// Meters from the eye this frame's cover reaches, and its most tiers.
     pub(crate) fn reach(&self) -> (f32, u32) {
         (self.reach, self.tiers)
     }
 
-    /// Blades the last read-back frame drew, and those past capacity.
     pub(crate) fn totals(&self) -> [u32; 2] {
         self.totals.get().unwrap_or([0; 2])
     }
 
-    /// Bytes of the blades' buffer.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.blades.size()
     }
 
-    /// Plans this frame's growth for every terrain whose materials have
-    /// cover, with `settings` on, seen through `culling` (world) on a view
-    /// `height` pixels tall at presentation time `time`, its blades thinning
-    /// and retiring by their size on screen seen from the detail eye `eye`.
-    /// Returns whether any grows.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -185,7 +139,6 @@ impl GroundCoverPass {
             (culling, eye, time, previous, height),
         );
         if !grows {
-            // Nothing grows: none drawn, whatever the last read-back said.
             self.totals.set(Some([0; 2]));
         }
         grows
@@ -219,11 +172,8 @@ impl GroundCoverPass {
         let mut most = 0.0;
         for (index, render) in terrains.terrains.iter().enumerate() {
             let (directory, palette, terms, colors) = terrain.cover_terrain(index);
-            // Blades a square meter of the densest cover grows on the
-            // lushest ground.
             let density = terms.densest * settings.density * lushest();
             let law = CoverLaw::of(terms, pixels_per_meter);
-            // Surroundings grow no blades.
             if density <= 0.0 || law.span <= 0.0 || !render.drawn || render.surroundings {
                 continue;
             }
@@ -234,8 +184,6 @@ impl GroundCoverPass {
             self.reach = engine_core::math::max(self.reach, tiers[count - 1].1);
             self.tiers = self.tiers.max(count as u32);
             for &(inner, outer, scale) in &tiers[..count] {
-                // Each tier past the first tries the finest cells'
-                // candidates its nearest blades' share reaches.
                 let tried = if scale > 1.0 {
                     engine_core::math::min((candidates * law.share(inner)).ceil(), candidates)
                 } else {
@@ -277,9 +225,6 @@ impl GroundCoverPass {
             self.grow_uniforms = uniforms;
             return false;
         }
-        // Room for the most blades the discs can grow across the share of a
-        // turn the view spans, or the budget, within what one storage
-        // binding holds: growth leaves the rest out and counts them.
         let room = (self.blades.room() / BLADE_BYTES).min(u64::from(u32::MAX)) as u32;
         let seen = (most * turn_share(culling)).ceil() as u32;
         let capacity = settings
@@ -371,9 +316,6 @@ impl GroundCoverPass {
         true
     }
 
-    /// Records this frame's growth and the indirect draw's arguments, and
-    /// a copy of the counts to read back, timed by `profiler`
-    /// (`ground_cover`).
     fn encode_growth(
         &self,
         device: &wgpu::Device,
@@ -405,19 +347,15 @@ impl GroundCoverPass {
             .record(device, encoder, &self.counts, 16, self.capacity);
     }
 
-    /// Whether this frame grows blades: what its pass records.
     pub(crate) fn growing(&self) -> bool {
         self.compute.is_some() && self.grow_group.get().is_some() && !self.growths.is_empty()
     }
 
-    /// Creates the growth's pipelines unless they exist.
     pub(crate) fn warm(&mut self, device: &wgpu::Device) {
         self.compute
             .get_or_insert_with(|| compute(device, &self.grow_layout));
     }
 
-    /// Specializes the blades' pipelines for `shading`'s scene features:
-    /// those made for others are dropped, to be created anew.
     pub(crate) fn specialize(&mut self, shading: SceneShading) {
         if self.shading != shading {
             self.shading = shading;
@@ -425,8 +363,6 @@ impl GroundCoverPass {
         }
     }
 
-    /// Creates the pipeline drawing blades into `targets` (`lit` or not)
-    /// unless it exists.
     pub(crate) fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -492,8 +428,6 @@ impl GroundCoverPass {
         self.pipelines.insert((targets, lit), pipeline);
     }
 
-    /// Draws this frame's blades into `targets` (`lit` or not), the camera
-    /// and lights already bound; returns the draws.
     pub(crate) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, targets: Targets, lit: bool) -> u32 {
         let (Some(pipeline), Some(group)) =
             (self.pipelines.get(&(targets, lit)), self.draw_group.get())
@@ -505,22 +439,16 @@ impl GroundCoverPass {
         }
         pass.set_pipeline(pipeline);
         pass.set_bind_group(1, group, &[]);
-        // Whole blades, then straight ones.
         pass.draw_indirect(&self.args, 0);
         pass.draw_indirect(&self.args, DRAW_ARGS);
         2
     }
 }
 
-/// Pixels a meter spans a meter from the eye along a view `height` pixels
-/// tall seen through `culling`.
 pub(crate) fn pixels_per_meter(culling: Mat4, height: f32) -> f32 {
     culling.row(1).truncate().length() * height * 0.5
 }
 
-/// The share of a full turn about the eye a view seen through `culling`
-/// (world) spans across, between its side planes, which a level view sees
-/// of the ground around it: all of it for views wider than that.
 fn turn_share(culling: Mat4) -> f32 {
     let across = culling.row(0).truncate().length();
     let depth = culling.row(3).truncate().length();
@@ -530,16 +458,10 @@ fn turn_share(culling: Mat4) -> f32 {
     engine_core::math::min(libm::atanf(depth / across) / std::f32::consts::PI, 1.0)
 }
 
-/// How many times its material's own height and density ground cover grows
-/// on the lushest ground, and its inverse on the driest: geometrically about
-/// its own, the lushest growing COVER_LUSH_RATIO times the driest
-/// (`terrain_variety.wgsl`'s `cover_growth`).
 fn lushest() -> f32 {
     COVER_LUSH_RATIO.sqrt()
 }
 
-/// A terrain's covers as ground cover's law takes them: its densest one's
-/// blades per square meter and their root width (meters).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct CoverTerms {
     pub(crate) densest: f32,
@@ -547,7 +469,6 @@ pub(crate) struct CoverTerms {
 }
 
 impl CoverTerms {
-    /// The terms of a terrain's `covers`: the first densest's.
     pub(crate) fn of<'a>(covers: impl IntoIterator<Item = &'a Cover>) -> Self {
         covers.into_iter().fold(Self::default(), |terms, cover| {
             if cover.density > terms.densest {
@@ -562,38 +483,22 @@ impl CoverTerms {
     }
 }
 
-/// Ground cover's law on a terrain, which its blades and their canopy
-/// follow alike (`terrain_variety.wgsl`'s `CoverLaw`): the meters from the
-/// eye within which a blade of its densest cover spans a pixel or more
-/// across the view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CoverLaw {
     pub(crate) span: f32,
 }
 
 impl CoverLaw {
-    /// The law on a terrain whose covers' terms are `terms`, seen at
-    /// `pixels_per_meter`: its densest cover's blades span a pixel as far as
-    /// their roots' width does. Every cover on the terrain thins by its
-    /// densest's span, so the canopy, which knows no blade's width, thins by
-    /// one law with them.
     pub(crate) fn of(terms: CoverTerms, pixels_per_meter: f32) -> Self {
         Self {
             span: terms.width * pixels_per_meter,
         }
     }
 
-    /// Meters from the eye its tiers reach: where the last of its tufts, by
-    /// its rank, retires spanning half a pixel at its widest
-    /// (`terrain_variety.wgsl`'s `seen_share`), twice COVER_LEAVES times its
-    /// span.
     fn reach(self) -> f32 {
         2.0 * COVER_LEAVES as f32 * self.span
     }
 
-    /// Its tiers, each one's inner and outer meters and its cells' width in
-    /// level-0 samples: out to its span, then out to its reach each reaching
-    /// twice as far as the last with cells twice as wide; and how many.
     fn tiers(self) -> ([(f32, f32, f32); MAX_TIERS], usize) {
         let reach = self.reach();
         let mut tiers = [(0.0, self.span, 1.0); MAX_TIERS];
@@ -613,23 +518,17 @@ impl CoverLaw {
         (tiers, count)
     }
 
-    /// `terrain_variety.wgsl`'s `cover_widening`: how many blades each tuft
-    /// stands for `away` meters from the eye.
     fn widening(self, away: f32) -> f32 {
         let blades = away / engine_core::math::max(self.span, 1.0e-6);
         engine_core::math::clamp(blades, 1.0, COVER_LEAVES as f32)
     }
 
-    /// `terrain_variety.wgsl`'s `cover_share`: the share of the densest
-    /// cover growing `away` meters from the eye.
     fn share(self, away: f32) -> f32 {
         let widening = self.widening(away);
         let spanned = self.span * widening / engine_core::math::max(away, 1.0e-3);
         seen_share(spanned) / widening
     }
 
-    /// The square meters of densest cover its tiers grow: their area
-    /// weighted by its share, summed ring by ring.
     fn area(self) -> f32 {
         const RINGS: u32 = 256;
         let width = self.reach() / RINGS as f32;
@@ -642,16 +541,12 @@ impl CoverLaw {
     }
 }
 
-/// `terrain_variety.wgsl`'s `seen_share`: the share of things retiring by
-/// their size on screen still showing where each spans `pixels` pixels.
 fn seen_share(pixels: f32) -> f32 {
     let octaves =
         engine_core::math::ln(engine_core::math::max(pixels, 1.0e-6)) * std::f32::consts::LOG2_E;
     engine_core::math::clamp(1.0 + octaves, 0.0, 1.0)
 }
 
-/// The view's frustum planes from its view-projection (world), each
-/// normalized with its inside positive.
 pub(crate) fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
     let rows = [
         view_projection.row(0),
@@ -659,7 +554,6 @@ pub(crate) fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
         view_projection.row(2),
         view_projection.row(3),
     ];
-    // Reversed depth: the near plane is z = w, the far z = 0.
     [
         rows[3] + rows[0],
         rows[3] - rows[0],
@@ -697,14 +591,12 @@ fn compute(
     )
 }
 
-/// A frame that grows blades.
 pub(crate) struct CoverFrame;
 
 impl RenderFeature for GroundCoverPass {
     type Frame = CoverFrame;
     type Stats = engine_core::GroundCoverStats;
 
-    /// Blades grow over the tracks pressed into the ground.
     fn declare(_frame: &CoverFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
         graph
             .add(Pass::Feature(FeaturePass::GroundCover))
@@ -723,7 +615,6 @@ impl RenderFeature for GroundCoverPass {
         0
     }
 
-    /// Requests the map of this frame's counts once it is submitted.
     fn after_submit(&mut self, _frame: Option<&CoverFrame>) {
         let totals = Rc::clone(&self.totals);
         self.readbacks.after_submit(move |words, capacity| {
@@ -736,8 +627,6 @@ impl RenderFeature for GroundCoverPass {
         GroundCoverPass::capacity_bytes(self)
     }
 
-    /// Blades the last read-back frame drew and those past capacity, and how
-    /// far and in how many tiers the cover reaches.
     fn stats(
         this: Option<&Self>,
         _frame: Option<&CoverFrame>,

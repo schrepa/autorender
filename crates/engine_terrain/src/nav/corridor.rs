@@ -1,12 +1,6 @@
-//! The walk over a corridor's samples, the tiles a walk graph's way
-//! crosses, and pulling it taut.
-
 use super::*;
 use search::{Flow, Stage};
 
-/// A tile of a corridor: its ground, its samples an agent stands on, and
-/// each sample's cost from the start and the neighbor it was reached from
-/// (an index of [`NEIGHBORS`]).
 struct Block {
     key: TileKey,
     first: Sample,
@@ -16,9 +10,6 @@ struct Block {
     from: Vec<u8>,
 }
 
-/// A* over the samples of the tiles the walk graph's way crosses, each
-/// sample belonging to the tile it lies in (one past an edge, the next):
-/// widened once by every neighboring tile where no walk is found within.
 pub(super) struct Corridor {
     tiles: Vec<TileKey>,
     samples: [Sample; 2],
@@ -46,8 +37,6 @@ impl Corridor {
         }
     }
 
-    /// The block and index there holding `sample`, if a tile of the
-    /// corridor does.
     fn locate(&self, sample: Sample, [columns, rows]: [u32; 2]) -> Option<(usize, usize)> {
         if sample[0] < 0 || sample[1] < 0 {
             return None;
@@ -73,7 +62,6 @@ impl Corridor {
             .map(|(block, index)| self.blocks[block].ground.heights[index])
     }
 
-    /// The id a queue holds sample `index` of block `block` by.
     fn id(block: usize, index: usize) -> u32 {
         (block * SIDE * SIDE + index) as u32
     }
@@ -90,8 +78,6 @@ impl Corridor {
 }
 
 impl WalkSearch {
-    /// Makes the corridor's blocks once its tiles' grounds are held, the
-    /// start queued; whether they are.
     fn build(&mut self, corridor: &mut Corridor, data: &dyn WalkData) -> bool {
         let grounds: Vec<Option<Arc<WalkGround>>> = corridor
             .tiles
@@ -128,9 +114,6 @@ impl WalkSearch {
         true
     }
 
-    /// A* over the corridor's samples from the start to the goal, then the
-    /// walk pulled taut; where the open samples run out, the corridor
-    /// widens once.
     pub(super) fn corridor(
         &mut self,
         mut corridor: Box<Corridor>,
@@ -197,8 +180,6 @@ impl WalkSearch {
         Flow::Stay(Stage::Corridor(corridor))
     }
 
-    /// Widens `corridor` by every tile neighboring one of its tiles, its
-    /// search to start over.
     fn widen(&self, corridor: &mut Corridor) {
         let level = self.pyramid.tiles(self.gait.level);
         let mut tiles = corridor.tiles.clone();
@@ -215,9 +196,6 @@ impl WalkSearch {
     }
 }
 
-/// The walk the corridor's search found, being pulled taut: its cells
-/// (samples) from the start, the anchors it pulls straight between, and the
-/// cell the next pull starts from.
 pub(super) struct Pull {
     corridor: Box<Corridor>,
     tiles: [u32; 2],
@@ -252,15 +230,12 @@ impl Pull {
         }
     }
 
-    /// Whether the agent stands on the sample nearest terrain-local `point`.
     fn stands_at(&self, point: Vec2, spacing: f32) -> bool {
         let cell = (point / spacing).round();
         self.corridor
             .stands([cell.x as i64, cell.y as i64], self.tiles)
     }
 
-    /// The ground's height at terrain-local `point`, between its samples;
-    /// where the corridor lacks one around it, the nearest sample's.
     fn ground(&self, point: Vec2, spacing: f32) -> Option<f32> {
         let cell = point / spacing;
         let (x0, z0) = (cell.x.floor(), cell.y.floor());
@@ -283,8 +258,6 @@ impl Pull {
 }
 
 impl WalkSearch {
-    /// Whether walking straight from cell `a` to cell `b` of `pull` stays on
-    /// ground the agent stands on and climbs, at half a sample's steps.
     fn straight(&self, pull: &Pull, (a, b): (usize, usize), budget: &mut u64) -> bool {
         let spacing = self.spacing;
         let (a, b) = (
@@ -309,9 +282,6 @@ impl WalkSearch {
         })
     }
 
-    /// The farthest cell within [`PULL_REACH`] of `pull`'s current one seen
-    /// straight from it: the walk's cells at doubling strides while they
-    /// are, then halving between the last seen and the first not.
     fn reach_from(&self, pull: &Pull, budget: &mut u64) -> usize {
         let index = pull.index;
         let last = (index + PULL_REACH).min(pull.cells.len() - 1);
@@ -346,8 +316,6 @@ impl WalkSearch {
         seen
     }
 
-    /// Pulls the walk taut from anchor to anchor, then follows the ground
-    /// between them every few meters: the walk.
     pub(super) fn pull(&mut self, mut pull: Box<Pull>, budget: &mut u64) -> Flow {
         while pull.index + 1 < pull.cells.len() {
             if *budget == 0 {
@@ -363,7 +331,6 @@ impl WalkSearch {
             .iter()
             .map(|&anchor| position(anchor, spacing))
             .collect();
-        // Every point's ground lies in the corridor, its cells' own.
         let mut last = pull.ground(anchors[0], spacing).unwrap_or_default();
         let mut points: Vec<Vec3> = vec![anchors[0].extend(last)];
         for pair in anchors.windows(2) {

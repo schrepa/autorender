@@ -1,7 +1,3 @@
-//! The controls the development host runs: one exhaustive dispatch, a
-//! feature's control applied by its development file and the host's own in
-//! the modules here, each rendering after it changes something.
-
 mod environment;
 mod input;
 mod view;
@@ -14,7 +10,6 @@ use serde_json::{Value, json};
 use super::{DevHost, InputBatch};
 use crate::app_host::AppHost;
 
-/// Runs `control`, sent as `source`, on a `size` view: its result.
 pub(super) fn run(
     host: &mut DevHost,
     app: &mut AppHost,
@@ -23,7 +18,6 @@ pub(super) fn run(
     size: (u32, u32),
 ) -> Result<Value, DevError> {
     match control {
-        // Every feature's control: its development file applies it.
         Control::Feature(control) => {
             let result = control.apply(&mut app.engine, scene)?;
             then_render(app, size, control.changed(), result)
@@ -74,14 +68,10 @@ pub(super) fn run(
             panic!("debug_panic: a development session asked the engine to panic")
         }
         Control::Host(HostControl::DebugFault { feature }) => view::fault(app, &feature, size),
-        // The host's loop runs these: it receives them validated, with
-        // their defaults.
         Control::Host(HostControl::Loop(control)) => Ok(json!({ "control": control })),
     }
 }
 
-/// Renders the `size` view after `what` changed: `result`, or the render's
-/// error.
 fn then_render(
     app: &mut AppHost,
     (width, height): (u32, u32),
@@ -92,7 +82,6 @@ fn then_render(
     Ok(result)
 }
 
-/// What rendering after `what` came to: a development error when it failed.
 fn rendered(outcome: crate::Result<()>, what: &str) -> Result<(), DevError> {
     outcome.map_err(|error| {
         DevError::new(

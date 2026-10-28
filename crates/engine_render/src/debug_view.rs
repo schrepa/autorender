@@ -1,12 +1,3 @@
-//! Debug views (`engine_core::DebugView`): frames whose main passes draw,
-//! with pipelines of their own (`Targets::Debug`, `meshes/debug.wgsl`),
-//! what drew each pixel into the debug targets, which this feature's pass
-//! then shows in the canvas as the view says (`debug_view.wgsl`). The
-//! water's views alone change what those pipelines draw: water wherever it
-//! lies ([`shows_water`]). A feature
-//! of the renderer (`crate::render_features`) created with the first frame
-//! showing a view; frames without one create and draw nothing of it.
-
 #![expect(
     clippy::expect_used,
     reason = "the pass binds the targets its frame made"
@@ -31,21 +22,10 @@ use crate::render_graph::{Access, Clear, FrameShape, Node, Pass, RenderGraph, Re
 use crate::shaders::entry::debug_view;
 use crate::targets::{FrameSize, ScreenTarget};
 
-/// What drew each pixel: its draw's record with the sun's lookup, the
-/// object, a detail of it and its normal.
 pub(crate) const IDS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
-/// The fragments that passed the depth test at each pixel, added.
 pub(crate) const COUNT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
-/// Terrain's tile and surface materials at each terrain pixel
-/// (`meshes/terrain_debug.wgsl`), and water's Froude numbers (its flow's
-/// and its eddies'), turbulence, white water and reach at
-/// each water pixel (`meshes/debug.wgsl`). The targets take 28 bytes a
-/// sample together, of the 32 every device lets color attachments take.
 pub(crate) const TERRAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
 
-/// The debug targets' states in pipeline order: what drew each pixel,
-/// written over; one more fragment, added; and terrain's and water's
-/// numbers, written over.
 pub(crate) fn color_targets() -> Vec<Option<wgpu::ColorTargetState>> {
     let add = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
@@ -66,15 +46,10 @@ pub(crate) fn color_targets() -> Vec<Option<wgpu::ColorTargetState>> {
     ]
 }
 
-/// The vertex stream slot of the draw's record that meshes, impostors and
-/// virtual geometry read in debug views (`@location(14)` of
-/// `meshes/debug.wgsl`): one element, which every instance repeats.
 pub(crate) const RECORD_SLOT: u32 = 4;
 
 const RECORD_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![14 => Uint32x4];
 
-/// The record stream's layout: no stride, so every vertex and instance
-/// reads the element bound.
 pub(crate) fn record_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: 0,
@@ -83,8 +58,6 @@ pub(crate) fn record_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
-/// `buffers`, a pipeline's vertex streams, with the record stream at
-/// [`RECORD_SLOT`] for debug views.
 pub(crate) fn with_record<'a>(
     buffers: &[Option<wgpu::VertexBufferLayout<'a>>],
 ) -> Vec<Option<wgpu::VertexBufferLayout<'a>>> {
@@ -94,8 +67,6 @@ pub(crate) fn with_record<'a>(
     streams
 }
 
-/// Binds `record` at [`RECORD_SLOT`] of `pass` in frames showing a debug
-/// view, which hold `records`.
 pub(crate) fn bind_record(
     pass: &mut wgpu::RenderPass<'_>,
     records: Option<&DebugViewPass>,
@@ -106,7 +77,6 @@ pub(crate) fn bind_record(
     }
 }
 
-/// What a draw reading its record draws.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DrawKind {
     Mesh,
@@ -125,7 +95,6 @@ impl DrawKind {
         Self::Virtual,
     ];
 
-    /// Its kind in the debug targets.
     fn kind(self) -> u32 {
         match self {
             Self::Mesh => DEBUG_KIND_MESH,
@@ -137,11 +106,8 @@ impl DrawKind {
     }
 }
 
-/// Levels of detail a record names: four bits.
 const LEVELS: u32 = 16;
 
-/// A draw's record: what it draws, at which level of detail and whether it
-/// casts sun shadows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DrawRecord {
     pub kind: DrawKind,
@@ -150,8 +116,6 @@ pub(crate) struct DrawRecord {
 }
 
 impl DrawRecord {
-    /// The record of draws of `kind` at `level`, casting sun shadows where
-    /// `casts`.
     pub(crate) fn of(kind: DrawKind, level: usize, casts: bool) -> Self {
         Self {
             kind,
@@ -160,7 +124,6 @@ impl DrawRecord {
         }
     }
 
-    /// Its place among the records: by kind, level and casting.
     fn index(self) -> u64 {
         let kind = DrawKind::ALL
             .iter()
@@ -170,7 +133,6 @@ impl DrawRecord {
             + u64::from(self.casts)
     }
 
-    /// The record's first word in the debug targets.
     fn word(self) -> u32 {
         let mut word = self.kind.kind() | (self.level.min(LEVELS - 1) << DEBUG_LEVEL_SHIFT);
         if self.casts {
@@ -180,10 +142,8 @@ impl DrawRecord {
     }
 }
 
-/// Bytes of a record: four words.
 const RECORD_BYTES: u64 = 16;
 
-/// The view's value in the pass's uniform (`DEBUG_VIEW_*`).
 fn view_value(view: DebugViewMode) -> u32 {
     match view {
         DebugViewMode::Off => 0,
@@ -210,10 +170,6 @@ fn view_value(view: DebugViewMode) -> u32 {
     }
 }
 
-/// Whether `view` shows the water's state: frames showing it draw terrains'
-/// water, live or settled, wherever it lies, however little of each pixel it
-/// covers, where the other views draw it as the shaded image mostly shows
-/// it, covering at least half the pixel.
 pub(crate) fn shows_water(view: DebugViewMode) -> bool {
     matches!(
         view,
@@ -229,14 +185,10 @@ pub(crate) fn shows_water(view: DebugViewMode) -> bool {
     )
 }
 
-/// The pipeline constants of terrains' water drawn into the
-/// debug targets: whether frames show the water's state
-/// (`meshes/debug.wgsl`'s `DEBUG_WATER_VIEWS`, [`shows_water`]).
 pub(crate) fn water_constants(water_views: bool) -> [(&'static str, f64); 1] {
     [("DEBUG_WATER_VIEWS", if water_views { 1.0 } else { 0.0 })]
 }
 
-/// The debug targets at the frame's size, and the group the pass binds.
 struct Targets {
     textures: [wgpu::Texture; 3],
     ids: wgpu::TextureView,
@@ -253,7 +205,6 @@ impl Drop for Targets {
     }
 }
 
-/// The debug views' pass, its targets and the records draws read.
 pub(crate) struct DebugViewPass {
     layout: crate::pipelines::GroupLayout,
     pipeline: wgpu::RenderPipeline,
@@ -262,7 +213,6 @@ pub(crate) struct DebugViewPass {
     targets: ScreenTarget<Targets>,
 }
 
-/// A frame showing a debug view.
 pub(crate) struct DebugViewFrame;
 
 impl DebugViewPass {
@@ -290,7 +240,6 @@ impl DebugViewPass {
                 depth: None,
             },
         );
-        // Every record, in the order of their indices.
         let mut words = Vec::new();
         for kind in DrawKind::ALL {
             for level in 0..LEVELS {
@@ -318,9 +267,6 @@ impl DebugViewPass {
         }
     }
 
-    /// Prepares a frame of `size` showing `settings`' view (the kinds of
-    /// what drew each pixel when it shows none), its colors shaded by the
-    /// sun toward `sun`.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -343,7 +289,6 @@ impl DebugViewPass {
         Some(DebugViewFrame)
     }
 
-    /// Sizes the targets to `size`.
     fn begin(&mut self, device: &wgpu::Device, size: FrameSize) {
         if !self.targets.resizes(size) {
             return;
@@ -394,22 +339,17 @@ impl DebugViewPass {
         );
     }
 
-    /// The targets: what drew each pixel, its fragments and terrain's and
-    /// water's numbers.
     #[cfg(feature = "dev")]
     pub(crate) fn textures(&self) -> [&wgpu::Texture; 3] {
         let targets = self.targets.get().expect("sized in prepare");
         targets.textures.each_ref()
     }
 
-    /// The views of the targets: what drew each pixel, its fragments and
-    /// terrain's and water's numbers.
     pub(crate) fn views(&self) -> [&wgpu::TextureView; 3] {
         let targets = self.targets.get().expect("sized in prepare");
         [&targets.ids, &targets.count, &targets.terrain]
     }
 
-    /// The record of draws as `record` says, for [`RECORD_SLOT`].
     pub(crate) fn record(&self, record: DrawRecord) -> wgpu::BufferSlice<'_> {
         let offset = record.index() * RECORD_BYTES;
         self.records.slice(offset..offset + RECORD_BYTES)
@@ -422,8 +362,6 @@ impl RenderFeature for DebugViewPass {
 
     const LABELS: &'static [&'static str] = &["engine/debug-view"];
 
-    /// The view over the whole canvas, from what the main passes drew;
-    /// every target and the depths stay for the pixel probe.
     fn declare(_frame: &DebugViewFrame, shape: &FrameShape, graph: &mut RenderGraph) {
         graph
             .add(Pass::Feature(FeaturePass::DebugView))
@@ -452,13 +390,11 @@ impl RenderFeature for DebugViewPass {
         0
     }
 
-    /// The targets: 26 bytes per pixel.
     fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
             u64::from(size.width) * u64::from(size.height) * 26 + self.records.size()
         })
     }
 
-    /// Frames report the view's pass among their passes.
     fn stats(_this: Option<&Self>, _frame: Option<&DebugViewFrame>, _snapshot: &RenderSnapshot) {}
 }

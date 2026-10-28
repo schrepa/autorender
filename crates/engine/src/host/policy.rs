@@ -1,16 +1,9 @@
-//! The values both hosts' policies take, declared once: the page reads them
-//! from the generated `web/src/generated/host.ts`, the native host from
-//! here.
-
 use engine_core::ActionId;
 
-/// Declares each policy value once: a constant, and an entry of
-/// `constants`, which `host::typescript` writes for the web host.
 macro_rules! policy {
     ($($(#[doc = $doc:literal])+ pub const $name:ident: $ty:ty = $value:expr;)*) => {
         $($(#[doc = $doc])+ pub const $name: $ty = $value;)*
 
-        /// Each value's name, what it is and the value, as JSON.
         #[cfg(all(feature = "schema", not(target_arch = "wasm32")))]
         pub(crate) fn constants() -> Vec<(&'static str, String, serde_json::Value)> {
             vec![$((
@@ -23,75 +16,35 @@ macro_rules! policy {
 }
 
 policy! {
-    /// Frames in a row that create no pipeline before play starts, once
-    /// the terrains loaded the view: the GPU has compiled what the first
-    /// frames need.
     pub const QUIET_FRAMES: u32 = 3;
-    /// Milliseconds after which play starts however preparation stands.
     pub const PREPARE_LIMIT_MS: u64 = 60_000;
-    /// The interval between frames pacing assumes before it measured one.
     pub const FRAME_INTERVAL_MS: f64 = 1000.0 / 60.0;
-    /// The share of each new interval pacing's running interval takes.
     pub const PACE_SMOOTHING: f64 = 0.1;
-    /// Intervals this long or longer (a pause, a hidden page) leave pacing
-    /// alone.
     pub const PACE_INTERVAL_LIMIT_MS: f64 = 100.0;
-    /// Milliseconds loading between frames leaves before the next is due.
     pub const BETWEEN_MARGIN_MS: f64 = 4.0;
-    /// Logical processors a host leaves its frames (the engine's thread
-    /// and the GPU's driver) when it runs job workers on the rest.
     pub const FRAME_CORES: u32 = 2;
-    /// The most job workers a host runs.
     pub const MAX_WORKERS: u32 = 32;
-    /// MiB of job outputs a host keeps by default.
     pub const JOB_CACHE_MIB: u64 = 1024;
-    /// The most MiB of job outputs a host keeps.
     pub const MAX_JOB_CACHE_MIB: u64 = 9_999_999;
-    /// Actions a game binds keys to, by index.
     pub const MAX_ACTIONS: u32 = ActionId::COUNT;
-    /// The largest look delta a frame takes, either way, in pixels.
     pub const LOOK_LIMIT: f32 = 1000.0;
-    /// Milliseconds a development benchmark may take.
     pub const BENCHMARK_LIMIT_MS: u64 = 10_000;
-    /// The most physical pixels a view draws per logical pixel, however
-    /// dense the display.
     pub const MAX_PIXEL_RATIO: f64 = 1.5;
-    /// The widest a view draws, in physical pixels.
     pub const MAX_VIEW_WIDTH: u32 = 2560;
-    /// The tallest a view draws, in physical pixels.
     pub const MAX_VIEW_HEIGHT: u32 = 1440;
-    /// The step dynamic resolution's scale moves by: it keeps to its
-    /// multiples within the settings' bounds, so temporal antialiasing's
-    /// history stays steady.
     pub const DYNAMIC_STEP: f64 = 1.0 / 32.0;
-    /// Frames taking more than this share of their budget run over it.
     pub const DYNAMIC_OVER: f64 = 1.05;
-    /// Frames whose GPU work took less than this share of their budget run
-    /// under it.
     pub const DYNAMIC_UNDER: f64 = 0.85;
-    /// The share of the budget lowering the scale aims frames at.
     pub const DYNAMIC_AIM: f64 = 0.9;
-    /// Frames in a row over their budget that lower the scale.
     pub const DYNAMIC_LOWER_FRAMES: u32 = 3;
-    /// Frames in a row whose GPU work ran under their budget that raise the
-    /// scale a step.
     pub const DYNAMIC_RAISE_FRAMES: u32 = 30;
-    /// Frames in a row within their budget that raise the scale a step where
-    /// the device times no GPU work: the time between frames cannot tell how
-    /// far under it they run.
     pub const DYNAMIC_PROBE_FRAMES: u32 = 120;
 }
 
-/// The job workers a host runs by default on `cores` logical processors:
-/// one on each the frames leave ([`FRAME_CORES`]), at least one and at most
-/// [`MAX_WORKERS`].
 pub fn default_workers(cores: u32) -> u32 {
     cores.saturating_sub(FRAME_CORES).clamp(1, MAX_WORKERS)
 }
 
-/// The job workers a cook runs on `cores` logical processors: one on each,
-/// up to [`MAX_WORKERS`], as a cook keeps no frame rate and its records are
-/// the same bits however many workers made them.
 pub fn cook_workers(cores: u32) -> u32 {
     cores.clamp(1, MAX_WORKERS)
 }

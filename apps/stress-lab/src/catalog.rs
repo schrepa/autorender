@@ -1,16 +1,9 @@
-//! What the page offers, from the lists the workloads use: presets, scenes,
-//! looks, effects, views and mesh batches, each with its name in menus, and
-//! the names of the per-frame sample. `cargo xtask schema` writes it into the
-//! page's generated module, and the features a workload can switch into
-//! `bench/options.json`, which measurements name them from.
-
 use serde::Serialize;
 
 use crate::config::MESH_VARIETIES;
 use crate::scene::{EFFECTS, LOOKS, SCENE_LOOK, VIEWS};
 use crate::{Preset, StressSample, StressScene, presets};
 
-/// A menu choice: the value the workload takes, and its name in menus.
 #[derive(Clone, Debug, Serialize)]
 pub struct Choice {
     pub value: String,
@@ -24,7 +17,6 @@ fn choice(value: impl Into<String>, label: impl Into<String>) -> Choice {
     }
 }
 
-/// Everything the page offers.
 #[derive(Clone, Debug, Serialize)]
 pub struct Catalog {
     pub presets: Vec<Preset>,
@@ -36,7 +28,6 @@ pub struct Catalog {
     pub sample: Vec<&'static str>,
 }
 
-/// The page's catalog.
 pub fn catalog() -> Catalog {
     Catalog {
         presets: presets(),
@@ -64,9 +55,6 @@ pub fn catalog() -> Catalog {
     }
 }
 
-/// An optional feature a workload can switch, by the name its page
-/// parameter and its native option share: the values it takes, its default
-/// and what it does.
 #[derive(Clone, Debug, Serialize)]
 pub struct Switch {
     pub name: &'static str,
@@ -75,8 +63,6 @@ pub struct Switch {
     pub what: &'static str,
 }
 
-/// The features a workload can switch. `effects` takes one of its values,
-/// or `no-` exclusions joined by commas.
 pub fn switches() -> Vec<Switch> {
     let catalog = catalog();
     let values = |choices: &[Choice]| choices.iter().map(|choice| choice.value.clone()).collect();

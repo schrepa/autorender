@@ -1,5 +1,3 @@
-//! The city's trees and bushes.
-
 use super::*;
 
 pub(super) fn tree(b: &mut Builder, shape: Shape) {

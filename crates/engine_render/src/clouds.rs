@@ -1,28 +1,3 @@
-//! Clouds (`clouds.wgsl`): domes of the sky's clouds, marched through the
-//! noise the scene's static tables hold (`engine_core::table_data::clouds`
-//! makes it), uploaded once it arrives; until then no cloud shows. Each
-//! dome holds two layers, each marched from one fixed point: the eye's,
-//! which the sky, the sky's environment map and reflection probes' sky
-//! show, and its mirror point's ([`Origins`]), which the reflections of
-//! smooth surfaces show, as a mirror shows the world from there.
-//! Ordinary frames march a back dome a band of rows at a time in both its
-//! layers, over the settings' slices of frames, from where the camera and
-//! its mirror point were when it began; once whole it blends in over the
-//! newer shown dome while the next one marches, so no displayed frame shows
-//! a part-marched dome or marches one whole. Lookups correct each dome's
-//! parallax through the cloud layer's middle (`scene.wgsl`'s
-//! `cloud_dome_direction`). Exact frames, new domes and changed clouds march
-//! a dome whole from the camera and its mirror point, shown alone. The
-//! camera's group and the environment map's bind the shown domes
-//! (`sky_light.wgsl`); frames without clouds bind a clear one.
-//!
-//! The view marches the clouds again, a ray through each
-//! pixel of its render size after the opaque scene and water, up to what
-//! the pixel shows: the clouds' light and the share of the scene passing,
-//! which a composite lays over each pixel. Pixels seeing the sky march too
-//! while the camera is in or above the layer, and the view's sky shows no
-//! dome then; under it, the dome shows the sky's clouds as before.
-
 use crate::shaders::entry::{clouds, meshes};
 use engine_core::collections::HashMap;
 
@@ -39,52 +14,34 @@ use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource};
 
 const DOME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// Layers of each dome: the eye's, then its mirror point's
-/// (`MIRROR_LAYER`). Every band of rows marches in both, which doubles the
-/// rays a frame marches into the dome; the light map and the shadows' grid
-/// serve both.
 const DOME_LAYERS: u32 = MIRROR_LAYER + 1;
-/// Domes completed between redraws of the sky's environment map.
 const ENVIRONMENT_EVERY: u64 = 16;
 use crate::gpu_layouts::clouds::{
     CLOUD_LIGHT_BYTES, CLOUD_SHADOW_BYTES, LIGHT_TEXELS, MIRROR_LAYER, SHADOW_CELLS,
 };
-/// The meters the shadows' grid spans around the camera.
 const SHADOW_EXTENT: f32 = 8192.0;
-/// Frames over which ordinary frames march the whole shadows' grid.
 const SHADOW_SLICES: u32 = 4;
-/// The meters the light map spans around the eye's place in the clouds' own
-/// frame, how far that place may move from its middle before a new map
-/// begins, and the map's rows ordinary frames build.
 const LIGHT_EXTENT: f32 = 24_000.0;
 const LIGHT_RECENTER: f32 = 2_000.0;
 const LIGHT_ROWS: u32 = 48;
 
 use crate::gpu_layouts::clouds::CloudUniform;
 
-/// Bytes of the march's uniform.
 pub(crate) const CLOUD_UNIFORM_BYTES: usize = size_of::<CloudUniform>();
 
 use crate::gpu_layouts::clouds::DomeUniform;
 
-/// Bytes of the domes' uniform.
 pub(crate) const DOME_UNIFORM_BYTES: usize = size_of::<DomeUniform>();
 
 use crate::gpu_layouts::clouds::ViewUniform;
 
-/// Bytes of the view march's uniform.
 pub(crate) const CLOUD_VIEW_BYTES: usize = size_of::<ViewUniform>();
 
-/// The view's marched clouds: each pixel's light and passing
-/// share, made at the display's size, which they are along x and y.
 struct ViewTargets {
     clouds: (wgpu::Texture, wgpu::TextureView),
     size: [u32; 2],
 }
 
-/// The light map (`clouds.wgsl`'s): its cells, made with the first frame
-/// that has clouds; what it holds the light for; its rows built so far;
-/// and this frame's rows to build.
 #[derive(Default)]
 struct LightMap {
     cells: Option<wgpu::Buffer>,
@@ -93,9 +50,6 @@ struct LightMap {
     job: u32,
 }
 
-/// What a light map holds the light for: its first column's corner in the
-/// clouds' own frame (meters), the sun's direction, and the layer's base,
-/// top, coverage and noise repeat.
 #[derive(Clone, Copy, PartialEq)]
 struct LightKey {
     corner: [f32; 2],
@@ -103,28 +57,12 @@ struct LightKey {
     layer: [f32; 4],
 }
 
-/// A back dome's march: where its layers march from and when it began, and
-/// the next row it marches.
 struct Cycle {
     origin: Origins,
     seconds: f64,
     next_row: u32,
 }
 
-/// Where a dome's layers march from: the eye, and its mirror point, the eye
-/// mirrored across the height of what lies straight under it
-/// (`RenderSnapshot::surface_under_eye`: the water standing there, or else
-/// the ground). A mirror shows the world as seen from the eye's image under
-/// it, so water at that height sees each cloud along its own reflection,
-/// never squashed toward a dome's horizon however close the eye is to the
-/// cloud layer. For water above that height the mirror point lies under the
-/// water's own image of the eye, so it sees each cloud along a line rising
-/// as steeply as the reflection or more: no height at or under the water
-/// squashes them. For water under it the mirror point lies over the water's
-/// image but still at or under the eye, so it sees them no flatter than the
-/// eye's layer does. Reflections correct the domes' parallax from where each
-/// starts (`scene.wgsl`'s `cloud_dome_direction`), so water at every height
-/// meets its clouds where its reflection meets their layer.
 #[derive(Clone, Copy, Default)]
 struct Origins {
     eye: glam::Vec3,
@@ -132,9 +70,6 @@ struct Origins {
 }
 
 impl Origins {
-    /// An eye at `eye` and its mirror point across `surface`, the height of
-    /// what lies under it; the eye itself without one, or under one, whose
-    /// underside mirrors no sky.
     fn of(eye: glam::Vec3, surface: Option<f32>) -> Self {
         let level = surface.map_or(eye.y, |surface| min(surface, eye.y));
         Self {
@@ -144,9 +79,6 @@ impl Origins {
     }
 }
 
-/// What the sky binds of the domes: the older and newer shown domes (clear
-/// ones without clouds), each in both its layers, their sampler and
-/// uniform, and a key advancing whenever other textures show.
 pub(crate) struct DomeBinding<'a> {
     pub old: &'a wgpu::TextureView,
     pub new: &'a wgpu::TextureView,
@@ -155,9 +87,6 @@ pub(crate) struct DomeBinding<'a> {
     pub key: (u64, [u8; 2], bool),
 }
 
-/// The noise's volumes on the GPU, the shapes' and the detail's with its
-/// mipmaps, which the march reads as wide as its rays' cones
-/// (`clouds.wgsl`'s `detail_lod`), with the table they were uploaded from.
 struct NoiseVolumes {
     id: u64,
     _textures: [wgpu::Texture; 2],
@@ -166,10 +95,6 @@ struct NoiseVolumes {
     bytes: u64,
 }
 
-/// The levels below `texels`, a cube `side` texels a side, a byte a texel
-/// (rows along x, then y, then layers along z), down to one texel: each the
-/// mean of every 2 × 2 × 2 block of the level above, rounded to the nearest
-/// byte, as mipmaps average what a footprint spans.
 fn levels_below(side: u32, texels: &[u8]) -> Vec<Vec<u8>> {
     let mut levels: Vec<Vec<u8>> = Vec::new();
     let mut side = side as usize;
@@ -197,7 +122,6 @@ fn levels_below(side: u32, texels: &[u8]) -> Vec<Vec<u8>> {
 }
 
 impl NoiseVolumes {
-    /// `noise`'s volumes, uploaded.
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, noise: &StaticTable<CloudNoise>) -> Self {
         let volume = |label, side: u32, levels: &[&[u8]]| {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -266,67 +190,38 @@ impl NoiseVolumes {
 
 pub(crate) struct CloudPass {
     march_layout: crate::pipelines::GroupLayout,
-    // The march's pipelines, made with the first frame that has clouds.
     pipelines: Option<[wgpu::ComputePipeline; 3]>,
     light: LightMap,
-    // The noise's volumes, once its table arrived.
     noise: Option<NoiseVolumes>,
-    // The shadows' grid, as the camera group binds it.
     shadows: wgpu::Buffer,
-    // Three domes of the settings' size: two shown, blended, and one
-    // marching.
     domes: Option<[(wgpu::Texture, wgpu::TextureView); 3]>,
-    // Which dome is the older shown one, the newer and the marching one,
-    // where each dome's layers marched from, and the newer's share of the
-    // blend.
     roles: [usize; 3],
     origins: [Origins; 3],
     blend: f32,
-    // A clear dome: no cloud, the whole sky passing in both layers; and its
-    // view.
     clear: (wgpu::Texture, wgpu::TextureView),
     sampler: wgpu::Sampler,
     noise_sampler: wgpu::Sampler,
     uniform: wgpu::Buffer,
     dome_uniform: wgpu::Buffer,
-    // The shadows' grid as the march writes it.
     shadow_cells: wgpu::Buffer,
-    // The march's groups, one writing each dome.
     march_groups: Cached<u64, [wgpu::BindGroup; 3]>,
-    // Advances whenever the domes are other textures.
     generation: u64,
-    // The settings the domes march, the back dome's march, and whether
-    // this frame's completes it.
     marched: Option<Clouds>,
     cycle: Option<Cycle>,
     completes: bool,
-    // Domes completed, and how many were recorded: the sky's environment
-    // map, drawn before a frame's march, follows those, and shows the domes
-    // of the generation whose march a frame recorded.
     completed: u64,
     recorded: u64,
     recorded_generation: Option<u64>,
-    // Whether a whole dome shows: until then the sky shows a clear one.
     ready: bool,
-    // This frame's march: the dome written, its first row and its rows.
     job: Option<(usize, u32, u32)>,
-    // This frame's rows of the shadows' grid between those marched.
     shadow_stride: u32,
     frame: u64,
     active: bool,
-    /// Rows of the dome this frame marched.
     pub(crate) rows: u32,
-    // Clouds in the view: the march's and the composite's
-    // layouts, the march's uniform from the camera and the view's, the
-    // marched pixels, the groups binding them (by the depth buffer and the
-    // marched pixels), and the march's pipeline and the composite's by
-    // target; this frame's pixels to march, and whether they march the sky.
     view_layout: crate::pipelines::GroupLayout,
     composite_layout: crate::pipelines::GroupLayout,
     view_clouds: wgpu::Buffer,
     view_uniform: wgpu::Buffer,
-    // The composite's indirect draw, which the march gives a triangle once
-    // any pixel's ray meets a cloud.
     composite_args: wgpu::Buffer,
     view_targets: Option<Versioned<ViewTargets>>,
     view_group: GroupCache<12>,
@@ -336,7 +231,6 @@ pub(crate) struct CloudPass {
     composite_pipelines: HashMap<(wgpu::TextureFormat, bool), wgpu::RenderPipeline>,
     view_job: Option<[u32; 2]>,
     view_sky: bool,
-    /// Pixels of the view whose clouds this frame marched.
     pub(crate) view_pixels: u32,
 }
 
@@ -360,8 +254,6 @@ impl CloudPass {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        // No light scattered, the whole sky passing: half-float 0, 0, 0, 1
-        // in each layer.
         let texels = [[0_u16, 0, 0, 0x3c00]; DOME_LAYERS as usize];
         queue.write_texture(
             clear.as_image_copy(),
@@ -381,7 +273,6 @@ impl CloudPass {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        // Around the horizon the dome repeats; up and down it clamps.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/cloud-dome-sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -390,8 +281,6 @@ impl CloudPass {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        // The detail's levels blend as a ray's cone widens, so its wisps
-        // average away with no step between levels.
         let noise_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/cloud-noise-sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -475,10 +364,6 @@ impl CloudPass {
         }
     }
 
-    /// Plans this frame's rows of the light map for the march `uniform`: a
-    /// new map around the eye's place in the clouds' own frame when the sun
-    /// or the layer changed or that place moved too far from its middle;
-    /// all its rows still due on exact frames (`whole`), otherwise a slice.
     fn plan_light(
         &mut self,
         device: &wgpu::Device,
@@ -524,8 +409,6 @@ impl CloudPass {
         [first, rows, 0, 0]
     }
 
-    /// The light map as the marches read it: its first column's corner,
-    /// meters a column, and 1 once it holds every row.
     fn light_uniform(&self) -> [f32; 4] {
         self.light.held.map_or([0.0; 4], |held| {
             [
@@ -537,17 +420,12 @@ impl CloudPass {
         })
     }
 
-    /// This frame's slice of the shadows' grid: all of it on exact frames,
-    /// a quarter of its rows otherwise.
     fn shadow_rows(&mut self, whole: bool) -> [u32; 4] {
         let stride = if whole { 1 } else { SHADOW_SLICES };
         self.shadow_stride = stride;
         [(self.frame % u64::from(stride)) as u32, stride, 0, 0]
     }
 
-    /// The domes the sky and reflections show (clear ones without clouds),
-    /// their sampler and uniform, and a key advancing whenever other
-    /// textures show, which the camera's group binds.
     pub(crate) fn dome(&self) -> DomeBinding<'_> {
         match (&self.domes, self.active && self.ready) {
             (Some(domes), true) => DomeBinding {
@@ -571,8 +449,6 @@ impl CloudPass {
         }
     }
 
-    /// What the sky's environment map holds of the clouds: it redraws when
-    /// this changes, every few completed domes.
     pub(crate) fn environment_key(&self) -> [f32; 4] {
         if self.environment_shows() {
             [
@@ -586,10 +462,6 @@ impl CloudPass {
         }
     }
 
-    /// The domes the sky's environment map shows: [`Self::dome`]'s once a
-    /// frame recorded a march of the domes shown, clear ones until then.
-    /// The map draws before a frame's march, so a dome a frame first
-    /// marches shows in it from the next frame on.
     pub(crate) fn environment_dome(&self) -> DomeBinding<'_> {
         let dome = self.dome();
         if self.environment_shows() {
@@ -603,15 +475,10 @@ impl CloudPass {
         }
     }
 
-    /// Whether the environment map shows the domes: they show, and a frame
-    /// recorded a march of their generation.
     fn environment_shows(&self) -> bool {
         self.active && self.ready && self.recorded_generation == Some(self.generation)
     }
 
-    /// Where the physically based sky's light goes in the
-    /// marches' uniforms, the dome's and the view's: the
-    /// sun's, the zenith's and the horizon's colors.
     pub(crate) fn sky_copies(&self) -> [crate::sky::SkyCopy<'_>; 6] {
         let at = |offset: usize| offset as u64;
         let copies = |uniform| {
@@ -641,16 +508,6 @@ impl CloudPass {
         [a, b, c, d, e, f]
     }
 
-    /// Plans this frame's march of `settings`' clouds, shaped by `noise`
-    /// (the latest the scene's tables hold, uploaded unless it was), for an
-    /// eye at `eye` over what lies under it at the height `surface`
-    /// ([`Origins::of`]) at simulation time `seconds` in `lighting`'s sun
-    /// and sky (the physically based one's `air` lighting each cloud where
-    /// it stands): a whole dome from the eye and its mirror point, shown
-    /// alone, when `whole` (exact frames), when the domes are new or the
-    /// clouds changed; otherwise a band of the back dome's rows in both its
-    /// layers from where they began, which shows once whole. No cloud shows
-    /// before the noise first arrived.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -671,7 +528,6 @@ impl CloudPass {
             && self.noise.as_ref().is_none_or(|held| held.id != noise.id)
         {
             self.noise = Some(NoiseVolumes::new(device, queue, noise));
-            // Groups binding the volumes it replaces bind them anew.
             self.generation += 1;
             self.march_groups = Cached::default();
             self.view_group = GroupCache::default();
@@ -696,8 +552,6 @@ impl CloudPass {
             self.cycle = None;
             self.completes = false;
         }
-        // Last frame's band completed the back dome: it blends in over the
-        // newer shown one, which becomes the older.
         if self.completes {
             self.completes = false;
             self.rotate();
@@ -708,8 +562,6 @@ impl CloudPass {
         let target = self.roles[2];
         let origins = Origins::of(eye, surface);
         let (origin, at, first, count) = if whole || fresh || changed || !self.ready {
-            // A whole dome from the eye and its mirror point, shown alone
-            // this frame.
             let spare = (0..3).find(|&index| index != target).unwrap_or(0);
             self.roles = [target, target, spare];
             self.origins[target] = origins;
@@ -730,7 +582,6 @@ impl CloudPass {
             let count = rows.div_ceil(frames).min(rows - first);
             cycle.next_row += count;
             let (origin, at, done) = (cycle.origin, cycle.seconds, cycle.next_row >= rows);
-            // The newer shown dome blends in as the back one marches.
             self.blend = cycle.next_row as f32 / rows as f32;
             if done {
                 self.origins[target] = origin;
@@ -755,7 +606,6 @@ impl CloudPass {
         self.prepare_dome_draws(device, air);
     }
 
-    /// The pipelines and groups this frame's march of the dome binds.
     fn prepare_dome_draws(&mut self, device: &wgpu::Device, air: crate::sky::AirBindings<'_>) {
         let (Some(domes), Some(noise)) = (&self.domes, &self.noise) else {
             return;
@@ -796,13 +646,6 @@ impl CloudPass {
         });
     }
 
-    /// Plans this frame's clouds in the view of `settings`
-    /// from an eye at `eye` at simulation time `seconds`, through
-    /// `view_projection` (unjittered) onto the frame's `region` in
-    /// `lighting`'s sun and sky: a ray for each pixel of its render size,
-    /// into targets made at its display's size; call after
-    /// [`Self::prepare`]. Nothing marches without clouds or with the view's
-    /// march off.
     #[expect(clippy::too_many_arguments, reason = "the view's inputs, typed")]
     pub(crate) fn prepare_view(
         &mut self,
@@ -846,7 +689,6 @@ impl CloudPass {
             pixels: [render.width, render.height, u32::from(view_sky), 0],
         };
         queue.write_buffer(&self.view_uniform, 0, bytemuck::bytes_of(&view));
-        // No vertices until the march meets a cloud; one instance.
         queue.write_buffer(
             &self.composite_args,
             0,
@@ -857,13 +699,10 @@ impl CloudPass {
         self.prepare_view_draws(device, depth, air);
     }
 
-    /// Whether this frame marches clouds in the view.
     pub(crate) fn marches_view(&self) -> bool {
         self.view_job.is_some()
     }
 
-    /// The view march's pipeline and group, up to what the depth buffer
-    /// `depth` shows.
     fn prepare_view_draws(
         &mut self,
         device: &wgpu::Device,
@@ -923,8 +762,6 @@ impl CloudPass {
         );
     }
 
-    /// Records this frame's march of the view's clouds, timed by `profiler`
-    /// (`cloud_view`); after the dome's march made the noise.
     fn encode_view(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -948,10 +785,6 @@ impl CloudPass {
         );
     }
 
-    /// Builds the composite's pipeline into `format` (`canvas`: the
-    /// canvas, encoded; otherwise the screen effects' scene target) from
-    /// `shader` with the camera group's `camera_layout`, and its group over
-    /// the marched pixels.
     pub(crate) fn prepare_composite(
         &mut self,
         device: &wgpu::Device,
@@ -988,18 +821,12 @@ impl CloudPass {
         );
     }
 
-    /// What this frame records: the dome's march, and the view's march and
-    /// composite into `target` (the format of the scene's color, and whether
-    /// that is the canvas); `None` when neither marches.
     pub(crate) fn frame(&self, target: (wgpu::TextureFormat, bool)) -> Option<CloudFrame> {
         let dome = self.job.is_some() && self.domes.is_some();
         let view = self.view_job.map(|_| target);
         (dome || view.is_some()).then_some(CloudFrame { dome, view })
     }
 
-    /// Lays the view's clouds over `pass`'s target of `format` (`canvas`:
-    /// the canvas), the camera's `camera` group bound; after
-    /// [`Self::prepare_composite`].
     fn draw_composite(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -1015,12 +842,9 @@ impl CloudPass {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, camera, &[]);
         pass.set_bind_group(1, group, &[]);
-        // The march's count: no triangle while no block met a cloud.
         pass.draw_indirect(&self.composite_args, 0);
     }
 
-    /// The back dome, complete, shows as the newer one; the newer shown one
-    /// becomes the older; the third marches next.
     fn rotate(&mut self) {
         let [_, new, marching] = self.roles;
         let spare = (0..3)
@@ -1032,9 +856,6 @@ impl CloudPass {
         self.ready = true;
     }
 
-    /// Writes the domes' uniform: where the shown domes' layers marched
-    /// from, with whether they show and the blend; the eye with the cloud
-    /// layer's middle; and whether the view's march shows the sky's clouds.
     fn write_domes(&self, queue: &wgpu::Queue, eye: glam::Vec3, settings: &Clouds) {
         let shows = if self.active && self.ready { 1.0 } else { 0.0 };
         let [old, new, _] = self.roles;
@@ -1052,8 +873,6 @@ impl CloudPass {
         queue.write_buffer(&self.dome_uniform, 0, bytemuck::bytes_of(&uniform));
     }
 
-    /// Records this frame's march and the shadows' grid, copied into the
-    /// uniform the camera group binds, timed by `profiler` (`clouds`).
     fn encode_dome(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -1069,7 +888,6 @@ impl CloudPass {
         };
         let group = &groups[target];
         if self.light.job > 0 {
-            // The light map's slice before the march that reads it.
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/cloud-light"),
                 timestamp_writes: profiler.span("cloud_light").map(|span| span.compute()),
@@ -1084,7 +902,6 @@ impl CloudPass {
         }
         let width = domes[target].0.width();
         if count > 0 {
-            // The band in both layers.
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/cloud-march"),
                 timestamp_writes: profiler.span("clouds").map(|span| span.compute()),
@@ -1098,7 +915,6 @@ impl CloudPass {
             );
         }
         {
-            // A slice of the shadows' grid every frame: the clouds drift.
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/cloud-shadows"),
                 timestamp_writes: profiler.span("cloud_shadows").map(|span| span.compute()),
@@ -1121,13 +937,10 @@ impl CloudPass {
         );
     }
 
-    /// The shadows' grid, as the camera group binds it.
     pub(crate) fn shadows(&self) -> &wgpu::Buffer {
         &self.shadows
     }
 
-    /// Bytes of the noise's volumes, the domes, the view's marched pixels
-    /// and the light map.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         let noise = self.noise.as_ref().map_or(0, |noise| noise.bytes);
         let domes = self.domes.as_ref().map_or(0, |domes| {
@@ -1149,21 +962,15 @@ impl CloudPass {
     }
 }
 
-/// The march's uniform for `settings`' clouds marched from `origin` at
-/// simulation time `at` in `lighting`'s sun and sky; no mirror point, dome
-/// rows or shadows' grid.
 fn march_uniform(
     settings: &Clouds,
     (origin, at): (glam::Vec3, f64),
     lighting: &LightingUniform,
 ) -> CloudUniform {
-    // The wind's drift by then, wrapped where every repeat of the noise
-    // lines up again.
     let wrap = f64::from(settings.scale) * 43.0;
     let drift = |speed: f32| ((f64::from(speed) * at) % wrap) as f32;
     let seed = (f64::from(settings.seed) * 7919.0 % wrap) as f32;
     CloudUniform {
-        // The physically based sky lights each cloud where it stands.
         eye: origin.extend(lighting.grade[2]).to_array(),
         mirror: [0.0; 4],
         layer: [
@@ -1190,8 +997,6 @@ fn march_uniform(
     }
 }
 
-/// The view's marched clouds, `size` pixels, which the view's march
-/// writes and its composite reads.
 fn view_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("engine/cloud-view"),
@@ -1211,7 +1016,6 @@ fn view_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::
     (texture, view)
 }
 
-/// The view's march.
 fn view_pipeline(
     device: &wgpu::Device,
     layout: &crate::pipelines::GroupLayout,
@@ -1228,9 +1032,6 @@ fn view_pipeline(
     crate::pipelines::compute_entry(device, &layout, &module, clouds::march_view)
 }
 
-/// The composite of the view's clouds into `format`, the
-/// canvas's when `canvas`: their light over the scene, which keeps the
-/// share they pass, and the target's alpha as it was.
 fn composite_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
@@ -1277,8 +1078,6 @@ fn composite_pipeline(
     )
 }
 
-/// A dome `size` texels wide and tall in each of its layers, which the
-/// march writes and the sky and reflections read.
 fn dome_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("engine/cloud-dome"),
@@ -1301,11 +1100,6 @@ fn dome_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::
     (texture, view)
 }
 
-/// The shadows' grid around `eye`: its first cell (world
-/// cell indices along x and z, as floats) and meters a cell. Cells snap to
-/// whole cells and keep their slots as the grid moves (cell index modulo
-/// the cells along a side), so moving the grid leaves every cell it still
-/// covers where it was.
 pub(crate) fn shadow_grid(eye: glam::Vec3) -> Option<([f32; 2], f32)> {
     let cell = SHADOW_EXTENT / SHADOW_CELLS as f32;
     if !eye.is_finite() {
@@ -1316,9 +1110,6 @@ pub(crate) fn shadow_grid(eye: glam::Vec3) -> Option<([f32; 2], f32)> {
     Some(([first(eye.x), first(eye.z)], cell))
 }
 
-/// The lighting uniform's clouds' shadows for `clouds` seen from `eye`:
-/// the grid's first cell, cells per meter and strength, and the clouds'
-/// base; zero without clouds or shadows.
 pub(crate) fn shadow_lighting(clouds: &Clouds, eye: glam::Vec3) -> ([f32; 4], [f32; 4]) {
     let clouds = clouds.sanitized();
     match shadow_grid(eye) {
@@ -1330,8 +1121,6 @@ pub(crate) fn shadow_lighting(clouds: &Clouds, eye: glam::Vec3) -> ([f32; 4], [f
     }
 }
 
-/// The camera group's buffer of clouds' shadows: every cell passing all
-/// the light until the clouds' pass copies its grid in.
 fn shadow_uniform(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer {
     let buffer = crate::buffers::storage(
         device,
@@ -1339,7 +1128,6 @@ fn shadow_uniform(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer {
         CLOUD_SHADOW_BYTES as u64,
         wgpu::BufferUsages::empty(),
     );
-    // Half-float ones, two a word.
     let ones = vec![0x3c00_3c00_u32; CLOUD_SHADOW_BYTES / 4];
     queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&ones));
     buffer
@@ -1365,9 +1153,6 @@ fn pipelines(
     ]
 }
 
-/// What a frame records of the clouds: the dome's march, and the view's
-/// march and composite into the scene's color of the given format (and
-/// whether that is the canvas).
 pub(crate) struct CloudFrame {
     dome: bool,
     view: Option<(wgpu::TextureFormat, bool)>,
@@ -1377,10 +1162,6 @@ impl RenderFeature for CloudPass {
     type Frame = CloudFrame;
     type Stats = engine_core::CloudStats;
 
-    /// The dome's slice, which the sky and its environment map show; then
-    /// the view's march up to what the opaque scene and water show at each
-    /// pixel, and its composite over the scene before transparent surfaces
-    /// draw.
     fn declare(frame: &CloudFrame, shape: &FrameShape, graph: &mut RenderGraph) {
         if frame.dome {
             graph
@@ -1426,7 +1207,6 @@ impl RenderFeature for CloudPass {
         0
     }
 
-    /// A march recorded completes its dome for the sky's environment map.
     fn after_submit(&mut self, frame: Option<&CloudFrame>) {
         if frame.is_some_and(|frame| frame.dome) {
             self.recorded = self.completed;
@@ -1438,7 +1218,6 @@ impl RenderFeature for CloudPass {
         CloudPass::capacity_bytes(self)
     }
 
-    /// The dome's rows marched and the view's pixels.
     fn stats(
         this: Option<&Self>,
         _frame: Option<&CloudFrame>,

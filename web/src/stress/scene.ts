@@ -4,8 +4,6 @@ import { loadSceneFiles, loadSceneSource } from "../engine/source";
 import { STRESS_PARAMETERS } from "./parameters";
 import "./stress.css";
 
-// An authored scene in place of a workload, reloaded by revision through the
-// development tools.
 const params = new URLSearchParams(location.search);
 const sourceUrl = params.get("source") ?? "";
 if (!/^\/scenes\/[A-Za-z0-9_-]+\.scene\.json$/.test(sourceUrl)) throw new Error("The scene source must be a /scenes/<name>.scene.json path.");

@@ -1,21 +1,8 @@
-//! Terrain sky visibility: each terrain's sky map, cooked with its
-//! lighting ([`engine_core::TerrainLighting`]): a grid over the whole
-//! terrain holding at every texel the share of the sky its ground sees
-//! about its normal and the turn of its normal toward the middle of the
-//! sky it sees. Terrain scales its ambient light by the share, taking the
-//! hidden sky's share back as its own light, and takes the sky's light
-//! around the turned normal.
-//!
-//! A terrain's layer uploads as its lighting arrives, and again when it
-//! changes; until then its ground sees the whole sky. Terrains past the
-//! device's array layers see it always.
-
 use std::sync::Arc;
 
 use engine_core::terrain_data::lighting::SKY_LAYERS;
 use engine_core::{RenderTerrains, TerrainLighting, TerrainSettings};
 
-/// A sky map texel: the share of the sky seen and the normal's turn.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 struct Maps {
@@ -27,13 +14,9 @@ struct Maps {
 
 pub(crate) struct SkyMaps {
     maps: Option<Maps>,
-    // A one-texel map of open sky bound while no terrain has one.
     empty: wgpu::TextureView,
-    // The lighting each terrain's layers hold.
     held: Vec<Option<Arc<TerrainLighting>>>,
-    // Advances when the bound view is replaced.
     generation: u64,
-    /// Terrains whose maps uploaded this frame.
     pub(crate) uploaded: u32,
 }
 
@@ -71,17 +54,14 @@ impl SkyMaps {
         }
     }
 
-    /// Advances when [`Self::view`] is another view.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// The maps, a layer per terrain, or a texel of open sky.
     pub(crate) fn view(&self) -> &wgpu::TextureView {
         self.maps.as_ref().map_or(&self.empty, |maps| &maps.view)
     }
 
-    /// Terrain `index`'s layer plus one once uploaded; 0 before.
     pub(crate) fn layer(&self, index: usize) -> u32 {
         match self.held.get(index) {
             Some(Some(_)) => (SKY_LAYERS * index) as u32 + 1,
@@ -89,21 +69,16 @@ impl SkyMaps {
         }
     }
 
-    /// Terrains whose maps are here.
     pub(crate) fn count(&self) -> u32 {
         self.held.iter().flatten().count() as u32
     }
 
-    /// Bytes of the maps.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.maps.as_ref().map_or(0, |maps| {
             u64::from(maps.size) * u64::from(maps.size) * (SKY_LAYERS * maps.terrains) as u64 * 4
         })
     }
 
-    /// Uploads the maps of every terrain whose lighting arrived or changed
-    /// since, with terrain `settings` asking for sky visibility at their
-    /// resolution; without it the maps are released.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -155,8 +130,6 @@ impl SkyMaps {
     }
 }
 
-/// Writes terrain `index`'s layers of `texture`, `size` texels a side, from
-/// `texels`.
 fn write_layers(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
@@ -189,7 +162,6 @@ fn write_layers(
     );
 }
 
-/// The maps of `terrains` terrains, `size` texels a side.
 fn maps(device: &wgpu::Device, size: u32, terrains: usize) -> Maps {
     let texture = crate::targets::texture_2d(
         device,

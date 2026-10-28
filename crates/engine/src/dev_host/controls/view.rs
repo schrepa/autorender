@@ -1,6 +1,3 @@
-//! Controls of the view: presentation previews, culling, the camera,
-//! plain renders and faults injected into the renderer.
-
 use serde_json::Value;
 
 use super::{rendered, then_render};
@@ -11,7 +8,6 @@ use engine_dev::results::{
     CameraResult, CullingResult, DebugFaultResult, PresentResult, RenderResult, result,
 };
 
-/// Presents fixed-tick poses at `alpha`, through the GPU path with `gpu`.
 pub(super) fn present(
     app: &mut AppHost,
     alpha: f64,
@@ -29,7 +25,6 @@ pub(super) fn present(
     }))
 }
 
-/// Turns visibility culling on or off, then renders.
 pub(super) fn culling(
     app: &mut AppHost,
     enabled: bool,
@@ -47,7 +42,6 @@ pub(super) fn culling(
     )
 }
 
-/// Sets the camera, then renders.
 pub(super) fn camera(
     app: &mut AppHost,
     (position, target): ([f32; 3], [f32; 3]),
@@ -72,15 +66,12 @@ pub(super) fn camera(
     )
 }
 
-/// Renders current state without advancing gameplay.
 pub(super) fn render(app: &mut AppHost, (width, height): (u32, u32)) -> Result<Value, DevError> {
     app.dev_render(width, height)
         .map_err(|error| DevError::new(ErrorCode::RenderFailed, "$", error.to_string()))?;
     Ok(result::render(RenderResult { rendered: true }))
 }
 
-/// Injects a fault into the renderer's lazily created feature `feature`,
-/// then renders.
 pub(super) fn fault(app: &mut AppHost, feature: &str, size: (u32, u32)) -> Result<Value, DevError> {
     app.renderer
         .inject_fault(feature)

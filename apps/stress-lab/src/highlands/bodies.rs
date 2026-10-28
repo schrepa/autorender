@@ -1,31 +1,15 @@
-//! Bodies in the highlands' rivers, once the terrain's hydrology bake is
-//! done: a dam of stacked logs across a river near the camera, where its
-//! pool fills soonest, logs dropped upstream that its current carries down
-//! against the dam, and boulders on its bank that roll in. The dam holds
-//! the river back: a pool fills behind it while the river below runs dry,
-//! until the water pours over it, and logs floating up on the pool may
-//! spill over. As many drifting logs as the workload's `bodies`; the
-//! ground about the dam stays loaded while they drift. Rivers' courses say
-//! where the dam fits; the water the terrain's tiles hold says where its
-//! water stands.
-
 use engine::prelude::*;
 
 use super::rocks;
 use crate::kit::StressConfig;
 use crate::kit::random::Rng;
 
-/// The rivers have their bodies.
 #[derive(Resource)]
 struct Dammed;
 
-/// The boulders' mesh, a record asked for as the world populates
-/// ([`request`]).
 #[derive(Resource)]
 struct BankBoulder(MeshHandle);
 
-/// Asks for the bank's boulders' mesh where `config` has bodies, so the
-/// cook keeps it with the world's other records.
 pub(super) fn request(world: &mut World, config: &StressConfig) -> engine::Result<()> {
     if config.bodies > 0 {
         let mesh = rocks::boulder_record(world, config.seed ^ 0x5eed)?;
@@ -34,30 +18,17 @@ pub(super) fn request(world: &mut World, config: &StressConfig) -> engine::Resul
     Ok(())
 }
 
-/// Meters across the ground from under the camera the dam stands within,
-/// and over which a site's pull halves.
 const FARTHEST: f32 = 2500.0;
 const NEAR: f32 = 800.0;
-/// The gentlest slope of the river's water above the dam: on gentler
-/// reaches its pool spreads too far to fill while anyone watches.
 const STEEP: f32 = 0.004;
-/// The shallowest and narrowest river channel the dam spans (meters deep,
-/// meters across half its width).
 const DEEP: f32 = 0.45;
 const WIDE: f32 = 2.0;
-/// River points above the dam the logs drop over, and the dam's own
-/// points from either end of its river.
 const UPSTREAM: usize = 24;
-/// Logs stacked in the dam, each this thick (meters), and how far their
-/// top stands above the river's water.
 const DAM_LOGS: usize = 4;
 const DAM_LOG: f32 = 0.5;
 const CREST: f32 = 1.0;
-/// Boulders on the bank.
 const BOULDERS: u32 = 3;
 
-/// A river point fit for the dam: its terrain's origin, its river's points
-/// and at each half its width and its bed, and the point.
 struct Site {
     origin: Vec3,
     points: Vec<[f32; 2]>,
@@ -66,19 +37,12 @@ struct Site {
     point: usize,
 }
 
-/// The way a river's points `points` run at point `index` (a unit vector
-/// along x and z).
 fn run(points: &[[f32; 2]], index: usize) -> Vec2 {
     let next = points[(index + 1).min(points.len() - 1)];
     let previous = points[index.saturating_sub(1)];
     (Vec2::from(next) - Vec2::from(previous)).normalize_or(Vec2::X)
 }
 
-/// The river point within reach of `eye` whose pool would fill soonest,
-/// sooner the nearer it stands across the ground, whose river runs in its
-/// bed and steeply enough for [`UPSTREAM`] points above it: its pool holds
-/// about the river's width times its reach up the slope (the crest over the
-/// slope) times half the crest, filled by the discharge.
 fn site(terrains: &Terrains, eye: Vec3) -> Option<Site> {
     let mut best: Option<(f32, Site)> = None;
     for (_, origin, layers) in terrains.waters() {
@@ -129,8 +93,6 @@ fn site(terrains: &Terrains, eye: Vec3) -> Option<Site> {
     best.map(|(_, site)| site)
 }
 
-/// Builds the dam, drops the logs and sets the boulders once the bake is
-/// done, a river fits and the tiles there hold its water.
 pub(super) fn place(world: &mut World) {
     let Some(config) = world.get_resource::<StressConfig>() else {
         return;
@@ -159,8 +121,6 @@ pub(super) fn place(world: &mut World) {
     }
 }
 
-/// The dam, the logs and the boulders (of mesh `boulder`) at `site`, its
-/// water standing at `water` (terrain-local) at the dam.
 fn build(
     world: &mut World,
     site: &Site,
@@ -180,9 +140,7 @@ fn build(
     };
     let along = run(&site.points, at);
     let side = Vec2::new(-along.y, along.x);
-    // The water up the river stands about as deep over its bed.
     let water_at = |point: usize| water + site.bed[point] - site.bed[at];
-    // Logs across the river from bed to crest, into either bank.
     let bed = site.bed[at];
     let span = 2.0 * site.half[at] + 4.0;
     let yaw = Quat::from_rotation_y((-side.y).atan2(side.x));
@@ -203,12 +161,10 @@ fn build(
             Collider::cuboid(Vec3::splat(0.5))?,
         ));
     }
-    // The ground about the dam stays loaded, so what drifts to it moves.
     world.spawn((
         Transform::from_translation(world_point(site.points[at], water)),
         StreamingFocus,
     ));
-    // Logs dropped over the river above the dam.
     let mut rng = Rng::new(seed, 0x10c5, at as i32);
     for log in 0..count {
         let point = at - 4 - (log as usize * (UPSTREAM - 6)) / count.max(1) as usize;
@@ -232,7 +188,6 @@ fn build(
             },
         ));
     }
-    // Boulders on the bank, a little above the water, rolling in.
     for stone_index in 0..BOULDERS {
         let point = at - 6 - stone_index as usize * 5;
         let bank = side * (site.half[point] + 2.5) * if stone_index % 2 == 0 { 1.0 } else { -1.0 };

@@ -1,9 +1,3 @@
-//! Particles: emitter records and the stateless particle
-//! pipelines. Alpha particles and mist draw into the transparent
-//! accumulation targets, additive ones into the frame's color (and glow) in
-//! the transparent composite pass. Everything here is created with the
-//! first frame that has emitters.
-
 #![expect(clippy::expect_used, reason = "drawing reads what this frame prepared")]
 
 use crate::shaders::entry::particles;
@@ -43,8 +37,6 @@ impl EmitterData {
 pub(crate) use crate::gpu_layouts::particles::ParticleUniform;
 
 impl ParticleUniform {
-    /// Billboard axes of the unjittered `view_projection`: its first two
-    /// rows are the view's right and up axes scaled by the projection.
     pub(crate) fn new(view_projection: engine_core::glam::Mat4, width: u32, height: u32) -> Self {
         let axis = |row: usize| {
             view_projection
@@ -64,11 +56,6 @@ impl ParticleUniform {
     }
 }
 
-/// Emitter records in draw order: alpha emitters first, then mist, then
-/// additive ones, with the instances of each, up to `room` particles (what
-/// the GPU's bindings hold); returns the particles alpha emitters end at,
-/// those mist ends at, the total and the particles of emitters that did
-/// not fit.
 pub(crate) fn pack_emitters(
     emitters: &[RenderEmitter],
     records: &mut Vec<EmitterData>,
@@ -103,7 +90,6 @@ pub(crate) fn pack_emitters(
     (alpha, mist, first, dropped)
 }
 
-/// The emitter of each instance of `records`.
 fn pack_owners(records: &[EmitterData], owners: &mut Vec<u32>) {
     owners.clear();
     for (index, record) in records.iter().enumerate() {
@@ -111,7 +97,6 @@ fn pack_owners(records: &[EmitterData], owners: &mut Vec<u32>) {
     }
 }
 
-/// Whether `a` and `b` give their emitters the same instances.
 fn same_instances(a: &[EmitterData], b: &[EmitterData]) -> bool {
     a.len() == b.len()
         && a.iter()
@@ -128,9 +113,6 @@ mod gpu {
     use crate::cached::{Bound, GroupCache, Versioned};
     use crate::gpu_data::PARTICLE_SHADER;
 
-    /// A frame's particles: alpha instances first, then mist, then additive
-    /// ones (where each ends), and the particles of emitters beyond the GPU's
-    /// bindings.
     pub(crate) struct ParticleFrame {
         pub alpha: u32,
         pub mist: u32,
@@ -143,32 +125,24 @@ mod gpu {
         pipeline_layout: wgpu::PipelineLayout,
         module: wgpu::ShaderModule,
         alpha: wgpu::RenderPipeline,
-        // Mist's pipeline, and the targets it draws into; created when
-        // first used.
         mist: Option<wgpu::RenderPipeline>,
         transparent_targets: Vec<Option<wgpu::ColorTargetState>>,
-        // Additive pipelines into the canvas and into the scene and glow
-        // targets, created when first used.
         additive: [Option<wgpu::RenderPipeline>; 2],
         surface_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
         uniform: wgpu::Buffer,
         written: Option<ParticleUniform>,
         emitters: Growable,
-        // An owner entry each particle: as many particles as its room holds.
         owners: Growable,
         records: Vec<EmitterData>,
         uploaded: Vec<EmitterData>,
         owner_staging: Vec<u32>,
-        // The render stream and emitters revision the uploads were packed
-        // from, and that packing's alpha, mist, total and dropped particles.
         packed: Option<(u64, u64)>,
         counts: (u32, u32, u32, u64),
         group: GroupCache<4>,
     }
 
     impl ParticlePass {
-        /// `camera_layout` is group 0 of the mesh pipelines.
         pub(crate) fn new(
             device: &wgpu::Device,
             camera_layout: &crate::pipelines::GroupLayout,
@@ -236,10 +210,6 @@ mod gpu {
             self.emitters.size() + self.owners.size()
         }
 
-        /// Uploads `snapshot`'s emitters when `emitters` (the render stream
-        /// identity and its emitters revision) changed; `None` when the frame
-        /// draws no particles. `depth` is the depth buffer, sampled for soft
-        /// particles.
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
@@ -295,9 +265,6 @@ mod gpu {
             })
         }
 
-        /// Packs and uploads the snapshot's emitter records, one owner entry
-        /// per particle and one record per emitter, within what a storage
-        /// binding holds: owners only when emitters' instances changed.
         fn pack(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, snapshot: &RenderSnapshot) {
             let room = self.owners.room() / 4;
             self.counts = pack_emitters(&snapshot.particles.list, &mut self.records, room);
@@ -321,8 +288,6 @@ mod gpu {
             }
         }
 
-        /// Creates the additive pipeline into the canvas or, with `post`, the
-        /// scene and glow targets.
         pub(crate) fn ensure_additive(&mut self, device: &wgpu::Device, post: bool) {
             let index = usize::from(post);
             if self.additive[index].is_some() {
@@ -382,8 +347,6 @@ mod gpu {
             self.additive[index] = Some(pipeline);
         }
 
-        /// Draws alpha particles and mist into the transparent accumulation
-        /// targets.
         pub(crate) fn draw_alpha(
             &self,
             pass: &mut wgpu::RenderPass<'_>,
@@ -405,8 +368,6 @@ mod gpu {
             }
         }
 
-        /// Draws additive particles into the frame's color; call
-        /// [`Self::ensure_additive`] first.
         pub(crate) fn draw_additive(
             &self,
             pass: &mut wgpu::RenderPass<'_>,
@@ -442,12 +403,10 @@ mod gpu {
                 vertex_constants: &[],
                 vertex: particles::vs_particle,
                 buffers: &[],
-                // One four-vertex strip per instance.
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleStrip,
                     ..Default::default()
                 },
-                // Reversed depth.
                 depth: Some(wgpu::DepthStencilState {
                     format: depth_format,
                     depth_write_enabled: Some(false),

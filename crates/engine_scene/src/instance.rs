@@ -21,32 +21,18 @@ use crate::{
     validation::{PreparedEntity, PreparedScene, PreparedStreamed},
 };
 
-/// Authored identity retained for game setup and development inspection.
-///
-/// These strings are not read by the renderer or any built-in per-frame system.
-/// Multiple instances of the same source may coexist; IDs are scoped to their
-/// [`SceneInstance`]. Add game components using tags once after instantiation.
 #[derive(Component, Debug)]
 pub struct SceneEntity {
     pub scene_id: String,
     pub authored_id: String,
     pub name: String,
     pub tags: Vec<String>,
-    /// Expanded authored parent ID; runtime reparenting does not rewrite source.
     pub authored_parent: Option<String>,
     pub prefab_id: Option<String>,
     pub prefab_instance: Option<String>,
     pub prefab_local_id: Option<String>,
 }
 
-/// Owns the entities and assets created by one successful scene instantiation.
-///
-/// Dropping this value does not mutate the world. Call [`Self::despawn`] at an
-/// explicit scene disposal boundary. Handles copied into outside entities are
-/// weak and become invalid after disposal; old extracted snapshots may retain
-/// immutable CPU geometry until they are released. The global camera and
-/// environment are not restored during disposal, allowing a new scene to be
-/// staged first.
 #[derive(Debug)]
 #[must_use = "retain the instance and explicitly despawn it when the scene is disposed"]
 pub struct SceneInstance {
@@ -59,14 +45,10 @@ pub struct SceneInstance {
     mesh_ids: Vec<String>,
     texture_ids: Vec<String>,
     clip_ids: Vec<String>,
-    /// Where each asset came from, in source order, and its skins' IDs
-    /// with the inverse binds their entities share.
     origins: Origins,
-    /// Its streamed items, if it has any.
     streamed: Option<StreamSet>,
 }
 
-/// Where an instance's assets came from, without their data.
 #[derive(Debug, Default)]
 struct Origins {
     meshes: Vec<MeshOrigin>,
@@ -75,8 +57,6 @@ struct Origins {
     skins: Vec<(String, Arc<[Mat4]>)>,
 }
 
-/// Where an instance's mesh came from, without its vertices: its
-/// [`crate::MeshSource`] as inspectors report it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -84,17 +64,13 @@ pub enum MeshOrigin {
     Cube,
     Plane,
     Octahedron,
-    /// Authored vertex by vertex: how many vertices and indices.
     Inline {
         vertices: usize,
         indices: usize,
     },
-    /// An engine mesh buffer file beside the scene.
     Buffer {
         uri: String,
     },
-    /// A virtual mesh file beside the scene, drawn elsewhere as its most
-    /// detailed cut of at most `fallback_triangles` triangles.
     Virtual {
         uri: String,
         fallback_triangles: Option<u32>,
@@ -123,17 +99,13 @@ impl From<&crate::MeshSource> for MeshOrigin {
     }
 }
 
-/// An instance's animation as authored, without its keyframes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipOrigin {
     pub name: String,
-    /// The authored IDs of the entities its channels animate, in order.
     pub targets: Vec<String>,
-    /// Its clip file beside the scene, if not authored inline.
     pub uri: Option<String>,
 }
 
-/// The assets one instantiation inserted, in source order, removed together.
 #[derive(Debug, Default)]
 struct OwnedAssets {
     meshes: Vec<MeshHandle>,
@@ -159,8 +131,6 @@ impl OwnedAssets {
     }
 }
 
-/// Inserts `items` with `insert`, pushing each handle onto `handles`; the
-/// first refusal is a budget error at `$.{field}[index]`.
 fn insert_each<T, H>(
     items: Vec<T>,
     handles: &mut Vec<H>,
@@ -181,7 +151,6 @@ fn insert_each<T, H>(
 }
 
 impl SceneInstance {
-    /// Persistent authored scene ID. This is not a unique runtime instance ID.
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -190,10 +159,6 @@ impl SceneInstance {
         self.revision
     }
 
-    /// Looks up an entity by its authored ID within this instance only.
-    ///
-    /// The entity may have been removed by gameplay since instantiation; use
-    /// the world's checked accessors before reading its components.
     pub fn entity(&self, authored_id: &str) -> Option<Entity> {
         self.entities.get(authored_id).copied()
     }
@@ -202,8 +167,6 @@ impl SceneInstance {
         self.entities.len()
     }
 
-    /// Authored texture IDs and their weak CPU handles, in source order.
-    /// Readiness inspection belongs at explicit development boundaries.
     pub fn textures(&self) -> impl ExactSizeIterator<Item = (&str, TextureHandle)> {
         self.texture_ids
             .iter()
@@ -211,7 +174,6 @@ impl SceneInstance {
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
-    /// Authored mesh IDs and their weak handles, in source order.
     pub fn meshes(&self) -> impl ExactSizeIterator<Item = (&str, MeshHandle)> {
         self.mesh_ids
             .iter()
@@ -219,7 +181,6 @@ impl SceneInstance {
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
-    /// Authored material IDs and their weak handles, in source order.
     pub fn materials(&self) -> impl ExactSizeIterator<Item = (&str, MaterialHandle)> {
         self.material_ids
             .iter()
@@ -227,8 +188,6 @@ impl SceneInstance {
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
-    /// The clip of animation `id`, for switching what an
-    /// [`AnimationPlayer`] plays. Handles are weak, like texture handles.
     pub fn clip(&self, id: &str) -> Option<ClipHandle> {
         self.clip_ids
             .iter()
@@ -236,7 +195,6 @@ impl SceneInstance {
             .map(|index| self.assets.clips[index])
     }
 
-    /// Authored animation IDs and their clips, in source order.
     pub fn clips(&self) -> impl ExactSizeIterator<Item = (&str, ClipHandle)> {
         self.clip_ids
             .iter()
@@ -244,14 +202,11 @@ impl SceneInstance {
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
-    /// The authored ID of mesh `handle` and where it came from.
     pub fn mesh_origin(&self, handle: MeshHandle) -> Option<(&str, &MeshOrigin)> {
         let index = self.assets.meshes.iter().position(|&mesh| mesh == handle)?;
         Some((&self.mesh_ids[index], &self.origins.meshes[index]))
     }
 
-    /// The authored ID of texture `handle` and its image file, if it was not
-    /// authored inline.
     pub fn texture_origin(&self, handle: TextureHandle) -> Option<(&str, Option<&str>)> {
         let index = self
             .assets
@@ -264,14 +219,11 @@ impl SceneInstance {
         ))
     }
 
-    /// The authored ID of clip `handle` and the animation it came from.
     pub fn clip_origin(&self, handle: ClipHandle) -> Option<(&str, &ClipOrigin)> {
         let index = self.assets.clips.iter().position(|&clip| clip == handle)?;
         Some((&self.clip_ids[index], &self.origins.clips[index]))
     }
 
-    /// The authored ID of the skin `skin` was made from, which its inverse
-    /// binds tell: every entity of a skin shares them.
     pub fn skin_id(&self, skin: &Skin) -> Option<&str> {
         self.origins
             .skins
@@ -280,31 +232,20 @@ impl SceneInstance {
             .map(|(id, _)| id.as_str())
     }
 
-    /// Authored IDs in stable lexical order, including entities removed by gameplay.
-    /// Check the world's entity accessor before inspecting an entry.
     pub fn entities(&self) -> impl ExactSizeIterator<Item = (&str, Entity)> {
         self.entities
             .iter()
             .map(|(id, entity)| (id.as_str(), *entity))
     }
 
-    /// The set its streamed items registered with
-    /// [`WorldCells`] as, if it has any. Their entities exist while their
-    /// cells are loaded; [`Self::entity`] does not find them.
     pub fn streamed(&self) -> Option<StreamSet> {
         self.streamed
     }
 
-    /// Whether this instance's runtime entity references belong to this world.
     pub fn belongs_to(&self, world: &World) -> bool {
         self.world_id == world.id()
     }
 
-    /// Removes only owned entities, streamed items (despawning what loaded
-    /// ones spawned) and assets. Already removed items are safe.
-    ///
-    /// # Panics
-    /// Panics before mutation if passed a different world from instantiation.
     pub fn despawn(self, world: &mut World) {
         assert_eq!(self.world_id, world.id(), "scene belongs to another world");
         if let Some(set) = self.streamed {
@@ -320,23 +261,10 @@ impl SceneInstance {
 }
 
 impl SceneDocument {
-    /// Validates and creates a complete instance at an exclusive world boundary.
-    ///
-    /// The caller must install an [`AssetLibrary`]. CPU assets are validated
-    /// before insertion; a budget failure rolls back all inserted assets and
-    /// leaves existing entities, the camera and the environment unchanged.
-    /// Success sets the world's camera to this document's camera and, when the
-    /// document has an environment, its atmosphere and effect resources.
-    /// There are no GPU uploads here.
-    ///
-    /// For transactional reload, instantiate a replacement before disposing of
-    /// the previous instance. Budgets must allow both instances to coexist.
     pub fn instantiate(&self, world: &mut World) -> Result<SceneInstance, SceneError> {
         self.instantiate_with(world, &SceneFiles::default())
     }
 
-    /// [`Self::instantiate`] with the contents of the files the document
-    /// references; a missing or invalid one fails first.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -393,7 +321,6 @@ impl SceneDocument {
         if let Some(environment) = prepared.environment {
             environment.apply_all(world);
         }
-        // Streamed items load from the next extraction on.
         let streamed = (!prepared.streamed.items.is_empty()).then(|| {
             let scene = Arc::new(StreamedScene {
                 lookups,
@@ -406,7 +333,6 @@ impl SceneDocument {
                 .iter()
                 .enumerate()
                 .map(|(item, prepared)| StreamedItem {
-                    // Removals persist by `scene/root`.
                     id: Some(Arc::from(format!(
                         "{}/{}",
                         self.id, scene.prepared.entities[prepared.entities[0]].source.id
@@ -476,8 +402,6 @@ impl SceneDocument {
         })
     }
 
-    /// Inserts `prepared`'s meshes, textures, materials and clips: a refused
-    /// one leaves none of this document's assets resident.
     fn insert_assets(
         &self,
         world: &mut World,
@@ -530,8 +454,6 @@ impl SceneDocument {
         Ok(owned)
     }
 
-    /// Spawns each expanded entity with its transform, identity, mesh and
-    /// components; returns them in expanded order.
     fn spawn(&self, world: &mut World, prepared: &PreparedScene, lookups: &Lookups) -> Vec<Entity> {
         prepared
             .entities
@@ -545,9 +467,6 @@ impl SceneDocument {
     }
 }
 
-/// What spawning a document's entities needs of one instantiation: the
-/// scene's ID, its assets' handles by authored ID and in source order, and
-/// its clips.
 pub(crate) struct Lookups {
     scene_id: String,
     pub(crate) meshes: BTreeMap<String, MeshHandle>,
@@ -580,8 +499,6 @@ impl Lookups {
     }
 }
 
-/// Spawns one expanded entity with its transform, identity, mesh and
-/// components besides its animation player and skin.
 fn spawn_entity(
     world: &mut World,
     lookups: &Lookups,
@@ -613,9 +530,6 @@ fn spawn_entity(
     entity.id()
 }
 
-/// Gives the `rigged` entities their animation players and skins, which
-/// name other entities by expanded index (`entity_of` finds them);
-/// animated targets present smoothly between fixed ticks.
 fn attach_rigs<'a>(
     world: &mut World,
     rigged: impl Iterator<Item = (&'a PreparedEntity, Entity)> + Clone,
@@ -653,15 +567,12 @@ fn attach_rigs<'a>(
     }
 }
 
-/// An instance's streamed entities, ready to spawn item by
-/// item with its assets' handles.
 struct StreamedScene {
     lookups: Lookups,
     prepared: PreparedStreamed,
     skin_binds: Vec<Arc<[Mat4]>>,
 }
 
-/// One item of a [`StreamedScene`]: a streamed root and its descendants.
 struct StreamedTree {
     scene: Arc<StreamedScene>,
     item: usize,
@@ -689,7 +600,6 @@ impl Streamed for StreamedTree {
                 )
             })
             .collect();
-        // References stay within an item (validated).
         let entity_of = |index: usize| {
             mine[item
                 .entities
