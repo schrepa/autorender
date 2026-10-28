@@ -116,25 +116,9 @@ pub fn generated() -> Result<Generated, String> {
             ));
         }
     }
-    for (name, schema) in described {
-        if ["protocol", "BrowserControl", "FrameStats"].contains(&name.as_str()) {
-            continue;
-        }
-        let description = schema["description"].as_str().unwrap_or_default();
-        if description.is_empty() || description.len() > protocol::bounds::MAX_DESCRIPTION_BYTES {
-            problems.push(format!(
-                "{name} needs a doc comment of at most {} bytes: inspectors describe themselves",
-                protocol::bounds::MAX_DESCRIPTION_BYTES
-            ));
-        }
-    }
-    let mut sections = Sections {
-        schemas: Map::new(),
-        problems: Vec::new(),
-    };
+    let mut sections = Sections(Map::new());
     engine_scene::SceneEnvironment::default().visit(&mut sections);
-    problems.append(&mut sections.problems);
-    for name in sections.schemas.keys() {
+    for name in sections.0.keys() {
         if let Some(component) = name.strip_suffix('s')
             && schemas.get(component).is_some()
         {
@@ -144,7 +128,7 @@ pub fn generated() -> Result<Generated, String> {
         }
     }
     if let Some(all) = schemas.as_object_mut() {
-        all.extend(sections.schemas);
+        all.extend(sections.0);
     }
     let scene_schema = engine_scene::SceneDocument::schema_json();
     let queries = ops(&schemas["protocol"], &mut problems);
@@ -183,8 +167,8 @@ pub const {name}: [&str; {}] = {:?};
             .collect::<Vec<_>>(),
         "errors": engine_settings::ErrorCode::ALL
             .iter()
-            .map(|&(code, name, _)| (name.to_owned(), json!(code.description())))
-            .collect::<Map<_, _>>(),
+            .map(|&(_, name)| name)
+            .collect::<Vec<_>>(),
     });
     let pretty = |value: &Value| {
         serde_json::to_string_pretty(value).map_err(|error| format!("cannot write JSON: {error}"))
@@ -309,23 +293,12 @@ fn references(value: &Value, names: &mut Vec<String>) {
     }
 }
 
-struct Sections {
-    schemas: Map<String, Value>,
-    problems: Vec<String>,
-}
+struct Sections(Map<String, Value>);
 
 impl SectionVisitor for Sections {
     fn section<T: EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
         let schema = serde_json::to_value(T::schema()).unwrap_or_default();
-        for (field, property) in schema["properties"].as_object().into_iter().flatten() {
-            if property["description"].as_str().is_none_or(str::is_empty) {
-                self.problems.push(format!(
-                    "{}.{field} needs a doc comment: sections describe themselves",
-                    T::NAME
-                ));
-            }
-        }
-        self.schemas.insert(T::NAME.to_owned(), schema);
+        self.0.insert(T::NAME.to_owned(), schema);
     }
 }
 
@@ -340,12 +313,7 @@ fn frame_stats(problems: &mut Vec<String>) -> Value {
             .map(|(name, definition)| (name.as_str(), definition)),
     );
     for (name, object) in objects {
-        for (field, property) in object["properties"].as_object().into_iter().flatten() {
-            if property["description"].as_str().is_none_or(str::is_empty) {
-                problems.push(format!(
-                    "{name}.{field} needs a doc comment: frame stats describe themselves"
-                ));
-            }
+        for field in object["properties"].as_object().into_iter().flat_map(Map::keys) {
             if field.contains("dropped") && field != "dropped" && !field.starts_with("dropped_") {
                 problems.push(format!(
                     "{name}.{field}: name what budgets drop `dropped` or `dropped_*`"
@@ -371,7 +339,7 @@ fn frame_stats(problems: &mut Vec<String>) -> Value {
 fn reserved_inspectors(problems: &mut Vec<String>) {
     let mut tools = crate::DevTools::bare();
     for name in crate::reserved_names() {
-        let probe = crate::InspectorDescriptor::new(name, "a probe", json!({"type": "object"}));
+        let probe = crate::InspectorDescriptor::new(name, json!({"type": "object"}));
         match tools.register_resource::<engine_core::FixedTime>(probe, |_| Value::Null) {
             Err(error) if error.code == engine_settings::ErrorCode::ReservedInspector => {}
             Err(error) => problems.push(format!(
@@ -543,12 +511,7 @@ fn shown(
     let Some(fields) = authored["properties"].as_object() else {
         return;
     };
-    let declared = format!("`{name}`");
-    if target.get("properties").is_none()
-        && target["description"]
-            .as_str()
-            .is_some_and(|description| description.contains(&declared))
-    {
+    if target.as_bool() == Some(true) || target.as_object().is_some_and(Map::is_empty) {
         return;
     }
     for field in fields.keys() {

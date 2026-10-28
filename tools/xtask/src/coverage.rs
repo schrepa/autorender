@@ -21,7 +21,7 @@ pub fn coverage(
     let sections = environment_sections();
     let smokes: Vec<(String, Claims)> = crate::smoke::scripts(root)?
         .into_iter()
-        .map(|(name, _, source)| (name, Claims::of(&source)))
+        .map(|(name, source)| (name, Claims::of(&source)))
         .collect();
     let naming = |kind: fn(&Claims) -> &BTreeSet<String>, word: &str| -> Vec<String> {
         smokes

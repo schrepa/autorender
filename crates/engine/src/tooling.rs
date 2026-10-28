@@ -46,16 +46,12 @@ pub fn message_interfaces(
     output
 }
 
-pub fn constant(name: &str, doc: &str, value: &Value) -> String {
-    let mut output = String::from("\n");
-    comment(&mut output, "", &Value::from(doc));
-    writeln!(output, "export const {name} = {value};").expect("strings write");
-    output
+pub fn constant(name: &str, value: &Value) -> String {
+    format!("\nexport const {name} = {value};\n")
 }
 
 fn interface(output: &mut String, name: &str, schema: &Value, optional: bool) {
     output.push('\n');
-    comment(output, "", &schema["description"]);
     if schema.get("properties").is_none() {
         writeln!(output, "export type {name} = {};", type_of(schema)).expect("strings write");
         return;
@@ -63,28 +59,12 @@ fn interface(output: &mut String, name: &str, schema: &Value, optional: bool) {
     writeln!(output, "export interface {name} {{").expect("strings write");
     let required = schema["required"].as_array();
     for (field, property) in schema["properties"].as_object().into_iter().flatten() {
-        comment(output, "  ", &property["description"]);
         let absent =
             optional && !required.is_some_and(|required| required.iter().any(|name| name == field));
         let mark = if absent { "?" } else { "" };
         writeln!(output, "  {field}{mark}: {};", type_of(property)).expect("strings write");
     }
     output.push_str("}\n");
-}
-
-fn comment(output: &mut String, indent: &str, description: &Value) {
-    let Some(description) = description.as_str() else {
-        return;
-    };
-    if !description.contains('\n') {
-        writeln!(output, "{indent}/** {description} */").expect("strings write");
-        return;
-    }
-    writeln!(output, "{indent}/**").expect("strings write");
-    for line in description.lines() {
-        writeln!(output, "{indent} * {line}").expect("strings write");
-    }
-    writeln!(output, "{indent} */").expect("strings write");
 }
 
 fn type_of(schema: &Value) -> String {

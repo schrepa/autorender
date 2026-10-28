@@ -73,17 +73,18 @@ pub enum InspectorKind {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct InspectorDescriptor {
     pub name: String,
-    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub schema: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
 }
 
 impl InspectorDescriptor {
-    pub fn new(name: impl Into<String>, description: impl Into<String>, schema: Value) -> Self {
+    pub fn new(name: impl Into<String>, schema: Value) -> Self {
         Self {
             name: name.into(),
-            description: description.into(),
+            description: None,
             schema,
             default: None,
         }
@@ -94,11 +95,13 @@ impl InspectorDescriptor {
             .get(name)
             .cloned()
             .unwrap_or_else(|| panic!("no schema named {name} was generated"));
-        let description = schema["description"]
-            .as_str()
-            .unwrap_or_else(|| panic!("the schema of {name} has no description"))
-            .replace('\n', " ");
-        Self::new(name, description, schema)
+        Self::new(name, schema)
+    }
+
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
     }
 
     #[must_use]
@@ -207,22 +210,6 @@ fn scene_schema(definition: Option<&str>) -> Result<Value, DevError> {
     }
 }
 
-fn summary(doc: &str) -> String {
-    let sentence = doc
-        .find(". ")
-        .map_or(doc, |end| &doc[..=end])
-        .replace('\n', " ");
-    if sentence.len() <= MAX_DESCRIPTION_BYTES {
-        return sentence;
-    }
-    let mut end = MAX_DESCRIPTION_BYTES - 3;
-    while !sentence.is_char_boundary(end) {
-        end -= 1;
-    }
-    let cut = sentence[..end].rfind(' ').unwrap_or(end);
-    format!("{}...", &sentence[..cut])
-}
-
 impl DevTools {
     pub(crate) fn component_views(
         &self,
@@ -298,7 +285,8 @@ impl DevTools {
                 format!("a game may register at most {MAX_INSPECTORS} inspectors"),
             ));
         }
-        if inspector.descriptor.description.len() > MAX_DESCRIPTION_BYTES
+        let description = inspector.descriptor.description.as_deref().unwrap_or_default();
+        if description.len() > MAX_DESCRIPTION_BYTES
             || encode(&inspector.descriptor, MAX_INSPECTOR_BYTES).is_err()
         {
             return Err(DevError::new(
@@ -504,7 +492,7 @@ impl DevTools {
                 .map(|inspector| DescribedType {
                     name: inspector.descriptor.name.clone(),
                     kind: inspector.kind.into(),
-                    description: Some(inspector.descriptor.description.clone()),
+                    description: inspector.descriptor.description.clone(),
                     feature: Some(feature(&inspector.descriptor.name)),
                 })
                 .collect();
@@ -550,10 +538,7 @@ impl DevTools {
             "ErrorCodes" => Ok(DescribeResult::Catalog {
                 name: name.to_owned(),
                 kind: TypeKind::Catalog,
-                codes: ErrorCode::ALL
-                    .iter()
-                    .map(|&(code, text, _)| (text.to_owned(), json!(code.description())))
-                    .collect(),
+                codes: ErrorCode::ALL.iter().map(|&(_, code)| code).collect(),
             }),
             "FrameStats" => Ok(DescribeResult::Observation {
                 name: name.to_owned(),

@@ -1,16 +1,12 @@
 use engine_core::ActionId;
 
 macro_rules! policy {
-    ($($(#[doc = $doc:literal])+ pub const $name:ident: $ty:ty = $value:expr;)*) => {
-        $($(#[doc = $doc])+ pub const $name: $ty = $value;)*
+    ($(pub const $name:ident: $ty:ty = $value:expr;)*) => {
+        $(pub const $name: $ty = $value;)*
 
         #[cfg(all(feature = "schema", not(target_arch = "wasm32")))]
-        pub(crate) fn constants() -> Vec<(&'static str, String, serde_json::Value)> {
-            vec![$((
-                stringify!($name),
-                [$($doc.trim()),+].join("\n"),
-                serde_json::json!($name),
-            )),*]
+        pub(crate) fn constants() -> Vec<(&'static str, serde_json::Value)> {
+            vec![$((stringify!($name), serde_json::json!($name))),*]
         }
     };
 }

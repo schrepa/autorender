@@ -206,8 +206,8 @@ fn scene_rules(root: &Path) -> Result<BTreeSet<String>, String> {
     for variant in named {
         let code = ErrorCode::ALL
             .iter()
-            .find(|(code, _, _)| format!("{code:?}") == variant)
-            .map(|(_, name, _)| (*name).to_owned())
+            .find(|(code, _)| format!("{code:?}") == variant)
+            .map(|(_, name)| (*name).to_owned())
             .ok_or_else(|| format!("engine_scene names ErrorCode::{variant}, which is no code"))?;
         rules.insert(code);
     }

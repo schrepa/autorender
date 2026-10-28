@@ -205,7 +205,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         UNREACHED.windows(2).all(|pair| pair[0].0 < pair[1].0),
         || "UNREACHED (tools/xtask/src/pure/requests.rs) must be sorted and unique".to_owned(),
     );
-    for &(_, code, _) in ErrorCode::ALL {
+    for &(_, code) in ErrorCode::ALL {
         let unreached = UNREACHED.iter().any(|(listed, _)| *listed == code);
         observed.check(reached.contains(code) != unreached, || {
             if unreached {
@@ -323,7 +323,8 @@ fn register(refusal: &Value) -> Option<DevError> {
             .as_str()
             .unwrap_or("a probe")
             .repeat(repeat);
-        let descriptor = InspectorDescriptor::new(name, description, json!({"type": "object"}));
+        let descriptor = InspectorDescriptor::new(name, json!({"type": "object"}))
+            .with_description(description);
         last = tools
             .register_resource::<engine::FixedTime>(descriptor, |_| Value::Null)
             .err();

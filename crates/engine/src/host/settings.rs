@@ -50,7 +50,7 @@ macro_rules! settings {
     )*) => {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
         pub struct HostSettings {
-            $(#[doc = $what] pub $field: Option<$ty>,)*
+            $(pub $field: Option<$ty>,)*
         }
 
         pub const SETTINGS: &[Setting] = &[$(Setting {

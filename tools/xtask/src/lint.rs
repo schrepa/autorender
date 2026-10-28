@@ -68,11 +68,6 @@ pub(crate) const LINT: &[Stage] = &[
         run: crate::coverage::check,
     },
     Stage {
-        name: "smoke descriptions",
-        needs: &[],
-        run: crate::smoke::check,
-    },
-    Stage {
         name: "path map",
         needs: &[],
         run: crate::verify::check,
@@ -159,11 +154,6 @@ pub(crate) const LINT: &[Stage] = &[
                 ],
             )
         },
-    },
-    Stage {
-        name: "docs",
-        needs: &[],
-        run: crate::pipeline::docs,
     },
     Stage {
         name: "wasm",

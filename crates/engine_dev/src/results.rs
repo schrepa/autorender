@@ -11,7 +11,6 @@ macro_rules! results {
     ($($op:ident: $result:ty),* $(,)?) => {
         pub mod result {
             $(
-                #[doc = concat!("The `", stringify!($op), "` op's result as its reply carries it.")]
                 pub fn $op(result: $result) -> serde_json::Value {
                     serde_json::to_value(result).expect("results serialize")
                 }
@@ -232,7 +231,7 @@ pub enum DescribeResult {
     Catalog {
         name: String,
         kind: TypeKind,
-        codes: serde_json::Map<String, Value>,
+        codes: Vec<&'static str>,
     },
     Inspector {
         kind: TypeKind,

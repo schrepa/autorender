@@ -5,13 +5,11 @@ const MAX_FILE_LINES: usize = 1500;
 const MAX_STRUCT_FIELDS: usize = 30;
 
 const LONG_FILES: &[(&str, usize)] = &[
-    ("apps/stress-lab/src/city/mod.rs", 1583),
-    ("apps/stress-lab/src/highlands/mod.rs", 2050),
-    ("apps/stress-lab/src/metro/mod.rs", 3409),
-    ("crates/engine_core/src/hierarchy.rs", 1675),
-    ("crates/engine_core/src/retained_render.rs", 1651),
-    ("crates/engine_terrain/src/layers.rs", 1591),
-    ("tools/lodbuild/src/simplify.rs", 2387),
+    ("apps/stress-lab/src/city/mod.rs", 1509),
+    ("apps/stress-lab/src/highlands/mod.rs", 1602),
+    ("apps/stress-lab/src/metro/mod.rs", 3274),
+    ("crates/engine_terrain/src/layers.rs", 1589),
+    ("tools/lodbuild/src/simplify.rs", 1999),
 ];
 
 const WIDE_STRUCTS: &[(&str, &str, usize)] = &[

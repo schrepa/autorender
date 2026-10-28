@@ -163,7 +163,6 @@ fn execute() -> Result<(), Failure> {
     Ok(match task.as_str() {
         "build" => pipeline::build(&root),
         "lint" => lint::run_stages(&root, lint::LINT),
-        "docs" => pipeline::docs(&root),
         "assets" => authoring::validate_sources(&root),
         "schema" => authoring::write_generated(&root),
         "gpu" => gpu::check(&root),
@@ -215,7 +214,6 @@ fn commands() -> Vec<(String, &'static str)> {
         ("selfcheck [measure] [checks]".into(), "Check the factory's tools against themselves on the working tree as a commit (made without moving any ref): an A/A measure task (both arms that commit, Field, 2 clean pairs) must complete with every run settled, the same work counted every run and the arms' median frame times within 25%; one check run with its commit's own scripts and with the same commit's scripts checked out again must hold at its first attempt both ways, and expected to fail must fail every attempt; files in target/selfcheck/; exit 3 when the sides differed"),
         ("verify [--level quick|pr|merge] [--base REV] [--plan]".into(), "Run the checks a change calls for: the paths the working tree changed since the base (the merge-base with origin/main, or --base) select them through the path map (tools/xtask/src/verify/map.rs); quick (under 2 minutes) runs formatting, the drift checks, the shaders, Clippy over the changed packages and the selected pure corpora; pr (the default, under 10 minutes) all of lint, the selected smokes with --serve, the Wasm replay where selected, equivalence's smoke tier plus the selected cells natively and the selected self-checks of the factory's tools; merge (30-45 minutes) all of lint, every smoke, the native smoke again built in the dev profile (debug assertions on), the Wasm replay, equivalence's full tier and, where selected, its browser leg and the self-checks; --plan prints the steps without running them; exit 3 when a step found a fault, 1 when one could not check"),
         ("lint".into(), "Run every GPU-free check, cheapest first and each whatever failed before it: the repository policy, formatting, the web host's text checks, scene sources, generated files, bench/, smoke coverage, feature layering, the schedules' ordering of conflicting systems, shaders against Rust, the pure checks, native and Wasm Clippy, rustdoc, the browser clients and TypeScript; ends with each stage's result and time"),
-        ("docs".into(), "Generate the documentation of every item, private ones included, of the native workspace and the browser façade, in target/doc and target/wasm32-unknown-unknown/doc; fails where a link does not resolve, public docs link a private item, or markup is malformed, every rustdoc lint denied (lint's docs stage)"),
         ("help [--json]".into(), "Show this message, or the commands as JSON"),
     ]
 }

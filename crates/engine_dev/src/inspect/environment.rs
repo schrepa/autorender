@@ -19,14 +19,9 @@ impl DevTools {
                     .get(T::NAME)
                     .cloned()
                     .unwrap_or_else(|| panic!("schemas generates no schema named {}", T::NAME));
-                let description = summary(
-                    schema["description"]
-                        .as_str()
-                        .expect("every environment section's settings type documents itself"),
-                );
                 self.tools
                     .register_resource::<T>(
-                        InspectorDescriptor::new(T::NAME, description, schema)
+                        InspectorDescriptor::new(T::NAME, schema)
                             .with_default(json!(T::default())),
                         |settings| json!(settings),
                     )
@@ -41,7 +36,7 @@ impl DevTools {
             schemas,
         });
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Environment", "The whole current look as a scene environment: paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off. Each section's inspector describes its fields.", sections_schema()),
+            descriptor: InspectorDescriptor::new("Environment", sections_schema()).with_description("The whole current look as a scene environment: paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off. Each section's inspector describes its fields."),
             kind: InspectorKind::Resource,
             has: Box::new(|_, _| true),
             read: Box::new(|world, _, _| Some(json!(SceneEnvironment::current(world)))),

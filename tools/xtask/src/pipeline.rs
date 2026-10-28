@@ -46,39 +46,6 @@ pub fn dev(root: &Path, port: u16) -> Result<(), String> {
     )
 }
 
-pub fn docs(root: &Path) -> Result<(), String> {
-    run(
-        root,
-        "cargo",
-        &[
-            "doc",
-            "--workspace",
-            "--all-features",
-            "--no-deps",
-            "--document-private-items",
-            "--locked",
-        ],
-    )?;
-    run(
-        root,
-        "cargo",
-        &[
-            "doc",
-            "-p",
-            "engine",
-            "-p",
-            "engine_render",
-            "--features",
-            "engine/dev",
-            "--target",
-            WASM_TARGET,
-            "--no-deps",
-            "--document-private-items",
-            "--locked",
-        ],
-    )
-}
-
 pub(crate) fn build_wasm(
     root: &Path,
     development: bool,

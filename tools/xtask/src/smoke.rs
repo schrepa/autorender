@@ -9,7 +9,7 @@ use crate::Failure;
 use crate::heavy::{HELD, HeavyRun};
 use crate::serve::Server;
 
-pub fn scripts(root: &Path) -> Result<Vec<(String, String, String)>, String> {
+pub fn scripts(root: &Path) -> Result<Vec<(String, String)>, String> {
     let directory = root.join("web/scripts");
     let entries = fs::read_dir(&directory)
         .map_err(|error| format!("cannot read {}: {error}", directory.display()))?;
@@ -29,7 +29,7 @@ pub fn scripts(root: &Path) -> Result<Vec<(String, String, String)>, String> {
         }
         let source = fs::read_to_string(directory.join(file))
             .map_err(|error| format!("cannot read {file}: {error}"))?;
-        scripts.push((name.to_owned(), file.to_owned(), source));
+        scripts.push((name.to_owned(), source));
     }
     scripts.sort();
     Ok(scripts)
@@ -39,36 +39,8 @@ fn sent_folder(root: &Path) -> PathBuf {
     root.join("target").join("smoke-coverage")
 }
 
-fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
-    let mut smokes = Vec::new();
-    for (name, file, source) in scripts(root)? {
-        let summary = source
-            .trim_start()
-            .strip_prefix("/**")
-            .map(|comment| {
-                comment
-                    .trim_start_matches(['*', ' ', '\r', '\n'])
-                    .lines()
-                    .next()
-                    .unwrap_or_default()
-                    .trim_end_matches("*/")
-                    .trim()
-                    .to_owned()
-            })
-            .filter(|summary| !summary.is_empty())
-            .ok_or_else(|| format!("{file} must open with a /** comment saying what it checks"))?;
-        smokes.push((name, summary));
-    }
-    Ok(smokes)
-}
-
-pub fn check(root: &Path) -> Result<(), String> {
-    let smokes = smokes(root)?;
-    println!(
-        "{} smoke checks, each opening with what it checks.",
-        smokes.len()
-    );
-    Ok(())
+fn smokes(root: &Path) -> Result<Vec<String>, String> {
+    Ok(scripts(root)?.into_iter().map(|(name, _)| name).collect())
 }
 
 #[expect(
@@ -85,8 +57,8 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
     while let Some(option) = given.next() {
         match option.as_str() {
             "--list" if options.len() == 1 => {
-                for (name, summary) in &smokes {
-                    println!("{name:24} {summary}");
+                for name in &smokes {
+                    println!("{name}");
                 }
                 return Ok(());
             }
@@ -115,10 +87,10 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
         return Err(usage.into());
     }
     if all {
-        names = smokes.iter().map(|(name, _)| name.as_str()).collect();
+        names = smokes.iter().map(String::as_str).collect();
     }
     for name in &names {
-        if !smokes.iter().any(|(smoke, _)| smoke == name) {
+        if !smokes.iter().any(|smoke| smoke == name) {
             return Err(format!(
                 "no smoke check named {name}; `cargo xtask smoke --list` lists them"
             )

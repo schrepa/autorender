@@ -137,7 +137,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
 fn error_codes() -> String {
     let codes: String = engine::ErrorCode::ALL
         .iter()
-        .map(|(_, code, _)| format!("\n  | \"{code}\""))
+        .map(|(_, code)| format!("\n  | \"{code}\""))
         .collect();
     let name = engine::JS_ERROR_NAME;
     format!(

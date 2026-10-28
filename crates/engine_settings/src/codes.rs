@@ -1,13 +1,13 @@
 macro_rules! error_codes {
-    ($($(#[doc = $doc:literal])+ $variant:ident => $code:literal,)*) => {
+    ($($variant:ident => $code:literal,)*) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum ErrorCode {
-            $($(#[doc = $doc])+ $variant,)*
+            $($variant,)*
         }
 
         impl ErrorCode {
-            pub const ALL: &'static [(ErrorCode, &'static str, &'static str)] = &[
-                $((ErrorCode::$variant, $code, concat!($($doc),+)),)*
+            pub const ALL: &'static [(ErrorCode, &'static str)] = &[
+                $((ErrorCode::$variant, $code),)*
             ];
 
             pub const fn as_str(self) -> &'static str {
@@ -19,15 +19,8 @@ macro_rules! error_codes {
             pub fn named(name: &str) -> Option<ErrorCode> {
                 Self::ALL
                     .iter()
-                    .find(|(_, code, _)| *code == name)
-                    .map(|(code, _, _)| *code)
-            }
-
-            pub fn description(self) -> &'static str {
-                Self::ALL
-                    .iter()
-                    .find(|(code, _, _)| *code == self)
-                    .map_or("", |(_, _, description)| description.trim())
+                    .find(|(_, code)| *code == name)
+                    .map(|(code, _)| *code)
             }
         }
     };
@@ -52,7 +45,7 @@ impl schemars::JsonSchema for ErrorCode {
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let codes: Vec<&str> = Self::ALL.iter().map(|&(_, code, _)| code).collect();
+        let codes: Vec<&str> = Self::ALL.iter().map(|&(_, code)| code).collect();
         schemars::json_schema!({
             "description": "An error's code, as replies name it.",
             "type": "string",

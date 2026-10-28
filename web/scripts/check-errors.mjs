@@ -30,7 +30,7 @@ for (const [patterns, paths] of checks) {
     read++;
     for (const pattern of patterns) {
       for (const match of text.matchAll(new RegExp(pattern, "g"))) {
-        if (!Object.hasOwn(errors, match[1])) unknown.push(`${path}: ${match[1]}`);
+        if (!errors.includes(match[1])) unknown.push(`${path}: ${match[1]}`);
       }
     }
   }
@@ -39,4 +39,4 @@ if (unknown.length) {
   console.error(`Error codes missing from the engine's catalog (crates/engine_settings/src/codes.rs):\n${unknown.join("\n")}`);
   process.exit(1);
 }
-console.log(`Every error code ${read} files name is in the catalog (${Object.keys(errors).length} codes).`);
+console.log(`Every error code ${read} files name is in the catalog (${errors.length} codes).`);

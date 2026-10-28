@@ -41,8 +41,6 @@ macro_rules! core_features {
         pub enum Feature {
             $(
                 $(#[$doc])*
-                #[doc = ""]
-                #[doc = concat!("Its plugin is `", stringify!($plugin), "`.")]
                 $variant,
             )*
         }

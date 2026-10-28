@@ -55,24 +55,16 @@ pub fn typescript() -> String {
         ("PANIC_PREFIX", PANIC_PREFIX),
         ("PANIC_GLOBAL", PANIC_GLOBAL),
     ] {
-        output.push_str(&constant(
-            name,
-            &format!("Rust's `engine_panic::{name}`."),
-            &value.into(),
-        ));
+        output.push_str(&constant(name, &value.into()));
     }
-    for (name, doc, value) in policy::constants() {
-        output.push_str(&constant(name, &doc, &value));
+    for (name, value) in policy::constants() {
+        output.push_str(&constant(name, &value));
     }
     let phases: serde_json::Map<String, serde_json::Value> = FramePhase::ALL
         .iter()
         .map(|&(phase, name)| (name.to_owned(), (phase as u32).into()))
         .collect();
-    output.push_str(&constant(
-        "FRAME_PHASES",
-        "What an animation frame did (Rust's `engine::host::FramePhase`), by name.",
-        &phases.into(),
-    ));
+    output.push_str(&constant("FRAME_PHASES", &phases.into()));
     let formats: serde_json::Map<String, serde_json::Value> = IMAGE_FORMATS
         .iter()
         .map(|format| {
@@ -85,19 +77,11 @@ pub fn typescript() -> String {
             (format.name.to_owned(), described)
         })
         .collect();
-    output.push_str(&constant(
-        "IMAGE_FORMATS",
-        "The image formats a scene's files may hold, and who decodes each on the\npage and natively (Rust's `engine::host::IMAGE_FORMATS`): the engine's\ndecoder, the browser's, the page's Basis transcoder, or none.",
-        &formats.into(),
-    ));
+    output.push_str(&constant("IMAGE_FORMATS", &formats.into()));
     let settings: serde_json::Map<String, serde_json::Value> = SETTINGS
         .iter()
         .map(|setting| (setting.name.to_owned(), setting.described().into()))
         .collect();
-    output.push_str(&constant(
-        "HOST_SETTINGS",
-        "The engine switches every host takes (Rust's `engine::host::SETTINGS`),\nwhich the engine reads from the page's parameters: each one's values and\nwhat it does.",
-        &settings.into(),
-    ));
+    output.push_str(&constant("HOST_SETTINGS", &settings.into()));
     output
 }

@@ -1255,49 +1255,12 @@ fn check_upload_structs(root: &Path) -> Result<(), String> {
     }
     let mut found = Vec::new();
     walk(&root.join("crates/engine_render/src"), &mut found);
-    let mut errors = Vec::new();
-    if !found.is_empty() {
-        errors.push(format!(
-            "upload structs belong in engine_render::gpu_layouts, where the GPU check sees them: {}",
-            found.join(", ")
-        ));
-    }
-    let layouts = root.join("crates/engine_render/src/gpu_layouts");
-    for entry in std::fs::read_dir(&layouts).into_iter().flatten().flatten() {
-        let Ok(text) = std::fs::read_to_string(entry.path()) else {
-            continue;
-        };
-        for (index, line) in text.lines().enumerate() {
-            let Some(doc) = line.trim_start().strip_prefix("///") else {
-                continue;
-            };
-            let words: Vec<&str> = doc
-                .split(|c: char| c.is_whitespace() || c == '-' || c == '(' || c == ')')
-                .collect();
-            if words.windows(2).any(|pair| {
-                pair[0].parse::<u64>().is_ok()
-                    && pair[1]
-                        .trim_end_matches(['.', ',', ';', ':'])
-                        .starts_with("byte")
-            }) {
-                errors.push(format!(
-                    "{}:{}: a doc restating a byte size; the GPU check holds sizes",
-                    entry
-                        .path()
-                        .strip_prefix(root)
-                        .unwrap_or(&entry.path())
-                        .display(),
-                    index + 1
-                ));
-            }
-        }
-    }
-    if errors.is_empty() {
+    if found.is_empty() {
         Ok(())
     } else {
-        Err(errors.join(
-            "
-",
+        Err(format!(
+            "upload structs belong in engine_render::gpu_layouts, where the GPU check sees them: {}",
+            found.join(", ")
         ))
     }
 }

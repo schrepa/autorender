@@ -225,12 +225,10 @@ macro_rules! entry_points {
     })*) => {
         pub mod entry {
             $(
-                #[doc = concat!("The entry points of [`", stringify!($module), "`](super::", stringify!($module), ").")]
                 #[expect(non_upper_case_globals, reason = "named as their WGSL functions")]
                 pub mod $rust {
                     use super::super::{Entry, Stage};
                     $($(
-                        #[doc = concat!("`", stringify!($name), "`, a ", stringify!($stage), " stage.")]
                         pub const $name: Entry = Entry {
                             module: stringify!($module),
                             name: stringify!($name),

@@ -22,7 +22,6 @@ const QUICK_STAGES: &[&str] = &[
     "bench",
     "equivalence matrix",
     "coverage",
-    "smoke descriptions",
     "path map",
     "features",
     "schedule ambiguities",
@@ -399,7 +398,7 @@ pub(crate) fn check(root: &Path) -> Result<(), String> {
     }
     let smokes: BTreeSet<String> = crate::smoke::scripts(root)?
         .into_iter()
-        .map(|(name, _, _)| name)
+        .map(|(name, _)| name)
         .collect();
     let tiers: BTreeMap<String, String> = crate::equivalence::tiers(root)?.into_iter().collect();
     let corpora: Vec<&str> = crate::pure::CORPORA

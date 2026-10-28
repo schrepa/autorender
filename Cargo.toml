@@ -92,9 +92,6 @@ allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
 missing_assert_message = "deny"
 
-[workspace.lints.rustdoc]
-all = "deny"
-
 [profile.release]
 lto = "thin"
 codegen-units = 1

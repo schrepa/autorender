@@ -79,11 +79,11 @@ macro_rules! export_game {
 macro_rules! __export_game {
     (
         { $(#[$meta:meta])* $vis:vis $name:ident $game:ty }
-        always_mut { $( $(#[doc = $am_doc:literal])* fn $am:ident($($am_arg:ident: $am_ty:ty),*) $(-> $am_ret:ty $(as $am_json:ty)?)?; )* }
-        always_ref { $( $(#[doc = $ar_doc:literal])* fn $ar:ident($($ar_arg:ident: $ar_ty:ty),*) $(-> $ar_ret:ty $(as $ar_json:ty)?)?; )* }
-        dev_mut { $( $(#[doc = $dm_doc:literal])* fn $dm:ident($($dm_arg:ident: $dm_ty:ty),*) $(-> $dm_ret:ty $(as $dm_json:ty)?)?; )* }
-        profiling_mut { $( $(#[doc = $pm_doc:literal])* fn $pm:ident($($pm_arg:ident: $pm_ty:ty),*) $(-> $pm_ret:ty $(as $pm_json:ty)?)?; )* }
-        profiling_ref { $( $(#[doc = $pr_doc:literal])* fn $pr:ident($($pr_arg:ident: $pr_ty:ty),*) $(-> $pr_ret:ty $(as $pr_json:ty)?)?; )* }
+        always_mut { $( fn $am:ident($($am_arg:ident: $am_ty:ty),*) $(-> $am_ret:ty $(as $am_json:ty)?)?; )* }
+        always_ref { $( fn $ar:ident($($ar_arg:ident: $ar_ty:ty),*) $(-> $ar_ret:ty $(as $ar_json:ty)?)?; )* }
+        dev_mut { $( fn $dm:ident($($dm_arg:ident: $dm_ty:ty),*) $(-> $dm_ret:ty $(as $dm_json:ty)?)?; )* }
+        profiling_mut { $( fn $pm:ident($($pm_arg:ident: $pm_ty:ty),*) $(-> $pm_ret:ty $(as $pm_json:ty)?)?; )* }
+        profiling_ref { $( fn $pr:ident($($pr_arg:ident: $pr_ty:ty),*) $(-> $pr_ret:ty $(as $pr_json:ty)?)?; )* }
     ) => {
         $(#[$meta])*
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
@@ -93,22 +93,22 @@ macro_rules! __export_game {
 
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
         impl $name {
-            $( $(#[doc = $am_doc])* pub fn $am(&mut self, $($am_arg: $am_ty),*) $(-> $am_ret)? { self.host.$am($($am_arg),*) } )*
-            $( $(#[doc = $ar_doc])* pub fn $ar(&self, $($ar_arg: $ar_ty),*) $(-> $ar_ret)? { self.host.$ar($($ar_arg),*) } )*
+            $( pub fn $am(&mut self, $($am_arg: $am_ty),*) $(-> $am_ret)? { self.host.$am($($am_arg),*) } )*
+            $( pub fn $ar(&self, $($ar_arg: $ar_ty),*) $(-> $ar_ret)? { self.host.$ar($($ar_arg),*) } )*
         }
 
         $crate::__if_dev! {
             #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
             impl $name {
-                $( $(#[doc = $dm_doc])* pub fn $dm(&mut self, $($dm_arg: $dm_ty),*) $(-> $dm_ret)? { self.host.$dm($($dm_arg),*) } )*
+                $( pub fn $dm(&mut self, $($dm_arg: $dm_ty),*) $(-> $dm_ret)? { self.host.$dm($($dm_arg),*) } )*
             }
         }
 
         $crate::__if_profiling! {
             #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
             impl $name {
-                $( $(#[doc = $pm_doc])* pub fn $pm(&mut self, $($pm_arg: $pm_ty),*) $(-> $pm_ret)? { self.host.$pm($($pm_arg),*) } )*
-                $( $(#[doc = $pr_doc])* pub fn $pr(&self, $($pr_arg: $pr_ty),*) $(-> $pr_ret)? { self.host.$pr($($pr_arg),*) } )*
+                $( pub fn $pm(&mut self, $($pm_arg: $pm_ty),*) $(-> $pm_ret)? { self.host.$pm($($pm_arg),*) } )*
+                $( pub fn $pr(&self, $($pr_arg: $pr_ty),*) $(-> $pr_ret)? { self.host.$pr($($pr_arg),*) } )*
             }
 
             #[global_allocator]
@@ -155,13 +155,12 @@ pub fn runtime_typescript() -> String {
 macro_rules! __surface_typescript {
     (
         {}
-        $( $group:ident { $( $(#[doc = $doc:literal])* fn $method:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty $(as $json:ty)?)?; )* } )*
+        $( $group:ident { $( fn $method:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty $(as $json:ty)?)?; )* } )*
     ) => {{
         let methods = [$( $(
             $crate::surface::SurfaceMethod {
                 group: stringify!($group),
                 name: stringify!($method),
-                doc: &[$($doc),*],
                 arguments: &[$((stringify!($arg), stringify!($ty))),*],
                 returns: [$(stringify!($ret))?].first().copied(),
                 json: [$($(stringify!($json))?)?].first().copied(),
@@ -176,7 +175,6 @@ macro_rules! __surface_typescript {
 pub struct SurfaceMethod {
     pub group: &'static str,
     pub name: &'static str,
-    pub doc: &'static [&'static str],
     pub arguments: &'static [(&'static str, &'static str)],
     pub returns: Option<&'static str>,
     pub json: Option<&'static str>,
@@ -204,9 +202,6 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
          export interface Runtime {\n",
     );
     for method in methods {
-        if !method.doc.is_empty() {
-            writeln!(output, "  /**{} */", method.doc.concat()).expect("strings write");
-        }
         let optional = if method.group.starts_with("always") {
             ""
         } else {
