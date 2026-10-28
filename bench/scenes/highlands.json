@@ -1,22 +1,8 @@
 {
-  "note": "The 8 km generated terrain streamed around the camera, with its generated material maps and no scanned rocks. Hot paths: terrain tile streaming and placement on job workers (cpu:terrain_stream, jobs.completed), 208k placed objects and 93k far ones (terrain.placed_objects, gpu:scatter), 69 resident tiles (terrain.tiles), water (gpu:water), volumetric clouds (gpu:clouds), ground cover, temporal antialiasing (gpu:taa_resolve) and one walking navigation agent. It settles slowly: about 50 s natively.",
+  "note": "The 8 km generated terrain streamed around the camera, with its generated material maps and no scanned rocks (kept locally for their license, so not every machine has them). Hot paths: terrain tile streaming and placement on job workers (cpu:terrain_stream, jobs.completed), 208k placed objects and 93k far ones (terrain.placed_objects, gpu:scatter), 69 resident tiles (terrain.tiles), water (gpu:water), volumetric clouds (gpu:clouds), ground cover, temporal antialiasing (gpu:taa_resolve) and one walking navigation agent. It settles slowly: about 50 s natively.",
+  "project": "examples/highlands",
   "options": {
-    "preset": "highlands",
-    "config": {
-      "seed": 1337,
-      "renderables": 4000,
-      "moving_percent": 10,
-      "hierarchy": true,
-      "interpolation": true,
-      "colliders": 0,
-      "sensor_percent": 0,
-      "dense_colliders": false,
-      "queries_per_tick": 0,
-      "mesh_variety": 32,
-      "textured": true,
-      "culling": true,
-      "scene": "highlands"
-    },
-    "view": "overview"
+    "view": "overview",
+    "rocks": "off"
   }
 }

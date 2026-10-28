@@ -31,7 +31,6 @@ const OPTICS: &[(&str, &str)] = &[
     ("crown_softness", "a shadow map lookup"),
     ("crown_spread", "a shadow map lookup"),
     ("debug_sun", "the debug view of the shadow lookups"),
-    ("decal_point", "the side of a decal's surface the eye sees"),
     ("distribution", "the BRDF's microfacets"),
     ("dominant_direction", "a highlight's reflection"),
     ("environment_brdf", "the BRDF's split sum"),
@@ -71,7 +70,6 @@ const OPTICS: &[(&str, &str)] = &[
     ("octahedral_coordinates", "encoding a normal facing the eye"),
     ("open_sky", "the sky along a view"),
     ("plane_visibility", "a shadow map lookup"),
-    ("shade_ocean_below", "the sea seen from under it"),
     ("shaped_light", "lighting by local lights"),
     ("sky", "the sky along a view"),
     ("sky_above", "the sky a surface facing the eye sees"),
@@ -92,7 +90,6 @@ const OPTICS: &[(&str, &str)] = &[
     ("texel_slope", "a shadow map lookup"),
     ("toward_viewer", "an impostor's frames, seen from the eye"),
     ("transmitted", "light through leaves toward the eye"),
-    ("transparent_targets", "refraction through glass"),
     (
         "underwater_cover",
         "the sea's water between a point and the eye",

@@ -26,7 +26,6 @@ const INTERNAL: &[&str] = &[
     "lod_input",
     "state_atmosphere_rules",
     "table_data",
-    "wind_waves",
 ];
 
 pub fn check(root: &Path) -> Result<(), String> {

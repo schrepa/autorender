@@ -33,7 +33,7 @@ const SHEET_GAP: usize = 8;
 
 const SHEET_BACKGROUND: u8 = 24;
 
-const FIELDS: [&str; 5] = ["note", "preset", "looks", "distances", "places"];
+const FIELDS: [&str; 5] = ["note", "project", "looks", "distances", "places"];
 
 const PLACE_FIELDS: [&str; 3] = ["name", "target", "yaw"];
 
@@ -80,7 +80,7 @@ fn options(arguments: &[String]) -> Result<Options, String> {
 }
 
 struct Ladder {
-    preset: String,
+    project: String,
     looks: Vec<String>,
     distances: Vec<f64>,
     places: Vec<Place>,
@@ -139,8 +139,11 @@ fn read_ladder(path: &Path) -> Result<(Ladder, Value), String> {
         )));
     }
     let list = |key: &str| file[key].as_array().filter(|items| !items.is_empty());
-    let preset = name(&file["preset"])
-        .ok_or_else(|| wrong("preset names the Stress Lab preset every run starts"))?;
+    let project = file["project"]
+        .as_str()
+        .filter(|project| !project.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| wrong("project names the game crate's folder every run starts"))?;
     let looks = list("looks")
         .and_then(|looks| looks.iter().map(name).collect::<Option<Vec<_>>>())
         .ok_or_else(|| wrong("looks lists the lighting presets each place is seen under"))?;
@@ -174,7 +177,7 @@ fn read_ladder(path: &Path) -> Result<(Ladder, Value), String> {
         ));
     }
     let ladder = Ladder {
-        preset,
+        project,
         looks,
         distances,
         places,
@@ -182,7 +185,11 @@ fn read_ladder(path: &Path) -> Result<(Ladder, Value), String> {
     Ok((ladder, file))
 }
 
-fn program(root: &Path, given: Option<&Path>) -> Result<(PathBuf, Value), String> {
+fn program(
+    root: &Path,
+    given: Option<&Path>,
+    project: &str,
+) -> Result<(PathBuf, Value), String> {
     if let Some(given) = given {
         let program = std::path::absolute(given)
             .map_err(|error| format!("cannot resolve {}: {error}", given.display()))?;
@@ -194,8 +201,9 @@ fn program(root: &Path, given: Option<&Path>) -> Result<(PathBuf, Value), String
     let sha = crate::measure::git(root, &["rev-parse", "HEAD"])?;
     let changed = crate::measure::git(root, &["status", "--porcelain", "--untracked-files=no"])?;
     let backend = std::env::var("WGPU_BACKEND").unwrap_or_default();
+    let project = crate::process::Project::read(root, project)?;
     let folder = root.join("target").join("ladder");
-    let mut build = crate::measure::build_arm(root, root, &folder, &sha, &backend)?;
+    let mut build = crate::measure::build_arm(root, root, &folder, &sha, &project, &backend)?;
     build["uncommitted_changes"] = (!changed.is_empty()).into();
     if cfg!(windows)
         && let Some(library) = crate::measure::dxc()
@@ -206,7 +214,7 @@ fn program(root: &Path, given: Option<&Path>) -> Result<(PathBuf, Value), String
                 .map_err(|error| format!("cannot copy {}: {error}", library.display()))?;
         }
     }
-    Ok((folder.join(crate::measure::program_name()), build))
+    Ok((folder.join(project.program()), build))
 }
 
 #[derive(Clone, Copy)]
@@ -282,7 +290,6 @@ impl Runner<'_> {
         let capture = self.folder.join(format!("{stem}.png"));
         let log = self.folder.join(format!("{stem}.log"));
         let mut arguments: Vec<String> = [
-            ("--preset", ladder.preset.clone()),
             ("--look", name.clone()),
             ("--view", eye.view()),
             ("--dynamic-resolution", "off".to_owned()),
@@ -772,7 +779,7 @@ pub fn ladder(root: &Path, arguments: &[String]) -> Result<(), String> {
     let folder = out.join("captures");
     fs::create_dir_all(&folder)
         .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
-    let (program, build) = program(root, options.program.as_deref())?;
+    let (program, build) = program(root, options.program.as_deref(), &ladder.project)?;
     let inputs = json!({
         "ladder": options.ladder.display().to_string(),
         "file": file,

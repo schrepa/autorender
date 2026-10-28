@@ -1,6 +1,6 @@
 // @ts-check
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { launchContext } from "./browser-launch.mjs";
 import { holdHeavyRun } from "./heavy-run.mjs";
@@ -16,7 +16,6 @@ const plan = JSON.parse(await readFile(planPath, "utf8"));
 const QUIET = 3;
 const TAIL = 30;
 const SETTLE_MS = 300_000;
-const FIXTURE = "/scenes/equivalence-fixture.scene.json";
 const NOT_WORK = new Set(["frame", "tick", "read_back_age", "simulation_ms", "extraction_ms", "render_ms"]);
 
 function work(stats, prefix = "", out = {}) {
@@ -49,7 +48,6 @@ async function ok(command) {
 function settling(capture) {
   if (capture === "exact") return { op: "render" };
   const [kind, value] = capture.split(":");
-  if (kind === "cpu") return { op: "present", alpha: Number(value) };
   if (kind === "gpu") return { op: "present", alpha: Number(value), gpu: true };
   return undefined;
 }
@@ -82,8 +80,7 @@ async function shoot(capture, file) {
     await page.locator("canvas").screenshot({ path: file });
     return { path: file, rendering: reply.result.rendering };
   } else {
-    const [kind, value] = capture.split(":");
-    fields = kind === "gpu" ? { alpha: Number(value), gpu: true } : { alpha: Number(value) };
+    fields = { alpha: Number(capture.split(":")[1]), gpu: true };
   }
   const result = await ok({ op: "capture", ...fields });
   await page.locator("canvas").screenshot({ path: file });
@@ -95,27 +92,19 @@ async function run(entry, folder) {
   const result = { cell: entry.cell, side: entry.side, index: entry.index, shots: {}, digests: {}, unsettled: [], error: null };
   await mkdir(folder, { recursive: true });
   await page.unrouteAll({ behavior: "ignoreErrors" });
-  await page.route("**/stress/rocks/**", route => route.fulfill({ status: 404, body: "" }));
+  /** @type {string[]} */
+  const withheld = entry.withheld;
+  await page.route(url => withheld.some(path => {
+    const requested = decodeURIComponent(url.pathname);
+    return path.endsWith("/") ? requested.startsWith(path) : requested === path;
+  }), route => route.fulfill({ status: 404, body: "" }));
   const query = new URLSearchParams({ engine_dev: "1", ...Object.fromEntries(Object.entries(entry.page).map(([key, value]) =>
     [key, typeof value === "string" ? value : JSON.stringify(value)])) });
-  if (entry.source) {
-    const sourcePath = resolve(entry.tree, entry.source);
-    const document = JSON.parse(await readFile(sourcePath, "utf8"));
-    const folderOfScene = dirname(sourcePath);
-    await page.route(`**${FIXTURE}*`, route => route.fulfill({ json: document }));
-    await page.route("**/scenes/**", async route => {
-      const path = new URL(route.request().url()).pathname;
-      if (path === FIXTURE) return route.fallback();
-      try { await route.fulfill({ body: await readFile(join(folderOfScene, decodeURIComponent(path.slice("/scenes/".length)))) }); }
-      catch { await route.fulfill({ status: 404, body: "" }); }
-    });
-    query.set("source", FIXTURE);
-  }
   try {
-    await page.goto(new URL(`stress.html?${query}`, `${entry.url.replace(/\/$/, "")}/`).href, { waitUntil: "domcontentloaded" });
-    await page.addStyleTag({ content: `.viewport { position: fixed !important; left: 0 !important; top: 0 !important;
-      width: ${plan.size[0]}px !important; height: ${plan.size[1]}px !important; border: 0 !important; border-radius: 0 !important; z-index: 10000; }
-      .viewport > :not(canvas) { visibility: hidden !important; }` });
+    await page.goto(new URL(`${entry.html}?${query}`, `${entry.url.replace(/\/$/, "")}/`).href, { waitUntil: "domcontentloaded" });
+    await page.addStyleTag({ content: `.engine-page #scene { position: fixed !important; inset: auto !important; left: 0 !important; top: 0 !important;
+      width: ${plan.size[0]}px !important; height: ${plan.size[1]}px !important; z-index: 10000; }
+      .engine-page .engine-hud, .engine-page .message { visibility: hidden !important; }` });
     await page.waitForFunction(() => window.__engineDev?.version !== undefined, null, { timeout: 600_000 });
     await ok({ op: "pause" });
     if (entry.environment) await ok({ op: "environment", merge: true, ...entry.environment });

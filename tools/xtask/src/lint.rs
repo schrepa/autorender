@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use crate::{
     authoring,
     pipeline::{QUICK, build_wasm, install_web_dependencies},
-    process::{DEV_FEATURES, NPM, WASM_TARGET, client_packages, run},
+    process::{DEV_FEATURES, NPM, WASM_TARGET, client_packages, clients, run},
     structure,
 };
 
@@ -93,9 +93,9 @@ pub(crate) const LINT: &[Stage] = &[
         run: crate::structure::check,
     },
     Stage {
-        name: "content locality",
+        name: "examples are leaves",
         needs: &[],
-        run: crate::locality::check,
+        run: crate::leaves::check,
     },
     Stage {
         name: "gpu",
@@ -115,17 +115,12 @@ pub(crate) const LINT: &[Stage] = &[
     Stage {
         name: "clippy native dev",
         needs: &[],
-        run: |root| clippy_native(root, "engine_native/dev,stress-lab/dev"),
+        run: |root| clippy_native(root, &["dev"]),
     },
     Stage {
         name: "clippy native profiling",
         needs: &[],
-        run: |root| {
-            clippy_native(
-                root,
-                "engine_native/dev,engine_native/profiling,stress-lab/dev,stress-lab/profiling",
-            )
-        },
+        run: |root| clippy_native(root, &["dev", "profiling"]),
     },
     Stage {
         name: "clippy wasm",
@@ -252,21 +247,28 @@ fn clippy(root: &Path, selection: &[&str]) -> Result<(), String> {
     run(root, "cargo", &arguments)
 }
 
-fn clippy_native(root: &Path, features: &str) -> Result<(), String> {
-    clippy(
-        root,
-        &[
-            "-p",
-            "engine_native",
-            "-p",
-            "engine_profiler",
-            "-p",
-            "stress-lab",
-            "--all-targets",
-            "--features",
-            features,
-        ],
-    )
+fn clippy_native(root: &Path, wanted: &[&str]) -> Result<(), String> {
+    let games: Vec<&str> = clients()
+        .iter()
+        .filter(|client| client.native.is_some())
+        .map(|client| client.package.as_str())
+        .collect();
+    let features: Vec<String> = ["engine_native"]
+        .into_iter()
+        .chain(games.iter().copied())
+        .flat_map(|package| {
+            wanted
+                .iter()
+                .map(move |feature| format!("{package}/{feature}"))
+        })
+        .collect();
+    let features = features.join(",");
+    let mut selection = vec!["-p", "engine_native", "-p", "engine_profiler"];
+    for game in &games {
+        selection.extend(["-p", *game]);
+    }
+    selection.extend(["--all-targets", "--features", features.as_str()]);
+    clippy(root, &selection)
 }
 
 fn clippy_wasm(root: &Path, development: bool) -> Result<(), String> {

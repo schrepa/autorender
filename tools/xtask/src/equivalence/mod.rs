@@ -121,11 +121,11 @@ fn options(arguments: &[String]) -> Result<Options, String> {
     Ok(options)
 }
 
-pub(crate) fn tiers(root: &Path) -> Result<Vec<(String, String)>, String> {
+pub(crate) fn tiers(root: &Path) -> Result<Vec<(String, String, String)>, String> {
     let (cells, _) = matrix::read_matrix(root)?;
     Ok(cells
         .into_iter()
-        .map(|cell| (cell.name, cell.tier))
+        .map(|cell| (cell.name, cell.tier, cell.project))
         .collect())
 }
 
@@ -138,15 +138,17 @@ fn default_base(root: &Path, rev: &str) -> Result<String, String> {
 pub fn equivalence(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let options = options(arguments)?;
     let cells = selected(root, &options)?;
+    let projects: BTreeSet<&str> = cells.iter().map(|cell| cell.project.as_str()).collect();
+    let projects: Vec<&str> = projects.into_iter().collect();
     let base_rev = match &options.base {
         Some(base) => base.clone(),
         None => default_base(root, options.candidate.as_deref().unwrap_or("HEAD"))?,
     };
-    let base = commit_side(root, "base", &base_rev)?;
+    let base = commit_side(root, "base", &base_rev, &projects)?;
     let candidate = match (&options.candidate, options.aa) {
         (_, true) => None,
-        (Some(rev), false) => Some(commit_side(root, "candidate", rev)?),
-        (None, false) => Some(working_tree(root)?),
+        (Some(rev), false) => Some(commit_side(root, "candidate", rev, &projects)?),
+        (None, false) => Some(working_tree(root, &projects)?),
     };
     let using: Vec<&str> = [&base]
         .into_iter()
@@ -443,10 +445,15 @@ fn report(
         })
         .collect();
     let side = |side: &Side| {
+        let programs: serde_json::Map<String, Value> = side
+            .programs
+            .iter()
+            .map(|(project, program)| (project.clone(), program.display().to_string().into()))
+            .collect();
         json!({
             "label": side.label,
             "sha": side.sha,
-            "program": side.program.display().to_string(),
+            "programs": programs,
         })
     };
     json!({

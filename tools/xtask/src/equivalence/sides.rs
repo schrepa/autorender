@@ -1,17 +1,14 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
 use super::FOLDER;
-use crate::bench;
 use crate::measure::{self, git, read_json};
-
-const PACKAGE: &str = "stress-lab";
-
-const PROGRAM: &str = "stress-lab-native";
+use crate::process::Project;
 
 const PROFILE: &str = "quick";
 
@@ -22,29 +19,30 @@ const KEEP_RUNS: usize = 6;
 pub(super) struct Side {
     pub(super) label: String,
     pub(super) sha: Option<String>,
-    pub(super) program: PathBuf,
+    pub(super) programs: BTreeMap<String, PathBuf>,
     pub(super) tree: PathBuf,
-    pub(super) assets: PathBuf,
+}
+
+impl Side {
+    pub(super) fn program(&self, project: &str) -> Result<&Path, String> {
+        self.programs
+            .get(project)
+            .map(PathBuf::as_path)
+            .ok_or_else(|| format!("{} built no program of project {project}", self.label))
+    }
 }
 
 fn build_program(
     tree: &Path,
     target: Option<&Path>,
     commit: &str,
+    project: &Project,
     into: &Path,
 ) -> Result<PathBuf, String> {
     let mut command = Command::new("cargo");
     command
-        .args([
-            "build",
-            "-p",
-            PACKAGE,
-            "--bin",
-            PROGRAM,
-            "--profile",
-            PROFILE,
-        ])
-        .args(["--features", FEATURES, "--locked"])
+        .args(["build", "-p", &project.package, "--bin", &project.native])
+        .args(["--profile", PROFILE, "--features", FEATURES, "--locked"])
         .env("ENGINE_COMMIT", commit)
         .current_dir(tree);
     if let Some(target) = target {
@@ -55,16 +53,17 @@ fn build_program(
         .map_err(|error| format!("cannot run cargo: {error}"))?;
     if !status.success() {
         return Err(format!(
-            "building {PROGRAM} in {} failed ({status})",
+            "building {} in {} failed ({status})",
+            project.native,
             tree.display()
         ));
     }
     let built = target
         .map_or_else(|| tree.join("target"), Path::to_path_buf)
         .join(PROFILE)
-        .join(measure::program_name());
+        .join(project.program());
     fs::create_dir_all(into).map_err(|error| error.to_string())?;
-    let program = into.join(measure::program_name());
+    let program = into.join(project.program());
     fs::copy(&built, &program)
         .map_err(|error| format!("cannot copy {}: {error}", built.display()))?;
     if let Some(library) = measure::dxc() {
@@ -77,21 +76,30 @@ fn build_program(
     Ok(program)
 }
 
-pub(super) fn working_tree(root: &Path) -> Result<Side, String> {
+pub(super) fn working_tree(root: &Path, projects: &[&str]) -> Result<Side, String> {
     let (_, commit) = crate::process::engine_commit();
     eprintln!("Building the working tree ({commit}).");
-    let program = build_program(root, None, &commit, &root.join(FOLDER).join("working-tree"))?;
-    let assets = bench::assets(root)?.folder;
+    let into = root.join(FOLDER).join("working-tree");
+    let mut programs = BTreeMap::new();
+    for folder in projects {
+        let project = Project::read(root, folder)?;
+        let program = build_program(root, None, &commit, &project, &into)?;
+        programs.insert((*folder).to_owned(), program);
+    }
     Ok(Side {
         label: format!("the working tree ({commit})"),
         sha: None,
-        program,
+        programs,
         tree: root.to_path_buf(),
-        assets,
     })
 }
 
-pub(super) fn commit_side(root: &Path, role: &str, rev: &str) -> Result<Side, String> {
+pub(super) fn commit_side(
+    root: &Path,
+    role: &str,
+    rev: &str,
+    projects: &[&str],
+) -> Result<Side, String> {
     let sha = git(
         root,
         &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
@@ -99,36 +107,43 @@ pub(super) fn commit_side(root: &Path, role: &str, rev: &str) -> Result<Side, St
     .map_err(|_| format!("{rev} names no commit"))?;
     let cache = root.join(FOLDER).join("builds").join(&sha);
     let record = cache.join("build.json");
-    let program = cache.join(measure::program_name());
-    let kept = read_json(&record).ok().filter(|build| {
-        cache.join("tree").is_dir()
-            && build["assets"]
-                .as_str()
-                .is_some_and(|assets| Path::new(assets).join("complete").is_file())
-            && measure::file_hash(&program).ok().as_deref() == build["artifact_hash"].as_str()
-    });
     let label = sha[..12].to_owned();
-    if let Some(build) = kept {
+    let mut wanted = BTreeMap::new();
+    for folder in projects {
+        let project = Project::at(root, &sha, folder)?;
+        wanted.insert((*folder).to_owned(), project);
+    }
+    let built = |build: &Value, project: &Project| {
+        let program = cache.join(project.program());
+        measure::file_hash(&program).ok().as_deref()
+            == build["programs"][project.program()].as_str()
+    };
+    let kept = read_json(&record).ok().filter(|build| {
+        cache.join("tree").is_dir() && wanted.values().all(|project| built(build, project))
+    });
+    let programs: BTreeMap<String, PathBuf> = wanted
+        .iter()
+        .map(|(folder, project)| (folder.clone(), cache.join(project.program())))
+        .collect();
+    if kept.is_some() {
         eprintln!("Reusing the build of {label} ({role}).");
         fs::write(cache.join("used"), measure::iso(SystemTime::now()))
             .map_err(|error| error.to_string())?;
         return Ok(Side {
             label,
-            program,
+            programs,
             tree: cache.join("tree"),
-            assets: PathBuf::from(build["assets"].as_str().unwrap_or_default()),
             sha: Some(sha),
         });
     }
     let tree = checkout_tree(root, "tree", &sha)?;
     eprintln!("Building {label} ({role}).");
-    let program = build_program(
-        &tree,
-        Some(&root.join(FOLDER).join("target")),
-        &label,
-        &cache,
-    )?;
-    let assets = bench::assets(&tree)?.folder;
+    let target = root.join(FOLDER).join("target");
+    let mut hashes = Map::new();
+    for project in wanted.values() {
+        let program = build_program(&tree, Some(&target), &label, project, &cache)?;
+        hashes.insert(project.program(), measure::file_hash(&program)?.into());
+    }
     let kept_tree = cache.join("tree");
     if kept_tree.exists() {
         fs::remove_dir_all(&kept_tree).map_err(|error| error.to_string())?;
@@ -140,8 +155,7 @@ pub(super) fn commit_side(root: &Path, role: &str, rev: &str) -> Result<Side, St
         "sha": sha,
         "profile": PROFILE,
         "features": [FEATURES],
-        "artifact_hash": measure::file_hash(&program)?,
-        "assets": assets.display().to_string(),
+        "programs": hashes,
     });
     fs::write(
         &record,
@@ -153,9 +167,8 @@ pub(super) fn commit_side(root: &Path, role: &str, rev: &str) -> Result<Side, St
     Ok(Side {
         label,
         sha: Some(sha),
-        program,
+        programs,
         tree: kept_tree,
-        assets,
     })
 }
 

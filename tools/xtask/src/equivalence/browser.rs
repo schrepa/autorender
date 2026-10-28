@@ -4,15 +4,20 @@ use std::process::Command;
 
 use serde_json::{Map, Value, json};
 
-use super::matrix::{Cell, Workload};
-use super::session::{Run, SETTINGS, Shot, scene_options};
+use super::matrix::Cell;
+use super::session::{Run, SETTINGS, Shot};
 use super::sides::{Side, checkout_tree};
+use crate::bench::Scene;
 use crate::heavy::HELD;
-use crate::measure::{self, read_json};
+use crate::measure::{self, git, read_json};
+use crate::process::Project;
 use crate::serve::Server;
+
+const PUBLIC: &str = "web/public";
 
 pub(super) struct Page {
     pub(super) server: Server,
+    pub(super) withheld: Vec<String>,
 }
 
 pub(super) fn serve(root: &Path, side: &Side, name: &str, folder: &Path) -> Result<Page, String> {
@@ -20,10 +25,26 @@ pub(super) fn serve(root: &Path, side: &Side, name: &str, folder: &Path) -> Resu
         Some(sha) => checkout_tree(root, name, sha)?,
         None => root.to_path_buf(),
     };
-    crate::bench::install(&tree, &side.assets)?;
+    let ignored = git(
+        &tree,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "--",
+            PUBLIC,
+        ],
+    )?;
+    let withheld = ignored
+        .lines()
+        .filter_map(|path| path.strip_prefix(PUBLIC))
+        .map(str::to_owned)
+        .collect();
     eprintln!("Serving {} for the browser leg.", side.label);
     let server = Server::page(&tree, &folder.join(format!("server-{name}.log")))?;
-    Ok(Page { server })
+    Ok(Page { server, withheld })
 }
 
 pub(super) fn size(root: &Path) -> Result<[u32; 2], String> {
@@ -39,20 +60,29 @@ fn page_parameters(cell: &Cell, side: &Side) -> Result<Map<String, Value>, Strin
     let mut parameters = Map::new();
     parameters.insert("workers".into(), json!("off"));
     let settings = read_json(&side.tree.join(SETTINGS))?;
-    for (name, value) in settings["options"].as_object().into_iter().flatten() {
-        if !["size", "rocks"].contains(&name.as_str()) {
+    let scene = Scene::read(&side.tree, &cell.scene)?;
+    for (name, value) in settings["options"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .chain(&scene.options)
+    {
+        if name != "size" {
             parameters.insert(name.clone(), switch(value));
         }
     }
-    if let Workload::Scene(_) = cell.workload {
-        parameters.extend(scene_options(cell, &side.tree)?);
-    }
     for (option, value) in &cell.options {
-        if option != "config" {
-            parameters.insert(option.clone(), json!(value));
-        }
+        parameters.insert(option.clone(), json!(value));
     }
     Ok(parameters)
+}
+
+fn game_page(root: &Path, cell: &Cell) -> Result<String, String> {
+    let project = Project::read(root, &cell.project)?;
+    project
+        .client()
+        .and_then(|client| client.page.clone())
+        .ok_or_else(|| format!("{}: project {} serves no page", cell.name, cell.project))
 }
 
 fn switch(value: &Value) -> Value {
@@ -71,6 +101,7 @@ pub(super) fn round(
     folder: &Path,
 ) -> Vec<Run> {
     let planned = || -> Result<Vec<Value>, String> {
+        let html = game_page(root, cell)?;
         runs.iter()
             .map(|(side, page, role, index)| {
                 Ok(json!({
@@ -78,12 +109,9 @@ pub(super) fn round(
                     "side": role,
                     "index": index,
                     "url": page.server.url,
-                    "tree": side.tree.display().to_string(),
+                    "html": html,
+                    "withheld": page.withheld,
                     "page": page_parameters(cell, side)?,
-                    "source": match &cell.workload {
-                        Workload::Source(source) => json!(source),
-                        Workload::Scene(_) => Value::Null,
-                    },
                     "environment": cell.environment,
                     "ticks": cell.ticks,
                     "views": cell.views.iter().map(|view| json!({"name": view.name, "camera": view.camera})).collect::<Vec<_>>(),

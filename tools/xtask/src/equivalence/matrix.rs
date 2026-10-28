@@ -7,12 +7,7 @@ use crate::measure::read_json;
 
 pub(super) const MATRIX: &str = "bench/equivalence.json";
 
-const CAPTURES: &str = "exact, cpu:ALPHA, gpu:ALPHA or display:FRAMES";
-
-pub(super) enum Workload {
-    Scene(String),
-    Source(String),
-}
+const CAPTURES: &str = "exact, gpu:ALPHA or display:FRAMES";
 
 pub(super) struct View {
     pub(super) name: String,
@@ -22,7 +17,6 @@ pub(super) struct View {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Capture {
     Exact,
-    Cpu(f64),
     Gpu(f64),
     Display(u32),
 }
@@ -37,7 +31,6 @@ impl Capture {
         };
         match text.split_once(':') {
             None if text == "exact" => Some(Self::Exact),
-            Some(("cpu", value)) => alpha(value).map(Self::Cpu),
             Some(("gpu", value)) => alpha(value).map(Self::Gpu),
             Some(("display", value)) => value
                 .parse()
@@ -51,7 +44,6 @@ impl Capture {
     pub(super) fn label(self) -> String {
         match self {
             Self::Exact => "exact".into(),
-            Self::Cpu(alpha) => format!("cpu:{alpha}"),
             Self::Gpu(alpha) => format!("gpu:{alpha}"),
             Self::Display(frames) => format!("display:{frames}"),
         }
@@ -61,7 +53,8 @@ impl Capture {
 pub(super) struct Cell {
     pub(super) name: String,
     pub(super) tier: String,
-    pub(super) workload: Workload,
+    pub(super) scene: String,
+    pub(super) project: String,
     pub(super) options: Vec<(String, String)>,
     pub(super) environment: Option<Value>,
     pub(super) ticks: u32,
@@ -89,7 +82,6 @@ const FIELDS: &[&str] = &[
     "tier",
     "note",
     "scene",
-    "source",
     "options",
     "environment",
     "ticks",
@@ -99,22 +91,9 @@ const FIELDS: &[&str] = &[
     "unstable",
 ];
 
-struct Known<'a> {
-    root: &'a Path,
-    views: Vec<String>,
-    switches: Vec<Value>,
-}
-
 pub(super) fn read_matrix(root: &Path) -> Result<(Vec<Cell>, Vec<String>), String> {
     let matrix = read_json(&root.join(MATRIX))?;
-    let known = Known {
-        root,
-        views: crate::bench::stress_choices(root, "views")?,
-        switches: read_json(&root.join("bench/options.json"))?["options"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default(),
-    };
+    let environment = environment_sections()?;
     let mut problems = Vec::new();
     if matrix["note"].as_str().is_none_or(str::is_empty) {
         problems.push(format!("{MATRIX}: a note says what it is"));
@@ -124,17 +103,15 @@ pub(super) fn read_matrix(root: &Path) -> Result<(Vec<Cell>, Vec<String>), Strin
         .into_iter()
         .flat_map(|fields| fields.keys())
     {
-        if !["note", "not_toggled", "cells"].contains(&field.as_str()) {
-            problems.push(format!(
-                "{MATRIX}: {field} is not a field (note, not_toggled, cells)"
-            ));
+        if !["note", "cells"].contains(&field.as_str()) {
+            problems.push(format!("{MATRIX}: {field} is not a field (note, cells)"));
         }
     }
     let mut names = BTreeSet::new();
     let mut cells = Vec::new();
     for (index, entry) in matrix["cells"].as_array().into_iter().flatten().enumerate() {
         let mut found = Vec::new();
-        let cell = cell(entry, &known, &mut found);
+        let cell = cell(entry, root, &environment, &mut found);
         if !names.insert(cell.name.clone()) {
             found.push("a name the matrix gives no other cell".into());
         }
@@ -145,76 +122,26 @@ pub(super) fn read_matrix(root: &Path) -> Result<(Vec<Cell>, Vec<String>), Strin
     if cells.is_empty() {
         problems.push(format!("{MATRIX}: cells lists the matrix's cells"));
     }
-    problems.extend(section_problems(&matrix, &cells)?);
     Ok((cells, problems))
 }
 
-fn section_problems(matrix: &Value, cells: &[Cell]) -> Result<Vec<String>, String> {
+fn environment_sections() -> Result<BTreeSet<String>, String> {
     let schema: Value = serde_json::from_str(&engine_scene::SceneDocument::schema_json())
         .map_err(|error| format!("the scene schema is not JSON: {error}"))?;
-    let environment: BTreeSet<&str> = schema["$defs"]["SceneEnvironment"]["properties"]
+    Ok(schema["$defs"]["SceneEnvironment"]["properties"]
         .as_object()
         .into_iter()
         .flatten()
-        .map(|(key, _)| key.as_str())
-        .collect();
-    let mut problems = Vec::new();
-    let mut toggled = BTreeSet::new();
-    for cell in cells {
-        for key in cell
-            .environment
-            .as_ref()
-            .and_then(Value::as_object)
-            .into_iter()
-            .flatten()
-            .map(|(key, _)| key.as_str())
-        {
-            if !environment.contains(key) {
-                problems.push(format!(
-                    "{MATRIX} {}: environment names {key}, which scene environments do not hold",
-                    cell.name
-                ));
-            }
-            toggled.insert(key);
-        }
-    }
-    let sections: BTreeSet<&str> = crate::coverage::environment_sections()
-        .iter()
-        .map(|(key, _)| *key)
-        .collect();
-    let not_toggled = matrix["not_toggled"].as_object();
-    for (key, reason) in not_toggled.into_iter().flatten() {
-        if !sections.contains(key.as_str()) {
-            problems.push(format!(
-                "{MATRIX}: not_toggled names {key}, which is no environment section"
-            ));
-        } else if toggled.contains(key.as_str()) {
-            problems.push(format!(
-                "{MATRIX}: not_toggled names {key}, which a cell's environment switches"
-            ));
-        }
-        if reason
-            .as_str()
-            .is_none_or(|reason| reason.trim().is_empty())
-        {
-            problems.push(format!(
-                "{MATRIX}: not_toggled {key} carries a written reason"
-            ));
-        }
-    }
-    for section in sections {
-        if !toggled.contains(section)
-            && !not_toggled.is_some_and(|listed| listed.contains_key(section))
-        {
-            problems.push(format!(
-                "{MATRIX}: no cell's environment switches the {section} section: add a variant, or list it under not_toggled with why"
-            ));
-        }
-    }
-    Ok(problems)
+        .map(|(key, _)| key.clone())
+        .collect())
 }
 
-fn cell(entry: &Value, known: &Known, problems: &mut Vec<String>) -> Cell {
+fn cell(
+    entry: &Value,
+    root: &Path,
+    sections: &BTreeSet<String>,
+    problems: &mut Vec<String>,
+) -> Cell {
     let name = entry["name"].as_str().unwrap_or_default().to_owned();
     if name.is_empty()
         || !name
@@ -239,20 +166,29 @@ fn cell(entry: &Value, known: &Known, problems: &mut Vec<String>) -> Cell {
     if entry["note"].as_str().is_none_or(str::is_empty) {
         problems.push("a note says what the cell covers".into());
     }
-    let workload = workload(entry, known.root, problems);
+    let (scene, project) = scene(entry, root, problems);
     let environment = match &entry["environment"] {
         Value::Null => None,
-        Value::Object(sections) if !sections.is_empty() => Some(entry["environment"].clone()),
+        Value::Object(fields) if !fields.is_empty() => {
+            for key in fields.keys().filter(|key| !sections.contains(*key)) {
+                problems.push(format!(
+                    "environment names {key}, which scene environments do not hold"
+                ));
+            }
+            Some(entry["environment"].clone())
+        }
         _ => {
             problems.push("environment holds sections by name".into());
             None
         }
     };
-    let views = views(entry, &workload, known, problems);
+    let views = views(entry, problems);
     let cell = Cell {
         name,
         tier,
-        options: options(entry, &known.switches, problems),
+        scene,
+        project,
+        options: options(entry, problems),
         environment,
         ticks: number(entry, "ticks", "a count", problems),
         captures: captures(entry, problems),
@@ -268,7 +204,6 @@ fn cell(entry: &Value, known: &Known, problems: &mut Vec<String>) -> Cell {
             .flatten()
             .map(|(key, reason)| (key.clone(), reason.as_str().unwrap_or_default().to_owned()))
             .collect(),
-        workload,
         views,
     };
     let keys = cell.keys();
@@ -298,79 +233,42 @@ fn cell(entry: &Value, known: &Known, problems: &mut Vec<String>) -> Cell {
     cell
 }
 
-fn workload(entry: &Value, root: &Path, problems: &mut Vec<String>) -> Workload {
-    match (entry["scene"].as_str(), entry["source"].as_str()) {
-        (Some(scene), None) => {
-            if !root.join(format!("bench/scenes/{scene}.json")).is_file() {
-                problems.push(format!("bench/scenes/{scene}.json does not exist"));
-            }
-            Workload::Scene(scene.to_owned())
-        }
-        (None, Some(source)) => {
-            if !(source.starts_with("bench/") || source.starts_with("web/scripts/fixtures/"))
-                || !root.join(source).is_file()
-            {
-                problems.push(format!(
-                    "source {source} is a scene file under bench/ or web/scripts/fixtures/"
-                ));
-            }
-            Workload::Source(source.to_owned())
-        }
-        _ => {
-            problems.push("names a bench scene (scene) or an authored scene file (source)".into());
-            Workload::Scene(String::new())
+fn scene(entry: &Value, root: &Path, problems: &mut Vec<String>) -> (String, String) {
+    let Some(scene) = entry["scene"].as_str() else {
+        problems.push("scene names a bench scene (bench/scenes/NAME.json)".into());
+        return (String::new(), String::new());
+    };
+    match crate::bench::Scene::read(root, scene) {
+        Ok(read) => (scene.to_owned(), read.project),
+        Err(error) => {
+            problems.push(error);
+            (scene.to_owned(), String::new())
         }
     }
 }
 
-fn options(entry: &Value, switches: &[Value], problems: &mut Vec<String>) -> Vec<(String, String)> {
+fn options(entry: &Value, problems: &mut Vec<String>) -> Vec<(String, String)> {
     let mut options = Vec::new();
     for (option, value) in entry["options"].as_object().into_iter().flatten() {
-        let text = match value {
-            Value::String(text) => text.clone(),
-            Value::Bool(true) => "on".into(),
-            Value::Bool(false) => "off".into(),
-            other => other.to_string(),
-        };
-        match switches.iter().find(|switch| switch["name"] == *option) {
-            Some(switch)
-                if !switch["values"]
-                    .as_array()
-                    .is_some_and(|values| values.iter().any(|known| *known == *text)) =>
-            {
-                problems.push(format!(
-                    "option {option} is one of bench/options.json's values, not {text}"
-                ));
-            }
-            Some(_) => {}
-            None if option == "config" && value.is_object() => {}
-            None => problems.push(format!(
-                "option {option} is a switch of bench/options.json, or config"
-            )),
+        let text = crate::bench::switch(value);
+        if let Some(values) = crate::bench::setting_values(option)
+            && !values.contains(&text.as_str())
+        {
+            problems.push(format!(
+                "option {option} is one of {}, not {text}",
+                values.join(", ")
+            ));
         }
         options.push((option.clone(), text));
     }
     options
 }
 
-fn views(
-    entry: &Value,
-    workload: &Workload,
-    known: &Known,
-    problems: &mut Vec<String>,
-) -> Vec<View> {
+fn views(entry: &Value, problems: &mut Vec<String>) -> Vec<View> {
     let mut views = Vec::new();
     for view in entry["views"].as_array().into_iter().flatten() {
         match view {
-            Value::String(name) => {
-                if name != "scene"
-                    && (matches!(workload, Workload::Source(_)) || !known.views.contains(name))
-                {
-                    problems.push(format!(
-                        "view {name} is scene, or for bench scenes one of {}",
-                        known.views.join(", ")
-                    ));
-                }
+            Value::String(name) if !name.is_empty() => {
                 views.push(View {
                     name: name.clone(),
                     camera: None,
@@ -385,9 +283,7 @@ fn views(
                     camera: Some(fields["camera"].clone()),
                 });
             }
-            _ => {
-                problems.push("a view is scene, a Stress Lab view's name, or {name, camera}".into())
-            }
+            _ => problems.push("a view is scene, the game's view name, or {name, camera}".into()),
         }
     }
     let names: BTreeSet<&str> = views.iter().map(|view| view.name.as_str()).collect();

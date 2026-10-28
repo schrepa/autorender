@@ -130,7 +130,24 @@ fn working_commit(root: &Path, folder: &Path) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-fn measure_task(sha: &str) -> (Value, Value) {
+fn first_scene(root: &Path) -> Result<String, String> {
+    let folder = root.join("bench").join("scenes");
+    let mut scenes: Vec<String> = fs::read_dir(&folder)
+        .map_err(|error| format!("cannot read {}: {error}", folder.display()))?
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.strip_suffix(".json").map(str::to_owned)
+        })
+        .collect();
+    scenes.sort();
+    scenes
+        .into_iter()
+        .next()
+        .ok_or_else(|| "bench/scenes holds no scene".to_owned())
+}
+
+fn measure_task(sha: &str, scene: &str) -> (Value, Value) {
     let api = if cfg!(windows) {
         "d3d12"
     } else if cfg!(target_os = "macos") {
@@ -155,14 +172,14 @@ fn measure_task(sha: &str) -> (Value, Value) {
             "want": {"profiles": false, "shader_report": false},
             "checks": [],
             "workloads": [{
-                "name": "field-90k",
+                "name": scene,
                 "feature": "none",
                 "arms": {"base": arm, "candidate": arm},
                 "workload": {
-                    "scene": "field-90k",
+                    "scene": scene,
                     "settings": "default",
                     "runtimes": {"native": {"args": [
-                        "--scene", "bench/scenes/field-90k.json",
+                        "--scene", format!("bench/scenes/{scene}.json"),
                         "--settings", "bench/settings/default.json",
                     ]}},
                     "settle": {
@@ -191,7 +208,7 @@ fn write(path: &Path, value: &Value) -> Result<PathBuf, String> {
 
 fn measure_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, String> {
     fs::create_dir_all(folder).map_err(|error| error.to_string())?;
-    let (task, profile) = measure_task(sha);
+    let (task, profile) = measure_task(sha, &first_scene(root)?);
     let task = write(&folder.join("task.json"), &task)?;
     let profile = write(&folder.join("profile.json"), &profile)?;
     let out = folder.join("report.json");

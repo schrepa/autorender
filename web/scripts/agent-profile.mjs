@@ -50,7 +50,7 @@ export async function captureProfile({ page, requestBrowser, command, artifacts,
   if (!before.ok) return before;
   if (before.result?.paused !== true) throw new AgentError("pause_required", "Pause before starting a controlled profiling capture.");
   const available = await page.evaluate(() => typeof window.__engineProfile?.start === "function");
-  if (!available) throw new AgentError("profiling_unavailable", "Use cargo xtask profile and the profiling build's stress.html.");
+  if (!available) throw new AgentError("profiling_unavailable", "Use cargo xtask profile and the profiling build's game page.");
   const browser = await page.context().newCDPSession(page);
   let resumed = false, sampling = false, stoppedProfile, report;
   const cpuSamples = command.cpu_samples ?? true;

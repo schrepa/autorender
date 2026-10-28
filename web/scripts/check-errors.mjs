@@ -15,12 +15,14 @@ async function files(folder, suffix) {
   return names.filter(name => name.endsWith(suffix)).map(name => `${folder}/${name.replaceAll("\\", "/")}`);
 }
 
+const clients = JSON.parse(await readFile(`${web}src/generated/clients.json`, "utf8"));
+const games = clients.map(client => client.folder).filter(folder => folder && !folder.startsWith("crates/"));
 const scripts = (await readdir(`${web}scripts`)).filter(name => name.endsWith(".mjs") && !name.startsWith("zz-"));
 const checks = [
   [made, (await files("web/src", ".ts")).filter(path => !path.startsWith("web/src/generated/"))],
   [made, scripts.filter(name => !name.endsWith("-smoke.mjs")).map(name => `web/scripts/${name}`)],
   [expected, scripts.filter(name => name.endsWith("-smoke.mjs")).map(name => `web/scripts/${name}`)],
-  [written, [...await files("crates", ".rs"), ...await files("apps", ".rs")]],
+  [written, [...await files("crates", ".rs"), ...(await Promise.all(games.map(folder => files(folder, ".rs")))).flat()]],
 ];
 const unknown = [];
 let read = 0;

@@ -131,9 +131,6 @@ pub fn run(
     let (mut entries, mut incomplete) = (Vec::new(), false);
     for (sha, checks) in by_commit {
         let source = checkout(root, sha, None)?;
-        if let Err(error) = crate::bench::generated(root, &source, sha) {
-            eprintln!("The files {sha}'s pages read are missing: {error}");
-        }
         eprintln!("Starting the development server of {sha}.");
         let log = folder.join(format!("server-{}.log", &sha[..12]));
         let server = start_server(&source, sha, &log);

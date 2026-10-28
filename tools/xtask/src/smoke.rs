@@ -35,12 +35,45 @@ pub fn scripts(root: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(scripts)
 }
 
+pub fn checks(root: &Path, project: &str) -> Result<Vec<(String, PathBuf)>, String> {
+    let directory = root.join(project).join("checks");
+    let entries = match fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("cannot read {}: {error}", directory.display())),
+    };
+    let mut checks = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|error| format!("cannot read a check entry: {error}"))?
+            .path();
+        let name = path
+            .file_name()
+            .and_then(|file| file.to_str())
+            .and_then(|file| file.strip_suffix(".mjs"));
+        if let Some(name) = name {
+            checks.push((name.to_owned(), path.clone()));
+        }
+    }
+    checks.sort();
+    Ok(checks)
+}
+
 fn sent_folder(root: &Path) -> PathBuf {
     root.join("target").join("smoke-coverage")
 }
 
-fn smokes(root: &Path) -> Result<Vec<String>, String> {
-    Ok(scripts(root)?.into_iter().map(|(name, _)| name).collect())
+fn smokes(root: &Path, project: Option<&str>) -> Result<Vec<(String, PathBuf)>, String> {
+    match project {
+        Some(project) => checks(root, project),
+        None => Ok(scripts(root)?
+            .into_iter()
+            .map(|(name, _)| {
+                let path = root.join("web/scripts").join(format!("{name}-smoke.mjs"));
+                (name, path)
+            })
+            .collect()),
+    }
 }
 
 #[expect(
@@ -48,8 +81,9 @@ fn smokes(root: &Path) -> Result<Vec<String>, String> {
     reason = "longer than the line ceiling; it may only shrink"
 )]
 pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
-    let usage = "usage: smoke --list | [--serve] [--keep-going] [--native-profile PROFILE] (--all | NAME...)";
-    let smokes = smokes(root)?;
+    let usage = "usage: smoke [--project DIR] --list | [--project DIR] [--serve] [--keep-going] [--native-profile PROFILE] (--all | NAME...)";
+    let (project, options) = crate::process::project_option(options)?;
+    let smokes = smokes(root, project.as_deref())?;
     let (mut serve, mut keep_going, mut all) = (false, false, false);
     let mut native_profile = None;
     let mut names: Vec<&str> = Vec::new();
@@ -57,7 +91,7 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
     while let Some(option) = given.next() {
         match option.as_str() {
             "--list" if options.len() == 1 => {
-                for name in &smokes {
+                for (name, _) in &smokes {
                     println!("{name}");
                 }
                 return Ok(());
@@ -87,10 +121,10 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
         return Err(usage.into());
     }
     if all {
-        names = smokes.iter().map(String::as_str).collect();
+        names = smokes.iter().map(|(name, _)| name.as_str()).collect();
     }
     for name in &names {
-        if !smokes.iter().any(|smoke| smoke == name) {
+        if !smokes.iter().any(|(smoke, _)| smoke == name) {
             return Err(format!(
                 "no smoke check named {name}; `cargo xtask smoke --list` lists them"
             )
@@ -110,7 +144,11 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
     let _heavy = HeavyRun::hold(&format!("cargo xtask smoke {}", names.join(" ")))?;
     let mut results: Vec<(&str, Option<i32>, Duration)> = Vec::new();
     for name in &names {
-        let script = format!("scripts/{name}-smoke.mjs");
+        let script = smokes
+            .iter()
+            .find(|(smoke, _)| smoke == name)
+            .map(|(_, path)| path.display().to_string())
+            .unwrap_or_default();
         println!("smoke {name}");
         let started = Instant::now();
         let mut command = Command::new("node");

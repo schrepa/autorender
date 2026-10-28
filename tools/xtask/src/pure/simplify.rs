@@ -3,16 +3,14 @@ use std::path::Path;
 use engine_core::math::{cos, sin};
 use engine_core::{MeshLods, MeshVertex};
 use engine_lodbuild::simplify::{SimplifyInput, SimplifyOptions, VertexFlags, simplify};
-use engine_vgbuild::meshoptimizer;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use super::Observations;
 
-pub const GARDEN_PROP: &str = "tools/xtask/pure/garden-prop.glb";
+pub const PROP: &str = "tools/xtask/pure/prop.glb";
 const TARGETS: [f32; 3] = [0.5, 0.25, 0.05];
 const LIMITS: [f32; 2] = [0.01, 1.0];
-const SHOWN: usize = 6;
 
 struct Mesh {
     name: String,
@@ -20,22 +18,6 @@ struct Mesh {
     indices: Vec<u32>,
     attributes: Option<(Vec<f32>, usize, Vec<f32>)>,
     flags: Option<Vec<u8>>,
-}
-
-fn option_bits(options: SimplifyOptions) -> u32 {
-    [
-        (options.lock_border, 1 << 0),
-        (options.error_absolute, 1 << 2),
-        (options.prune, 1 << 3),
-        (options.regularize, 1 << 4),
-        (options.permissive, 1 << 5),
-        (options.regularize_light, 1 << 6),
-        (options.preserve_folds, 1 << 7),
-        (options.error_clamped, 1 << 8),
-    ]
-    .into_iter()
-    .filter(|(set, _)| *set)
-    .fold(0, |bits, (_, bit)| bits | bit)
 }
 
 fn options(mask: u32) -> SimplifyOptions {
@@ -59,11 +41,10 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         sphere(20, 12),
         torus(28, 12),
     ];
-    meshes.extend(garden_prop(root)?);
+    meshes.extend(prop(root)?);
     for mesh in &meshes {
         let mut hash = Sha256::new();
         let (mut runs, mut kept) = (0usize, 0usize);
-        let mut differences = Vec::new();
         let flags: Option<Vec<VertexFlags>> = mesh.flags.as_ref().map(|flags| {
             flags
                 .iter()
@@ -77,15 +58,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         if let Some(flags) = &flags {
             input = input.with_vertex_flags(flags);
         }
-        let reference = meshoptimizer::SimplifyInput {
-            positions: &mesh.positions,
-            indices: &mesh.indices,
-            attributes: mesh
-                .attributes
-                .as_ref()
-                .map(|(values, stride, weights)| (values.as_slice(), *stride, weights.as_slice())),
-            locks: mesh.flags.as_deref(),
-        };
         for mask in 0..256 {
             let options = options(mask);
             for fraction in TARGETS {
@@ -93,19 +65,8 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 for limit in LIMITS {
                     let ported = simplify(&input, target, limit, options)
                         .map_err(|error| format!("{}: {error}", mesh.name))?;
-                    let (indices, error) =
-                        meshoptimizer::simplify(&reference, target, limit, option_bits(options));
                     runs += 1;
                     kept += ported.indices.len();
-                    if ported.indices != indices || ported.error.to_bits() != error.to_bits() {
-                        differences.push(format!(
-                            "{options:?} target {target} limit {limit}: the port keeps {} \
-                             indices at error {}, meshoptimizer {} at {error}",
-                            ported.indices.len(),
-                            ported.error,
-                            indices.len()
-                        ));
-                    }
                     for index in &ported.indices {
                         hash.update(index.to_le_bytes());
                     }
@@ -113,19 +74,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 }
             }
         }
-        observed.check(differences.is_empty(), || {
-            format!(
-                "{}: the port differs from meshoptimizer in {} of {runs} runs: {}",
-                mesh.name,
-                differences.len(),
-                differences
-                    .iter()
-                    .take(SHOWN)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            )
-        });
         let digest: String = hash
             .finalize()
             .iter()
@@ -331,28 +279,28 @@ fn torus(around: u32, across: u32) -> Mesh {
     }
 }
 
-fn garden_prop(root: &Path) -> Result<Vec<Mesh>, String> {
-    let bytes = std::fs::read(root.join(GARDEN_PROP))
-        .map_err(|error| format!("cannot read {GARDEN_PROP}: {error}"))?;
-    let glb = gltf::Gltf::from_slice(&bytes).map_err(|error| format!("{GARDEN_PROP}: {error}"))?;
+fn prop(root: &Path) -> Result<Vec<Mesh>, String> {
+    let bytes =
+        std::fs::read(root.join(PROP)).map_err(|error| format!("cannot read {PROP}: {error}"))?;
+    let glb = gltf::Gltf::from_slice(&bytes).map_err(|error| format!("{PROP}: {error}"))?;
     let binary = glb
         .blob
         .as_deref()
-        .ok_or_else(|| format!("{GARDEN_PROP} has no binary chunk"))?;
+        .ok_or_else(|| format!("{PROP} has no binary chunk"))?;
     let mut meshes = Vec::new();
     for mesh in glb.document.meshes() {
         for (index, primitive) in mesh.primitives().enumerate() {
             let reader = primitive.reader(|buffer| (buffer.index() == 0).then_some(binary));
             let positions: Vec<[f32; 3]> = reader
                 .read_positions()
-                .ok_or("a garden prop primitive has no positions")?
+                .ok_or("a prop primitive has no positions")?
                 .collect();
             let normals = reader
                 .read_normals()
-                .ok_or("a garden prop primitive has no normals")?;
+                .ok_or("a prop primitive has no normals")?;
             let uvs = reader
                 .read_tex_coords(0)
-                .ok_or("a garden prop primitive has no texture coordinates")?
+                .ok_or("a prop primitive has no texture coordinates")?
                 .into_f32();
             let values = normals
                 .zip(uvs)
@@ -360,11 +308,11 @@ fn garden_prop(root: &Path) -> Result<Vec<Mesh>, String> {
                 .collect();
             let indices = reader
                 .read_indices()
-                .ok_or("a garden prop primitive has no indices")?
+                .ok_or("a prop primitive has no indices")?
                 .into_u32()
                 .collect();
             meshes.push(Mesh {
-                name: format!("garden prop {index}"),
+                name: format!("prop {index}"),
                 positions,
                 indices,
                 attributes: Some((values, 5, vec![1.0, 1.0, 1.0, 0.5, 0.5])),

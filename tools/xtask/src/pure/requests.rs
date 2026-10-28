@@ -55,10 +55,7 @@ const UNREACHED: &[(&str, &str)] = &[
     ("command_timeout", BRIDGE),
     ("content_type", BRIDGE),
     ("duplicate_request", BRIDGE),
-    (
-        "game_rule",
-        "a game's own refusal (engine::Error::game_rule): the lod smoke's unknown preset reaches it",
-    ),
+    ("game_rule", "a game's own refusal (engine::Error::game_rule)"),
     (
         "invalid_arguments",
         "hosts' and tools' command lines answer it (crates/engine_native/src/options.rs)",

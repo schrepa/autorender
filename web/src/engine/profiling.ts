@@ -11,7 +11,7 @@ type Memory = { timestamp_ms: number; wasm_linear_bytes: number | null; js_heap:
 type TraceEvent = { name: string; ph: string; pid: number; tid: number; ts?: number; dur?: number; cat?: string; s?: string; args: JsonObject };
 type ProfileOptions = { duration_ms?: number; max_events?: number };
 export type DetailedProfileReport = {
-  version: 1; kind: "stress_detailed_profile"; complete: boolean; reason: string; started_at: string;
+  version: 1; kind: "detailed_profile"; complete: boolean; reason: string; started_at: string;
   metadata: JsonObject; capabilities: JsonObject; timing: JsonObject; bounds: JsonObject;
   raw_rust: RustCapture | null; browser: { entries: BrowserEntry[]; frames: Frame[]; memory: Memory[]; dropped_entries: number; dropped_frames: number };
   traceEvents: TraceEvent[]; displayTimeUnit: "ms"; summary: JsonObject; errors: string[];
@@ -170,7 +170,7 @@ export class DetailedProfiler {
       for (const observer of this.observers) observer.disconnect();
       this.observers = []; this.phase = "idle";
       const failure: DetailedProfileReport = {
-        version: 1, kind: "stress_detailed_profile", complete: false, reason: "capture_failed", started_at: this.startedAt,
+        version: 1, kind: "detailed_profile", complete: false, reason: "capture_failed", started_at: this.startedAt,
         metadata: this.metadata, capabilities: this.capabilities, timing: { browser_start_ms: this.started, browser_end_ms: this.ended },
         bounds: this.options, raw_rust: null,
         browser: { entries: this.entries, frames: this.frames, memory: this.memories, dropped_entries: this.droppedEntries, dropped_frames: this.droppedFrames },
@@ -211,7 +211,7 @@ export class DetailedProfiler {
     const summary = { cpu_events: raw?.cpu.events.length ?? 0, dropped_cpu_events: raw?.cpu.dropped_events ?? 0, host_frames: this.frames.length, browser_entries: this.entries.length,
       gpu: gpuSummary, allocations: raw?.cpu.allocations_delta ?? null, memory_start: this.memories[0] ?? null, memory_end: this.memories.at(-1) ?? null };
     const result: DetailedProfileReport = {
-      version: 1, kind: "stress_detailed_profile", complete, reason, started_at: this.startedAt, metadata: this.metadata, capabilities: this.capabilities,
+      version: 1, kind: "detailed_profile", complete, reason, started_at: this.startedAt, metadata: this.metadata, capabilities: this.capabilities,
       timing: { browser_time_origin_ms: performance.timeOrigin, browser_start_ms: this.started, browser_end_ms: this.ended,
         cpu_clock: "Rust and browser spans use window performance.now milliseconds; trace timestamps are microseconds from that same origin", gpu_clock: "GPU elapsed durations remain in raw_rust.gpu. GPU timestamps have no calibrated CPU correlation. Trace GPU duration counters are positioned at their associated CPU frame solely for attribution; they are not GPU start times or execution spans. Samples without a matching CPU frame remain only in raw data.",
         overhead: "Profiling scopes, allocator atomics, GPU queries/readback, bounded JS frame records, four-Hz memory reads, browser observers and the ordinary HUD add overhead. CPU/Rust buffers serialize once after stop; trace conversion/export occurs after capture. Host spans include Wasm and HUD; nested spans must not be summed. No per-entity instrumentation.",
