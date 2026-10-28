@@ -43,9 +43,13 @@ fn water_turbulent_slopes(depth: f32, stirring: f32) -> f32 {
 // The detail waves' smallest wavelength (meters): where surface tension
 // takes over from gravity, 1.7 centimeters, below which ripples die within
 // their own length; the most octaves from the eddies' size down to it; the
-// seconds the current carries a pattern before a fresh one takes over (a
-// flow map's phase, Vlachos 2010), as long as a pattern stretches little in
-// water whose speed changes over meters; the root mean square of the
+// wavelengths a pattern rides a current of WATER_DETAIL_CURRENT meters a
+// second before a fresh one takes over (a flow map's phase, Vlachos 2010),
+// each octave's phase as long as that takes it, so a pattern moves a few of
+// its own lengths before it renews, never far enough for its own reset to
+// show as a jump or for the current's shear to stretch it, and no shorter
+// or longer than WATER_DETAIL_PHASES seconds, so it neither flickers from
+// frame to frame nor lingers; the root mean square of the
 // noise's gradient and of its value, by which its octaves are scaled to the
 // slopes they carry; and the pixels a wavelength spans on screen from
 // which an octave draws, and from which it draws whole: gradient noise's
@@ -54,7 +58,9 @@ fn water_turbulent_slopes(depth: f32, stirring: f32) -> f32 {
 // rest is roughness, as a pattern finer than that averages out.
 const WATER_DETAIL_SMALLEST: f32 = 0.017;
 const WATER_DETAIL_OCTAVES: u32 = 7u;
-const WATER_DETAIL_PHASE: f32 = 1.0;
+const WATER_DETAIL_RIDE: f32 = 4.0;
+const WATER_DETAIL_CURRENT: f32 = 2.0;
+const WATER_DETAIL_PHASES: vec2<f32> = vec2<f32>(0.15, 2.0);
 const WATER_DETAIL_GRADIENT: f32 = 1.2;
 const WATER_DETAIL_VALUE: f32 = 0.25;
 const WATER_DETAIL_SHOWN: vec2<f32> = vec2<f32>(8.0, 16.0);
@@ -89,11 +95,23 @@ fn water_noise_gradient(corner: vec2<u32>, seed: u32) -> vec2<f32> {
     return vec2<f32>(cos(turn), sin(turn));
 }
 
-// The share of its pattern each of a flow map's two phases shows at `time`
-// seconds (`water_detail`): rising from none as it begins to all of it
-// halfway through its phase and back, the second half a phase behind.
-fn water_detail_phases(time: f32) -> vec2<f32> {
-    let cycle = time / WATER_DETAIL_PHASE;
+// The seconds a flow map's phase lasts for the detail waves' octave of
+// wavelength `wavelength` (meters): as long as a current of
+// WATER_DETAIL_CURRENT takes to carry it WATER_DETAIL_RIDE of its lengths,
+// within WATER_DETAIL_PHASES. Fixed for each octave, as anything dividing
+// the clock where each pixel stands would land elsewhere from pixel to
+// pixel.
+fn water_detail_phase(wavelength: f32) -> f32 {
+    return clamp(WATER_DETAIL_RIDE * wavelength / WATER_DETAIL_CURRENT,
+        WATER_DETAIL_PHASES.x, WATER_DETAIL_PHASES.y);
+}
+
+// The share of its pattern each of a flow map's two phases `seconds` long
+// shows at `time` seconds (`water_detail`): rising from none as it begins
+// to all of it halfway through its phase and back, the second half a phase
+// behind.
+fn water_detail_phases(time: f32, seconds: f32) -> vec2<f32> {
+    let cycle = time / seconds;
     return 1.0 - abs(2.0 * fract(vec2<f32>(cycle, cycle + 0.5)) - 1.0);
 }
 
@@ -126,8 +144,8 @@ struct WaterDetail {
 // than waves stand before they break (WATER_STEEPEST); laid in the world's
 // own axes, as anything turned by the current where each pixel stands would
 // turn about the world's origin, kilometers off, and land elsewhere from
-// pixel to pixel; carried by the current over WATER_DETAIL_PHASE in two
-// phases half a phase apart, each
+// pixel to pixel; carried by the current over its octave's phase
+// (`water_detail_phase`) in two phases half a phase apart, each
 // fresh pattern taking over as the other fades (`water_detail_phases`),
 // blended keeping their variance (Heitz and Neyret 2018), so the waves ride
 // the current and never stretch. An octave draws while its wavelength spans
@@ -142,7 +160,6 @@ fn water_detail(world: vec3<f32>, flow: vec2<f32>, depth: f32, stirring: f32, ac
         0.5 * WATER_STEEPEST * WATER_STEEPEST / octaves);
     let variance = each * octaves;
     let steep = sqrt(each) / WATER_DETAIL_GRADIENT;
-    let phases = water_detail_phases(time);
     var slope = vec2<f32>(0.0);
     var crest = 0.0;
     var drawn = 0.0;
@@ -154,21 +171,24 @@ fn water_detail(world: vec3<f32>, flow: vec2<f32>, depth: f32, stirring: f32, ac
         drawn += each * raised * shows * shows;
         hidden += each * raised * (1.0 - shows * shows);
         if shows * raised > 0.0 {
+            let seconds = water_detail_phase(wavelength);
+            let phases = water_detail_phases(time, seconds);
+            let kept = inverseSqrt(max(dot(phases, phases), 1.0e-6));
             for (var phase = 0u; phase < 2u; phase++) {
-                let cycle = time / WATER_DETAIL_PHASE + 0.5 * f32(phase);
-                let number = u32(i32(floor(cycle))) * 2u + phase;
+                let cycle = time / seconds + 0.5 * f32(phase);
+                let number = (u32(i32(floor(cycle))) * 2u + phase) * 8u + octave;
                 let shift = vec2<f32>(unit(pcg(number)), unit(pcg(number ^ 0x9e3779b9u))) * 97.0;
-                let at = world.xz - flow * (fract(cycle) * WATER_DETAIL_PHASE);
-                let noise = water_noise(at / wavelength + shift, pcg(number * 8u + octave));
-                slope += phases[phase] * shows * raised * steep * noise.yz;
-                crest += phases[phase] * shows * raised * noise.x / WATER_DETAIL_VALUE;
+                let at = world.xz - flow * (fract(cycle) * seconds);
+                let noise = water_noise(at / wavelength + shift, pcg(number));
+                let share = phases[phase] * kept * shows * raised;
+                slope += share * steep * noise.yz;
+                crest += share * noise.x / WATER_DETAIL_VALUE;
             }
         }
         wavelength *= 2.0;
     }
-    let kept = inverseSqrt(max(dot(phases, phases), 1.0e-6));
-    detail.slope = slope * kept;
-    detail.crest = crest * kept * inverseSqrt(max(octaves, 1.0));
+    detail.slope = slope;
+    detail.crest = crest * inverseSqrt(max(octaves, 1.0));
     detail.hidden = hidden;
     detail.shown = select(0.0, drawn / variance, variance > 0.0);
     return detail;

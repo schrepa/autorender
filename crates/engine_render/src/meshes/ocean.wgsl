@@ -168,6 +168,7 @@ fn shade_ocean_below(input: OceanOutput) -> WaterShade {
     result.coverage = 1.0;
     result.behind = vec3<f32>(0.0);
     result.fade = 1.0;
+    result.flow = vec2<f32>(0.0);
     return result;
 }
 
@@ -318,6 +319,7 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     result.behind = behind.color * transmit * ((1.0 - lit.reflectance) * (1.0 - foam.cover)
         * (1.0 - atmospheric_cover(camera.position.xyz, world)));
     result.fade = fade;
+    result.flow = vec2<f32>(0.0);
     return water_mirroring(result);
 }
 

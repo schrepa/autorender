@@ -313,7 +313,7 @@ entry_points! {
             vs_affine_temporal_skinned, vs_resolve, vs_sky, vs_decal, vs_impostor_bake,
             vs_impostor_bake_extended, vs_impostor, vs_impostor_temporal, vs_terrain,
             vs_terrain_temporal, vs_fullscreen, vs_cover,
-            vs_cover_temporal, vs_water, vs_water_temporal, vs_ocean,
+            vs_cover_temporal, vs_water, vs_ocean,
             vs_ocean_temporal, vs_fall, vs_fall_temporal,
             vs_debug_affine, vs_debug_affine_extended, vs_debug_affine_skinned, vs_debug_virtual,
             vs_debug_impostor

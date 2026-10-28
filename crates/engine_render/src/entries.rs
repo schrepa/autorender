@@ -254,7 +254,7 @@ pub(crate) fn water(targets: Targets) -> (Entry, Entry) {
     match targets {
         Targets::Canvas => (meshes::vs_water, meshes::fs_water),
         Targets::Post => (meshes::vs_water, meshes::fs_water_post),
-        Targets::Temporal => (meshes::vs_water_temporal, meshes::fs_water_temporal),
+        Targets::Temporal => (meshes::vs_water, meshes::fs_water_temporal),
         Targets::Debug => (meshes::vs_water, meshes::fs_debug_water),
     }
 }

@@ -261,14 +261,6 @@ struct WaterOutput {
     @location(0) relative: vec3<f32>,
 }
 
-// Tiles' water's vertex in the temporal pipelines: also where its point
-// stood in the previous frame's view (x, y and w of its clip position).
-struct WaterTemporalOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) relative: vec3<f32>,
-    @location(1) previous: vec3<f32>,
-}
-
 // The texel of block `block` holding its sample `sample` (x and y, counted
 // from the block's first, a sample before its patch's first), and its
 // layer (z).
@@ -846,18 +838,23 @@ fn vs_water(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
     return water_output(vertex, instance);
 }
 
-// Water's motion is the camera's: its surface moves only as its state does.
-@vertex
-fn vs_water_temporal(@builtin(vertex_index) vertex: u32,
-        @builtin(instance_index) instance: u32) -> WaterTemporalOutput {
-    let output = water_output(vertex, instance);
-    var temporal: WaterTemporalOutput;
-    temporal.clip_position = output.clip_position;
-    temporal.relative = output.relative;
-    temporal.previous = (camera.previous_view_projection
-        * vec4<f32>(eye_world(output.relative), 1.0)).xyw;
-    return temporal;
+// Where the point `relative` (less the eye) of water whose surface runs at
+// `flow` (meters a second along x and z) stood in the previous frame's view
+// (x, y and w of its clip position): what its surface shows, its foam and
+// the waves its current carries, rode the current there from where it was
+// the frame before (the previous frame's presentation time,
+// `camera.wind.w`), no more than WATER_LONGEST_FRAME back, so the temporal
+// resolve takes its history where it was, not where the still surface
+// under it stood.
+fn water_previous(relative: vec3<f32>, flow: vec2<f32>) -> vec3<f32> {
+    let seconds = clamp(camera.position.w - camera.wind.w, 0.0, WATER_LONGEST_FRAME);
+    let before = eye_world(relative) - vec3<f32>(flow.x, 0.0, flow.y) * seconds;
+    return (camera.previous_view_projection * vec4<f32>(before, 1.0)).xyw;
 }
+
+// The longest frame water's motion reaches back over: a longer frame's
+// history lies too far for the resolve to take.
+const WATER_LONGEST_FRAME: f32 = 0.1;
 
 // What scatters light in water's body besides the water. The fine sediment
 // it carries (`water.sediment`: silt, or the glacial flour that turns
@@ -1224,12 +1221,15 @@ fn water_light(surface: WaterSurface) -> WaterLit {
 // Water's light, and how it covers what lies below: in frames blending it,
 // the share of the ground it hides (`coverage`); in frames refracting the
 // scene, what shows through it (graded, as the scene holds it) and the
-// share of the scene it covers, all but where its shores fade.
+// share of the scene it covers, all but where its shores fade; and the
+// current its surface runs at (meters a second along x and z), which
+// carries what it shows of its foam and waves (none for the sea).
 struct WaterShade {
     shaded: Shaded,
     coverage: f32,
     behind: vec3<f32>,
     fade: f32,
+    flow: vec2<f32>,
 }
 
 // Water's light and what shows through it as its targets' color at `pixel`:
@@ -1477,6 +1477,7 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     result.behind = behind.color * transmit * (caustic * let_through * (1.0 - wet)
         * (1.0 - atmospheric_cover(camera.position.xyz, world)));
     result.fade = fade;
+    result.flow = flow;
     return water_mirroring(result);
 }
 
@@ -1522,9 +1523,10 @@ fn fs_water_post(input: WaterOutput) -> SceneTargets {
 }
 
 @fragment
-fn fs_water_temporal(input: WaterTemporalOutput) -> TemporalTargets {
+fn fs_water_temporal(input: WaterOutput) -> TemporalTargets {
     let shade = shade_mesh(input.relative, input.clip_position.xy, true);
-    var targets = temporal_targets(shade.shaded, input.clip_position, input.previous);
+    var targets = temporal_targets(shade.shaded, input.clip_position,
+        water_previous(input.relative, shade.flow));
     targets.color = water_covering(shade, input.clip_position.xy);
     return targets;
 }
