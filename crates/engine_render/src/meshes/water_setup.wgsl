@@ -1,47 +1,53 @@
-// The live water's setup (`water_sim.rs`): every block of the live square a
-// frame newly holds, or whose tiles changed under it, set up from what the
-// GPU holds of the terrain, a workgroup a block (`setup_blocks`), and the
-// cells just past the square's edges, an invocation each (`setup_ring`),
-// after an empty first group and the terrain group of the terrain the
-// window stands on, through which it reads the ground as its triangles
-// hold it, its materials as the ground's mesh band reads them and the
-// tiles' water as water's shading reads it; nothing comes from the CPU but
-// where the window stands, the solids standing in it and what its rivers
-// bring.
+// The water's beds and the live water's setup: settling water's blocks'
+// ground raised as their regions load (`setup_raise`, `water_settle.rs`),
+// and every block of the live square a frame newly holds, or whose tiles
+// changed under it, set up from what the GPU holds of the terrain, a
+// workgroup a block (`setup_blocks`), and the cells just past the square's
+// edges, an invocation each (`setup_ring`) (`water_sim.rs`); each after an
+// empty first group and the terrain group of the terrain the water stands
+// on, through which it reads its materials as the ground's mesh band reads
+// them and, live, the ground as its triangles hold it and the tiles' water
+// as water's shading reads it; nothing comes from the CPU but where the
+// water stands, the solids standing in it and what its rivers bring, and,
+// settling, its bare ground and the level-0 samples it rises by.
 //
-// A block's ground stands at its cells' corners on the finest resident
-// level's triangles (`terrain_level_height`), raised by the relief of the
-// ground's materials (`terrain_band_rise`) at the level whose texels span a
-// live cell: a level the cells' spacing sets, not the view, so the bed is a
-// function of where it stands alone, its materials blended at the finest
-// level the terrain shades with, as the ground near the eye shades. The
-// relief lies along the ground's smooth normal, as the mesh band moves the
-// drawn ground, and raises each corner as high as it raises the drawn
-// ground's point there, its rise times the normal's upright part: the
-// stones stand where the drawn ones do, within the sideways part of their
-// rise, and no higher than their depth on any slope. Each cell's bed's
-// roughness and what its bed holds (its span's and its reach's codes) are
-// those of the tiles' water's sample nearest its middle (`water_info`'s
-// words), the ground's outside the water; and the solids standing in the
-// settled water cover it by the share of SETUP_COVER_POINTS along each
-// side of it they stand on, at the mean height their tops stand at there
-// (`engine_terrain::cover_cells`).
+// Both water's beds are one: a block's ground stands at its cells' corners
+// on level 0's triangles, raised by the relief of the ground's materials at
+// the level whose texels span a cell (`terrain_ground_rise`): a level the
+// cells' spacing sets, not the view, so the bed is a function of where it
+// stands alone, its materials blended at level 0, as the ground near the
+// eye shades. The relief lies along the ground's smooth normal, as the mesh
+// band moves the drawn ground, and raises each corner as high as it raises
+// the drawn ground's point there, its rise times the normal's upright part:
+// the stones stand where the drawn ones do, within the sideways part of
+// their rise, and no higher than their depth on any slope. The live water
+// reads the samples it rises by from the tiles' layers
+// (`terrain_ground_samples`), settling water from those its region's parts
+// carry (`setup_window`), the same samples. A lake lets go of each cell its
+// raised ground stands at or over (`setup_held`), as a lake holds no cell it
+// does not stand over; and each cell's bed's roughness is the solve's from
+// the word of the sample nearest its middle by one rule (`setup_rough`):
+// friction counts only the roughness its bed does not hold as its shape.
+// The solids standing in the settled water cover each cell by the share of
+// SETUP_COVER_POINTS along each side of it they stand on, at the mean
+// height their tops stand at there (`engine_terrain::cover_cells`), the
+// live water's here, settling water's on the CPU.
 //
-// Each cell's water is the settled water as water's shading reads the
+// Each live cell's water is the settled water as water's shading reads the
 // tiles' water at its middle (`water_read`: the smooth surface through the
-// samples of the finest resident level holding one, its flow, foam and
-// turbulence through the same weights), standing over its own ground,
-// matched to its settled cell, the settled water's cell holding it, which
-// a block holds whole, as the samples around that cell's middle hold it
-// between them (`setup_settled`): where a lake holds that cell, its live
-// cells stand still at the lake's level, and the lake holds each but where
-// its raised ground stands at or over the level, as a lake holds no cell it
-// does not stand over; where it flows, those of its live cells holding
-// water are raised or lowered alike and their velocity turned alike, so
-// their mean surface and velocity are its own, or, where none would hold
-// water, each stands at its surface, velocity and foam; and where it is
-// dry, each stands as it reads. So over each settled cell the live water is
-// that cell's water, the same water as the settled water around the
+// samples of the finest resident level holding one, its flow and turbulence
+// through the same weights), standing over its own ground, matched to its
+// settled cell, the settled water's cell holding it, which a block holds
+// whole, as the samples around that cell's middle hold it between them
+// (`setup_settled`): where a lake holds that cell, its live cells stand
+// still at the lake's level, and the lake holds each but where its raised
+// ground stands at or over the level; where it flows, those of its live
+// cells holding water are raised or lowered alike and their velocity turned
+// alike, so their mean surface and velocity are its own, or, where none
+// would hold water, each stands at its surface and velocity; and where it
+// is dry, each stands as it reads. So over each settled cell the live water
+// is that cell's water, the mean of the water settling ran over its cells
+// on the same bed, and the same water as the settled water around the
 // square. It starts off that steady state by noise of zero mean and unit
 // variance hashed at its cell: its velocity by as far as its turbulence
 // says its speed swings about its mean, shared by x and z, and its surface
@@ -59,16 +65,20 @@
 // the mean of that face's corners, times its velocity, bringing the square
 // what of it runs inward across that face.
 
-// What a frame sets up: the blocks it sets up (those set up whole first,
-// then those whose ground alone is set up again), those set up whole, the
-// cells past the square's edges it sets up (four times its cells along a
-// side; none where it sets up none) and the solids standing in the settled
-// water over the square; the square's first cell on the terrain's lattice
-// of its cells along x and z (an i32's bits each), its cells along a side
-// and the live cells along each side of a settled cell; the meters across a
-// live cell and the height its heights stand above (world meters), then
-// nothing; and where its ring starts among the simulation's inputs, then
-// nothing.
+// What a frame sets up. The live water's: the blocks it sets up (those set
+// up whole first, then those whose ground alone is set up again), those set
+// up whole, the cells past the square's edges it sets up (four times its
+// cells along a side; none where it sets up none) and the solids standing
+// in the settled water over the square; the square's first cell on the
+// terrain's lattice of its cells along x and z (an i32's bits each), its
+// cells along a side and the live cells along each side of a settled cell;
+// the meters across a live cell and the height its heights stand above
+// (world meters), then nothing; and where its ring starts among the
+// simulation's inputs, then nothing. Settling water's (`setup_raise`): the
+// blocks whose ground it raises, then nothing; the level-0 samples along
+// each side of a block's samples and the terrain's last sample along x and
+// z, then nothing; the meters across its cells and the height its heights
+// stand above (terrain-local meters), then nothing; and nothing.
 struct SimSetup {
     counts: vec4<u32>,
     square: vec4<u32>,
@@ -77,33 +87,44 @@ struct SimSetup {
 }
 
 @group(2) @binding(41) var<uniform> setup_frame: SimSetup;
-// The solids standing in the settled water over the square, SETUP_SOLID
-// entries each (a float's bits): its center (terrain-local) and 1 for a
-// ball, else 0; then the inverse of the axes mapping the unit cube (or
-// ball) to it, a column each, the first two beside how far it reaches from
-// its center along x and along z. Then each block the frame sets up: its
-// slot in the live water's pool and the cell of the terrain's lattice of
-// live cells its first corner stands at (an i32's bits along x and z).
+// The live water's: the solids standing in the settled water over the
+// square, SETUP_SOLID entries each (a float's bits): its center
+// (terrain-local) and 1 for a ball, else 0; then the inverse of the axes
+// mapping the unit cube (or ball) to it, a column each, the first two beside
+// how far it reaches from its center along x and along z. Then each block
+// the frame sets up: its slot in the live water's pool and the cell of the
+// terrain's lattice of live cells its first corner stands at (an i32's bits
+// along x and z). Settling water's (`setup_raise`): each block whose ground
+// it raises, two entries: its block among the ground's (its slot's first
+// block's index plus its own in its pool), the cell of the terrain's
+// lattice of cells its first corner stands at (an i32's bits along x and z)
+// and the entry its samples start at; then the first of them on the
+// terrain's lattice of level-0 samples (an i32's bits along x and z), then
+// nothing. And each block's samples, `setup_frame.square.x` along each side,
+// row by row: each one's control value, its smooth surface's gradient as a
+// normal map's texel holds it and the bits of its bed's roughness's word
+// (`engine_terrain::shallow_water::roughness`), then nothing.
 @group(2) @binding(42) var<storage, read> setup_list: array<vec4<u32>>;
-// The live water's ground (`water_sim.wgsl`'s `sim_ground`), SETUP_GROUND
-// entries a block of its pool: the ground at its cells' corners over its
+// The simulation's ground (`water_sim.wgsl`'s `sim_ground`), SETUP_GROUND
+// entries a block of its pools: the ground at its cells' corners over its
 // datum (SETUP_SIDE a row, rows along z), then each of its cells' lake's
 // level (SETUP_UNHELD where no lake holds it), bed's roughness, share the
 // solids cover and the height their tops stand at over the datum.
 @group(2) @binding(43) var<storage, read_write> setup_ground: array<f32>;
 // The live water's step's start (`sim_cells`' first state), each block's
-// cells row by row: each one's surface, flow along x and z and foam.
+// cells row by row: each one's surface and flow along x and z, then
+// nothing.
 @group(2) @binding(44) var<storage, read_write> setup_cells: array<vec4<f32>>;
 // The live water's cells' looks (`sim_averages`), two a cell: its settled
 // water, then its water as water's pass draws it.
 @group(2) @binding(45) var<storage, read_write> setup_looks: array<vec4<f32>>;
 // The live water's inputs (`sim_inputs`), whose ring it writes from
 // `setup_frame.ring.x`, two entries a cell past the edges: its surface,
-// flow along x and z and lake's level, then its foam and the flow it
-// brings in.
+// flow along x and z and lake's level, then the flow it brings in, then
+// nothing.
 @group(2) @binding(46) var<storage, read_write> setup_edges: array<vec4<f32>>;
 
-// Entries of a block of the live water's ground, what a cell no lake holds
+// Entries of a block of the simulation's ground, what a cell no lake holds
 // holds as its lake's level, the meters of water under which a cell is dry,
 // the roughness of ground outside rivers' channels and the points along
 // each side of a cell its cover is measured at (`engine_terrain`'s
@@ -137,25 +158,23 @@ const SETUP_FLOWING: u32 = 2u;
 
 // A live cell's settled water as the setup stands it: the surface it stands
 // at over the datum (NO_WATER_SURFACE where none), its velocity along x and
-// z (meters a second), its foam, the level a lake holds it at over the
-// datum (SETUP_UNHELD where none does), and how far its speed swings about
-// its mean (meters a second).
+// z (meters a second), the level a lake holds it at over the datum
+// (SETUP_UNHELD where none does), and how far its speed swings about its
+// mean (meters a second).
 struct SetupWater {
     surface: f32,
     velocity: vec2<f32>,
-    foam: f32,
     held: f32,
     rush: f32,
 }
 
 // A settled cell as the samples around its middle hold it: what it holds
 // (SETUP_DRY_CELL, SETUP_HELD or SETUP_FLOWING), the surface its water
-// stands at over the datum, its velocity (meters a second) and its foam.
+// stands at over the datum and its velocity (meters a second).
 struct SetupSettled {
     kind: u32,
     surface: f32,
     velocity: vec2<f32>,
-    foam: f32,
 }
 
 // The ground over the datum at corner `corner` of the terrain's lattice of
@@ -172,19 +191,37 @@ fn setup_bed(at: vec2<i32>) -> f32 {
         + setup_ground_at(at + vec2<i32>(0, 1)) + setup_ground_at(at + vec2<i32>(1, 1)));
 }
 
-// The ground `ground` meters over the datum at terrain-local `local`, raised
-// by the relief of the ground's materials (`terrain_band_rise`) at the
-// level whose texels span a live cell: the ground's smooth normal, its blend
-// and its materials' heights read at the finest level the terrain shades
-// with.
-fn setup_raised(local: vec2<f32>, ground: f32) -> f32 {
-    let cell = setup_frame.meters.x;
-    let world = vec3<f32>(terrain.origin.x + local.x, setup_frame.meters.y + ground,
-        terrain.origin.z + local.y);
-    let shading = TerrainShadingLevel(0u, 0.0);
-    let normal = terrain_surface_normal(local, shading);
-    let blend = terrain_blend(local, normal, shading);
-    return ground + terrain_band_rise(blend, world, normal, vec2<f32>(cell)).x * normal.y;
+// How far the relief of the ground's materials raises the ground `height`
+// meters above the terrain's origin at terrain-local `local`, at the level
+// whose texels span a cell, `samples` holding the ground there
+// (`terrain_ground_rise`), and whether its materials raise it.
+fn setup_raised(samples: TerrainGroundSamples, local: vec2<f32>, height: f32)
+        -> TerrainGroundRise {
+    return terrain_ground_rise(samples, local, height, setup_frame.meters.x);
+}
+
+// The level a lake holding a cell at `level` (SETUP_UNHELD where none does)
+// holds it at, its raised ground standing at `risen`, the mean of its
+// corners as the solve reads it (`water_sim.wgsl`'s `sim_bed`): none where
+// that ground stands at or over the level, as a lake holds no cell it does
+// not stand over.
+fn setup_held(level: f32, risen: f32) -> f32 {
+    return select(SETUP_UNHELD, level, level > risen);
+}
+
+// The roughness the solve reads of a cell `cell` meters across whose bed's
+// roughness's word is `rough` (`engine_terrain::shallow_water::roughness`:
+// its D84, negated where steps or knobs are carved into it), `relief` where
+// its materials raise its ground: friction counts only the roughness its
+// bed does not hold as its shape. Where its bed holds relief as its shape,
+// carved or raised, its grains finer than a cell alone, its D84 no more
+// than a cell, negated so friction counts its grains alone
+// (`water_sim.wgsl`'s `sim_resistance`); elsewhere its D84 as it is.
+fn setup_rough(rough: f32, relief: bool, cell: f32) -> f32 {
+    if rough < 0.0 || relief {
+        return -min(abs(rough), cell);
+    }
+    return rough;
 }
 
 // The settled cell holding live cell `at`, on the terrain's lattice of
@@ -202,19 +239,18 @@ fn setup_cell(at: vec2<i32>) -> WaterCell {
 
 // The settled water at the point `cell` (`setup_cell`'s) as water's shading
 // reads it (`water_read`): its smooth surface over the datum, none where its
-// samples hold none; its velocity and foam through the same weights; held
-// by no lake; and its speed's swing about its mean, its turbulence's share
-// of its speed, as the cook counts it (`engine_terrain`'s `turbulence`: the
-// speed counting as WATER_TURBULENT_SPEED at least).
+// samples hold none; its velocity through the same weights; held by no
+// lake; and its speed's swing about its mean, its turbulence's share of its
+// speed, as the cook counts it (`engine_terrain`'s `turbulence`: the speed
+// counting as WATER_TURBULENT_SPEED at least).
 fn setup_read(cell: WaterCell) -> SetupWater {
     let at = water_read(cell);
-    var water = SetupWater(NO_WATER_SURFACE, vec2<f32>(0.0), 0.0, SETUP_UNHELD, 0.0);
+    var water = SetupWater(NO_WATER_SURFACE, vec2<f32>(0.0), SETUP_UNHELD, 0.0);
     if at.held <= 0.0 {
         return water;
     }
     water.surface = (at.surface + terrain.origin.y) - setup_frame.meters.y;
     water.velocity = at.words.flow;
-    water.foam = at.words.foam;
     water.rush = at.words.state.x * max(length(at.words.flow), WATER_TURBULENT_SPEED);
     return water;
 }
@@ -235,14 +271,14 @@ fn setup_nearest(cell: WaterCell) -> vec4<u32> {
 // Settled cell `holding` of the terrain's lattice of settled cells as the
 // tiles' water's four samples of the finest resident level around its
 // middle hold it between them, bilinearly: through the weights of those
-// whose surface stands over their ground, its surface and foam, and its
-// velocity through those no lake holds; held by a lake where lakes hold
-// most of those weights, as tiles' water blends settled cells
+// whose surface stands over their ground, its surface, and its velocity
+// through those no lake holds; held by a lake where lakes hold most of
+// those weights, as tiles' water blends settled cells
 // (`engine_terrain::Tile::steadied`); dry where none holds water.
 fn setup_settled(holding: vec2<i32>) -> SetupSettled {
     let spacing = setup_frame.meters.x * f32(setup_frame.square.w);
     let cell = water_cell((vec2<f32>(holding) + 0.5) * spacing, 0u);
-    var settled = SetupSettled(SETUP_DRY_CELL, 0.0, vec2<f32>(0.0), 0.0);
+    var settled = SetupSettled(SETUP_DRY_CELL, 0.0, vec2<f32>(0.0));
     if cell.block == NO_WATER_BLOCK {
         return settled;
     }
@@ -250,7 +286,6 @@ fn setup_settled(holding: vec2<i32>) -> SetupSettled {
     var still = 0.0;
     var moving = 0.0;
     var surface = 0.0;
-    var foam = 0.0;
     var flow = vec2<f32>(0.0);
     for (var k = 0u; k < 4u; k++) {
         let step = vec2<u32>(k % 2u, k / 2u);
@@ -264,7 +299,6 @@ fn setup_settled(holding: vec2<i32>) -> SetupSettled {
         let words = water_words(textureLoad(water_info, texel.xy, texel.z, 0));
         weight += share;
         surface += share * held.x;
-        foam += share * words.foam;
         if words.lake {
             still += share;
         } else {
@@ -276,7 +310,6 @@ fn setup_settled(holding: vec2<i32>) -> SetupSettled {
         return settled;
     }
     settled.surface = (surface / weight + terrain.origin.y) - setup_frame.meters.y;
-    settled.foam = foam / weight;
     if 2.0 * still > weight {
         settled.kind = SETUP_HELD;
         return settled;
@@ -298,13 +331,13 @@ fn setup_wet(water: SetupWater, bed: f32) -> bool {
 // `sums` (how many, then their surfaces and their velocities along x and
 // z): still at the lake's level where a lake holds that cell; raised or
 // lowered and its velocity turned as all of them are, so their mean is the
-// cell's, where it flows and it holds water, or at the cell's surface,
-// velocity and foam where none of them does; as it is elsewhere.
+// cell's, where it flows and it holds water, or at the cell's surface and
+// velocity where none of them does; as it is elsewhere.
 fn setup_matched(own: SetupWater, bed: f32, settled: SetupSettled, sums: vec4<f32>)
         -> SetupWater {
     var water = own;
     if settled.kind == SETUP_HELD {
-        return SetupWater(settled.surface, vec2<f32>(0.0), settled.foam, settled.surface, 0.0);
+        return SetupWater(settled.surface, vec2<f32>(0.0), settled.surface, 0.0);
     }
     if settled.kind != SETUP_FLOWING {
         return water;
@@ -312,7 +345,6 @@ fn setup_matched(own: SetupWater, bed: f32, settled: SetupSettled, sums: vec4<f3
     if sums.x <= 0.0 {
         water.surface = settled.surface;
         water.velocity = settled.velocity;
-        water.foam = settled.foam;
         return water;
     }
     if setup_wet(own, bed) {
@@ -324,17 +356,17 @@ fn setup_matched(own: SetupWater, bed: f32, settled: SetupSettled, sums: vec4<f3
 }
 
 // Live water `water` as cell `at` over its ground `bed` holds it, its
-// surface, flow along x and z (square meters a second) and foam: still at
-// its level where a lake holds it, which lies below its ground where the
-// lake stands under it and the solve dries it there; at its ground, dry,
-// where it holds no water; else its depth over its ground at its velocity,
-// and where `unsteady`, off its steady state by noise hashed at its cell:
-// its velocity by its speed's swing shared by x and z, and its depth by as
-// far as a shallow wave carrying that swing heaves its surface (the swing
-// times √(h/g)), at most half its depth.
+// surface and flow along x and z (square meters a second), then nothing:
+// still at its level where a lake holds it, which lies below its ground
+// where the lake stands under it and the solve dries it there; at its
+// ground, dry, where it holds no water; else its depth over its ground at
+// its velocity, and where `unsteady`, off its steady state by noise hashed
+// at its cell: its velocity by its speed's swing shared by x and z, and its
+// depth by as far as a shallow wave carrying that swing heaves its surface
+// (the swing times √(h/g)), at most half its depth.
 fn setup_standing(water: SetupWater, bed: f32, at: vec2<i32>, unsteady: bool) -> vec4<f32> {
     if water.held > 0.5 * SETUP_UNHELD {
-        return vec4<f32>(water.held, 0.0, 0.0, water.foam);
+        return vec4<f32>(water.held, 0.0, 0.0, 0.0);
     }
     if !setup_wet(water, bed) {
         return vec4<f32>(bed, 0.0, 0.0, 0.0);
@@ -348,7 +380,7 @@ fn setup_standing(water: SetupWater, bed: f32, at: vec2<i32>, unsteady: bool) ->
         velocity += water.rush * inverseSqrt(2.0)
             * vec2<f32>(setup_noise(at, 1u), setup_noise(at, 2u));
     }
-    return vec4<f32>(bed + deep, deep * velocity, water.foam);
+    return vec4<f32>(bed + deep, deep * velocity, 0.0);
 }
 
 // A value of zero mean and unit variance hashed from the terrain's lattice
@@ -481,23 +513,52 @@ fn setup_lone(at: vec2<i32>) -> SetupWater {
     return setup_matched(own, setup_bed(at), settled, sums);
 }
 
-// A block's corners as its workgroup sets them up, their ground and that
-// ground raised by the relief of the ground's materials; and each of its
-// cells' water as it reads: whether it holds water over its ground, then
-// its surface and velocity along x and z.
+// A block's corners as its workgroup sets them up or raises them, their
+// ground, that ground raised by the relief of the ground's materials and
+// whether its materials raise it (1 where they do); and each of its cells'
+// water as it reads: whether it holds water over its ground, then its
+// surface and velocity along x and z.
 var<workgroup> setup_bare: array<f32, SETUP_CORNERS>;
 var<workgroup> setup_risen: array<f32, SETUP_CORNERS>;
+var<workgroup> setup_reliefs: array<u32, SETUP_CORNERS>;
 var<workgroup> setup_waters: array<vec4<f32>, SETUP_CELLS>;
+
+// The corner of a block invocation `local` of its workgroup raises along
+// with its own, the block's last column and row taking their far corners
+// too: its own (k 0), then past it along x, along z and along both,
+// whichever it takes (`setup_corner_taken`).
+fn setup_corner(local: vec2<u32>, k: u32) -> vec2<u32> {
+    return local + vec2<u32>(k & 1u, k >> 1u);
+}
+
+fn setup_corner_taken(local: vec2<u32>, k: u32) -> bool {
+    let far = vec2<u32>(k & 1u, k >> 1u);
+    return !any((far > vec2<u32>(0u)) & (local < vec2<u32>(WATER_LIVE_BLOCK - 1u)));
+}
+
+// The ground raised at the middle of cell `local` of a block, the mean of
+// its corners as the solve reads it (`water_sim.wgsl`'s `sim_bed`), and
+// whether the materials of any of its corners raise it, as the workgroup
+// raised them.
+fn setup_cell_risen(local: vec2<u32>) -> vec2<f32> {
+    let corner = local.y * SETUP_SIDE + local.x;
+    let risen = 0.5 * (0.5 * (setup_risen[corner] + setup_risen[corner + SETUP_SIDE])
+        + 0.5 * (setup_risen[corner + 1u] + setup_risen[corner + SETUP_SIDE + 1u]));
+    let reliefs = setup_reliefs[corner] | setup_reliefs[corner + 1u]
+        | setup_reliefs[corner + SETUP_SIDE] | setup_reliefs[corner + SETUP_SIDE + 1u];
+    return vec2<f32>(risen, f32(reliefs));
+}
 
 // The blocks a frame sets up, a workgroup each: each invocation sets up the
 // ground at the corner its cell starts at, those along the block's last
-// column and row their far corners too, raised (`setup_raised`); then its
-// cell's ground: the lake holding its settled cell holds it where its
-// raised ground, the mean of its corners as the solve reads it
-// (`water_sim.wgsl`'s `sim_bed`), stands under the lake's level, its bed's
-// roughness and the solids' cover. A block set up whole sets up its cells'
-// water too, each matched over its settled cell, which the block holds
-// whole: what it starts from in the step's first state, and its looks.
+// column and row their far corners too, raised (`setup_raised`) by the
+// samples the tiles' layers hold (`terrain_ground_samples`); then its
+// cell's ground: the lake holding its settled cell holds it but where its
+// raised ground stands at or over the lake's level (`setup_held`), its bed's
+// roughness from the word of the tiles' water's sample nearest its middle
+// (`setup_rough`) and the solids' cover. A block set up whole sets up its
+// cells' water too, each matched over its settled cell, which the block
+// holds whole: what it starts from in the step's first state, and its looks.
 @compute @workgroup_size(WATER_LIVE_BLOCK, WATER_LIVE_BLOCK)
 fn setup_blocks(
     @builtin(workgroup_id) group: vec3<u32>,
@@ -513,24 +574,25 @@ fn setup_blocks(
     let slot = listed.x;
     let first = bitcast<vec2<i32>>(listed.yz);
     let base = slot * SETUP_GROUND;
-    let last = vec2<u32>(WATER_LIVE_BLOCK - 1u);
     for (var k = 0u; k < 4u; k++) {
-        let far = vec2<u32>(k & 1u, k >> 1u);
-        if any((far > vec2<u32>(0u)) & (local.xy < last)) {
+        if !setup_corner_taken(local.xy, k) {
             continue;
         }
-        let corner = local.xy + far;
+        let corner = setup_corner(local.xy, k);
         let lattice = first + vec2<i32>(corner);
+        let point = vec2<f32>(lattice) * setup_frame.meters.x;
         let bare = setup_ground_at(lattice);
-        let risen = setup_raised(vec2<f32>(lattice) * setup_frame.meters.x, bare);
+        let height = (setup_frame.meters.y + bare) - terrain.origin.y;
+        let raised = setup_raised(terrain_ground_samples(point), point, height);
         let at = corner.y * SETUP_SIDE + corner.x;
-        setup_ground[base + at] = risen;
+        setup_ground[base + at] = bare + raised.rise;
         setup_bare[at] = bare;
-        setup_risen[at] = risen;
+        setup_risen[at] = bare + raised.rise;
+        setup_reliefs[at] = select(0u, 1u, raised.relief);
     }
     let at = first + vec2<i32>(local.xy);
     let cell = setup_cell(at);
-    var own = SetupWater(NO_WATER_SURFACE, vec2<f32>(0.0), 0.0, SETUP_UNHELD, 0.0);
+    var own = SetupWater(NO_WATER_SURFACE, vec2<f32>(0.0), SETUP_UNHELD, 0.0);
     if whole {
         own = setup_read(cell);
     }
@@ -538,8 +600,7 @@ fn setup_blocks(
     let corner = local.y * SETUP_SIDE + local.x;
     let bed = 0.25 * (setup_bare[corner] + setup_bare[corner + 1u]
         + setup_bare[corner + SETUP_SIDE] + setup_bare[corner + SETUP_SIDE + 1u]);
-    let risen = 0.5 * (0.5 * (setup_risen[corner] + setup_risen[corner + SETUP_SIDE])
-        + 0.5 * (setup_risen[corner + 1u] + setup_risen[corner + SETUP_SIDE + 1u]));
+    let risen = setup_cell_risen(local.xy);
     let index = local.y * WATER_LIVE_BLOCK + local.x;
     setup_waters[index] = select(vec4<f32>(0.0), vec4<f32>(1.0, own.surface, own.velocity),
         setup_wet(own, bed));
@@ -549,8 +610,9 @@ fn setup_blocks(
     let nearest = setup_nearest(cell);
     let cover = setup_cover(at);
     let ground = base + SETUP_CORNERS + index;
-    setup_ground[ground] = select(SETUP_UNHELD, level, level > risen);
-    setup_ground[ground + SETUP_CELLS] = bitcast<f32>(nearest.w);
+    setup_ground[ground] = setup_held(level, risen.x);
+    setup_ground[ground + SETUP_CELLS] = setup_rough(bitcast<f32>(nearest.w), risen.y > 0.0,
+        setup_frame.meters.x);
     setup_ground[ground + 2u * SETUP_CELLS] = cover.x;
     setup_ground[ground + 3u * SETUP_CELLS] = cover.y;
     if !whole {
@@ -573,6 +635,84 @@ fn setup_blocks(
     setup_looks[2u * held] = setup_standing(water, bed, at, false);
     setup_looks[2u * held + 1u] = vec4<f32>(0.0, 0.0, bitcast<f32>(nearest.x & 0xff000000u),
         bitcast<f32>(nearest.y & 0xff000000u));
+}
+
+// Sample `at` of a settling block's samples (`setup_raise`'s, from the
+// list's entry `window`, `setup_frame.square.x` along each side, counted
+// from their first), the nearest of them past their edges.
+fn setup_sample(window: u32, at: vec2<i32>) -> vec4<u32> {
+    let side = i32(setup_frame.square.x);
+    let held = clamp(at, vec2<i32>(0), vec2<i32>(side - 1));
+    return setup_list[window + u32(held.y * side + held.x)];
+}
+
+// The ground's samples around terrain-local `local` (`TerrainGroundSamples`)
+// as a settling block's samples hold them (from the list's entry `window`,
+// the first of them `start` on the terrain's lattice of level-0 samples):
+// the cell of samples holding the point and where in it the point lies, as
+// the tiles' layers find them (`terrain_level_own`'s tile and corner), its
+// last cell the terrain's last before the sample `setup_frame.square.yz`.
+fn setup_window(window: u32, start: vec2<i32>, local: vec2<f32>) -> TerrainGroundSamples {
+    let at = max(local / terrain.anchor.w, vec2<f32>(0.0));
+    let last = vec2<f32>(setup_frame.square.yz);
+    let cell = min(floor(at), last - 1.0);
+    let first = vec2<i32>(cell) - start;
+    // In a gather's order: x (0, 1), y (1, 1), z (1, 0), w (0, 0).
+    let x = setup_sample(window, first + vec2<i32>(0, 1));
+    let y = setup_sample(window, first + vec2<i32>(1, 1));
+    let z = setup_sample(window, first + vec2<i32>(1, 0));
+    let w = setup_sample(window, first);
+    return TerrainGroundSamples(vec4<u32>(x.x, y.x, z.x, w.x), vec4<u32>(x.y, y.y, z.y, w.y),
+        min(at, last) - cell);
+}
+
+// Settling water's blocks as their regions load, a workgroup each, before
+// their first steps (`water_settle.rs`): each invocation raises the ground
+// at the corner its cell starts at, those along the block's last column and
+// row their far corners too, as the live water's setup raises its own
+// (`setup_raised`), from the level-0 samples the block's list holds
+// (`setup_window`), the samples the tiles' layers hold; then its cell's lake
+// lets go of it where its raised ground stands at or over its level
+// (`setup_held`), and its bed's roughness is the solve's from the word of
+// the sample nearest its middle (`setup_rough`). Its ground stands bare
+// before, as the CPU wrote it, and raised after: it is raised once.
+@compute @workgroup_size(WATER_LIVE_BLOCK, WATER_LIVE_BLOCK)
+fn setup_raise(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
+) {
+    let block = group.y * count.x + group.x;
+    if block >= setup_frame.counts.x {
+        return;
+    }
+    let head = setup_list[2u * block];
+    let base = head.x * SETUP_GROUND;
+    let first = bitcast<vec2<i32>>(head.yz);
+    let window = head.w;
+    let start = bitcast<vec2<i32>>(setup_list[2u * block + 1u].xy);
+    let cell = setup_frame.meters.x;
+    for (var k = 0u; k < 4u; k++) {
+        if !setup_corner_taken(local.xy, k) {
+            continue;
+        }
+        let corner = setup_corner(local.xy, k);
+        let point = vec2<f32>(first + vec2<i32>(corner)) * cell;
+        let at = corner.y * SETUP_SIDE + corner.x;
+        let bare = setup_ground[base + at];
+        let height = setup_frame.meters.y + bare;
+        let raised = setup_raised(setup_window(window, start, point), point, height);
+        setup_ground[base + at] = bare + raised.rise;
+        setup_risen[at] = bare + raised.rise;
+        setup_reliefs[at] = select(0u, 1u, raised.relief);
+    }
+    workgroupBarrier();
+    let risen = setup_cell_risen(local.xy);
+    let ground = base + SETUP_CORNERS + local.y * WATER_LIVE_BLOCK + local.x;
+    setup_ground[ground] = setup_held(setup_ground[ground], risen.x);
+    let middle = (vec2<f32>(first + vec2<i32>(local.xy)) + 0.5) * cell / terrain.anchor.w;
+    let nearest = setup_sample(window, vec2<i32>(floor(middle + 0.5)) - start);
+    setup_ground[ground + SETUP_CELLS] = setup_rough(bitcast<f32>(nearest.z), risen.y > 0.0, cell);
 }
 
 // The cells just past the live square's edges, an invocation each, in the
@@ -617,11 +757,10 @@ fn setup_ring(@builtin(global_invocation_id) id: vec3<u32>) {
     var carried = vec4<f32>(0.0);
     if water.held > 0.5 * SETUP_UNHELD {
         standing = vec4<f32>(water.held, 0.0, 0.0, water.held);
-        carried.x = water.foam;
     } else if water.surface > 0.5 * NO_WATER_SURFACE {
         let flow = water.velocity * max(water.surface - ground, 0.0);
         standing = vec4<f32>(water.surface, flow, SETUP_UNHELD);
-        carried = vec4<f32>(water.foam, max(dot(flow, toward), 0.0), 0.0, 0.0);
+        carried.x = max(dot(flow, toward), 0.0);
     }
     let entry = setup_frame.ring.x + 2u * ghost;
     setup_edges[entry] = standing;

@@ -51,8 +51,10 @@ impl Terrains {
     }
 
     /// The water terrains hold over world `point`: what their tiles hold
-    /// there, lake or river, or a waterfall's jet, whichever stands highest;
-    /// `None` where none does or no tile holding the point is resident.
+    /// there, lake or river, its foam the white water born in it, where the
+    /// foam's rafts are born, or a waterfall's jet, whichever stands
+    /// highest; `None` where none does or no tile holding the point is
+    /// resident.
     pub fn water_at(&self, point: Vec3) -> Option<WaterSample> {
         self.entries
             .iter()
@@ -71,7 +73,7 @@ impl Terrains {
                         surface: water.surface,
                         depth: water.depth,
                         velocity: [water.flow.x, 0.0, water.flow.y],
-                        foam: water.white,
+                        foam: water.state.breaking,
                     });
                 [held, fall(&state.falls, local)]
                     .into_iter()

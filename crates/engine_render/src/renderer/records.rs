@@ -60,12 +60,14 @@ impl Renderer {
     }
 
     /// Settles the water of each of `starts` on the GPU for its records
-    /// (`settled_water`, one for each tile it keeps, in its order), those
+    /// (`settled_water`, one for each tile it keeps, in its order), its bed
+    /// raised through the materials of the terrain its id names, those
     /// already settling left as they are: terrains hand them over
     /// ([`engine_core::Terrains::take_water_settles`]).
     pub fn settle_water(
         &mut self,
         starts: Vec<(
+            u64,
             Vec<RecordKey>,
             std::sync::Arc<engine_core::terrain_data::SettleStart>,
         )>,

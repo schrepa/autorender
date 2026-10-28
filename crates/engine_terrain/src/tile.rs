@@ -615,7 +615,7 @@ impl Tile {
 
     /// The water at `local`, meters from the tile's first corner, on the
     /// triangles [`Self::sample`] reads the ground on: its surface, its
-    /// depth over that ground, its flow, whitewater, span, kind and state
+    /// depth over that ground, its flow, span, kind and state
     /// (its kind and reach the first corner's); `None` where no water
     /// reaches the triangle's corners or its surface stands at or below the
     /// ground.
@@ -640,12 +640,11 @@ impl Tile {
             surface,
             depth,
             flow: Vec2::new(
-                on_triangle(info.map(|(flow, _, _, _)| flow.x), fu, fv),
-                on_triangle(info.map(|(flow, _, _, _)| flow.y), fu, fv),
+                on_triangle(info.map(|(flow, _, _)| flow.x), fu, fv),
+                on_triangle(info.map(|(flow, _, _)| flow.y), fu, fv),
             ),
-            white: on_triangle(info.map(|(_, white, _, _)| white), fu, fv),
-            span: on_triangle(info.map(|(_, _, _, span)| span), fu, fv),
-            lake: info[corners[0]].2,
+            span: on_triangle(info.map(|(_, _, span)| span), fu, fv),
+            lake: info[corners[0]].1,
             state: WaterState {
                 turbulence: on_triangle(states.map(|state| state.turbulence), fu, fv),
                 breaking: on_triangle(states.map(|state| state.breaking), fu, fv),

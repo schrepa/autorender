@@ -74,7 +74,7 @@ const terrainViews = ["levels", "tiles", "materials", "sky", "detail"];
 // The water's views, which show the fixture's lakes and rivers wherever
 // they lie against everything else gray, unlit.
 const waterViews = ["water_depth", "water_speed", "water_froude", "water_turbulence", "water_white", "water_reach",
-  "water_foam", "water_span", "water_eddies", "water_roughness"];
+  "water_span", "water_eddies", "water_roughness"];
 const report = {};
 // What each drawn pixel's probe may name, and those an entity's slot draws.
 const kinds = ["mesh", "placed", "card", "placed_card", "virtual", "terrain", "cover", "water", "sea", "falls", "sky"];

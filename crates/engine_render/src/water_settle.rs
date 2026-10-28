@@ -1,18 +1,27 @@
-//! Water settling on the GPU for tiles' records (`settled_water`): terrains
-//! hand the renderer what a region's water settles from ([`SettleStart`]),
-//! the whole terrain's while a session cooks, and it runs the shallow-water
-//! scheme ([`crate::water_kernels`]) over as many regions at once as its
-//! buffers hold, each a slot holding the blocks of cells its water can
-//! reach and stepping its cells by their own seconds with open edges, only
-//! the blocks water can reach this step stepping, until its water settles
-//! (or its steps run out), looked at every [`LOOK_EVERY`] steps (its cells'
-//! water averaged over the seconds since the look before, with how much it
-//! varied, summed block by block and read back); its averaged water then
-//! makes the records of the tiles the region keeps
+//! Water settling on the GPU for tiles' records (`settled_water`), in the
+//! model the live water runs in (`water_sim.rs`): terrains hand the renderer
+//! what a region's water settles from ([`SettleStart`]), the whole terrain's
+//! while a session cooks, on the live water's cells, and it runs the
+//! shallow-water scheme ([`crate::water_kernels`]) over as many regions at
+//! once as its buffers hold, each a slot holding the blocks of cells its
+//! water can reach. A region's ground stands bare as it loads; in the first
+//! frame that lays out the terrain it settles on, the GPU raises it by its
+//! materials' relief through that terrain's group, as the live water's setup
+//! raises its own (`meshes/water_setup.wgsl`'s `setup_raise`), and the region
+//! steps no step before. It then steps its cells by their own seconds with
+//! open edges, only the blocks water can reach this step stepping, until its
+//! water settles (or its steps run out), looked at every [`LOOK_EVERY`]
+//! steps (its cells' water averaged over the seconds since the look before,
+//! with how much it varied, summed block by block and read back); then it
+//! stirs, stepping every cell by the live water's seconds and stirred by
+//! turbulence's bursts as the live water is, its looks keeping their sums,
+//! until its means over all it stirred hold still (or its stirring's steps
+//! run out). Its averaged water and its ground as the GPU raised it, read
+//! back, make the records of the tiles the region keeps
 //! ([`SettleStart::finish`]), which the renderer hands its host to keep and
 //! to the terrain that asked. While a session cooks it takes more memory and
-//! more steps a frame, and says how its regions settle, how much water
-//! stands against the edges of the blocks they store, and what their
+//! more steps a frame, and says how its regions settle and stir, how much
+//! water stands against the edges of the blocks they store, and what their
 //! records came to.
 
 use std::cell::RefCell;
@@ -20,32 +29,46 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use bytemuck::Zeroable;
 use engine_core::RecordKey;
-use engine_core::terrain_data::shallow_water::{CELL_MEANS, DRY};
-use engine_core::terrain_data::{BLOCK_CELLS, SettleStart, SteadyWater, codec};
+use engine_core::terrain_data::shallow_water::{CELL_MEANS, DRY, step_seconds};
+use engine_core::terrain_data::{
+    BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, SettleStart, SteadyWater, codec,
+};
 
 use crate::gpu_layouts::constants::{
-    SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_LOCAL, SIM_LOOKING, SIM_OPEN, SIM_SLOTS, SIM_SPARSE,
-    SIM_STEPPING, SIM_SUMMING,
+    SIM_BLOCK_LOOKS, SIM_BURSTING, SIM_CELL_SUMS, SIM_KEEPING, SIM_LOCAL, SIM_LOOKING, SIM_OPEN,
+    SIM_SLOTS, SIM_SPARSE, SIM_STEPPING, SIM_SUMMING,
 };
-use crate::gpu_layouts::water::SimSlot;
+use crate::gpu_layouts::water::{SimSetup, SimSlot};
+use crate::terrain::TerrainPass;
 use crate::water_kernels::{
     Capacity, Kernels, SlotBuffers, encode_look, encode_steps, slot_bytes, slot_largest_bytes,
 };
+use crate::water_sim::{Setup, SetupBuffers};
 
 /// Steps between a region's looks at its water, which its frames' steps
 /// divide.
-pub(crate) const LOOK_EVERY: u32 = 256;
-/// The steps a region runs at least and at most, and its looks at most.
+const LOOK_EVERY: u32 = 256;
+/// The steps a region runs at least and at most stepping its cells by their
+/// own seconds.
 const SETTLE_STEPS: [u32; 2] = [1024, 16_384];
-const SETTLE_LOOKS: u64 = (SETTLE_STEPS[1] / LOOK_EVERY) as u64;
+/// The steps a region stirs at least and at most, stepping every cell by
+/// the live water's seconds: at least as many as hold its eddies' turning
+/// over a few times, eddies as large as a half-meter cell running at tenths
+/// of a meter a second turning over in about two seconds and 1024 steps of
+/// half-meter cells spanning four and a half; at most half as many as it
+/// settles in.
+const STIR_STEPS: [u32; 2] = [1024, SETTLE_STEPS[1] / 2];
+/// The looks a region takes at most, settling and stirring.
+const SETTLE_LOOKS: u64 = ((SETTLE_STEPS[1] + STIR_STEPS[1]) / LOOK_EVERY) as u64;
 /// A region settled once its means are stationary: over [`STILL_LOOKS`]
 /// looks in a row, the water it holds and its flowing cells' mean speed,
 /// energy lost, heave and swirl each changed from the look before by under
 /// [`STILL_CHANGE`] of itself, or by no more than the step records keep
 /// them at (`codec::HEIGHT_STEP` of their unit), which records cannot tell.
 /// Water running unsteadily (down rough steep rock) keeps varying, and its
-/// means and spreads settle.
+/// means and spreads settle; stirring, its means over all it stirred.
 const STILL_LOOKS: usize = 3;
 const STILL_CHANGE: f64 = 0.01;
 /// Bytes of the GPU's memory settling takes at most, while a session cooks
@@ -59,17 +82,22 @@ const PLAY_BYTES: u64 = 128 << 20;
 const COOK_CELL_STEPS: u64 = 160_000_000;
 const PLAY_CELL_STEPS: u64 = 2_000_000;
 
-/// Water settling: the scheme's passes and buffers; the starts waiting for
-/// a slot, each with the keys of the records it makes; the slots' regions,
-/// and the regions loaded so far; what is read back; the records made
-/// since its host last took them (or why one failed); whether its session
-/// cooks; and this frame's steps, the blocks its passes cover (those of the
-/// region storing the most), the cells rivers bring water to its passes
-/// cover, slots' rectangles, buffer ranges cleared and copies to read back.
+/// Water settling: the scheme's passes and buffers; what raises its regions'
+/// ground and its buffers, bound to the scheme's; the starts waiting for a
+/// slot, each with the id renderers key its terrain by and the keys of the
+/// records it makes; the slots' regions, and the regions loaded so far; what
+/// is read back; the records made since its host last took them (or why one
+/// failed); whether its session cooks; and this frame's steps, the blocks
+/// its passes cover (those of the region storing the most), the cells rivers
+/// bring water to its passes cover, whether any region stirs, the blocks
+/// whose ground it raises, slots' rectangles, buffer ranges cleared and
+/// copies to read back.
 pub(crate) struct WaterSettle {
     kernels: Kernels,
     buffers: Option<SlotBuffers>,
-    waiting: VecDeque<(Vec<RecordKey>, Arc<SettleStart>)>,
+    setup: Setup,
+    setup_buffers: Option<SetupBuffers>,
+    waiting: VecDeque<(u64, Vec<RecordKey>, Arc<SettleStart>)>,
     squares: Vec<Option<Square>>,
     loads: u32,
     readbacks: Vec<Readback>,
@@ -78,34 +106,43 @@ pub(crate) struct WaterSettle {
     steps: u32,
     blocks: u32,
     sourced: u32,
+    stirring: bool,
+    raising: u32,
     clears: Vec<Clear>,
     copies: Vec<CopyBack>,
 }
 
-/// A region settling in a slot: the keys of its records and its start, its
-/// load's count (its looks and its read backs carry it), its steps, all
-/// told and since its last look, what its looks found, its cells stepping
-/// and flowing as its last look found them (stepping as it started,
-/// before), where it stands, and whether its start is still to be written
-/// into its slot.
+/// A region settling in a slot: the keys of its records, the id renderers
+/// key its terrain by and its start, its load's count (its looks and its
+/// read backs carry it), whether its ground was raised, its steps, all told,
+/// since its last look and stirred, what its looks found while it stirs or
+/// before, whether it settled before it stirred, its cells stepping and
+/// flowing as its last look found them (stepping as it started, before),
+/// where it stands, and whether its start is still to be written into its
+/// slot.
 struct Square {
     records: Vec<RecordKey>,
+    terrain: u64,
     start: Arc<SettleStart>,
     load: u32,
+    raised: bool,
     steps: u32,
     since_look: u32,
+    stirred: u32,
     looks: Vec<Look>,
+    settled: bool,
     stepping: u64,
     flowing: u64,
     phase: Phase,
     fresh: bool,
 }
 
-/// Where a region stands: stepping, or settled and its averaged water
-/// reading back.
+/// Where a region stands: stepping by its cells' own seconds, stirring as
+/// the live water does, or settled and its averaged water reading back.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Stepping,
+    Stirring,
     Reading,
 }
 
@@ -155,16 +192,20 @@ struct Clear {
     bytes: u64,
 }
 
-/// A copy this frame reads back: from the averages at `offset` (bytes),
-/// `bytes` of them, into its read back.
+/// A copy this frame reads back: from the ground where `ground`, else from
+/// the averages, at `offset` (bytes), `bytes` of them, into its read back
+/// at `into` (bytes).
 struct CopyBack {
+    ground: bool,
     offset: u64,
     bytes: u64,
     readback: usize,
+    into: u64,
 }
 
 /// A read back: the slot, region load and kind it reads (a look's sums, or
-/// the region's averaged water), and its buffer and map.
+/// the region's averaged water followed by its ground), and its buffer and
+/// map.
 struct Readback {
     slot: usize,
     load: u32,
@@ -190,6 +231,8 @@ impl WaterSettle {
         Self {
             kernels: Kernels::new(device),
             buffers: None,
+            setup: Setup::new(device),
+            setup_buffers: None,
             waiting: VecDeque::new(),
             squares: Vec::new(),
             loads: 0,
@@ -199,17 +242,19 @@ impl WaterSettle {
             steps: 0,
             blocks: 0,
             sourced: 0,
+            stirring: false,
+            raising: 0,
             clears: Vec::new(),
             copies: Vec::new(),
         }
     }
 
-    /// Settles each of `starts` for its records, those already asked for
-    /// left as they stand; a start storing no block holds no water and
-    /// makes its records dry at once.
-    pub(crate) fn settle(&mut self, starts: Vec<(Vec<RecordKey>, Arc<SettleStart>)>) {
-        for (records, start) in starts {
-            let asked = self.waiting.iter().any(|(held, _)| *held == records)
+    /// Settles each of `starts` for its records, on the terrain renderers
+    /// key by its id, those already asked for left as they stand; a start
+    /// storing no block holds no water and makes its records dry at once.
+    pub(crate) fn settle(&mut self, starts: Vec<(u64, Vec<RecordKey>, Arc<SettleStart>)>) {
+        for (terrain, records, start) in starts {
+            let asked = self.waiting.iter().any(|(_, held, _)| *held == records)
                 || self
                     .squares
                     .iter()
@@ -219,7 +264,7 @@ impl WaterSettle {
                 continue;
             }
             if start.stored.stored() == 0 {
-                let made = start.finish(&[], 0, true);
+                let made = start.finish(&[], &[], 0, true);
                 self.made.extend(
                     records
                         .into_iter()
@@ -228,7 +273,7 @@ impl WaterSettle {
                 );
                 continue;
             }
-            self.waiting.push_back((records, start));
+            self.waiting.push_back((terrain, records, start));
         }
     }
 
@@ -246,34 +291,43 @@ impl WaterSettle {
     /// [`SETTLE_LOOKS`] less those it took.
     pub(crate) fn looks_left(&self) -> u64 {
         let waiting = self.waiting.len() as u64 * SETTLE_LOOKS;
-        let settling = self
-            .squares
-            .iter()
-            .flatten()
-            .map(|square| SETTLE_LOOKS.saturating_sub(square.looks.len() as u64));
+        let settling = self.squares.iter().flatten().map(|square| {
+            let taken = u64::from((square.steps + square.stirred) / LOOK_EVERY);
+            SETTLE_LOOKS.saturating_sub(taken)
+        });
         waiting + settling.sum::<u64>()
     }
 
     /// Bytes of its buffers.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.buffers.as_ref().map_or(0, SlotBuffers::bytes)
+            + self.setup_buffers.as_ref().map_or(0, SetupBuffers::bytes)
     }
 
-    /// Prepares this frame's settling: takes what read back (deciding
-    /// whether the looked regions settled, or making a settled region's
-    /// records), its buffers for the regions to come, the waiting starts
-    /// into free slots, each region's water to start from, the steps this
-    /// frame runs and which regions look at its end, and their slots'
-    /// rectangles.
-    pub(crate) fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    /// Prepares this frame's settling, its regions' ground raised through
+    /// the terrain group `terrain` lays out with the passes made from the
+    /// mesh module `shader`: takes what read back (deciding whether the
+    /// looked regions settled or stirred enough, or making a settled
+    /// region's records), its buffers for the regions to come, the waiting
+    /// starts into free slots, each region's water to start from, the ground
+    /// of one region loaded and not yet raised, the steps this frame runs
+    /// and which regions look at its end, and their slots' rectangles.
+    pub(crate) fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        (shader, terrain): (&wgpu::ShaderModule, &TerrainPass),
+    ) {
         self.clears.clear();
         self.copies.clear();
+        self.raising = 0;
         let ran = std::mem::take(&mut self.steps);
         let wanted = self.take_readbacks(ran);
         let idle = self.waiting.is_empty() && self.squares.iter().all(Option::is_none);
         if idle {
             if self.readbacks.is_empty() {
                 self.buffers = None;
+                self.setup_buffers = None;
                 self.squares.clear();
             }
             return;
@@ -292,11 +346,12 @@ impl WaterSettle {
                 self.clears.extend(clears);
             }
         }
+        self.raise((device, queue), (shader, terrain));
         let stepping: u64 = self
             .squares
             .iter()
             .flatten()
-            .filter(|square| square.phase == Phase::Stepping)
+            .filter(|square| square.raised && square.phase != Phase::Reading)
             .map(|square| square.stepping.max(1))
             .sum();
         let budget = if self.cooking {
@@ -310,6 +365,91 @@ impl WaterSettle {
         }
         let looks = self.write_squares(queue);
         self.ask_readbacks(device, (looks, wanted));
+    }
+
+    /// Has this frame raise the ground of the first region loaded and not
+    /// yet raised whose terrain `terrain` lays out this frame, through its
+    /// group at that terrain's uniform with the setup made from the mesh
+    /// module `shader`: its blocks listed, each by its place among the
+    /// ground's blocks, its first corner and where its level-0 samples
+    /// start, then their samples; the region steps from this frame on.
+    fn raise(
+        &mut self,
+        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        (shader, terrain): (&wgpu::ShaderModule, &TerrainPass),
+    ) {
+        let Some(buffers) = self.buffers.as_ref() else {
+            return;
+        };
+        let found = self.squares.iter().enumerate().find_map(|(slot, square)| {
+            let square = square.as_ref().filter(|square| !square.raised)?;
+            Some((slot, terrain.ground(square.terrain)?))
+        });
+        self.setup.hold(found.as_ref().map(|(_, ground)| ground));
+        let Some((slot, _)) = found else {
+            return;
+        };
+        self.setup.ensure(device, shader);
+        let Some(square) = self.squares[slot].as_mut() else {
+            return;
+        };
+        if !self.setup.sets_up() {
+            return;
+        }
+        let start = &square.start;
+        let blocks = start.stored.stored();
+        let window = (start.window * start.window) as usize;
+        let entries = 2 * blocks + blocks * window;
+        if self
+            .setup_buffers
+            .as_ref()
+            .is_none_or(|setup| setup.room < entries)
+        {
+            self.setup_buffers = Some(SetupBuffers::new(
+                device,
+                &self.setup.layout,
+                buffers,
+                entries,
+            ));
+        }
+        let Some(setup) = self.setup_buffers.as_ref() else {
+            return;
+        };
+        let side = i64::from(BLOCK_SIDE);
+        let first = (slot as u32) * buffers.capacity.blocks;
+        let mut list: Vec<[u32; 4]> = Vec::with_capacity(entries);
+        let blocks_and_samples = start.stored.places.iter().zip(&start.windows);
+        for (block, (&place, sample)) in blocks_and_samples.enumerate() {
+            let corner = [
+                start.first[0] + i64::from(place & 0xffff) * side,
+                start.first[1] + i64::from(place >> 16) * side,
+            ];
+            // An `i32`'s bits each, as the setup reads them.
+            let bits = |value: i64| value as i32 as u32;
+            list.push([
+                first + block as u32,
+                bits(corner[0]),
+                bits(corner[1]),
+                (2 * blocks + block * window) as u32,
+            ]);
+            list.push([bits(sample[0]), bits(sample[1]), 0, 0]);
+        }
+        list.extend_from_slice(&start.samples);
+        queue.write_buffer(&setup.list, 0, bytemuck::cast_slice(&list));
+        let frame = SimSetup {
+            counts: [blocks as u32, 0, 0, 0],
+            square: [
+                start.window,
+                start.last[0] as u32,
+                start.last[1] as u32,
+                0,
+            ],
+            meters: [start.cell, start.datum, 0.0, 0.0],
+            ring: [0; 4],
+        };
+        queue.write_buffer(&setup.frame, 0, bytemuck::bytes_of(&frame));
+        square.raised = true;
+        self.raising = blocks as u32;
     }
 
     /// Fills its free slots with the starts waiting that fit them, those
@@ -327,21 +467,25 @@ impl WaterSettle {
             let Some(at) = self
                 .waiting
                 .iter()
-                .position(|(_, start)| fits(start.as_ref()))
+                .position(|(_, _, start)| fits(start.as_ref()))
             else {
                 break;
             };
-            let Some((records, start)) = self.waiting.remove(at) else {
+            let Some((terrain, records, start)) = self.waiting.remove(at) else {
                 break;
             };
             self.loads += 1;
             self.squares[slot] = Some(Square {
                 records,
+                terrain,
                 start,
                 load: self.loads,
+                raised: false,
                 steps: 0,
                 since_look: 0,
+                stirred: 0,
                 looks: Vec::new(),
+                settled: false,
                 stepping: 0,
                 flowing: 0,
                 phase: Phase::Stepping,
@@ -350,21 +494,18 @@ impl WaterSettle {
         }
     }
 
-    /// Writes the frames and each slot's rectangle for this frame's
-    /// steps, counting each region's steps; the slots whose regions look at
-    /// the frame's end.
+    /// Writes the frames and each slot's rectangle for this frame's steps,
+    /// counting each region's steps: a region whose ground was raised steps
+    /// by its cells' own seconds, or stirs as the live water does, every
+    /// cell by the live water's seconds, its steps' index its steps stirred
+    /// so far, bursting and its looks keeping its sums; the slots whose
+    /// regions look at the frame's end.
     fn write_squares(&mut self, queue: &wgpu::Queue) -> Vec<usize> {
         let steps = self.steps;
         self.blocks = 0;
         self.sourced = 0;
-        let mut squares = vec![
-            SimSlot {
-                shape: [0; 4],
-                step: [0.0; 4],
-                blocks: [0; 4],
-            };
-            self.squares.len()
-        ];
+        self.stirring = false;
+        let mut squares = vec![SimSlot::zeroed(); self.squares.len()];
         let mut looks = Vec::new();
         for (slot, held) in self.squares.iter_mut().enumerate() {
             let Some(square) = held else {
@@ -372,11 +513,25 @@ impl WaterSettle {
             };
             let start = &square.start;
             let stored = &start.stored;
-            let mut flags = SIM_LOCAL | SIM_OPEN | SIM_SUMMING | SIM_SPARSE;
-            if square.phase == Phase::Stepping && steps > 0 {
+            let stirs = square.phase == Phase::Stirring;
+            let mut flags = SIM_OPEN | SIM_SUMMING | SIM_SPARSE;
+            flags |= if stirs {
+                SIM_BURSTING | SIM_KEEPING
+            } else {
+                SIM_LOCAL
+            };
+            // Its stirring's steps so far, which its bursts are drawn by.
+            let index = square.stirred;
+            let runs = square.raised && square.phase != Phase::Reading && steps > 0;
+            if runs {
                 flags |= SIM_STEPPING;
-                square.steps += steps;
                 square.since_look += steps;
+                if stirs {
+                    square.stirred += steps;
+                    self.stirring = true;
+                } else {
+                    square.steps += steps;
+                }
                 self.sourced = self.sourced.max(start.sources.len() as u32);
                 if square.since_look >= LOOK_EVERY {
                     flags |= SIM_LOOKING;
@@ -386,21 +541,23 @@ impl WaterSettle {
             }
             self.blocks = self.blocks.max(stored.stored() as u32);
             let [x, z] = stored.cells;
+            // Its first cell on the terrain's lattice of its cells, an
+            // `i32`'s bits each.
+            let [first_x, first_z] = start.first.map(|first| first as i32 as u32);
             squares[slot] = SimSlot {
                 shape: [x, z, flags, start.sources.len() as u32],
-                step: [start.cell, 0.0, 0.0, 0.0],
+                step: [start.cell, step_seconds(start.cell), 0.0, 0.0],
                 blocks: [
                     stored.blocks[0],
                     stored.blocks[1],
                     stored.stored() as u32,
                     0,
                 ],
+                place: [first_x, first_z, index, 0],
             };
         }
         if let Some(buffers) = self.buffers.as_ref() {
-            // No wind drags settling water's surface: its records stand for
-            // whatever wind blows over them.
-            buffers.write_frames(queue, [0.0; 2], [0; 3]);
+            buffers.write_frames(queue);
             buffers.write_squares(queue, &squares);
         }
         looks
@@ -408,23 +565,25 @@ impl WaterSettle {
 
     /// Sets up the read backs at the frame's end: the sums of each slot
     /// of `looks` whose region looks, and the averaged water of each of
-    /// `wanted`, whose regions settled.
+    /// `wanted`, whose regions settled, with its ground as the GPU raised
+    /// it.
     fn ask_readbacks(&mut self, device: &wgpu::Device, (looks, wanted): (Vec<usize>, Vec<usize>)) {
         let Some(buffers) = self.buffers.as_ref() else {
             return;
         };
         let held = buffers.held();
         let means = CELL_MEANS as u64;
-        let mut copies = Vec::new();
+        let mut reads = Vec::new();
         for slot in looks {
             let Some(square) = self.squares[slot].as_ref() else {
                 continue;
             };
             let blocks = square.start.stored.stored() as u64;
             let offset = (buffers.averages_at(slot as u32) + (SIM_CELL_SUMS + means) * held) * 16;
-            copies.push((
+            reads.push((
                 (slot, square.load, false),
-                (offset, SIM_BLOCK_LOOKS * blocks * 16),
+                [(false, offset, SIM_BLOCK_LOOKS * blocks * 16)],
+                None,
             ));
         }
         for slot in wanted {
@@ -432,34 +591,49 @@ impl WaterSettle {
                 continue;
             };
             let cells = square.start.water.len() as u64;
+            let blocks = square.start.stored.stored() as u64;
             let offset = (buffers.averages_at(slot as u32) + SIM_CELL_SUMS * held) * 16;
-            copies.push(((slot, square.load, true), (offset, means * cells * 16)));
+            let ground = buffers.ground_at(slot as u32) * 4;
+            reads.push((
+                (slot, square.load, true),
+                [(false, offset, means * cells * 16)],
+                Some((true, ground, blocks * BLOCK_GROUND as u64 * 4)),
+            ));
         }
-        for (read, range) in copies {
-            self.read_back(device, read, range);
+        for (read, [first], then) in reads {
+            let copies: Vec<(bool, u64, u64)> = std::iter::once(first).chain(then).collect();
+            self.read_back(device, read, &copies);
         }
     }
 
-    /// Sets up a read back of `bytes` of the averages from `offset` for
-    /// `slot`'s region load `load`, of its averaged water where `means`,
-    /// else of a look's sums.
+    /// Sets up a read back for `slot`'s region load `load`, of its averaged
+    /// water and its ground where `means`, else of a look's sums: `copies`,
+    /// each from the ground or the averages, at an offset, of some bytes,
+    /// one after the other.
     fn read_back(
         &mut self,
         device: &wgpu::Device,
         (slot, load, means): (usize, u32, bool),
-        (offset, bytes): (u64, u64),
+        copies: &[(bool, u64, u64)],
     ) {
+        let bytes: u64 = copies.iter().map(|&(_, _, bytes)| bytes).sum();
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("engine/water-settle-readback"),
             size: bytes,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        self.copies.push(CopyBack {
-            offset,
-            bytes,
-            readback: self.readbacks.len(),
-        });
+        let mut into = 0;
+        for &(ground, offset, bytes) in copies {
+            self.copies.push(CopyBack {
+                ground,
+                offset,
+                bytes,
+                readback: self.readbacks.len(),
+                into,
+            });
+            into += bytes;
+        }
         self.readbacks.push(Readback {
             slot,
             load,
@@ -473,17 +647,18 @@ impl WaterSettle {
     /// slot as the region storing the most stores, as many of them mapped
     /// as the largest rectangle's, as many faces along its edges and cells
     /// rivers bring water to as the most of them, and as many slots as its
-    /// memory holds, made anew where more are wanted and no region settles.
-    /// A start larger than the GPU binds fails its records.
+    /// memory holds, made anew where more are wanted and no region settles,
+    /// what raises its regions' ground bound to them anew. A start larger
+    /// than the GPU binds fails its records.
     fn ensure_buffers(&mut self, device: &wgpu::Device) {
         let limits = device.limits();
         let binding = limits
             .max_storage_buffer_binding_size
             .min(limits.max_buffer_size);
         let mut kept = VecDeque::with_capacity(self.waiting.len());
-        for (records, start) in std::mem::take(&mut self.waiting) {
+        for (terrain, records, start) in std::mem::take(&mut self.waiting) {
             if slot_largest_bytes(needs(&start)) <= binding {
-                kept.push_back((records, start));
+                kept.push_back((terrain, records, start));
                 continue;
             }
             let [x, z] = start.stored.cells;
@@ -502,7 +677,7 @@ impl WaterSettle {
         let largest = self
             .waiting
             .iter()
-            .map(|(_, start)| start)
+            .map(|(_, _, start)| start)
             .chain(self.squares.iter().flatten().map(|square| &square.start))
             .fold(Capacity::default(), |most, start| most.max(needs(start)));
         let settling = self.squares.iter().any(Option::is_some) || !self.readbacks.is_empty();
@@ -523,14 +698,18 @@ impl WaterSettle {
             (largest, slots),
             false,
         ));
+        self.setup_buffers = None;
         self.squares = (0..slots).map(|_| None).collect();
     }
 
     /// Takes what read back: a look's sums decide whether its region is
-    /// done, settled or out of steps, its averaged water then read back (the
-    /// slots returned), a frame having run `ran` steps; a region's averaged
-    /// water makes its records. A read back of an earlier load of its slot
-    /// is dropped; one that failed fails its region's records.
+    /// done stepping by its cells' own seconds (settled, or out of steps),
+    /// when it turns to stir, or done stirring (its means over all it
+    /// stirred stationary, or out of its stirring's steps), its averaged
+    /// water then read back (the slots returned), a frame having run `ran`
+    /// steps; a region's averaged water and ground make its records. A read
+    /// back of an earlier load of its slot is dropped; one that failed fails
+    /// its region's records.
     fn take_readbacks(&mut self, ran: u32) -> Vec<usize> {
         let mut kept = Vec::with_capacity(self.readbacks.len());
         let mut wanted = Vec::new();
@@ -567,38 +746,57 @@ impl WaterSettle {
                 self.squares[readback.slot] = None;
                 continue;
             };
+            if readback.means {
+                self.finish(readback.slot, &bytes);
+                continue;
+            }
             let values = floats(&bytes);
             drop(bytes);
-            if readback.means {
-                self.finish(readback.slot, &values);
-            } else if square.phase == Phase::Stepping {
-                let done = looked(square, &values);
-                // A cook says how its regions settle, a line every sixteen
-                // looks from the first and as each one ends.
-                if self.cooking && (done || square.looks.len() % 16 == 1) {
-                    say(square, ran, done);
-                }
-                if done {
-                    square.phase = Phase::Reading;
-                    wanted.push(readback.slot);
-                }
+            if square.phase == Phase::Reading {
+                continue;
+            }
+            let done = looked(square, &values);
+            // A cook says how its regions settle and stir, a line every
+            // sixteen looks from the first and as each part ends.
+            if self.cooking && (done || square.looks.len() % 16 == 1) {
+                say(square, ran, done);
+            }
+            if !done {
+                continue;
+            }
+            if square.phase == Phase::Stepping {
+                square.settled = square.steps < SETTLE_STEPS[1];
+                square.phase = Phase::Stirring;
+                square.looks.clear();
+                square.since_look = 0;
+            } else {
+                square.phase = Phase::Reading;
+                wanted.push(readback.slot);
             }
         }
         self.readbacks = kept;
         wanted
     }
 
-    /// Slot `slot`'s region settled to `means` (each stored cell's
-    /// [`CELL_MEANS`] entries of its means over its last steps, in its
-    /// slots' order), which make its records, the slot then free; a cook
-    /// says what they came to.
-    fn finish(&mut self, slot: usize, means: &[[f32; 4]]) {
+    /// Slot `slot`'s region settled to the means `bytes` holds (each stored
+    /// cell's [`CELL_MEANS`] entries of its means over its last steps, in
+    /// its slots' order), followed by its ground as the GPU raised it, which
+    /// make its records, the slot then free; a cook says what they came to.
+    fn finish(&mut self, slot: usize, bytes: &[u8]) {
         let Some(square) = self.squares[slot].as_mut() else {
             return;
         };
-        let means = &means[..means.len().min(square.start.water.len() * CELL_MEANS)];
-        let settled = square.steps < SETTLE_STEPS[1];
-        let made = square.start.finish(means, square.steps, settled);
+        let start = &square.start;
+        let split = (start.water.len() * CELL_MEANS * 16).min(bytes.len());
+        let means = floats(&bytes[..split]);
+        let ground: Vec<f32> = bytes[split..]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&chunk| f32::from_le_bytes(chunk))
+            .collect();
+        let settled = square.settled && square.stirred < STIR_STEPS[1];
+        let made = start.finish(&means, &ground, square.steps + square.stirred, settled);
         if self.cooking {
             say_made(square, &made);
         }
@@ -609,8 +807,9 @@ impl WaterSettle {
     }
 
     /// Encodes this frame's settling into `encoder`: the ranges cleared for
-    /// the regions starting, its steps over every slot, the looks at the
-    /// frame's end, and the copies read back.
+    /// the regions starting, the raising of a region's ground, its steps
+    /// over every slot, the looks at the frame's end, and the copies read
+    /// back.
     pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder) {
         let (Some(pipelines), Some(buffers)) = (self.kernels.created(), &self.buffers) else {
             return;
@@ -623,22 +822,36 @@ impl WaterSettle {
             };
             encoder.clear_buffer(buffer, clear.offset, Some(clear.bytes));
         }
+        if self.raising > 0
+            && let Some(setup) = self.setup_buffers.as_ref()
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/water-settle-raise"),
+                timestamp_writes: None,
+            });
+            self.setup.encode_raise(&mut pass, &setup.group, self.raising);
+        }
         if self.steps > 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/water-settle"),
                 timestamp_writes: None,
             });
-            let run = (self.steps, self.sourced, true, true);
+            let run = (self.steps, self.sourced, true, self.stirring);
             encode_steps(&mut pass, pipelines, buffers, run, self.blocks);
             encode_look(&mut pass, pipelines, buffers, self.blocks);
         }
         for copy in &self.copies {
             let readback = &self.readbacks[copy.readback];
+            let source = if copy.ground {
+                &buffers.ground
+            } else {
+                &buffers.averages
+            };
             encoder.copy_buffer_to_buffer(
-                &buffers.averages,
+                source,
                 copy.offset,
                 &readback.buffer,
-                0,
+                copy.into,
                 copy.bytes,
             );
         }
@@ -676,11 +889,11 @@ impl WaterSettle {
 }
 
 /// Writes `square`'s start into slot `slot` of `buffers`: its table, its
-/// blocks' ground, their cells' water to start from (into both states),
-/// its rivers' sources, and its blocks as they start (each marked where a
-/// cell of it holds water no lake holds or rivers bring water to one), its
-/// cells' stepping counted; the ranges to clear before it steps: its sums,
-/// and its cells' waves, outflow's shares and seconds.
+/// blocks' ground, bare, their cells' water to start from (into both
+/// states), its rivers' sources, and its blocks as they start (each marked
+/// where a cell of it holds water no lake holds or rivers bring water to
+/// one), its cells' stepping counted; the ranges to clear before it steps:
+/// its sums, and its cells' waves, outflow's shares and seconds.
 fn load(queue: &wgpu::Queue, buffers: &SlotBuffers, slot: u32, square: &mut Square) -> [Clear; 2] {
     let start = &square.start;
     let n = start.water.len() as u64;
@@ -781,8 +994,8 @@ fn blocks(start: &SettleStart) -> (Vec<[f32; 2]>, u64) {
 /// its cells stepping; the energy they lose, their heave, their swirl and
 /// those that ran at the fastest water runs; and the water its cells beside
 /// blocks the slot does not store held, and those cells) into `square`'s
-/// looks: whether it is done, settled (its means stationary) or out of
-/// steps.
+/// looks: whether it is done with its phase, its means stationary (its own
+/// steps' or, stirring, all it stirred's) or its phase's steps out.
 fn looked(square: &mut Square, sums: &[[f32; 4]]) -> bool {
     let (mut volume, mut speed, mut flowing, mut stepping) = (0.0_f64, 0.0_f64, 0.0_f64, 0.0);
     let (mut energy, mut heave, mut swirl, mut clamped) = (0.0_f64, 0.0_f64, 0.0_f64, 0.0);
@@ -824,39 +1037,51 @@ fn looked(square: &mut Square, sums: &[[f32; 4]]) -> bool {
     square.looks.push(look);
     let looks = &square.looks;
     let count = looks.len();
-    let settled = square.steps >= SETTLE_STEPS[0]
-        && count > STILL_LOOKS
-        && looks[count - STILL_LOOKS..].iter().all(|look| look.still);
-    settled || square.steps >= SETTLE_STEPS[1]
+    let still = count > STILL_LOOKS && looks[count - STILL_LOOKS..].iter().all(|look| look.still);
+    let ([least, most], steps) = match square.phase {
+        Phase::Stirring => (STIR_STEPS, square.stirred),
+        Phase::Stepping | Phase::Reading => (SETTLE_STEPS, square.steps),
+    };
+    (steps >= least && still) || steps >= most
 }
 
-/// Prints how `square` settles at its last look, a frame running `steps`
-/// steps: its cells, the blocks of them it stores and its rivers' water,
-/// those stepping and flowing, the water it holds, its flowing cells' mean
-/// speed, energy lost, heave and swirl and those that ran at the fastest
-/// water runs, the water standing against the edges of what it stores, and
-/// whether it is `done`, settled or out of steps.
+/// Prints how `square` settles or stirs at its last look, a frame running
+/// `steps` steps: its cells, the blocks of them it stores and its rivers'
+/// water, those stepping and flowing, the water it holds, its flowing
+/// cells' mean speed, energy lost, heave and swirl and those that ran at the
+/// fastest water runs, the water standing against the edges of what it
+/// stores, and whether it is `done`, settled or out of steps.
 fn say(square: &Square, steps: u32, done: bool) {
     let start = &square.start;
     let [x, z] = start.stored.cells;
-    let state = match (done, square.steps < SETTLE_STEPS[1]) {
-        (false, _) => "settling",
-        (true, true) => "settled",
-        (true, false) => "out of steps",
+    let stirs = square.phase == Phase::Stirring;
+    let (taken, most) = if stirs {
+        (square.stirred, STIR_STEPS[1])
+    } else {
+        (square.steps, SETTLE_STEPS[1])
+    };
+    let state = match (stirs, done, taken < most) {
+        (false, false, _) => "settling",
+        (false, true, true) => "settled, now stirring",
+        (false, true, false) => "out of steps, now stirring",
+        (true, false, _) => "stirring",
+        (true, true, true) => "stirred",
+        (true, true, false) => "out of stirring's steps",
     };
     let sources: f32 = start.sources.iter().map(|source| source.rate).sum();
     let area = f64::from(start.cell * start.cell);
     let look = square.looks.last().copied();
     eprintln!(
         "Water settling {x} by {z} cells of {} m, {} blocks of them stored ({} tiles kept, \
-         rivers bringing {sources:.0} m3/s): {state} after {} steps, {steps} a frame; {} cells \
-         stepping, {} flowing; {:.0} m3 held, flowing at {:.3} m/s, losing {:.1} W/m2, heaving \
-         {:.4} m and swirling {:.3}/s on average, {} cells at the fastest water runs; {:.0} m3 \
-         against the edges of the blocks stored, over {} cells",
+         rivers bringing {sources:.0} m3/s): {state} after {} steps, {} stirred, {steps} a \
+         frame; {} cells stepping, {} flowing; {:.0} m3 held, flowing at {:.3} m/s, losing \
+         {:.1} W/m2, heaving {:.4} m and swirling {:.3}/s on average, {} cells at the fastest \
+         water runs; {:.0} m3 against the edges of the blocks stored, over {} cells",
         start.cell,
         start.stored.stored(),
         square.records.len(),
         square.steps,
+        square.stirred,
         square.stepping,
         square.flowing,
         look.map_or(0.0, |look| look.volume * area),

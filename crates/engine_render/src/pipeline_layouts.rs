@@ -177,9 +177,10 @@ pipeline_layouts! {
     /// Water's simulation: faces, fluxes, cells, the water rivers bring and
     /// the cells past its edges.
     WATER_SIM_PIPELINES = [WATER_SIM];
-    /// The live water's setup: an empty group, the terrain group, through
-    /// which it reads the ground, its materials as their mesh band does and
-    /// the tiles' water as water's shading does, and its own.
+    /// The water's beds' and the live water's setup: an empty group, the
+    /// terrain group, through which it reads the ground, its materials as
+    /// their mesh band does and the tiles' water as water's shading does,
+    /// and its own.
     WATER_SETUP_PIPELINES = [EMPTY, TERRAIN, WATER_SETUP];
     /// Water's particles: water's first group, whose camera measures the
     /// pixel their rafts are born no smaller than, the water's group, read

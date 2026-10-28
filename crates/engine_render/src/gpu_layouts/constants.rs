@@ -310,7 +310,7 @@ gpu_consts! {
     // crate::water_sim
     /// Workgroup side of the simulation's passes over cells and faces: a
     /// block of cells, as its slots store them and water draws them.
-    pub(crate) const WATER_SIM_GROUP: u32 = engine_core::terrain_data::BLOCK_SIDE => ["WATER_SIM_GROUP" in WATER_SIM_SHADER, "WATER_LIVE_BLOCK" in SHADER, "@sim_exchange" in WATER_SIM_SHADER, "@sim_waves" in WATER_SIM_SHADER, "@sim_seconds" in WATER_SIM_SHADER, "@sim_drain" in WATER_SIM_SHADER, "@sim_update" in WATER_SIM_SHADER, "@sim_touch" in WATER_SIM_SHADER, "@sim_burst" in WATER_SIM_SHADER, "@sim_push" in WATER_SIM_SHADER, "@sim_drift" in WATER_SIM_SHADER, "@sim_churn" in WATER_SIM_SHADER, "@sim_churned" in WATER_SIM_SHADER, "@sim_tally" in WATER_SIM_SHADER, "@sim_activity" in WATER_SIM_SHADER, "@sim_look" in WATER_SIM_SHADER, "@sim_drawn" in WATER_SIM_SHADER];
+    pub(crate) const WATER_SIM_GROUP: u32 = engine_core::terrain_data::BLOCK_SIDE => ["WATER_SIM_GROUP" in WATER_SIM_SHADER, "WATER_LIVE_BLOCK" in SHADER, "@sim_exchange" in WATER_SIM_SHADER, "@sim_waves" in WATER_SIM_SHADER, "@sim_seconds" in WATER_SIM_SHADER, "@sim_drain" in WATER_SIM_SHADER, "@sim_update" in WATER_SIM_SHADER, "@sim_touch" in WATER_SIM_SHADER, "@sim_burst" in WATER_SIM_SHADER, "@sim_push" in WATER_SIM_SHADER, "@sim_ended" in WATER_SIM_SHADER, "@sim_tally" in WATER_SIM_SHADER, "@sim_activity" in WATER_SIM_SHADER, "@sim_look" in WATER_SIM_SHADER, "@sim_drawn" in WATER_SIM_SHADER];
     /// The most rectangles a dispatch of the simulation runs, each a slot
     /// of its buffers.
     pub(crate) const SIM_SLOTS: usize = 64 => ["SIM_SLOTS" in WATER_SIM_SHADER];
@@ -330,8 +330,10 @@ gpu_consts! {
     /// A rectangle's flags: it steps; each cell by its own seconds; water
     /// leaves over its edges freely and none comes in; it sums each cell's
     /// water over its steps; the dispatch looks at its sums; only its
-    /// blocks water can reach step; and it runs live, its rim pulled back to
-    /// the settled water and its looks kept.
+    /// blocks water can reach step; it runs live, its rim pulled back to the
+    /// settled water and its looks kept; turbulence bursts in its water
+    /// before each step; and its looks keep its sums, so each look's means
+    /// span every step since it began to stir.
     pub(crate) const SIM_STEPPING: u32 = 1 => ["SIM_STEPPING" in WATER_SIM_SHADER];
     pub(crate) const SIM_LOCAL: u32 = 2 => ["SIM_LOCAL" in WATER_SIM_SHADER];
     pub(crate) const SIM_OPEN: u32 = 4 => ["SIM_OPEN" in WATER_SIM_SHADER];
@@ -339,6 +341,8 @@ gpu_consts! {
     pub(crate) const SIM_LOOKING: u32 = 16 => ["SIM_LOOKING" in WATER_SIM_SHADER];
     pub(crate) const SIM_SPARSE: u32 = 32 => ["SIM_SPARSE" in WATER_SIM_SHADER];
     pub(crate) const SIM_LIVE: u32 = 64 => ["SIM_LIVE" in WATER_SIM_SHADER];
+    pub(crate) const SIM_BURSTING: u32 = 128 => ["SIM_BURSTING" in WATER_SIM_SHADER];
+    pub(crate) const SIM_KEEPING: u32 = 256 => ["SIM_KEEPING" in WATER_SIM_SHADER];
     /// Cells along each edge of the live square over which its water is
     /// pulled back to the settled water, and over which water's pass
     /// hands it back to the tiles' water: a block of them, the scheme's own
@@ -497,7 +501,6 @@ gpu_consts! {
     pub(crate) const DEBUG_VIEW_WATER_TURBULENCE: u32 = 15 => ["DEBUG_VIEW_WATER_TURBULENCE" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_WATER_WHITE: u32 = 16 => ["DEBUG_VIEW_WATER_WHITE" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_WATER_REACH: u32 = 17 => ["DEBUG_VIEW_WATER_REACH" in DEBUG_VIEW_SHADER];
-    pub(crate) const DEBUG_VIEW_WATER_FOAM: u32 = 18 => ["DEBUG_VIEW_WATER_FOAM" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_WATER_SPAN: u32 = 19 => ["DEBUG_VIEW_WATER_SPAN" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_WATER_EDDIES: u32 = 20 => ["DEBUG_VIEW_WATER_EDDIES" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_WATER_ROUGHNESS: u32 = 21 => ["DEBUG_VIEW_WATER_ROUGHNESS" in DEBUG_VIEW_SHADER];
@@ -612,16 +615,16 @@ gpu_consts! {
     pub(crate) const CLOUD_REACH: f32 = 60000.0 => ["REACH" in CLOUDS_SHADER, "CLOUD_PARALLAX_REACH"];
     /// Vertices drawn per cluster of virtual geometry: three a triangle.
     pub(crate) const CLUSTER_DRAWN_VERTICES: u32 = 3 * engine_core::CLUSTER_TRIANGLES => ["CLUSTER_VERTICES" in VIRTUAL_SHADER];
-    /// How the current foam rides on water's surface turns from the water's
-    /// velocity in a bend, where the helical flow carries the surface toward
-    /// the outer bank (Rozovskii 1957; Engelund 1974): the tangent of its
-    /// turn this many depths over the streamlines' radius of curvature, and
-    /// the most it reaches, 45 degrees, as sharper bends saturate (Blanckaert
-    /// and de Vriend 2003); and the share of the wind's speed the wind drags
-    /// it at (Wu 1975).
-    pub(crate) const SURFACE_BEND: f32 = 7.0 => ["SIM_BEND" in WATER_SIM_SHADER, "WATER_SURFACE_BEND"];
-    pub(crate) const SURFACE_BEND_MOST: f32 = 1.0 => ["SIM_BEND_MOST" in WATER_SIM_SHADER, "WATER_SURFACE_BEND_MOST"];
-    pub(crate) const SURFACE_WIND_DRIFT: f32 = 0.03 => ["SIM_WIND_DRIFT" in WATER_SIM_SHADER, "WATER_SURFACE_DRIFT"];
+    /// How the current water's particles ride on its surface turns from the
+    /// water's velocity in a bend, where the helical flow carries the surface
+    /// toward the outer bank (Rozovskii 1957; Engelund 1974): the tangent of
+    /// its turn this many depths over the streamlines' radius of curvature,
+    /// and the most it reaches, 45 degrees, as sharper bends saturate
+    /// (Blanckaert and de Vriend 2003); and the share of the wind's speed the
+    /// wind drags it at (Wu 1975).
+    pub(crate) const SURFACE_BEND: f32 = 7.0 => ["WATER_SURFACE_BEND"];
+    pub(crate) const SURFACE_BEND_MOST: f32 = 1.0 => ["WATER_SURFACE_BEND_MOST"];
+    pub(crate) const SURFACE_WIND_DRIFT: f32 = 0.03 => ["WATER_SURFACE_DRIFT"];
 }
 
 gpu_mirrors! {
@@ -645,13 +648,10 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::GROUND_D84 => ["SETUP_GROUND_D84"];
     engine_core::terrain_data::COVER_POINTS => ["SETUP_COVER_POINTS"];
     engine_core::terrain_data::shallow_water::WET_MOST => ["SIM_WET_MOST" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::FOAM_LIFE => ["SIM_FOAM_LIFE" in WATER_SIM_SHADER, "WATER_FOAM_LIFE"];
-    engine_core::terrain_data::shallow_water::FOAM_MOST => ["SIM_FOAM_MOST" in WATER_SIM_SHADER, "WATER_FOAM_MOST"];
-    engine_core::terrain_data::shallow_water::FOAM_WET => ["SIM_FOAM_WET" in WATER_SIM_SHADER, "WATER_FOAM_WET"];
-    engine_core::terrain_data::shallow_water::FOAM_LOSS => ["SIM_FOAM_LOSS" in WATER_SIM_SHADER, "WATER_FOAM_LOSS"];
-    engine_core::terrain_data::shallow_water::FOAM_DROP => ["SIM_FOAM_DROP" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::FOAM_JUMP => ["SIM_FOAM_JUMP" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::FOAM_POWER => ["SIM_FOAM_POWER" in WATER_SIM_SHADER, "WATER_FOAM_POWER"];
+    engine_core::terrain_data::shallow_water::FOAM_LIFE => ["WATER_FOAM_LIFE"];
+    engine_core::terrain_data::shallow_water::FOAM_WET => ["WATER_FOAM_WET"];
+    engine_core::terrain_data::shallow_water::FOAM_LOSS => ["WATER_FOAM_LOSS"];
+    engine_core::terrain_data::shallow_water::FOAM_POWER => ["WATER_FOAM_POWER"];
     engine_core::terrain_data::shallow_water::COURANT => ["SIM_COURANT" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::LOCAL_SHARE => ["SIM_LOCAL_SHARE" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SLOWEST => ["SIM_SLOWEST" in WATER_SIM_SHADER];

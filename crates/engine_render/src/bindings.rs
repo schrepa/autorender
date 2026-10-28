@@ -1019,13 +1019,15 @@ tables! {
         ],
     };
 
-    /// Group 2 of the live water's setup (`meshes/water_setup.wgsl`),
-    /// after an empty first group and the terrain group (`TERRAIN`),
-    /// through which it reads the ground, its materials as their mesh band
-    /// does and the tiles' water as water's shading does: what a frame sets
-    /// up, the solids standing in the settled water and the blocks it sets
-    /// up, and what it writes of the simulation's buffers, the live water's
-    /// ground, its cells' start, their looks and its inputs, where its ring
+    /// Group 2 of the water's beds' and the live water's setup
+    /// (`meshes/water_setup.wgsl`), after an empty first group and the
+    /// terrain group (`TERRAIN`), through which it reads the ground, its
+    /// materials as their mesh band does and the tiles' water as water's
+    /// shading does: what a frame sets up, its list (the live water's
+    /// solids standing in the settled water and the blocks it sets up, or
+    /// settling water's blocks and the level-0 samples their ground rises
+    /// by), and what it writes of the simulation's buffers, the ground, the
+    /// live water's cells' start, their looks and its inputs, where its ring
     /// stands: seven of a compute stage's 8 storage buffers with the terrain
     /// group's two, and eight of its 16 sampled textures.
     const WATER_SETUP: Table = Table {

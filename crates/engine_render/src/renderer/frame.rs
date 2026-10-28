@@ -359,8 +359,6 @@ impl Renderer {
         // The GPU works on the prelude while the frame prepares and records
         // its passes.
         self.hand_prelude(prelude);
-        // Water settling for tiles' records runs first in the frame.
-        self.water_settle.prepare(&self.device, &self.queue);
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let view = surface
             .texture()
@@ -369,7 +367,6 @@ impl Renderer {
         // The frame's GPU time, which dynamic resolution keeps within its
         // budget, from here to its last pass.
         self.display.time_begin(&mut encoder);
-        self.water_settle.encode(&mut encoder);
         let passes = self.prepare_pipelines(kind, &packing.temporal_frame, &features);
         let (virtual_frame, resolving) = self.prepare_virtual_frame(
             snapshot,
@@ -387,6 +384,11 @@ impl Renderer {
                 kind.gpu_mode,
             ),
         );
+        // Water settling for tiles' records, its regions' ground raised
+        // through the terrain group the frame laid out.
+        self.water_settle
+            .prepare(&self.device, &self.queue, (&self.mesh_shader, &self.terrain));
+        self.water_settle.encode(&mut encoder);
         // Ground cover grows on the terrain drawn.
         features.frames.ground_cover = if terrain {
             self.features

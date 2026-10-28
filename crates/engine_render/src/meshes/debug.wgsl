@@ -281,9 +281,9 @@ fn debug_span_code(span: f32) -> f32 {
 // (`debug_span_code`), the roughness its shading gives it, and none; the
 // third target its Froude number and
 // its eddies' turbulent Froude number (`water_eddy_froude`), half floats,
-// then its turbulence, white water and the foam it carries (a byte each, 0
-// to 1, the foam a share of WATER_FOAM_MOST) with its reach in the top byte
-// (0 for none, else one more than `engine_terrain::Reach`).
+// then its turbulence and white water (a byte each, 0 to 1), then none,
+// with its reach in the top byte (0 for none, else one more than
+// `engine_terrain::Reach`).
 fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets {
     let shade = shade_water(point, pixel, at, false);
     if shade.coverage < 0.5 && !DEBUG_WATER_VIEWS { // optics: water covers as its shading sees it
@@ -298,7 +298,7 @@ fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets 
         pack4x8unorm(vec4<f32>(debug_span_code(at.words.span), shade.shaded.roughness,
             0.0, 0.0)), seen);
     targets.terrain = vec2<u32>(pack2x16float(vec2<f32>(froude, eddies)),
-        pack4x8unorm(vec4<f32>(at.words.state.xy, at.words.foam / WATER_FOAM_MOST, 0.0))
+        pack4x8unorm(vec4<f32>(at.words.state.xy, 0.0, 0.0))
             | (min(at.words.reach, 0xffu) << 24u));
     return targets;
 }

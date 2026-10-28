@@ -32,30 +32,28 @@ gpu_structs! {
 
     /// WGSL `SimFrame` of `water_sim.wgsl`: the stage, the slots the
     /// buffers hold, the blocks a slot's pool holds and the blocks a
-    /// slot's table maps; the most cells rivers bring water to a slot holds
-    /// and the faces along its west and south edges a slot holds; the free
-    /// wind over the water (meters a second along x and z), which drags its
-    /// surface and the foam riding it, then nothing; and the live square's
-    /// first cell on the terrain's lattice of its cells along x and z (an
-    /// `i32`'s bits each) and the index of its frame's first step, which
-    /// turbulence's bursts are drawn by, then nothing (none settling).
+    /// slot's table maps; and the most cells rivers bring water to a slot
+    /// holds and the faces along its west and south edges a slot holds, then
+    /// nothing.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimFrame as ["SimFrame" in WATER_SIM_SHADER] {
         pub stage: [u32; 4],
         pub inputs: [u32; 4],
-        pub wind: [f32; 4],
-        pub live: [u32; 4],
     }
 
     /// WGSL `SimSlot` of `water_sim.wgsl`: a slot's rectangle, its cells
     /// along x and z, flags and cells rivers bring water to; the meters
     /// across a cell and the seconds of a step alike for every cell, then
-    /// nothing; and its blocks along x and z and those its pool stores.
+    /// nothing; its blocks along x and z and those its pool stores, then
+    /// nothing; and its first cell on the terrain's lattice of its cells
+    /// along x and z (an `i32`'s bits each) and the index of its frame's
+    /// first step, which turbulence's bursts are drawn by, then nothing.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimSlot as ["SimSlot" in WATER_SIM_SHADER] {
         pub shape: [u32; 4],
         pub step: [f32; 4],
         pub blocks: [u32; 4],
+        pub place: [u32; 4],
     }
 
     /// WGSL `SimSlots` of `water_sim.wgsl`: every slot's rectangle.
@@ -90,16 +88,21 @@ gpu_structs! {
         pub touch: [SimTouch; SIM_TOUCHES],
     }
 
-    /// WGSL `SimSetup` of `meshes/water_setup.wgsl`: the blocks of the live
-    /// square a frame sets up (those set up whole first, then those whose
-    /// ground alone is set up again), those set up whole, the cells past its
-    /// edges it sets up (none where it sets up none) and the solids standing
-    /// in the settled water over it; its first cell on the terrain's lattice
-    /// of its cells along x and z (an `i32`'s bits each), its cells along a
-    /// side and the live cells along each side of a settled cell; the
-    /// meters across a cell and the height its heights stand above (world
-    /// meters), then nothing; and where its ring starts among the
-    /// simulation's inputs, then nothing.
+    /// WGSL `SimSetup` of `meshes/water_setup.wgsl`. The live water's: the
+    /// blocks of the live square a frame sets up (those set up whole first,
+    /// then those whose ground alone is set up again), those set up whole,
+    /// the cells past its edges it sets up (none where it sets up none) and
+    /// the solids standing in the settled water over it; its first cell on
+    /// the terrain's lattice of its cells along x and z (an `i32`'s bits
+    /// each), its cells along a side and the live cells along each side of a
+    /// settled cell; the meters across a cell and the height its heights
+    /// stand above (world meters), then nothing; and where its ring starts
+    /// among the simulation's inputs, then nothing. Settling water's: the
+    /// blocks whose ground it raises, then nothing; the level-0 samples along
+    /// each side of a block's samples and the terrain's last sample along x
+    /// and z, then nothing; the meters across a cell and the height its
+    /// heights stand above (terrain-local meters), then nothing; and
+    /// nothing.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimSetup as ["SimSetup"] {
         pub counts: [u32; 4],

@@ -519,6 +519,66 @@ pub(crate) struct TerrainStreaming {
     prefetch: QueryState<(Entity, &'static TerrainPrefetch)>,
     points: Vec<Vec3>,
     places: Vec<(Vec3, f32)>,
+    reliefs: Reliefs,
+}
+
+/// The contents of the height maps the relief raising terrains' settled
+/// water's bed reads, each hashed once by its texture's handle, which names
+/// the same texels while it lives.
+#[derive(Default)]
+struct Reliefs {
+    textures: HashMap<engine_assets::TextureHandle, u128>,
+}
+
+impl Reliefs {
+    /// What the relief raising the bed of the settled water of a terrain of
+    /// surface `materials` reads, over `assets`, hashed: each material's
+    /// depth, tiling, height contrast and projection, and the texels of the
+    /// height map its engine material's metallic-roughness map holds (none
+    /// without one, or while it is missing).
+    fn of(&mut self, materials: &[SurfaceMaterial], assets: Option<&AssetLibrary>) -> u128 {
+        let mut bytes = Vec::with_capacity(32 * materials.len());
+        for look in materials {
+            for value in [look.depth, look.tiling, look.height_contrast] {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            bytes.push(match look.projection {
+                SurfaceProjection::Top => 0,
+                SurfaceProjection::Biplanar => 1,
+            });
+            let map = look.material.and_then(|handle| {
+                let material = assets?.material(handle)?;
+                Some(material.metallic_roughness_texture()?.texture)
+            });
+            let content = map.map_or(0, |handle| self.texture(handle, assets));
+            bytes.extend_from_slice(&content.to_le_bytes());
+        }
+        content_hash(&bytes)
+    }
+
+    /// The content of texture `handle` among `assets`: its size and texels;
+    /// 0, and not kept, while it is not there.
+    fn texture(
+        &mut self,
+        handle: engine_assets::TextureHandle,
+        assets: Option<&AssetLibrary>,
+    ) -> u128 {
+        if let Some(&content) = self.textures.get(&handle) {
+            return content;
+        }
+        let Some(texture) = assets.and_then(|assets| assets.texture(handle)) else {
+            return 0;
+        };
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&texture.width().to_le_bytes());
+        bytes.extend_from_slice(&texture.height().to_le_bytes());
+        for level in texture.levels() {
+            bytes.extend_from_slice(level);
+        }
+        let content = content_hash(&bytes);
+        self.textures.insert(handle, content);
+        content
+    }
 }
 
 impl FromWorld for TerrainStreaming {
@@ -529,6 +589,7 @@ impl FromWorld for TerrainStreaming {
             prefetch: world.query::<(Entity, &TerrainPrefetch)>(),
             points: Vec::new(),
             places: Vec::new(),
+            reliefs: Reliefs::default(),
         }
     }
 }
@@ -613,6 +674,11 @@ impl TerrainStreaming {
                 (*entity, solids.map(|asset| asset.solid(assets)).collect())
             })
             .collect();
+        // What raises each terrain's settled water's bed.
+        let reliefs: Vec<(Entity, u128)> = present
+            .iter()
+            .map(|(entity, terrain)| (*entity, self.reliefs.of(&terrain.surface.materials, assets)))
+            .collect();
         // Jobs stream with the terrains, and cook with them in a session
         // that cooks.
         let water = world.get_resource::<Water>().copied();
@@ -622,6 +688,7 @@ impl TerrainStreaming {
             let terrains = terrains.as_mut();
             terrains.follow(present);
             terrains.stand(&solids);
+            terrains.relieve(&reliefs);
             match settings {
                 Some(settings) => {
                     // Where the eye is headed, from its motion since the
@@ -714,6 +781,16 @@ impl Terrains {
                 && state.solids[..] != found[..]
             {
                 state.solids = Arc::from(found.as_slice());
+            }
+        }
+    }
+
+    /// Gives each terrain the relief `reliefs` lists for its entity: what
+    /// raises its settled water's bed, which its records are keyed by.
+    fn relieve(&mut self, reliefs: &[(Entity, u128)]) {
+        for state in &mut self.entries {
+            if let Some(&(_, relief)) = reliefs.iter().find(|(entity, _)| *entity == state.entity) {
+                state.relief = relief;
             }
         }
     }
