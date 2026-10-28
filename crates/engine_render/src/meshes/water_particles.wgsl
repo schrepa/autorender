@@ -239,7 +239,7 @@ struct ParticleFrame {
 @group(2) @binding(40) var particle_spread_target: texture_storage_2d<rgba16float, write>;
 // The pools as the foam particles' draw reads them (`particle_pool`'s), with
 // their frame (`vs_foam`).
-@group(2) @binding(47) var<storage, read> foam_pool: array<vec4<u32>>;
+@group(2) @binding(48) var<storage, read> foam_pool: array<vec4<u32>>;
 
 // The water at a lattice point as `particles_gather` reads it.
 struct ParticleWater {

@@ -27,7 +27,7 @@
 @group(2) @binding(24) var water_particles: texture_2d<f32>;
 @group(2) @binding(25) var water_particles_sampler: sampler;
 @group(2) @binding(26) var water_particles_spread: texture_2d<f32>;
-@group(2) @binding(48) var water_foam_drawn: texture_2d<f32>;
+@group(2) @binding(49) var water_foam_drawn: texture_2d<f32>;
 
 // The meters a second over which water running against what stands in it
 // tears air in, from the first to the second (Ervine, McKeogh and Elsawy

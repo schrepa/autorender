@@ -62,19 +62,24 @@
 // eddies and surges stir it where it runs turbulent, about its own mean.
 // What sets slots apart is where their water comes from and where it goes:
 // - the square running live around the detail eye (`water_sim.rs`), set up
-//   on the GPU from the ground and the tiles' water
-//   (`meshes/water_setup.wgsl`), stores every block of it, each in the slot
-//   of its place on the terrain's lattice of blocks, and steps every cell
-//   by the same seconds; over its edges water flows to and from the cells
-//   just past them, which stand as the water settled there (the ring), and
-//   comes in as the water settled there brings it: water left alone stays
-//   as it settled. The solids standing in its water push it (`sim_touch`):
+//   on the GPU from the ground and the live cells of the settled water's
+//   records (`meshes/water_setup.wgsl`), stores every block of it, each in
+//   the slot of its place on the terrain's lattice of blocks, and steps
+//   every cell of the blocks whose data is resident by the same seconds;
+//   over its edges water flows to and from the cells just past them, which
+//   stand as the water settled there (the ring), and comes in as the water
+//   settled there brings it: water left alone stays as it settled. A block
+//   still waiting for its data stands as the settled water does there, none
+//   of its water stepping, and the water beside it flows to and from its
+//   cells as across the edges (`sim_standing_at`). The solids standing in
+//   its water push it (`sim_touch`):
 //   toward their own velocity where they fill its depth, so it flows around
 //   what stands still and is pushed ahead of what moves, its wakes, bow
 //   waves and rings coming out of the shallow-water equations themselves;
-//   at each step's end its rim is pulled back to the settled water at its
-//   cells (`sim_rim_pull`), which over each settled cell is the settled
-//   cell's water, so at its edges it is the settled water around it; and
+//   at each step's end its rim, along its edges and around the blocks
+//   standing as the settled water does, is pulled back to the settled water
+//   at its cells (`sim_rim_pull`), as its records keep it on those cells,
+//   so at its edges it is the settled water around it; and
 //   after the frame's steps each of its cells' water as water's pass draws
 //   it goes into its look (`sim_drawn`), by the rules the cook finds the
 //   settled water's state by;
@@ -104,6 +109,10 @@ const SIM_SLOTS: u32 = 64u;
 // its cells' bed's roughness, and the share of each of its cells covered by
 // solids and the height their tops stand at.
 const SIM_NO_BLOCK: u32 = 0xffffffffu;
+// What the live square's table holds beside the block of its pool storing
+// a block standing as the settled water does, its data not resident
+// (`gpu_layouts::constants::SIM_STANDING`).
+const SIM_STANDING: u32 = 0x80000000u;
 const SIM_BLOCK_CELLS: u32 = WATER_SIM_GROUP * WATER_SIM_GROUP;
 const SIM_BLOCK_CORNERS: u32 = (WATER_SIM_GROUP + 1u) * (WATER_SIM_GROUP + 1u);
 const SIM_BLOCK_GROUND: u32 = 337u;
@@ -226,7 +235,11 @@ struct SimSlots {
 @group(0) @binding(1) var<storage, read> sim_ground: array<f32>;
 // Each slot's step's start and then its first stage, each its pool's
 // blocks' cells, a block's row by row: the water's surface and its flow
-// along x and z, then nothing.
+// along x and z, then nothing; in the start of a block of the live square
+// standing as the settled water does, that water at each cell: its surface
+// (far below the ground where dry), its flow along x and z and the level a
+// lake holds it at (SIM_UNHELD where none does), as the ring holds its
+// cells' (`meshes/water_setup.wgsl`'s `setup_ghost`).
 @group(0) @binding(2) var<storage, read_write> sim_cells: array<vec4<f32>>;
 // Each cell's water's depths at its faces as reconstructed, the mean of
 // their squares across x (its west and east faces') and across z (its
@@ -255,9 +268,11 @@ struct SimSlots {
 // each row.
 @group(0) @binding(5) var<storage, read> sim_inputs: array<vec4<f32>>;
 // Each slot's table: the block of its pool storing each block of its
-// rectangle, row by row (SIM_NO_BLOCK where none does); then each block of
-// its pool's place in the rectangle (its column, and its row above 16
-// bits).
+// rectangle, row by row (SIM_NO_BLOCK where none does; beside SIM_STANDING
+// where a block of the live square stands as the settled water does, its
+// data not resident); then each block of its pool's place in the rectangle
+// (its column, and its row above 16 bits; SIM_NO_BLOCK, placing it nowhere,
+// for one standing so).
 @group(0) @binding(6) var<storage, read> sim_blocks: array<u32>;
 // Each slot's cells' fastest wave through their faces in the step's first
 // stage, then the share of its outflow each can give in a stage
@@ -286,11 +301,11 @@ struct SimSlots {
 // and those cells. The live square's slot, which sums nothing, holds its
 // cells' looks in their place (`sim_looks`), SIM_LIVE_LOOKS entries a cell:
 // the settled water at it (its surface and its flow along x and z, then
-// nothing, as its setup stands it, `meshes/water_setup.wgsl`: the settled
-// water's smooth surface at the live cell, whose mean over each settled
-// cell is that cell's water), which its rim is pulled back to and its
-// swings are measured from; and its water as water's pass draws it
-// (`sim_drawn`).
+// nothing, as its setup stands it, `meshes/water_setup.wgsl`: the water as
+// its tile's record of settled water keeps it on that live cell), which its
+// rim is pulled back to and its swings are measured from; and its water as
+// water's pass draws it (`sim_drawn`; no surface and no ground in a block
+// standing as the settled water does).
 @group(0) @binding(9) var<storage, read_write> sim_averages: array<vec4<f32>>;
 
 // The most solids that push the square around the camera's water a frame
@@ -444,14 +459,30 @@ fn sim_step(q: Square) -> u32 {
     return sim_slots.slot[q.slot].place.z + u32(sim_steps[sim_count_at(q)].x);
 }
 
-// The block of slot `q`'s pool storing block `block` (its column and row)
-// of its rectangle: SIM_NO_BLOCK where none does or the rectangle has no
-// such block.
-fn sim_block(q: Square, block: vec2<i32>) -> u32 {
+// Slot `q`'s table's entry for block `block` (its column and row) of its
+// rectangle: the block of its pool storing it, beside SIM_STANDING where it
+// stands as the settled water does; SIM_NO_BLOCK where none does or the
+// rectangle has no such block.
+fn sim_table(q: Square, block: vec2<i32>) -> u32 {
     if any(block < vec2<i32>(0)) || any(block >= vec2<i32>(q.blocks)) {
         return SIM_NO_BLOCK;
     }
     return sim_blocks[sim_table_base(q) + u32(block.y) * q.blocks.x + u32(block.x)];
+}
+
+// Whether a table's entry `entry` (`sim_table`'s) holds a block standing as
+// the settled water does.
+fn sim_stands(entry: u32) -> bool {
+    return entry >= SIM_STANDING && entry != SIM_NO_BLOCK;
+}
+
+// The block of slot `q`'s pool storing block `block` (its column and row)
+// of its rectangle, whose water runs: SIM_NO_BLOCK where none does, where
+// it stands as the settled water does, or where the rectangle has no such
+// block.
+fn sim_block(q: Square, block: vec2<i32>) -> u32 {
+    let entry = sim_table(q, block);
+    return select(entry, SIM_NO_BLOCK, entry >= SIM_STANDING);
 }
 
 // The place in slot `q`'s rectangle of block `block` of its pool: its
@@ -463,8 +494,8 @@ fn sim_place(q: Square, block: u32) -> vec2<u32> {
 
 // Where slot `q` holds cell (i, j) of its rectangle: its index among the
 // slot's cells, its block's first and then its place there; SIM_NO_BLOCK
-// where it lies outside the rectangle or the pool does not store its
-// block.
+// where it lies outside the rectangle, the pool does not store its block or
+// its block stands as the settled water does.
 fn sim_at(q: Square, i: i32, j: i32) -> u32 {
     if i < 0 || j < 0 || i >= i32(q.nx) || j >= i32(q.nz) {
         return SIM_NO_BLOCK;
@@ -476,6 +507,24 @@ fn sim_at(q: Square, i: i32, j: i32) -> u32 {
     }
     let local = cell % WATER_SIM_GROUP;
     return block * SIM_BLOCK_CELLS + local.y * WATER_SIM_GROUP + local.x;
+}
+
+// Where slot `q` holds the water standing in cell (i, j) of its rectangle
+// where its block stands as the settled water does, its data not resident:
+// that cell's entry of the step's start (`sim_cells`), as `sim_at` finds
+// cells; SIM_NO_BLOCK where it lies outside the rectangle or its block does
+// not stand so.
+fn sim_standing_at(q: Square, i: i32, j: i32) -> u32 {
+    if i < 0 || j < 0 || i >= i32(q.nx) || j >= i32(q.nz) {
+        return SIM_NO_BLOCK;
+    }
+    let cell = vec2<u32>(u32(i), u32(j));
+    let entry = sim_table(q, vec2<i32>(cell / WATER_SIM_GROUP));
+    if !sim_stands(entry) {
+        return SIM_NO_BLOCK;
+    }
+    let local = cell % WATER_SIM_GROUP;
+    return (entry - SIM_STANDING) * SIM_BLOCK_CELLS + local.y * WATER_SIM_GROUP + local.x;
 }
 
 // The cell an invocation stands on: where its slot holds it, its column and
@@ -902,28 +951,6 @@ fn sim_from_lakes(q: Square, flux: vec4<f32>, near: u32, far: u32) -> vec4<f32> 
     return flux;
 }
 
-// Ring entry `ghost` (its first of two) as the face it shows the square
-// over the edge whose ground stands at `ground`, its flow across and along
-// that face as `across_z` says (true for faces between rows): its water
-// held at its own surface, first order.
-fn sim_ghost_face(q: Square, ghost: u32, ground: f32, across_z: bool) -> vec4<f32> {
-    let cell = sim_inputs[sim_ring_base(q) + 2u * ghost];
-    let across = select(cell.y, cell.z, across_z);
-    let along = select(cell.z, cell.y, across_z);
-    return sim_face(cell.x, ground, across, along);
-}
-
-// Whether ring entry `ghost` is held at a lake's level.
-fn sim_ghost_held(q: Square, ghost: u32) -> bool {
-    return sim_inputs[sim_ring_base(q) + 2u * ghost].w > 0.5 * SIM_UNHELD;
-}
-
-// The discharge ring entry `ghost` brings into the square across a meter of
-// its edge (square meters a second; none where it brings none).
-fn sim_ghost_inflow(q: Square, ghost: u32) -> f32 {
-    return max(sim_inputs[sim_ring_base(q) + 2u * ghost + 1u].x, 0.0);
-}
-
 // The flux through a face on the square's edge from what stands as `l` to
 // what stands as `r`, one the inside's face and one a ring cell's, whether
 // each is held by a lake, gravity along the bed there `g`: none where it
@@ -949,20 +976,26 @@ fn sim_inflow(face: vec4<f32>, inflow: f32, inward: f32, g: f32) -> vec4<f32> {
     return vec4<f32>(mass, mass * speed + 0.5 * g * face.y * face.y, mass * face.w, wave);
 }
 
-// The flux through a face on the edge of a square with a ring, as the face
-// keeps it (`sim_kept`), between its inside's face `inside` and ring entry
-// `ghost` past it (its first of two), the ground at the face standing at
-// `ground`, its flow across and along it as `across_z` says, `inward` the
-// way into the square across it (+1 or -1), `held` whether a lake holds the
-// inside and `g` gravity along the bed there: where the ring brings water
-// in, its discharge with the momentum of its water as it settled there;
-// else between the two as they stand, none where it would carry water out
-// of a lake.
-fn sim_ring_flux(q: Square, ghost: u32, inside: vec4<f32>, ground: f32, across_z: bool,
-    inward: f32, held: bool, g: f32) -> vec4<f32> {
-    let outside = sim_ghost_face(q, ghost, ground, across_z);
-    let outside_held = sim_ghost_held(q, ghost);
-    let inflow = sim_ghost_inflow(q, ghost);
+// The flux through a face where the water running live meets the water
+// standing as it settled past it, as the face keeps it (`sim_kept`):
+// between its inside's face `inside` and that water, `standing` (its
+// surface, far below the ground where dry, its flow along x and z and the
+// level a lake holds it at, SIM_UNHELD where none does), as the face it
+// shows the inside, held at its own surface, first order, which brings
+// `inflow` in (the discharge across a meter of the face, square meters a
+// second; none where it brings none); the ground at the face standing at
+// `ground`, its flow across and along it as `across_z` says (true for faces
+// between rows), `inward` the way into the inside across it (+1 or -1),
+// `held` whether a lake holds the inside and `g` gravity along the bed
+// there: where the standing water brings water in, its discharge with the
+// momentum of its water as it settled there; else between the two as they
+// stand, none where it would carry water out of a lake.
+fn sim_ghost_flux(standing: vec4<f32>, inflow: f32, inside: vec4<f32>, ground: f32,
+    across_z: bool, inward: f32, held: bool, g: f32) -> vec4<f32> {
+    let across = select(standing.y, standing.z, across_z);
+    let along = select(standing.z, standing.y, across_z);
+    let outside = sim_face(standing.x, ground, across, along);
+    let outside_held = standing.w > 0.5 * SIM_UNHELD;
     if inflow > 0.0 && !outside_held {
         return sim_kept(sim_inflow(outside, inflow, inward, g), outside, outside);
     }
@@ -970,6 +1003,16 @@ fn sim_ring_flux(q: Square, ghost: u32, inside: vec4<f32>, ground: f32, across_z
         return sim_kept(sim_edge(outside, inside, outside_held, held, g), outside, inside);
     }
     return sim_kept(sim_edge(inside, outside, held, outside_held, g), inside, outside);
+}
+
+// The flux through a face on the edge of a square with a ring, between
+// its inside's face `inside` and ring entry `ghost` past it (its first of
+// two), with what it brings in (`sim_ghost_flux`).
+fn sim_ring_flux(q: Square, ghost: u32, inside: vec4<f32>, ground: f32, across_z: bool,
+    inward: f32, held: bool, g: f32) -> vec4<f32> {
+    let entry = sim_ring_base(q) + 2u * ghost;
+    return sim_ghost_flux(sim_inputs[entry], max(sim_inputs[entry + 1u].x, 0.0), inside,
+        ground, across_z, inward, held, g);
 }
 
 // The flux through a face on an open rectangle's edge whose inside stands
@@ -984,16 +1027,38 @@ fn sim_open(face: vec4<f32>, inward: f32, g: f32) -> vec4<f32> {
     return flux;
 }
 
+// The flux through a face of a cell, as the face keeps it (`sim_kept`), its
+// side of the face reconstructed as `face`, toward cell `beside` of the
+// rectangle past it where the slot holds no cell whose water runs, the
+// ground at the face standing at `ground`, its flow across and along it as
+// `across_z` says, `inward` the way into the cell across it (+1 or -1),
+// `held` whether a lake holds the cell and `g` gravity along the bed there:
+// where `beside` stands as the settled water does in a block of the live
+// square (`sim_standing_at`), between the face and that water, which brings
+// in what of its flow runs inward, as the ring does across the square's
+// edges (`sim_ghost_flux`); else open, as a rectangle's edges are.
+fn sim_beside(q: Square, beside: vec2<i32>, face: vec4<f32>, ground: f32, across_z: bool,
+    inward: f32, held: bool, g: f32) -> vec4<f32> {
+    let standing = sim_standing_at(q, beside.x, beside.y);
+    if standing == SIM_NO_BLOCK {
+        return sim_kept(sim_open(face, inward, g), face, face);
+    }
+    let water = sim_cells[sim_cells_base(q) + standing];
+    let inflow = max(inward * select(water.y, water.z, across_z), 0.0);
+    return sim_ghost_flux(water, inflow, face, ground, across_z, inward, held, g);
+}
+
 // Each cell that steps, and each beside one that does, finds the fluxes
 // through its east and north faces (and its west and south ones on the
 // rectangle's edges), each by the gravity along the bed through it and as
 // much as the solids beside it let through (`sim_opening`): between two
 // cells that step, as their faces say; on the edges, open or between the
 // inside and the ring cell past it, or as much as the ring brings in;
-// toward a cell the slot does not hold, open (`sim_open_west` finds the
-// west and south ones there); and between a cell that steps and one
-// standing still, nothing, as no water reaches either this step. A cell
-// that steps keeps its faces' depths.
+// toward a cell the slot holds none whose water runs at, open, or between
+// it and the water standing there as settled (`sim_beside`;
+// `sim_west_beside` finds the west and south ones there); and between a
+// cell that steps and one standing still, nothing, as no water reaches
+// either this step. A cell that steps keeps its faces' depths.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
 fn sim_exchange(
     @builtin(workgroup_id) group: vec3<u32>,
@@ -1046,7 +1111,8 @@ fn sim_exchange(
                 far);
         } else if steps && east == SIM_NO_BLOCK {
             let gravity = sim_gravity_x(q, at, SIM_NO_BLOCK);
-            flux = sim_kept(sim_open(x.high, -1.0, gravity), x.high, x.high);
+            flux = sim_beside(q, vec2<i32>(i32(i) + 1, i32(j)), x.high, sim_ground_x(q, at).y,
+                false, -1.0, sim_held_at(q, at), gravity);
         }
         sim_fluxes[fluxes + at] = sim_through(flux, sim_opening(q, state, at, east));
     }
@@ -1080,7 +1146,8 @@ fn sim_exchange(
                 far);
         } else if steps && north == SIM_NO_BLOCK {
             let gravity = sim_gravity_z(q, at, SIM_NO_BLOCK);
-            flux = sim_kept(sim_open(z.high, -1.0, gravity), z.high, z.high);
+            flux = sim_beside(q, vec2<i32>(i32(i), i32(j) + 1), z.high, sim_ground_z(q, at).y,
+                true, -1.0, sim_held_at(q, at), gravity);
         }
         sim_fluxes[fluxes + sim_held() + at] = sim_through(flux,
             sim_opening(q, state, at, north));
@@ -1099,25 +1166,29 @@ fn sim_exchange(
     }
 }
 
-// The flux out through the west face (`across_z` false) or the south one
-// (true) of the cell at `at`, cell (i, j), toward a cell the slot does not
-// hold: open, as the rectangle's edges are, as much as its solids let
-// through. The cells beside it keep no face toward it, so it finds that
-// face again.
-fn sim_open_west(q: Square, at: u32, i: u32, j: u32, across_z: bool) -> vec4<f32> {
+// The flux through the west face (`across_z` false) or the south one
+// (true) of the cell at `at`, cell (i, j), toward a cell the slot holds
+// none whose water runs at: open, as the rectangle's edges are, or between
+// it and the water standing there as settled (`sim_beside`), as much as its
+// solids let through. The cells beside it keep no face toward it, so it
+// finds that face again.
+fn sim_west_beside(q: Square, at: u32, i: u32, j: u32, across_z: bool) -> vec4<f32> {
     let state = frame.stage.x;
     let open = sim_opening(q, state, SIM_NO_BLOCK, at);
+    let held = sim_held_at(q, at);
     if across_z {
-        return sim_through(sim_open(sim_across_z(q, state, at, i, j).low, 1.0,
+        return sim_through(sim_beside(q, vec2<i32>(i32(i), i32(j) - 1),
+            sim_across_z(q, state, at, i, j).low, sim_ground_z(q, at).x, true, 1.0, held,
             sim_gravity_z(q, SIM_NO_BLOCK, at)), open);
     }
-    return sim_through(sim_open(sim_across_x(q, state, at, i, j).low, 1.0,
+    return sim_through(sim_beside(q, vec2<i32>(i32(i) - 1, i32(j)),
+        sim_across_x(q, state, at, i, j).low, sim_ground_x(q, at).x, false, 1.0, held,
         sim_gravity_x(q, SIM_NO_BLOCK, at)), open);
 }
 
 // The fluxes into and out of the cell at `at`, cell (i, j): through its
-// west, east, south and north faces; open through a face toward a cell the
-// slot does not hold.
+// west, east, south and north faces; through a face toward a cell the slot
+// holds none whose water runs at, as `sim_beside` finds it.
 fn sim_west(q: Square, at: u32, i: u32, j: u32) -> vec4<f32> {
     let fluxes = sim_fluxes_base(q);
     if i == 0u {
@@ -1125,7 +1196,7 @@ fn sim_west(q: Square, at: u32, i: u32, j: u32) -> vec4<f32> {
     }
     let west = sim_at(q, i32(i) - 1, i32(j));
     if west == SIM_NO_BLOCK {
-        return sim_open_west(q, at, i, j, false);
+        return sim_west_beside(q, at, i, j, false);
     }
     return sim_fluxes[fluxes + west];
 }
@@ -1141,7 +1212,7 @@ fn sim_south(q: Square, at: u32, i: u32, j: u32) -> vec4<f32> {
     }
     let south = sim_at(q, i32(i), i32(j) - 1);
     if south == SIM_NO_BLOCK {
-        return sim_open_west(q, at, i, j, true);
+        return sim_west_beside(q, at, i, j, true);
     }
     return sim_fluxes[fluxes + sim_held() + south];
 }
@@ -1708,20 +1779,56 @@ const SIM_WET_NORTH: u32 = 16u;
 // The sides of its block a workgroup's cells hold water along.
 var<workgroup> sim_wet_sides: atomic<u32>;
 
+// Blocks the rim's cells within SIM_RIM of a block reach past it on each
+// side, and the blocks around a block, its own among them, that they reach.
+const SIM_RIM_BLOCKS: u32 = (SIM_RIM + WATER_SIM_GROUP - 1u) / WATER_SIM_GROUP;
+const SIM_RIM_SIDE: u32 = 2u * SIM_RIM_BLOCKS + 1u;
+const SIM_RIM_AROUND: u32 = SIM_RIM_SIDE * SIM_RIM_SIDE;
+
+// Whether each of the blocks around a workgroup's own in the live square,
+// row by row from the first along z and x, stands as the settled water
+// does (1 where it does).
+var<workgroup> sim_rim_stands: array<u32, SIM_RIM_AROUND>;
+
+// Cells from cell `cell` to the nearest edge of the live square, or to the
+// nearest cell of a block within SIM_RIM of it standing as the settled water
+// does (`sim_rim_stands`, as its workgroup gathered them), along x or z:
+// none for a cell on its edge or beside such a block.
+fn sim_rim_inside(q: Square, cell: SimCell) -> u32 {
+    var inside = min(min(cell.i, cell.j), min(q.nx - 1u - cell.i, q.nz - 1u - cell.j));
+    let side = i32(WATER_SIM_GROUP);
+    let local = vec2<i32>(vec2<u32>(cell.i, cell.j) % WATER_SIM_GROUP);
+    for (var k = 0u; k < SIM_RIM_AROUND; k++) {
+        if sim_rim_stands[k] == 0u {
+            continue;
+        }
+        // The blocks from its own to the standing one along x and z, and the
+        // cells between it and that block's nearest along each.
+        let step = vec2<i32>(i32(k % SIM_RIM_SIDE), i32(k / SIM_RIM_SIDE))
+            - vec2<i32>(i32(SIM_RIM_BLOCKS));
+        let low = local + (-step - vec2<i32>(1)) * side;
+        let high = vec2<i32>(side - 1) - local + (step - vec2<i32>(1)) * side;
+        let apart = select(select(vec2<i32>(0), low, step < vec2<i32>(0)), high,
+            step > vec2<i32>(0));
+        inside = min(inside, u32(max(max(apart.x, apart.y), 0)));
+    }
+    return inside;
+}
+
 // The share of the way back to the settled water at its cell `cell` (the
-// first entry of its look, which its setup stands: the settled water's
-// smooth surface at the live cells, whose mean over each settled cell is
-// that cell's water) that the live square pulls it at each step's end:
-// none SIM_RIM cells or more inside its edges, and from there rising to all
-// of it at its outermost cells, as wave relaxation zones weigh their pull
-// (Jacobsen, Fuhrman and Fredsøe 2012: (e^(χ^3.5) − 1)/(e − 1), χ rising
-// from none at the zone's inner side to 1 at its edge). Its outermost cells
-// then stand as the settled water the ring past its edges stands as, the
-// same water as the settled cells over them, and unsteady water running
-// out toward them settles back on its way, sending nothing back in from
-// its edges.
+// first entry of its look, which its setup stands: the water as its tile's
+// record of settled water keeps it on that cell) that the live square pulls
+// it at each step's end: none SIM_RIM cells or more inside its edges and
+// from the blocks standing as the settled water does (`sim_rim_inside`),
+// and from there rising to all of it at the cells beside them, as wave
+// relaxation zones weigh their pull (Jacobsen, Fuhrman and Fredsøe 2012:
+// (e^(χ^3.5) − 1)/(e − 1), χ rising from none at the zone's inner side to 1
+// at its edge). Those cells then stand as the settled water the ring past
+// its edges and the standing blocks stand as, the same water as theirs,
+// and unsteady water running out toward them settles back on its way,
+// sending nothing back in.
 fn sim_rim_pull(q: Square, cell: SimCell) -> f32 {
-    let inside = min(min(cell.i, cell.j), min(q.nx - 1u - cell.i, q.nz - 1u - cell.j));
+    let inside = sim_rim_inside(q, cell);
     if inside >= SIM_RIM {
         return 0.0;
     }
@@ -1729,8 +1836,10 @@ fn sim_rim_pull(q: Square, cell: SimCell) -> f32 {
     return (exp(pow(chi, 3.5)) - 1.0) / (exp(1.0) - 1.0);
 }
 
-// Each step's end: the live square's rim is pulled back to the settled
-// water at its cells (`sim_rim_pull`); the step counts among those its
+// Each step's end: the live square's rim, along its edges and around its
+// blocks standing as the settled water does, is pulled back to the settled
+// water at its cells (`sim_rim_pull`), each workgroup first gathering which
+// of the blocks around its own stand so; the step counts among those its
 // slot's frame has run (`sim_step`); and a sparse rectangle's cells holding
 // water no lake holds mark their block, and the sides of it they lie along.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
@@ -1740,11 +1849,22 @@ fn sim_ended(
     @builtin(local_invocation_id) local: vec3<u32>,
     @builtin(local_invocation_index) index: u32,
 ) {
+    let q = sim_square(group.z);
     if index == 0u {
         atomicStore(&sim_wet_sides, 0u);
     }
+    if index < SIM_RIM_AROUND {
+        let block = group.y * count.x + group.x;
+        var stands = false;
+        if group.z < sim_slot_count() && sim_has(q, SIM_LIVE) && block < q.stored {
+            let near = vec2<i32>(sim_place(q, block))
+                + vec2<i32>(i32(index % SIM_RIM_SIDE), i32(index / SIM_RIM_SIDE))
+                - vec2<i32>(i32(SIM_RIM_BLOCKS));
+            stands = sim_stands(sim_table(q, near));
+        }
+        sim_rim_stands[index] = select(0u, 1u, stands);
+    }
     workgroupBarrier();
-    let q = sim_square(group.z);
     let cell = sim_cell_of(q, group, count, local);
     let at = cell.at;
     if cell.runs && sim_active(q, at) {
@@ -1908,7 +2028,8 @@ fn sim_source(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let source = sim_inputs[sim_sources_base(q) + id.x];
     let at = bitcast<u32>(source.x);
-    if sim_held_at(q, at) {
+    // None where its block stands as the settled water does, placed nowhere.
+    if sim_place(q, at / SIM_BLOCK_CELLS).x >= q.blocks.x || sim_held_at(q, at) {
         return;
     }
     let cells = sim_cells_base(q);

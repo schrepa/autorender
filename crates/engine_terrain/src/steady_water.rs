@@ -39,17 +39,18 @@
 //! under other edits do, and its solids holding it back. Settled, its water,
 //! averaged over its last steps with how much it varied over them, becomes
 //! what each tile the region keeps keeps of it ([`SettleStart::finish`]), a
-//! [`SteadyWater`] on the settled cells, each the mean of the cells over it:
-//! a record hosts keep and the cook ships with the solids standing in it.
-//! Level-0 tiles' water stands and runs as theirs and their neighbors' say
-//! ([`Tile::steadied`]), coarser tiles' runs as the summaries under them do,
-//! each sample averaging their squares over its own spacing
+//! [`SteadyWater`] on the settled cells, each the mean of the cells over it,
+//! and beside them its own live cells' water wherever any is wet
+//! ([`LiveWater`]): a record hosts keep and the cook ships with the solids
+//! standing in it. Level-0 tiles' water stands and runs as theirs and their
+//! neighbors' say ([`Tile::steadied`]), coarser tiles' runs as the summaries
+//! under them do, each sample averaging their squares over its own spacing
 //! ([`Tile::flowing`]), so every level holds the finer water's average; each
 //! tile's water is a job's record of its own, made on a worker from the
 //! records it reads ([`Steadying`]), with the solids standing in it; and the
-//! window running live around the camera starts from it, each settled
-//! cell's live cells matched to its mean, and takes its water at its edges,
-//! its rivers' water where they bring it and its solids.
+//! window running live around the camera starts each of its cells as the
+//! record's live cell there stands and runs, and takes the same water past
+//! its edges, its rivers' water where they bring it and its solids.
 
 use std::sync::Arc;
 
@@ -185,8 +186,9 @@ record!(SteadySource { cell, rate, way });
 /// (as [`SteadyCell::Flowing`] holds them; NaN where a lake holds it or it
 /// is dry) and the share of the time it was wet (0 to 1, dry cells too);
 /// where its rivers bring water; its water seen from afar; how settling
-/// came out; and the solids standing in its water whose middles its cells
-/// hold (terrain-local, in their order).
+/// came out; the solids standing in its water whose middles its cells hold
+/// (terrain-local, in their order); and its water on its live cells, which
+/// the water running live around the camera starts from ([`LiveWater`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SteadyWater {
     pub key: TileKey,
@@ -205,6 +207,68 @@ pub struct SteadyWater {
     pub summary: SteadySummary,
     pub stats: SteadyStats,
     pub solids: Vec<Footprint>,
+    pub live: LiveWater,
+}
+
+/// A level-0 tile's settled water on its live cells, as its region's last
+/// steps left it ([`SettleStart::finish`]): the scheme's own state at each
+/// live cell the tile holds, which the water running live around the camera
+/// starts from exactly. Its table spans the blocks of the terrain's lattice
+/// of live cells ([`BLOCK_SIDE`] along each side, the first block's first
+/// cell at the terrain's first corner) over the tile's live cells, its first
+/// block along x and z and its blocks along each; it keeps only the blocks
+/// holding a wet live cell, by their index in the table (row by row),
+/// ascending, and their cells, [`BLOCK_CELLS`] a block, its row by row: the
+/// surface the water stands at (terrain-local meters; NaN where the cell is
+/// dry or not the tile's) and its flow along x and z (square meters a
+/// second; NaN where a lake holds it, at that surface), each the mean over
+/// the time the cell was wet. A live cell is wet where a lake holds it or
+/// water stands in it most of the time ([`shallow_water::WET_MOST`]), as a
+/// settled cell's water stands. Plain `f32`s, 12 bytes a cell: 768 bytes a
+/// block kept, with its index's 4.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LiveWater {
+    pub first: [i64; 2],
+    pub blocks: [u32; 2],
+    pub wet: Vec<u32>,
+    pub cells: Vec<[f32; 3]>,
+}
+
+record!(LiveWater {
+    first,
+    blocks,
+    wet,
+    cells,
+});
+
+impl LiveWater {
+    /// The cells of block `(x, z)` of the terrain's lattice of blocks of live
+    /// cells, row by row, where it keeps that block: none where its table
+    /// spans no such block or the block holds no wet live cell.
+    pub fn block(&self, x: i64, z: i64) -> Option<&[[f32; 3]]> {
+        let (column, row) = (x - self.first[0], z - self.first[1]);
+        let [columns, rows] = self.blocks.map(i64::from);
+        if column < 0 || row < 0 || column >= columns || row >= rows {
+            return None;
+        }
+        let at = self
+            .wet
+            .binary_search(&((row * columns + column) as u32))
+            .ok()?;
+        self.cells.get(at * BLOCK_CELLS..(at + 1) * BLOCK_CELLS)
+    }
+
+    /// Whether it reads back whole: a block's cells for each block it keeps,
+    /// those blocks ascending within its table.
+    fn valid(&self) -> bool {
+        let spanned = u64::from(self.blocks[0]) * u64::from(self.blocks[1]);
+        self.cells.len() == self.wet.len() * BLOCK_CELLS
+            && self.wet.windows(2).all(|pair| pair[0] < pair[1])
+            && self
+                .wet
+                .last()
+                .is_none_or(|&last| u64::from(last) < spanned)
+    }
 }
 
 /// A cell of settled water ([`SteadyWater::at`]).
@@ -290,6 +354,7 @@ impl codec::Codec for SteadyWater {
         ] {
             codec::put_grid(out, values, stride);
         }
+        out.put(&self.live);
     }
 
     fn read(input: &mut Reader<'_>) -> Result<Self, codec::CodecError> {
@@ -312,11 +377,13 @@ impl codec::Codec for SteadyWater {
         let rush = codec::get_grid(input, stride)?;
         let wet = codec::get_grid(input, stride)?;
         let lip = codec::get_grid(input, stride)?;
+        let live: LiveWater = input.get()?;
         let grids = [&surface, &x, &z, &energy, &heave, &swirl, &rush, &wet, &lip];
         if grids.iter().any(|grid| grid.len() != count)
             || !(cell.is_finite() && cell > 0.0)
             || sources.iter().any(|source| source.cell as usize >= count)
             || !solids.iter().all(Footprint::valid)
+            || !live.valid()
         {
             return Err(codec::CodecError("invalid settled water"));
         }
@@ -337,6 +404,7 @@ impl codec::Codec for SteadyWater {
             summary,
             stats,
             solids,
+            live,
         })
     }
 }
@@ -1717,8 +1785,9 @@ impl SettleStart {
     /// stored. With them the water its rivers bring to its settled cells,
     /// cells in order; its summary, each flowing cell breaking white as its
     /// water does at its depth; how its water settled, its stats counting
-    /// its region's cells within it; and the solids standing in its water
-    /// whose middles its settled cells hold.
+    /// its region's cells within it; the solids standing in its water whose
+    /// middles its settled cells hold; and its live cells' own water
+    /// wherever any is wet ([`LiveWater`]).
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -1896,9 +1965,100 @@ impl SettleStart {
                 sources,
                 summary,
                 solids,
+                live: self.live((means, raised), kept),
             });
         }
         made
+    }
+
+    /// The water settled to `means` over `ground` on the live cells of the
+    /// settled cells it keeps for a tile, `kept` (its first along x and z,
+    /// counted from its square's first settled cell, and its cells along
+    /// each), as the water running live starts from it ([`LiveWater`]): of
+    /// each block of the terrain's lattice of live cells over them, its cells
+    /// the tile holds as `Self::live_cell` finds them, kept where any is
+    /// wet.
+    fn live(
+        &self,
+        (means, ground): (&[[f32; 4]], SlotGround<'_>),
+        [x0, z0, columns, rows]: [u32; 4],
+    ) -> LiveWater {
+        let split = self.split;
+        let side = i64::from(BLOCK_SIDE);
+        // The tile's live cells along x and z, counted from the square's
+        // first, from `low` to before `high`; and the blocks over them, on
+        // the terrain's lattice of blocks.
+        let low = [x0 * split, z0 * split].map(i64::from);
+        let high = [(x0 + columns) * split, (z0 + rows) * split].map(i64::from);
+        let first = [0, 1].map(|axis| (self.first[axis] + low[axis]).div_euclid(side));
+        let last = [0, 1].map(|axis| (self.first[axis] + high[axis] - 1).div_euclid(side));
+        let blocks = [0, 1].map(|axis| (last[axis] - first[axis] + 1).max(0) as u32);
+        let mut live = LiveWater {
+            first,
+            blocks,
+            wet: Vec::new(),
+            cells: Vec::new(),
+        };
+        let mut cells = [[f32::NAN; 3]; BLOCK_CELLS];
+        for row in 0..blocks[1] {
+            for column in 0..blocks[0] {
+                let corner = [
+                    (first[0] + i64::from(column)) * side - self.first[0],
+                    (first[1] + i64::from(row)) * side - self.first[1],
+                ];
+                // The blocks of its square it stores over these cells, of
+                // its own lattice of blocks: none, and they are dry.
+                let [from, to] =
+                    [0, side - 1].map(|past| corner.map(|at| (at + past).div_euclid(side)));
+                let stored = (from[1]..=to[1])
+                    .any(|z| (from[0]..=to[0]).any(|x| self.stored.slot(x, z).is_some()));
+                if !stored {
+                    continue;
+                }
+                let mut wet = false;
+                for (k, held) in cells.iter_mut().enumerate() {
+                    let i = corner[0] + (k % BLOCK_SIDE as usize) as i64;
+                    let j = corner[1] + (k / BLOCK_SIDE as usize) as i64;
+                    let inside = (low[0]..high[0]).contains(&i) && (low[1]..high[1]).contains(&j);
+                    *held = [f32::NAN; 3];
+                    if !inside {
+                        continue;
+                    }
+                    if let Some(water) = self.live_cell((means, ground), i as u32, j as u32) {
+                        *held = water;
+                        wet = true;
+                    }
+                }
+                if wet {
+                    live.wet.push(row * blocks[0] + column);
+                    live.cells.extend_from_slice(&cells);
+                }
+            }
+        }
+        live
+    }
+
+    /// The water settled to `means` over `ground` in the cell `(i, j)` of
+    /// its square as the water running live starts from it: where a lake
+    /// holds it, its level (terrain-local) and no flow (NaN); where water
+    /// stands in it most of the time, its mean surface (terrain-local) and
+    /// flow along x and z over the time it was wet; none where it is dry or
+    /// its block is not stored.
+    fn live_cell(
+        &self,
+        (means, ground): (&[[f32; 4]], SlotGround<'_>),
+        i: u32,
+        j: u32,
+    ) -> Option<[f32; 3]> {
+        let at = self.stored.at(i, j)?;
+        if let Some(level) = ground.held(at) {
+            return Some([level + self.datum, f32::NAN, f32::NAN]);
+        }
+        let Some(&[water, _, shares]) = means.get(at * CELL_MEANS..(at + 1) * CELL_MEANS) else {
+            return None;
+        };
+        let wet = water[0] - ground.bed(at) > DRY && shares[0] >= WET_MOST;
+        wet.then_some([water[0] + self.datum, water[1], water[2]])
     }
 }
 

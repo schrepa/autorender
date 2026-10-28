@@ -89,26 +89,27 @@ gpu_structs! {
     }
 
     /// WGSL `SimSetup` of `meshes/water_setup.wgsl`. The live water's: the
-    /// blocks of the live square a frame sets up (those set up whole first,
-    /// then those whose ground alone is set up again), those set up whole,
-    /// the cells past its edges it sets up (none where it sets up none) and
-    /// the solids standing in the settled water over it; its first cell on
-    /// the terrain's lattice of its cells along x and z (an `i32`'s bits
-    /// each), its cells along a side and the live cells along each side of a
-    /// settled cell; the meters across a cell and the height its heights
-    /// stand above (world meters), then nothing; and where its ring starts
-    /// among the simulation's inputs, then nothing. Settling water's: the
-    /// blocks whose ground it raises, then nothing; the level-0 samples along
-    /// each side of a block's samples and the terrain's last sample along x
-    /// and z, then nothing; the meters across a cell and the height its
-    /// heights stand above (terrain-local meters), then nothing; and
-    /// nothing.
+    /// blocks of the live square a frame sets up (each with what it sets up
+    /// of it), then nothing, the cells past its edges it sets up (none where
+    /// it sets up none) and the solids standing in the settled water over
+    /// it; its first cell on the terrain's lattice of its cells along x and
+    /// z (an `i32`'s bits each), its cells along a side and the live cells
+    /// along each side of a settled cell; the meters across a cell and the
+    /// height its heights stand above (world meters), then nothing; where
+    /// its ring starts among the simulation's inputs, then nothing; and the
+    /// level-0 tiles whose records' live cells its setup holds, the first
+    /// along x and z and how many along each. Settling water's: the blocks
+    /// whose ground it raises, then nothing; the level-0 samples along each
+    /// side of a block's samples and the terrain's last sample along x and
+    /// z, then nothing; the meters across a cell and the height its heights
+    /// stand above (terrain-local meters), then nothing; and nothing, twice.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimSetup as ["SimSetup"] {
         pub counts: [u32; 4],
         pub square: [u32; 4],
         pub meters: [f32; 4],
         pub ring: [u32; 4],
+        pub tiles: [u32; 4],
     }
 
     /// WGSL `ParticleFrame` of `meshes/water_particles.wgsl`: the first

@@ -18,18 +18,19 @@
 //! rivers bring water, what the settled cells over each of its cells bring
 //! shared by area, so water left alone stays as it settled; the solids
 //! standing in the settled water over it, held whole; and the tiles its
-//! water is set up from, the finest resident one holding each level-0 tile
-//! it and a settled cell past its edges reach ([`WaterRead`]). The renderer
-//! sets every cell up on the GPU from what it holds of those tiles, in the
-//! frame the window newly covers the cell or the tile under it changes (its
-//! `meshes/water_setup.wgsl`): its ground and what its bed holds, the
+//! water is set up from, each level-0 tile it and a settled cell past its
+//! edges reach with the finest resident tile holding it, its settled water's
+//! record held whole and whether the window can start from them
+//! ([`WaterRead`]). The renderer sets each block of cells up on the GPU from
+//! what it holds of those tiles, once, in the frame the level-0 tiles under
+//! it, their settled water and their records' live cells are all there
+//! (its `meshes/water_setup.wgsl`): its ground and what its bed holds, the
 //! solids' cover by their share of it, as they cover any cells
-//! ([`cover_cells`](crate::terrain_data::cover_cells)), its water as the
-//! settled water's smooth surface stands there matched to the settled cell
-//! holding it, the lakes it holds, and the cells past its edges. So a window
-//! runs in the frame it comes: where a tile's settled water is not resident
-//! yet, the coarser level shading reads there stands in until the finest
-//! arrives, and the cells over it are set up again then.
+//! ([`cover_cells`](crate::terrain_data::cover_cells)), and its water and
+//! lakes exactly as the record's live cells hold them
+//! ([`LiveWater`](crate::terrain_data::LiveWater)); and the cells past its
+//! edges from the same. Until then a block stands as the settled water does
+//! there and its water does not run.
 //!
 //! A window follows the detail eye a snap of whole blocks at a time
 //! ([`WaterWindow::snap`]): once the eye goes FOLLOW of a snap from its
@@ -118,15 +119,19 @@ pub struct WaterWindow {
 /// A level-0 tile a window's water is set up from: its key and its square
 /// (terrain-local least and greatest corners), the finest resident tile
 /// holding it, whose ground and water the GPU sets the window's cells over
-/// it up from (none where no level holds it), and its record of settled
-/// water held whole, which the window's sources and solids are found from
-/// (none where none is held).
+/// it up from (none where no level holds it); its record of settled water
+/// held whole, whose live cells the window's water starts from and which
+/// its sources and solids are found from (none where none is held); and
+/// whether the window's cells over it can start from them: that tile is its
+/// own, level 0's, holding its settled water with that record held, or its
+/// bake's water reaches none of it (`Settled::ready`).
 #[derive(Clone, Debug)]
 pub struct WaterRead {
     pub key: TileKey,
     pub square: [Vec2; 2],
     pub tile: Option<Arc<Tile>>,
-    settled: Option<Arc<SteadyWater>>,
+    pub settled: Option<Arc<SteadyWater>>,
+    pub ready: bool,
 }
 
 impl WaterRead {
@@ -136,9 +141,12 @@ impl WaterRead {
         self.key == other.key && alike(self.tile.as_ref(), other.tile.as_ref())
     }
 
-    /// Whether it reads what `other` reads: the same tile and record.
+    /// Whether it reads what `other` reads: the same tile and record, as
+    /// ready.
     fn same(&self, other: &Self) -> bool {
-        self.same_tile(other) && alike(self.settled.as_ref(), other.settled.as_ref())
+        self.same_tile(other)
+            && alike(self.settled.as_ref(), other.settled.as_ref())
+            && self.ready == other.ready
     }
 }
 
@@ -346,9 +354,10 @@ pub(crate) fn place_water_windows(
 /// once where no window of its size runs, on the datum of the window before
 /// it while its ground lies near that. A window standing where it stood is
 /// made again where the tiles it reads changed (another finest resident
-/// tile, or its settled water arrived), its sources and solids found again,
-/// and where the cells its reach asks for, or the pixels a cell spans as
-/// far out as it holds the reach, changed.
+/// tile, its settled water's record arriving, or its cells able to start
+/// from them), its sources and solids found again, and where the cells its
+/// reach asks for, or the pixels a cell spans as far out as it holds the
+/// reach, changed.
 fn follow(state: &mut TerrainState, (reach, cell, budget): (f32, f32, u32), eye: Vec3) {
     let side = BLOCK_SIDE as f32;
     let snap_blocks = max((SNAP / (cell * side)).round(), 1.0);
@@ -448,8 +457,8 @@ fn lowest(state: &TerrainState, first: [i64; 2], (cells, cell): (u32, f32)) -> O
 /// `first` of `cells` cells `cell` meters across along each side is set up
 /// from, its square and a settled cell past it on every side, where the
 /// cells just past its edges and their settled cells lie, row by row: each
-/// with the finest tile `state` holds over it, and its record of settled
-/// water held whole.
+/// with the finest tile `state` holds over it, its record of settled water
+/// held whole, and whether the window's cells over it can start from them.
 fn reads(state: &TerrainState, first: [i64; 2], (cells, cell): (u32, f32)) -> Vec<WaterRead> {
     let pyramid = &state.terrain.pyramid;
     let size = pyramid.tile_size(0);
@@ -476,6 +485,10 @@ fn reads(state: &TerrainState, first: [i64; 2], (cells, cell): (u32, f32)) -> Ve
                 let held = pyramid.tile_at(level, middle)?;
                 state.store.get(&held).cloned()
             });
+            let held_back = state.store.watered(&key).is_some_and(Option::is_some);
+            let ready = tile.as_ref().is_some_and(|tile| {
+                tile.key() == key && state.settled.ready(key, tile, held_back)
+            });
             reads.push(WaterRead {
                 key,
                 square: [corner, corner + Vec2::splat(size)],
@@ -485,6 +498,7 @@ fn reads(state: &TerrainState, first: [i64; 2], (cells, cell): (u32, f32)) -> Ve
                     .held
                     .get(&key)
                     .map(|(water, _)| Arc::clone(water)),
+                ready,
             });
         }
     }

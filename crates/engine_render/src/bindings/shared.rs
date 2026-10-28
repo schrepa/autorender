@@ -99,10 +99,11 @@ shared_groups! {
             particle_frame, particle_lattice, particle_pool, particle_counts, particle_splat,
             particle_source, particle_target, particle_spread_source, particle_spread_target
         ],
-        setup: 41..47 [
-            setup_frame, setup_list, setup_ground, setup_cells, setup_looks, setup_edges
+        setup: 41..48 [
+            setup_frame, setup_list, setup_ground, setup_cells, setup_looks, setup_edges,
+            setup_live
         ],
-        foam: 47..49 [foam_pool, water_foam_drawn],
+        foam: 48..50 [foam_pool, water_foam_drawn],
     }
     SHADER @ 3 {
         lights: 0..4 [clusters, lights, cluster_ranges, cluster_lights],

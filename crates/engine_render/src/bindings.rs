@@ -962,8 +962,8 @@ tables! {
             sampler(25, "water_particles_sampler", Filtering, F),
             texture(26, "water_particles_spread", Float, D2, F),
             uniform_of(32, "particle_frame", size_of::<water::ParticleFrame>(), V),
-            read(47, "foam_pool", V),
-            texture(48, "water_foam_drawn", Float, D2, F),
+            read(48, "foam_pool", V),
+            texture(49, "water_foam_drawn", Float, D2, F),
         ],
     };
 
@@ -1026,10 +1026,11 @@ tables! {
     /// shading does: what a frame sets up, its list (the live water's
     /// solids standing in the settled water and the blocks it sets up, or
     /// settling water's blocks and the level-0 samples their ground rises
-    /// by), and what it writes of the simulation's buffers, the ground, the
+    /// by), what it writes of the simulation's buffers, the ground, the
     /// live water's cells' start, their looks and its inputs, where its ring
-    /// stands: seven of a compute stage's 8 storage buffers with the terrain
-    /// group's two, and eight of its 16 sampled textures.
+    /// stands, and the live cells of the settled water's records the live
+    /// water starts from: all eight of a compute stage's 8 storage buffers
+    /// with the terrain group's two, and eight of its 16 sampled textures.
     const WATER_SETUP: Table = Table {
         label: "engine/water-setup-layout",
         serves: [SHADER @ 2],
@@ -1040,6 +1041,7 @@ tables! {
             write(44, "setup_cells", C),
             write(45, "setup_looks", C),
             write(46, "setup_edges", C),
+            read(47, "setup_live", C),
         ],
     };
 

@@ -343,6 +343,29 @@ impl Settled {
         self.held.get(&key)?.0.at(i, j)
     }
 
+    /// Whether the water running live over level-0 tile `key` can start
+    /// from what is held of its settled water, `tile` the resident tile
+    /// holding it and `held_back` whether something standing in its rivers
+    /// holds them back: its bake's water reaches none of it, so none ever
+    /// settles there; or its record is held whole, with its live cells, and
+    /// `tile` holds the water that record stands (held back, the water its
+    /// rivers run with now).
+    pub(super) fn ready(&self, key: TileKey, tile: &Arc<Tile>, held_back: bool) -> bool {
+        let watered = self
+            .watered
+            .as_ref()
+            .is_some_and(|(_, keys)| keys.binary_search(&key).is_ok());
+        if !watered {
+            return true;
+        }
+        self.held.contains_key(&key)
+            && (held_back
+                || self
+                    .given
+                    .get(&key)
+                    .is_some_and(|(given, _)| Arc::ptr_eq(given, tile)))
+    }
+
     /// The keys it shares with workers, in order.
     pub(super) fn shares(&self) -> Vec<String> {
         let mut keys: Vec<String> = self.sharing.iter().cloned().collect();

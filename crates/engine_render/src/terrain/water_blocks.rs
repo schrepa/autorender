@@ -104,10 +104,12 @@ impl Texels {
 /// from their surfaces seen from the detail eye;
 /// the blocks resident and dropped this frame for want of layers; the
 /// leaves the water's subdivisions drew and the splits their room refused,
-/// as last read back; and the terrain group as the subdivisions' passes
-/// bind it, with its layout, once made, through which the live water's
-/// setup reads the ground, its materials and the tiles' water
-/// (`meshes/water_setup.wgsl`).
+/// as last read back; the terrain group as the subdivisions' passes bind
+/// it, with its layout, once made, through which the live water's setup
+/// reads the ground, its materials and the tiles' water
+/// (`meshes/water_setup.wgsl`); and the tiles the GPU holds, by terrain and
+/// key, each with its water's blocks, which the live water's blocks run
+/// over once theirs are there.
 pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) heights: &'a wgpu::TextureView,
     pub(crate) views: &'a wgpu::Buffer,
@@ -123,6 +125,7 @@ pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) blocks: [u32; 2],
     pub(crate) subdivided: [u32; 2],
     pub(crate) ground: Option<(&'a crate::pipelines::GroupLayout, &'a wgpu::BindGroup)>,
+    pub(crate) held: &'a HashMap<(u64, TileKey), Arc<Tile>>,
 }
 
 pub(crate) struct WaterBlocks {
@@ -283,6 +286,7 @@ impl WaterBlocks {
                 .pipelines
                 .surface_group()
                 .map(|group| (&pass.pipelines.layout, group)),
+            held: &pass.atlas.held,
         })
     }
 

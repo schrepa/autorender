@@ -344,14 +344,17 @@ impl TerrainPass {
 
     /// The terrain group as the subdivisions' passes bind it, with its
     /// layout, at the offset of the uniform of the terrain whose id is `id`
-    /// this frame: what settling water raises its bed through, reading its
-    /// materials as the live water's setup reads them; `None` before the
-    /// group is made or where no uniform is laid out for it.
+    /// this frame, with the tiles the GPU holds: what settling water raises
+    /// its bed through, reading its materials as the live water's setup
+    /// reads them; `None` before the group is made or where no uniform is
+    /// laid out for it.
     pub(crate) fn ground(&self, id: u64) -> Option<crate::water_sim::LiveGround<'_>> {
         Some(crate::water_sim::LiveGround {
             layout: &self.pipelines.layout,
             group: self.pipelines.surface_group()?,
             uniform: self.tables.uniform_of(id)?,
+            terrain: id,
+            held: &self.atlas.held,
         })
     }
 

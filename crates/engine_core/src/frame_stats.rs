@@ -592,11 +592,18 @@ pub struct WaterStats {
     /// frame takes, by which the live water fell behind the clock.
     pub live_behind: u32,
     /// Blocks of that square (a scheme's block of its cells each) the GPU
-    /// set up whole this frame from the ground and the tiles' water it
-    /// holds: every block of a square that came anew, the strips a move
-    /// uncovered, and those over a tile that changed (a finer level, or its
-    /// settled water, arriving); 0 in frames none came.
+    /// set up whole this frame from the ground it holds and the live cells
+    /// of the settled water's records: those whose level-0 tiles, their
+    /// settled water and its records' live cells all came to be there this
+    /// frame, in a square that came anew, a strip a move uncovered or where
+    /// they arrived, and those over a tile that changed; 0 in frames none
+    /// did.
     pub live_setup: u32,
+    /// Blocks of that square waiting for their level-0 tiles, those tiles'
+    /// settled water or its records' live cells, standing as the settled
+    /// water does there, none of their water running, while water's pass
+    /// draws the tiles' water over them.
+    pub live_waiting: u32,
     /// Solids standing in that square whose push its water takes this
     /// frame, nearest the eye first: bodies and colliders, at most
     /// `SIM_TOUCHES`.

@@ -409,7 +409,7 @@ impl WaterSettle {
                 device,
                 &self.setup.layout,
                 buffers,
-                entries,
+                (entries, 0),
             ));
         }
         let Some(setup) = self.setup_buffers.as_ref() else {
@@ -441,6 +441,7 @@ impl WaterSettle {
             square: [start.window, start.last[0] as u32, start.last[1] as u32, 0],
             meters: [start.cell, start.datum, 0.0, 0.0],
             ring: [0; 4],
+            tiles: [0; 4],
         };
         queue.write_buffer(&setup.frame, 0, bytemuck::bytes_of(&frame));
         square.raised = true;

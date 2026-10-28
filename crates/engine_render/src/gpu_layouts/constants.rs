@@ -359,6 +359,27 @@ gpu_consts! {
     /// ball, then the inverse of its axes, a column each, beside how far it
     /// reaches along x and z.
     pub(crate) const SETUP_SOLID_ENTRIES: usize = 4 => ["SETUP_SOLID"];
+    /// What the live water's setup sets up of a block its list holds: the
+    /// block whole, its data resident; its ground alone again; or the
+    /// settled water it stands as while its data is not resident.
+    pub(crate) const SETUP_WHOLE: u32 = 0 => ["SETUP_WHOLE"];
+    pub(crate) const SETUP_RISEN: u32 = 1 => ["SETUP_RISEN"];
+    pub(crate) const SETUP_STANDS: u32 = 2 => ["SETUP_STANDS"];
+    /// What the live square's table holds beside a block's slot where the
+    /// block stands as the settled water does, its data not resident: the
+    /// top bit, above any slot.
+    pub(crate) const SIM_STANDING: u32 = 1 << 31 => ["SIM_STANDING" in WATER_SIM_SHADER];
+    /// The records' live cells as the live water's setup reads them
+    /// (`crate::water_sim`'s `live_words`): what a tile whose record is not
+    /// held and a block holding no wet live cell hold; the words of a
+    /// table's head (its first block along x and z, and its blocks along
+    /// each) and of a live cell (its surface, and its flow along x and z);
+    /// and what a live cell a lake holds holds as its flow along x, past any
+    /// flow water runs at.
+    pub(crate) const LIVE_NONE: u32 = u32::MAX => ["SETUP_NO_LIVE"];
+    pub(crate) const LIVE_HEAD: u32 = 4 => ["SETUP_LIVE_HEAD"];
+    pub(crate) const LIVE_CELL: u32 = 3 => ["SETUP_LIVE_CELL"];
+    pub(crate) const LIVE_HELD: f32 = 1.0e30 => ["SETUP_LIVE_HELD"];
 
     // crate::water_particles
     /// Particles and items a workgroup of water's particles' passes over
@@ -631,7 +652,7 @@ gpu_mirrors! {
     engine_core::table_data::sky::MULTIPLE_SIDE => ["SKY_MULTIPLE_SIZE"];
     engine_core::terrain_data::hydraulics::GRAVITY => ["SIM_GRAVITY" in WATER_SIM_SHADER, "WATER_GRAVITY"];
     engine_core::terrain_data::shallow_water::THETA => ["SIM_THETA" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::THIN => ["SIM_THIN" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::THIN => ["SIM_THIN" in WATER_SIM_SHADER, "SETUP_THIN"];
     engine_core::terrain_data::shallow_water::DRY => ["SIM_DRY" in WATER_SIM_SHADER, "SETUP_DRY"];
     engine_core::terrain_data::shallow_water::FASTEST => ["SIM_FASTEST" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SOURCE_SPEED => ["SIM_SOURCE_SPEED" in WATER_SIM_SHADER];

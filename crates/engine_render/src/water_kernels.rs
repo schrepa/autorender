@@ -7,15 +7,16 @@
 //! of turbulence pushing its water before each step of the same seconds
 //! wherever they stir it: the square running live around the detail eye
 //! (`water_sim.rs`) is one slot storing every block of it, with a ring past
-//! its edges, which the GPU sets up (`meshes/water_setup.wgsl`), the solids
-//! standing in its water, which push it before each step, and its cells'
-//! looks in place of sums: the settled water at each, which its rim is
-//! pulled back to, and the water as water's pass draws it; regions settling
-//! for their tiles' records (`water_settle.rs`) fill as many as fit, each
-//! storing the blocks its water can reach, their cells stepping by their
-//! own seconds until their water settles and then stirred as the live
-//! square is for their last looks, and no solid touches them. What sets
-//! them apart is each slot's flags ([`SimSlot`]).
+//! its edges, which the GPU sets up (`meshes/water_setup.wgsl`), its blocks
+//! waiting for their data standing as the settled water does, as the ring
+//! stands, the solids standing in its water, which push it before each
+//! step, and its cells' looks in place of sums: the settled water at each,
+//! which its rim is pulled back to, and the water as water's pass draws it;
+//! regions settling for their tiles' records (`water_settle.rs`) fill as
+//! many as fit, each storing the blocks its water can reach, their cells
+//! stepping by their own seconds until their water settles and then stirred
+//! as the live square is for their last looks, and no solid touches them.
+//! What sets them apart is each slot's flags ([`SimSlot`]).
 
 use bytemuck::Zeroable;
 use engine_core::terrain_data::shallow_water::CELL_MEANS;

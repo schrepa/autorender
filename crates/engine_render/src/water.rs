@@ -359,7 +359,8 @@ impl WaterPass {
         // Rivers running live where a terrain's window stands, pushed by the
         // solids standing in it, set up from the ground, its materials and
         // the tiles' water through the terrain group at its terrain's
-        // uniform.
+        // uniform, over the tiles the GPU holds, and from the live cells of
+        // its settled water's records.
         let live = terrains
             .iter()
             .find_map(|terrain| {
@@ -371,6 +372,8 @@ impl WaterPass {
                         layout,
                         group,
                         uniform: drawn.1,
+                        terrain: terrain.id,
+                        held: tiles.held,
                     })
                 });
                 Some(Live {
@@ -1111,8 +1114,9 @@ impl RenderFeature for WaterPass {
     /// dropped; the cells along a side of the live square, those the
     /// budget of its cell steps and the device's bindings cut from it, the
     /// steps it ran and those it fell behind the clock by, the blocks the
-    /// GPU set up whole this frame, and the solids pushing its water with
-    /// those standing in it past the most that do;
+    /// GPU set up whole this frame and those waiting for their data, and the
+    /// solids pushing its water with those standing in it past the most
+    /// that do;
     /// the texels along a side of the particles' window, the points along a
     /// side of their foam's square, those the device cut and its reach, and
     /// the particles their pools hold, born and dropped, as last read back;
@@ -1129,7 +1133,8 @@ impl RenderFeature for WaterPass {
             live_steps,
             live_behind,
             live_setup,
-        ] = frame.and(this).map_or([0; 6], |this| this.sim.cells());
+            live_waiting,
+        ] = frame.and(this).map_or([0; 7], |this| this.sim.cells());
         let [touches, dropped_touches] = frame.and(this).map_or([0; 2], |this| this.sim.touches());
         let [leaves, refused] = frame.map_or([0; 2], |frame| frame.subdivided);
         let particles = frame
@@ -1147,6 +1152,7 @@ impl RenderFeature for WaterPass {
                 live_steps,
                 live_behind,
                 live_setup,
+                live_waiting,
                 touches,
                 dropped_touches,
                 particle_texels: particles.texels,

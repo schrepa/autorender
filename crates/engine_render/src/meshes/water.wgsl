@@ -32,10 +32,11 @@
 // `sim_drawn`), and the vertices stand on whichever surface stands higher
 // (`water_field`): one water, which hands back to the tiles' level as a
 // pixel's span grows past what the live reach was made for and across the
-// live square's rim, where the live water is the settled water
-// (`water_live_share`). Everything drawn of the water reads that state and
-// what follows from it: its eddies' speed (`water_eddies`); the water's debug
-// views paint each of its fields (`meshes/debug.wgsl`).
+// live square's rim and around its blocks still waiting for their data,
+// where the live water is the settled water, the tiles' water drawn over
+// those blocks (`water_live_share`). Everything drawn of the water reads
+// that state and what follows from it: its eddies' speed (`water_eddies`);
+// the water's debug views paint each of its fields (`meshes/debug.wgsl`).
 // Nothing else draws it (`shade_water`): its surface is that smooth surface
 // itself, tilted by the small waves the turbulence reaching it raises,
 // which its particles carry around the detail eye (`water_particles.rs`,
@@ -156,7 +157,10 @@ struct WaterUniform {
 // water at it, then its water as water's pass draws it, as a tile's water
 // sample holds it: its surface (above the square's datum; NO_WATER_SURFACE
 // where none) and its ground, then its two words as `water_info`'s first
-// two (`water_words`), their bits.
+// two (`water_words`), their bits. A block standing as the settled water
+// does while its data is not resident (`meshes/water_setup.wgsl`) holds no
+// surface and no ground (NO_WATER_SURFACE each), and water's pass reads the
+// tiles' water over it (`water_live_standing`).
 @group(1) @binding(56) var<storage, read> water_live: array<vec4<f32>>;
 const WATER_LIVE_BLOCK: u32 = 8u;
 const WATER_LIVE_LOOKS: u32 = 2u;
@@ -704,6 +708,41 @@ fn water_live_read(local: vec2<f32>) -> WaterAt {
     return at;
 }
 
+// Whether block `block` (its column and row) of the live square stands as
+// the settled water does while its data is not resident: its first cell's
+// look as water's pass draws it holds no ground.
+fn water_live_stands(block: vec2<i32>) -> bool {
+    return water_live_look(block * i32(WATER_LIVE_BLOCK)).y <= 0.5 * NO_WATER_SURFACE;
+}
+
+// Cells from the point `cells` (cells from the live square's first corner
+// along x and z, `n` along each side of it) to the nearest cell of a block
+// standing as the settled water does (`water_live_stands`) among those
+// within WATER_LIVE_RIM of it, along x or z: none inside one, and
+// WATER_LIVE_RIM where none stands that near.
+fn water_live_standing(cells: vec2<f32>, n: f32) -> f32 {
+    let side = f32(WATER_LIVE_BLOCK);
+    let reach = i32((WATER_LIVE_RIM + WATER_LIVE_BLOCK - 1u) / WATER_LIVE_BLOCK);
+    let blocks = i32(n) / i32(WATER_LIVE_BLOCK);
+    let own = vec2<i32>(floor(cells / side));
+    var nearest = f32(WATER_LIVE_RIM);
+    for (var z = -reach; z <= reach; z++) {
+        for (var x = -reach; x <= reach; x++) {
+            let block = own + vec2<i32>(x, z);
+            if any(block < vec2<i32>(0)) || any(block >= vec2<i32>(blocks)) {
+                continue;
+            }
+            if !water_live_stands(block) {
+                continue;
+            }
+            let low = vec2<f32>(block) * side;
+            let apart = max(max(low - cells, cells - (low + side)), vec2<f32>(0.0));
+            nearest = min(nearest, max(apart.x, apart.y));
+        }
+    }
+    return nearest;
+}
+
 // How much of the water a pixel resolving `seen` meters at terrain-local
 // `local` (`detail_resolved`, seen from the detail eye) reads from the live
 // water (`water_live_read`) rather than the tiles': all of it inside the
@@ -713,20 +752,29 @@ fn water_live_read(local: vec2<f32>) -> WaterAt {
 // it is gone where the live square's reach ends: where its cells span
 // `engine_core::LIVE_PIXELS`, or nearer where the budget of their steps
 // cuts the square (`engine_core::WaterWindow::pixels`); and across the
-// WATER_LIVE_RIM cells along the square's edges, from where all the samples
-// its smooth surface reads lie inside it, two cells in, to its edges,
+// WATER_LIVE_RIM cells along the square's edges and around its blocks
+// standing as the settled water does while their data is not resident
+// (`water_live_standing`), from where all the samples its smooth surface
+// reads lie among cells whose water runs, two cells in, to those edges,
 // where the solve has pulled the live water back to the settled water.
-// None where no water runs live.
+// None where no water runs live, and over the standing blocks.
 fn water_live_share(local: vec2<f32>, seen: f32) -> f32 {
     let n = water.sim.w;
     if n < f32(2u * WATER_LIVE_RIM) {
         return 0.0;
     }
-    let cells = (local + terrain.origin.xz - water.sim.xy) / water.sim.z;
-    let inside = min(min(cells.x, cells.y), min(n - cells.x, n - cells.y));
-    let rim = smoothstep(2.0, f32(WATER_LIVE_RIM), inside);
     let handed = detail_level(seen, water.sim.z / (2.0 * water.sim_pixels.x), 2u);
-    return rim * select(0.0, 1.0 - handed.blend, handed.level == 0u);
+    if handed.level != 0u {
+        return 0.0;
+    }
+    let cells = (local + terrain.origin.xz - water.sim.xy) / water.sim.z;
+    let edges = min(min(cells.x, cells.y), min(n - cells.x, n - cells.y));
+    if edges <= 2.0 {
+        return 0.0;
+    }
+    let inside = min(edges, water_live_standing(cells, n));
+    let rim = smoothstep(2.0, f32(WATER_LIVE_RIM), inside);
+    return rim * (1.0 - handed.blend);
 }
 
 // Water `first` blended `toward` water `second`, both as `WaterAt` holds
