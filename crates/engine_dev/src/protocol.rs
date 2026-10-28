@@ -29,7 +29,6 @@ pub mod bounds {
     pub const FRAME_INTERVAL: Rule = Rule::Range(1.0, 1000.0);
     pub const AXIS: Rule = Rule::Range(-1.0, 1.0);
     pub const TURN: Rule = Rule::Range(-1000.0, 1000.0);
-    pub const MAX_CHANGES: usize = 256;
     pub const MAX_VALUES: usize = 1024;
     pub const PIXEL: Rule = Rule::Range(0.0, 16_384.0);
 }

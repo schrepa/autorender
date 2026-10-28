@@ -1,4 +1,16 @@
-use crate::collections::HashMap;
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
+
+mod dev;
+
+pub use dev::{
+    MAX_CHANGES, StreamedCellView, StreamingGridView, WorldCellsView, WorldChangesControl,
+    WorldChangesResult, WorldChangesView,
+};
+
+use engine_core::collections::HashMap;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -6,9 +18,12 @@ use bevy_ecs::prelude::*;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::math::{max, min};
-use crate::{Camera, FrameTime, GlobalTransforms, StreamingFocus};
-use engine_settings::settings;
+use engine_core::math::{max, min};
+use engine_core::{
+    Brick, BrickStats, Bricks, Camera, EnvironmentSection, FrameTime, GlobalTransforms,
+    StreamingFocus, WorldSync, WorldSyncSystems,
+};
+use engine_settings::{InvalidSetting, settings};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct StreamingGrid {
@@ -61,6 +76,29 @@ impl WorldStreaming {
             enabled: false,
             ..Self::default()
         }
+    }
+}
+
+impl EnvironmentSection for WorldStreaming {
+    const KEY: &'static str = "world_streaming";
+    const NAME: &'static str = "WorldStreaming";
+    const OPT_IN: bool = false;
+
+    fn section_off() -> Self {
+        Self::off()
+    }
+
+    fn section_check(&self) -> Result<(), InvalidSetting> {
+        self.validate()
+    }
+
+    fn section_sanitized(self) -> Self {
+        self.sanitized()
+    }
+
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema {
+        schemars::schema_for!(WorldStreaming)
     }
 }
 
@@ -150,7 +188,7 @@ impl WorldChanges {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct StreamSet(u64);
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CellStats {
     pub cells: u32,
@@ -160,6 +198,15 @@ pub struct CellStats {
     pub entities: u32,
     pub spawned: u32,
     pub despawned: u32,
+}
+
+impl BrickStats for CellStats {
+    const KEY: &'static str = "world_streaming";
+
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema {
+        schemars::schema_for!(CellStats)
+    }
 }
 
 struct Cell {
@@ -430,7 +477,7 @@ pub(crate) fn stream_cells(world: &mut World, focus: &mut FocusQuery) {
     if !world.contains_resource::<WorldChanges>() {
         world.init_resource::<WorldChanges>();
     }
-    world.resource_scope(|world, mut cells: Mut<WorldCells>| {
+    let stats = world.resource_scope(|world, mut cells: Mut<WorldCells>| {
         let cells = &mut *cells;
         cells.stats.spawned = 0;
         cells.stats.despawned = 0;
@@ -456,7 +503,11 @@ pub(crate) fn stream_cells(world: &mut World, focus: &mut FocusQuery) {
         cells.stats.loaded = cells.cells.iter().filter(|cell| cell.loaded).count() as u32;
         cells.stats.items = cells.items() as u32;
         cells.stats.entities = cells.cells.iter().map(|cell| cell.spawned).sum();
+        cells.stats
     });
+    if let Some(mut kept) = world.get_resource_mut::<CellStats>() {
+        *kept = stats;
+    }
 }
 
 fn sources(
@@ -550,17 +601,19 @@ fn load_and_unload(
     stats.pending = (wanted.len() - loaded) as u32;
 }
 
-#[derive(Default)]
-pub struct WorldStreamingPlugin;
+pub struct WorldStreamingBrick;
 
-impl bevy_app::Plugin for WorldStreamingPlugin {
-    fn build(&self, app: &mut bevy_app::App) {
-        crate::install(app, crate::Feature::WorldStreaming);
-        app.init_resource::<WorldCells>()
-            .init_resource::<WorldChanges>()
-            .add_systems(
-                crate::WorldSync,
-                stream_cells.in_set(crate::WorldSyncSystems::Stream),
-            );
+impl Brick for WorldStreamingBrick {
+    fn register(bricks: &mut Bricks) {
+        bricks
+            .settings::<WorldStreaming>()
+            .resource::<WorldCells>()
+            .resource::<WorldChanges>()
+            .resource::<CellStats>()
+            .stats::<CellStats>()
+            .systems(WorldSync, stream_cells.in_set(WorldSyncSystems::Stream))
+            .inspector(dev::world_cells as fn(&WorldCells) -> WorldCellsView)
+            .inspector(dev::world_changes as fn(&WorldChanges) -> WorldChangesView)
+            .operation::<WorldChangesControl>();
     }
 }

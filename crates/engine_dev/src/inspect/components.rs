@@ -120,6 +120,15 @@ impl DevTools {
             |emitter| json!(SceneEmitter::from(emitter)),
         )
         .expect("built-in descriptor is bounded");
+        self.register_component::<engine_world_streaming::StreamedId>(
+            InspectorDescriptor::generated(schemas, "StreamedId"),
+            |id| {
+                json!(crate::views::StreamedIdView {
+                    id: id.0.to_string()
+                })
+            },
+        )
+        .expect("built-in descriptor is bounded");
     }
 }
 

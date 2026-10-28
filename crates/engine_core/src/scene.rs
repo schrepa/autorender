@@ -322,7 +322,6 @@ pub struct RenderSnapshot {
     pub particles: crate::RenderParticles,
     pub reflection_probes: crate::RenderReflectionProbes,
     pub terrain: crate::RenderTerrains,
-    pub cells: crate::CellStats,
     pub tables: crate::RenderTables,
     pub instances: Vec<RenderInstance>,
     pub(crate) instance_slots: crate::retained_render::InstanceSlots,

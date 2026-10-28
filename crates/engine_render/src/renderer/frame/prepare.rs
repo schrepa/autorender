@@ -386,7 +386,7 @@ impl Renderer {
             (&snapshot.environment.foliage, temporal_frame.is_some()),
         );
         lighting.grade[3] = f32::from(u8::from(snapshot.environment.dither.enabled));
-        crate::sky::apply_night(&mut lighting, &snapshot.environment);
+        crate::sky::apply_night(&mut lighting, snapshot);
         crate::sky::apply_haze(
             &mut lighting,
             &snapshot.environment.haze,
@@ -781,7 +781,7 @@ impl Renderer {
         ];
         copies.extend(self.features.clouds.get().sky_copies());
         let sun = snapshot.environment.atmosphere.sun_direction;
-        let [night, _, moon] = crate::sky::night_lighting(&snapshot.environment, sun);
+        let [night, _, moon] = crate::sky::night_lighting(snapshot, sun);
         self.features.sky.get_mut().encode(
             &self.device,
             &self.queue,

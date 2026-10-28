@@ -11,6 +11,7 @@ engine_core.workspace = true
 engine_collision.workspace = true
 engine_physics.workspace = true
 engine_scene.workspace = true
+engine_world_streaming.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
@@ -25,6 +26,8 @@ engine_world_streaming = { workspace = true, features = ["schema"] }
 engine_navigation = { workspace = true, features = ["schema"] }
 engine_time_of_day = { workspace = true, features = ["schema"] }
 engine_scene = { workspace = true, features = ["schema"] }
+engine_world_streaming = { workspace = true, features = ["schema"] }
+engine_time_of_day = { workspace = true, features = ["schema"] }
 
 [lints]
 workspace = true

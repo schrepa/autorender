@@ -3,7 +3,8 @@ use crate::render_graph::{FrameShape, Node, RenderGraph};
 use crate::shaders::entry::sky;
 use engine_core::table_data::sky::SkyTables;
 use engine_core::table_data::sky::{MULTIPLE_SIZE, TRANSMITTANCE_SIZE};
-use engine_core::{Sky, StaticTable};
+use engine_core::{RenderSnapshot, Sky, StaticTable};
+use engine_time_of_day::TimeOfDay;
 use glam::Vec3;
 
 use crate::bindings::{SKY_TABLES, SKY_TRANSMITTANCE};
@@ -455,13 +456,17 @@ impl RenderFeature for SkyPass {
     }
 }
 
-pub(crate) fn night_lighting(environment: &engine_core::Environment, sun: Vec3) -> [[f32; 4]; 3] {
-    let night = environment.night_sky.sanitized();
-    let day = environment.time_of_day.sanitized();
+pub(crate) fn night_lighting(snapshot: &RenderSnapshot, sun: Vec3) -> [[f32; 4]; 3] {
+    let night = snapshot.environment.night_sky.sanitized();
+    let day = snapshot
+        .extracted
+        .get::<TimeOfDay>()
+        .copied()
+        .map_or_else(TimeOfDay::off, TimeOfDay::sanitized);
     let clock = if day.enabled {
         day
     } else {
-        engine_core::TimeOfDay::default()
+        TimeOfDay::default()
     };
     let moon = (day.enabled && night.moon > 0.0).then(|| day.moon_direction(night.moon_age));
     let lit = moon.map_or(0.0, |moon| 0.5 - 0.5 * moon.dot(sun.normalize_or_zero()));
@@ -479,11 +484,11 @@ pub(crate) fn night_lighting(environment: &engine_core::Environment, sun: Vec3) 
 
 pub(crate) fn apply_night(
     lighting: &mut crate::gpu_data::LightingUniform,
-    environment: &engine_core::Environment,
+    snapshot: &RenderSnapshot,
 ) {
     [lighting.night, lighting.star_turn, lighting.moon] =
-        night_lighting(environment, environment.atmosphere.sun_direction);
-    let night = environment.night_sky.sanitized();
+        night_lighting(snapshot, snapshot.environment.atmosphere.sun_direction);
+    let night = snapshot.environment.night_sky.sanitized();
     lighting.night_shape = [
         night.cirrus_height,
         night.cirrus_drift[0],

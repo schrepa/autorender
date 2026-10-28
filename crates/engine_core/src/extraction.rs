@@ -4,16 +4,11 @@ use glam::Mat4;
 use crate::retained_render::RetainedRender;
 use crate::{
     GlobalTransforms, PresentationMode, PresentationState, PresentedTransforms, TransformIndex,
-    WorldCells,
 };
 
 pub(crate) fn extract(retained: &mut RetainedRender, world: &World, aspect: f32) {
     retained.extract_terrain(world, aspect);
-    retained.set_streamed(
-        world
-            .get_resource::<WorldCells>()
-            .map(WorldCells::stats)
-            .unwrap_or_default(),
+    retained.set_tables(
         world
             .get_resource::<crate::StaticTables>()
             .map(crate::StaticTables::render)

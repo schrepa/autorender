@@ -244,7 +244,6 @@ impl Renderer {
                 features.frames.clouds.as_ref().map(Ready::frame),
                 snapshot,
             ),
-            world_streaming: snapshot.cells,
             sky: engine_core::SkyStats {
                 exposure: crate::exposure::ExposurePass::stats(
                     self.features.exposure.get(),

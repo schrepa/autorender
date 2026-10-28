@@ -171,42 +171,6 @@ pub struct FallView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct WorldCellsView {
-    pub cells: u32,
-    pub loaded: u32,
-    pub pending: u32,
-    pub items: u32,
-    pub entities: u32,
-    pub spawned: u32,
-    pub despawned: u32,
-    pub velocity: [f32; 3],
-    pub grids: Vec<StreamingGridView>,
-    pub nearest: Vec<StreamedCellView>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct StreamingGridView {
-    pub cell: f32,
-    pub range: f32,
-    pub reach: Option<f32>,
-    pub cells: u32,
-    pub loaded: u32,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct StreamedCellView {
-    pub grid: u8,
-    pub key: [i32; 2],
-    pub items: u32,
-    pub entities: u32,
-    pub loaded: bool,
-    pub distance: f32,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct NavAgentView {
     pub agent: engine_core::NavAgent,
     pub status: engine_core::NavStatus,
@@ -280,13 +244,6 @@ pub struct NavAgentRow {
     pub position: [f32; 3],
     pub destination: Option<[f32; 2]>,
     pub left: f32,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct WorldChangesView {
-    pub removed: usize,
-    pub ids: Vec<String>,
 }
 
 #[derive(Serialize)]
