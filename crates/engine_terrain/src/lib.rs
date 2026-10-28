@@ -62,7 +62,7 @@ mod tile_errors;
 mod tile_water;
 
 pub use bake::{Bake, BakeKind, Baked, ErosionBake, HydrologyBake, PathBake, Stage, TerrainBake};
-pub use bed::{Bed, Reach};
+pub use bed::{Bed, NARROWEST, Reach};
 pub use erosion::{Erosion, ErosionLayer, ErosionStats};
 pub use flow::{Block, Pool, RiverFlow, WEIR};
 pub use given::{

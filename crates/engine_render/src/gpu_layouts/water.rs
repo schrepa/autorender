@@ -9,8 +9,9 @@ gpu_structs! {
     /// WGSL `WaterUniform` of `meshes/water.wgsl`; the sea's parts are zero
     /// for terrains' water, whose projection is the terrain view's and whose
     /// `foam` holds its foam field's cells, texture and handover
-    /// (`crate::water_foam_field`), and the sea carries no sediment and
-    /// stands on no subdivision, its `lift` zero.
+    /// (`crate::water_foam_field`), and the sea carries no sediment, stands
+    /// on no subdivision and runs nowhere live, its `lift` and live water's
+    /// parts zero.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct WaterUniform as ["WaterUniform"] {
         pub relative_view_projection: [[f32; 4]; 4],
@@ -26,19 +27,24 @@ gpu_structs! {
         pub sim_datum: [f32; 4],
         pub sediment: [f32; 4],
         pub lift: [f32; 4],
+        pub sim_pixels: [f32; 4],
     }
 
     /// WGSL `SimFrame` of `water_sim.wgsl`: the stage, the slots the
     /// buffers hold, the blocks a slot's pool holds and the blocks a
     /// slot's table maps; the most cells rivers bring water to a slot holds
-    /// and the faces along its west and south edges a slot holds; and the
-    /// free wind over the water (meters a second along x and z), which
-    /// drags its surface and the foam riding it, then nothing.
+    /// and the faces along its west and south edges a slot holds; the free
+    /// wind over the water (meters a second along x and z), which drags its
+    /// surface and the foam riding it, then nothing; and the live square's
+    /// first cell on the terrain's lattice of its cells along x and z (an
+    /// `i32`'s bits each) and the index of its frame's first step, which
+    /// turbulence's bursts are drawn by, then nothing (none settling).
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimFrame as ["SimFrame" in WATER_SIM_SHADER] {
         pub stage: [u32; 4],
         pub inputs: [u32; 4],
         pub wind: [f32; 4],
+        pub live: [u32; 4],
     }
 
     /// WGSL `SimSlot` of `water_sim.wgsl`: a slot's rectangle, its cells

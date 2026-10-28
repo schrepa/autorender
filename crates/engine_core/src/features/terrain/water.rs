@@ -2,13 +2,16 @@
 //! they stand. Rivers run along their channels as their water settles there
 //! by the shallow-water equations, and lakes lie still; around the detail
 //! eye, out to where its cells' unsteady features stay a few pixels across
-//! ([`crate::LIVE_PIXELS`]), the same water runs live from that settled
-//! state by the same equations, in the settled water's own cells, and hands
-//! back to it at its rim. How water moves and foams follows from its state
-//! alone, what its tiles or the live solve hold at each place (its depth,
-//! flow, the foam it carries, how turbulent it runs and how far across its
-//! water body is), the scene's wind ([`crate::Wind`]) dragging the water
-//! that runs live and the foam riding it. It shows that state and nothing
+//! ([`crate::LIVE_PIXELS`]) and as far as a budget of its cells' steps holds
+//! ([`Water::live_budget`]), the same water runs live from that settled
+//! state by the same equations, in cells finer than the settled water's, a
+//! few across its narrowest channels, stirred by its own turbulence's
+//! bursts, and hands back to it at its rim. How water moves and foams
+//! follows from its state alone, what its tiles or the live solve hold at
+//! each place (its depth, flow, the foam it carries, how turbulent it runs
+//! and how far across its water body is), the scene's wind
+//! ([`crate::Wind`]) dragging the water that runs live and the foam riding
+//! it. It shows that state and nothing
 //! else: its surface is the state's own, roughened where its turbulence and
 //! eddies stir it, a calm mirror where nothing does, and its foam smooth
 //! coverage. Each body's look is its color, its clarity and the
@@ -49,9 +52,20 @@ settings! {
         /// The color the water's sediment scatters back, linear.
         pub sediment_color: [f32; 3] = [0.05, 0.065, 0.03] => range(0.0, 1.0),
         /// The meters across the cells water settles in: the cook makes the
-        /// settled water's records at this size, and the water running live
-        /// around the detail eye runs in these same cells.
+        /// settled water's records at this size; the water running live
+        /// around the detail eye runs in these cells split along each side
+        /// into as few as put four across the narrowest channel the
+        /// terrain's bake cuts, half a meter for meter cells over a meter's
+        /// samples.
         pub simulation_cell: f32 = 1.0 => range(0.25, 8.0),
+        /// The most cell steps the water running live around the detail eye
+        /// takes in a frame: its square holds no more cells than this over
+        /// the steps of the longest frame it steps through (a thirtieth of a
+        /// second, eight steps of half-meter cells), reaching nearer the eye
+        /// than its cells' pixels ask where it would hold more (the cells it
+        /// cuts are counted). The default holds 512 half-meter cells along a
+        /// side, 256 meters.
+        pub live_budget: u32 = 2_097_152 => range(65_536, 67_108_864),
         /// Pixels the water's drawn triangles may stray from its surface,
         /// seen from the detail eye: each terrain's water subdivides a tree
         /// of its own, splitting its leaves straying more and merging those

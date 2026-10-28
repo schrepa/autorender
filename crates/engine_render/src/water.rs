@@ -357,7 +357,8 @@ impl WaterPass {
         let (running, sim_generation) = self.sim.drawn();
         // The square of the window that runs: its first corner, the meters
         // across a cell and its cells along a side; its datum, the slots its
-        // blocks turn by along x and z and its pool's slots along each side.
+        // blocks turn by along x and z and its pool's slots along each side;
+        // and the pixels a cell spans where its water hands back.
         let running = running.map(|drawn| {
             let window = drawn.window;
             let square = [
@@ -375,6 +376,7 @@ impl WaterPass {
                     wrap_z as f32,
                     drawn.pool as f32,
                 ],
+                [window.pixels, 0.0, 0.0, 0.0],
             )
         });
         // The foam tiles' water carries, over the water of the terrain the
@@ -403,8 +405,9 @@ impl WaterPass {
                 absorption: absorption(settings.color, settings.clarity),
                 ocean: sea,
                 foam: self.foam.shading(),
-                sim: running.map_or([0.0; 4], |(square, _)| square),
-                sim_datum: running.map_or([0.0; 4], |(_, datum)| datum),
+                sim: running.map_or([0.0; 4], |(square, _, _)| square),
+                sim_datum: running.map_or([0.0; 4], |(_, datum, _)| datum),
+                sim_pixels: running.map_or([0.0; 4], |(_, _, pixels)| pixels),
                 sediment: [sediment[0], sediment[1], sediment[2], settings.sediment],
                 // Its vertices stand over its surface by the pixels the
                 // drawn ground and its mesh may stray from theirs.
@@ -672,6 +675,7 @@ impl WaterPass {
             // The sea carries no sediment, and stands on no subdivision.
             sediment: [0.0; 4],
             lift: [0.0; 4],
+            sim_pixels: [0.0; 4],
         };
         queue.write_buffer(&draw.uniform, 0, bytemuck::bytes_of(&uniform));
         !draw.runs.is_empty()
@@ -944,7 +948,8 @@ impl RenderFeature for WaterPass {
     /// The leaves the water's subdivisions drew and the splits their room
     /// refused, as last read back; tiles' water blocks resident and
     /// dropped; the cells along a side of the live square, those the
-    /// device's bindings cut from it and the steps it ran, and the solids
+    /// budget of its cell steps and the device's bindings cut from it, the
+    /// steps it ran and those it fell behind the clock by, and the solids
     /// pushing its water with those standing in it past the most that do;
     /// the cells along a side of the foam field; and the sea's sectors drawn
     /// and their triangles.
@@ -953,8 +958,8 @@ impl RenderFeature for WaterPass {
         frame: Option<&WaterFrame>,
         _snapshot: &RenderSnapshot,
     ) -> (WaterStats, OceanStats) {
-        let [live_cells, live_cut, live_steps] =
-            frame.and(this).map_or([0; 3], |this| this.sim.cells());
+        let [live_cells, live_budget_cut, live_cut, live_steps, live_behind] =
+            frame.and(this).map_or([0; 5], |this| this.sim.cells());
         let [touches, dropped_touches] = frame.and(this).map_or([0; 2], |this| this.sim.touches());
         let [leaves, refused] = frame.map_or([0; 2], |frame| frame.subdivided);
         (
@@ -964,8 +969,10 @@ impl RenderFeature for WaterPass {
                 blocks: frame.map_or(0, |frame| frame.blocks[0]),
                 dropped_blocks: frame.map_or(0, |frame| frame.blocks[1]),
                 live_cells,
+                live_budget_cut,
                 live_cut,
                 live_steps,
+                live_behind,
                 touches,
                 dropped_touches,
                 foam_cells: frame.and(this).map_or(0, |this| this.foam.cells()),
