@@ -98,6 +98,7 @@ shared_groups! {
             foam_frame, foam_lattice, foam_state, foam_source, foam_target, foam_waves,
             foam_spread_source, foam_spread_target
         ],
+        bed: 40..44 [bed_frame, bed_taken, bed_ground, bed_kept],
     }
     SHADER @ 3 {
         lights: 0..4 [clusters, lights, cluster_ranges, cluster_lights],

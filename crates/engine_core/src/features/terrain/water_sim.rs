@@ -17,21 +17,23 @@
 //! roughness and what they hold under each one's middle, and the solids
 //! standing in the water of the settled records held whole, covering its
 //! cells by their share as they cover any cells ([`cover_cells`]); the
-//! drawn ground's materials' mesh band, which the GPU's materials alone
-//! hold and which follows the pixels it is drawn at, raises none of it. Its
-//! water comes from the terrain's settled water through that water's smooth
-//! surface ([`SteadyCells::matched`]): each live cell's at the uniform cubic
-//! B-spline through the settled cells around it, as water's shading takes
-//! its smooth surface, its depth its own over its own ground, held by a
-//! lake where the settled cell holding it is, and the live cells over each
-//! flowing settled cell raised and turned alike so their mean is that
-//! cell's water; it starts off that steady state as unsteadily as the water
-//! settled there; the cells past its edges stand as that same water does
-//! there, giving and taking water as the steady state does; and its rivers
-//! bring what the settled cells bring, shared by area, so water left alone
-//! stays as it settled. Its heights stand above a datum, its lowest ground
-//! as probed in whole meters, which keeps them small for the GPU's single
-//! precision.
+//! relief of the ground's materials, which the GPU's materials alone hold,
+//! raises that ground as the renderer takes its blocks, at the level whose
+//! texels span a live cell (the renderer's `meshes/water_bed.wgsl`), and
+//! lets go of the lakes it raises cells out of, so each cell's lake comes
+//! as its settled cell holds it. Its water comes from the terrain's settled
+//! water through that water's smooth surface ([`SteadyCells::matched`]):
+//! each live cell's at the uniform cubic B-spline through the settled cells
+//! around it, as water's shading takes its smooth surface, its depth its
+//! own over its own ground, held by a lake where the settled cell holding
+//! it is, and the live cells over each flowing settled cell raised and
+//! turned alike so their mean is that cell's water; it starts off that
+//! steady state as unsteadily as the water settled there; the cells past
+//! its edges stand as that same water does there, giving and taking water
+//! as the steady state does; and its rivers bring what the settled cells
+//! bring, shared by area, so water left alone stays as it settled. Its
+//! heights stand above a datum, its lowest ground as probed in whole
+//! meters, which keeps them small for the GPU's single precision.
 //!
 //! A window holds its cells by the scheme's blocks of them, each made from
 //! its place on the terrain's lattice of blocks, the window's cells' size
@@ -167,8 +169,9 @@ pub struct WaterWindow {
 /// A block of a window's cells, [`BLOCK_SIDE`] along each side, as any
 /// window holding it gathers it: the stamp it took, which no other block
 /// holds; the ground at its cells' corners over the datum of the windows
-/// holding it (`BLOCK_SIDE + 1` a row, rows along z); and, cells row by row,
-/// each one's water as the settled water stands at it
+/// holding it (`BLOCK_SIDE + 1` a row, rows along z), which the renderer
+/// raises by its materials' relief as it takes the block; and, cells row
+/// by row, each one's water as the settled water stands at it
 /// (`SteadyCells::matched`), the roughness of its ground as the scheme
 /// counts it (the D84 of the river bed under it in meters, negated where
 /// steps or boulders are carved into the bed, whose friction then counts
@@ -243,23 +246,22 @@ impl WaterBlock {
         self.water[z as usize * SIDE + x as usize]
     }
 
-    /// The level a lake holds its cell (x, z) at, where it stands over the
-    /// cell's ground; NaN where none does.
+    /// The level a lake holds its cell (x, z) at, where the settled cell
+    /// holding its middle is a lake's; NaN where it is not. The live bed
+    /// lets the lake go where the cell's ground, raised by the relief of the
+    /// ground's materials, stands at or over that level, as a lake holds no
+    /// cell it does not stand over (the renderer's `meshes/water_bed.wgsl`).
     pub fn held(&self, x: u32, z: u32) -> f32 {
-        let level = self.water(x, z).held;
-        if level > self.bed(x, z) {
-            level
-        } else {
-            f32::NAN
-        }
+        self.water(x, z).held
     }
 
     /// What its cell (x, z) starts from: its surface, its flow along x and
     /// z (square meters a second) and its foam. A cell a lake holds stands
-    /// still at its level; one holding flowing water starts off its steady
-    /// state by its unsteadiness, its surface by at most half its depth so
-    /// it stays wet, its flow its depth over its ground at its velocity; a
-    /// dry one stands at its ground.
+    /// still at its level, below its ground where the lake stands under it,
+    /// which the live water dries there; one holding flowing water starts
+    /// off its steady state by its unsteadiness, its surface by at most half
+    /// its depth so it stays wet, its flow its depth over its ground at its
+    /// velocity; a dry one stands at its ground.
     pub fn start(&self, x: u32, z: u32) -> [f32; 4] {
         self.standing(x, z, true)
     }

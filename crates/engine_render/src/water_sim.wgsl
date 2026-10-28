@@ -31,6 +31,23 @@
 // surface converges, along the banks it is pushed against and on eddy
 // lines, and it fades as its bubbles break.
 //
+// Over any bed, however steep its relief, the scheme holds what the water's
+// shapes come from: no cell's depth falls below none, as its faces' water
+// is kept over the ground at both faces and no cell gives more in a stage
+// than it holds (`sim_drain`); water at rest stays at rest, as it
+// reconstructs the surface rather than the depth and its pull down the
+// ground balances its faces' pressure exactly (`sim_pull`), a waterline's
+// water lying flat against it (`sim_sides`), so it needs no hydrostatic
+// reconstruction of its own (Audusse et al. 2004); cells wet and dry at
+// their waterlines; and its steps keep within the waves' reach: the live
+// square's fixed step lets water no faster than SIM_FASTEST, with the
+// waves of water five meters deep, cross no more than SIM_COURANT of a cell
+// (`engine_terrain::shallow_water::BOUNDING_SPEED`), and a settling
+// region's cells step as their own waves allow. So over the stones the live
+// square's bed holds, fast water stands in waves, pillows over those under
+// it, falls into holes behind them and jumps where it slows as the
+// equations say, and a lake beside a stone standing out of it stays still.
+//
 // Every dispatch runs rectangles side by side, the third dimension counting
 // them, each a slot of the buffers with its own cells along x and z, cell
 // size, steps and edges (`SimSlot`). A slot stores its rectangle's cells by
@@ -42,6 +59,8 @@
 // comes back.
 // - the square running live around the detail eye (`water_sim.rs`), in
 //   cells finer than the settled water's (`engine_core`'s `live_cell`),
+//   over ground the relief of its materials raises at its cells' spacing
+//   (`meshes/water_bed.wgsl`), the stones and cobbles the ground draws,
 //   stores every block of it, and of the square it moves to next, each in
 //   the slot of its place on the terrain's lattice of blocks, and steps
 //   every cell by the same seconds, and over its edges water flows to and
@@ -198,13 +217,14 @@ struct SimSlots {
 @group(0) @binding(0) var<uniform> frame: SimFrame;
 // Each slot's pool's blocks' ground, SIM_BLOCK_GROUND entries a block: the
 // ground at its cells' corners (meters, WATER_SIM_GROUP + 1 a row, rows
-// along z), then the level a lake holds each of its cells at (SIM_UNHELD
-// where none does), then each of its cells' bed's roughness (its D84 in
-// meters where friction follows Ferguson's law, the same negated where
-// steps or knobs are carved into it and friction counts its grains alone),
-// then the share of each of its cells covered by the solids standing in it
-// (0 to 1), then the height their tops stand at over it (meters), cells
-// row by row.
+// along z; the live square's raised by its materials' relief,
+// `meshes/water_bed.wgsl`), then the level a lake holds each of its cells
+// at (SIM_UNHELD where none does), then each of its cells' bed's roughness
+// (its D84 in meters where friction follows Ferguson's law, the same
+// negated where steps or knobs are carved into it and friction counts its
+// grains alone), then the share of each of its cells covered by the solids
+// standing in it (0 to 1), then the height their tops stand at over it
+// (meters), cells row by row.
 @group(0) @binding(1) var<storage, read> sim_ground: array<f32>;
 // Each slot's step's start and then its first stage, each its pool's
 // blocks' cells, a block's row by row: the water's surface, its flow along

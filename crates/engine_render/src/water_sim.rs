@@ -21,14 +21,24 @@
 //! slots the running window leaves free a few a frame, so they are there
 //! when it takes the window's place. Blocks taken are staged in one write
 //! the frame's encoding copies into their slots before the steps, and a new
-//! window runs once every block of it is there, taken a few a frame. Before
-//! each step turbulence bursts in its water, each burst drawn by the one
-//! rule for bursts (`water_bursts.wgsl`) from its cell and the step's
-//! index, and pushes it; then the solids standing in its water push it
-//! toward their own velocity and churn its foam, which rides its surface,
-//! dragged by the scene's wind. Where one of the device's storage bindings
-//! cannot hold a buffer of the window, its middle square whose buffers they
-//! hold runs instead. Nothing is read back.
+//! window runs once every block of it is there, taken a few a frame. As
+//! their copies land, the same frame raises their bed by the relief of the
+//! ground's materials (`meshes/water_bed.wgsl`, through the terrain group
+//! of the terrain the window stands on): the stones and cobbles the ground
+//! draws, at the level whose texels span a live cell, so its fast water
+//! breaks over them, and a lake holds none of its cells that relief raises
+//! to its level. Blocks are taken only while their bed can rise, so no step
+//! runs over ground left unraised; and every frame some of the slots
+//! holding blocks rise again, round the pool, from the ground they were
+//! taken with, kept for them, so the bed follows the ground's materials as
+//! they arrive and the tiles under it fade in. Before each step turbulence
+//! bursts in its water, each burst drawn by the one rule for bursts
+//! (`water_bursts.wgsl`) from its cell and the step's index, and pushes it;
+//! then the solids standing in its water push it toward their own velocity
+//! and churn its foam, which rides its surface, dragged by the scene's
+//! wind. Where one of the device's storage bindings cannot hold a buffer of
+//! the window, its middle square whose buffers they hold runs instead.
+//! Nothing is read back.
 //!
 //! The cook's meter cells over a meter's samples run live in half-meter
 //! cells (`engine_core`'s `live_cell`), each step 1/225 of a second
@@ -42,7 +52,15 @@
 //! a pool of 72 × 72 blocks, about a million cell steps a frame at 60 Hz;
 //! on one 1440 pixels tall the reach of 173 meters asks for 792 cells, and
 //! the budget holds the same 512. Its buffers take about 133 bytes a cell
-//! of its pool: about 44 MB.
+//! of its pool: about 44 MB. Its bed rises in one dispatch a frame, reading
+//! the ground's materials at each of a block's 81 corners as the mesh band
+//! reads them at a vertex: the blocks taken, TAKEN a frame while a window is
+//! taken ahead and the strips a move uncovers at once where they were not
+//! (a move of a snap along both axes, some 960 blocks and 78,000 corners),
+//! and TAKEN slots rising again (some 21,000 corners, the pool of 72 × 72
+//! within 21 frames). Its steps cost what they cost over any bed; the ground
+//! kept for its bed to rise from takes 580 bytes a slot of its pool (about
+//! 3 MB), its list of blocks rising 16, and its stage 580 more a block taken.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -53,10 +71,13 @@ use engine_core::terrain_data::shallow_water::{UNHELD, step_seconds};
 use engine_core::terrain_data::{BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, StoredBlocks};
 use engine_core::{SIM_TOUCHES, WaterObstacle, WaterWindow, Wind, live_steps};
 
+use crate::bindings::{EMPTY, WATER_BED};
 use crate::gpu_layouts::constants::{SIM_LIVE, SIM_LIVE_LOOKS, SIM_STEPPING};
-use crate::gpu_layouts::water::{SimSlot, SimTouch, SimTouches};
+use crate::gpu_layouts::water::{SimBed, SimSlot, SimTouch, SimTouches};
+use crate::pipelines::GroupLayout;
+use crate::shaders::entry::meshes;
 use crate::water_kernels::{
-    Capacity, Kernels, SlotBuffers, encode_drawn, encode_steps, live_largest_bytes,
+    Capacity, Kernels, SlotBuffers, encode_drawn, encode_steps, grid, live_largest_bytes,
 };
 
 // The longest frame whose time the live water steps through, whose steps
@@ -67,35 +88,207 @@ pub(crate) use engine_core::LONGEST_FRAME;
 /// yet, a new window's before it runs and the blocks the window moves to
 /// next: about a megabyte staged, a millisecond or so of the main thread's.
 /// Those a running window moves onto that are not there yet are taken at
-/// once.
+/// once. As many slots holding blocks rise again each frame, round the
+/// pool, from the ground they were taken with, so the bed follows the
+/// ground's materials as they arrive and the tiles under it fade in: a
+/// pool of 72 × 72 slots within 21 frames.
 const TAKEN: usize = 256;
 /// What a slot holding no block of the window holds as its place: past any
 /// window's blocks, so its cells run no step.
 const NO_PLACE: u32 = u32::MAX;
-/// Bytes a block takes of the ground, of a state of the cells and of its
-/// cells' looks.
+/// Entries of a block's ground its bed rises from, kept for it to rise
+/// again: the ground at its cells' corners and the levels lakes hold its
+/// cells at, the entries before its cells' roughness, shares and tops.
+const BLOCK_KEPT: usize = BLOCK_GROUND - 3 * BLOCK_CELLS;
+/// Bytes a block takes of the ground, of the ground its bed rises from, of
+/// a state of the cells and of its cells' looks.
 const BLOCK_GROUND_BYTES: u64 = (BLOCK_GROUND * 4) as u64;
+const BLOCK_KEPT_BYTES: u64 = (BLOCK_KEPT * 4) as u64;
 const BLOCK_CELL_BYTES: u64 = (BLOCK_CELLS * 16) as u64;
 const BLOCK_LOOK_BYTES: u64 = BLOCK_CELLS as u64 * SIM_LIVE_LOOKS * 16;
 
 /// A terrain's live window as frames hand it over: the window, the window
 /// waiting ahead to take its place, the solids standing in it (nearest the
-/// eye first) and how many more stand there.
+/// eye first) and how many more stand there, and the terrain group its bed
+/// reads the ground's materials through, once made.
 pub(crate) struct Live<'a> {
     pub(crate) window: &'a Arc<WaterWindow>,
     pub(crate) ahead: Option<&'a Arc<WaterWindow>>,
     pub(crate) touches: &'a [WaterObstacle],
     pub(crate) beyond: u32,
+    pub(crate) ground: Option<LiveGround<'a>>,
+}
+
+/// The terrain group through which the live water's bed reads the ground's
+/// materials (`meshes/water_bed.wgsl`): its layout, the group as the
+/// subdivisions' passes bind it, and the offset of the uniform of the
+/// terrain the window stands on.
+pub(crate) struct LiveGround<'a> {
+    pub(crate) layout: &'a GroupLayout,
+    pub(crate) group: &'a wgpu::BindGroup,
+    pub(crate) uniform: u32,
+}
+
+/// What raises the live water's bed by the relief of the ground's
+/// materials (`meshes/water_bed.wgsl`): the empty group its pipeline binds
+/// first and that group's layout, its own group's layout, the terrain
+/// group's layout once a frame brought it and, once the mesh module came,
+/// its pipeline; and this frame's terrain group with the offset of the
+/// uniform of the terrain the window stands on.
+struct Bed {
+    empty_layout: GroupLayout,
+    empty: wgpu::BindGroup,
+    layout: GroupLayout,
+    terrain: Option<GroupLayout>,
+    pipeline: Option<wgpu::ComputePipeline>,
+    ground: Option<(wgpu::BindGroup, u32)>,
+}
+
+impl Bed {
+    fn new(device: &wgpu::Device) -> Self {
+        let empty_layout = crate::pipelines::layout(device, &EMPTY);
+        let empty = crate::pipelines::group(
+            device,
+            "engine/water-bed-empty",
+            &EMPTY,
+            &empty_layout,
+            &[],
+        );
+        Self {
+            empty_layout,
+            empty,
+            layout: crate::pipelines::layout(device, &WATER_BED),
+            terrain: None,
+            pipeline: None,
+            ground: None,
+        }
+    }
+
+    /// Keeps `ground`, the terrain group this frame's bed reads, and its
+    /// layout the first time one comes; none where it does not.
+    fn hold(&mut self, ground: Option<&LiveGround<'_>>) {
+        self.ground = ground.map(|ground| {
+            if self.terrain.is_none() {
+                self.terrain = Some(ground.layout.clone());
+            }
+            (ground.group.clone(), ground.uniform)
+        });
+    }
+
+    /// Creates its pipeline from the mesh module `shader` unless it exists,
+    /// once a frame brought the terrain group's layout.
+    fn ensure(&mut self, device: &wgpu::Device, shader: &wgpu::ShaderModule) {
+        if self.pipeline.is_some() {
+            return;
+        }
+        let Some(terrain) = self.terrain.as_ref() else {
+            return;
+        };
+        let layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::WATER_BED_PIPELINES,
+            &[&self.empty_layout, terrain, &self.layout],
+        );
+        self.pipeline = Some(crate::pipelines::compute_entry(
+            device,
+            &layout,
+            shader,
+            meshes::raise_bed,
+        ));
+    }
+
+    /// Whether it raises the bed of blocks taken this frame: its pipeline
+    /// made and the terrain group there.
+    fn raises(&self) -> bool {
+        self.pipeline.is_some() && self.ground.is_some()
+    }
+
+    /// Records into `pass` the rise of the bed of the `blocks` blocks a
+    /// window's group `group` lists, a workgroup each, through the terrain
+    /// group at the uniform of the terrain the window stands on.
+    fn raise(&self, pass: &mut wgpu::ComputePass<'_>, group: &wgpu::BindGroup, blocks: u32) {
+        let (Some(pipeline), Some((terrain, uniform))) = (&self.pipeline, &self.ground) else {
+            return;
+        };
+        let [groups_x, groups_z] = grid(blocks);
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &self.empty, &[]);
+        // The terrain's uniform at its offset, the views' at their first,
+        // which it reads none of.
+        pass.set_bind_group(1, terrain, &[0, *uniform]);
+        pass.set_bind_group(2, group, &[]);
+        pass.dispatch_workgroups(groups_x, groups_z, 1);
+    }
+}
+
+/// What raises the bed of a window's blocks as they are taken and again
+/// after: its uniform (the blocks whose bed a frame raises and the meters
+/// across their cells); each such block (its slot, the cell of the terrain's
+/// lattice of live cells its first corner stands at and its window's
+/// datum), room for one in each slot of its pool; the ground each slot's
+/// block was taken with that its bed rises from (BLOCK_KEPT entries a
+/// slot); and the group binding them with its ground.
+struct Raised {
+    frame: wgpu::Buffer,
+    taken: wgpu::Buffer,
+    kept: wgpu::Buffer,
+    group: wgpu::BindGroup,
+}
+
+impl Raised {
+    /// For a pool of `slots` slots whose blocks' ground `ground` holds, its
+    /// group of the layout `layout`.
+    fn new(
+        device: &wgpu::Device,
+        layout: &GroupLayout,
+        ground: &wgpu::Buffer,
+        slots: usize,
+    ) -> Self {
+        let frame = crate::buffers::uniform(device, "engine/water-bed", size_of::<SimBed>() as u64);
+        let none = wgpu::BufferUsages::empty();
+        let taken =
+            crate::buffers::storage(device, "engine/water-bed-taken", slots as u64 * 16, none);
+        let kept = crate::buffers::storage(
+            device,
+            "engine/water-bed-kept",
+            slots as u64 * BLOCK_KEPT_BYTES,
+            none,
+        );
+        let group = crate::pipelines::group(
+            device,
+            "engine/water-bed",
+            &WATER_BED,
+            layout,
+            &[
+                crate::buffers::entry("bed_frame", &frame),
+                crate::buffers::entry("bed_taken", &taken),
+                crate::buffers::entry("bed_ground", ground),
+                crate::buffers::entry("bed_kept", &kept),
+            ],
+        );
+        Self {
+            frame,
+            taken,
+            kept,
+            group,
+        }
+    }
+
+    /// Bytes of its buffers.
+    fn bytes(&self) -> u64 {
+        self.frame.size() + self.taken.size() + self.kept.size()
+    }
 }
 
 /// A terrain's water running live over its window: the scheme's passes,
-/// the window's buffers, the steps this frame runs and those the
-/// simulation's time held past them, the step of the simulation's time the
-/// last frame stepped to, a count advancing whenever what water draws from
-/// changes, and the solids pushing its water this frame with those standing
-/// in its window past the most that do.
+/// what raises its bed, the window's buffers, the steps this frame runs and
+/// those the simulation's time held past them, the step of the simulation's
+/// time the last frame stepped to, a count advancing whenever what water
+/// draws from changes, and the solids pushing its water this frame with
+/// those standing in its window past the most that do.
 pub(crate) struct WaterSim {
     kernels: Kernels,
+    bed: Bed,
     window: Option<SimWindow>,
     steps: u32,
     behind: u32,
@@ -109,11 +302,13 @@ pub(crate) struct WaterSim {
 /// ahead and its square of the same size; the slots along each side of the
 /// pool, the square's blocks (each in the slot of its place on the
 /// terrain's lattice of blocks taken around the pool's side) and the slots
-/// they turn by along x and z; its buffers (one slot with its ring) and the
-/// count of cells rivers bring water to; the stamp of the block each slot
-/// holds (0 where it holds none it knows); whether every block of the
-/// square is there, so it runs; what this frame takes into its slots; and
-/// the buffer it stages them in.
+/// they turn by along x and z; its buffers (one slot with its ring), what
+/// raises the bed of the blocks taken into them and the count of cells
+/// rivers bring water to; the stamp of the block each slot holds (0 where
+/// it holds none it knows) and what its bed rises by (`Raised`'s blocks'),
+/// and the slot the next frame's bed rises again from; whether every block
+/// of the square is there, so it runs; what this frame takes into its
+/// slots; and the buffer it stages them in.
 struct SimWindow {
     source: Arc<WaterWindow>,
     fitted: Arc<WaterWindow>,
@@ -122,21 +317,27 @@ struct SimWindow {
     stored: StoredBlocks,
     wrap: [u32; 2],
     buffers: SlotBuffers,
+    raised: Raised,
     sourced: u32,
     stamps: Vec<u64>,
+    beds: Vec<[u32; 4]>,
+    sweep: usize,
     ready: bool,
     taken: Option<Taken>,
     stage: Option<wgpu::Buffer>,
 }
 
 /// The blocks a frame takes into its window's slots, staged in their
-/// slots' order, all their ground, then all their cells' start, then all
-/// their cells' looks: the runs of consecutive slots they fill, each its
-/// first slot, its slots and its first block staged; the blocks staged; and
-/// whether the frame's encoding recorded their copies.
+/// slots' order, all their ground, then all of it their bed rises from,
+/// then all their cells' start, then all their cells' looks: the runs of
+/// consecutive slots they fill, each its first slot, its slots and its
+/// first block staged; the blocks staged; the blocks whose bed the frame
+/// raises, those staged and those rising again; and whether the frame's
+/// encoding recorded their copies.
 struct Taken {
     runs: Vec<[u32; 3]>,
     staged: u32,
+    raising: u32,
     recorded: Cell<bool>,
 }
 
@@ -144,6 +345,7 @@ impl WaterSim {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         Self {
             kernels: Kernels::new(device),
+            bed: Bed::new(device),
             window: None,
             steps: 0,
             behind: 0,
@@ -157,13 +359,14 @@ impl WaterSim {
     /// `seconds` in the scene's wind `wind`, over the square of it the
     /// device's bindings hold: its buffers anew where a square of another
     /// size came; where one of its size moved, its table, sources and ring;
-    /// in its slots the blocks they do not hold, and the blocks of the
-    /// window waiting ahead the square leaves slots free for; the solids
-    /// pushing its water; the wind dragging its surface; and as many steps,
-    /// each of the same seconds, as the simulation time since the last frame
-    /// holds, at most LONGEST_FRAME's, each of its index in the simulation's
-    /// time, which its bursts are drawn by. Drops it where there is no
-    /// window, or no square of it fits.
+    /// the terrain group its bed reads the ground's materials through; in
+    /// its slots the blocks they do not hold, and the blocks of the window
+    /// waiting ahead the square leaves slots free for, while their bed can
+    /// rise; the solids pushing its water; the wind dragging its surface; and
+    /// as many steps, each of the same seconds, as the simulation time since
+    /// the last frame holds, at most LONGEST_FRAME's, each of its index in
+    /// the simulation's time, which its bursts are drawn by. Drops it where
+    /// there is no window, or no square of it fits.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -189,9 +392,12 @@ impl WaterSim {
             if self.window.take().is_some() {
                 self.generation += 1;
             }
+            self.bed.hold(None);
             (self.steps, self.behind, self.tick, self.touches) = (0, 0, None, [0; 2]);
             return;
         };
+        self.bed.hold(live.ground.as_ref());
+        let raises = self.bed.raises();
         self.kernels.pipelines(device);
         let layout = &self.kernels.layout;
         if let Some(fitted) = fitted {
@@ -205,7 +411,8 @@ impl WaterSim {
                     current.follow((device, queue, layout), live.window, fitted);
                 }
             } else {
-                self.window = Some(SimWindow::new((device, queue, layout), live.window, fitted));
+                let layouts = (layout, &self.bed.layout);
+                self.window = Some(SimWindow::new((device, queue, layouts), live.window, fitted));
                 self.generation += 1;
             }
         }
@@ -214,7 +421,7 @@ impl WaterSim {
         };
         current.wait_ahead(live.ahead);
         let ready = current.ready;
-        current.take(device, queue);
+        current.take(device, queue, raises);
         if current.ready != ready {
             self.generation += 1;
         }
@@ -261,9 +468,10 @@ impl WaterSim {
         current.buffers.write_touches(queue, pushing.as_ref());
     }
 
-    /// Copies the blocks this frame took into the window's slots, then,
-    /// once every block of its square is there, runs the steps prepared and
-    /// finds each cell's look, timed by `profiler` (`water_sim`).
+    /// Copies the blocks this frame took into the window's slots and raises
+    /// their bed and that of the slots rising again, then, once every block
+    /// of its square is there, runs the steps prepared and finds each cell's
+    /// look, timed by `profiler` (`water_sim`).
     pub(crate) fn encode(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -272,15 +480,25 @@ impl WaterSim {
         let (Some(pipelines), Some(window)) = (self.kernels.created(), &self.window) else {
             return;
         };
-        window.copy_taken(encoder);
-        if !window.ready {
+        let raised = if self.bed.raises() {
+            window.copy_taken(encoder)
+        } else {
+            0
+        };
+        if !window.ready && raised == 0 {
             return;
         }
-        let blocks = window.stored.stored() as u32;
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/water-sim"),
             timestamp_writes: profiler.span("water_sim").map(|span| span.compute()),
         });
+        if raised > 0 {
+            self.bed.raise(&mut pass, &window.raised.group, raised);
+        }
+        if !window.ready {
+            return;
+        }
+        let blocks = window.stored.stored() as u32;
         if self.steps > 0 {
             encode_steps(
                 &mut pass,
@@ -336,10 +554,19 @@ impl WaterSim {
         self.touches
     }
 
+    /// Creates the pass raising the live water's bed from the mesh module
+    /// `shader` unless it exists, once a frame brought the terrain group
+    /// its bed reads the ground's materials through.
+    pub(crate) fn ensure_bed(&mut self, device: &wgpu::Device, shader: &wgpu::ShaderModule) {
+        self.bed.ensure(device, shader);
+    }
+
     /// Bytes of the window's buffers.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.window.as_ref().map_or(0, |window| {
-            window.buffers.bytes() + window.stage.as_ref().map_or(0, wgpu::Buffer::size)
+            window.buffers.bytes()
+                + window.raised.bytes()
+                + window.stage.as_ref().map_or(0, wgpu::Buffer::size)
         })
     }
 }
@@ -347,10 +574,15 @@ impl WaterSim {
 impl SimWindow {
     /// The buffers `fitted`, the square of `source` that runs, runs in, its
     /// pool holding as many more blocks along each side as it moves by, with
-    /// its table, sources and ring; its slots take its blocks a few a frame
-    /// before it runs.
+    /// its table, sources and ring, of the scheme's group layout `layout`,
+    /// and its group raising its bed, of the layout `bed`; its slots take
+    /// its blocks a few a frame before it runs.
     fn new(
-        (device, queue, layout): (&wgpu::Device, &wgpu::Queue, &crate::pipelines::GroupLayout),
+        (device, queue, (layout, bed)): (
+            &wgpu::Device,
+            &wgpu::Queue,
+            (&GroupLayout, &GroupLayout),
+        ),
         source: &Arc<WaterWindow>,
         fitted: Arc<WaterWindow>,
     ) -> Self {
@@ -363,6 +595,7 @@ impl SimWindow {
             (Capacity::of(&stored, fitted.sources.len().max(1)), 1),
             true,
         );
+        let raised = Raised::new(device, bed, &buffers.ground, slots);
         let mut window = Self {
             source: source.clone(),
             fitted,
@@ -371,8 +604,11 @@ impl SimWindow {
             stored,
             wrap,
             buffers,
+            raised,
             sourced: 0,
             stamps: vec![0; slots],
+            beds: vec![[0; 4]; slots],
+            sweep: 0,
             ready: false,
             taken: None,
             stage: None,
@@ -451,7 +687,8 @@ impl SimWindow {
     /// Takes into its slots the blocks of its square they do not hold, and
     /// of the square waiting ahead those the square leaves slots free for:
     /// each one's ground (at its cells' corners, the levels lakes hold its
-    /// cells at, UNHELD where none does, its cells' roughness, and the share
+    /// cells at, UNHELD where none does, which its bed lets go where it
+    /// raises a cell's ground to them, its cells' roughness, and the share
     /// of each covered by solids and the height their tops stand at), its
     /// cells' water to start from, into the step's first state, and its
     /// cells' looks (the settled water at each, and what its bed holds under
@@ -461,8 +698,13 @@ impl SimWindow {
     /// waiting ahead what is left of TAKEN; it runs once all of its own are
     /// there. They are staged in one write, in their slots' order, for the
     /// frame's encoding to copy into their slots a run of consecutive slots
-    /// at a time.
-    fn take(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    /// at a time, with the ground their bed rises from, and listed for it to
+    /// raise their bed, after them TAKEN of the slots holding blocks round
+    /// the pool, rising again: each one's slot, the cell of the terrain's
+    /// lattice of live cells its first corner stands at and its window's
+    /// datum. Where their bed cannot rise this frame (`raises` false) it
+    /// takes none, and runs only where it holds them all.
+    fn take(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, raises: bool) {
         let (side, pool) = (self.fitted.blocks(), self.pool);
         // Each block taken: its slot, whether it is the square's ahead, and
         // its column and row.
@@ -475,13 +717,13 @@ impl SimWindow {
                     continue;
                 }
                 missing += 1;
-                if self.ready || fresh.len() < TAKEN {
+                if raises && (self.ready || fresh.len() < TAKEN) {
                     fresh.push((slot, false, x, z));
                 }
             }
         }
         self.ready = fresh.len() == missing;
-        if let Some((_, ahead)) = self.ahead.as_ref().filter(|_| self.ready) {
+        if let Some((_, ahead)) = self.ahead.as_ref().filter(|_| raises && self.ready) {
             let wrap = wrap_of(ahead, pool);
             let used = |slot: u32| {
                 let (x, z) = (slot % pool, slot / pool);
@@ -502,25 +744,83 @@ impl SimWindow {
                 }
             }
         }
-        if fresh.is_empty() {
+        if !raises {
             return;
         }
         fresh.sort_unstable_by_key(|&(slot, _, _, _)| slot);
+        let runs = self.stage_blocks(device, queue, &fresh);
+        // The blocks taken, then as many of the slots holding blocks as
+        // TAKEN round the pool from where the frame before stopped, each
+        // rising again from the ground it was taken with.
+        let mut raising: Vec<[u32; 4]> = fresh
+            .iter()
+            .map(|&(slot, _, _, _)| self.beds[slot as usize])
+            .collect();
+        let slots = self.stamps.len();
+        let mut swept = 0;
+        for _ in 0..slots {
+            if swept == TAKEN {
+                break;
+            }
+            let slot = self.sweep;
+            self.sweep = (slot + 1) % slots;
+            let staged = fresh
+                .binary_search_by_key(&(slot as u32), |&(at, _, _, _)| at)
+                .is_ok();
+            if self.stamps[slot] != 0 && !staged {
+                raising.push(self.beds[slot]);
+                swept += 1;
+            }
+        }
+        if raising.is_empty() {
+            return;
+        }
+        queue.write_buffer(&self.raised.taken, 0, bytemuck::cast_slice(&raising));
+        let bed = SimBed {
+            blocks: [raising.len() as u32, 0, 0, 0],
+            cell: [self.fitted.cell, 0.0, 0.0, 0.0],
+        };
+        queue.write_buffer(&self.raised.frame, 0, bytemuck::bytes_of(&bed));
+        self.taken = Some(Taken {
+            runs,
+            staged: fresh.len() as u32,
+            raising: raising.len() as u32,
+            recorded: Cell::new(false),
+        });
+    }
+
+    /// Stages the blocks of `fresh` (each one's slot, whether it is the
+    /// square's ahead, and its column and row, in their slots' order): all
+    /// their ground, then all of it their bed rises from, then all their
+    /// cells' start, then all their cells' looks; and notes in each one's
+    /// slot its stamp and what its bed rises by. Returns the runs of
+    /// consecutive slots they fill, each its first slot, its slots and its
+    /// first block staged.
+    fn stage_blocks(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        fresh: &[(u32, bool, u32, u32)],
+    ) -> Vec<[u32; 3]> {
         let blocks = fresh.len();
+        if blocks == 0 {
+            return Vec::new();
+        }
         let mut ground: Vec<f32> = Vec::with_capacity(blocks * BLOCK_GROUND);
+        let mut kept: Vec<f32> = Vec::with_capacity(blocks * BLOCK_KEPT);
         let mut cells: Vec<[f32; 4]> = Vec::with_capacity(blocks * BLOCK_CELLS);
         let mut looks: Vec<[f32; 4]> = Vec::with_capacity(blocks * BLOCK_CELLS * 2);
         let mut held: Vec<f32> = Vec::with_capacity(BLOCK_CELLS);
         let mut rough: Vec<f32> = Vec::with_capacity(BLOCK_CELLS);
         let mut shares: Vec<f32> = Vec::with_capacity(BLOCK_CELLS);
         let mut tops: Vec<f32> = Vec::with_capacity(BLOCK_CELLS);
-        let mut stamped: Vec<(u32, u64)> = Vec::with_capacity(blocks);
-        for &(slot, ahead, x, z) in &fresh {
+        for &(slot, ahead, x, z) in fresh {
             let square = match (&self.ahead, ahead) {
                 (Some((_, waiting)), true) => waiting,
                 _ => &self.fitted,
             };
             let block = square.block(x, z);
+            let first = ground.len();
             for k in 0..=BLOCK_SIDE {
                 for l in 0..=BLOCK_SIDE {
                     ground.push(block.corner(l, k));
@@ -550,18 +850,28 @@ impl SimWindow {
                 }
             }
             ground.extend_from_slice(&held);
+            kept.extend_from_slice(&ground[first..]);
             ground.extend_from_slice(&rough);
             ground.extend_from_slice(&shares);
             ground.extend_from_slice(&tops);
-            stamped.push((slot, block.stamp()));
-        }
-        for (slot, stamp) in stamped {
-            self.stamps[slot as usize] = stamp;
+            self.stamps[slot as usize] = block.stamp();
+            // Its first corner on the terrain's lattice of live cells, an
+            // `i32`'s bits each, and its datum's bits.
+            let [first_x, first_z] = square.first;
+            self.beds[slot as usize] = [
+                slot,
+                (first_x + i64::from(x * BLOCK_SIDE)) as u32,
+                (first_z + i64::from(z * BLOCK_SIDE)) as u32,
+                square.datum.to_bits(),
+            ];
         }
         let mut staged: Vec<u8> = Vec::with_capacity(
-            blocks * (BLOCK_GROUND_BYTES + BLOCK_CELL_BYTES + BLOCK_LOOK_BYTES) as usize,
+            blocks
+                * (BLOCK_GROUND_BYTES + BLOCK_KEPT_BYTES + BLOCK_CELL_BYTES + BLOCK_LOOK_BYTES)
+                    as usize,
         );
         staged.extend_from_slice(bytemuck::cast_slice(&ground));
+        staged.extend_from_slice(bytemuck::cast_slice(&kept));
         staged.extend_from_slice(bytemuck::cast_slice(&cells));
         staged.extend_from_slice(bytemuck::cast_slice(&looks));
         let bytes = staged.len() as u64;
@@ -573,10 +883,9 @@ impl SimWindow {
                 mapped_at_creation: false,
             }));
         }
-        let Some(stage) = self.stage.as_ref() else {
-            return;
-        };
-        queue.write_buffer(stage, 0, &staged);
+        if let Some(stage) = self.stage.as_ref() {
+            queue.write_buffer(stage, 0, &staged);
+        }
         let mut runs: Vec<[u32; 3]> = Vec::new();
         for (at, &(slot, _, _, _)) in fresh.iter().enumerate() {
             match runs.last_mut() {
@@ -584,22 +893,25 @@ impl SimWindow {
                 _ => runs.push([slot, 1, at as u32]),
             }
         }
-        self.taken = Some(Taken {
-            runs,
-            staged: blocks as u32,
-            recorded: Cell::new(false),
-        });
+        runs
     }
 
     /// Records the copies of the blocks this frame took from their stage
-    /// into their slots: their ground, their cells' water into the step's
-    /// first state, and their cells' looks.
-    fn copy_taken(&self, encoder: &mut wgpu::CommandEncoder) {
-        let (Some(taken), Some(stage)) = (&self.taken, &self.stage) else {
-            return;
+    /// into their slots: their ground, the ground their bed rises from,
+    /// their cells' water into the step's first state, and their cells'
+    /// looks; returns the blocks whose bed the frame raises next, those it
+    /// took and those rising again.
+    fn copy_taken(&self, encoder: &mut wgpu::CommandEncoder) -> u32 {
+        let Some(taken) = &self.taken else {
+            return 0;
+        };
+        taken.recorded.set(true);
+        let Some(stage) = &self.stage else {
+            return taken.raising;
         };
         let staged = u64::from(taken.staged);
-        let cells_staged = staged * BLOCK_GROUND_BYTES;
+        let kept_staged = staged * BLOCK_GROUND_BYTES;
+        let cells_staged = kept_staged + staged * BLOCK_KEPT_BYTES;
         let looks_staged = cells_staged + staged * BLOCK_CELL_BYTES;
         let buffers = &self.buffers;
         let (ground_at, cells_at, looks_at) = (
@@ -618,6 +930,13 @@ impl SimWindow {
             );
             encoder.copy_buffer_to_buffer(
                 stage,
+                kept_staged + first * BLOCK_KEPT_BYTES,
+                &self.raised.kept,
+                slot * BLOCK_KEPT_BYTES,
+                slots * BLOCK_KEPT_BYTES,
+            );
+            encoder.copy_buffer_to_buffer(
+                stage,
                 cells_staged + first * BLOCK_CELL_BYTES,
                 &buffers.cells,
                 cells_at + slot * BLOCK_CELL_BYTES,
@@ -631,7 +950,7 @@ impl SimWindow {
                 slots * BLOCK_LOOK_BYTES,
             );
         }
-        taken.recorded.set(true);
+        taken.raising
     }
 }
 

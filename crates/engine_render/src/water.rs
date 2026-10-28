@@ -70,7 +70,7 @@ use crate::targets::{FrameSize, ScreenTarget};
 use crate::terrain::{SurfaceDraw, TerrainWaterDraws};
 use crate::water_falls::{fall_layout, sheets};
 use crate::water_foam_field::{FoamField, FoamView, foam_terrain};
-use crate::water_sim::{Live, WaterSim};
+use crate::water_sim::{Live, LiveGround, WaterSim};
 
 /// Cells around the sea's grid, the sectors it splits into for culling,
 /// and the rings a cell apart at its middle: about the cells around over
@@ -342,15 +342,28 @@ impl WaterPass {
             return None;
         }
         // Rivers running live where a terrain's window stands, pushed by the
-        // solids standing in it, the wind dragging their surface.
+        // solids standing in it, the wind dragging their surface, over a bed
+        // its ground's materials raise through the terrain group at its
+        // terrain's uniform.
         let live = terrains
             .iter()
             .find_map(|terrain| {
+                let window = terrain.water_window.as_ref()?;
+                let ground = tiles.as_ref().and_then(|tiles| {
+                    let (layout, group) = tiles.ground?;
+                    let drawn = tiles.terrains.iter().find(|drawn| drawn.0 == terrain.id)?;
+                    Some(LiveGround {
+                        layout,
+                        group,
+                        uniform: drawn.1,
+                    })
+                });
                 Some(Live {
-                    window: terrain.water_window.as_ref()?,
+                    window,
                     ahead: terrain.water_ahead.as_ref(),
                     touches: &terrain.water_touches[..],
                     beyond: terrain.water_touches_beyond,
+                    ground,
                 })
             })
             .filter(|_| settings.enabled);
@@ -691,7 +704,8 @@ impl WaterPass {
     /// Creates the pipelines into `targets` this frame's water and sea
     /// draw with unless they exist, and tiles' water's when `coming`,
     /// before a bake gives any, and those of the foam field's passes once
-    /// it runs; `camera` is water's first group (`bindings::CAMERA_WATER`).
+    /// it runs and of the live water's bed once it runs; `camera` is
+    /// water's first group (`bindings::CAMERA_WATER`).
     pub(crate) fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -713,6 +727,7 @@ impl WaterPass {
             self.fall_pipelines.insert(targets, pipeline);
         }
         self.foam.ensure_pipelines(device, shader, &self.layout);
+        self.sim.ensure_bed(device, shader);
     }
 
     /// The layout water's pipelines share, its first group `camera`'s, made

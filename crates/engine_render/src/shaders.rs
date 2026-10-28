@@ -48,6 +48,7 @@ shaders! {
         "meshes/water.wgsl",
         "meshes/water_footprint.wgsl",
         "meshes/water_flow.wgsl",
+        "meshes/water_bed.wgsl",
         "meshes/water_falls.wgsl",
         "meshes/ocean.wgsl",
         "meshes/water_foam.wgsl",
@@ -340,6 +341,7 @@ entry_points! {
             fs_debug_ocean, fs_debug_fall, fs_debug_sky
         ],
         compute: [
+            raise_bed,
             subdivide_begin,
             subdivide_decide,
             subdivide_apply,
