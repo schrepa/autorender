@@ -15,10 +15,10 @@ use crate::collections::HashMap;
 use crate::hierarchy::HierarchyScratch;
 
 use crate::{
-    AlphaMode, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation,
-    MAX_TRANSFORM_NODES, Material, MaterialBinding, MaterialHandle, Mesh3d, MeshHandle,
-    PresentedTransforms, RenderInstance, RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot,
-    RenderTexture, Surface, TextureHandle, Tint, Transform, TransformIndex,
+    AlphaMode, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation, MAX_TRANSFORM_NODES,
+    Material, MaterialBinding, MaterialHandle, Mesh3d, MeshHandle, PresentedTransforms,
+    RenderInstance, RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot, RenderTexture,
+    Surface, TextureHandle, Tint, Transform, TransformIndex,
     probes::ProbeExtraction,
     ticks::{ChangeWindow, ScanClock, consume_through},
 };

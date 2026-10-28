@@ -931,9 +931,10 @@ fn maps(
                 ("orm", TextureUsage::Data),
             ];
             let set = format!("highlands/{name}");
-            let textures = crate::records::textures((records, &mut *assets), set, &maps, move || {
-                ground::sources(name)
-            })?;
+            let textures =
+                crate::records::textures((records, &mut *assets), set, &maps, move || {
+                    ground::sources(name)
+                })?;
             loaded.insert(name, textures.clone());
             textures
         }

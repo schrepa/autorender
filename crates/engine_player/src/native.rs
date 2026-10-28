@@ -74,7 +74,11 @@ impl Options {
 
     fn build(&self) -> engine::Result<(Engine, ScenePlayer)> {
         let path = self.source.as_ref().ok_or_else(|| {
-            Error::new(ErrorCode::InvalidArguments, "$.source", "required: --source PATH")
+            Error::new(
+                ErrorCode::InvalidArguments,
+                "$.source",
+                "required: --source PATH",
+            )
         })?;
         let source = std::fs::read_to_string(path).map_err(|error| {
             Error::new(

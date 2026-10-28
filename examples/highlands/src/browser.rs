@@ -58,7 +58,9 @@ impl HighlandsGame {
 
     pub fn control(&mut self, name: &str, value: &str) -> Result<(), JsValue> {
         let (engine, highlands) = self.host_mut().parts_mut();
-        highlands.control(engine, name, value).map_err(JsValue::from)
+        highlands
+            .control(engine, name, value)
+            .map_err(JsValue::from)
     }
 }
 

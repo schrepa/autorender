@@ -133,7 +133,10 @@ fn packages(root: &Path) -> Result<Vec<String>, String> {
     let entries =
         fs::read_dir(&folder).map_err(|error| format!("cannot read {LEAVES}: {error}"))?;
     for entry in entries {
-        let manifest = entry.map_err(|error| error.to_string())?.path().join("Cargo.toml");
+        let manifest = entry
+            .map_err(|error| error.to_string())?
+            .path()
+            .join("Cargo.toml");
         let Ok(text) = fs::read_to_string(&manifest) else {
             continue;
         };

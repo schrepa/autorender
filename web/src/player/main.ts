@@ -1,6 +1,7 @@
 import { loadGame } from "../engine/bindings";
 import { startGame } from "../engine/host";
 import { loadSceneFiles, loadSceneSource } from "../engine/source";
+import { PLAYER_PARAMETERS } from "./parameters";
 
 const params = new URLSearchParams(location.search);
 const sourceUrl = params.get("source") ?? "";
@@ -18,10 +19,7 @@ const loadScene = (signal: AbortSignal) => loadSceneSource(checkedSource(), sign
 const loadFiles = async (source: string, signal: AbortSignal) => loadSceneFiles(checkedSource(), source, await playerBindings(), signal);
 
 startGame({
-  parameters: {
-    source: "scene file",
-    without: "comma-separated features the engine leaves out",
-  },
+  parameters: PLAYER_PARAMETERS,
   source: { url: sourceUrl, load: loadScene, files: loadFiles },
   async create(canvas, signal) {
     const { default: init, PlayerGame } = await playerBindings();

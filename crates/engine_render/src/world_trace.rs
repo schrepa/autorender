@@ -254,7 +254,7 @@ impl WorldTrace {
         self.words = words;
         self.free.clear();
         self.layers = layers;
-        self.dirty = vec![0..self.words.len()];
+        self.dirty = std::iter::once(0..self.words.len()).collect();
         self.synced = self.synced.map(|(pool, _)| (pool, u64::MAX));
         if rebuilt {
             self.synced = None;
@@ -383,7 +383,7 @@ impl WorldTrace {
         let bytes = (self.words.len() * 4) as u64;
         let mut dirty = std::mem::take(&mut self.dirty);
         if self.placed.grow(device, bytes) {
-            dirty = vec![0..self.words.len()];
+            dirty = std::iter::once(0..self.words.len()).collect();
         }
         let held = ((self.placed.size() / 4) as usize).min(self.words.len());
         for run in dirty {

@@ -70,7 +70,6 @@ const OPTICS: &[(&str, &str)] = &[
     ("octahedral_coordinates", "encoding a normal facing the eye"),
     ("plane_visibility", "a shadow map lookup"),
     ("shaped_light", "lighting by local lights"),
-    ("sky", "the sky along a view"),
     ("sky_above", "the sky a surface facing the eye sees"),
     ("sky_average", "the sky a surface facing the eye sees"),
     ("sky_behind", "the sky behind fog along a view"),

@@ -59,13 +59,8 @@ pub enum MeshOrigin {
     Cube,
     Plane,
     Octahedron,
-    Inline {
-        vertices: usize,
-        indices: usize,
-    },
-    Buffer {
-        uri: String,
-    },
+    Inline { vertices: usize, indices: usize },
+    Buffer { uri: String },
 }
 
 impl From<&crate::MeshSource> for MeshOrigin {

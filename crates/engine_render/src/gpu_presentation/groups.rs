@@ -351,10 +351,6 @@ fn batch_record(
         ],
         group: meta.group,
         bounds_min: meta.bounds.min().extend(0.0).to_array(),
-        bounds_max: meta
-            .bounds
-            .max()
-            .extend(0.0)
-            .to_array(),
+        bounds_max: meta.bounds.max().extend(0.0).to_array(),
     }
 }

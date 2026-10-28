@@ -1752,6 +1752,28 @@
       "direction": null
     },
     {
+      "name": "water.live_behind",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "water.live_budget_cut",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "water.live_cells",
       "kind": "work",
       "rule": "shown",
@@ -1774,6 +1796,17 @@
       "direction": "lower"
     },
     {
+      "name": "water.live_setup",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "water.live_steps",
       "kind": "work",
       "rule": "shown",
@@ -1783,6 +1816,17 @@
       ],
       "unit": "count",
       "direction": null
+    },
+    {
+      "name": "water.live_waiting",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
     },
     {
       "name": "water.particle_texels",

@@ -34,10 +34,12 @@ struct TileDraws {
     terrains: Vec<(u64, u32, u32, SurfaceDraw)>,
 }
 
+type BuiltFalls = (u64, Vec3, Arc<[Fall]>, Range<u32>);
+
 struct FallDraws {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
-    built: Vec<(u64, Vec3, Arc<[Fall]>, Range<u32>)>,
+    built: Vec<BuiltFalls>,
 }
 
 struct BehindCopies {

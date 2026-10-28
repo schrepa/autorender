@@ -95,10 +95,6 @@ type Levels = (
 );
 
 impl Renderer {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub(super) fn prepare_scatter(
         &mut self,
         snapshot: &RenderSnapshot,

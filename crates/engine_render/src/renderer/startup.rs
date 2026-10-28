@@ -167,8 +167,7 @@ impl Renderer {
         let profiler = GpuProfiler::new(required_features, f64::from(queue.get_timestamp_period()));
         let mesh_arena = MeshArena::new(
             &device,
-            [size_of::<Vertex>(), size_of::<ExtraVertex>()]
-                .map(|bytes| bytes as u64),
+            [size_of::<Vertex>(), size_of::<ExtraVertex>()].map(|bytes| bytes as u64),
         );
         let water_settle = crate::water_settle::WaterSettle::new(&device);
         let renderer = Self {

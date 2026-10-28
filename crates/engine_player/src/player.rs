@@ -56,7 +56,10 @@ impl ScenePlayer {
             return Err(SceneError {
                 code: ErrorCode::GameRule,
                 path: "$.entities".into(),
-                message: format!("player {}: expected a root entity with a collider", player.id),
+                message: format!(
+                    "player {}: expected a root entity with a collider",
+                    player.id
+                ),
             });
         }
         let player_id = players.first().map(|player| player.id.clone());

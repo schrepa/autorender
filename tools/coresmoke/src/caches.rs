@@ -482,9 +482,7 @@ fn differences(living: &Frame, fresh: &Frame, map: &HashMap<Entity, Entity>) -> 
             .iter()
             .zip(&fresh.instances)
             .find(|(a, b)| a != b);
-        found.push(format!(
-            "snapshot instances differ, first {differ:?}"
-        ));
+        found.push(format!("snapshot instances differ, first {differ:?}"));
     }
     found
 }

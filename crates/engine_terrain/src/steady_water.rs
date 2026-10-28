@@ -803,7 +803,7 @@ impl<'a> Reading<'a> {
             .parts
             .iter()
             .flat_map(|part| part.heights.iter().copied())
-            .fold(f32::INFINITY, |low, height| min(low, height));
+            .fold(f32::INFINITY, min);
         if lowest.is_finite() {
             lowest.floor()
         } else {
@@ -1227,12 +1227,11 @@ impl SettleStart {
         let mut held = Vec::with_capacity(count);
         let mut rough = Vec::with_capacity(count);
         let mut reaches = Vec::with_capacity(count);
-        for at in 0..count {
+        for (at, &[share, top]) in cover.iter().enumerate() {
             let [i, j] = stored.cell(at);
             let holder = settled(i, j);
             let found = reading.water(holder);
             let (bed, start, lake) = started(corners(i, j), found, datum, || warmed(holder));
-            let [share, top] = cover[at];
             let start = if share >= 1.0 && top >= start[0] {
                 [bed, 0.0, 0.0]
             } else {

@@ -367,23 +367,23 @@ enum State {
     Complete,
 }
 
-trait Walked {
+trait ParentLinked {
     fn state(&mut self) -> &mut State;
 }
 
-impl Walked for RelationshipNode {
+impl ParentLinked for RelationshipNode {
     fn state(&mut self) -> &mut State {
         &mut self.state
     }
 }
 
-impl Walked for Link {
+impl ParentLinked for Link {
     fn state(&mut self) -> &mut State {
         &mut self.state
     }
 }
 
-fn complete_parents_first<N: Walked, E>(
+fn complete_parents_first<N: ParentLinked, E>(
     nodes: &mut [N],
     path: &mut Vec<usize>,
     parent: impl Fn(&N) -> Option<usize>,

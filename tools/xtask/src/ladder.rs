@@ -185,11 +185,7 @@ fn read_ladder(path: &Path) -> Result<(Ladder, Value), String> {
     Ok((ladder, file))
 }
 
-fn program(
-    root: &Path,
-    given: Option<&Path>,
-    project: &str,
-) -> Result<(PathBuf, Value), String> {
+fn program(root: &Path, given: Option<&Path>, project: &str) -> Result<(PathBuf, Value), String> {
     if let Some(given) = given {
         let program = std::path::absolute(given)
             .map_err(|error| format!("cannot resolve {}: {error}", given.display()))?;

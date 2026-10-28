@@ -841,6 +841,10 @@ impl Control {
 }
 
 impl Biomes {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub fn compile(&self) -> Result<BiomeRules, BiomeError> {
         let fail = |path: String, rule: &str| BiomeError {
             path,

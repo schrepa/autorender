@@ -9,6 +9,7 @@ mod clock;
 mod clouds;
 mod commands;
 mod debug_view;
+mod detail_eye;
 mod effects;
 mod entity_indices;
 mod environment;
@@ -53,6 +54,7 @@ pub use clock::*;
 pub use clouds::*;
 pub use commands::*;
 pub use debug_view::*;
+pub use detail_eye::*;
 pub use effects::*;
 pub use engine_assets::{
     Aabb, AlphaImage, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding,

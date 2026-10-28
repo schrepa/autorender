@@ -68,7 +68,11 @@ fn switch(name: &str, value: &str) -> engine::Result<bool> {
     match value {
         "on" => Ok(true),
         "off" => Ok(false),
-        _ => Err(Error::new(ErrorCode::InvalidValue, format!("$.{name}"), SWITCH)),
+        _ => Err(Error::new(
+            ErrorCode::InvalidValue,
+            format!("$.{name}"),
+            SWITCH,
+        )),
     }
 }
 

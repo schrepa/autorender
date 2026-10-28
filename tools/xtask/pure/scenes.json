@@ -17,7 +17,7 @@
       "textures": [{"id": "checker", "width": 2, "height": 2, "rgba8": "/////wAAAP8AAAD//////w=="}],
       "materials": [
         {"id": "plain", "color": [0.6, 0.5, 0.4, 1], "surface": {"roughness": 0.7, "metalness": 0}},
-        {"id": "tinted", "color": [0.7, 0.9, 1, 1], "opacity": 0.4},
+        {"id": "tinted", "color": [0.7, 0.9, 1, 1]},
         {"id": "tiled", "color": [1, 1, 1, 1], "texture": {"id": "checker", "wrap_u": "mirrored_repeat", "scale": [4, 4]}, "alpha_mode": "mask", "alpha_cutoff": 0.3, "double_sided": true}
       ],
       "meshes": [

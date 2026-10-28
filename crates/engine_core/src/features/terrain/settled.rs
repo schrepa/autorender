@@ -138,12 +138,14 @@ impl Terrains {
     }
 }
 
+type Checked = (Generation, Arc<[Option<Solid>]>, u128);
+
 #[derive(Default)]
 pub(super) struct Settled {
     cell: f32,
     watered: Option<(Arc<Layers>, Arc<[TileKey]>)>,
     regions: Arc<[([u32; 4], Vec<TileKey>)]>,
-    checked: Option<(Generation, Arc<[Option<Solid>]>, u128)>,
+    checked: Option<Checked>,
     records: TileMap<Keys>,
     pub(super) held: TileMap<(Arc<SteadyWater>, RecordKey)>,
     shared: TileMap<RecordKey>,

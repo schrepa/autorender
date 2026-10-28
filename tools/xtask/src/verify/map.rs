@@ -289,7 +289,12 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_textures/**",
             "crates/engine_core/src/records*",
         ],
-        checks: &[Pure("textures"), PureWasm, Smokes("texture"), Smokes("jobs")],
+        checks: &[
+            Pure("textures"),
+            PureWasm,
+            Smokes("texture"),
+            Smokes("jobs"),
+        ],
     },
     Rule {
         paths: &["crates/engine_assets/**"],

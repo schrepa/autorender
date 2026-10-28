@@ -368,28 +368,22 @@ impl Renderer {
         self.structure_keys.order = Some(key);
         let mut keys = std::mem::take(&mut self.draw_order.keys);
         keys.clear();
-        keys.extend(
-            self.plan
-                .batches
-                .iter()
-                .enumerate()
-                .map(|(index, batch)| {
-                    let mesh = &self.meshes[&batch.mesh];
-                    let (_, variant) = self.batch_binding(batch, Some(mesh));
-                    let buffers = match &mesh.placement {
-                        Ok(placement) => placement.streams as u8,
-                        Err(_) => u8::MAX,
-                    };
-                    let flat = flat_batch(snapshot, &self.plan, batch);
-                    (
-                        u8::from(flat),
-                        variant,
-                        batch.material,
-                        buffers,
-                        index as u32,
-                    )
-                }),
-        );
+        keys.extend(self.plan.batches.iter().enumerate().map(|(index, batch)| {
+            let mesh = &self.meshes[&batch.mesh];
+            let (_, variant) = self.batch_binding(batch, Some(mesh));
+            let buffers = match &mesh.placement {
+                Ok(placement) => placement.streams as u8,
+                Err(_) => u8::MAX,
+            };
+            let flat = flat_batch(snapshot, &self.plan, batch);
+            (
+                u8::from(flat),
+                variant,
+                batch.material,
+                buffers,
+                index as u32,
+            )
+        }));
         keys.sort_unstable();
         self.draw_order.keys = keys;
         self.draw_order.order.clear();

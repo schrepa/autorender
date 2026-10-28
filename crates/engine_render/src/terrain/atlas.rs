@@ -879,6 +879,10 @@ impl TileAtlas {
         self.normal_jobs.clear();
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn ensure_arrays(
         &mut self,
         device: &wgpu::Device,

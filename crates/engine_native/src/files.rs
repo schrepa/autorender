@@ -1,7 +1,7 @@
 use std::path::Path;
 
-pub use engine::host::{Image, decode_image, image_format};
 use engine::host::SceneLoad;
+pub use engine::host::{Image, decode_image, image_format};
 use engine::scene::SceneFiles;
 use engine::{Error, ErrorCode};
 

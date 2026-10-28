@@ -309,67 +309,11 @@ fn world_texels(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32
     return texels;
 }
 
-struct UvGradients {
-    dx: vec2<f32>,
-    dy: vec2<f32>,
-    dx1: vec2<f32>,
-    dy1: vec2<f32>,
-}
-
 fn map_gradient(index: u32, d: vec2<f32>, d1: vec2<f32>) -> vec2<f32> {
     let second = ((u32(material_maps.params.w) >> index) & 1u) == 1u;
     let change = vec3<f32>(select(d, d1, second), 0.0);
     return vec2<f32>(dot(material_maps.transforms[index * 2u].xyz, change),
         dot(material_maps.transforms[index * 2u + 1u].xyz, change));
-}
-
-fn material_texels_grad(uv: vec2<f32>, uv1: vec2<f32>, gradients: UvGradients)
-        -> MaterialTexels {
-    var texels = untextured();
-    var base_uv = uv;
-    var base_dx = gradients.dx;
-    var base_dy = gradients.dy;
-    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
-        base_uv = map_uv(0u, uv, uv1);
-        base_dx = map_gradient(0u, gradients.dx, gradients.dx1);
-        base_dy = map_gradient(0u, gradients.dy, gradients.dy1);
-    }
-    texels.base = textureSampleGrad(base_color_texture, base_color_sampler, base_uv, base_dx,
-        base_dy);
-    if ALPHA_MASK {
-        texels.coverage = mask_coverage(base_dx, base_dy);
-    }
-    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
-        var metallic_roughness = vec4<f32>(1.0);
-        if material_flag(VARIANT_METALLIC_ROUGHNESS_MAP, METALLIC_ROUGHNESS_MAP) {
-            metallic_roughness = textureSampleGrad(metallic_roughness_texture,
-                metallic_roughness_sampler, map_uv(1u, uv, uv1),
-                map_gradient(1u, gradients.dx, gradients.dx1),
-                map_gradient(1u, gradients.dy, gradients.dy1));
-        }
-        texels.factors = metallic_roughness.gb;
-        texels.height = metallic_roughness.a;
-        if material_flag(VARIANT_PACKED_OCCLUSION, PACKED_OCCLUSION) {
-            texels.occlusion = metallic_roughness.r;
-        } else if material_flag(VARIANT_OCCLUSION_MAP, OCCLUSION_MAP) {
-            texels.occlusion = textureSampleGrad(occlusion_texture, occlusion_sampler,
-                map_uv(3u, uv, uv1), map_gradient(3u, gradients.dx, gradients.dx1),
-                map_gradient(3u, gradients.dy, gradients.dy1)).r;
-        }
-        texels.emissive = vec3<f32>(1.0);
-        if material_flag(VARIANT_EMISSIVE_MAP, EMISSIVE_MAP) {
-            texels.emissive = textureSampleGrad(emissive_texture, emissive_sampler,
-                map_uv(4u, uv, uv1), map_gradient(4u, gradients.dx, gradients.dx1),
-                map_gradient(4u, gradients.dy, gradients.dy1)).rgb;
-        }
-    }
-    if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
-        texels.normal_dx = map_gradient(2u, gradients.dx, gradients.dx1);
-        texels.normal_dy = map_gradient(2u, gradients.dy, gradients.dy1);
-        texels.normal = textureSampleGrad(normal_texture, normal_sampler, map_uv(2u, uv, uv1),
-            texels.normal_dx, texels.normal_dy).xyz * 2.0 - 1.0;
-    }
-    return texels;
 }
 
 fn shading_normal(geometric: vec3<f32>, world: vec3<f32>, world_dx: vec3<f32>,

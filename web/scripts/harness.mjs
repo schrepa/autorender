@@ -47,6 +47,7 @@ export function gridScene({ side = 24, moving = false } = {}) {
   }
   const paints = [[0.85, 0.35, 0.2, 1], [0.25, 0.6, 0.85, 1], [0.4, 0.75, 0.3, 1], [0.9, 0.75, 0.25, 1]];
   const cube = { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] };
+  /** @type {Record<string, unknown>[]} */
   const entities = [{
     id: "ground", mesh: "box", material: "ground", transform: { translation: [0, -0.5, 0], scale: [side * 6, 1, side * 6] },
     ...(moving ? { collider: { shape: cube } } : {}),

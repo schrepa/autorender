@@ -157,7 +157,9 @@ fn launch_arguments(
 ) -> Result<Vec<String>, String> {
     let settings = side.tree.join(SETTINGS).display().to_string();
     let mut arguments = vec!["--settings".to_owned(), settings];
-    arguments.extend(bench::arguments(&Scene::read(&side.tree, &cell.scene)?.options));
+    arguments.extend(bench::arguments(
+        &Scene::read(&side.tree, &cell.scene)?.options,
+    ));
     for (option, value) in &cell.options {
         arguments.extend([format!("--{option}"), value.clone()]);
     }
@@ -306,9 +308,7 @@ fn settle(session: &mut Session, frame: &Value, log: &Path) -> Result<Option<Str
 fn shoot(session: &mut Session, capture: Capture, log: &Path) -> Result<Shot, String> {
     let result = match capture {
         Capture::Exact => session.ok(&json!({"op": "capture"}), log)?,
-        Capture::Gpu(alpha) => {
-            session.ok(&json!({"op": "capture", "alpha": alpha}), log)?
-        }
+        Capture::Gpu(alpha) => session.ok(&json!({"op": "capture", "alpha": alpha}), log)?,
         Capture::Display(frames) => {
             let reply = session.request(
                 &json!({"op": "frames", "count": frames, "interval_ms": 1000.0 / 60.0, "capture": true}),

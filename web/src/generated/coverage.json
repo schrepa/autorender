@@ -73,12 +73,16 @@
     {
       "inspector": "InterpolateTransform",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "agent"
+      ]
     },
     {
       "inspector": "Jobs",
       "kind": "resource",
-      "smokes": []
+      "smokes": [
+        "agent"
+      ]
     },
     {
       "inspector": "LocalLight",
@@ -157,7 +161,9 @@
     {
       "inspector": "StaticTables",
       "kind": "resource",
-      "smokes": []
+      "smokes": [
+        "agent"
+      ]
     },
     {
       "inspector": "StreamedId",

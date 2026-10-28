@@ -1,311 +1,11 @@
 {
   "caches": {
     "caches checks": 50,
-    "caches entities": 2201,
+    "caches entities": 2167,
     "caches mismatches": 0,
-    "content city": {
-      "assets": {
-        "clips": {
-          "count": 0,
-          "hash": "0000000000000000"
-        },
-        "materials": {
-          "count": 119,
-          "hash": "c496a0cc7f5f3384"
-        },
-        "meshes": {
-          "count": 9,
-          "hash": "4e98c490cfdda85d"
-        },
-        "textures": {
-          "count": 15,
-          "hash": "d085efb9d314d884"
-        }
-      },
-      "components": {
-        "Collider": {
-          "count": 1000,
-          "hash": "dd2e1b0520e7762c"
-        },
-        "GlobalTransform": {
-          "count": 10697,
-          "hash": "3195bbd31877de44"
-        },
-        "Hierarchy": {
-          "count": 10697,
-          "hash": "208811f02241125a"
-        },
-        "InterpolateTransform": {
-          "count": 2324,
-          "hash": "3b6f27367b9b7ce7"
-        },
-        "LocalLight": {
-          "count": 900,
-          "hash": "12a5c94ec627ade8"
-        },
-        "Mesh3d": {
-          "count": 10000,
-          "hash": "531c4239a9b38be0"
-        },
-        "ParticleEmitter": {
-          "count": 307,
-          "hash": "6cb0d8eb62867331"
-        },
-        "PresentedTransform": {
-          "count": 10697,
-          "hash": "57c28bcd2f200bae"
-        },
-        "Transform": {
-          "count": 10697,
-          "hash": "cec8a534d0550bf0"
-        }
-      },
-      "entities": 10767,
-      "hash": "c18d748952aa5c2d"
-    },
-    "content dense": {
-      "assets": {
-        "clips": {
-          "count": 0,
-          "hash": "0000000000000000"
-        },
-        "materials": {
-          "count": 5,
-          "hash": "50e61bdc4a00260c"
-        },
-        "meshes": {
-          "count": 5,
-          "hash": "4472c906431d39c2"
-        },
-        "textures": {
-          "count": 0,
-          "hash": "0000000000000000"
-        }
-      },
-      "components": {
-        "GlobalTransform": {
-          "count": 10100,
-          "hash": "93290e77f952981c"
-        },
-        "Hierarchy": {
-          "count": 10100,
-          "hash": "e958d88741e8e418"
-        },
-        "InterpolateTransform": {
-          "count": 2500,
-          "hash": "df3860cd16aee302"
-        },
-        "Mesh3d": {
-          "count": 10100,
-          "hash": "e9322e48df25b1af"
-        },
-        "PresentedTransform": {
-          "count": 10100,
-          "hash": "b1b2bab025c40b81"
-        },
-        "Transform": {
-          "count": 10100,
-          "hash": "71d2976ae2d9972e"
-        }
-      },
-      "entities": 10170,
-      "hash": "6ee82e71fbe5f42b"
-    },
-    "content field": {
-      "assets": {
-        "clips": {
-          "count": 0,
-          "hash": "0000000000000000"
-        },
-        "materials": {
-          "count": 8,
-          "hash": "12771b5aebb49315"
-        },
-        "meshes": {
-          "count": 9,
-          "hash": "d8f78fd376d4b1c5"
-        },
-        "textures": {
-          "count": 8,
-          "hash": "71b6cf5ea8666d2d"
-        }
-      },
-      "components": {
-        "Collider": {
-          "count": 1000,
-          "hash": "728b2907755171fd"
-        },
-        "GlobalTransform": {
-          "count": 10313,
-          "hash": "4d82694b850aedb1"
-        },
-        "Hierarchy": {
-          "count": 10313,
-          "hash": "ef3e886093e1fbba"
-        },
-        "InterpolateTransform": {
-          "count": 2500,
-          "hash": "df3860cd16aee302"
-        },
-        "Mesh3d": {
-          "count": 10000,
-          "hash": "74a86396d111e1f9"
-        },
-        "PresentedTransform": {
-          "count": 10313,
-          "hash": "f2d82d4a54d7ff14"
-        },
-        "Transform": {
-          "count": 10313,
-          "hash": "857359c078750dcd"
-        }
-      },
-      "entities": 10383,
-      "hash": "3881de4901ecbb62"
-    },
-    "content highlands": {
-      "assets": {
-        "clips": {
-          "count": 0,
-          "hash": "0000000000000000"
-        },
-        "materials": {
-          "count": 14,
-          "hash": "db6b3bf46644301d"
-        },
-        "meshes": {
-          "count": 32,
-          "hash": "aef2379275c1e508"
-        },
-        "textures": {
-          "count": 9,
-          "hash": "a13c48e49ed711ae"
-        }
-      },
-      "components": {
-        "Collider": {
-          "count": 1000,
-          "hash": "728b2907755171fd"
-        },
-        "GlobalTransform": {
-          "count": 10314,
-          "hash": "7b3611cd9503036f"
-        },
-        "Grounded": {
-          "count": 1,
-          "hash": "4a43e1abe30fa8f6"
-        },
-        "Hierarchy": {
-          "count": 10314,
-          "hash": "68d58651651f99a2"
-        },
-        "InterpolateTransform": {
-          "count": 2501,
-          "hash": "2198ea062eca3bf9"
-        },
-        "Mesh3d": {
-          "count": 10001,
-          "hash": "6e118f8fe01c4804"
-        },
-        "NavAgent": {
-          "count": 1,
-          "hash": "e78562ae47d235b3"
-        },
-        "PresentedTransform": {
-          "count": 10314,
-          "hash": "f0f236f71717b73e"
-        },
-        "Terrain": {
-          "count": 1,
-          "hash": "0794202ed23e5bd9"
-        },
-        "Transform": {
-          "count": 10314,
-          "hash": "cdd1696b966b996a"
-        }
-      },
-      "entities": 10390,
-      "hash": "33b554d2aaeb5cd8"
-    },
-    "content metro": {
-      "assets": {
-        "clips": {
-          "count": 12,
-          "hash": "971e942bcc978c09"
-        },
-        "materials": {
-          "count": 48,
-          "hash": "a874e4bcdb25100b"
-        },
-        "meshes": {
-          "count": 17,
-          "hash": "8a0d6ecf6f0110d1"
-        },
-        "textures": {
-          "count": 116,
-          "hash": "d2ab05d2bb6b6719"
-        }
-      },
-      "components": {
-        "AnimationPlayer": {
-          "count": 480,
-          "hash": "0a845bd7b23c6068"
-        },
-        "Collider": {
-          "count": 1000,
-          "hash": "fdc23ea13c14eb8d"
-        },
-        "GlobalTransform": {
-          "count": 15270,
-          "hash": "e5e2aefdd053e874"
-        },
-        "Hierarchy": {
-          "count": 15270,
-          "hash": "3dbadb1557962806"
-        },
-        "InterpolateTransform": {
-          "count": 6832,
-          "hash": "77ef86fe2f0400ab"
-        },
-        "LocalLight": {
-          "count": 2205,
-          "hash": "d14ffa9dee9ba992"
-        },
-        "Mesh3d": {
-          "count": 10000,
-          "hash": "07faa4713f6564f1"
-        },
-        "ParticleEmitter": {
-          "count": 21,
-          "hash": "3f5096d12236f72b"
-        },
-        "PresentedTransform": {
-          "count": 15270,
-          "hash": "52f96e941bbfdd12"
-        },
-        "ReflectionProbe": {
-          "count": 230,
-          "hash": "8b506d0b3c78b8db"
-        },
-        "Skin": {
-          "count": 375,
-          "hash": "5a18222e9383d7f4"
-        },
-        "Tint": {
-          "count": 4757,
-          "hash": "797acd26fffb7cb0"
-        },
-        "Transform": {
-          "count": 15270,
-          "hash": "47123809d28c1818"
-        }
-      },
-      "entities": 15342,
-      "hash": "df33a258173df6c7"
-    },
     "terrain frames": 400,
-    "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141416, restored_tiles: 12, prefetching_tiles: 0, rewatered_tiles: 0, stale_water_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, lit: 2, lighting: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, loading: false } | terrain tiles 854854a0fbb2ae0d patches 22ace422c564909f | surroundings tiles a2eadb7ccd455bc5 patches 3a24f9ec9a3ffb0b",
-    "terrain trace": "fec6a6e6428696cc"
+    "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141728, restored_tiles: 12, prefetching_tiles: 0, rewatered_tiles: 0, stale_water_tiles: 0, settled_records: 0, settling_records: 0, shaded_tiles: 5, shading_records: 0, dropped_tiles: 0, fallback_tiles: 0, baking: 0, lit: 2, lighting: 0, bounced: 1, bouncing: 0, colored: 0, coloring: 2, bridges: 3, tunnels: 1, falls: 0, white_water: 0, surroundings_tiles: 31, loading: false } | terrain tiles 854854a0fbb2ae0d drawn true | surroundings tiles a2eadb7ccd455bc5 drawn true",
+    "terrain trace": "9bcba51389360725"
   },
   "gltf": {
     "gltf prefab": {
@@ -316,10 +16,10 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf prefab document": "3c085dd0b3859d8b",
-    "gltf prefab file garden/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
-    "gltf prefab file garden/node1.p0.688c131c1624.bin": "688c131c16243f7d",
-    "gltf prefab file garden/node1.p1.3d257417825e.bin": "3d257417825e1393",
+    "gltf prefab document": "4f60e874978f548e",
+    "gltf prefab file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
+    "gltf prefab file prop/node1.p0.f11bc280da7c.bin": "f11bc280da7c472e",
+    "gltf prefab file prop/node1.p1.fc2cf9b9803f.bin": "fc2cf9b9803ffa4b",
     "gltf scene": {
       "entities": 2,
       "files": 3,
@@ -328,22 +28,10 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf scene document": "f88c964fad3b6da8",
-    "gltf scene file garden/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
-    "gltf scene file garden/node1.p0.688c131c1624.bin": "688c131c16243f7d",
-    "gltf scene file garden/node1.p1.3d257417825e.bin": "3d257417825e1393",
-    "gltf virtual": {
-      "entities": 2,
-      "files": 3,
-      "ignored extensions": [],
-      "materials": 2,
-      "meshes": 2,
-      "textures": 1
-    },
-    "gltf virtual document": "6a35239b4522f40d",
-    "gltf virtual file garden/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
-    "gltf virtual file garden/node1.p0.7dd7b84a9fce.evg": "7dd7b84a9fce1001",
-    "gltf virtual file garden/node1.p1.221cd3983587.evg": "221cd39835875159"
+    "gltf scene document": "e489c92a24b714d4",
+    "gltf scene file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
+    "gltf scene file prop/node1.p0.f11bc280da7c.bin": "f11bc280da7c472e",
+    "gltf scene file prop/node1.p1.fc2cf9b9803f.bin": "fc2cf9b9803ffa4b"
   },
   "import": {
     "import": {
@@ -567,7 +255,7 @@
     },
     "refusal unknown_variant at $.op": {
       "code": "unknown_variant",
-      "message": "unknown variant `weather`, expected one of `status`, `inspect`, `assets`, `digest`, `distribution`, `describe`, `raycast`, `overlap`, `shape_cast`, `terrain_height`, `nav_path`, `water_query`, `deformation_query`, `terrain_sweep`, `terrain_route`, `collision_events`",
+      "message": "unknown variant `weather`, expected one of `status`, `inspect`, `assets`, `digest`, `distribution`, `describe`, `raycast`, `overlap`, `shape_cast`, `terrain_height`, `nav_path`, `terrain_sweep`, `terrain_route`, `collision_events`",
       "path": "$.op"
     },
     "refusal unsupported_version at $.version": {
@@ -582,11 +270,11 @@
     }
   },
   "scenes": {
-    "document components": "cccb8467c1234c93",
+    "document components": "5bba60ba97ef9cc5",
     "document components counts": {
-      "bytes": 12459,
-      "entities": 12,
-      "materials": 4,
+      "bytes": 10072,
+      "entities": 9,
+      "materials": 3,
       "meshes": 3,
       "prefabs": 1,
       "streamed": 2,
@@ -612,10 +300,10 @@
       "streamed": 0,
       "textures": 0
     },
-    "document terrain": "2f2c7cd8c3c829d9",
+    "document terrain": "ca88da4f02e2b4ad",
     "document terrain counts": {
-      "bytes": 26326,
-      "entities": 7,
+      "bytes": 25184,
+      "entities": 5,
       "materials": 2,
       "meshes": 2,
       "prefabs": 0,
@@ -652,11 +340,6 @@
       "message": "world exceeds its transform-node limit (TransformNodeLimit)",
       "path": "$.entities"
     },
-    "refusal invalid_animation at $.entities[0].animation.speed": {
-      "code": "invalid_animation",
-      "message": "speed must be in [-1000, 1000]",
-      "path": "$.entities[0].animation.speed"
-    },
     "refusal invalid_camera at $.camera.near": {
       "code": "invalid_camera",
       "message": "must be in [0.001, 1000000]",
@@ -676,11 +359,6 @@
       "code": "invalid_environment",
       "message": "must be in [0, 4]",
       "path": "$.environment.bloom.intensity"
-    },
-    "refusal invalid_floating at $.entities[1].floating": {
-      "code": "invalid_floating",
-      "message": "only roots ride the sea; float the placement or root instead",
-      "path": "$.entities[1].floating"
     },
     "refusal invalid_grounded at $.entities[1].grounded": {
       "code": "invalid_grounded",
@@ -731,11 +409,6 @@
       "code": "invalid_rigid_body",
       "message": "only roots move as bodies; give the placement or root the body instead",
       "path": "$.entities[1].rigid_body"
-    },
-    "refusal invalid_skin at $.entities[0].skin": {
-      "code": "invalid_skin",
-      "message": "a skin deforms its entity's mesh; give the entity a mesh and material",
-      "path": "$.entities[0].skin"
     },
     "refusal invalid_spline at $.entities[0].spline.points": {
       "code": "invalid_spline",
@@ -802,10 +475,10 @@
       "message": "the scene references absent.png, which was not supplied",
       "path": "$.textures[0].uri"
     },
-    "refusal missing_plugin at $.entities[0].floating": {
+    "refusal missing_plugin at $.entities[0].prefetch": {
       "code": "missing_plugin",
-      "message": "OceanPlugin is not added: add it, or EnginePlugins, to the engine",
-      "path": "$.entities[0].floating"
+      "message": "TerrainPlugin is not added: add it, or EnginePlugins, to the engine",
+      "path": "$.entities[0].prefetch"
     },
     "refusal nested_prefab at $.prefabs[1].entities[0].prefab": {
       "code": "nested_prefab",
@@ -819,7 +492,7 @@
     },
     "refusal unknown_field at $.version": {
       "code": "unknown_field",
-      "message": "unknown field `version`, expected one of `id`, `revision`, `camera`, `environment`, `textures`, `materials`, `meshes`, `prefabs`, `animations`, `skins`, `entities`, `streamed` at line 1 column 73",
+      "message": "unknown field `version`, expected one of `id`, `revision`, `camera`, `environment`, `textures`, `materials`, `meshes`, `prefabs`, `entities`, `streamed` at line 1 column 73",
       "path": "$.version"
     },
     "refusal unknown_parent at $.entities[0].parent": {
@@ -834,28 +507,116 @@
     },
     "refusal unknown_variant at $.meshes[0].source.kind": {
       "code": "unknown_variant",
-      "message": "unknown variant `teapot`, expected one of `cube`, `plane`, `octahedron`, `inline`, `buffer`, `virtual` at line 1 column 84",
+      "message": "unknown variant `teapot`, expected one of `cube`, `plane`, `octahedron`, `inline`, `buffer` at line 1 column 84",
       "path": "$.meshes[0].source.kind"
     }
   },
   "simplify": {
-    "simplify garden prop 0": {
-      "hash": "e2ad00bebbde88bf",
-      "kept indices": 205230,
-      "runs": 1536,
-      "triangles": 52
+    "levels grid 24x24": {
+      "casters": 0,
+      "errors": [
+        0.05175086855888367,
+        0.08545374870300293,
+        0.13046325743198395,
+        20.22975730895996
+      ],
+      "hash": "539a65d2272eb0d5",
+      "triangles": [
+        528,
+        263,
+        132,
+        0
+      ]
     },
-    "simplify garden prop 1": {
-      "hash": "5ccc31bd0782ac3f",
-      "kept indices": 80256,
-      "runs": 1536,
-      "triangles": 24
+    "levels prop 0": {
+      "casters": 0,
+      "errors": [
+        2.75,
+        4.538997650146484
+      ],
+      "hash": "8d037fc2a948950b",
+      "triangles": [
+        24,
+        0
+      ]
+    },
+    "levels prop 1": {
+      "casters": 0,
+      "errors": [
+        1.1700000762939453,
+        1.908769130706787
+      ],
+      "hash": "44fad901f4239b09",
+      "triangles": [
+        12,
+        0
+      ]
+    },
+    "levels seamed grid 16x16": {
+      "casters": 0,
+      "errors": [
+        0.04555187001824379,
+        0.1196901872754097,
+        0.22284014523029327,
+        17.882017135620117
+      ],
+      "hash": "43d03fb2c9171b3a",
+      "triangles": [
+        224,
+        112,
+        55,
+        0
+      ]
+    },
+    "levels sphere 20x12": {
+      "casters": 0,
+      "errors": [
+        0.048499271273612976,
+        0.15071861445903778,
+        0.2899521589279175,
+        5.716494560241699
+      ],
+      "hash": "827065b3f8419904",
+      "triangles": [
+        239,
+        119,
+        60,
+        0
+      ]
+    },
+    "levels torus 28x12": {
+      "casters": 0,
+      "errors": [
+        0.0861457958817482,
+        0.2045636624097824,
+        0.2953835129737854,
+        3.979196071624756
+      ],
+      "hash": "e5c827bb22f5bc88",
+      "triangles": [
+        336,
+        168,
+        84,
+        0
+      ]
     },
     "simplify grid 24x24": {
       "hash": "4d912471a5f29446",
       "kept indices": 2411376,
       "runs": 1536,
       "triangles": 1058
+    },
+    "simplify prop 0": {
+      "hash": "e2ad00bebbde88bf",
+      "kept indices": 205230,
+      "runs": 1536,
+      "triangles": 52
+    },
+    "simplify prop 1": {
+      "hash": "5ccc31bd0782ac3f",
+      "kept indices": 80256,
+      "runs": 1536,
+      "triangles": 24
     },
     "simplify seamed grid 16x16": {
       "hash": "c1f11904328ebe38",
@@ -881,9 +642,7 @@
     "cloud noise Detail slab texels": "ac4ac2eb70e893d3",
     "cloud noise Shape slab": "4425465019563216",
     "cloud noise Shape slab texels": "c4403d564f9ffc1b",
-    "fall map": "25208151437a8710",
-    "sky tables": "bd4009251a8db5a2",
-    "wave spectra": "f6b7df5b6f290bae"
+    "sky tables": "bd4009251a8db5a2"
   },
   "terrain": {
     "bake 1": {
@@ -973,7 +732,7 @@
   "textures": {
     "textures cutout": {
       "astc": {
-        "hash": "1be601a3b16afff1",
+        "hash": "6e1ed61cf4b9f8ea",
         "psnr by level": [
           99.0,
           60.2,
@@ -985,7 +744,7 @@
         ]
       },
       "bc7": {
-        "hash": "b58edd0bb3ebdf28",
+        "hash": "752ae7fb302137a4",
         "psnr by level": [
           57.2,
           57.2,
@@ -999,7 +758,7 @@
     },
     "textures data with height": {
       "astc": {
-        "hash": "aadc51116ef176a4",
+        "hash": "f9fd62eab28ad2e9",
         "psnr by level": [
           41.4,
           37.1,
@@ -1011,7 +770,7 @@
         ]
       },
       "bc7": {
-        "hash": "42b5e52cab910fc5",
+        "hash": "63fe571b5d80a070",
         "psnr by level": [
           43.2,
           39.7,
@@ -1025,7 +784,7 @@
     },
     "textures noisy color": {
       "astc": {
-        "hash": "4cae628c0d0aa77a",
+        "hash": "7c05750c7d92a840",
         "psnr by level": [
           26.2,
           31.6,
@@ -1037,7 +796,7 @@
         ]
       },
       "bc7": {
-        "hash": "beb33d1a51fc436f",
+        "hash": "fa324d8b7d305557",
         "psnr by level": [
           28.0,
           33.6,
@@ -1051,33 +810,33 @@
     },
     "textures normal map": {
       "astc": {
-        "hash": "f3ae5a2c834c59f1",
+        "hash": "bdaa3704bd4677e9",
         "psnr by level": [
           32.0,
-          27.5,
-          27.0,
-          29.7,
-          44.5,
-          60.2,
+          27.9,
+          27.7,
+          30.5,
+          38.1,
+          57.2,
           99.0
         ]
       },
       "bc7": {
-        "hash": "6da5e741f7ce84d7",
+        "hash": "e6945da30deba3f4",
         "psnr by level": [
           36.4,
-          30.2,
-          28.6,
-          32.6,
-          53.2,
-          60.2,
+          30.6,
+          29.7,
+          33.0,
+          49.3,
+          54.2,
           51.1
         ]
       }
     },
     "textures smooth color": {
       "astc": {
-        "hash": "d4ad2b74fa11e1e6",
+        "hash": "42244f8de15109dc",
         "psnr by level": [
           46.4,
           40.7,
@@ -1089,7 +848,7 @@
         ]
       },
       "bc7": {
-        "hash": "4f21d3df0a527437",
+        "hash": "1b3fd24bc96dac5d",
         "psnr by level": [
           46.8,
           41.3,

@@ -7,9 +7,7 @@ use crate::occupancy::OccupancyPass;
 use crate::transparent::Transparency;
 use crate::water::WaterPass;
 
-use engine_core::{
-    CullingStats, DetailStats, ShadowStats, TerrainBounceStats, TerrainRenderStats,
-};
+use engine_core::{CullingStats, DetailStats, ShadowStats, TerrainBounceStats, TerrainRenderStats};
 
 #[cfg(feature = "profiling")]
 #[expect(clippy::expect_used, reason = "render stats always serialize")]

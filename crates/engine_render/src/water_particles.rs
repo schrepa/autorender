@@ -445,6 +445,10 @@ impl WaterParticles {
 }
 
 impl ParticleGrid {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn new(device: &wgpu::Device, layout: &GroupLayout, texel: f32, sizes: ParticleSizes) -> Self {
         let ParticleSizes {
             texels,

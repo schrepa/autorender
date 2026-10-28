@@ -43,15 +43,8 @@ pub(crate) fn import(
         let normal_matrix = linear.inverse().transpose();
         if let Some(mesh) = node.mesh() {
             for primitive in mesh.primitives() {
-                let (object, mesh, file) = import_primitive(
-                    output,
-                    binary,
-                    id,
-                    &node,
-                    &primitive,
-                    matrix,
-                    normal_matrix,
-                )?;
+                let (object, mesh, file) =
+                    import_primitive(output, binary, id, &node, &primitive, matrix, normal_matrix)?;
                 output.meshes.push(mesh);
                 files.push(file);
                 output.entities.push(object);

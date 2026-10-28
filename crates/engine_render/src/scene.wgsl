@@ -240,10 +240,6 @@ fn sun_halo(direction: vec3<f32>) -> vec3<f32> {
     return lighting.sun_color.rgb * (0.12 * square * square * square);
 }
 
-fn sky(direction: vec3<f32>) -> vec3<f32> {
-    return haze(direction) + sun_disc(direction);
-}
-
 fn sun_disc(direction: vec3<f32>) -> vec3<f32> {
     let toward = max(dot(direction, lighting.sun.xyz), 0.0);
     return lighting.sun_color.rgb * (6.0 * pow(toward, 900.0));

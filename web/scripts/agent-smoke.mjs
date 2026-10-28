@@ -153,6 +153,12 @@ try {
   assert.deepEqual(Object.keys(look.result.value).sort(), Object.keys(sections).sort());
   const mesh = await cli("inspect", { entity: playerId, component: "Mesh3d" });
   assert.equal(typeof mesh.result.entity.components.Mesh3d.material.surface.roughness, "number");
+  const interpolation = await cli("inspect", { entity: playerId, component: "InterpolateTransform" });
+  assert.equal(interpolation.result.entity.components.InterpolateTransform.enabled, true);
+  const jobs = await cli("inspect", { component: "Jobs" });
+  assert.equal(typeof jobs.result.value.cache_hits, "number");
+  const tables = await cli("inspect", { component: "StaticTables" });
+  assert.equal(typeof tables.result.value.failed_jobs, "number");
   const invalidLook = await cli("environment", { shadows: { tile_texels: 100 } }, false);
   assert.equal(invalidLook.error.code, "invalid_environment");
   assert.equal(invalidLook.error.path, "$.shadows.tile_texels");

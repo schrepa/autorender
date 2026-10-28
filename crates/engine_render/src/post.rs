@@ -71,6 +71,12 @@ impl Drop for Targets {
     }
 }
 
+type TraceInputs<'a> = (
+    crate::terrain::TraceSources<'a>,
+    (&'a wgpu::Buffer, &'a wgpu::Buffer, u64),
+    Option<(&'a wgpu::TextureView, u64)>,
+);
+
 pub(crate) struct PostPass {
     layout: crate::pipelines::GroupLayout,
     fillers: Fillers,
@@ -382,11 +388,7 @@ impl PostPass {
         (device, queue): (&wgpu::Device, &wgpu::Queue),
         (frame, depth): (Effects, &Versioned<wgpu::TextureView>),
         trace: Option<&crate::world_trace::TraceFrame<'_>>,
-        (sources, placed, frames): (
-            crate::terrain::TraceSources<'_>,
-            (&wgpu::Buffer, &wgpu::Buffer, u64),
-            Option<(&wgpu::TextureView, u64)>,
-        ),
+        (sources, placed, frames): TraceInputs<'_>,
     ) {
         self.world_trace
             .prepare(device, queue, trace.filter(|_| frame.reflections));

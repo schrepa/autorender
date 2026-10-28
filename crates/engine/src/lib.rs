@@ -30,26 +30,27 @@ mod games {
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, App, AssetBudget,
         AssetError, AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, Clouds, Cover, Cube,
-        DebugView, DebugViewMode, Dither, Engine, EngineConfig, EngineEntityCommands, Environment,
-        Feature, Filter, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
-        FixedSimulationSystems, FixedTime, Foliage, FrameReport, FrameTime, GlobalTransform,
-        GlobalTransforms, Ground, GroundCover, GroundSample, Grounded, Grounding, Haze, HeightHeld,
-        HierarchyError, Highlights, InputState, Interior, InterpolateTransform, InterpolationError,
-        LevelOfDetail, LightRegion, LocalLight, LocalLightSettings, MakeSources, MakeTextures,
-        Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, NavAgent, NavAgents,
-        NavQuery, NavStatus, NavSystems, NavWalk, Navigation, NavigationPlugin, NightSky,
-        OcclusionCulling, Occupancy, Parent, ParticleBlend, ParticleEmitter, ParticleSettings,
-        Physics, Plugin, PluginGroup, Presentation, PresentationState, PresentedTime,
-        PresentedTransform, PresentedTransforms, Records, ReflectionProbe, ReflectionProbeSettings,
-        Reflections, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamSet, Streamed,
-        StreamedId, StreamedItem, StreamingFocus, SubpixelCulling, Surface, TemporalAntialiasing,
-        Terrain, TerrainPlugin, TerrainSample, TerrainSettings, Terrains, Texture, TextureHandle,
-        TextureRef, TextureSet, TextureSource, TextureUsage, TimeOfDay, TimeOfDayPlugin, Tint,
-        TopLayer, Transform, TransformEditError, UvTransform, ViewSync, ViewSyncSystems, Water,
-        WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource, WaterSources, Wind,
-        WorldCells, WorldChanges, WorldStreaming, WorldStreamingPlugin, WorldSync, WorldSyncSystems,
-        Wrap, edit_transform, math, remove_streamed, reset_all_interpolation, reset_interpolation,
-        set_parent, set_parents, trim_cards,
+        DebugView, DebugViewMode, Dither, DynamicResolution, DynamicResolutionStats, Engine,
+        EngineConfig, EngineEntityCommands, Environment, Feature, Filter, FixedPostSimulation,
+        FixedPreSimulation, FixedSimulation, FixedSimulationSystems, FixedTime, Foliage,
+        FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Ground, GroundCover,
+        GroundSample, Grounded, Grounding, Haze, HeightHeld, HierarchyError, Highlights,
+        InputState, Interior, InterpolateTransform, InterpolationError, LevelOfDetail, LightRegion,
+        LocalLight, LocalLightSettings, MakeSources, MakeTextures, Material, MaterialHandle, Mesh,
+        Mesh3d, MeshHandle, MeshVertex, NavAgent, NavAgents, NavQuery, NavStatus, NavSystems,
+        NavWalk, Navigation, NavigationPlugin, NightSky, OcclusionCulling, Occupancy, Parent,
+        ParticleBlend, ParticleEmitter, ParticleSettings, Physics, Plugin, PluginGroup,
+        Presentation, PresentationState, PresentedTime, PresentedTransform, PresentedTransforms,
+        Records, ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution,
+        ResolutionStats, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamSet,
+        Streamed, StreamedId, StreamedItem, StreamingFocus, SubpixelCulling, Surface,
+        TemporalAntialiasing, Terrain, TerrainPlugin, TerrainSample, TerrainSettings, Terrains,
+        Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage, TimeOfDay,
+        TimeOfDayPlugin, Tint, TopLayer, Transform, TransformEditError, UvTransform, ViewSync,
+        ViewSyncSystems, Water, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource,
+        WaterSources, Wind, WorldCells, WorldChanges, WorldStreaming, WorldStreamingPlugin,
+        WorldSync, WorldSyncSystems, Wrap, edit_transform, math, remove_streamed,
+        reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
     };
 }
 pub use games::*;
@@ -97,11 +98,10 @@ pub mod render {
 
 pub mod stats {
     pub use engine_core::{
-        Applied, CellStats, CloudStats, CullingStats, DetailStats, Drawn,
-        ErosionStats, ExposureStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats,
-        LightStats, Names, NavStats, OccupancyStats, PathStats, PhysicsStats,
-        ProbeStats, RenderStats, ShadowStats, SkyStats, TerrainBounceStats, TerrainRenderStats,
-        TerrainStats, WaterStats,
+        Applied, CellStats, CloudStats, CullingStats, DetailStats, Drawn, ErosionStats,
+        ExposureStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats, Names,
+        NavStats, OccupancyStats, PathStats, PhysicsStats, ProbeStats, RenderStats, ShadowStats,
+        SkyStats, TerrainBounceStats, TerrainRenderStats, TerrainStats, WaterStats,
     };
 }
 

@@ -168,7 +168,10 @@ impl Project {
         if !output.status.success() {
             return Err(format!("project {folder}: {manifest} is not at {sha}"));
         }
-        Self::parse(&manifest, String::from_utf8_lossy(&output.stdout).into_owned())
+        Self::parse(
+            &manifest,
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        )
     }
 
     fn parse(manifest: &str, text: String) -> Result<Self, String> {

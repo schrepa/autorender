@@ -107,8 +107,13 @@ struct StandingEye {
 
 impl StandingEye {
     fn new(world: &World, place: &str) -> engine::Result<Self> {
-        let malformed =
-            || Error::new(ErrorCode::InvalidValue, "$.view", format!("{STAND}x,z,yaw,pitch"));
+        let malformed = || {
+            Error::new(
+                ErrorCode::InvalidValue,
+                "$.view",
+                format!("{STAND}x,z,yaw,pitch"),
+            )
+        };
         let numbers: Vec<f32> = place
             .split(',')
             .map(|number| number.trim().parse::<f32>())

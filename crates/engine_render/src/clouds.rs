@@ -234,6 +234,13 @@ pub(crate) struct CloudPass {
     pub(crate) view_pixels: u32,
 }
 
+type CloudInputs<'a> = (
+    &'a Clouds,
+    Option<&'a StaticTable<CloudNoise>>,
+    (glam::Vec3, Option<f32>),
+    f64,
+);
+
 impl CloudPass {
     #[expect(
         clippy::too_many_lines,
@@ -512,12 +519,7 @@ impl CloudPass {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        (settings, noise, (eye, surface), seconds): (
-            &Clouds,
-            Option<&StaticTable<CloudNoise>>,
-            (glam::Vec3, Option<f32>),
-            f64,
-        ),
+        (settings, noise, (eye, surface), seconds): CloudInputs<'_>,
         (lighting, air): (&LightingUniform, crate::sky::AirBindings<'_>),
         whole: bool,
     ) {
