@@ -381,7 +381,7 @@ fn foam_site(site: vec2<i32>, here: FoamCarrier) -> vec4<u32> {
     var fired = 0u;
     var weight = 0.0;
     for (var quarter = 0u; quarter < 4u; quarter++) {
-        let drawn = water_burst_weight(mean, water_burst_unit(places[quarter]));
+        let drawn = water_burst_weight(mean, unit(places[quarter]));
         if drawn > 0.0 {
             weight = drawn;
             fired |= (1u | ((places[quarter] & 15u) << 1u)) << (5u * quarter);

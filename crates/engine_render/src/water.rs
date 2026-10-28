@@ -520,9 +520,7 @@ impl WaterPass {
                 (
                     "water_foam_spread",
                     crate::pipelines::view(
-                        self.foam
-                            .spread_view()
-                            .unwrap_or(&self.placeholders.scene),
+                        self.foam.spread_view().unwrap_or(&self.placeholders.scene),
                     ),
                 ),
             ],

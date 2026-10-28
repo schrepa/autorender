@@ -39,11 +39,6 @@ fn water_burst_bits(site: vec2<i32>, stream: u32, slot: vec2<u32>) -> vec4<u32> 
     return v;
 }
 
-// A draw's top 24 bits as a share in [0, 1).
-fn water_burst_unit(bits: u32) -> f32 {
-    return f32(bits >> 8u) * (1.0 / 16777216.0);
-}
-
 // The slot holding the simulation's step `step` (its index, each step
 // `seconds` long) at site `site` of stream `stream` (`water_burst_bits`'),
 // for events living `life` seconds: a run of 2^m steps, 2^m the power of two
@@ -68,7 +63,7 @@ fn water_burst_life(slot: vec2<u32>, seconds: f32) -> f32 {
     return f32(1u << slot.y) * seconds;
 }
 
-// The weight of the event a site draws as `drawn` (`water_burst_unit`) over a
+// The weight of the event a site draws as `drawn` (math.wgsl's `unit`) over a
 // slot where `mean` are expected (Poisson): it fires where one or more
 // would, with the chance 1 − e^−mean, and stands for all that would,
 // mean / (1 − e^−mean) of them, so the weights' mean is `mean` however many
