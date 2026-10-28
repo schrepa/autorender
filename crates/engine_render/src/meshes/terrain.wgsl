@@ -1607,31 +1607,16 @@ struct TerrainLift {
     kept: vec3<f32>,
 }
 
-// The mesh band at `world`, terrain-local `local`: along the ground's
-// smooth normal at the levels a pixel seen from the detail eye shades it
-// at, each material of its blend by its share, its heights at the level
-// whose texels are the finest features the mesh carries there
-// (`terrain_carried`) less their mean, so ground whose mesh carries none
-// of them, far off, draws its smooth surface; and with `pieces` the meters
-// between a leaf's meshlet vertices (0 for none), the part those pieces
-// carry, which the subdivision measures leaves by. None where the deepest
-// of the terrain's materials (`terrain.relief.x`) would move the ground
-// less than TERRAIN_BAND_PIXELS, which then reads no materials. A function
-// of where the point stands alone, so every pass drawing the ground, and
-// the subdivision measuring it, moves it alike.
-fn terrain_displacement(world: vec3<f32>, local: vec2<f32>, pieces: f32) -> TerrainLift {
-    var lift = TerrainLift(vec3<f32>(0.0), vec3<f32>(0.0));
-    let across = max(detail_across(world), 1.0e-6);
-    if terrain.relief.x < TERRAIN_BAND_PIXELS * across {
-        return lift;
-    }
-    let carried = terrain_carried(across);
-    let spaced = max(carried, TERRAIN_MESH_CARRIES * pieces);
-    let shading = terrain_pixel_shading(world);
-    let normal = terrain_surface_normal(local, shading);
-    let blend = terrain_blend(local, normal, shading);
-    var moved = 0.0;
-    var kept = 0.0;
+// How far the materials of `blend` move the ground at `world`, of smooth
+// normal `normal`, along that normal: each by its share, its heights less
+// their mean at the level whose texels span `meters.x` (x), and at the
+// level whose texels span `meters.y` (y), read again only where that spans
+// more. Materials of no depth or without maps move none of it. The mesh
+// band (`terrain_displacement`) and the live water's bed
+// (`meshes/water_bed.wgsl`) raise the ground by it alike.
+fn terrain_band_rise(blend: TerrainBlend, world: vec3<f32>, normal: vec3<f32>,
+        meters: vec2<f32>) -> vec2<f32> {
+    var rise = vec2<f32>(0.0);
     for (var slot = 0u; slot < 4u; slot++) {
         let weight = blend.weights[slot];
         if weight <= 0.0 {
@@ -1644,17 +1629,43 @@ fn terrain_displacement(world: vec3<f32>, local: vec2<f32>, pieces: f32) -> Terr
         let heights = terrain_material_heights(entry, world, normal);
         let depth = weight * entry.relief.x;
         let band = terrain_band_height(heights, world,
-            terrain_band_level(heights.mapping, carried));
+            terrain_band_level(heights.mapping, meters.x));
         var coarse = band;
-        if spaced > carried {
+        if meters.y > meters.x {
             coarse = terrain_band_height(heights, world,
-                terrain_band_level(heights.mapping, spaced));
+                terrain_band_level(heights.mapping, meters.y));
         }
-        moved += depth * (band - entry.heights.x);
-        kept += depth * (coarse - entry.heights.x);
+        rise += depth * (vec2<f32>(band, coarse) - entry.heights.x);
     }
-    lift.moved = normal * moved;
-    lift.kept = normal * kept;
+    return rise;
+}
+
+// The mesh band at `world`, terrain-local `local`: along the ground's
+// smooth normal at the levels a pixel seen from the detail eye shades it
+// at, each material of its blend by its share, its heights at the level
+// whose texels are the finest features the mesh carries there
+// (`terrain_carried`) less their mean, so ground whose mesh carries none
+// of them, far off, draws its smooth surface; and with `pieces` the meters
+// between a leaf's meshlet vertices (0 for none), the part those pieces
+// carry, which the subdivision measures leaves by (`terrain_band_rise`).
+// None where the deepest of the terrain's materials (`terrain.relief.x`)
+// would move the ground less than TERRAIN_BAND_PIXELS, which then reads no
+// materials. A function of where the point stands alone, so every pass
+// drawing the ground, and the subdivision measuring it, moves it alike.
+fn terrain_displacement(world: vec3<f32>, local: vec2<f32>, pieces: f32) -> TerrainLift {
+    var lift = TerrainLift(vec3<f32>(0.0), vec3<f32>(0.0));
+    let across = max(detail_across(world), 1.0e-6);
+    if terrain.relief.x < TERRAIN_BAND_PIXELS * across {
+        return lift;
+    }
+    let carried = terrain_carried(across);
+    let spaced = max(carried, TERRAIN_MESH_CARRIES * pieces);
+    let shading = terrain_pixel_shading(world);
+    let normal = terrain_surface_normal(local, shading);
+    let blend = terrain_blend(local, normal, shading);
+    let rise = terrain_band_rise(blend, world, normal, vec2<f32>(carried, spaced));
+    lift.moved = normal * rise.x;
+    lift.kept = normal * rise.y;
     return lift;
 }
 

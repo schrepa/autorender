@@ -97,9 +97,11 @@ impl Texels {
 /// its id, its uniform's offset, its water's tree's and that tree's draw of
 /// its leaves; the pixels the drawn ground (x) and water's mesh (y) may stray
 /// from their surfaces seen from the detail eye;
-/// the blocks resident and dropped this frame for want of layers; and the
+/// the blocks resident and dropped this frame for want of layers; the
 /// leaves the water's subdivisions drew and the splits their room refused,
-/// as last read back.
+/// as last read back; and the terrain group as the subdivisions' passes
+/// bind it, with its layout, once made, through which the live water's bed
+/// reads the ground's materials (`meshes/water_bed.wgsl`).
 pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) heights: &'a wgpu::TextureView,
     pub(crate) views: &'a wgpu::Buffer,
@@ -114,6 +116,7 @@ pub(crate) struct TerrainWaterDraws<'a> {
     pub(crate) targets: [f32; 2],
     pub(crate) blocks: [u32; 2],
     pub(crate) subdivided: [u32; 2],
+    pub(crate) ground: Option<(&'a crate::pipelines::GroupLayout, &'a wgpu::BindGroup)>,
 }
 
 pub(crate) struct WaterBlocks {
@@ -255,6 +258,7 @@ impl WaterBlocks {
             targets: pass.surface.targets(),
             blocks: [self.resident(), self.dropped],
             subdivided: pass.surface.water_stats(),
+            ground: pass.pipelines.surface_group().map(|group| (&pass.pipelines.layout, group)),
         })
     }
 

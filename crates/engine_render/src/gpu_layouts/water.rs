@@ -90,6 +90,15 @@ gpu_structs! {
         pub touch: [SimTouch; SIM_TOUCHES],
     }
 
+    /// WGSL `SimBed` of `meshes/water_bed.wgsl`: the blocks whose bed the
+    /// live water raises this frame, then nothing; and the meters across
+    /// their cells, then nothing.
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct SimBed as ["SimBed"] {
+        pub blocks: [u32; 4],
+        pub cell: [f32; 4],
+    }
+
     /// WGSL `FoamFrame` of `meshes/water_foam_field.wgsl`: the first cell
     /// of foam's field's window along x and z (world cells), then that of
     /// the window its state held the frame before; its lattice's first

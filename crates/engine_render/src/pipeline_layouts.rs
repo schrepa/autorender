@@ -20,8 +20,8 @@ use crate::bindings::{
     TEMPORAL_POSES, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS, TERRAIN_RESOLVE,
     TERRAIN_SUBDIVISION, TERRAIN_SUBDIVISION_CAMERA, TRANSPARENT_COMPOSITE, Table, VIRTUAL_BIN,
     VIRTUAL_POSES, VIRTUAL_SEED, VIRTUAL_SELECT, VIRTUAL_SHADOW, VIRTUAL_TRAVERSE,
-    VISIBILITY_CLASSIFY, VISIBILITY_PASS, VISIBILITY_RESOLVE, WATER, WATER_BEHIND, WATER_FOAM,
-    WATER_SIM,
+    VISIBILITY_CLASSIFY, VISIBILITY_PASS, VISIBILITY_RESOLVE, WATER, WATER_BED, WATER_BEHIND,
+    WATER_FOAM, WATER_SIM,
 };
 
 /// The bytes one uniform buffer binding holds on every device (wgpu's
@@ -177,6 +177,10 @@ pipeline_layouts! {
     /// Water's simulation: faces, fluxes, cells, the water rivers bring and
     /// the cells past its edges.
     WATER_SIM_PIPELINES = [WATER_SIM];
+    /// The live water's bed: an empty group, the terrain group, through
+    /// which it reads the ground's materials as their mesh band does, and
+    /// its own.
+    WATER_BED_PIPELINES = [EMPTY, TERRAIN, WATER_BED];
     /// Foam's field: the water's group, read as its shading reads it, and
     /// the field's own.
     WATER_FOAM_PIPELINES = [EMPTY, WATER, WATER_FOAM];
@@ -220,5 +224,8 @@ pipeline_layouts! {
 /// effects' shared layout leaves. Foam's field takes one, built once
 /// terrains' water draws: its passes read the water through the water's
 /// group, as its shading reads it, and write the texture that shading
-/// samples, which no group a water draw binds may write.
-pub const LAYOUT_BUDGET: usize = 73;
+/// samples, which no group a water draw binds may write. The live water's
+/// bed takes one, built once water runs live: it reads the ground's
+/// materials through the terrain group, which the simulation's own layout,
+/// at a compute stage's eight storage buffers, has no room for.
+pub const LAYOUT_BUDGET: usize = 74;

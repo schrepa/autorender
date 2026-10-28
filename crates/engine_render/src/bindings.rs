@@ -1002,6 +1002,25 @@ tables! {
         ],
     };
 
+    /// Group 2 of the live water's bed (`meshes/water_bed.wgsl`), after an
+    /// empty first group and the terrain group (`TERRAIN`), through which
+    /// it reads the ground's materials as their mesh band does: the blocks
+    /// whose bed a frame raises and the meters across their cells, each
+    /// one's slot, first corner and datum, the live water's ground it raises
+    /// (the simulation's `sim_ground`) and the ground each slot's block was
+    /// taken with, which it rises from: five of a compute stage's 8 storage
+    /// buffers with the terrain group's two.
+    const WATER_BED: Table = Table {
+        label: "engine/water-bed-layout",
+        serves: [SHADER @ 2],
+        bindings: &[
+            uniform_of(40, "bed_frame", size_of::<water::SimBed>(), C),
+            read(41, "bed_taken", C),
+            write(42, "bed_ground", C),
+            read(43, "bed_kept", C),
+        ],
+    };
+
     /// Group 1 of ground cover's pipelines (`meshes/cover.wgsl`):
     /// the frame's blades and the wind and times they sway with.
     const COVER_DRAW: Table = Table {
