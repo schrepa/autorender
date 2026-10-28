@@ -30,11 +30,12 @@
 //! its own uniform, by which they read the water under them: they show only
 //! where they stand clear of it, and write their depth where they show.
 //!
-//! The foam terrains' water carries runs live on a field of its own around
-//! the detail eye (`crate::water_foam_field`), stepped before water draws
-//! over the water of the terrain the detail eye stands over, read as the
-//! water's shading reads it; its texture binds beside what lies behind the
-//! water, which its passes do not bind.
+//! What turbulence makes on terrains' water, its white water, foam and the
+//! disturbance of its surface, runs live on a field of its own around the
+//! detail eye (`crate::water_foam_field`), stepped before water draws over
+//! the water of the terrain the detail eye stands over, read as the water's
+//! shading reads it; its textures bind beside what lies behind the water,
+//! which its passes do not bind.
 //!
 //! Water is a feature of the renderer (`crate::render_features`).
 //!
@@ -471,8 +472,8 @@ impl WaterPass {
 
     /// The copies of the opaque scene at `size`, the depth's of `format`
     /// and, when water `refracts`, the color's; and their group, with the
-    /// foam field's texture (the one-texel color in its place while none
-    /// runs) and its sampler.
+    /// foam field's textures (the one-texel color in their place while none
+    /// runs) and their sampler.
     fn behind_copies(
         &self,
         device: &wgpu::Device,
@@ -515,6 +516,14 @@ impl WaterPass {
                 (
                     "water_foam_sampler",
                     crate::pipelines::sampler(self.foam.sampler()),
+                ),
+                (
+                    "water_foam_spread",
+                    crate::pipelines::view(
+                        self.foam
+                            .spread_view()
+                            .unwrap_or(&self.placeholders.scene),
+                    ),
                 ),
             ],
         );

@@ -351,7 +351,7 @@ gpu_consts! {
     // crate::water_foam_field
     /// Cells along a side of the workgroups of foam's field's passes, and of
     /// its lattice's points.
-    pub(crate) const FOAM_GROUP: u32 = 8 => ["FOAM_GROUP", "@foam_gather", "@foam_currents", "@foam_step", "@foam_down"];
+    pub(crate) const FOAM_GROUP: u32 = 8 => ["FOAM_GROUP", "@foam_gather", "@foam_currents", "@foam_bursts", "@foam_step", "@foam_look", "@foam_down"];
 
     // crate::ground_cover
     /// Bytes of a blade or tuft (`CoverBlade`).
