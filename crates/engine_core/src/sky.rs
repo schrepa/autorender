@@ -1,7 +1,21 @@
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::bricks::{Brick, Bricks};
+use crate::sections::environment_section;
+use crate::{Atmosphere, Clouds};
 use engine_settings::settings;
+
+impl Brick for Sky {
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks
+            .settings::<Clouds>()
+            .settings::<Sky>()
+            .settings::<Haze>()
+            .settings::<NightSky>()
+            .resource::<Atmosphere>();
+    }
+}
 
 settings! {
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -31,6 +45,8 @@ settings! {
     }
 }
 
+environment_section!(Sky, "sky", opt_in: true);
+
 impl Sky {
     pub fn off() -> Self {
         Self {
@@ -58,6 +74,8 @@ settings! {
         pub size: f32 = 60.0 => range(0.1, 100_000.0),
     }
 }
+
+environment_section!(Haze, "haze", opt_in: false);
 
 impl Haze {
     pub fn off() -> Self {
@@ -87,6 +105,8 @@ settings! {
         pub cirrus_drift: [f32; 2] = [6.0, 1.5] => range(-1000.0, 1000.0),
     }
 }
+
+environment_section!(NightSky, "night_sky", opt_in: false);
 
 impl NightSky {
     pub fn off() -> Self {

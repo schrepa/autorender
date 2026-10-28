@@ -1,8 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use glam::Vec3;
 
-use crate::environment::InvalidSetting;
-use engine_settings::Setting;
+use engine_settings::{InvalidSetting, Setting};
 
 #[macro_export]
 macro_rules! atmosphere_fields {

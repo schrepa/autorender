@@ -1,8 +1,30 @@
 use bevy_ecs::prelude::{Resource, World};
 use serde::{Deserialize, Serialize};
 
-use crate::{Camera, Environment, FrameTime, RenderSnapshot};
+use crate::bricks::{Brick, Bricks};
+use crate::sections::environment_section;
+use crate::{Camera, Environment, FrameTime, RenderSnapshot, SkyOcclusion, TemporalAntialiasing};
 use engine_settings::settings;
+
+impl Brick for Shadows {
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks.settings::<Shadows>().settings::<SkyOcclusion>();
+    }
+}
+
+pub struct PostEffects;
+
+impl Brick for PostEffects {
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks
+            .settings::<AmbientOcclusion>()
+            .settings::<Bloom>()
+            .settings::<Dither>()
+            .settings::<AutoExposure>()
+            .settings::<Reflections>()
+            .settings::<TemporalAntialiasing>();
+    }
+}
 
 pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
     let eye = world.resource::<Camera>().eye();
@@ -49,6 +71,8 @@ settings! {
     }
 }
 
+environment_section!(Shadows, "shadows", opt_in: false);
+
 impl Shadows {
     pub fn off() -> Self {
         Self {
@@ -71,6 +95,8 @@ settings! {
         pub radius: f32 = 2.5 => above(0.0),
     }
 }
+
+environment_section!(AmbientOcclusion, "ambient_occlusion", opt_in: false);
 
 impl AmbientOcclusion {
     pub fn off() -> Self {
@@ -99,6 +125,8 @@ settings! {
     }
 }
 
+environment_section!(Bloom, "bloom", opt_in: false);
+
 impl Bloom {
     pub fn off() -> Self {
         Self {
@@ -124,6 +152,8 @@ settings! {
         pub enabled: bool = true => any,
     }
 }
+
+environment_section!(Dither, "dither", opt_in: false);
 
 impl Dither {
     pub fn off() -> Self {
@@ -155,6 +185,8 @@ settings! {
     }
 }
 
+environment_section!(AutoExposure, "auto_exposure", opt_in: true);
+
 impl AutoExposure {
     pub fn off() -> Self {
         Self {
@@ -178,6 +210,8 @@ settings! {
         pub distance: f32 = 120.0 => range(0.001, 100_000.0),
     }
 }
+
+environment_section!(Reflections, "reflections", opt_in: true);
 
 impl Reflections {
     pub fn off() -> Self {

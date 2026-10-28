@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
+use crate::sections::environment_section;
 use engine_settings::settings;
 
 settings! {
@@ -19,6 +20,8 @@ settings! {
         pub light_radius: f32 = 0.1 => range(0.0, 100.0),
     }
 }
+
+environment_section!(Highlights, "highlights", opt_in: false);
 
 impl Highlights {
     pub fn off() -> Self {

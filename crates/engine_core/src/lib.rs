@@ -38,6 +38,7 @@ mod records;
 mod resolution;
 mod retained_render;
 mod scene;
+mod sections;
 mod sky;
 mod sky_occlusion;
 mod spline_mesh;
@@ -207,7 +208,6 @@ pub struct Engine {
     clock: FixedClock,
     render_query: RenderQuery,
     retained: retained_render::RetainedRender,
-    extractions: extraction::Extractions,
     plugins_finalized: bool,
     tick_ahead: TickAhead,
 }
@@ -299,7 +299,6 @@ impl Engine {
             .init_resource::<FrameTime>()
             .init_resource::<PresentedTime>()
             .init_resource::<Camera>()
-            .init_resource::<Atmosphere>()
             .init_resource::<BrickRegistry>()
             .init_resource::<WaterSources>()
             .init_resource::<Jobs>()
@@ -321,7 +320,6 @@ impl Engine {
             Option<Ref<Mesh3d>>,
             Option<Ref<Tint>>,
         ), Or<(With<Cube>, With<Mesh3d>)>>();
-        let extractions = extraction::Extractions::new(app.world_mut());
         let mut retained = retained_render::RetainedRender::new(
             cube_mesh,
             config.frustum_culling,
@@ -333,7 +331,6 @@ impl Engine {
             clock,
             render_query,
             retained,
-            extractions,
             plugins_finalized: false,
             tick_ahead: TickAhead::None,
         }
@@ -561,10 +558,7 @@ impl Engine {
     }
 
     pub fn render_entity(&self, slot: u32) -> Option<Entity> {
-        self.retained
-            .entities
-            .iter()
-            .find_map(|(&entity, &held)| (held as u32 == slot).then_some(entity))
+        self.retained.entity_in(slot)
     }
 
     pub fn frustum_culling(&self) -> bool {
@@ -642,8 +636,7 @@ impl Engine {
         let world = self.app.world();
         self.retained
             .prepare(world, &mut self.render_query, aspect, gpu);
-        self.extractions
-            .extract(&mut self.retained, world, aspect, gpu);
+        extraction::extract(&mut self.retained, world, aspect);
         if gpu {
             self.app.world_mut().increment_change_tick();
         }

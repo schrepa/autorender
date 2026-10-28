@@ -1,7 +1,19 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
+use crate::bricks::{Brick, Bricks};
+use crate::sections::environment_section;
 use engine_settings::settings;
+
+pub struct Culling;
+
+impl Brick for Culling {
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks
+            .settings::<OcclusionCulling>()
+            .settings::<SubpixelCulling>();
+    }
+}
 
 settings! {
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,6 +27,8 @@ settings! {
         pub enabled: bool = true => any,
     }
 }
+
+environment_section!(OcclusionCulling, "occlusion_culling", opt_in: false);
 
 impl OcclusionCulling {
     pub fn off() -> Self {
@@ -34,6 +48,8 @@ settings! {
         pub enabled: bool = true => any,
     }
 }
+
+environment_section!(SubpixelCulling, "subpixel_culling", opt_in: false);
 
 impl SubpixelCulling {
     pub fn off() -> Self {

@@ -49,6 +49,7 @@ mod games {
         WorldSync, WorldSyncSystems, Wrap, edit_transform, math, remove_streamed,
         reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
     };
+    pub use engine_core::{Culling, LightingModel, Lights, Particles, PostEffects, ReflectionProbes};
 }
 pub use games::*;
 

@@ -325,6 +325,7 @@ pub struct RenderSnapshot {
     pub cells: crate::CellStats,
     pub tables: crate::RenderTables,
     pub instances: Vec<RenderInstance>,
+    pub(crate) instance_slots: crate::retained_render::InstanceSlots,
     pub meshes: Vec<RenderMesh>,
     pub materials: Vec<RenderMaterial>,
     pub textures: Vec<RenderTexture>,
