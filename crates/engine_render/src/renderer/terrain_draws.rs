@@ -5,7 +5,7 @@ use super::frame::FrameState;
 use super::*;
 use crate::terrain::TerrainViews;
 use crate::water::WaterFrame;
-use crate::water_foam_field::FoamView;
+use crate::water_particles::ParticleView;
 
 /// Terrain's visibility target: each pixel's terrain (its
 /// directory start plus one; 0 where none shows) and depth's bits, and the
@@ -296,10 +296,10 @@ impl Renderer {
         let (device, shader, camera) = (&self.device, &self.mesh_shader, &self.camera.water_layout);
         let formats = (self.display.format(), DEPTH_FORMAT);
         let tiles = self.terrain.water_draws(&snapshot.terrain);
-        // The foam field reaches from the detail eye out to where its cells
-        // span a few of the display's pixels.
+        // Water's particles reach from the detail eye out to where their
+        // texels span a pixel of the display.
         let display = self.display.region.display;
-        let seen = FoamView {
+        let seen = ParticleView {
             detail: snapshot.detail_eye,
             pixel_angle: crate::gpu_data::pixel_angle(snapshot.view_projection, display.height),
             display,

@@ -81,7 +81,7 @@ use crate::water_kernels::{
 };
 
 // The longest frame whose time the live water steps through, whose steps
-// a longer frame steps no more of, nor the foam field.
+// a longer frame steps no more of, nor water's particles.
 pub(crate) use engine_core::LONGEST_FRAME;
 
 /// Blocks a frame takes into its window's slots while they are not needed

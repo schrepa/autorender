@@ -21,7 +21,7 @@ use crate::bindings::{
     TERRAIN_SUBDIVISION, TERRAIN_SUBDIVISION_CAMERA, TRANSPARENT_COMPOSITE, Table, VIRTUAL_BIN,
     VIRTUAL_POSES, VIRTUAL_SEED, VIRTUAL_SELECT, VIRTUAL_SHADOW, VIRTUAL_TRAVERSE,
     VISIBILITY_CLASSIFY, VISIBILITY_PASS, VISIBILITY_RESOLVE, WATER, WATER_BED, WATER_BEHIND,
-    WATER_FOAM, WATER_SIM,
+    WATER_PARTICLES, WATER_SIM,
 };
 
 /// The bytes one uniform buffer binding holds on every device (wgpu's
@@ -181,9 +181,9 @@ pipeline_layouts! {
     /// which it reads the ground's materials as their mesh band does, and
     /// its own.
     WATER_BED_PIPELINES = [EMPTY, TERRAIN, WATER_BED];
-    /// Foam's field: the water's group, read as its shading reads it, and
-    /// the field's own.
-    WATER_FOAM_PIPELINES = [EMPTY, WATER, WATER_FOAM];
+    /// Water's particles: the water's group, read as its shading reads it,
+    /// and the particles' own.
+    WATER_PARTICLE_PIPELINES = [EMPTY, WATER, WATER_PARTICLES];
     COVER_GROW_PIPELINES = [COVER_GROW];
     OCCUPANCY_PIPELINES = [OCCUPANCY];
     SCATTER_SNAP_PIPELINES = [SCATTER_SNAP];
@@ -221,9 +221,9 @@ pipeline_layouts! {
 /// take one: their world trace lights what it meets as the main passes
 /// light it, through their first group, and walks the terrain's and placed
 /// objects' data beside the screen's, more sampled textures than the screen
-/// effects' shared layout leaves. Foam's field takes one, built once
-/// terrains' water draws: its passes read the water through the water's
-/// group, as its shading reads it, and write the texture that shading
+/// effects' shared layout leaves. Water's particles take one, built once
+/// terrains' water draws: their passes read the water through the water's
+/// group, as its shading reads it, and write the textures that shading
 /// samples, which no group a water draw binds may write. The live water's
 /// bed takes one, built once water runs live: it reads the ground's
 /// materials through the terrain group, which the simulation's own layout,

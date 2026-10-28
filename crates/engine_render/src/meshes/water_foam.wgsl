@@ -1,36 +1,33 @@
-// Foam on terrains' water and the sea: smooth coverage, the share of the
-// surface foam hides, from the water's state and what it meets. Terrains'
-// water's is the foam field the water carries (`water_foam_field.rs`,
-// `water_foam_held`), what the turbulence reaching its surface in bursts
-// makes (`water_bursts.wgsl`): the white water laid where the water breaks
-// (`engine_terrain`'s `breaking`), carried on as its bubbles drain, and the
-// foam churned up where it churns (`water_sim.wgsl`'s `sim_churn`: where it
-// loses energy, plunges or jumps, along its eddy lines and where it
-// converges), in patches as wide as the eddies bringing it, carried by the
-// current its surface runs at, gathering where that converges and against
-// what stands in it, and fading as it ages, with open water between the
-// patches; out past where the field's cells span a few pixels, the water's
-// own state's, which the field's mean is. And white water where it runs
-// against what stands in it behind the pixel fast enough to tear air in
-// (`water_contact`), by how far it climbs what it meets (`water_climbing`).
-// The sea's whitens where its crests fold and where its waves run up its
-// shores (`meshes/ocean.wgsl`). Fresh white water and carried foam add into
-// one coverage (`water_foam`), lit as foam is lit (`water_light`); age
-// changes only how it scatters light. No grain and no texture draws any of
-// it: what shape it takes, its patches, streaks, rafts, lines along eddies
-// and piles behind what stands in the water, comes from the bursts and how
-// the water carries them.
+// Foam on terrains' water and the sea: the share of the surface foam hides,
+// from the water's state and what it meets. Terrains' water's is what its
+// particles lay (`water_particles.rs`, `water_splatted`): the white water
+// turbulence's bursts lay where the water breaks (`engine_terrain`'s
+// `breaking`), draining as its bubbles rise out, and the foam they churn up
+// where it churns (`water_sim.wgsl`'s `sim_churn`: where it loses energy,
+// plunges or jumps, along its eddy lines and where it converges), carried as
+// particles by the current its surface runs at, drawn by it into streaks,
+// gathering where it converges and against what stands in it, and fading
+// as they age, with open water between them; out past where their texels
+// span a pixel, the water's own state's, which their mean is. And white
+// water where it runs against what stands in it behind the pixel fast
+// enough to tear air in (`water_contact`), by how far it climbs what it
+// meets (`water_climbing`). The sea's whitens where its crests fold and
+// where its waves run up its shores (`meshes/ocean.wgsl`). Fresh white
+// water and carried foam add into one coverage (`water_foam`), lit as foam
+// is lit (`water_light`); age changes only how it scatters light. No grain
+// and no texture draws any of it: what shape it takes, its flecks, streaks,
+// rafts, lines along eddies and piles behind what stands in the water,
+// comes from the particles and how the water carries them.
 
-// The foam field terrains' water carries (`water_foam_field.rs`), its
-// texels its cells, each the white water's layers covering it, the foam the
-// water carries there as a share of WATER_FOAM_MOST and how fast the
-// disturbance turbulence raises on its surface falls along x and z; the
-// squares of those falls and their product (`water_spread`); each with its
-// coarser levels; and the sampler reading them, which repeats them, as
-// their texels hold their world cells' remainders over its side.
-@group(2) @binding(24) var water_foam_field: texture_2d<f32>;
-@group(2) @binding(25) var water_foam_sampler: sampler;
-@group(2) @binding(26) var water_foam_spread: texture_2d<f32>;
+// What water's particles splat (`water_particles.rs`) around the detail
+// eye, its texels anchored in the world: each the share of it white water
+// covers and foam covers, and how fast the waves' surface falls along x and
+// z; the squares of those falls and their product (`water_spread`); each
+// with its coarser levels; and the sampler reading them, which repeats
+// them, as their texels hold their world texels' remainders over its side.
+@group(2) @binding(24) var water_particles: texture_2d<f32>;
+@group(2) @binding(25) var water_particles_sampler: sampler;
+@group(2) @binding(26) var water_particles_spread: texture_2d<f32>;
 
 // The meters a second over which water running against what stands in it
 // tears air in, from the first to the second (Ervine, McKeogh and Elsawy
@@ -103,60 +100,59 @@ fn water_foam(fresh: f32, carried: f32) -> WaterFoam {
     return foam;
 }
 
-// The share of the surface white water hides where `layers` of it lie
-// (`water_foam_held`'s): each layer hides as often as not what the others
-// leave, as the patches the bursts lay overlap, so `layers` of them leave
-// e^−layers of it open.
+// The share of the surface white water hides where `layers` of it lie: each
+// layer hides as often as not what the others leave, so `layers` of them
+// leave e^−layers of it open.
 fn water_white(layers: f32) -> f32 {
     return 1.0 - exp(-max(layers, 0.0));
 }
 
-// The meters across the eddies of water `depth` meters deep that the
-// bursts of turbulence reaching its surface stand for
-// (`meshes/water_foam_field.wgsl`), on a field of cells `cell` meters
-// across whose bursts stand for eddies up to `largest` meters across: about
-// its depth, at least a cell, no larger than `largest`.
-fn water_eddy_size(depth: f32, cell: f32, largest: f32) -> f32 {
-    return clamp(depth, cell, largest);
+// The meters across the eddies of water `depth` meters deep that the waves
+// water's particles raise stand for (`meshes/water_particles.wgsl`), their
+// texels `texel` meters across, riding water whose cells are `largest`
+// meters across: about its depth, at least PARTICLE_SMALLEST texels and no
+// larger than those cells, whose own flow carries larger eddies; none where
+// no particles run.
+fn water_eddy_size(depth: f32, texel: f32, largest: f32) -> f32 {
+    let smallest = PARTICLE_SMALLEST * texel;
+    return clamp(depth, smallest, max(largest, smallest));
 }
 
-// What the foam field terrains' water carries shows under a pixel: the
-// white water covering it, in layers (`water_white`), and the foam it
-// carries, as a share of the surface (`foam`); how fast the disturbance
-// turbulence raises on its surface falls along x and z (`fall`, meters a
-// meter), as much of it as the field shows; the covariance of that
-// disturbance's slopes the pixel hides (`hidden`, `water_spread`); and how
-// much of the field shows (`shown`, 0 to 1), the rest the water's own
-// state's.
-struct WaterField {
+// What water's particles show under a pixel: the shares of it the white
+// water and the foam the water carries cover (`foam`); how fast the waves'
+// surface falls along x and z (`fall`, meters a meter), as much of it as
+// the particles show; the covariance of the waves' slopes the pixel hides
+// (`hidden`, `water_spread`); and how much of the particles shows (`shown`,
+// 0 to 1), the rest the water's own state's.
+struct WaterSplatted {
     foam: vec2<f32>,
     fall: vec2<f32>,
     hidden: vec3<f32>,
     shown: f32,
 }
 
-// What the foam field shows under a pixel at `world` whose footprint is
-// `footprint` (`water_footprint`), its uniform `water.foam` (the meters
-// across its cells, none where none runs; the meters its textures span,
-// which repeat; the pixels its cells span where it hands over; and the
-// meters across the largest eddies its bursts stand for): filtered over the
-// footprint by its levels, out to where its cells span water.foam.z pixels
-// seen from the detail eye, handing over to `settled`, its white water and
-// foam as the water's own state holds them (the white water born there and
-// the foam its flow churned up), the field's mean, as a pyramid's level
-// hands over to the next coarser (`detail_level`); `settled` and a
-// surface it draws nothing on past it. The slopes the footprint averages
-// hide in their covariance, the mean of their squares less their mean's
-// (LEAN mapping, Olano and Baker 2010).
-fn water_foam_held(world: vec3<f32>, footprint: WaterFootprint, settled: vec2<f32>)
-        -> WaterField {
-    var held: WaterField;
+// What water's particles show under a pixel at `world` whose footprint is
+// `footprint` (`water_footprint`), their uniform `water.foam` (the meters
+// across their texels, none where none run; the meters their textures span,
+// which repeat; the pixels their texels span where they hand over; and the
+// meters across the cells of the water they ride): filtered over the
+// footprint by their levels, out to where their texels span water.foam.z
+// pixels seen from the detail eye, handing over to `settled`, the shares
+// white water and foam cover as the water's own state holds them (the white
+// water born there and the foam its flow churned up), the particles' mean,
+// as a pyramid's level hands over to the next coarser (`detail_level`);
+// `settled` and a surface they draw nothing on past it. The slopes the
+// footprint averages hide in their covariance, the mean of their squares
+// less their mean's (LEAN mapping, Olano and Baker 2010).
+fn water_splatted(world: vec3<f32>, footprint: WaterFootprint, settled: vec2<f32>)
+        -> WaterSplatted {
+    var held: WaterSplatted;
     held.foam = settled;
-    let cell = water.foam.x;
-    if cell <= 0.0 {
+    let texel = water.foam.x;
+    if texel <= 0.0 {
         return held;
     }
-    let picked = detail_level(2.0 * water.foam.z * detail_across(world), cell, 2u);
+    let picked = detail_level(2.0 * water.foam.z * detail_across(world), texel, 2u);
     if picked.level > 0u {
         return held;
     }
@@ -164,12 +160,13 @@ fn water_foam_held(world: vec3<f32>, footprint: WaterFootprint, settled: vec2<f3
     let at = world.xz / side;
     let dx = footprint.dx / side;
     let dy = footprint.dy / side;
-    let field = textureSampleGrad(water_foam_field, water_foam_sampler, at, dx, dy);
-    let squares = textureSampleGrad(water_foam_spread, water_foam_sampler, at, dx, dy).xyz;
-    let hidden = squares - water_spread(field.zw);
-    held.foam = mix(field.xy, settled, picked.blend);
+    let splatted = textureSampleGrad(water_particles, water_particles_sampler, at, dx, dy);
+    let squares = textureSampleGrad(water_particles_spread, water_particles_sampler, at, dx,
+        dy).xyz;
+    let hidden = squares - water_spread(splatted.zw);
+    held.foam = mix(splatted.xy, settled, picked.blend);
     held.shown = 1.0 - picked.blend;
-    held.fall = field.zw * held.shown;
+    held.fall = splatted.zw * held.shown;
     held.hidden = vec3<f32>(max(hidden.xy, vec2<f32>(0.0)), hidden.z);
     return held;
 }

@@ -1928,7 +1928,7 @@
       "direction": "lower"
     },
     {
-      "name": "water.foam_cells",
+      "name": "water.foam_particles",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",
@@ -1983,6 +1983,39 @@
       "direction": null
     },
     {
+      "name": "water.particle_texels",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water.particles_born",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water.particles_dropped",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "water.refused",
       "kind": "work",
       "rule": "not-above",
@@ -1995,6 +2028,17 @@
     },
     {
       "name": "water.touches",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water.wave_particles",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",

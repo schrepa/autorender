@@ -348,10 +348,32 @@ gpu_consts! {
     /// pass takes.
     pub(crate) const WATER_SIM_SOURCE_GROUP: u32 = 64 => ["WATER_SIM_SOURCE_GROUP" in WATER_SIM_SHADER, "@sim_source" in WATER_SIM_SHADER];
 
-    // crate::water_foam_field
-    /// Cells along a side of the workgroups of foam's field's passes, and of
-    /// its lattice's points.
-    pub(crate) const FOAM_GROUP: u32 = 8 => ["FOAM_GROUP", "@foam_gather", "@foam_currents", "@foam_bursts", "@foam_step", "@foam_look", "@foam_down"];
+    // crate::water_particles
+    /// Particles and items a workgroup of water's particles' passes over
+    /// them takes, and of the scan over their groups: the most invocations a
+    /// workgroup holds on every device; and the side of a workgroup of their
+    /// passes over the lattice's points and the window's texels.
+    pub(crate) const PARTICLE_GROUP: u32 = 256 => ["PARTICLE_GROUP", "@particles_age", "@particles_sum", "@particles_scan", "@particles_place", "@particles_splat"];
+    pub(crate) const PARTICLE_SIDE: u32 = 8 => ["PARTICLE_SIDE", "@particles_gather", "@particles_currents", "@particles_births", "@particles_look", "@particles_down"];
+    /// Texels of the particles' window along a step of their lattice, where
+    /// they read the water: eight, half a meter for the cook's meter cells,
+    /// the cells those run live in.
+    pub(crate) const PARTICLE_LATTICE: u32 = 8 => ["PARTICLE_LATTICE"];
+    /// Words of the particles' counts: the foam and the wave particles the
+    /// pools hold after a frame, those born in it and those the pools had no
+    /// room for, the tallies read back; those the pools held before it; the
+    /// dispatch over the particles (three words) and over the scan's items
+    /// (three more); and the first of the items' counts.
+    pub(crate) const PARTICLE_FOAM_LIVE: u32 = 0 => ["PARTICLE_FOAM_LIVE"];
+    pub(crate) const PARTICLE_WAVES_LIVE: u32 = 1 => ["PARTICLE_WAVES_LIVE"];
+    pub(crate) const PARTICLE_FOAM_BORN: u32 = 2 => ["PARTICLE_FOAM_BORN"];
+    pub(crate) const PARTICLE_WAVES_BORN: u32 = 3 => ["PARTICLE_WAVES_BORN"];
+    pub(crate) const PARTICLE_FOAM_DROPPED: u32 = 4 => ["PARTICLE_FOAM_DROPPED"];
+    pub(crate) const PARTICLE_WAVES_DROPPED: u32 = 5 => ["PARTICLE_WAVES_DROPPED"];
+    pub(crate) const PARTICLE_FOAM_BEFORE: u32 = 6 => ["PARTICLE_FOAM_BEFORE"];
+    pub(crate) const PARTICLE_WAVES_BEFORE: u32 = 7 => ["PARTICLE_WAVES_BEFORE"];
+    pub(crate) const PARTICLE_ARGS: u32 = 8 => ["PARTICLE_ARGS"];
+    pub(crate) const PARTICLE_ITEMS: u32 = 16 => ["PARTICLE_ITEMS"];
 
     // crate::ground_cover
     /// Bytes of a blade or tuft (`CoverBlade`).
@@ -581,9 +603,9 @@ gpu_consts! {
     /// the most it reaches, 45 degrees, as sharper bends saturate (Blanckaert
     /// and de Vriend 2003); and the share of the wind's speed the wind drags
     /// it at (Wu 1975).
-    pub(crate) const SURFACE_BEND: f32 = 7.0 => ["SIM_BEND" in WATER_SIM_SHADER, "FOAM_BEND"];
-    pub(crate) const SURFACE_BEND_MOST: f32 = 1.0 => ["SIM_BEND_MOST" in WATER_SIM_SHADER, "FOAM_BEND_MOST"];
-    pub(crate) const SURFACE_WIND_DRIFT: f32 = 0.03 => ["SIM_WIND_DRIFT" in WATER_SIM_SHADER, "FOAM_WIND_DRIFT"];
+    pub(crate) const SURFACE_BEND: f32 = 7.0 => ["SIM_BEND" in WATER_SIM_SHADER, "WATER_SURFACE_BEND"];
+    pub(crate) const SURFACE_BEND_MOST: f32 = 1.0 => ["SIM_BEND_MOST" in WATER_SIM_SHADER, "WATER_SURFACE_BEND_MOST"];
+    pub(crate) const SURFACE_WIND_DRIFT: f32 = 0.03 => ["SIM_WIND_DRIFT" in WATER_SIM_SHADER, "WATER_SURFACE_DRIFT"];
 }
 
 gpu_mirrors! {

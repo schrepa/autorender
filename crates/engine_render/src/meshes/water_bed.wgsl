@@ -27,20 +27,20 @@ struct SimBed {
     cell: vec4<f32>,
 }
 
-@group(2) @binding(40) var<uniform> bed_frame: SimBed;
+@group(2) @binding(41) var<uniform> bed_frame: SimBed;
 // Each block whose bed rises: the slot of the live water's pool it stands
 // in, the cell of the terrain's lattice of live cells its first corner
 // stands at (an `i32`'s bits along x and z), and the height its heights
 // stand above (world meters, a float's bits).
-@group(2) @binding(41) var<storage, read> bed_taken: array<vec4<u32>>;
+@group(2) @binding(42) var<storage, read> bed_taken: array<vec4<u32>>;
 // The live water's ground, WATER_BED_GROUND entries a block of its pool:
 // the ground at its cells' corners over its datum (meters, BED_SIDE a row,
 // rows along z), then the level a lake holds each of its cells at
 // (WATER_BED_UNHELD where none does), then what the solve reads past them.
-@group(2) @binding(42) var<storage, read_write> bed_ground: array<f32>;
+@group(2) @binding(43) var<storage, read_write> bed_ground: array<f32>;
 // The ground each slot's block was taken with, which its bed rises from:
 // BED_KEPT entries a slot, its ground's first, its corners' and its lakes'.
-@group(2) @binding(43) var<storage, read> bed_kept: array<f32>;
+@group(2) @binding(44) var<storage, read> bed_kept: array<f32>;
 
 // Entries of a block of the live water's ground, and what a cell no lake
 // holds holds as its lake's level (`engine_terrain::BLOCK_GROUND`,
