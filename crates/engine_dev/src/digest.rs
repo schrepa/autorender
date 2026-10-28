@@ -63,12 +63,6 @@ fn assets(library: &AssetLibrary) -> Value {
                 .map(|(slot, texture)| (slot, texture_bytes(texture)))
                 .collect()
         ),
-        "clips": kind(
-            library
-                .clips()
-                .map(|(slot, clip)| (slot, without_libraries(&format!("{clip:?}"))))
-                .collect()
-        ),
     })
 }
 
@@ -90,25 +84,11 @@ fn mesh_bytes(mesh: &Mesh) -> Vec<u8> {
     for uv in mesh.uv1().into_iter().flatten() {
         floats(uv);
     }
-    for weights in mesh.weights().into_iter().flatten() {
-        floats(weights);
-    }
     let bounds = mesh.bounds();
     floats(&bounds.min().to_array());
     floats(&bounds.max().to_array());
     for index in mesh.indices() {
         bytes.extend_from_slice(&index.to_le_bytes());
-    }
-    for joints in mesh.joints().into_iter().flatten() {
-        for joint in joints {
-            bytes.extend_from_slice(&joint.to_le_bytes());
-        }
-    }
-    bytes.extend_from_slice(&mesh.joint_count().to_le_bytes());
-    if let Some(geometry) = mesh.virtual_geometry() {
-        for word in geometry.words() {
-            bytes.extend_from_slice(&word.to_le_bytes());
-        }
     }
     bytes
 }

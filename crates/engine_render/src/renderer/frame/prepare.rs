@@ -14,11 +14,6 @@ struct PostPrep {
     refraction: bool,
 }
 
-struct PresentationPrep {
-    occlusion: Option<(u32, u32, u32)>,
-    gpu_prepared: Option<GpuPrepared>,
-}
-
 impl Renderer {
     pub(super) fn plan_frame<'f>(
         &mut self,
@@ -98,10 +93,6 @@ impl Renderer {
             if self.meshes.len() != resident {
                 self.mesh_layout += 1;
             }
-            let meshes = &self.meshes;
-            self.virtual_draws
-                .pass
-                .retain(|handle| meshes.contains_key(&handle));
         }
         self.materials.retain(&self.plan, snapshot);
         drop(profile_residency);
@@ -136,10 +127,6 @@ impl Renderer {
     pub(in crate::renderer) fn forget_temporal(&mut self) {
         let current = |&(kind, _): &(PassKind, Variant)| kind.targets() != Some(Targets::Temporal);
         self.mesh_pipelines.variants.retain(|key, _| current(key));
-        self.virtual_draws.pipelines.retain(|key, _| current(key));
-        self.visibility
-            .resolve_pipelines
-            .retain(|key, _| current(key));
         self.impostors.pipelines.forget_pipelines(Targets::Temporal);
         self.mesh_pipelines
             .forget_sky(SkyTargets::Frame(Targets::Temporal));
@@ -153,8 +140,6 @@ impl Renderer {
             self.mesh_pipelines.variants.clear();
             self.structure_keys.variants = None;
             self.structure_keys.probes = None;
-            self.virtual_draws.pipelines.clear();
-            self.visibility.resolve_pipelines.clear();
             self.impostors.pipelines.forget_shading();
         }
         self.terrain.pipelines.specialize(shading);
@@ -219,20 +204,14 @@ impl Renderer {
                     .staging
                     .extend(source.vertices().iter().map(Vertex::from));
                 let extras = ExtraVertex::stream(source);
-                let skin = SkinVertex::stream(source);
                 let mut streams: Vec<&[u8]> =
                     vec![bytemuck::cast_slice(&self.mesh_uploads.staging)];
                 if let Some(extras) = &extras {
                     streams.push(bytemuck::cast_slice(extras));
                 }
-                if let Some(skin) = &skin {
-                    streams.push(bytemuck::cast_slice(skin));
-                }
                 let (indices, lods, casters) = with_levels(source, rendered.lods.as_deref());
                 let index_count = source.indices().len() as u32;
-                let without_levels = rendered.lods.is_none()
-                    && source.joint_count() == 0
-                    && source.virtual_geometry().is_none();
+                let without_levels = rendered.lods.is_none();
                 let placement = self
                     .mesh_arena
                     .insert(
@@ -257,9 +236,6 @@ impl Renderer {
                             extras: extras.as_ref().map(|stream| {
                                 buffer("engine/mesh-extras", bytemuck::cast_slice(stream), vertex)
                             }),
-                            skin: skin.as_ref().map(|stream| {
-                                buffer("engine/mesh-skin", bytemuck::cast_slice(stream), vertex)
-                            }),
                             indices: buffer(
                                 "engine/mesh-indices",
                                 bytemuck::cast_slice(&indices),
@@ -272,7 +248,6 @@ impl Renderer {
                 entry.insert(GpuMesh {
                     placement,
                     extended: extras.is_some(),
-                    skinned: skin.is_some(),
                     index_count,
                     byte_len,
                     plan: plan_levels(&lods),
@@ -281,9 +256,6 @@ impl Renderer {
                     without_levels,
                 });
                 mesh_upload_bytes += byte_len;
-                if let Some(geometry) = source.virtual_geometry() {
-                    self.virtual_draws.pass.insert(handle, geometry);
-                }
             }
         }
         if mesh_uploads {
@@ -294,11 +266,6 @@ impl Renderer {
                 self.scatter_meshes.1,
             ));
         }
-        self.virtual_draws.pass.upload(
-            &self.device,
-            &self.queue,
-            snapshot.environment.virtual_geometry.max_resident_pages,
-        );
         let shadow_materials = self
             .shadows
             .groups()
@@ -330,12 +297,8 @@ impl Renderer {
         let snapshot = frame.snapshot();
 
         let profile_packing = engine_profile::span("render", "instance_buffer_and_packing");
-        self.instances.reserve(
-            &self.device,
-            snapshot.instances.len(),
-            snapshot.joints.len(),
-            temporal,
-        );
+        self.instances
+            .reserve(&self.device, snapshot.instances.len(), temporal);
         let temporal_frame: Option<TemporalFrame> = match self.features.temporal.get_mut() {
             Some(pass) if temporal => Some(pass.begin(
                 &self.device,
@@ -482,7 +445,7 @@ impl Renderer {
             + usize::from(write_slots);
         let pose_rows: &[u8] = bytemuck::cast_slice(frame.pose_rows());
         let stride = size_of::<PoseData>();
-        let mut pose_upload_bytes: u64 = pose_ranges
+        let pose_upload_bytes: u64 = pose_ranges
             .iter()
             .map(|range| ((range.end - range.start) * stride) as u64)
             .sum();
@@ -527,18 +490,6 @@ impl Renderer {
             );
             color_upload_bytes += std::mem::size_of_val(records) as u64;
         }
-        if !gpu_mode && !snapshot.joints.is_empty() {
-            self.instances.palette_staging.clear();
-            self.instances
-                .palette_staging
-                .extend(snapshot.joints.iter().map(|joint| joint.matrix));
-            self.queue.write_buffer(
-                &self.instances.palettes[0],
-                0,
-                bytemuck::cast_slice(&self.instances.palette_staging),
-            );
-            pose_upload_bytes += std::mem::size_of_val(&self.instances.palette_staging[..]) as u64;
-        }
         if write_slots {
             self.queue.write_buffer(
                 self.instances.slots(),
@@ -570,10 +521,8 @@ impl Renderer {
         prelude: &mut Prelude,
     ) -> Features<'s> {
         let snapshot = frame.snapshot();
-        let PresentationPrep {
-            occlusion,
-            gpu_prepared,
-        } = self.prepare_presentation(frame, gpu, kind, temporal_frame, &mut prelude.inputs);
+        let gpu_prepared =
+            self.prepare_presentation(frame, gpu, kind, temporal_frame, &mut prelude.inputs);
         let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
         self.features.clouds.get_mut().prepare(
             &self.device,
@@ -608,7 +557,7 @@ impl Renderer {
         let (environment, probe_list) = self.prepare_environment(snapshot, lighting);
         prelude.environment = environment;
         if kind.debug {
-            return Features::debug(occlusion, gpu_prepared, shadow_frame, probe_list);
+            return Features::debug(gpu_prepared, shadow_frame, probe_list);
         }
         let lights = self.prepare_lights(frame, kind, temporal_frame);
         let lit = lights.is_some();
@@ -624,7 +573,6 @@ impl Renderer {
         let temporal = self.prepare_resolve(temporal_frame, transparency.is_some());
         let decals = self.prepare_decals(snapshot, temporal_frame, lit, post_frame);
         Features {
-            occlusion,
             gpu_prepared,
             shadow_frame,
             probe_list,
@@ -647,7 +595,7 @@ impl Renderer {
         kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
         input_copies: &mut Option<wgpu::CommandEncoder>,
-    ) -> PresentationPrep {
+    ) -> Option<GpuPrepared> {
         let gpu_mode = kind.gpu_mode;
         let snapshot = frame.snapshot();
 
@@ -662,40 +610,26 @@ impl Renderer {
                 .culling
                 .pyramid
                 .get_or_insert_with(|| DepthPyramid::new(device, Reduction::Farthest));
-            let levels = pyramid.prepare(device, &self.queue, &self.depth.view, region);
-            Some((region.render.width, region.render.height, levels))
+            Some(pyramid.prepare(device, &self.queue, &self.depth.view, region))
         } else {
             None
         };
-        let virtual_enabled = snapshot.environment.virtual_geometry.enabled;
-        let arena = self
-            .virtual_draws
-            .pass
-            .arena()
-            .map_or(0, |(_, generation)| generation);
-        let virtual_key = arena * 2 + u64::from(virtual_enabled);
-        let gpu_prepared = if let Some(gpu) = gpu {
+        if let Some(gpu) = gpu {
             let meshes = &self.meshes;
             let arena = &self.mesh_arena;
             let shadows = &self.shadows;
-            let virtual_meshes = &self.virtual_draws.pass;
             let impostor_records = &self.impostors.records;
             let batch_meta = |index, batch: &DrawBatch| {
                 let mesh = &snapshot.meshes[batch.source_index].mesh;
                 let gpu_mesh = &meshes[&batch.mesh];
                 let draw = gpu_mesh.draw(arena);
-                let virtual_geometry = virtual_enabled
-                    && !batch.transparent
-                    && virtual_meshes.mesh_index(batch.mesh).is_some();
-                let levels = lod_levels(batch, gpu_mesh, virtual_geometry);
+                let levels = lod_levels(batch, gpu_mesh);
                 BatchMeta {
                     index_count: draw.index_count,
                     first_index: draw.first_index,
                     base_vertex: draw.base_vertex,
                     bounds: mesh.bounds(),
                     group: shadows.batch_group(index),
-                    joints: mesh.joint_count(),
-                    virtual_geometry,
                     lods: gpu_mesh.plan[..levels - 1]
                         .iter()
                         .map(|&(offset, count, error)| (draw.first_index + offset, count, error))
@@ -707,7 +641,7 @@ impl Renderer {
             };
             let records = RecordsKey {
                 shadow_groups: !shadows.groups().is_empty(),
-                meshes: virtual_key ^ (self.mesh_layout << 32),
+                meshes: self.mesh_layout,
                 impostors: if snapshot.environment.level_of_detail.impostors {
                     self.impostors.atlas.generation() + 1
                 } else {
@@ -723,7 +657,7 @@ impl Renderer {
                 motion: temporal_frame
                     .as_ref()
                     .is_some_and(|temporal| temporal.motion_valid),
-                occlusion: occlusion.map(|(_, _, levels)| levels),
+                occlusion,
                 subpixel: snapshot.environment.subpixel_culling.enabled,
                 lod_error: if snapshot.environment.level_of_detail.enabled {
                     snapshot.environment.level_of_detail.pixel_error * region.share()[1]
@@ -758,10 +692,6 @@ impl Renderer {
             ))
         } else {
             None
-        };
-        PresentationPrep {
-            occlusion,
-            gpu_prepared,
         }
     }
 
@@ -786,7 +716,7 @@ impl Renderer {
                 },
                 |mesh| {
                     let draw = mesh.draw(arena);
-                    let lods = if mesh.skinned || !snapshot.environment.level_of_detail.enabled {
+                    let lods = if !snapshot.environment.level_of_detail.enabled {
                         Vec::new()
                     } else {
                         mesh.lods
@@ -1193,50 +1123,11 @@ impl Renderer {
         }
     }
 
-    pub(super) fn prepare_virtual_frame(
-        &mut self,
-        snapshot: &RenderSnapshot,
-        kind: FrameKind,
-        temporal_frame: &Option<TemporalFrame>,
-        occlusion: Option<(u32, u32, u32)>,
-        opaque_kind: PassKind,
-    ) -> (bool, bool) {
-        let FrameKind {
-            gpu_mode,
-            instance_count,
-            ..
-        } = kind;
-
-        let odd = temporal_frame
-            .as_ref()
-            .is_some_and(|frame| frame.parity == 1);
-        let rasterized = temporal_frame
-            .as_ref()
-            .map_or(snapshot.view_projection, |temporal| temporal.rasterized);
-        let virtual_frame = self.prepare_virtual(
-            snapshot,
-            gpu_mode,
-            odd,
-            (rasterized, occlusion.map(|(_, _, levels)| levels)),
-        );
-        if virtual_frame {
-            self.ensure_virtual_pipelines(opaque_kind);
-            self.ensure_virtual_pose_groups();
-        }
-        let resolving =
-            virtual_frame && instance_count > 0 && self.prepare_visibility(snapshot, opaque_kind);
-        if resolving {
-            self.ensure_visibility_pipelines(opaque_kind);
-            self.ensure_visibility_groups();
-        }
-        (virtual_frame, resolving)
-    }
-
     pub(super) fn frame_shape(
         &self,
         kind: FrameKind,
         (packing, features, passes): (&Packing, &Features<'_>, &Passes),
-        (virtual_frame, resolving, scatter, terrain): (bool, bool, bool, bool),
+        (scatter, terrain): (bool, bool),
     ) -> FrameShape {
         let post = features.post_frame();
         let targets = self.frame_targets(kind, &packing.temporal_frame, post);
@@ -1256,12 +1147,6 @@ impl Renderer {
             subdivision: terrain && self.terrain.subdivides(),
             deferred: self.terrain_deferred(terrain, passes.opaque_kind),
             scatter,
-            clusters: virtual_frame,
-            shadow_clusters: virtual_frame && !self.virtual_draws.shadow_bins.is_empty(),
-            resolves: [
-                resolving,
-                resolving && phases == 2 && self.virtual_draws.phase_two.is_some(),
-            ],
             lights: features.light_frame().is_some(),
             refraction: features.refraction && post.is_some(),
             effects: post.unwrap_or_default(),
@@ -1298,7 +1183,6 @@ impl Renderer {
                 &self.device,
                 both,
                 &poses.colors.bound(),
-                poses.palettes.map(|palette| palette.bound()),
                 &Bound::fixed(self.instances.grounds().as_entire_binding()),
             );
         }

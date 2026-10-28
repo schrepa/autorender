@@ -7,8 +7,8 @@ use std::{
 
 use super::casters::CasterGroups;
 use super::pipelines::ShadowPipelines;
-use super::{GROUP, MAPS, MOVING_MAP, Presented, SKINNED_GROUP, ShadowFrame, Source};
-use crate::bindings::{SHADOW_SELECT, SHADOW_SKINNED};
+use super::{GROUP, MAPS, MOVING_MAP, Presented, ShadowFrame, Source};
+use crate::bindings::SHADOW_SELECT;
 use crate::buffers::{ReadbackRing, entry};
 use crate::cached::Cached;
 use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES};
@@ -81,7 +81,6 @@ pub(super) struct Selection {
     generation: u64,
     select_groups: [Cached<SelectKey, wgpu::BindGroup>; 2],
     select_parity: usize,
-    skinned_group: Cached<(u64, u64, u64), wgpu::BindGroup>,
     readbacks: ReadbackRing<u64>,
     read_back: Rc<RefCell<MasksRead>>,
     casters: Rc<Cell<Option<[u32; 3]>>>,
@@ -115,15 +114,10 @@ impl Selection {
             generation: 0,
             select_groups: Default::default(),
             select_parity: 0,
-            skinned_group: Cached::default(),
             readbacks: ReadbackRing::new("engine/shadow-counters-readback"),
             read_back: Rc::new(RefCell::new(MasksRead::default())),
             casters: Rc::new(Cell::new(None)),
         }
-    }
-
-    pub(super) fn generation(&self) -> u64 {
-        self.generation
     }
 
     pub(super) fn capacity_bytes(&self) -> u64 {
@@ -309,7 +303,6 @@ impl Selection {
         }
     }
 
-    #[expect(clippy::too_many_arguments, reason = "a frame's disjoint inputs")]
     pub(super) fn bind(
         &mut self,
         device: &wgpu::Device,
@@ -317,7 +310,6 @@ impl Selection {
         source: Source,
         presented: Option<&Presented<'_>>,
         poses: &FramePoses<'_>,
-        skinned: u32,
         (tiles, tiles_key): (&wgpu::TextureView, u64),
     ) {
         let key = SelectKey {
@@ -357,29 +349,6 @@ impl Selection {
             );
             self.select_groups[poses.parity].set(key, group);
         }
-        if let Some(presented) = presented.filter(|_| skinned != 0) {
-            let key = (self.generation, presented.generation, tiles_key);
-            if self.skinned_group.stale(&key) {
-                let group = crate::pipelines::group(
-                    device,
-                    "engine/shadow-skinned-group",
-                    &SHADOW_SKINNED,
-                    &pipelines.skinned_layout,
-                    &[
-                        entry("cull", &pipelines.cull),
-                        entry("batches", presented.batches),
-                        entry("flags", presented.flags),
-                        entry("ids", &self.ids),
-                        entry("args", &self.args),
-                        entry("counters", &self.counters),
-                        entry("skinned", presented.skinned),
-                        entry("skin_bounds", presented.skin_bounds),
-                        ("tile_slots", crate::pipelines::view(tiles)),
-                    ],
-                );
-                self.skinned_group.set(key, group);
-            }
-        }
     }
 
     pub(super) fn encode(
@@ -408,14 +377,6 @@ impl Selection {
             pass.set_pipeline(&pipelines.select);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(frame.candidates.div_ceil(GROUP), 1, 1);
-            if frame.skinned != 0
-                && let Some(skinned) = self.skinned_group.get()
-            {
-                pass.set_pipeline(&pipelines.select_skinned);
-                pass.set_bind_group(0, skinned, &[]);
-                pass.dispatch_workgroups(frame.skinned.div_ceil(SKINNED_GROUP), 1, 1);
-                pass.set_bind_group(0, group, &[]);
-            }
             pass.set_pipeline(&pipelines.count);
             pass.dispatch_workgroups(1, 1, 1);
         }

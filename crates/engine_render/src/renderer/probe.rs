@@ -3,9 +3,9 @@ use super::*;
 use crate::gpu_layouts::constants::{
     DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
     DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SEA, DEBUG_KIND_SKY,
-    DEBUG_KIND_TERRAIN, DEBUG_KIND_VIRTUAL, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL,
-    DEBUG_PATCH_SHIFT, DEBUG_SHADOWED, DEBUG_SOURCE_SHIFT, DEBUG_SPAN_STEPS, DEBUG_SUN_BEYOND,
-    DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL, WATER_SPAN_LEAST, WATER_SPAN_MOST,
+    DEBUG_KIND_TERRAIN, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL, DEBUG_PATCH_SHIFT,
+    DEBUG_SHADOWED, DEBUG_SOURCE_SHIFT, DEBUG_SPAN_STEPS, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON,
+    DEBUG_SUN_LEVEL, WATER_SPAN_LEAST, WATER_SPAN_MOST,
 };
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::max;
@@ -292,7 +292,6 @@ fn drawn_kind(kind: u32) -> Option<DrawnKind> {
         DEBUG_KIND_PLACED => DrawnKind::Placed,
         DEBUG_KIND_CARD => DrawnKind::Card,
         DEBUG_KIND_PLACED_CARD => DrawnKind::PlacedCard,
-        DEBUG_KIND_VIRTUAL => DrawnKind::Virtual,
         DEBUG_KIND_TERRAIN => DrawnKind::Ground,
         DEBUG_KIND_COVER => DrawnKind::Blades,
         DEBUG_KIND_WATER => DrawnKind::Lakes,
@@ -412,18 +411,9 @@ impl Armed {
         };
         let with_object = matches!(
             kind,
-            Some(
-                DrawnKind::Mesh
-                    | DrawnKind::Placed
-                    | DrawnKind::Card
-                    | DrawnKind::PlacedCard
-                    | DrawnKind::Virtual
-            )
+            Some(DrawnKind::Mesh | DrawnKind::Placed | DrawnKind::Card | DrawnKind::PlacedCard)
         );
-        let with_detail = matches!(
-            kind,
-            Some(DrawnKind::Card | DrawnKind::PlacedCard | DrawnKind::Virtual)
-        );
+        let with_detail = matches!(kind, Some(DrawnKind::Card | DrawnKind::PlacedCard));
         PixelProbe {
             pixel: [self.pixel.0, self.pixel.1],
             kind,

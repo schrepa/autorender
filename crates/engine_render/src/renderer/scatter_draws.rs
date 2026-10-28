@@ -273,7 +273,6 @@ impl Renderer {
             let eligible = enabled
                 && group.part.is_none()
                 && !group.source.is_transparent()
-                && mesh.is_some_and(|mesh| !mesh.skinned)
                 && asset.is_some_and(|asset| {
                     asset.mesh.mesh.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES
                 });
@@ -306,7 +305,7 @@ impl Renderer {
                             draw: mesh.draw(&self.mesh_arena),
                             extended: mesh.extended,
                             group: bind_group,
-                            variant: variant.with_extended(mesh.extended).with_skinned(false),
+                            variant: variant.with_extended(mesh.extended),
                             bounds: (low, high),
                             material: Some(group.source),
                             parts,
@@ -515,9 +514,6 @@ impl Renderer {
 
     fn scatter_levels(&self, asset: &engine_core::RenderPlacementAsset) -> Option<Levels> {
         let mesh = self.meshes.get(&asset.mesh.handle)?;
-        if mesh.skinned {
-            return None;
-        }
         let draw = mesh.draw(&self.mesh_arena);
         let level = |mesh: &GpuMesh, draw: &MeshDraw<'_>, level: usize, own: (u32, u32)| {
             let (first, count) = mesh.caster_range(level, own);
@@ -549,7 +545,7 @@ impl Renderer {
             let Some(coarser) = self.meshes.get(&lod.handle) else {
                 break;
             };
-            if coarser.extended != mesh.extended || coarser.skinned {
+            if coarser.extended != mesh.extended {
                 break;
             }
             let coarse = coarser.draw(&self.mesh_arena);
@@ -569,16 +565,13 @@ impl Renderer {
         levels: usize,
     ) -> Option<PartLevels> {
         let first = self.meshes.get(&part.meshes.first()?.handle)?;
-        if first.skinned {
-            return None;
-        }
         let mut ranges = Vec::new();
         let mut meshes = Vec::new();
         for rendered in part.meshes.iter().take(levels) {
             let Some(mesh) = self.meshes.get(&rendered.handle) else {
                 break;
             };
-            if mesh.extended != first.extended || mesh.skinned {
+            if mesh.extended != first.extended {
                 break;
             }
             let draw = mesh.draw(&self.mesh_arena);
@@ -590,9 +583,6 @@ impl Renderer {
 
     fn proxy_caster(&self, proxy: &engine_core::RenderMesh) -> Option<(u32, u32, i32)> {
         let mesh = self.meshes.get(&proxy.handle)?;
-        if mesh.skinned {
-            return None;
-        }
         let draw = mesh.draw(&self.mesh_arena);
         let (first, count) = mesh.caster_range(0, (0, draw.index_count));
         Some((count, draw.first_index + first, draw.base_vertex))
@@ -603,7 +593,6 @@ impl Renderer {
         let (group, variant) = self.materials.binding(Some(draw.material));
         let variant = variant
             .with_extended(mesh.is_some_and(|mesh| mesh.extended))
-            .with_skinned(false)
             .with_grounding(draw.source.grounding().is_some());
         (group, variant)
     }
@@ -693,7 +682,7 @@ impl Renderer {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         map: usize,
-        casters: &[wgpu::RenderPipeline; 4],
+        casters: &[wgpu::RenderPipeline; 2],
         cards: Option<&wgpu::RenderPipeline>,
     ) -> u32 {
         let (Some(view), Some(poses)) = (
@@ -842,7 +831,7 @@ fn bake_parts<'a>(
             draw: mesh.draw(arena),
             extended: mesh.extended,
             group,
-            variant: variant.with_extended(mesh.extended).with_skinned(false),
+            variant: variant.with_extended(mesh.extended),
         });
     }
     (parts, content, (low, high))

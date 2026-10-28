@@ -18,7 +18,6 @@ shaders! {
         "meshes/vertex.wgsl",
         "meshes/shading.wgsl",
         "meshes/forward.wgsl",
-        "meshes/resolve.wgsl",
         "sky_common.wgsl",
         "sky_light.wgsl",
         "meshes/sky.wgsl",
@@ -105,13 +104,6 @@ shaders! {
     ];
     DEPTH_PYRAMID_SHADER = [
         "depth_pyramid.wgsl",
-    ];
-    VIRTUAL_SHADER = [
-        "screen_cull.wgsl",
-        "virtual_geometry.wgsl",
-    ];
-    VISIBILITY_SHADER = [
-        "visibility.wgsl",
     ];
     TEMPORAL_SHADER = [
         "color.wgsl",
@@ -246,24 +238,20 @@ macro_rules! entry_points {
 entry_points! {
     meshes = SHADER {
         vertex: [
-            vs_virtual, vs_virtual_temporal, vs_visibility, vs_affine, vs_affine_temporal,
-            vs_affine_extended, vs_affine_temporal_extended, vs_affine_skinned,
-            vs_affine_temporal_skinned, vs_resolve, vs_sky, vs_decal, vs_impostor_bake,
-            vs_impostor_bake_extended, vs_impostor, vs_impostor_temporal, vs_terrain,
-            vs_terrain_temporal, vs_fullscreen, vs_cover,
+            vs_affine, vs_affine_temporal, vs_affine_extended, vs_affine_temporal_extended,
+            vs_sky, vs_decal, vs_impostor_bake, vs_impostor_bake_extended, vs_impostor,
+            vs_impostor_temporal, vs_terrain, vs_terrain_temporal, vs_fullscreen, vs_cover,
             vs_cover_temporal, vs_water, vs_foam, vs_ocean,
             vs_ocean_temporal, vs_fall, vs_fall_temporal,
-            vs_debug_affine, vs_debug_affine_extended, vs_debug_affine_skinned, vs_debug_virtual,
-            vs_debug_impostor
+            vs_debug_affine, vs_debug_affine_extended, vs_debug_impostor
         ],
         fragment: [
-            fs_visibility, fs_main, fs_main_lit, fs_post, fs_post_lit, fs_temporal, fs_temporal_lit,
+            fs_main, fs_main_lit, fs_post, fs_post_lit, fs_temporal, fs_temporal_lit,
             fs_transparent, fs_transparent_lit, fs_probe, fs_probe_lit, fs_main_extended,
             fs_main_lit_extended, fs_probe_extended, fs_probe_lit_extended, fs_post_extended,
             fs_post_lit_extended, fs_temporal_extended, fs_temporal_lit_extended,
             fs_transparent_extended, fs_transparent_lit_extended, fs_masked_depth,
-            fs_masked_depth_extended, fs_masked_depth_temporal_extended, fs_resolve, fs_resolve_lit,
-            fs_resolve_post, fs_resolve_post_lit, fs_resolve_temporal, fs_resolve_temporal_lit,
+            fs_masked_depth_extended, fs_masked_depth_temporal_extended,
             fs_sky, fs_probe_sky, fs_view_clouds, fs_view_clouds_post, fs_sky_post, fs_sky_temporal,
             fs_decal, fs_decal_lit, fs_impostor_shade, fs_impostor_shade_extended, fs_impostor_bake,
             fs_impostor_bake_extended, fs_impostor, fs_impostor_lit, fs_impostor_post,
@@ -343,21 +331,11 @@ entry_points! {
     presentation = PRESENTATION_SHADER {
         compute: [
             shift_previous, compose_parents, cull, fade_levels, occlusion_test, count_still,
-            probe_cull, skin_palette, skin_bounds_pass, sum_groups, scan_groups, batch_args, scatter
+            probe_cull, sum_groups, scan_groups, batch_args, scatter
         ],
     }
     depth_pyramid = DEPTH_PYRAMID_SHADER {
         compute: [pyramid_first, pyramid_down, pyramid_first_nearest, pyramid_down_nearest],
-    }
-    virtual_geometry = VIRTUAL_SHADER {
-        vertex: [vs_shadow],
-        compute: [
-            seed, level_args_even, level_args_odd, traverse_even, traverse_odd, work_args,
-            select_clusters, retest_args, retest_clusters, bin_args
-        ],
-    }
-    visibility = VISIBILITY_SHADER {
-        compute: [classify_tiles, resolve_args],
     }
     temporal = TEMPORAL_SHADER {
         vertex: [vs_fullscreen],
@@ -384,12 +362,11 @@ entry_points! {
     }
     shadow = SHADOW_SHADER {
         vertex: [
-            vs_affine, vs_affine_masked, vs_affine_skinned, vs_affine_masked_skinned,
-            vs_impostor_card, vs_compose, vs_moving, vs_moving_masked, vs_moving_skinned,
-            vs_moving_masked_skinned, vs_clear_moving
+            vs_affine, vs_affine_masked, vs_impostor_card, vs_compose, vs_moving, vs_moving_masked,
+            vs_clear_moving
         ],
         fragment: [fs_impostor_card, fs_masked, fs_compose, fs_moving, fs_moving_masked],
-        compute: [select_skinned, select_casters, count_casters],
+        compute: [select_casters, count_casters],
     }
     shadow_marks = SHADOW_MARKS_SHADER {
         compute: [mark_shadow_tiles],

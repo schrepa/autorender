@@ -46,7 +46,6 @@ mod statistics;
 mod tables;
 mod ticks;
 mod transform_edits;
-mod virtual_geometry;
 mod water;
 mod windows;
 
@@ -66,14 +65,6 @@ pub use engine_assets::{
     MaterialHandle, Mesh, MeshHandle, MeshLods, MeshVertex, Sampler, Surface, Texture,
     TextureFormat, TextureHandle, TextureRef, TopLayer, Transmission, UvTransform, Wrap, lod_input,
     trim_cards,
-};
-pub use engine_assets::{
-    AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, ClipHandle,
-    KeyInterpolation, Keyframes,
-};
-pub use engine_assets::{
-    CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, DEFAULT_FALLBACK_TRIANGLES, GROUP_WORDS,
-    NODE_WORDS, PAGE_WORDS, VIRTUAL_MESH_MAGIC, VirtualMesh,
 };
 pub use engine_settings::ErrorCode;
 pub use engine_tables as table_data;
@@ -114,7 +105,6 @@ pub use spline_mesh::*;
 pub use statistics::{Distribution, median};
 pub use tables::*;
 pub use transform_edits::*;
-pub use virtual_geometry::*;
 pub use water::{WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource, WaterSources};
 pub use windows::*;
 

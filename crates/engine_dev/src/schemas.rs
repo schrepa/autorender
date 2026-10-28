@@ -408,8 +408,6 @@ const AUTHORED: &[(&str, &str)] = &[
     ("material", "Mesh3d.material"),
     ("parent", "Hierarchy.authored_parent"),
     ("prefab", "Hierarchy.prefab_id"),
-    ("animation", "AnimationPlayer"),
-    ("skin", "Skin.skin"),
     ("transform", "Transform"),
 ];
 
@@ -424,15 +422,12 @@ const DOCUMENT: &[(&str, &str)] = &[
     ("meshes", "Mesh3d.mesh"),
     ("materials", "Mesh3d.material"),
     ("textures", "Mesh3d.textures"),
-    ("skins", "Skin"),
-    ("animations", "AnimationPlayer.clip"),
 ];
 
 const RENAMED: &[(&str, &str)] = &[
     ("SceneTransform.rotation_degrees", "rotation"),
     ("SceneCamera.fov_degrees", "vertical_fov_radians"),
     ("SceneTexture.rgba8", "inline"),
-    ("SceneSkin.id", "skin"),
 ];
 
 fn authored_parity(scene: &Value, schemas: &Value, problems: &mut Vec<String>) {

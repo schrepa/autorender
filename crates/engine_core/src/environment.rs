@@ -37,7 +37,6 @@ macro_rules! environment_sections {
             refraction: Refraction { opt_in: true, feature: Core },
             decals: DecalSettings { opt_in: false, feature: Core },
             reflection_probes: ReflectionProbeSettings { opt_in: false, feature: Core },
-            virtual_geometry: VirtualGeometry { opt_in: false, feature: Core },
             level_of_detail: LevelOfDetail { opt_in: false, feature: Core },
             terrain: TerrainSettings { opt_in: false, feature: Terrain },
             ground_cover: GroundCover { opt_in: false, feature: Terrain },

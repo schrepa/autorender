@@ -36,7 +36,6 @@ pub mod shaders;
 mod shadow_fit;
 mod sky;
 mod uploads;
-mod virtual_streaming;
 
 mod buffers;
 mod environment;
@@ -65,8 +64,6 @@ mod terrain_macro;
 mod terrain_maps;
 mod terrain_sky;
 mod transparent;
-mod virtual_geometry;
-mod visibility;
 mod water;
 mod water_falls;
 mod water_kernels;

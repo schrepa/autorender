@@ -28,10 +28,8 @@ use crate::shadow_fit::{ClipPlan, ClipSettings, ClipStats, Clipmap, LightBasis, 
 use crate::gpu_layouts::constants::MOVING_MAP;
 use crate::gpu_layouts::constants::SHADOW_GROUP as GROUP;
 use crate::gpu_layouts::constants::SHADOW_REGIONS;
-use crate::gpu_layouts::constants::SHADOW_SKINNED_GROUP as SKINNED_GROUP;
 use crate::gpu_layouts::constants::SKY_MAP;
 use crate::gpu_layouts::constants::SKY_REFRESH;
-pub(crate) use crate::gpu_layouts::constants::VIRTUAL_SHADOW_PLANES;
 use casters::CasterGroups;
 pub(crate) use casters::ShadowGroup;
 pub(crate) use maps::SHADOW_FORMAT;
@@ -50,15 +48,6 @@ const COMPOSE_VIEW: u64 = MOVING_VIEW + VIEW_STRIDE;
 const SKY_VIEW: u64 = COMPOSE_VIEW + VIEW_STRIDE;
 const VIEWS_BYTES: u64 = SKY_VIEW + VIEW_STRIDE;
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct VirtualShadowView {
-    pub map: usize,
-    pub planes: [[f32; 4]; VIRTUAL_SHADOW_PLANES],
-    pub direction: Vec3,
-    pub view_offset: u32,
-    pub error: f32,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Source {
     Presented,
@@ -70,9 +59,6 @@ pub(crate) struct Presented<'a> {
     pub batches: &'a wgpu::Buffer,
     pub flags: &'a wgpu::Buffer,
     pub count: u32,
-    pub skinned: &'a wgpu::Buffer,
-    pub skin_bounds: &'a wgpu::Buffer,
-    pub skinned_count: u32,
     pub generation: u64,
 }
 
@@ -116,7 +102,7 @@ pub(crate) struct ShadowInputs<'a> {
 pub(crate) type ScatterDraw<'a> = dyn Fn(
         &mut wgpu::RenderPass<'_>,
         usize,
-        &[wgpu::RenderPipeline; 4],
+        &[wgpu::RenderPipeline; 2],
         Option<&wgpu::RenderPipeline>,
     ) -> u32
     + 'a;
@@ -128,9 +114,8 @@ pub(crate) struct KeptRefresh {
 }
 
 pub(crate) struct MapSources<'a> {
-    pub meshes: &'a dyn Fn(MeshHandle) -> Option<(MeshDraw<'a>, bool)>,
+    pub meshes: &'a dyn Fn(MeshHandle) -> Option<MeshDraw<'a>>,
     pub materials: &'a dyn Fn(MaterialHandle) -> Option<&'a wgpu::BindGroup>,
-    pub virtual_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
     pub terrain_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
     pub scatter_draw: &'a ScatterDraw<'a>,
 }
@@ -140,20 +125,13 @@ enum Casters {
     Terrain,
     Scatter,
     Meshes,
-    Virtual,
 }
 
-const CASTERS: [Casters; 4] = [
-    Casters::Terrain,
-    Casters::Scatter,
-    Casters::Meshes,
-    Casters::Virtual,
-];
+const CASTERS: [Casters; 3] = [Casters::Terrain, Casters::Scatter, Casters::Meshes];
 
 struct Caster<'m> {
     choice: usize,
     draw: MeshDraw<'m>,
-    skin: Option<&'m wgpu::Buffer>,
     material: Option<&'m wgpu::BindGroup>,
     index: usize,
 }
@@ -165,7 +143,6 @@ fn recycle<T, U>(mut storage: Vec<T>) -> Vec<U> {
 
 pub(crate) struct ShadowFrame {
     candidates: u32,
-    skinned: u32,
     regions: u32,
     composes: u32,
     moving: u32,
@@ -191,9 +168,8 @@ pub(crate) struct ShadowPass {
     casters: CasterGroups,
     selection: Selection,
     marks: Marks,
-    pose_groups: [GroupCache<4>; 2],
-    compose_groups: [GroupCache<4>; 2],
-    virtual_views: Vec<VirtualShadowView>,
+    pose_groups: [GroupCache<3>; 2],
+    compose_groups: [GroupCache<3>; 2],
     groups_generation: u64,
     caster_draws: Vec<CasterDraw>,
     draws_key: Option<(u64, u64, bool)>,
@@ -226,7 +202,6 @@ impl ShadowPass {
             marks: Marks::new(device),
             pose_groups: Default::default(),
             compose_groups: Default::default(),
-            virtual_views: Vec::new(),
             groups_generation: 0,
             caster_draws: Vec::new(),
             draws_key: None,
@@ -271,10 +246,6 @@ impl ShadowPass {
         self.casters.batch_group(index)
     }
 
-    pub(crate) fn virtual_views(&self) -> &[VirtualShadowView] {
-        &self.virtual_views
-    }
-
     pub(crate) fn region_views(&self) -> &[(usize, KeptRefresh)] {
         &self.region_views
     }
@@ -297,21 +268,6 @@ impl ShadowPass {
                 self.clipmap.dirty_level_box(index, min, max);
             }
         }
-    }
-
-    pub(crate) fn caster_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u32, u64) {
-        (
-            &self.selection.ids,
-            &self.selection.args,
-            self.selection.id_capacity as u32,
-            self.selection.generation(),
-        )
-    }
-
-    pub(crate) fn view_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.pipelines
-            .as_ref()
-            .map(|pipelines| &pipelines.view_buffer)
     }
 
     pub(crate) fn caster_counts(&self) -> Option<[u32; 3]> {
@@ -353,7 +309,6 @@ impl ShadowPass {
             poses,
             ..
         } = inputs;
-        self.virtual_views.clear();
         self.region_views.clear();
         let settings = snapshot.environment.shadows.sanitized();
         if !settings.enabled || (self.casters.groups().is_empty() && !inputs.terrain) {
@@ -455,14 +410,6 @@ impl ShadowPass {
             |index, level| draws[index].range(level),
             inputs.mesh_layout,
         );
-        if self
-            .casters
-            .groups()
-            .iter()
-            .any(|group| group.virtual_geometry)
-        {
-            frame_regions.virtual_views(&mut self.virtual_views);
-        }
         let pipelines = self.pipelines.as_ref().expect("created above");
         let wind = snapshot.environment.wind;
         let gusting = [
@@ -492,15 +439,14 @@ impl ShadowPass {
             self.compose_buffer.grow(device, bytes.len() as u64);
             queue.write_buffer(&self.compose_buffer, 0, bytes);
         }
-        let (candidates, skinned) = match (presented, source) {
-            (Some(presented), Source::Presented) => (presented.count, presented.skinned_count),
-            (_, Source::Listed) => (self.casters.listed.len() as u32, 0),
-            _ => (0, 0),
+        let candidates = match (presented, source) {
+            (Some(presented), Source::Presented) => presented.count,
+            (_, Source::Listed) => self.casters.listed.len() as u32,
+            _ => 0,
         };
         let mut cull = frame_regions.selection(
             &SelectionCounts {
                 candidates,
-                skinned,
                 groups: self.casters.groups().len() as u32,
                 capacity: self.selection.id_capacity as u32,
                 classify,
@@ -556,13 +502,11 @@ impl ShadowPass {
             source,
             presented.as_ref(),
             poses,
-            skinned,
             self.maps.table(),
         );
         self.bind_poses(device, poses);
         Some(ShadowFrame {
             candidates,
-            skinned,
             regions: self.plan.regions.len() as u32,
             composes: self.plan.composes.len() as u32,
             moving: self.plan.moving.len() as u32,
@@ -587,7 +531,6 @@ impl ShadowPass {
                 [
                     ("slot_poses", buffer.clone()),
                     ("slot_colors", poses.colors.bound()),
-                    ("slot_palette", poses.palettes[parity].bound()),
                     ("shadow_regions", regions),
                 ]
             };
@@ -694,7 +637,6 @@ impl ShadowPass {
         let MapSources {
             meshes,
             materials,
-            virtual_draw,
             terrain_draw,
             scatter_draw,
         } = sources;
@@ -710,29 +652,20 @@ impl ShadowPass {
         let compose_group = self.compose_groups[frame.pose_index].get();
         let mut casters: Vec<Caster<'_>> = recycle(self.caster_storage.take());
         if pose_group.is_some() {
-            casters.extend(
-                groups
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, group)| !group.virtual_geometry)
-                    .filter_map(|(index, group)| {
-                        let (draw, skinned) = meshes(group.mesh)?;
-                        let material = match group.material.map(materials) {
-                            Some(None) => return None,
-                            Some(Some(material)) => Some(material),
-                            None => None,
-                        };
-                        let skin = draw.skin.filter(|_| skinned);
-                        Some(Caster {
-                            choice: usize::from(material.is_some())
-                                + 2 * usize::from(skin.is_some()),
-                            draw,
-                            skin,
-                            material,
-                            index,
-                        })
-                    }),
-            );
+            casters.extend(groups.iter().enumerate().filter_map(|(index, group)| {
+                let draw = meshes(group.mesh)?;
+                let material = match group.material.map(materials) {
+                    Some(None) => return None,
+                    Some(Some(material)) => Some(material),
+                    None => None,
+                };
+                Some(Caster {
+                    choice: usize::from(material.is_some()),
+                    draw,
+                    material,
+                    index,
+                })
+            }));
         }
         casters.sort_unstable_by_key(|caster| {
             (
@@ -745,7 +678,7 @@ impl ShadowPass {
             )
         });
         let draw_meshes =
-            |pass: &mut wgpu::RenderPass<'_>, map: usize, set: &[wgpu::RenderPipeline; 4]| {
+            |pass: &mut wgpu::RenderPass<'_>, map: usize, set: &[wgpu::RenderPipeline; 2]| {
                 let Some(pose_group) = pose_group else {
                     return;
                 };
@@ -761,9 +694,6 @@ impl ShadowPass {
                     }
                     if let Some(material) = caster.material {
                         bindings.group(pass, 2, material);
-                    }
-                    if let Some(skin) = caster.skin {
-                        bindings.vertex(pass, 2, skin);
                     }
                     bindings.vertex(pass, 0, caster.draw.vertices);
                     bindings.index(pass, caster.draw.indices);
@@ -796,11 +726,6 @@ impl ShadowPass {
                             ),
                     ),
                     Casters::Meshes => draw_meshes(pass, map, &pipelines.casters),
-                    Casters::Virtual => {
-                        if pose_group.is_some() {
-                            draws.set(draws.get() + virtual_draw(pass, map));
-                        }
-                    }
                 }
             }
         };

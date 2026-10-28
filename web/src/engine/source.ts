@@ -34,8 +34,8 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
 }
 
 interface SceneLoad<Files> {
-  take_reads(): { uri: string; prefix?: number }[];
-  read(uri: string, bytes: Uint8Array, url: string): string | undefined;
+  take_reads(): { uri: string }[];
+  read(uri: string, bytes: Uint8Array): string | undefined;
   image(uri: string, width: number, height: number, pixels: Uint8Array): void;
   decode(uri: string, bytes: Uint8Array): void;
   compressed_image(uri: string, format: string, width: number, height: number, data: Uint8Array, levels: Uint32Array): void;
@@ -51,10 +51,10 @@ export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bi
   const load = new bindings.SceneLoad(source);
   const base = new URL(sceneUrl, location.href);
   const pool = jobPool();
-  const file = async ({ uri, prefix }: { uri: string; prefix?: number }) => {
+  const file = async ({ uri }: { uri: string }) => {
     const url = new URL(uri, base).href;
-    const bytes = await fetchBytes(url, prefix, signal);
-    const decoder = load.read(uri, bytes, url);
+    const bytes = await fetchBytes(url, signal);
+    const decoder = load.read(uri, bytes);
     if (decoder === "engine") {
       const image = pool && await pool.decodeImage(uri, bytes.slice()).catch(() => undefined);
       if (image) load.image(uri, image.width, image.height, image.pixels);
@@ -76,9 +76,8 @@ export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bi
   }
 }
 
-export async function fetchBytes(url: string, prefix: number | undefined, signal?: AbortSignal): Promise<Uint8Array> {
-  const headers: HeadersInit = prefix === undefined ? {} : { Range: `bytes=0-${prefix - 1}` };
-  const response = await fetch(url, { headers, cache: "no-store", signal });
+export async function fetchBytes(url: string, signal?: AbortSignal): Promise<Uint8Array> {
+  const response = await fetch(url, { cache: "no-store", signal });
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
     throw new Error(`Scene file ${url} fetch failed: HTTP ${response.status}`);

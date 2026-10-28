@@ -14,16 +14,13 @@ pub(super) struct Instances {
     colors: Versioned<wgpu::Buffer>,
     pub(super) color_staging: Vec<ColorData>,
     pub(super) pose_layout: crate::pipelines::GroupLayout,
-    pose_groups: [GroupCache<4>; 2],
+    pose_groups: [GroupCache<3>; 2],
     grounds: wgpu::Buffer,
     alternate: Versioned<Option<wgpu::Buffer>>,
     slots: Option<wgpu::Buffer>,
     pub(super) slot_capacity: usize,
     pub(super) slot_staging: Vec<u32>,
     pub(super) slot_revision: Option<(u64, u64)>,
-    pub(super) palettes: [Versioned<wgpu::Buffer>; 2],
-    palette_capacity: usize,
-    pub(super) palette_staging: Vec<engine_core::PoseRows>,
     pub(super) retained_uploads: RetainedUploads,
     pub(super) pose_uploads: StagingRing,
 }
@@ -53,9 +50,6 @@ impl Instances {
             slot_capacity: 0,
             slot_staging: Vec::new(),
             slot_revision: None,
-            palettes: [0, 1].map(|_| storage(1, size_of::<PoseData>())),
-            palette_capacity: 1,
-            palette_staging: Vec::new(),
             retained_uploads: RetainedUploads::default(),
             pose_uploads: StagingRing::default(),
         };
@@ -63,13 +57,7 @@ impl Instances {
         instances
     }
 
-    pub(super) fn reserve(
-        &mut self,
-        device: &wgpu::Device,
-        payload_count: usize,
-        joints: usize,
-        temporal: bool,
-    ) {
+    pub(super) fn reserve(&mut self, device: &wgpu::Device, payload_count: usize, temporal: bool) {
         let grew = payload_count > self.capacity;
         if grew {
             self.capacity = payload_count.next_power_of_two().min(self.limit);
@@ -86,16 +74,6 @@ impl Instances {
             ));
             self.retained_uploads.invalidate();
             self.alternate.replace(None);
-        }
-        if joints > self.palette_capacity {
-            self.palette_capacity = joints.next_power_of_two();
-            for palette in &mut self.palettes {
-                palette.replace(create_storage_buffer(
-                    device,
-                    self.palette_capacity,
-                    size_of::<PoseData>(),
-                ));
-            }
         }
         if temporal && self.alternate.is_none() {
             self.alternate.replace(Some(create_storage_buffer(
@@ -155,7 +133,6 @@ impl Instances {
         FramePoses {
             first: &self.buffer,
             alternate: &self.alternate,
-            palettes: [&self.palettes[0], &self.palettes[1]],
             colors: &self.colors,
             parity,
         }
@@ -168,17 +145,10 @@ impl Instances {
         let poses = FramePoses {
             first: &self.buffer,
             alternate: &self.alternate,
-            palettes: [&self.palettes[0], &self.palettes[1]],
             colors: &self.colors,
             parity,
         };
         (&mut self.pose_uploads, poses)
-    }
-
-    pub(super) fn pose_bounds(&self) -> [Bound<'_>; 2] {
-        let poses = self.frame_poses(0);
-        let first = poses.bound(0).expect("the first pose buffer exists");
-        [first.clone(), poses.bound(1).unwrap_or(first)]
     }
 
     pub(super) fn alternate(&self) -> Option<&wgpu::Buffer> {
@@ -215,7 +185,6 @@ impl Instances {
         let poses = FramePoses {
             first: &self.buffer,
             alternate: &self.alternate,
-            palettes: [&self.palettes[0], &self.palettes[1]],
             colors: &self.colors,
             parity,
         };
@@ -229,7 +198,6 @@ impl Instances {
                     poses.bound(parity).expect("temporal frames create it"),
                 ),
                 ("colors", self.colors.bound()),
-                ("palette", self.palettes[parity].bound()),
                 ("grounds", Bound::fixed(self.grounds.as_entire_binding())),
             ],
         );
@@ -240,7 +208,6 @@ impl Instances {
 pub(crate) struct FramePoses<'a> {
     first: &'a Versioned<wgpu::Buffer>,
     alternate: &'a Versioned<Option<wgpu::Buffer>>,
-    pub palettes: [&'a Versioned<wgpu::Buffer>; 2],
     pub colors: &'a Versioned<wgpu::Buffer>,
     pub parity: usize,
 }
@@ -268,25 +235,15 @@ impl<'a> FramePoses<'a> {
             .expect("temporal frames create the alternate pose buffer")
     }
 
-    pub(crate) fn palette(&self) -> &'a wgpu::Buffer {
-        self.palettes[self.parity]
-    }
-
     pub(crate) fn generation(&self) -> u64 {
         [
             self.first.generation(),
             self.alternate.generation(),
-            self.palettes[0].generation(),
-            self.palettes[1].generation(),
             self.colors.generation(),
         ]
         .into_iter()
         .max()
         .unwrap_or_default()
-    }
-
-    pub(crate) fn key(&self) -> u64 {
-        self.generation() * 2 + self.parity as u64
     }
 }
 

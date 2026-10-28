@@ -10,7 +10,7 @@ use crate::water::WaterPass;
 
 use engine_core::{
     Applied, CullingStats, DeformationStats, DetailStats, ShadowStats, TerrainBounceStats,
-    TerrainRenderStats, VirtualGeometryStats,
+    TerrainRenderStats,
 };
 
 #[cfg(feature = "profiling")]
@@ -71,7 +71,6 @@ impl Renderer {
             ..
         } = state.kind;
         let (snapshot, frame) = (state.snapshot, state.frame);
-        let (virtual_frame, resolving) = (state.virtual_frame, state.resolving);
         let shadow_draws = report.shadow_draws;
         let features = &state.features;
         let (shadow_frame, post_frame) = (&features.shadow_frame, features.post_frame());
@@ -96,9 +95,6 @@ impl Renderer {
         } else {
             None
         };
-        let virtual_stats = virtual_frame
-            .then(|| self.virtual_draws.pass.stats())
-            .flatten();
         let pipelines_created = self.pipeline_counts.frame_submitted(&self.queue);
         let lod_instances = if gpu_mode && snapshot.environment.level_of_detail.enabled {
             self.gpu_presentation.lod_instances()
@@ -133,9 +129,7 @@ impl Renderer {
                     .plan
                     .batches
                     .iter()
-                    .enumerate()
-                    .filter(|(index, _)| self.virtual_draws.drawn.get(*index) != Some(&true))
-                    .map(|(_, batch)| {
+                    .map(|batch| {
                         u64::from(batch.instances.end - batch.instances.start)
                             * u64::from(
                                 self.meshes
@@ -215,20 +209,6 @@ impl Renderer {
                 snapshot,
             ),
             reflection_probes: ProbePass::stats(Some(self.features.probes.get()), None, snapshot),
-            virtual_geometry: VirtualGeometryStats {
-                clusters: virtual_stats.map_or(0, |stats| stats.clusters),
-                triangles: virtual_stats.map_or(0, |stats| stats.triangles),
-                shadow_clusters: virtual_stats.map_or(0, |stats| stats.shadow_clusters),
-                shadow_triangles: virtual_stats.map_or(0, |stats| stats.shadow_triangles),
-                occluded_clusters: virtual_stats.map_or(0, |stats| stats.occluded),
-                dropped: virtual_stats.map_or(0, |stats| stats.dropped),
-                resident_pages: virtual_stats.map_or(0, |stats| stats.resident_pages),
-                loading_pages: virtual_stats.map_or(0, |stats| stats.loading_pages),
-                missing_pages: virtual_stats.map_or(0, |stats| stats.missing_pages),
-                dropped_pages: virtual_stats.map_or(0, |stats| stats.dropped_pages),
-                failed_pages: virtual_stats.map_or(0, |stats| stats.failed_pages),
-                visibility_buffer: resolving,
-            },
             level_of_detail: DetailStats {
                 lod0_instances: lod_instances.map(|levels| levels[0]),
                 lod1_instances: lod_instances.map(|levels| levels[1]),
@@ -417,15 +397,6 @@ impl Renderer {
                 + self.features.probes.get().capacity_bytes()
                 + self.features.clouds.get().capacity_bytes()
                 + self.features.sky.get().capacity_bytes()) as f64,
-        );
-        engine_profile::counter(
-            "memory.gpu_virtual_bytes",
-            (self.virtual_draws.pass.capacity_bytes()
-                + self
-                    .visibility
-                    .buffer
-                    .as_ref()
-                    .map_or(0, VisibilityBuffer::capacity_bytes)) as f64,
         );
         engine_profile::counter(
             "memory.gpu_light_bytes",

@@ -9,12 +9,12 @@ use wgpu::util::DeviceExt;
 use crate::bindings::DEBUG_VIEW;
 use crate::gpu_layouts::constants::{
     DEBUG_CASTS, DEBUG_KIND_CARD, DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD,
-    DEBUG_KIND_VIRTUAL, DEBUG_LEVEL_SHIFT, DEBUG_VIEW_CARDS, DEBUG_VIEW_CASTERS, DEBUG_VIEW_DETAIL,
-    DEBUG_VIEW_KINDS, DEBUG_VIEW_LEVELS, DEBUG_VIEW_MATERIALS, DEBUG_VIEW_NORMALS,
-    DEBUG_VIEW_OVERDRAW, DEBUG_VIEW_SHADOWS, DEBUG_VIEW_SKY, DEBUG_VIEW_TILES,
-    DEBUG_VIEW_WATER_DEPTH, DEBUG_VIEW_WATER_EDDIES, DEBUG_VIEW_WATER_FROUDE,
-    DEBUG_VIEW_WATER_REACH, DEBUG_VIEW_WATER_ROUGHNESS, DEBUG_VIEW_WATER_SPAN,
-    DEBUG_VIEW_WATER_SPEED, DEBUG_VIEW_WATER_TURBULENCE, DEBUG_VIEW_WATER_WHITE,
+    DEBUG_LEVEL_SHIFT, DEBUG_VIEW_CARDS, DEBUG_VIEW_CASTERS, DEBUG_VIEW_DETAIL, DEBUG_VIEW_KINDS,
+    DEBUG_VIEW_LEVELS, DEBUG_VIEW_MATERIALS, DEBUG_VIEW_NORMALS, DEBUG_VIEW_OVERDRAW,
+    DEBUG_VIEW_SHADOWS, DEBUG_VIEW_SKY, DEBUG_VIEW_TILES, DEBUG_VIEW_WATER_DEPTH,
+    DEBUG_VIEW_WATER_EDDIES, DEBUG_VIEW_WATER_FROUDE, DEBUG_VIEW_WATER_REACH,
+    DEBUG_VIEW_WATER_ROUGHNESS, DEBUG_VIEW_WATER_SPAN, DEBUG_VIEW_WATER_SPEED,
+    DEBUG_VIEW_WATER_TURBULENCE, DEBUG_VIEW_WATER_WHITE,
 };
 use crate::gpu_layouts::debug_view::DebugViewUniform;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -83,17 +83,10 @@ pub(crate) enum DrawKind {
     Placed,
     Card,
     PlacedCard,
-    Virtual,
 }
 
 impl DrawKind {
-    const ALL: [Self; 5] = [
-        Self::Mesh,
-        Self::Placed,
-        Self::Card,
-        Self::PlacedCard,
-        Self::Virtual,
-    ];
+    const ALL: [Self; 4] = [Self::Mesh, Self::Placed, Self::Card, Self::PlacedCard];
 
     fn kind(self) -> u32 {
         match self {
@@ -101,7 +94,6 @@ impl DrawKind {
             Self::Placed => DEBUG_KIND_PLACED,
             Self::Card => DEBUG_KIND_CARD,
             Self::PlacedCard => DEBUG_KIND_PLACED_CARD,
-            Self::Virtual => DEBUG_KIND_VIRTUAL,
         }
     }
 }

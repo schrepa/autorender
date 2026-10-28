@@ -124,8 +124,6 @@ error_codes! {
     InvalidMesh => "invalid_mesh",
     InvalidMaterial => "invalid_material",
     InvalidTexture => "invalid_texture",
-    InvalidAnimation => "invalid_animation",
-    InvalidSkin => "invalid_skin",
     InvalidRenderable => "invalid_renderable",
     InvalidCollider => "invalid_collider",
     InvalidColliderTransform => "invalid_collider_transform",

@@ -5,7 +5,7 @@ use crate::bindings::PRESENTATION_LEVEL;
 use crate::gpu_data::PRESENTATION_SHADER;
 use crate::pipeline_layouts::{
     PRESENTATION_COMPACT_PIPELINES, PRESENTATION_COMPOSE_PIPELINES, PRESENTATION_CULL_PIPELINES,
-    PRESENTATION_FADE_PIPELINES, PRESENTATION_SKIN_BOUND_PIPELINES, PRESENTATION_TEST_PIPELINES,
+    PRESENTATION_FADE_PIPELINES, PRESENTATION_TEST_PIPELINES,
 };
 use crate::pipelines::{Family, Fillers, layout};
 
@@ -15,7 +15,6 @@ pub(super) struct Families {
     pub(super) tests: Family,
     pub(super) compact: Family,
     pub(super) fades: Family,
-    skin_bounds: OnceCell<Family>,
 }
 
 pub(super) struct Pipelines {
@@ -28,8 +27,6 @@ pub(super) struct Pipelines {
     pub(super) scatter: wgpu::ComputePipeline,
     pub(super) occlusion_test: wgpu::ComputePipeline,
     pub(super) fade_levels: wgpu::ComputePipeline,
-    skin_palette: OnceCell<wgpu::ComputePipeline>,
-    skin_bounds: OnceCell<wgpu::ComputePipeline>,
     count_still: OnceCell<wgpu::ComputePipeline>,
     probe_cull: OnceCell<wgpu::ComputePipeline>,
 }
@@ -55,7 +52,6 @@ impl Shaders {
             tests: Family::new(device, &PRESENTATION_TEST_PIPELINES, &[]),
             compact: Family::new(device, &PRESENTATION_COMPACT_PIPELINES, &[]),
             fades: Family::new(device, &PRESENTATION_FADE_PIPELINES, &[]),
-            skin_bounds: OnceCell::new(),
         };
         let pipeline = |entry: crate::shaders::Entry, family: &Family| {
             crate::pipelines::compute_entry(device, &family.pipeline, &module, entry)
@@ -70,8 +66,6 @@ impl Shaders {
             scatter: pipeline(presentation::scatter, &families.compact),
             occlusion_test: pipeline(presentation::occlusion_test, &families.tests),
             fade_levels: pipeline(presentation::fade_levels, &families.fades),
-            skin_palette: OnceCell::new(),
-            skin_bounds: OnceCell::new(),
             count_still: OnceCell::new(),
             probe_cull: OnceCell::new(),
         };
@@ -84,12 +78,6 @@ impl Shaders {
         }
     }
 
-    pub(super) fn skin_bounds_family(&self, device: &wgpu::Device) -> &Family {
-        self.families
-            .skin_bounds
-            .get_or_init(|| Family::new(device, &PRESENTATION_SKIN_BOUND_PIPELINES, &[]))
-    }
-
     fn lazy<'a>(
         &self,
         device: &wgpu::Device,
@@ -100,26 +88,6 @@ impl Shaders {
         cell.get_or_init(|| {
             crate::pipelines::compute_entry(device, &family.pipeline, &self.module, entry)
         })
-    }
-
-    pub(super) fn skin_palette(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
-        let family = &self.families.compose;
-        self.lazy(
-            device,
-            &self.pipelines.skin_palette,
-            family,
-            presentation::skin_palette,
-        )
-    }
-
-    pub(super) fn skin_bounds(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
-        let family = self.skin_bounds_family(device);
-        self.lazy(
-            device,
-            &self.pipelines.skin_bounds,
-            family,
-            presentation::skin_bounds_pass,
-        )
     }
 
     pub(super) fn count_still(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {

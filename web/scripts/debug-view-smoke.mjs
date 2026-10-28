@@ -57,8 +57,8 @@ const terrainViews = ["levels", "tiles", "materials", "sky", "detail"];
 const waterViews = ["water_depth", "water_speed", "water_froude", "water_turbulence", "water_white", "water_reach",
   "water_span", "water_eddies", "water_roughness"];
 const report = {};
-const kinds = ["mesh", "placed", "card", "placed_card", "virtual", "terrain", "cover", "water", "sea", "falls", "sky"];
-const slotted = ["mesh", "card", "virtual"];
+const kinds = ["mesh", "placed", "card", "placed_card", "terrain", "cover", "water", "sea", "falls", "sky"];
+const slotted = ["mesh", "card"];
 
 try {
   await routedScene(page, gridScene()).route();

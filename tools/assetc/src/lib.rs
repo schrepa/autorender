@@ -1,4 +1,3 @@
-mod animation;
 mod geometry;
 mod materials;
 mod validation;
@@ -11,20 +10,6 @@ use sha2::{Digest, Sha256};
 
 pub const MAX_INPUT_BYTES: usize = u32::MAX as usize;
 pub const IMPORTER_VERSION: &str = "gltf-pbr-10";
-pub const DEFAULT_VIRTUAL_TRIANGLES: u32 = 512;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ImportOptions {
-    pub virtual_triangles: Option<u32>,
-}
-
-impl Default for ImportOptions {
-    fn default() -> Self {
-        Self {
-            virtual_triangles: Some(DEFAULT_VIRTUAL_TRIANGLES),
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedFile {
@@ -89,14 +74,6 @@ pub fn source_sha256(bytes: &[u8]) -> String {
 }
 
 pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
-    import_glb_with(bytes, id, &ImportOptions::default())
-}
-
-pub fn import_glb_with(
-    bytes: &[u8],
-    id: &str,
-    options: &ImportOptions,
-) -> Result<Imported, ImportError> {
     if id.is_empty()
         || id.len() > 40
         || !id
@@ -127,14 +104,12 @@ pub fn import_glb_with(
         materials: Vec::new(),
         meshes: Vec::new(),
         prefabs: Vec::new(),
-        animations: Vec::new(),
-        skins: Vec::new(),
         entities: Vec::new(),
         streamed: Vec::new(),
     };
     let mut files = Vec::new();
     materials::import(&gltf.document, &json, binary, id, &mut scene, &mut files)?;
-    geometry::import(&gltf.document, binary, id, options, &mut scene, &mut files)?;
+    geometry::import(&gltf.document, binary, id, &mut scene, &mut files)?;
     scene.to_json()?;
     Ok(Imported {
         document: scene,
@@ -144,15 +119,7 @@ pub fn import_glb_with(
 }
 
 pub fn import_glb_prefab(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
-    import_glb_prefab_with(bytes, id, &ImportOptions::default())
-}
-
-pub fn import_glb_prefab_with(
-    bytes: &[u8],
-    id: &str,
-    options: &ImportOptions,
-) -> Result<Imported, ImportError> {
-    let mut imported = import_glb_with(bytes, id, options)?;
+    let mut imported = import_glb(bytes, id)?;
     let scene = &mut imported.document;
     let prefix = format!("{id}.");
     let local = |value: &mut String| {
@@ -167,14 +134,6 @@ pub fn import_glb_prefab_with(
         if let Some(parent) = &mut entity.parent {
             local(parent);
         }
-    }
-    for target in scene
-        .animations
-        .iter_mut()
-        .flat_map(|animation| &mut animation.targets)
-        .chain(scene.skins.iter_mut().flat_map(|skin| &mut skin.joints))
-    {
-        local(target);
     }
     scene.prefabs.push(ScenePrefab {
         id: id.to_owned(),

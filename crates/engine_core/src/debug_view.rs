@@ -92,7 +92,6 @@ pub enum DrawnKind {
     Placed,
     Card,
     PlacedCard,
-    Virtual,
     #[serde(rename = "terrain")]
     Ground,
     #[serde(rename = "cover")]

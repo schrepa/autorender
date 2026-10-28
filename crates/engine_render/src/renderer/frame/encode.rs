@@ -22,7 +22,6 @@ impl Renderer {
                 &self.profiler,
             ),
             Pass::ShadowSelect => self.encode_shadow_selection(state, encoder),
-            Pass::VirtualSelect => self.encode_cluster_selection(encoder),
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
             Pass::Deformation => {
                 self.terrain
@@ -50,13 +49,6 @@ impl Renderer {
                 report.draws += self.encode_terrain_resolve(state, encoder, view, node);
             }
             Pass::OpaqueLate => report.draws += self.encode_opaque_late(state, encoder, view, node),
-            Pass::VisibilityIds { phase } => {
-                self.encode_visibility_ids(state, encoder, view, node, phase.index());
-            }
-            Pass::Classify { .. } => self.encode_visibility_tiles(encoder),
-            Pass::Resolve { phase } => {
-                self.encode_visibility_resolve(state, encoder, view, node, phase.index());
-            }
             Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
             Pass::ShadowMarks => self.encode_shadow_marks(encoder),
             Pass::Feature(pass) => {
@@ -90,12 +82,6 @@ impl Renderer {
                 .get()
                 .expect("temporal frames create it")
                 .motion(),
-            Resource::Ids => self
-                .visibility
-                .buffer
-                .as_ref()
-                .expect("resolving frames create it")
-                .ids_view(),
             Resource::TerrainIds => {
                 &self
                     .terrain_ids
@@ -127,7 +113,6 @@ impl Renderer {
                 }
             }
             Resource::History
-            | Resource::Tiles
             | Resource::Poses
             | Resource::Visible
             | Resource::Placed
@@ -135,7 +120,6 @@ impl Renderer {
             | Resource::Casters
             | Resource::ShadowMaps
             | Resource::ShadowMarks
-            | Resource::Clusters
             | Resource::Lights
             | Resource::Pyramid
             | Resource::Effects
@@ -239,17 +223,6 @@ impl Renderer {
             .encode_selection(&self.device, encoder, shadow_frame, &self.profiler);
     }
 
-    fn encode_cluster_selection(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        let span = self.profiler.span("virtual_selection");
-        if let Some(span) = span {
-            span.mark(encoder, false);
-        }
-        self.virtual_draws.pass.encode(&self.device, encoder);
-        if let Some(span) = span {
-            span.mark(encoder, true);
-        }
-    }
-
     fn encode_shadow_marks(&mut self, encoder: &mut wgpu::CommandEncoder) {
         self.shadows.encode_marks(
             &self.device,
@@ -266,7 +239,6 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         report: &mut EncodeReport,
     ) {
-        let virtual_frame = state.virtual_frame;
         let shadow_frame = state
             .features
             .shadow_frame
@@ -274,29 +246,13 @@ impl Renderer {
             .expect("planned with shadows");
         let meshes = &self.meshes;
         let arena = &self.mesh_arena;
-        let (virtual_geometry, shadow_bins) =
-            (&self.virtual_draws.pass, &self.virtual_draws.shadow_bins);
         let (terrain, terrain_frame) = (&self.terrain, state.terrain);
         report.shadow_draws = self.shadows.encode_maps(
             encoder,
             shadow_frame,
             &MapSources {
-                meshes: &|mesh| {
-                    meshes
-                        .get(&mesh)
-                        .map(|mesh| (mesh.draw(arena), mesh.skinned))
-                },
+                meshes: &|mesh| meshes.get(&mesh).map(|mesh| mesh.draw(arena)),
                 materials: &|material| self.materials.group(material),
-                virtual_draw: &|pass, map| {
-                    shadow_bins
-                        .iter()
-                        .find(|(bin_map, _, _)| *bin_map == map)
-                        .map_or(0, |&(_, bin, offset)| {
-                            u32::from(
-                                virtual_frame && virtual_geometry.draw_shadow(pass, bin, offset),
-                            )
-                        })
-                },
                 terrain_draw: &|pass, map| {
                     if terrain_frame {
                         terrain.draw_shadow(pass, map)

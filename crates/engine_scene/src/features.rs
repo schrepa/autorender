@@ -22,8 +22,6 @@ macro_rules! object_features {
                         self.$field.is_some(),
                         crate::components::component_feature!($feature),
                     ),)*
-                    ("animation", self.animation.is_some(), Some(Feature::Animation)),
-                    ("skin", self.skin.is_some(), Some(Feature::Animation)),
                 ]
                 .into_iter()
                 .filter_map(|(field, authored, feature)| {

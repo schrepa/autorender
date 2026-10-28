@@ -22,11 +22,6 @@ pub fn trim_cards(mesh: &Mesh, alpha: AlphaImage<'_>, cutoff: f32) -> Result<Mes
             reason: "cards are trimmed before their mesh's levels of detail are made",
         });
     }
-    if mesh.virtual_geometry().is_some() {
-        return Err(AssetError::InvalidVirtualMesh {
-            reason: "cards are trimmed before their mesh's virtual geometry is made",
-        });
-    }
     let cards = find_cards(mesh, coverage.snap);
     let mut fitted = BTreeMap::new();
     let mut fits = Vec::new();
@@ -525,16 +520,6 @@ impl<'a> Trimmed<'a> {
                 .map(|vertex| vertex.blend(|corner| uv1[corner]));
             trimmed = trimmed.with_uv1(joined(uv1, &kept, blended))?;
         }
-        if let (Some(joints), Some(weights)) = (mesh.joints(), mesh.weights()) {
-            let (blended_joints, blended_weights): (Vec<_>, Vec<_>) = added
-                .iter()
-                .map(|vertex| vertex.skin(joints, weights))
-                .unzip();
-            trimmed = trimmed.with_skin(
-                joined(joints, &kept, blended_joints),
-                joined(weights, &kept, blended_weights),
-            )?;
-        }
         Ok(trimmed)
     }
 }
@@ -566,29 +551,5 @@ impl Added {
             }
         }
         blended.map(|sum| sum as f32)
-    }
-
-    fn skin(self, joints: &[[u16; 4]], weights: &[[f32; 4]]) -> ([u16; 4], [f32; 4]) {
-        let mut sums: Vec<(u16, f64)> = Vec::with_capacity(16);
-        for (corner, share) in self.corners.into_iter().zip(self.shares()) {
-            let corner = corner as usize;
-            for (joint, weight) in joints[corner].into_iter().zip(weights[corner]) {
-                let weight = share * f64::from(weight);
-                if weight <= 0.0 {
-                    continue;
-                }
-                match sums.iter_mut().find(|(other, _)| *other == joint) {
-                    Some((_, sum)) => *sum += weight,
-                    None => sums.push((joint, weight)),
-                }
-            }
-        }
-        sums.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-        let mut skin = ([0; 4], [0.0; 4]);
-        for (slot, (joint, weight)) in sums.into_iter().take(4).enumerate() {
-            skin.0[slot] = joint;
-            skin.1[slot] = weight as f32;
-        }
-        skin
     }
 }

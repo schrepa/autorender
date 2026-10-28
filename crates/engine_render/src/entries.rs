@@ -25,7 +25,6 @@ pub(crate) enum Slots {
 pub(crate) enum Streams {
     Basic,
     Extended,
-    Skinned,
 }
 
 impl PassKind {
@@ -70,16 +69,13 @@ impl PassKind {
             return match streams {
                 Streams::Basic => meshes::vs_debug_affine,
                 Streams::Extended => meshes::vs_debug_affine_extended,
-                Streams::Skinned => meshes::vs_debug_affine_skinned,
             };
         }
         match (self.slots(), streams) {
             (Slots::Retained, Streams::Basic) => meshes::vs_affine,
             (Slots::Retained, Streams::Extended) => meshes::vs_affine_extended,
-            (Slots::Retained, Streams::Skinned) => meshes::vs_affine_skinned,
             (Slots::Temporal, Streams::Basic) => meshes::vs_affine_temporal,
             (Slots::Temporal, Streams::Extended) => meshes::vs_affine_temporal_extended,
-            (Slots::Temporal, Streams::Skinned) => meshes::vs_affine_temporal_skinned,
         }
     }
 
@@ -131,29 +127,6 @@ pub(crate) fn sky_fragment(targets: Option<Targets>) -> Entry {
         Some(Targets::Temporal) => meshes::fs_sky_temporal,
         Some(Targets::Debug) => meshes::fs_debug_sky,
         None => meshes::fs_probe_sky,
-    }
-}
-
-pub(crate) fn virtual_vertex(targets: Targets) -> Entry {
-    match targets {
-        Targets::Canvas | Targets::Post => meshes::vs_virtual,
-        Targets::Temporal => meshes::vs_virtual_temporal,
-        Targets::Debug => meshes::vs_debug_virtual,
-    }
-}
-
-pub(crate) const VISIBILITY_VERTEX: Entry = meshes::vs_visibility;
-pub(crate) const VISIBILITY_FRAGMENT: Entry = meshes::fs_visibility;
-pub(crate) const RESOLVE_VERTEX: Entry = meshes::vs_resolve;
-
-pub(crate) fn resolve_fragment(targets: Targets, lit: bool) -> Entry {
-    match (targets, lit) {
-        (Targets::Canvas | Targets::Debug, false) => meshes::fs_resolve,
-        (Targets::Canvas | Targets::Debug, true) => meshes::fs_resolve_lit,
-        (Targets::Post, false) => meshes::fs_resolve_post,
-        (Targets::Post, true) => meshes::fs_resolve_post_lit,
-        (Targets::Temporal, false) => meshes::fs_resolve_temporal,
-        (Targets::Temporal, true) => meshes::fs_resolve_temporal_lit,
     }
 }
 

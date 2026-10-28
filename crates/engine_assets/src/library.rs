@@ -5,7 +5,7 @@ use std::sync::{
 
 use bevy_ecs::prelude::Resource;
 
-use crate::{AnimationClip, AssetError, Material, Mesh, MeshLods, Texture, takes_levels};
+use crate::{AssetError, Material, Mesh, MeshLods, Texture, takes_levels};
 
 static NEXT_LIBRARY: AtomicU64 = AtomicU64::new(1);
 
@@ -40,9 +40,6 @@ impl MaterialHandle {
 impl engine_settings::Setting for MeshHandle {}
 impl engine_settings::Setting for MaterialHandle {}
 impl engine_settings::Setting for TextureHandle {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ClipHandle(Id);
 
 #[derive(Debug, Clone, Copy)]
 pub struct AssetBudget {
@@ -228,7 +225,6 @@ pub struct AssetLibrary {
     awaiting_lods: Vec<MeshHandle>,
     materials: Storage<(Material, u64)>,
     textures: Storage<Arc<Texture>>,
-    clips: Storage<Arc<AnimationClip>>,
     resident_bytes: usize,
     texture_bytes: usize,
 }
@@ -263,7 +259,6 @@ impl AssetLibrary {
             awaiting_lods: Vec::new(),
             materials: Storage::default(),
             textures: Storage::default(),
-            clips: Storage::default(),
             resident_bytes: 0,
             texture_bytes: 0,
         }
@@ -412,24 +407,6 @@ impl AssetLibrary {
         Ok(())
     }
 
-    pub fn insert_clip(&mut self, clip: AnimationClip) -> Result<ClipHandle, AssetError> {
-        self.reserve_bytes(clip.byte_len())?;
-        Ok(ClipHandle(self.clips.insert(self.id, Arc::new(clip))))
-    }
-
-    pub fn clip(&self, handle: ClipHandle) -> Option<&Arc<AnimationClip>> {
-        self.clips.get(self.id, handle.0)
-    }
-
-    pub fn remove_clip(&mut self, handle: ClipHandle) -> bool {
-        let Some(clip) = self.clips.remove(self.id, handle.0) else {
-            return false;
-        };
-        self.resident_bytes -= clip.map_or(0, |clip| clip.byte_len());
-        self.revision = self.revision.saturating_add(1);
-        true
-    }
-
     pub fn mesh(&self, handle: MeshHandle) -> Option<&Arc<Mesh>> {
         self.meshes.get(self.id, handle.0).map(|held| &held.mesh)
     }
@@ -518,10 +495,6 @@ impl AssetLibrary {
 
     pub fn textures(&self) -> impl Iterator<Item = (usize, &Arc<Texture>)> {
         self.textures.values()
-    }
-
-    pub fn clips(&self) -> impl Iterator<Item = (usize, &Arc<AnimationClip>)> {
-        self.clips.values()
     }
 
     pub fn texture_bytes(&self) -> usize {

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::virtual_mesh::VirtualMesh;
 use glam::Vec3;
 
 use crate::{AssetError, MeshLods};
@@ -19,10 +18,6 @@ pub struct Aabb {
 }
 
 impl Aabb {
-    pub(crate) fn from_min_max(min: Vec3, max: Vec3) -> Self {
-        Self { min, max }
-    }
-
     pub fn min(&self) -> Vec3 {
         self.min
     }
@@ -39,16 +34,7 @@ pub struct Mesh {
     bounds: Aabb,
     colors: Option<Box<[[f32; 4]]>>,
     uv1: Option<Box<[[f32; 2]]>>,
-    skin: Option<MeshSkin>,
-    virtual_geometry: Option<Arc<VirtualMesh>>,
     lods: Option<Arc<MeshLods>>,
-}
-
-#[derive(Debug)]
-struct MeshSkin {
-    joints: Box<[[u16; 4]]>,
-    weights: Box<[[f32; 4]]>,
-    joint_count: u32,
 }
 
 impl Mesh {
@@ -95,36 +81,11 @@ impl Mesh {
             bounds: Aabb { min, max },
             colors: None,
             uv1: None,
-            skin: None,
-            virtual_geometry: None,
             lods: None,
         })
     }
 
-    pub fn from_virtual(
-        geometry: Arc<VirtualMesh>,
-        fallback_triangles: u32,
-    ) -> Result<Self, AssetError> {
-        let mut mesh = geometry.fallback(fallback_triangles)?;
-        let bounds = geometry.bounds();
-        mesh.bounds = Aabb {
-            min: mesh.bounds.min.min(bounds.min()),
-            max: mesh.bounds.max.max(bounds.max()),
-        };
-        mesh.virtual_geometry = Some(geometry);
-        Ok(mesh)
-    }
-
-    pub fn virtual_geometry(&self) -> Option<&Arc<VirtualMesh>> {
-        self.virtual_geometry.as_ref()
-    }
-
     pub fn with_lods(mut self, lods: MeshLods) -> Result<Self, AssetError> {
-        if self.joint_count() != 0 || self.virtual_geometry.is_some() {
-            return Err(AssetError::InvalidLevels {
-                reason: "meshes with joints or virtual geometry have no levels of detail",
-            });
-        }
         lods.check(self.indices.len(), self.vertices.len())?;
         self.lods = Some(Arc::new(lods));
         Ok(self)
@@ -132,42 +93,6 @@ impl Mesh {
 
     pub fn lods(&self) -> Option<&Arc<MeshLods>> {
         self.lods.as_ref()
-    }
-
-    pub fn with_skin(
-        mut self,
-        mut joints: Vec<[u16; 4]>,
-        mut weights: Vec<[f32; 4]>,
-    ) -> Result<Self, AssetError> {
-        self.check_count("joints", joints.len())?;
-        self.check_count("weights", weights.len())?;
-        let mut joint_count = 0;
-        for (vertex, (joints, weights)) in joints.iter_mut().zip(&mut weights).enumerate() {
-            let sum: f32 = weights.iter().sum();
-            if !weights
-                .iter()
-                .all(|weight| weight.is_finite() && *weight >= 0.0)
-                || !(sum > 0.0 && sum.is_finite())
-            {
-                return Err(AssetError::InvalidAttribute {
-                    attribute: "weights",
-                    vertex,
-                });
-            }
-            for (joint, weight) in joints.iter_mut().zip(weights.iter_mut()) {
-                *weight /= sum;
-                if *weight == 0.0 {
-                    *joint = 0;
-                }
-                joint_count = joint_count.max(u32::from(*joint) + 1);
-            }
-        }
-        self.skin = Some(MeshSkin {
-            joints: joints.into_boxed_slice(),
-            weights: weights.into_boxed_slice(),
-            joint_count,
-        });
-        Ok(self)
     }
 
     pub fn with_colors(mut self, colors: Vec<[f32; 4]>) -> Result<Self, AssetError> {
@@ -225,18 +150,6 @@ impl Mesh {
         self.uv1.as_deref()
     }
 
-    pub fn joints(&self) -> Option<&[[u16; 4]]> {
-        self.skin.as_ref().map(|skin| &skin.joints[..])
-    }
-
-    pub fn weights(&self) -> Option<&[[f32; 4]]> {
-        self.skin.as_ref().map(|skin| &skin.weights[..])
-    }
-
-    pub fn joint_count(&self) -> u32 {
-        self.skin.as_ref().map_or(0, |skin| skin.joint_count)
-    }
-
     pub fn indices(&self) -> &[u32] {
         &self.indices
     }
@@ -250,11 +163,6 @@ impl Mesh {
             + std::mem::size_of_val(self.indices())
             + self.colors().map_or(0, std::mem::size_of_val)
             + self.uv1().map_or(0, std::mem::size_of_val)
-            + self.joints().map_or(0, std::mem::size_of_val)
-            + self.weights().map_or(0, std::mem::size_of_val)
-            + self
-                .virtual_geometry()
-                .map_or(0, |geometry| geometry.byte_len())
             + self.lods().map_or(0, |lods| lods.byte_len())
     }
 

@@ -2,7 +2,6 @@
 pub(crate) enum Streams {
     Plain = 0,
     Extended = 1,
-    Skinned = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,7 +78,6 @@ mod gpu {
     pub(crate) struct MeshDraw<'a> {
         pub vertices: &'a wgpu::Buffer,
         pub extras: Option<&'a wgpu::Buffer>,
-        pub skin: Option<&'a wgpu::Buffer>,
         pub indices: &'a wgpu::Buffer,
         pub first_index: u32,
         pub base_vertex: i32,
@@ -156,7 +154,7 @@ mod gpu {
     }
 
     pub(crate) struct MeshArena {
-        classes: [Class; 3],
+        classes: [Class; 2],
         indices: wgpu::Buffer,
         index_space: Space,
     }
@@ -200,7 +198,7 @@ mod gpu {
     }
 
     impl MeshArena {
-        pub(crate) fn new(device: &wgpu::Device, [vertex, extra, skin]: [u64; 3]) -> Self {
+        pub(crate) fn new(device: &wgpu::Device, [vertex, extra]: [u64; 2]) -> Self {
             let class = |strides: Vec<u64>| Class {
                 buffers: strides
                     .iter()
@@ -210,11 +208,7 @@ mod gpu {
                 space: Space::default(),
             };
             Self {
-                classes: [
-                    class(vec![vertex]),
-                    class(vec![vertex, extra]),
-                    class(vec![vertex, extra, skin]),
-                ],
+                classes: [class(vec![vertex]), class(vec![vertex, extra])],
                 indices: buffer(device, "engine/mesh-arena-indices", 0, INDEX_USAGE),
                 index_space: Space::default(),
             }
@@ -241,7 +235,6 @@ mod gpu {
             let class = match streams.len() {
                 1 => Streams::Plain,
                 2 => Streams::Extended,
-                3 => Streams::Skinned,
                 _ => return None,
             };
             let index_count = u32::try_from(indices.len()).ok()?;
@@ -319,7 +312,6 @@ mod gpu {
             MeshDraw {
                 vertices: &buffers[0],
                 extras: buffers.get(1),
-                skin: buffers.get(2),
                 indices: &self.indices,
                 first_index: placement.first_index,
                 base_vertex: placement.base_vertex as i32,

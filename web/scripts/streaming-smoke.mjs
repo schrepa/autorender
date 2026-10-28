@@ -12,9 +12,6 @@ const fixture = {
   camera: { position: [0, 60, 40], target: [20, 20, 0], fov_degrees: 60, near: 0.5, far: 20000 },
   materials: [{ id: "plain", color: [0.8, 0.3, 0.2, 1] }],
   meshes: [{ id: "box", source: { kind: "cube" } }],
-  animations: [{ id: "spin", targets: ["spinner-blade"], channels: [
-    { target: 0, property: "rotation", times: [0, 1], values: [0, 0, 0, 1, 0, 0.7071068, 0, 0.7071068] },
-  ] }],
   prefabs: [{ id: "lamp", entities: [
     { id: "post", mesh: "box", material: "plain", transform: { translation: [0, 1, 0], scale: [0.2, 2, 0.2] } },
     { id: "light", light: { color: [1, 0.7, 0.4], intensity: 10, range: 10 }, transform: { translation: [0, 2.2, 0] } },
@@ -26,7 +23,7 @@ const fixture = {
   streamed: [
     { id: "crate-near", mesh: "box", material: "plain", collider: cube, grounded: { offset: 0.5 }, transform: { translation: [20, 0, 0] } },
     { id: "crate-mid", mesh: "box", material: "plain", grounded: { offset: 0.5 }, transform: { translation: [900, 0, 0] } },
-    { id: "spinner", transform: { translation: [-30, 30, 10] }, animation: { clip: "spin" } },
+    { id: "spinner", transform: { translation: [-30, 30, 10] } },
     { id: "spinner-blade", parent: "spinner", mesh: "box", material: "plain", transform: { scale: [3, 0.2, 0.4] } },
     { id: "lamp-far", prefab: "lamp", transform: { translation: [1500, 0, 300] } },
     { id: "tower", mesh: "box", material: "plain", transform: { translation: [5000, 30, 0], scale: [10, 60, 10] } },
@@ -87,17 +84,6 @@ try {
 
   const post = (await command("inspect", { entity: "lamp-far.post", component: "Hierarchy" })).result.entity.components.Hierarchy;
   assert.equal(post.parent, "lamp-far");
-  const player = (await command("inspect", { entity: "spinner", component: "AnimationPlayer" })).result.entity.components.AnimationPlayer;
-  assert.equal(player.clip.id, "spin");
-  assert.deepEqual([player.clip.targets, player.clip.channels], [["spinner-blade"], 1]);
-  assert.deepEqual(player.targets, ["spinner-blade"]);
-  const animated = (await command("animation", { entity: "spinner", time: 0.25, speed: 0 })).result;
-  assert.equal(animated.before.clip, "spin");
-  assert.deepEqual([animated.after.time, animated.after.speed], [0.25, 0]);
-  const held = (await command("inspect", { entity: "spinner", component: "AnimationPlayer" })).result.entity.components.AnimationPlayer;
-  assert.deepEqual([held.time, held.speed], [0.25, 0]);
-  const unknownClip = await command("animation", { entity: "spinner", clip: "missing" }, false);
-  assert.equal(unknownClip.error.code, "unknown_reference");
   checks.push({ check: "items" });
 
   rendering = await look(850, 0);
@@ -174,7 +160,6 @@ try {
     ["parent across lists", document => { document.streamed[5].parent = "player"; }, "unknown_parent", "$.streamed[5].parent"],
     ["grounded child", document => { document.streamed[3].grounded = {}; }, "invalid_grounded", "$.streamed[3].grounded"],
     ["duplicate ID", document => { document.streamed[0].id = "player"; }, "duplicate_id", "$.streamed[0].id"],
-    ["target outside the item", document => { document.streamed[2].animation = { clip: "spin" }; document.streamed[3].parent = undefined; }, "unknown_reference", "$.streamed[2].animation.clip"],
   ])) {
     const broken = structuredClone(fixture);
     change(broken);

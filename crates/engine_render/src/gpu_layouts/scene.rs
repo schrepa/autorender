@@ -77,12 +77,6 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct SkinVertex {
-        pub joints: [u16; 4],
-        pub weights: [u16; 4],
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct MaterialUniform as ["MaterialMaps"] {
         pub transforms: [[f32; 4]; 10],
         pub emissive: [f32; 4],
@@ -180,15 +174,14 @@ gpu_structs! {
         pub planes: [[f32; 4]; 6],
         pub absolute_view_projection: [[f32; 4]; 4],
         pub motion: u32,
-        pub joints: u32,
         pub mask: u32,
         pub occlusion: u32,
+        pub subpixel: u32,
         pub view_projection: [[f32; 4]; 4],
         pub viewport: [f32; 4],
-        pub skinned: u32,
-        pub subpixel: u32,
         pub plane: u32,
         pub lod_error: f32,
+        pub pad: [u32; 2],
         pub eye: [f32; 4],
         pub fade: [f32; 4],
     }
@@ -215,13 +208,5 @@ gpu_structs! {
         pub first_plane: u32,
         pub lod_ranges: [u32; 4],
         pub lod_errors: [f32; 4],
-    }
-
-    #[derive(Clone, Copy, Pod, Zeroable)]
-    pub(crate) struct SkinnedData as ["Skinned"] {
-        pub slot: u32,
-        pub position: u32,
-        pub batch: u32,
-        pub joints: u32,
     }
 }

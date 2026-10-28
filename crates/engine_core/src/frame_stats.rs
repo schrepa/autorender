@@ -65,7 +65,6 @@ pub struct RenderStats {
     pub refraction: Applied,
     pub decals: Drawn,
     pub reflection_probes: ProbeStats,
-    pub virtual_geometry: VirtualGeometryStats,
     pub level_of_detail: DetailStats,
     pub terrain: TerrainRenderStats,
     pub ground_cover: GroundCoverStats,
@@ -188,23 +187,6 @@ pub struct ProbeStats {
     pub ready: u32,
     pub faces: u32,
     pub dropped: u32,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct VirtualGeometryStats {
-    pub clusters: u32,
-    pub triangles: u32,
-    pub shadow_clusters: u32,
-    pub shadow_triangles: u32,
-    pub occluded_clusters: u32,
-    pub dropped: u32,
-    pub resident_pages: u32,
-    pub loading_pages: u32,
-    pub missing_pages: u32,
-    pub dropped_pages: u32,
-    pub failed_pages: u32,
-    pub visibility_buffer: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]

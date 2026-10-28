@@ -1,7 +1,7 @@
 use engine_collision::CollisionPlugin;
 use engine_core::{
-    AnimationPlugin, DeformationPlugin, Feature, NavigationPlugin, OceanPlugin, PluginGroup,
-    PluginGroupBuilder, TerrainPlugin, TimeOfDayPlugin, WorldStreamingPlugin,
+    DeformationPlugin, Feature, NavigationPlugin, OceanPlugin, PluginGroup, PluginGroupBuilder,
+    TerrainPlugin, TimeOfDayPlugin, WorldStreamingPlugin,
 };
 use engine_physics::PhysicsPlugin;
 

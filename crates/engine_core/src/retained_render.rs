@@ -17,9 +17,8 @@ use crate::hierarchy::HierarchyScratch;
 use crate::{
     Aabb, AlphaMode, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation,
     MAX_TRANSFORM_NODES, Material, MaterialBinding, MaterialHandle, Mesh3d, MeshHandle,
-    PresentedTransforms, RenderInstance, RenderJoint, RenderMaterial, RenderMesh, RenderQuery,
-    RenderSnapshot, RenderTexture, SkinExtraction, Surface, TextureHandle, Tint, Transform,
-    TransformIndex,
+    PresentedTransforms, RenderInstance, RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot,
+    RenderTexture, Surface, TextureHandle, Tint, Transform, TransformIndex,
     culling::{Classification, Frustum},
     decals::DecalExtraction,
     probes::ProbeExtraction,
@@ -123,9 +122,6 @@ impl<'a> RenderFrame<'a> {
     pub fn lights_revision(self) -> u64 {
         self.owner.lights_revision
     }
-    pub fn joints_revision(self) -> u64 {
-        self.owner.joints_revision
-    }
     pub fn emitters_revision(self) -> u64 {
         self.owner.emitters_revision
     }
@@ -188,7 +184,6 @@ impl<'a> RenderFrame<'a> {
             cells,
             tables,
             instances,
-            joints,
             meshes,
             materials,
             textures,
@@ -239,7 +234,6 @@ impl<'a> RenderFrame<'a> {
                 model: self.model(slot),
                 ..instances[slot]
             }));
-        snapshot.joints.clone_from(joints);
         snapshot.meshes.clone_from(meshes);
         snapshot.materials.clone_from(materials);
         snapshot.textures.clone_from(textures);
@@ -315,7 +309,6 @@ impl SlotFrame {
 struct Sources {
     meshes: Vec<RenderMesh>,
     bounds: Vec<Aabb>,
-    skinned: Vec<bool>,
     materials: Vec<RenderMaterial>,
     textures: Vec<RenderTexture>,
     mesh_indices: HashMap<MeshHandle, usize>,
@@ -335,7 +328,6 @@ impl Sources {
     fn clear(&mut self) {
         self.meshes.clear();
         self.bounds.clear();
-        self.skinned.clear();
         self.materials.clear();
         self.textures.clear();
         self.mesh_indices.clear();
@@ -382,7 +374,6 @@ impl Sources {
         let mesh_index = *self.mesh_indices.entry(handle).or_insert_with(|| {
             let index = self.meshes.len();
             self.bounds.push(rendered.mesh.bounds());
-            self.skinned.push(rendered.mesh.joint_count() != 0);
             self.meshes.push(rendered);
             self.mesh_used.push(false);
             index
@@ -569,7 +560,6 @@ pub(crate) struct RetainedRender {
     color_revision: u64,
     caster_revision: u64,
     lights_revision: u64,
-    joints_revision: u64,
     emitters_revision: u64,
     snapshot: RenderSnapshot,
     cube_mesh: MeshHandle,
@@ -634,7 +624,6 @@ impl RetainedRender {
             color_revision: 0,
             caster_revision: 0,
             lights_revision: 0,
-            joints_revision: 0,
             emitters_revision: 0,
             snapshot: RenderSnapshot::default(),
             cube_mesh,
@@ -751,7 +740,6 @@ impl RetainedRender {
                     model: Mat4::IDENTITY,
                     color: [1.0; 4],
                     surface: Surface::MATTE,
-                    skin: None,
                 });
                 self.pose_indices.push(u32::MAX);
                 self.pose_changes.push(0);
@@ -796,129 +784,6 @@ impl RetainedRender {
         self.lights_revision = lights.revision;
         particles.extract(world, &mut self.snapshot, gpu);
         self.emitters_revision = particles.revision;
-    }
-
-    pub(crate) fn extract_skins(&mut self, world: &World, skins: &mut SkinExtraction, gpu: bool) {
-        let assets = world.resource::<AssetLibrary>();
-        let globals = world.resource::<GlobalTransforms>();
-        let presented = world.resource::<PresentedTransforms>();
-        let this_run = world.read_change_tick();
-        if gpu {
-            let key = (
-                assets.revision(),
-                globals.topology_revision(),
-                globals.validity_epoch(),
-            );
-            let mut inputs = std::mem::take(&mut skins.inputs);
-            let previous = inputs.len();
-            let mut changed = skins.key != Some(key);
-            let mut count = 0;
-            for (entity, skin) in skins.query.iter(world) {
-                changed |= skins.scans.changed(skin.last_changed(), this_run);
-                let input = match self.entities.get(&entity) {
-                    Some(&slot) => (entity, slot, Some(self.snapshot.instances[slot].mesh)),
-                    None => (entity, usize::MAX, None),
-                };
-                if !changed && inputs.get(count) != Some(&input) {
-                    changed = true;
-                }
-                if changed {
-                    inputs.truncate(count);
-                    inputs.push(input);
-                }
-                count += 1;
-            }
-            changed |= count != previous;
-            inputs.truncate(count);
-            skins.inputs = inputs;
-            skins.scans.scanned(this_run);
-            if !changed {
-                self.snapshot.joints.truncate(skins.joints);
-                engine_profile::counter("extraction.skinned", skins.skinned.len() as f64);
-                engine_profile::counter("extraction.joints", self.snapshot.joints.len() as f64);
-                return;
-            }
-            skins.key = Some(key);
-        } else {
-            skins.key = None;
-        }
-        let joints = &mut self.snapshot.joints;
-        joints.clear();
-        let mut next = std::mem::take(&mut skins.scratch);
-        next.clear();
-        for (entity, skin) in skins.query.iter(world) {
-            let Some(&slot) = self.entities.get(&entity) else {
-                continue;
-            };
-            if self.frames[slot].mesh == NO_SOURCE {
-                continue;
-            }
-            let Some(mesh) = assets.mesh(self.snapshot.instances[slot].mesh) else {
-                continue;
-            };
-            let needed = mesh.joint_count() as usize;
-            if needed == 0 || needed > skin.joints.len() {
-                continue;
-            }
-            let base = joints.len();
-            if skins.hints.len() < base + skin.joints.len() {
-                skins
-                    .hints
-                    .resize(base + skin.joints.len(), TransformIndex::default());
-            }
-            for (index, &joint) in skin.joints.iter().enumerate() {
-                let inverse_bind = skin.inverse_bind(index);
-                let hint = &mut skins.hints[base + index];
-                let (node, matrix) = if gpu {
-                    let node = globals
-                        .valid_index(joint, hint)
-                        .map_or(u32::MAX, |index| index as u32);
-                    (node, IDENTITY_ROWS)
-                } else {
-                    let world = presented
-                        .get_indexed(joint, hint)
-                        .and_then(|pose| pose.matrix())
-                        .unwrap_or(Mat4::IDENTITY);
-                    (u32::MAX, pose_rows(world * inverse_bind))
-                };
-                joints.push(RenderJoint {
-                    node,
-                    inverse_bind: pose_rows(inverse_bind),
-                    matrix,
-                });
-            }
-            next.push((slot, base as u32));
-        }
-        next.sort_unstable_by_key(|&(slot, _)| slot);
-        skins.joints = joints.len();
-        self.joints_revision += 1;
-        let sequence = self.sequence;
-        let mut changed = false;
-        for &slot in &skins.skinned {
-            if next.binary_search_by_key(&slot, |&(slot, _)| slot).is_err()
-                && let Some(record) = self.snapshot.instances.get_mut(slot)
-                && record.skin.take().is_some()
-            {
-                self.color_changes[slot] = sequence;
-                changed = true;
-            }
-        }
-        skins.skinned.clear();
-        for &(slot, base) in &next {
-            let record = &mut self.snapshot.instances[slot];
-            if record.skin != Some(base) {
-                record.skin = Some(base);
-                self.color_changes[slot] = sequence;
-                changed = true;
-            }
-            skins.skinned.push(slot);
-        }
-        if changed {
-            self.color_revision = sequence;
-        }
-        skins.scratch = next;
-        engine_profile::counter("extraction.skinned", skins.skinned.len() as f64);
-        engine_profile::counter("extraction.joints", self.snapshot.joints.len() as f64);
     }
 
     pub(crate) fn extract_decals(
@@ -1312,15 +1177,12 @@ impl RetainedRender {
         pass.casters += 1;
         if reclassify || pose_changed {
             let bounds = self.sources.bounds[frame.mesh as usize];
-            let skinned = self.sources.skinned[frame.mesh as usize];
-            frame.outside = !skinned
-                && self.frustum.as_ref().is_some_and(|frustum| {
-                    pass.culling_tests += 1;
-                    let classification = frustum.classify(model, bounds);
-                    pass.culling_interior +=
-                        usize::from(classification == Classification::Interior);
-                    classification.outside()
-                });
+            frame.outside = self.frustum.as_ref().is_some_and(|frustum| {
+                pass.culling_tests += 1;
+                let classification = frustum.classify(model, bounds);
+                pass.culling_interior += usize::from(classification == Classification::Interior);
+                classification.outside()
+            });
         } else if self.frustum.is_some() {
             pass.culling_reused += 1;
         }

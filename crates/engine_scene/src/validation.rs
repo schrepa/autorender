@@ -1,17 +1,15 @@
 use engine_core::collections::HashMap;
 use engine_settings::ErrorCode;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 use engine_core::{
-    AnimationClip, Mesh, Texture, Transform,
+    Mesh, Texture, Transform,
     glam::{Mat4, Vec3},
 };
 
 use crate::error::broken_rule;
 use crate::{
     MeshSource, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles,
-    animation::{PreparedPlayer, PreparedSkin},
     components::{PreparedComponents, Reach},
     hierarchy::{ExpandedObject, ExpandedScene},
     material::PreparedMaterial,
@@ -25,8 +23,6 @@ pub(crate) struct PreparedScene {
     pub textures: Vec<Texture>,
     pub transforms: Vec<Transform>,
     pub entities: Vec<ExpandedObject>,
-    pub clips: Vec<AnimationClip>,
-    pub skin_binds: Vec<Arc<[Mat4]>>,
     pub streamed: PreparedStreamed,
 }
 
@@ -47,16 +43,6 @@ pub(crate) struct PreparedItem {
 
 pub(crate) struct PreparedEntity {
     pub components: PreparedComponents,
-    pub player: Option<PreparedPlayer>,
-    pub skin: Option<PreparedSkin>,
-}
-
-type Resolve<'a> = dyn Fn(&ExpandedObject, &str) -> Option<usize> + 'a;
-
-struct Rigs<'a> {
-    animation_ids: BTreeSet<&'a str>,
-    skin_ids: BTreeSet<&'a str>,
-    skin_binds: Vec<Arc<[Mat4]>>,
 }
 
 struct CpuAssets {
@@ -92,16 +78,10 @@ impl SceneDocument {
         for mesh in &self.meshes {
             match &mesh.source {
                 MeshSource::Buffer { uri } => add(uri, SceneFileKind::Buffer),
-                MeshSource::Virtual { uri, .. } => add(uri, SceneFileKind::VirtualMesh),
                 MeshSource::Cube { .. }
                 | MeshSource::Plane { .. }
                 | MeshSource::Octahedron { .. }
                 | MeshSource::Inline { .. } => {}
-            }
-        }
-        for animation in &self.animations {
-            if let Some(uri) = &animation.uri {
-                add(uri, SceneFileKind::Buffer);
             }
         }
         let entities = self
@@ -140,43 +120,20 @@ impl SceneDocument {
             }
         }
         let [expanded, streamed] = self.expand(&mesh_ids, &material_ids)?;
-        let rigs = self.prepare_rigs()?;
-        let entity_indices: BTreeMap<&str, usize> = expanded
-            .entities
-            .iter()
-            .enumerate()
-            .map(|(index, entity)| (entity.source.id.as_str(), index))
-            .collect();
-        let resolve = |entity: &ExpandedObject, id: &str| {
-            entity
-                .prefab_instance
-                .as_ref()
-                .and_then(|instance| entity_indices.get(format!("{instance}.{id}").as_str()))
-                .or_else(|| entity_indices.get(id))
-                .copied()
-        };
         let components = expanded
             .entities
             .iter()
-            .map(|entity| self.prepare_entity(entity, &resolve, &rigs, files))
+            .map(|entity| self.prepare_entity(entity, files))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let streamed_components = self.prepare_streamed(&streamed, &rigs, files)?;
+        let streamed_components = self.prepare_streamed(&streamed, files)?;
 
         let CpuAssets {
             textures,
             meshes,
             materials,
         } = self.prepare_assets(files)?;
-        self.check_skin_joints(&expanded.entities, &components, &meshes)?;
-        self.check_skin_joints(&streamed.entities, &streamed_components, &meshes)?;
         let streamed = self.streamed_items(streamed, streamed_components, &meshes);
-        let clips = self
-            .animations
-            .iter()
-            .enumerate()
-            .map(|(index, animation)| animation.clip(&format!("$.animations[{index}]"), files))
-            .collect::<Result<Vec<_>, _>>()?;
         if let Some(environment) = &self.environment {
             environment.validate("$.environment")?;
         }
@@ -188,8 +145,6 @@ impl SceneDocument {
             textures,
             transforms: expanded.transforms,
             entities: expanded.entities,
-            clips,
-            skin_binds: rigs.skin_binds,
             streamed,
         })
     }
@@ -197,32 +152,14 @@ impl SceneDocument {
     fn prepare_streamed(
         &self,
         streamed: &ExpandedScene,
-        rigs: &Rigs<'_>,
         files: Option<&SceneFiles>,
     ) -> Result<Vec<PreparedEntity>, SceneError> {
-        let indices: BTreeMap<&str, usize> = streamed
-            .entities
-            .iter()
-            .enumerate()
-            .map(|(index, entity)| (entity.source.id.as_str(), index))
-            .collect();
-        let roots = item_roots(&streamed.entities, &indices);
-        let resolve = |entity: &ExpandedObject, id: &str| {
-            let own = indices[entity.source.id.as_str()];
-            entity
-                .prefab_instance
-                .as_ref()
-                .and_then(|instance| indices.get(format!("{instance}.{id}").as_str()))
-                .or_else(|| indices.get(id))
-                .copied()
-                .filter(|&target| roots[target] == roots[own])
-        };
         streamed
             .entities
             .iter()
             .map(|entity| {
                 entity.source.check_streamed(&entity.path)?;
-                self.prepare_entity(entity, &resolve, rigs, files)
+                self.prepare_entity(entity, files)
             })
             .collect()
     }
@@ -331,53 +268,6 @@ impl SceneDocument {
         }
     }
 
-    fn prepare_rigs(&self) -> Result<Rigs<'_>, SceneError> {
-        let animation_ids = unique_ids(
-            self.animations
-                .iter()
-                .map(|animation| animation.id.as_str()),
-            "$.animations",
-        )?;
-        let skin_ids = unique_ids(self.skins.iter().map(|skin| skin.id.as_str()), "$.skins")?;
-        for (index, animation) in self.animations.iter().enumerate() {
-            display_name(&animation.name, &format!("$.animations[{index}].name"))?;
-            for (target, id) in animation.targets.iter().enumerate() {
-                identifier(id, &format!("$.animations[{index}].targets[{target}]"))?;
-            }
-        }
-        let skin_binds = self
-            .skins
-            .iter()
-            .enumerate()
-            .map(|(index, skin)| {
-                for (joint, id) in skin.joints.iter().enumerate() {
-                    identifier(id, &format!("$.skins[{index}].joints[{joint}]"))?;
-                }
-                skin.inverse_binds(&format!("$.skins[{index}]"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        for (prefab, definition) in self.prefabs.iter().enumerate() {
-            for (index, entity) in definition.entities.iter().enumerate() {
-                let path = format!("$.prefabs[{prefab}].entities[{index}]");
-                if let Some(player) = &entity.animation {
-                    reference(
-                        &player.clip,
-                        &animation_ids,
-                        &format!("{path}.animation.clip"),
-                    )?;
-                }
-                if let Some(skin) = &entity.skin {
-                    reference(skin, &skin_ids, &format!("{path}.skin"))?;
-                }
-            }
-        }
-        Ok(Rigs {
-            animation_ids,
-            skin_ids,
-            skin_binds,
-        })
-    }
-
     fn prepare_assets(&self, files: Option<&SceneFiles>) -> Result<CpuAssets, SceneError> {
         for (mesh_index, mesh) in self.meshes.iter().enumerate() {
             if let MeshSource::Inline { vertices, .. } = &mesh.source {
@@ -419,151 +309,15 @@ impl SceneDocument {
         })
     }
 
-    fn check_skin_joints(
-        &self,
-        entities: &[ExpandedObject],
-        components: &[PreparedEntity],
-        meshes: &[Mesh],
-    ) -> Result<(), SceneError> {
-        for (entity, component) in entities.iter().zip(components) {
-            let (Some(skin), Some(mesh)) = (&component.skin, &entity.source.mesh) else {
-                continue;
-            };
-            let mesh = &meshes[self
-                .meshes
-                .iter()
-                .position(|source| source.id == *mesh)
-                .expect("referenced mesh exists")];
-            if mesh.joint_count() as usize > skin.joints.len() {
-                return Err(SceneError::new(
-                    ErrorCode::InvalidSkin,
-                    format!("{}.skin", entity.path),
-                    format!(
-                        "the mesh's vertices name {} joints but skin '{}' has {}",
-                        mesh.joint_count(),
-                        self.skins[skin.skin].id,
-                        skin.joints.len()
-                    ),
-                ));
-            }
-        }
-        Ok(())
-    }
-
     fn prepare_entity(
         &self,
         entity: &ExpandedObject,
-        resolve: &Resolve<'_>,
-        rigs: &Rigs<'_>,
         files: Option<&SceneFiles>,
     ) -> Result<PreparedEntity, SceneError> {
         let (source, path) = (&entity.source, &entity.path);
         Ok(PreparedEntity {
-            player: self.prepare_player(entity, resolve, &rigs.animation_ids)?,
-            skin: self.prepare_skin(entity, resolve, &rigs.skin_ids)?,
             components: source.prepare_components(path, self, files)?,
         })
-    }
-
-    fn prepare_player(
-        &self,
-        entity: &ExpandedObject,
-        resolve: &Resolve<'_>,
-        animation_ids: &BTreeSet<&str>,
-    ) -> Result<Option<PreparedPlayer>, SceneError> {
-        let Some(player) = &entity.source.animation else {
-            return Ok(None);
-        };
-        let path = format!("{}.animation", entity.path);
-        reference(&player.clip, animation_ids, &format!("{path}.clip"))?;
-        engine_settings::Setting::check(
-            &player.speed,
-            "speed",
-            engine_core::AnimationPlayer::SPEED,
-        )
-        .map_err(|invalid| {
-            SceneError::new(
-                ErrorCode::InvalidAnimation,
-                format!("{path}.speed"),
-                invalid.to_string(),
-            )
-        })?;
-        if !player.time.is_finite() || player.time < 0.0 {
-            return Err(SceneError::new(
-                ErrorCode::InvalidAnimation,
-                format!("{path}.time"),
-                "time must be finite and not negative",
-            ));
-        }
-        let clip = self
-            .animations
-            .iter()
-            .position(|animation| animation.id == player.clip)
-            .expect("referenced clip exists");
-        let targets = self.animations[clip]
-            .targets
-            .iter()
-            .map(|target| {
-                resolve(entity, target).ok_or_else(|| {
-                    SceneError::new(
-                        ErrorCode::UnknownReference,
-                        format!("{path}.clip"),
-                        format!(
-                            "target '{target}' of animation '{}' matches no entity of this placement or scene",
-                            player.clip
-                        ),
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Some(PreparedPlayer {
-            clip,
-            targets,
-            speed: player.speed,
-            looping: player.looping,
-            time: player.time,
-        }))
-    }
-
-    fn prepare_skin(
-        &self,
-        entity: &ExpandedObject,
-        resolve: &Resolve<'_>,
-        skin_ids: &BTreeSet<&str>,
-    ) -> Result<Option<PreparedSkin>, SceneError> {
-        let Some(id) = &entity.source.skin else {
-            return Ok(None);
-        };
-        let path = format!("{}.skin", entity.path);
-        reference(id, skin_ids, &path)?;
-        if entity.source.mesh.is_none() {
-            return Err(SceneError::new(
-                ErrorCode::InvalidSkin,
-                path,
-                "a skin deforms its entity's mesh; give the entity a mesh and material",
-            ));
-        }
-        let skin = self
-            .skins
-            .iter()
-            .position(|skin| skin.id == *id)
-            .expect("referenced skin exists");
-        let joints = self.skins[skin]
-            .joints
-            .iter()
-            .map(|joint| {
-                resolve(entity, joint).ok_or_else(|| {
-                    SceneError::new(
-                        ErrorCode::UnknownReference,
-                        path.clone(),
-                        format!(
-                            "joint '{joint}' of skin '{id}' matches no entity of this placement or scene"
-                        ),
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Some(PreparedSkin { skin, joints }))
     }
 
     fn validate_camera(&self) -> Result<(), SceneError> {

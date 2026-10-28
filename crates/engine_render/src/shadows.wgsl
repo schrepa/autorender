@@ -67,14 +67,6 @@ struct Counters {
     words: array<atomic<u32>>,
 }
 @group(0) @binding(8) var<storage, read_write> counters: Counters;
-struct Skinned {
-    slot: u32,
-    position: u32,
-    batch: u32,
-    joints: u32,
-}
-@group(0) @binding(10) var<storage, read> skinned: array<Skinned>;
-@group(0) @binding(11) var<storage, read> skin_bounds: array<vec4<f32>>;
 @group(0) @binding(12) var tile_slots: texture_2d<u32>;
 
 const STILLNESS: u32 = 1u;
@@ -204,25 +196,6 @@ fn light_box(center: vec3<f32>, half: vec3<f32>) -> array<vec3<f32>, 2> {
     return array<vec3<f32>, 2>(light_center - light_half, light_center + light_half);
 }
 
-@compute @workgroup_size(64)
-fn select_skinned(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= cull.counts.z {
-        return;
-    }
-    let record = skinned[id.x];
-    if (flags[record.position] & VALID) == 0u {
-        return;
-    }
-    let group = batches[record.batch].group;
-    if group >= cull.groups {
-        return;
-    }
-    let world_low = skin_bounds[2u * id.x].xyz;
-    let world_high = skin_bounds[2u * id.x + 1u].xyz;
-    let bounds = light_box((world_low + world_high) * 0.5, (world_high - world_low) * 0.5);
-    mark_tiles(cull.words.z, bounds[0].xy, bounds[1].xy, true, group, record.slot);
-}
-
 @compute @workgroup_size(256)
 fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= cull.candidates {
@@ -238,9 +211,6 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     if batch.group >= cull.groups {
         return;
     }
-    if batch.bounds_min.w != 0.0 && classify {
-        return;
-    }
     let center = (batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5;
     let half = (batch.bounds_max.xyz - batch.bounds_min.xyz) * 0.5;
     let world_center = vec3<f32>(dot(pose.r0.xyz, center) + pose.r0.w,
@@ -250,9 +220,8 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     let bounds = light_box(world_center, world_half);
     let low = bounds[0];
     let high = bounds[1];
-    let clustered = batch.bounds_max.w != 0.0;
-    var moving = !clustered;
-    var kept = clustered;
+    var moving = true;
+    var kept = false;
     if classify {
         let key = pose_key(pose, batch.group);
         let state = stillness[candidate.slot];
@@ -351,7 +320,6 @@ struct Routes {
 }
 @group(0) @binding(13) var<storage, read> routes: Routes;
 @group(1) @binding(0) var<storage, read> slot_poses: array<Rows>;
-@group(1) @binding(2) var<storage, read> slot_palette: array<Rows>;
 
 fn flattened(clip: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(clip.xy, max(clip.z, 0.0), clip.w);
@@ -495,62 +463,6 @@ fn vs_moving_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>
     let slot = pair & MOVING_SLOT;
     let tile = pair >> 24u;
     return moving_masked_output(masked_output(route(slot_world(slot, position), tile), uv,
-        slot_colors[slot].color), tile);
-}
-
-fn skinned_world(slot: u32, position: vec3<f32>, joints: vec4<u32>,
-        weights: vec4<f32>) -> vec3<f32> {
-    let point = vec4<f32>(position, 1.0);
-    let flags = slot_colors[slot].flags;
-    if flags == 0u {
-        let pose = slot_poses[slot];
-        return vec3<f32>(dot(pose.r0, point), dot(pose.r1, point), dot(pose.r2, point));
-    }
-    let base = flags - 1u;
-    let w = weights / max(dot(weights, vec4<f32>(1.0)), 1.0e-6);
-    let a = slot_palette[base + joints.x];
-    let b = slot_palette[base + joints.y];
-    let c = slot_palette[base + joints.z];
-    let d = slot_palette[base + joints.w];
-    let r0 = a.r0 * w.x + b.r0 * w.y + c.r0 * w.z + d.r0 * w.w;
-    let r1 = a.r1 * w.x + b.r1 * w.y + c.r1 * w.z + d.r1 * w.w;
-    let r2 = a.r2 * w.x + b.r2 * w.y + c.r2 * w.z + d.r2 * w.w;
-    return vec3<f32>(dot(r0, point), dot(r1, point), dot(r2, point));
-}
-
-@vertex
-fn vs_affine_skinned(@location(0) position: vec3<f32>, @location(2) slot: u32,
-        @location(11) joints: vec4<u32>, @location(12) weights: vec4<f32>)
-        -> @builtin(position) vec4<f32> {
-    return project(skinned_world(slot, position, joints, weights));
-}
-
-@vertex
-fn vs_affine_masked_skinned(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>,
-        @location(2) slot: u32, @location(11) joints: vec4<u32>,
-        @location(12) weights: vec4<f32>) -> MaskedOutput {
-    return masked_output(project(skinned_world(slot, position, joints, weights)), uv,
-        slot_colors[slot].color);
-}
-
-@vertex
-fn vs_moving_skinned(@location(0) position: vec3<f32>, @location(2) pair: u32,
-        @location(11) joints: vec4<u32>, @location(12) weights: vec4<f32>) -> MovingOutput {
-    var output: MovingOutput;
-    output.tile = pair >> 24u;
-    output.clip = route(skinned_world(pair & MOVING_SLOT, position, joints, weights),
-        output.tile);
-    return output;
-}
-
-@vertex
-fn vs_moving_masked_skinned(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>,
-        @location(2) pair: u32, @location(11) joints: vec4<u32>,
-        @location(12) weights: vec4<f32>) -> MovingMaskedOutput {
-    let slot = pair & MOVING_SLOT;
-    let tile = pair >> 24u;
-    return moving_masked_output(masked_output(
-        route(skinned_world(slot, position, joints, weights), tile), uv,
         slot_colors[slot].color), tile);
 }
 

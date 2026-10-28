@@ -411,12 +411,9 @@ impl<G: Game> GameHost<G> {
             Ok(probe) => probe,
             Err(error) => return Some(Err(error.to_string())),
         };
-        let slot = probe.object.filter(|_| {
-            matches!(
-                probe.kind,
-                Some(DrawnKind::Mesh | DrawnKind::Card | DrawnKind::Virtual)
-            )
-        });
+        let slot = probe
+            .object
+            .filter(|_| matches!(probe.kind, Some(DrawnKind::Mesh | DrawnKind::Card)));
         let engine = self.app.engine();
         let entity = slot
             .and_then(|slot| engine.render_entity(slot))

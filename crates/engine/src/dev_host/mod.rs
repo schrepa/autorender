@@ -15,8 +15,8 @@ impl RendererFacts for Facts<'_> {
     }
 
     fn mesh(&self, mesh: engine_core::MeshHandle) -> Option<RenderedMesh> {
-        let (skinned, levels) = self.0.mesh_levels(mesh)?;
-        Some(RenderedMesh { skinned, levels })
+        let levels = self.0.mesh_levels(mesh)?;
+        Some(RenderedMesh { levels })
     }
 
     fn impostor(

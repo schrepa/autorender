@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 engine_core.workspace = true
 engine_scene.workspace = true
-engine_vgbuild.workspace = true
 engine_lodbuild.workspace = true
 glam.workspace = true
 gltf.workspace = true

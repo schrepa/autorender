@@ -71,8 +71,6 @@ struct SlotColor {
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
 @group(2) @binding(1) var<storage, read> colors: array<SlotColor>;
 @group(2) @binding(2) var<storage, read> previous_poses: array<AffinePose>;
-@group(2) @binding(3) var<storage, read> palette: array<AffinePose>;
-@group(2) @binding(4) var<storage, read> previous_palette: array<AffinePose>;
 @group(2) @binding(5) var<storage, read> grounds: array<vec4<u32>>;
 const MOVED_SLOT: u32 = 0x80000000u;
 
@@ -102,29 +100,6 @@ fn fade_hidden(fade: u32, position: vec2<f32>) -> bool {
     let shows = fade_noise(position) < f32(fade & 0x7fu) / 127.0;
     return shows == ((fade & FADE_WORD_OUT) != 0u);
 }
-
-struct VirtualMeshRecord {
-    bases: vec4<u32>,
-    info: vec4<u32>,
-    position_min: vec4<f32>,
-    position_step: vec4<f32>,
-    uv: vec4<f32>,
-}
-@group(2) @binding(6) var<storage, read> virtual_meshes: array<VirtualMeshRecord>;
-@group(2) @binding(7) var<storage, read> virtual_clusters: array<vec4<u32>>;
-@group(2) @binding(8) var<storage, read> virtual_pages: array<u32>;
-const VIRTUAL_PAGE_WORDS: u32 = 32768u;
-
-struct VisibilityDraw {
-    visible_base: u32,
-    bin: u32,
-    tile_base: u32,
-    tiles_across: u32,
-}
-@group(2) @binding(9) var<uniform> visibility_draw: VisibilityDraw;
-@group(2) @binding(10) var<storage, read> visible_clusters: array<vec2<u32>>;
-@group(2) @binding(11) var visibility_ids: texture_2d<u32>;
-@group(2) @binding(12) var<storage, read> resolve_tiles: array<u32>;
 
 struct Clusters {
     view_projection: mat4x4<f32>,

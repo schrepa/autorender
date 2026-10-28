@@ -3,7 +3,6 @@ use engine_core::glam::{Mat4, Vec3, Vec4};
 use super::maps::AtlasLayout;
 use super::{
     COMPOSE_VIEW, KeptRefresh, MAPS, MOVING_MAP, MOVING_VIEW, SKY_MAP, SKY_VIEW, VIEW_STRIDE,
-    VIRTUAL_SHADOW_PLANES, VirtualShadowView,
 };
 use crate::gpu_data::{ComposeData, MAX_LEVELS, RouteData, ShadowCullUniform, ShadowUniform};
 use crate::gpu_layouts::constants::{SHADOW_REGIONS, STILLNESS};
@@ -21,7 +20,6 @@ pub(super) struct FrameRegions<'a> {
 
 pub(super) struct SelectionCounts {
     pub(super) candidates: u32,
-    pub(super) skinned: u32,
     pub(super) groups: u32,
     pub(super) capacity: u32,
     pub(super) classify: bool,
@@ -60,25 +58,6 @@ impl FrameRegions<'_> {
                     texel: region.texel,
                 },
             ));
-        }
-    }
-
-    pub(super) fn virtual_views(&self, out: &mut Vec<VirtualShadowView>) {
-        for (index, region) in self.plan.regions.iter().enumerate() {
-            let mut planes = [[0.0, 0.0, 0.0, 1.0]; VIRTUAL_SHADOW_PLANES];
-            for (slot, plane) in planes
-                .iter_mut()
-                .zip(self.rect_planes(region.rect, region.depth[1]))
-            {
-                *slot = plane;
-            }
-            out.push(VirtualShadowView {
-                map: index,
-                planes,
-                direction: self.basis.rows[2],
-                view_offset: (index as u64 * VIEW_STRIDE) as u32,
-                error: 0.5 * region.texel,
-            });
         }
     }
 
@@ -203,7 +182,7 @@ impl FrameRegions<'_> {
             counts: [
                 self.plan.regions.len() as u32,
                 self.clipmap.len() as u32,
-                counts.skinned,
+                0,
                 self.clipmap.side(),
             ],
             words: [mask_words, 0, mask_words, 2 * mask_words],

@@ -421,13 +421,12 @@ fn frame(engine: &mut Engine, alpha: f32, snapshot: &mut RenderSnapshot) -> Resu
         .iter()
         .map(|instance| {
             format!(
-                "{} {:?} {:?} {:?} {:?} {:?}",
+                "{} {:?} {:?} {:?} {:?}",
                 instance.mesh.slot(),
                 instance.material.map(MaterialHandle::slot),
                 bits(instance.model),
                 instance.color.map(f32::to_bits),
                 instance.surface,
-                instance.skin,
             )
         })
         .collect();

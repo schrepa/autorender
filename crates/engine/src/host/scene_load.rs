@@ -1,12 +1,10 @@
-use engine_core::{ErrorCode, TextureFormat, VirtualMesh};
+use engine_core::{ErrorCode, TextureFormat};
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 pub use engine_worker::{
     IMAGE_FORMATS, Image, ImageDecoder, ImageFormat, decode_image, image_format,
 };
 
 use crate::{Error, Result};
-
-const VIRTUAL_HEADER: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoadingHost {
@@ -17,7 +15,6 @@ pub enum LoadingHost {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileRead {
     pub uri: String,
-    pub prefix: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -29,7 +26,6 @@ pub struct ImageRead {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
     Asked,
-    Prefix,
     Decoding,
     Held,
 }
@@ -52,13 +48,7 @@ impl SceneLoad {
             .collect();
         let reads = entries
             .iter()
-            .map(|(uri, kind, _)| FileRead {
-                uri: uri.clone(),
-                prefix: match kind {
-                    SceneFileKind::VirtualMesh => Some(VIRTUAL_HEADER),
-                    SceneFileKind::Image | SceneFileKind::Buffer => None,
-                },
-            })
+            .map(|(uri, _, _)| FileRead { uri: uri.clone() })
             .collect();
         Ok(Self {
             host,
@@ -72,7 +62,7 @@ impl SceneLoad {
         std::mem::take(&mut self.reads)
     }
 
-    pub fn read(&mut self, uri: &str, bytes: Vec<u8>, url: &str) -> Result<Option<ImageRead>> {
+    pub fn read(&mut self, uri: &str, bytes: Vec<u8>) -> Result<Option<ImageRead>> {
         let at = self
             .entries
             .iter()
@@ -84,8 +74,7 @@ impl SceneLoad {
                     format!("the scene names no file {uri}"),
                 )
             })?;
-        let (kind, stage) = (self.entries[at].1, self.entries[at].2);
-        match kind {
+        match self.entries[at].1 {
             SceneFileKind::Buffer => {
                 self.files.add_buffer(uri, bytes);
                 self.entries[at].2 = Stage::Held;
@@ -107,38 +96,6 @@ impl SceneLoad {
                 })?;
                 self.entries[at].2 = Stage::Decoding;
                 Ok(Some(ImageRead { decoder, bytes }))
-            }
-            SceneFileKind::VirtualMesh => {
-                let length = bytes
-                    .get(..VIRTUAL_HEADER)
-                    .and_then(VirtualMesh::prefix_bytes);
-                let Some(length) = length else {
-                    return Err(Error::new(
-                        ErrorCode::InvalidMesh,
-                        "$",
-                        format!("{url} is not a virtual mesh file of this engine version"),
-                    ));
-                };
-                if bytes.len() < length {
-                    if stage == Stage::Prefix {
-                        return Err(Error::new(
-                            ErrorCode::MissingFile,
-                            "$",
-                            format!("{url} ends within its prefix"),
-                        ));
-                    }
-                    self.entries[at].2 = Stage::Prefix;
-                    self.reads.push(FileRead {
-                        uri: uri.to_owned(),
-                        prefix: Some(length),
-                    });
-                    return Ok(None);
-                }
-                let mut prefix = bytes;
-                prefix.truncate(length);
-                self.files.add_virtual_mesh(uri, prefix, Some(url));
-                self.entries[at].2 = Stage::Held;
-                Ok(None)
             }
         }
     }

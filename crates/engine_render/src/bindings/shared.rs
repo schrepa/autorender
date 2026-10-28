@@ -68,9 +68,7 @@ shared_groups! {
         errors: 62..64 [terrain_errors, water_errors],
     }
     SHADER @ 2 {
-        poses: 0..6 [poses, colors, previous_poses, palette, previous_palette, grounds],
-        virtual_geometry: 6..9 [virtual_meshes, virtual_clusters, virtual_pages],
-        visibility: 9..13 [visibility_draw, visible_clusters, visibility_ids, resolve_tiles],
+        poses: 0..6 [poses, colors, previous_poses, grounds],
         decals: 13..15 [decal_records, decal_depth],
         impostor_bakes: 15..17 [impostor_bake, impostor_shade],
         terrain: 18..19 [terrain_ids_texture],
