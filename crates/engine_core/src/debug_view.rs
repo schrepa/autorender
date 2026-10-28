@@ -1,7 +1,15 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
+use crate::bricks::{Brick, Bricks};
+use crate::sections::environment_section;
 use engine_settings::{Setting, settings};
+
+impl Brick for DebugView {
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks.settings::<DebugView>();
+    }
+}
 
 macro_rules! modes {
     ($($(#[$doc:meta])* $mode:ident = $name:literal,)*) => {
@@ -70,6 +78,8 @@ settings! {
         pub shade: bool = true => any,
     }
 }
+
+environment_section!(DebugView, "debug_view", opt_in: true);
 
 impl DebugView {
     pub fn off() -> Self {

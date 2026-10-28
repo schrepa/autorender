@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
+use crate::sections::environment_section;
 use engine_settings::settings;
 
 settings! {
@@ -20,6 +21,8 @@ settings! {
         pub directions: u32 = 13 => range(5.0, 13.0),
     }
 }
+
+environment_section!(SkyOcclusion, "sky_occlusion", opt_in: false);
 
 impl SkyOcclusion {
     pub fn off() -> Self {

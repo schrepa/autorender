@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
+use crate::sections::environment_section;
 use engine_settings::settings;
 
 settings! {
@@ -18,6 +19,8 @@ settings! {
         pub particle_response: f32 = 2.0 => range(0.0, 4.0),
     }
 }
+
+environment_section!(TemporalAntialiasing, "temporal_antialiasing", opt_in: false);
 
 impl TemporalAntialiasing {
     pub fn off() -> Self {

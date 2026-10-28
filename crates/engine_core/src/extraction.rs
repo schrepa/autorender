@@ -3,45 +3,22 @@ use glam::Mat4;
 
 use crate::retained_render::RetainedRender;
 use crate::{
-    GlobalTransforms, PresentedTransforms, TransformIndex, WorldCells, lights, particles, probes,
+    GlobalTransforms, PresentationMode, PresentationState, PresentedTransforms, TransformIndex,
+    WorldCells,
 };
 
-pub(crate) struct Extractions {
-    lights: lights::LightExtraction,
-    particles: particles::ParticleExtraction,
-    probes: probes::ProbeExtraction,
-}
-
-impl Extractions {
-    pub(crate) fn new(world: &mut World) -> Self {
-        Self {
-            lights: lights::LightExtraction::new(world),
-            particles: particles::ParticleExtraction::new(world),
-            probes: probes::ProbeExtraction::new(world),
-        }
-    }
-
-    pub(crate) fn extract(
-        &mut self,
-        retained: &mut RetainedRender,
-        world: &World,
-        aspect: f32,
-        gpu: bool,
-    ) {
-        retained.extract_lights_and_particles(world, &mut self.lights, &mut self.particles, gpu);
-        retained.extract_probes(world, &mut self.probes);
-        retained.extract_terrain(world, aspect);
-        retained.set_streamed(
-            world
-                .get_resource::<WorldCells>()
-                .map(WorldCells::stats)
-                .unwrap_or_default(),
-            world
-                .get_resource::<crate::StaticTables>()
-                .map(crate::StaticTables::render)
-                .unwrap_or_default(),
-        );
-    }
+pub(crate) fn extract(retained: &mut RetainedRender, world: &World, aspect: f32) {
+    retained.extract_terrain(world, aspect);
+    retained.set_streamed(
+        world
+            .get_resource::<WorldCells>()
+            .map(WorldCells::stats)
+            .unwrap_or_default(),
+        world
+            .get_resource::<crate::StaticTables>()
+            .map(crate::StaticTables::render)
+            .unwrap_or_default(),
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -51,11 +28,10 @@ pub(crate) enum Poses<'w> {
 }
 
 impl<'w> Poses<'w> {
-    pub(crate) fn of(world: &'w World, gpu: bool) -> Self {
-        if gpu {
-            Self::Authoritative(world.resource())
-        } else {
-            Self::Prepared(world.resource())
+    pub(crate) fn of(world: &'w World) -> Self {
+        match world.resource::<PresentationState>().mode() {
+            PresentationMode::Interpolated { .. } => Self::Authoritative(world.resource()),
+            PresentationMode::Current => Self::Prepared(world.resource()),
         }
     }
 

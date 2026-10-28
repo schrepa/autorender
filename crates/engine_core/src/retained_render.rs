@@ -19,7 +19,6 @@ use crate::{
     Material, MaterialBinding, MaterialHandle, Mesh3d, MeshHandle, PresentedTransforms,
     RenderInstance, RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot, RenderTexture,
     Surface, TextureHandle, Tint, Transform, TransformIndex,
-    probes::ProbeExtraction,
     ticks::{ChangeWindow, ScanClock, consume_through},
 };
 
@@ -103,7 +102,7 @@ impl<'a> RenderFrame<'a> {
         self.owner.structure_revision
     }
     pub fn source_revision(self) -> u64 {
-        self.owner.source_revision
+        self.owner.snapshot.instance_slots.revision
     }
     pub fn pose_revision(self) -> u64 {
         self.owner.pose_revision
@@ -112,10 +111,10 @@ impl<'a> RenderFrame<'a> {
         self.owner.color_revision
     }
     pub fn lights_revision(self) -> u64 {
-        self.owner.lights_revision
+        self.owner.snapshot.lights.revision
     }
     pub fn emitters_revision(self) -> u64 {
-        self.owner.emitters_revision
+        self.owner.snapshot.particles.revision
     }
     pub fn visible_indices(self) -> &'a [usize] {
         &self.owner.visible
@@ -174,6 +173,7 @@ impl<'a> RenderFrame<'a> {
             cells,
             tables,
             instances,
+            instance_slots: _,
             meshes,
             materials,
             textures,
@@ -193,6 +193,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.lights.list.clear();
         snapshot.lights.dropped = lights.dropped;
         snapshot.lights.invalid = lights.invalid;
+        snapshot.lights.revision = lights.revision;
         for light in &lights.list {
             let Some(slot) = light.slot else {
                 snapshot.lights.list.push(*light);
@@ -269,6 +270,27 @@ impl SourceKey {
                 | (u8::from(mesh.is_some()) << 1)
                 | (u8::from(tint.is_some()) << 2),
         }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct InstanceSlots {
+    entities: EntityHashMap<usize>,
+    sourced: Vec<bool>,
+    revision: u64,
+}
+
+impl InstanceSlots {
+    pub(crate) fn drawn(&self, entity: Entity) -> Option<u32> {
+        self.entities
+            .get(&entity)
+            .copied()
+            .filter(|&index| self.sourced[index])
+            .map(|index| index as u32)
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
     }
 }
 
@@ -536,18 +558,14 @@ pub(crate) struct RetainedRender {
     identity: u64,
     sequence: u64,
     structure_revision: u64,
-    source_revision: u64,
     pose_revision: u64,
     color_revision: u64,
     caster_revision: u64,
-    lights_revision: u64,
-    emitters_revision: u64,
     snapshot: RenderSnapshot,
     cube_mesh: MeshHandle,
     owners: Vec<Option<Entity>>,
     frames: Vec<SlotFrame>,
     visited: Vec<u64>,
-    pub(crate) entities: EntityHashMap<usize>,
     free: Vec<usize>,
     query_slots: Vec<Option<(Entity, usize)>>,
     visible: Vec<usize>,
@@ -584,7 +602,19 @@ struct Pass {
 
 impl RetainedRender {
     pub(crate) fn slot_of(&self, entity: Entity) -> Option<u32> {
-        self.entities.get(&entity).map(|&slot| slot as u32)
+        self.snapshot
+            .instance_slots
+            .entities
+            .get(&entity)
+            .map(|&slot| slot as u32)
+    }
+
+    pub(crate) fn entity_in(&self, slot: u32) -> Option<Entity> {
+        self.snapshot
+            .instance_slots
+            .entities
+            .iter()
+            .find_map(|(&entity, &held)| (held as u32 == slot).then_some(entity))
     }
 
     pub(crate) fn new(cube_mesh: MeshHandle, culling: bool, budget: usize) -> Self {
@@ -595,18 +625,14 @@ impl RetainedRender {
             identity,
             sequence: 0,
             structure_revision: 0,
-            source_revision: 0,
             pose_revision: 0,
             color_revision: 0,
             caster_revision: 0,
-            lights_revision: 0,
-            emitters_revision: 0,
             snapshot: RenderSnapshot::default(),
             cube_mesh,
             owners: Vec::new(),
             frames: Vec::new(),
             visited: Vec::new(),
-            entities: EntityHashMap::default(),
             free: Vec::new(),
             query_slots: Vec::new(),
             visible: Vec::new(),
@@ -662,7 +688,7 @@ impl RetainedRender {
             debug_assert_eq!(self.owners[*index], Some(entity), "an entity owns its slot");
             return Some(*index);
         }
-        let index = if let Some(&index) = self.entities.get(&entity) {
+        let index = if let Some(&index) = self.snapshot.instance_slots.entities.get(&entity) {
             index
         } else {
             globals.get(entity)?;
@@ -676,9 +702,10 @@ impl RetainedRender {
                                 && world.get::<Mesh3d>(old).is_none())
                             || globals.get(old).is_none())
                     {
-                        self.entities.remove(&old);
+                        self.snapshot.instance_slots.entities.remove(&old);
                         *owner = None;
                         self.frames[index].mesh = NO_SOURCE;
+                        self.snapshot.instance_slots.sourced[index] = false;
                         self.free.push(index);
                     }
                 }
@@ -687,6 +714,7 @@ impl RetainedRender {
             let index = if let Some(index) = self.free.pop() {
                 self.owners[index] = Some(entity);
                 self.frames[index] = SlotFrame::NEW;
+                self.snapshot.instance_slots.sourced[index] = false;
                 self.pose_indices[index] = u32::MAX;
                 self.pose_changes[index] = 0;
                 self.color_changes[index] = 0;
@@ -700,6 +728,10 @@ impl RetainedRender {
                     let capacity = (index.max(16) * 2).min(MAX_TRANSFORM_NODES);
                     self.owners.reserve_exact(capacity - index);
                     self.frames.reserve_exact(capacity - index);
+                    self.snapshot
+                        .instance_slots
+                        .sourced
+                        .reserve_exact(capacity - index);
                     self.snapshot.instances.reserve_exact(capacity - index);
                     self.pose_indices.reserve_exact(capacity - index);
                     self.pose_changes.reserve_exact(capacity - index);
@@ -708,6 +740,7 @@ impl RetainedRender {
                 }
                 self.owners.push(Some(entity));
                 self.frames.push(SlotFrame::NEW);
+                self.snapshot.instance_slots.sourced.push(false);
                 self.snapshot.instances.push(RenderInstance {
                     mesh: self.cube_mesh,
                     material: None,
@@ -721,47 +754,15 @@ impl RetainedRender {
                 self.color_changes.push(0);
                 index
             };
-            self.entities.insert(entity, index);
+            self.snapshot.instance_slots.entities.insert(entity, index);
             self.structure_revision = self.sequence;
-            self.source_revision = self.sequence;
+            self.snapshot.instance_slots.revision = self.sequence;
             index
         };
         if let Some(cached) = self.query_slots.get_mut(row) {
             *cached = Some((entity, index));
         }
         Some(index)
-    }
-
-    pub(crate) fn extract_lights_and_particles(
-        &mut self,
-        world: &World,
-        lights: &mut crate::lights::LightExtraction,
-        particles: &mut crate::particles::ParticleExtraction,
-        gpu: bool,
-    ) {
-        let entities = &self.entities;
-        let frames = &self.frames;
-        let slot_of = |entity: Entity| {
-            entities
-                .get(&entity)
-                .copied()
-                .filter(|&index| frames[index].mesh != NO_SOURCE)
-                .map(|index| index as u32)
-        };
-        lights.extract(
-            world,
-            &mut self.snapshot,
-            slot_of,
-            self.source_revision,
-            gpu,
-        );
-        self.lights_revision = lights.revision;
-        particles.extract(world, &mut self.snapshot, gpu);
-        self.emitters_revision = particles.revision;
-    }
-
-    pub(crate) fn extract_probes(&mut self, world: &World, probes: &mut ProbeExtraction) {
-        probes.extract(world, &mut self.snapshot);
     }
 
     pub(crate) fn set_streamed(&mut self, cells: crate::CellStats, tables: crate::RenderTables) {
@@ -924,7 +925,7 @@ impl RetainedRender {
             if !replaced.contains(&mesh3d.material) {
                 continue;
             }
-            let Some(&index) = self.entities.get(&entity) else {
+            let Some(&index) = self.snapshot.instance_slots.entities.get(&entity) else {
                 continue;
             };
             let before = self.frames[index];
@@ -954,7 +955,7 @@ impl RetainedRender {
             self.structure_revision = sequence;
         }
         if pass.sources_changed || published == Published::Sources {
-            self.source_revision = sequence;
+            self.snapshot.instance_slots.revision = sequence;
         }
         if pass.colors != 0 {
             self.color_revision = sequence;
@@ -1001,6 +1002,7 @@ impl RetainedRender {
             .as_ref()
             .and_then(|value| value.material_index)
             .map_or(NO_SOURCE, |material| material as u32);
+        self.snapshot.instance_slots.sourced[index] = resolved.is_some();
         let Some(ResolvedSource {
             mesh,
             material,
@@ -1154,15 +1156,16 @@ impl RetainedRender {
         if pass.casters_changed {
             self.caster_revision = sequence;
         }
-        if pass.seen != self.entities.len() {
+        if pass.seen != self.snapshot.instance_slots.entities.len() {
             self.free
                 .reserve_exact(self.owners.len().saturating_sub(self.free.len()));
             for (index, owner) in self.owners.iter_mut().enumerate() {
                 if self.visited[index / 64] & (1 << (index % 64)) == 0
                     && let Some(entity) = owner.take()
                 {
-                    self.entities.remove(&entity);
+                    self.snapshot.instance_slots.entities.remove(&entity);
                     self.frames[index].mesh = NO_SOURCE;
+                    self.snapshot.instance_slots.sourced[index] = false;
                     self.free.push(index);
                     pass.structure_changed = true;
                     pass.sources_changed = true;
@@ -1175,7 +1178,7 @@ impl RetainedRender {
             self.structure_revision = sequence;
         }
         if pass.sources_changed || published == Published::Sources {
-            self.source_revision = sequence;
+            self.snapshot.instance_slots.revision = sequence;
         }
         if pass.poses != 0 {
             self.pose_revision = sequence;

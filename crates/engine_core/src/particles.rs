@@ -1,3 +1,5 @@
+use std::sync::{Mutex, PoisonError};
+
 use bevy_ecs::{
     entity::EntityHashMap,
     prelude::{Component, Entity, Resource, World},
@@ -6,9 +8,22 @@ use bevy_ecs::{
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::bricks::{Brick, Bricks};
 use crate::extraction::{Nearest, Poses};
+use crate::sections::environment_section;
 use crate::{RenderSnapshot, TransformIndex};
 use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
+
+pub struct Particles;
+
+impl Brick for Particles {
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks
+            .settings::<ParticleSettings>()
+            .resource::<ParticleExtractor>()
+            .extract(extract_particles);
+    }
+}
 
 pub const MAX_EMITTER_PARTICLES: u32 = 1 << 24;
 
@@ -87,6 +102,8 @@ settings! {
     }
 }
 
+environment_section!(ParticleSettings, "particles", opt_in: false);
+
 impl ParticleSettings {
     pub fn off() -> Self {
         Self {
@@ -110,42 +127,42 @@ pub struct RenderParticles {
     pub list: Vec<RenderEmitter>,
     pub dropped: usize,
     pub invalid: usize,
+    pub revision: u64,
 }
 
-pub(crate) struct ParticleExtraction {
-    query: QueryState<(Entity, &'static ParticleEmitter)>,
+#[derive(Resource, Default)]
+pub(crate) struct ParticleExtractor(Mutex<ParticleExtraction>);
+
+fn extract_particles(world: &World, snapshot: &mut RenderSnapshot) {
+    world
+        .resource::<ParticleExtractor>()
+        .0
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .extract(world, snapshot);
+}
+
+#[derive(Default)]
+struct ParticleExtraction {
+    query: Option<QueryState<(Entity, &'static ParticleEmitter)>>,
     hints: Vec<TransformIndex>,
     motion: EntityHashMap<(Vec3, f32, Vec3, u64)>,
     extraction: u64,
     candidates: Vec<(f32, Entity, Mat4, ParticleEmitter)>,
     nearest: Nearest,
     previous: Vec<RenderEmitter>,
-    pub(crate) revision: u64,
 }
 
 impl ParticleExtraction {
-    pub(crate) fn new(world: &mut World) -> Self {
-        Self {
-            query: world.query::<(Entity, &ParticleEmitter)>(),
-            hints: Vec::new(),
-            motion: EntityHashMap::default(),
-            extraction: 0,
-            candidates: Vec::new(),
-            nearest: Nearest::default(),
-            previous: Vec::new(),
-            revision: 0,
-        }
-    }
-
-    pub(crate) fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
-        self.fill(world, snapshot, gpu);
+    fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
+        self.fill(world, snapshot);
         if snapshot.particles.list != self.previous {
-            self.revision += 1;
+            snapshot.particles.revision += 1;
             self.previous.clone_from(&snapshot.particles.list);
         }
     }
 
-    fn fill(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
+    fn fill(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
         let settings = snapshot.environment.particles;
         snapshot.particles.list.clear();
         snapshot.particles.dropped = 0;
@@ -154,24 +171,29 @@ impl ParticleExtraction {
             self.motion.clear();
             return;
         }
-        let poses = Poses::of(world, gpu);
+        if self.query.is_none() {
+            self.query = world.try_query();
+        }
+        let poses = Poses::of(world);
         let eye = snapshot.detail_eye;
         self.candidates.clear();
         let mut wanted = 0_u64;
-        for (position, (entity, emitter)) in self.query.iter(world).enumerate() {
-            if emitter.validate().is_err() {
-                snapshot.particles.invalid += 1;
-                continue;
+        if let Some(query) = &mut self.query {
+            for (position, (entity, emitter)) in query.iter(world).enumerate() {
+                if emitter.validate().is_err() {
+                    snapshot.particles.invalid += 1;
+                    continue;
+                }
+                if self.hints.len() <= position {
+                    self.hints.resize(position + 1, TransformIndex::default());
+                }
+                let Some(model) = poses.model_indexed(entity, &mut self.hints[position]) else {
+                    continue;
+                };
+                wanted += u64::from(emitter.capacity());
+                let distance = model.transform_point3(emitter.offset).distance_squared(eye);
+                self.candidates.push((distance, entity, model, *emitter));
             }
-            if self.hints.len() <= position {
-                self.hints.resize(position + 1, TransformIndex::default());
-            }
-            let Some(model) = poses.model_indexed(entity, &mut self.hints[position]) else {
-                continue;
-            };
-            wanted += u64::from(emitter.capacity());
-            let distance = model.transform_point3(emitter.offset).distance_squared(eye);
-            self.candidates.push((distance, entity, model, *emitter));
         }
         let budget = settings.max_particles.map(u64::from);
         let time = snapshot.elapsed_seconds;

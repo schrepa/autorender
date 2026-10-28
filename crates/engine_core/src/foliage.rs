@@ -1,7 +1,18 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
+use crate::Highlights;
+use crate::bricks::{Brick, Bricks};
+use crate::sections::environment_section;
 use engine_settings::settings;
+
+pub struct LightingModel;
+
+impl Brick for LightingModel {
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks.settings::<Highlights>().settings::<Foliage>();
+    }
+}
 
 settings! {
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -19,6 +30,8 @@ settings! {
         pub crown_depth: f32 = 2.0 => range(0.0, 8.0),
     }
 }
+
+environment_section!(Foliage, "foliage", opt_in: false);
 
 impl Foliage {
     pub fn off() -> Self {

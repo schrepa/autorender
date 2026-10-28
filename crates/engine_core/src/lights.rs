@@ -1,3 +1,5 @@
+use std::sync::{Mutex, PoisonError};
+
 use bevy_ecs::{
     change_detection::DetectChanges,
     prelude::{Component, Entity, Ref, Resource, World},
@@ -6,10 +8,23 @@ use bevy_ecs::{
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::bricks::{Brick, Bricks};
 use crate::extraction::{Nearest, Poses};
+use crate::sections::environment_section;
 use crate::ticks::ScanClock;
 use crate::{GlobalTransforms, RenderSnapshot};
 use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
+
+pub struct Lights;
+
+impl Brick for Lights {
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks
+            .settings::<LocalLightSettings>()
+            .resource::<LightExtractor>()
+            .extract(extract_lights);
+    }
+}
 
 pub const MAX_SPOT_DEGREES: f32 = 89.0;
 pub const MIN_SPOT_DEGREES: f32 = 0.1;
@@ -138,6 +153,8 @@ settings! {
     }
 }
 
+environment_section!(LocalLightSettings, "local_lights", opt_in: false);
+
 impl LocalLightSettings {
     pub fn off() -> Self {
         Self {
@@ -222,10 +239,24 @@ pub struct RenderLights {
     pub list: Vec<RenderLight>,
     pub dropped: usize,
     pub invalid: usize,
+    pub revision: u64,
 }
 
-pub(crate) struct LightExtraction {
-    query: QueryState<(Entity, Ref<'static, LocalLight>)>,
+#[derive(Resource, Default)]
+pub(crate) struct LightExtractor(Mutex<LightExtraction>);
+
+fn extract_lights(world: &World, snapshot: &mut RenderSnapshot) {
+    world
+        .resource::<LightExtractor>()
+        .0
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .extract(world, snapshot);
+}
+
+#[derive(Default)]
+struct LightExtraction {
+    query: Option<QueryState<(Entity, Ref<'static, LocalLight>)>>,
     scans: ScanClock,
     count: usize,
     source_revision: Option<u64>,
@@ -235,67 +266,51 @@ pub(crate) struct LightExtraction {
     invalid: usize,
     ranked: Vec<(f32, usize)>,
     nearest: Nearest,
-    pub(crate) revision: u64,
 }
 
 impl LightExtraction {
-    pub(crate) fn new(world: &mut World) -> Self {
-        Self {
-            query: world.query::<(Entity, Ref<LocalLight>)>(),
-            scans: ScanClock::default(),
-            count: 0,
-            source_revision: None,
-            settings: None,
-            lights: Vec::new(),
-            world_lights: Vec::new(),
-            invalid: 0,
-            ranked: Vec::new(),
-            nearest: Nearest::default(),
-            revision: 0,
-        }
-    }
-
-    pub(crate) fn extract(
-        &mut self,
-        world: &World,
-        snapshot: &mut RenderSnapshot,
-        slot_of: impl Fn(Entity) -> Option<u32>,
-        source_revision: u64,
-        gpu: bool,
-    ) {
+    fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
         let settings = snapshot.environment.local_lights;
         snapshot.lights.dropped = 0;
         snapshot.lights.invalid = 0;
         if !settings.active() {
             snapshot.lights.list.clear();
             self.scans.forget();
-            self.revision += 1;
+            snapshot.lights.revision += 1;
             return;
         }
+        if self.query.is_none() {
+            self.query = world.try_query();
+        }
+        let source_revision = snapshot.instance_slots.revision();
         let this_run = world.read_change_tick();
         let mut count = 0;
         let mut changed = self.scans.aged(this_run)
             || self.source_revision != Some(source_revision)
             || self.settings != Some(settings);
-        for (_, light) in self.query.iter(world) {
-            count += 1;
-            changed |= self.scans.changed(light.last_changed(), this_run);
+        if let Some(query) = &mut self.query {
+            for (_, light) in query.iter(world) {
+                count += 1;
+                changed |= self.scans.changed(light.last_changed(), this_run);
+            }
         }
         changed |= count != self.count;
         if changed {
             self.lights.clear();
             self.world_lights.clear();
             self.invalid = 0;
-            for (entity, light) in self.query.iter(world) {
-                if light.validate().is_err() {
-                    self.invalid += 1;
-                    continue;
+            if let Some(query) = &mut self.query {
+                for (entity, light) in query.iter(world) {
+                    if light.validate().is_err() {
+                        self.invalid += 1;
+                        continue;
+                    }
+                    let slot = snapshot.instance_slots.drawn(entity);
+                    if slot.is_none() {
+                        self.world_lights.push(self.lights.len());
+                    }
+                    self.lights.push((entity, *light, slot));
                 }
-                let slot = slot_of(entity);
-                if slot.is_none() {
-                    self.world_lights.push(self.lights.len());
-                }
-                self.lights.push((entity, *light, slot));
             }
             self.count = count;
             self.source_revision = Some(source_revision);
@@ -310,9 +325,9 @@ impl LightExtraction {
             return;
         }
         snapshot.lights.invalid = self.invalid;
-        self.revision += 1;
+        snapshot.lights.revision += 1;
         let globals = world.resource::<GlobalTransforms>();
-        let poses = Poses::of(world, gpu);
+        let poses = Poses::of(world);
         let budget = settings
             .max_lights
             .map_or(usize::MAX, |budget| budget as usize);

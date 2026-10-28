@@ -1,3 +1,5 @@
+use std::sync::{Mutex, PoisonError};
+
 use bevy_ecs::{
     prelude::{Component, Entity, Resource, World},
     query::QueryState,
@@ -5,9 +7,22 @@ use bevy_ecs::{
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+use crate::bricks::{Brick, Bricks};
 use crate::extraction::Nearest;
+use crate::sections::environment_section;
 use crate::{GlobalTransforms, RenderSnapshot, TransformIndex};
 use engine_settings::{InvalidSetting, settings};
+
+pub struct ReflectionProbes;
+
+impl Brick for ReflectionProbes {
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks
+            .settings::<ReflectionProbeSettings>()
+            .resource::<ProbeExtractor>()
+            .extract(extract_probes);
+    }
+}
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ReflectionProbe {
@@ -83,6 +98,8 @@ settings! {
     }
 }
 
+environment_section!(ReflectionProbeSettings, "reflection_probes", opt_in: false);
+
 impl ReflectionProbeSettings {
     pub fn off() -> Self {
         Self {
@@ -107,59 +124,68 @@ pub struct RenderReflectionProbes {
     pub dropped: usize,
 }
 
-pub(crate) struct ProbeExtraction {
-    query: QueryState<(Entity, &'static ReflectionProbe)>,
+#[derive(Resource, Default)]
+pub(crate) struct ProbeExtractor(Mutex<ProbeExtraction>);
+
+fn extract_probes(world: &World, snapshot: &mut RenderSnapshot) {
+    world
+        .resource::<ProbeExtractor>()
+        .0
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .extract(world, snapshot);
+}
+
+#[derive(Default)]
+struct ProbeExtraction {
+    query: Option<QueryState<(Entity, &'static ReflectionProbe)>>,
     hints: Vec<TransformIndex>,
     candidates: Vec<(f32, RenderReflectionProbe)>,
     nearest: Nearest,
 }
 
 impl ProbeExtraction {
-    pub(crate) fn new(world: &mut World) -> Self {
-        Self {
-            query: world.query::<(Entity, &ReflectionProbe)>(),
-            hints: Vec::new(),
-            candidates: Vec::new(),
-            nearest: Nearest::default(),
-        }
-    }
-
-    pub(crate) fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
+    fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
         let settings = snapshot.environment.reflection_probes;
         snapshot.reflection_probes.list.clear();
         snapshot.reflection_probes.dropped = 0;
         if !settings.enabled {
             return;
         }
+        if self.query.is_none() {
+            self.query = world.try_query();
+        }
         let globals = world.resource::<GlobalTransforms>();
         let eye = snapshot.detail_eye;
         self.candidates.clear();
-        for (position, (entity, probe)) in self.query.iter(world).enumerate() {
-            if probe.validate().is_err() {
-                continue;
+        if let Some(query) = &mut self.query {
+            for (position, (entity, probe)) in query.iter(world).enumerate() {
+                if probe.validate().is_err() {
+                    continue;
+                }
+                if self.hints.len() <= position {
+                    self.hints.resize(position + 1, TransformIndex::default());
+                }
+                let Some(center) = globals
+                    .get_indexed(entity, &mut self.hints[position])
+                    .and_then(|pose| pose.matrix())
+                    .map(|matrix| matrix.w_axis.truncate())
+                    .filter(|center| center.is_finite())
+                else {
+                    continue;
+                };
+                let outside = ((eye - center).abs() - probe.extent).max(Vec3::ZERO);
+                self.candidates.push((
+                    outside.length_squared(),
+                    RenderReflectionProbe {
+                        key: entity.to_bits(),
+                        center,
+                        extent: probe.extent,
+                        blend: probe.blend,
+                        interior: probe.interior,
+                    },
+                ));
             }
-            if self.hints.len() <= position {
-                self.hints.resize(position + 1, TransformIndex::default());
-            }
-            let Some(center) = globals
-                .get_indexed(entity, &mut self.hints[position])
-                .and_then(|pose| pose.matrix())
-                .map(|matrix| matrix.w_axis.truncate())
-                .filter(|center| center.is_finite())
-            else {
-                continue;
-            };
-            let outside = ((eye - center).abs() - probe.extent).max(Vec3::ZERO);
-            self.candidates.push((
-                outside.length_squared(),
-                RenderReflectionProbe {
-                    key: entity.to_bits(),
-                    center,
-                    extent: probe.extent,
-                    blend: probe.blend,
-                    interior: probe.interior,
-                },
-            ));
         }
         let kept = settings
             .max_probes

@@ -1,8 +1,17 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::InvalidSetting;
-use engine_settings::{ExtraRules, settings};
+use crate::bricks::{Brick, Bricks};
+use crate::sections::environment_section;
+use engine_settings::{ExtraRules, InvalidSetting, settings};
+
+impl Brick for Resolution {
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks
+            .settings::<Resolution>()
+            .settings::<DynamicResolution>();
+    }
+}
 
 settings! {
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -16,6 +25,8 @@ settings! {
         pub scale: f32 = 1.0 => range(0.25, 2.0),
     }
 }
+
+environment_section!(Resolution, "resolution", opt_in: false);
 
 impl Resolution {
     pub fn off() -> Self {
@@ -59,6 +70,8 @@ impl ExtraRules for DynamicResolution {
         }
     }
 }
+
+environment_section!(DynamicResolution, "dynamic_resolution", opt_in: true);
 
 impl DynamicResolution {
     pub fn off() -> Self {

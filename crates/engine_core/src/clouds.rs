@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::sections::environment_section;
 use engine_settings::settings;
 
 settings! {
@@ -26,6 +27,8 @@ settings! {
         pub in_view: bool = true => any,
     }
 }
+
+environment_section!(Clouds, "clouds", opt_in: true);
 
 impl Clouds {
     pub fn off() -> Self {

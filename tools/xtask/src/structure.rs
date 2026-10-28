@@ -24,11 +24,6 @@ const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
         "GpuInputs",
         35,
     ),
-    (
-        "crates/engine_core/src/retained_render.rs",
-        "RetainedRender",
-        37,
-    ),
     ("crates/engine_render/src/clouds.rs", "CloudPass", 48),
     ("crates/engine_render/src/post.rs", "PostPass", 32),
     ("crates/engine_render/src/renderer.rs", "Renderer", 37),
