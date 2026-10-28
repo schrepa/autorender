@@ -1,20 +1,20 @@
 use std::{fs, path::Path};
 
-use crate::process::{clients, run};
+use crate::process::{clients, project_option, run};
+
+const USAGE: &str = "usage: cargo xtask new --project DIR";
 
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
 pub fn new(root: &Path, options: &[String]) -> Result<(), String> {
-    let [kind, name] = options else {
-        return Err("usage: cargo xtask new app NAME".into());
+    let (project, rest) = project_option(options)?;
+    let (Some(project), true) = (project, rest.is_empty()) else {
+        return Err(USAGE.into());
     };
-    if kind != "app" {
-        return Err(format!(
-            "cannot make a new {kind:?}; usage: cargo xtask new app NAME"
-        ));
-    }
+    let project = project.trim_end_matches('/').to_owned();
+    let name = project.rsplit('/').next().unwrap_or_default().to_owned();
     let valid = name.split('-').all(|word| {
         !word.is_empty()
             && word
@@ -32,12 +32,12 @@ pub fn new(root: &Path, options: &[String]) -> Result<(), String> {
         .split('-')
         .map(|word| word[..1].to_ascii_uppercase() + &word[1..])
         .collect();
-    let crate_dir = root.join("apps").join(name);
+    let crate_dir = root.join(&project);
     let page = format!("{name}.html");
     for taken in [
         crate_dir.clone(),
         root.join("web").join(&page),
-        root.join("web/src").join(name),
+        root.join("web/src").join(&name),
     ] {
         if taken.exists() {
             return Err(format!("{} already exists", taken.display()));
@@ -61,7 +61,7 @@ pub fn new(root: &Path, options: &[String]) -> Result<(), String> {
         "//! {pascal}: a game the engine runs on its page, `web/{page}`, and natively.\n{}\n",
         body.replace("Template", &pascal)
     );
-    let native = native_entry(root, name, &wasm, &pascal)?;
+    let native = native_entry(root, &name, &wasm, &pascal)?;
     let manifest = format!(
         r#"[package]
 name = "{name}"
@@ -84,6 +84,7 @@ path = "src/main.rs"
 [package.metadata.engine]
 page = "{page}"
 game = "{name}"
+native = "{name}-native"
 
 [features]
 default = []
@@ -143,7 +144,7 @@ startGame({{
         (crate_dir.join("src/lib.rs"), source),
         (crate_dir.join("src/main.rs"), native),
         (root.join("web").join(&page), html),
-        (root.join("web/src").join(name).join("main.ts"), entry),
+        (root.join("web/src").join(&name).join("main.ts"), entry),
     ];
     for (path, contents) in &files {
         fs::create_dir_all(path.parent().expect("files have folders"))
@@ -155,12 +156,36 @@ startGame({{
             path.strip_prefix(root).unwrap_or(path).display()
         );
     }
-    run(root, "cargo", &["check", "-p", name])?;
+    join_workspace(root, &project)?;
+    run(root, "cargo", &["check", "-p", &name])?;
     run(root, "cargo", &["xtask", "schema"])?;
     println!(
         "Run `cargo xtask dev` and open http://127.0.0.1:5173/{page}, or `cargo run -p {name}` \
          for its window."
     );
+    Ok(())
+}
+
+fn join_workspace(root: &Path, project: &str) -> Result<(), String> {
+    let path = root.join("Cargo.toml");
+    let manifest =
+        fs::read_to_string(&path).map_err(|error| format!("cannot read Cargo.toml: {error}"))?;
+    let parent = project.rsplit_once('/').map(|(parent, _)| parent);
+    let listed = |member: &str| {
+        manifest.contains(&format!("\"{member}\""))
+            || parent.is_some_and(|parent| manifest.contains(&format!("\"{parent}/*\"")))
+    };
+    if listed(project) {
+        return Ok(());
+    }
+    let members = "members = [";
+    let at = manifest
+        .find(members)
+        .ok_or("Cargo.toml lists no [workspace] members")?
+        + members.len();
+    let joined = format!("{}\"{project}\", {}", &manifest[..at], &manifest[at..]);
+    fs::write(&path, joined).map_err(|error| format!("cannot write Cargo.toml: {error}"))?;
+    println!("Added {project} to the workspace's members.");
     Ok(())
 }
 

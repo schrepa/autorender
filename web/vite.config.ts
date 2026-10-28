@@ -6,22 +6,25 @@ import clients from "./src/generated/clients.json";
 
 const instrumented = new Map([["profiling", "profile"], ["attribution", "attribution"]]);
 const games = clients.flatMap(({ wasm, game, page }) => game && page ? [{ wasm, game, page }] : []);
-const rocksFolder = resolve(import.meta.dirname, "public/stress/rocks");
-const rocks = existsSync(rocksFolder) ? readdirSync(rocksFolder).filter(name => name.endsWith(".ktx2")) : [];
+const publicFolder = resolve(import.meta.dirname, "public");
+const ktx2 = existsSync(publicFolder)
+  ? readdirSync(publicFolder, { recursive: true, encoding: "utf8" })
+    .map(path => path.replaceAll("\\", "/")).filter(path => path.endsWith(".ktx2")).sort()
+  : [];
 
 export default defineConfig(({ command, mode }) => ({
-  define: { __STRESS_ROCKS__: JSON.stringify(rocks) },
+  define: { __PUBLIC_KTX2__: JSON.stringify(ktx2) },
   server: { watch: { ignored: ["**/public/scenes/**"] } },
   plugins: [{
     name: "explicit-scene-reload",
     configureServer(server) {
       const types = new Map([["json", "application/json; charset=utf-8"], ["png", "image/png"], ["jpg", "image/jpeg"],
         ["jpeg", "image/jpeg"], ["webp", "image/webp"], ["ktx2", "image/ktx2"], ["bin", "application/octet-stream"],
-        ["evg", "application/octet-stream"], ["etr", "application/octet-stream"], ["r16", "application/octet-stream"]]);
+        ["etr", "application/octet-stream"], ["r16", "application/octet-stream"]]);
       server.middlewares.use(async (request, response, next) => {
         const path = request.url?.split("?")[0];
         const scene = !!path && /^\/scenes\/[A-Za-z0-9_-]+\.scene\.json$/.test(path);
-        const asset = !!path && /^\/scenes\/[A-Za-z0-9_-][A-Za-z0-9_\/-]*(\.[A-Za-z0-9_-]+)*\.(png|jpe?g|webp|ktx2|bin|evg|etr|r16)$/.test(path)
+        const asset = !!path && /^\/scenes\/[A-Za-z0-9_-][A-Za-z0-9_\/-]*(\.[A-Za-z0-9_-]+)*\.(png|jpe?g|webp|ktx2|bin|etr|r16)$/.test(path)
           && !path.split("/").some(part => part === "." || part === "..");
         if (!path || (!scene && !asset)) return next();
         if (request.method !== "GET" && request.method !== "HEAD") { response.statusCode = 405; response.end(); return; }

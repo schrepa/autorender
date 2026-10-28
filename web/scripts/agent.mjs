@@ -33,6 +33,11 @@ function options(args) {
   return result;
 }
 
+function pageUrl(url) {
+  if (!url) throw new AgentError("invalid_arguments", "A browser session needs --url, the game page.", "--url");
+  return url;
+}
+
 function portValue(value = "7331") {
   if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65_535) throw new AgentError("invalid_arguments", "Port must be an integer from 1 to 65535.", "port");
   return Number(value);
@@ -85,7 +90,7 @@ async function serve(values) {
     owned = values.native
       ? await launchNativeSession({ program: nativeProgram(values.native, { profiling: values.profiling === "on" }), args: values.args?.split(" ").filter(Boolean).map(option => `--${option}`) ?? [] })
       : await launchBrowserSession({
-        url: values.url ?? "http://127.0.0.1:5173/stress.html", browserPath: values.browser,
+        url: pageUrl(values.url), browserPath: values.browser,
       });
     if (closing) { await owned.close(); return; }
     bridge = createBridge({
@@ -164,7 +169,7 @@ async function main() {
     if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", "A native A/B takes no --url or --browser.");
     const owned = values.native
       ? await launchNativeSession({ program: nativeProgram(values.native, { profiling: values.profile === "on" }), args: values.args?.split(" ").filter(Boolean).map(option => `--${option}`) ?? [] })
-      : await launchBrowserSession({ url: values.url ?? "http://127.0.0.1:5173/stress.html", browserPath: values.browser });
+      : await launchBrowserSession({ url: pageUrl(values.url), browserPath: values.browser });
     try {
       console.log(JSON.stringify({ version: VERSION, ok: true, session: owned.session, url: owned.url, result: await runAb(owned, values) }));
     } finally { await owned.close(); }

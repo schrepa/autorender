@@ -18,23 +18,20 @@ const ALLOWED: &[(&str, &str)] = &[
         "terrain's eye-relative frame and culling, and water's view",
     ),
     (
-        "crates/engine_render/src/renderer/virtual_draws.rs",
-        "virtual geometry's normal cones, tested from the eye (culling)",
-    ),
-    (
         "crates/engine_render/src/temporal.rs",
         "temporally antialiased frames' camera uniform (transforms)",
     ),
 ];
 
-const FOLDERS: [&str; 2] = ["crates", "apps"];
-
 const FIELD: &str = "camera_position";
 
 pub(super) fn check(root: &Path) -> Result<usize, String> {
     let mut files = Vec::new();
-    for folder in FOLDERS {
-        walk(&root.join(folder), &mut files);
+    walk(&root.join("crates"), &mut files);
+    for client in crate::process::clients() {
+        if !client.folder.starts_with("crates/") {
+            walk(&root.join(&client.folder), &mut files);
+        }
     }
     files.sort();
     let mut problems = Vec::new();

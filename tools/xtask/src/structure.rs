@@ -5,9 +5,6 @@ const MAX_FILE_LINES: usize = 1500;
 const MAX_STRUCT_FIELDS: usize = 30;
 
 const LONG_FILES: &[(&str, usize)] = &[
-    ("apps/stress-lab/src/city/mod.rs", 1509),
-    ("apps/stress-lab/src/highlands/mod.rs", 1602),
-    ("apps/stress-lab/src/metro/mod.rs", 3274),
     ("crates/engine_terrain/src/layers.rs", 1589),
     ("tools/lodbuild/src/simplify.rs", 1999),
 ];
@@ -33,7 +30,15 @@ pub fn check(root: &Path) -> Result<(), String> {
     let mut problems = Vec::new();
     let mut long = Vec::new();
     let mut wide = Vec::new();
+    let games: Vec<String> = crate::process::clients()
+        .iter()
+        .filter(|client| client.game.is_some() && !client.folder.starts_with("crates/"))
+        .map(|client| format!("{}/", client.folder))
+        .collect();
     for path in sources(root)? {
+        if games.iter().any(|folder| path.starts_with(folder.as_str())) {
+            continue;
+        }
         let text = std::fs::read_to_string(root.join(&path))
             .map_err(|error| format!("cannot read {path}: {error}"))?;
         let lines = text.lines().count();

@@ -1,6 +1,6 @@
 {
-  "note": "The distance ladder `cargo xtask ladder` captures over the Highlands: the three places the distance audit saw from a standing eye, near the water views close_stream, meadow_river and torrent, each looked at along its heading from 5, 20, 50, 150 and 500 m back, under the scene's own look and at dusk. Its fields are documented where the task reads them (tools/xtask/src/ladder.rs).",
-  "preset": "highlands",
+  "note": "The distance ladder `cargo xtask ladder` captures over the Highlands: the three places the distance audit saw from a standing eye, near the water views close_stream, meadow_river and torrent, each looked at along its heading from 5, 20, 50, 150 and 500 m back, under the scene's own look and at dusk.",
+  "project": "examples/highlands",
   "looks": ["scene", "dusk"],
   "distances": [5, 20, 50, 150, 500],
   "places": [

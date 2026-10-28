@@ -1,6 +1,6 @@
 mod map;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -27,7 +27,7 @@ const QUICK_STAGES: &[&str] = &[
     "schedule ambiguities",
     "exports",
     "structure",
-    "content locality",
+    "examples are leaves",
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -45,7 +45,7 @@ struct Selection {
     shaders: bool,
     smokes: BTreeSet<String>,
     all_smokes: bool,
-    cells: BTreeSet<&'static str>,
+    projects: BTreeSet<&'static str>,
     equivalence: bool,
     browser: bool,
     self_checks: BTreeSet<&'static str>,
@@ -54,7 +54,7 @@ struct Selection {
 }
 
 impl Selection {
-    fn add(&mut self, root: &Path, path: &str) {
+    fn add(&mut self, root: &Path, smokes: &[String], path: &str) {
         let Some(checks) = map::checks_of(path) else {
             self.unmapped.push(path.to_owned());
             self.everything = true;
@@ -68,18 +68,24 @@ impl Selection {
                 }
                 Check::PureWasm => self.pure_wasm = true,
                 Check::Shaders => self.shaders = true,
-                Check::Smoke(name) => {
-                    self.smokes.insert(name.to_owned());
+                Check::Smokes(topic) => {
+                    self.smokes.extend(
+                        smokes
+                            .iter()
+                            .filter(|smoke| map::covers(topic, smoke))
+                            .cloned(),
+                    );
                 }
                 Check::ItsSmoke => {
                     let name = path
                         .rsplit('/')
                         .next()
-                        .and_then(|file| file.strip_suffix("-smoke.mjs"));
+                        .and_then(|file| file.strip_suffix("-smoke.mjs"))
+                        .filter(|name| smokes.iter().any(|smoke| smoke == name));
                     self.smokes.extend(name.map(str::to_owned));
                 }
                 Check::AllSmokes => self.all_smokes = true,
-                Check::Cells(cells) => self.cells.extend(cells),
+                Check::Project => self.projects.extend(map::project_of(path)),
                 Check::Equivalence => self.equivalence = true,
                 Check::Browser => self.browser = true,
                 Check::Tools(kind) => {
@@ -163,9 +169,10 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
             .lines()
             .map(str::to_owned),
     );
+    let smokes = smoke_names(root)?;
     let mut selection = Selection::default();
     for path in &changed {
-        selection.add(root, path);
+        selection.add(root, &smokes, path);
     }
     println!(
         "{} files changed since {}.",
@@ -264,10 +271,32 @@ fn steps<'a>(
         ));
     }
     if level == Level::Merge {
+        let mut options = vec!["--native-profile".to_owned(), "dev".to_owned()];
+        options.extend(
+            smoke_names(root)?
+                .into_iter()
+                .filter(|smoke| map::covers("native", smoke)),
+        );
+        if options.len() > 2 {
+            steps.push(Step::new(
+                format!("smoke {}", options.join(" ")),
+                move || crate::smoke::smoke(root, &options),
+            ));
+        }
+    }
+    let every_project = level == Level::Merge || everything;
+    for client in crate::process::clients() {
+        let folder = client.folder.as_str();
+        let wanted = every_project || selection.projects.contains(folder);
+        if !wanted || crate::smoke::checks(root, folder)?.is_empty() {
+            continue;
+        }
         let options = vec![
-            "--native-profile".to_owned(),
-            "dev".to_owned(),
-            "native".to_owned(),
+            "--serve".to_owned(),
+            "--keep-going".to_owned(),
+            "--project".to_owned(),
+            folder.to_owned(),
+            "--all".to_owned(),
         ];
         steps.push(Step::new(
             format!("smoke {}", options.join(" ")),
@@ -287,7 +316,12 @@ fn steps<'a>(
         }));
     }
     let tiers = crate::equivalence::tiers(root)?;
-    let wanted_equivalence = everything || selection.equivalence || !selection.cells.is_empty();
+    let project_cells: BTreeSet<&str> = tiers
+        .iter()
+        .filter(|(_, _, project)| selection.projects.contains(project.as_str()))
+        .map(|(name, _, _)| name.as_str())
+        .collect();
+    let wanted_equivalence = everything || selection.equivalence || !project_cells.is_empty();
     if level == Level::Merge {
         let options = vec![
             "--base".to_owned(),
@@ -302,20 +336,22 @@ fn steps<'a>(
     } else if wanted_equivalence {
         let mut cells: BTreeSet<&str> = tiers
             .iter()
-            .filter(|(_, tier)| tier == "smoke")
-            .map(|(name, _)| name.as_str())
+            .filter(|(_, tier, _)| tier == "smoke")
+            .map(|(name, _, _)| name.as_str())
             .collect();
-        cells.extend(selection.cells.iter().copied());
-        let options = vec![
-            "--base".to_owned(),
-            base.to_owned(),
-            "--cells".into(),
-            cells.into_iter().collect::<Vec<_>>().join(","),
-        ];
-        steps.push(Step::new(
-            format!("equivalence {}", options.join(" ")),
-            move || crate::equivalence::equivalence(root, &options),
-        ));
+        cells.extend(project_cells);
+        if !cells.is_empty() {
+            let options = vec![
+                "--base".to_owned(),
+                base.to_owned(),
+                "--cells".into(),
+                cells.into_iter().collect::<Vec<_>>().join(","),
+            ];
+            steps.push(Step::new(
+                format!("equivalence {}", options.join(" ")),
+                move || crate::equivalence::equivalence(root, &options),
+            ));
+        }
     }
     if level == Level::Merge && (everything || selection.browser) {
         let options = vec!["--base".to_owned(), base.to_owned(), "--browser".into()];
@@ -386,6 +422,13 @@ fn run_steps(steps: &[Step]) -> Result<(), Failure> {
     }
 }
 
+fn smoke_names(root: &Path) -> Result<Vec<String>, String> {
+    Ok(crate::smoke::scripts(root)?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect())
+}
+
 pub(crate) fn check(root: &Path) -> Result<(), String> {
     let mut problems = Vec::new();
     let tracked = git(root, &["ls-files"])?;
@@ -396,37 +439,17 @@ pub(crate) fn check(root: &Path) -> Result<(), String> {
     if !unmapped.is_empty() {
         problems.push(format!("no rule covers {}", unmapped.join(", ")));
     }
-    let smokes: BTreeSet<String> = crate::smoke::scripts(root)?
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect();
-    let tiers: BTreeMap<String, String> = crate::equivalence::tiers(root)?.into_iter().collect();
+    let smokes = smoke_names(root)?;
     let corpora: Vec<&str> = crate::pure::CORPORA
         .iter()
         .map(|corpus| corpus.name)
         .collect();
-    let mut named_smokes = BTreeSet::new();
-    let mut named_cells = BTreeSet::new();
+    let mut topics = BTreeSet::new();
     for rule in map::MAP {
         for check in rule.checks {
             match check {
-                Check::Smoke(name) => {
-                    if !smokes.contains(*name) {
-                        problems.push(format!(
-                            "a rule names the smoke check {name}, which does not exist"
-                        ));
-                    }
-                    named_smokes.insert((*name).to_owned());
-                }
-                Check::Cells(cells) => {
-                    for cell in *cells {
-                        if !tiers.contains_key(*cell) {
-                            problems.push(format!(
-                                "a rule names the equivalence cell {cell}, which does not exist"
-                            ));
-                        }
-                        named_cells.insert((*cell).to_owned());
-                    }
+                Check::Smokes(topic) => {
+                    topics.insert(*topic);
                 }
                 Check::Pure(corpus) if !corpora.contains(corpus) => {
                     problems.push(format!(
@@ -442,34 +465,22 @@ pub(crate) fn check(root: &Path) -> Result<(), String> {
             }
         }
     }
-    let unnamed: Vec<&str> = smokes
+    let uncovered: Vec<&str> = smokes
         .iter()
-        .filter(|smoke| !named_smokes.contains(*smoke))
+        .filter(|smoke| !topics.iter().any(|topic| map::covers(topic, smoke)))
         .map(String::as_str)
         .collect();
-    if !unnamed.is_empty() {
+    if !uncovered.is_empty() {
         problems.push(format!(
-            "no rule calls for the smoke checks {}",
-            unnamed.join(", ")
-        ));
-    }
-    let unnamed: Vec<&str> = tiers
-        .iter()
-        .filter(|(cell, tier)| *tier != "smoke" && !named_cells.contains(*cell))
-        .map(|(cell, _)| cell.as_str())
-        .collect();
-    if !unnamed.is_empty() {
-        problems.push(format!(
-            "no rule calls for the equivalence cells {}",
-            unnamed.join(", ")
+            "no rule's topic covers the smoke checks {}",
+            uncovered.join(", ")
         ));
     }
     if problems.is_empty() {
         println!(
-            "The path map covers {} tracked files and calls for {} smoke checks and {} cells.",
+            "The path map covers {} tracked files and calls for {} smoke checks.",
             tracked.lines().count(),
-            smokes.len(),
-            tiers.len()
+            smokes.len()
         );
         return Ok(());
     }

@@ -8,9 +8,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
-use super::matrix::{Capture, Cell, Workload};
+use super::matrix::{Capture, Cell};
 use super::sides::Side;
-use crate::measure::{self, read_json};
+use crate::bench::{self, Scene};
+use crate::measure;
 
 pub(super) const SETTINGS: &str = "bench/settings/default.json";
 
@@ -29,16 +30,21 @@ struct Session {
 }
 
 impl Session {
-    fn launch(side: &Side, arguments: &[String], log: &Path) -> Result<Self, String> {
+    fn launch(
+        program: &Path,
+        tree: &Path,
+        arguments: &[String],
+        log: &Path,
+    ) -> Result<Self, String> {
         let errors = fs::File::create(log).map_err(|error| error.to_string())?;
-        let mut child = Command::new(&side.program)
+        let mut child = Command::new(program)
             .args(arguments)
-            .current_dir(&side.tree)
+            .current_dir(tree)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(errors)
             .spawn()
-            .map_err(|error| format!("cannot start {}: {error}", side.program.display()))?;
+            .map_err(|error| format!("cannot start {}: {error}", program.display()))?;
         let input = child.stdin.take().expect("piped");
         let output = child.stdout.take().expect("piped");
         let (send, lines) = channel();
@@ -149,30 +155,15 @@ fn launch_arguments(
     folder: &Path,
     gpu: &str,
 ) -> Result<Vec<String>, String> {
-    let path = |relative: &str| side.tree.join(relative).display().to_string();
-    let mut arguments = vec!["--settings".to_owned(), path(SETTINGS)];
-    match &cell.workload {
-        Workload::Scene(scene) => {
-            arguments.extend([
-                "--scene".into(),
-                path(&format!("bench/scenes/{scene}.json")),
-            ]);
-        }
-        Workload::Source(source) => arguments.extend(["--source".into(), path(source)]),
-    }
+    let settings = side.tree.join(SETTINGS).display().to_string();
+    let mut arguments = vec!["--settings".to_owned(), settings];
+    arguments.extend(bench::arguments(&Scene::read(&side.tree, &cell.scene)?.options));
     for (option, value) in &cell.options {
-        let value = if option == "config" {
-            scene_options(cell, &side.tree)?["config"].to_string()
-        } else {
-            value.clone()
-        };
-        arguments.extend([format!("--{option}"), value]);
+        arguments.extend([format!("--{option}"), value.clone()]);
     }
     arguments.extend([
         "--workers".into(),
         "off".into(),
-        "--assets".into(),
-        side.assets.display().to_string(),
         "--gpu".into(),
         gpu.into(),
         "--dev".into(),
@@ -182,27 +173,6 @@ fn launch_arguments(
     Ok(arguments)
 }
 
-pub(super) fn scene_options(cell: &Cell, tree: &Path) -> Result<Map<String, Value>, String> {
-    let Workload::Scene(scene) = &cell.workload else {
-        return Ok(Map::new());
-    };
-    let mut options = read_json(&tree.join(format!("bench/scenes/{scene}.json")))?["options"]
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
-    if let Some((_, fields)) = cell.options.iter().find(|(option, _)| option == "config") {
-        let fields: Value = serde_json::from_str(fields)
-            .map_err(|error| format!("{}: config: {error}", cell.name))?;
-        if let (Some(config), Some(fields)) = (
-            options.get_mut("config").and_then(Value::as_object_mut),
-            fields.as_object(),
-        ) {
-            config.extend(fields.clone());
-        }
-    }
-    Ok(options)
-}
-
 pub(super) fn run_cell(cell: &Cell, side: &Side, folder: &Path, gpu: &str) -> Run {
     let mut run = Run::default();
     if let Err(error) = fs::create_dir_all(folder) {
@@ -210,8 +180,9 @@ pub(super) fn run_cell(cell: &Cell, side: &Side, folder: &Path, gpu: &str) -> Ru
         return run;
     }
     let log = folder.join("program.log");
-    let launched = launch_arguments(cell, side, folder, gpu)
-        .and_then(|arguments| Session::launch(side, &arguments, &log));
+    let launched = launch_arguments(cell, side, folder, gpu).and_then(|arguments| {
+        Session::launch(side.program(&cell.project)?, &side.tree, &arguments, &log)
+    });
     let mut session = match launched {
         Ok(session) => session,
         Err(error) => {
@@ -284,7 +255,6 @@ fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Resul
 fn settling_frame(capture: Capture) -> Option<Value> {
     match capture {
         Capture::Exact => Some(json!({"op": "render"})),
-        Capture::Cpu(alpha) => Some(json!({"op": "present", "alpha": alpha})),
         Capture::Gpu(alpha) => Some(json!({"op": "present", "alpha": alpha, "gpu": true})),
         Capture::Display(_) => None,
     }
@@ -336,7 +306,6 @@ fn settle(session: &mut Session, frame: &Value, log: &Path) -> Result<Option<Str
 fn shoot(session: &mut Session, capture: Capture, log: &Path) -> Result<Shot, String> {
     let result = match capture {
         Capture::Exact => session.ok(&json!({"op": "capture"}), log)?,
-        Capture::Cpu(alpha) => session.ok(&json!({"op": "capture", "alpha": alpha}), log)?,
         Capture::Gpu(alpha) => {
             session.ok(&json!({"op": "capture", "alpha": alpha, "gpu": true}), log)?
         }

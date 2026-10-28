@@ -66,10 +66,6 @@ pub const UNSAFE_FILES: &[(&str, &str)] = &[
         "crates/engine_render/src/renderer/native.rs",
         "starts and stops a graphics debugger's capture",
     ),
-    (
-        "tools/vgbuild/src/ffi.rs",
-        "calls the vendored C++ meshoptimizer",
-    ),
 ];
 
 pub fn check_text(path: &str, text: &str, problems: &mut Problems) {

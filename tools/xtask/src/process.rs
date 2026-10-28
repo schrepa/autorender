@@ -24,9 +24,11 @@ pub fn repository_root() -> Result<PathBuf, String> {
 
 pub struct Client {
     pub package: String,
+    pub folder: String,
     pub wasm: String,
     pub game: Option<String>,
     pub page: Option<String>,
+    pub native: Option<String>,
     pub schema: bool,
 }
 
@@ -80,17 +82,25 @@ fn read_clients() -> Result<Vec<Client>, String> {
                         .is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin"))
             });
         let field = |key: &str| engine[key].as_str().map(str::to_owned);
-        let (game, page) = (field("game"), field("page"));
+        let (game, page, native) = (field("game"), field("page"), field("native"));
         if game.is_some() != page.is_some() || (game.is_none() && engine["worker"] != true) {
             return Err(format!(
                 "{name}'s [package.metadata.engine] declares a game's `page` and `game`, or `worker = true`"
             ));
         }
+        let manifest = Path::new(package["manifest_path"].as_str().unwrap_or_default());
+        let folder = manifest
+            .parent()
+            .and_then(|folder| folder.strip_prefix(&root).ok())
+            .map(slashed)
+            .ok_or_else(|| format!("{name}'s manifest lies outside the workspace"))?;
         clients.push(Client {
             package: name.to_owned(),
+            folder,
             wasm: wasm.to_owned(),
             game,
             page,
+            native,
             schema,
         });
     }
@@ -118,12 +128,97 @@ pub fn clients_json() -> serde_json::Value {
         .map(|client| {
             serde_json::json!({
                 "package": client.package,
+                "folder": client.folder,
                 "wasm": client.wasm,
                 "game": client.game,
                 "page": client.page,
+                "native": client.native,
             })
         })
         .collect()
+}
+
+pub fn slashed(path: &Path) -> String {
+    path.components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+pub struct Project {
+    pub package: String,
+    pub native: String,
+}
+
+impl Project {
+    pub fn read(root: &Path, folder: &str) -> Result<Self, String> {
+        let manifest = format!("{folder}/Cargo.toml");
+        let text = std::fs::read_to_string(root.join(&manifest))
+            .map_err(|error| format!("--project {folder}: cannot read {manifest}: {error}"))?;
+        Self::parse(&manifest, text)
+    }
+
+    pub fn at(root: &Path, sha: &str, folder: &str) -> Result<Self, String> {
+        let manifest = format!("{folder}/Cargo.toml");
+        let output = Command::new("git")
+            .args(["show", &format!("{sha}:{manifest}")])
+            .current_dir(root)
+            .output()
+            .map_err(|error| format!("cannot run git: {error}"))?;
+        if !output.status.success() {
+            return Err(format!("project {folder}: {manifest} is not at {sha}"));
+        }
+        Self::parse(&manifest, String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn parse(manifest: &str, text: String) -> Result<Self, String> {
+        let document = toml_edit::Document::parse(text)
+            .map_err(|error| format!("{manifest} is not TOML: {error}"))?;
+        let package = document.as_item().get("package");
+        let name = package
+            .and_then(|package| package.get("name"))
+            .and_then(toml_edit::Item::as_str)
+            .ok_or_else(|| format!("{manifest}: [package] has no name"))?;
+        let native = package
+            .and_then(|package| package.get("metadata"))
+            .and_then(|metadata| metadata.get("engine"))
+            .and_then(|engine| engine.get("native"))
+            .and_then(toml_edit::Item::as_str)
+            .ok_or_else(|| format!("{manifest}: [package.metadata.engine] declares no native"))?;
+        Ok(Self {
+            package: name.to_owned(),
+            native: native.to_owned(),
+        })
+    }
+
+    pub fn program(&self) -> String {
+        format!("{}{}", self.native, std::env::consts::EXE_SUFFIX)
+    }
+
+    pub fn client(&self) -> Option<&'static Client> {
+        clients()
+            .iter()
+            .find(|client| client.package == self.package)
+    }
+}
+
+pub fn project_option(arguments: &[String]) -> Result<(Option<String>, Vec<String>), String> {
+    let mut project = None;
+    let mut rest = Vec::new();
+    let mut given = arguments.iter();
+    while let Some(argument) = given.next() {
+        if argument == "--project" {
+            let folder = given
+                .next()
+                .ok_or("--project takes a game crate's folder")?;
+            if project.replace(folder.replace('\\', "/")).is_some() {
+                return Err("--project is given once".into());
+            }
+        } else {
+            rest.push(argument.clone());
+        }
+    }
+    Ok((project, rest))
 }
 
 pub fn game_names() -> String {

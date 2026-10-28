@@ -18,7 +18,6 @@ engine_terrain.workspace = true
 engine_worker.workspace = true
 engine_sources.workspace = true
 zstd.workspace = true
-engine_vgbuild.workspace = true
 engine_native.workspace = true
 glam.workspace = true
 gltf.workspace = true
@@ -33,6 +32,7 @@ engine = { workspace = true, features = ["schema"] }
 policy.workspace = true
 bevy_ecs = { workspace = true, features = ["debug"] }
 serde_json.workspace = true
+toml_edit.workspace = true
 
 [lints]
 workspace = true

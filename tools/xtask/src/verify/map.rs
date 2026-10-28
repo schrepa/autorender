@@ -1,6 +1,6 @@
 use Check::{
-    AllSmokes, Browser, Cells, Equivalence, Everything, ItsSmoke, Pure, PureWasm, Shaders, Smoke,
-    Tools,
+    AllSmokes, Browser, Equivalence, Everything, ItsSmoke, Project, Pure, PureWasm, Shaders,
+    Smokes, Tools,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9,10 +9,10 @@ pub(crate) enum Check {
     Pure(&'static str),
     PureWasm,
     Shaders,
-    Smoke(&'static str),
+    Smokes(&'static str),
     ItsSmoke,
     AllSmokes,
-    Cells(&'static [&'static str]),
+    Project,
     Equivalence,
     Browser,
     Tools(&'static str),
@@ -22,13 +22,6 @@ pub(crate) struct Rule {
     pub paths: &'static [&'static str],
     pub checks: &'static [Check],
 }
-
-const TERRAIN_SMOKES: [Check; 4] = [
-    Smoke("terrain"),
-    Smoke("terrain-surface"),
-    Smoke("terrain-water-sky"),
-    Smoke("terrain-files"),
-];
 
 pub(crate) const MAP: &[Rule] = &[
     Rule {
@@ -62,15 +55,10 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &[
             "bench/scenes/**",
             "bench/settings/**",
-            "bench/options.json",
             "bench/metrics.json",
             "bench/shader-paths.json",
         ],
         checks: &[Equivalence, Tools("measure")],
-    },
-    Rule {
-        paths: &["bench/budgets.json"],
-        checks: &[],
     },
     Rule {
         paths: &["bench/ladders/**"],
@@ -86,7 +74,7 @@ pub(crate) const MAP: &[Rule] = &[
             Pure("caches"),
             Pure("scenes"),
             Equivalence,
-            Smoke("plugins"),
+            Smokes("plugins"),
         ],
     },
     Rule {
@@ -94,7 +82,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine/src/**/browser*",
             "crates/engine/src/**/dev_host*",
         ],
-        checks: &[Smoke("host-parity"), Browser],
+        checks: &[Smokes("parity"), Browser],
     },
     Rule {
         paths: &[
@@ -109,10 +97,10 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_core/src/**/extraction*",
         ],
         checks: &[
-            Smoke("hierarchy"),
-            Smoke("interpolation"),
-            Smoke("gpu-presentation"),
-            Smoke("culling"),
+            Smokes("hierarchy"),
+            Smokes("interpolation"),
+            Smokes("presentation"),
+            Smokes("culling"),
         ],
     },
     Rule {
@@ -126,19 +114,10 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_scene/src/**/terrain*",
             "crates/engine_dev/src/features/terrain/**",
             "crates/engine_dev/src/features/navigation*",
-            "crates/engine_dev/src/features/deformation*",
             "crates/engine_collision/src/**/terrain*",
             "crates/engine_terrain/**",
         ],
-        checks: &[
-            Pure("terrain"),
-            TERRAIN_SMOKES[0],
-            TERRAIN_SMOKES[1],
-            TERRAIN_SMOKES[2],
-            TERRAIN_SMOKES[3],
-            Smoke("jobs"),
-            Cells(&["highlands", "highlands-views", "terrain-frames"]),
-        ],
+        checks: &[Pure("terrain"), Smokes("terrain"), Smokes("jobs")],
     },
     Rule {
         paths: &["crates/engine_terrain/**"],
@@ -149,19 +128,13 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_core/src/**/ground_cover*",
             "crates/engine_core/src/**/wind*",
             "crates/engine_core/src/**/occupancy*",
-            "crates/engine_core/src/**/deformation*",
-            "crates/engine_core/src/**/deformation/**",
             "crates/engine_render/src/**/ground_cover*",
             "crates/engine_render/src/**/cover_grow*",
             "crates/engine_render/src/**/occupancy*",
-            "crates/engine_render/src/**/deformation*",
             "crates/engine_render/src/**/shadow*",
             "crates/engine_render/src/**/shadows/**",
         ],
-        checks: &[
-            Smoke("terrain-surface"),
-            Cells(&["highlands", "metro-shadows-off"]),
-        ],
+        checks: &[Smokes("surface")],
     },
     Rule {
         paths: &[
@@ -171,8 +144,6 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_core/src/**/time_of_day*",
             "crates/engine_core/src/**/time_of_day/**",
             "crates/engine_core/src/**/atmosphere*",
-            "crates/engine_core/src/**/ocean/**",
-            "crates/engine_dev/src/features/ocean*",
             "crates/engine_render/src/**/clouds*",
             "crates/engine_render/src/**/sky*",
             "crates/engine_render/src/**/water*",
@@ -182,21 +153,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_core/src/**/tables*",
             "crates/engine_tables/**",
         ],
-        checks: &[
-            Smoke("terrain-water-sky"),
-            Cells(&[
-                "garden-clouds",
-                "garden-sky",
-                "garden-time-of-day",
-                "garden-night-sky",
-                "metro-haze-off",
-                "metro-sky",
-                "metro-golden",
-                "metro-dusk",
-                "metro-night",
-                "metro-day",
-            ]),
-        ],
+        checks: &[Smokes("sky")],
     },
     Rule {
         paths: &[
@@ -204,24 +161,15 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_render/src/**/*water*",
             "crates/engine_terrain/src/**/*water*",
         ],
-        checks: &[Smoke("torrent")],
+        checks: &[Smokes("torrent")],
     },
     Rule {
         paths: &[
-            "crates/engine_core/src/**/culling*",
             "crates/engine_core/src/**/gpu_culling*",
-            "crates/engine_render/src/**/visibility*",
             "crates/engine_render/src/**/depth_pyramid*",
             "crates/engine_render/src/**/scatter*",
         ],
-        checks: &[
-            Smoke("culling"),
-            Cells(&[
-                "dense-visibility",
-                "metro-occlusion-culling-off",
-                "metro-subpixel-culling-off",
-            ]),
-        ],
+        checks: &[Smokes("culling")],
     },
     Rule {
         paths: &[
@@ -234,30 +182,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_core/src/**/mesh_lods*",
             "tools/lodbuild/**",
         ],
-        checks: &[
-            Smoke("lod"),
-            Pure("simplify"),
-            Cells(&["metro-lod-off", "metro-impostors-off"]),
-        ],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/virtual_geometry*",
-            "crates/engine_render/src/**/virtual_geometry*",
-            "crates/engine_render/src/**/virtual_geometry/**",
-            "crates/engine_render/src/**/virtual_streaming*",
-            "crates/engine_assets/src/**/virtual_mesh*",
-            "web/src/engine/virtual-mesh*",
-        ],
-        checks: &[Smoke("virtual-geometry")],
-    },
-    Rule {
-        paths: &["tools/vgbuild/**"],
-        checks: &[
-            Smoke("virtual-geometry"),
-            Cells(&["dense-views", "dense-visibility"]),
-            Equivalence,
-        ],
+        checks: &[Smokes("lod"), Pure("simplify")],
     },
     Rule {
         paths: &[
@@ -265,44 +190,35 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_worker/**",
             "crates/engine_sources/**",
         ],
-        checks: &[Smoke("jobs"), PureWasm, Pure("terrain")],
+        checks: &[Smokes("jobs"), PureWasm, Pure("terrain")],
     },
     Rule {
         paths: &[
             "crates/engine_sources/**",
             "crates/engine_core/src/**/records*",
         ],
-        checks: &[Pure("terrain"), Pure("caches"), Smoke("jobs")],
+        checks: &[Pure("terrain"), Pure("caches"), Smokes("jobs")],
     },
     Rule {
         paths: &[
             "crates/engine_core/src/**/tables*",
             "crates/engine_tables/**",
         ],
-        checks: &[Pure("tables"), PureWasm, Smoke("jobs")],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/animation*",
-            "crates/engine_core/src/**/skin*",
-            "crates/engine_assets/src/**/animation*",
-            "crates/engine_scene/src/**/animation*",
-        ],
-        checks: &[Smoke("meshes")],
+        checks: &[Pure("tables"), PureWasm, Smokes("jobs")],
     },
     Rule {
         paths: &[
             "crates/engine_core/src/**/spline_mesh*",
             "crates/engine_scene/src/**/spline*",
         ],
-        checks: &[Smoke("spline")],
+        checks: &[Smokes("spline")],
     },
     Rule {
         paths: &[
             "crates/engine_core/src/**/streaming*",
             "crates/engine_core/src/**/streaming/**",
         ],
-        checks: &[Smoke("streaming")],
+        checks: &[Smokes("streaming")],
     },
     Rule {
         paths: &[
@@ -311,15 +227,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_render/src/**/meshes/debug*",
             "crates/engine_render/src/**/renderer/probe*",
         ],
-        checks: &[Smoke("debug-view"), Shaders],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/decals*",
-            "crates/engine_render/src/**/decals*",
-            "crates/engine_scene/src/**/decal*",
-        ],
-        checks: &[Smoke("surfaces"), Cells(&["metro-decals-off"])],
+        checks: &[Smokes("debug"), Shaders],
     },
     Rule {
         paths: &[
@@ -329,42 +237,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_render/src/**/post*",
             "crates/engine_render/src/**/haze*",
         ],
-        checks: &[
-            Smoke("taa"),
-            Cells(&[
-                "metro-ambient-occlusion-off",
-                "metro-bloom-off",
-                "metro-dither-off",
-                "metro-haze-off",
-                "metro-no-reflections",
-                "metro-no-refraction",
-                "garden-haze-unmarched",
-                "garden-reflections",
-                "garden-refraction",
-            ]),
-        ],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/lights*",
-            "crates/engine_render/src/**/lights*",
-        ],
-        checks: &[Cells(&["metro-local-lights-off"])],
-    },
-    Rule {
-        paths: &["crates/engine_core/src/**/highlights*"],
-        checks: &[Cells(&["metro-highlights-uncapped"])],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/sky_occlusion*",
-            "crates/engine_render/src/shadows/sky*",
-        ],
-        checks: &[Cells(&["metro-sky-occlusion-off"])],
-    },
-    Rule {
-        paths: &["crates/engine_core/src/**/windows*"],
-        checks: &[Cells(&["city-windows"])],
+        checks: &[Smokes("taa")],
     },
     Rule {
         paths: &[
@@ -372,51 +245,19 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_render/src/meshes/cover*",
             "crates/engine_render/src/meshes/impostors*",
         ],
-        checks: &[Smoke("taa"), Cells(&["metro-foliage"])],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/particles*",
-            "crates/engine_render/src/**/particles*",
-        ],
-        checks: &[Cells(&["metro-particles-off"])],
+        checks: &[Smokes("taa")],
     },
     Rule {
         paths: &[
             "crates/engine_core/src/**/probes*",
             "crates/engine_render/src/**/probes*",
+            "crates/engine_render/src/**/exposure*",
         ],
-        checks: &[
-            Smoke("terrain-water-sky"),
-            Cells(&["metro-reflection-probes-off", "garden-reflections"]),
-        ],
-    },
-    Rule {
-        paths: &["crates/engine_render/src/**/exposure*"],
-        checks: &[Smoke("terrain-water-sky"), Cells(&["metro-auto-exposure"])],
-    },
-    Rule {
-        paths: &["crates/engine_render/src/**/transparent*"],
-        checks: &[Cells(&["metro-no-refraction", "garden-refraction"])],
+        checks: &[Smokes("sky")],
     },
     Rule {
         paths: &["crates/engine_render/**"],
         checks: &[Shaders, Equivalence, Browser],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_render/src/**/renderer*",
-            "crates/engine_render/src/**/renderer/**",
-            "crates/engine_render/src/**/render_graph*",
-            "crates/engine_render/src/**/targets*",
-        ],
-        checks: &[Cells(&[
-            "field-views",
-            "motion-views",
-            "city-views",
-            "metro-views",
-            "dense-views",
-        ])],
     },
     Rule {
         paths: &[
@@ -425,20 +266,14 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_render/src/**/bounce*",
             "crates/engine_render/src/**/scatter*",
         ],
-        checks: &[
-            TERRAIN_SMOKES[0],
-            TERRAIN_SMOKES[1],
-            TERRAIN_SMOKES[2],
-            TERRAIN_SMOKES[3],
-            Cells(&["highlands", "highlands-views"]),
-        ],
+        checks: &[Smokes("terrain")],
     },
     Rule {
         paths: &[
             "crates/engine_render/src/**/gpu_presentation/**",
             "crates/engine_render/src/**/presentation*",
         ],
-        checks: &[Smoke("gpu-presentation"), Smoke("interpolation")],
+        checks: &[Smokes("presentation"), Smokes("interpolation")],
     },
     Rule {
         paths: &[
@@ -447,28 +282,22 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_assets/src/**/texture*",
             "crates/engine_assets/src/**/ktx2*",
         ],
-        checks: &[Smoke("texture"), Smoke("surfaces"), Cells(&["metro-views"])],
+        checks: &[Smokes("texture"), Smokes("surfaces")],
     },
     Rule {
         paths: &[
             "crates/engine_textures/**",
             "crates/engine_core/src/records*",
         ],
-        checks: &[
-            Pure("textures"),
-            PureWasm,
-            Smoke("texture"),
-            Smoke("jobs"),
-            Cells(&["metro-views", "highlands", "city-views"]),
-        ],
+        checks: &[Pure("textures"), PureWasm, Smokes("texture"), Smokes("jobs")],
     },
     Rule {
         paths: &["crates/engine_assets/**"],
         checks: &[
             Pure("gltf"),
             Pure("simplify"),
-            Smoke("meshes"),
-            Smoke("texture"),
+            Smokes("meshes"),
+            Smokes("texture"),
             Equivalence,
         ],
     },
@@ -478,8 +307,8 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_dev/src/features/collision/**",
         ],
         checks: &[
-            Smoke("collision"),
-            Smoke("terrain"),
+            Smokes("collision"),
+            Smokes("terrain"),
             Pure("caches"),
             Equivalence,
         ],
@@ -494,9 +323,9 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_terrain/src/flow*",
         ],
         checks: &[
-            Smoke("physics"),
-            Smoke("plugins"),
-            Smoke("terrain-water-sky"),
+            Smokes("physics"),
+            Smokes("plugins"),
+            Smokes("sky"),
             Pure("caches"),
             Equivalence,
         ],
@@ -507,8 +336,8 @@ pub(crate) const MAP: &[Rule] = &[
             Pure("scenes"),
             Pure("requests"),
             Pure("gltf"),
-            Smoke("agent"),
-            Smoke("plugins"),
+            Smokes("agent"),
+            Smokes("plugins"),
             Equivalence,
         ],
     },
@@ -516,18 +345,18 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &["crates/engine_dev/**"],
         checks: &[
             Pure("requests"),
-            Smoke("agent"),
-            Smoke("native"),
-            Smoke("host-parity"),
+            Smokes("agent"),
+            Smokes("native"),
+            Smokes("parity"),
             Equivalence,
         ],
     },
     Rule {
         paths: &["crates/engine_native/**", "crates/engine_panic/**"],
         checks: &[
-            Smoke("native"),
-            Smoke("host-parity"),
-            Smoke("agent"),
+            Smokes("native"),
+            Smokes("parity"),
+            Smokes("agent"),
             Equivalence,
         ],
     },
@@ -537,72 +366,15 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_profile/**",
             "crates/engine_profiler/**",
         ],
-        checks: &[Smoke("native"), Tools("measure")],
+        checks: &[Smokes("native"), Tools("measure")],
     },
     Rule {
-        paths: &["apps/stress-lab/**"],
-        checks: &[Pure("caches"), Equivalence],
-    },
-    Rule {
-        paths: &["apps/stress-lab/src/metro/**"],
-        checks: &[Cells(&["metro-views"])],
-    },
-    Rule {
-        paths: &["apps/stress-lab/src/highlands/**"],
-        checks: &[Cells(&["highlands", "highlands-views"])],
-    },
-    Rule {
-        paths: &["apps/stress-lab/src/dense*"],
-        checks: &[Cells(&["dense-views", "dense-visibility"])],
-    },
-    Rule {
-        paths: &["apps/stress-lab/src/city/**"],
-        checks: &[Cells(&["city-views"])],
-    },
-    Rule {
-        paths: &["apps/stress-lab/src/kit/**"],
-        checks: &[Cells(&[
-            "field-views",
-            "motion-views",
-            "city-views",
-            "metro-views",
-            "dense-views",
-            "highlands",
-            "highlands-views",
-        ])],
-    },
-    Rule {
-        paths: &[
-            "apps/stress-lab/src/scene*",
-            "apps/stress-lab/src/world*",
-            "apps/stress-lab/src/field*",
-            "apps/stress-lab/src/game*",
-            "apps/stress-lab/src/config*",
-            "apps/stress-lab/src/catalog*",
-            "apps/stress-lab/src/presets*",
-        ],
-        checks: &[Cells(&["field-views", "motion-views"])],
-    },
-    Rule {
-        paths: &["apps/stress-lab/src/authored*"],
-        checks: &[Smoke("plugins"), Smoke("collision"), Smoke("hierarchy")],
-    },
-    Rule {
-        paths: &["apps/stress-lab/src/browser*"],
-        checks: &[Smoke("host-parity"), Browser],
-    },
-    Rule {
-        paths: &[
-            "apps/stress-lab/src/native*",
-            "apps/stress-lab/src/main*",
-            "apps/stress-lab/src/observation*",
-            "apps/stress-lab/src/metrics*",
-        ],
-        checks: &[Smoke("native"), Tools("measure")],
+        paths: &["crates/engine_player/**"],
+        checks: &[AllSmokes, Browser],
     },
     Rule {
         paths: &["tools/assetc/**"],
-        checks: &[Smoke("terrain-files"), Pure("import")],
+        checks: &[Smokes("files"), Pure("import")],
     },
     Rule {
         paths: &["tools/coresmoke/**"],
@@ -706,11 +478,11 @@ pub(crate) const MAP: &[Rule] = &[
             "tools/xtask/src/heavy.rs",
             "tools/xtask/src/pipeline.rs",
         ],
-        checks: &[Smoke("agent-lifecycle")],
+        checks: &[Smokes("lifecycle")],
     },
     Rule {
         paths: &["tools/xtask/src/importing.rs"],
-        checks: &[Pure("gltf"), Smoke("virtual-geometry")],
+        checks: &[Pure("gltf")],
     },
     Rule {
         paths: &["web/scripts/*-smoke.mjs"],
@@ -733,24 +505,11 @@ pub(crate) const MAP: &[Rule] = &[
             "web/scripts/fixtures/terrain*",
             "web/scripts/fixtures/terrain-smoke/**",
         ],
-        checks: &[
-            TERRAIN_SMOKES[0],
-            TERRAIN_SMOKES[1],
-            TERRAIN_SMOKES[2],
-            TERRAIN_SMOKES[3],
-            Pure("terrain"),
-            Pure("import"),
-            Equivalence,
-        ],
+        checks: &[Smokes("terrain"), Pure("terrain"), Pure("import")],
     },
     Rule {
-        paths: &["web/scripts/fixtures/garden.scene.json"],
-        checks: &[
-            Smoke("hierarchy"),
-            Smoke("texture"),
-            Smoke("agent"),
-            Equivalence,
-        ],
+        paths: &["web/scripts/fixtures/**"],
+        checks: &[AllSmokes, Pure("scenes")],
     },
     Rule {
         paths: &[
@@ -761,12 +520,7 @@ pub(crate) const MAP: &[Rule] = &[
             "web/scripts/agent-ab.mjs",
             "web/scripts/agent-profile.mjs",
         ],
-        checks: &[
-            Smoke("agent"),
-            Smoke("agent-lifecycle"),
-            Smoke("host-parity"),
-            Smoke("native"),
-        ],
+        checks: &[Smokes("agent"), Smokes("parity"), Smokes("native")],
     },
     Rule {
         paths: &["web/scripts/pure-wasm.mjs"],
@@ -784,11 +538,11 @@ pub(crate) const MAP: &[Rule] = &[
         checks: &[],
     },
     Rule {
-        paths: &["web/src/**", "web/stress.html"],
+        paths: &["web/src/**", "web/*.html"],
         checks: &[
-            Smoke("host-parity"),
-            Smoke("gpu-presentation"),
-            Smoke("agent"),
+            Smokes("parity"),
+            Smokes("presentation"),
+            Smokes("agent"),
             Browser,
         ],
     },
@@ -798,7 +552,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_native/src/window*",
             "web/src/engine/host.ts",
         ],
-        checks: &[Smoke("frame-loop"), Smoke("streaming"), Smoke("terrain")],
+        checks: &[Smokes("loop"), Smokes("streaming"), Smokes("terrain")],
     },
     Rule {
         paths: &[
@@ -807,19 +561,15 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_native/src/input*",
             "web/src/engine/input*",
         ],
-        checks: &[Smoke("input"), Smoke("interpolation")],
+        checks: &[Smokes("input"), Smokes("interpolation")],
     },
     Rule {
         paths: &["web/src/engine/job*"],
-        checks: &[Smoke("jobs")],
+        checks: &[Smokes("jobs")],
     },
     Rule {
-        paths: &[
-            "web/src/engine/ktx2*",
-            "web/src/engine/decode*",
-            "web/public/basis/**",
-        ],
-        checks: &[Smoke("texture")],
+        paths: &["web/src/engine/ktx2*", "web/src/engine/decode*"],
+        checks: &[Smokes("texture")],
     },
     Rule {
         paths: &[
@@ -862,6 +612,22 @@ fn segment_matches(pattern: &str, text: &str) -> bool {
     }
 }
 
+pub(crate) fn project_of(path: &str) -> Option<&'static str> {
+    crate::process::clients()
+        .iter()
+        .filter(|client| client.game.is_some())
+        .map(|client| client.folder.as_str())
+        .filter(|folder| {
+            path.strip_prefix(folder)
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+        .max_by_key(|folder| folder.len())
+}
+
+pub(crate) fn covers(topic: &str, smoke: &str) -> bool {
+    smoke.split('-').any(|word| word == topic)
+}
+
 pub(crate) fn checks_of(path: &str) -> Option<Vec<Check>> {
     let mut found = None;
     for rule in MAP {
@@ -870,6 +636,9 @@ pub(crate) fn checks_of(path: &str) -> Option<Vec<Check>> {
                 .get_or_insert_with(Vec::new)
                 .extend_from_slice(rule.checks);
         }
+    }
+    if project_of(path).is_some() {
+        found.get_or_insert_with(Vec::new).push(Project);
     }
     found
 }

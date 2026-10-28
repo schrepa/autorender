@@ -168,61 +168,6 @@
       "direction": null
     },
     {
-      "name": "decals.drawn",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "decals.dropped",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "decals.invalid",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "deformation.stamps",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "deformation.texels",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "disabled_features",
       "kind": "work",
       "rule": "not-above",
@@ -850,28 +795,6 @@
       "direction": null
     },
     {
-      "name": "ocean.sectors",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "ocean.triangles",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "particles.drawn",
       "kind": "work",
       "rule": "shown",
@@ -1071,17 +994,6 @@
     },
     {
       "name": "reflections.active",
-      "kind": "work",
-      "rule": "equal",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "boolean",
-      "direction": null
-    },
-    {
-      "name": "refraction.active",
       "kind": "work",
       "rule": "equal",
       "statistic": "the last sampled frame's value",
@@ -1719,17 +1631,6 @@
       "direction": null
     },
     {
-      "name": "transparent_draws",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "triangles",
       "kind": "work",
       "rule": "shown",
@@ -1749,138 +1650,6 @@
         "native"
       ],
       "unit": "bytes",
-      "direction": null
-    },
-    {
-      "name": "virtual_geometry.clusters",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "virtual_geometry.dropped",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "virtual_geometry.dropped_pages",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "virtual_geometry.failed_pages",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "virtual_geometry.loading_pages",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "virtual_geometry.missing_pages",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
-      "name": "virtual_geometry.occluded_clusters",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "virtual_geometry.resident_pages",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "virtual_geometry.shadow_clusters",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "virtual_geometry.shadow_triangles",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "virtual_geometry.triangles",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "virtual_geometry.visibility_buffer",
-      "kind": "work",
-      "rule": "equal",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "boolean",
       "direction": null
     },
     {

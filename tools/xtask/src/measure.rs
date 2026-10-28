@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -9,15 +9,14 @@ use engine_profiler::load::{Load, Monitor};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::bench::{self, hex};
+use crate::bench::{self, Scene, hex};
+use crate::process::Project;
 
 const MIN_PAIRS: u64 = 8;
 const NEVER_SETTLES: usize = 4;
 const PROFILE_FRAMES: u32 = 60;
 const FRAMES_IN_FLIGHT: u32 = 2;
 const TOOLS_STATISTICS: &[&str] = &["frame_ms_p95"];
-const PACKAGE: &str = "stress-lab";
-const PROGRAM: &str = "stress-lab-native";
 const PROFILE: &str = "profiling";
 const FEATURES: &[&str] = &["profiling"];
 const TOOL: &str = "cargo xtask measure";
@@ -165,12 +164,6 @@ struct Build {
     program: PathBuf,
     build: Value,
     shader_hash: String,
-    assets: String,
-    generated_hash: String,
-}
-
-pub(crate) fn program_name() -> String {
-    format!("{PROGRAM}{}", std::env::consts::EXE_SUFFIX)
 }
 
 pub(crate) fn ensure_commit(root: &Path, sha: &str, pull: Option<u64>) -> Result<(), String> {
@@ -226,35 +219,33 @@ pub(crate) fn dxc() -> Option<PathBuf> {
 fn prepare_build(
     root: &Path,
     sha: &str,
+    project: &str,
     pull: Option<u64>,
     backend: &str,
 ) -> Result<Build, String> {
     crate::checkouts::lease(root, sha)?;
-    let folder = root.join("target").join("measure").join("builds").join(sha);
-    let program = folder.join(program_name());
+    let project = Project::at(root, sha, project)?;
+    let folder = root
+        .join("target")
+        .join("measure")
+        .join("builds")
+        .join(sha)
+        .join(&project.package);
+    let program = folder.join(project.program());
     let files = folder.join("tree");
-    let made = folder.join("generated.json");
-    let kept = read_json(&folder.join("build.json"))
-        .ok()
-        .zip(read_json(&made).ok())
-        .filter(|(build, generated)| {
-            program.is_file()
-                && file_hash(&program).ok().as_deref() == build["artifact_hash"].as_str()
-                && files.is_dir()
-                && generated["folder"]
-                    .as_str()
-                    .is_some_and(|assets| Path::new(assets).join("complete").is_file())
-                && generated["generated_hash"].is_string()
-        });
-    let (mut build, generated) = match kept {
+    let kept = read_json(&folder.join("build.json")).ok().filter(|build| {
+        program.is_file()
+            && file_hash(&program).ok().as_deref() == build["artifact_hash"].as_str()
+            && files.is_dir()
+    });
+    let mut build = match kept {
         Some(kept) => {
-            eprintln!("Reusing the build of {sha}.");
+            eprintln!("Reusing the build of {} at {sha}.", project.package);
             kept
         }
         None => {
             let tree = crate::checkouts::reused(root, sha, pull)?;
-            let build = build_arm(root, tree.path(), &folder, sha, backend)?;
-            let (assets, generated_hash) = bench::generated(root, tree.path(), sha)?;
+            let build = build_arm(root, tree.path(), &folder, sha, &project, backend)?;
             if files.exists() {
                 fs::remove_dir_all(&files)
                     .map_err(|error| format!("cannot remove {}: {error}", files.display()))?;
@@ -262,10 +253,7 @@ fn prepare_build(
             for part in crate::checkouts::RUN_FILES {
                 crate::checkouts::copy_folder(&tree.path().join(part), &files.join(part))?;
             }
-            let generated = json!({"folder": assets, "generated_hash": generated_hash});
-            fs::write(&made, generated.to_string())
-                .map_err(|error| format!("cannot write {}: {error}", made.display()))?;
-            (build, generated)
+            build
         }
     };
     if cfg!(windows) {
@@ -289,11 +277,8 @@ fn prepare_build(
         .ok()
         .and_then(|value| value["shader_hash"].as_str().map(str::to_owned))
         .ok_or_else(|| format!("the program of {sha} printed no shader hash: {printed}"))?;
-    let text = |key: &str| generated[key].as_str().unwrap_or_default().to_owned();
     Ok(Build {
         sha: sha.to_owned(),
-        assets: text("folder"),
-        generated_hash: text("generated_hash"),
         files,
         program,
         build,
@@ -306,30 +291,32 @@ pub(crate) fn build_arm(
     source: &Path,
     folder: &Path,
     sha: &str,
+    project: &Project,
     backend: &str,
 ) -> Result<Value, String> {
-    eprintln!("Building {PACKAGE} at {sha}.");
+    let package = project.package.as_str();
+    eprintln!("Building {package} at {sha}.");
     let target = root.join("target").join("measure").join("target");
     let features = FEATURES.join(",");
     let started = Instant::now();
     let status = Command::new("cargo")
-        .args(["build", "-p", PACKAGE, "--profile", PROFILE, "--locked"])
-        .args(["--features", &features])
+        .args(["build", "-p", package, "--bin", &project.native])
+        .args(["--profile", PROFILE, "--locked", "--features", &features])
         .env("CARGO_TARGET_DIR", &target)
         .env("ENGINE_COMMIT", &sha[..12])
         .current_dir(source)
         .status()
         .map_err(|error| format!("cannot run cargo: {error}"))?;
     if !status.success() {
-        return Err(format!("building {PACKAGE} at {sha} failed ({status})"));
+        return Err(format!("building {package} at {sha} failed ({status})"));
     }
     let build_ms = started.elapsed().as_secs_f64() * 1000.0;
     fs::create_dir_all(folder).map_err(|error| error.to_string())?;
     let built = target.join(PROFILE);
-    let program = folder.join(program_name());
-    fs::copy(built.join(program_name()), &program)
+    let program = folder.join(project.program());
+    fs::copy(built.join(project.program()), &program)
         .map_err(|error| format!("cannot copy the program: {error}"))?;
-    let symbols = format!("{}.pdb", PROGRAM.replace('-', "_"));
+    let symbols = format!("{}.pdb", project.native.replace('-', "_"));
     if built.join(&symbols).is_file() {
         fs::copy(built.join(&symbols), folder.join(&symbols))
             .map_err(|error| format!("cannot copy the symbols: {error}"))?;
@@ -560,6 +547,49 @@ impl Workload<'_> {
     }
 }
 
+fn task_project(root: &Path, spec: &Value) -> Result<String, String> {
+    let mut projects = BTreeSet::new();
+    for entry in spec["workloads"].as_array().into_iter().flatten() {
+        let scene = entry["workload"]["scene"].as_str().ok_or_else(|| {
+            format!(
+                "workload {}: `scene` names its file in bench/scenes",
+                entry["name"]
+            )
+        })?;
+        for role in ["base", "candidate"] {
+            let at = format!("workload {}'s {role} arm's sha", entry["name"]);
+            let sha = commit_id(entry["arms"][role]["sha"].as_str(), &at)?;
+            projects.insert(Scene::at(root, sha, scene)?.project);
+        }
+    }
+    let mut projects = projects.into_iter();
+    match (projects.next(), projects.next()) {
+        (Some(project), None) => Ok(project),
+        (None, _) => Err("the task measures no workload: its scenes name the project".into()),
+        (Some(first), Some(second)) => Err(format!(
+            "the task's scenes name projects {first} and {second}: a task measures one project"
+        )),
+    }
+}
+
+fn scene_arguments(files: &Path, runtime: &[String]) -> Result<Vec<String>, String> {
+    let mut arguments = Vec::new();
+    let mut given = runtime.iter();
+    while let Some(argument) = given.next() {
+        if argument != "--scene" {
+            arguments.push(argument.clone());
+            continue;
+        }
+        let path = given.next().ok_or("--scene takes a bench scene file")?;
+        let name = Path::new(path)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or_else(|| format!("--scene {path} names no file"))?;
+        arguments.extend(bench::arguments(&Scene::read(files, name)?.options));
+    }
+    Ok(arguments)
+}
+
 fn arm_commits(spec: &Value) -> Result<Vec<&str>, String> {
     let mut commits = Vec::new();
     for entry in spec["workloads"].as_array().into_iter().flatten() {
@@ -626,22 +656,9 @@ fn workload<'a>(
             }
         };
         arm["options"] = Value::Object(options.clone());
-        let mut arguments = runtime.clone();
-        for (option, value) in &options {
-            let value = match value {
-                Value::String(text) => text.clone(),
-                Value::Bool(true) => "on".into(),
-                Value::Bool(false) => "off".into(),
-                other => other.to_string(),
-            };
-            arguments.extend([format!("--{option}"), value]);
-        }
-        arguments.extend([
-            "--assets".into(),
-            build.assets.clone(),
-            "--gpu".into(),
-            gpu.into(),
-        ]);
+        let mut arguments = scene_arguments(&build.files, &runtime)?;
+        arguments.extend(bench::arguments(&options));
+        arguments.extend(["--gpu".into(), gpu.into()]);
         Ok(Side {
             role,
             build,
@@ -808,7 +825,6 @@ fn measure_run(
         "started_at": started_at,
         "metrics": metrics,
         "frames": frames,
-        "generated_hash": side.build.generated_hash,
         "work": work,
         "conditions": conditions,
         "capture": capture.display().to_string(),
@@ -1033,12 +1049,14 @@ pub(crate) fn measure_with(
     let pairs = spec["pairs"].as_u64().unwrap_or(MIN_PAIRS);
     let want_profiles = spec["want"]["profiles"] == true;
     let catalog = bench::catalog(root)?;
+    let project = task_project(root, spec)?;
     let mut builds: BTreeMap<String, Build> = BTreeMap::new();
     let mut commits = vec![base_sha, candidate_sha];
     commits.extend(arm_commits(spec)?);
     for sha in commits {
         if !builds.contains_key(sha) {
-            builds.insert(sha.to_owned(), prepare_build(root, sha, pull, backend)?);
+            let build = prepare_build(root, sha, &project, pull, backend)?;
+            builds.insert(sha.to_owned(), build);
         }
     }
     crate::checkouts::prune(root);

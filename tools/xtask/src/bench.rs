@@ -1,10 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::Command;
 
-use serde_json::Value;
-use sha2::{Digest, Sha256};
+use serde_json::{Map, Value};
 
 pub const MEASURED: &[&str] = &[
     "frame_ms_mean",
@@ -29,298 +28,77 @@ pub const NOT_WORK: &[&str] = &[
     "resolution.gpu_ms",
 ];
 
-const SCENE_OPTIONS: &[&str] = &["preset", "config", "view"];
+const SCENE_FIELDS: &[&str] = &["note", "project", "options"];
 
-const SETTINGS_OPTIONS: &[&str] = &["size", "jobcache", "rocks"];
+const SETTINGS_FIELDS: &[&str] = &["note", "options"];
 
-const GENERATED: &[(&str, &[&str])] = &[(
-    "stress/dense",
-    &[
-        "-p",
-        "engine_vgbuild",
-        "--profile",
-        "quick",
-        "--locked",
-        "--bin",
-        "dense_assets",
-        "--",
-    ],
-)];
+const HOST_OPTIONS: &[&str] = &["size", "jobcache"];
 
 pub fn bench(root: &Path, options: &[String]) -> Result<(), String> {
     match options.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         ["check"] => check(root),
-        ["assets"] => {
-            let assets = assets(root)?;
-            for (set, replaced) in install(root, &assets.folder)? {
-                println!("{set}: {replaced} file(s) written to web/public/{set}");
-            }
-            println!(
-                "{}",
-                serde_json::json!({
-                    "folder": assets.folder.display().to_string(),
-                    "generated_hash": assets.generated_hash,
-                })
-            );
-            Ok(())
-        }
-        _ => Err("usage: cargo xtask bench check | assets | budgets ...".into()),
+        _ => Err("usage: cargo xtask bench check".into()),
     }
 }
 
-pub struct Assets {
-    pub folder: PathBuf,
-    pub generated_hash: String,
+pub struct Scene {
+    pub project: String,
+    pub options: Map<String, Value>,
 }
 
-pub fn assets(root: &Path) -> Result<Assets, String> {
-    let folder = build_sets(root, "bench-assets", GENERATED)?;
-    let mut files = Vec::new();
-    for (set, _) in GENERATED {
-        files.extend(files_under(&folder, &folder.join(set))?);
+impl Scene {
+    pub fn read(root: &Path, name: &str) -> Result<Self, String> {
+        let path = format!("bench/scenes/{name}.json");
+        let text = fs::read_to_string(root.join(&path))
+            .map_err(|error| format!("cannot read {path}: {error}"))?;
+        Self::parse(&text, &path)
     }
-    files.sort();
-    let mut hash = Sha256::new();
-    for path in &files {
-        let bytes =
-            fs::read(folder.join(path)).map_err(|error| format!("cannot read {path}: {error}"))?;
-        hash.update(path.as_bytes());
-        hash.update([0]);
-        hash.update((bytes.len() as u64).to_le_bytes());
-        hash.update(&bytes);
+
+    pub fn at(root: &Path, sha: &str, name: &str) -> Result<Self, String> {
+        let path = format!("bench/scenes/{name}.json");
+        let text = crate::measure::git(root, &["show", &format!("{sha}:{path}")])
+            .map_err(|_| format!("{path} is not at {sha}"))?;
+        Self::parse(&text, &format!("{sha}:{path}"))
     }
-    Ok(Assets {
-        folder,
-        generated_hash: hex(&hash.finalize()),
-    })
-}
 
-pub fn dense_assets(root: &Path) -> Result<PathBuf, String> {
-    build_sets(root, "dense-assets", &GENERATED[..1])
-}
-
-fn build_sets(
-    root: &Path,
-    cache: &str,
-    sets: &[(&'static str, &'static [&'static str])],
-) -> Result<PathBuf, String> {
-    let inputs = inputs_hash(root, sets)?;
-    let folder = root.join("target").join(cache).join(&inputs[..16]);
-    let complete = folder.join("complete");
-    if !complete.is_file() {
-        if folder.exists() {
-            fs::remove_dir_all(&folder)
-                .map_err(|error| format!("cannot clear {}: {error}", folder.display()))?;
-        }
-        for (set, command) in sets {
-            let into = folder.join(set);
-            fs::create_dir_all(&into)
-                .map_err(|error| format!("cannot create {}: {error}", into.display()))?;
-            let into = into.display().to_string();
-            let mut arguments = vec!["run"];
-            arguments.extend(*command);
-            arguments.push(&into);
-            crate::process::run(root, "cargo", &arguments)?;
-        }
-        fs::write(&complete, &inputs)
-            .map_err(|error| format!("cannot write {}: {error}", complete.display()))?;
-        prune_assets(&folder)?;
-    }
-    Ok(folder)
-}
-
-const KEPT_ASSETS: usize = 3;
-
-fn prune_assets(newest: &Path) -> Result<(), String> {
-    let Some(parent) = newest.parent() else {
-        return Ok(());
-    };
-    let mut others: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(parent)
-        .map_err(|error| format!("cannot list {}: {error}", parent.display()))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && path != newest)
-        .map(|path| {
-            let built = fs::metadata(path.join("complete"))
-                .and_then(|metadata| metadata.modified())
-                .unwrap_or(std::time::UNIX_EPOCH);
-            (built, path)
+    fn parse(text: &str, at: &str) -> Result<Self, String> {
+        let file: Value = serde_json::from_str(text).map_err(|error| format!("{at}: {error}"))?;
+        let project = file["project"]
+            .as_str()
+            .filter(|project| !project.is_empty())
+            .ok_or_else(|| format!("{at}: project names a game crate's folder"))?;
+        let options = file["options"]
+            .as_object()
+            .cloned()
+            .ok_or_else(|| format!("{at}: options is an object of options by name"))?;
+        Ok(Self {
+            project: project.to_owned(),
+            options,
         })
-        .collect();
-    others.sort_by_key(|(built, _)| std::cmp::Reverse(*built));
-    for (_, path) in others.into_iter().skip(KEPT_ASSETS) {
-        fs::remove_dir_all(&path)
-            .map_err(|error| format!("cannot remove {}: {error}", path.display()))?;
     }
-    Ok(())
 }
 
-fn inputs_hash(root: &Path, sets: &[(&str, &[&str])]) -> Result<String, String> {
-    let generators: Vec<&str> = sets
+pub fn switch(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Bool(true) => "on".into(),
+        Value::Bool(false) => "off".into(),
+        other => other.to_string(),
+    }
+}
+
+pub fn arguments(options: &Map<String, Value>) -> Vec<String> {
+    options
         .iter()
-        .filter_map(|(_, command)| {
-            command
-                .windows(2)
-                .find(|pair| pair[0] == "-p")
-                .map(|pair| pair[1])
-        })
-        .collect();
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--locked"])
-        .current_dir(root)
-        .output()
-        .map_err(|error| format!("cannot run cargo metadata: {error}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-    }
-    let metadata: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("cargo metadata is not JSON: {error}"))?;
-    let packages: BTreeMap<&str, &Value> = metadata["packages"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|package| Some((package["id"].as_str()?, package)))
-        .collect();
-    let nodes: BTreeMap<&str, &Value> = metadata["resolve"]["nodes"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|node| Some((node["id"].as_str()?, node)))
-        .collect();
-    let mut queue: VecDeque<&str> = packages
+        .flat_map(|(option, value)| [format!("--{option}"), switch(value)])
+        .collect()
+}
+
+pub fn setting_values(option: &str) -> Option<&'static [&'static str]> {
+    engine::host::SETTINGS
         .iter()
-        .filter(|(_, package)| generators.contains(&package["name"].as_str().unwrap_or("")))
-        .map(|(id, _)| *id)
-        .collect();
-    let mut seen = BTreeSet::new();
-    let mut folders = BTreeSet::new();
-    while let Some(id) = queue.pop_front() {
-        if !seen.insert(id) {
-            continue;
-        }
-        let package = packages[id];
-        if package["source"].is_null() {
-            let manifest = Path::new(package["manifest_path"].as_str().unwrap_or_default());
-            if let Some(folder) = manifest.parent() {
-                folders.insert(folder.to_path_buf());
-            }
-        }
-        for dependency in nodes
-            .get(id)
-            .and_then(|node| node["deps"].as_array())
-            .into_iter()
-            .flatten()
-        {
-            let normal = dependency["dep_kinds"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|kind| kind["kind"].is_null() || kind["kind"] == "build");
-            if let (true, Some(package)) = (normal, dependency["pkg"].as_str()) {
-                queue.push_back(package);
-            }
-        }
-    }
-    let mut paths: Vec<String> = Vec::new();
-    for folder in &folders {
-        let relative = folder.strip_prefix(root).unwrap_or(folder);
-        let listed = Command::new("git")
-            .args(["ls-files", "-z", "--"])
-            .arg(relative)
-            .current_dir(root)
-            .output()
-            .map_err(|error| format!("cannot run git ls-files: {error}"))?;
-        paths.extend(
-            String::from_utf8_lossy(&listed.stdout)
-                .split('\0')
-                .filter(|path| !path.is_empty())
-                .map(str::to_owned),
-        );
-    }
-    paths.push("Cargo.lock".into());
-    paths.sort();
-    paths.dedup();
-    let mut hash = Sha256::new();
-    for path in &paths {
-        let bytes = fs::read(root.join(path)).unwrap_or_default();
-        hash.update(path.as_bytes());
-        hash.update([0]);
-        hash.update(normalized(&bytes));
-        hash.update([0]);
-    }
-    let rustc = Command::new("rustc")
-        .arg("-V")
-        .output()
-        .map_err(|error| format!("cannot run rustc: {error}"))?;
-    hash.update(&rustc.stdout);
-    for (set, command) in sets {
-        hash.update(set.as_bytes());
-        hash.update(command.join(" ").as_bytes());
-    }
-    Ok(hex(&hash.finalize()))
-}
-
-fn normalized(bytes: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(bytes.len());
-    for (index, &byte) in bytes.iter().enumerate() {
-        if !(byte == b'\r' && bytes.get(index + 1) == Some(&b'\n')) {
-            out.push(byte);
-        }
-    }
-    out
-}
-
-fn files_under(base: &Path, folder: &Path) -> Result<Vec<String>, String> {
-    let mut files = Vec::new();
-    let entries = fs::read_dir(folder)
-        .map_err(|error| format!("cannot read {}: {error}", folder.display()))?;
-    for entry in entries {
-        let path = entry.map_err(|error| error.to_string())?.path();
-        if path.is_dir() {
-            files.extend(files_under(base, &path)?);
-        } else {
-            let relative = path.strip_prefix(base).unwrap_or(&path);
-            files.push(
-                relative
-                    .components()
-                    .map(|part| part.as_os_str().to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join("/"),
-            );
-        }
-    }
-    Ok(files)
-}
-
-pub fn install(root: &Path, folder: &Path) -> Result<Vec<(&'static str, usize)>, String> {
-    let mut installed = Vec::new();
-    for (set, _) in GENERATED {
-        installed.push((
-            *set,
-            copy_changed(&folder.join(set), &root.join("web/public").join(set))?,
-        ));
-    }
-    Ok(installed)
-}
-
-fn copy_changed(from: &Path, into: &Path) -> Result<usize, String> {
-    fs::create_dir_all(into)
-        .map_err(|error| format!("cannot create {}: {error}", into.display()))?;
-    let mut copied = 0;
-    for path in files_under(from, from)? {
-        let (source, target) = (from.join(&path), into.join(&path));
-        let bytes = fs::read(&source).map_err(|error| format!("cannot read {path}: {error}"))?;
-        if fs::read(&target).is_ok_and(|existing| existing == bytes) {
-            continue;
-        }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        fs::write(&target, bytes)
-            .map_err(|error| format!("cannot write {}: {error}", target.display()))?;
-        copied += 1;
-    }
-    Ok(copied)
+        .find(|setting| setting.name == option)
+        .map(|setting| setting.values)
 }
 
 pub fn hex(bytes: &[u8]) -> String {
@@ -468,15 +246,9 @@ pub fn check(root: &Path) -> Result<(), String> {
     }
     problems.extend(option_file_problems(root)?);
     problems.extend(shader_path_problems(root)?);
-    let covered = |metric: &str| {
-        catalog
-            .iter()
-            .any(|entry| covers(entry["name"].as_str().unwrap_or_default(), metric))
-    };
-    problems.extend(crate::budgets::problems(root, &covered)?);
     if problems.is_empty() {
         println!(
-            "bench/ matches the code: {} catalog entries, the option files, shader paths and budgets.",
+            "bench/ matches the code: {} catalog entries, the option files and shader paths.",
             catalog.len()
         );
         Ok(())
@@ -489,13 +261,8 @@ pub fn check(root: &Path) -> Result<(), String> {
 }
 
 fn option_file_problems(root: &Path) -> Result<Vec<String>, String> {
-    let switches = read(root, "options.json")?["options"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let presets = engine_presets(root)?;
     let mut problems = Vec::new();
-    for (folder, allowed) in [("scenes", SCENE_OPTIONS), ("settings", SETTINGS_OPTIONS)] {
+    for (folder, fields) in [("scenes", SCENE_FIELDS), ("settings", SETTINGS_FIELDS)] {
         let entries = fs::read_dir(root.join("bench").join(folder))
             .map_err(|error| format!("cannot read bench/{folder}: {error}"))?;
         for entry in entries {
@@ -513,75 +280,51 @@ fn option_file_problems(root: &Path) -> Result<Vec<String>, String> {
             if file["note"].as_str().is_none_or(str::is_empty) {
                 problems.push(format!("{at}: a note says what it is"));
             }
-            let Some(options) = file["options"].as_object() else {
-                problems.push(format!("{at}: options is an object of options by name"));
-                continue;
-            };
             if let Some(field) = file
                 .as_object()
                 .into_iter()
                 .flat_map(|fields| fields.keys())
-                .find(|field| !["note", "options"].contains(&field.as_str()))
+                .find(|field| !fields.contains(&field.as_str()))
             {
-                problems.push(format!("{at}: {field} is not a field (note, options)"));
+                problems.push(format!(
+                    "{at}: {field} is not a field ({})",
+                    fields.join(", ")
+                ));
             }
+            let Some(options) = file["options"].as_object() else {
+                problems.push(format!("{at}: options is an object of options by name"));
+                continue;
+            };
             for (option, value) in options {
-                let switch = switches.iter().find(|switch| switch["name"] == *option);
-                match switch {
-                    Some(switch) if folder == "settings" => {
-                        let values = switch["values"].as_array().cloned().unwrap_or_default();
-                        if !values.contains(value) {
-                            problems.push(format!(
-                                "{at}: {option} is one of bench/options.json's values, not {value}"
-                            ));
-                        }
-                    }
-                    _ if allowed.contains(&option.as_str()) => {}
-                    _ => problems.push(format!(
-                        "{at}: {option} does not belong here ({})",
-                        allowed.join(", ")
+                let value = switch(value);
+                match setting_values(option) {
+                    Some(values) if !values.contains(&value.as_str()) => problems.push(format!(
+                        "{at}: {option} is one of {}, not {value}",
+                        values.join(", ")
                     )),
+                    Some(_) => {}
+                    None if folder == "settings" && !HOST_OPTIONS.contains(&option.as_str()) => {
+                        problems.push(format!(
+                            "{at}: {option} is not a host setting ({} or an engine switch)",
+                            HOST_OPTIONS.join(", ")
+                        ));
+                    }
+                    None => {}
                 }
             }
             if folder == "scenes" {
-                let preset = options["preset"].as_str().unwrap_or_default();
-                if !presets.iter().any(|known| known == preset) {
-                    problems.push(format!(
-                        "{at}: preset {preset} is not one of {}",
-                        presets.join(", ")
-                    ));
-                }
-                if !options["config"].is_object() {
-                    problems.push(format!("{at}: config is the whole workload configuration"));
+                match file["project"].as_str() {
+                    Some(project) => {
+                        if let Err(error) = crate::process::Project::read(root, project) {
+                            problems.push(format!("{at}: {error}"));
+                        }
+                    }
+                    None => problems.push(format!("{at}: project names a game crate's folder")),
                 }
             }
         }
     }
     Ok(problems)
-}
-
-fn engine_presets(root: &Path) -> Result<Vec<String>, String> {
-    stress_choices(root, "presets")
-}
-
-pub fn stress_choices(root: &Path, list: &str) -> Result<Vec<String>, String> {
-    let page = fs::read_to_string(root.join("web/src/generated/stress.ts"))
-        .map_err(|error| format!("cannot read web/src/generated/stress.ts: {error}"))?;
-    let start = page
-        .find("export const STRESS_CATALOG = ")
-        .map(|at| at + "export const STRESS_CATALOG = ".len())
-        .ok_or("web/src/generated/stress.ts has no STRESS_CATALOG")?;
-    let end = page[start..]
-        .find(" as const;")
-        .ok_or("STRESS_CATALOG does not end")?;
-    let catalog: Value = serde_json::from_str(&page[start..start + end])
-        .map_err(|error| format!("STRESS_CATALOG: {error}"))?;
-    Ok(catalog[list]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|choice| choice["value"].as_str().map(str::to_owned))
-        .collect())
 }
 
 fn shader_path_problems(root: &Path) -> Result<Vec<String>, String> {
@@ -645,37 +388,4 @@ pub fn glob(pattern: &str, path: &str) -> bool {
     let pattern: Vec<&str> = pattern.split('/').collect();
     let path: Vec<&str> = path.split('/').collect();
     segments(&pattern, &path)
-}
-
-pub(crate) fn generated(root: &Path, source: &Path, sha: &str) -> Result<(String, String), String> {
-    eprintln!("Generating the files workloads read at {sha}.");
-    let target = root.join("target").join("measure").join("target");
-    let made = Command::new("cargo")
-        .args(["xtask", "bench", "assets"])
-        .env("CARGO_TARGET_DIR", &target)
-        .current_dir(source)
-        .stderr(Stdio::inherit())
-        .output()
-        .map_err(|error| format!("cannot run cargo: {error}"))?;
-    let printed = String::from_utf8_lossy(&made.stdout);
-    let summary = printed
-        .lines()
-        .rev()
-        .find_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(|_| made.status.success());
-    match summary {
-        Some(summary) => match (
-            summary["folder"].as_str(),
-            summary["generated_hash"].as_str(),
-        ) {
-            (Some(folder), Some(hash)) => Ok((folder.to_owned(), hash.to_owned())),
-            _ => Err(format!(
-                "`cargo xtask bench assets` at {sha} printed no folder and generated_hash"
-            )),
-        },
-        None => Err(format!(
-            "`cargo xtask bench assets` at {sha} failed ({}): measured commits need it",
-            made.status
-        )),
-    }
 }

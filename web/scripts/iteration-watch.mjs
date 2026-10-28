@@ -1,6 +1,6 @@
 // @ts-check
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, readFileSync } from "node:fs";
 import { lstat, open, opendir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -10,7 +10,8 @@ const MAX_BYTES = 128 * 1024 * 1024;
 const MAX_ENTRIES = 40_000;
 const MAX_DEPTH = 64;
 const CHUNK_BYTES = 64 * 1024;
-const TREES = ["crates", "apps", ".cargo", "vendor/glam"];
+const clients = JSON.parse(readFileSync(new URL("../src/generated/clients.json", import.meta.url), "utf8"));
+const TREES = ["crates", ...clients.map(client => client.folder).filter(folder => folder && !folder.startsWith("crates/")), ".cargo", "vendor/glam"];
 const FILES = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 const IGNORED = new Set(["target", "pkg", "pkg-dev", "dist", ".git", "node_modules", ".tools"]);
 

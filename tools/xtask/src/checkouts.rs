@@ -13,7 +13,7 @@ const KEPT_BUILDS: usize = 12;
 
 const KEPT_CHECKOUTS: usize = 3;
 
-pub const RUN_FILES: &[&str] = &["bench", "web/scripts/fixtures"];
+pub const RUN_FILES: &[&str] = &["bench"];
 
 const REMOVING: &str = "removing";
 

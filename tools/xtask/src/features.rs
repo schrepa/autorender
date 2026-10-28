@@ -8,13 +8,9 @@ fn own_crate(feature: Feature) -> Option<&'static str> {
     match feature {
         Feature::Collision => Some("engine_collision"),
         Feature::Physics => Some("engine_physics"),
-        Feature::Terrain
-        | Feature::WorldStreaming
-        | Feature::Navigation
-        | Feature::Ocean
-        | Feature::Animation
-        | Feature::TimeOfDay
-        | Feature::Deformation => None,
+        Feature::Terrain | Feature::WorldStreaming | Feature::Navigation | Feature::TimeOfDay => {
+            None
+        }
     }
 }
 

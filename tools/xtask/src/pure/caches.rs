@@ -8,14 +8,13 @@ use super::Observations;
 pub const TRACE: &str = "target/coresmoke/terrain-trace.txt";
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
-    let folder = crate::bench::dense_assets(root)?.display().to_string();
     let trace = root.join(TRACE).display().to_string();
     println!("Running the core smoke (cargo run -p coresmoke)");
     let output = Command::new("cargo")
         .args(["run", "-q", "--locked", "-p", "coresmoke", "--target-dir"])
         .arg(crate::process::tools_target(root))
         .arg("--")
-        .args(["--assets", &folder, "--trace", &trace])
+        .args(["--trace", &trace])
         .current_dir(root)
         .output()
         .map_err(|error| format!("cannot run cargo: {error}"))?;

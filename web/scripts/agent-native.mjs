@@ -1,6 +1,7 @@
 // @ts-check
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
@@ -14,16 +15,20 @@ import { workspace } from "./workspace.mjs";
 const SESSIONS_KEPT = 10;
 const READY_TIMEOUT_MS = 300_000;
 
-export function nativeProgram(native, { profiling = false } = {}) {
-  if (!/^[a-z][a-z0-9-]*$/.test(native)) return resolve(native);
+const clients = JSON.parse(readFileSync(new URL("../src/generated/clients.json", import.meta.url), "utf8"));
+
+export function nativeProgram(name, { profiling = false } = {}) {
+  const client = clients.find(client => client.native && (client.package === name || client.native === name));
+  if (!client) return resolve(name);
   const [chosen, features] = profiling ? ["profiling", "dev,profiling"] : ["release", "dev"];
   const profile = process.env.ENGINE_NATIVE_PROFILE || chosen;
   const env = profiling && process.platform === "linux"
     ? { ...process.env, RUSTFLAGS: `${process.env.RUSTFLAGS ?? ""} -Cforce-frame-pointers=yes`.trim() }
     : process.env;
-  execFileSync("cargo", ["build", "-q", "-p", native, "--profile", profile, "--features", features], { cwd: workspace, env, stdio: ["ignore", "ignore", "inherit"] });
+  execFileSync("cargo", ["build", "-q", "-p", client.package, "--bin", client.native, "--profile", profile, "--features", features],
+    { cwd: workspace, env, stdio: ["ignore", "ignore", "inherit"] });
   const folder = profile === "dev" ? "debug" : profile;
-  return resolve(workspace, "target", folder, process.platform === "win32" ? `${native}-native.exe` : `${native}-native`);
+  return resolve(workspace, "target", folder, process.platform === "win32" ? `${client.native}.exe` : client.native);
 }
 
 async function pruneSessions(root) {
