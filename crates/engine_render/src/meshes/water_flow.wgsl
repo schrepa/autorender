@@ -1,7 +1,7 @@
 // Terrains' water's roughness (`shade_water`), from its simulation's state:
-// its surface is the simulated surface itself, tilted by the disturbance the
-// turbulence reaching it raises where the foam field runs
-// (`meshes/water_foam_field.wgsl`), and nothing else adds waves to it. What
+// its surface is the simulated surface itself, tilted by the waves the
+// turbulence reaching it raises where its particles run
+// (`meshes/water_particles.wgsl`), and nothing else adds waves to it. What
 // neither resolves of it, the surface its eddies lift and lower about its
 // mean between its samples, roughens it instead (`water_unresolved`), by the
 // simulation's own turbulence and eddies there, drawn as no pattern; and how
@@ -28,14 +28,14 @@ fn water_stirring(speed: f32, eddy: f32, turbulence: f32) -> f32 {
 // `depth` meters deep (at least WATER_BREAK_THINNEST, as `water_eddies`
 // takes it) whose eddies turn at `stirring` meters a second
 // (`water_stirring`), by eddies smaller than the `resolved` meters across
-// the foam field's bursts draw (`water_eddy_size`; none where none are
-// drawn): how much the surface varies about its mean. The eddies' dynamic
+// the waves of water's particles stand for (`water_eddy_size`; none where
+// none run): how much the surface varies about its mean. The eddies' dynamic
 // pressure lifts and lowers the surface by u²/g in root mean square, each
 // eddy as large as the water is deep, one lifting it and the next lowering
 // it as a sine twice as long does: slopes of π·u²/(g·h) in root mean square,
 // no steeper than waves stand before they break (WATER_STEEPEST, a sine's
 // root mean square of it), alike every way; less the variance of those the
-// bursts draw, π·u²/(g·r) for eddies r across, which leaves none where they
+// waves draw, π·u²/(g·r) for eddies r across, which leaves none where they
 // are as large as the water is deep. So shallow fast riffles run rough, and
 // deep slow pools and still lakes stay glassy.
 fn water_unresolved(depth: f32, stirring: f32, resolved: f32) -> vec3<f32> {

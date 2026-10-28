@@ -907,8 +907,9 @@ tables! {
     /// leaves its vertices take. With water's first group (`CAMERA_WATER`)
     /// and what lies behind the water, within a fragment stage's 16 sampled
     /// textures and 8 storage buffers. The sea's group has placeholders for
-    /// what only tiles' water reads. Foam's field's passes (`WATER_FOAM`)
-    /// read the water through it as shading reads it (`water_pixel`).
+    /// what only tiles' water reads. Water's particles' passes
+    /// (`WATER_PARTICLES`) read the water through it as shading reads it
+    /// (`water_pixel`).
     const WATER: Table = Table {
         label: "engine/water-layout",
         serves: [SHADER @ 1],
@@ -934,10 +935,10 @@ tables! {
     /// Group 2 of water's pipelines: what lies behind the water, copied
     /// from the opaque scene before it draws: the depth, and the color in
     /// frames drawing the effects' targets (a placeholder in others); and
-    /// the foam field the water carries (`crate::water_foam_field`), its
-    /// white water, foam and disturbance's slopes and those slopes'
+    /// what water's particles splat (`crate::water_particles`), the shares
+    /// white water and foam cover and the waves' slopes, and those slopes'
     /// squares, with their coarser levels, and the sampler repeating them
-    /// (placeholders where none runs), which foam's field's passes write
+    /// (placeholders where none run), which the particles' passes write
     /// outside it: 15 of a fragment stage's 16 sampled textures with water's
     /// first group's and water's (`CAMERA_WATER`, `WATER`).
     const WATER_BEHIND: Table = Table {
@@ -946,32 +947,33 @@ tables! {
         bindings: &[
             texture(22, "water_depth", Depth, D2, F),
             texture(23, "water_scene", Float, D2, F),
-            texture(24, "water_foam_field", Float, D2, F),
-            sampler(25, "water_foam_sampler", Filtering, F),
-            texture(26, "water_foam_spread", Float, D2, F),
+            texture(24, "water_particles", Float, D2, F),
+            sampler(25, "water_particles_sampler", Filtering, F),
+            texture(26, "water_particles_spread", Float, D2, F),
         ],
     };
 
-    /// Group 2 of foam's field's passes (`meshes/water_foam_field.wgsl`),
-    /// after an empty first group and the water's (`WATER`), through which
-    /// they read the water as its shading does: the field's frame, its
-    /// lattice, its state twice over (the frame before's and this frame's)
-    /// in two buffers, and a level of each of the two textures water's
-    /// shading reads (written) and the level finer than it (read): five of
-    /// a compute stage's 8 storage buffers with the water's two, and two of
-    /// its 4 storage textures.
-    const WATER_FOAM: Table = Table {
-        label: "engine/water-foam-layout",
+    /// Group 2 of water's particles' passes
+    /// (`meshes/water_particles.wgsl`), after an empty first group and the
+    /// water's (`WATER`), through which they read the water as its shading
+    /// does: their frame, their lattice, their pools twice over (the frame
+    /// before's and this frame's), their counts, their splat's sums, and a
+    /// level of each of the two textures water's shading reads (written) and
+    /// the level finer than it (read): six of a compute stage's 8 storage
+    /// buffers with the water's two, and two of its 4 storage textures.
+    const WATER_PARTICLES: Table = Table {
+        label: "engine/water-particles-layout",
         serves: [SHADER @ 2],
         bindings: &[
-            uniform_of(32, "foam_frame", size_of::<water::FoamFrame>(), C),
-            write(33, "foam_lattice", C),
-            write(34, "foam_state", C),
-            texture(35, "foam_source", Float, D2, C),
-            bind(36, "foam_target", Kind::Storage(Rgba16Float), C),
-            write(37, "foam_waves", C),
-            texture(38, "foam_spread_source", Float, D2, C),
-            bind(39, "foam_spread_target", Kind::Storage(Rgba16Float), C),
+            uniform_of(32, "particle_frame", size_of::<water::ParticleFrame>(), C),
+            write(33, "particle_lattice", C),
+            write(34, "particle_pool", C),
+            write(35, "particle_counts", C),
+            write(36, "particle_splat", C),
+            texture(37, "particle_source", Float, D2, C),
+            bind(38, "particle_target", Kind::Storage(Rgba16Float), C),
+            texture(39, "particle_spread_source", Float, D2, C),
+            bind(40, "particle_spread_target", Kind::Storage(Rgba16Float), C),
         ],
     };
 

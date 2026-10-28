@@ -85,7 +85,7 @@ const LIVE_ACROSS: f32 = 4.0;
 /// The longest frame whose time the live water steps through: a longer
 /// frame steps as many steps as this one holds, so a slow frame costs no
 /// more than this ([`live_steps`]), and the water then runs slower than the
-/// clock; the foam field steps no more of it either.
+/// clock; water's particles step no more of it either.
 pub const LONGEST_FRAME: f64 = 1.0 / 30.0;
 /// Settled cells a live cell's settled water reads past the one holding
 /// its middle, along each axis: the uniform cubic B-spline's control points

@@ -1,17 +1,18 @@
 // Turbulence reaching water's surface in bursts: the one rule every
-// simulation of water draws the events of its turbulence by, the foam
-// field's boils and patches (`meshes/water_foam_field.wgsl`) and the live
-// solve's turbulent pushes (`water_sim.wgsl`'s `sim_burst`) alike. Below its
+// simulation of water draws the events of its turbulence by, the foam and
+// the waves water's particles are born in (`meshes/water_particles.wgsl`)
+// and the live solve's turbulent pushes (`water_sim.wgsl`'s `sim_burst`)
+// alike. Below its
 // grid a simulation knows how turbulent each place is: its turbulence, its
 // eddies' speed, the energy it loses, the white water born in it.
 // Turbulence reaches the surface intermittently, so its events are random
 // in space and time, Poisson about the simulation's rate as their mean.
 // Each is drawn from a hash of the cell of the world it stands at and the
 // simulation's step index alone, so every host draws the same events
-// however its frames fall. The foam field names its sites, how long its
-// events live (`water_burst_slot`) and how many it expects at a site over a
-// slot (`water_burst_weight`); the live solve draws at most one a cell a
-// step (`water_burst`).
+// however its frames fall. Water's particles name their sites, how long
+// their events live (`water_burst_slot`) and how many they expect at a site
+// over a slot (`water_burst_weight`); the live solve draws at most one a
+// cell a step (`water_burst`).
 
 // The most steps a slot spans: 2^WATER_BURST_LONGEST, minutes of the
 // simulation's steps, longer than any eddy turns over.
@@ -85,8 +86,8 @@ struct WaterBurst {
     turn: f32,
 }
 
-// The stream the live solve's bursts draw from (`water_burst_bits`'), past
-// those the foam field's grids use.
+// The stream the live solve's bursts draw from (`water_burst_bits`'),
+// before those water's particles draw from (`PARTICLE_STREAMS`).
 const WATER_BURST_LIVE: u32 = 16u;
 
 // Four draws, each uniform over [0, 1), for world cell `cell` of the live

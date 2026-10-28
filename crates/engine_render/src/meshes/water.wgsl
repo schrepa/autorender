@@ -37,13 +37,14 @@
 // what follows from it: its eddies' speed (`water_eddies`); the water's debug
 // views paint each of its fields (`meshes/debug.wgsl`).
 // Nothing else draws it (`shade_water`): its surface is that smooth surface
-// itself, tilted by the disturbance the turbulence reaching it raises, which
-// the foam field simulates around the detail eye on a grid finer than its
-// own cells (`water_foam_field.rs`, `meshes/water_foam.wgsl`): boils raised
-// by bursts of turbulence, carried by the current its surface runs at and
-// spreading as gravity waves do, so its glints and what it mirrors travel
-// downstream; nothing else adds waves to it. What neither resolves of it,
-// the surface its eddies lift and lower between its samples, roughens it by
+// itself, tilted by the small waves the turbulence reaching it raises,
+// which its particles carry around the detail eye (`water_particles.rs`,
+// `meshes/water_foam.wgsl`): wavefronts raised by the boils of turbulence's
+// bursts and where the water runs against what stands in it, running at
+// their groups' speed plus the current its surface runs at and spreading,
+// so its glints and what it mirrors travel downstream; nothing else adds
+// waves to it. What neither resolves of it, the surface its eddies lift and
+// lower between its samples, roughens it by
 // the simulation's own turbulence and eddies there (`water_flow.wgsl`), and
 // so does how far its normal turns across a pixel, along the view and
 // across it as the ellipse of those slopes projects into the view
@@ -56,14 +57,13 @@
 // copies the scene's color, brighter where that surface's own curvature
 // gathers the sun's light on it, and dimmed channel by channel over the
 // light's path down to it and back, the ground darker for being wet. Its
-// foam is the foam field it carries, smooth coverage: the white water and
-// foam the same bursts lay where it breaks and churns
-// (`engine_terrain::shallow_water`), settling or live, in patches with open
-// water between, carried by the current its surface runs at, and past the
-// field's reach its own state's, the field's mean; and white water where it
-// runs fast against what stands in it. However thin, the water fades only at
-// its waterline. The sea (`meshes/ocean.wgsl`) lights its surface the same
-// way.
+// foam is what its particles lay: the white water and foam the same bursts
+// lay where it breaks and churns (`engine_terrain::shallow_water`), settling
+// or live, as particles carried by the current its surface runs at, drawn
+// out into streaks with open water between, and past their reach its own
+// state's, their mean; and white water where it runs fast against what
+// stands in it. However thin, the water fades only at its waterline. The
+// sea (`meshes/ocean.wgsl`) lights its surface the same way.
 // Where rivers leave their beds, their jets fall as sheets of their own
 // (`water_falls.rs`), drawn last.
 
@@ -105,12 +105,12 @@
 // which half the light passes (w); for the sea, the compression below which
 // its crests whiten (x), the amplitude of one wave holding all its waves'
 // variance, which runs up its shores (y), and its waves' summed height (w),
-// and for terrains' water its foam field's (`water_foam_held`): the meters
-// across its cells (x, none where none runs), the meters its textures span
-// (y), the pixels its cells span where it hands over to the water's own
-// foam (z) and the meters across the largest eddies its bursts stand for
-// (w) (`foam`); and how fast the water takes each channel of light, per
-// meter (rgb).
+// and for terrains' water its particles' (`water_splatted`): the meters
+// across their texels (x, none where none run), the meters their textures
+// span (y), the pixels their texels span where they hand over to the
+// water's own foam (z) and the meters across the cells of the water they
+// ride (w) (`foam`); and how fast the water takes each channel of light,
+// per meter (rgb).
 // The sea's parts (`meshes/ocean.wgsl`): its wind's heading
 // (`origin`, xy: a unit vector), its still level less the eye, its grid's
 // finest cell, cells around and rings a cell apart; the rings' growth, the
@@ -1249,15 +1249,15 @@ fn water_covering(shade: WaterShade, pixel: vec2<f32>) -> vec4<f32> {
 // WATER_CAUSTIC_MOST, which the graded scene holds unclipped. Terrains'
 // water's surface is the simulated surface, smooth through its samples (the
 // cubic B-spline through the tiles' level a pixel resolves or the live
-// water's cells, `water_pixel`), tilted by the disturbance the foam field
-// simulates on it (`water_foam_held`), so its normal turns across a pixel by
+// water's cells, `water_pixel`), tilted by the waves its particles raise on
+// it (`water_splatted`), so its normal turns across a pixel by
 // the surface's own curvature: a surface bending κ a meter gathers the light
 // landing d meters under it about 1/(1 − d·κ·(1 − 1/n)) times, n water's
 // index of refraction. Caustics come from that curvature alone. Where the
 // surface bends little, a stream standing a few centimeters over a meter or
 // a level pool, they gather a percent or less and go of themselves; they
 // show where the simulation bends its surface sharply, over its jumps and
-// drops, and travel with the boils turbulence raises on it.
+// drops, and travel with the waves turbulence raises on it.
 // Its derivatives need it called in uniform control flow.
 const WATER_CAUSTIC_CONTRAST: f32 = 0.3;
 const WATER_CAUSTIC_MOST: f32 = 1.5;
@@ -1364,26 +1364,25 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let speed = length(flow);
     let stirring = water_stirring(speed, water_eddies(speed, length(at.slope), depth),
         turbulence);
-    // What the foam field the water carries holds over the pixel's footprint
-    // (`water_foam_held`): the white water covering it and the foam it
-    // carries, and the disturbance the turbulence reaching its surface raises
-    // on it, as much of it as the field shows; past the field's reach the
-    // white water born where it breaks and the foam its flow churned up as its
-    // own state holds them, the field's mean, on a surface it draws nothing
-    // on.
+    // What the water's particles splat over the pixel's footprint
+    // (`water_splatted`): the shares of it the white water and the foam it
+    // carries cover, and the waves the turbulence reaching its surface raises
+    // on it, as much of them as the particles show; past their reach the
+    // white water born where it breaks and the foam its flow churned up as
+    // its own state holds them, the particles' mean, on a surface they draw
+    // nothing on.
     let footprint = water_footprint(world_dx.xz, world_dy.xz);
-    let field = water_foam_held(world, footprint,
-        vec2<f32>(born, saturate(at.words.foam / WATER_FOAM_MOST)));
-    // Its normal: the simulated surface's own, tilted by that disturbance, so
-    // its glints and what it mirrors travel down the current with the boils
-    // raising them.
-    let fall = at.slope + field.fall;
+    let splatted = water_splatted(world, footprint,
+        vec2<f32>(water_white(born), saturate(at.words.foam / WATER_FOAM_MOST)));
+    // Its normal: the simulated surface's own, tilted by those waves, so its
+    // glints and what it mirrors travel down the current with them.
+    let fall = at.slope + splatted.fall;
     let normal = normalize(vec3<f32>(fall.x, 1.0, fall.y));
     // What neither resolves of its surface roughens it by the simulation's
     // own turbulence and eddies there (`water_unresolved`): all of it past the
-    // field's reach, and where the field shows, what the eddies smaller than
-    // its bursts' lift, with the slopes of the disturbance the pixel's
-    // footprint hides; and so does how far its normal turns across the pixel
+    // particles' reach, and where they show, what the eddies smaller than
+    // their waves' lift, with the slopes of the waves the pixel's footprint
+    // hides; and so does how far its normal turns across the pixel
     // (`water_turning`), so its glints widen instead of sparkling: along the
     // view and across it as the ellipse of those slopes projects into the
     // view, so where it runs rough it glints rather than mirroring the sky,
@@ -1393,7 +1392,7 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let view = stable_normalize(-point);
     let resolved = water_eddy_size(depth, water.foam.x, water.foam.w);
     let unresolved = mix(water_unresolved(depth, stirring, 0.0),
-        water_unresolved(depth, stirring, resolved) + field.hidden, field.shown);
+        water_unresolved(depth, stirring, resolved) + splatted.hidden, splatted.shown);
     let roughness = water_roughness(unresolved + water_turning(fall), water_heading(view));
     // Under the sea, the sea's water stands instead: its level
     // (`water.ocean.x`) is held relative to the eye.
@@ -1427,19 +1426,18 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let through = min(max(length(behind.ground - point), 0.0), // optics: the view's way through the water
         depth * plane.y / max(dot(view, plane), 0.1)); // optics: the view's way through the water
     let down = clamp(dot(point - behind.ground, plane) / plane.y, 0.0, through); // optics: the light's way down to what the view meets
-    // The white water covering it, its layers hiding what each leaves
-    // (`water_white`); the water holds bubbles where it is white and where it
-    // carries foam.
-    let white = water_white(field.foam.x);
-    let aerated = max(white, field.foam.y);
+    // The share of it white water covers; the water holds bubbles where it is
+    // white and where it carries foam.
+    let white = splatted.foam.x;
+    let aerated = max(white, splatted.foam.y);
     let transmit = water_transmitted(through + down, aerated);
-    // Foam (`meshes/water_foam.wgsl`), smooth coverage: the white water, and
-    // fresh white water where the water runs against what stands in it
-    // behind the pixel fast enough to tear air in, by its speed and how far
-    // its surface stands over what it meets (`water_contact`); and the foam it
-    // carries, drained as it ages (`water_foam`).
+    // Foam (`meshes/water_foam.wgsl`): the white water, and fresh white water
+    // where the water runs against what stands in it behind the pixel fast
+    // enough to tear air in, by its speed and how far its surface stands over
+    // what it meets (`water_contact`); and the foam it carries, drained as it
+    // ages (`water_foam`).
     let contact = water_contact(standing, standing_change, footprint, speed);
-    let foam = water_foam(1.0 - (1.0 - white) * (1.0 - contact), field.foam.y);
+    let foam = water_foam(1.0 - (1.0 - white) * (1.0 - contact), splatted.foam.y);
     var surface: WaterSurface;
     surface.relative = point;
     surface.world_dx = world_dx;

@@ -8,10 +8,10 @@ use super::constants::SIM_SLOTS;
 gpu_structs! {
     /// WGSL `WaterUniform` of `meshes/water.wgsl`; the sea's parts are zero
     /// for terrains' water, whose projection is the terrain view's and whose
-    /// `foam` holds its foam field's cells, textures, handover and largest
-    /// eddies (`crate::water_foam_field`), and the sea carries no sediment,
-    /// stands on no subdivision and runs nowhere live, its `lift` and live
-    /// water's parts zero.
+    /// `foam` holds its particles' texels, textures, handover and the cells
+    /// of the water they ride (`crate::water_particles`), and the sea carries
+    /// no sediment, stands on no subdivision and runs nowhere live, its
+    /// `lift` and live water's parts zero.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct WaterUniform as ["WaterUniform"] {
         pub relative_view_projection: [[f32; 4]; 4],
@@ -90,25 +90,26 @@ gpu_structs! {
         pub touch: [SimTouch; SIM_TOUCHES],
     }
 
-    /// WGSL `FoamFrame` of `meshes/water_foam_field.wgsl`: the first cell
-    /// of foam's field's window along x and z (world cells), then that of
-    /// the window its state held the frame before; its lattice's first
-    /// point along x and z (world lattice points, two cells apart), its
-    /// points along a side and its cells along a side; the meters across a
-    /// cell, the seconds the frame steps and the wind (meters a second along
-    /// x and z); the half of its state holding the frame before's, 1 where
-    /// it holds none yet, and the index of the simulation's step the frame
-    /// begins in and of the one it ends in; the least steps a slot of its
-    /// bursts spans and the levels of their sites, then nothing; and the
-    /// seconds of a simulation step and the meters across the largest
-    /// eddies its bursts stand for, then nothing.
+    /// WGSL `ParticleFrame` of `meshes/water_particles.wgsl`: the first
+    /// texel of water's particles' window along x and z (world texels), then
+    /// that of the window its pools' particles ran in the frame before; its
+    /// lattice's first point along x and z (world lattice points,
+    /// `PARTICLE_LATTICE` texels apart), its points along a side and the
+    /// window's texels along a side; the meters across a texel, the seconds
+    /// the frame steps and the wind (meters a second along x and z); 1 where
+    /// its pools hold none yet, the index of the simulation's step the frame
+    /// begins in and of the one it ends in, and the least steps a slot of
+    /// its events spans; the most foam and wave particles its pools hold,
+    /// the half holding the frame before's and its lattice's points; and the
+    /// seconds of a simulation step and the meters across the cells of the
+    /// water the particles ride, then nothing.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct FoamFrame as ["FoamFrame"] {
+    pub(crate) struct ParticleFrame as ["ParticleFrame"] {
         pub window: [i32; 4],
         pub lattice: [i32; 4],
         pub step: [f32; 4],
         pub flags: [u32; 4],
-        pub sites: [u32; 4],
+        pub pool: [u32; 4],
         pub eddies: [f32; 4],
     }
 

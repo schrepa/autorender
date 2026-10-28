@@ -597,11 +597,27 @@ pub struct WaterStats {
     /// Solids standing in that square past the most its water takes, which
     /// push none of it.
     pub dropped_touches: u32,
-    /// Cells along a side of the foam field terrains' water carries around
-    /// the detail eye: 0 while none runs; as many as reach out to where its
-    /// cells span two pixels, or fewer where the display's pixels or the
-    /// device's storage bindings cut them, and its cells span more there.
-    pub foam_cells: u32,
+    /// Texels along a side of the window around the detail eye that the
+    /// particles terrains' water carries splat into: 0 while none run; as
+    /// many as reach out to where its texels span a pixel, or fewer where
+    /// the display's pixels or the device's storage bindings cut them, and
+    /// its texels span more there. Its pools hold a particle for every few
+    /// of its texels.
+    pub particle_texels: u32,
+    /// Foam particles living in that window, white water and the foam the
+    /// water carries, as read back a few frames late.
+    pub foam_particles: u32,
+    /// Wave particles living in that window, as read back a few frames
+    /// late.
+    pub wave_particles: u32,
+    /// Particles born in the frame last read back, foam and waves together:
+    /// where the water breaks and churns, where it runs against what stands
+    /// in it, and where the window newly covers its water or its current
+    /// carries foam in across the window's rim.
+    pub particles_born: u32,
+    /// Particles that frame's pools had no room for, born or left by a wave
+    /// splitting: the foam and the waves there go undrawn.
+    pub particles_dropped: u32,
 }
 
 /// The sea.
