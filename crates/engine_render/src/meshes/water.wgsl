@@ -1374,25 +1374,25 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let footprint = water_footprint(world_dx.xz, world_dy.xz);
     let splatted = water_splatted(world, footprint,
         vec2<f32>(water_white(born), saturate(at.words.foam / WATER_FOAM_MOST)));
-    // Its normal: the simulated surface's own, tilted by those waves, so its
-    // glints and what it mirrors travel down the current with them.
-    let fall = at.slope + splatted.fall;
+    // The waves its turbulence raises between its samples, carried by its
+    // current (`water_detail`), as many of them as the pixel draws.
+    let detail = water_detail(world, flow, depth, stirring, detail_across(world),
+        camera.position.w);
+    // Its normal: the simulated surface's own, tilted by those waves and by
+    // the boils its particles carry, so its glints and what it mirrors travel
+    // down the current with them.
+    let fall = at.slope + detail.slope + splatted.fall;
     let normal = normalize(vec3<f32>(fall.x, 1.0, fall.y));
-    // What neither resolves of its surface roughens it by the simulation's
-    // own turbulence and eddies there (`water_unresolved`): all of it past the
-    // particles' reach, and where they show, what the eddies smaller than
-    // their waves' lift, with the slopes of the waves the pixel's footprint
-    // hides; and so does how far its normal turns across the pixel
-    // (`water_turning`), so its glints widen instead of sparkling: along the
-    // view and across it as the ellipse of those slopes projects into the
-    // view, so where it runs rough it glints rather than mirroring the sky,
-    // its glints and what it mirrors drawn out along the view (Bruneton,
-    // Neyret and Holzschuch, `water_roughness`); where nothing stirs it, it is
-    // a calm mirror.
+    // The slopes of those waves finer than the pixel draws roughen it, with
+    // those of the boils its footprint hides; and so does how far its normal
+    // turns across the pixel (`water_turning`), so its glints widen instead
+    // of sparkling: along the view and across it as the ellipse of those
+    // slopes projects into the view, its glints and what it mirrors drawn out
+    // along the view (Bruneton, Neyret and Holzschuch, `water_roughness`);
+    // where nothing stirs it, it is a calm mirror.
     let view = stable_normalize(-point);
-    let resolved = water_eddy_size(depth, water.foam.x, water.foam.w);
-    let unresolved = mix(water_unresolved(depth, stirring, 0.0),
-        water_unresolved(depth, stirring, resolved) + splatted.hidden, splatted.shown);
+    let unresolved = vec3<f32>(0.5 * detail.hidden, 0.5 * detail.hidden, 0.0)
+        + splatted.hidden * splatted.shown;
     let roughness = water_roughness(unresolved + water_turning(fall), water_heading(view));
     // Under the sea, the sea's water stands instead: its level
     // (`water.ocean.x`) is held relative to the eye.
@@ -1426,20 +1426,24 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     let through = min(max(length(behind.ground - point), 0.0), // optics: the view's way through the water
         depth * plane.y / max(dot(view, plane), 0.1)); // optics: the view's way through the water
     let down = clamp(dot(point - behind.ground, plane) / plane.y, 0.0, through); // optics: the light's way down to what the view meets
-    // The share of it white water covers; the water holds bubbles where it is
-    // white and where it carries foam.
-    let white = splatted.foam.x;
-    let aerated = max(white, splatted.foam.y);
-    let transmit = water_transmitted(through + down, aerated);
-    // Foam (`meshes/water_foam.wgsl`): the white water, and fresh white water
-    // where the water runs against what stands in it behind the pixel fast
-    // enough to tear air in, by its speed, how far its surface stands over
-    // what it meets and how much of its depth that blocks (`water_contact`,
-    // `water_blocking`); and the foam it carries, drained as it ages
-    // (`water_foam`).
+    // Foam (`meshes/water_foam.wgsl`): the white water, the share of the
+    // surface its breaking eddies whiten at once (`water_breaking_share`),
+    // and fresh white water where the water runs against what stands in it
+    // behind the pixel fast enough to tear air in, by its speed, how far its
+    // surface stands over what it meets and how much of its depth that
+    // blocks (`water_contact`, `water_blocking`); and the foam it carries,
+    // drained as it ages (`water_foam`); lying on the detail waves' crests
+    // (`water_foam_crests`).
+    let white = water_breaking_share(splatted.foam.x);
     let contact = water_contact(standing, standing_change, footprint, speed,
         water_blocking(standing, depth));
     let foam = water_foam(1.0 - (1.0 - white) * (1.0 - contact), splatted.foam.y);
+    let cover = water_foam_crests(foam.cover, detail);
+    // The water holds bubbles under its fresh white water, where breaking
+    // drives air down: the lace it carries floats on its surface, its bubbles
+    // burst, and the clear water between its patches holds none.
+    let aerated = cover * (1.0 - foam.thin);
+    let transmit = water_transmitted(through + down, aerated);
     var surface: WaterSurface;
     surface.relative = point;
     surface.world_dx = world_dx;
@@ -1449,7 +1453,7 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     surface.plane = plane;
     surface.foam_shade = foam.shade;
     surface.foam_thin = foam.thin;
-    surface.foam = foam.cover;
+    surface.foam = cover;
     surface.scatter = water_body(aerated);
     surface.transmit = transmit;
     // Its surface raises no crests for the sun's light to cross.
@@ -1465,11 +1469,11 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
     // wet however thin the water over it, over WATER_SOAKED of it as smoothly
     // as the pixel spans it; foam covers it.
     let wet = water_ramp(standing, WATER_SOAKED, standing_change) * WATER_WET;
-    let let_through = (1.0 - lit.reflectance) * (1.0 - foam.cover);
+    let let_through = (1.0 - lit.reflectance) * (1.0 - cover);
     var result: WaterShade;
     result.shaded = lit.shaded;
     result.coverage = max(max(1.0 - (1.0 - lit.reflectance) * luminance(transmit), wet),
-        foam.cover) * fade;
+        cover) * fade;
     result.behind = behind.color * transmit * (caustic * let_through * (1.0 - wet)
         * (1.0 - atmospheric_cover(camera.position.xyz, world)));
     result.fade = fade;

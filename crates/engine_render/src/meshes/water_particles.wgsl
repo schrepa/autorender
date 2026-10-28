@@ -82,10 +82,11 @@ const WATER_SURFACE_BEND: f32 = 7.0;
 const WATER_SURFACE_BEND_MOST: f32 = 1.0;
 const WATER_SURFACE_DRIFT: f32 = 0.03;
 // The meters a second white water's bubbles rise out of it once it stops
-// breaking: about what bubbles a millimeter across rise at in natural
-// water, whose surfactants slow them (Clift, Grace and Weber 1978), so white
-// water drains in as many seconds as it is deep in tenths of a meter.
-const PARTICLE_RISE: f32 = 0.1;
+// breaking: what the bubbles a few millimeters across that hold most of
+// breaking water's air rise at (Clift, Grace and Weber 1978; Chanson 1996),
+// so white water drains in as many seconds as it is deep in quarters of a
+// meter.
+const PARTICLE_RISE: f32 = 0.25;
 // The weight the quadratic B-spline a foam particle splats by gives the
 // texel holding it at its middle, (3/4)²: a particle holding t²/PARTICLE_PEAK
 // (`particle_quantum`, t a texel's side) lays one layer of foam there.

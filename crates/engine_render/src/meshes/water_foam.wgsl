@@ -40,6 +40,16 @@ const WATER_FOAM_CAPPING: f32 = 0.12;
 // How much of the light heaped foam's hollows lose to the bubbles around
 // them.
 const WATER_FOAM_HOLLOW: f32 = 0.35;
+// The most of the surface water breaking white all over whitens at once:
+// its breaking eddies reach its surface in patches, rollers and boils
+// between which its water runs clear (Brocchini and Peregrine 2001; Chanson
+// 1996, the surface of self-aerated flow), so that rapids show white crests
+// and streaks over dark water.
+const WATER_BREAKING_MOST: f32 = 0.6;
+// The most of the surface the lace drained foam leaves covers: its walls'
+// network over the open water between them, a third of it where it lies
+// thickest (Craig and Stewart; lace below rapids).
+const WATER_FOAM_LACE: f32 = 0.35;
 // The share of water's depth an obstacle stands up through from which the
 // water starts to climb it, and from which it climbs it whole: a stone half
 // as tall as the water runs deep bulges the surface over it, and one
@@ -105,20 +115,51 @@ struct WaterFoam {
 }
 
 // The foam of fresh white water covering `fresh` of the surface and of foam
-// the water carries covering `carried` (0 to 1 each), as shares of it: each
-// lies where the other does as often as anywhere, so together they cover
-// all but what both leave. Fresh white water is wet foam, round bubbles
-// heaping as they churn (Weta's foam, 2022); the foam the water carries has
-// aged, its bubbles drained into the walls of a single layer. Its share of
-// the two sets how thin the foam lies, and the hollows of what heaps shade it
-// by WATER_FOAM_HOLLOW: age changes how it scatters light, never where it
-// lies.
+// the water carries holding `carried` of the most it holds (0 to 1 each):
+// each lies where the other does as often as anywhere, so together they
+// cover all but what both leave. Fresh white water is wet foam, round
+// bubbles heaping as they churn (Weta's foam, 2022), as white as it is
+// thick; the foam the water carries has drained, its bubbles burst into an
+// open lace of the walls between them, which covers WATER_FOAM_LACE of the
+// surface at the most. Its share of the two sets how thin the foam lies,
+// and the hollows of what heaps shade it by WATER_FOAM_HOLLOW: age changes
+// how it scatters light, never where it lies.
 fn water_foam(fresh: f32, carried: f32) -> WaterFoam {
     var foam: WaterFoam;
-    foam.cover = 1.0 - (1.0 - fresh) * (1.0 - carried);
-    foam.thin = carried / max(fresh + carried, 1.0e-6);
+    let lace = carried * WATER_FOAM_LACE;
+    foam.cover = 1.0 - (1.0 - fresh) * (1.0 - lace);
+    foam.thin = lace / max(fresh + lace, 1.0e-6);
     foam.shade = WATER_FOAM_HOLLOW * (1.0 - foam.thin);
     return foam;
+}
+
+// The scale of the logistic distribution as spread as a unit normal one,
+// √3/π: the share of a crest field past a threshold, and the threshold
+// leaving a share past it, in closed form.
+const WATER_FOAM_LOGISTIC: f32 = 0.5513289;
+
+// Where on the waves foam covering the share `mean` of the surface lies, as
+// a pixel shows it, over the detail waves `detail` (`water_detail`): foam
+// rides to their crests, so it covers what stands past the crest height
+// leaving `mean` of the surface past it, the waves' crest heights taken as
+// logistic, their edge as sharp as their crests change across the pixel; as
+// much of that pattern as the pixel draws of the waves, the rest the mean
+// itself, so the share stays `mean` wherever the waves draw or not.
+fn water_foam_crests(mean: f32, detail: WaterDetail) -> f32 {
+    if mean <= 1.0e-4 || mean >= 1.0 - 1.0e-4 {
+        return mean;
+    }
+    let threshold = WATER_FOAM_LOGISTIC * log((1.0 - mean) / mean);
+    let edge = max(fwidth(detail.crest), 0.05); // filter: the foam's edge spread over the pixel, keeping its share
+    let crested = 1.0 / (1.0 + exp(-clamp((detail.crest - threshold) / edge, -30.0, 30.0)));
+    return mix(mean, crested, saturate(detail.shown));
+}
+
+// The share of the surface water breaking white covers at once, where its
+// white water lies as `white` (0 to 1) of what it holds: as much of
+// WATER_BREAKING_MOST.
+fn water_breaking_share(white: f32) -> f32 {
+    return white * WATER_BREAKING_MOST;
 }
 
 // The share of the surface white water hides where `layers` of it lie: each
