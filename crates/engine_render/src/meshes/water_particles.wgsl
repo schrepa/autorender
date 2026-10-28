@@ -86,12 +86,6 @@ const WATER_SURFACE_DRIFT: f32 = 0.03;
 // water, whose surfactants slow them (Clift, Grace and Weber 1978), so white
 // water drains in as many seconds as it is deep in tenths of a meter.
 const PARTICLE_RISE: f32 = 0.1;
-// Water's kinematic viscosity (square meters a second, at 15 °C), and von
-// Kármán's constant, by which turbulent water's eddy viscosity is κ·u·ℓ/6
-// over eddies ℓ across (Elder 1959), u the speed its eddies turn at, which
-// near the surface is about the shear velocity (Nezu and Nakagawa 1993).
-const PARTICLE_VISCOSITY: f32 = 1.1e-6;
-const PARTICLE_KARMAN: f32 = 0.41;
 // The weight the quadratic B-spline a foam particle splats by gives the
 // texel holding it at its middle, (3/4)²: a particle holding t²/PARTICLE_PEAK
 // (`particle_quantum`, t a texel's side) lays one layer of foam there.
@@ -111,12 +105,14 @@ const PARTICLE_FIXED: f32 = 65536.0;
 // foam for: all but a step of the signed byte its words hold it in
 // (`water_words`), 4.8 layers.
 const PARTICLE_DENSEST: f32 = 0.99212598;
-// The wave particles a boil's ring starts with; the arc between neighbors
-// each holds at birth (radians), a ring's sixth or a fan's third; and the
-// most times a wave particle splits, four bits' worth.
-const PARTICLE_RING: u32 = 6u;
-const PARTICLE_WAVE_ARC: f32 = 1.0471976;
-const PARTICLE_WAVE_SPLITS: u32 = 15u;
+// How many times as long as across a boil draws out along the current
+// each turnover of its eddy, as the shear its eddies stand for strains it:
+// a boil wells up round and leaves as a scar streaked along the flow
+// (Nezu and Nakagawa 1993, surface renewal in open channels); and the most
+// it draws out to, as long as the half float its stretch is held in stays
+// fine.
+const PARTICLE_STRETCH: f32 = 2.0;
+const PARTICLE_STRETCH_MOST: f32 = 16.0;
 // The texels across the smallest eddies wave particles stand for: four, a
 // kernel two texels in radius, the least whose slopes the texels resolve.
 const PARTICLE_SMALLEST: f32 = 4.0;
@@ -127,13 +123,12 @@ const PARTICLE_SMALLEST: f32 = 4.0;
 const PARTICLE_STREAMS: u32 = 32u;
 const PARTICLE_STREAM_SPAN: u32 = 64u;
 // The kinds of events laying particles: turbulence's bursts, laying white
-// water and foam and raising boils; the fans of waves water raises running
-// against what stands in it; the water's own foam seeded where the window
-// newly covers a site; and its own foam carried in across the window's rim.
+// water and foam and raising boils; the water's own foam seeded where the
+// window newly covers a site; and its own foam carried in across the
+// window's rim.
 const PARTICLE_BURSTS: u32 = 0u;
-const PARTICLE_FANS: u32 = 1u;
-const PARTICLE_SEEDS: u32 = 2u;
-const PARTICLE_INFLOW: u32 = 3u;
+const PARTICLE_SEEDS: u32 = 1u;
+const PARTICLE_INFLOW: u32 = 2u;
 // What a texel outside the window splats into: nothing.
 const PARTICLE_NO_TEXEL: u32 = 0xffffffffu;
 
@@ -231,17 +226,16 @@ struct ParticleCarrier {
 
 // A particle: where it stands (world meters along x and z) and whether it
 // is a wave's; a foam particle's white water and foam (layers times square
-// meters); a wave particle's amplitude (meters), the meters between it and
-// its neighbors along its wavefront, its heading (radians from x toward z),
-// the times it split and its radius (meters).
+// meters); a wave particle's height (meters), how many times as long along
+// the current as across it it has drawn out, its heading (the current's,
+// radians from x toward z) and its radius across the current (meters).
 struct Particle {
     at: vec2<f32>,
     wave: bool,
     amounts: vec2<f32>,
     amplitude: f32,
-    gap: f32,
+    stretch: f32,
     heading: f32,
-    splits: u32,
     radius: f32,
 }
 
@@ -420,32 +414,11 @@ fn particle_carrier(world: vec2<f32>) -> ParticleCarrier {
     return carrier;
 }
 
-// The speed (meters a second) wave particles `radius` meters in radius run
-// at in water `depth` meters deep, as linear gravity waves' groups run:
-// waves twice the radius long, of wave number k = π/radius, ω² = g·k·tanh(k·h),
-// their groups at half their phase speed ω/k times 1 + 2kh/sinh(2kh), the
-// whole of it in shallow water.
-fn particle_wave_speed(radius: f32, depth: f32) -> f32 {
-    let number = PI / radius;
-    let deep = number * max(depth, WATER_BREAK_THINNEST);
-    let phase = sqrt(WATER_GRAVITY * tanh(deep) / number);
-    let twice = min(2.0 * deep, 20.0);
-    let shallow = select(1.0, twice / sinh(twice), twice > 1.0e-3);
-    return 0.5 * phase * (1.0 + shallow);
-}
-
-// The arc (radians) between neighbors a wave particle split `splits` times
-// holds: PARTICLE_WAVE_ARC, a third of it for each split.
-fn particle_arc(splits: u32) -> f32 {
-    return PARTICLE_WAVE_ARC * pow(1.0 / 3.0, f32(splits));
-}
-
 // The particle `words` (`particle_pool`'s) holds: where it stands, then, for
 // a foam particle (the top bit of w clear), its white water and its foam,
-// half floats; for a wave particle, its amplitude and the gap to its
-// neighbors, half floats (z), and its heading as a share of a turn (w's
-// fourteen low bits), the times it split (four bits from 14) and its radius
-// in eighths of a texel, less one (eight bits from 18).
+// half floats; for a wave particle, its height and its stretch, half floats
+// (z), and its heading as a share of a turn (w's fourteen low bits) and its
+// radius in eighths of a texel, less one (eight bits from 18).
 fn particle_read(words: vec4<u32>) -> Particle {
     var particle: Particle;
     particle.at = bitcast<vec2<f32>>(words.xy);
@@ -456,9 +429,8 @@ fn particle_read(words: vec4<u32>) -> Particle {
     }
     let shape = unpack2x16float(words.z);
     particle.amplitude = shape.x;
-    particle.gap = shape.y;
+    particle.stretch = shape.y;
     particle.heading = f32(words.w & 0x3fffu) * (2.0 * PI / 16384.0);
-    particle.splits = (words.w >> 14u) & 15u;
     particle.radius = f32(((words.w >> 18u) & 255u) + 1u) * 0.125 * particle_frame.step.x;
     return particle;
 }
@@ -472,9 +444,8 @@ fn particle_word(particle: Particle) -> vec4<u32> {
     let turn = u32(round(fract(particle.heading / (2.0 * PI)) * 16384.0)) & 0x3fffu;
     let eighths = clamp(round(particle.radius / particle_frame.step.x * 8.0), 1.0, 256.0);
     let radius = u32(eighths) - 1u;
-    let splits = min(particle.splits, PARTICLE_WAVE_SPLITS);
-    return vec4<u32>(at, pack2x16float(vec2<f32>(particle.amplitude, particle.gap)),
-        (1u << 31u) | (radius << 18u) | (splits << 14u) | turn);
+    return vec4<u32>(at, pack2x16float(vec2<f32>(particle.amplitude, particle.stretch)),
+        (1u << 31u) | (radius << 18u) | turn);
 }
 
 // Whether world point `world` (meters along x and z) lies in the window.
@@ -563,11 +534,9 @@ fn particle_quanta(amount: f32, drawn: f32) -> vec2<f32> {
 // What a site of the lattice gives birth to this frame (`particle_births`):
 // the site (world lattice points) and its middle (world meters); its
 // burst's slot and middle (world meters), the white water and the foam
-// particles it lays and each one's amount, the wave particles its boil's
-// ring raises, each one's amplitude and the ring's first heading; the
-// radius of the waves its eddies raise; the waves the water raises running
-// against what stands in it, each one's amplitude and the heading against
-// the current; the white water and the foam particles seeding the water's
+// particles it lays and each one's amount, whether it raises a boil, the
+// boil's height and the radius of the boils its eddies raise; the white
+// water and the foam particles seeding the water's
 // own foam and each one's amount; and the foam particles carried in across
 // the window's rim, each one's amount and their slot.
 struct ParticleBirths {
@@ -577,13 +546,9 @@ struct ParticleBirths {
     middle: vec2<f32>,
     laid: vec2<u32>,
     each: vec2<f32>,
-    ring: u32,
+    boils: u32,
     boil: f32,
-    turn: f32,
     radius: f32,
-    fan: u32,
-    raised: f32,
-    against: f32,
     seeds: vec2<u32>,
     seeded: vec2<f32>,
     inflow: u32,
@@ -594,7 +559,7 @@ struct ParticleBirths {
 // The foam and the wave particles `births` holds.
 fn particle_births_count(births: ParticleBirths) -> vec2<u32> {
     return vec2<u32>(births.laid.x + births.laid.y + births.seeds.x + births.seeds.y
-        + births.inflow, births.ring + births.fan);
+        + births.inflow, births.boils);
 }
 
 // What the site at lattice point `point` gives birth to this frame, where
@@ -615,13 +580,8 @@ fn particle_births_count(births: ParticleBirths) -> vec2<u32> {
 //   at rest, and foam at ln(1 + c)/WATER_FOAM_LIFE, c the cook's churn, so
 //   the water there holds the foam the cook's churning holds it toward,
 //   c / (1 + c) of the most, both over 1 − PARTICLE_DRAINED, the share the
-//   particles lay before they go; and raises a boil, its ring as high in all
-//   as its eddy's velocity head, u²/2g;
-// - where the water's current converges, running against what stands in it
-//   and losing the share `facing` of its speed across an eddy's width, a fan
-//   of three waves against the current, a third of that share of its
-//   velocity head each, U²/2g, each slot of its waves' period, the seconds
-//   they take to run their length at their group speed;
+//   particles lay before they go; and raises a boil, as high as its eddy's
+//   velocity head, u²/2g, which the current carries off;
 // - and on the window's rim, where the current runs into the window, the
 //   water's own foam over the site's square each time the current takes
 //   across it.
@@ -670,25 +630,12 @@ fn particle_births(point: vec2<i32>) -> ParticleBirths {
                     * lasting, more.x);
                 births.laid = vec2<u32>(u32(white.x), u32(foam.x));
                 births.each = vec2<f32>(white.y, foam.y);
-                let boil = weight * here.stirring * here.stirring / (2.0 * WATER_GRAVITY)
-                    / f32(PARTICLE_RING);
+                let boil = here.stirring * here.stirring / (2.0 * WATER_GRAVITY);
                 if boil * number >= flattest {
-                    births.ring = PARTICLE_RING;
+                    births.boils = 1u;
                     births.boil = boil;
-                    births.turn = 2.0 * PI * more.y;
                 }
             }
-        }
-    }
-    let speed = length(here.current);
-    let facing = saturate(-here.spread * size / max(speed, 1.0e-6));
-    let raised = speed * speed / (2.0 * WATER_GRAVITY) * facing / 3.0;
-    if raised * number >= flattest {
-        let period = size / particle_wave_speed(births.radius, here.depth);
-        if particle_slot(births.cell, PARTICLE_FANS, period).z != 0u {
-            births.fan = 3u;
-            births.raised = raised;
-            births.against = atan2(-here.current.y, -here.current.x);
         }
     }
     let flowing = dot(here.current, particle_inward(births.site));
@@ -740,66 +687,52 @@ fn particle_born_foam(births: ParticleBirths, k: u32) -> Particle {
     return particle;
 }
 
-// The `k`th wave particle `births` holds: its boil's ring, at the burst's
-// middle, headed all around; then its fan against the current, at the
-// site, headed against it and a fan's arc either side.
-fn particle_born_wave(births: ParticleBirths, k: u32) -> Particle {
+// The wave particle `births` holds: its boil, at the burst's middle, round,
+// headed along the current.
+fn particle_born_wave(births: ParticleBirths, here: vec2<f32>) -> Particle {
     var particle: Particle;
     particle.wave = true;
     particle.radius = births.radius;
-    if k < births.ring {
-        particle.at = births.middle;
-        particle.amplitude = births.boil;
-        particle.heading = births.turn + f32(k) * PARTICLE_WAVE_ARC;
-        return particle;
-    }
-    particle.at = births.site;
-    particle.amplitude = births.raised;
-    particle.heading = births.against + (f32(k - births.ring) - 1.0) * PARTICLE_WAVE_ARC;
+    particle.at = births.middle;
+    particle.amplitude = births.boil;
+    particle.stretch = 1.0;
+    particle.heading = atan2(here.y, here.x);
     return particle;
 }
 
-// The velocity (meters a second along x and z) `particle` runs at where
-// `carrier` carries it: the current its surface runs at, and a wave
-// particle's group speed along its heading (`particle_wave_speed`).
-fn particle_velocity(particle: Particle, carrier: ParticleCarrier) -> vec2<f32> {
-    if !particle.wave {
-        return carrier.current;
-    }
-    let speed = particle_wave_speed(particle.radius, carrier.depth);
-    return carrier.current + speed * vec2<f32>(cos(particle.heading), sin(particle.heading));
+// The velocity (meters a second along x and z) a particle runs at where
+// `carrier` carries it: the current its surface runs at, foam and boils
+// alike.
+fn particle_velocity(carrier: ParticleCarrier) -> vec2<f32> {
+    return carrier.current;
 }
 
-// A particle after the frame's step, and how many it leaves: none, one, or
-// for a wave particle splitting, three.
+// A particle after the frame's step, and whether it lives on.
 struct ParticleAged {
     particle: Particle,
     leaves: u32,
 }
 
-// `before` after a step of the frame's seconds: carried by its velocity
+// `before` after a step of the frame's seconds: carried by the current
 // (`particle_velocity`) by the midpoint rule, the water at the midpoint its
 // water over the step. It leaves none where it leaves the window or the
 // water there holds no foam. A foam particle's white water drains as its
 // bubbles rise out over the depth (`particle_draining`), and its foam fades
 // over WATER_FOAM_LIFE, as the cook's, the particle going once it holds
-// less than PARTICLE_DRAINED of what it was born with. A wave particle dies
-// by e at 2(ν + ν_t)·k² a second, as a viscous fluid's gravity waves do
-// (Lamb), ν water's viscosity and ν_t the turbulent water's eddy viscosity,
-// κ·u·ℓ/6 (PARTICLE_KARMAN, u its eddies' speed, ℓ the waves' length); the
-// gap to its neighbors widens as its arc of the wavefront (`particle_arc`)
-// times how far it ran; where that gap passes half its radius it splits in
-// three, each a third of its arc and of its amplitude (Yuksel, House and
-// Keyser 2007); and it goes once its slopes, or its thirds' where it
-// splits, fall under the smoothest water's lobe (`WATER_SMOOTHEST`'s
-// square), turning no glint.
+// less than PARTICLE_DRAINED of what it was born with. A boil sinks back by
+// e each turnover of its eddy, 2r/u (u its eddies' speed where it rides),
+// as turbulence renews the surface (Danckwerts 1951), and draws out along
+// the current by PARTICLE_STRETCH each turnover as the shear strains it,
+// headed along the current where it rides; it goes once its slopes fall
+// under the smoothest water's lobe (`WATER_SMOOTHEST`'s square), turning no
+// glint.
 fn particle_aged(before: Particle) -> ParticleAged {
     let seconds = particle_frame.step.y;
     var aged: ParticleAged;
     aged.particle = before;
     let here = particle_carrier(before.at);
-    let middle = particle_carrier(before.at + 0.5 * seconds * particle_velocity(before, here));
-    aged.particle.at = before.at + seconds * particle_velocity(before, middle);
+    let middle = particle_carrier(before.at + 0.5 * seconds * particle_velocity(here));
+    aged.particle.at = before.at + seconds * particle_velocity(middle);
     if middle.depth <= WATER_FOAM_WET || !particle_inside(aged.particle.at) {
         return aged;
     }
@@ -810,34 +743,17 @@ fn particle_aged(before: Particle) -> ParticleAged {
         aged.leaves = u32(white + foam >= PARTICLE_DRAINED * particle_quantum());
         return aged;
     }
-    let number = PI / before.radius;
-    let viscosity = PARTICLE_VISCOSITY
-        + PARTICLE_KARMAN / 6.0 * middle.stirring * 2.0 * before.radius;
-    let amplitude = before.amplitude * exp(-2.0 * viscosity * number * number * seconds);
+    let turns = seconds * max(middle.stirring, 1.0e-3) / (2.0 * before.radius);
+    let amplitude = before.amplitude * exp(-turns);
     aged.particle.amplitude = amplitude;
-    aged.particle.gap = before.gap + particle_arc(before.splits)
-        * particle_wave_speed(before.radius, middle.depth) * seconds;
+    aged.particle.stretch = min(before.stretch + PARTICLE_STRETCH * turns,
+        PARTICLE_STRETCH_MOST);
+    if length(middle.current) > 1.0e-3 {
+        aged.particle.heading = atan2(middle.current.y, middle.current.x);
+    }
     let flattest = WATER_SMOOTHEST * WATER_SMOOTHEST;
-    if amplitude * number < flattest {
-        return aged;
-    }
-    aged.leaves = 1u;
-    if aged.particle.gap > 0.5 * before.radius && before.splits < PARTICLE_WAVE_SPLITS {
-        aged.leaves = select(0u, 3u, amplitude / 3.0 * number >= flattest);
-    }
+    aged.leaves = u32(amplitude * PI / (before.radius * aged.particle.stretch) >= flattest);
     return aged;
-}
-
-// The `child`th (0 to 2) of the three a wave particle `parent` splits into:
-// a third of its arc, amplitude and gap, headed a third of its arc to one
-// side of its heading, along it, or to the other.
-fn particle_child(parent: Particle, child: u32) -> Particle {
-    var particle = parent;
-    particle.splits = parent.splits + 1u;
-    particle.amplitude = parent.amplitude / 3.0;
-    particle.gap = parent.gap / 3.0;
-    particle.heading = parent.heading + (f32(child) - 1.0) * particle_arc(particle.splits);
-    return particle;
 }
 
 // The word an item's counts take (`particle_counts`): its foam particles
@@ -970,29 +886,36 @@ fn particle_splat_foam(particle: Particle) {
     }
 }
 
-// Splats wave particle `particle` into the texels within its radius r, its
-// surface a raised cosine A/2·(1 + cos(πd/r)) at d meters from it (Yuksel,
-// House and Keyser 2007): how fast that surface falls along x and z at each
-// texel's middle, A·π/(2r)·sin(πd/r) away from the particle.
+// Splats boil `particle` into the texels its bump covers: a raised cosine
+// A/2·(1 + cos(πd)) over the ellipse its radius r spans across the current
+// and its stretch s times r along it, d = √((a/sr)² + (c/r)²) for a texel a
+// meters along its heading and c across it; how fast that surface falls
+// along x and z at each texel's middle, A·π/2·sin(πd)·∇d away from its
+// middle.
 fn particle_splat_wave(particle: Particle) {
     let texel = particle_frame.step.x;
-    let reach = i32(ceil(particle.radius / texel));
+    let along = vec2<f32>(cos(particle.heading), sin(particle.heading));
+    let across = vec2<f32>(-along.y, along.x);
+    let long = particle.radius * particle.stretch;
+    let reach = i32(ceil(long / texel));
     let holding = vec2<i32>(floor(particle.at / texel));
-    let number = PI / particle.radius;
-    let fall = PARTICLE_FIXED * 0.5 * particle.amplitude * number;
+    let fall = PARTICLE_FIXED * 0.5 * particle.amplitude * PI;
     for (var row = -reach; row <= reach; row++) {
         for (var column = -reach; column <= reach; column++) {
             let cell = holding + vec2<i32>(column, row);
             let away = (vec2<f32>(cell) + 0.5) * texel - particle.at;
-            let meters = length(away);
-            if meters >= particle.radius || meters <= 0.0 {
+            let a = dot(away, along) / long;
+            let c = dot(away, across) / particle.radius;
+            let d = sqrt(a * a + c * c);
+            if d >= 1.0 || d <= 0.0 {
                 continue;
             }
             let at = particle_texel(cell);
             if at == PARTICLE_NO_TEXEL {
                 continue;
             }
-            let sums = vec2<i32>(round(fall * sin(number * meters) / meters * away));
+            let gradient = (a / long * along + c / particle.radius * across) / d;
+            let sums = vec2<i32>(round(fall * sin(PI * d) * gradient));
             if sums.x != 0 {
                 atomicAdd(&particle_splat[at + 2u], sums.x);
             }
@@ -1207,9 +1130,8 @@ fn particles_scan(@builtin(local_invocation_id) local: vec3<u32>) {
 // sum of the counts of the items before it, the groups' before its own
 // (`particles_scan`'s) and its group's (`particle_scan_group`), within the
 // pools' room (`particle_lay`): a particle the pools held, as it left its
-// step, or the three a wave particle splits into (`particle_child`); and
-// what a site gives birth to, its foam particles and then its waves
-// (`particle_born_foam`, `particle_born_wave`).
+// step; and what a site gives birth to, its foam particles and then its
+// boil (`particle_born_foam`, `particle_born_wave`).
 @compute @workgroup_size(PARTICLE_GROUP)
 fn particles_place(@builtin(global_invocation_id) id: vec3<u32>,
         @builtin(local_invocation_id) local: vec3<u32>,
@@ -1227,12 +1149,8 @@ fn particles_place(@builtin(global_invocation_id) id: vec3<u32>,
             particle_frame.pool.z)]);
         if !particle.wave {
             particle_lay(particle, first.x);
-        } else if count.y == 1u {
-            particle_lay(particle, first.y);
         } else {
-            for (var child = 0u; child < count.y; child++) {
-                particle_lay(particle_child(particle, child), first.y + child);
-            }
+            particle_lay(particle, first.y);
         }
         return;
     }
@@ -1242,8 +1160,9 @@ fn particles_place(@builtin(global_invocation_id) id: vec3<u32>,
     for (var k = 0u; k < count.x; k++) {
         particle_lay(particle_born_foam(births, k), first.x + k);
     }
-    for (var k = 0u; k < count.y; k++) {
-        particle_lay(particle_born_wave(births, k), first.y + k);
+    if count.y != 0u {
+        let here = particle_carrier(births.middle);
+        particle_lay(particle_born_wave(births, here.current), first.y);
     }
 }
 
