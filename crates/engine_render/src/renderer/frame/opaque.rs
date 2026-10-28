@@ -291,7 +291,7 @@ impl Renderer {
                 continue;
             };
             if gpu_mode {
-                for level in 0..lod_levels(batch, mesh) {
+                for level in 0..lod_levels(mesh) {
                     if level > 0 && mesh.plan[level - 1].1 == 0 {
                         continue;
                     }

@@ -11,7 +11,6 @@ impl<'s> Features<'s> {
             gpu_prepared,
             shadow_frame,
             probe_list,
-            refraction: false,
             frames: FeatureFrames::default(),
         }
     }

@@ -80,7 +80,12 @@ pub(crate) fn import(
                 Some(SceneAlphaMode::Mask),
                 Some(material.alpha_cutoff().unwrap_or(0.5)),
             ),
-            gltf::material::AlphaMode::Blend => (opacity, Some(SceneAlphaMode::Blend), None),
+            gltf::material::AlphaMode::Blend => {
+                return Err(unsupported(
+                    format!("{path}.alphaMode"),
+                    "materials are OPAQUE or MASK",
+                ));
+            }
         };
         let map = |field: &str, info: &Value, texture: Option<gltf::Texture<'_>>| {
             texture
@@ -119,16 +124,6 @@ pub(crate) fn import(
             .as_f64()
             .unwrap_or(1.0) as f32;
         let emissive = material.emissive_factor().map(|value| value * strength);
-        let extensions = &source["extensions"];
-        let factor = |value: &Value| value.as_f64().map(|value| value as f32);
-        let transmission = factor(&extensions["KHR_materials_transmission"]["transmissionFactor"])
-            .filter(|share| *share > 0.0)
-            .map(|share| engine_core::math::min(share, 1.0));
-        let ior = factor(&extensions["KHR_materials_ior"]["ior"])
-            .filter(|_| transmission.is_some())
-            .map(|ior| engine_core::math::clamp(ior, 1.0, 3.0));
-        let thickness = factor(&extensions["KHR_materials_volume"]["thicknessFactor"])
-            .filter(|thickness| transmission.is_some() && *thickness > 0.0);
         scene.materials.push(SceneMaterial {
             id: format!("{id}.material{index}"),
             color: [red, green, blue, 1.0],
@@ -155,13 +150,9 @@ pub(crate) fn import(
             alpha_cutoff,
             double_sided: material.double_sided().then_some(true),
             foliage: None,
-            transmission,
-            ior,
-            thickness,
             world_tiling: None,
             top: None,
             grounding: None,
-            windows: None,
         });
     }
     Ok(())

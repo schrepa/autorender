@@ -17,7 +17,7 @@ pub use library::{AssetBudget, AssetLibrary, MaterialHandle, MeshHandle, Texture
 pub use lod::{LOD_RECORD, LodInput, LodLevel, MeshLods, lod_input, takes_levels};
 pub use material::{
     AlphaMode, Filter, Grounding, MAX_GROUNDING_HEIGHT, MAX_WORLD_TILING, Material,
-    MaterialBinding, Sampler, Surface, TextureRef, TopLayer, Transmission, UvTransform, Wrap,
+    MaterialBinding, Sampler, Surface, TextureRef, TopLayer, UvTransform, Wrap,
 };
 pub use mesh::{Aabb, Mesh, MeshVertex};
 pub use texture::{

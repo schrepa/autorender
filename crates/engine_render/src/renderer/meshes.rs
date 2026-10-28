@@ -219,11 +219,11 @@ impl Renderer {
             .insert((kind, variant), pipeline);
     }
 
-    pub(super) fn ensure_variants(&mut self, opaque: PassKind, transparent: PassKind) {
+    pub(super) fn ensure_variants(&mut self, opaque: PassKind) {
         if self.relights() && opaque.targets() != Some(Targets::Debug) {
-            self.create_variants(relit(opaque), relit(transparent));
+            self.create_variants(relit(opaque));
         }
-        self.create_variants(opaque, transparent);
+        self.create_variants(opaque);
         if let Some(targets) = opaque.targets() {
             self.ensure_sky(SkyTargets::Frame(targets));
         }
@@ -233,22 +233,13 @@ impl Renderer {
         self.mesh_pipelines.cooking && self.features.lights.get().is_some()
     }
 
-    fn create_variants(&mut self, opaque: PassKind, transparent: PassKind) {
-        let key = (self.structure_key(), opaque, transparent);
+    fn create_variants(&mut self, opaque: PassKind) {
+        let key = (self.structure_key(), opaque);
         if self.structure_keys.variants != Some(key) {
             let mut missing = Vec::new();
-            let debug = opaque.targets() == Some(Targets::Debug);
             for batch in &self.plan.batches {
-                if batch.transparent && debug {
-                    continue;
-                }
                 let (_, variant) = self.batch_binding(batch, self.meshes.get(&batch.mesh));
-                let drawn = if batch.transparent {
-                    [Some((transparent, variant)), None]
-                } else {
-                    opaque_keys(opaque, variant)
-                };
-                for pipeline in drawn.into_iter().flatten() {
+                for pipeline in opaque_keys(opaque, variant).into_iter().flatten() {
                     if !self.mesh_pipelines.variants.contains_key(&pipeline)
                         && !missing.contains(&pipeline)
                     {
@@ -352,12 +343,6 @@ impl Renderer {
                 depth_write: !variant.pretested(),
                 mirrored: false,
             },
-            MeshPass::Transparent => MeshFragment {
-                targets: accumulation_targets().to_vec(),
-                depth_compare: wgpu::CompareFunction::Greater,
-                depth_write: false,
-                mirrored: false,
-            },
             MeshPass::Probe => MeshFragment {
                 targets: vec![Some(ENVIRONMENT_FORMAT.into())],
                 depth_compare: wgpu::CompareFunction::Greater,
@@ -388,7 +373,6 @@ impl Renderer {
                 .batches
                 .iter()
                 .enumerate()
-                .filter(|(_, batch)| !batch.transparent)
                 .map(|(index, batch)| {
                     let mesh = &self.meshes[&batch.mesh];
                     let (_, variant) = self.batch_binding(batch, Some(mesh));

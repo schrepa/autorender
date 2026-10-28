@@ -1,4 +1,3 @@
-const IMPOSTOR_ROOMS: u32 = 0x40000u;
 const IMPOSTOR_FOLIAGE: u32 = 0x1000000u;
 
 @group(1) @binding(11) var<storage, read> impostor_records: array<ImpostorRecord>;
@@ -492,10 +491,6 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     point.world = world;
     let reach = select(1.0, 0.25, (record.flags & IMPOSTOR_HEMISPHERE) != 0u);
     point.shadow_offset = lighting.sun.xyz * (reach * length(input.depth_axis.xyz));
-    if (record.flags & IMPOSTOR_ROOMS) != 0u {
-        let window = select(0.0, saturate(emissive.a * unpremultiply), slot_surface.z > 0.0);
-        point = far_rooms(point, window);
-    }
     return widened(point, dpdx(point.normal), dpdy(point.normal));
 }
 

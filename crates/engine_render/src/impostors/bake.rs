@@ -265,7 +265,7 @@ fn bake_group(
         source.bounds.0,
         source.bounds.1,
         0,
-        ([0.0; 3], false, false, false),
+        ([0.0; 3], false, false),
         shape,
     );
     let uniform = wgpu::util::DeviceExt::create_buffer_init(

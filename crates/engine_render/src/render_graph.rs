@@ -203,7 +203,6 @@ passes! {
     occlusion_test: OcclusionTest,
     opaque_phase_two: Opaque { phase: Phase::Two },
     shadow_marks: ShadowMarks,
-    decals: Feature(FeaturePass::Decals),
     water: Feature(FeaturePass::Water),
     cloud_march: Feature(FeaturePass::CloudMarch),
     cloud_composite: Feature(FeaturePass::CloudComposite),
@@ -513,7 +512,6 @@ pub(crate) struct FrameShape {
     pub(crate) deferred: bool,
     pub(crate) scatter: bool,
     pub(crate) lights: bool,
-    pub(crate) refraction: bool,
     pub(crate) effects: Effects,
     pub(crate) probes: bool,
 }

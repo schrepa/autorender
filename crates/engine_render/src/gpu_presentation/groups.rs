@@ -354,7 +354,7 @@ fn batch_record(
         bounds_max: meta
             .bounds
             .max()
-            .extend(if batch.transparent { 1.0 } else { 0.0 })
+            .extend(if { 0.0 })
             .to_array(),
     }
 }

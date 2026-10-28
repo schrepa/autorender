@@ -150,7 +150,6 @@ layout_modules! {
     clouds,
     debug_view,
     deformation,
-    decals,
     exposure,
     ground_cover,
     impostors,

@@ -11,12 +11,10 @@ use engine_core::RenderSnapshot;
 
 use crate::clouds::CloudPass;
 use crate::debug_view::DebugViewPass;
-use crate::decals::DecalPass;
 use crate::environment::Environment;
 use crate::exposure::ExposurePass;
 use crate::ground_cover::GroundCoverPass;
 use crate::lights::LightPass;
-use crate::materials::MaterialStore;
 use crate::occupancy::OccupancyPass;
 use crate::post::PostPass;
 use crate::probes::ProbePass;
@@ -305,10 +303,6 @@ impl<F> Ready<F> {
     }
 }
 
-pub(crate) trait MeshDraws {
-    fn transparent(&self, pass: &mut wgpu::RenderPass<'_>) -> u32;
-}
-
 pub(crate) trait AttachmentViews {
     fn view(&self, resource: Resource) -> &wgpu::TextureView;
 
@@ -317,14 +311,11 @@ pub(crate) trait AttachmentViews {
 
 pub(crate) struct Encode<'f> {
     views: &'f dyn AttachmentViews,
-    pub(crate) meshes: &'f dyn MeshDraws,
     pub(crate) device: &'f wgpu::Device,
     pub(crate) profiler: &'f GpuProfiler,
     pub(crate) camera: &'f wgpu::BindGroup,
     pub(crate) terrain_camera: &'f wgpu::BindGroup,
     pub(crate) water_camera: &'f wgpu::BindGroup,
-    pub(crate) materials: &'f MaterialStore,
-    pub(crate) lights: Option<&'f wgpu::BindGroup>,
     pub(crate) targets: Targets,
     pub(crate) depth: &'f wgpu::Texture,
     pub(crate) scene: Option<&'f wgpu::Texture>,
@@ -332,29 +323,22 @@ pub(crate) struct Encode<'f> {
 
 impl<'f> Encode<'f> {
     pub(crate) fn new(
-        (views, meshes): (&'f dyn AttachmentViews, &'f dyn MeshDraws),
+        views: &'f dyn AttachmentViews,
         (device, profiler): (&'f wgpu::Device, &'f GpuProfiler),
-        ((camera, terrain_camera, water_camera), materials, lights): (
-            (
-                &'f wgpu::BindGroup,
-                &'f wgpu::BindGroup,
-                &'f wgpu::BindGroup,
-            ),
-            &'f MaterialStore,
-            Option<&'f wgpu::BindGroup>,
+        (camera, terrain_camera, water_camera): (
+            &'f wgpu::BindGroup,
+            &'f wgpu::BindGroup,
+            &'f wgpu::BindGroup,
         ),
         (targets, depth, scene): (Targets, &'f wgpu::Texture, Option<&'f wgpu::Texture>),
     ) -> Self {
         Self {
             views,
-            meshes,
             device,
             profiler,
             camera,
             terrain_camera,
             water_camera,
-            materials,
-            lights,
             targets,
             depth,
             scene,
@@ -566,7 +550,6 @@ render_features! {
     lights: Lazy<LightPass> => [Lights],
     ground_cover: Eager<GroundCoverPass> => [GroundCover],
     clouds: Eager<CloudPass> => [CloudDome, CloudMarch, CloudComposite],
-    decals: Lazy<DecalPass> => [Decals],
     water: Eager<WaterPass> => [Water],
     transparency: Eager<Transparency> => [Transparent, TransparentComposite],
     post: Lazy<PostPass> => [Effects, Composite],

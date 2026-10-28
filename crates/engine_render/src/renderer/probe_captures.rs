@@ -183,7 +183,7 @@ impl Renderer {
             let Some(mesh) = self.meshes.get(&batch.mesh) else {
                 continue;
             };
-            if batch.transparent {
+            if {
                 continue;
             }
             let variant = self.batch_binding(batch, Some(mesh)).1.uber();

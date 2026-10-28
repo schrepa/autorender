@@ -116,20 +116,10 @@ impl MaterialStore {
 
     pub(crate) fn retain(&mut self, plan: &BatchPlan, snapshot: &RenderSnapshot) {
         let extra_material = |handle: &MaterialHandle| {
-            snapshot
-                .decals
-                .materials
-                .iter()
-                .chain(placed_materials(snapshot))
-                .any(|source| source.handle == *handle)
+            placed_materials(snapshot).any(|source| source.handle == *handle)
         };
         let extra_texture = |handle: &TextureHandle| {
-            snapshot
-                .decals
-                .textures
-                .iter()
-                .chain(placed_textures(snapshot))
-                .any(|source| source.handle == *handle)
+            placed_textures(snapshot).any(|source| source.handle == *handle)
         };
         let count = self.materials.len();
         self.materials
@@ -164,7 +154,6 @@ impl MaterialStore {
                     .iter()
                     .find(|source| source.handle == handle)
             })
-            .chain(&snapshot.decals.materials)
             .chain(placed_materials(snapshot))
             .filter(|source| !built(&self.materials, source))
             .collect();
@@ -188,12 +177,9 @@ impl MaterialStore {
                     let texture = snapshot
                         .textures
                         .iter()
-                        .chain(&snapshot.decals.textures)
                         .chain(placed_textures(snapshot))
                         .find(|texture| texture.handle == map.texture)
-                        .expect(
-                            "the plan and decal extraction validated every material's textures",
-                        );
+                        .expect("the plan and placements validated every material's textures");
                     let gpu = create_texture(
                         device,
                         queue,

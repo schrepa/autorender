@@ -7,9 +7,7 @@ use std::{fmt, ops::Range};
 
 use engine_core::collections::HashMap;
 
-use engine_core::{
-    MaterialHandle, MeshHandle, RenderFrame, RenderInstance, RenderSnapshot, TextureHandle,
-};
+use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, TextureHandle};
 
 const UNMAPPED_BUCKET: u32 = u32::MAX;
 
@@ -20,15 +18,7 @@ pub(crate) struct DrawBatch {
     pub mesh: MeshHandle,
     pub source_index: usize,
     pub material: Option<MaterialHandle>,
-    pub transparent: bool,
     pub instances: Range<u32>,
-}
-
-pub(crate) fn is_transparent(instance: &RenderInstance, transparent: &[MaterialHandle]) -> bool {
-    match instance.material {
-        Some(material) => transparent.contains(&material),
-        None => instance.color[3] < 1.0,
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -94,7 +84,6 @@ pub(crate) struct BatchPlan {
     texture_source_indices: Vec<usize>,
     pub material_sources: Vec<usize>,
     pub texture_sources: Vec<usize>,
-    pub transparent_materials: Vec<MaterialHandle>,
     mesh_handles: Vec<MeshHandle>,
     material_handles: Vec<MaterialHandle>,
     texture_handles: Vec<TextureHandle>,
@@ -181,8 +170,7 @@ impl BatchPlan {
                 * size_of::<usize>()
                 + self.batches.capacity() * size_of::<DrawBatch>()
                 + self.mesh_handles.capacity() * size_of::<MeshHandle>()
-                + (self.material_handles.capacity() + self.transparent_materials.capacity())
-                    * size_of::<MaterialHandle>()
+                + self.material_handles.capacity() * size_of::<MaterialHandle>()
                 + self.texture_handles.capacity() * size_of::<TextureHandle>()
                 + group_scratch_bytes;
             engine_profile::counter("memory.batch_plan_capacity_bytes", capacity_bytes as f64);
@@ -221,16 +209,11 @@ impl BatchPlan {
         self.texture_source_indices.clear();
         self.material_sources.clear();
         self.texture_sources.clear();
-        self.transparent_materials.clear();
         self.mesh_handles.clear();
         self.material_handles.clear();
         self.texture_handles.clear();
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     fn prepare_inner(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -245,7 +228,6 @@ impl BatchPlan {
         self.texture_source_indices.clear();
         self.material_sources.clear();
         self.texture_sources.clear();
-        self.transparent_materials.clear();
         self.mesh_handles.clear();
         self.material_handles.clear();
         self.texture_handles.clear();
@@ -311,9 +293,6 @@ impl BatchPlan {
                 {
                     return Err(SnapshotError::MissingTexture { handle });
                 }
-            }
-            if source.material.is_transparent() {
-                self.transparent_materials.push(source.handle);
             }
         }
         drop(profile_sources);
@@ -384,15 +363,8 @@ impl BatchPlan {
                     instance.material,
                 )?;
                 self.key_resolutions += 1;
-                let transparent = match material_rank {
-                    Some(rank) => snapshot.materials[self.material_source_indices[rank]]
-                        .material
-                        .is_transparent(),
-                    None => instance.color[3] < 1.0,
-                };
-                let key = (u64::from(transparent) << 62)
-                    | ((mesh_rank as u64) << 31)
-                    | material_rank.map_or(0, |rank| rank as u64 + 1);
+                let key =
+                    ((mesh_rank as u64) << 31) | material_rank.map_or(0, |rank| rank as u64 + 1);
                 let next = self.group_keys.len() as u32;
                 let group = *self.group_ids.entry(key).or_insert(next);
                 if group == next {
@@ -438,7 +410,6 @@ impl BatchPlan {
                     mesh: snapshot.meshes[source_index].handle,
                     source_index,
                     material,
-                    transparent: key >> 62 != 0,
                     instances: start as u32..end as u32,
                 });
                 start = end;

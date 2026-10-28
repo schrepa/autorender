@@ -10,7 +10,6 @@ mod clouds;
 mod commands;
 mod culling;
 mod debug_view;
-mod decals;
 mod effects;
 mod entity_indices;
 mod environment;
@@ -47,7 +46,6 @@ mod tables;
 mod ticks;
 mod transform_edits;
 mod water;
-mod windows;
 
 pub use antialiasing::*;
 pub use atmosphere::*;
@@ -57,14 +55,12 @@ pub use clock::*;
 pub use clouds::*;
 pub use commands::*;
 pub use debug_view::*;
-pub use decals::*;
 pub use effects::*;
 pub use engine_assets::{
     Aabb, AlphaImage, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding,
     LOD_RECORD, LodInput, LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding,
     MaterialHandle, Mesh, MeshHandle, MeshLods, MeshVertex, Sampler, Surface, Texture,
-    TextureFormat, TextureHandle, TextureRef, TopLayer, Transmission, UvTransform, Wrap, lod_input,
-    trim_cards,
+    TextureFormat, TextureHandle, TextureRef, TopLayer, UvTransform, Wrap, lod_input, trim_cards,
 };
 pub use engine_settings::ErrorCode;
 pub use engine_tables as table_data;
@@ -106,7 +102,6 @@ pub use statistics::{Distribution, median};
 pub use tables::*;
 pub use transform_edits::*;
 pub use water::{WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource, WaterSources};
-pub use windows::*;
 
 use bevy_app::PluginsState;
 use bevy_ecs::{

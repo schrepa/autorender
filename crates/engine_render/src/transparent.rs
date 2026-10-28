@@ -243,8 +243,7 @@ pub(crate) struct Transparency {
 }
 
 pub(crate) struct TransparencyFrame {
-    meshes: bool,
-    particles: Option<ParticleFrame>,
+    particles: ParticleFrame,
     dither: bool,
 }
 
@@ -261,7 +260,7 @@ impl Transparency {
             &crate::pipelines::GroupLayout,
             (wgpu::TextureFormat, wgpu::TextureFormat),
         ),
-        (meshes, post): (bool, bool),
+        post: bool,
     ) -> Option<TransparencyFrame> {
         let particles =
             if snapshot.environment.particles.enabled && !snapshot.particles.list.is_empty() {
@@ -283,23 +282,19 @@ impl Transparency {
             } else {
                 None
             };
-        if !meshes && particles.is_none() {
+        let Some(particles) = particles else {
             if let Some(surfaces) = self.surfaces.as_mut() {
                 surfaces.release_targets();
             }
             return None;
-        }
+        };
         let surfaces = self
             .surfaces
             .get_or_insert_with(|| TransparentPass::new(device, surface_format, depth_format));
         surfaces.begin(device, region.display);
         let dither = snapshot.environment.dither.enabled;
         surfaces.ensure_composite(device, post, dither);
-        Some(TransparencyFrame {
-            meshes,
-            particles,
-            dither,
-        })
+        Some(TransparencyFrame { particles, dither })
     }
 
     fn surfaces(&self) -> &TransparentPass {
@@ -328,12 +323,7 @@ impl RenderFeature for Transparency {
     fn declare(_frame: &TransparencyFrame, shape: &FrameShape, graph: &mut RenderGraph) {
         graph
             .add(Pass::Feature(FeaturePass::Transparent))
-            .read(Resource::Poses)
-            .read_if(shape.gpu, Resource::Visible)
-            .read_if(shape.lights, Resource::Lights)
             .read_if(shape.shadows, Resource::ShadowMaps)
-            .read_if(shape.refraction, Resource::Scene)
-            .read(Resource::Probes)
             .color(
                 Resource::Accumulated,
                 Access::Clear(Clear::Color(TRANSPARENT)),
@@ -373,8 +363,8 @@ impl RenderFeature for Transparency {
                     .map(Span::render),
             );
             self.surfaces().composite(&mut pass, post, frame.dither);
-            if let (Some(particles_frame), Some(particles)) = (&frame.particles, &self.particles) {
-                particles.draw_additive(&mut pass, encode.camera, particles_frame, post);
+            if let Some(particles) = &self.particles {
+                particles.draw_additive(&mut pass, encode.camera, &frame.particles, post);
             }
             return 0;
         }
@@ -384,15 +374,10 @@ impl RenderFeature for Transparency {
             "engine/transparent-accumulation",
             encode.profiler.span("transparent").map(Span::render),
         );
-        let draws = if frame.meshes {
-            encode.meshes.transparent(&mut pass)
-        } else {
-            0
-        };
-        if let (Some(particles_frame), Some(particles)) = (&frame.particles, &self.particles) {
-            particles.draw_alpha(&mut pass, encode.camera, particles_frame);
+        if let Some(particles) = &self.particles {
+            particles.draw_alpha(&mut pass, encode.camera, &frame.particles);
         }
-        draws
+        0
     }
 
     fn capacity_bytes(&self) -> u64 {
@@ -410,7 +395,7 @@ impl RenderFeature for Transparency {
         frame: Option<&TransparencyFrame>,
         snapshot: &RenderSnapshot,
     ) -> Drawn {
-        let particles = frame.and_then(|frame| frame.particles.as_ref());
+        let particles = frame.map(|frame| &frame.particles);
         Drawn {
             drawn: particles.map_or(0, |frame| frame.total),
             invalid: snapshot.particles.invalid.min(u32::MAX as usize) as u32,

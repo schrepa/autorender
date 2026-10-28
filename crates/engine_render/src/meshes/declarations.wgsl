@@ -12,7 +12,7 @@ struct MaterialMaps {
     transforms: array<vec4<f32>, 10>,
     emissive: vec4<f32>,
     params: vec4<f32>,
-    volume: vec4<f32>,
+    variant: vec4<f32>,
     top: vec4<f32>,
     layer: vec4<f32>,
 }
@@ -26,7 +26,6 @@ override METALLIC_ROUGHNESS_MAP: bool = true;
 override OCCLUSION_MAP: bool = true;
 override EMISSIVE_MAP: bool = true;
 override PACKED_OCCLUSION: bool = false;
-override TRANSMISSION: bool = false;
 override WORLD_MAPPING: bool = false;
 override TOP_LAYER: bool = false;
 override GROUNDING: bool = false;
@@ -48,12 +47,11 @@ const VARIANT_FOLIAGE: u32 = 65536u;
 
 fn material_flag(bit: u32, specialized: bool) -> bool {
     if UBER_MATERIALS {
-        return (bitcast<u32>(material_maps.volume.w) & bit) != 0u;
+        return (bitcast<u32>(material_maps.variant.x) & bit) != 0u;
     }
     return specialized;
 }
 
-@group(0) @binding(9) var refraction_source: texture_2d<f32>;
 @group(0) @binding(10) var refraction_sampler: sampler;
 const PROBE_ENTRY_WORDS: u32 = 3u;
 @group(0) @binding(13) var<storage, read> probe_words: array<vec4<u32>>;

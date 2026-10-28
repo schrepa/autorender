@@ -55,30 +55,6 @@ settings! {
 
 pub const MAX_GROUNDING_HEIGHT: f32 = 10_000.0;
 
-settings! {
-    unauthored;
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct Transmission {
-        pub factor: f32 = Transmission::NONE.factor => range(0.0, 1.0),
-        pub ior: f32 = Transmission::NONE.ior => range(1.0, 3.0),
-        pub thickness: f32 = Transmission::NONE.thickness => at_least(0.0),
-    }
-}
-
-impl Transmission {
-    pub const NONE: Self = Self {
-        factor: 0.0,
-        ior: 1.5,
-        thickness: 0.0,
-    };
-
-    pub const GLASS: Self = Self {
-        factor: 1.0,
-        ior: 1.5,
-        thickness: 0.0,
-    };
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Wrap {
     #[default]
@@ -205,7 +181,6 @@ pub enum AlphaMode {
     Mask {
         cutoff: f32,
     },
-    Blend,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -223,11 +198,9 @@ pub struct Material {
     alpha_mode: AlphaMode,
     double_sided: bool,
     foliage: bool,
-    transmission: Transmission,
     world_tiling: Option<f32>,
     top: Option<TopLayer>,
     grounding: Option<Grounding>,
-    windows: Option<u32>,
 }
 
 impl Material {
@@ -238,7 +211,6 @@ impl Material {
     pub const OCCLUSION_STRENGTH: Rule = Rule::range(0.0, 1.0);
     pub const EMISSIVE: Rule = Rule::at_least(0.0);
     pub const WORLD_TILING: Rule = Rule::above_to(0.0, MAX_WORLD_TILING as f64);
-    pub const WINDOWS: Rule = Rule::range(1.0, 4096.0);
 
     pub fn new(color: [f32; 4]) -> Result<Self, AssetError> {
         for (channel, value) in color.iter().enumerate() {
@@ -263,11 +235,9 @@ impl Material {
             alpha_mode: AlphaMode::Opaque,
             double_sided: false,
             foliage: false,
-            transmission: Transmission::NONE,
             world_tiling: None,
             top: None,
             grounding: None,
-            windows: None,
         })
     }
 
@@ -275,10 +245,10 @@ impl Material {
         if opacity.check("opacity", Self::OPACITY).is_err() {
             return Err(AssetError::InvalidOpacity);
         }
-        self.color[3] = opacity;
         if opacity < 1.0 && self.alpha_mode == AlphaMode::Opaque {
-            self.alpha_mode = AlphaMode::Blend;
+            return Err(AssetError::UnsupportedAlpha);
         }
+        self.color[3] = opacity;
         Ok(self)
     }
 
@@ -292,7 +262,7 @@ impl Material {
                     field: "alpha_cutoff",
                 });
             }
-            AlphaMode::Mask { .. } | AlphaMode::Blend => {}
+            AlphaMode::Mask { .. } => {}
         }
         self.alpha_mode = mode;
         Ok(self)
@@ -304,22 +274,6 @@ impl Material {
 
     pub fn alpha_mode(&self) -> AlphaMode {
         self.alpha_mode
-    }
-
-    pub fn is_transparent(&self) -> bool {
-        self.alpha_mode == AlphaMode::Blend || self.transmission.factor > 0.0
-    }
-
-    pub fn with_transmission(mut self, transmission: Transmission) -> Result<Self, AssetError> {
-        transmission
-            .validate()
-            .map_err(|invalid| invalid_part(None, invalid))?;
-        self.transmission = transmission;
-        Ok(self)
-    }
-
-    pub fn transmission(&self) -> Transmission {
-        self.transmission
     }
 
     pub fn with_world_mapping(mut self, tiling: f32) -> Result<Self, AssetError> {
@@ -334,20 +288,6 @@ impl Material {
 
     pub fn world_tiling(&self) -> Option<f32> {
         self.world_tiling
-    }
-
-    pub fn with_windows(mut self, rooms: u32) -> Result<Self, AssetError> {
-        if (rooms as f32).check("windows", Self::WINDOWS).is_err() {
-            return Err(AssetError::InvalidSurface {
-                field: "windows".into(),
-            });
-        }
-        self.windows = Some(rooms);
-        Ok(self)
-    }
-
-    pub fn windows(&self) -> Option<u32> {
-        self.windows
     }
 
     pub fn with_top_layer(mut self, top: TopLayer) -> Result<Self, AssetError> {
@@ -529,8 +469,6 @@ impl Material {
             || self.emissive != [0.0; 3]
             || self.double_sided
             || matches!(self.alpha_mode, AlphaMode::Mask { .. })
-            || (self.alpha_mode == AlphaMode::Blend && self.color[3] == 1.0)
-            || self.transmission.factor > 0.0
     }
 
     pub fn binding(&self) -> Option<MaterialBinding> {
@@ -558,18 +496,11 @@ impl Material {
                 self.emissive[2],
                 match self.alpha_mode {
                     AlphaMode::Mask { cutoff } => cutoff,
-                    AlphaMode::Opaque | AlphaMode::Blend => 0.0,
+                    AlphaMode::Opaque => 0.0,
                 },
-                self.transmission.factor,
-                self.transmission.ior,
-                self.transmission.thickness,
             ]
             .map(f32::to_bits),
-            alpha: match self.alpha_mode {
-                AlphaMode::Opaque => 0,
-                AlphaMode::Mask { .. } => 1,
-                AlphaMode::Blend => 2,
-            },
+            masked: matches!(self.alpha_mode, AlphaMode::Mask { .. }),
             double_sided: self.double_sided,
             foliage: self.foliage,
         })
@@ -581,8 +512,8 @@ type BoundMap = (TextureHandle, Sampler, [u32; 5], u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MaterialBinding {
     maps: [Option<BoundMap>; 5],
-    parameters: [u32; 9],
-    alpha: u8,
+    parameters: [u32; 6],
+    masked: bool,
     double_sided: bool,
     foliage: bool,
 }

@@ -5,7 +5,6 @@
 
 mod collider;
 mod components;
-mod decal;
 mod document;
 mod environment;
 mod error;
@@ -24,7 +23,6 @@ mod validation;
 
 pub use collider::{SceneCollider, SceneColliderShape};
 pub use components::COMPONENT_SHOWS;
-pub use decal::{SceneDecal, SceneDecalBlend};
 pub use document::{
     MAX_SOURCE_BYTES, MeshSource, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
     SceneSurface, SceneTransform, SceneVertex,

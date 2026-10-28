@@ -20,7 +20,6 @@ struct Lighting {
     grade: vec4<f32>,
     shadow_tint: vec4<f32>,
     highlight_tint: vec4<f32>,
-    refraction: vec4<f32>,
     aerial: vec4<f32>,
     aerial_color: vec4<f32>,
     occupancy: vec4<f32>,
@@ -35,7 +34,6 @@ struct Lighting {
     moon: vec4<f32>,
     foliage: vec4<f32>,
     highlights: vec4<f32>,
-    windows: vec4<f32>,
     night_shape: vec4<f32>,
     haze_march: vec4<f32>,
 }
@@ -70,7 +68,6 @@ override TERRAIN_HORIZONS: bool = true;
 override CLOUD_SHADOWS: bool = true;
 override OCCUPANCY: bool = true;
 override PROBES: bool = true;
-override WINDOWS: bool = true;
 override BOUNCE: bool = true;
 
 fn occupancy_cover(world: vec3<f32>, map: u32) -> f32 {
@@ -996,19 +993,13 @@ struct TransparentTargets {
     @location(1) revealed: vec2<f32>,
 }
 
-fn weighted(color: vec3<f32>, opacity: f32, distance: f32) -> TransparentTargets {
+fn weighted_particle(color: vec3<f32>, opacity: f32, distance: f32) -> TransparentTargets {
     let near = distance / 5.0;
     let far = distance / 200.0;
     let far3 = far * far * far;
     let weight = opacity * clamp(10.0 / (1.0e-5 + near * near + far3 * far3), 0.01, 3000.0);
     var targets: TransparentTargets;
     targets.accumulated = vec4<f32>(color * opacity, opacity) * weight;
-    targets.revealed = vec2<f32>(opacity, 0.0);
-    return targets;
-}
-
-fn weighted_particle(color: vec3<f32>, opacity: f32, distance: f32) -> TransparentTargets {
-    var targets = weighted(color, opacity, distance);
-    targets.revealed.y = opacity;
+    targets.revealed = vec2<f32>(opacity);
     return targets;
 }

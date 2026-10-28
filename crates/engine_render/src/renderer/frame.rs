@@ -104,7 +104,6 @@ pub(super) struct Features<'s> {
     pub(super) gpu_prepared: Option<GpuPrepared>,
     pub(super) shadow_frame: Option<ShadowFrame>,
     pub(super) probe_list: &'s [engine_core::RenderReflectionProbe],
-    pub(super) refraction: bool,
     pub(super) frames: FeatureFrames,
 }
 
@@ -121,7 +120,6 @@ impl Features<'_> {
 #[derive(Clone, Copy)]
 pub(super) struct Passes {
     pub(super) opaque_kind: PassKind,
-    pub(super) transparent_kind: PassKind,
     pub(super) impostor_pass: Option<(Targets, bool)>,
 }
 

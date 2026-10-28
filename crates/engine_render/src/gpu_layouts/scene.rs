@@ -36,7 +36,6 @@ gpu_structs! {
         pub grade: [f32; 4],
         pub shadow_tint: [f32; 4],
         pub highlight_tint: [f32; 4],
-        pub refraction: [f32; 4],
         pub aerial: [f32; 4],
         pub aerial_color: [f32; 4],
         pub occupancy: [f32; 4],
@@ -51,7 +50,6 @@ gpu_structs! {
         pub moon: [f32; 4],
         pub foliage: [f32; 4],
         pub highlights: [f32; 4],
-        pub windows: [f32; 4],
         pub night_shape: [f32; 4],
         pub haze_march: [f32; 4],
     }
@@ -81,7 +79,7 @@ gpu_structs! {
         pub transforms: [[f32; 4]; 10],
         pub emissive: [f32; 4],
         pub params: [f32; 4],
-        pub volume: [f32; 4],
+        pub variant: [f32; 4],
         pub top: [f32; 4],
         pub layer: [f32; 4],
     }

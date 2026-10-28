@@ -135,7 +135,6 @@ impl Renderer {
         let occupancy = crate::occupancy::OccupancyPass::new(&device);
         let camera = CameraBindings::new(
             &device,
-            &queue,
             (lighting_buffer, clouds.shadows().clone()),
             &camera::GroupSources {
                 shadows: &shadows,
@@ -219,7 +218,6 @@ impl Renderer {
                 lights: Lazy::default(),
                 ground_cover: Eager::new(ground_cover),
                 clouds: Eager::new(clouds),
-                decals: Lazy::default(),
                 water: Eager::new(water),
                 transparency: Eager::new(crate::transparent::Transparency::default()),
                 post: Lazy::default(),

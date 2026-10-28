@@ -51,7 +51,6 @@ pub struct RenderStats {
     #[serde(skip)]
     #[cfg_attr(feature = "schema", schemars(skip))]
     pub submitted: bool,
-    pub transparent_draws: u32,
     pub pipelines: u32,
     pub pipelines_created: u32,
     pub render_passes: Names,
@@ -62,8 +61,6 @@ pub struct RenderStats {
     pub haze: Applied,
     pub reflections: Applied,
     pub particles: Drawn,
-    pub refraction: Applied,
-    pub decals: Drawn,
     pub reflection_probes: ProbeStats,
     pub level_of_detail: DetailStats,
     pub terrain: TerrainRenderStats,

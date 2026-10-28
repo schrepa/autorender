@@ -49,22 +49,6 @@ fn fs_temporal_lit(input: TemporalOutput, @builtin(front_facing) front: bool)
 }
 
 @fragment
-fn fs_transparent(input: VertexOutput, @builtin(front_facing) front: bool)
-        -> TransparentTargets {
-    let values = fragment(input);
-    let point = transparent_point(values, front);
-    return transparent_targets(finish(point, vec3<f32>(0.0)), point, values);
-}
-
-@fragment
-fn fs_transparent_lit(input: VertexOutput, @builtin(front_facing) front: bool)
-        -> TransparentTargets {
-    let values = fragment(input);
-    let point = transparent_point(values, front);
-    return transparent_targets(finish(point, local_light(point, values.pixel)), point, values);
-}
-
-@fragment
 fn fs_probe(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     return vec4<f32>(shade(fragment(input), front).linear, 1.0);
 }
@@ -125,20 +109,4 @@ fn fs_temporal_lit_extended(input: ExtendedTemporalOutput,
         @builtin(front_facing) front: bool) -> TemporalTargets {
     let values = extended_fragment(extended_temporal_output(input));
     return temporal_targets(shade_lit(values, front), input.clip_position, input.previous);
-}
-
-@fragment
-fn fs_transparent_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
-        -> TransparentTargets {
-    let values = extended_fragment(input);
-    let point = transparent_point(values, front);
-    return transparent_targets(finish(point, vec3<f32>(0.0)), point, values);
-}
-
-@fragment
-fn fs_transparent_lit_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
-        -> TransparentTargets {
-    let values = extended_fragment(input);
-    let point = transparent_point(values, front);
-    return transparent_targets(finish(point, local_light(point, values.pixel)), point, values);
 }

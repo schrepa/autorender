@@ -41,7 +41,6 @@ use crate::shadows::{CasterDraw, ShadowPass};
 use crate::staging::{self, StagingRing};
 use crate::targets::{FrameSize, ScreenTarget, Targets};
 use crate::temporal::{TemporalFrame, TemporalPass};
-use crate::transparent::accumulation_targets;
 use crate::uploads::UploadCache;
 
 mod camera;
@@ -123,12 +122,8 @@ impl GpuMesh {
     }
 }
 
-fn lod_levels(batch: &DrawBatch, mesh: &GpuMesh) -> usize {
-    if batch.transparent {
-        1
-    } else {
-        1 + mesh.plan.len().min(LOD_LEVELS - 1)
-    }
+fn lod_levels(mesh: &GpuMesh) -> usize {
+    1 + mesh.plan.len().min(LOD_LEVELS - 1)
 }
 
 fn plan_levels(lods: &[(u32, u32, f32)]) -> Vec<(u32, u32, f32)> {
@@ -164,7 +159,7 @@ type StructureKey = (u64, u64, u64);
 #[derive(Default)]
 struct StructureKeys {
     order: Option<StructureKey>,
-    variants: Option<(StructureKey, PassKind, PassKind)>,
+    variants: Option<(StructureKey, PassKind)>,
     probes: Option<(StructureKey, PassKind)>,
     impostors: Option<(StructureKey, engine_core::LevelOfDetail, bool, u64)>,
     residency: Option<(u64, u64, u64)>,

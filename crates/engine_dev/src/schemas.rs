@@ -85,7 +85,6 @@ pub fn generated() -> Result<Generated, String> {
         "Camera": schemars::schema_for!(views::CameraView),
         "Mesh3d": schemars::schema_for!(views::Mesh3dView),
         "Atmosphere": schemars::schema_for!(engine_scene::SceneAtmosphere),
-        "Decal": schemars::schema_for!(views::DecalView),
         "SplineMesh": schemars::schema_for!(views::SplineMeshView),
         "ReflectionProbe": schemars::schema_for!(engine_scene::SceneReflectionProbe),
         "Input": schemars::schema_for!(views::InputView),

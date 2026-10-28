@@ -1,7 +1,7 @@
 #![expect(clippy::expect_used, reason = "passes read what their frames created")]
 
 use super::*;
-use crate::render_features::{AttachmentViews, Encode, MeshDraws};
+use crate::render_features::{AttachmentViews, Encode};
 
 impl Renderer {
     pub(super) fn encode_pass(
@@ -173,30 +173,17 @@ impl Renderer {
             canvas: view,
             history,
         };
-        let meshes = FrameMeshes {
-            renderer: self,
-            state,
-        };
-        let lights = state
-            .features
-            .light_frame()
-            .and(self.features.lights.get())
-            .map(LightPass::fragment_group);
         let scene = matches!(state.shape.targets, Targets::Post | Targets::Temporal)
             .then(|| self.features.post.get())
             .flatten()
             .map(crate::post::PostPass::scene_texture);
         let encode = Encode::new(
-            (&views, &meshes),
+            &views,
             (&self.device, &self.profiler),
             (
-                (
-                    self.camera.group(),
-                    self.camera.terrain_group(),
-                    self.camera.water_group(),
-                ),
-                &self.materials,
-                lights,
+                self.camera.group(),
+                self.camera.terrain_group(),
+                self.camera.water_group(),
             ),
             (state.shape.targets, &self.depth.texture, scene),
         );
@@ -300,70 +287,6 @@ impl Renderer {
             light_frame.map(|frame| (frame, &snapshot.environment.local_lights)),
         );
         self.features.probes.get_mut().faces = faces;
-    }
-}
-
-struct FrameMeshes<'a> {
-    renderer: &'a Renderer,
-    state: &'a FrameState<'a>,
-}
-
-impl MeshDraws for FrameMeshes<'_> {
-    fn transparent(&self, pass: &mut wgpu::RenderPass<'_>) -> u32 {
-        let (renderer, state) = (self.renderer, self.state);
-        let FrameKind {
-            gpu_mode,
-            instance_count,
-            ..
-        } = state.kind;
-        if instance_count == 0 {
-            return 0;
-        }
-        let features = &state.features;
-        let lit = features.light_frame().zip(renderer.features.lights.get());
-        let camera_group = match renderer.camera.refraction_group() {
-            Some(group) if features.refraction && features.post_frame().is_some() => group,
-            _ => renderer.camera.group(),
-        };
-        pass.set_bind_group(0, camera_group, &[]);
-        if let Some((_, lights)) = lit {
-            pass.set_bind_group(3, lights.fragment_group(), &[]);
-        }
-        let parity = state
-            .packing
-            .temporal_frame
-            .as_ref()
-            .map_or(0, |frame| frame.parity);
-        pass.set_bind_group(2, renderer.instances.pose_group(parity), &[]);
-        if !gpu_mode {
-            pass.set_vertex_buffer(1, renderer.instances.slots().slice(..));
-        }
-        let mut binds = BatchBinds::default();
-        let mut draws = 0;
-        for (index, batch) in renderer.plan.batches.iter().enumerate() {
-            if !batch.transparent {
-                continue;
-            }
-            let (_, draw) = renderer.bind_batch(
-                pass,
-                &mut binds,
-                (state.passes.transparent_kind, false),
-                batch,
-            );
-            if gpu_mode {
-                let (ids, args, offset) = renderer.gpu_presentation.draw_source(batch, index, 0, 0);
-                binds.bindings.ids(pass, 1, ids);
-                pass.draw_indexed_indirect(args, offset);
-            } else {
-                pass.draw_indexed(
-                    draw.index_range(),
-                    draw.base_vertex,
-                    batch.instances.clone(),
-                );
-            }
-            draws += 1;
-        }
-        draws
     }
 }
 

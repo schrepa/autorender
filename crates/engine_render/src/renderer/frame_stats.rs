@@ -1,7 +1,6 @@
 use super::frame::{EncodeReport, FrameKind, FrameState};
 use super::*;
 use crate::clouds::CloudPass;
-use crate::decals::DecalPass;
 use crate::gpu_presentation::GpuPrepared;
 use crate::ground_cover::GroundCoverPass;
 use crate::occupancy::OccupancyPass;
@@ -9,7 +8,7 @@ use crate::transparent::Transparency;
 use crate::water::WaterPass;
 
 use engine_core::{
-    Applied, CullingStats, DeformationStats, DetailStats, ShadowStats, TerrainBounceStats,
+    CullingStats, DeformationStats, DetailStats, ShadowStats, TerrainBounceStats,
     TerrainRenderStats,
 };
 
@@ -73,13 +72,12 @@ impl Renderer {
         let (snapshot, frame) = (state.snapshot, state.frame);
         let shadow_draws = report.shadow_draws;
         let features = &state.features;
-        let (shadow_frame, post_frame) = (&features.shadow_frame, features.post_frame());
+        let shadow_frame = &features.shadow_frame;
         let effects = PostPass::stats(
             self.features.post.get(),
             features.frames.post.as_ref().map(Ready::frame),
             snapshot,
         );
-        let refraction = features.refraction;
         let (water, ocean) = WaterPass::stats(
             Some(self.features.water.get()),
             features.frames.water.as_ref().map(Ready::frame),
@@ -155,15 +153,6 @@ impl Renderer {
             texture_upload_bytes,
             resident_texture_bytes: residency.texture_bytes,
             submitted: true,
-            transparent_draws: if instance_count > 0 {
-                self.plan
-                    .batches
-                    .iter()
-                    .filter(|batch| batch.transparent)
-                    .count() as u32
-            } else {
-                0
-            },
             pipelines: self.pipeline_counts.created(),
             pipelines_created,
             render_passes: crate::render_graph::render_passes(report.passes),
@@ -198,14 +187,6 @@ impl Renderer {
             particles: Transparency::stats(
                 Some(self.features.transparency.get()),
                 features.frames.transparency.as_ref().map(Ready::frame),
-                snapshot,
-            ),
-            refraction: Applied {
-                active: refraction && post_frame.is_some(),
-            },
-            decals: DecalPass::stats(
-                self.features.decals.get(),
-                features.frames.decals.as_ref().map(Ready::frame),
                 snapshot,
             ),
             reflection_probes: ProbePass::stats(Some(self.features.probes.get()), None, snapshot),
@@ -420,12 +401,7 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.gpu_transparent_bytes",
-            (self.features.transparency.get().capacity_bytes()
-                + self
-                    .features
-                    .decals
-                    .get()
-                    .map_or(0, DecalPass::capacity_bytes)) as f64,
+            self.features.transparency.get().capacity_bytes() as f64,
         );
         engine_profile::counter(
             "memory.gpu_temporal_bytes",

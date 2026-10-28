@@ -3,14 +3,12 @@ use glam::Mat4;
 
 use crate::retained_render::RetainedRender;
 use crate::{
-    GlobalTransforms, PresentedTransforms, TransformIndex, WorldCells, decals, lights, particles,
-    probes,
+    GlobalTransforms, PresentedTransforms, TransformIndex, WorldCells, lights, particles, probes,
 };
 
 pub(crate) struct Extractions {
     lights: lights::LightExtraction,
     particles: particles::ParticleExtraction,
-    decals: decals::DecalExtraction,
     probes: probes::ProbeExtraction,
 }
 
@@ -19,7 +17,6 @@ impl Extractions {
         Self {
             lights: lights::LightExtraction::new(world),
             particles: particles::ParticleExtraction::new(world),
-            decals: decals::DecalExtraction::new(world),
             probes: probes::ProbeExtraction::new(world),
         }
     }
@@ -33,7 +30,6 @@ impl Extractions {
     ) {
         retained.extract_deformation(world);
         retained.extract_lights_and_particles(world, &mut self.lights, &mut self.particles, gpu);
-        retained.extract_decals(world, &mut self.decals, gpu);
         retained.extract_probes(world, &mut self.probes);
         retained.extract_terrain(world, aspect);
         retained.set_streamed(

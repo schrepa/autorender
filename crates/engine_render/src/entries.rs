@@ -5,7 +5,6 @@ use crate::shaders::entry::{meshes, terrain_shadow};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum MeshPass {
     Opaque(Targets),
-    Transparent,
     Probe,
 }
 
@@ -35,13 +34,6 @@ impl PassKind {
         }
     }
 
-    pub(crate) fn transparent(lit: bool) -> Self {
-        Self {
-            pass: MeshPass::Transparent,
-            lit,
-        }
-    }
-
     pub(crate) fn probe(lit: bool) -> Self {
         Self {
             pass: MeshPass::Probe,
@@ -52,7 +44,7 @@ impl PassKind {
     pub(crate) fn targets(self) -> Option<Targets> {
         match self.pass {
             MeshPass::Opaque(targets) => Some(targets),
-            MeshPass::Transparent | MeshPass::Probe => None,
+            MeshPass::Probe => None,
         }
     }
 
@@ -94,10 +86,6 @@ impl PassKind {
             (MeshPass::Opaque(Targets::Temporal), false, true) => meshes::fs_temporal_extended,
             (MeshPass::Opaque(Targets::Temporal), true, true) => meshes::fs_temporal_lit_extended,
             (MeshPass::Opaque(Targets::Debug), _, _) => meshes::fs_debug_mesh,
-            (MeshPass::Transparent, false, false) => meshes::fs_transparent,
-            (MeshPass::Transparent, true, false) => meshes::fs_transparent_lit,
-            (MeshPass::Transparent, false, true) => meshes::fs_transparent_extended,
-            (MeshPass::Transparent, true, true) => meshes::fs_transparent_lit_extended,
             (MeshPass::Probe, false, false) => meshes::fs_probe,
             (MeshPass::Probe, true, false) => meshes::fs_probe_lit,
             (MeshPass::Probe, false, true) => meshes::fs_probe_extended,
@@ -223,13 +211,3 @@ pub(crate) fn cover(targets: Targets, lit: bool) -> (Entry, Entry) {
 }
 
 pub(crate) const TERRAIN_SHADOW_VERTEX: Entry = terrain_shadow::vs_terrain_shadow;
-
-pub(crate) const DECAL_VERTEX: Entry = meshes::vs_decal;
-
-pub(crate) fn decal_fragment(lit: bool) -> Entry {
-    if lit {
-        meshes::fs_decal_lit
-    } else {
-        meshes::fs_decal
-    }
-}

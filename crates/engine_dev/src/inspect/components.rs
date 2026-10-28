@@ -1,10 +1,6 @@
 use super::*;
 
 impl DevTools {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub(super) fn register_components(&mut self, schemas: &Value) {
         self.register_resource::<Camera>(
             InspectorDescriptor::generated(schemas, "Camera")
@@ -45,15 +41,6 @@ impl DevTools {
                 .with_default(json!(crate::views::TintView(Tint::WHITE.0))),
             |tint| json!(crate::views::TintView(tint.0)),
         )
-        .expect("built-in descriptor is bounded");
-        self.insert(Inspector {
-            descriptor: InspectorDescriptor::generated(schemas, "Decal"),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| world.get::<Decal>(entity).is_some())
-            }),
-            read: Box::new(decal_view),
-        })
         .expect("built-in descriptor is bounded");
         self.insert(Inspector {
             descriptor: InspectorDescriptor::generated(schemas, "SplineMesh"),
@@ -139,26 +126,6 @@ fn grounded_view(world: &World, entity: Option<Entity>, _context: &Context<'_>) 
     Some(json!(crate::views::GroundedView {
         offset: grounded.offset,
         level: at.and_then(|at| at.level),
-    }))
-}
-
-fn decal_view(world: &World, entity: Option<Entity>, context: &Context<'_>) -> Option<Value> {
-    let scene = context.scene;
-    let decal = world.get::<Decal>(entity?)?;
-    let assets = world.get_resource::<AssetLibrary>();
-    let material = scene.and_then(|scene| {
-        scene
-            .materials()
-            .find(|(_, handle)| *handle == decal.material)
-            .map(|(id, _)| id.to_owned())
-    });
-    let field = SceneDecal::from_runtime(decal, material.clone().unwrap_or_default());
-    Some(json!(DecalView {
-        material,
-        material_alive: assets.is_some_and(|assets| assets.material(decal.material).is_some()),
-        blend: field.blend,
-        opacity: field.opacity,
-        fade_degrees: field.fade_degrees,
     }))
 }
 

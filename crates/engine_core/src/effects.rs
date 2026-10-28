@@ -191,30 +191,3 @@ impl Reflections {
         self.intensity > 0.0
     }
 }
-
-settings! {
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneRefraction")
-    )]
-    #[serde(default, deny_unknown_fields)]
-    pub struct Refraction {
-        pub strength: f32 = 1.0 => range(0.0, 4.0),
-        pub blur: f32 = 12.0 => range(0.0, 64.0),
-    }
-}
-
-impl Refraction {
-    pub fn off() -> Self {
-        Self {
-            strength: 0.0,
-            ..Self::default()
-        }
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.strength > 0.0
-    }
-}

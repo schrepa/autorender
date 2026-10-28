@@ -135,9 +135,6 @@ impl CasterGroups {
             let instances = &snapshot.instances;
             self.listed.clear();
             for &slot in frame.casters() {
-                if crate::batches::is_transparent(&instances[slot], &plan.transparent_materials) {
-                    continue;
-                }
                 let mesh = instances[slot].mesh;
                 let Some(&source_index) = sources.get(&mesh) else {
                     continue;
@@ -159,10 +156,6 @@ impl CasterGroups {
             }
         } else {
             for batch in &plan.batches {
-                if batch.transparent {
-                    self.batch_groups.push(u32::MAX);
-                    continue;
-                }
                 let count = batch.instances.end - batch.instances.start;
                 let group = add_to_group(
                     &mut self.groups,

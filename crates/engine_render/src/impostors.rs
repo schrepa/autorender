@@ -19,7 +19,6 @@ use crate::gpu_layouts::constants::IMPOSTOR_FRAMES_SHIFT as FRAMES_SHIFT;
 pub(crate) use crate::gpu_layouts::constants::IMPOSTOR_HEMISPHERE as HEMISPHERE;
 use crate::gpu_layouts::constants::IMPOSTOR_KINDS as KINDS;
 use crate::gpu_layouts::constants::IMPOSTOR_MASKED as MASKED;
-use crate::gpu_layouts::constants::IMPOSTOR_ROOMS as ROOMS;
 use crate::gpu_layouts::constants::VARIANT_FOLIAGE;
 pub(crate) use crate::gpu_layouts::impostors::ImpostorRecord;
 use crate::mesh_arena::MeshDraw;
@@ -190,7 +189,7 @@ impl ImpostorRecord {
         min: Vec3,
         max: Vec3,
         layer: u32,
-        (emissive, masked, foliage, rooms): ([f32; 3], bool, bool, bool),
+        (emissive, masked, foliage): ([f32; 3], bool, bool),
         shape: AtlasShape,
     ) -> Self {
         let center = (min + max) * 0.5;
@@ -203,8 +202,7 @@ impl ImpostorRecord {
             emissive,
             flags: shape.flags()
                 | if masked { MASKED } else { 0 }
-                | if foliage { FOLIAGE } else { 0 }
-                | if rooms { ROOMS } else { 0 },
+                | if foliage { FOLIAGE } else { 0 },
         }
     }
 
@@ -681,10 +679,6 @@ impl ImpostorAtlas {
             .material
             .as_ref()
             .map_or([0.0; 3], Material::emissive);
-        let rooms = source
-            .material
-            .as_ref()
-            .is_some_and(|material| material.windows().is_some());
         let variants =
             || std::iter::once(source.variant).chain(source.parts.iter().map(|part| part.variant));
         let masked = variants().any(Variant::alpha_mask);
@@ -693,7 +687,7 @@ impl ImpostorAtlas {
             source.bounds.0,
             source.bounds.1,
             layer,
-            (emissive, masked, foliage, rooms),
+            (emissive, masked, foliage),
             self.shape,
         );
         self.baked.insert(
