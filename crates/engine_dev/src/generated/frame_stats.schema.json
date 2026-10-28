@@ -1211,13 +1211,19 @@
           "type": "integer"
         },
         "live_setup": {
-          "description": "Blocks of that square (a scheme's block of its cells each) the GPU\nset up whole this frame from the ground and the tiles' water it\nholds: every block of a square that came anew, the strips a move\nuncovered, and those over a tile that changed (a finer level, or its\nsettled water, arriving); 0 in frames none came.",
+          "description": "Blocks of that square (a scheme's block of its cells each) the GPU\nset up whole this frame from the ground it holds and the live cells\nof the settled water's records: those whose level-0 tiles, their\nsettled water and its records' live cells all came to be there this\nframe, in a square that came anew, a strip a move uncovered or where\nthey arrived, and those over a tile that changed; 0 in frames none\ndid.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_steps": {
           "description": "Steps the live water took this frame, each of the same seconds, the\nlongest in which its fastest water and waves cross a quarter of its\ncells: as many as the simulation time passed holds, at most those of\na frame a thirtieth of a second long.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "live_waiting": {
+          "description": "Blocks of that square waiting for their level-0 tiles, those tiles'\nsettled water or its records' live cells, standing as the settled\nwater does there, none of their water running, while water's pass\ndraws the tiles' water over them.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1264,6 +1270,7 @@
         "live_steps",
         "live_behind",
         "live_setup",
+        "live_waiting",
         "touches",
         "dropped_touches",
         "particle_texels",

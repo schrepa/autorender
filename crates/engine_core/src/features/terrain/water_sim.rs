@@ -486,9 +486,9 @@ fn reads(state: &TerrainState, first: [i64; 2], (cells, cell): (u32, f32)) -> Ve
                 state.store.get(&held).cloned()
             });
             let held_back = state.store.watered(&key).is_some_and(Option::is_some);
-            let ready = tile.as_ref().is_some_and(|tile| {
-                tile.key() == key && state.settled.ready(key, tile, held_back)
-            });
+            let ready = tile
+                .as_ref()
+                .is_some_and(|tile| tile.key() == key && state.settled.ready(key, tile, held_back));
             reads.push(WaterRead {
                 key,
                 square: [corner, corner + Vec2::splat(size)],

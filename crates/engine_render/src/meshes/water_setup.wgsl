@@ -282,7 +282,7 @@ fn setup_nearest(cell: WaterCell) -> vec4<u32> {
 // that tile's table's block holding the cell, then the cell. Not resident
 // where that tile's record is not held; dry where its table holds no wet
 // cell there.
-fn setup_live(at: vec2<i32>) -> SetupLive {
+fn setup_live_cell(at: vec2<i32>) -> SetupLive {
     var live = SetupLive(false, NO_WATER_SURFACE, vec2<f32>(0.0), false);
     let spacing = setup_frame.meters.x * f32(setup_frame.square.w);
     let middle = (vec2<f32>(setup_holding(at)) + 0.5) * spacing;
@@ -324,7 +324,7 @@ fn setup_live(at: vec2<i32>) -> SetupLive {
 
 // The water live cell `at` stands as where the live water does not run
 // there, past the square's edges or in a block still waiting for its data:
-// as its tile's record keeps it on that cell (`setup_live`) where the
+// as its tile's record keeps it on that cell (`setup_live_cell`) where the
 // record's live cells are resident; else as water's shading reads the
 // tiles' water at its middle (`water_read`), standing where the samples
 // holding a surface carry WATER_HELD of its weights or more and it stands
@@ -334,7 +334,7 @@ fn setup_live(at: vec2<i32>) -> SetupLive {
 // is dry), its flow along x and z (square meters a second) and the level a
 // lake holds it at over the datum (SETUP_UNHELD where none does).
 fn setup_ghost(at: vec2<i32>) -> vec4<f32> {
-    let live = setup_live(at);
+    let live = setup_live_cell(at);
     if live.resident {
         if live.held {
             return vec4<f32>(live.surface, 0.0, 0.0, live.surface);
@@ -540,8 +540,8 @@ fn setup_cell_risen(local: vec2<u32>) -> vec2<f32> {
 // the lake's level (`setup_held`), its bed's roughness from the word of the
 // tiles' water's sample nearest its middle (`setup_rough`) and the solids'
 // cover. A block set up whole sets up its cells' water too, each as its
-// tile's record keeps it (`setup_live`): what it starts from in the step's
-// first state, and its looks.
+// tile's record keeps it (`setup_live_cell`): what it starts from in the
+// step's first state, and its looks.
 @compute @workgroup_size(WATER_LIVE_BLOCK, WATER_LIVE_BLOCK)
 fn setup_blocks(
     @builtin(workgroup_id) group: vec3<u32>,
@@ -557,7 +557,7 @@ fn setup_blocks(
     let first = bitcast<vec2<i32>>(listed.yz);
     let stands = listed.w == SETUP_STANDS;
     let base = slot * SETUP_GROUND;
-    if !stands {
+    if listed.w == SETUP_WHOLE || listed.w == SETUP_RISEN {
         for (var k = 0u; k < 4u; k++) {
             if !setup_corner_taken(local.xy, k) {
                 continue;
@@ -584,7 +584,7 @@ fn setup_blocks(
         return;
     }
     let risen = setup_cell_risen(local.xy);
-    let live = setup_live(at);
+    let live = setup_live_cell(at);
     let lake = setup_held(select(SETUP_UNHELD, live.surface, live.held), risen.x);
     let nearest = setup_nearest(setup_cell(at));
     let cover = setup_cover(at);

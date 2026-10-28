@@ -96,10 +96,10 @@ pub use select::{LodRanges, WantedTile, WantedView, wanted_tiles};
 pub use shading::TileShading;
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverListing, RiverSight};
 pub use steady_water::{
-    BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, COVER_POINTS, LiveWater, MARGIN, NO_BLOCK,
-    REGION_CELLS, SUMMARY_SIDE, SettleRegion, SettleStart, SettledKey, SteadyCell, SteadySource,
-    SteadySquare, SteadyStats, SteadySummary, SteadyWater, StoredBlocks, WaterPart, cover_cells,
-    settle_regions, watered_tiles,
+    BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, COVER_POINTS, LiveWater, MARGIN, NO_BLOCK, REGION_CELLS,
+    SUMMARY_SIDE, SettleRegion, SettleStart, SettledKey, SteadyCell, SteadySource, SteadySquare,
+    SteadyStats, SteadySummary, SteadyWater, StoredBlocks, WaterPart, cover_cells, settle_regions,
+    watered_tiles,
 };
 pub use surface::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, Facing, MAX_BIOMES,

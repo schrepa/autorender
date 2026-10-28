@@ -94,9 +94,9 @@ use engine_core::{SIM_TOUCHES, Tile, TileKey, WaterObstacle, WaterRead, WaterWin
 
 use crate::bindings::{EMPTY, WATER_SETUP};
 use crate::gpu_layouts::constants::{
-    LIVE_CELL, LIVE_HEAD, LIVE_HELD, LIVE_NONE, NO_WATER_SURFACE, SETUP_RISEN,
-    SETUP_SOLID_ENTRIES, SETUP_STANDS, SETUP_WHOLE, SIM_BURSTING, SIM_LIVE, SIM_STANDING,
-    SIM_STEPPING, WATER_SETUP_RING_GROUP,
+    LIVE_CELL, LIVE_HEAD, LIVE_HELD, LIVE_NONE, NO_WATER_SURFACE, SETUP_RISEN, SETUP_SOLID_ENTRIES,
+    SETUP_STANDS, SETUP_WHOLE, SIM_BURSTING, SIM_LIVE, SIM_STANDING, SIM_STEPPING,
+    WATER_SETUP_RING_GROUP,
 };
 use crate::gpu_layouts::water::{SimSetup, SimSlot, SimTouch, SimTouches};
 use crate::pipelines::GroupLayout;
@@ -1003,7 +1003,12 @@ impl SimWindow {
 /// `i32`'s bits along x and z, and `what`.
 fn entry(slot: u32, place: [i64; 2], what: u32) -> [u32; 4] {
     let side = i64::from(BLOCK_SIDE);
-    [slot, (place[0] * side) as u32, (place[1] * side) as u32, what]
+    [
+        slot,
+        (place[0] * side) as u32,
+        (place[1] * side) as u32,
+        what,
+    ]
 }
 
 /// The live cells of the records of settled water `window` reads, as its
@@ -1040,9 +1045,8 @@ fn live_words(window: &WaterWindow) -> ([u32; 4], Vec<u32>) {
         };
         let live = &record.live;
         let from = [0, 1].map(|axis| live.first[axis].max(low[axis]));
-        let to = [0, 1].map(|axis| {
-            (live.first[axis] + i64::from(live.blocks[axis])).min(low[axis] + span)
-        });
+        let to = [0, 1]
+            .map(|axis| (live.first[axis] + i64::from(live.blocks[axis])).min(low[axis] + span));
         let blocks = [0, 1].map(|axis| (to[axis] - from[axis]).max(0) as u32);
         let column = u32::from(read.key.x - least[0]);
         let row = u32::from(read.key.z - least[1]);
