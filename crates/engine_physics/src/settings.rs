@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::Resource;
+use engine_core::{BrickStats, EnvironmentSection};
+use engine_settings::{InvalidSetting, settings};
+use engine_terrain::hydraulics::GRAVITY;
 use serde::{Deserialize, Serialize};
-
-use crate::terrain_data::hydraulics::GRAVITY;
-use engine_settings::settings;
 
 settings! {
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -30,7 +30,30 @@ impl Physics {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+impl EnvironmentSection for Physics {
+    const KEY: &'static str = "physics";
+    const NAME: &'static str = "Physics";
+    const OPT_IN: bool = false;
+
+    fn section_off() -> Self {
+        Self::off()
+    }
+
+    fn section_check(&self) -> Result<(), InvalidSetting> {
+        self.validate()
+    }
+
+    fn section_sanitized(self) -> Self {
+        self.sanitized()
+    }
+
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema {
+        schemars::schema_for!(Physics)
+    }
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PhysicsStats {
     pub bodies: u32,
@@ -40,4 +63,13 @@ pub struct PhysicsStats {
     pub solids: u32,
     pub contacts: u32,
     pub water_samples: u32,
+}
+
+impl BrickStats for PhysicsStats {
+    const KEY: &'static str = "physics";
+
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema {
+        schemars::schema_for!(PhysicsStats)
+    }
 }

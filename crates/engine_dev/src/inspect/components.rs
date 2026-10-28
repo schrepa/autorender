@@ -129,6 +129,33 @@ impl DevTools {
             },
         )
         .expect("built-in descriptor is bounded");
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::generated(schemas, "Collider"),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| {
+                entity.is_some_and(|entity| {
+                    world.get::<engine_collision::Collider>(entity).is_some()
+                })
+            }),
+            read: Box::new(|world, entity, _context| {
+                engine_collision::collider_view(world, entity?).map(|view| json!(view))
+            }),
+        })
+        .expect("built-in descriptor is bounded");
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::generated(schemas, "RigidBody")
+                .with_default(json!(engine_physics::RigidBody::default())),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| {
+                entity.is_some_and(|entity| {
+                    world.get::<engine_physics::RigidBody>(entity).is_some()
+                })
+            }),
+            read: Box::new(|world, entity, _context| {
+                engine_physics::rigid_body_view(world, entity?).map(|view| json!(view))
+            }),
+        })
+        .expect("built-in descriptor is bounded");
     }
 }
 

@@ -1,9 +1,11 @@
 use bevy_ecs::prelude::World;
 use engine_core::math::clamp;
-use engine_core::{Physics, WaterSample, WaterSources, Wind};
+use engine_core::{WaterSample, WaterSources};
+use engine_terrain::Wind;
 use glam::{Quat, Vec3};
 
 use crate::body::BodyWater;
+use crate::settings::Physics;
 use crate::shapes::BodyShape;
 
 const MOST_CELLS: f32 = 6.0;

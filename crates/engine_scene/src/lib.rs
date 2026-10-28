@@ -4,6 +4,7 @@
 )]
 
 mod bricks;
+mod authored;
 mod collider;
 mod components;
 mod document;
@@ -21,6 +22,7 @@ mod terrain;
 mod texture;
 mod validation;
 
+pub use authored::active_scene;
 pub use collider::{SceneCollider, SceneColliderShape};
 pub use components::COMPONENT_SHOWS;
 pub use document::{

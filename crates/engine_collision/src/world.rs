@@ -24,7 +24,7 @@ pub(crate) struct CollisionSync<'w, 's> {
     config: Res<'w, CollisionConfig>,
     frame: Option<Res<'w, FrameTime>>,
     tick: Option<Res<'w, FixedTime>>,
-    terrains: Option<Res<'w, engine_core::Terrains>>,
+    terrains: Option<Res<'w, engine_terrain::Terrains>>,
     collisions: ResMut<'w, CollisionWorld>,
 }
 
@@ -657,7 +657,7 @@ pub fn refresh_collision_world(world: &mut World) -> Result<CollisionReport, Col
         let mut sync = state
             .0
             .get_mut(world)
-            .expect("CollisionPlugin resources must remain installed");
+            .expect("the collision brick's resources must remain added");
         sync.refresh()
     });
     Ok(report)

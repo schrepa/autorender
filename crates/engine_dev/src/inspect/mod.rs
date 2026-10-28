@@ -7,7 +7,7 @@ use poses::presentation_view;
 use engine_settings::ErrorCode;
 use std::{collections::BTreeMap, io::Write};
 
-use engine_collision::{CollisionWorld, refresh_collision_world};
+use engine_collision::{CollisionError, CollisionWorld, CollisionWorldView, refresh_collision_world};
 use engine_core::{
     ActionId, ActionInput, AssetLibrary, Atmosphere, BrickRegistry, Camera, Engine, FixedTime,
     FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle,
@@ -421,9 +421,7 @@ impl DevTools {
                 },
             )?;
             if engine.app.world().contains_resource::<CollisionWorld>() {
-                refresh_collision_world(engine.app.world_mut()).map_err(|error| {
-                    DevError::new(error.code(), "$.collision", error.to_string())
-                })?;
+                refresh_collision_world(engine.app.world_mut()).map_err(collision_error)?;
             }
         }
         if matches!(query, ToolsQuery::Inspect { .. } | ToolsQuery::Digest) {
@@ -863,14 +861,12 @@ fn encode(value: &impl Serialize, limit: usize) -> Result<String, serde_json::Er
 }
 
 pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) -> Option<Entity> {
-    scene.entity(id).or_else(|| {
-        scene.streamed()?;
-        world
-            .try_query::<(Entity, &SceneEntity)>()?
-            .iter(world)
-            .find(|(_, metadata)| metadata.authored_id == id && metadata.scene_id == scene.id())
-            .map(|(entity, _)| entity)
-    })
+    scene.authored_entity(world, id)
+}
+
+pub(crate) fn collision_error(error: CollisionError) -> DevError {
+    let error = error.query_error();
+    DevError::new(error.code, error.path, error.message)
 }
 
 fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, DevError> {

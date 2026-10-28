@@ -439,52 +439,5 @@ pub struct MeshBoundsView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ColliderShapeView {
-    Cuboid { half_extents: [f32; 3] },
-    Sphere { radius: f32 },
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct ColliderView {
-    pub shape: ColliderShapeView,
-    pub memberships: u32,
-    pub filter: u32,
-    pub sensor: bool,
-    pub world_valid: bool,
-    pub world_error: Option<String>,
-    pub cache_status: String,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct CollisionLimitsView {
-    pub max_colliders: usize,
-    pub max_candidate_pairs: usize,
-    pub max_sensor_pairs: usize,
-    pub max_query_candidates: usize,
-    pub max_query_hits: usize,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct CollisionWorldView {
-    pub revision: String,
-    pub frame: String,
-    pub tick: String,
-    pub colliders: usize,
-    pub active_colliders: usize,
-    pub invalid_colliders: usize,
-    pub overflow_colliders: usize,
-    pub bvh_nodes: usize,
-    pub cache_bytes: usize,
-    pub complete: bool,
-    pub placed_colliders: usize,
-    pub limits: CollisionLimitsView,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct TintView(pub [f32; 4]);

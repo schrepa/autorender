@@ -15,14 +15,14 @@ pub enum SceneColliderShape {
     Cuboid {
         #[cfg_attr(
             feature = "schema",
-            schemars(inner(range(min = engine_core::MIN_COLLIDER_EXTENT, max = engine_core::MAX_COLLIDER_EXTENT)))
+            schemars(inner(range(min = engine_collision::MIN_COLLIDER_EXTENT, max = engine_collision::MAX_COLLIDER_EXTENT)))
         )]
         half_extents: [f32; 3],
     },
     Sphere {
         #[cfg_attr(
             feature = "schema",
-            schemars(range(min = engine_core::MIN_COLLIDER_EXTENT, max = engine_core::MAX_COLLIDER_EXTENT))
+            schemars(range(min = engine_collision::MIN_COLLIDER_EXTENT, max = engine_collision::MAX_COLLIDER_EXTENT))
         )]
         radius: f32,
     },

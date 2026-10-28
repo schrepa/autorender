@@ -2,8 +2,7 @@ use engine_core::collections::HashMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
-use engine_core::terrain_data::TILE_QUADS;
-use engine_core::{DECK_DEPTH, DECK_MARGIN, DECK_RISE, PlacedShape, Terrains, Tile};
+use engine_terrain::{DECK_DEPTH, DECK_MARGIN, DECK_RISE, PlacedShape, TILE_QUADS, Terrains, Tile};
 use glam::{Mat4, Quat, Vec2, Vec3};
 
 use crate::bvh::Bvh;

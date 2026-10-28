@@ -6,20 +6,22 @@
 mod body;
 mod coupling;
 mod obstacles;
+mod settings;
 mod shapes;
 mod solver;
 mod statics;
+mod views;
 mod world;
 
 pub use body::{BodyMotion, BodyProblem, BodyStatus, BodyWater, RigidBody};
+pub use settings::{Physics, PhysicsStats};
+pub use views::{PhysicsWorldView, RigidBodyView, rigid_body_view};
 pub use world::PhysicsWorld;
 
-use bevy_app::{App, Plugin};
 use bevy_ecs::prelude::*;
-use engine_core::{FixedSimulation, FixedSimulationSystems};
+use engine_core::{Brick, Bricks, FixedSimulation, FixedSimulationSystems};
 
-#[derive(Default)]
-pub struct PhysicsPlugin;
+pub struct PhysicsBrick;
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PhysicsSystems {
@@ -27,23 +29,26 @@ pub enum PhysicsSystems {
     Obstruct,
 }
 
-impl Plugin for PhysicsPlugin {
-    fn build(&self, app: &mut App) {
-        engine_core::install(app, engine_core::Feature::Physics);
-        app.init_resource::<PhysicsWorld>()
-            .init_resource::<engine_core::WaterObstacles>()
+impl Brick for PhysicsBrick {
+    fn register(bricks: &mut Bricks) {
+        bricks
+            .settings::<Physics>()
+            .stats::<PhysicsStats>()
+            .resource::<PhysicsWorld>()
+            .resource::<engine_core::WaterObstacles>()
             .configure_sets(
                 FixedSimulation,
                 (PhysicsSystems::Step, PhysicsSystems::Obstruct)
                     .chain()
                     .in_set(FixedSimulationSystems::Simulate),
             )
-            .add_systems(
+            .systems(
                 FixedSimulation,
                 (
                     world::step.in_set(PhysicsSystems::Step),
                     obstacles::obstruct.in_set(PhysicsSystems::Obstruct),
                 ),
-            );
+            )
+            .inspector::<PhysicsWorld, PhysicsWorldView>(PhysicsWorldView::of);
     }
 }

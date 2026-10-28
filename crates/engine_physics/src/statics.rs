@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use bevy_ecs::entity::{Entity, EntityHashMap};
 use engine_collision::{CollisionLayers, CollisionWorld, Solid};
-use engine_core::TileKey;
 use engine_core::collections::HashMap;
+use engine_terrain::TileKey;
 use glam::Vec3;
 use parry3d::shape::Shape;
 use rapier3d::prelude as rp;

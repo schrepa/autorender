@@ -6,7 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
-schema = ["dep:schemars", "engine_settings/schema"]
+schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema"]
 default = []
 profiling = ["engine_profile/enabled", "engine_core/profiling"]
 attribution = ["engine_core/attribution"]
@@ -15,10 +15,12 @@ attribution = ["engine_core/attribution"]
 engine_core.workspace = true
 engine_profile.workspace = true
 engine_settings.workspace = true
-bevy_app.workspace = true
+engine_terrain.workspace = true
 bevy_ecs.workspace = true
 glam.workspace = true
 parry3d.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 schemars = { workspace = true, optional = true }
 
 [lints]

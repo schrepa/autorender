@@ -46,7 +46,7 @@ pub struct SceneInstance {
     id: String,
     revision: u64,
     world_id: WorldId,
-    entities: BTreeMap<String, Entity>,
+    entities: Arc<BTreeMap<String, Entity>>,
     assets: OwnedAssets,
     material_ids: Vec<String>,
     mesh_ids: Vec<String>,
@@ -201,6 +201,10 @@ impl SceneInstance {
         self.streamed
     }
 
+    pub(crate) fn shared_entities(&self) -> Arc<BTreeMap<String, Entity>> {
+        self.entities.clone()
+    }
+
     pub fn belongs_to(&self, world: &World) -> bool {
         self.world_id == world.id()
     }
@@ -210,7 +214,7 @@ impl SceneInstance {
         if let Some(set) = self.streamed {
             remove_streamed(world, set);
         }
-        for entity in self.entities.into_values() {
+        for &entity in self.entities.values() {
             world.despawn(entity);
         }
         if let Some(mut assets) = world.get_resource_mut::<AssetLibrary>() {
@@ -300,7 +304,7 @@ impl SceneDocument {
             id: self.id.clone(),
             revision: self.revision,
             world_id: world.id(),
-            entities,
+            entities: Arc::new(entities),
             assets: owned,
             material_ids: self
                 .materials
