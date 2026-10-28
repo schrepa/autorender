@@ -1,24 +1,43 @@
-//! Foam's field (`meshes/water_foam_field.wgsl`): the foam terrains' water
-//! makes, carries and loses as it runs, simulated live on a grid of its own
-//! finer than the water's cells, which water's shading reads as coverage
-//! (`meshes/water_foam.wgsl`'s `water_foam_held`). Each cell holds the
-//! white water covering it and the foam the water carries there. The
-//! white water is born where the water breaks, by the cook's rule
-//! (`engine_terrain`'s `breaking`), carried on as its bubbles rise out over
-//! its depth; the foam is churned up by the cook's rule for it
-//! (`water_sim.wgsl`'s `sim_churn`: where the water loses energy, plunges
-//! or jumps, along its eddy lines and where it converges) and fades over
-//! the cook's foam life. Both ride the current the water's surface runs
-//! at, the water's velocity turned outward in bends and dragged by the
-//! wind, the velocity read as water's shading reads it (`water_pixel`: the
-//! live solve's where it runs, the settled flow elsewhere), by
-//! semi-Lagrangian transport in conservative form: each cell takes the
-//! state at the point the current carried it from, by Catmull and Rom's
-//! spline kept within its nearest cells, by how much the surface there
-//! shrank or grew, so foam gathers where the current converges and piles
-//! against what stops it, dry ground and what stands up through the water.
-//! Streaks, rafts, lines along eddies and piles behind rocks come from that
-//! transport alone.
+//! Foam's field (`meshes/water_foam_field.wgsl`): what turbulence makes on
+//! terrains' water as it runs, simulated live on a grid of its own finer
+//! than the water's cells, which water's shading reads as coverage and as
+//! the slopes of its surface (`meshes/water_foam.wgsl`'s
+//! `water_foam_held`). Each cell holds the white water covering it, the
+//! foam the water carries there, the turbulence reaching its surface and
+//! the surface's own disturbance from it, its height and how fast that
+//! rises.
+//!
+//! Turbulence reaches the surface in bursts (`water_bursts.wgsl`, the rule
+//! the live solve's turbulent pushes share): below its grid the simulation
+//! knows how fast the water's eddies turn, about as large as it is deep, at
+//! least a cell, and no larger than two of the water's cells, past which its
+//! own flow carries them; each eddy reaches the surface over its size
+//! squared of it once as it turns over (surface renewal), so bursts are
+//! born at random in space and time about that rate, each drawn from a hash
+//! of the world point it is born at and the simulation's step index, the
+//! same on every host. A burst brings the surface turbulence over a patch
+//! as wide as its eddy, dying as its eddies turn over, and raises a boil
+//! there as high as its eddies' velocity head lets it. The turbulence
+//! reaching the surface lays fresh white water where the water breaks, by
+//! the cook's rule (`engine_terrain`'s `breaking`), which drains as its
+//! bubbles rise out over its depth, and churns foam where the water churns,
+//! by the cook's rule for it (`water_sim.wgsl`'s `sim_churn`: where the
+//! water loses energy, plunges or jumps, along its eddy lines and where it
+//! converges), which fades over the cook's foam life; on average as the
+//! cook lays them, so the field's mean is the settled foam past its reach,
+//! but in patches, open water between them. The boils spread as gravity
+//! waves on the field's grid and die by the water's friction and viscosity.
+//! All of it rides the current the water's surface runs at, the water's
+//! velocity turned outward in bends and dragged by the wind, the velocity
+//! read as water's shading reads it (`water_pixel`: the live solve's where
+//! it runs, the settled flow elsewhere), by semi-Lagrangian transport, each
+//! cell taking the state at the point the current carried it from, by
+//! Catmull and Rom's spline kept within its nearest cells; the white water,
+//! foam and turbulence by how much the surface there shrank or grew, so
+//! they gather where the current converges and pile against what stops it,
+//! dry ground and what stands up through the water. Patches stretch into
+//! streaks, merge, drain and break up by that transport and their decay
+//! alone, and reflections and glints travel downstream with the boils.
 //!
 //! Its cells split each of the water's cells ([`Water::simulation_cell`])
 //! [`FOAM_SPLIT`] ways along each side, 25 cm for the cook's meter cells,
@@ -27,35 +46,38 @@
 //! cells across. How many cells it holds follows from the screen alone,
 //! whatever their size: it shows out to where its cells span
 //! [`FOAM_PIXELS`] pixels seen from the detail eye, past which water shows
-//! its own foam, the field's mean, handing over as a pyramid's level does,
-//! so the cells along a side are the pixels a radian holds over
-//! FOAM_PIXELS, twice. Seen through a view 60° tall, a pixel at 1920×1080
-//! spans 1.07 mrad, so the field shows out to 117 m and holds 960 cells
-//! along a side; at 2560×1440 a pixel spans 0.80 mrad, out to 156 m over
-//! 1280 cells. A view narrower or a display larger asks for more cells; it
-//! holds no more than the display has pixels, nor than one of the device's
-//! storage bindings holds, and where that cuts it, its cells span more
-//! pixels at its reach.
+//! its own foam, the field's mean, on a surface it draws nothing on, handing
+//! over as a pyramid's level does, so the cells along a side are the pixels
+//! a radian holds over FOAM_PIXELS, twice. Seen through a view 60° tall, a
+//! pixel at 1920×1080 spans 1.07 mrad, so the field shows out to 117 m and
+//! holds 960 cells along a side; at 2560×1440 a pixel spans 0.80 mrad, out
+//! to 156 m over 1280 cells. A view narrower or a display larger asks for
+//! more cells; it holds no more than the display has pixels, nor than one
+//! of the device's storage bindings holds, and where that cuts it, its cells
+//! span more pixels at its reach.
 //!
 //! Its grid is anchored in the world: a world cell's texel is its remainder
 //! over the cells along a side, so its window, centered on the detail eye,
 //! shifts by whole cells as the eye moves and every cell it keeps keeps its
-//! state. Cells it newly covers, and foam carried in across its rim, start
-//! as the settled foam there.
+//! state. Cells it newly covers, and what is carried in across its rim,
+//! start as the settled foam there on a still surface.
 //!
-//! Each frame runs a fixed number of dispatches, none read back: the
-//! water read at every other corner of its cells (`foam_gather`), what
-//! carries and churns its foam there (`foam_currents`), the step of every
-//! cell (`foam_step`) and its texture's coarser levels (`foam_down`, one
-//! dispatch each), nine in all. It costs 27 MB at 1920×1080 (its state,
-//! twice over, 15 MB; its lattice 8 MB; its texture and levels 5 MB) and
-//! 48 MB at 2560×1440 (26, 13 and 9 MB); its passes read some 250 bytes a
-//! cell, each from the few around it, and dry cells exit early.
+//! Each frame runs a fixed number of dispatches, none read back: the water
+//! read at every other corner of its cells (`foam_gather`), what carries and
+//! churns its foam there (`foam_currents`), the bursts born at the sites
+//! those corners stand for (`foam_bursts`), the step of every cell
+//! (`foam_step`), its textures' finest level (`foam_look`) and their coarser
+//! levels (`foam_down`, one dispatch each), eleven in all. It costs 57 MB at
+//! 1920×1080 (its state, twice over, 29 MB; its lattice 8 MB; its two
+//! textures and their levels 20 MB) and 101 MB at 2560×1440 (52, 13 and 35
+//! MB); its step reads some 750 bytes a cell, each from the few around it,
+//! its other passes under a hundred, and dry cells exit early.
 
 use std::cell::Cell;
 
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::math::{clamp, max};
+use engine_core::terrain_data::shallow_water::step_seconds;
 use engine_core::{RenderTerrain, Water};
 
 use crate::bindings::{EMPTY, WATER_FOAM};
@@ -70,12 +92,20 @@ use crate::water_sim::LONGEST_FRAME;
 /// The field's cells along a side of one of the water's: four, so the
 /// lines the water's velocity draws foam into, narrower than its cells, are
 /// a few of the field's across.
-const FOAM_SPLIT: f32 = 4.0;
+const FOAM_SPLIT: u32 = 4;
+/// The field's cells across the largest eddies its bursts stand for: two of
+/// the water's cells, the shortest wave its cells resolve (Nyquist); its
+/// own flow carries larger eddies.
+const EDDY_CELLS: u32 = 2 * FOAM_SPLIT;
+/// The levels of the bursts' sites (`foam_level`): level L's sites span
+/// 2^(L+1) cells and hold eddies up to twice that, so as many levels as
+/// hold eddies EDDY_CELLS across.
+const BURST_LEVELS: u32 = EDDY_CELLS.div_ceil(4).next_power_of_two().trailing_zeros() + 1;
 /// The pixels the field's cells span, seen from the detail eye, where it
 /// hands over to the water's own foam (`water_foam_held`): two, the finest
 /// a line drawn on screen keeps without aliasing (Nyquist).
 const FOAM_PIXELS: f32 = 2.0;
-/// The levels its texture holds coarser than its cells: down to texels 64
+/// The levels its textures hold coarser than its cells: down to texels 64
 /// cells across, past the most its texels' anisotropic filtering takes
 /// along the view at its reach; its cells along a side are a whole number
 /// of the coarsest's, so every level wraps as its cells do.
@@ -92,13 +122,17 @@ const FOAM_MARGIN: u32 = MATERIAL_ANISOTROPY as u32 / FOAM_PIXELS as u32 + 1;
 /// second, two thirds of a meter), and the spline reading it there takes
 /// the two cells past that point.
 const LATTICE_MARGIN: u32 = 3;
-/// Bytes a cell of its state takes: two floats, twice over.
+/// Bytes a cell takes of each of its state's two buffers: two floats, or
+/// two words of half floats, twice over.
 const STATE_BYTES: u64 = 16;
+/// Bytes a texel of each of its textures takes: four half floats.
+const TEXEL_BYTES: u64 = 8;
 
 /// Foam's field: its passes' group layout and pipelines, the empty group
-/// standing first and the sampler water's shading reads its texture
-/// through; the grid it runs over, when the last frame was, and a count
-/// advancing whenever its texture changes.
+/// standing first and the sampler water's shading reads its textures
+/// through; the grid it runs over, when the last frame was and the
+/// simulation's step it ended in, and a count advancing whenever its
+/// textures change.
 pub(crate) struct FoamField {
     layout: GroupLayout,
     empty_layout: GroupLayout,
@@ -107,6 +141,7 @@ pub(crate) struct FoamField {
     pipelines: Option<FoamPipelines>,
     grid: Option<FoamGrid>,
     last: Option<f64>,
+    step: Option<u32>,
     generation: u64,
 }
 
@@ -114,19 +149,23 @@ pub(crate) struct FoamField {
 struct FoamPipelines {
     gather: wgpu::ComputePipeline,
     currents: wgpu::ComputePipeline,
+    bursts: wgpu::ComputePipeline,
     step: wgpu::ComputePipeline,
+    look: wgpu::ComputePipeline,
     down: wgpu::ComputePipeline,
 }
 
 /// The grid the field runs over: its cells along a side and the meters
 /// across each, its lattice's points along a side and the pixels its cells
 /// span where it hands over; its frame's uniform, its lattice, its state
-/// twice over and the texture water's shading reads, with its whole view,
-/// and its groups (the first for its finest level, which the lattice's and
-/// the step's passes take, then each coarser level's); the window its state
-/// holds (none until a step ran) and the half holding it; this frame's
-/// window and the uniform offset of the terrain whose water it runs over;
-/// and whether the frame's encoding recorded its step.
+/// twice over in two buffers, and the textures water's shading reads (its
+/// white water, foam and disturbance's slopes; and those slopes' squares),
+/// with their whole views, and its groups (the first for their finest
+/// level, which the lattice's, the bursts', the step's and the look's
+/// passes take, then each coarser level's); the window its state holds
+/// (none until a step ran) and the half holding it; this frame's window and
+/// the uniform offset of the terrain whose water it runs over; and whether
+/// the frame's encoding recorded its step.
 struct FoamGrid {
     cells: u32,
     cell: f32,
@@ -135,8 +174,11 @@ struct FoamGrid {
     frame: wgpu::Buffer,
     lattice: wgpu::Buffer,
     state: wgpu::Buffer,
+    waves: wgpu::Buffer,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    spread: wgpu::Texture,
+    spread_view: wgpu::TextureView,
     groups: Vec<wgpu::BindGroup>,
     held: Option<[i64; 2]>,
     read: u32,
@@ -185,6 +227,7 @@ impl FoamField {
             pipelines: None,
             grid: None,
             last: None,
+            step: None,
             generation: 0,
         }
     }
@@ -195,7 +238,9 @@ impl FoamField {
     /// time `seconds`: what the frame before stepped taken as its state; a
     /// grid anew where it holds too few cells or twice as many as it needs,
     /// or cells of another size; its window around the detail eye; and its
-    /// frame. Drops it where no terrain's water draws.
+    /// frame, with the simulation's steps the frame begins and ends in, each
+    /// as long as a step of the water's cells (`step_seconds`), which its
+    /// bursts are drawn by. Drops it where no terrain's water draws.
     pub(crate) fn prepare(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -214,9 +259,10 @@ impl FoamField {
                 self.generation += 1;
             }
             self.last = None;
+            self.step = None;
             return;
         };
-        let cell = settings.simulation_cell / FOAM_SPLIT;
+        let cell = settings.simulation_cell / FOAM_SPLIT as f32;
         let cells = wanted(device, seen);
         let keeps = self
             .grid
@@ -242,6 +288,15 @@ impl FoamField {
             clamp((seconds - last) as f32, 0.0, LONGEST_FRAME as f32)
         });
         self.last = Some(seconds);
+        // The simulation's steps, the frame's last and the one the frame
+        // before ended in, as an index wrapping past u32::MAX's; and the
+        // fewest a slot of bursts spans, the power of two holding the
+        // longest frame's.
+        let tick = step_seconds(settings.simulation_cell);
+        let step = (seconds / f64::from(tick)).floor() as i64 as u32;
+        let begun = self.step.unwrap_or(step);
+        self.step = Some(step);
+        let least = ((LONGEST_FRAME / f64::from(tick)).ceil() as u32).next_power_of_two();
         let held = grid.held.unwrap_or(window);
         let lattice = window.map(|first| first.div_euclid(2) - i64::from(LATTICE_MARGIN));
         let frame = FoamFrame {
@@ -258,7 +313,9 @@ impl FoamField {
                 grid.cells as i32,
             ],
             step: [cell, elapsed, wind[0], wind[1]],
-            flags: [grid.read, u32::from(grid.held.is_none()), 0, 0],
+            flags: [grid.read, u32::from(grid.held.is_none()), begun, step],
+            sites: [least, BURST_LEVELS, 0, 0],
+            eddies: [tick, grid.largest(), 0.0, 0.0],
         };
         queue.write_buffer(&grid.frame, 0, bytemuck::bytes_of(&frame));
     }
@@ -284,14 +341,17 @@ impl FoamField {
         self.pipelines = Some(FoamPipelines {
             gather: entry(meshes::foam_gather),
             currents: entry(meshes::foam_currents),
+            bursts: entry(meshes::foam_bursts),
             step: entry(meshes::foam_step),
+            look: entry(meshes::foam_look),
             down: entry(meshes::foam_down),
         });
     }
 
     /// Records the field's step over `water`, the water's group, timed by
-    /// `profiler` (`water_foam`): its lattice's water and what carries its
-    /// foam, every cell's step and its texture's coarser levels.
+    /// `profiler` (`water_foam`): its lattice's water, what carries its
+    /// foam and the bursts born there, every cell's step, and its textures'
+    /// finest level and their coarser levels.
     pub(crate) fn encode(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -311,13 +371,15 @@ impl FoamField {
         pass.set_bind_group(1, water, &[0, grid.terrain, 0]);
         pass.set_bind_group(2, &grid.groups[0], &[]);
         let points = grid.points.div_ceil(FOAM_GROUP);
-        pass.set_pipeline(&pipelines.gather);
-        pass.dispatch_workgroups(points, points, 1);
-        pass.set_pipeline(&pipelines.currents);
-        pass.dispatch_workgroups(points, points, 1);
+        for pipeline in [&pipelines.gather, &pipelines.currents, &pipelines.bursts] {
+            pass.set_pipeline(pipeline);
+            pass.dispatch_workgroups(points, points, 1);
+        }
         let cells = grid.cells.div_ceil(FOAM_GROUP);
-        pass.set_pipeline(&pipelines.step);
-        pass.dispatch_workgroups(cells, cells, 1);
+        for pipeline in [&pipelines.step, &pipelines.look] {
+            pass.set_pipeline(pipeline);
+            pass.dispatch_workgroups(cells, cells, 1);
+        }
         pass.set_pipeline(&pipelines.down);
         for (level, group) in grid.groups.iter().enumerate().skip(1) {
             pass.set_bind_group(2, group, &[]);
@@ -327,29 +389,42 @@ impl FoamField {
         grid.stepped.set(true);
     }
 
-    /// The field's texture as water's shading reads it, with its levels;
-    /// none while none runs.
+    /// The field's texture of its white water, foam and disturbance's
+    /// slopes as water's shading reads it, with its levels; none while none
+    /// runs.
     pub(crate) fn view(&self) -> Option<&wgpu::TextureView> {
         self.grid.as_ref().map(|grid| &grid.view)
     }
 
-    /// The sampler water's shading reads the field's texture through: it
-    /// repeats it, as its texels hold their world cells' remainders.
+    /// The field's texture of its disturbance's slopes' squares as water's
+    /// shading reads it, with its levels; none while none runs.
+    pub(crate) fn spread_view(&self) -> Option<&wgpu::TextureView> {
+        self.grid.as_ref().map(|grid| &grid.spread_view)
+    }
+
+    /// The sampler water's shading reads the field's textures through: it
+    /// repeats them, as their texels hold their world cells' remainders.
     pub(crate) fn sampler(&self) -> &wgpu::Sampler {
         &self.sampler
     }
 
     /// What water's uniform holds of the field for terrains' water
     /// (`water.foam`): the meters across its cells (none while none runs),
-    /// the meters its texture spans and the pixels its cells span where it
-    /// hands over.
+    /// the meters its textures span, the pixels its cells span where it
+    /// hands over and the meters across the largest eddies its bursts stand
+    /// for.
     pub(crate) fn shading(&self) -> [f32; 4] {
         self.grid.as_ref().map_or([0.0; 4], |grid| {
-            [grid.cell, grid.cell * grid.cells as f32, grid.pixels, 0.0]
+            [
+                grid.cell,
+                grid.cell * grid.cells as f32,
+                grid.pixels,
+                grid.largest(),
+            ]
         })
     }
 
-    /// A count advancing whenever the field's texture changes.
+    /// A count advancing whenever the field's textures change.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
@@ -359,13 +434,19 @@ impl FoamField {
         self.grid.as_ref().map_or(0, |grid| grid.cells)
     }
 
-    /// Bytes of its grid's buffers and texture.
+    /// Bytes of its grid's buffers and textures.
     pub(crate) fn capacity_bytes(&self) -> u64 {
+        let texels = |texture: &wgpu::Texture| -> u64 {
+            (0..texture.mip_level_count())
+                .map(|level| u64::from(texture.width() >> level).pow(2))
+                .sum()
+        };
         self.grid.as_ref().map_or(0, |grid| {
-            let texels: u64 = (0..grid.texture.mip_level_count())
-                .map(|level| u64::from(grid.texture.width() >> level).pow(2))
-                .sum();
-            grid.frame.size() + grid.lattice.size() + grid.state.size() + texels * 4
+            grid.frame.size()
+                + grid.lattice.size()
+                + grid.state.size()
+                + grid.waves.size()
+                + (texels(&grid.texture) + texels(&grid.spread)) * TEXEL_BYTES
         })
     }
 }
@@ -386,32 +467,42 @@ impl FoamGrid {
             2 * u64::from(points) * u64::from(points) * 16,
             wgpu::BufferUsages::empty(),
         );
-        let state = crate::buffers::storage(
-            device,
-            "engine/water-foam-state",
-            u64::from(cells) * u64::from(cells) * STATE_BYTES,
-            wgpu::BufferUsages::empty(),
-        );
-        let texture = crate::targets::texture_2d(
-            device,
-            "engine/water-foam-field",
-            (cells, cells),
-            1,
-            FOAM_LEVELS + 1,
-            wgpu::TextureFormat::Rgba8Unorm,
-            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let levels: Vec<wgpu::TextureView> = (0..=FOAM_LEVELS)
-            .map(|level| {
-                texture.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("engine/water-foam-level"),
-                    base_mip_level: level,
-                    mip_level_count: Some(1),
-                    ..Default::default()
+        let state_buffer = |label| {
+            crate::buffers::storage(
+                device,
+                label,
+                u64::from(cells) * u64::from(cells) * STATE_BYTES,
+                wgpu::BufferUsages::empty(),
+            )
+        };
+        let state = state_buffer("engine/water-foam-state");
+        let waves = state_buffer("engine/water-foam-waves");
+        let textures = |label| {
+            let texture = crate::targets::texture_2d(
+                device,
+                label,
+                (cells, cells),
+                1,
+                FOAM_LEVELS + 1,
+                wgpu::TextureFormat::Rgba16Float,
+                wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            let levels: Vec<wgpu::TextureView> = (0..=FOAM_LEVELS)
+                .map(|level| {
+                    texture.create_view(&wgpu::TextureViewDescriptor {
+                        label: Some("engine/water-foam-level"),
+                        base_mip_level: level,
+                        mip_level_count: Some(1),
+                        ..Default::default()
+                    })
                 })
-            })
-            .collect();
+                .collect();
+            (texture, levels)
+        };
+        let (texture, levels) = textures("engine/water-foam-field");
+        let (spread, spread_levels) = textures("engine/water-foam-spread");
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let spread_view = spread.create_view(&wgpu::TextureViewDescriptor::default());
         // The finest level's group, which writes it, reads the next coarser
         // in the finer one's place; each coarser level's reads the level
         // finer than it.
@@ -427,8 +518,17 @@ impl FoamGrid {
                         ("foam_frame", frame.as_entire_binding()),
                         crate::buffers::entry("foam_lattice", &lattice),
                         crate::buffers::entry("foam_state", &state),
+                        crate::buffers::entry("foam_waves", &waves),
                         ("foam_source", crate::pipelines::view(&levels[finer])),
                         ("foam_target", crate::pipelines::view(&levels[level])),
+                        (
+                            "foam_spread_source",
+                            crate::pipelines::view(&spread_levels[finer]),
+                        ),
+                        (
+                            "foam_spread_target",
+                            crate::pipelines::view(&spread_levels[level]),
+                        ),
                     ],
                 )
             })
@@ -441,8 +541,11 @@ impl FoamGrid {
             frame,
             lattice,
             state,
+            waves,
             texture,
             view,
+            spread,
+            spread_view,
             groups,
             held: None,
             read: 0,
@@ -451,12 +554,18 @@ impl FoamGrid {
             stepped: Cell::new(false),
         }
     }
+
+    /// The meters across the largest eddies its bursts stand for:
+    /// EDDY_CELLS of its cells.
+    fn largest(&self) -> f32 {
+        EDDY_CELLS as f32 * self.cell
+    }
 }
 
 /// The cells along a side the field's grid takes as `seen` sees it: as many
 /// as reach, from the detail eye, out to where its cells span FOAM_PIXELS
 /// pixels, with FOAM_MARGIN more each side, whatever their size, in whole
-/// texels of its texture's coarsest level; no more than the display has
+/// texels of its textures' coarsest level; no more than the display has
 /// pixels, nor than one of the device's storage bindings holds of its
 /// state, nor than a side of its textures holds.
 fn wanted(device: &wgpu::Device, seen: FoamView) -> u32 {

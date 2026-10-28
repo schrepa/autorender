@@ -934,9 +934,12 @@ tables! {
     /// Group 2 of water's pipelines: what lies behind the water, copied
     /// from the opaque scene before it draws: the depth, and the color in
     /// frames drawing the effects' targets (a placeholder in others); and
-    /// the foam field the water carries (`crate::water_foam_field`), with
-    /// its coarser levels, and the sampler repeating it (a placeholder where
-    /// none runs), which foam's field's passes write outside it.
+    /// the foam field the water carries (`crate::water_foam_field`), its
+    /// white water, foam and disturbance's slopes and those slopes'
+    /// squares, with their coarser levels, and the sampler repeating them
+    /// (placeholders where none runs), which foam's field's passes write
+    /// outside it: 15 of a fragment stage's 16 sampled textures with water's
+    /// first group's and water's (`CAMERA_WATER`, `WATER`).
     const WATER_BEHIND: Table = Table {
         label: "engine/water-behind-layout",
         serves: [SHADER @ 2],
@@ -945,15 +948,18 @@ tables! {
             texture(23, "water_scene", Float, D2, F),
             texture(24, "water_foam_field", Float, D2, F),
             sampler(25, "water_foam_sampler", Filtering, F),
+            texture(26, "water_foam_spread", Float, D2, F),
         ],
     };
 
     /// Group 2 of foam's field's passes (`meshes/water_foam_field.wgsl`),
     /// after an empty first group and the water's (`WATER`), through which
     /// they read the water as its shading does: the field's frame, its
-    /// lattice, its state twice over (the frame before's and this frame's),
-    /// and a level of the texture water's shading reads (written) and the
-    /// level finer than it (read).
+    /// lattice, its state twice over (the frame before's and this frame's)
+    /// in two buffers, and a level of each of the two textures water's
+    /// shading reads (written) and the level finer than it (read): five of
+    /// a compute stage's 8 storage buffers with the water's two, and two of
+    /// its 4 storage textures.
     const WATER_FOAM: Table = Table {
         label: "engine/water-foam-layout",
         serves: [SHADER @ 2],
@@ -962,7 +968,10 @@ tables! {
             write(33, "foam_lattice", C),
             write(34, "foam_state", C),
             texture(35, "foam_source", Float, D2, C),
-            bind(36, "foam_target", Kind::Storage(Format::Rgba8Unorm), C),
+            bind(36, "foam_target", Kind::Storage(Rgba16Float), C),
+            write(37, "foam_waves", C),
+            texture(38, "foam_spread_source", Float, D2, C),
+            bind(39, "foam_spread_target", Kind::Storage(Rgba16Float), C),
         ],
     };
 
