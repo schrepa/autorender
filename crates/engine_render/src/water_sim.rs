@@ -147,13 +147,8 @@ struct Bed {
 impl Bed {
     fn new(device: &wgpu::Device) -> Self {
         let empty_layout = crate::pipelines::layout(device, &EMPTY);
-        let empty = crate::pipelines::group(
-            device,
-            "engine/water-bed-empty",
-            &EMPTY,
-            &empty_layout,
-            &[],
-        );
+        let empty =
+            crate::pipelines::group(device, "engine/water-bed-empty", &EMPTY, &empty_layout, &[]);
         Self {
             empty_layout,
             empty,
@@ -412,7 +407,11 @@ impl WaterSim {
                 }
             } else {
                 let layouts = (layout, &self.bed.layout);
-                self.window = Some(SimWindow::new((device, queue, layouts), live.window, fitted));
+                self.window = Some(SimWindow::new(
+                    (device, queue, layouts),
+                    live.window,
+                    fitted,
+                ));
                 self.generation += 1;
             }
         }
@@ -578,11 +577,7 @@ impl SimWindow {
     /// and its group raising its bed, of the layout `bed`; its slots take
     /// its blocks a few a frame before it runs.
     fn new(
-        (device, queue, (layout, bed)): (
-            &wgpu::Device,
-            &wgpu::Queue,
-            (&GroupLayout, &GroupLayout),
-        ),
+        (device, queue, (layout, bed)): (&wgpu::Device, &wgpu::Queue, (&GroupLayout, &GroupLayout)),
         source: &Arc<WaterWindow>,
         fitted: Arc<WaterWindow>,
     ) -> Self {

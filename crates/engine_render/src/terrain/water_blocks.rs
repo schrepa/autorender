@@ -258,7 +258,10 @@ impl WaterBlocks {
             targets: pass.surface.targets(),
             blocks: [self.resident(), self.dropped],
             subdivided: pass.surface.water_stats(),
-            ground: pass.pipelines.surface_group().map(|group| (&pass.pipelines.layout, group)),
+            ground: pass
+                .pipelines
+                .surface_group()
+                .map(|group| (&pass.pipelines.layout, group)),
         })
     }
 
