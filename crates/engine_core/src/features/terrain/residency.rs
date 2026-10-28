@@ -64,6 +64,10 @@ pub(super) struct TerrainState {
     /// The solids its surface's assets' objects stand as, by asset
     /// ([`PlacementAsset::solid`]), which its settled water flows around.
     pub(super) solids: Arc<[Option<Solid>]>,
+    /// What raises its settled water's bed, hashed: its surface materials'
+    /// relief and the height maps that relief reads, which its settled
+    /// water's records are keyed by.
+    pub(super) relief: u128,
     /// The ranges its levels' tiles streamed by at the last update.
     pub(super) ranges: Vec<f32>,
     /// The layers tiles generate from once its bakes are done, the rivers
@@ -151,6 +155,7 @@ impl TerrainState {
             collision: Vec::new(),
             standing: 0,
             solids: Arc::from(Vec::new()),
+            relief: 0,
             ranges: Vec::new(),
             baked: None,
             baked_rivers: Arc::from(Vec::new()),

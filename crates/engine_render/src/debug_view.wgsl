@@ -34,7 +34,6 @@ const DEBUG_VIEW_WATER_FROUDE: u32 = 14u;
 const DEBUG_VIEW_WATER_TURBULENCE: u32 = 15u;
 const DEBUG_VIEW_WATER_WHITE: u32 = 16u;
 const DEBUG_VIEW_WATER_REACH: u32 = 17u;
-const DEBUG_VIEW_WATER_FOAM: u32 = 18u;
 const DEBUG_VIEW_WATER_SPAN: u32 = 19u;
 const DEBUG_VIEW_WATER_EDDIES: u32 = 20u;
 const DEBUG_VIEW_WATER_ROUGHNESS: u32 = 21u;
@@ -116,11 +115,6 @@ const DEBUG_WATER_TURBULENCE = array<vec3<f32>, 3>(
 // Water without white water, which turns white as white water is born:
 // its red is the white water's share.
 const DEBUG_WATER_CLEAR = vec3<f32>(0.0, 0.12, 0.35);
-// The foam water carries, as a share of the most it carries: dark brown,
-// sand, white.
-const DEBUG_WATER_FOAMS = array<vec3<f32>, 3>(
-    vec3<f32>(0.1, 0.07, 0.05), vec3<f32>(0.72, 0.58, 0.36), vec3<f32>(1.0, 0.98, 0.92),
-);
 // How far across its water body is, by its logarithm from the narrowest
 // span the words tell apart to the widest (`engine_terrain`'s
 // `WATER_SPAN_LEAST`, `WATER_SPAN_MOST`), its byte's DEBUG_SPAN_STEPS steps
@@ -383,8 +377,8 @@ fn debug_eddies_color(froude: f32) -> vec3<f32> {
 // `view` shows them: its depth and speed (`ids`' object word), and its
 // Froude number and its eddies' (`numbers.x`), each pair half floats; its
 // span's step and roughness, a byte each (its detail word); its
-// turbulence, white water and carried foam, a byte each, and its reach in
-// the top byte (`numbers.y`).
+// turbulence and white water, a byte each, and its reach in the top byte
+// (`numbers.y`).
 fn debug_water_color(view: u32, ids: vec4<u32>, numbers: vec2<u32>) -> vec3<f32> {
     let motion = unpack2x16float(ids.y);
     let body = unpack4x8unorm(ids.z);
@@ -405,9 +399,6 @@ fn debug_water_color(view: u32, ids: vec4<u32>, numbers: vec2<u32>) -> vec3<f32>
         }
         case DEBUG_VIEW_WATER_WHITE: {
             return mix(DEBUG_WATER_CLEAR, vec3<f32>(1.0), state.y);
-        }
-        case DEBUG_VIEW_WATER_FOAM: {
-            return debug_ramp(DEBUG_WATER_FOAMS, state.z);
         }
         case DEBUG_VIEW_WATER_SPAN: {
             let steps = round(body.x * (DEBUG_SPAN_STEPS + 1.0));
@@ -461,8 +452,7 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
         }
         case DEBUG_VIEW_WATER_DEPTH, DEBUG_VIEW_WATER_SPEED, DEBUG_VIEW_WATER_FROUDE,
             DEBUG_VIEW_WATER_TURBULENCE, DEBUG_VIEW_WATER_WHITE, DEBUG_VIEW_WATER_REACH,
-            DEBUG_VIEW_WATER_FOAM, DEBUG_VIEW_WATER_SPAN, DEBUG_VIEW_WATER_EDDIES,
-            DEBUG_VIEW_WATER_ROUGHNESS: {
+            DEBUG_VIEW_WATER_SPAN, DEBUG_VIEW_WATER_EDDIES, DEBUG_VIEW_WATER_ROUGHNESS: {
             // The water's views: terrains' water, live or settled, against
             // everything else, unlit.
             color = select(DEBUG_OTHER, DEBUG_SKY, kind == DEBUG_KIND_SKY);

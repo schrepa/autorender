@@ -333,9 +333,8 @@ impl WaterPass {
     /// opaque `depth` and, when `refracts`, the color it copies; seen from
     /// `eye`, and by the detail eye and the display as `seen` says, which
     /// size and place the particles' window, the wind `wind` dragging the
-    /// water running live and the particles riding it, its waves and the
-    /// live water's steps at the simulation time `seconds` the frame
-    /// presents; `None` when none of it draws.
+    /// particles riding the water, its waves and the live water's steps at
+    /// the simulation time `seconds` the frame presents; `None` when none of it draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -357,9 +356,9 @@ impl WaterPass {
             return None;
         }
         // Rivers running live where a terrain's window stands, pushed by the
-        // solids standing in it, the wind dragging their surface, set up
-        // from the ground, its materials and the tiles' water through the
-        // terrain group at its terrain's uniform.
+        // solids standing in it, set up from the ground, its materials and
+        // the tiles' water through the terrain group at its terrain's
+        // uniform.
         let live = terrains
             .iter()
             .find_map(|terrain| {
@@ -381,7 +380,7 @@ impl WaterPass {
                 })
             })
             .filter(|_| settings.enabled);
-        self.sim.prepare(device, queue, live, (wind, seconds));
+        self.sim.prepare(device, queue, live, seconds);
         let (running, sim_generation) = self.sim.drawn();
         // The square of the window that runs: its first corner, the meters
         // across a cell and its cells along a side; its datum, the slots its

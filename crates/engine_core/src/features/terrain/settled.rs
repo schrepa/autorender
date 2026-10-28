@@ -12,7 +12,7 @@
 //! ([`SteadiedJob`]) reading the tile's record and the shared records
 //! around it: a resident level-0 tile's water stands as its record and its
 //! neighbors' say ([`engine_terrain::Tile::steadied`]), a resident coarser
-//! tile's runs and foams as the summaries under it and around it say
+//! tile's runs as the summaries under it and around it say
 //! ([`engine_terrain::Tile::flowing`]). It is asked for once everything it
 //! reads is here, or known never to come, and kept by the keys of what it
 //! reads, so it is made again only when one of them changes, as after an
@@ -186,15 +186,16 @@ struct Watering {
 /// Water settling on the GPU, which terrains share: the hash of the
 /// renderer's code settling it, which its records are keyed by with their
 /// tiles' own ([`Terrains::set_water_settling`]), and whether a renderer
-/// settles it here; the starts handed to the renderer, each with the keys
-/// of the records it makes, until its host takes them; and what the
-/// renderer settled, by key, for the frame's terrains to take (each a
-/// record, or why it failed).
+/// settles it here; the starts handed to the renderer, each with the id
+/// renderers key its terrain by, through whose materials the renderer
+/// raises its bed, and the keys of the records it makes, until its host
+/// takes them; and what the renderer settled, by key, for the frame's
+/// terrains to take (each a record, or why it failed).
 #[derive(Default)]
 pub(super) struct SettleQueue {
     pub(super) source: [u8; 32],
     pub(super) settles: bool,
-    asked: Vec<(Vec<RecordKey>, Arc<SettleStart>)>,
+    asked: Vec<(u64, Vec<RecordKey>, Arc<SettleStart>)>,
     settled: Vec<(RecordKey, Result<Vec<u8>, String>)>,
 }
 
@@ -222,9 +223,11 @@ impl Terrains {
     }
 
     /// The starts of water to settle handed to the renderer since the last
-    /// call, each with the keys of the records it makes, in the order it
-    /// keeps their tiles.
-    pub fn take_water_settles(&mut self) -> Vec<(Vec<RecordKey>, Arc<SettleStart>)> {
+    /// call, each with the id renderers key its terrain by
+    /// ([`crate::RenderTerrain::id`]), through whose materials it raises
+    /// its bed, and the keys of the records it makes, in the order it keeps
+    /// their tiles.
+    pub fn take_water_settles(&mut self) -> Vec<(u64, Vec<RecordKey>, Arc<SettleStart>)> {
         std::mem::take(&mut self.settling.asked)
     }
 
@@ -238,8 +241,8 @@ impl Terrains {
 /// A terrain's settled water: the cells' size its records hold; the
 /// level-0 tiles its bake's water reaches, found over its baked layers,
 /// and the cook's regions over them (each a rectangle of tiles, with its
-/// watered ones); the generation of tiles and solids its keys were found
-/// for, and each watered tile's records' keys then; the records held whole,
+/// watered ones); the generation of tiles, the solids and the relief its
+/// keys were found for, and each watered tile's records' keys then; the records held whole,
 /// decoded, and those shared whole with workers, and the record of each
 /// tile whose head (its summary) is shared, each by its key; the records
 /// asked for, those that failed (at the frame they did) and those no host
@@ -259,7 +262,7 @@ pub(super) struct Settled {
     cell: f32,
     watered: Option<(Arc<Layers>, Arc<[TileKey]>)>,
     regions: Arc<[([u32; 4], Vec<TileKey>)]>,
-    checked: Option<(Generation, Arc<[Option<Solid>]>)>,
+    checked: Option<(Generation, Arc<[Option<Solid>]>, u128)>,
     records: TileMap<Keys>,
     pub(super) held: TileMap<(Arc<SteadyWater>, RecordKey)>,
     shared: TileMap<RecordKey>,
@@ -456,9 +459,10 @@ impl Settled {
 impl TerrainState {
     /// The keys of level-0 tile `key`'s settled water's records over the
     /// recipe shared as `recipe`, under the edits reaching the square it
-    /// settles over alone, its objects standing as its solids, in cells
-    /// `cell` meters across, settled by code hashing to `settling`: over the
-    /// region of `tiles` (its region of the cook's), and alone.
+    /// settles over alone, its objects standing as its solids, its bed raised
+    /// by its relief, in cells `cell` meters across, settled by code hashing
+    /// to `settling`: over the region of `tiles` (its region of the cook's),
+    /// and alone.
     fn water_records(
         &self,
         recipe: &str,
@@ -483,6 +487,7 @@ impl TerrainState {
                 })
                 .collect(),
             solids: self.solids.to_vec(),
+            relief: self.relief.to_le_bytes(),
             cell,
             tiles,
         };
@@ -661,9 +666,9 @@ fn beside(pyramid: &Pyramid, near: &[TileKey], watered: &[TileKey]) -> Vec<TileK
 /// bake's water (what it asked for cancelled, `slots` given theirs back,
 /// its shares let go of into `released`), anew over other baked layers or
 /// cells' size, and each watered tile's record's key found again under
-/// other edits or solids (keyed by `queue`'s settling), the records asked
-/// for under others asked for no more and the parts made with other solids
-/// dropped. The recipe its records settle over and the level-0 tiles its
+/// other edits, solids or relief (keyed by `queue`'s settling), the records
+/// asked for under others asked for no more and the parts made with other
+/// solids dropped. The recipe its records settle over and the level-0 tiles its
 /// bake's water reaches, in key order.
 fn refresh(
     state: &mut TerrainState,
@@ -739,7 +744,11 @@ fn refresh(
         .watered
         .as_ref()
         .map(|(_, keys)| keys.clone())?;
-    let checked = (state.store.generation(), Arc::clone(&state.solids));
+    let checked = (
+        state.store.generation(),
+        Arc::clone(&state.solids),
+        state.relief,
+    );
     if state.settled.checked.as_ref() != Some(&checked) {
         let cell = state.settled.cell;
         let mut records = TileMap::default();
@@ -755,7 +764,7 @@ fn refresh(
         if settled
             .checked
             .as_ref()
-            .is_some_and(|(_, solids)| *solids != checked.1)
+            .is_some_and(|(_, solids, _)| *solids != checked.1)
         {
             for (_, part) in settled.parts.iter() {
                 if let Part::Asked(id) = part {
@@ -1173,6 +1182,7 @@ fn take_parts(
     queue: &mut SettleQueue,
     frame: u64,
 ) {
+    let terrain = state.render_id();
     let settled = &mut state.settled;
     let mut broken = Vec::new();
     for key in settled.parts.keys() {
@@ -1240,7 +1250,7 @@ fn take_parts(
                         settled.asked.insert(key, asked);
                     }
                 }
-                queue.asked.push((making.records, Arc::new(start)));
+                queue.asked.push((terrain, making.records, Arc::new(start)));
             }
             Err(error) => {
                 settled.fail(&making.region.kept, frame);

@@ -7,7 +7,7 @@
 //! sources' data, so what water does matches what it shows. The other way,
 //! the solids standing in the world ([`WaterObstacles`]) hold water back
 //! where they rest on a river's bed, and push the water running live around
-//! the camera toward their own velocity, churning its foam.
+//! the camera toward their own velocity.
 
 use bevy_ecs::prelude::*;
 use glam::{Mat3, Vec3};

@@ -1,19 +1,21 @@
 //! The shallow-water scheme's passes (`water_sim.wgsl`) and the buffers
 //! they run over: slots side by side, each a pool of blocks of cells
 //! ([`StoredBlocks`]) with its table, and the blocks' ground, cells, faces'
-//! depths (between steps, the currents their cells' surfaces run at),
-//! fluxes, sources, waves, outflow's shares, seconds and sums. The
-//! square running live around the detail eye (`water_sim.rs`) is one slot
-//! storing every block of it, with a ring past its edges, which the GPU
-//! sets up (`meshes/water_setup.wgsl`), the bursts of turbulence and the
-//! solids standing in its
-//! water, which push it before each step, the steps its frame has run, and
-//! its cells' looks in place of sums: the settled water at each, which its
-//! rim is pulled back to, and the water as water's pass draws it; regions
-//! settling for their tiles' records (`water_settle.rs`) fill as many as
-//! fit, each storing the blocks its water can reach, and no burst or solid
-//! touches them. One scheme runs both: what sets them apart is each slot's
-//! flags ([`SimSlot`]).
+//! depths (between steps, the pushes of turbulence's bursts), fluxes,
+//! sources, waves, outflow's shares, seconds, its steps' count and sums. One
+//! scheme runs every slot, on the live cells over the same bed, the bursts
+//! of turbulence pushing its water before each step of the same seconds
+//! wherever they stir it: the square running live around the detail eye
+//! (`water_sim.rs`) is one slot storing every block of it, with a ring past
+//! its edges, which the GPU sets up (`meshes/water_setup.wgsl`), the solids
+//! standing in its water, which push it before each step, and its cells'
+//! looks in place of sums: the settled water at each, which its rim is
+//! pulled back to, and the water as water's pass draws it; regions settling
+//! for their tiles' records (`water_settle.rs`) fill as many as fit, each
+//! storing the blocks its water can reach, their cells stepping by their
+//! own seconds until their water settles and then stirred as the live
+//! square is for their last looks, and no solid touches them. What sets
+//! them apart is each slot's flags ([`SimSlot`]).
 
 use bytemuck::Zeroable;
 use engine_core::terrain_data::shallow_water::CELL_MEANS;
@@ -48,9 +50,7 @@ pub(crate) struct Pipelines {
     touch: wgpu::ComputePipeline,
     burst: wgpu::ComputePipeline,
     push: wgpu::ComputePipeline,
-    drift: wgpu::ComputePipeline,
-    churn: wgpu::ComputePipeline,
-    churned: wgpu::ComputePipeline,
+    ended: wgpu::ComputePipeline,
     tally: wgpu::ComputePipeline,
     activity: wgpu::ComputePipeline,
     look: wgpu::ComputePipeline,
@@ -90,9 +90,7 @@ impl Kernels {
                 touch: entry(water_sim::sim_touch),
                 burst: entry(water_sim::sim_burst),
                 push: entry(water_sim::sim_push),
-                drift: entry(water_sim::sim_drift),
-                churn: entry(water_sim::sim_churn),
-                churned: entry(water_sim::sim_churned),
+                ended: entry(water_sim::sim_ended),
                 tally: entry(water_sim::sim_tally),
                 activity: entry(water_sim::sim_activity),
                 look: entry(water_sim::sim_look),
@@ -153,9 +151,9 @@ impl Capacity {
 }
 
 /// The entries a slot of `capacity` takes in each buffer: its cells, its
-/// ground, its faces, its table, its steps (the live square's with the
-/// count of the steps its frame has run), its sums (the live square's
-/// looks) and, where it has one, its ring.
+/// ground, its faces, its table, its steps (with the count of the steps its
+/// frame has run), its sums (the live square's looks) and, where it has
+/// one, its ring.
 struct Entries {
     cells: u64,
     ground: u64,
@@ -175,7 +173,7 @@ fn entries(capacity: Capacity, live: bool) -> Entries {
         ground: blocks * BLOCK_GROUND as u64,
         faces: 2 * cells + u64::from(capacity.edges),
         table: u64::from(capacity.mapped) + blocks,
-        steps: cells + 2 * blocks + u64::from(live),
+        steps: cells + 2 * blocks + 1,
         averages: if live {
             SIM_LIVE_LOOKS * cells
         } else {
@@ -275,7 +273,12 @@ impl SlotBuffers {
             crate::buffers::storage(device, label, bytes, extra)
         };
         let none = wgpu::BufferUsages::empty();
-        let ground = storage("engine/water-sim-ground", all * entries.ground * 4, none);
+        // Settling reads its regions' ground back as its GPU raised it.
+        let ground = storage(
+            "engine/water-sim-ground",
+            all * entries.ground * 4,
+            wgpu::BufferUsages::COPY_SRC,
+        );
         let cells = storage("engine/water-sim-cells", all * 2 * entries.cells * 16, none);
         let depths = storage("engine/water-sim-depths", all * entries.cells * 8, none);
         let fluxes = storage("engine/water-sim-fluxes", all * entries.faces * 16, none);
@@ -367,39 +370,30 @@ impl SlotBuffers {
     }
 
     /// Writes each stage's frame: the stage, the slots' count, the blocks
-    /// a slot's pool holds and those its table maps, the cells rivers
+    /// a slot's pool holds and those its table maps, and the cells rivers
     /// bring water to and the faces along its west and south edges a slot
-    /// holds, `wind`, the free wind over the water (meters a second along x
-    /// and z), which drags its surface and the foam riding it, and `live`,
-    /// the live square's first cell on the terrain's lattice of its cells
-    /// (an `i32`'s bits along x and z) and the index of its frame's first
-    /// step (none settling); the live square's count of the steps its frame
-    /// has run starts at none.
-    pub(crate) fn write_frames(&self, queue: &wgpu::Queue, wind: [f32; 2], live: [u32; 3]) {
+    /// holds; each slot's count of the steps its frame has run starts at
+    /// none.
+    pub(crate) fn write_frames(&self, queue: &wgpu::Queue) {
         let capacity = self.capacity;
         for (stage, buffer) in self.frames.iter().enumerate() {
             let frame = SimFrame {
                 stage: [stage as u32, self.slots, capacity.blocks, capacity.mapped],
                 inputs: [capacity.sources, capacity.edges, 0, 0],
-                wind: [wind[0], wind[1], 0.0, 0.0],
-                live: [live[0], live[1], live[2], 0],
             };
             queue.write_buffer(buffer, 0, bytemuck::bytes_of(&frame));
         }
-        if self.live {
-            let count = (self.held() + 2 * u64::from(self.capacity.blocks)) * 8;
-            queue.write_buffer(&self.steps, count, bytemuck::cast_slice(&[0.0_f32; 2]));
+        let counted = self.held() + 2 * u64::from(capacity.blocks);
+        for slot in 0..self.slots {
+            let at = (self.steps_at(slot) + counted) * 8;
+            queue.write_buffer(&self.steps, at, bytemuck::cast_slice(&[0.0_f32; 2]));
         }
     }
 
     /// Writes the slots' squares.
     pub(crate) fn write_squares(&self, queue: &wgpu::Queue, squares: &[SimSlot]) {
         let mut all = SimSlots {
-            slot: [SimSlot {
-                shape: [0; 4],
-                step: [0.0; 4],
-                blocks: [0; 4],
-            }; SIM_SLOTS],
+            slot: [SimSlot::zeroed(); SIM_SLOTS],
         };
         for (slot, square) in all.slot.iter_mut().zip(squares) {
             *slot = *square;
@@ -408,9 +402,8 @@ impl SlotBuffers {
     }
 
     /// Writes the solids standing in the live square's water this frame,
-    /// which push it before each step its frame runs, the foam it carries
-    /// piling against them; none touch it where `touches` holds none, its
-    /// uniform then holding none for the foam's carry to find.
+    /// which push it before each step its frame runs; none touch it where
+    /// `touches` holds none, its uniform then holding none.
     pub(crate) fn write_touches(&mut self, queue: &wgpu::Queue, touches: Option<&SimTouches>) {
         self.touched = touches.map(|touches| [touches.blocks[2], touches.blocks[3]]);
         let none = SimTouches::zeroed();
@@ -508,27 +501,27 @@ fn inputs(device: &wgpu::Device, (capacity, slots): (Capacity, u32), live: bool)
 /// Encodes `steps` steps of every slot of `buffers` into `pass`, with
 /// `pipelines`, over the `blocks` the pool of the slot stepping storing the
 /// most holds, whose rivers bring water to up to `sourced` cells a slot:
-/// each step, the live square's bursts of turbulence drawn and pushing its
-/// water, then the solids standing in its water pushing it where any do;
-/// its blocks that step (where `sparse` slots run), its two stages (each
-/// finding the faces' fluxes, the share of its outflow each cell can give
-/// and updating the cells, each slot stepping locally finding its cells'
-/// seconds from the first's waves), what rivers bring, the current each
-/// cell's surface runs at and the foam riding it; and, where slots step
-/// locally (settling, which sums its water), each cell's water into its
-/// sums.
+/// each step, where slots burst (`bursting`), the bursts of turbulence drawn
+/// and pushing their water, then the solids standing in the live square's
+/// water pushing it where any do; where slots settle (`settling`: sparse,
+/// some stepping by their cells' own seconds, summing their water), the
+/// blocks that step; the two stages (each finding the faces' fluxes, the
+/// share of its outflow each cell can give and updating the cells, each
+/// slot stepping locally finding its cells' seconds from the first's
+/// waves), what rivers bring and the step's end; and, where slots settle,
+/// each cell's water into its sums.
 pub(crate) fn encode_steps(
     pass: &mut wgpu::ComputePass<'_>,
     pipelines: &Pipelines,
     buffers: &SlotBuffers,
-    (steps, sourced, local, sparse): (u32, u32, bool, bool),
+    (steps, sourced, settling, bursting): (u32, u32, bool, bool),
     blocks: u32,
 ) {
     let [cells_x, cells_z] = grid(blocks);
     let [blocks_x, blocks_z] = grid(blocks.div_ceil(BLOCK_CELLS as u32));
     let slots = buffers.slots;
     for _ in 0..steps {
-        if buffers.live {
+        if bursting {
             pass.set_bind_group(0, &buffers.groups[0], &[]);
             pass.set_pipeline(&pipelines.burst);
             pass.dispatch_workgroups(cells_x, cells_z, slots);
@@ -540,7 +533,7 @@ pub(crate) fn encode_steps(
             pass.set_pipeline(&pipelines.touch);
             pass.dispatch_workgroups(touched_x, touched_z, 1);
         }
-        if sparse {
+        if settling {
             pass.set_bind_group(0, &buffers.groups[0], &[]);
             pass.set_pipeline(&pipelines.activity);
             pass.dispatch_workgroups(blocks_x, blocks_z, slots);
@@ -549,7 +542,7 @@ pub(crate) fn encode_steps(
             pass.set_bind_group(0, group, &[]);
             pass.set_pipeline(&pipelines.exchange);
             pass.dispatch_workgroups(cells_x, cells_z, slots);
-            if stage == 0 && local {
+            if stage == 0 && settling {
                 pass.set_pipeline(&pipelines.waves);
                 pass.dispatch_workgroups(cells_x, cells_z, slots);
                 pass.set_pipeline(&pipelines.seconds);
@@ -564,13 +557,9 @@ pub(crate) fn encode_steps(
             pass.set_pipeline(&pipelines.source);
             pass.dispatch_workgroups(sourced.div_ceil(WATER_SIM_SOURCE_GROUP), 1, slots);
         }
-        pass.set_pipeline(&pipelines.drift);
+        pass.set_pipeline(&pipelines.ended);
         pass.dispatch_workgroups(cells_x, cells_z, slots);
-        pass.set_pipeline(&pipelines.churn);
-        pass.dispatch_workgroups(cells_x, cells_z, slots);
-        pass.set_pipeline(&pipelines.churned);
-        pass.dispatch_workgroups(cells_x, cells_z, slots);
-        if local {
+        if settling {
             pass.set_pipeline(&pipelines.tally);
             pass.dispatch_workgroups(cells_x, cells_z, slots);
         }

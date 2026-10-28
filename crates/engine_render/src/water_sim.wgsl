@@ -7,29 +7,25 @@
 // Bollermann et al. reconstruct it, 2013) and in time (Heun's two stages),
 // Kurganov and Lin's anti-diffusion (2007) keeping shear from smearing,
 // friction from each cell's bed (Ferguson's variable-power law, 2007, or
-// its grains alone where steps or knobs are carved into it) solved exactly
-// in each implicit step, gravity along the bed's slope, each cell's outflow
-// kept to the water it holds within a stage, and velocities desingularized
-// where the water thins out (`engine_terrain::shallow_water` holds the
-// constants these mirror). Each cell holds its water's surface, its flow
-// along x and z (square meters a second) and its foam. The ground stands at
-// the cells' corners, with the level a lake holds each cell at, if one
-// does, each cell's bed's roughness, and the share of each covered by the
-// solids standing in it with the height their tops stand at: lakes stand
-// still, taking the water that runs into them and giving none, and solids
-// block the flow through a cell's faces by the share of the cell they
-// cover, as deep as they stand in its water (`sim_opening`), so it turns
-// around them. A stage finds the flux through every face, each cell
-// reconstructing its water at its own faces and at its neighbors' beside
-// them (computing them twice costs less than carrying them through memory),
-// then the share of its outflow each cell can give, and updates every cell;
-// rivers bring their water to their cells after each step. The water
-// carries foam: it churns it up where it loses energy fast enough to break
-// (as it runs, where it plunges and jumps, along its eddy lines and where
-// it piles up), the current its surface runs at carries it off conserved,
-// turned outward in bends and dragged by the wind, so it gathers where that
-// surface converges, along the banks it is pushed against and on eddy
-// lines, and it fades as its bubbles break.
+// its grains finer than a cell alone where the bed holds relief as its
+// shape) solved exactly in each implicit step, gravity along the bed's
+// slope, each cell's outflow kept to the water it holds within a stage, and
+// velocities desingularized where the water thins out
+// (`engine_terrain::shallow_water` holds the constants these mirror). Each
+// cell holds its water's surface and its flow along x and z (square meters
+// a second). The ground stands at the cells' corners, raised by the relief
+// of its materials at the cells' spacing (`meshes/water_setup.wgsl`), with
+// the level a lake holds each cell at, if one does, each cell's bed's
+// roughness, and the share of each covered by the solids standing in it with
+// the height their tops stand at: lakes stand still, taking the water that
+// runs into them and giving none, and solids block the flow through a
+// cell's faces by the share of the cell they cover, as deep as they stand
+// in its water (`sim_opening`), so it turns around them. A stage finds the
+// flux through every face, each cell reconstructing its water at its own
+// faces and at its neighbors' beside them (computing them twice costs less
+// than carrying them through memory), then the share of its outflow each
+// cell can give, and updates every cell; rivers bring their water to their
+// cells after each step.
 //
 // Over any bed, however steep its relief, the scheme holds what the water's
 // shapes come from: no cell's depth falls below none, as its faces' water
@@ -39,65 +35,64 @@
 // ground balances its faces' pressure exactly (`sim_pull`), a waterline's
 // water lying flat against it (`sim_sides`), so it needs no hydrostatic
 // reconstruction of its own (Audusse et al. 2004); cells wet and dry at
-// their waterlines; and its steps keep within the waves' reach: the live
-// square's fixed step lets water no faster than SIM_FASTEST, with the
-// waves of water five meters deep, cross no more than SIM_COURANT of a cell
-// (`engine_terrain::shallow_water::BOUNDING_SPEED`), and a settling
-// region's cells step as their own waves allow. So over the stones the live
-// square's bed holds, fast water stands in waves, pillows over those under
-// it, falls into holes behind them and jumps where it slows as the
-// equations say, and a lake beside a stone standing out of it stays still.
+// their waterlines; and its steps keep within the waves' reach: the fixed
+// step lets water no faster than SIM_FASTEST, with the waves of water five
+// meters deep, cross no more than SIM_COURANT of a cell
+// (`engine_terrain::shallow_water::BOUNDING_SPEED`), and a cell stepping by
+// its own seconds steps as its own waves allow. So over the stones its bed
+// holds, fast water stands in waves, pillows over those under it, falls
+// into holes behind them and jumps where it slows as the equations say, and
+// a lake beside a stone standing out of it stays still.
 //
 // Every dispatch runs rectangles side by side, the third dimension counting
 // them, each a slot of the buffers with its own cells along x and z, cell
-// size, steps and edges (`SimSlot`). A slot stores its rectangle's cells by
-// blocks of a workgroup's (`engine_terrain::StoredBlocks`), only the blocks
-// its water can reach, in a pool its table finds each block in, and a
-// dispatch runs a workgroup for each block of the pool. The edges of the
-// blocks it stores are open, as a settling rectangle's edges are: water
-// running over them toward a block it does not store leaves, and none
-// comes back.
-// - the square running live around the detail eye (`water_sim.rs`), in
-//   cells finer than the settled water's (`engine_core`'s `live_cell`),
-//   over ground the relief of its materials raises at its cells' spacing,
-//   the stones and cobbles the ground draws, set up on the GPU from the
-//   ground and the tiles' water (`meshes/water_setup.wgsl`), stores every
-//   block of it, each in the slot of its place on the terrain's lattice of
-//   blocks, and steps
-//   every cell by the same seconds, and over its edges water flows to and
-//   from the cells just past them, which stand as the water settled there
-//   (the ring), and comes in as the water settled there brings it: water
-//   left alone stays as it settled. Before each step turbulence bursts in
-//   its water and pushes it (`sim_burst`, `sim_push`): random pushes as
-//   strong as its eddies run and as wide as they are, at the rate they
-//   turn over, so unsteady eddies and surges stir it where it runs
-//   turbulent, about its own mean; and the solids standing in its water
-//   push it (`sim_touch`): toward their own velocity where they fill its
-//   depth, so it flows around what stands still and is pushed ahead of
-//   what moves, its wakes, bow waves and rings coming out of the
-//   shallow-water equations themselves, and churning its foam where they
-//   pass it fast enough to tear air in, the foam it carries piling against
-//   what stands up through its surface; the scene's wind drags its surface;
+// size, steps, edges and place on the terrain's lattice of its cells
+// (`SimSlot`). A slot stores its rectangle's cells by blocks of a
+// workgroup's (`engine_terrain::StoredBlocks`), only the blocks its water
+// can reach, in a pool its table finds each block in, and a dispatch runs a
+// workgroup for each block of the pool. The edges of the blocks it stores
+// are open, as a settling rectangle's edges are: water running over them
+// toward a block it does not store leaves, and none comes back. One model
+// runs every slot, on the live cells (`engine_core`'s `live_cell`), over the
+// same bed, and turbulence bursts in each slot's water before its every
+// step of the same seconds (`sim_burst`, `sim_push`): random pushes as
+// strong as its eddies run and as wide as they are, at the rate they turn
+// over, each drawn by the one rule for bursts from its cell on the
+// terrain's lattice and the step's index (`water_bursts.wgsl`), so unsteady
+// eddies and surges stir it where it runs turbulent, about its own mean.
+// What sets slots apart is where their water comes from and where it goes:
+// - the square running live around the detail eye (`water_sim.rs`), set up
+//   on the GPU from the ground and the tiles' water
+//   (`meshes/water_setup.wgsl`), stores every block of it, each in the slot
+//   of its place on the terrain's lattice of blocks, and steps every cell
+//   by the same seconds; over its edges water flows to and from the cells
+//   just past them, which stand as the water settled there (the ring), and
+//   comes in as the water settled there brings it: water left alone stays
+//   as it settled. The solids standing in its water push it (`sim_touch`):
+//   toward their own velocity where they fill its depth, so it flows around
+//   what stands still and is pushed ahead of what moves, its wakes, bow
+//   waves and rings coming out of the shallow-water equations themselves;
 //   at each step's end its rim is pulled back to the settled water at its
 //   cells (`sim_rim_pull`), which over each settled cell is the settled
 //   cell's water, so at its edges it is the settled water around it; and
 //   after the frame's steps each of its cells' water as water's pass draws
 //   it goes into its look (`sim_drawn`), by the rules the cook finds the
 //   settled water's state by;
-// - regions settling tiles' water (`water_settle.rs`) step each cell by as
-//   long as its own and its neighbors' fastest waves allow, which reaches
-//   the steady state in far fewer steps; their water leaves freely over
-//   their edges and none comes in; each cell's water is summed over the
-//   steps since its region's last look, each step weighted by its seconds,
-//   with what it loses, how it varies and how it moves, whose means and
-//   spreads a look keeps and sums, block by block, for its region to tell
-//   whether they still change; and only the blocks water can reach this
-//   step step: a block steps where it held water no lake holds at the step
-//   before's end, or where a block beside it held water along the side they
-//   share, as water crosses less than a cell a step, and every other block
-//   stands still, dry or a lake's, the faces between them and those
-//   stepping carrying nothing; and no wind drags their surface, as their
-//   records stand for whatever wind blows.
+// - regions settling tiles' water (`water_settle.rs`) first step each cell
+//   by as long as its own and its neighbors' fastest waves allow, which
+//   reaches the steady state in far fewer steps, then stir it, stepping
+//   every cell by the live square's seconds and bursting as it bursts; their
+//   water leaves freely over their edges and none comes in; each cell's
+//   water is summed over the steps since its region's last look (once it
+//   stirs, since it began to stir), each step weighted by its seconds, with
+//   what it loses, how it varies and how it moves, whose means and spreads a
+//   look keeps and sums, block by block, for its region to tell whether they
+//   still change; and only the blocks water can reach this step step: a
+//   block steps where it held water no lake holds at the step before's end,
+//   or where a block beside it held water along the side they share, as
+//   water crosses less than a cell a step, and every other block stands
+//   still, dry or a lake's, the faces between them and those stepping
+//   carrying nothing.
 
 const WATER_SIM_GROUP: u32 = 8u;
 const WATER_SIM_SOURCE_GROUP: u32 = 64u;
@@ -153,8 +148,10 @@ const SIM_LIVE_LOOKS: u32 = 2u;
 // A rectangle's flags: it steps; each cell by its own seconds; water
 // leaves over its edges freely and none comes in (else the ring stands
 // past them); it sums each cell's water over its steps; this dispatch
-// looks at its sums; only its blocks water can reach step; and it runs
-// live, its rim pulled back to the settled water and its looks kept.
+// looks at its sums; only its blocks water can reach step; it runs live,
+// its rim pulled back to the settled water and its looks kept; turbulence
+// bursts in its water before each step; and its looks keep its sums, so
+// each look's means span every step since it began to stir.
 const SIM_STEPPING: u32 = 1u;
 const SIM_LOCAL: u32 = 2u;
 const SIM_OPEN: u32 = 4u;
@@ -162,6 +159,8 @@ const SIM_SUMMING: u32 = 8u;
 const SIM_LOOKING: u32 = 16u;
 const SIM_SPARSE: u32 = 32u;
 const SIM_LIVE: u32 = 64u;
+const SIM_BURSTING: u32 = 128u;
+const SIM_KEEPING: u32 = 256u;
 // Cells along each edge of the live square over which its water is pulled
 // back to the settled water (`sim_rim_pull`).
 const SIM_RIM: u32 = 8u;
@@ -186,29 +185,27 @@ const SIM_BREAK_FULL: f32 = 1.2;
 const SIM_BREAK_THINNEST: f32 = 0.02;
 
 // The stage (0: the first, 1: the second), the slots the buffers hold, the
-// blocks a slot's pool holds and the blocks a slot's table maps; the most
-// cells rivers bring water to a slot holds, and the faces along its west
-// and south edges a slot holds (its cells along x and z); the free wind
-// over the water (meters a second along x and z; none for settling
-// regions), then nothing; and the live square's first cell on the
-// terrain's lattice of its cells along x and z (an i32's bits each) and the
-// index of its frame's first step (`sim_live_step`), then nothing (none for
-// settling regions).
+// blocks a slot's pool holds and the blocks a slot's table maps; and the
+// most cells rivers bring water to a slot holds, and the faces along its
+// west and south edges a slot holds (its cells along x and z), then
+// nothing.
 struct SimFrame {
     stage: vec4<u32>,
     inputs: vec4<u32>,
-    wind: vec4<f32>,
-    live: vec4<u32>,
 }
 
 // A slot's rectangle: its cells along x and z, its flags and the cells
 // its rivers bring water to; the meters across a cell and the seconds of a
-// step stepping every cell alike, then nothing; and its blocks along x and
-// z and those its pool stores.
+// step stepping every cell alike, then nothing; its blocks along x and z
+// and those its pool stores, then nothing; and its first cell on the
+// terrain's lattice of its cells along x and z (an i32's bits each) and the
+// index of its frame's first step (`sim_step`), which its bursts are drawn
+// by, then nothing.
 struct SimSlot {
     shape: vec4<u32>,
     step: vec4<f32>,
     blocks: vec4<u32>,
+    place: vec4<u32>,
 }
 
 struct SimSlots {
@@ -218,27 +215,24 @@ struct SimSlots {
 @group(0) @binding(0) var<uniform> frame: SimFrame;
 // Each slot's pool's blocks' ground, SIM_BLOCK_GROUND entries a block: the
 // ground at its cells' corners (meters, WATER_SIM_GROUP + 1 a row, rows
-// along z; the live square's raised by its materials' relief,
-// `meshes/water_setup.wgsl`), then the level a lake holds each of its cells
-// at (SIM_UNHELD where none does), then each of its cells' bed's roughness
-// (its D84 in meters where friction follows Ferguson's law, the same
-// negated where steps or knobs are carved into it and friction counts its
-// grains alone), then the share of each of its cells covered by the solids
-// standing in it (0 to 1), then the height their tops stand at over it
-// (meters), cells row by row.
+// along z), raised by its materials' relief (`meshes/water_setup.wgsl`),
+// then the level a lake holds each of its cells at (SIM_UNHELD where none
+// does), then each of its cells' bed's roughness (its D84 in meters where
+// friction follows Ferguson's law; negated, and no more than a cell, where
+// the bed holds relief as its shape and friction counts its grains finer
+// than a cell alone, `setup_rough`), then the share of each of its cells
+// covered by the solids standing in it (0 to 1), then the height their tops
+// stand at over it (meters), cells row by row.
 @group(0) @binding(1) var<storage, read> sim_ground: array<f32>;
 // Each slot's step's start and then its first stage, each its pool's
-// blocks' cells, a block's row by row: the water's surface, its flow along
-// x and z, and its foam (0 none, 1 white all over; in the first stage, once
-// the step churned it, its next).
+// blocks' cells, a block's row by row: the water's surface and its flow
+// along x and z, then nothing.
 @group(0) @binding(2) var<storage, read_write> sim_cells: array<vec4<f32>>;
 // Each cell's water's depths at its faces as reconstructed, the mean of
 // their squares across x (its west and east faces') and across z (its
 // south and north faces'), which the pull of gravity down its ground reads;
-// from a step's end until the foam it carries has ridden it, the current
-// its surface runs at (meters a second along x and z, `sim_drift`); and in
-// the live square, from the step's start until its first stage, the push
-// of the burst of turbulence starting in it (meters a second along x and z,
+// and from the step's start until its first stage, the push of the burst
+// of turbulence starting in it (meters a second along x and z,
 // `sim_burst`), none where none starts.
 @group(0) @binding(3) var<storage, read_write> sim_depths: array<vec2<f32>>;
 // The fluxes through each slot's faces: each of its cells' east face's,
@@ -255,9 +249,9 @@ struct SimSlots {
 // slot's ring, the cells just past its edges as their water settled, two
 // entries each: its surface (far below the ground where dry), its flow
 // along x and z and the level a lake holds it at (SIM_UNHELD where none
-// does); then its foam and the water it brings in, the discharge across a
-// meter of the edge into the square (square meters a second; none where it
-// brings none). South then north of each column, then west then east of
+// does); then the water it brings in, the discharge across a meter of the
+// edge into the square (square meters a second; none where it brings none),
+// then nothing. South then north of each column, then west then east of
 // each row.
 @group(0) @binding(5) var<storage, read> sim_inputs: array<vec4<f32>>;
 // Each slot's table: the block of its pool storing each block of its
@@ -270,32 +264,33 @@ struct SimSlots {
 // (`sim_drain`), and their seconds; then each of its pool's blocks':
 // whether it held water no lake holds at the step before's end, and
 // whether it steps this step and the steps it stood still since its
-// rectangle's last look or its waking, whichever came later. The live
-// square's buffers, holding it alone, hold one entry more: the steps its
-// frame has run so far (`sim_live_step`).
+// rectangle's last look or its waking, whichever came later; then the
+// steps its frame has run so far (`sim_step`).
 @group(0) @binding(7) var<storage, read_write> sim_steps: array<vec2<f32>>;
 @group(0) @binding(8) var<uniform> sim_slots: SimSlots;
-// Each slot's cells' sums over their steps since its last look,
-// SIM_CELL_SUMS entries a cell (`SimSums`, each step weighted by its
-// seconds; then the seconds it ran at the fastest water runs, and the
-// seconds themselves); then their means at that look, SIM_CELL_MEANS
-// entries a cell, each over the seconds it was wet: its surface, flow along
-// x and z and foam; the energy it loses (watts a square meter), the
-// variance of its depth, the mean square of its vorticity and the variance
-// of its velocity; and the share of the time it was wet, the share of the
-// time wet its water left its bed and the share of the time it ran at the
-// fastest water runs, then nothing. Then each of its pool's blocks' sums at a look,
-// SIM_BLOCK_LOOKS entries each: the water its cells flowing held, their
-// speeds, those cells and its cells stepping; the energy those lose, their
-// heave, their swirl and those that ran at the fastest water runs; and the
-// water its cells beside blocks the pool does not store held, and those
-// cells. The live square's slot, which sums nothing, holds its cells' looks
-// in their place (`sim_looks`), SIM_LIVE_LOOKS entries a cell: the settled
-// water at it (its surface, its flow along x and z and its foam, as its
-// setup stands it, `meshes/water_setup.wgsl`: the settled water's smooth
-// surface at the live cell, whose mean over each settled cell is that
-// cell's water), which its rim is pulled back to and its swings are
-// measured from; and its water as water's pass draws it (`sim_drawn`).
+// Each slot's cells' sums over their steps since its last look (or, where
+// its looks keep them, since it began to stir), SIM_CELL_SUMS entries a
+// cell (`SimSums`, each step weighted by its seconds; then the seconds it
+// ran at the fastest water runs, and the seconds themselves); then their
+// means at that look, SIM_CELL_MEANS entries a cell, each over the seconds
+// it was wet: its surface and flow along x and z, then nothing; the energy
+// it loses (watts a square meter), the variance of its depth, the mean
+// square of its vorticity and the variance of its velocity; and the share
+// of the time it was wet, the share of the time wet its water left its bed
+// and the share of the time it ran at the fastest water runs, then
+// nothing. Then each of its pool's blocks' sums
+// at a look, SIM_BLOCK_LOOKS entries each: the water its cells flowing
+// held, their speeds, those cells and its cells stepping; the energy those
+// lose, their heave, their swirl and those that ran at the fastest water
+// runs; and the water its cells beside blocks the pool does not store held,
+// and those cells. The live square's slot, which sums nothing, holds its
+// cells' looks in their place (`sim_looks`), SIM_LIVE_LOOKS entries a cell:
+// the settled water at it (its surface and its flow along x and z, then
+// nothing, as its setup stands it, `meshes/water_setup.wgsl`: the settled
+// water's smooth surface at the live cell, whose mean over each settled
+// cell is that cell's water), which its rim is pulled back to and its
+// swings are measured from; and its water as water's pass draws it
+// (`sim_drawn`).
 @group(0) @binding(9) var<storage, read_write> sim_averages: array<vec4<f32>>;
 
 // The most solids that push the square around the camera's water a frame
@@ -402,7 +397,7 @@ fn sim_table_base(q: Square) -> u32 {
 }
 
 fn sim_steps_base(q: Square) -> u32 {
-    return q.slot * (sim_held() + 2u * sim_pool());
+    return q.slot * (sim_held() + 2u * sim_pool() + 1u);
 }
 
 fn sim_averages_base(q: Square) -> u32 {
@@ -430,23 +425,23 @@ fn sim_looks(at: u32) -> u32 {
     return SIM_LIVE_LOOKS * at;
 }
 
-// The live square's first cell on the terrain's lattice of its cells, along
-// x and z.
-fn sim_live_first() -> vec2<i32> {
-    return bitcast<vec2<i32>>(frame.live.xy);
+// Slot `q`'s first cell on the terrain's lattice of its cells, along x and
+// z.
+fn sim_first(q: Square) -> vec2<i32> {
+    return bitcast<vec2<i32>>(sim_slots.slot[q.slot].place.xy);
 }
 
-// Where the live square's buffers count the steps its frame has run: the
-// entry of `sim_steps` past its slot's own, which each step's end counts on
-// (`sim_churned`), a float counting a frame's few steps exactly.
-fn sim_live_count() -> u32 {
-    return sim_held() + 2u * sim_pool();
+// Where slot `q` counts the steps its frame has run: the entry of
+// `sim_steps` past its cells' and blocks', which each step's end counts on
+// (`sim_ended`), a float counting a frame's steps exactly.
+fn sim_count_at(q: Square) -> u32 {
+    return sim_steps_base(q) + sim_held() + 2u * sim_pool();
 }
 
-// The index of the step the live square runs: its frame's first step's
-// index, and the steps its frame has run since.
-fn sim_live_step() -> u32 {
-    return frame.live.z + u32(sim_steps[sim_live_count()].x);
+// The index of the step slot `q` runs: its frame's first step's index, and
+// the steps its frame has run since.
+fn sim_step(q: Square) -> u32 {
+    return sim_slots.slot[q.slot].place.z + u32(sim_steps[sim_count_at(q)].x);
 }
 
 // The block of slot `q`'s pool storing block `block` (its column and row)
@@ -926,7 +921,7 @@ fn sim_ghost_held(q: Square, ghost: u32) -> bool {
 // The discharge ring entry `ghost` brings into the square across a meter of
 // its edge (square meters a second; none where it brings none).
 fn sim_ghost_inflow(q: Square, ghost: u32) -> f32 {
-    return max(sim_inputs[sim_ring_base(q) + 2u * ghost + 1u].y, 0.0);
+    return max(sim_inputs[sim_ring_base(q) + 2u * ghost + 1u].x, 0.0);
 }
 
 // The flux through a face on the square's edge from what stands as `l` to
@@ -1257,8 +1252,9 @@ fn sim_drained(q: Square, at: u32) -> f32 {
 // How hard the bed of the cell at `at` holds back water `h` meters deep
 // running over it: k of dq/dt = -k·|q|·q (per square meter). Where its
 // roughness is a D84, Darcy and Weisbach's f/(8h²) of Ferguson's f (2007,
-// 8/a2²·(D84/h)² + 8/a1²·(D84/h)^(1/3)); where steps or knobs are carved
-// into it, g·n²/h^(7/3) of its grains' Manning's n, D84^(1/6)/SIM_STRICKLER;
+// 8/a2²·(D84/h)² + 8/a1²·(D84/h)^(1/3)); where its bed holds relief as its
+// shape (negated, `meshes/water_setup.wgsl`'s `setup_rough`), g·n²/h^(7/3)
+// of its grains' Manning's n, D84^(1/6)/SIM_STRICKLER;
 // the depth over the D84 counting within SIM_SHALLOWEST and SIM_DEEPEST;
 // times φ², as water running down sloping ground runs over more of it
 // (`engine_terrain::shallow_water::resistance`).
@@ -1320,8 +1316,8 @@ fn sim_pull(gravity: vec2<f32>, depth: f32, rise: f32, squares: f32) -> f32 {
     return -0.5 * (gravity.x + gravity.y) * depth * rise + 0.5 * (gravity.y - gravity.x) * squares;
 }
 
-// Each cell's water after a stage, its foam as the step started, each face
-// carrying as much as the cell its water leaves can give: friction slows
+// Each cell's water after a stage, each face carrying as much as the cell
+// its water leaves can give: friction slows
 // it over the stage's share of the step, all of it in the first stage and
 // half in the second, as Heun's average counts the first's half again, so
 // water settled stays settled whatever its steps; a summing rectangle
@@ -1392,7 +1388,7 @@ fn sim_update(
     let rubbing = select(dt, 0.5 * dt, stage == 1u);
     let settled = sim_settle(q, at, next, ground, sim_lake(q, at), rubbing);
     let written = select(base + held + at, base + at, stage == 1u);
-    sim_cells[written] = vec4<f32>(settled.xyz, start.w);
+    sim_cells[written] = vec4<f32>(settled.xyz, 0.0);
     if stage == 1u && settled.w > 0.0 && sim_has(q, SIM_SUMMING) {
         sim_averages[sim_sums_at(q, at) + 3u].x += dt;
     }
@@ -1401,12 +1397,6 @@ fn sim_update(
         sim_steps[sim_block_at(q, at / SIM_BLOCK_CELLS)].x = 0.0;
     }
 }
-
-// The speeds (meters a second) at which water passing a solid starts to
-// tear air in, and at which it churns foam as a churn of one does
-// (`sim_churn`'s, holding half the most): Ervine, McKeogh and Elsawy (1980)
-// find water drawing air in from about 0.7 to 1.3 meters a second.
-const SIM_TEARING: vec2<f32> = vec2<f32>(0.7, 1.3);
 
 // Where along the upright line through `point` (meters over the square's
 // first corner, x and z) solid `touch` stands: the lowest and the highest
@@ -1448,12 +1438,8 @@ fn sim_touch_span(touch: SimTouch, point: vec2<f32>) -> vec2<f32> {
 // water's momentum, dq/dt = −(χ/τ)·(q − h·u), χ the share of the cell's
 // depth the solid fills and τ the step's seconds, solved exactly over the
 // step), so water flows around a solid standing still and is pushed ahead
-// of one moving; and where it stands up through the surface, the cell's
-// foam churns as `sim_churn` churns it, by how much faster than
-// SIM_TEARING.x the water passes it, a share of the span to SIM_TEARING.y
-// churning one, toward SIM_FOAM_MOST. A lake holding a cell still at its
-// level, a solid churns its foam alone. Solids over one cell push it in
-// turn, nearest the eye first.
+// of one moving; none where a lake holds the cell still at its level.
+// Solids over one cell push it in turn, nearest the eye first.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
 fn sim_touch(
     @builtin(workgroup_id) group: vec3<u32>,
@@ -1468,16 +1454,14 @@ fn sim_touch(
     if at == SIM_NO_BLOCK {
         return;
     }
-    let still = sim_held_at(q, at);
     let base = sim_cells_base(q);
     var water = sim_cells[base + at];
     let bed = sim_bed(q, at);
     let h = water.x - bed;
-    if h <= SIM_DRY {
+    if h <= SIM_DRY || sim_held_at(q, at) {
         return;
     }
     let middle = (vec2<f32>(cell) + 0.5) * q.dx;
-    let flowing = vec2<f32>(sim_velocity(h, water.y), sim_velocity(h, water.z));
     for (var k = 0u; k < sim_touches.count.x; k++) {
         let touch = sim_touches.touch[k];
         if any(middle < touch.reach.xy) || any(middle > touch.reach.zw) {
@@ -1488,24 +1472,15 @@ fn sim_touch(
         if filled <= 0.0 {
             continue;
         }
-        let solid = touch.velocity.xz;
-        if span.y > water.x {
-            let churn = max(length(flowing - solid) - SIM_TEARING.x, 0.0)
-                / (SIM_TEARING.y - SIM_TEARING.x);
-            let kept = exp(-churn * q.live / SIM_FOAM_LIFE);
-            water.w = SIM_FOAM_MOST + (water.w - SIM_FOAM_MOST) * kept;
-        }
-        if !still {
-            let carried = h * solid;
-            let flow = carried + (water.yz - carried) * exp(-min(filled / h, 1.0));
-            water = vec4<f32>(water.x, flow, water.w);
-        }
+        let carried = h * touch.velocity.xz;
+        let flow = carried + (water.yz - carried) * exp(-min(filled / h, 1.0));
+        water = vec4<f32>(water.x, flow, 0.0);
     }
     sim_cells[base + at] = water;
 }
 
-// Turbulence's bursts in the live square's water: the energy its water
-// loses below its cells stirs eddies about as large as it is deep, which
+// Turbulence's bursts in a slot's water: the energy its water loses below
+// its cells stirs eddies about as large as it is deep, which
 // reach its surface now and then (`water_bursts.wgsl`), and each burst
 // pushes the water the cells resolve by as much as such an eddy runs. The
 // cells around the one a burst starts in its push reaches at most: an eddy
@@ -1535,10 +1510,11 @@ fn sim_eddy_speed(power: f32, h: f32, size: f32) -> f32 {
     return pow(max(power, 0.0) * size / (SIM_DENSITY * h), 1.0 / 3.0);
 }
 
-// The live square's cells before each step, an invocation each: whether
-// turbulence bursts in each one's water this step, by the one rule for
-// bursts (`water_burst`), drawn from the cell on the terrain's lattice of
-// the square's cells and the step's index (`sim_live_step`). Its eddies
+// The cells of each slot turbulence bursts in before each step, an
+// invocation each: whether it bursts in each one's water this step, by the
+// one rule for bursts (`water_burst`), drawn from the cell on the terrain's
+// lattice of the slot's cells (`sim_first`) and the step's index
+// (`sim_step`). Its eddies
 // (`sim_eddy_size`, ℓ) run at the speed the energy its water lost over the
 // step before stirs (`sim_eddy_speed`, u', from `sim_dissipation`), and one
 // starts in each eddy's area once each time they turn over, ℓ/u': on
@@ -1554,18 +1530,18 @@ fn sim_burst(
 ) {
     let q = sim_square(group.z);
     let cell = sim_cell_of(q, group, count, local);
-    if !cell.runs || !sim_has(q, SIM_LIVE) {
+    if !cell.runs || !sim_has(q, SIM_BURSTING) {
         return;
     }
     let at = cell.at;
     let h = sim_cells[sim_cells_base(q) + at].x - sim_bed(q, at);
     var push = vec2<f32>(0.0);
-    if h > SIM_THIN && !sim_held_at(q, at) {
+    if h > SIM_THIN && !sim_held_at(q, at) && sim_active(q, at) {
         let size = sim_eddy_size(h, q.dx);
         let speed = sim_eddy_speed(sim_dissipation(q, cell), h, size);
         let mean = speed * q.live * q.dx * q.dx / (size * size * size);
-        let place = vec2<i32>(i32(cell.i), i32(cell.j)) + sim_live_first();
-        let burst = water_burst(place, sim_live_step(), mean);
+        let place = vec2<i32>(i32(cell.i), i32(cell.j)) + sim_first(q);
+        let burst = water_burst(place, sim_step(q), mean);
         if burst.starts {
             let heading = 6.2831853 * burst.turn;
             push = speed * vec2<f32>(cos(heading), sin(heading));
@@ -1579,18 +1555,18 @@ fn sim_burst(
 // x and z) and its eddies' size (meters); none where none starts.
 var<workgroup> sim_bursts: array<vec3<f32>, SIM_PUSH_CELLS>;
 
-// The live square's cells once the step's bursts are drawn (`sim_burst`),
-// a workgroup for each block of its pool, before the solids standing in its
-// water push it: each cell's water takes the push of every burst whose
-// eddies reach it, its velocity changing by the burst's push times
-// (1 − (d/ℓ)²)², d the meters between their middles and ℓ the eddies'
-// size, so an eddy pushes its water by its whole speed at its middle and by
-// less out to its edge, and its flow by its depth times that. Each burst
-// pushes along a heading drawn evenly all around, so the pushes average to
-// none and the water's mean stays its own, the settled flow where the
-// square starts from it: stochastic forcing at the scale the cells resolve,
-// the energy the water loses below them coming back in part as eddies
-// they hold (stochastic backscatter: Leith 1990; Mason and Thomson 1992):
+// The cells of each slot turbulence bursts in once the step's bursts are
+// drawn (`sim_burst`), a workgroup for each block of its pool, before the
+// solids standing in the live square's water push it: each cell's water
+// takes the push of every burst whose eddies reach it, its velocity
+// changing by the burst's push times (1 − (d/ℓ)²)², d the meters between
+// their middles and ℓ the eddies' size, so an eddy pushes its water by its
+// whole speed at its middle and by less out to its edge, and its flow by
+// its depth times that. Each burst pushes along a heading drawn evenly all
+// around, so the pushes average to none and the water's mean stays its
+// own, the settled flow where a square starts from it: stochastic forcing
+// at the scale the cells resolve, the energy the water loses below them
+// coming back in part as eddies they hold (stochastic backscatter: Leith 1990; Mason and Thomson 1992):
 // with these pushes' size and rate, about a third of it where its eddies
 // span a few cells (π/10 of ρ·h·u'²·ℓ² joules a burst, u'/ℓ³ bursts a
 // square meter a second, ρ·u'³ = power·ℓ/h), so the energy its eddies lose
@@ -1608,7 +1584,7 @@ fn sim_push(
     let cell = sim_cell_of(q, group, count, local);
     let block = group.y * count.x + group.x;
     var gathering = group.z < sim_slot_count() && sim_has(q, SIM_STEPPING)
-        && sim_has(q, SIM_LIVE) && block < q.stored;
+        && sim_has(q, SIM_BURSTING) && block < q.stored;
     if gathering {
         let place = sim_place(q, block);
         gathering = place.x < q.blocks.x && place.y < q.blocks.y;
@@ -1720,373 +1696,6 @@ fn sim_dissipation(q: Square, cell: SimCell) -> f32 {
     return SIM_DENSITY * (friction + 0.5 * SIM_GRAVITY * lost / q.dx);
 }
 
-// Foam, the lace white water leaves on the water: churned up where the
-// water loses energy fast enough to break, held by its churning toward the
-// most it holds as it fades. The seconds it takes to fade to 1/e; the most
-// churning holds; the meters of water under which a cell holds none; the
-// least rate (square meters a second cubed) the water loses energy at,
-// gravity times its surface's slope times its speed, for it to churn any;
-// the meters water drops into a cell to plunge, and the Froude number it
-// runs at into water slower than its waves to jump; and the power the water
-// loses breaking (watts a square meter of bed) at which it holds half the
-// most. Eddy lines and converging currents draw no air in: they gather the
-// foam the current carries, as its surface's current does
-// (`sim_foam_carried`).
-const SIM_FOAM_LIFE: f32 = 20.0;
-const SIM_FOAM_MOST: f32 = 1.5;
-const SIM_FOAM_WET: f32 = 0.005;
-const SIM_FOAM_LOSS: f32 = 0.02;
-const SIM_FOAM_DROP: f32 = 0.05;
-const SIM_FOAM_JUMP: f32 = 1.7;
-const SIM_FOAM_POWER: f32 = 500.0;
-// Foam rides the water's surface, which runs as the depth's mean does but
-// for two things. In a bend the helical flow carries the surface toward the
-// outer bank and the bed toward the inner one (Rozovskii 1957; de Vriend
-// 1977): the flow along the bed turns inward by an angle whose tangent is
-// 7 h/R, h the depth and R the streamlines' radius of curvature (Engelund
-// 1974), and the surface turns outward by as much, SIM_BEND depths over the
-// radius. Sharper bends saturate, as their secondary flow flattens the
-// main flow's profile that drives it (Blanckaert and de Vriend 2003): the
-// turn's tangent stops at SIM_BEND_MOST, 45 degrees, which the linear rule
-// reaches where R nears seven depths, so the surface never runs more
-// across the stream than along it. And the wind drags the surface at
-// SIM_WIND_DRIFT of its speed along its heading (Wu 1975).
-const SIM_BEND: f32 = 7.0;
-const SIM_BEND_MOST: f32 = 1.0;
-const SIM_WIND_DRIFT: f32 = 0.03;
-
-// The first state's cell at `at`: its surface, depth and velocity; or
-// `instead` where it is dry.
-fn sim_moving_at(q: Square, at: u32, instead: vec4<f32>) -> vec4<f32> {
-    let cell = sim_cells[sim_cells_base(q) + at];
-    let h = cell.x - sim_bed(q, at);
-    if h <= SIM_FOAM_WET {
-        return instead;
-    }
-    return vec4<f32>(cell.x, h, sim_velocity(h, cell.y), sim_velocity(h, cell.z));
-}
-
-// The first state's cell (i, j): its surface, depth and velocity; or
-// `instead` where it is dry or the slot holds none there.
-fn sim_moving(q: Square, i: i32, j: i32, instead: vec4<f32>) -> vec4<f32> {
-    let at = sim_at(q, i, j);
-    if at == SIM_NO_BLOCK {
-        return instead;
-    }
-    return sim_moving_at(q, at, instead);
-}
-
-// The Froude number of water standing as `water` (its surface, depth and
-// velocity): how many times faster than its waves it runs.
-fn sim_foam_froude(water: vec4<f32>) -> f32 {
-    return length(water.zw) / sqrt(SIM_GRAVITY * max(water.y, SIM_FOAM_WET));
-}
-
-// The power (watts a square meter of bed) water standing as `upstream`
-// (its surface, depth and velocity) spends landing in a cell `dx` meters
-// across standing as `here`, the cell past it standing as `beyond` and
-// `toward` the way from it into the cell: the head it loses times the
-// water it brings, where it plunges, its surface falling into the cell
-// further than it falls on past it (a step, not the steady fall of a slope)
-// by SIM_FOAM_DROP or more and by more than the water's own depth, so its
-// jet leaves the bed and falls free (a nappe; Chanson 2004) rather than
-// rippling over the stones under it, or jumps, running at SIM_FOAM_JUMP
-// times its waves' speed or faster into water slower than its waves; none
-// elsewhere.
-fn sim_foam_landing(upstream: vec4<f32>, here: vec4<f32>, beyond: vec4<f32>, toward: vec2<f32>,
-        dx: f32) -> f32 {
-    let drop = upstream.x - here.x;
-    let step = drop - max(here.x - beyond.x, 0.0);
-    let plunges = step >= max(SIM_FOAM_DROP, upstream.y);
-    let jumps = sim_foam_froude(upstream) >= SIM_FOAM_JUMP && sim_foam_froude(here) < 1.0;
-    if !plunges && !jumps {
-        return 0.0;
-    }
-    let brought = upstream.y * max(dot(upstream.zw, toward), 0.0);
-    let speeds = dot(upstream.zw, upstream.zw) - dot(here.zw, here.zw);
-    let head = select(drop, step, plunges) + speeds / (2.0 * SIM_GRAVITY);
-    return SIM_DENSITY * SIM_GRAVITY * brought * max(head, 0.0) / dx;
-}
-
-// The current the surface of water standing as `here` (its surface, depth
-// and velocity) runs at, its neighbors along x and z standing as `west`,
-// `east`, `south` and `north` (`sim_moving`'s, itself standing in for one
-// dry or missing), over cells `dx` meters across: its velocity turned
-// outward in a bend by δ, tan δ = SIM_BEND·h/R, no more than SIM_BEND_MOST.
-// R is the streamlines' radius of curvature, 1/R = |u × (u·∇)u| / |u|³, the
-// velocity's derivatives taken between its neighbors as `sim_churn` takes
-// them; outward is away from the side u × (u·∇)u says the streamlines
-// curve toward.
-fn sim_surface_current(here: vec4<f32>, west: vec4<f32>, east: vec4<f32>, south: vec4<f32>,
-        north: vec4<f32>, dx: f32) -> vec2<f32> {
-    let velocity = here.zw;
-    let along_x = (east.zw - west.zw) / (2.0 * dx);
-    let along_z = (north.zw - south.zw) / (2.0 * dx);
-    let turning = velocity.x * along_x + velocity.y * along_z;
-    let speed = length(velocity);
-    let curving = (velocity.x * turning.y - velocity.y * turning.x)
-        / max(speed * speed * speed, 1.0e-12);
-    let tangent = clamp(SIM_BEND * here.y * curving, -SIM_BEND_MOST, SIM_BEND_MOST);
-    return vec2<f32>(velocity.x + tangent * velocity.y, velocity.y - tangent * velocity.x)
-        * inverseSqrt(1.0 + tangent * tangent);
-}
-
-// Each cell that steps, once the step's stages have run and rivers have
-// brought their water: the current its surface runs at
-// (`sim_surface_current`) with the wind's drag, SIM_WIND_DRIFT of the
-// frame's wind, into its entry of `sim_depths`, which the stages are done
-// with; none where it is dry. The foam it carries rides it (`sim_churn`).
-@compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_drift(
-    @builtin(workgroup_id) group: vec3<u32>,
-    @builtin(num_workgroups) count: vec3<u32>,
-    @builtin(local_invocation_id) local: vec3<u32>,
-) {
-    let q = sim_square(group.z);
-    let cell = sim_cell_of(q, group, count, local);
-    if !cell.runs || !sim_active(q, cell.at) {
-        return;
-    }
-    let here = sim_moving_at(q, cell.at, vec4<f32>(0.0));
-    var drift = vec2<f32>(0.0);
-    if here.y > SIM_FOAM_WET {
-        let i = i32(cell.i);
-        let j = i32(cell.j);
-        drift = sim_surface_current(here, sim_moving(q, i - 1, j, here),
-            sim_moving(q, i + 1, j, here), sim_moving(q, i, j - 1, here),
-            sim_moving(q, i, j + 1, here), q.dx) + SIM_WIND_DRIFT * frame.wind.xy;
-    }
-    sim_depths[sim_depths_base(q) + cell.at] = drift;
-}
-
-// Whether a solid stands up through the water's surface, standing at
-// `surface`, in cell `place` of the live square, as `sim_touch` finds the
-// solids there, reaching from below the surface to above it at the cell's
-// middle: none in the blocks no solid reaches, and none in settling
-// regions, whose solids' uniform holds none.
-fn sim_pierced(q: Square, place: vec2<u32>, surface: f32) -> bool {
-    let block = place / WATER_SIM_GROUP;
-    let first = sim_touches.blocks.xy;
-    if any(block < first) || any(block >= first + sim_touches.blocks.zw) {
-        return false;
-    }
-    let middle = (vec2<f32>(place) + 0.5) * q.dx;
-    for (var k = 0u; k < sim_touches.count.x; k++) {
-        let touch = sim_touches.touch[k];
-        if any(middle < touch.reach.xy) || any(middle > touch.reach.zw) {
-            continue;
-        }
-        let span = sim_touch_span(touch, middle);
-        if span.x < surface && span.y > surface {
-            return true;
-        }
-    }
-    return false;
-}
-
-// The share of a cell solids standing up through its surface cover from
-// which they wall it off from the foam carried into it: half of it, where
-// they stand over more of it than its water does.
-const SIM_WALLED: f32 = 0.5;
-
-// Whether the cell at `at`, cell `place`, its water's surface standing at
-// `surface`, takes the foam carried into it: where it is wet and no solid
-// stands up through its surface, neither one pushing its water
-// (`sim_pierced`) nor those covering SIM_WALLED of it or more, so foam
-// carried against dry ground or a solid stays along it.
-fn sim_foam_takes(q: Square, at: u32, place: vec2<u32>, surface: f32) -> bool {
-    let cover = sim_cover(q, at);
-    let walled = cover.x >= SIM_WALLED && cover.y > surface;
-    return surface - sim_bed(q, at) > SIM_FOAM_WET && !walled && !sim_pierced(q, place, surface);
-}
-
-// Whether the cell at `at`, its water's surface standing at `surface`,
-// gives the foam it carries across a face whose middle's ground stands at
-// `ground`: where it is wet and its water stands over that ground, as no
-// water crosses a wall higher than it stands.
-fn sim_foam_gives(q: Square, at: u32, surface: f32, ground: f32) -> bool {
-    return min(surface - sim_bed(q, at), surface - ground) > SIM_FOAM_WET;
-}
-
-// The foam the surface's current carries a second through the face between
-// the cells at `low` and `high`, cell `place` and the cell past it along x
-// or, where `across_z`, along z (positive along the axis): the two cells'
-// surface currents across it (`sim_drift`) averaged, carrying the foam of
-// the cell it leaves where that cell gives it (`sim_foam_gives`) into the
-// other where it takes it (`sim_foam_takes`); none between a cell that
-// steps and one standing still, as no water reaches either. Both cells
-// beside the face find it alike, so what one gives the other takes.
-fn sim_foam_across(q: Square, low: u32, high: u32, place: vec2<u32>, across_z: bool) -> f32 {
-    if !sim_active(q, low) || !sim_active(q, high) {
-        return 0.0;
-    }
-    let base = sim_cells_base(q);
-    let near = sim_cells[base + low];
-    let far = sim_cells[base + high];
-    let currents = sim_depths_base(q);
-    let both = sim_depths[currents + low] + sim_depths[currents + high];
-    var current: f32;
-    var ground: f32;
-    var past: vec2<u32>;
-    if across_z {
-        current = 0.5 * both.y;
-        ground = sim_ground_z(q, low).y;
-        past = place + vec2<u32>(0u, 1u);
-    } else {
-        current = 0.5 * both.x;
-        ground = sim_ground_x(q, low).y;
-        past = place + vec2<u32>(1u, 0u);
-    }
-    if current > 0.0 {
-        if sim_foam_gives(q, low, near.x, ground) && sim_foam_takes(q, high, past, far.x) {
-            return current * near.w;
-        }
-    } else if sim_foam_gives(q, high, far.x, ground) && sim_foam_takes(q, low, place, near.x) {
-        return current * far.w;
-    }
-    return 0.0;
-}
-
-// The foam the surface's current carries a second through the face on side
-// `side` (-1 its west or south face, 1 its east or north one) of the cell
-// at `at`, cell `place`, across x or, where `across_z`, across z, toward a
-// cell its slot does not hold (positive along the axis): its own surface
-// current across it (`sim_drift`) carries its foam out where the cell
-// gives it (`sim_foam_gives`), and brings in that of ring entry `ghost`
-// (its first of two; SIM_NO_BLOCK where no ring stands there) where that
-// entry's water stands over the ground at the face's middle and the cell
-// takes foam (`sim_foam_takes`). Open edges, and blocks the pool does not
-// store, bring none in, as they bring no water.
-fn sim_foam_beyond(q: Square, at: u32, place: vec2<u32>, side: f32, across_z: bool, ghost: u32)
-    -> f32 {
-    let water = sim_cells[sim_cells_base(q) + at];
-    let drift = sim_depths[sim_depths_base(q) + at];
-    var current: f32;
-    var faces: vec2<f32>;
-    if across_z {
-        current = drift.y;
-        faces = sim_ground_z(q, at);
-    } else {
-        current = drift.x;
-        faces = sim_ground_x(q, at);
-    }
-    let ground = select(faces.x, faces.y, side > 0.0);
-    if current * side > 0.0 {
-        return select(0.0, current * water.w, sim_foam_gives(q, at, water.x, ground));
-    }
-    if ghost == SIM_NO_BLOCK || !sim_foam_takes(q, at, place, water.x) {
-        return 0.0;
-    }
-    let ring = sim_ring_base(q) + 2u * ghost;
-    return select(0.0, current * sim_inputs[ring + 1u].x,
-        sim_inputs[ring].x - ground > SIM_FOAM_WET);
-}
-
-// The first state's foam of cell `cell` after `seconds` of its surface's
-// current carrying it conserved, ∂c/∂t + ∇·(c·u_s) = 0: what it held less
-// what crosses its four faces out of it, by upwind fluxes
-// (`sim_foam_across`, or `sim_foam_beyond` toward cells its slot does not
-// hold), so it thins where the surface spreads, gathers where it converges
-// and stays along what it is carried against. Its steps keep it above
-// none: they let the fastest water and waves cross no more than
-// SIM_COURANT of a cell, and the surface's current, its water's velocity
-// turned and the wind's drift, runs within them, so its four faces carry
-// off less than the cell holds. Past SIM_FOAM_MOST it heaps, its cover
-// held at the most.
-fn sim_foam_carried(q: Square, cell: SimCell, seconds: f32) -> f32 {
-    let at = cell.at;
-    let place = vec2<u32>(cell.i, cell.j);
-    let ringed = !sim_has(q, SIM_OPEN);
-    var leaving = 0.0;
-    for (var k = 0; k < 4; k++) {
-        let toward = sim_toward(k);
-        let across_z = k >= 2;
-        let side = f32(toward.x + toward.y);
-        let beside = vec2<i32>(place) + toward;
-        let other = sim_at(q, beside.x, beside.y);
-        var flux: f32;
-        if other == SIM_NO_BLOCK {
-            // The ring stands past a ringed rectangle's edges: its columns'
-            // south and north cells, then its rows' west and east ones.
-            let outside = any(beside < vec2<i32>(0)) || beside.x >= i32(q.nx)
-                || beside.y >= i32(q.nz);
-            var ghost = SIM_NO_BLOCK;
-            if ringed && outside {
-                if k < 2 {
-                    ghost = 2u * q.nx + 2u * cell.j + u32(k);
-                } else {
-                    ghost = 2u * cell.i + u32(k) - 2u;
-                }
-            }
-            flux = sim_foam_beyond(q, at, place, side, across_z, ghost);
-        } else if side > 0.0 {
-            flux = sim_foam_across(q, at, other, place, across_z);
-        } else {
-            flux = sim_foam_across(q, other, at, vec2<u32>(beside), across_z);
-        }
-        leaving += side * flux;
-    }
-    let foam = sim_cells[sim_cells_base(q) + at].w;
-    return clamp(foam - seconds / q.dx * leaving, 0.0, SIM_FOAM_MOST);
-}
-
-// Each cell's foam after a step, into the second state's: what its
-// surface's current carried there conserved (`sim_foam_carried`), faded,
-// and what the water churned up there. Foam is the air breaking water draws
-// in, so the power its water loses as it runs churns it only as far as that
-// water breaks white (its eddies' turbulent Froude number from
-// SIM_BREAK_ONSET to SIM_BREAK_FULL, as `sim_drawn` breaks it): a steep run
-// loses power to its bed all the way down and runs clear where it does not
-// break. Its churn sums that share of the power lost and the power of the
-// water landing in it from its neighbors (a plunge draws air in whatever
-// its eddies), each as a share of SIM_FOAM_POWER; none where its water
-// loses energy slower than
-// SIM_FOAM_LOSS. Churning at `churn`, its foam nears churn / (1 + churn) of
-// SIM_FOAM_MOST, 1 + churn times as fast as foam fades, so it never passes
-// the most.
-@compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_churn(
-    @builtin(workgroup_id) group: vec3<u32>,
-    @builtin(num_workgroups) count: vec3<u32>,
-    @builtin(local_invocation_id) local: vec3<u32>,
-) {
-    let q = sim_square(group.z);
-    let cell = sim_cell_of(q, group, count, local);
-    if !cell.runs || !sim_active(q, cell.at) {
-        return;
-    }
-    let next = sim_cells_base(q) + sim_held() + cell.at;
-    let i = i32(cell.i);
-    let j = i32(cell.j);
-    let here = sim_moving_at(q, cell.at, vec4<f32>(0.0));
-    if here.y <= SIM_FOAM_WET {
-        sim_cells[next].w = 0.0;
-        return;
-    }
-    let dx = q.dx;
-    let dt = sim_seconds_at(q, cell.at);
-    let carried = sim_foam_carried(q, cell, dt);
-    let west = sim_moving(q, i - 1, j, here);
-    let east = sim_moving(q, i + 1, j, here);
-    let south = sim_moving(q, i, j - 1, here);
-    let north = sim_moving(q, i, j + 1, here);
-    let landing = sim_foam_landing(west, here, east, vec2<f32>(1.0, 0.0), dx)
-        + sim_foam_landing(east, here, west, vec2<f32>(-1.0, 0.0), dx)
-        + sim_foam_landing(south, here, north, vec2<f32>(0.0, 1.0), dx)
-        + sim_foam_landing(north, here, south, vec2<f32>(0.0, -1.0), dx);
-    let slope = length(vec2<f32>(east.x - west.x, north.x - south.x)) / (2.0 * dx);
-    let lost = max(sim_dissipation(q, cell), 0.0);
-    let depth = max(here.y, SIM_BREAK_THINNEST);
-    let breaks = sim_eddy_speed(lost, depth, depth) / sqrt(SIM_GRAVITY * depth);
-    let breaking = smoothstep(SIM_BREAK_ONSET, SIM_BREAK_FULL, breaks);
-    var churn = (lost * breaking + landing) / SIM_FOAM_POWER;
-    if SIM_GRAVITY * slope * length(here.zw) < SIM_FOAM_LOSS {
-        churn = 0.0;
-    }
-    let steady = SIM_FOAM_MOST * churn / (1.0 + churn);
-    sim_cells[next].w = steady + (carried - steady) * exp(-(1.0 + churn) * dt / SIM_FOAM_LIFE);
-}
-
 // Where a block's cells held water no lake holds at a step's end, as its
 // first entry of `sim_steps` keeps it: SIM_WET_CELLS where any did, and the side
 // bits of the sides along which one did.
@@ -2120,13 +1729,12 @@ fn sim_rim_pull(q: Square, cell: SimCell) -> f32 {
     return (exp(pow(chi, 3.5)) - 1.0) / (exp(1.0) - 1.0);
 }
 
-// The foam after the step is the next one's start; the live square's rim
-// is pulled back to the settled water at its cells (`sim_rim_pull`), and
-// the step counts among those its frame has run (`sim_live_step`); and a
-// sparse rectangle's cells holding water no lake holds mark their block,
-// and the sides of it they lie along.
+// Each step's end: the live square's rim is pulled back to the settled
+// water at its cells (`sim_rim_pull`); the step counts among those its
+// slot's frame has run (`sim_step`); and a sparse rectangle's cells holding
+// water no lake holds mark their block, and the sides of it they lie along.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_churned(
+fn sim_ended(
     @builtin(workgroup_id) group: vec3<u32>,
     @builtin(num_workgroups) count: vec3<u32>,
     @builtin(local_invocation_id) local: vec3<u32>,
@@ -2142,11 +1750,10 @@ fn sim_churned(
     if cell.runs && sim_active(q, at) {
         let base = sim_cells_base(q);
         var water = sim_cells[base + at];
-        water.w = sim_cells[base + sim_held() + at].w;
         if sim_has(q, SIM_LIVE) {
             water = mix(water, sim_averages[sim_looks(at)], sim_rim_pull(q, cell));
+            sim_cells[base + at] = water;
         }
-        sim_cells[base + at] = water;
         if sim_has(q, SIM_SPARSE) && !sim_held_at(q, at) && water.x - sim_bed(q, at) > SIM_DRY {
             let inside = at % SIM_BLOCK_CELLS;
             let x = inside % WATER_SIM_GROUP;
@@ -2164,14 +1771,14 @@ fn sim_churned(
     if index == 0u && sides != 0u && cell.runs {
         sim_steps[sim_block_at(q, at / SIM_BLOCK_CELLS)].x = f32(sides);
     }
-    let first = index == 0u && all(group == vec3<u32>(0u));
-    if first && sim_has(q, SIM_STEPPING) && sim_has(q, SIM_LIVE) {
-        sim_steps[sim_live_count()].x += 1.0;
+    let first = index == 0u && all(group.xy == vec2<u32>(0u));
+    if first && group.z < sim_slot_count() && sim_has(q, SIM_STEPPING) {
+        sim_steps[sim_count_at(q)].x += 1.0;
     }
 }
 
 // What a cell's water adds to its sums for each of its seconds: while it
-// is wet, its depth, flow along x and z and foam; the energy it loses
+// is wet, its depth and flow along x and z, then nothing; the energy it loses
 // (watts a square meter), its depth squared, its vorticity squared and its
 // speed squared; and its velocity along x and z; whether it is wet; and
 // whether its water leaves its bed. Dry, it adds none of its water, so its
@@ -2193,20 +1800,24 @@ fn sim_add(q: Square, at: u32, seconds: f32, sums: SimSums) {
 }
 
 // What the cell at `at` adds to its sums standing still, its water
-// standing as `water`: wet, its depth, flow and foam, its depth squared and
-// that it is wet; nothing moving.
+// standing as `water`: wet, its depth and flow, its depth squared and that
+// it is wet; nothing moving.
 fn sim_still(q: Square, at: u32, water: vec4<f32>) -> SimSums {
     let h = max(water.x - sim_bed(q, at), 0.0);
     let wet = select(0.0, 1.0, h > SIM_DRY);
-    return SimSums(wet * vec4<f32>(h, water.yzw), vec4<f32>(0.0, wet * h * h, 0.0, 0.0),
+    return SimSums(wet * vec4<f32>(h, water.yz, 0.0), vec4<f32>(0.0, wet * h * h, 0.0, 0.0),
         vec4<f32>(0.0, 0.0, wet, 0.0));
 }
 
 // The seconds each step a block stands still counts for in its cells'
-// sums: the longest a local step takes, as a cell whose water and whose
-// neighbors' water stand still takes it.
+// sums: where cells step by their own seconds, the longest a local step
+// takes, as a cell whose water and whose neighbors' water stand still takes
+// it; else the rectangle's step's.
 fn sim_standing(q: Square) -> f32 {
-    return SIM_LOCAL_SHARE * SIM_COURANT * q.dx / SIM_SLOWEST;
+    if sim_has(q, SIM_LOCAL) {
+        return SIM_LOCAL_SHARE * SIM_COURANT * q.dx / SIM_SLOWEST;
+    }
+    return q.live;
 }
 
 // The velocity of the water of cell (i, j) as the step left it, or
@@ -2248,8 +1859,8 @@ fn sim_bend(q: Square, cell: SimCell, velocity: vec2<f32>) -> f32 {
         + 2.0 * velocity.x * velocity.y * bend.z;
 }
 
-// A summing rectangle's cells after each step, their foam churned: each
-// adds its water over its seconds to its sums (`SimSums`): the energy it
+// A summing rectangle's cells after each step: each adds its water over
+// its seconds to its sums (`SimSums`): the energy it
 // loses (`sim_dissipation`), its vorticity from its neighbors' velocities
 // (its own standing in for a neighbor the slot does not hold; none where
 // it is dry), and its water leaving its bed where the bed curves away
@@ -2280,7 +1891,7 @@ fn sim_tally(
     let leaves = wet && SIM_GRAVITY + sim_bend(q, cell, velocity) <= 0.0;
     let moving = vec4<f32>(sim_dissipation(q, cell), h * h, swirl * swirl,
         dot(velocity, velocity));
-    let sums = SimSums(select(vec4<f32>(0.0), vec4<f32>(h, water.yzw), wet),
+    let sums = SimSums(select(vec4<f32>(0.0), vec4<f32>(h, water.yz, 0.0), wet),
         select(vec4<f32>(0.0), moving, wet),
         vec4<f32>(select(vec2<f32>(0.0), velocity, wet), select(0.0, 1.0, wet),
             select(0.0, 1.0, leaves)));
@@ -2313,7 +1924,7 @@ fn sim_source(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // Where the cells of block `place` (its column and row in the slot's
-// rectangle) held water at the step before's end, as `sim_churned` marks
+// rectangle) held water at the step before's end, as `sim_ended` marks
 // it; nothing for a block the slot does not store.
 fn sim_wet_at(q: Square, place: vec2<i32>) -> u32 {
     let block = sim_block(q, place);
@@ -2395,7 +2006,8 @@ fn sim_at_edge(q: Square, i: i32, j: i32) -> bool {
 // about their means (the means of their squares less their means' squares,
 // the sums kept above the ground so they keep their precision), and the
 // shares of the time it was wet and ran at the fastest water runs, replace
-// the means kept then, and its sums start anew; each block sums, over its
+// the means kept then, and its sums start anew, or, where its looks keep
+// them, hold that water too; each block sums, over its
 // cells flowing (wet SIM_WET_MOST of the time or more), the water their
 // means hold (cubic meters a meter of cell,
 // above their ground), their speeds, the energy they lose, their heave
@@ -2446,13 +2058,15 @@ fn sim_look(
         let heave = max(moving.y - mean.x * mean.x, 0.0);
         let rush = max(moving.w - dot(portions.xy, portions.xy), 0.0);
         let means = sim_means_at(q, at);
-        sim_averages[means] = vec4<f32>(sim_bed(q, at) + mean.x, mean.yzw);
+        sim_averages[means] = vec4<f32>(sim_bed(q, at) + mean.x, mean.yz, 0.0);
         sim_averages[means + 1u] = vec4<f32>(moving.x, heave, moving.z, rush);
         sim_averages[means + 2u] = vec4<f32>(shares.z / seconds, portions.w, spent.x / seconds,
             0.0);
-        for (var k = 0u; k < SIM_CELL_SUMS; k++) {
-            sim_averages[sums + k] = vec4<f32>(0.0);
-        }
+        let kept = select(0.0, 1.0, sim_has(q, SIM_KEEPING));
+        sim_averages[sums] = water * kept;
+        sim_averages[sums + 1u] = motion * kept;
+        sim_averages[sums + 2u] = shares * kept;
+        sim_averages[sums + 3u] = spent * kept;
         let h = mean.x;
         if !sim_held_at(q, at) && h > SIM_DRY && shares.z >= SIM_WET_MOST * seconds {
             let velocity = vec2<f32>(sim_velocity(h, mean.y), sim_velocity(h, mean.z));
@@ -2488,7 +2102,7 @@ fn sim_look(
         sim_averages[at] = sim_look_water[0];
         sim_averages[at + 1u] = sim_look_motion[0];
         sim_averages[at + 2u] = vec4<f32>(sim_look_edges[0], 0.0, 0.0);
-        // The steps it stood still start anew with the sums.
+        // The steps it stood still start anew, the sums holding them.
         if sparse {
             sim_steps[sim_block_at(q, block) + 1u].y = 0.0;
         }
@@ -2536,11 +2150,11 @@ fn sim_change(before: vec4<f32>, here: vec2<f32>, after: vec4<f32>, dx: f32) -> 
 // each: each one's water as water's pass draws it into the second entry of
 // its look, as a tile's water sample holds it (`engine_terrain::TileWater`):
 // its surface and its ground above the square's datum beside its two words,
-// its velocity as a share of SIM_FLOW_RANGE either way, its foam as a share
-// of SIM_FOAM_MOST and its span's code, then its turbulence, how strongly it
-// breaks white, its shear as a share of SIM_SHEAR_RANGE and its reach's
-// code. The codes of its span and reach are its bed's, which its setup
-// stands in their top bytes and each look keeps. A cell holding water
+// its velocity as a share of SIM_FLOW_RANGE either way, then none, and its
+// span's code, then its turbulence, how strongly it breaks white, its shear
+// as a share of SIM_SHEAR_RANGE and its reach's code. The codes of its span
+// and reach are its bed's, which its setup stands in their top bytes and
+// each look keeps. A cell holding water
 // deeper than SIM_THIN stands at its surface in the state the cook's rules
 // give the water it holds now: its turbulence its velocity's swing from the
 // velocity it settled at, against that speed (at least
@@ -2552,8 +2166,8 @@ fn sim_change(before: vec4<f32>, here: vec2<f32>, after: vec4<f32>, dx: f32) -> 
 // (`engine_terrain`'s `breaking`); and its shear its velocity's gradient
 // between its neighbors holding water. A cell holding none beside cells
 // that do, its ground at or above their mean level, carries that level over
-// it with their mean velocity and foam, in no state, so the shore falls
-// where the ground rises through the water; one on lower ground, or beside
+// it with their mean velocity, in no state, so the shore falls where the
+// ground rises through the water; one on lower ground, or beside
 // none, holds no surface (SIM_NO_SURFACE), and the water ends halfway to it,
 // as the rings continuing tiles' water under its banks end it, one ring
 // deep.
@@ -2576,19 +2190,16 @@ fn sim_drawn(
     let i = i32(cell.i);
     let j = i32(cell.j);
     let dx = q.dx;
-    let base = sim_cells_base(q);
     let ground = sim_bed(q, at);
     let here = sim_shown(q, i, j);
     var sides = array<vec4<f32>, 4>(sim_shown(q, i - 1, j), sim_shown(q, i + 1, j),
         sim_shown(q, i, j - 1), sim_shown(q, i, j + 1));
     var surface = SIM_NO_SURFACE;
     var velocity = vec2<f32>(0.0);
-    var foam = 0.0;
     var state = vec3<f32>(0.0);
     if here.y > 0.0 {
         surface = here.x;
         velocity = here.zw;
-        foam = sim_cells[base + at].w;
         let settled = sim_averages[looks];
         let settled_depth = settled.x - ground;
         var mean = vec2<f32>(0.0);
@@ -2613,24 +2224,20 @@ fn sim_drawn(
         var level = 0.0;
         var wet = 0.0;
         var carried = vec2<f32>(0.0);
-        var white = 0.0;
         for (var k = 0; k < 4; k++) {
             let side = sides[k];
             if side.y > 0.0 {
-                let beside = vec2<i32>(i, j) + sim_toward(k);
                 level += side.x;
                 carried += side.zw;
-                white += sim_cells[base + sim_at(q, beside.x, beside.y)].w;
                 wet += 1.0;
             }
         }
         if wet > 0.0 && ground >= level / wet {
             surface = level / wet;
             velocity = carried / wet;
-            foam = white / wet;
         }
     }
-    let flowing = pack4x8snorm(vec4<f32>(velocity / SIM_FLOW_RANGE, foam / SIM_FOAM_MOST, 0.0));
+    let flowing = pack4x8snorm(vec4<f32>(velocity / SIM_FLOW_RANGE, 0.0, 0.0));
     let stirred = pack4x8unorm(vec4<f32>(state.xy, state.z / SIM_SHEAR_RANGE, 0.0));
     let words = vec2<u32>((flowing & 0x00ffffffu) | span, (stirred & 0x00ffffffu) | reach);
     sim_averages[looks + 1u] = vec4<f32>(surface, ground, bitcast<vec2<f32>>(words));

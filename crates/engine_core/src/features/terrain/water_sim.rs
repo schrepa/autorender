@@ -1,9 +1,9 @@
 //! Water's live windows: the square of ground around the detail eye over
 //! which the renderer runs rivers by the shallow-water equations (its
 //! `water_sim`), the same water as the settled water around it
-//! ([`super::settled`]'s, in cells [`Water::simulation_cell`] across), in
-//! live cells finer than the settled ones, as few as put LIVE_ACROSS across
-//! the narrowest channel its streams fill ([`live_cell`]): out from the eye
+//! ([`super::settled`]'s, in cells [`Water::simulation_cell`] across) in the
+//! same model, on the live cells the settled water settled on, finer than
+//! the settled ones ([`live_cell`]): out from the eye
 //! as far as those cells' unsteady features stay [`LIVE_PIXELS`] across or
 //! more ([`live_reach`]), no farther than a frame's budget of its cells'
 //! steps holds ([`Water::live_budget`]), and as far again as the eye goes
@@ -46,8 +46,8 @@ use glam::{Vec2, Vec3};
 use super::residency::TerrainState;
 use super::{TerrainDebug, Terrains, Viewport, Water};
 use crate::math::{max, min, sin_cos};
-use crate::terrain_data::shallow_water::step_seconds;
-use crate::terrain_data::{BLOCK_SIDE, Footprint, NARROWEST, SteadyWater, Tile, TileKey};
+use crate::terrain_data::shallow_water::{live_split, step_seconds};
+use crate::terrain_data::{BLOCK_SIDE, Footprint, SteadyWater, Tile, TileKey};
 use crate::{Camera, WaterObstacle};
 
 /// Pixels across the view a live cell spans, at the view's middle, as far
@@ -57,13 +57,6 @@ use crate::{Camera, WaterObstacle};
 /// water's pass hands the live water over to on the way out
 /// (`meshes/water.wgsl`'s `water_live_share`).
 pub const LIVE_PIXELS: f32 = 4.0;
-/// Live cells across the narrowest water whose flow the live solve turns
-/// ([`live_cell`]): four, the fewest over which its cells' water, linear
-/// across each of them (`water_sim.wgsl`'s reconstruction), carries a
-/// velocity rising from a bank or a rock's side to the stream's thread and
-/// falling back, two cells each side, so its flow bends around what stands
-/// in it and sheds eddies in its lee.
-const LIVE_ACROSS: f32 = 4.0;
 /// The longest frame whose time the live water steps through: a longer
 /// frame steps as many steps as this one holds, so a slow frame costs no
 /// more than this ([`live_steps`]), and the water then runs slower than the
@@ -279,22 +272,14 @@ fn live_reach(cell: f32, height: u32, fov: f32) -> f32 {
 
 /// The meters across the live cells over settled cells `settled` meters
 /// across, on a terrain whose finest level's samples stand `finest` apart:
-/// LIVE_ACROSS of them across the narrowest water its streams fill, the
-/// narrowest channel its bake cuts ([`NARROWEST`] of those samples, the
-/// fewest any feature of its ground spans), each settled cell split along
-/// each side into the fewest that does, a power of two no more than a
-/// block's side, so the live cells tile the settled cells and each block
-/// holds whole settled cells; the settled cells themselves where they are
-/// as fine. Rocks standing in the water, solids, turn it by the share of
-/// the live cells they cover. For the cook's meter cells over a meter's
-/// samples, half a meter: four across a two-meter channel, and two or more
-/// across a boulder a meter wide; a quarter of a meter would put four
-/// across it, but its steps, twice as many, would leave the budget a reach
-/// of a few tens of meters.
+/// the settled cells split along each side into the cells settling ran on
+/// ([`live_split`]). Rocks standing in the water, solids, turn it by the
+/// share of the live cells they cover. For the cook's meter cells over a
+/// meter's samples, half a meter; a quarter of a meter would put four
+/// across a boulder a meter wide, but its steps, twice as many, would leave
+/// the budget a reach of a few tens of meters.
 fn live_cell(settled: f32, finest: f32) -> f32 {
-    let narrowest = NARROWEST * finest;
-    let split = max((LIVE_ACROSS * settled / narrowest).ceil(), 1.0) as u32;
-    settled / split.next_power_of_two().min(BLOCK_SIDE) as f32
+    settled / live_split(settled, finest) as f32
 }
 
 /// The most steps the live water takes a frame over cells `cell` meters

@@ -1,8 +1,8 @@
 // Turbulence reaching water's surface in bursts: the one rule every
 // simulation of water draws the events of its turbulence by, the foam and
 // the waves water's particles are born in (`meshes/water_particles.wgsl`)
-// and the live solve's turbulent pushes (`water_sim.wgsl`'s `sim_burst`)
-// alike. Below its
+// and the solve's turbulent pushes, live and settling
+// (`water_sim.wgsl`'s `sim_burst`), alike. Below its
 // grid a simulation knows how turbulent each place is: its turbulence, its
 // eddies' speed, the energy it loses, the white water born in it.
 // Turbulence reaches the surface intermittently, so its events are random
@@ -11,8 +11,8 @@
 // simulation's step index alone, so every host draws the same events
 // however its frames fall. Water's particles name their sites, how long
 // their events live (`water_burst_slot`) and how many they expect at a site
-// over a slot (`water_burst_weight`); the live solve draws at most one a
-// cell a step (`water_burst`).
+// over a slot (`water_burst_weight`); the solve draws at most one a cell a
+// step (`water_burst`).
 
 // The most steps a slot spans: 2^WATER_BURST_LONGEST, minutes of the
 // simulation's steps, longer than any eddy turns over.
@@ -86,11 +86,11 @@ struct WaterBurst {
     turn: f32,
 }
 
-// The stream the live solve's bursts draw from (`water_burst_bits`'),
-// before those water's particles draw from (`PARTICLE_STREAMS`).
+// The stream the solve's bursts draw from (`water_burst_bits`'), live and
+// settling, before those water's particles draw from (`PARTICLE_STREAMS`).
 const WATER_BURST_LIVE: u32 = 16u;
 
-// Four draws, each uniform over [0, 1), for world cell `cell` of the live
+// Four draws, each uniform over [0, 1), for world cell `cell` of the
 // solve's lattice at step `tick` (`water_burst_bits`), each its draw's top
 // 24 bits, which a float holds exactly.
 fn water_burst_draws(cell: vec2<i32>, tick: u32) -> vec4<f32> {

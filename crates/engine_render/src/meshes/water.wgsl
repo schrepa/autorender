@@ -16,10 +16,10 @@
 // one (the uniform cubic B-spline whose control points they are, as the
 // ground's shading takes its smooth surface), whose gradient tilts the
 // water; its depth over that level's own ground and what its samples' words
-// say of the water (`WaterWords`: its flow, the foam it carries, how
-// turbulent it runs, where white water is born in it, its shear, how far
-// across its water body is and whether a lake holds it, and the reach of its
-// stream), read through the same weights, so no triangle of the level shows
+// say of the water (`WaterWords`: its flow, how turbulent it runs, where
+// white water is born in it, its shear, how far across its water body is
+// and whether a lake holds it, and the reach of its stream), read through
+// the same weights, so no triangle of the level shows
 // in it; and how much of those weights its
 // samples holding a surface carry, the water ending where they carry less
 // than half (`water_level`). It lies wherever that surface stands over the
@@ -75,11 +75,10 @@
 // reaches or the water ends before it) beside their tile's ground (x and
 // y); and their words
 // (`engine_terrain::TileWater::info`), a texel's channels:
-// their flow along x and z as shares of WATER_FLOW_RANGE either way, the
-// foam they carry as a share of WATER_FOAM_MOST (negative where a fall's
-// sheet runs over them), and how far across their water body is, its code
-// in 127ths (`water_span`: none for 0), negative where a lake holds them
-// (x, four signed bytes); how turbulent they run, how strongly they break
+// their flow along x and z as shares of WATER_FLOW_RANGE either way, a
+// step below none where a fall's sheet runs over them (else none), and how
+// far across their water body is, its code in 127ths (`water_span`: none
+// for 0), negative where a lake holds them (x, four signed bytes); how turbulent they run, how strongly they break
 // white and their shear as a share of WATER_SHEAR_RANGE, in 255ths, and 0
 // for no reach, else their reach plus one (y, four bytes); and the height
 // above the terrain's origin the water's mesh stands at over them, a float's
@@ -166,9 +165,6 @@ const WATER_LIVE_LOOKS: u32 = 2u;
 // water back to the settled water and water's pass hands it back to the
 // tiles' (`gpu_layouts::constants::SIM_RIM`).
 const WATER_LIVE_RIM: u32 = 8u;
-// The most foam water carries, as its flow churns it up
-// (`engine_terrain::shallow_water::FOAM_MOST`).
-const WATER_FOAM_MOST: f32 = 1.5;
 // What lies behind the water, copied from the opaque scene before it
 // draws: its depth and, in frames drawing the effects' targets, its color.
 @group(2) @binding(22) var water_depth: texture_depth_2d;
@@ -274,15 +270,13 @@ fn water_texel(block: u32, sample: vec2<u32>) -> vec3<i32> {
 }
 
 // What a sample's words say of its water: its flow along x and z (meters a
-// second), the foam it carries (0 none, WATER_FOAM_MOST the most), how far
-// across its water body is (its span, meters: a river's width, a lake's
-// equal-area diameter; none where none is known), whether a lake holds it
-// and whether a fall's sheet runs over it; how turbulent it runs, how
+// second), how far across its water body is (its span, meters: a river's
+// width, a lake's equal-area diameter; none where none is known), whether a
+// lake holds it and whether a fall's sheet runs over it; how turbulent it runs, how
 // strongly it breaks white and its shear (a second); and its reach's code
 // (0 for none, else 1 plus `engine_terrain::Reach`).
 struct WaterWords {
     flow: vec2<f32>,
-    foam: f32,
     span: f32,
     lake: bool,
     sheet: bool,
@@ -297,7 +291,6 @@ fn water_words(words: vec4<u32>) -> WaterWords {
     let state = unpack4x8unorm(words.y);
     var read: WaterWords;
     read.flow = info.xy * WATER_FLOW_RANGE;
-    read.foam = abs(info.z) * WATER_FOAM_MOST;
     read.span = water_span(info.w);
     read.lake = info.w < 0.0;
     read.sheet = info.z < 0.0;
@@ -645,7 +638,6 @@ fn water_at_level(level: WaterLevel) -> WaterAt {
 fn water_words_add(at: WaterAt, words: WaterWords, share: f32, nearest: bool) -> WaterAt {
     var sum = at;
     sum.words.flow += words.flow * share;
-    sum.words.foam += words.foam * share;
     sum.words.span += words.span * share;
     sum.words.state += words.state * share;
     if nearest {
@@ -750,7 +742,6 @@ fn water_blend(first: WaterAt, second: WaterAt, toward: f32) -> WaterAt {
     at.depth = mix(first.depth, second.depth, toward);
     at.held = mix(first.held, second.held, toward);
     at.words.flow = mix(first.words.flow, second.words.flow, toward);
-    at.words.foam = mix(first.words.foam, second.words.foam, toward);
     at.words.span = mix(first.words.span, second.words.span, toward);
     at.words.state = mix(first.words.state, second.words.state, toward);
     at.slope = mix(first.slope, second.slope, toward);

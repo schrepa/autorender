@@ -435,7 +435,7 @@ fn water_span(code: u8) -> f32 {
 /// draw's `object` word (its depth and speed, half floats) and `detail`
 /// word (its span's code and its roughness, a byte each), then the terrain
 /// target's texel in `bytes` (its Froude number and its eddies', half
-/// floats; its turbulence, white water, carried foam and reach).
+/// floats; its turbulence, white water and reach).
 fn water_probe((object, detail): (u32, u32), bytes: &[u8]) -> WaterProbe {
     let (froudes, state) = (word(bytes, TERRAIN), word(bytes, TERRAIN + 4));
     let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
@@ -449,7 +449,6 @@ fn water_probe((object, detail): (u32, u32), bytes: &[u8]) -> WaterProbe {
         turbulence: share(state, 0),
         white: share(state, 1),
         reach: water_reach(state >> 24),
-        foam: share(state, 2),
         span: water_span((detail & 0xff) as u8),
         eddies,
         roughness: share(detail, 1),

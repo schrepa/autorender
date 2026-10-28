@@ -1,27 +1,26 @@
 //! Water running live (`water_sim.wgsl`): rivers running over a terrain's
-//! [`WaterWindow`] by the shallow-water equations, in cells finer than the
-//! settled water's, the same water as the settled water around it,
-//! starting from the water as it settled there, which also stands just past
-//! its edges and which its rim is pulled back to, stirred by its own
-//! turbulence's bursts and pushed by the solids standing in it. Water's
-//! pass draws it as one with the tiles' water, reading each cell's look
-//! (`meshes/water.wgsl`'s `water_live_read`). The window is one slot of the
-//! scheme's buffers ([`crate::water_kernels`]) whose pool holds its blocks,
-//! each block in the slot of its place on the terrain's lattice of blocks
-//! taken around the pool's side, with a ring past its edges. Every frame
-//! steps every cell by the same seconds, as many steps as the simulation
-//! time passed holds, at most those of a frame LONGEST_FRAME long
-//! ([`live_steps`]), within a fixed number of dispatches, and then finds
-//! each cell's look. As the window follows the detail eye a block keeps
-//! its slot, and the water there runs on; each block it newly covers takes
-//! the slot of a block it left. Before each step turbulence bursts in its
-//! water, each burst drawn by the one rule for bursts (`water_bursts.wgsl`)
-//! from its cell and the step's index, and pushes it; then the solids
-//! standing in its water push it toward their own velocity and churn its
-//! foam, which rides its surface, dragged by the scene's wind. Where one of
-//! the device's storage bindings cannot hold a buffer of the window, its
-//! middle square whose buffers they hold runs instead. Nothing is read
-//! back.
+//! [`WaterWindow`] by the shallow-water equations, the same water as the
+//! settled water around it in the same model: on the cells settling ran on,
+//! finer than the settled water's, over the same bed, stirred by the same
+//! bursts of turbulence. It starts from the water as it settled there,
+//! which also stands just past its edges and which its rim is pulled back
+//! to, and the solids standing in it push it. Water's pass draws it as one
+//! with the tiles' water, reading each cell's look (`meshes/water.wgsl`'s
+//! `water_live_read`). The window is one slot of the scheme's buffers
+//! ([`crate::water_kernels`]) whose pool holds its blocks, each block in the
+//! slot of its place on the terrain's lattice of blocks taken around the
+//! pool's side, with a ring past its edges. Every frame steps every cell by
+//! the same seconds, as many steps as the simulation time passed holds, at
+//! most those of a frame LONGEST_FRAME long ([`live_steps`]), within a
+//! fixed number of dispatches, and then finds each cell's look. As the
+//! window follows the detail eye a block keeps its slot, and the water there
+//! runs on; each block it newly covers takes the slot of a block it left.
+//! Before each step turbulence bursts in its water, each burst drawn by the
+//! one rule for bursts (`water_bursts.wgsl`) from its cell and the step's
+//! index, and pushes it; then the solids standing in its water push it
+//! toward their own velocity. Where one of the device's storage bindings
+//! cannot hold a buffer of the window, its middle square whose buffers they
+//! hold runs instead. Nothing is read back.
 //!
 //! The GPU sets the window up from what it holds already
 //! (`meshes/water_setup.wgsl`, through the terrain group of the terrain the
@@ -29,29 +28,30 @@
 //! the block change (a finer level, or its settled water, arriving), before
 //! any step: one dispatch, a workgroup a block, sets up each such block's
 //! ground from the finest resident heights, raised by the relief of the
-//! ground's materials at the level whose texels span a live cell, so its
-//! fast water breaks over the stones and cobbles the ground draws; the
-//! lakes holding its cells, which let go of those that relief raises to
-//! their level; its bed's roughness and what its bed holds, from the tiles'
-//! water; the solids' cover; its water to start from, the settled water's
-//! smooth surface at each cell matched over each settled cell to that cell's
-//! water, off that steady state as unsteadily as the water runs there; and
-//! that steady state, which its rim is pulled back to. A second dispatch,
-//! an invocation a cell, sets up the cells past its edges and what they
-//! bring in, in each frame the window changed. So a window runs in the
-//! frame it comes, reading the coarser level shading reads where the
-//! tiles' settled water is not resident yet; and every frame RISEN slots'
-//! ground rises again, round the pool, so the bed follows the ground's
-//! materials as they arrive and the tiles under it fade in. The CPU hands
-//! over only where the window stands, the blocks a frame sets up, the
-//! solids and where its rivers bring water.
+//! ground's materials at the level whose texels span a live cell as
+//! settling raises its own (`terrain_ground_rise`), so its fast water breaks
+//! over the stones and cobbles the ground draws; the lakes holding its
+//! cells, which let go of those that relief raises to their level; its
+//! bed's roughness by settling's rule, and what its bed holds, from the
+//! tiles' water; the solids' cover; its water to start from, the settled
+//! water's smooth surface at each cell matched over each settled cell to
+//! that cell's water, off that steady state as unsteadily as the water runs
+//! there; and that steady state, which its rim is pulled back to. A second
+//! dispatch, an invocation a cell, sets up the cells past its edges and what
+//! they bring in, in each frame the window changed. So a window runs in the
+//! frame it comes, reading the coarser level shading reads where the tiles'
+//! settled water is not resident yet; and every frame RISEN slots' ground
+//! rises again, round the pool, so the bed follows the ground's materials as
+//! they arrive and the tiles under it fade in. The CPU hands over only where
+//! the window stands, the blocks a frame sets up, the solids and where its
+//! rivers bring water.
 //!
 //! The cook's meter cells over a meter's samples run live in half-meter
 //! cells (`engine_core`'s `live_cell`), each step 1/225 of a second
 //! ([`step_seconds`]), so a frame at 60 Hz steps about four times and one
-//! LONGEST_FRAME long eight, each step thirteen dispatches at most, 107 a
-//! frame with the looks' and the setup's two. On a view 1080 pixels tall
-//! through 55 degrees,
+//! LONGEST_FRAME long eight, each step eleven dispatches at most, 91 a frame
+//! with the looks' and the setup's two. On a view 1080 pixels tall through
+//! 55 degrees,
 //! their live reach of 130 meters asks for a window of 616 cells along each
 //! side (with three quarters of a 32-meter snap past it), and the default
 //! budget of 2,097,152 cell steps over the longest frame's eight holds 512
@@ -75,11 +75,11 @@ use bytemuck::Zeroable;
 use engine_core::glam::{Mat3, Vec2, Vec3};
 use engine_core::terrain_data::shallow_water::step_seconds;
 use engine_core::terrain_data::{BLOCK_SIDE, Footprint, StoredBlocks};
-use engine_core::{SIM_TOUCHES, WaterObstacle, WaterRead, WaterWindow, Wind, live_steps};
+use engine_core::{SIM_TOUCHES, WaterObstacle, WaterRead, WaterWindow, live_steps};
 
 use crate::bindings::{EMPTY, WATER_SETUP};
 use crate::gpu_layouts::constants::{
-    SETUP_SOLID_ENTRIES, SIM_LIVE, SIM_STEPPING, WATER_SETUP_RING_GROUP,
+    SETUP_SOLID_ENTRIES, SIM_BURSTING, SIM_LIVE, SIM_STEPPING, WATER_SETUP_RING_GROUP,
 };
 use crate::gpu_layouts::water::{SimSetup, SimSlot, SimTouch, SimTouches};
 use crate::pipelines::GroupLayout;
@@ -119,23 +119,25 @@ pub(crate) struct LiveGround<'a> {
     pub(crate) uniform: u32,
 }
 
-/// What sets the live water up on the GPU (`meshes/water_setup.wgsl`): the
-/// empty group its pipelines bind first and that group's layout, its own
-/// group's layout, the terrain group's layout once a frame brought it and,
-/// once the mesh module came, its pipelines, setting up blocks and the cells
-/// past the window's edges; and this frame's terrain group with the offset
-/// of the uniform of the terrain the window stands on.
-struct Setup {
+/// What sets the water's beds and the live water up on the GPU
+/// (`meshes/water_setup.wgsl`): the empty group its pipelines bind first and
+/// that group's layout, its own group's layout, the terrain group's layout
+/// once a frame brought it and, once the mesh module came, its pipelines,
+/// setting up the live water's blocks and the cells past its window's edges
+/// and raising settling water's ground; and this frame's terrain group with
+/// the offset of the uniform of the terrain the water stands on. The live
+/// water and settling ([`crate::water_settle`]) each hold one.
+pub(crate) struct Setup {
     empty_layout: GroupLayout,
     empty: wgpu::BindGroup,
-    layout: GroupLayout,
+    pub(crate) layout: GroupLayout,
     terrain: Option<GroupLayout>,
-    pipelines: Option<[wgpu::ComputePipeline; 2]>,
+    pipelines: Option<[wgpu::ComputePipeline; 3]>,
     ground: Option<(wgpu::BindGroup, u32)>,
 }
 
 impl Setup {
-    fn new(device: &wgpu::Device) -> Self {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
         let empty_layout = crate::pipelines::layout(device, &EMPTY);
         let empty = crate::pipelines::group(
             device,
@@ -156,7 +158,7 @@ impl Setup {
 
     /// Keeps `ground`, the terrain group this frame's setup reads, and its
     /// layout the first time one comes; none where it does not.
-    fn hold(&mut self, ground: Option<&LiveGround<'_>>) {
+    pub(crate) fn hold(&mut self, ground: Option<&LiveGround<'_>>) {
         self.ground = ground.map(|ground| {
             if self.terrain.is_none() {
                 self.terrain = Some(ground.layout.clone());
@@ -167,7 +169,7 @@ impl Setup {
 
     /// Creates its pipelines from the mesh module `shader` unless they
     /// exist, once a frame brought the terrain group's layout.
-    fn ensure(&mut self, device: &wgpu::Device, shader: &wgpu::ShaderModule) {
+    pub(crate) fn ensure(&mut self, device: &wgpu::Device, shader: &wgpu::ShaderModule) {
         if self.pipelines.is_some() {
             return;
         }
@@ -180,13 +182,55 @@ impl Setup {
             &[&self.empty_layout, terrain, &self.layout],
         );
         let entry = |entry| crate::pipelines::compute_entry(device, &layout, shader, entry);
-        self.pipelines = Some([entry(meshes::setup_blocks), entry(meshes::setup_ring)]);
+        self.pipelines = Some([
+            entry(meshes::setup_blocks),
+            entry(meshes::setup_ring),
+            entry(meshes::setup_raise),
+        ]);
     }
 
     /// Whether it sets up this frame: its pipelines made and the terrain
     /// group there.
-    fn sets_up(&self) -> bool {
+    pub(crate) fn sets_up(&self) -> bool {
         self.pipelines.is_some() && self.ground.is_some()
+    }
+
+    /// Binds into `pass` the groups its pipelines read through: the empty
+    /// one, the terrain group at the uniform of the terrain the water stands
+    /// on and `group`; the pipelines, where it sets up this frame.
+    fn bind<'a>(
+        &'a self,
+        pass: &mut wgpu::ComputePass<'_>,
+        group: &wgpu::BindGroup,
+    ) -> Option<&'a [wgpu::ComputePipeline; 3]> {
+        let (Some(pipelines), Some((terrain, uniform))) = (&self.pipelines, &self.ground) else {
+            return None;
+        };
+        // Its pipelines bind the same groups: the terrain's uniform at its
+        // offset, the views' at their first, which they read none of.
+        pass.set_bind_group(0, &self.empty, &[]);
+        pass.set_bind_group(1, terrain, &[0, *uniform]);
+        pass.set_bind_group(2, group, &[]);
+        Some(pipelines)
+    }
+
+    /// Records into `pass` the raising of `blocks` blocks of settling water's
+    /// ground a settling slot's group `group` lists, a workgroup each,
+    /// through the terrain group at the uniform of the terrain it settles on;
+    /// whether it recorded them.
+    pub(crate) fn encode_raise(
+        &self,
+        pass: &mut wgpu::ComputePass<'_>,
+        group: &wgpu::BindGroup,
+        blocks: u32,
+    ) -> bool {
+        let Some([_, _, raise]) = self.bind(pass, group) else {
+            return false;
+        };
+        let [groups_x, groups_z] = grid(blocks);
+        pass.set_pipeline(raise);
+        pass.dispatch_workgroups(groups_x, groups_z, 1);
+        true
     }
 
     /// Records into `pass` the setup of `blocks` blocks a window's group
@@ -199,16 +243,9 @@ impl Setup {
         group: &wgpu::BindGroup,
         (blocks, ghosts): (u32, u32),
     ) -> bool {
-        let (Some([set_blocks, set_ring]), Some((terrain, uniform))) =
-            (&self.pipelines, &self.ground)
-        else {
+        let Some([set_blocks, set_ring, _]) = self.bind(pass, group) else {
             return false;
         };
-        // Both pipelines bind the same groups: the terrain's uniform at its
-        // offset, the views' at their first, which they read none of.
-        pass.set_bind_group(0, &self.empty, &[]);
-        pass.set_bind_group(1, terrain, &[0, *uniform]);
-        pass.set_bind_group(2, group, &[]);
         if blocks > 0 {
             let [groups_x, groups_z] = grid(blocks);
             pass.set_pipeline(set_blocks);
@@ -222,24 +259,26 @@ impl Setup {
     }
 }
 
-/// What sets up a window's blocks and the cells past its edges: its
-/// uniform; its list, the solids standing in the settled water over the
-/// window first (SETUP_SOLID_ENTRIES entries each), then the blocks a frame
-/// sets up (each one's slot and the cell of the terrain's lattice of live
-/// cells its first corner stands at), with the entries it holds room for;
-/// and the group binding them with the window's buffers.
-struct SetupBuffers {
-    frame: wgpu::Buffer,
-    list: wgpu::Buffer,
-    room: usize,
-    group: wgpu::BindGroup,
+/// What sets up a window's blocks and the cells past its edges, or raises
+/// settling water's ground: its uniform; its list (the live water's, the
+/// solids standing in the settled water over the window first,
+/// SETUP_SOLID_ENTRIES entries each, then the blocks a frame sets up, each
+/// one's slot and the cell of the terrain's lattice of live cells its first
+/// corner stands at; settling water's, its blocks and their samples), with
+/// the entries it holds room for; and the group binding them with the
+/// scheme's buffers.
+pub(crate) struct SetupBuffers {
+    pub(crate) frame: wgpu::Buffer,
+    pub(crate) list: wgpu::Buffer,
+    pub(crate) room: usize,
+    pub(crate) group: wgpu::BindGroup,
 }
 
 impl SetupBuffers {
     /// Room for `entries` entries of the list, the next power of two of
     /// them, and the group of the layout `layout` binding them with
     /// `buffers`.
-    fn new(
+    pub(crate) fn new(
         device: &wgpu::Device,
         layout: &GroupLayout,
         buffers: &SlotBuffers,
@@ -277,7 +316,7 @@ impl SetupBuffers {
     }
 
     /// Bytes of its buffers.
-    fn bytes(&self) -> u64 {
+    pub(crate) fn bytes(&self) -> u64 {
         self.frame.size() + self.list.size()
     }
 }
@@ -357,15 +396,14 @@ impl WaterSim {
     }
 
     /// Prepares the live window `live` for this frame at simulation time
-    /// `seconds` in the scene's wind `wind`, over the square of it the
-    /// device's bindings hold: its buffers anew where a square of another
-    /// size came; where one of its size moved, its table and sources; the
-    /// terrain group its setup reads the ground and the tiles' water
-    /// through; the setup of the blocks its slots do not hold, of those whose
-    /// tiles changed and of the cells past its edges where it changed, and
-    /// the ground of RISEN slots rising again, wherever the setup can run;
-    /// the solids pushing its water; the wind dragging its surface; and as
-    /// many steps, each of the same seconds, as the simulation time since
+    /// `seconds`, over the square of it the device's bindings hold: its
+    /// buffers anew where a square of another size came; where one of its
+    /// size moved, its table and sources; the terrain group its setup reads
+    /// the ground and the tiles' water through; the setup of the blocks its
+    /// slots do not hold, of those whose tiles changed and of the cells past
+    /// its edges where it changed, and the ground of RISEN slots rising
+    /// again, wherever the setup can run; the solids pushing its water; and
+    /// as many steps, each of the same seconds, as the simulation time since
     /// the last frame holds, at most LONGEST_FRAME's, each of its index in
     /// the simulation's time, which its bursts are drawn by. Drops it where
     /// there is no window, or no square of it fits.
@@ -374,7 +412,7 @@ impl WaterSim {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         live: Option<Live<'_>>,
-        (wind, seconds): (Wind, f64),
+        seconds: f64,
     ) {
         if let Some(current) = self.window.as_mut() {
             current.settle();
@@ -452,21 +490,22 @@ impl WaterSim {
         ];
         let [columns, rows] = current.stored.blocks;
         let pooled = current.stored.stored() as u32;
-        // The wind's mean drags the surface: its gusts come and go within
-        // seconds (`Wind::at`), carrying what floats back and forth by a few
-        // centimeters in a breeze. Bursts are drawn by the cell on the
-        // terrain's lattice of the square's cells, an `i32`'s bits each, and
-        // the step's index.
+        // Bursts are drawn by the cell on the terrain's lattice of the
+        // square's cells, an `i32`'s bits each, and the step's index.
         let [x, z] = current.fitted.first;
-        current
-            .buffers
-            .write_frames(queue, wind.velocity, [x as u32, z as u32, starting as u32]);
+        current.buffers.write_frames(queue);
         current.buffers.write_squares(
             queue,
             &[SimSlot {
-                shape: [cells, cells, SIM_STEPPING | SIM_LIVE, current.sourced],
+                shape: [
+                    cells,
+                    cells,
+                    SIM_STEPPING | SIM_LIVE | SIM_BURSTING,
+                    current.sourced,
+                ],
                 step: [cell, step, 0.0, 0.0],
                 blocks: [columns, rows, pooled, 0],
+                place: [x as u32, z as u32, starting as u32, 0],
             }],
         );
         current.buffers.write_touches(queue, pushing.as_ref());
@@ -505,7 +544,7 @@ impl WaterSim {
                 &mut pass,
                 pipelines,
                 &window.buffers,
-                (self.steps, window.sourced, false, false),
+                (self.steps, window.sourced, false, true),
                 blocks,
             );
         }

@@ -232,7 +232,7 @@ fn half_value(bits: u16) -> f32 {
 }
 
 /// The gradient `[x, z]` as a normal map's texel: its two halves.
-fn gradient_word([x, z]: [f32; 2]) -> u32 {
+pub(crate) fn gradient_word([x, z]: [f32; 2]) -> u32 {
     u32::from(half_bits(x)) | u32::from(half_bits(z)) << 16
 }
 

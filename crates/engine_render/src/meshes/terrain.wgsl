@@ -372,10 +372,8 @@ fn terrain_level_gradient(local: vec2<f32>, level: u32) -> vec2<f32> {
         // rounding moves off the block.
         let texels = textureGather(0, terrain_normals, terrain_control_sampler,
             (vec2<f32>(corner) + vec2<f32>(2.0)) / 259.0, layer);
-        let low = mix(unpack2x16float(texels.w), unpack2x16float(texels.z), f.x);
-        let high = mix(unpack2x16float(texels.x), unpack2x16float(texels.y), f.x);
         let fade = terrain_layer_fades(layer).x;
-        gradient += mix(low, high, f.y) * (left * (1.0 - fade));
+        gradient += terrain_gradient_between(texels, f) * (left * (1.0 - fade));
         left *= fade;
         if left <= 0.0 {
             return gradient;
@@ -457,6 +455,16 @@ fn terrain_kept_lift(world: vec3<f32>, local: vec2<f32>) -> KeptLift {
     return lift;
 }
 
+// The smooth surface's gradient at a point `f` (0 to 1 along x and z)
+// between four samples whose normal maps' texels are `texels`, in a
+// gather's order (x: (0, 1), y: (1, 1), z: (1, 0), w: (0, 0)): their
+// gradients blended bilinearly.
+fn terrain_gradient_between(texels: vec4<u32>, f: vec2<f32>) -> vec2<f32> {
+    let low = mix(unpack2x16float(texels.w), unpack2x16float(texels.z), f.x);
+    let high = mix(unpack2x16float(texels.x), unpack2x16float(texels.y), f.x);
+    return mix(low, high, f.y);
+}
+
 // The normal of the terrain's smooth surface at terrain-local `local` at
 // `shading`'s levels, their gradients blended.
 fn terrain_surface_normal(local: vec2<f32>, shading: TerrainShadingLevel) -> vec3<f32> {
@@ -512,6 +520,28 @@ fn terrain_control_blend(blend: ptr<function, TerrainBlend>, control: u32, weigh
     }
 }
 
+// Adds `weight` of the materials of four samples at a point `f` (0 to 1
+// along x and z) between them, bilinearly: their control values
+// `controls`, in a gather's order (x: (0, 1), y: (1, 1), z: (1, 0), w:
+// (0, 0)), each blended as `terrain_control_blend` blends one.
+fn terrain_controls_blend(blend: ptr<function, TerrainBlend>, controls: vec4<u32>,
+        f: vec2<f32>, weight: f32) {
+    let weights = vec4<f32>(weight * (1.0 - f.x) * (1.0 - f.y), weight * f.x * (1.0 - f.y),
+        weight * (1.0 - f.x) * f.y, weight * f.x * f.y);
+    if weights.x != 0.0 {
+        terrain_control_blend(blend, controls.w, weights.x);
+    }
+    if weights.y != 0.0 {
+        terrain_control_blend(blend, controls.z, weights.y);
+    }
+    if weights.z != 0.0 {
+        terrain_control_blend(blend, controls.x, weights.z);
+    }
+    if weights.w != 0.0 {
+        terrain_control_blend(blend, controls.y, weights.w);
+    }
+}
+
 // Whether this terrain's coarser levels shade with level 0's shading
 // averaged (`terrain.steep.w`): every terrain's but surroundings'.
 fn terrain_averaged() -> bool {
@@ -548,20 +578,7 @@ fn terrain_level_own(blend: ptr<function, TerrainBlend>, local: vec2<f32>, level
         // samples a side.
         let controls = textureGather(0, terrain_control, terrain_control_sampler,
             (vec2<f32>(texel) + vec2<f32>(1.0)) / 259.0, layer);
-        let weights = vec4<f32>(own * (1.0 - f.x) * (1.0 - f.y), own * f.x * (1.0 - f.y),
-            own * (1.0 - f.x) * f.y, own * f.x * f.y);
-        if weights.x != 0.0 {
-            terrain_control_blend(blend, controls.w, weights.x);
-        }
-        if weights.y != 0.0 {
-            terrain_control_blend(blend, controls.z, weights.y);
-        }
-        if weights.z != 0.0 {
-            terrain_control_blend(blend, controls.x, weights.z);
-        }
-        if weights.w != 0.0 {
-            terrain_control_blend(blend, controls.y, weights.w);
-        }
+        terrain_controls_blend(blend, controls, f, own);
     }
     return weight * fade;
 }
@@ -1607,13 +1624,19 @@ struct TerrainLift {
     kept: vec3<f32>,
 }
 
+// Whether material `entry` moves the ground by its heights: one of some
+// depth with maps.
+fn terrain_material_rises(entry: TerrainPaletteEntry) -> bool {
+    return entry.relief.x > 0.0 && entry.params.w > 0.0;
+}
+
 // How far the materials of `blend` move the ground at `world`, of smooth
 // normal `normal`, along that normal: each by its share, its heights less
 // their mean at the level whose texels span `meters.x` (x), and at the
 // level whose texels span `meters.y` (y), read again only where that spans
-// more. Materials of no depth or without maps move none of it. The mesh
-// band (`terrain_displacement`) and the live water's setup of its bed
-// (`meshes/water_setup.wgsl`) raise the ground by it alike.
+// more. Materials of no depth or without maps move none of it
+// (`terrain_material_rises`). The mesh band (`terrain_displacement`) and
+// the water's bed (`terrain_ground_rise`) raise the ground by it alike.
 fn terrain_band_rise(blend: TerrainBlend, world: vec3<f32>, normal: vec3<f32>,
         meters: vec2<f32>) -> vec2<f32> {
     var rise = vec2<f32>(0.0);
@@ -1623,7 +1646,7 @@ fn terrain_band_rise(blend: TerrainBlend, world: vec3<f32>, normal: vec3<f32>,
             continue;
         }
         let entry = terrain_material(blend.ids[slot]);
-        if entry.relief.x <= 0.0 || entry.params.w <= 0.0 {
+        if !terrain_material_rises(entry) {
             continue;
         }
         let heights = terrain_material_heights(entry, world, normal);
@@ -1638,6 +1661,90 @@ fn terrain_band_rise(blend: TerrainBlend, world: vec3<f32>, normal: vec3<f32>,
         rise += depth * (vec2<f32>(band, coarse) - entry.heights.x);
     }
     return rise;
+}
+
+// Level 0's ground at a point as the four samples around it hold it: their
+// control values and their smooth surface's gradients (as a normal map's
+// texels hold them), in a gather's order (x: (0, 1), y: (1, 1), z: (1, 0),
+// w: (0, 0)), and where the point lies among them (0 to 1 along x and z).
+// The water's bed rises by them (`terrain_ground_rise`): the live water's
+// from the tiles' layers (`terrain_ground_samples`), settling water's from
+// the samples its regions' parts carry (`meshes/water_setup.wgsl`'s
+// `setup_raise`).
+struct TerrainGroundSamples {
+    controls: vec4<u32>,
+    gradients: vec4<u32>,
+    within: vec2<f32>,
+}
+
+// The ground's samples around terrain-local `local` in the tiles' layers
+// (`TerrainGroundSamples`): level 0's where its tile is resident with its
+// materials, else the finest resident coarser level's, its shading level
+// 0's averaged; none where no level holds them.
+fn terrain_ground_samples(local: vec2<f32>) -> TerrainGroundSamples {
+    var samples = TerrainGroundSamples(vec4<u32>(0u), vec4<u32>(0u), vec2<f32>(0.0));
+    let base = terrain.directory.x;
+    let levels = terrain.directory.y;
+    for (var index = 0u; index < levels; index++) {
+        let header = base + index * 4u;
+        let at = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
+        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tile = min(vec2<u32>(at / 256.0), tiles - vec2<u32>(1u));
+        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        if layer == 0xffffffffu || terrain_layer_fades(layer).y >= 1.0 {
+            continue;
+        }
+        // Samples 0 to 256 within the tile; layers keep a border texel
+        // before the first. The 2x2 block's texels in one gather at its
+        // shared corner each, as `terrain_level_own` gathers them.
+        let within = clamp(at - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
+        let corner = min(vec2<u32>(within), vec2<u32>(255u));
+        let uv = (vec2<f32>(corner) + vec2<f32>(2.0)) / 259.0;
+        samples.controls = textureGather(0, terrain_control, terrain_control_sampler, uv, layer);
+        samples.gradients = textureGather(0, terrain_normals, terrain_control_sampler, uv, layer);
+        samples.within = within - vec2<f32>(corner);
+        return samples;
+    }
+    return samples;
+}
+
+// How far the relief of its materials raises the ground the water's bed
+// stands on at terrain-local `local`, `height` meters above the terrain's
+// origin, as `samples` hold the ground there, at the level whose texels span
+// `meters` (`rise`); and whether any of its materials raises it
+// (`relief`). Along the ground's smooth normal, the samples' gradients
+// blended, as the mesh band moves the drawn ground, its rise times the
+// normal's upright part, so the stones stand where the drawn ones do,
+// within the sideways part of their rise; its materials blended as
+// `terrain_blend` blends them at level 0: the samples' control values
+// bilinearly, the steep material decided again at the point, and the
+// borders between them moved by level 0's noise. One function of where the
+// point stands and what its samples hold, which the live water and settling
+// water raise their beds by alike.
+struct TerrainGroundRise {
+    rise: f32,
+    relief: bool,
+}
+
+fn terrain_ground_rise(samples: TerrainGroundSamples, local: vec2<f32>, height: f32,
+        meters: f32) -> TerrainGroundRise {
+    let gradient = terrain_gradient_between(samples.gradients, samples.within);
+    let normal = normalize(vec3<f32>(-gradient.x, 1.0, -gradient.y));
+    var blend: TerrainBlend;
+    blend.ids = vec4<u32>(0xffffffffu);
+    blend.weights = vec4<f32>(0.0);
+    terrain_controls_blend(&blend, samples.controls, samples.within, 1.0);
+    terrain_steep_blend(&blend, normal);
+    terrain_border_blend(&blend, local, TerrainShadingLevel(0u, 0.0));
+    let world = terrain.origin.xyz + vec3<f32>(local.x, height, local.y);
+    var raised = TerrainGroundRise(0.0, false);
+    raised.rise = terrain_band_rise(blend, world, normal, vec2<f32>(meters)).x * normal.y;
+    for (var slot = 0u; slot < 4u; slot++) {
+        if blend.weights[slot] > 0.0 && terrain_material_rises(terrain_material(blend.ids[slot])) {
+            raised.relief = true;
+        }
+    }
+    return raised;
 }
 
 // The mesh band at `world`, terrain-local `local`: along the ground's

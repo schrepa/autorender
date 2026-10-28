@@ -5,9 +5,9 @@
 //! terrain's ground is made of: its tiles and patches, surface materials,
 //! the sky it sees and how it shows its materials' maps; or what terrains'
 //! water is doing, each field of its state: its depth, speed, Froude number,
-//! turbulence, white water, the reach it runs in, the foam it carries, how
-//! far across its water body is, its eddies' turbulent Froude number and the
-//! roughness its shading gives it. Renderers draw them with pipelines of
+//! turbulence, white water, the reach it runs in, how far across its water
+//! body is, its eddies' turbulent Froude number and the roughness its
+//! shading gives it. Renderers draw them with pipelines of
 //! their own, created the first time a view shows, into targets of their
 //! own; the shaded frame's pipelines, targets and passes stay as they are,
 //! and a world without the settings draws no view.
@@ -122,10 +122,6 @@ modes! {
     /// blue, plane beds cyan, steps and pools green, cascades orange, falls
     /// red; water no stream holds (lakes) violet.
     WaterReach = "water_reach",
-    /// The foam it carries, as its flow churns it up, carries it and loses
-    /// it (`engine_terrain::shallow_water`), from dark brown (none) through
-    /// sand to white (the most water carries).
-    WaterFoam = "water_foam",
     /// How far across its water body is: a river's width, a lake's
     /// equal-area diameter, on a logarithmic scale from violet (a quarter
     /// meter) through teal (32 meters) to pale yellow (4096 meters or more).
@@ -324,8 +320,6 @@ pub struct WaterProbe {
     /// The reach of the stream it runs in; `None` where no stream holds it
     /// (lakes).
     pub reach: Option<WaterReach>,
-    /// The foam it carries, 0 (none) to 1 (the most water carries).
-    pub foam: f32,
     /// Meters across its water body: a river's width, a lake's equal-area
     /// diameter.
     pub span: f32,

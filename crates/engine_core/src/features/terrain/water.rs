@@ -4,14 +4,14 @@
 //! eye, out to where its cells' unsteady features stay a few pixels across
 //! ([`crate::LIVE_PIXELS`]) and as far as a budget of its cells' steps holds
 //! ([`Water::live_budget`]), the same water runs live from that settled
-//! state by the same equations, in cells finer than the settled water's, a
-//! few across its narrowest channels, stirred by its own turbulence's
-//! bursts, and hands back to it at its rim. How water moves and foams
-//! follows from its state alone, what its tiles or the live solve hold at
-//! each place (its depth, flow, the foam it carries, how turbulent it runs
-//! and how far across its water body is), the scene's wind
-//! ([`crate::Wind`]) dragging the water that runs live and the foam riding
-//! it. It shows that state and nothing
+//! state in the same model, on the cells it settled on, finer than the
+//! settled water's, a few across its narrowest channels, over the same bed,
+//! stirred by the same turbulence's bursts, and hands back to it at its rim.
+//! How water moves and foams follows from its state alone, what its tiles
+//! or the live solve hold at each place (its depth, flow, how turbulent it
+//! runs and how far across its water body is), the scene's wind
+//! ([`crate::Wind`]) dragging the foam riding it. It shows that state and
+//! nothing
 //! else: its surface is the state's own, roughened where its turbulence and
 //! eddies stir it, a calm mirror where nothing does, and its foam and small
 //! waves particles its flow carries. Each body's look is its color, its
@@ -30,7 +30,7 @@ settings! {
     /// Water settings: how terrains' water looks (its color, clarity and
     /// sediment), the cells it settles and runs live in, and how it draws;
     /// its movement and foam come from its state, the scene's wind dragging
-    /// the water that runs live.
+    /// the foam riding it.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -52,12 +52,12 @@ settings! {
         pub sediment: f32 = 0.15 => range(0.0, 50.0),
         /// The color the water's sediment scatters back, linear.
         pub sediment_color: [f32; 3] = [0.05, 0.065, 0.03] => range(0.0, 1.0),
-        /// The meters across the cells water settles in: the cook makes the
-        /// settled water's records at this size; the water running live
-        /// around the detail eye runs in these cells split along each side
-        /// into as few as put four across the narrowest channel the
+        /// The meters across the cells of the settled water's records,
+        /// which the cook makes at this size: settling and the water running
+        /// live around the detail eye both run in these cells split along
+        /// each side into as few as put four across the narrowest channel the
         /// terrain's bake cuts, half a meter for meter cells over a meter's
-        /// samples.
+        /// samples, each record's cell their mean.
         pub simulation_cell: f32 = 1.0 => range(0.25, 8.0),
         /// The most cell steps the water running live around the detail eye
         /// takes in a frame: its square holds no more cells than this over

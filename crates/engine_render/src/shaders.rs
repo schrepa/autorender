@@ -344,6 +344,7 @@ entry_points! {
         compute: [
             setup_blocks,
             setup_ring,
+            setup_raise,
             subdivide_begin,
             subdivide_decide,
             subdivide_apply,
@@ -378,8 +379,7 @@ entry_points! {
     water_sim = WATER_SIM_SHADER {
         compute: [
             sim_exchange, sim_waves, sim_seconds, sim_drain, sim_update, sim_source, sim_touch,
-            sim_burst, sim_push, sim_drift, sim_churn, sim_churned, sim_tally, sim_activity,
-            sim_look, sim_drawn
+            sim_burst, sim_push, sim_ended, sim_tally, sim_activity, sim_look, sim_drawn
         ],
     }
     clouds = CLOUDS_SHADER {
