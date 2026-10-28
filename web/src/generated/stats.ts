@@ -818,8 +818,9 @@ export interface WaterStats {
   live_budget_cut: number;
   /**
    * Cells along a side of the square around the detail eye over which
-   * water runs live this frame: 0 while none does (before its first
-   * square is gathered).
+   * water runs live this frame: 0 while none does (before the GPU can
+   * set its square up, the terrain group it reads the ground and the
+   * tiles' water through not made yet).
    */
   live_cells: number;
   /**
@@ -828,6 +829,14 @@ export interface WaterStats {
    * instead: the live water then hands back nearer the eye still.
    */
   live_cut: number;
+  /**
+   * Blocks of that square (a scheme's block of its cells each) the GPU
+   * set up whole this frame from the ground and the tiles' water it
+   * holds: every block of a square that came anew, the strips a move
+   * uncovered, and those over a tile that changed (a finer level, or its
+   * settled water, arriving); 0 in frames none came.
+   */
+  live_setup: number;
   /**
    * Steps the live water took this frame, each of the same seconds, the
    * longest in which its fastest water and waves cross a quarter of its

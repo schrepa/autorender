@@ -38,6 +38,7 @@ const V: Stages = Stages::VERTEX;
 const VF: Stages = Stages::VERTEX_FRAGMENT;
 // Tables a family's compute and render passes share.
 const VC: Stages = Stages(V.0 | C.0);
+const FC: Stages = Stages(F.0 | C.0);
 const VFC: Stages = Stages(VF.0 | C.0);
 // Bytes of a pose, a slot color, a placed object's ground,
 // and of virtual geometry's mesh, cluster and page pool word.
@@ -1033,7 +1034,7 @@ tables! {
             write(43, "setup_ground", C),
             write(44, "setup_cells", C),
             write(45, "setup_looks", C),
-            write(46, "setup_ring", C),
+            write(46, "setup_edges", C),
         ],
     };
 

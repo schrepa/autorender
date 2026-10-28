@@ -246,11 +246,8 @@ impl SetupBuffers {
         entries: usize,
     ) -> Self {
         let room = entries.max(1).next_power_of_two();
-        let frame = crate::buffers::uniform(
-            device,
-            "engine/water-setup",
-            size_of::<SimSetup>() as u64,
-        );
+        let frame =
+            crate::buffers::uniform(device, "engine/water-setup", size_of::<SimSetup>() as u64);
         let list = crate::buffers::storage(
             device,
             "engine/water-setup-list",
@@ -268,7 +265,7 @@ impl SetupBuffers {
                 crate::buffers::entry("setup_ground", &buffers.ground),
                 crate::buffers::entry("setup_cells", &buffers.cells),
                 crate::buffers::entry("setup_looks", &buffers.averages),
-                crate::buffers::entry("setup_ring", &buffers.inputs),
+                crate::buffers::entry("setup_edges", &buffers.inputs),
             ],
         );
         Self {
@@ -659,12 +656,8 @@ impl SimWindow {
             .hold_sources(device, layout, self.fitted.sources.len());
         let entries = entries(&self.fitted, self.held.len());
         if grown || entries > self.setup.room {
-            self.setup = SetupBuffers::new(
-                device,
-                setup,
-                &self.buffers,
-                entries.max(self.setup.room),
-            );
+            self.setup =
+                SetupBuffers::new(device, setup, &self.buffers, entries.max(self.setup.room));
         }
         self.buffers.write_table(queue, 0, &self.stored);
         self.sourced = write_sources(queue, &self.buffers, &self.fitted, &self.stored);

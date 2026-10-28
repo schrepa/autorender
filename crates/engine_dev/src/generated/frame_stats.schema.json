@@ -1181,13 +1181,19 @@
           "type": "integer"
         },
         "live_cells": {
-          "description": "Cells along a side of the square around the detail eye over which\nwater runs live this frame: 0 while none does (before its first\nsquare is gathered).",
+          "description": "Cells along a side of the square around the detail eye over which\nwater runs live this frame: 0 while none does (before the GPU can\nset its square up, the terrain group it reads the ground and the\ntiles' water through not made yet).",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "live_cut": {
           "description": "Cells along a side of the square the budget holds that the device's\nstorage bindings cut from it, the middle square they hold running\ninstead: the live water then hands back nearer the eye still.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "live_setup": {
+          "description": "Blocks of that square (a scheme's block of its cells each) the GPU\nset up whole this frame from the ground and the tiles' water it\nholds: every block of a square that came anew, the strips a move\nuncovered, and those over a tile that changed (a finer level, or its\nsettled water, arriving); 0 in frames none came.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1239,6 +1245,7 @@
         "live_cut",
         "live_steps",
         "live_behind",
+        "live_setup",
         "touches",
         "dropped_touches",
         "particle_texels",

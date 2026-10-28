@@ -184,7 +184,10 @@ impl TerrainPipelines {
                             "water_surface",
                             crate::pipelines::view(sources.water.surface_view()),
                         ),
-                        ("water_info", crate::pipelines::view(sources.water.info_view())),
+                        (
+                            "water_info",
+                            crate::pipelines::view(sources.water.info_view()),
+                        ),
                         ("terrain_errors", crate::pipelines::view(ground_errors)),
                         ("water_errors", crate::pipelines::view(water_errors)),
                     ],

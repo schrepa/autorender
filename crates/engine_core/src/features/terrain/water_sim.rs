@@ -414,7 +414,11 @@ fn follow(state: &mut TerrainState, (reach, cell, budget): (f32, f32, u32), eye:
     let reads = reads(state, first, (cells, cell));
     if let Some(window) = staying {
         let read = window.reads.len() == reads.len()
-            && window.reads.iter().zip(&reads).all(|(held, read)| held.same(read));
+            && window
+                .reads
+                .iter()
+                .zip(&reads)
+                .all(|(held, read)| held.same(read));
         if read && (window.asked, window.pixels) == (asked, pixels) {
             return;
         }

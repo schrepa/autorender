@@ -101,7 +101,7 @@ struct SimSetup {
 // `setup_frame.ring.x`, two entries a cell past the edges: its surface,
 // flow along x and z and lake's level, then its foam and the flow it
 // brings in.
-@group(2) @binding(46) var<storage, read_write> setup_ring: array<vec4<f32>>;
+@group(2) @binding(46) var<storage, read_write> setup_edges: array<vec4<f32>>;
 
 // Entries of a block of the live water's ground, what a cell no lake holds
 // holds as its lake's level, the meters of water under which a cell is dry,
@@ -624,6 +624,6 @@ fn setup_ring(@builtin(global_invocation_id) id: vec3<u32>) {
         carried = vec4<f32>(water.foam, max(dot(flow, toward), 0.0), 0.0, 0.0);
     }
     let entry = setup_frame.ring.x + 2u * ghost;
-    setup_ring[entry] = standing;
-    setup_ring[entry + 1u] = carried;
+    setup_edges[entry] = standing;
+    setup_edges[entry + 1u] = carried;
 }

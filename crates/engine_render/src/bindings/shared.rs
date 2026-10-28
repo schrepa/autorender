@@ -100,7 +100,7 @@ shared_groups! {
             particle_source, particle_target, particle_spread_source, particle_spread_target
         ],
         setup: 41..47 [
-            setup_frame, setup_list, setup_ground, setup_cells, setup_looks, setup_ring
+            setup_frame, setup_list, setup_ground, setup_cells, setup_looks, setup_edges
         ],
         foam: 47..49 [foam_pool, water_foam_drawn],
     }
