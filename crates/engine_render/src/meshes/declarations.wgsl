@@ -1,3 +1,5 @@
+import package::frame::view::fade_noise;
+
 @group(1) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(1) @binding(1) var base_color_sampler: sampler;
 @group(1) @binding(2) var metallic_roughness_texture: texture_2d<f32>;
@@ -52,10 +54,6 @@ fn material_flag(bit: u32, specialized: bool) -> bool {
     return specialized;
 }
 
-@group(0) @binding(10) var refraction_sampler: sampler;
-const PROBE_ENTRY_WORDS: u32 = 3u;
-@group(0) @binding(13) var<storage, read> probe_words: array<vec4<u32>>;
-
 struct AffinePose {
     row_0: vec4<f32>,
     row_1: vec4<f32>,
@@ -98,35 +96,6 @@ fn fade_hidden(fade: u32, position: vec2<f32>) -> bool {
     let shows = fade_noise(position) < f32(fade & 0x7fu) / 127.0;
     return shows == ((fade & FADE_WORD_OUT) != 0u);
 }
-
-struct Clusters {
-    view_projection: mat4x4<f32>,
-    depth: vec4<f32>,
-    projection: vec4<f32>,
-    grid: vec4<f32>,
-    counts: vec4<u32>,
-    lights: vec4<u32>,
-}
-struct Light {
-    position: vec3<f32>,
-    range: f32,
-    color: vec3<f32>,
-    cos_outer: f32,
-    direction: vec3<f32>,
-    cos_inner: f32,
-    radius: f32,
-    length: f32,
-    region: u32,
-    pad: u32,
-}
-const SHAPED_LIGHTS: u32 = 1u;
-const KEPT_REGIONS: u32 = 2u;
-const LIGHT_INTERIOR: u32 = 1u;
-const LIGHT_EXTERIOR: u32 = 2u;
-@group(3) @binding(0) var<uniform> clusters: Clusters;
-@group(3) @binding(1) var<storage, read> lights: array<Light>;
-@group(3) @binding(2) var<storage, read> cluster_ranges: array<vec2<u32>>;
-@group(3) @binding(3) var<storage, read> cluster_lights: array<u32>;
 
 struct AffineVertexInput {
     @location(0) position: vec3<f32>,
