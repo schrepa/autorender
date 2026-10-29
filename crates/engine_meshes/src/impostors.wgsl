@@ -1,9 +1,10 @@
 import package::engine::math::maximum_abs;
 import package::engine::wind::slot_sway;
-import package::frame::encode::encoded;
-import package::frame::view::{camera, lighting, material_detail, stable_normalize};
-import package::lighting::surface::{BODY_SOLID, BODY_THIN, Shaded, SurfacePoint, finish};
-import package::lights::shade::local_light;
+import package::face::dither::encoded;
+import package::face::lighting::{BODY_SOLID, BODY_THIN, Shaded, SurfacePoint, finish, local_light};
+import package::face::meshes::{scene_targets, temporal_targets, widened};
+import package::face::sun::sun_direction;
+import package::frame::view::{camera, fade_noise, material_detail, stable_normalize};
 import package::meshes::declarations::{
     ALPHA_MASK, MATERIAL_MAPS, MOVED_SLOT, NORMAL_MAP, TOP_LAYER, VARIANT_MAPS,
     VARIANT_NORMAL_MAP, VARIANT_TOP_LAYER, colors, material_flag, material_maps, poses,
@@ -14,13 +15,11 @@ import package::meshes::impostor_frames::{
     ImpostorRecord, impostor_basis, impostor_facing, impostor_fade, impostor_frame_direction,
     impostor_frames, impostor_grid, impostor_index, impostor_met, impostor_over
 };
-import package::meshes::surface::{
+import package::meshes::shade::{
     MASK_MIP_SCALE, MaterialTexels, alpha_cutoff, fragment_pixel, geometric_normal, leafiness,
-    mapped_normal, material_texels, plant_tint, rippled, scene_targets, temporal_targets,
-    top_layer_amount, widened
+    mapped_normal, material_texels, plant_tint, rippled, top_layer_amount
 };
 import package::meshes::vertex::{octahedral_normal, origin_key, pose_matrix, slot_wind};
-import package::shadows::sample::fade_noise;
 
 const IMPOSTOR_FOLIAGE: u32 = 0x1000000u;
 
@@ -514,7 +513,7 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     point.n_v = max(dot(point.normal, point.view), 1.0e-4);
     point.world = world;
     let reach = select(1.0, 0.25, (record.flags & IMPOSTOR_HEMISPHERE) != 0u);
-    point.shadow_offset = lighting.sun.xyz * (reach * length(input.depth_axis.xyz));
+    point.shadow_offset = sun_direction() * (reach * length(input.depth_axis.xyz));
     return widened(point, dpdx(point.normal), dpdy(point.normal));
 }
 
@@ -551,10 +550,6 @@ fn impostor_shaded(input: ImpostorOutput, point: SurfacePoint, light: vec3<f32>)
 }
 
 fn shade_impostor(input: ImpostorOutput) -> ImpostorShaded {
-    return impostor_shaded(input, impostor_point(input), vec3<f32>(0.0));
-}
-
-fn shade_impostor_lit(input: ImpostorOutput) -> ImpostorShaded {
     let point = impostor_point(input);
     return impostor_shaded(input, point, local_light(point, input.clip_position.xy));
 }
@@ -603,26 +598,11 @@ fn fs_impostor(input: ImpostorOutput) -> ImpostorColor {
 }
 
 @fragment
-fn fs_impostor_lit(input: ImpostorOutput) -> ImpostorColor {
-    return impostor_color(shade_impostor_lit(input), input);
-}
-
-@fragment
 fn fs_impostor_post(input: ImpostorOutput) -> ImpostorSceneTargets {
     return impostor_scene_targets(shade_impostor(input), input);
 }
 
 @fragment
-fn fs_impostor_post_lit(input: ImpostorOutput) -> ImpostorSceneTargets {
-    return impostor_scene_targets(shade_impostor_lit(input), input);
-}
-
-@fragment
 fn fs_impostor_temporal(input: ImpostorTemporalOutput) -> ImpostorTemporalTargets {
     return impostor_temporal_targets(shade_impostor(impostor_output(input)), input);
-}
-
-@fragment
-fn fs_impostor_temporal_lit(input: ImpostorTemporalOutput) -> ImpostorTemporalTargets {
-    return impostor_temporal_targets(shade_impostor_lit(impostor_output(input)), input);
 }
