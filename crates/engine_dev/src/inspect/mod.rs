@@ -18,7 +18,7 @@ use engine_core::{
 };
 use engine_scene::{
     SceneAtmosphere, SceneEmitter, SceneEntity, SceneEnvironment, SceneInstance, SceneLight,
-    SceneMaterial, SceneReflectionProbe,
+    SceneMaterial, SceneReflectionProbe, TextureOrigin,
 };
 use serde::Serialize;
 use serde_json::{Value, json};

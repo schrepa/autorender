@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use engine_core::{
-    AssetLibrary, Error, MaterialHandle, Mesh3d, MeshHandle, TextureHandle, Transform,
+    AssetLibrary, Error, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets, TextureHandle,
+    Transform,
     bevy_ecs::{
         self,
         prelude::{Component, Entity, World},
@@ -48,7 +49,8 @@ pub struct SceneInstance {
     revision: u64,
     world_id: WorldId,
     entities: Arc<BTreeMap<String, Entity>>,
-    assets: OwnedAssets,
+    assets: Handles,
+    owned: Handles,
     material_ids: Vec<String>,
     mesh_ids: Vec<String>,
     texture_ids: Vec<String>,
@@ -59,7 +61,7 @@ pub struct SceneInstance {
 #[derive(Debug, Default)]
 struct Origins {
     meshes: Vec<MeshOrigin>,
-    textures: Vec<Option<String>>,
+    textures: Vec<TextureOrigin>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -71,6 +73,7 @@ pub enum MeshOrigin {
     Octahedron,
     Inline { vertices: usize, indices: usize },
     Buffer { uri: String },
+    Provided { name: String },
 }
 
 impl From<&crate::MeshSource> for MeshOrigin {
@@ -84,18 +87,36 @@ impl From<&crate::MeshSource> for MeshOrigin {
                 indices: indices.len(),
             },
             crate::MeshSource::Buffer { uri } => Self::Buffer { uri: uri.clone() },
+            crate::MeshSource::Provided { name } => Self::Provided { name: name.clone() },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TextureOrigin {
+    Inline,
+    File { uri: String },
+    Provided { name: String },
+}
+
+impl From<&crate::SceneTexture> for TextureOrigin {
+    fn from(texture: &crate::SceneTexture) -> Self {
+        match (&texture.provided, &texture.uri) {
+            (Some(name), _) => Self::Provided { name: name.clone() },
+            (None, Some(uri)) => Self::File { uri: uri.clone() },
+            (None, None) => Self::Inline,
         }
     }
 }
 
 #[derive(Debug, Default)]
-struct OwnedAssets {
+struct Handles {
     meshes: Vec<MeshHandle>,
     materials: Vec<MaterialHandle>,
     textures: Vec<TextureHandle>,
 }
 
-impl OwnedAssets {
+impl Handles {
     fn remove(&self, assets: &mut AssetLibrary) {
         for &handle in &self.meshes {
             assets.remove_mesh(handle);
@@ -109,21 +130,54 @@ impl OwnedAssets {
     }
 }
 
-fn insert_each<T, H>(
+fn insert_each<T, H: Copy>(
     items: Vec<T>,
-    handles: &mut Vec<H>,
+    provided: Vec<Option<H>>,
+    (handles, owned): (&mut Vec<H>, &mut Vec<H>),
     field: &str,
     mut insert: impl FnMut(T) -> Result<H, Error>,
 ) -> Result<(), Error> {
-    for (index, item) in items.into_iter().enumerate() {
-        let handle = insert(item).map_err(|error| {
-            error
-                .coded(ErrorCode::AssetBudgetExceeded)
-                .at(format!("$.{field}[{index}]"))
-        })?;
+    for (index, (item, provided)) in items.into_iter().zip(provided).enumerate() {
+        let handle = match provided {
+            Some(handle) => handle,
+            None => {
+                let handle = insert(item).map_err(|error| {
+                    error
+                        .coded(ErrorCode::AssetBudgetExceeded)
+                        .at(format!("$.{field}[{index}]"))
+                })?;
+                owned.push(handle);
+                handle
+            }
+        };
         handles.push(handle);
     }
     Ok(())
+}
+
+fn provided_each<'a, H, N>(
+    names: impl Iterator<Item = Option<&'a str>>,
+    path: impl Fn(usize) -> String,
+    find: impl Fn(&str) -> Option<H>,
+    known: impl Fn() -> N,
+) -> Result<Vec<Option<H>>, Error>
+where
+    N: IntoIterator,
+    N::Item: Into<String>,
+{
+    names
+        .enumerate()
+        .map(|(index, name)| {
+            name.map(|name| {
+                find(name).ok_or_else(|| {
+                    Error::new(ErrorCode::UnknownReference, path(index))
+                        .got(name)
+                        .variants(known())
+                })
+            })
+            .transpose()
+        })
+        .collect()
 }
 
 impl SceneInstance {
@@ -169,16 +223,13 @@ impl SceneInstance {
         Some((&self.mesh_ids[index], &self.origins.meshes[index]))
     }
 
-    pub fn texture_origin(&self, handle: TextureHandle) -> Option<(&str, Option<&str>)> {
+    pub fn texture_origin(&self, handle: TextureHandle) -> Option<(&str, &TextureOrigin)> {
         let index = self
             .assets
             .textures
             .iter()
             .position(|&texture| texture == handle)?;
-        Some((
-            &self.texture_ids[index],
-            self.origins.textures[index].as_deref(),
-        ))
+        Some((&self.texture_ids[index], &self.origins.textures[index]))
     }
 
     pub fn entities(&self) -> impl ExactSizeIterator<Item = (&str, Entity)> {
@@ -219,7 +270,7 @@ impl SceneInstance {
             world.despawn(entity);
         }
         if let Some(mut assets) = world.get_resource_mut::<AssetLibrary>() {
-            self.assets.remove(&mut assets);
+            self.owned.remove(&mut assets);
         }
     }
 }
@@ -236,8 +287,8 @@ impl SceneDocument {
     ) -> Result<SceneInstance, Error> {
         let mut prepared = self.prepare(Some(files))?;
         self.check_bricks(world)?;
-        let owned = self.insert_assets(world, &mut prepared)?;
-        let lookups = Lookups::new(self, &owned);
+        let (assets, owned) = self.insert_assets(world, &mut prepared)?;
+        let lookups = Lookups::new(self, &assets);
         let spawned = self.spawn(world, &prepared, &lookups);
         let entities: BTreeMap<String, Entity> = prepared
             .entities
@@ -304,7 +355,8 @@ impl SceneDocument {
             revision: self.revision,
             world_id: world.id(),
             entities: Arc::new(entities),
-            assets: owned,
+            assets,
+            owned,
             material_ids: self
                 .materials
                 .iter()
@@ -322,11 +374,7 @@ impl SceneDocument {
                     .iter()
                     .map(|mesh| MeshOrigin::from(&mesh.source))
                     .collect(),
-                textures: self
-                    .textures
-                    .iter()
-                    .map(|texture| texture.uri.clone())
-                    .collect(),
+                textures: self.textures.iter().map(TextureOrigin::from).collect(),
             },
             streamed,
         };
@@ -338,33 +386,61 @@ impl SceneDocument {
         &self,
         world: &mut World,
         prepared: &mut PreparedScene,
-    ) -> Result<OwnedAssets, Error> {
-        let mut owned = OwnedAssets::default();
+    ) -> Result<(Handles, Handles), Error> {
+        let none = ProvidedAssets::default();
+        let provided = world.get_resource::<ProvidedAssets>().unwrap_or(&none);
+        let provided_meshes = provided_each(
+            self.meshes.iter().map(|mesh| mesh.source.provided()),
+            |index| format!("$.meshes[{index}].source.name"),
+            |name| provided.mesh(name),
+            || provided.mesh_names(),
+        )?;
+        let provided_textures = provided_each(
+            self.textures
+                .iter()
+                .map(|texture| texture.provided.as_deref()),
+            |index| format!("$.textures[{index}].provided"),
+            |name| provided.texture(name),
+            || provided.texture_names(),
+        )?;
+        let provided_materials = provided_each(
+            self.materials
+                .iter()
+                .map(|material| material.provided.as_deref()),
+            |index| format!("$.materials[{index}].provided"),
+            |name| provided.material(name),
+            || provided.material_names(),
+        )?;
+        let mut handles = Handles::default();
+        let mut owned = Handles::default();
         let mut assets = world
             .get_resource_mut::<AssetLibrary>()
             .ok_or_else(|| Error::new(ErrorCode::MissingAssetLibrary, "$"))?;
         let inserted = (|| {
             insert_each(
                 std::mem::take(&mut prepared.meshes),
-                &mut owned.meshes,
+                provided_meshes,
+                (&mut handles.meshes, &mut owned.meshes),
                 "meshes",
                 |mesh| assets.insert_mesh(mesh),
             )?;
             insert_each(
                 std::mem::take(&mut prepared.textures),
-                &mut owned.textures,
+                provided_textures,
+                (&mut handles.textures, &mut owned.textures),
                 "textures",
                 |texture| assets.insert_texture(texture),
             )?;
             let texture_lookup: BTreeMap<_, _> = self
                 .textures
                 .iter()
-                .zip(&owned.textures)
+                .zip(&handles.textures)
                 .map(|(source, handle)| (source.id.as_str(), *handle))
                 .collect();
             insert_each(
                 std::mem::take(&mut prepared.materials),
-                &mut owned.materials,
+                provided_materials,
+                (&mut handles.materials, &mut owned.materials),
                 "materials",
                 |material| assets.insert_material(material.material(|id| texture_lookup[id])),
             )
@@ -373,7 +449,7 @@ impl SceneDocument {
             owned.remove(&mut assets);
             return Err(error);
         }
-        Ok(owned)
+        Ok((handles, owned))
     }
 
     fn spawn(&self, world: &mut World, prepared: &PreparedScene, lookups: &Lookups) -> Vec<Entity> {
@@ -398,23 +474,23 @@ pub(crate) struct Lookups {
 }
 
 impl Lookups {
-    fn new(document: &SceneDocument, owned: &OwnedAssets) -> Self {
+    fn new(document: &SceneDocument, assets: &Handles) -> Self {
         Self {
             scene_id: document.id.clone(),
             meshes: document
                 .meshes
                 .iter()
-                .zip(&owned.meshes)
+                .zip(&assets.meshes)
                 .map(|(source, handle)| (source.id.clone(), *handle))
                 .collect(),
             materials: document
                 .materials
                 .iter()
-                .zip(&owned.materials)
+                .zip(&assets.materials)
                 .map(|(source, handle)| (source.id.clone(), *handle))
                 .collect(),
-            owned_meshes: owned.meshes.clone(),
-            owned_materials: owned.materials.clone(),
+            owned_meshes: assets.meshes.clone(),
+            owned_materials: assets.materials.clone(),
         }
     }
 }

@@ -267,10 +267,17 @@ pub(super) fn mesh_view(
                 .map(|map| {
                     let origin = scene.and_then(|scene| scene.texture_origin(map.texture));
                     let texture = assets.texture(map.texture);
+                    let (uri, inline, provided) = match origin.map(|(_, source)| source) {
+                        Some(TextureOrigin::File { uri }) => (Some(uri.clone()), false, None),
+                        Some(TextureOrigin::Inline) => (None, true, None),
+                        Some(TextureOrigin::Provided { name }) => (None, false, Some(name.clone())),
+                        None => (None, false, None),
+                    };
                     TextureView {
                         id: origin.map(|(id, _)| id.to_owned()),
-                        uri: origin.and_then(|(_, uri)| uri.map(str::to_owned)),
-                        inline: origin.is_some_and(|(_, uri)| uri.is_none()),
+                        uri,
+                        inline,
+                        provided,
                         alive: texture.is_some(),
                         width: texture.map(|texture| texture.width()),
                         height: texture.map(|texture| texture.height()),

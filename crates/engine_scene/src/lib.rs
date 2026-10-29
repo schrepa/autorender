@@ -36,7 +36,7 @@ pub use files::{
     MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile, SceneFileKind, SceneFiles,
     decode_mesh_buffer, encode_mesh_buffer, encode_mesh_buffer_with,
 };
-pub use instance::{MeshOrigin, SceneEntity, SceneInstance, authored_id};
+pub use instance::{MeshOrigin, SceneEntity, SceneInstance, TextureOrigin, authored_id};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use material::{
     SceneAlphaMode, SceneFilter, SceneGrounding, SceneMap, SceneMaterial, SceneMipmapFilter,

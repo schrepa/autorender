@@ -223,14 +223,36 @@ pub enum MeshSource {
         )]
         uri: String,
     },
+    Provided {
+        #[cfg_attr(
+            feature = "schema",
+            schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        )]
+        name: String,
+    },
 }
 
 impl MeshSource {
+    pub(crate) fn provided(&self) -> Option<&str> {
+        match self {
+            Self::Provided { name } => Some(name),
+            Self::Cube {}
+            | Self::Plane {}
+            | Self::Octahedron {}
+            | Self::Inline { .. }
+            | Self::Buffer { .. } => None,
+        }
+    }
+
     pub(crate) fn mesh(&self, path: &str, files: Option<&SceneFiles>) -> Result<Mesh, Error> {
         match self {
             Self::Cube {} => Ok(Mesh::cube()),
             Self::Plane {} => Ok(Mesh::plane()),
             Self::Octahedron {} => Ok(Mesh::octahedron()),
+            Self::Provided { name } => {
+                crate::validation::identifier(name, &format!("{path}.name"))?;
+                Ok(Mesh::cube())
+            }
             Self::Buffer { uri } => {
                 let uri_path = format!("{path}.uri");
                 valid_uri(uri, &uri_path)?;

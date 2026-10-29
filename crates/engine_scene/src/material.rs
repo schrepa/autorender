@@ -6,7 +6,7 @@ use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
 use crate::SceneSurface;
-use crate::validation::moved;
+use crate::validation::{identifier, moved};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(
@@ -21,7 +21,14 @@ pub struct SceneMaterial {
         schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub id: String,
-    pub color: [f32; 4],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+    )]
+    pub provided: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<[f32; 4]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub texture: Option<SceneMap>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -251,7 +258,8 @@ impl SceneMaterial {
         };
         Self {
             id: id.into(),
-            color: [red, green, blue, 1.0],
+            provided: None,
+            color: Some([red, green, blue, 1.0]),
             texture: map(material.base_color_texture()),
             surface: Some(SceneSurface {
                 roughness: surface.roughness,
@@ -300,17 +308,65 @@ impl SceneMaterial {
         ]
     }
 
+    pub(crate) fn prepare(&self, path: &str) -> Result<PreparedMaterial, Error> {
+        match (&self.provided, self.color) {
+            (Some(name), _) => self.prepare_provided(name, path),
+            (None, Some(color)) => self.prepare_authored(color, path),
+            (None, None) => Err(Error::new(ErrorCode::MissingField, format!("{path}.color"))
+                .expected(Expected::Present)),
+        }
+    }
+
+    fn prepare_provided(&self, name: &str, path: &str) -> Result<PreparedMaterial, Error> {
+        identifier(name, &format!("{path}.provided"))?;
+        let given = [
+            ("color", self.color.is_some()),
+            ("texture", self.texture.is_some()),
+            ("surface", self.surface.is_some()),
+            ("opacity", self.opacity.is_some()),
+            (
+                "metallic_roughness_texture",
+                self.metallic_roughness_texture.is_some(),
+            ),
+            ("normal_texture", self.normal_texture.is_some()),
+            ("normal_scale", self.normal_scale.is_some()),
+            ("occlusion_texture", self.occlusion_texture.is_some()),
+            ("occlusion_strength", self.occlusion_strength.is_some()),
+            ("emissive", self.emissive.is_some()),
+            ("emissive_texture", self.emissive_texture.is_some()),
+            ("alpha_mode", self.alpha_mode.is_some()),
+            ("alpha_cutoff", self.alpha_cutoff.is_some()),
+            ("double_sided", self.double_sided.is_some()),
+            ("foliage", self.foliage.is_some()),
+            ("world_tiling", self.world_tiling.is_some()),
+            ("top", self.top.is_some()),
+            ("grounding", self.grounding.is_some()),
+        ];
+        if let Some((field, _)) = given.into_iter().find(|&(_, given)| given) {
+            return Err(
+                Error::new(ErrorCode::InvalidMaterial, format!("{path}.{field}"))
+                    .expected(Expected::Absent),
+            );
+        }
+        Ok(PreparedMaterial {
+            material: Material::new([1.0; 4]).expect("white_material_valid"),
+            maps: Default::default(),
+            normal_scale: 1.0,
+            occlusion_strength: 1.0,
+        })
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub(crate) fn prepare(&self, path: &str) -> Result<PreparedMaterial, Error> {
+    fn prepare_authored(&self, color: [f32; 4], path: &str) -> Result<PreparedMaterial, Error> {
         let invalid =
             |field: &str| Error::new(ErrorCode::InvalidMaterial, format!("{path}.{field}"));
         let failed = |error: Error, field: &str| {
             moved(error, ErrorCode::InvalidMaterial, format!("{path}.{field}"))
         };
-        let mut material = Material::new(self.color).map_err(|error| failed(error, "color"))?;
+        let mut material = Material::new(color).map_err(|error| failed(error, "color"))?;
         if let Some(mode) = self.alpha_mode {
             if self.alpha_cutoff.is_some() && mode != SceneAlphaMode::Mask {
                 return Err(invalid("alpha_cutoff").expected(Expected::Absent));
