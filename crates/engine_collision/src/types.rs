@@ -3,7 +3,8 @@ use engine_core::{Error, ErrorCode, missing_brick};
 use engine_settings::rule::Bound;
 use glam::{Mat3, Mat4, Vec3};
 
-pub use engine_terrain::{MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT};
+pub const MIN_COLLIDER_EXTENT: f32 = 1.0e-4;
+pub const MAX_COLLIDER_EXTENT: f32 = 1.0e4;
 pub const MAX_COLLISION_COORDINATE: f32 = 1.0e6;
 pub const MAX_COLLISION_NODES: usize = 100_000;
 pub const MAX_QUERY_HITS: usize = 4_096;

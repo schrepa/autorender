@@ -24,18 +24,11 @@ pub(crate) struct CollisionSync<'w, 's> {
     config: Res<'w, CollisionConfig>,
     frame: Option<Res<'w, FrameTime>>,
     tick: Option<Res<'w, FixedTime>>,
-    terrains: Option<Res<'w, engine_terrain::Terrains>>,
     collisions: ResMut<'w, CollisionWorld>,
 }
 
 impl CollisionSync<'_, '_> {
     fn refresh(&mut self) -> CollisionReport {
-        if self.collisions.terrain.sync(self.terrains.as_deref()) {
-            self.collisions.report.terrain_tiles = self.collisions.terrain.len();
-        }
-        if self.collisions.placed.sync(self.terrains.as_deref()) {
-            self.collisions.report.placed_colliders = self.collisions.placed.len();
-        }
         self.collisions.refresh(
             *self.config,
             self.frame.as_ref().map_or(0, |time| time.frame),
@@ -664,12 +657,25 @@ pub fn refresh_collision_world(world: &mut World) -> Result<CollisionReport, Err
         return Err(Fault::MissingPlugin.error());
     }
     propagate_transforms(world);
+    sync_ground(world);
     world.init_resource::<DirectSyncState>();
     let report = world.resource_scope(|world, mut state: Mut<DirectSyncState>| {
         let mut sync = state.0.get_mut(world).expect("collision_resources_added");
         sync.refresh()
     });
     Ok(report)
+}
+
+pub(crate) fn sync_ground(world: &mut World) {
+    world.resource_scope(|world, mut collisions: Mut<CollisionWorld>| {
+        let collisions = &mut *collisions;
+        if collisions.terrain.sync(world) {
+            collisions.report.terrain_tiles = collisions.terrain.len();
+        }
+        if collisions.placed.sync(world) {
+            collisions.report.placed_colliders = collisions.placed.len();
+        }
+    });
 }
 
 pub(crate) fn sync(mut sync: CollisionSync) {

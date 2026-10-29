@@ -16,7 +16,6 @@ mod types;
 mod views;
 mod world;
 
-pub use placed::BRIDGE_LAYER;
 pub use queries::{
     CollisionEventsQuery, CollisionFilterRequest, CollisionSensorFilter, CollisionShapeRequest,
     OverlapQuery, RaycastQuery, ShapeCastQuery,
@@ -48,7 +47,9 @@ impl Brick for Collision {
             .resource::<SensorEvents>()
             .systems(
                 FixedPreSimulation,
-                world::sync.in_set(CollisionSystems::Sync),
+                (world::sync_ground, world::sync)
+                    .chain()
+                    .in_set(CollisionSystems::Sync),
             )
             .configure_sets(
                 FixedPostSimulation,
@@ -57,7 +58,9 @@ impl Brick for Collision {
             .systems(
                 FixedPostSimulation,
                 (
-                    world::sync.in_set(CollisionSystems::Sync),
+                    (world::sync_ground, world::sync)
+                        .chain()
+                        .in_set(CollisionSystems::Sync),
                     world::detect.in_set(CollisionSystems::Detect),
                 ),
             )

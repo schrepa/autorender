@@ -2,15 +2,15 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::sync::Arc;
 
-use engine_core::ErrorCode;
+use engine_core::{
+    Error, ErrorCode, GroundBridge, GroundGrid, GroundObstacle, Pyramid, TILE_QUADS, TILE_SAMPLES,
+    TileKey,
+};
 use engine_math::collections::HashMap;
 use engine_math::{max, min};
 use engine_settings::settings;
-use engine_terrain::codec::{self, Error, Reader, Writer};
-use engine_terrain::{
-    Generator, Layers, MAX_LEVEL, Obstacle, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, Tile,
-    TileKey, TileWater, record, tagged,
-};
+use engine_terrain::codec::{self, Reader, Writer};
+use engine_terrain::{MAX_LEVEL, record, tagged};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +25,7 @@ use corridor::{Corridor, Pull};
 use flood::{Buckets, Flood, Stepper, octile};
 use graph::Graph;
 pub use ground::WalkGround;
-pub use portals::{Portal, Side, TilePortals, tile_portals};
+pub use portals::{Portal, Side, TilePortals};
 pub use search::{WalkData, WalkSearch, Want};
 
 settings! {

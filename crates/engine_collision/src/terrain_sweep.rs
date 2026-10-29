@@ -1,8 +1,7 @@
-use bevy_ecs::prelude::World;
-use engine_core::{Error, ErrorCode, Operation, bounds, missing_brick};
+use bevy_ecs::prelude::{Entity, World};
+use engine_core::{Error, ErrorCode, Ground, GroundSlot, Operation, Slot, bounds, missing_brick};
 #[cfg(feature = "schema")]
 use engine_settings::stated;
-use engine_terrain::{Terrain, Terrains};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -82,21 +81,26 @@ fn sweep(world: &mut World, center: Vec2, half_extent: f32, samples: u32) -> Res
         refresh_collision_world(world)?;
     }
     let world = &*world;
-    let terrains = world
-        .get_resource::<Terrains>()
-        .ok_or_else(|| missing_brick("terrain", "$.op"))?;
+    if !world.contains_resource::<Ground>() {
+        return Err(missing_brick(GroundSlot::NAME, "$.op"));
+    }
+    let grounds: Vec<Entity> = world
+        .get_resource::<CollisionWorld>()
+        .into_iter()
+        .flat_map(|collision| collision.ground_solids())
+        .map(|solid| solid.terrain)
+        .collect();
     let mut queried = 0;
     let mut level_zero = 0;
     let mut holes = 0;
     let mut rays = Worst::default();
-    let mut layers = Worst::default();
-    let (mut ray_checks, mut ray_misses, mut layer_checks, mut placed_first) = (0, 0, 0, 0);
+    let (mut ray_checks, mut ray_misses, mut placed_first) = (0, 0, 0);
     let mut collected = Vec::new();
     for row in 0..samples {
         for column in 0..samples {
             let unit = Vec2::new(column as f32, row as f32) / (samples - 1) as f32 * 2.0 - 1.0;
             let point = center + unit * half_extent;
-            let Some(sample) = terrains.sample(point.x, point.y) else {
+            let Some(sample) = Ground::point_in(world, point.x, point.y) else {
                 continue;
             };
             queried += 1;
@@ -122,21 +126,13 @@ fn sweep(world: &mut World, center: Vec2, half_extent: f32, samples: u32) -> Res
                 )?;
                 placed_first += usize::from(hits.first().is_some_and(|hit| hit.placed.is_some()));
                 let hit = hits.into_iter().find(|hit| hit.placed.is_none());
-                match hit.filter(|hit| hit.entity == sample.terrain) {
+                match hit.filter(|hit| grounds.contains(&hit.entity)) {
                     Some(hit) => {
                         ray_checks += 1;
                         rays.add((hit.point.y - sample.height).abs(), point);
                     }
                     None => ray_misses += 1,
                 }
-            }
-            if let Some(terrain) = world.get::<Terrain>(sample.terrain)
-                && let Some(stack) = terrains.layers(sample.terrain)
-            {
-                let local = point - Vec2::new(terrain.origin.x, terrain.origin.z);
-                let height = terrain.origin.y + stack.height_at(&terrain.pyramid, local);
-                layer_checks += 1;
-                layers.add((height - sample.height).abs(), point);
             }
             if collected.len() < 8 {
                 collected.push(SweepExample {
@@ -157,10 +153,6 @@ fn sweep(world: &mut World, center: Vec2, half_extent: f32, samples: u32) -> Res
             placed_first,
             worst: rays,
         }),
-        layers: SweepLayers {
-            compared: layer_checks,
-            worst: layers,
-        },
         examples: collected,
     }))
 }
@@ -173,7 +165,6 @@ pub struct TerrainSweepResult {
     pub level_zero: usize,
     pub holes: usize,
     pub collision: Option<SweepRays>,
-    pub layers: SweepLayers,
     pub examples: Vec<SweepExample>,
 }
 
@@ -183,13 +174,6 @@ pub struct SweepRays {
     pub compared: usize,
     pub missed: usize,
     pub placed_first: usize,
-    pub worst: Worst,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct SweepLayers {
-    pub compared: usize,
     pub worst: Worst,
 }
 

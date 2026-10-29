@@ -16,11 +16,11 @@ pub use agents::{
     NavigationBrick,
 };
 pub use dev::{
-    NavAgentRow, NavAgentView, NavAgentsView, NavGoControl, NavGoResult, NavPathQuery,
+    GroundKey, NavAgentRow, NavAgentView, NavAgentsView, NavGoControl, NavGoResult, NavPathQuery,
     NavPathResult, WalkResult,
 };
 pub use jobs::{NavigationWorker, PortalsJob, portals_output};
 pub use nav::{
     Gait, NavOptions, NavPath, PORTAL_RUN, Portal, Side, TilePortals, WalkData, WalkGround,
-    WalkSearch, Want, tile_portals,
+    WalkSearch, Want,
 };

@@ -1,9 +1,6 @@
-use engine_core::collections::HashMap;
-use std::sync::Arc;
-
-use bevy_ecs::prelude::Entity;
-use engine_terrain::{DECK_DEPTH, DECK_MARGIN, DECK_RISE, PlacedShape, TILE_QUADS, Terrains, Tile};
-use glam::{Mat4, Quat, Vec2, Vec3};
+use bevy_ecs::prelude::{Entity, World};
+use engine_core::{Ground, GroundShape, GroundSolid as FaceSolid};
+use glam::Vec3;
 
 use crate::bvh::Bvh;
 use crate::geometry::{AffineShape, Bounds, Narrow, intersects};
@@ -11,8 +8,6 @@ use crate::{
     ColliderShape, CollisionLayers, CollisionRay, Fault, PlacedPart, QueryFilter, RayHit,
     SensorFilter, ShapeCastOptions, ShapeHit,
 };
-
-pub const BRIDGE_LAYER: u16 = u16::MAX;
 
 #[derive(Clone, Copy)]
 struct Object {
@@ -28,12 +23,6 @@ pub(crate) struct PlacedShapes {
     bounds: Vec<Bounds>,
     bvh: Bvh,
     revision: Option<u64>,
-}
-
-struct Ground<'a> {
-    origin: Vec3,
-    size: f32,
-    tiles: HashMap<(u16, u16), &'a Arc<Tile>>,
 }
 
 fn accepts(filter: QueryFilter, object: &Object) -> bool {
@@ -58,16 +47,17 @@ impl PlacedShapes {
             .map(|object| (object.entity, object.part, &object.affine))
     }
 
-    pub(crate) fn sync(&mut self, terrains: Option<&Terrains>) -> bool {
-        let revision = terrains.map(Terrains::revision);
+    pub(crate) fn sync(&mut self, world: &World) -> bool {
+        let ground = world.get_resource::<Ground>();
+        let revision = ground.map(|ground| ground.face().revision(world));
         if revision == self.revision {
             return false;
         }
         self.revision = revision;
         let had = !self.objects.is_empty();
         self.objects.clear();
-        if let Some(terrains) = terrains {
-            self.collect(terrains);
+        if let Some(ground) = ground {
+            self.collect(ground.face().solids(world));
         }
         self.bounds.clear();
         self.bounds
@@ -76,137 +66,24 @@ impl PlacedShapes {
         had || !self.objects.is_empty()
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
-    fn collect(&mut self, terrains: &Terrains) {
-        for (entity, origin, bridges) in terrains.colliding_bridges() {
-            for (index, bridge) in bridges.iter().enumerate() {
-                for pair in bridge.deck.windows(2) {
-                    let (a, b) = (origin + pair[0], origin + pair[1]);
-                    let along = b - a;
-                    let length = along.length();
-                    if length < 1.0e-3 {
-                        continue;
-                    }
-                    let center = 0.5 * (a + b) + Vec3::Y * (0.5 * (DECK_RISE - DECK_DEPTH));
-                    let model = Mat4::from_rotation_translation(
-                        Quat::from_rotation_arc(Vec3::X, along / length),
-                        center,
-                    );
-                    let shape = ColliderShape::Cuboid {
-                        half_extents: Vec3::new(
-                            0.5 * length,
-                            0.5 * (DECK_RISE + DECK_DEPTH),
-                            0.5 * bridge.width + DECK_MARGIN,
-                        ),
-                    };
-                    let Ok(affine) = AffineShape::new(shape, model) else {
-                        continue;
-                    };
-                    self.objects.push(Object {
-                        entity,
-                        part: PlacedPart {
-                            layer: BRIDGE_LAYER,
-                            asset: index.min(usize::from(u16::MAX)) as u16,
-                        },
-                        layers: CollisionLayers::default(),
-                        affine,
-                    });
-                }
-            }
-        }
-        let mut grounds: HashMap<Entity, Ground<'_>> = HashMap::default();
-        for (entity, origin, tile) in terrains.collision_tiles() {
-            let key = tile.key();
-            grounds
-                .entry(entity)
-                .or_insert_with(|| Ground {
-                    origin,
-                    size: TILE_QUADS as f32 * tile.spacing(),
-                    tiles: HashMap::default(),
-                })
-                .tiles
-                .insert((key.x, key.z), tile);
-        }
-        for (
-            entity,
-            Ground {
-                origin,
-                size,
-                tiles,
-            },
-        ) in grounds
-        {
-            let Some(terrain) = terrains.terrain(entity) else {
+    fn collect(&mut self, solids: Vec<FaceSolid>) {
+        for solid in solids {
+            let shape = match solid.shape {
+                GroundShape::Cuboid { half_extents } => ColliderShape::Cuboid { half_extents },
+                GroundShape::Sphere { radius } => ColliderShape::Sphere { radius },
+            };
+            let Ok(affine) = AffineShape::new(shape, solid.model) else {
                 continue;
             };
-            let assets = &terrain.surface.assets;
-            if assets.iter().all(|asset| asset.collider.is_none()) {
-                continue;
-            }
-            let (low, high) = tiles.keys().fold(
-                (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
-                |(low, high), &(x, z)| {
-                    let corner = Vec2::new(f32::from(x), f32::from(z)) * size;
-                    (low.min(corner), high.max(corner + size))
+            self.objects.push(Object {
+                entity: solid.ground,
+                part: PlacedPart {
+                    layer: solid.layer,
+                    asset: solid.asset,
                 },
-            );
-            for tile in terrains.tiles(entity) {
-                let key = tile.key();
-                let reach = TILE_QUADS as f32 * tile.spacing();
-                let corner = Vec2::new(f32::from(key.x), f32::from(key.z)) * reach;
-                if tile.placed().is_empty()
-                    || (corner + reach).cmplt(low).any()
-                    || corner.cmpgt(high).any()
-                {
-                    continue;
-                }
-                for placed in tile.placed() {
-                    if placed.near_level.is_some() {
-                        continue;
-                    }
-                    let Some(collider) = assets
-                        .get(usize::from(placed.asset))
-                        .and_then(|asset| asset.collider)
-                    else {
-                        continue;
-                    };
-                    let [x, _, z] = placed.position;
-                    let (column, row) = ((x / size).floor(), (z / size).floor());
-                    if !(0.0..65536.0).contains(&column) || !(0.0..65536.0).contains(&row) {
-                        continue;
-                    }
-                    let Some(ground) = tiles.get(&(column as u16, row as u16)) else {
-                        continue;
-                    };
-                    let local = Vec2::new(x - column * size, z - row * size);
-                    let Some(sample) = ground.sample(local).filter(|sample| !sample.hole) else {
-                        continue;
-                    };
-                    let model = placed.model(origin, sample.height - placed.sink)
-                        * Mat4::from_translation(Vec3::from_array(collider.center));
-                    let shape = match collider.shape {
-                        PlacedShape::Cuboid { half_extents } => ColliderShape::Cuboid {
-                            half_extents: Vec3::from_array(half_extents),
-                        },
-                        PlacedShape::Sphere { radius } => ColliderShape::Sphere { radius },
-                    };
-                    let Ok(affine) = AffineShape::new(shape, model) else {
-                        continue;
-                    };
-                    self.objects.push(Object {
-                        entity,
-                        part: PlacedPart {
-                            layer: placed.layer,
-                            asset: placed.asset,
-                        },
-                        layers: CollisionLayers::new(collider.memberships, collider.filter),
-                        affine,
-                    });
-                }
-            }
+                layers: CollisionLayers::new(solid.memberships, solid.filter),
+                affine,
+            });
         }
     }
 

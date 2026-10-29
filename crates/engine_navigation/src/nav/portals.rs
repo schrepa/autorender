@@ -1,5 +1,4 @@
 use super::*;
-use engine_core::Expected;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
@@ -186,24 +185,4 @@ impl codec::Codec for TilePortals {
             costs,
         })
     }
-}
-
-pub fn tile_portals(
-    layers: &Arc<Layers>,
-    pyramid: &Pyramid,
-    key: TileKey,
-    gait: &Gait,
-) -> Result<TilePortals, Error> {
-    let mut whole = u64::MAX;
-    let tile = Generator::new(layers.clone(), pyramid, key)
-        .advance(&mut whole)
-        .ok_or_else(|| {
-            Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(Expected::Finite)
-        })?;
-    let tile: Tile = codec::decode(&codec::encode(&tile))?;
-    Ok(TilePortals::new(
-        &WalkGround::new(&tile, layers, pyramid),
-        pyramid,
-        gait,
-    ))
 }
