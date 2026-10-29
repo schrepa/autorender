@@ -5,8 +5,12 @@
 
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
+mod relief;
+
 use engine_core::{Brick, Bricks};
 use engine_terrain::layer::{AddTerrainLayers, LayerKind};
+
+pub use relief::{HUMMOCKS, HummocksLayer, STEPS, StepsLayer};
 
 pub struct LayerReliefBrick;
 
@@ -16,4 +20,4 @@ impl Brick for LayerReliefBrick {
     }
 }
 
-pub static KINDS: &[&LayerKind] = &[];
+pub static KINDS: &[&LayerKind] = &[&STEPS, &HUMMOCKS];

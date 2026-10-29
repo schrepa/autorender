@@ -1,11 +1,18 @@
-use engine_math::min;
-use engine_settings::settings;
-use serde::{Deserialize, Serialize};
+use std::any::Any;
+use std::sync::Arc;
 
-use crate::hydrology::{FLOW_RANGE, Hydrology, WETNESS_RANGE, WaterGrid, decode};
-use crate::layers::Layers;
-use crate::noise::{gradient_value, smooth};
-use crate::rivers::{BANK_REACH, BANK_SLOPE};
+use engine_core::{Error, ErrorCode};
+use engine_math::min;
+use engine_settings::{InvalidSetting, parse_value, settings};
+use engine_terrain::codec::{Reader, Writer};
+use engine_terrain::hydrology::{FLOW_RANGE, Hydrology, WETNESS_RANGE, WaterGrid, decode};
+use engine_terrain::layer::{
+    Below, LayerFiles, LayerKind, Made, Place, Row, TerrainLayer, no_files, same_as,
+};
+use engine_terrain::noise::{gradient_value, smooth};
+use engine_terrain::rivers::{BANK_REACH, BANK_SLOPE};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 const STEP_HEIGHT: f32 = 3.0;
 const JOINT_SPACING: f32 = 4.0;
@@ -51,17 +58,103 @@ settings! {
     }
 }
 
+pub static STEPS: LayerKind = LayerKind {
+    name: "steps",
+    source: crate::SOURCE,
+    from_json: steps_from_json,
+    read: read_steps,
+    files: no_files,
+    #[cfg(feature = "schema")]
+    schema: steps_schema,
+};
+
+pub static HUMMOCKS: LayerKind = LayerKind {
+    name: "hummocks",
+    source: crate::SOURCE,
+    from_json: hummocks_from_json,
+    read: read_hummocks,
+    files: no_files,
+    #[cfg(feature = "schema")]
+    schema: hummocks_schema,
+};
+
 fn repose() -> f32 {
     libm::atanf(BANK_SLOPE).to_degrees()
 }
 
-impl StepsLayer {
-    pub(crate) fn apply_row(
-        &self,
-        layers: &Layers,
-        (row, xs, z): (&mut [f32], &[f32], f32),
-        spacing: f32,
-    ) {
+fn steps_from_json(settings: &Value, _files: &dyn LayerFiles) -> Made {
+    let steps: StepsLayer = parse_value(settings.clone())?;
+    checked(steps.validate())?;
+    Ok(Arc::new(steps))
+}
+
+fn read_steps(input: &mut Reader<'_>) -> Made {
+    let steps: StepsLayer = input.get()?;
+    checked(steps.validate())?;
+    Ok(Arc::new(steps))
+}
+
+fn hummocks_from_json(settings: &Value, _files: &dyn LayerFiles) -> Made {
+    let hummocks: HummocksLayer = parse_value(settings.clone())?;
+    checked(hummocks.validate())?;
+    Ok(Arc::new(hummocks))
+}
+
+fn read_hummocks(input: &mut Reader<'_>) -> Made {
+    let hummocks: HummocksLayer = input.get()?;
+    checked(hummocks.validate())?;
+    Ok(Arc::new(hummocks))
+}
+
+#[cfg(feature = "schema")]
+fn steps_schema() -> schemars::Schema {
+    schemars::schema_for!(StepsLayer)
+}
+
+#[cfg(feature = "schema")]
+fn hummocks_schema() -> schemars::Schema {
+    schemars::schema_for!(HummocksLayer)
+}
+
+fn checked(valid: Result<(), InvalidSetting>) -> Result<(), Error> {
+    valid.map_err(|invalid| invalid.error(ErrorCode::InvalidTerrain, "$"))
+}
+
+fn water_below(place: Place<'_>) -> Result<(), Error> {
+    if place.below().iter().any(|layer| layer.makes_water()) {
+        Ok(())
+    } else {
+        Err(Error::new(ErrorCode::MissingLayer, "$").variants(["hydrology"]))
+    }
+}
+
+impl TerrainLayer for StepsLayer {
+    fn kind(&self) -> &'static LayerKind {
+        &STEPS
+    }
+
+    fn write(&self, out: &mut Writer) {
+        out.put(self);
+    }
+
+    fn settings(&self) -> Value {
+        serde_json::to_value(self).unwrap_or(Value::Null)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn same(&self, other: &dyn TerrainLayer) -> bool {
+        same_as(self, other)
+    }
+
+    fn check(&self, place: Place<'_>) -> Result<(), Error> {
+        water_below(place)
+    }
+
+    fn apply_row(&self, below: Below<'_>, at: &Row<'_>, row: &mut [f32]) {
+        let Row { xs, z, spacing, .. } = *at;
         let placement = Placement::new(
             (self.slope, self.wetness),
             (self.patches, self.cover),
@@ -72,13 +165,15 @@ impl StepsLayer {
             return;
         }
         relieve(
-            layers,
+            below,
             &placement,
             (row, xs, z, spacing),
             |x, z, height, slope| self.step(x, z, (height, slope), spacing),
         );
     }
+}
 
+impl StepsLayer {
     fn step(&self, x: f32, z: f32, (height, slope): (f32, f32), spacing: f32) -> f32 {
         if slope <= 0.0 {
             return 0.0;
@@ -98,13 +193,33 @@ impl StepsLayer {
     }
 }
 
-impl HummocksLayer {
-    pub(crate) fn apply_row(
-        &self,
-        layers: &Layers,
-        (row, xs, z): (&mut [f32], &[f32], f32),
-        spacing: f32,
-    ) {
+impl TerrainLayer for HummocksLayer {
+    fn kind(&self) -> &'static LayerKind {
+        &HUMMOCKS
+    }
+
+    fn write(&self, out: &mut Writer) {
+        out.put(self);
+    }
+
+    fn settings(&self) -> Value {
+        serde_json::to_value(self).unwrap_or(Value::Null)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn same(&self, other: &dyn TerrainLayer) -> bool {
+        same_as(self, other)
+    }
+
+    fn check(&self, place: Place<'_>) -> Result<(), Error> {
+        water_below(place)
+    }
+
+    fn apply_row(&self, below: Below<'_>, at: &Row<'_>, row: &mut [f32]) {
+        let Row { xs, z, spacing, .. } = *at;
         if self.height <= 0.0 || self.cover <= 0.0 || 2.0 * self.across < RESOLVED * spacing {
             return;
         }
@@ -114,7 +229,7 @@ impl HummocksLayer {
             self.seed ^ HUMMOCK_PATCHES,
         );
         let half = 0.5 * self.height;
-        relieve(layers, &placement, (row, xs, z, spacing), |x, z, _, _| {
+        relieve(below, &placement, (row, xs, z, spacing), |x, z, _, _| {
             half * blobs(x, z, self.across, self.seed ^ HUMMOCK_MOUNDS)
         });
     }
@@ -162,12 +277,12 @@ impl Placement {
 }
 
 fn relieve(
-    layers: &Layers,
+    below: Below<'_>,
     placement: &Placement,
     (row, xs, z, spacing): (&mut [f32], &[f32], f32, f32),
     mut shape: impl FnMut(f32, f32, f32, f32) -> f32,
 ) {
-    let Some(hydrology) = layers.hydrology() else {
+    let Some(hydrology) = below.water() else {
         return;
     };
     let count = row.len().min(xs.len());
@@ -190,7 +305,7 @@ fn relieve(
             let wetness = decode(sample, WETNESS_RANGE);
             let flow = decode(flows[index], FLOW_RANGE);
             let slope = map_slope(flow, wetness, hydrology.spacing);
-            let placed = placement.weight(x, z, slope, wetness) * layers.shown(x, z);
+            let placed = placement.weight(x, z, slope, wetness) * below.shown(x, z);
             if placed <= 0.0 {
                 return;
             }
@@ -254,7 +369,7 @@ fn blobs(x: f32, z: f32, across: f32, seed: u32) -> f32 {
     gradient_value(0.8 * u - 0.6 * v + 0.37, 0.6 * u + 0.8 * v + 0.61, seed)
 }
 
-crate::codec::record!(StepsLayer {
+engine_terrain::codec::record!(StepsLayer {
     seed,
     height,
     joints,
@@ -263,7 +378,7 @@ crate::codec::record!(StepsLayer {
     patches,
     cover,
 });
-crate::codec::record!(HummocksLayer {
+engine_terrain::codec::record!(HummocksLayer {
     seed,
     height,
     across,
