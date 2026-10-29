@@ -28,9 +28,9 @@ pub const NOT_WORK: &[&str] = &[
     "resolution.gpu_ms",
 ];
 
-const SCENE_FIELDS: &[&str] = &["note", "project", "options"];
+const SCENE_FIELDS: &[&str] = &["project", "options"];
 
-const SETTINGS_FIELDS: &[&str] = &["note", "options"];
+const SETTINGS_FIELDS: &[&str] = &["options"];
 
 const HOST_OPTIONS: &[&str] = &["size", "jobcache"];
 
@@ -276,9 +276,6 @@ fn option_file_problems(root: &Path) -> Result<Vec<String>, String> {
             let at = format!("bench/{path}");
             if !name.ends_with(".json") {
                 problems.push(format!("{at}: option files end in .json"));
-            }
-            if file["note"].as_str().is_none_or(str::is_empty) {
-                problems.push(format!("{at}: a note says what it is"));
             }
             if let Some(field) = file
                 .as_object()

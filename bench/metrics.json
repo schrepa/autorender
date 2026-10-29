@@ -1,5 +1,4 @@
 {
-  "note": "Every metric and work counter the engine's measurements report: what each is (kind, statistic, runtimes, unit, direction) and, for work counters, the rule base and candidate follow (equal; not-above: the candidate's no higher; false: in every run; shown). A name ending in * stands for every name with that prefix. Work counters are the frame statistics (FrameStats) by their dotted paths. How a metric is judged (its noise floor, whether it counts as a cost) is the factory's policy. cargo xtask lint holds this file to the names the measurements report.",
   "metrics": [
     {
       "name": "frame_ms_mean",

@@ -1,10 +1,8 @@
 {
-  "note": "The cells `cargo xtask equivalence` runs on a base and a candidate natively, one after the other: each a bench scene (scene: bench/scenes/NAME.json, which names the project) with its switches (options), environment sections merged over the scene's, the ticks it steps, its views (scene: as launched; the game's view by name; or {name, camera} with the camera control's fields) and its captures (exact; gpu:ALPHA, a fraction of the last tick presented on the GPU; display:FRAMES, the last of that many ordinary frames). Every cell runs with bench/settings/default.json and job workers off. tolerance is the largest channel difference a pixel may show and count as equal (0 unless given). unstable lists the captures (VIEW CAPTURE) that vary from run to run, each with why: they pass when a candidate run matches one of the base's over --repeat runs, or lies no farther from the nearest than the base's own images lie from each other. The smoke tier runs by default; --tier full adds the rest.",
   "cells": [
     {
       "name": "highlands",
       "tier": "smoke",
-      "note": "The 8 km generated terrain: tile streaming in place, placement, far objects, water, clouds and the navigation agent, terrain streaming by frames (--terrain-clock frames: bases from c24f963 on). A run on the frame clock takes about 2.5 min to settle.",
       "scene": "highlands",
       "options": { "terrain-clock": "frames" },
       "ticks": 30,
@@ -14,7 +12,6 @@
     {
       "name": "highlands-views",
       "tier": "full",
-      "note": "The highlands workload's other views, terrain streaming by frames as for highlands.",
       "scene": "highlands",
       "options": { "terrain-clock": "frames" },
       "ticks": 30,

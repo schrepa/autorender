@@ -33,7 +33,7 @@ const SHEET_GAP: usize = 8;
 
 const SHEET_BACKGROUND: u8 = 24;
 
-const FIELDS: [&str; 5] = ["note", "project", "looks", "distances", "places"];
+const FIELDS: [&str; 4] = ["project", "looks", "distances", "places"];
 
 const PLACE_FIELDS: [&str; 3] = ["name", "target", "yaw"];
 

@@ -1,5 +1,4 @@
 {
-  "note": "The host settings every workload is measured with: the size and no job cache, so every run starts afresh. Option files hold options by name, as --help lists them.",
   "options": {
     "size": "1400x900",
     "jobcache": "off"
