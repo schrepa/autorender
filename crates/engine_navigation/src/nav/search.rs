@@ -18,7 +18,7 @@ pub struct WalkSearch {
     pub(super) stepper: Stepper,
     ends: [Vec2; 2],
     pub(super) tiles: Option<[TileKey; 2]>,
-    obstacles: BTreeMap<TileKey, Vec<Obstacle>>,
+    obstacles: BTreeMap<TileKey, Vec<GroundObstacle>>,
     stands: BTreeMap<TileKey, Arc<[bool]>>,
     stage: Stage,
     pub(super) wants: Vec<Want>,
@@ -46,7 +46,7 @@ impl WalkSearch {
     pub fn new(
         pyramid: &Pyramid,
         (from, to): (Vec2, Vec2),
-        obstacles: Vec<Obstacle>,
+        obstacles: Vec<GroundObstacle>,
         options: &NavOptions,
     ) -> Self {
         let gait = options.gait(pyramid);
@@ -307,14 +307,14 @@ fn line_tiles(pyramid: &Pyramid, level: u32, (from, to): (Vec2, Vec2)) -> Vec<Ti
 }
 
 fn bin(
-    obstacles: Vec<Obstacle>,
+    obstacles: Vec<GroundObstacle>,
     radius: f32,
     pyramid: &Pyramid,
     level: u32,
-) -> BTreeMap<TileKey, Vec<Obstacle>> {
+) -> BTreeMap<TileKey, Vec<GroundObstacle>> {
     let (size, spacing) = (pyramid.tile_size(level), pyramid.spacing(level));
     let [columns, rows] = pyramid.tiles(level);
-    let mut bins: BTreeMap<TileKey, Vec<Obstacle>> = BTreeMap::new();
+    let mut bins: BTreeMap<TileKey, Vec<GroundObstacle>> = BTreeMap::new();
     for obstacle in obstacles {
         let reach = obstacle.radius + radius;
         if !(reach.is_finite() && obstacle.center.is_finite()) {
@@ -333,7 +333,7 @@ fn bin(
             for x in span(low.x, high.x, columns) {
                 bins.entry(TileKey::new(level as u8, x, z))
                     .or_default()
-                    .push(Obstacle {
+                    .push(GroundObstacle {
                         center: obstacle.center,
                         radius: reach,
                     });

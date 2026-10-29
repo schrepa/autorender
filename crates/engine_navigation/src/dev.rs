@@ -1,8 +1,9 @@
 use bevy_ecs::prelude::{Entity, World};
 use bevy_ecs::world::Mut;
-use engine_core::{Error, Jobs, Operation, Transform, missing_brick};
+use engine_core::{
+    Error, Ground, GroundRead, GroundSlot, Jobs, Operation, Slot, Transform, missing_brick,
+};
 use engine_settings::{ErrorCode, InvalidSetting, Rule, Setting};
-use engine_terrain::{Terrain, TerrainKey, Terrains, terrain_key};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -171,8 +172,22 @@ impl Operation for NavGoControl {
 
 #[derive(Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum GroundKey {
+    Authored(String),
+    Entity(u64),
+}
+
+fn ground_key(world: &World, entity: Entity) -> GroundKey {
+    engine_core::authored_id(world, entity)
+        .map_or_else(|| GroundKey::Entity(entity.to_bits()), GroundKey::Authored)
+}
+
+#[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NavPathResult {
-    pub terrain: TerrainKey,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terrain: Option<GroundKey>,
     pub options: NavOptions,
     pub searching: bool,
     pub walk: Option<WalkResult>,
@@ -241,31 +256,26 @@ fn walk(
         code: ErrorCode::OutOfRange,
         ..Error::from(invalid).within("$.options")
     })?;
-    let entity = world
-        .query::<(Entity, &Terrain)>()
-        .iter(world)
-        .map(|(entity, _)| entity)
-        .next()
-        .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$"))?;
-    if !world.contains_resource::<Terrains>() {
-        return Err(missing_brick("terrain", "$.op"));
-    }
+    let ground = world
+        .get_resource::<Ground>()
+        .cloned()
+        .ok_or_else(|| missing_brick(GroundSlot::NAME, "$.op"))?;
     if !world.contains_resource::<NavAgents>() || !world.contains_resource::<Jobs>() {
         return Err(missing_brick("navigation", "$.op"));
     }
+    let terrain = match ground.face().source(world, from, to) {
+        GroundRead::Ready(source) => Some(ground_key(world, source.ground)),
+        GroundRead::Waiting => None,
+        GroundRead::Off => return Err(Error::new(ErrorCode::UnknownTerrain, "$")),
+    };
     let found = world.resource_scope(|world, mut navigation: Mut<NavAgents>| {
         world.resource_scope(|world, mut jobs: Mut<Jobs>| {
-            navigation.query(
-                world.resource::<Terrains>(),
-                &mut jobs,
-                (from, to),
-                &options,
-            )
+            navigation.query(world, &mut jobs, (from, to), &options)
         })
     });
     let round = |value: f32| (f64::from(value) * 100.0).round() / 100.0;
     Ok(json!(NavPathResult {
-        terrain: terrain_key(world, entity),
+        terrain,
         options,
         searching: found == NavQuery::Searching,
         walk: match found {

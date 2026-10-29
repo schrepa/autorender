@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
-use engine_terrain::{Tile, TileKey};
+use engine_core::{GroundSamples, TileKey};
 use glam::{Mat3, Vec3};
 use parry3d::shape::HeightField;
 
@@ -46,7 +46,7 @@ pub struct ColliderSolid {
 pub struct GroundSolid<'a> {
     pub terrain: Entity,
     pub key: TileKey,
-    pub tile: &'a Arc<Tile>,
+    pub samples: &'a Arc<dyn GroundSamples>,
     pub center: Vec3,
     pub min: Vec3,
     pub max: Vec3,

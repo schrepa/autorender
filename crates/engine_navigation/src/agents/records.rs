@@ -14,7 +14,13 @@ enum Kept<T> {
 struct Asked {
     record: RecordKey,
     id: JobId,
-    ground: Option<Arc<WalkedTerrain>>,
+    ground: Option<AskedGround>,
+}
+
+struct AskedGround {
+    source: GroundSource,
+    key: TileKey,
+    kind: &'static str,
 }
 
 pub(super) enum Resolved {
@@ -48,14 +54,12 @@ impl WalkRecords {
                 continue;
             };
             match &asked.ground {
-                Some(terrain) => {
+                Some(ground) => {
                     grounds += 1;
-                    let made = job_output(
-                        TileJob::KIND.name(),
-                        output,
-                        engine_terrain::jobs::tile_output,
-                    )
-                    .map(|tile| WalkGround::new(&tile, &terrain.layers, &terrain.pyramid));
+                    let made = job_output(ground.kind, output, |bytes| {
+                        ground.source.regions.grid(ground.key, bytes)
+                    })
+                    .map(|grid| WalkGround::new(&grid, &ground.source.pyramid));
                     let kept = kept(made, (tick, &mut self.reads), failures);
                     self.grounds.insert(asked.record, kept);
                 }
@@ -82,21 +86,24 @@ impl WalkRecords {
         for &want in running.search.wants() {
             let found = match want {
                 Want::Ground(key) => {
-                    let (input, record) = running.terrain.tile_record(key);
+                    let GroundRecord {
+                        kind,
+                        input,
+                        key: record,
+                    } = running.source.regions.record(key);
                     let found = read(&mut self.grounds, record, (tick, &mut self.reads));
                     if let Found::Missing = found {
-                        let ground = Some(running.terrain.clone());
-                        self.ask(
-                            slots,
-                            (TileJob::KIND.name(), input, record),
-                            priority,
-                            ground,
-                        );
+                        let ground = Some(AskedGround {
+                            source: running.source.clone(),
+                            key,
+                            kind,
+                        });
+                        self.ask(slots, (kind, input, record), priority, ground);
                     }
                     found.map(|ground| running.held.grounds.insert(key, ground))
                 }
                 Want::Portals(key) => {
-                    let (input, record) = portals_record(&running.terrain, key, &gait);
+                    let (input, record) = portals_record(&running.source, key, &gait);
                     let found = read(&mut self.portals, record, (tick, &mut self.reads));
                     if let Found::Missing = found {
                         self.ask(slots, (PortalsJob::KIND, input, record), priority, None);
@@ -126,7 +133,7 @@ impl WalkRecords {
         let gait = running.search.gait();
         let priority = job_priority(GAMEPLAY_JOBS, 1);
         while let Some(&key) = running.search.ahead().get(running.asked_ahead) {
-            let (input, record) = portals_record(&running.terrain, key, &gait);
+            let (input, record) = portals_record(&running.source, key, &gait);
             if let Found::Missing = read(&mut self.portals, record, (tick, &mut self.reads))
                 && !self.ask(slots, (PortalsJob::KIND, input, record), priority, None)
             {
@@ -141,7 +148,7 @@ impl WalkRecords {
         slots: &mut Option<JobBudget<'_>>,
         (kind, input, record): (&'static str, Vec<u8>, RecordKey),
         priority: u32,
-        ground: Option<Arc<WalkedTerrain>>,
+        ground: Option<AskedGround>,
     ) -> bool {
         let Some(slots) = slots.as_mut() else {
             return false;

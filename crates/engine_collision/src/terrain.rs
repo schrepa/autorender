@@ -1,9 +1,9 @@
 use std::cell::Cell;
 
-use bevy_ecs::prelude::Entity;
+use bevy_ecs::prelude::{Entity, World};
 use std::sync::Arc;
 
-use engine_terrain::{TILE_QUADS, TILE_SAMPLES, Terrains, Tile, TileKey};
+use engine_core::{Ground, GroundSamples, TILE_QUADS, TILE_SAMPLES, TileKey};
 use glam::Vec3;
 use parry3d::{
     bounding_volume::Aabb,
@@ -26,7 +26,7 @@ use crate::{
 struct Field {
     entity: Entity,
     key: TileKey,
-    tile: Arc<Tile>,
+    samples: Arc<dyn GroundSamples>,
     center: Vec3,
     shape: Arc<HeightField>,
     bounds: Bounds,
@@ -53,7 +53,7 @@ impl TerrainFields {
         self.fields.iter().map(|field| crate::GroundSolid {
             terrain: field.entity,
             key: field.key,
-            tile: &field.tile,
+            samples: &field.samples,
             center: field.center,
             min: field.bounds.min,
             max: field.bounds.max,
@@ -65,22 +65,22 @@ impl TerrainFields {
         self.revision
     }
 
-    pub(crate) fn sync(&mut self, terrains: Option<&Terrains>) -> bool {
-        let Some(terrains) = terrains else {
+    pub(crate) fn sync(&mut self, world: &World) -> bool {
+        let Some(ground) = world.get_resource::<Ground>() else {
             let changed = !self.fields.is_empty();
             self.fields.clear();
             self.revision = None;
             return changed;
         };
-        let revision = terrains.revision();
-        let wanted: Vec<_> = terrains.collision_tiles().collect();
+        let revision = ground.face().revision(world);
+        let wanted = ground.face().patches(world);
         let same = self.revision == Some(revision)
             && wanted.len() == self.fields.len()
-            && wanted.iter().all(|(entity, _, tile)| {
+            && wanted.iter().all(|patch| {
                 self.fields.iter().any(|field| {
-                    field.entity == *entity
-                        && field.key == tile.key()
-                        && Arc::ptr_eq(&field.tile, tile)
+                    field.entity == patch.ground
+                        && field.key == patch.key
+                        && Arc::ptr_eq(&field.samples, &patch.samples)
                 })
             });
         if same {
@@ -88,26 +88,25 @@ impl TerrainFields {
         }
         self.revision = Some(revision);
         let mut kept = std::mem::take(&mut self.fields);
-        for (entity, origin, tile) in wanted {
-            let key = tile.key();
+        for patch in wanted {
+            let (entity, key, origin) = (patch.ground, patch.key, patch.origin);
             if let Some(position) = kept.iter().position(|field| {
                 field.entity == entity
                     && field.key == key
-                    && (Arc::ptr_eq(&field.tile, tile)
-                        || (field.tile.heights() == tile.heights()
-                            && field.tile.hole_bits() == tile.hole_bits()))
+                    && (Arc::ptr_eq(&field.samples, &patch.samples)
+                        || field.samples.same(&*patch.samples))
             }) {
                 let mut field = kept.swap_remove(position);
-                field.tile = tile.clone();
+                field.samples = patch.samples;
                 self.fields.push(field);
                 continue;
             }
             let samples = TILE_SAMPLES as usize;
-            let spacing = tile.spacing();
+            let spacing = patch.spacing;
             let mut heights = Vec::with_capacity(samples * samples);
             for x in 0..samples as i32 {
                 for z in 0..samples as i32 {
-                    heights.push(tile.height(x, z));
+                    heights.push(patch.samples.height(x, z));
                 }
             }
             let size = TILE_QUADS as f32 * spacing;
@@ -115,16 +114,14 @@ impl TerrainFields {
                 Array2::new(samples, samples, heights),
                 Vec3::new(size, 1.0, size),
             );
-            if tile.hole_bits().is_some() {
-                for z in 0..TILE_QUADS {
-                    for x in 0..TILE_QUADS {
-                        if tile.is_hole(x, z) {
-                            shape.set_cell_status(
-                                z as usize,
-                                x as usize,
-                                HeightFieldCellStatus::CELL_REMOVED,
-                            );
-                        }
+            for z in 0..TILE_QUADS {
+                for x in 0..TILE_QUADS {
+                    if patch.samples.hole(x, z) {
+                        shape.set_cell_status(
+                            z as usize,
+                            x as usize,
+                            HeightFieldCellStatus::CELL_REMOVED,
+                        );
                     }
                 }
             }
@@ -133,11 +130,11 @@ impl TerrainFields {
                 origin.y,
                 origin.z + f32::from(key.z) * size,
             );
-            let [low, high] = tile.bounds();
+            let [low, high] = patch.bounds;
             self.fields.push(Field {
                 entity,
                 key,
-                tile: tile.clone(),
+                samples: patch.samples,
                 center: corner + Vec3::new(size * 0.5, 0.0, size * 0.5),
                 shape: Arc::new(shape),
                 bounds: Bounds {

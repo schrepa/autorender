@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) struct CookGraph {
-    terrain: WalkedTerrain,
+    source: GroundSource,
     gait: Gait,
     tiles: Vec<TileKey>,
     next: usize,
@@ -11,33 +11,33 @@ pub(super) struct CookGraph {
 impl NavAgents {
     pub(super) fn cook(
         &mut self,
-        terrains: &Terrains,
-        agents: &Agents,
+        world: &World,
+        agents: &mut Agents,
         jobs: &mut Jobs,
         cooking: &mut Cooking,
     ) {
         let mut left = 0;
-        for (_, agent, _, transform) in agents.iter() {
+        for (_, agent, _, transform) in agents.iter(world) {
             let at = Vec2::new(transform.translation.x, transform.translation.z);
-            match terrains.walked_terrain(at, at) {
-                Walked::Ready(terrain) => {
-                    let gait = agent.sanitized().options().gait(&terrain.pyramid);
+            match ground_source(world, at, at) {
+                GroundRead::Ready(source) => {
+                    let gait = agent.sanitized().options().gait(&source.pyramid);
                     if !self
                         .cook
                         .iter()
-                        .any(|graph| graph.terrain.entity == terrain.entity && graph.gait == gait)
+                        .any(|graph| graph.source.ground == source.ground && graph.gait == gait)
                     {
                         self.cook.push(CookGraph {
-                            tiles: terrain.pyramid.level_tiles(gait.level).collect(),
-                            terrain,
+                            tiles: source.pyramid.level_tiles(gait.level).collect(),
+                            source,
                             gait,
                             next: 0,
                             flight: Vec::new(),
                         });
                     }
                 }
-                Walked::Baking => left += 1,
-                Walked::Off => {}
+                GroundRead::Waiting => left += 1,
+                GroundRead::Off => {}
             }
         }
         let mut slots = JobBudget::of(jobs);
@@ -57,7 +57,7 @@ impl NavAgents {
                 if !slots.take(priority) {
                     break;
                 }
-                let (input, record) = portals_record(&graph.terrain, key, &graph.gait);
+                let (input, record) = portals_record(&graph.source, key, &graph.gait);
                 graph.flight.push(slots.jobs.submit_record(
                     PortalsJob::KIND,
                     input,

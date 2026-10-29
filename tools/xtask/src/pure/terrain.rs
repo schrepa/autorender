@@ -558,14 +558,13 @@ fn portals(
 ) -> Result<(WalkGround, Vec<u8>), String> {
     let key = tile.key();
     let job = PortalsJob {
-        stack: "stack".into(),
+        source: codec::encode(&(String::from("stack"), (*pyramid, stamps.to_vec()))),
         pyramid: *pyramid,
         key,
-        stamps: stamps.to_vec(),
         gait: *gait,
     };
     let bytes = worker.run(PortalsJob::KIND, &job.identity())?;
-    let ground = WalkGround::new(tile, layers, pyramid);
+    let ground = WalkGround::new(&walk_grid(tile, layers, pyramid), pyramid);
     observed.check(
         codec::encode(&TilePortals::new(&ground, pyramid, gait)) == bytes,
         || {
@@ -577,6 +576,62 @@ fn portals(
         },
     );
     Ok((ground, bytes))
+}
+
+fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_core::GroundGrid {
+    let side = engine_terrain::TILE_SAMPLES as usize;
+    let stride = engine_terrain::TILE_STRIDE as usize;
+    let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
+    let key = tile.key();
+    let spacing = pyramid.spacing(u32::from(key.level));
+    let surfaces = tile.water().map(engine_terrain::TileWater::surfaces);
+    let mut heights = vec![0.0; side * side].into_boxed_slice();
+    let mut water = surfaces.map(|_| vec![f32::NAN; side * side].into_boxed_slice());
+    for z in 0..side {
+        for x in 0..side {
+            heights[z * side + x] = tile.heights()[stored(x, z)];
+            if let (Some(water), Some(surfaces)) = (water.as_mut(), surfaces) {
+                water[z * side + x] = surfaces[stored(x, z)];
+            }
+        }
+    }
+    let first = pyramid.first_sample(key);
+    let at = |x: i64, z: i64| {
+        glam::Vec2::new((first[0] + x) as f32, (first[1] + z) as f32) * spacing
+    };
+    let quads = i64::from(engine_terrain::TILE_QUADS);
+    let mut holes = None;
+    if layers.holes_reach(at(0, 0), at(quads, quads)) {
+        let mut bits = vec![0_u64; (side * side).div_ceil(64)];
+        let mut any = false;
+        for z in 0..side {
+            for x in 0..side {
+                let point = at(x as i64, z as i64);
+                if layers.hole_at(point.x, point.y) {
+                    let index = z * side + x;
+                    bits[index / 64] |= 1 << (index % 64);
+                    any = true;
+                }
+            }
+        }
+        holes = any.then(|| bits.into_boxed_slice());
+    }
+    engine_core::GroundGrid {
+        key,
+        spacing,
+        heights,
+        water,
+        holes,
+        bridges: layers
+            .bridges()
+            .into_iter()
+            .map(|bridge| engine_core::GroundBridge {
+                deck: bridge.deck,
+                width: bridge.width,
+                tunnel: bridge.tunnel,
+            })
+            .collect(),
+    }
 }
 
 #[derive(Default)]

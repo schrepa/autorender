@@ -8,12 +8,11 @@ use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max};
 use engine_core::{
     Brick, BrickStats, Bricks, Cooking, EnvironmentSection, FixedSimulation,
-    FixedSimulationSystems, FixedTime, GAMEPLAY_JOBS, HeightHeld, IDLE_JOBS, JobBudget,
-    JobFailures, JobId, Jobs, Parent, RecordKey, Transform, job_output, job_priority,
+    FixedSimulationSystems, FixedTime, GAMEPLAY_JOBS, Ground, GroundObstacle, GroundRead,
+    GroundRecord, GroundSource, HeightHeld, IDLE_JOBS, JobBudget, JobFailures, JobId, Jobs, Parent,
+    RecordKey, TileKey, Transform, job_output, job_priority,
 };
 use engine_settings::{InvalidSetting, settings};
-use engine_terrain::jobs::TileJob;
-use engine_terrain::{Terrains, TileKey, Walked, WalkedTerrain};
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -132,7 +131,7 @@ enum Search {
 }
 
 struct Running {
-    terrain: Arc<WalkedTerrain>,
+    source: GroundSource,
     search: WalkSearch,
     held: Held,
     asked_ahead: usize,
@@ -170,27 +169,27 @@ impl Search {
 
     fn advance(
         &mut self,
-        terrains: &Terrains,
+        world: &World,
         records: &mut WalkRecords,
         slots: &mut Option<JobBudget<'_>>,
         budget: &mut u64,
         tick: u64,
     ) -> Option<Found> {
         if let Self::Starting { from, to, options } = self {
-            let terrain = match terrains.walked_terrain(*from, *to) {
-                Walked::Ready(terrain) => terrain,
-                Walked::Baking => return None,
-                Walked::Off => return Some((Vec3::ZERO, None)),
+            let source = match ground_source(world, *from, *to) {
+                GroundRead::Ready(source) => source,
+                GroundRead::Waiting => return None,
+                GroundRead::Off => return Some((Vec3::ZERO, None)),
             };
-            let corner = Vec2::new(terrain.origin.x, terrain.origin.z);
+            let corner = Vec2::new(source.origin.x, source.origin.z);
             let search = WalkSearch::new(
-                &terrain.pyramid,
+                &source.pyramid,
                 (*from - corner, *to - corner),
-                terrains.walk_obstacles(terrain.entity),
+                ground_obstacles(world, source.ground),
                 options,
             );
             *self = Self::Running(Box::new(Running {
-                terrain: Arc::new(terrain),
+                source,
                 search,
                 held: Held::default(),
                 asked_ahead: 0,
@@ -199,7 +198,7 @@ impl Search {
         let Self::Running(running) = self else {
             return None;
         };
-        let origin = running.terrain.origin;
+        let origin = running.source.origin;
         loop {
             records.ask_ahead(running, slots, tick);
             if let Some(found) = running.search.step(budget, &running.held) {
@@ -241,7 +240,7 @@ impl NavAgents {
 
     pub fn query(
         &mut self,
-        terrains: &Terrains,
+        world: &World,
         jobs: &mut Jobs,
         ends: (Vec2, Vec2),
         options: &NavOptions,
@@ -268,7 +267,7 @@ impl NavAgents {
         let mut slots = Some(JobBudget::of(jobs));
         let mut unlimited = u64::MAX;
         let found = self.queries[at].search.advance(
-            terrains,
+            world,
             &mut self.records,
             &mut slots,
             &mut unlimited,
@@ -307,9 +306,7 @@ pub enum NavSystems {
     Walk,
 }
 
-type Agents<'w, 's> = Query<
-    'w,
-    's,
+type Agents = QueryState<
     (
         Entity,
         &'static NavAgent,
@@ -319,30 +316,64 @@ type Agents<'w, 's> = Query<
     Without<Parent>,
 >;
 
-pub(crate) fn walk_agents(
-    time: Res<FixedTime>,
-    settings: Option<Res<Navigation>>,
-    terrains: Res<Terrains>,
-    mut jobs: Option<ResMut<Jobs>>,
-    mut cooking: Option<ResMut<Cooking>>,
-    (mut navigation, mut stats): (ResMut<NavAgents>, ResMut<NavStats>),
-    mut agents: Agents,
-) {
-    let settings = settings.map_or(Navigation::off(), |settings| settings.sanitized());
-    *stats = NavStats::default();
+fn ground_source(world: &World, from: Vec2, to: Vec2) -> GroundRead<GroundSource> {
+    world
+        .get_resource::<Ground>()
+        .map_or(GroundRead::Off, |ground| ground.face().source(world, from, to))
+}
+
+fn ground_obstacles(world: &World, entity: Entity) -> Vec<GroundObstacle> {
+    world
+        .get_resource::<Ground>()
+        .map_or_else(Vec::new, |ground| ground.face().obstacles(world, entity))
+}
+
+fn scoped<R: Resource, T>(
+    world: &mut World,
+    run: impl FnOnce(&mut World, Option<Mut<'_, R>>) -> T,
+) -> T {
+    if world.contains_resource::<R>() {
+        world.resource_scope(|world, resource: Mut<R>| run(world, Some(resource)))
+    } else {
+        run(world, None)
+    }
+}
+
+pub(crate) fn walk_agents(world: &mut World, agents: &mut Agents) {
+    let time = *world.resource::<FixedTime>();
+    let settings = world
+        .get_resource::<Navigation>()
+        .map_or(Navigation::off(), |settings| settings.sanitized());
+    let stats = world.resource_scope(|world, mut navigation: Mut<NavAgents>| {
+        scoped::<Jobs, _>(world, |world, jobs| {
+            scoped::<Cooking, _>(world, |world, cooking| {
+                walk(world, agents, (&settings, time), &mut navigation, (jobs, cooking))
+            })
+        })
+    });
+    *world.resource_mut::<NavStats>() = stats;
+}
+
+fn walk(
+    world: &mut World,
+    agents: &mut Agents,
+    (settings, time): (&Navigation, FixedTime),
+    navigation: &mut NavAgents,
+    (mut jobs, mut cooking): (Option<Mut<'_, Jobs>>, Option<Mut<'_, Cooking>>),
+) -> NavStats {
+    let mut stats = NavStats::default();
     navigation.tick = time.tick;
     let mut jobs = jobs.as_deref_mut();
     if !settings.enabled {
         navigation.stop(jobs);
-        return;
+        return stats;
     }
     if let Some(jobs) = jobs.as_deref_mut() {
-        let navigation = navigation.as_mut();
         navigation
             .records
             .take(jobs, navigation.tick, &mut navigation.failures);
     }
-    for (entity, agent, mut walk, transform) in &mut agents {
+    for (entity, agent, mut walk, transform) in agents.iter_mut(world) {
         let agent = agent.sanitized();
         if walk.destination == agent.destination {
             continue;
@@ -360,21 +391,16 @@ pub(crate) fn walk_agents(
         navigation.searches.push((entity, search));
         walk.status = NavStatus::Searching;
     }
-    search(
-        &settings,
-        &terrains,
-        jobs.as_deref_mut(),
-        (&mut *navigation, &mut *stats),
-        &mut agents,
-    );
+    search(settings, world, jobs.as_deref_mut(), (&mut *navigation, &mut stats), agents);
     if let (Some(jobs), Some(cooking)) = (jobs, cooking.as_deref_mut()) {
-        navigation.cook(&terrains, &agents, jobs, cooking);
+        navigation.cook(world, agents, jobs, cooking);
     }
     let (grounds, portals) = navigation.records.held();
     stats.grounds = grounds;
     stats.portals = portals;
     let seconds = time.delta_seconds;
-    for (_, agent, mut walk, mut transform) in &mut agents {
+    let mut moved = Vec::new();
+    for (entity, agent, mut walk, mut transform) in agents.iter_mut(world) {
         stats.agents += 1;
         match walk.status {
             NavStatus::Searching => stats.searching += 1,
@@ -387,13 +413,22 @@ pub(crate) fn walk_agents(
         }
         stats.walking += 1;
         let agent = agent.sanitized();
-        step(&agent, &mut walk, &mut transform, &terrains, seconds);
+        moved.push((entity, step(&agent, &mut walk, &mut transform, seconds)));
     }
+    for (_, step) in &mut moved {
+        step.settle(world);
+    }
+    for (entity, step) in moved {
+        if let Ok((_, _, _, mut transform)) = agents.get_mut(world, entity) {
+            transform.translation = step.position;
+        }
+    }
+    stats
 }
 
 fn search(
     settings: &Navigation,
-    terrains: &Terrains,
+    world: &mut World,
     jobs: Option<&mut Jobs>,
     (navigation, stats): (&mut NavAgents, &mut NavStats),
     agents: &mut Agents,
@@ -409,7 +444,7 @@ fn search(
         let index = (navigation.turn + offset) % count;
         let (entity, search) = &mut navigation.searches[index];
         if let Some(found) = search.advance(
-            terrains,
+            world,
             &mut navigation.records,
             &mut slots,
             &mut budget,
@@ -428,7 +463,7 @@ fn search(
     finished.sort_by_key(|&(index, ..)| std::cmp::Reverse(index));
     for (index, entity, (origin, found)) in finished {
         navigation.searches.swap_remove(index);
-        let Ok((_, _, mut walk, _)) = agents.get_mut(entity) else {
+        let Ok((_, _, mut walk, _)) = agents.get_mut(world, entity) else {
             continue;
         };
         give(&mut walk, origin, found);
@@ -452,13 +487,28 @@ fn give(walk: &mut NavWalk, origin: Vec3, found: Option<NavPath>) {
     }
 }
 
-fn step(
-    agent: &NavAgent,
-    walk: &mut NavWalk,
-    transform: &mut Transform,
-    terrains: &Terrains,
-    seconds: f32,
-) {
+struct Step {
+    position: Vec3,
+    walked: f32,
+    offset: f32,
+}
+
+impl Step {
+    fn settle(&mut self, world: &World) {
+        let walked = self.walked;
+        let ground = Ground::sample_in(world, self.position.x, self.position.z)
+            .map_or(walked, |point| {
+                if walked > point.height + DECK_ABOVE {
+                    walked
+                } else {
+                    point.height
+                }
+            });
+        self.position.y = ground + self.offset;
+    }
+}
+
+fn step(agent: &NavAgent, walk: &mut NavWalk, transform: &mut Transform, seconds: f32) -> Step {
     let mut position = transform.translation;
     let mut travel = agent.speed * seconds;
     let mut heading = None;
@@ -482,17 +532,6 @@ fn step(
         }
     }
     let walked = walk_height(walk, position);
-    let ground = terrains
-        .height_at(position.x, position.z)
-        .map_or(walked, |ground| {
-            if walked > ground + DECK_ABOVE {
-                walked
-            } else {
-                ground
-            }
-        });
-    position.y = ground + agent.offset;
-    transform.translation = position;
     if walk.next >= walk.points.len() {
         walk.status = NavStatus::Arrived;
     }
@@ -505,6 +544,11 @@ fn step(
             .rotation
             .slerp(target, max(share, 0.0))
             .normalize();
+    }
+    Step {
+        position,
+        walked,
+        offset: agent.offset,
     }
 }
 
@@ -528,12 +572,11 @@ fn walk_height(walk: &NavWalk, position: Vec3) -> f32 {
     a.y + (b.y - a.y) * t
 }
 
-fn portals_record(terrain: &WalkedTerrain, key: TileKey, gait: &Gait) -> (Vec<u8>, RecordKey) {
+fn portals_record(source: &GroundSource, key: TileKey, gait: &Gait) -> (Vec<u8>, RecordKey) {
     let job = PortalsJob {
-        stack: terrain.stack.clone(),
-        pyramid: terrain.pyramid,
+        source: source.identity.to_vec(),
+        pyramid: source.pyramid,
         key,
-        stamps: terrain.reaching(key),
         gait: *gait,
     };
     let input = job.identity();
