@@ -1,21 +1,23 @@
 import package::engine::color::decode_srgb;
 import package::engine::screen_points::{depth_normal, world_at};
-import package::frame::encode::grade;
-import package::frame::view::{camera, lighting, stable_normalize};
+import package::face::heightfield::{
+    GroundTerrain, LevelTile, NOT_RESIDENT, cover_growth, cover_seen, directory, heights,
+    level_tile, macro_tint, tile_height, triangle_height,
+};
+import package::face::horizons::{bounce_light, terrain_visibility};
+import package::face::shadows::sun_shadowed;
+import package::face::sky::{
+    ambient as sky_ambient, atmospheric, cloud_passing, sky_above, sky_average,
+};
+import package::face::sun::{sun_color, sun_direction};
+import package::face::tonemap::tonemap;
+import package::frame::view::{camera, stable_normalize};
+import package::generated::pieces::pieces;
 import package::meshes::impostor_frames::{
     IMPOSTOR_CUTOFF, IMPOSTOR_HEMISPHERE, ImpostorRecord, impostor_basis, impostor_facing,
     impostor_frame_direction, impostor_frames, impostor_grid, impostor_met,
 };
 import package::post::frame::{depth_texture, drawn_uv, glow, linear, post};
-import package::shadows::sample::{SHADOW_MAPS, shadow};
-import package::sky::air::{atmospheric, cloud_passing, sky_above, sky_average};
-import package::terrain::bounce::bounce_light;
-import package::terrain::ground::{
-    GroundTerrain, LevelTile, NOT_RESIDENT, directory, heights, level_tile, tile_height,
-    triangle_height,
-};
-import package::terrain::horizons::terrain_visibility;
-import package::terrain::variety::{cover_growth, cover_seen, macro_tint};
 
 @group(1) @binding(10) var nearest_depth: texture_2d<f32>;
 @group(1) @binding(13) var surface_texture: texture_2d<u32>;
@@ -281,7 +283,7 @@ fn block_holds(block: u32, first: vec2<f32>, size: f32, local: vec2<f32>, front:
 }
 
 fn crown_holds(front: vec3<f32>, back: vec3<f32>) -> bool {
-    let count = u32(post.reflections.w);
+    let count = u32(pieces.reflections.trace.w);
     for (var index = 0u; index < count; index++) {
         let terrain = world_terrains[index];
         let held = terrain.maps.y;
@@ -809,7 +811,7 @@ fn world_trace(p: vec3<f32>, direction: vec3<f32>, nearest: f32, farthest: f32,
         spread: vec2<f32>) -> WorldHit {
     var hit: WorldHit;
     hit.s = farthest;
-    let count = u32(post.reflections.w);
+    let count = u32(pieces.reflections.trace.w);
     for (var index = 0u; index < count; index++) {
         var below = hit.s;
         if direction.y > 0.0 {
@@ -949,19 +951,19 @@ fn world_light(hit: WorldHit, p: vec3<f32>, direction: vec3<f32>, footprint: f32
             * placed.occlusion;
         bounce = around.light * (around.weight * placed.occlusion);
     }
-    let sky_light = albedo * (ambient * lighting.zenith.w + bounce);
-    let sun = lighting.sun.xyz;
+    let sky_light = albedo * (ambient * sky_ambient() + bounce);
+    let sun = sun_direction();
     let wrapped = max((dot(normal, sun) + 0.25) / 1.25, 0.0);
     var sun_light = vec3<f32>(0.0);
     if wrapped > 0.0 {
         var visible = cloud_passing(world) * unshaded;
-        if SHADOW_MAPS && shadow.state.x != 0.0 {
+        if sun_shadowed() {
             visible *= terrain_visibility(world, hit.ground);
         }
-        sun_light = albedo * lighting.sun_color.rgb * (wrapped * visible);
+        sun_light = albedo * sun_color() * (wrapped * visible);
     }
     let eye = camera.position.xyz;
-    return grade(atmospheric(sky_light + sun_light, eye, world, stable_normalize(world - eye)).rgb);
+    return tonemap(atmospheric(sky_light + sun_light, eye, world, stable_normalize(world - eye)).rgb);
 }
 
 fn reach_fade(travelled: f32, reach: f32) -> f32 {
@@ -987,7 +989,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     var normal = mirroring.normal;
     normal = normalize(normal + max(facing - dot(normal, to_eye), 0.0) * to_eye);
     let direction = reflect(-to_eye, normal);
-    let reach = post.reflections.x;
+    let reach = pieces.reflections.trace.x;
     let start = screen_point(p);
     let rows = transpose(post.view_projection);
     let w_rate = dot(rows[3].xyz, direction);
